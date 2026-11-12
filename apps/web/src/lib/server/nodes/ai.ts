@@ -369,19 +369,22 @@ interface AgentNodeState {
 }
 
 /** A person's decisions, from the approval route (`{ decisions: { [callId]: { approved, by, input? } } }`): `input` is what they edited. */
-export function decisionsOf(resume: AgentNodeState['$resume']): Record<string, { approved: boolean; by?: string; at?: string; input?: JsonObject }> {
+export function decisionsOf(resume: AgentNodeState['$resume']): Record<string, { approved: boolean; by?: string; at?: string; input?: JsonObject; text?: string; comment?: string }> {
   const data = resume?.data as { decisions?: unknown; body?: { decisions?: unknown } } | undefined;
   const raw = (data?.decisions ?? data?.body?.decisions) as Record<string, unknown> | undefined;
-  const decisions: Record<string, { approved: boolean; by?: string; at?: string; input?: JsonObject }> = {};
+  const decisions: Record<string, { approved: boolean; by?: string; at?: string; input?: JsonObject; text?: string; comment?: string }> = {};
   for (const [id, value] of Object.entries(raw ?? {})) {
     if (typeof value === 'boolean') decisions[id] = { approved: value };
     else if (value && typeof value === 'object') {
-      const v = value as { approved?: unknown; by?: unknown; at?: unknown; input?: unknown };
+      const v = value as { approved?: unknown; by?: unknown; at?: unknown; input?: unknown; text?: unknown; comment?: unknown };
       decisions[id] = {
         approved: Boolean(v.approved),
         ...(typeof v.by === 'string' && { by: v.by }),
         ...(typeof v.at === 'string' && { at: v.at }),
         ...(v.approved === true && typeof v.input === 'object' && v.input !== null && !Array.isArray(v.input) ? { input: v.input as JsonObject } : {}),
+        // Ask a Person: the text a person edited before approving, and a note.
+        ...(v.approved === true && typeof v.text === 'string' && { text: v.text }),
+        ...(typeof v.comment === 'string' && { comment: v.comment }),
       };
     }
   }

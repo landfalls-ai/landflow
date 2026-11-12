@@ -147,6 +147,11 @@ export function decideGate(executionId: string, decision: 'accepted' | 'sent_bac
   return api<{ status: string }>(`/api/executions/${executionId}/gate`, { method: 'POST', json: { decision, ...(note && { note }) } });
 }
 
+/** Answer an Ask a Person node's request: approve (with the draft as the person edited it, and a note) or reject (POST /api/executions/:id/approvals). */
+export async function decideConfirm(executionId: string, decision: { approved: boolean; text?: string; comment?: string }, onEvent: (event: string, data: unknown) => void = () => {}): Promise<void> {
+  await streamEvents(`/api/executions/${executionId}/approvals`, { callId: 'confirm', ...decision }, onEvent);
+}
+
 /**
  * Decide the tool calls an execution waits on (the AI Agent node's approvals). Returns false when the wait is not a tool
  * approval (a form, an approval node): the caller sends the person to the execution instead. `onEvent` follows the resumed

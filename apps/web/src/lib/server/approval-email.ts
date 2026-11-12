@@ -105,6 +105,8 @@ export interface ApprovalEmailCall {
   tool: string;
   input: unknown;
   target: EmailApprovalTarget;
+  /** Ask a Person: the email asks about this draft instead of a tool call. */
+  confirm?: { text: string };
 }
 
 /** Email each address one message per waiting tool call, with its two links. Returns the addresses it reached. */
@@ -113,12 +115,13 @@ export async function sendApprovalEmails(options: { to: string[]; title: string;
   for (const to of options.to) {
     for (const call of options.calls) {
       const links = approvalLinks(call.target, to);
-      const subject = `${options.title}: approve ${call.tool}?`;
+      const subject = call.confirm ? options.title : `${options.title}: approve ${call.tool}?`;
+      const body = call.confirm ? call.confirm.text.slice(0, 20_000) : preview(call.input);
       const text = [
         options.title,
-        `The tool "${call.tool}" needs your approval.`,
+        call.confirm ? 'Please review this and answer.' : `The tool "${call.tool}" needs your approval.`,
         '',
-        preview(call.input),
+        body,
         '',
         `Approve: ${links.approve}`,
         `Reject:  ${links.reject}`,
@@ -128,8 +131,8 @@ export async function sendApprovalEmails(options: { to: string[]; title: string;
       const button = (label: string, href: string, color: string) =>
         `<a href="${escapeHtml(href)}" style="display:inline-block;padding:9px 18px;margin-right:8px;border-radius:8px;background:${color};color:#fff;text-decoration:none;font-weight:600">${label}</a>`;
       const html =
-        `<p><strong>${escapeHtml(options.title)}</strong><br>The tool <code>${escapeHtml(call.tool)}</code> needs your approval.</p>` +
-        `<pre style="background:#f4f4f5;padding:10px;border-radius:8px;white-space:pre-wrap">${escapeHtml(preview(call.input))}</pre>` +
+        `<p><strong>${escapeHtml(options.title)}</strong><br>${call.confirm ? 'Please review this and answer.' : `The tool <code>${escapeHtml(call.tool)}</code> needs your approval.`}</p>` +
+        `<pre style="background:#f4f4f5;padding:10px;border-radius:8px;white-space:pre-wrap">${escapeHtml(body)}</pre>` +
         `<p>${button('Approve', links.approve, '#16a34a')}${button('Reject', links.reject, '#dc2626')}</p>` +
         `<p style="color:#71717a;font-size:12px">The links work once and expire ${escapeHtml(links.expiresAt)}.${options.note ? ` ${escapeHtml(options.note)}` : ''}</p>`;
       await sendMail({ to, subject, text, html });
@@ -165,6 +168,8 @@ export interface LinkView {
   title: string;
   tool: string;
   input: unknown;
+  /** Ask a Person: the request's title and draft. */
+  confirm?: { title: string; text: string };
   /** Set when the link can no longer decide: spent, already decided, run finished. */
   closed?: string;
 }
@@ -180,7 +185,7 @@ export function describeLink(token: string): LinkView {
     const record = store.getExecution(target.e);
     const approval = pendingApproval(record);
     const call = approval?.calls.find((c) => c.id === target.c);
-    view = { title: approval ? `${approval.nodeName} (${record?.workflowName ?? 'workflow'})` : 'A workflow', tool: call?.tool ?? 'a tool', input: call?.input ?? {} };
+    view = { title: approval ? `${approval.nodeName} (${record?.workflowName ?? 'workflow'})` : 'A workflow', tool: call?.tool ?? 'a tool', input: call?.input ?? {}, ...(approval?.confirm && { confirm: { title: approval.confirm.title, text: String((call?.input as { text?: unknown } | undefined)?.text ?? approval.confirm.text) } }) };
     if (!call || approval?.decisions?.[target.c]) view.closed = 'This tool call is no longer waiting for approval.';
   } else {
     const agent = agentStore.get(target.a);
@@ -196,6 +201,8 @@ export interface LinkOutcome {
   approved: boolean;
   tool: string;
   title: string;
+  /** Ask a Person's request (it has no tool). */
+  confirm?: boolean;
 }
 
 /** Decide with a link: spends its group first (so a second use fails), then records the decision; a failed decision frees the link. */
@@ -232,7 +239,7 @@ export async function useLink(token: string): Promise<LinkOutcome> {
   // Old rows go with the next use.
   database().deleteBefore('approval_email_used', 'expires_at', new Date().toISOString());
   logger.info('approval decided by email link', { 'landflow.approval.approved': approved, 'landflow.approval.by': by });
-  return { approved, tool: view.tool, title: view.title };
+  return { approved, tool: view.tool, title: view.confirm?.title ?? view.title, ...(view.confirm && { confirm: true }) };
 }
 
 /** After an email decision resumed a channel session, the answer belongs in that chat (Slack thread, Teams conversation). */
@@ -270,8 +277,10 @@ export function confirmationPage(token: string): Response {
     if (view.closed) return html(`<h2>Nothing to decide</h2><p>${escapeHtml(view.closed)}</p>`, 409);
     const approve = view.payload.d === 'approve';
     return html(
-      `<h2>${approve ? 'Approve' : 'Reject'} this tool call?</h2><p><strong>${escapeHtml(view.title)}</strong> wants to run <code>${escapeHtml(view.tool)}</code>.</p>` +
-        `<pre>${escapeHtml(preview(view.input))}</pre><form method="post"><button class="${approve ? 'approve' : 'reject'}" type="submit">${approve ? 'Approve' : 'Reject'}</button></form>` +
+      (view.confirm
+        ? `<h2>${approve ? 'Approve' : 'Reject'} this?</h2><p><strong>${escapeHtml(view.confirm.title)}</strong> (${escapeHtml(view.title)}) asks for your answer.</p><pre>${escapeHtml(view.confirm.text.slice(0, 20_000))}</pre>`
+        : `<h2>${approve ? 'Approve' : 'Reject'} this tool call?</h2><p><strong>${escapeHtml(view.title)}</strong> wants to run <code>${escapeHtml(view.tool)}</code>.</p><pre>${escapeHtml(preview(view.input))}</pre>`) +
+        `<form method="post"><button class="${approve ? 'approve' : 'reject'}" type="submit">${approve ? 'Approve' : 'Reject'}</button></form>` +
         `<p class="muted">Sent to ${escapeHtml(view.payload.m)}. This link works once.</p>`,
     );
   } catch (error) {
@@ -284,7 +293,7 @@ export function confirmationPage(token: string): Response {
 export async function decisionPage(token: string): Promise<Response> {
   try {
     const outcome = await useLink(token);
-    return html(`<h2>${outcome.approved ? 'Approved' : 'Rejected'}</h2><p><code>${escapeHtml(outcome.tool)}</code> was ${outcome.approved ? 'approved' : 'rejected'}. You can close this page.</p>`);
+    return html(`<h2>${outcome.approved ? 'Approved' : 'Rejected'}</h2><p>${outcome.confirm ? `<strong>${escapeHtml(outcome.title)}</strong>` : `<code>${escapeHtml(outcome.tool)}</code>`} was ${outcome.approved ? 'approved' : 'rejected'}. You can close this page.</p>`);
   } catch (error) {
     if (error instanceof LinkError) return html(`<h2>Link not usable</h2><p>${escapeHtml(error.message)}</p>`, error.status);
     throw error;

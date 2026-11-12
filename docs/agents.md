@@ -742,7 +742,7 @@ through the infra Mailpit (`apps/web/test/approval-email-mailpit.test.ts`, skipp
 | `POST /api/agents/:id/sessions/:sid/approvals` | `{ callId, approved }` → the same SSE stream once the run resumes |
 | `POST /api/slack/events/:agentId/:channelId` | Slack Events API of the agent's Slack channel (signed by Slack) |
 | `POST /api/slack/commands/:agentId/:channelId` | Slack slash commands of the agent's Slack channel (signed by Slack; answered on the `response_url`) |
-| `POST /api/slack/interactions` | Slack interactivity: the Approve / Reject buttons of agents and AI Agent nodes (signed by Slack) |
+| `POST /api/slack/interactions` | Slack interactivity: the Approve / Reject buttons of agents and AI Agent nodes, and Ask a Person's Approve / Edit / Reject with its edit modal (signed by Slack) |
 | `POST /api/teams/messages/:agentId/:channelId` | Bot Framework messaging endpoint of the agent's Teams channel (bearer JWT validated) |
 | `GET/POST /api/approvals/email/:token` | the links of approval emails: GET confirms, POST decides once (signed token) |
 | `GET /api/insights/ai-usage?agentId=` | the agent's tokens and estimated cost: totals, per model, per day, `today` and `month` |
