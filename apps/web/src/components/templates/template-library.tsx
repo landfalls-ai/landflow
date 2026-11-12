@@ -13,6 +13,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { TEMPLATE_CATEGORIES, type TemplateDetail, type TemplateSource } from '@/lib/shared/templates';
 import { cn } from '@/lib/utils';
+import { PhoneFilters } from '../ui/phone-filters';
 import { useViewer } from '@/components/auth/viewer';
 import { rememberedProject, rememberProject } from '@/components/projects/current-project';
 import { projectLabel, useProjects } from '@/components/projects/use-projects';
@@ -133,18 +134,21 @@ export function TemplateLibrary() {
             ))}
           </div>
         </div>
-        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Categories">
-          {[undefined, ...TEMPLATE_CATEGORIES].map((c) => (
-            <button
-              key={c?.id ?? 'all'}
-              onClick={() => setCategory(c?.id)}
-              aria-pressed={category === c?.id}
-              className={cn('rounded-full border px-2.5 py-0.5 text-[12px] transition-colors', category === c?.id ? 'border-ac bg-acdim text-ac' : 'border-hair text-t2 hover:border-ac')}
-            >
-              {c?.name ?? 'All categories'}
-            </button>
-          ))}
-        </div>
+        {/* A phone: the categories in a Filters sheet (desktop: in place). */}
+        <PhoneFilters active={category ? 1 : 0} onClear={() => setCategory(undefined)} className="self-start">
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Categories">
+            {[undefined, ...TEMPLATE_CATEGORIES].map((c) => (
+              <button
+                key={c?.id ?? 'all'}
+                onClick={() => setCategory(c?.id)}
+                aria-pressed={category === c?.id}
+                className={cn('rounded-full border px-2.5 py-0.5 text-[12px] transition-colors', category === c?.id ? 'border-ac bg-acdim text-ac' : 'border-hair text-t2 hover:border-ac')}
+              >
+                {c?.name ?? 'All categories'}
+              </button>
+            ))}
+          </div>
+        </PhoneFilters>
 
         {current && (
           <p className="text-[12px] text-t3">

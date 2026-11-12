@@ -357,7 +357,7 @@ export default function DevelopersPage() {
         </Section>
 
         <Section title="Credentials, polling triggers and observability">
-          <p className="mb-3 max-w-[80ch] text-[13px] leading-relaxed text-t2">
+          <p className="mb-3 max-w-[80ch] text-[13px] leading-relaxed text-t2 [overflow-wrap:anywhere]">
             Declare credential types and the host stores them encrypted, renders their form and sends the values only to the node that uses them. A trigger with{' '}
             <Mono>triggerSource: &apos;poll&apos;</Mono> is called on schedule with the state it returned last time. Every SDK continues the host&apos;s trace (W3C{' '}
             <Mono>traceparent</Mono> over HTTP headers or gRPC metadata), writes JSON logs with trace ids and serves <Mono>/metrics</Mono>; spans, metrics and a traced HTTP
@@ -395,7 +395,7 @@ export default function DevelopersPage() {
         </Section>
 
         <Section title="Built-in nodes">
-          <p className="max-w-[80ch] text-[13px] leading-relaxed text-t2">
+          <p className="max-w-[80ch] text-[13px] leading-relaxed text-t2 [overflow-wrap:anywhere]">
             The host&apos;s own built-in nodes implement the same <Mono>INodeType</Mono> interface; they are simply registered in-process. The full spec lives in <Mono>docs/protocol.md</Mono>, the contract in{' '}
             <Mono>packages/protocol/proto/landflow/plugin/v1/plugin.proto</Mono>, and JSON Schemas in <Mono>packages/protocol/schema/</Mono>.
           </p>

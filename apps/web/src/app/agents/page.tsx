@@ -17,6 +17,7 @@ import { SaveTemplateDialog } from '@/components/agents/save-template-dialog';
 import { configOf, downloadJson, parseAgentFile, slug } from '@/components/agents/util';
 import { useAgentData } from '@/components/agents/use-agent-data';
 import { PageBody, PageHeader } from '@/components/shell/page-header';
+import { PhoneFilters } from '@/components/ui/phone-filters';
 import { Badge, Chip } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { MenuItem, Popover } from '@/components/ui/popover';
@@ -174,7 +175,7 @@ export default function AgentsPage() {
   );
 
   const seg = <T extends string>(label: string, value: T, set: (v: T) => void, options: Array<[T, string, number?]>) => (
-    <div role="group" aria-label={label} className="inline-flex max-w-full overflow-x-auto rounded-full border border-hair bg-wl p-0.5 [scrollbar-width:none]">
+    <div role="group" aria-label={label} className="inline-flex max-w-full overflow-x-auto rounded-full border border-hair bg-wl p-0.5 [scrollbar-width:none] max-md:flex-wrap max-md:overflow-visible max-md:rounded-2xl">
       {options.map(([key, text, n]) => (
         <button
           key={key}
@@ -243,14 +244,23 @@ export default function AgentsPage() {
           <>
             {strip}
             <div className="mb-5 flex flex-wrap items-center gap-3">
-              {seg('Show', filter, setFilter, FILTERS.map(([key, text, test]) => [key, text, list.filter(test).length]))}
-              <div className="ml-auto flex items-center gap-2 text-[12px] text-t3">
-                Group by
-                {seg<Group>('Group by', group, setGroup, [
-                  ['team', 'Team'],
-                  ['none', 'None'],
-                ])}
-              </div>
+              {/* A phone: which agents and how they're grouped, in a Filters sheet (desktop: in place). */}
+              <PhoneFilters
+                active={(filter !== 'all' ? 1 : 0) + (group !== 'team' ? 1 : 0)}
+                onClear={() => {
+                  setFilter('all');
+                  setGroup('team');
+                }}
+              >
+                {seg('Show', filter, setFilter, FILTERS.map(([key, text, test]) => [key, text, list.filter(test).length]))}
+                <div className="ml-auto flex items-center gap-2 text-[12px] text-t3 max-md:ml-0">
+                  Group by
+                  {seg<Group>('Group by', group, setGroup, [
+                    ['team', 'Team'],
+                    ['none', 'None'],
+                  ])}
+                </div>
+              </PhoneFilters>
             </div>
             {visible.length === 0 && <p className="py-10 text-center text-[13px] text-t3">No agents match.</p>}
             <div className="flex flex-col gap-7">

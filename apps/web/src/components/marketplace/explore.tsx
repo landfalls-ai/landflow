@@ -12,6 +12,7 @@ import Link from 'next/link';
 import { ArrowRight, Boxes, Check, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { PhoneFilters } from '../ui/phone-filters';
 import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
 import type { ExploreFlow, ExplorePlugin, MarketplaceSummary } from '@/lib/shared/marketplace';
@@ -366,64 +367,73 @@ export function Explore({ marketplaces, version, onAdd, onOpen, onChanged }: { m
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Source">
-        <button onClick={() => setSource(undefined)} aria-pressed={!source} className={chip(!source)}>
-          All sources
-        </button>
-        {marketplaces.map((m) => (
-          <button key={m.id} onClick={() => setSource(m.id)} aria-pressed={source === m.id} className={chip(source === m.id)}>
-            {m.name}
-            <span className="font-mono text-[11px] font-normal text-t3">{sourceCounts.get(m.id) ?? m.plugins}</span>
+      {/* A phone: source, its marketplace and the categories in a Filters sheet (desktop: in place, as they were). */}
+      <PhoneFilters
+        active={(source ? 1 : 0) + (category ? 1 : 0)}
+        onClear={() => {
+          setSource(undefined);
+          setCategory(undefined);
+        }}
+      >
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Source">
+          <button onClick={() => setSource(undefined)} aria-pressed={!source} className={chip(!source)}>
+            All sources
           </button>
-        ))}
-        <button onClick={() => setSource(LOCAL)} aria-pressed={source === LOCAL} className={chip(source === LOCAL)} title="The registry's own plugins and the Templates library">
-          This instance
-          <span className="font-mono text-[11px] font-normal text-t3">{sourceCounts.get(LOCAL) ?? 0}</span>
-        </button>
-        <button onClick={onAdd} className="inline-flex h-8 items-center gap-1.5 rounded-full border border-dashed border-bd px-3 text-[12px] text-t2 hover:border-ac hover:text-ac">
-          <Plus className="size-3.5" /> Add
-        </button>
-      </div>
-
-      {current && (
-        <Card className="flex flex-wrap items-center gap-3">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <span className="text-[13px] font-semibold text-t1">{current.name}</span>
-              {!current.removable && <Badge tone="accent">Built in</Badge>}
-              {current.owner && <span className="text-[12px] text-t3">by {current.owner}</span>}
-            </div>
-            <p className="truncate text-[12px] text-t3">
-              {current.description ? `${current.description} · ` : ''}
-              <span className="font-mono text-[11px]">{locationText(current)}</span>
-              {current.fetchedAt && ` · fetched ${timeAgo(current.fetchedAt)}`}
-            </p>
-          </div>
-          <Button size="sm" onClick={() => void refresh()} loading={refreshing}>
-            {!refreshing && <RefreshCw className="size-3.5" />} Refresh
-          </Button>
-          {current.removable && (
-            <Button variant="ghost" size="sm" onClick={() => void remove()} aria-label={`Remove ${current.name}`}>
-              <Trash2 className="size-3.5" /> Remove
-            </Button>
-          )}
-        </Card>
-      )}
-
-      {categories.length > 0 && (
-        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Categories">
-          {[undefined, ...categories].map((c) => (
-            <button
-              key={c ?? 'all'}
-              onClick={() => setCategory(c)}
-              aria-pressed={category === c}
-              className={cn('rounded-full border px-2.5 py-0.5 text-[12px] transition-colors', category === c ? 'border-ac bg-acdim text-ac' : 'border-hair text-t2 hover:border-ac')}
-            >
-              {c ?? 'All categories'}
+          {marketplaces.map((m) => (
+            <button key={m.id} onClick={() => setSource(m.id)} aria-pressed={source === m.id} className={chip(source === m.id)}>
+              {m.name}
+              <span className="font-mono text-[11px] font-normal text-t3">{sourceCounts.get(m.id) ?? m.plugins}</span>
             </button>
           ))}
+          <button onClick={() => setSource(LOCAL)} aria-pressed={source === LOCAL} className={chip(source === LOCAL)} title="The registry's own plugins and the Templates library">
+            This instance
+            <span className="font-mono text-[11px] font-normal text-t3">{sourceCounts.get(LOCAL) ?? 0}</span>
+          </button>
+          <button onClick={onAdd} className="inline-flex h-8 items-center gap-1.5 rounded-full border border-dashed border-bd px-3 text-[12px] text-t2 hover:border-ac hover:text-ac">
+            <Plus className="size-3.5" /> Add
+          </button>
         </div>
-      )}
+
+        {current && (
+          <Card className="flex flex-wrap items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="text-[13px] font-semibold text-t1">{current.name}</span>
+                {!current.removable && <Badge tone="accent">Built in</Badge>}
+                {current.owner && <span className="text-[12px] text-t3">by {current.owner}</span>}
+              </div>
+              <p className="truncate text-[12px] text-t3">
+                {current.description ? `${current.description} · ` : ''}
+                <span className="font-mono text-[11px]">{locationText(current)}</span>
+                {current.fetchedAt && ` · fetched ${timeAgo(current.fetchedAt)}`}
+              </p>
+            </div>
+            <Button size="sm" onClick={() => void refresh()} loading={refreshing}>
+              {!refreshing && <RefreshCw className="size-3.5" />} Refresh
+            </Button>
+            {current.removable && (
+              <Button variant="ghost" size="sm" onClick={() => void remove()} aria-label={`Remove ${current.name}`}>
+                <Trash2 className="size-3.5" /> Remove
+              </Button>
+            )}
+          </Card>
+        )}
+
+        {categories.length > 0 && (
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Categories">
+            {[undefined, ...categories].map((c) => (
+              <button
+                key={c ?? 'all'}
+                onClick={() => setCategory(c)}
+                aria-pressed={category === c}
+                className={cn('rounded-full border px-2.5 py-0.5 text-[12px] transition-colors', category === c ? 'border-ac bg-acdim text-ac' : 'border-hair text-t2 hover:border-ac')}
+              >
+                {c ?? 'All categories'}
+              </button>
+            ))}
+          </div>
+        )}
+      </PhoneFilters>
 
       {error && <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>}
       {explore && explore.errors.length > 0 && (

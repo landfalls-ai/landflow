@@ -25,7 +25,7 @@ export function PageHeader({ title, meta, actions, className }: { title: ReactNo
 }
 
 export function PageBody({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn('px-6 py-5', className)}>{children}</div>;
+  return <div className={cn('px-6 py-5 max-md:px-4', className)}>{children}</div>;
 }
 
 export function Card({ children, className, style }: { children: ReactNode; className?: string; style?: CSSProperties }) {

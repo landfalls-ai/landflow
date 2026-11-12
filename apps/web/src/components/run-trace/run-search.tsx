@@ -18,6 +18,7 @@ import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
 import { FieldLabel, Input, Select } from '../ui/inputs';
 import { TrendChart } from './trend-chart';
+import { PhoneFilters } from '@/components/ui/phone-filters';
 
 interface Filters {
   text: string;
@@ -145,51 +146,62 @@ export function RunSearch({ initialWorkflowId = '' }: { initialWorkflowId?: stri
           <FieldLabel>Words</FieldLabel>
           <Input value={filters.text} onChange={(e) => set('text', e.target.value)} placeholder="A name, a message, an output…" className="h-11" />
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <FieldLabel>Workflow</FieldLabel>
-            <Select value={filters.workflowId} onChange={(e) => set('workflowId', e.target.value)} className="h-11">
-              <option value="">Any workflow</option>
-              {workflows.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {w.name}
-                </option>
-              ))}
-            </Select>
+        {/* A phone: the rest in a Filters sheet, so the results start on the first screen (desktop: in place). */}
+        <PhoneFilters
+          active={(['workflowId', 'status', 'actor', 'tool', 'from', 'to'] as const).filter((key) => filters[key].trim()).length + (filters.failedSteps ? 1 : 0) + (filters.failedCheck ? 1 : 0)}
+          onClear={() => setFilters({ ...EMPTY, text: filters.text })}
+          onApply={() => {
+            setPicked([]);
+            void run(filters);
+          }}
+          className="max-md:w-full max-md:justify-center"
+        >
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <FieldLabel>Workflow</FieldLabel>
+              <Select value={filters.workflowId} onChange={(e) => set('workflowId', e.target.value)} className="h-11">
+                <option value="">Any workflow</option>
+                {workflows.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div>
+              <FieldLabel>Status</FieldLabel>
+              <Select value={filters.status} onChange={(e) => set('status', e.target.value)} className="h-11">
+                <option value="">Any status</option>
+                {STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div>
+              <FieldLabel>Agent or actor</FieldLabel>
+              <Input value={filters.actor} onChange={(e) => set('actor', e.target.value)} placeholder="Developer" className="h-11" />
+            </div>
+            <div>
+              <FieldLabel>Tool</FieldLabel>
+              <Input value={filters.tool} onChange={(e) => set('tool', e.target.value)} placeholder="Bash" className="h-11" />
+            </div>
+            <div>
+              <FieldLabel>From</FieldLabel>
+              <Input type="date" value={filters.from} onChange={(e) => set('from', e.target.value)} className="h-11" />
+            </div>
+            <div>
+              <FieldLabel>To</FieldLabel>
+              <Input type="date" value={filters.to} onChange={(e) => set('to', e.target.value)} className="h-11" />
+            </div>
           </div>
-          <div>
-            <FieldLabel>Status</FieldLabel>
-            <Select value={filters.status} onChange={(e) => set('status', e.target.value)} className="h-11">
-              <option value="">Any status</option>
-              {STATUSES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </Select>
+          <div className="flex flex-wrap gap-x-6">
+            <Check label="Has failed steps" checked={filters.failedSteps} onChange={(v) => set('failedSteps', v)} />
+            <Check label="A check failed" checked={filters.failedCheck} onChange={(v) => set('failedCheck', v)} />
           </div>
-          <div>
-            <FieldLabel>Agent or actor</FieldLabel>
-            <Input value={filters.actor} onChange={(e) => set('actor', e.target.value)} placeholder="Developer" className="h-11" />
-          </div>
-          <div>
-            <FieldLabel>Tool</FieldLabel>
-            <Input value={filters.tool} onChange={(e) => set('tool', e.target.value)} placeholder="Bash" className="h-11" />
-          </div>
-          <div>
-            <FieldLabel>From</FieldLabel>
-            <Input type="date" value={filters.from} onChange={(e) => set('from', e.target.value)} className="h-11" />
-          </div>
-          <div>
-            <FieldLabel>To</FieldLabel>
-            <Input type="date" value={filters.to} onChange={(e) => set('to', e.target.value)} className="h-11" />
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-x-6">
-          <Check label="Has failed steps" checked={filters.failedSteps} onChange={(v) => set('failedSteps', v)} />
-          <Check label="A check failed" checked={filters.failedCheck} onChange={(v) => set('failedCheck', v)} />
-        </div>
-        {filters.failedCheck && <Input value={filters.checkName} onChange={(e) => set('checkName', e.target.value)} placeholder="Which check (leave empty for any)" className="h-11" />}
+          {filters.failedCheck && <Input value={filters.checkName} onChange={(e) => set('checkName', e.target.value)} placeholder="Which check (leave empty for any)" className="h-11" />}
+        </PhoneFilters>
         <div className="flex gap-2">
           <Button type="submit" variant="primary" loading={busy} className="h-11 flex-1">
             <Search className="size-4" /> Search
