@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { BellRing, BookOpen, Braces, CircleDollarSign, Cpu, GitBranch, KeyRound, Landmark, Layers, Network, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Users, Vault } from 'lucide-react';
+import { BellRing, BookOpen, Braces, ChevronLeft, ChevronRight, CircleDollarSign, Cpu, GitBranch, KeyRound, Landmark, Layers, Network, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Users, Vault } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { can, type Action } from '@/lib/shared/auth';
 import { useViewer } from '@/components/auth/viewer';
@@ -74,9 +74,15 @@ export default function SettingsPage() {
   const sections = SECTIONS.filter((s) => !s.role || can(viewer, s.role));
   const [chosen, setSection] = useState<Section>('general');
   const section = sections.some((s) => s.id === chosen) ? chosen : 'general';
+  // A phone shows the sections as a list first, and one section at a time (docs/mobile.md#settings-and-agents).
+  const [opened, setOpened] = useState(false);
 
   useEffect(() => {
-    const fromHash = () => setSection(SECTIONS.find((s) => `#${s.id}` === window.location.hash)?.id ?? 'general');
+    const fromHash = () => {
+      const found = SECTIONS.find((s) => `#${s.id}` === window.location.hash)?.id;
+      setSection(found ?? 'general');
+      setOpened(Boolean(found));
+    };
     fromHash();
     window.addEventListener('hashchange', fromHash);
     return () => window.removeEventListener('hashchange', fromHash);
@@ -84,14 +90,19 @@ export default function SettingsPage() {
 
   const choose = (id: Section) => {
     setSection(id);
+    setOpened(true);
     window.history.replaceState(null, '', `#${id}`);
+  };
+  const backToList = () => {
+    setOpened(false);
+    window.history.replaceState(null, '', window.location.pathname);
   };
 
   return (
     <>
       <PageHeader title="Settings" meta={<span>Instance-wide</span>} />
       <PageBody className="grid max-w-[1080px] grid-cols-1 gap-6 md:grid-cols-[200px_minmax(0,1fr)]">
-        <nav aria-label="Settings sections" className="flex gap-1 overflow-x-auto md:flex-col">
+        <nav aria-label="Settings sections" className={cn('flex gap-1 overflow-x-auto md:flex-col max-md:flex-col max-md:gap-0 max-md:overflow-visible max-md:rounded-2xl max-md:border max-md:border-hair max-md:bg-sf', opened && 'max-md:hidden')}>
           {sections.map((item) => {
             const Icon = item.icon;
             const active = section === item.id;
@@ -100,18 +111,25 @@ export default function SettingsPage() {
                 key={item.id}
                 onClick={() => choose(item.id)}
                 aria-current={active ? 'page' : undefined}
-                className={cn('flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors duration-[120ms]', active ? 'bg-acdim' : 'hover:bg-acdim')}
+                className={cn(
+                  'flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors duration-[120ms] max-md:items-center max-md:gap-3 max-md:rounded-none max-md:border-b max-md:border-hair max-md:px-4 max-md:py-3 max-md:last:border-b-0',
+                  active ? 'bg-acdim max-md:bg-transparent' : 'hover:bg-acdim',
+                )}
               >
                 <Icon className={cn('mt-0.5 size-4 shrink-0', active ? 'text-t1' : 'text-t3')} strokeWidth={1.8} />
-                <span className="min-w-0">
-                  <span className={cn('block text-[13px]', active ? 'font-semibold text-t1' : 'text-t2')}>{item.label}</span>
-                  <span className="hidden truncate text-[11px] text-t3 md:block">{item.hint}</span>
+                <span className="min-w-0 max-md:flex-1">
+                  <span className={cn('block text-[13px] max-md:text-[15px] max-md:font-semibold max-md:text-t1', active ? 'font-semibold text-t1' : 'text-t2')}>{item.label}</span>
+                  <span className="block truncate text-[11px] text-t3 max-md:text-[12.5px]">{item.hint}</span>
                 </span>
+                <ChevronRight className="size-4 shrink-0 text-t3 md:hidden" aria-hidden />
               </button>
             );
           })}
         </nav>
-        <section key={section} className="min-w-0 animate-fade-up">
+        <section key={section} className={cn('min-w-0 animate-fade-up', !opened && 'max-md:hidden')}>
+          <button type="button" onClick={backToList} className="-ml-2 mb-1 flex h-11 items-center gap-1 rounded-full px-2 text-[14px] text-t2 md:hidden">
+            <ChevronLeft className="size-4" /> Settings
+          </button>
           <h2 className="mb-3 text-[15px] font-semibold text-t1">{SECTIONS.find((s) => s.id === section)?.label}</h2>
           {BODIES[section]?.()}
         </section>
