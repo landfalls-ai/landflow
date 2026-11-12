@@ -356,7 +356,7 @@ export function NodePanel() {
                     <>
                       No input yet.
                       <br />
-                      Run the workflow to see what flows into this node{phone ? '.' : ', then drag fields into parameters.'}
+                      Run the workflow to see what flows into this node{phone ? ', then tap {} beside a parameter to use a field.' : ', then drag fields into parameters.'}
                     </>
                   }
                 />
