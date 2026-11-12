@@ -22,7 +22,7 @@ import { afterReply, testDraft, useAutonomous } from './autonomous';
 import { LiveSteps, useLive } from './building';
 import { applyChanges, draft as draftCall, sendFeedback, suggestionKey, undos, useAssistant, useSuggestions, useWorking, type AgentProgress, type ChatItem, type Need, type Outcome, type Proposal, type ReplyAction, type Suggestion, type TestRun } from './assistant';
 import { useEditor } from './store';
-import { usePhone } from '@/lib/client/use-phone';
+import { isPhone, usePhone } from '@/lib/client/use-phone';
 import { dictationSupported, useDictation } from './use-dictation';
 import { OpsDiff, Warnings } from './suggestions-card';
 import { MAX_FIXES, productionNote, publishToProduction, sendsAllowed, testUntilItRuns } from './test-session';
@@ -675,6 +675,8 @@ export function SpotlightPanel({ hiddenOnPhone = false }: { hiddenOnPhone?: bool
   }, []);
 
   const { setCollapsed, reset, stop } = useAssistant.getState();
+  const phoneHeight = useAssistant((s) => s.phoneHeight);
+  const drag = useRef<number>(undefined);
   // One set of colours: violet while it works, amber when it needs you, green when it passed; a stop is neutral.
   const icon = busy ? (
     <Loader2 className="size-3.5 shrink-0 animate-spin text-viz-7" />
@@ -700,7 +702,8 @@ export function SpotlightPanel({ hiddenOnPhone = false }: { hiddenOnPhone?: bool
         hiddenOnPhone && 'max-md:hidden',
         // Phone: a sheet under the canvas, which shrinks to the space above it.
         'max-md:shrink-0 max-md:rounded-t-2xl max-md:border-t',
-        collapsed ? 'max-md:max-h-[40dvh]' : 'max-md:h-[52dvh]',
+        // Phone: three heights, folded to its bar, peek (the newest of the timeline) and half.
+        collapsed ? 'max-md:max-h-[40dvh]' : phoneHeight === 'peek' ? 'max-md:h-[34dvh]' : 'max-md:h-[52dvh]',
         // Desktop: a column beside the canvas.
         'md:relative md:shrink-0 md:border-l',
         collapsed ? 'md:w-11' : 'md:w-[360px]',
@@ -722,7 +725,25 @@ export function SpotlightPanel({ hiddenOnPhone = false }: { hiddenOnPhone?: bool
         </button>
       )}
       <div className={cn('flex min-h-0 flex-1 flex-col', collapsed && 'md:hidden')}>
-        <div className="relative flex h-11 shrink-0 items-center gap-1.5 border-b border-hair pl-3 pr-1.5">
+        <div
+          // A phone: drag the header up or down for the next height (the chevron goes between the bar and half).
+          onPointerDown={(e) => {
+            if (!isPhone() || (e.target as HTMLElement).closest('button, input, [role="switch"]')) return;
+            drag.current = e.clientY;
+            // The finger leaves the header as it drags: the header still gets the release.
+            e.currentTarget.setPointerCapture(e.pointerId);
+          }}
+          onPointerUp={(e) => {
+            const start = drag.current;
+            drag.current = undefined;
+            if (start === undefined || Math.abs(e.clientY - start) < 24) return;
+            const heights = ['bar', 'peek', 'half'] as const;
+            const at = collapsed ? 0 : phoneHeight === 'peek' ? 1 : 2;
+            useAssistant.getState().setDock(heights[Math.max(0, Math.min(2, at + (e.clientY < start ? 1 : -1)))]);
+          }}
+          onPointerCancel={() => (drag.current = undefined)}
+          className="relative flex h-11 shrink-0 items-center gap-1.5 border-b border-hair pl-3 pr-1.5 max-md:touch-none max-md:select-none"
+        >
           <span className="absolute left-1/2 top-1 block h-1 w-8 -translate-x-1/2 rounded-full bg-hair md:hidden" aria-hidden />
           {icon}
           <span role="status" aria-live="polite" className="min-w-0 flex-1 truncate text-[13px] font-semibold text-t1" title={latest}>
@@ -748,6 +769,8 @@ export function SpotlightPanel({ hiddenOnPhone = false }: { hiddenOnPhone?: bool
             aria-label={collapsed ? 'Show the conversation' : 'Hide the conversation'}
             aria-expanded={!collapsed}
             onClick={() => {
+              // A phone unfolds to half; peek is a drag away.
+              if (collapsed && isPhone()) useAssistant.setState({ phoneHeight: 'half' });
               setCollapsed(!collapsed);
               // Folding on a desktop hides this button: the strip that unfolds it takes the focus.
               if (!collapsed) requestAnimationFrame(() => document.querySelector<HTMLElement>('aside[aria-label="Spotlight"] button[aria-label="Show Spotlight"]')?.focus());

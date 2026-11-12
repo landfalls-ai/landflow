@@ -66,6 +66,18 @@ which has no Input, shows Parameters); opening a step from the canvas starts at 
 paused before it. **Breakpoint** and **Run from here** lead the Settings pane. Focus moves to the back arrow when the
 editor opens, and toasts sit just above the foot bar.
 
+## Spotlight's dock
+
+On a phone Spotlight is a sheet under the steps or the canvas, with three heights:
+
+- **Bar** (the default on a phone): its header, the step it is on, and the box.
+- **Peek**: about a third of the screen, the newest of its timeline (a reply, a run, **Needs you**, the outcome).
+- **Half**: half the screen, the whole timeline.
+
+Drag its header up or down for the next height (`setDock` in `components/editor/assistant.ts`); the chevron goes between
+the bar and half. As on a desktop, only you move it: a reply, a draft or a test session leaves it where it is, and the
+folded bar already says what Spotlight is doing.
+
 ## Lists and filters
 
 - **Executions as cards.** On a phone each run is a card: the workflow and its menu on the first line, the status and how
@@ -99,7 +111,7 @@ that opened it.
 6. ~~Tap to open a step, no zoom rail, one canvas toolbar~~.
 7. ~~A Steps view as the phone's default~~.
 8. ~~Runs on the step cards~~ (the Execute bar stays at the foot in place of the Logs panel).
-9. Spotlight's dock with three heights: bar, peek and half screen.
+9. ~~Spotlight's dock with three heights~~.
 10. ~~Executions as cards~~.
 11. Sheets and full-screen dialogs, with dialog roles and focus kept inside (`Sheet` is in, used by Filters; the other
     dialogs are still the desktop's).
