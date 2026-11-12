@@ -365,6 +365,22 @@ export interface ProposalAction {
 export const MAX_PROPOSAL_ACTIONS = 4;
 export const RESERVED_ACTION_IDS = ['applied', 'dismissed', 'snoozed', 'action'];
 
+/** Someone a suggestion is addressed to (docs/second-brain.md#suggestions-with-an-audience). Emails are resolved to Landflow users where they exist. */
+export interface AudienceMember {
+  userId?: string;
+  email?: string;
+  slackUserId?: string;
+  name?: string;
+}
+
+export const MAX_AUDIENCE = 10;
+
+/** Where a suggestion was mirrored to Slack: the credential that posted and each direct message (channel + ts) so a decision can update them. */
+export interface ProposalSlackMirror {
+  credential: { id: string; name: string };
+  messages: Array<{ slackUserId: string; channel: string; ts: string }>;
+}
+
 /** What was decided: `action` is applied, dismissed or snoozed, or the id of a flow-defined action. */
 export interface ProposalDecision {
   action: string;
@@ -409,6 +425,10 @@ export interface Proposal {
   status: ProposalStatus;
   /** Buttons a flow added (Suggest Improvement's Actions), shown next to Apply. */
   actions?: ProposalAction[];
+  /** Who it is addressed to: they see it in their inbox even when it is about something outside their projects. */
+  audience?: AudienceMember[];
+  /** The Slack direct messages that mirror it (set when the flow asked for a mirror). */
+  slack?: ProposalSlackMirror;
   /** The latest decision made on it, for the flows that listen (On Suggestion Decided). */
   decision?: ProposalDecision;
   reason?: DismissReason;
@@ -447,6 +467,10 @@ export interface ProposalInput {
   confidence?: number;
   /** Buttons for the card (at most 4); taking one starts the flows on On Suggestion Decided. */
   actions?: unknown;
+  /** Named people it is addressed to (at most 10): a list of { userId?, email?, slackUserId?, name? }, or emails and Slack member ids in a string or list. */
+  audience?: unknown;
+  /** Mirror it to Slack as a direct message to each audience member with a Slack id (or an email Slack knows), through this credential. */
+  slackCredential?: { id: string; name: string };
   /** Defaults to a hash of the label, target and title. */
   fingerprint?: string;
   /** Only flow detectors declare one (the Detector Trigger and Suggest Improvement nodes). */

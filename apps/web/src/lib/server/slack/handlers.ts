@@ -11,7 +11,8 @@
  *   One session per user and Slack channel; `/<command> new` starts over.
  * - Interactivity: POST /api/slack/interactions. The approval buttons of AI Agent nodes (workflow executions)
  *   and of agents answering in Slack. Checked against every Slack credential's signing secret; the
- *   credential that verifies must be the one that posted the buttons.
+ *   credential that verifies must be the one that posted the buttons. Also a mirrored suggestion's buttons
+ *   (brain/audience.ts).
  *
  * Tools that need approval pause the agent and post Approve / Reject buttons in the thread; the click decides
  * (lib/server/agents/runtime.ts `decide`) and the run continues.
@@ -19,6 +20,7 @@
 import type { JsonObject } from '@landflow/protocol';
 import { approvalSubject, type Agent, type AgentChannel } from '../../shared/agents';
 import { allowed } from '../agents/triggers';
+import { handleProposalClick, PROPOSAL_ACTION_PREFIX } from '../brain/audience';
 import { decide, newSession, runAgent, type RunResult } from '../agents/runtime';
 import { agentStore } from '../agents/store';
 import { ApprovalError, decideApproval, pendingApproval } from '../approvals';
@@ -291,6 +293,15 @@ export async function handleSlackInteraction(request: Request): Promise<Response
   }
   if (payload.type === 'view_submission') return submitEdit(payload, verifiedBy);
   if (payload.type !== 'block_actions') return new Response(null, { status: 200 });
+  // A suggestion's buttons (a mirrored suggestion, lib/server/brain/audience.ts).
+  const mirrored = payload.actions?.find((a) => a.action_id?.startsWith(PROPOSAL_ACTION_PREFIX));
+  if (mirrored?.action_id) {
+    inBackground(
+      () => handleProposalClick({ actionId: mirrored.action_id!, value: mirrored.value, slackUser: payload.user?.id, responseUrl: payload.response_url, verifiedBy }),
+      (caught) => logger.warn('slack suggestion click failed', { error: (caught as Error).message }),
+    );
+    return new Response(null, { status: 200 });
+  }
   const action = payload.actions?.find((a) => a.action_id === APPROVE_ACTION || a.action_id === REJECT_ACTION || a.action_id === EDIT_ACTION);
   const target = parseTarget(action?.value);
   if (!action || !target) return new Response(null, { status: 200 });

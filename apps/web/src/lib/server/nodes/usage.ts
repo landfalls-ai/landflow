@@ -10,6 +10,7 @@ import { defineNode, NodeOperationError, type JsonObject, type NodeItem, type Pr
 import { customKindProblem, DETECTOR_LABELS, DETECTORS, detectorLabel, flowDetectorId, isUsageKind, METRIC_FIELDS, metricSpecFrom, parseAttrEquals, quietBar, SIMILAR_KINDS, USAGE_KINDS, type SimilarKind, type UsageGroup, type UsageKind } from '../../shared/brain';
 import { agentStore as agents } from '../agents/store';
 import { listKinds } from '../usage/kinds';
+import { SLACK_CREDENTIAL, SLACK_OAUTH2_CREDENTIAL, slackRefOf } from '../slack';
 import { store } from '../store';
 
 const main = [{ type: 'main' as const }];
@@ -601,6 +602,10 @@ export const suggestImprovementNode = defineNode({
       'Post a suggestion to the inbox. Arguments: `title`, `why` (with the evidence), optional `workflowId` it is about, `effect` (the expected effect), `ops` (a JSON array of edit operations on that workflow: addNode, setParameters, connect, setNodeSettings, setWorkflowSettings…).',
     inputs: main,
     outputs: main,
+    credentials: [
+      { name: SLACK_CREDENTIAL, required: true, displayOptions: { show: { mirrorToSlack: [true], slackAuthentication: ['accessToken'] } } },
+      { name: SLACK_OAUTH2_CREDENTIAL, required: true, displayOptions: { show: { mirrorToSlack: [true], slackAuthentication: ['oAuth2'] } } },
+    ],
     properties: [
       { name: 'title', displayName: 'Title', type: 'string', default: '', required: true, placeholder: 'Retry the CRM call when it times out' },
       { name: 'why', displayName: 'Why', type: 'string', default: '', required: true, typeOptions: { rows: 3 }, description: 'The reason and the evidence people see' },
@@ -651,6 +656,33 @@ export const suggestImprovementNode = defineNode({
           },
         ],
       },
+      {
+        name: 'sendTo',
+        displayName: 'Send To',
+        type: 'string',
+        default: '',
+        placeholder: 'dana@example.com, U0123ABCD',
+        description: 'Address it to these people (up to 10): emails and Slack member ids, comma-separated. They see it in their inbox even when it is about something outside their projects, with only what it says; applying its changes still takes edit access.',
+      },
+      {
+        name: 'mirrorToSlack',
+        displayName: 'Mirror to Slack',
+        type: 'boolean',
+        default: false,
+        description: 'Send each person in Send To a direct message with the title, reason, evidence and buttons (its own actions, Apply, Dismiss, Snooze 7 days). A click there decides the suggestion here, and a decision here updates the messages.',
+      },
+      {
+        name: 'slackAuthentication',
+        displayName: 'Slack Authentication',
+        type: 'options',
+        default: 'accessToken',
+        noDataExpression: true,
+        options: [
+          { name: 'Bot Token', value: 'accessToken' },
+          { name: 'OAuth2 (Installed App)', value: 'oAuth2' },
+        ],
+        displayOptions: { show: { mirrorToSlack: [true] } },
+      },
       ...metricProperties(true),
     ],
   },
@@ -673,6 +705,10 @@ export const suggestImprovementNode = defineNode({
     const trigger = ownWorkflow && detector ? (await import('../brain/flow-detectors')).detectorTriggerOf(ownWorkflow) : undefined;
     const items = ctx.getInputData();
     const out: NodeItem[] = [];
+    // The node's Slack credential reference (the context only hands over its data): from the workflow as it runs.
+    const self = ctx.getNode();
+    const running = store.getExecution(ctx.getExecutionId())?.workflow ?? (ownWorkflow ?? undefined);
+    const slackCredential = slackRefOf(running?.nodes.find((n) => n.id === self.id)?.credentials)?.ref;
     for (let i = 0; i < Math.max(items.length, 1); i++) {
       const override = String(ctx.getNodeParameter('metricSource', i, 'inherit') ?? 'inherit');
       const declared = detector ? (override === 'inherit' ? metricSpecFrom((name) => trigger?.parameters?.[name]) : metricSpecFrom((name) => ctx.getNodeParameter(name, i, ''))) : {};
@@ -688,6 +724,9 @@ export const suggestImprovementNode = defineNode({
         }
       }
       const confidence = Number(ctx.getNodeParameter('confidence', i, 0.6));
+      const sendTo = ctx.getNodeParameter('sendTo', i, '') as unknown;
+      const mirror = Boolean(ctx.getNodeParameter('mirrorToSlack', i, false));
+      if (mirror && !slackCredential) throw new NodeOperationError('Mirror to Slack needs a Slack credential', { itemIndex: i });
       try {
         const proposal = proposeFrom(
           {
@@ -703,6 +742,8 @@ export const suggestImprovementNode = defineNode({
             fingerprint: String(ctx.getNodeParameter('fingerprint', i, '') ?? '').trim() || undefined,
             ...(declared.spec && { metricSpec: declared.spec }),
             actions: ctx.getNodeParameter('actions', i, {}),
+            ...(sendTo ? { audience: sendTo } : {}),
+            ...(mirror && slackCredential && { slackCredential }),
           },
           'workflow',
           undefined,
