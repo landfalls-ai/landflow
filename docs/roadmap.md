@@ -1209,10 +1209,29 @@ Calendar, Notion and the Directory, then for Linear, Attio and Fathom.
 the same customer named by a channel or folder. Open from Phase A: a Notion webhook trigger once Notion can create subscriptions over its API; push channels for Drive and Calendar
 once app webhooks can renew themselves; Slack message edits and deletions; the Directory's groups and org units.
 
+## The Brain page (built 2026-11-12)
+
+`/brain` reads the second brain as a wiki ([second-brain.md](second-brain.md#the-brain-page)): a home with Ask, what
+two or more teams worked on this week, suggestions, teams, pages that need a person, the directory and the latest work;
+a page per entity with a summary the brain's model writes (page links, numbered references to the work, stale once new
+work lands), Ask about the page, its work, people, related pages, facts and mentions. "What Landflow knows" moved there
+from Insights. The layout follows a look at how other products show a company brain
+([research/brain-ui-research.md](research/brain-ui-research.md)).
+
+- **Found while checking it**: a local model turned person ids into surnames ("Tal Northpeak" for
+  `tal@northpeak.example`); the prompt now gives every link with its name, and names the model writes plainly are
+  linked on their first mention.
+- **Checked live** on a scratch host with 17 made-up work events across eight people and seven teams, with
+  `qwen3-coder:30b` on Ollama: shared work, a summary with links and references, a reference scrolling to its item, Ask
+  from a page, and both pages at phone width.
+- **Next**: relations between entities of their own (not only through shared work), filing a good answer back as a
+  fact, and a detector that turns shared work into a suggestion addressed to both teams.
+
 ## Planned next
 
 1. **Declare event kinds in the UI**: kinds are declared over the API or by Record Event's *Declare Kind If New* only.
-2. **A page per entity**, relations between entities, and a detector that looks at them (two initiatives with the same goal).
+2. **Relations between entities** and a detector that looks at them (two initiatives with the same goal); the page per
+   entity is built ([the Brain page](#the-brain-page-built-2026-11-12)).
 3. **Find Similar in the editor**: show likely overlaps when a workflow is created; a stricter embedding-only ranking mode.
 4. **Ask a Person per item**, and editing from email.
 5. **A chart of a declared metric**: baseline and checks over time on the card.

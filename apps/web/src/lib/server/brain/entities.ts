@@ -202,6 +202,7 @@ export function deleteEntity(type: string, id: string, db: Database = database()
   db.delete('brain_entities', { type, id });
   db.delete('brain_facts', { subject_type: 'entity', subject_id: ref });
   db.delete('brain_profiles', { subject_type: 'entity', subject_id: ref });
+  db.delete('brain_pages', { subject: ref });
   const now = new Date().toISOString();
   for (const row of db.all<{ data: string }>("SELECT data FROM proposals WHERE status IN ('open', 'snoozed')")) {
     const p = parse<Proposal | undefined>(row.data, undefined);
