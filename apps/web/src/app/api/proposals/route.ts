@@ -3,12 +3,13 @@
  * GET  ?status=open|applied|dismissed|snoozed|expired|all&workflowId=&agentId=&detector=&limit= — highest score first
  *      (`detector`: a built-in one or `flow:<workflowId>`); the
  *      viewer's workflows and agents only (owners and admins: also the instance's).
- * POST ProposalInput — a suggestion from outside (an agent or a script over the API), source `analyst`; its ops are
+ * POST ProposalInput — (`entity: { type, id }` for an initiative, person, customer or system) a suggestion from outside (an agent or a script over the API), source `analyst`; its ops are
  *      checked against the workflow. Needs edit access to the workflow or agent it is about.
  */
 import { z } from 'zod';
-import { isDetectorId, type ProposalStatus } from '@/lib/shared/brain';
+import { ENTITY_TYPES, entityRef, isDetectorId, type ProposalStatus } from '@/lib/shared/brain';
 import { listProposals, proposeFrom, ProposalError } from '@/lib/server/brain/proposals';
+import { getEntity } from '@/lib/server/brain/entities';
 import { canProposal, scopeForActor } from '@/lib/server/brain/scope';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { routeActor } from '@/lib/server/projects/http';
@@ -38,6 +39,7 @@ const Body = z.object({
   label: z.string().max(80).optional(),
   workflowId: z.string().max(200).optional(),
   agentId: z.string().max(200).optional(),
+  entity: z.object({ type: z.enum(ENTITY_TYPES), id: z.string().max(64) }).optional(),
   nodeName: z.string().max(200).optional(),
   evidence: z.array(Evidence).max(12).optional(),
   effect: z.string().max(300).optional(),
@@ -57,7 +59,9 @@ export const POST = handler(async (request: Request) => {
     ? { type: 'workflow' as const, id: input.workflowId, exists: Boolean(store.getWorkflow(input.workflowId)) }
     : input.agentId
       ? { type: 'agent' as const, id: input.agentId, exists: Boolean(agentStore.get(input.agentId)) }
-      : { type: 'instance' as const, exists: true };
+      : input.entity
+        ? { type: 'entity' as const, id: entityRef(input.entity.type, input.entity.id), exists: Boolean(getEntity(input.entity.type, input.entity.id)) }
+        : { type: 'instance' as const, exists: true };
   if (!target.exists) return error(`No ${target.type} ${'id' in target ? target.id : ''}`, 404);
   if (!canProposal(actor, { target }, 'update')) return error('You can’t make suggestions about this', 403);
   try {

@@ -51,9 +51,9 @@ export function upsertFact(input: FactInput, db: Database = database(), now = ne
   return fact;
 }
 
-/** Facts not refreshed since `before` go stale (intended facts and the outcomes of applied suggestions stay). */
+/** Facts not refreshed since `before` go stale (intended facts, the outcomes of applied suggestions and the statements people and flows added about an entity stay). */
 export function staleFactsBefore(before: string, db: Database = database()): number {
-  const rows = db.all<{ data: string }>("SELECT data FROM brain_facts WHERE status = 'active' AND last_seen < ? AND kind <> 'intended' AND id NOT LIKE '%:change:pr_%'", before);
+  const rows = db.all<{ data: string }>("SELECT data FROM brain_facts WHERE status = 'active' AND last_seen < ? AND kind <> 'intended' AND id NOT LIKE '%:change:pr_%' AND id NOT LIKE 'entity:%:fact_%'", before);
   for (const row of rows) {
     const fact = parse<BrainFact>(row.data);
     if (!fact) continue;
@@ -70,6 +70,8 @@ function inScope(fact: { subjectType: FactSubject; subjectId: string }, scope?: 
   if (!scope || (!scope.workflows && !scope.agents)) return true;
   if (fact.subjectType === 'workflow') return Boolean(scope.workflows?.has(fact.subjectId));
   if (fact.subjectType === 'agent') return Boolean(scope.agents?.has(fact.subjectId));
+  // An entity's subjectId is `<type>/<id>`, the key the scope holds.
+  if (fact.subjectType === 'entity') return Boolean(scope.entities?.has(fact.subjectId));
   // Node types, credentials and the instance span projects: owners and admins only.
   return false;
 }

@@ -598,7 +598,7 @@ describe('the nodes', () => {
 
   it('the analyst’s tools are Landflow Usage and Suggest Improvement nodes with model-filled arguments', () => {
     const config = analystConfig();
-    expect(config.tools?.map((t) => (t.type === 'node' ? t.nodeType : t.type))).toEqual(['core.landflowUsage', 'core.landflowUsage', 'core.landflowUsage', 'core.landflowUsage', 'core.suggestImprovement']);
+    expect(config.tools?.map((t) => (t.type === 'node' ? t.nodeType : t.type))).toEqual(['core.landflowUsage', 'core.landflowUsage', 'core.landflowUsage', 'core.landflowUsage', 'core.landflowUsage', 'core.brainEntity', 'core.brainEntity', 'core.suggestImprovement']);
     const lookup = registryLookup();
     for (const tool of config.tools ?? []) if (tool.type === 'node') expect(lookup(tool.nodeType)).toBeDefined();
   });
@@ -679,7 +679,7 @@ describe('the routes', () => {
     expect(made.status).toBe(201);
     const agent = made.body.agent as { id: string; name: string; published?: { version: number } };
     expect(agent).toMatchObject({ name: 'Platform analyst', published: { version: 1 } });
-    expect(agentStore.get(agent.id)?.tools).toHaveLength(5);
+    expect(agentStore.get(agent.id)?.tools).toHaveLength(8);
     // It starts on the brain's model (off here, so the builder's), so it can answer right away.
     expect(agentStore.get(agent.id)?.model).toMatchObject({ provider: 'ollama' });
   });

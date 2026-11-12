@@ -18,6 +18,7 @@ import { DETECTOR_RUNS, detectContext, type Finding } from './detectors';
 import { countFacts } from './facts';
 import { runFlowDetectors, type FlowDetectorRun } from './flow-detectors';
 import { checkEffects, detectorStats, expireStale, upsertProposal } from './proposals';
+import { countEntities } from './entities';
 import { study, type StudyResult } from './study';
 import { brainModelName, enrichFindings } from './writer';
 
@@ -121,6 +122,7 @@ export function brainStatus(db: Database = database()): BrainStatus {
     ...(oldest && { oldestEvent: oldest }),
     facts,
     profiles,
+    entities: countEntities(db),
     open,
     ...(at(KEYS.detect) && { lastDetect: at(KEYS.detect) }),
     ...(at(KEYS.study) && { lastStudy: at(KEYS.study) }),

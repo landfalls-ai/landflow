@@ -248,7 +248,7 @@ export const DISMISS_REASONS = ['intended', 'not-relevant', 'wrong', 'done'] as 
 export type DismissReason = (typeof DISMISS_REASONS)[number];
 export type ProposalOutcome = 'pending' | 'worked' | 'no-effect' | 'worse';
 
-export type ProposalTargetType = 'workflow' | 'agent' | 'credential' | 'instance' | 'team';
+export type ProposalTargetType = 'workflow' | 'agent' | 'credential' | 'instance' | 'team' | 'entity';
 
 export interface AgentChange {
   always?: string[];
@@ -330,6 +330,8 @@ export interface ProposalInput {
   label?: string;
   workflowId?: string;
   agentId?: string;
+  /** About an entity (docs/second-brain.md#entities): the suggestion's target is `entity:<type>/<id>`. */
+  entity?: { type: string; id: string };
   nodeName?: string;
   evidence?: ProposalEvidence[];
   effect?: string;
@@ -343,10 +345,62 @@ export interface ProposalInput {
 }
 
 // ---------------------------------------------------------------------------
+// Entities
+// ---------------------------------------------------------------------------
+
+/** What the registry holds besides workflows and agents (docs/second-brain.md#entities). One list, used by the routes, the nodes and the UI. */
+export const ENTITY_TYPES = ['initiative', 'person', 'customer', 'system'] as const;
+export type EntityType = (typeof ENTITY_TYPES)[number];
+export const ENTITY_LABELS: Record<EntityType, string> = { initiative: 'Initiative', person: 'Person', customer: 'Customer', system: 'System' };
+export const isEntityType = (value: unknown): value is EntityType => typeof value === 'string' && (ENTITY_TYPES as readonly string[]).includes(value);
+
+/** An entity id: lowercase letters, digits, `_`, `-` and `.`; it never holds a `/`, which joins type and id in `entity:<type>/<id>`. */
+export const ENTITY_ID = /^[a-z0-9][a-z0-9_.-]{0,63}$/;
+
+/** How facts and suggestions address an entity: its subjectId / target id, `<type>/<id>`. */
+export const entityRef = (type: string, id: string) => `${type}/${id}`;
+
+/** `<type>/<id>` back into its parts, or undefined when it isn't one. */
+export function parseEntityRef(ref: string | undefined): { type: EntityType; id: string } | undefined {
+  const slash = ref?.indexOf('/') ?? -1;
+  if (!ref || slash < 1) return undefined;
+  const type = ref.slice(0, slash);
+  const id = ref.slice(slash + 1);
+  return isEntityType(type) && ENTITY_ID.test(id) ? { type, id } : undefined;
+}
+
+export interface BrainEntity {
+  type: EntityType;
+  id: string;
+  name: string;
+  /** What it is or what it is for: for an initiative, its goal. */
+  description?: string;
+  /** A user id, or a free name ("Platform team"). */
+  owner?: string;
+  /** The owner as a person reads it: the user's name when `owner` is a user id. */
+  ownerName?: string;
+  projectId?: string;
+  /** Anything else worth knowing, as flat key/value pairs. */
+  attrs: Record<string, string | number | boolean>;
+  /** Who put it there: api, workflow, agent, ui. */
+  source: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** GET /api/entities/:type/:id: the entity, what the brain learned about it and its open suggestions. */
+export interface EntityKnowledge {
+  entity: BrainEntity;
+  profile?: BrainProfile;
+  facts: BrainFact[];
+  proposals: Proposal[];
+}
+
+// ---------------------------------------------------------------------------
 // Memory
 // ---------------------------------------------------------------------------
 
-export const FACT_SUBJECTS = ['workflow', 'agent', 'nodeType', 'credential', 'instance'] as const;
+export const FACT_SUBJECTS = ['workflow', 'agent', 'nodeType', 'credential', 'instance', 'entity'] as const;
 export type FactSubject = (typeof FACT_SUBJECTS)[number];
 export const FACT_KINDS = ['purpose', 'health', 'cost', 'failure', 'slow', 'change', 'dependency', 'usage', 'quality', 'intended'] as const;
 export type FactKind = (typeof FACT_KINDS)[number];
@@ -422,6 +476,8 @@ export interface BrainStatus {
   oldestEvent?: string;
   facts: number;
   profiles: number;
+  /** Entities in the registry (initiatives, people, customers, systems). */
+  entities: number;
   open: number;
   lastDetect?: string;
   lastStudy?: string;
@@ -439,7 +495,7 @@ export const isBrainCollection = (name: string): boolean => {
   return lower === BRAIN_COLLECTION_PREFIX || lower.startsWith(`${BRAIN_COLLECTION_PREFIX}-`);
 };
 
-export const SIMILAR_KINDS = ['workflow', 'agent', 'fact'] as const;
+export const SIMILAR_KINDS = ['workflow', 'agent', 'entity', 'fact'] as const;
 export type SimilarKind = (typeof SIMILAR_KINDS)[number];
 
 /**
@@ -447,7 +503,7 @@ export type SimilarKind = (typeof SIMILAR_KINDS)[number];
  * fields and nothing else: no id, no link, no fact statements, no evidence.
  */
 export interface SimilarElsewhere {
-  type: 'workflow' | 'agent';
+  type: 'workflow' | 'agent' | 'entity';
   title: string;
   /** Who made it (a workflow's creator, an agent's project owner). */
   owner?: string;
@@ -470,6 +526,8 @@ export interface SimilarOwn extends Omit<SimilarElsewhere, 'type'> {
   subject?: { type: FactSubject; id: string };
   description?: string;
   active?: boolean;
+  /** An entity's type (initiative, person, customer, system). */
+  entityType?: EntityType;
 }
 
 export type SimilarMatch = SimilarOwn | SimilarElsewhere;

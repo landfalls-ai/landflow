@@ -173,11 +173,12 @@ Six nodes make the brain something workflows can use:
   confidence, and a fingerprint.
 - **Detector Trigger** (`core.detectorTrigger`) makes the workflow one of the brain's detectors (below).
 - **Find Similar** (`core.findSimilar`, usable as a tool) asks whether something like this already exists ([below](#find-similar)).
+- **Entity** (`core.brainEntity`, usable as a tool) keeps initiatives, people, customers and systems ([below](#entities)).
 
 #### Find Similar
 
-"Is anyone already doing this?" Give the node a title and a goal; it returns one item per nearest workflow, agent or
-fact, best first (`score` 0 to 1). Settings: what to search (workflows, agents, facts), a limit (10), a minimum score
+"Is anyone already doing this?" Give the node a title and a goal; it returns one item per nearest workflow, agent, entity or
+fact, best first (`score` 0 to 1). Settings: what to search (workflows, agents, entities, facts), a limit (10), a minimum score
 (0.15) and **Include Other Projects**.
 
 - **Ranking.** The words the text shares with a candidate (its name, description and the purpose the brain wrote; for
@@ -186,11 +187,46 @@ fact, best first (`score` 0 to 1). Settings: what to search (workflows, agents, 
 - **Your projects.** A match in a project the workflow's creator can open (an agent's tools: its own project) carries
   `yours: true`, its `id`, `description`, `active`, and for a fact its `kind`, `statement` and `subject`.
 - **Other projects.** With **Include Other Projects**, a match in a project they can't open is a projection of six
-  fields: `type` (workflow or agent), `title`, `owner`, `goal` (one line), `project` and `score`. It has no id, no link,
+  fields: `type` (workflow, agent or entity), `title`, `owner`, `goal` (one line), `project` and `score`. It has no id, no link,
   no fact statements and no evidence, and facts of other projects are never listed: they only raise the score of the
   workflow or agent they are about. The point is to find out whom to ask, not to read their work.
 - Code: `brain/similar.ts` (`findSimilar(text, { scope, kinds, limit, minScore, includeOthers, exclude })`), shared by the
   node and the MCP tool `check_overlap`.
+
+#### Entities
+
+The brain knows workflows, agents, node types, credentials and the instance. **Entities** add the things people talk
+about that no workflow holds: `initiative`, `person`, `customer` and `system` (one list, `ENTITY_TYPES` in
+`lib/shared/brain.ts`). An overlap finder is the point: "two teams run the same initiative".
+
+- **The registry.** Table `brain_entities` (migration 2063): `type`, `id`, `name`, `description` (an initiative's goal),
+  `owner` (a user id or a free name such as "Platform team"; `ownerName` is the user's name when it is an id), `projectId`,
+  flat `attrs` (text, numbers, true/false; at most 20), `source` (api, workflow, agent) and timestamps. An id is lowercase
+  letters, digits, `_`, `-` and `.`; left out, it is made from the name. Code: `brain/entities.ts`.
+- **Walls.** An entity lives in a project (the creator's personal project unless another is named) and the people who can
+  open the project see it; owners and admins see all. The usage scope gained `entities` (`<type>/<id>`), so facts,
+  suggestions, Find Similar and the MCP tools cut entities down like workflows. A workflow or agent's Entity node sees the
+  entities of its creator's projects (an agent's: its own project) and creates new ones in its own project.
+- **Facts and suggestions.** A fact about an entity has `subjectType: entity` and `subjectId: <type>/<id>`, plus the name;
+  a suggestion's target is `entity:<type>/<id>` (`target.type: entity`, `target.id: <type>/<id>`), made with
+  `entity: { type, id }` in `POST /api/proposals`, the Suggest Improvement node's *About Entity* or `brain_suggest`. The inbox
+  card shows the entity's name and type. Entity suggestions are advice: *Mark done* closes them. Dismissed as *intended*, one
+  writes the `intended` fact on the entity and is never suggested again. Deleting an entity removes its facts and profile
+  and expires its open suggestions.
+- **Facts people add.** *Add Fact* on the node (or `POST /api/entities/:type/:id/facts`) writes a statement of any fact kind.
+  The study refreshes the facts it writes itself and lets them go stale when the entity is gone, but never stales these.
+- **The study** writes a profile for every entity without a model: the purpose is its description, or a sentence from its
+  type, owner and attributes; a `purpose` fact says the same with the attributes, and a `usage` fact counts the statements
+  on file. They are embedded per project like workflow facts, so meaning-search finds them. (With a model it is the same:
+  the study does not ask it about entities.)
+- **Find Similar** has the kind `entity`: ranked by words in the name, description and purpose (and the facts' vector
+  bonus). A match you can open carries `id` (`<type>/<id>`), `entityType` and detail; one in another project is the same
+  six-field projection as for workflows (`type: entity`).
+- **Reading.** Landflow Usage's *Search Facts* can be limited to *Entities* (`subjectType`), and its *Entity Knowledge*
+  operation returns an entity, its profile, facts and open suggestions (the way *Workflow Knowledge* does for a workflow).
+  `check_overlap` (`what: ["entity"]`) and `brain_search_facts` (`subjectType: "entity"`) include entities over MCP.
+  The Platform analyst has the tools `entity_knowledge`, `entities` (list only) and `note_entity_fact`; it cannot
+  delete one. Insights counts entities, and its facts list shows an entity's type next to its name.
 
 #### The vector collections
 
@@ -337,6 +373,9 @@ Routes are also in [reference/api.md](reference/api.md), and variables in
 | `POST /api/proposals/:id/apply` | apply on the server | edit access to its target; any builder for a draft |
 | `POST /api/proposals/:id/applied` | the editor applied it itself | edit access to its target |
 | `GET /api/brain/status`, `/api/brain/facts`, `/api/brain/workflows/:id` | what it knows | `executions:read`, scoped |
+| `GET /api/entities`, `GET /api/entities/:type/:id` | entities (`?type=&owner=&q=&projectId=&limit=`), one with its profile, facts and open suggestions | `workflows:read`, scoped to the caller's projects |
+| `POST /api/entities`, `PATCH`/`DELETE /api/entities/:type/:id` | add or update (by `id`), change, delete | `workflows:write`, editor of the entity's project |
+| `POST /api/entities/:type/:id/facts` | add a fact about an entity | `workflows:write`, editor of the entity's project |
 | `POST /api/brain/run` | detect, study, effects or all, now; `detector` runs one detector alone (built-in or `flow:<id>`, published) | owners and admins |
 | `POST /api/brain/analyst` | make the Platform analyst | `workflows:write` |
 
@@ -363,10 +402,11 @@ Routes are also in [reference/api.md](reference/api.md), and variables in
   - study and facts;
   - scope, the analyst and On Usage Event (`usage-trigger.ts`);
   - flow detectors (`flow-detectors.ts`);
-  - Find Similar (`similar.ts`).
+  - Find Similar (`similar.ts`);
+  - entities (`entities.ts`; `apps/web/src/app/api/entities/` for their routes).
 - `apps/web/src/lib/server/usage/kinds.ts`: the declared custom kinds and the attribute checks;
   `apps/web/src/app/api/usage/kinds/`: their routes.
 - `apps/web/src/lib/server/mcp/brain-tools.ts`: the brain's tools on the instance MCP server.
-- `apps/web/src/lib/server/nodes/usage.ts`: the six nodes; `nodes/vector-stores.ts` refuses the brain's collections.
+- `apps/web/src/lib/server/nodes/usage.ts`: the six nodes, `nodes/entities.ts` the Entity node; `nodes/vector-stores.ts` refuses the brain's collections.
 - `apps/web/src/components/brain/`: the inbox, the canvas card and the Insights panel.
-- Tests: `apps/web/test/brain.test.ts`, `apps/web/test/brain-events.test.ts` (custom kinds).
+- Tests: `apps/web/test/brain.test.ts`, `apps/web/test/brain-events.test.ts` (custom kinds), `apps/web/test/brain-entities.test.ts` (entities).

@@ -11,7 +11,7 @@
  * instance's own, so a vector store node or an agent's knowledge base can search them too.
  */
 import type { LanguageModel, Workflow } from '@landflow/engine';
-import type { BrainFact, BrainProfile, FactKind, FactSubject, ProfileStats, ProposalEvidence } from '../../shared/brain';
+import { ENTITY_LABELS, type BrainFact, type BrainProfile, type FactKind, type FactSubject, type ProfileStats, type ProposalEvidence } from '../../shared/brain';
 import { agentStore } from '../agents/store';
 import { agentTeamStore } from '../agent-teams/store';
 import { workflowOutline } from '../assistant/research';
@@ -25,6 +25,7 @@ import { store } from '../store';
 import { logger } from '../telemetry/logger';
 import { percentile } from '../usage/query';
 import { EXECUTE_WORKFLOW } from './detectors';
+import { entityKey, entityProject, listEntities, MANUAL_FACT } from './entities';
 import { getProfile, listFacts, saveProfile, staleFactsBefore, upsertFact } from './facts';
 import { brainModel } from './writer';
 
@@ -322,6 +323,43 @@ function studyNodeTypesAndCredentials(db: Database, now: number) {
   return count;
 }
 
+/**
+ * A profile and facts for every entity (docs/second-brain.md#entities), written from what is on file: no model needed.
+ * The purpose is its description (or a sentence from its type, owner and attributes); a `usage` fact counts the statements
+ * people and flows added. Those statements themselves are kept as they are (entities.ts addEntityFact).
+ */
+function studyEntities(db: Database, now: number) {
+  let count = 0;
+  for (const entity of listEntities({}, db)) {
+    const ref = entityKey(entity);
+    const projectId = entityProject(entity);
+    const attrs = Object.entries(entity.attrs).map(([k, v]) => `${k}: ${v}`);
+    const label = ENTITY_LABELS[entity.type].toLowerCase();
+    const purpose = entity.description || `${ENTITY_LABELS[entity.type]} “${entity.name}”${entity.ownerName ? `, owned by ${entity.ownerName}` : ''}.`;
+    const noted = listFacts({ subjectType: 'entity', subjectId: ref, limit: 5_000 }, db).filter((f) => f.id.includes(`:${MANUAL_FACT}`));
+    saveProfile(
+      {
+        subjectType: 'entity',
+        subjectId: ref,
+        name: entity.name,
+        ...(projectId && { projectId }),
+        version: entity.updatedAt,
+        purpose,
+        stats: { runs: 0, failures: 0, failureRate: 0, manualRuns: 0, p95Ms: 0, tokens: 0, cost: 0 },
+        uses: [],
+        updatedAt: iso(now),
+      },
+      db,
+    );
+    const subject = { subjectType: 'entity' as const, subjectId: ref, subjectName: entity.name, ...(projectId && { projectId }) };
+    const about = [`${label} “${entity.name}”`, entity.ownerName && `owned by ${entity.ownerName}`, entity.description, attrs.length && `(${attrs.join('; ')})`].filter(Boolean).join(' ');
+    upsertFact({ ...subject, kind: 'purpose', statement: about.endsWith('.') ? about : `${about}.`, confidence: 0.9, evidence: [] }, db, iso(now));
+    if (noted.length) upsertFact({ ...subject, kind: 'usage', statement: `${noted.length} statement${noted.length === 1 ? '' : 's'} on file about this ${label}.`, confidence: 1, evidence: [] }, db, iso(now));
+    count++;
+  }
+  return count;
+}
+
 function studyInstance(db: Database, now: number) {
   const since = iso(now - 7 * DAY_MS);
   const runs = num(db, `SELECT COUNT(*) AS n FROM usage_events WHERE kind = 'run.finished' AND at >= ? AND ${PRODUCTION}`, since);
@@ -400,6 +438,7 @@ export interface StudyResult {
   workflows: number;
   agents: number;
   others: number;
+  entities: number;
   stale: number;
   embedded: number;
   durationMs: number;
@@ -414,8 +453,9 @@ export async function study(options: { model?: LanguageModel; db?: Database; now
   const workflows = await studyWorkflows(db, now, model);
   const agents = studyAgents(db, now);
   const others = studyNodeTypesAndCredentials(db, now);
+  const entities = studyEntities(db, now);
   studyInstance(db, now);
   const stale = staleFactsBefore(iso(now), db);
   const embedded = options.embed === false ? 0 : await embedFacts(db);
-  return { workflows, agents, others, stale, embedded, durationMs: Date.now() - started };
+  return { workflows, agents, others, entities, stale, embedded, durationMs: Date.now() - started };
 }

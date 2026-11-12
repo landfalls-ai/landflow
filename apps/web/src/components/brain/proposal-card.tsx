@@ -10,7 +10,7 @@ import { ChevronDown, ChevronRight, Clock, FilePlus2, MoreHorizontal } from 'luc
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
-import { detectorLabel, type DismissReason, type Proposal } from '@/lib/shared/brain';
+import { detectorLabel, ENTITY_LABELS, parseEntityRef, type DismissReason, type Proposal } from '@/lib/shared/brain';
 import { Badge, Chip, type Tone } from '../ui/badge';
 import { Button } from '../ui/button';
 import { MenuItem, Popover } from '../ui/popover';
@@ -157,7 +157,9 @@ export function ProposalCard({ proposal, actions, compact, onFocus }: { proposal
   const tag = proposal.detector ? detectorLabel(proposal.detector, proposal.label) : (proposal.label ?? 'Suggestion');
   const kind = proposalKind(proposal);
   const busy = actions.busy === proposal.id;
-  const target = [proposal.target.name, proposal.target.nodeName].filter(Boolean).join(' · ');
+  // An entity says what kind it is: “Invoice reminders · Initiative”.
+  const entityType = proposal.target.type === 'entity' ? parseEntityRef(proposal.target.id)?.type : undefined;
+  const target = [proposal.target.name, entityType && ENTITY_LABELS[entityType], proposal.target.nodeName].filter(Boolean).join(' · ');
   return (
     <div className={cn('animate-fade-up space-y-1.5 rounded-[10px] border border-hair bg-wl', compact ? 'p-2.5' : 'p-3')}>
       <div className="flex items-start gap-2">

@@ -1,6 +1,6 @@
 /**
  * Find Similar (docs/second-brain.md#find-similar): "is anyone already doing this?". Given a title and a goal, the nearest
- * workflows, agents and facts of the brain, best first.
+ * workflows, agents, entities (initiatives, people, customers, systems) and facts of the brain, best first.
  *
  * Ranking: the share of words the text and a candidate have in common (a candidate is its name, description and the
  * purpose the brain wrote; a fact is its statement), and, when facts are embedded, a bonus from the vector search
@@ -18,8 +18,9 @@ import { getProject, homeProjectId } from '../projects/store';
 import { searchTerms } from '../rag/search';
 import { store } from '../store';
 import type { UsageScope } from '../usage/query';
-import type { SimilarElsewhere, SimilarKind, SimilarMatch, SimilarOwn } from '../../shared/brain';
+import type { EntityType, SimilarElsewhere, SimilarKind, SimilarMatch, SimilarOwn } from '../../shared/brain';
 import { SIMILAR_KINDS } from '../../shared/brain';
+import { entityKey, entityProject, listEntities } from './entities';
 import { getFact, getProfile, listFacts } from './facts';
 import { projectsOf } from './scope';
 import { vectorFactHits } from './study';
@@ -27,7 +28,7 @@ import { vectorFactHits } from './study';
 export interface FindSimilarOptions {
   /** What the caller can open (scopeForActor, scopeForWorkflow). Undefined: everything. */
   scope?: UsageScope;
-  /** What to look at (default: all three). */
+  /** What to look at (default: all four). */
   kinds?: SimilarKind[];
   limit?: number;
   /** 0..1 (default 0.15). */
@@ -35,7 +36,7 @@ export interface FindSimilarOptions {
   /** Also return the projection of neighbours in projects the caller can't open. */
   includeOthers?: boolean;
   /** Leave out the workflow or agent that is asking. */
-  exclude?: { workflowId?: string; agentId?: string };
+  exclude?: { workflowId?: string; agentId?: string; entity?: string };
 }
 
 const oneLine = (text: string | undefined, max = 160): string | undefined => {
@@ -73,14 +74,14 @@ export async function findSimilar(text: string, options: FindSimilarOptions = {}
   const kinds = new Set(options.kinds?.length ? options.kinds : SIMILAR_KINDS);
   const limit = Math.max(1, Math.min(100, options.limit ?? 10));
   const minScore = options.minScore ?? 0.15;
-  const sees = (kind: 'workflow' | 'agent', id: string) => !scope || Boolean((kind === 'workflow' ? scope.workflows : scope.agents)?.has(id));
+  const sees = (kind: 'workflow' | 'agent' | 'entity', id: string) => !scope || Boolean((kind === 'workflow' ? scope.workflows : kind === 'agent' ? scope.agents : scope.entities)?.has(id));
 
   // The vector search, over every project when others are wanted (only to rank: nothing of a fact is shown from there).
   const hits = await vectorFactHits(text, options.includeOthers ? undefined : projectsOf(scope));
   const bonus = new Map<string, number>();
   hits.forEach((factId, rank) => {
     const fact = getFact(factId);
-    if (!fact || (fact.subjectType !== 'workflow' && fact.subjectType !== 'agent')) return;
+    if (!fact || (fact.subjectType !== 'workflow' && fact.subjectType !== 'agent' && fact.subjectType !== 'entity')) return;
     const key = `${fact.subjectType}:${fact.subjectId}`;
     bonus.set(key, Math.max(bonus.get(key) ?? 0, vectorBonus(rank)));
   });
@@ -88,7 +89,7 @@ export async function findSimilar(text: string, options: FindSimilarOptions = {}
   const found: Array<{ score: number; match: SimilarMatch }> = [];
   const add = (score: number, match: SimilarMatch) => score >= minScore && found.push({ score, match });
 
-  const candidates: Array<{ kind: 'workflow' | 'agent'; id: string; name: string; description?: string; owner?: string; active?: boolean }> = [];
+  const candidates: Array<{ kind: 'workflow' | 'agent' | 'entity'; id: string; name: string; description?: string; owner?: string; active?: boolean; entityType?: EntityType; project?: string }> = [];
   if (kinds.has('workflow')) {
     for (const w of store.listWorkflows()) {
       if (w.id === options.exclude?.workflowId) continue;
@@ -103,15 +104,22 @@ export async function findSimilar(text: string, options: FindSimilarOptions = {}
       candidates.push({ kind: 'agent', id: a.id, name: a.name, description: a.description, owner: ownerId ? getUser(ownerId)?.name : undefined });
     }
   }
+  if (kinds.has('entity')) {
+    for (const e of listEntities({ limit: 5_000 })) {
+      if (entityKey(e) === options.exclude?.entity) continue;
+      const projectId = entityProject(e);
+      candidates.push({ kind: 'entity', id: entityKey(e), name: e.name, description: e.description, owner: e.ownerName, entityType: e.type, project: projectId ? getProject(projectId)?.name : undefined });
+    }
+  }
   for (const c of candidates) {
     const visible = sees(c.kind, c.id);
     if (!visible && !options.includeOthers) continue;
     const purpose = getProfile(c.kind, c.id)?.purpose;
     const score = round(overlap(query, `${c.name} ${c.name} ${c.description ?? ''} ${purpose ?? ''}`) + (bonus.get(`${c.kind}:${c.id}`) ?? 0));
     const goal = oneLine(purpose ?? c.description);
-    const project = projectOf(c.kind, c.id)?.name;
+    const project = c.kind === 'entity' ? c.project : projectOf(c.kind, c.id)?.name;
     if (visible) {
-      const own: SimilarOwn = { type: c.kind, title: c.name, ...(c.owner && { owner: c.owner }), ...(goal && { goal }), ...(project && { project }), score, yours: true, id: c.id, ...(c.description && { description: c.description }), ...(c.active !== undefined && { active: c.active }) };
+      const own: SimilarOwn = { type: c.kind, title: c.name, ...(c.owner && { owner: c.owner }), ...(goal && { goal }), ...(project && { project }), score, yours: true, id: c.id, ...(c.description && { description: c.description }), ...(c.active !== undefined && { active: c.active }), ...(c.entityType && { entityType: c.entityType }) };
       add(score, own);
     } else {
       // The projection: these fields only.
@@ -126,6 +134,7 @@ export async function findSimilar(text: string, options: FindSimilarOptions = {}
     for (const fact of listFacts({ scope, limit: 5_000 })) {
       if (fact.subjectType === 'workflow' && fact.subjectId === options.exclude?.workflowId) continue;
       if (fact.subjectType === 'agent' && fact.subjectId === options.exclude?.agentId) continue;
+      if (fact.subjectType === 'entity' && fact.subjectId === options.exclude?.entity) continue;
       const words = overlap(query, `${fact.subjectName ?? ''} ${fact.statement}`);
       const vector = rank.has(fact.id) ? vectorBonus(rank.get(fact.id)!) + 0.3 : 0;
       const score = round(Math.max(words, vector));

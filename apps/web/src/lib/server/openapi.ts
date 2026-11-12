@@ -1906,7 +1906,7 @@ function paths(): Record<string, Record<string, Json>> {
     id: 'createProposal',
     summary: 'Add a suggestion',
     description: 'Source `analyst`. Its ops are checked against the workflow; the same fingerprint refreshes the open suggestion. Needs edit access to the workflow or agent. `proposal: null` when it is held back (dismissed or applied recently, or the weekly cap is full).',
-    body: jsonBody(object({ title: { type: 'string' }, why: { type: 'string' }, workflowId: { type: 'string' }, agentId: { type: 'string' }, nodeName: { type: 'string' }, effect: { type: 'string' }, ops: array({ type: 'object' }), risk: { type: 'string', enum: ['low', 'medium', 'high'] }, confidence: { type: 'number' }, fingerprint: { type: 'string' } }, ['title', 'why'])),
+    body: jsonBody(object({ title: { type: 'string' }, why: { type: 'string' }, workflowId: { type: 'string' }, agentId: { type: 'string' }, entity: object({ type: { type: 'string', enum: ['initiative', 'person', 'customer', 'system'] }, id: { type: 'string' } }, ['type', 'id']), nodeName: { type: 'string' }, effect: { type: 'string' }, ops: array({ type: 'object' }), risk: { type: 'string', enum: ['low', 'medium', 'high'] }, confidence: { type: 'number' }, fingerprint: { type: 'string' } }, ['title', 'why'])),
     responses: { 200: reply('Held back', object({ proposal: { type: 'null' }, reason: { type: 'string' } })), 201: reply('The suggestion', object({ proposal }, ['proposal'])), 400: invalid, 404: notFound },
   });
   add('get', '/api/proposals/{id}', { tag: 'Second brain', id: 'getProposal', summary: 'Get a suggestion', responses: { 200: reply('The suggestion', object({ proposal }, ['proposal'])), 404: notFound } });
@@ -1930,8 +1930,38 @@ function paths(): Record<string, Record<string, Json>> {
     id: 'listBrainFacts',
     summary: 'What the second brain learned',
     description: '`q` searches (keywords fused with the vector index); otherwise lists by subjectType, subjectId, kind and status.',
-    query: [text('q', 'Search'), text('subjectType', 'workflow, agent, nodeType, credential or instance'), text('subjectId', 'One subject'), text('kind', 'purpose, health, cost, failure, slow, change, dependency, usage, quality or intended'), text('status', 'active (default), stale or all'), text('limit', 'At most this many (100)')],
+    query: [text('q', 'Search'), text('subjectType', 'workflow, agent, nodeType, credential, instance or entity (subjectId is then <type>/<id>)'), text('subjectId', 'One subject'), text('kind', 'purpose, health, cost, failure, slow, change, dependency, usage, quality or intended'), text('status', 'active (default), stale or all'), text('limit', 'At most this many (100)')],
     responses: { 200: reply('The facts', object({ facts: array({ type: 'object' }) }, ['facts'])) },
+  });
+  const entity = { type: 'object', description: 'A BrainEntity (lib/shared/brain.ts): type (initiative, person, customer, system), id, name, description, owner, ownerName, projectId, attrs, source, createdAt, updatedAt' };
+  const entityBody = (required: string[]) =>
+    jsonBody(object({ type: { type: 'string', enum: ['initiative', 'person', 'customer', 'system'] }, id: { type: 'string' }, name: { type: 'string' }, description: { type: 'string' }, owner: { type: 'string', description: 'A user id or a free name' }, projectId: { type: 'string' }, attrs: { type: 'object', description: 'Flat values; null removes one' } }, required));
+  add('get', '/api/entities', {
+    tag: 'Second brain',
+    id: 'listEntities',
+    summary: 'List entities',
+    description: 'Initiatives, people, customers and systems the second brain reasons about, by name. Members see those in projects they can open.',
+    query: [text('type', 'initiative, person, customer or system'), text('owner', 'A user id or name'), text('q', 'Words in the name, description, owner or attributes'), text('projectId', 'One project'), text('limit', 'At most this many (500)')],
+    responses: { 200: reply('The entities', object({ entities: array(entity) }, ['entities'])), 400: invalid },
+  });
+  add('post', '/api/entities', {
+    tag: 'Second brain',
+    id: 'upsertEntity',
+    summary: 'Add an entity, or update the one with this id',
+    description: 'Needs editor access to the project (`projectId`, else your personal project). With an `id` that exists it updates (fields left out stay).',
+    body: entityBody(['type']),
+    responses: { 200: reply('Updated', object({ entity }, ['entity'])), 201: reply('Added', object({ entity }, ['entity'])), 400: invalid, 403: errorRef('Not an editor of the project'), 404: notFound },
+  });
+  add('get', '/api/entities/{type}/{id}', { tag: 'Second brain', id: 'getEntity', summary: 'An entity with what the brain knows', description: 'The entity, its profile, the facts about it and its open suggestions.', responses: { 200: reply('The entity', object({ entity, profile: { type: 'object' }, facts: array({ type: 'object' }), proposals: array(proposal) }, ['entity', 'facts', 'proposals'])), 404: notFound } });
+  add('patch', '/api/entities/{type}/{id}', { tag: 'Second brain', id: 'updateEntity', summary: 'Change an entity', body: entityBody([]), responses: { 200: reply('The entity', object({ entity }, ['entity'])), 400: invalid, 403: errorRef('Not an editor of the project'), 404: notFound } });
+  add('delete', '/api/entities/{type}/{id}', { tag: 'Second brain', id: 'deleteEntity', summary: 'Delete an entity', description: 'Its facts and profile go with it and its open suggestions expire.', responses: { 200: reply('Deleted', object({ ok: { type: 'boolean' } }, ['ok'])), 403: errorRef('Not an editor of the project'), 404: notFound } });
+  add('post', '/api/entities/{type}/{id}/facts', {
+    tag: 'Second brain',
+    id: 'addEntityFact',
+    summary: 'Add a fact about an entity',
+    description: 'A statement the brain keeps and searches. `kind` is purpose, health, cost, failure, slow, change, dependency, usage, quality or intended.',
+    body: jsonBody(object({ kind: { type: 'string' }, statement: { type: 'string' }, confidence: { type: 'number' } }, ['kind', 'statement'])),
+    responses: { 201: reply('The fact', object({ fact: { type: 'object' } }, ['fact'])), 400: invalid, 403: errorRef('Not an editor of the project'), 404: notFound },
   });
   add('get', '/api/brain/status', { tag: 'Second brain', id: 'brainStatus', summary: 'What the second brain holds and when it last looked', responses: { 200: reply('The status', { type: 'object' }) } });
   return out;
