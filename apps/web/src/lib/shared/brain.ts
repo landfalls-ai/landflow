@@ -429,3 +429,47 @@ export interface BrainStatus {
   /** Per detector: suggestions made, applied and dismissed, and how much it is quieted. */
   detectors: DetectorStat[];
 }
+
+/** The reserved name of the brain's vector collections: `landflow-brain` and `landflow-brain-<project>`. */
+export const BRAIN_COLLECTION_PREFIX = 'landflow-brain';
+
+/** Whether a vector collection name is one of the brain's. Workflows and agents can't read or write these (nodes/vector-stores.ts). */
+export const isBrainCollection = (name: string): boolean => {
+  const lower = name.trim().toLowerCase();
+  return lower === BRAIN_COLLECTION_PREFIX || lower.startsWith(`${BRAIN_COLLECTION_PREFIX}-`);
+};
+
+export const SIMILAR_KINDS = ['workflow', 'agent', 'fact'] as const;
+export type SimilarKind = (typeof SIMILAR_KINDS)[number];
+
+/**
+ * What Find Similar knows of a neighbour in a project the caller can't see (docs/second-brain.md#find-similar): these six
+ * fields and nothing else: no id, no link, no fact statements, no evidence.
+ */
+export interface SimilarElsewhere {
+  type: 'workflow' | 'agent';
+  title: string;
+  /** Who made it (a workflow's creator, an agent's project owner). */
+  owner?: string;
+  /** One line: its purpose or description. */
+  goal?: string;
+  /** The project it lives in. */
+  project?: string;
+  /** 0..1. */
+  score: number;
+}
+
+/** A neighbour in a project the caller can open: the same six fields, plus what lets them open it. */
+export interface SimilarOwn extends Omit<SimilarElsewhere, 'type'> {
+  type: SimilarKind;
+  yours: true;
+  id: string;
+  /** A fact: its kind and statement, and what it is about. */
+  kind?: FactKind;
+  statement?: string;
+  subject?: { type: FactSubject; id: string };
+  description?: string;
+  active?: boolean;
+}
+
+export type SimilarMatch = SimilarOwn | SimilarElsewhere;

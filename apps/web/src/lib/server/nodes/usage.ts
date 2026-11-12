@@ -7,7 +7,7 @@
  * A workflow sees the usage its creator could see (lib/server/brain/scope.ts).
  */
 import { defineNode, NodeOperationError, type JsonObject, type NodeItem } from '@landflow/sdk';
-import { customKindProblem, DETECTOR_LABELS, DETECTORS, detectorLabel, flowDetectorId, isUsageKind, parseAttrEquals, quietBar, USAGE_KINDS, type UsageGroup, type UsageKind } from '../../shared/brain';
+import { customKindProblem, DETECTOR_LABELS, DETECTORS, detectorLabel, flowDetectorId, isUsageKind, parseAttrEquals, quietBar, SIMILAR_KINDS, USAGE_KINDS, type SimilarKind, type UsageGroup, type UsageKind } from '../../shared/brain';
 import { agentStore as agents } from '../agents/store';
 import { listKinds } from '../usage/kinds';
 import { store } from '../store';
@@ -169,6 +169,63 @@ export const landflowUsageNode = defineNode({
       }
       if (operation === 'workflow' || oneItem) out.push({ json: json(whole), pairedItem: { item: i } });
       else out.push(...rows.map((row) => ({ json: json(row), pairedItem: { item: i } })));
+    }
+    return [out];
+  },
+});
+
+export const findSimilarNode = defineNode({
+  description: {
+    name: 'findSimilar',
+    displayName: 'Find Similar',
+    description: 'Ask the second brain whether something like this already exists: the nearest workflows, agents and facts to a title and a goal',
+    version: 1,
+    kind: 'action',
+    categories: ['AI', 'Core'],
+    icon: 'lucide:search-check',
+    color: '#8b5cf6',
+    subtitle: '{{what}}',
+    keywords: ['similar', 'duplicate', 'overlap', 'already', 'second brain', 'nearest', 'search', 'is anyone doing this'],
+    usableAsTool: true,
+    toolDescription:
+      'Check whether something like this already exists. Arguments: `text` (a title and a goal), `what` (workflow, agent, fact; comma-separated, default all), `limit`, `minScore` (0..1), `includeOthers` (also list lookalikes in projects you can\'t open: only title, owner, goal, project and score).',
+    inputs: main,
+    outputs: main,
+    properties: [
+      { name: 'text', displayName: 'Title and Goal', type: 'string', default: '', required: true, typeOptions: { rows: 3 }, placeholder: 'Remind customers of unpaid invoices', description: 'What you want to build or know about' },
+      { name: 'what', displayName: 'Search In', type: 'multiOptions', default: ['workflow', 'agent', 'fact'], options: SIMILAR_KINDS.map((k) => ({ name: k === 'fact' ? 'Facts' : k === 'agent' ? 'Agents' : 'Workflows', value: k })) },
+      { name: 'limit', displayName: 'Limit', type: 'number', default: 10, typeOptions: { minValue: 1, maxValue: 100 } },
+      { name: 'minScore', displayName: 'Minimum Score', type: 'number', default: 0.15, typeOptions: { minValue: 0, maxValue: 1, numberPrecision: 2 }, description: '0 to 1: how much of the wording the two share (and, with embeddings, how close in meaning)' },
+      {
+        name: 'includeOthers',
+        displayName: 'Include Other Projects',
+        type: 'boolean',
+        default: false,
+        description: 'Also list lookalikes in projects this workflow’s creator can’t open. Those carry only type, title, owner, goal, project and score: no id, no facts, no evidence',
+      },
+    ],
+  },
+  async execute(ctx) {
+    const { findSimilar } = await import('../brain/similar');
+    const { scopeForWorkflow } = await import('../brain/scope');
+    const workflowId = ctx.getWorkflowId();
+    const scope = scopeForWorkflow(workflowId);
+    const items = ctx.getInputData();
+    const out: NodeItem[] = [];
+    for (let i = 0; i < Math.max(items.length, 1); i++) {
+      const text = String(ctx.getNodeParameter('text', i, '') ?? '').trim();
+      if (!text) throw new NodeOperationError('Say what to look for: a title and a goal', { itemIndex: i });
+      const kinds = list(ctx.getNodeParameter('what', i, SIMILAR_KINDS)).filter((k): k is SimilarKind => (SIMILAR_KINDS as readonly string[]).includes(k));
+      const matches = await findSimilar(text, {
+        scope,
+        kinds,
+        limit: Number(ctx.getNodeParameter('limit', i, 10)) || 10,
+        minScore: Number(ctx.getNodeParameter('minScore', i, 0.15)),
+        includeOthers: Boolean(ctx.getNodeParameter('includeOthers', i, false)),
+        // A workflow looking for lookalikes of itself shouldn't find itself; an agent's tools run as `agent:<id>`.
+        exclude: workflowId?.startsWith('agent:') ? { agentId: workflowId.slice('agent:'.length) } : { workflowId },
+      });
+      out.push(...matches.map((match) => ({ json: json(match), pairedItem: { item: i } })));
     }
     return [out];
   },

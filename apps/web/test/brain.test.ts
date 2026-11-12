@@ -2,7 +2,7 @@
  * The second brain (docs/second-brain.md): the usage ledger (redaction, signatures, what executions and audit events
  * record, reports, rollups and scope), the detectors on seeded events, the suggestion lifecycle (dedupe, held back, the
  * weekly cap, dismiss as intended, apply ops / a draft / persona rules, the effect checks), what study() learns without a
- * model, the Landflow Usage, Suggest Improvement and On Usage Event nodes, flow detectors (Detector Trigger), the new edit
+ * model, Find Similar (and the walls around other projects), the brain over the instance MCP server, the Landflow Usage, Suggest Improvement and On Usage Event nodes, flow detectors (Detector Trigger), the new edit
  * operations, and the routes.
  * No model and no embeddings: LANDFLOW_BRAIN_MODEL and LANDFLOW_BRAIN_EMBEDDINGS are off.
  */
@@ -43,7 +43,12 @@ const facts = await import('@/lib/server/brain/facts');
 const { study } = await import('@/lib/server/brain/study');
 const { analystConfig } = await import('@/lib/server/brain/analyst');
 const { matches, dispatchUsage, resetUsageTrigger, usageItems } = await import('@/lib/server/brain/usage-trigger');
-const { landflowUsageNode, suggestImprovementNode } = await import('@/lib/server/nodes/usage');
+const { landflowUsageNode, suggestImprovementNode, findSimilarNode } = await import('@/lib/server/nodes/usage');
+const { findSimilar } = await import('@/lib/server/brain/similar');
+const { scopeForActor } = await import('@/lib/server/brain/scope');
+const { instanceServer } = await import('@/lib/server/mcp/instance-tools');
+const { createTeamProject, setHomeProject, setMember } = await import('@/lib/server/projects/store');
+const { inMemoryVectorStoreNode } = await import('@/lib/server/nodes/vector-stores');
 const { applyOps, describeOps, parseOps } = await import('@/lib/shared/assistant-ops');
 const { runOk } = await import('./helpers');
 const { registryLookup } = await import('@/lib/server/assistant/ops');
@@ -677,5 +682,166 @@ describe('the routes', () => {
     expect(agentStore.get(agent.id)?.tools).toHaveLength(5);
     // It starts on the brain's model (off here, so the builder's), so it can answer right away.
     expect(agentStore.get(agent.id)?.model).toMatchObject({ provider: 'ollama' });
+  });
+});
+
+describe('find similar', () => {
+  let alice: Awaited<ReturnType<typeof createUser>>;
+  let alpha: ReturnType<typeof createTeamProject>;
+  let beta: ReturnType<typeof createTeamProject>;
+  const aliceActor = () => ({ id: alice.id, role: 'member' as const });
+
+  /** Alice is in Alpha only. Alpha has "Invoice reminders", Beta (made by Owner) has "Overdue invoice nagger" and a secret fact. */
+  async function seed() {
+    alice ??= await createUser({ email: 'alice@brain.test', name: 'Alice', role: 'member', password: 'alice-password-1' });
+    alpha ??= createTeamProject({ name: 'Alpha', createdBy: owner.id });
+    beta ??= createTeamProject({ name: 'Beta', createdBy: owner.id });
+    setMember(alpha.id, alice.id, 'editor');
+    const mine = workflow('wf_inv_a', 'Invoice reminders', [node('h', 'Call', 'core.httpRequest')], [], { description: 'Email customers who have not paid their invoices', createdBy: alice.id });
+    const theirs = workflow('wf_inv_b', 'Overdue invoice nagger', [node('h', 'Call', 'core.httpRequest')], [], { description: 'Remind customers of unpaid invoices every Monday.\nUses the Stripe key sk-hidden', createdBy: owner.id });
+    const other = workflow('wf_crm', 'Sync CRM contacts', [node('h', 'Call', 'core.httpRequest')], [], { description: 'Copy contacts to the warehouse', createdBy: alice.id });
+    setHomeProject('workflow', mine.id, alpha.id);
+    setHomeProject('workflow', other.id, alpha.id);
+    setHomeProject('workflow', theirs.id, beta.id);
+    facts.upsertFact({ subjectType: 'workflow', subjectId: 'wf_inv_b', subjectName: 'Overdue invoice nagger', kind: 'usage', statement: 'Nags unpaid invoice customers using the sk-hidden-fact key', evidence: [{ label: 'secret evidence' }], confidence: 0.9, projectId: beta.id });
+    facts.upsertFact({ subjectType: 'workflow', subjectId: 'wf_inv_a', subjectName: 'Invoice reminders', kind: 'usage', statement: 'Reminds unpaid invoice customers by email', evidence: [], confidence: 0.9, projectId: alpha.id });
+  }
+
+  it('ranks workflows by shared words without a model, best first', async () => {
+    await seed();
+    const found = await findSimilar('Remind customers about unpaid invoices', { scope: undefined, kinds: ['workflow'] });
+    expect(found.map((m) => m.title)).toEqual(expect.arrayContaining(['Invoice reminders', 'Overdue invoice nagger']));
+    expect(found.some((m) => m.title === 'Sync CRM contacts')).toBe(false);
+    expect(found[0].score).toBeGreaterThanOrEqual(found[1].score);
+    expect(await findSimilar('   ')).toEqual([]);
+    expect(await findSimilar('Remind customers about unpaid invoices', { kinds: ['workflow'], minScore: 0.99 })).toEqual([]);
+    expect(await findSimilar('Remind customers about unpaid invoices', { kinds: ['workflow'], exclude: { workflowId: 'wf_inv_a' } })).not.toContainEqual(expect.objectContaining({ title: 'Invoice reminders' }));
+  });
+
+  it('gives full detail for your own projects and only a projection for the rest', async () => {
+    await seed();
+    const scope = scopeForActor(aliceActor());
+    const mine = await findSimilar('Remind customers about unpaid invoices', { scope });
+    expect(mine.map((m) => m.title)).toContain('Invoice reminders');
+    expect(JSON.stringify(mine)).not.toMatch(/Overdue|sk-hidden|wf_inv_b/);
+    expect(mine.find((m) => m.title === 'Invoice reminders' && m.type === 'workflow')).toMatchObject({ yours: true, id: 'wf_inv_a', type: 'workflow', owner: 'Alice', project: 'Alpha' });
+
+    const withOthers = await findSimilar('Remind customers about unpaid invoices', { scope, includeOthers: true });
+    const wall = withOthers.find((m) => m.title === 'Overdue invoice nagger')!;
+    // Exactly the six projection fields: no id (nothing that grants access), no description, no facts, no evidence.
+    expect(Object.keys(wall).sort()).toEqual(['goal', 'owner', 'project', 'score', 'title', 'type']);
+    expect(wall).toMatchObject({ type: 'workflow', owner: 'Owner', project: 'Beta', goal: 'Remind customers of unpaid invoices every Monday.' });
+    const text = JSON.stringify(withOthers);
+    expect(text).not.toMatch(/wf_inv_b|sk-hidden|secret evidence|Stripe/);
+    // Facts of the other project are never listed, even when only facts are asked for.
+    const factsOnly = await findSimilar('unpaid invoice customers', { scope, kinds: ['fact'], includeOthers: true });
+    expect(factsOnly.every((m) => 'yours' in m && m.type === 'fact')).toBe(true);
+    expect(JSON.stringify(factsOnly)).not.toMatch(/sk-hidden/);
+    expect(factsOnly[0]).toMatchObject({ subject: { id: 'wf_inv_a' } });
+  });
+
+  it('is the Find Similar node: one item per match, as the creator of the workflow sees', async () => {
+    await seed();
+    workflow('wf_test', 'Asker', [node('f', 'Find', 'core.findSimilar')], [], { createdBy: alice.id });
+    const mine = await runOk(findSimilarNode, { text: 'Remind customers about unpaid invoices', what: ['workflow'], limit: 10, minScore: 0.15, includeOthers: false });
+    expect(mine.json().map((r) => r.title)).toEqual(['Invoice reminders']);
+    const all = await runOk(findSimilarNode, { text: 'Remind customers about unpaid invoices', what: 'workflow,agent', limit: 10, minScore: 0.15, includeOthers: true });
+    const wall = all.json().find((r) => r.title === 'Overdue invoice nagger')!;
+    expect(wall).not.toHaveProperty('id');
+    expect(wall).not.toHaveProperty('yours');
+    await expect(runOk(findSimilarNode, { text: '', what: [], limit: 10, minScore: 0.15, includeOthers: false })).rejects.toThrow(/title and a goal/);
+  });
+
+  it('keeps workflows out of the brain’s vector collections', async () => {
+    for (const collection of ['landflow-brain', 'landflow-brain-prj_x', ' Landflow-Brain-prj_x ']) {
+      await expect(runOk(inMemoryVectorStoreNode, { mode: 'insert', collection })).rejects.toThrow(/second brain’s own collection/);
+      await expect(runOk(inMemoryVectorStoreNode, { mode: 'load', collection, prompt: 'x', topK: 1 })).rejects.toThrow(/Find Similar/);
+    }
+    // Another name is not caught by the guard (it fails later, for the missing embeddings model).
+    await expect(runOk(inMemoryVectorStoreNode, { mode: 'load', collection: 'landflow-brainstorm', prompt: 'x', topK: 1 })).rejects.toThrow(/embeddings/);
+  });
+
+  describe('over the instance MCP server', () => {
+    type Result = { isError?: boolean; content: Array<{ text: string }> };
+    async function connect(actor?: { id: string; role: 'member' | 'owner' }, scope?: { projectId: string }) {
+      const { Client, InMemoryTransport } = await import('@modelcontextprotocol/client');
+      const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+      await instanceServer(actor, scope).connect(serverSide);
+      const client = new Client({ name: 'brain-test', version: '1.0.0' });
+      await client.connect(clientSide);
+      const call = async (name: string, args: Record<string, unknown> = {}) => {
+        const result = (await client.callTool({ name, arguments: args })) as Result;
+        const text = result.content[0].text;
+        return { error: Boolean(result.isError), text, data: result.isError ? undefined : (JSON.parse(text) as Record<string, any>) };
+      };
+      return { client, call };
+    }
+
+    it('lists the brain tools', async () => {
+      const { client } = await connect();
+      const names = (await client.listTools()).tools.map((t) => t.name);
+      expect(names).toEqual(expect.arrayContaining(['brain_search_facts', 'brain_list_suggestions', 'brain_workflow_knowledge', 'brain_usage_report', 'check_overlap', 'brain_suggest']));
+      await client.close();
+    });
+
+    it('scope every tool to what the caller can open', async () => {
+      await seed();
+      runs('wf_inv_a', 2);
+      runs('wf_inv_b', 3);
+      proposals.proposeFrom({ title: 'Retry the nagger', why: 'timeouts', workflowId: 'wf_inv_b' }, 'analyst');
+      proposals.proposeFrom({ title: 'Retry the reminder', why: 'timeouts', workflowId: 'wf_inv_a' }, 'analyst');
+      const { client, call } = await connect(aliceActor());
+
+      const found = await call('brain_search_facts', { query: 'unpaid invoice customers' });
+      expect(found.data!.facts.map((f: { subjectId: string }) => f.subjectId)).toEqual(['wf_inv_a']);
+      const open = await call('brain_list_suggestions', {});
+      expect(open.data!.proposals.map((p: { title: string }) => p.title)).toEqual(['Retry the reminder']);
+      expect((await call('brain_list_suggestions', { workflowId: 'wf_inv_b' })).error).toBe(true);
+      expect((await call('brain_list_suggestions', { detector: 'nope' })).error).toBe(true);
+      expect((await call('brain_workflow_knowledge', { workflowId: 'wf_inv_a' })).data).toMatchObject({ name: 'Invoice reminders', facts: [expect.objectContaining({ kind: 'usage' })] });
+      const hidden = await call('brain_workflow_knowledge', { workflowId: 'wf_inv_b' });
+      expect(hidden.error).toBe(true);
+      expect(hidden.text).toMatch(/not found/);
+      const report = await call('brain_usage_report', { groupBy: 'workflow', days: 7 });
+      expect(report.data!.rows.map((r: { key: string }) => r.key)).toEqual(['wf_inv_a']);
+      expect((await call('brain_usage_report', { workflowId: 'wf_inv_b' })).error).toBe(true);
+
+      // check_overlap looks past the wall, as a projection.
+      const overlap = await call('check_overlap', { text: 'Remind customers about unpaid invoices' });
+      const wall = overlap.data!.matches.find((m: { title: string }) => m.title === 'Overdue invoice nagger');
+      expect(Object.keys(wall).sort()).toEqual(['goal', 'owner', 'project', 'score', 'title', 'type']);
+      expect(overlap.text).not.toMatch(/wf_inv_b|sk-hidden|secret evidence/);
+      expect((await call('check_overlap', { text: 'Remind customers about unpaid invoices', includeOthers: false })).text).not.toContain('Overdue');
+      await client.close();
+    });
+
+    it('lets the instance token see everything and a project server only its project', async () => {
+      await seed();
+      const instance = await connect();
+      const all = await instance.call('check_overlap', { text: 'Remind customers about unpaid invoices' });
+      expect(all.data!.matches.filter((m: { yours?: boolean }) => m.yours).map((m: { id: string }) => m.id)).toEqual(expect.arrayContaining(['wf_inv_a', 'wf_inv_b']));
+      await instance.client.close();
+
+      const scoped = await connect({ id: owner.id, role: 'owner' }, { projectId: beta.id });
+      expect((await scoped.call('brain_workflow_knowledge', { workflowId: 'wf_inv_a' })).error).toBe(true);
+      expect((await scoped.call('brain_workflow_knowledge', { workflowId: 'wf_inv_b' })).error).toBe(false);
+      const nearby = await scoped.call('check_overlap', { text: 'Remind customers about unpaid invoices' });
+      const reminders = nearby.data!.matches.find((m: { title: string }) => m.title === 'Invoice reminders');
+      expect(reminders).not.toHaveProperty('id');
+      expect((await scoped.call('brain_suggest', { title: 'Instance-wide', why: 'x' })).text).toMatch(/scoped to a project/);
+      await scoped.client.close();
+    });
+
+    it('posts a suggestion only where the caller can edit', async () => {
+      await seed();
+      const { client, call } = await connect(aliceActor());
+      const saved = await call('brain_suggest', { title: 'Add a retry', why: 'it timed out', workflowId: 'wf_inv_a', ops: [{ op: 'setNodeSettings', node: 'Call', settings: { retryOnFail: true } }] });
+      expect(saved.data).toMatchObject({ saved: true, proposal: { source: 'analyst', target: { id: 'wf_inv_a' } } });
+      expect((await call('brain_suggest', { title: 'Meddle', why: 'x', workflowId: 'wf_inv_b' })).error).toBe(true);
+      expect((await call('brain_suggest', { title: 'Meddle', why: 'x' })).error).toBe(true);
+      expect((await call('brain_suggest', { title: 'Meddle', why: 'x', workflowId: 'wf_missing' })).text).toMatch(/not found/);
+      expect(proposals.listProposals({ status: 'open', workflowId: 'wf_inv_b' })).toHaveLength(0);
+      await client.close();
+    });
   });
 });
