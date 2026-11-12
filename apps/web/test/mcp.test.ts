@@ -596,6 +596,12 @@ describe('Instance MCP server', () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(
       [
+        'brain_list_suggestions',
+        'brain_search_facts',
+        'brain_suggest',
+        'brain_usage_report',
+        'brain_workflow_knowledge',
+        'check_overlap',
         'create_workflow',
         'execute_workflow',
         'explain_failure',

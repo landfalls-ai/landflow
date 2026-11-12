@@ -151,7 +151,7 @@ The first tick is 30 s after start.
 
 ### 6. Your own conclusions
 
-Four nodes make the brain something workflows can use:
+Five nodes make the brain something workflows can use:
 
 - **Landflow Usage** (`core.landflowUsage`, usable as an agent tool). Its operations:
   - Report: grouped by day, kind, workflow, node type, signature, agent or model;
@@ -170,6 +170,50 @@ Four nodes make the brain something workflows can use:
   the workflow and node, the expected effect, ops as JSON (checked against the workflow; `[]` for advice), risk,
   confidence, and a fingerprint.
 - **Detector Trigger** (`core.detectorTrigger`) makes the workflow one of the brain's detectors (below).
+- **Find Similar** (`core.findSimilar`, usable as a tool) asks whether something like this already exists ([below](#find-similar)).
+
+#### Find Similar
+
+"Is anyone already doing this?" Give the node a title and a goal; it returns one item per nearest workflow, agent or
+fact, best first (`score` 0 to 1). Settings: what to search (workflows, agents, facts), a limit (10), a minimum score
+(0.15) and **Include Other Projects**.
+
+- **Ranking.** The words the text shares with a candidate (its name, description and the purpose the brain wrote; for
+  a fact, its statement), a light stem so "reminders" meets "reminder". With embeddings on, the subject of every fact
+  the vector search finds gets a bonus. With `LANDFLOW_BRAIN_EMBEDDINGS=off` only the words count, so it needs no model.
+- **Your projects.** A match in a project the workflow's creator can open (an agent's tools: its own project) carries
+  `yours: true`, its `id`, `description`, `active`, and for a fact its `kind`, `statement` and `subject`.
+- **Other projects.** With **Include Other Projects**, a match in a project they can't open is a projection of six
+  fields: `type` (workflow or agent), `title`, `owner`, `goal` (one line), `project` and `score`. It has no id, no link,
+  no fact statements and no evidence, and facts of other projects are never listed: they only raise the score of the
+  workflow or agent they are about. The point is to find out whom to ask, not to read their work.
+- Code: `brain/similar.ts` (`findSimilar(text, { scope, kinds, limit, minScore, includeOthers, exclude })`), shared by the
+  node and the MCP tool `check_overlap`.
+
+#### The vector collections
+
+Workflows and agents can't read or write `landflow-brain` and `landflow-brain-<project>` with a Vector Store node: the
+node refuses any collection with that name (case ignored) and points at Find Similar and Landflow Usage, which return
+only what the workflow's creator can see. The brain itself writes them and searches the ones the caller's projects own.
+
+#### The brain over MCP
+
+The instance MCP server ([reference/api.md](reference/api.md), `POST /api/mcp`) serves the brain, so a coding agent needs
+no hand-built MCP Server Trigger workflow:
+
+| Tool | Does |
+|---|---|
+| `brain_search_facts` | facts best matching a query (`subjectType`, `kind`, `limit`) |
+| `brain_list_suggestions` | the inbox (`status`, `workflowId`, `detector`, `limit`) |
+| `brain_workflow_knowledge` | a workflow's profile, facts and open suggestions |
+| `brain_usage_report` | the usage report (`groupBy`, `kinds`, `days`, `workflowId`) |
+| `check_overlap` | Find Similar for a title and a goal; other projects as the projection above (`includeOthers`, default true) |
+| `brain_suggest` | post a suggestion (source `analyst`, like `POST /api/proposals`) |
+
+Each tool sees what the token's user sees (an instance access token sees everything), cut down to the project on a
+project server (`/api/mcp/projects/<id>`, a project token), where `brain_suggest` must name a workflow or agent of it.
+A workflow the user can't open is "not found". `brain_suggest` needs edit access to the workflow or agent. Code:
+`mcp/brain-tools.ts`.
 
 #### Flow detectors
 
@@ -265,8 +309,6 @@ Routes are also in [reference/api.md](reference/api.md), and variables in
 
 ## Limits
 
-- The vector collections aren't access-controlled by themselves. The routes and nodes only search the collections of
-  the caller's projects, but a Vector Store node pointed at `landflow-brain-<project>` reads it directly.
 - Dead weight needs 60 days of ledger. On a new instance it waits, and the backfill only reaches as far as executions
   and audit events on disk.
 - In queue mode, each process records its own events and starts On Usage Event workflows for them, so a trigger's batch
@@ -287,7 +329,9 @@ Routes are also in [reference/api.md](reference/api.md), and variables in
   - detectors, suggestions (`proposals.ts`), effects, the model's writing (`writer.ts`);
   - study and facts;
   - scope, the analyst and On Usage Event (`usage-trigger.ts`);
-  - flow detectors (`flow-detectors.ts`).
-- `apps/web/src/lib/server/nodes/usage.ts`: the four nodes.
+  - flow detectors (`flow-detectors.ts`);
+  - Find Similar (`similar.ts`).
+- `apps/web/src/lib/server/mcp/brain-tools.ts`: the brain's tools on the instance MCP server.
+- `apps/web/src/lib/server/nodes/usage.ts`: the five nodes; `nodes/vector-stores.ts` refuses the brain's collections.
 - `apps/web/src/components/brain/`: the inbox, the canvas card and the Insights panel.
 - Tests: `apps/web/test/brain.test.ts`.
