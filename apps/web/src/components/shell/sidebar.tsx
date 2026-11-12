@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { Activity, BookOpenCheck, BookOpenText, Bot, ChartColumn, House, KeyRound, LayoutTemplate, Menu, Puzzle, Search, Settings, Store, Table2, Workflow, X } from 'lucide-react';
+import { Activity, BookOpenCheck, BookOpenText, Bot, Brain, ChartColumn, House, KeyRound, LayoutTemplate, Menu, Puzzle, Search, Settings, Store, Table2, Workflow, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { useLiveConnected, useLiveEvents } from '@/lib/client/live';
@@ -27,6 +27,7 @@ const GROUPS: Array<{ label: string; items: Array<{ href: string; label: string;
       { href: '/executions', label: 'Executions', icon: Activity },
       { href: '/runs', label: 'Search runs', icon: Search },
       { href: '/insights', label: 'Insights', icon: ChartColumn },
+      { href: '/brain', label: 'Brain', icon: Brain },
       { href: '/data-tables', label: 'Data tables', icon: Table2 },
       { href: '/runbooks', label: 'Runbooks', icon: BookOpenCheck },
       { href: '/credentials', label: 'Credentials', icon: KeyRound },

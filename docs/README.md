@@ -19,6 +19,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | Editor: canvas, node creator, runs, pinned data, debugging, versions, templates; importing from n8n and Flowise | [features/editor.md](features/editor.md) | [ui-review.md](ui-review.md) |
 | Editor assistant: suggestions after a run, Spotlight (the builder chat) | [assistant.md](assistant.md) | |
 | Second brain: the usage ledger, detectors and the Suggestions inbox, facts, the Platform analyst, your own conclusions, flow detectors (Detector Trigger), custom event kinds (Record Event), entities, flow buttons (On Suggestion Decided), audiences and Slack DMs, Find Similar and `check_overlap`, declared metrics, backtests | [second-brain.md](second-brain.md) | [observability.md](observability.md) |
+| The Brain page: the second brain as Markdown files in an editor's workbench (Explorer, tabs, Preview and Source, quick open, Problems), a file per person, customer and initiative with a summary the model writes, Spotlight to ask it, and work shared across teams | [second-brain.md](second-brain.md#the-brain-page) | [research/brain-ui-research.md](research/brain-ui-research.md) |
 | Composite nodes: groups typed by a contract (slots, rules, ports), checked in the editor, run as one step | [composites.md](composites.md) | [protocol.md](protocol.md) §3 |
 | Engine: data model, durable runtime, queue mode and HA, triggers and flow nodes (Ask a Person), debounce and rate limits, Code node | [features/engine.md](features/engine.md) | [architecture.md](architecture.md) |
 | Plugins: the node interface in each SDK, autodiscovery, branding | [plugins.md](plugins.md) | [protocol.md](protocol.md) |
@@ -101,6 +102,8 @@ how to run it and how to change it. The [project README](../README.md) has the q
   [04-n8n-integrations.md](research/04-n8n-integrations.md): the n8n research that drove the design.
 - [research/company-brain-next-sources.md](research/company-brain-next-sources.md): what the Company Brain's P1 and P2
   sources (Base44 Report Scheduler, the Brandlight platform, Shapes, Clay, Mesh, Scytale, Microsoft 365) would need.
+- [research/brain-ui-research.md](research/brain-ui-research.md): how other products show a company brain or LLM wiki,
+  and what the Brain page took from them.
 - [reports/Workflow platform feature gaps.md](<../reports/Workflow platform feature gaps.md>) and its notes in
   [research_notes/](<../research_notes/Workflow platform feature gaps>): the 2026 comparison with other workflow
   platforms that the roadmap's waves came from.

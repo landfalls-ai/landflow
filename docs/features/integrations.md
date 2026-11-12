@@ -49,7 +49,8 @@ from the name, so the same customer from Slack and Drive is one entity):
 | `work-google-directory` | Schedule, daily at 6 → Google Directory → Entity | none: each person as a `person` entity keyed by email, with title, department, org unit and manager |
 
 Declare the kinds first with `pnpm brain:work-kinds` (the templates' fallback declares a kind from the first event's fields,
-all optional). The events show in **Insights**, the entities in **What Landflow knows**.
+all optional). The events and entities show on the [Brain page](../second-brain.md#the-brain-page): a page per person, customer and
+initiative with its work, and what two or more teams worked on this week.
 
 The Linear, Attio and Fathom templates also ship as marketplace flows (`plugins/<name>/flows/work-<name>.json`, exported
 from the built-in ones) with their plugins in the repository's marketplace (`.claude-plugin/marketplace.json`), so an

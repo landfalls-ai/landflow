@@ -1209,10 +1209,34 @@ Calendar, Notion and the Directory, then for Linear, Attio and Fathom.
 the same customer named by a channel or folder. Open from Phase A: a Notion webhook trigger once Notion can create subscriptions over its API; push channels for Drive and Calendar
 once app webhooks can renew themselves; Slack message edits and deletions; the Directory's groups and org units.
 
+## The Brain page (built 2026-11-12)
+
+`/brain` opens the second brain as a repository of Markdown files in an editor's workbench
+([second-brain.md](second-brain.md#the-brain-page)): an activity bar (Explorer with Outline and Backlinks, Search,
+Timeline, What Landflow knows), a tree of `index.md`, `log.md` and a file per entity, tabs with a Preview and a Source
+(the page as Markdown with frontmatter, links and references), quick open, a Problems and Suggestions panel, a status
+bar, and Spotlight at the bottom of the editor to ask the brain. A page has a summary the brain's model writes (page
+links, numbered references to the work, stale once new work lands), its work, people, related pages, facts and
+mentions. "What Landflow knows" moved there from Insights. The layout follows a look at how other products show a
+company brain ([research/brain-ui-research.md](research/brain-ui-research.md)); the user then asked for an editor's
+workbench in place of a page of cards, keeping Spotlight.
+
+- **Found while checking it**: a local model turned person ids into surnames ("Tal Northpeak" for
+  `tal@northpeak.example`); the prompt now gives every link with its name, and names the model writes plainly are
+  linked on their first mention.
+- **Checked live** on a scratch host with 17 made-up work events across eight people and seven teams, with
+  `qwen3-coder:30b` on Ollama: the tree and its marks, Preview and Source, quick open, the Problems panel, Search and
+  Timeline, a summary with links and references, Spotlight from a page (its links opening tabs), tabs kept across a
+  reload, and the phone layout with its drawer.
+- **Next**: relations between entities of their own (not only through shared work), editing a file's frontmatter in
+  the Source, filing a good answer back as a fact, and a detector that turns shared work into a suggestion addressed to
+  both teams.
+
 ## Planned next
 
 1. **Declare event kinds in the UI**: kinds are declared over the API or by Record Event's *Declare Kind If New* only.
-2. **A page per entity**, relations between entities, and a detector that looks at them (two initiatives with the same goal).
+2. **Relations between entities** and a detector that looks at them (two initiatives with the same goal); the page per
+   entity is built ([the Brain page](#the-brain-page-built-2026-11-12)).
 3. **Find Similar in the editor**: show likely overlaps when a workflow is created; a stricter embedding-only ranking mode.
 4. **Ask a Person per item**, and editing from email.
 5. **A chart of a declared metric**: baseline and checks over time on the card.

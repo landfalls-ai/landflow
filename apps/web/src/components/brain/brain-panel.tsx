@@ -1,8 +1,9 @@
 'use client';
 /**
- * "What Landflow knows" on Insights: the second brain's status, its facts, and how each detector has done, the flow
- * detectors among them, each with Run and Backtest (docs/second-brain.md): Backtest reruns the detector over the last
- * 30 days and shows a small card of how it would have fared against what people decided.
+ * "What Landflow knows" at the foot of the Brain page (/brain; it was on Insights): the second brain's status, its facts,
+ * and how each detector has done, the flow detectors among them, each with Run and Backtest (docs/second-brain.md):
+ * Backtest reruns the detector over the last 30 days and shows a small card of how it would have fared against what
+ * people decided. One column, so a phone reads it.
  */
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
@@ -130,13 +131,19 @@ export function BrainPanel() {
       {facts && facts.length > 0 && (
         <div className="divide-y divide-hair rounded-xl border border-hair">
           {facts.map((f) => (
-            <div key={f.id} className="flex items-start gap-3 px-3 py-2 text-[12px]">
-              <div className="w-[140px] shrink-0 truncate font-semibold text-t1" title={f.subjectName ?? f.subjectId}>
-                {f.subjectName ?? f.subjectId}
+            <div key={f.id} className="flex flex-wrap items-start gap-x-3 gap-y-0.5 px-3 py-2 text-[12px]">
+              <div className="max-w-[140px] shrink-0 truncate font-semibold text-t1 sm:w-[140px]" title={f.subjectName ?? f.subjectId}>
+                {f.subjectType === 'entity' ? (
+                  <Link href={`/brain/${f.subjectId}`} className="hover:text-ac hover:underline">
+                    {f.subjectName ?? f.subjectId}
+                  </Link>
+                ) : (
+                  (f.subjectName ?? f.subjectId)
+                )}
                 {f.subjectType === 'entity' && <span className="ml-1 font-normal text-t3">{f.subjectId.split('/')[0]}</span>}
               </div>
               <div className="w-[64px] shrink-0 text-t3">{f.kind}</div>
-              <div className="min-w-0 flex-1 text-t2 [overflow-wrap:anywhere]">{f.statement}</div>
+              <div className="min-w-0 basis-full text-t2 [overflow-wrap:anywhere] sm:basis-0 sm:flex-1">{f.statement}</div>
               <div className="shrink-0 text-t3">{timeAgo(f.lastSeen)}</div>
             </div>
           ))}
@@ -144,21 +151,11 @@ export function BrainPanel() {
       )}
 
       {detectors.length > 0 && (
-        <table className="w-full text-left text-[12px]">
-          <thead className="text-t3">
-            <tr>
-              <th className="py-1 font-medium">Detector</th>
-              <th className="py-1 text-right font-medium">Made</th>
-              <th className="py-1 text-right font-medium">Applied</th>
-              <th className="py-1 text-right font-medium">Dismissed</th>
-              <th className="py-1 text-right font-medium" />
-              <th className="py-1 text-right font-medium" />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-hair text-t2">
-            {detectors.map((d) => (
-              <tr key={d.id}>
-                <td className="py-1.5 text-t1">
+        <ul className="divide-y divide-hair rounded-xl border border-hair text-[12px]">
+          {detectors.map((d) => (
+            <li key={d.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-t1">
                   {d.workflowId ? (
                     <Link href={`/workflows/${d.workflowId}`} className="hover:underline">
                       {d.label}
@@ -167,27 +164,25 @@ export function BrainPanel() {
                   ) : (
                     d.label
                   )}
-                </td>
-                <td className="py-1.5 text-right tabular-nums">{d.made}</td>
-                <td className="py-1.5 text-right tabular-nums">{d.applied}</td>
-                <td className="py-1.5 text-right tabular-nums">{d.dismissed}</td>
-                <td className="py-1.5 text-right text-warn">{d.quiet > 1 ? 'quieted' : ''}</td>
-                <td className="py-1.5 text-right">
-                  {canRun && (!d.workflowId || d.active) && (
-                    <>
-                      <Button size="sm" variant="ghost" onClick={() => void runOne(d.id)} loading={runningOne === d.id} disabled={Boolean(runningOne) && runningOne !== d.id}>
-                        Run
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => void backtest(d.id)} loading={backtesting === d.id} disabled={Boolean(backtesting) && backtesting !== d.id} title="Rerun it over the last 30 days and compare with what people decided">
-                        Backtest
-                      </Button>
-                    </>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                </div>
+                <div className="tabular-nums text-t3">
+                  {d.made} made · {d.applied} applied · {d.dismissed} dismissed
+                  {d.quiet > 1 && <span className="text-warn"> · quieted</span>}
+                </div>
+              </div>
+              {canRun && (!d.workflowId || d.active) && (
+                <div className="flex shrink-0 gap-1">
+                  <Button size="sm" variant="ghost" onClick={() => void runOne(d.id)} loading={runningOne === d.id} disabled={Boolean(runningOne) && runningOne !== d.id}>
+                    Run
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => void backtest(d.id)} loading={backtesting === d.id} disabled={Boolean(backtesting) && backtesting !== d.id} title="Rerun it over the last 30 days and compare with what people decided">
+                    Backtest
+                  </Button>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
       )}
       {detectors.map((d) => backtests[d.id] && <BacktestCard key={d.id} result={backtests[d.id]!} onClose={() => setBacktests((all) => ({ ...all, [d.id]: undefined }))} />)}
     </Card>

@@ -12,7 +12,7 @@ and post suggestions next to the built-in ones.
  AI call, action)   index               Platform analyst    Apply with a diff   facts
 ```
 
-Try it: open **Insights → What Landflow knows** and press **Run now** (owners and admins). Then open Home: suggestions
+Try it: open **Brain** in the sidebar, then **What Landflow knows** (the gear at the bottom left), and press **Run now** (owners and admins). Then open Home: suggestions
 show up in the **Suggestions** card, and on the canvas of the workflow they are about.
 
 ## Principles
@@ -141,7 +141,10 @@ The first tick is 30 s after start.
 - **The canvas**: a "N suggestions" pill at the top left of the workflow it is about. It folds out into a side card,
   and the canvas stays visible. Apply here changes the open canvas (one undo), and you save it like any edit. Clicking
   the node name selects the node.
-- **Insights → What Landflow knows**:
+- **[The Brain page](#the-brain-page)** (`/brain`): the brain as a repository of Markdown files in an editor's workbench,
+  a file per entity, Spotlight to ask it, and what more than one team worked on.
+- **Brain → What Landflow knows** (the gear at the foot of the Brain page's activity bar; it was on Insights, which now
+  links to it):
   - the ledger's size, the facts, the model, and when the brain last studied and detected;
   - a search over the facts;
   - each detector's record (made, applied, dismissed, quieted) with **Run**, which runs that detector alone, and
@@ -229,7 +232,72 @@ about that no workflow holds: `initiative`, `person`, `customer` and `system` (o
   operation returns an entity, its profile, facts and open suggestions (the way *Workflow Knowledge* does for a workflow).
   `check_overlap` (`what: ["entity"]`) and `brain_search_facts` (`subjectType: "entity"`) include entities over MCP.
   The Platform analyst has the tools `entity_knowledge`, `entities` (list only) and `note_entity_fact`; it cannot
-  delete one. Insights counts entities, and its facts list shows an entity's type next to its name.
+  delete one. The Brain page counts entities, and its facts list shows an entity's type next to its name and links to its
+  page.
+
+#### The Brain page
+
+`/brain` (**Brain** in the sidebar) opens the brain as a repository of Markdown files in an editor's workbench, in the
+manner of an LLM-kept wiki: every entity is a file, the `work.*` events the
+[activity integrations](features/integrations.md#work-ingest-templates) record are its sources, the model writes the
+prose and a person keeps the facts. Spotlight asks it questions.
+
+- **Work joins pages by its hints.** A `work.*` event names its pages through `customer` and `initiative` (matched by id or
+  by the id a template makes from a name: "Acme" and `#customer-acme` both meet `acme`) and through `actor`, the email of a
+  person page (its `email` attribute or its id). Its team is the event's `team`, else that person's `department`.
+- **The files.** `initiatives/`, `customers/`, `people/<department>/` and `systems/`, a file per entity named from its
+  name (`kestrel-bank.md`); `index.md`, the week's briefing; and `log.md`, the latest work with a heading per day. The
+  Explorer marks each file with its work this week, an **S** when two or more teams worked on it this week, and amber
+  with **!** when it needs a person.
+- **The workbench.**
+  - **Activity bar**: Explorer (Open Editors, the tree, the open file's **Outline** and its **Backlinks**: the pages
+    whose summary links to it or whose description names it, and the pages sharing its work), **Search** (pages, facts
+    and the latest work), **Timeline** (the latest work as a history), and **What Landflow knows** (status, fact
+    search, detectors with Run and Backtest, the analyst, Run now; it moved here from Insights), which opens as a tab.
+  - **Tabs**: one click opens a file in the preview tab (italic), which the next replaces; a double click or a change
+    keeps it. Breadcrumbs show its path. The tabs and the side bar's width are kept in the browser, and the address
+    names the open file (`/brain`, `/brain/log`, `/brain/settings`, `/brain/<type>/<id>`).
+  - **Preview or Source** (⌘⇧V): the Preview is the page with its controls; the Source is the same file as Markdown
+    (`lib/shared/brain-files.ts`): frontmatter (type, owner, teams, sources, attributes, when the summary was written),
+    the summary with its `[[type/id|Name]]` links and `[n]` references, then the work, people, related pages, facts,
+    suggestions and mentions. In the Source, a link opens its page and a reference jumps to its work line. **Copy**
+    takes the Markdown. The Source is read-only.
+  - **Spotlight** at the bottom of the editor, as in the workflow editor (⌘I): one bar, bubbles with questions about the
+    open file, and the conversation above the bar. With a page open, the question is about that page (the `@` chip)
+    until the chip is removed. Each answer has page links, which open tabs, and its numbered sources, folded.
+  - **Quick open** (⌘P or ⌘K): go to a file by name or path, `>` for commands (open index or log, toggle Source,
+    Problems, Suggestions, run the brain), or send what was typed to Spotlight.
+  - **Panel** (⌘J): **Problems** (initiatives and customers without an owner, pages quiet for 30 days, summaries behind
+    their work) and **Suggestions** with their buttons. **Status bar**: problems, shared pages, open suggestions, pages
+    and facts, the last study, the model.
+  - **On a phone**: the side bar is a drawer behind the Files button, with the views at its top; tabs scroll; Spotlight
+    and the status bar stay at the bottom.
+- **index.md**: **Shared across teams** (customers and initiatives two or more teams worked on in the last 7 days, most
+  teams first, with their teams, people and latest items: no other product flags this, and it is what the Company
+  Brain is for), **Suggestions**, **Teams this week** and **Needs a person**.
+- **A page**:
+  - **Kept by people**: name, what it is and owner, editable by editors of its project (`PATCH /api/entities/…`), and
+    chips for owner (amber when none, not on people), teams, sources and last work.
+  - **Summary, written by the brain**: 2–4 paragraphs, marked with the model and when, with page links and numbered
+    references to the work below; a reference scrolls to its item. It is written the first time the page is opened
+    with a model and work to go on, again on **Regenerate**, and shows **new work since** when the page's facts or work
+    changed after it (a hash of what it was written from, table `brain_pages`, migration 2065). The model sees only the
+    page, its facts, its last 40 work items, its people and related pages, each with its name, all within what the
+    reader can open. Links to pages the reader can't open become plain names, and a page's name the model wrote plainly
+    is linked on its first mention.
+  - **Work** (90 days, numbered), **People** (or **Works with** on a person's page), **Related pages** (the pages named
+    in the same work, with how often), **Facts** with **Add a fact**, **Suggestions** and **Mentioned in**.
+- **Ask** (`POST /api/brain/ask`, what Spotlight calls) finds pages by words in names, descriptions, owners and
+  attributes, facts by search (by meaning too when embeddings are on), and work by words and by the pages found; then
+  the model answers from those alone, in a few sentences with page links and numbered work. Without a model it returns
+  what it found.
+- **Walls.** Everything goes through the reader's scope: a page, a link, a person or a work item from a project the reader
+  can't open is not shown, not linked and not sent to the model.
+- Code: `brain/wiki.ts`, `lib/shared/brain-wiki.ts`, `lib/shared/brain-files.ts` (the tree and the Markdown),
+  `components/brain/wiki/` (`workbench.tsx`, `side-views.tsx`, `spotlight.tsx`, `source-view.tsx`, `page-doc.tsx`,
+  `index-doc.tsx`), `app/brain/[[...path]]/`; routes under `app/api/brain/wiki/` and `app/api/brain/ask/`. Tests:
+  `apps/web/test/brain-wiki.test.ts`, `apps/web/test/brain-files.test.ts`. Why it looks this way:
+  [research/brain-ui-research.md](research/brain-ui-research.md).
 
 #### The vector collections
 
@@ -293,11 +361,11 @@ shows up in the ledger and can start other flows.
 
 #### Flow detectors
 
-A suggestion a workflow posts is source `workflow`: it never expires, never quiets anything and isn't in Insights. A
+A suggestion a workflow posts is source `workflow`: it never expires, never quiets anything and isn't in the detector list. A
 published workflow that starts from **Detector Trigger** is a detector instead, as first-class as the built-in ones,
 with the id `flow:<workflowId>` and its workflow's name as its label:
 
-- **When it runs**: on the brain's tick after the built-in detectors, on **Insights → Run now**, and alone from its
+- **When it runs**: on the brain's tick after the built-in detectors, on **Brain → Run now**, and alone from its
   **Run** in the detectors table (`POST /api/brain/run { what: "detect", detector: "flow:<id>" }`). Flows run one
   after another, each for at most 10 minutes. Only the published version runs; **Run** in the editor starts at the
   trigger with this workflow's real values.
@@ -308,7 +376,7 @@ with the id `flow:<workflowId>` and its workflow's name as its label:
   as the detector (source `detector`). Their fingerprints are the detector's own, so the same finding refreshes the open
   suggestion, and a finding under `minConfidence` is held back (the node's item says why).
 - **What follows**: everything a built-in detector has. People's dismissals quiet it. A suggestion it stops finding
-  expires after 14 days. An applied one is measured ([7](#7-measuring-the-effect)). Insights lists its record. **Suggestion
+  expires after 14 days. An applied one is measured ([7](#7-measuring-the-effect)). What Landflow knows lists its record. **Suggestion
   From** on On Usage Event lists it, so a flow can act when one of its suggestions is applied.
 
 For example, an overlap finder: Detector Trigger → Landflow Usage (Search Facts) → an AI Agent judging which pairs are
@@ -365,7 +433,7 @@ were 2"); without one the detector's own current multiplier is used, and the res
 
 #### The analyst agent
 
-**Create the Platform analyst** (Insights, or `POST /api/brain/analyst`) makes and publishes an ordinary agent:
+**Create the Platform analyst** (Brain → What Landflow knows, or `POST /api/brain/analyst`) makes and publishes an ordinary agent:
 
 - its persona: an analyst that looks numbers up before it answers, never invents them and files one concrete change at
   a time;
@@ -547,8 +615,9 @@ Routes are also in [reference/api.md](reference/api.md), and variables in
   `apps/web/src/app/api/usage/kinds/`: their routes.
 - `apps/web/src/lib/server/mcp/brain-tools.ts`: the brain's tools on the instance MCP server.
 - `apps/web/src/lib/server/nodes/usage.ts`: the seven nodes, `nodes/entities.ts` the Entity node; `nodes/vector-stores.ts` refuses the brain's collections.
-- `apps/web/src/components/brain/`: the inbox, the canvas card and the Insights panel.
+- `apps/web/src/components/brain/`: the inbox, the canvas card, What Landflow knows (`brain-panel.tsx`) and the Brain page
+  (`wiki/`); `apps/web/src/lib/server/brain/wiki.ts` builds the Brain page and Ask.
 - Tests: `apps/web/test/brain.test.ts`, `apps/web/test/brain-events.test.ts` (custom kinds), `apps/web/test/brain-metrics.test.ts` (declared effect metrics), `apps/web/test/brain-actions.test.ts` (actions and On Suggestion Decided), `apps/web/test/brain-entities.test.ts` (entities), `apps/web/test/brain-audience.test.ts` (audiences and the Slack mirror).
 - The newer pieces have their own limits, listed in their sections and in [limitations.md](limitations.md): custom kinds
-  have no UI; entities are four fixed types without relations; a flow's button only records a decision unless a flow
+  have no UI; entities are four fixed types without relations (the Brain page relates them only through shared work); a flow's button only records a decision unless a flow
   listens; Slack mirroring is DMs only and not retried; a flow backtest runs every node of the flow once per point.

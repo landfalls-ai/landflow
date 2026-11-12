@@ -5,10 +5,10 @@
  * period before, runs per hour or day, and a row per workflow. Manual runs
  * (editor and chat tests) are left out unless "Include manual runs" is on.
  * The estimated AI cost of the workflows' model calls (/api/insights/ai-usage)
- * comes alongside, test runs included.
+ * comes alongside, test runs included. What the second brain knows moved to /brain; a link stays here.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowDown, ArrowUp, Minus } from 'lucide-react';
+import { ArrowDown, ArrowUp, Brain, Minus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import type { InsightsPeriod, InsightsReport, InsightsTotals } from '@/lib/shared/platform';
@@ -18,7 +18,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { SectionLabel, Switch } from '@/components/ui/inputs';
 import { change, formatMinutes, formatRate, formatRunTime } from '@/components/insights/format';
 import { FAILED_COLOR, RunsChart, SUCCEEDED_COLOR } from '@/components/insights/runs-chart';
-import { BrainPanel } from '@/components/brain/brain-panel';
+import Link from 'next/link';
 import { WorkflowTable } from '@/components/insights/workflow-table';
 import { AgentLayersCard } from '@/components/insights/agent-layers-card';
 
@@ -220,7 +220,12 @@ export default function InsightsPage() {
           )}
         </Card>
 
-        <BrainPanel />
+        <Link href="/brain" className="flex items-center gap-2 rounded-2xl border border-hair bg-sf px-4 py-3 text-[13px] text-t1 hover:border-ac">
+          <Brain className="size-4 text-viz-7" aria-hidden />
+          <span className="font-medium">What Landflow knows</span>
+          <span className="min-w-0 truncate text-t3">moved to the Brain: its pages, what teams share, its facts and detectors</span>
+          <span className="ml-auto text-ac">Open →</span>
+        </Link>
 
         <p className="text-[12px] leading-relaxed text-t3">
           Insights are counted as runs finish and kept for 400 days, apart from execution history, so pruning executions doesn’t change them. Time saved is the

@@ -1988,6 +1988,38 @@ function paths(): Record<string, Record<string, Json>> {
     responses: { 200: reply('The results', object({ backtests: array({ type: 'object' }) }, ['backtests'])) },
   });
   add('get', '/api/brain/status', { tag: 'Second brain', id: 'brainStatus', summary: 'What the second brain holds and when it last looked', responses: { 200: reply('The status', { type: 'object' }) } });
+  // The Brain page: the second brain read as a wiki (docs/second-brain.md#the-brain-page).
+  const workItem = { type: 'object', description: 'A work.* event: id, at, kind, source, title, summary, url, actor (email), team, customer, initiative, refs (the pages it names, <type>/<id>)' };
+  const wikiSummary = object({ text: { type: 'string', description: 'With [[type/id]] page links' }, model: { type: 'string' }, generatedAt: { type: 'string' }, stale: { type: 'boolean', description: 'The facts or work changed since it was written' }, links: array({ type: 'string' }) }, ['text', 'model', 'generatedAt', 'stale', 'links']);
+  add('get', '/api/brain/wiki', {
+    tag: 'Second brain',
+    id: 'brainWikiHome',
+    summary: 'The Brain page’s home',
+    description: 'The pages (entities) with how much work named them in 7 and 30 days; `shared`: customers and initiatives two or more teams worked on this week; `teams`; `kinds`; the latest work; open suggestions; `health` (no owner, quiet, summaries out of date); and the brain’s status. Only what the caller can open.',
+    responses: { 200: reply('The home', object({ status: { type: 'object' }, days: { type: 'integer' }, entries: array({ type: 'object' }), shared: array({ type: 'object' }), teams: array({ type: 'object' }), kinds: array({ type: 'object' }), recent: array(workItem), proposals: array(proposal), health: { type: 'object' }, model: { type: 'string' } }, ['status', 'days', 'entries', 'shared', 'teams', 'kinds', 'recent', 'proposals', 'health'])) },
+  });
+  add('get', '/api/brain/wiki/{type}/{id}', {
+    tag: 'Second brain',
+    id: 'brainWikiPage',
+    summary: 'One page of the Brain page',
+    description: 'The entity, its facts and open suggestions, the work that names it (90 days), the people and teams on it, related pages, the pages that name it, and the summary the model wrote. `canEdit` when the caller can change the entity.',
+    responses: { 200: reply('The page', object({ entity: { type: 'object' }, facts: array({ type: 'object' }), proposals: array(proposal), summary: wikiSummary, work: array(workItem), people: array({ type: 'object' }), related: array({ type: 'object' }), teams: array({ type: 'object' }), mentionedIn: array({ type: 'object' }), canEdit: { type: 'boolean' } }, ['entity', 'facts', 'proposals', 'work', 'people', 'related', 'teams', 'mentionedIn', 'canEdit'])), 404: notFound },
+  });
+  add('post', '/api/brain/wiki/{type}/{id}/summary', {
+    tag: 'Second brain',
+    id: 'writeBrainWikiSummary',
+    summary: 'Have the brain’s model write a page’s summary',
+    description: 'From what the caller can see of the page; kept until it is written again. 409 when the brain has no model (LANDFLOW_BRAIN_MODEL=off), 502 when the model fails.',
+    responses: { 200: reply('The summary', object({ summary: wikiSummary }, ['summary'])), 404: notFound, 409: errorRef('The brain has no model'), 502: errorRef('The model failed') },
+  });
+  add('post', '/api/brain/ask', {
+    tag: 'Second brain',
+    id: 'askBrain',
+    summary: 'Ask the second brain',
+    description: 'Finds the pages, facts and work the question is about, among what the caller can open, and the brain’s model answers from them with [[type/id]] page links and [n] references to `work`. `about` (<type>/<id>) asks from a page. Without a model `answer` is left out.',
+    body: jsonBody(object({ question: { type: 'string', maxLength: 500 }, about: { type: 'string', description: '<type>/<id> of the page it is asked from' } }, ['question'])),
+    responses: { 200: reply('The answer', object({ question: { type: 'string' }, answer: { type: 'string' }, model: { type: 'string' }, pages: array({ type: 'object' }), facts: array({ type: 'object' }), work: array(workItem), note: { type: 'string' }, about: { type: 'string' } }, ['question', 'pages', 'facts', 'work'])), 400: invalid },
+  });
   return out;
 }
 
