@@ -7,6 +7,7 @@
  * need regular mode).
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { singleton } from '../singleton';
 
 export interface BacktestScope {
   /** The moment being replayed, in ms. */
@@ -15,10 +16,12 @@ export interface BacktestScope {
   quiet: number;
 }
 
-const scope = new AsyncLocalStorage<BacktestScope>();
+// Pinned to globalThis: Next.js compiles the routes and the node registry into separate module graphs, and a
+// module-level store would leave the nodes blind to a backtest started from the route.
+const scope = () => singleton('brain-backtest-scope', () => new AsyncLocalStorage<BacktestScope>());
 
 /** The backtest this code runs in, if it does. */
-export const backtestScope = (): BacktestScope | undefined => scope.getStore();
+export const backtestScope = (): BacktestScope | undefined => scope().getStore();
 
 /** Run `fn` as a backtest at `asOf`. */
-export const inBacktest = <T>(value: BacktestScope, fn: () => T): T => scope.run(value, fn);
+export const inBacktest = <T>(value: BacktestScope, fn: () => T): T => scope().run(value, fn);
