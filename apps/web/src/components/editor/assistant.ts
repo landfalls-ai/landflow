@@ -510,6 +510,8 @@ export const useAssistant = create<AssistantState>((set, get) => ({
           ? { ...item, parts: item.parts.map((part) => (part.kind === 'proposal' && part.proposal.id === proposalId ? { ...part, proposal: { ...part.proposal, state, ...(skipped && { skipped }) } } : part)) }
           : item,
       ),
+      // An undone fix leaves no "Fixed" bubble on the canvas (there is one at a time).
+      ...(state === 'undone' && { fixNotes: {} }),
     }));
   },
 
@@ -527,8 +529,14 @@ export const offersTest = (items: ChatItem[]) => {
 /** Spotlight works on its own: drafting a flow, testing and fixing it, or a drafted flow waiting for its test. */
 export const useWorking = () => useAssistant((s) => s.drafting || Boolean(s.testing) || offersTest(s.items));
 
+/** The execution of the last run Spotlight started: its end is a row, not a toast, even once the session is over. */
+let ownedRun: string | undefined;
+export const ownRun = (executionId: string | undefined) => (ownedRun = executionId);
+
 /** A run Spotlight started (a test-and-fix session, a draft's first test): its timeline says how it went, not a toast. */
 export function spotlightOwnsRun(): boolean {
+  const { executionId } = useEditor.getState();
+  if (executionId && executionId === ownedRun) return true;
   const s = useAssistant.getState();
   return Boolean(s.testing || s.pending || s.drafting) || s.items.some((item) => item.role === 'assistant' && item.parts.some((p) => p.kind === 'run' && p.run.state === 'running'));
 }

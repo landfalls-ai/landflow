@@ -14,7 +14,7 @@ import { nanoid } from 'nanoid';
 import { toast } from 'sonner';
 import { opsTitle } from '@/lib/shared/assistant-ops';
 import { checkRun, hollowSteps, multipliedSteps, needsPerson, sameFailure, sendingSteps, type CheckedRun, type RunVerdict } from '@/lib/shared/run-check';
-import { applyChanges, fixedNodes, runDigests, undos, useAssistant, type Need, type ReplyPart } from './assistant';
+import { applyChanges, fixedNodes, ownRun, runDigests, undos, useAssistant, type Need, type ReplyPart } from './assistant';
 import { agentsSettled } from './new-agent';
 import { publishVersion, toastApprovalRequested } from './publish-control';
 import { useEditor } from './store';
@@ -103,7 +103,7 @@ function personNeed(result: RunVerdict, error: string | undefined, goal: string 
       : what === 'agent'
         ? `“${node}” has no agent picked.`
         : /credential/i.test(error ?? '')
-          ? `“${node}” needs a credential: ${error}`
+          ? `“${node}” needs ${/No (.+?) credential selected/i.exec(error ?? '')?.[1] ? `a ${/No (.+?) credential selected/i.exec(error ?? '')?.[1]} credential` : 'a credential'} picked.`
           : `“${node}” was refused by the app (${error}): its credential is missing or wrong.`;
   return { what, text, ...(node && { node }), ...(goal && { goal }) };
 }
@@ -122,8 +122,12 @@ async function runOnce(signal: AbortSignal): Promise<RunVerdict | { stopped: str
   await until(() => !useEditor.getState().running, signal);
   const { run } = useEditor.getState();
   if (!run) return { stopped: 'The editor can’t run the workflow right now.' };
-  run({ kind: 'run' });
-  if (!(await until(() => useEditor.getState().running, signal, 3000))) {
+  // This run is Spotlight's: its end is a row of the timeline, even once the session is over (no toast).
+  run({ kind: 'run', by: 'spotlight' });
+  const started = await until(() => useEditor.getState().running, signal, 3000);
+  // A run followed from the server (the stream dropped) is matched by its execution, once the server names it.
+  if (started) void until(() => Boolean(useEditor.getState().executionId), signal, 10000).then((named) => named && ownRun(useEditor.getState().executionId));
+  if (!started) {
     if (signal.aborted) return { stopped: 'Stopped.' };
     if (useTestListener.getState().listening) return { stopped: 'The trigger waits for a test event: send one (or pin test data on the trigger), then test again.' };
     return { stopped: 'The run didn’t start.' };
@@ -146,6 +150,21 @@ function outputOf(nodeName: string | undefined): string {
 }
 
 /** A reply of the session's own: a run (in the session, with its `testId`), or the outcome (after it); returns its id. */
+/**
+ * Ask the person for something only they can do. An older question still open is taken out: the newest one is what
+ * holds the session up (asking twice for the same yes reads as a stutter).
+ */
+function ask(need: Need): string {
+  useAssistant.setState((s) => ({
+    items: s.items.flatMap((item) => {
+      if (item.role !== 'assistant' || !item.parts.some((p) => p.kind === 'needs' && !p.need.state)) return [item];
+      const parts = item.parts.filter((p) => !(p.kind === 'needs' && !p.need.state));
+      return parts.length ? [{ ...item, parts }] : [];
+    }),
+  }));
+  return say([{ kind: 'needs', need }]);
+}
+
 function say(parts: ReplyPart[], testId?: string): string {
   const id = nanoid(8);
   useAssistant.getState().append([{ id, role: 'assistant', parts, ...(testId && { testId }) }]);
@@ -170,7 +189,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
     // What only the person can do comes first: no run, no fix spent on it.
     const first = beforeTesting(goal);
     if (first) {
-      say([{ kind: 'needs', need: first }]);
+      ask(first);
       return;
     }
     let fixes = 0;
@@ -199,7 +218,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         const error = failedNode ? (useEditor.getState().statuses[failedNode.id]?.error ?? runError()) : runError();
         const need = personNeed(result, error, goal);
         if (need) {
-          say([{ kind: 'needs', need }]);
+          ask(need);
           return;
         }
         // The same failure after a fix: the fix didn't help. Undo it and stop, rather than spend another.
@@ -251,7 +270,8 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         const yes = said?.kind === 'text' && /^\s*yes\b/i.test(said.text);
         if (!failed && yes) say([{ kind: 'action', action: 'publish' }]);
         else if (!failed) say([{ kind: 'text', text: 'It runs, but doesn’t do all you asked yet, and I have no change for it: tell me what to change.' }]);
-        else say([{ kind: 'text', text: `I can’t fix “${result.node ?? 'this'}” myself${said?.kind === 'text' ? `: ${said.text.split(/(?<=[.!?])\s/)[0]}` : '.'}` }]);
+        // The reply above already says why.
+        else say([{ kind: 'text', text: `I found no fix for “${result.node ?? 'this step'}”, so I stopped. Tell me what it should do, or open it.` }]);
         return;
       }
       const label = proposals.length === 1 ? `Spotlight applied “${proposals[0].summary}”` : `Spotlight applied ${proposals.length} fixes`;
@@ -278,6 +298,9 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
       tried.push(...proposals.map((p) => p.summary));
       fixes++;
     }
+  } catch (e) {
+    // A bug must not end a session in silence.
+    if (!signal.aborted) say([{ kind: 'text', text: `Testing stopped: ${(e as Error).message}` }]);
   } finally {
     // Over: the conversation comes back from the side with the outcome.
     if (useAssistant.getState().testing === abort) useAssistant.setState({ testing: undefined, fixing: undefined });

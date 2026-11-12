@@ -769,10 +769,10 @@ export function Editor({ workflowId }: { workflowId: string }) {
     [workflowId],
   );
 
-  const report = useCallback((result: RunResult | undefined, started: number, label: string) => {
+  const report = useCallback((result: RunResult | undefined, started: number, label: string, spotlights = false) => {
     if (!result) return;
     if (result.status === 'error') prefetchFailure();
-    if (spotlightOwnsRun()) return;
+    if (spotlights || spotlightOwnsRun()) return;
     if (result.status === 'success') toast.success(`${label} succeeded in ${duration(Date.now() - started)}`);
     else if (result.status === 'canceled') toast(`${label} stopped`);
     else if (result.status === 'waiting') toast(`${label} is waiting; it continues in the background`);
@@ -786,7 +786,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
       // A Webhook or Form trigger without test data: listen for a test event instead, as n8n does.
       const listenOn = testTriggerFor(command);
       if (listenOn) return listenForTestEvent(listenOn);
-      if (command.kind === 'run') return report(await execute(), started, 'Workflow');
+      if (command.kind === 'run') return report(await execute(), started, 'Workflow', command.by === 'spotlight');
       if (command.kind === 'debug') return report(await execute({}, true), started, 'Debug run');
 
       const state = useEditor.getState();

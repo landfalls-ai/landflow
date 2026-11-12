@@ -12,7 +12,7 @@ vi.mock('@/components/editor/assistant', async (original) => ({
   applyChanges: vi.fn(() => true),
 }));
 
-const { fixedNodes, spotlightOwnsRun, useAssistant } = await import('@/components/editor/assistant');
+const { fixedNodes, ownRun, spotlightOwnsRun, useAssistant } = await import('@/components/editor/assistant');
 const { useEditor } = await import('@/components/editor/store');
 const { afterReply, useAutonomous } = await import('@/components/editor/autonomous');
 const { agentStep, lastRunOf, stepsOf, titleOf } = await import('@/components/editor/timeline');
@@ -106,6 +106,10 @@ describe('the panel stays where the person put it', () => {
     expect(useAssistant.getState().fixNotes.n1).toMatchObject({ text: 'Pick the Slack credential' });
     useAssistant.getState().dismissFix('n1');
     expect(useAssistant.getState().fixNotes).toEqual({});
+    // Undoing the fix takes its bubble away too.
+    useAssistant.getState().noteFix(['n1'], 'Pick the Slack credential');
+    useAssistant.getState().setProposalState('x', 'p', 'undone');
+    expect(useAssistant.getState().fixNotes).toEqual({});
   });
 
   it('owns the runs it starts: no run toast while it tests or a run row is still running', () => {
@@ -116,6 +120,12 @@ describe('the panel stays where the person put it', () => {
     useAssistant.setState({ testing: new AbortController() });
     expect(spotlightOwnsRun()).toBe(true);
     useAssistant.setState({ testing: undefined });
+    expect(spotlightOwnsRun()).toBe(false);
+    // Its run ends after the session asked the person and ended: still its own.
+    useEditor.setState({ executionId: 'ex_1' });
+    ownRun('ex_1');
+    expect(spotlightOwnsRun()).toBe(true);
+    useEditor.setState({ executionId: 'ex_2' });
     expect(spotlightOwnsRun()).toBe(false);
   });
 });

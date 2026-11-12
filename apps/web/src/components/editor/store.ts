@@ -128,7 +128,8 @@ export interface PaletteRequest {
 }
 
 /** What the toolbar, node toolbars and the node panel can ask the editor to run. */
-export type RunCommand = { kind: 'run' } | { kind: 'debug' } | { kind: 'node'; nodeId: string; scope: 'from' | 'only' };
+/** `by: 'spotlight'`: Spotlight asked for the run, so its timeline reports it, not a toast. */
+export type RunCommand = { kind: 'run'; by?: 'spotlight' } | { kind: 'debug' } | { kind: 'node'; nodeId: string; scope: 'from' | 'only' };
 
 interface EditorState {
   workflowId: string;

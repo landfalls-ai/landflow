@@ -162,7 +162,9 @@ function NeedRow({ itemId, need }: { itemId: string; need: Need }) {
         </span>
       </div>
       {need.state ? (
-        <p className="pl-5 text-[11.5px] text-t3">{need.state === 'done' ? 'Done.' : 'Left for later.'}</p>
+        <p className="pl-5 text-[11.5px] text-t3">
+          {need.state === 'dismissed' ? 'Left for later.' : need.what === 'sends' ? 'You said yes: tests of this workflow run for real.' : need.what === 'trigger' ? 'Trigger added.' : 'Testing again.'}
+        </p>
       ) : (
         <div className="flex flex-wrap gap-1.5 pl-5">
           <Button size="sm" variant="primary" disabled={busy} onClick={primary.act}>
@@ -349,6 +351,8 @@ function ReplyView({ item, live, status }: { item: Reply; live: boolean; status?
   // Within a session, the reply's texts are one: its first sentence, the rest on "more".
   // Autonomous replies that changed the flow too: the rows say what was done.
   const session = Boolean(item.testId) || (autonomous && !live && item.parts.some((p) => p.kind === 'proposal'));
+  // A session's fix: its row says what it did and opens on the model's words; the prose would say it twice.
+  const quietText = Boolean(item.testId) && !live && item.parts.some((p) => p.kind === 'proposal' && p.proposal.state);
   const sessionText = session ? item.parts.flatMap((p) => (p.kind === 'text' ? [p.text] : [])).join('\n\n') : '';
   const firstText = item.parts.findIndex((p) => p.kind === 'text');
   return (
@@ -357,7 +361,7 @@ function ReplyView({ item, live, status }: { item: Reply; live: boolean; status?
       <div className="min-w-0 flex-1 space-y-2">
         {item.parts.map((part, i) =>
           part.kind === 'text' ? (
-            session ? (
+            quietText ? null : session ? (
               i === firstText && <ReplyText key={i} text={sessionText} short />
             ) : (
               <ReplyText key={i} text={part.text} short={false} />

@@ -487,7 +487,7 @@ export function withoutRepeats(text: string, earlier: string): string {
 }
 
 /** A reply that says only the person can fix it: a credential, an account, a key, an id. */
-const PERSON_ONLY = /\b(credential|api key|token|account|sign in|log in|permission)s?\b|\bpick (an?|the) \w+|\byou (need|have) to\b/i;
+const PERSON_ONLY = /\b(credential|api key|access token|sign in|log in|permission)s?\b/i;
 
 /** The model saying what it is about to do or what it looked at, before the answer. */
 const NARRATION = /^(?:let me|let's|i'll|i will|i need to|i'm going to|now i|now,? let|first,|next,|looking at|based on|i can see|i see that|to fix this|the user (?:wants|needs|asked))\b/i;
