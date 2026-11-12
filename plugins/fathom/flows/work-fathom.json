@@ -1,0 +1,195 @@
+{
+  "kind": "landflow/template",
+  "version": 1,
+  "template": {
+    "name": "Meetings from Fathom into the second brain",
+    "description": "Each recorded meeting in Fathom becomes a work.meeting_held event with its summary, and its action items work.action_item events, keeping the customer in the call in the second brain. Transcripts stay out.",
+    "categories": [
+      "productivity",
+      "data"
+    ],
+    "credentials": [
+      {
+        "id": "fathom",
+        "type": "fathom.fathomApi",
+        "name": "Fathom",
+        "description": "An API key from Fathom’s settings (API Access)."
+      }
+    ],
+    "setup": [
+      "Pick or add the Fathom API key.",
+      "Choose whose recordings to follow, and set **Internal Domains** in the trigger’s options so an outside attendee names the customer.",
+      "Transcripts are off; turn on **Include Transcript** only if you mean to keep them. Publishing registers the webhook in Fathom.",
+      "Declare the work kinds once with `pnpm brain:work-kinds` (or leave **Declare Kind If New** on in **Record work event**).",
+      "Publish the workflow; the events show in **Insights**, the customers and initiatives in **What Landflow knows**."
+    ],
+    "dataTables": [],
+    "workflow": {
+      "id": "",
+      "name": "Meetings from Fathom into the second brain",
+      "description": "Each recorded meeting in Fathom becomes a work.meeting_held event with its summary, and its action items work.action_item events, keeping the customer in the call in the second brain. Transcripts stay out.",
+      "nodes": [
+        {
+          "id": "trigger",
+          "name": "Fathom Trigger",
+          "type": "fathom.fathomTrigger",
+          "typeVersion": 1,
+          "position": [
+            0,
+            0
+          ],
+          "parameters": {
+            "triggeredFor": [
+              "my_recordings"
+            ],
+            "options": {
+              "includeSummary": true,
+              "includeActionItems": true,
+              "actionItemItems": true
+            }
+          },
+          "credentials": {
+            "fathomApi": {
+              "id": "fathom",
+              "name": "Fathom"
+            }
+          }
+        },
+        {
+          "id": "record",
+          "name": "Record work event",
+          "type": "core.recordEvent",
+          "typeVersion": 1,
+          "position": [
+            260,
+            -160
+          ],
+          "parameters": {
+            "kind": "{{ $json.kind }}",
+            "attributes": "{{ ({ source: $json.source, sourceId: $json.sourceId, url: $json.url, actor: $json.actorEmail, title: $json.title, summary: $json.summary, team: $json.teamHint, initiative: $json.initiativeHint, customer: $json.customerHint, occurredAt: $json.occurredAt }) }}",
+            "declareIfNew": true,
+            "message": "{{ $json.title }}"
+          }
+        },
+        {
+          "id": "hasCustomer",
+          "name": "Names a customer?",
+          "type": "core.if",
+          "typeVersion": 1,
+          "position": [
+            260,
+            20
+          ],
+          "parameters": {
+            "conditions": {
+              "condition": [
+                {
+                  "left": "{{ $json.customerHint }}",
+                  "operator": "isNotEmpty",
+                  "right": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "customer",
+          "name": "Keep the customer",
+          "type": "core.brainEntity",
+          "typeVersion": 1,
+          "position": [
+            520,
+            20
+          ],
+          "parameters": {
+            "operation": "upsert",
+            "type": "customer",
+            "entityId": "{{ String($json.customerHint).toLowerCase().replace(/[^a-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) }}",
+            "name": "{{ $json.customerHint }}",
+            "attributes": "{{ ({ lastSource: $json.source, lastSeenAt: $json.occurredAt }) }}"
+          }
+        },
+        {
+          "id": "hasInitiative",
+          "name": "Part of an initiative?",
+          "type": "core.if",
+          "typeVersion": 1,
+          "position": [
+            260,
+            200
+          ],
+          "parameters": {
+            "conditions": {
+              "condition": [
+                {
+                  "left": "{{ $json.initiativeHint }}",
+                  "operator": "isNotEmpty",
+                  "right": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "initiative",
+          "name": "Keep the initiative",
+          "type": "core.brainEntity",
+          "typeVersion": 1,
+          "position": [
+            520,
+            200
+          ],
+          "parameters": {
+            "operation": "upsert",
+            "type": "initiative",
+            "entityId": "{{ String($json.initiativeHint).toLowerCase().replace(/[^a-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) }}",
+            "name": "{{ $json.initiativeHint }}",
+            "attributes": "{{ ({ lastSource: $json.source, lastSeenAt: $json.occurredAt }) }}"
+          }
+        }
+      ],
+      "connections": [
+        {
+          "id": "c1",
+          "type": "main",
+          "source": "trigger",
+          "sourceIndex": 0,
+          "target": "record",
+          "targetIndex": 0
+        },
+        {
+          "id": "c2",
+          "type": "main",
+          "source": "trigger",
+          "sourceIndex": 0,
+          "target": "hasCustomer",
+          "targetIndex": 0
+        },
+        {
+          "id": "c3",
+          "type": "main",
+          "source": "hasCustomer",
+          "sourceIndex": 0,
+          "target": "customer",
+          "targetIndex": 0
+        },
+        {
+          "id": "c4",
+          "type": "main",
+          "source": "trigger",
+          "sourceIndex": 0,
+          "target": "hasInitiative",
+          "targetIndex": 0
+        },
+        {
+          "id": "c5",
+          "type": "main",
+          "source": "hasInitiative",
+          "sourceIndex": 0,
+          "target": "initiative",
+          "targetIndex": 0
+        }
+      ]
+    }
+  }
+}

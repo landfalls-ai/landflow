@@ -84,4 +84,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
   and Fathom name a customer by the attendee's domain (`globex.com`), which joins nothing else until someone merges them. The
   person who did the work is the event's `actor` (an email), not an entity; the Directory template makes the people.
   Record Event keeps 200 characters of a string attribute, so the 600-character summary is cut in the ledger.
+  Installing Linear, Attio or Fathom from the repository's marketplace on an instance that already runs it (`dev:all`,
+  compose) starts a second copy under the same plugin id and lists its template twice (built-in and installed); install
+  from the marketplace only where the plugin isn't bundled.
 - **Checked against fakes only**: Slack, Google, Notion, Linear, Attio and Fathom activity were tested against local fakes of their APIs, not a real workspace.

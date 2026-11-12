@@ -51,4 +51,9 @@ from the name, so the same customer from Slack and Drive is one entity):
 Declare the kinds first with `pnpm brain:work-kinds` (the templates' fallback declares a kind from the first event's fields,
 all optional). The events show in **Insights**, the entities in **What Landflow knows**.
 
+The Linear, Attio and Fathom templates also ship as marketplace flows (`plugins/<name>/flows/work-<name>.json`, exported
+from the built-in ones) with their plugins in the repository's marketplace (`.claude-plugin/marketplace.json`), so an
+instance that doesn't run those plugins can install one with its flow from **Marketplace**. An instance that runs them
+already (`pnpm dev:all`, compose) has the built-in templates and needs no install.
+
 **App webhook triggers.** A node with `triggerSource: "appWebhook"` registers a webhook at the service when its workflow is published and removes it when it is unpublished, so events arrive as they happen instead of on a poll. The TypeScript, Go and Python SDKs check GitHub (`X-Hub-Signature-256`), Stripe (`Stripe-Signature`, with a timestamp tolerance) and Slack (`X-Slack-Signature`) signatures in constant time ([docs/protocol.md §12](../protocol.md#12-app-webhook-triggers)).
