@@ -11,7 +11,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
-import { ArrowUp, Bot, Check, ChevronDown, ChevronRight, CircleCheck, CircleX, ExternalLink, Hand, Loader2, Mic, PanelRightClose, PanelRightOpen, Play, Rocket, Sparkles, Square, SquarePen, Undo2, Wrench, X, Zap } from 'lucide-react';
+import { ArrowUp, Bot, Check, ChevronDown, ChevronRight, CircleCheck, CircleStop, CircleX, ExternalLink, Hand, Loader2, Mic, PanelRightClose, PanelRightOpen, Play, Rocket, Sparkles, Square, SquarePen, Undo2, Wrench, X, Zap } from 'lucide-react';
 import { nanoid } from 'nanoid';
 import { cn } from '@/lib/utils';
 import { opsTitle } from '@/lib/shared/assistant-ops';
@@ -20,12 +20,13 @@ import { Button } from '../ui/button';
 import { useBuildFlow } from './ai-builder';
 import { afterReply, testDraft, useAutonomous } from './autonomous';
 import { LiveSteps, useLive } from './building';
-import { applyChanges, sendFeedback, suggestionKey, undos, useAssistant, useSuggestions, useWorking, type AgentProgress, type ChatItem, type Need, type Proposal, type ReplyAction, type Suggestion, type TestRun } from './assistant';
+import { applyChanges, draft as draftCall, sendFeedback, suggestionKey, undos, useAssistant, useSuggestions, useWorking, type AgentProgress, type ChatItem, type Need, type Outcome, type Proposal, type ReplyAction, type Suggestion, type TestRun } from './assistant';
 import { useEditor } from './store';
+import { usePhone } from '@/lib/client/use-phone';
 import { dictationSupported, useDictation } from './use-dictation';
 import { OpsDiff, Warnings } from './suggestions-card';
 import { MAX_FIXES, productionNote, publishToProduction, sendsAllowed, testUntilItRuns } from './test-session';
-import { agentStep, firstSentence, lastRunOf, openNeedOf, stepsOf, stoppedAtOf, titleOf } from './timeline';
+import { agentStep, firstSentence, foldLine, lastOutcomeOf, lastRunOf, openNeedOf, runRow, sessionFold, stepsOf, stoppedAtOf, titleOf } from './timeline';
 
 const INPUT_ID = 'spotlight-input';
 
@@ -185,6 +186,59 @@ function NeedRow({ itemId, need }: { itemId: string; need: Need }) {
   );
 }
 
+/**
+ * How a session that didn't pass ended: why, in one line, then what to do next. **Undo all fixes** puts the flow back as
+ * it was before the session (the oldest fix's undo restores the graph from before it).
+ */
+function OutcomeCard({ itemId, outcome }: { itemId: string; outcome: Outcome }) {
+  const busy = useAssistant((s) => s.pending || Boolean(s.testing));
+  // Select the items, then filter: a selector that builds a new array each time re-renders forever.
+  const items = useAssistant((s) => s.items);
+  const applied = outcome.fixes.filter((f) => items.some((i) => i.id === f.item && i.role === 'assistant' && i.parts.some((p) => p.kind === 'proposal' && p.proposal.id === f.proposal && p.proposal.state === 'applied')));
+  // Only while nothing changed since it stopped: no edit, undo or later Spotlight change. Restoring the graph from before
+  // the session would take those with it, and leave a later change's own Undo pointing at a graph that is gone.
+  const untouched = useEditor((s) => s.edits) === outcome.edits;
+  const newest = useAssistant((s) => s.items.length) >= 0 && outcome.fixes.some((f) => f.proposal === [...undos.keys()].at(-1));
+  const canUndo = applied.length > 0 && untouched && newest;
+  const undoAll = () => {
+    const first = applied[0];
+    if (!first) return;
+    undos.get(first.proposal)?.();
+    for (const f of applied) {
+      undos.delete(f.proposal);
+      useAssistant.getState().setProposalState(f.item, f.proposal, 'undone');
+    }
+    useAssistant.getState().updateParts(itemId, (parts) => parts.map((p) => (p.kind === 'outcome' ? { ...p, outcome: { ...p.outcome, state: 'undone' as const } } : p)));
+  };
+  return (
+    <div role="group" aria-label="Stopped" className="animate-fade-up space-y-2 rounded-xl border border-hair bg-sf p-2.5">
+      <div className="flex items-start gap-1.5 text-[12.5px] leading-snug">
+        <CircleStop className="mt-px size-3.5 shrink-0 text-t2" />
+        <span className="min-w-0 [overflow-wrap:anywhere]">
+          <span className="font-semibold text-t1">Stopped · </span>
+          <span className="text-t2">{outcome.text}</span>
+        </span>
+      </div>
+      {outcome.state === 'undone' && <p className="pl-5 text-[11.5px] text-t3">The flow is back as it was before the test.</p>}
+      <div className="flex flex-wrap gap-1.5 pl-5">
+        {outcome.node && (
+          <Button size="sm" variant="primary" onClick={() => openNodeNamed(outcome.node!)}>
+            Open “{outcome.node}”
+          </Button>
+        )}
+        {canUndo && (
+          <Button size="sm" variant="ghost" disabled={busy} title="Puts the flow back as it was before this test." onClick={undoAll}>
+            Undo {applied.length === 1 ? 'the fix' : `all ${applied.length} fixes`}
+          </Button>
+        )}
+        <Button size="sm" variant="ghost" disabled={busy} onClick={() => void testUntilItRuns(outcome.goal)}>
+          Try again
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 /** The first step after the trigger slot: where a new manual trigger goes in front of. */
 function firstStep(): string | undefined {
   const { nodes, edges } = useEditor.getState();
@@ -193,7 +247,12 @@ function firstStep(): string | undefined {
 
 /** One run of a test-and-fix session; a failed one opens the node it failed at. */
 function RunLine({ run }: { run: TestRun }) {
-  const at = /failed at “([^”]+)”/.exec(run.summary ?? '')?.[1];
+  const row = runRow(run);
+  const at = row.node;
+  // The row keeps the error's first clause; the rest (often what to do) opens below, for touch and keyboard too.
+  const full = (run.summary ?? '').replace(/^failed at “[^”]+”:?\s*/, '');
+  const cut = run.state === 'failed' && full.length > row.reason.length + 1;
+  const [more, setMore] = useState(false);
   const body = (
     <>
       {run.state === 'running' ? (
@@ -205,16 +264,32 @@ function RunLine({ run }: { run: TestRun }) {
       )}
       <span className="min-w-0 [overflow-wrap:anywhere]">
         <span className="font-semibold text-t1">Run {run.round}</span>
-        <span className="text-t2"> · {run.state === 'running' ? 'running…' : run.state === 'passed' ? `no errors: ${run.summary}` : run.summary}</span>
+        {row.node && <span className="text-t1"> · “{row.node}”</span>}
+        <span className="text-t2"> · {row.reason}</span>
       </span>
     </>
   );
-  return at ? (
-    <button type="button" onClick={() => openNodeNamed(at)} title={`Open “${at}”`} className="flex w-full items-start gap-1.5 rounded-md text-left text-[12.5px] leading-snug hover:bg-acdim">
+  const line = at ? (
+    <button type="button" onClick={() => openNodeNamed(at)} title={`${run.summary}. Open “${at}”`} className="flex min-w-0 flex-1 items-start gap-1.5 rounded-md text-left text-[12.5px] leading-snug hover:bg-acdim">
       {body}
     </button>
   ) : (
-    <div className="flex items-start gap-1.5 text-[12.5px] leading-snug">{body}</div>
+    <div title={run.summary} className="flex min-w-0 flex-1 items-start gap-1.5 text-[12.5px] leading-snug">
+      {body}
+    </div>
+  );
+  return (
+    <div>
+      <div className="flex items-start gap-1">
+        {line}
+        {cut && (
+          <button type="button" aria-expanded={more} aria-label={more ? 'Less' : 'The whole error'} onClick={() => setMore((m) => !m)} className="min-h-6 shrink-0 rounded-full px-1.5 text-[11.5px] font-semibold text-ac hover:bg-acdim max-md:min-h-8">
+            {more ? 'less' : 'more'}
+          </button>
+        )}
+      </div>
+      {more && <p className="mt-1 pl-5 text-[12px] leading-snug text-t2 [overflow-wrap:anywhere]">{full}</p>}
+    </div>
   );
 }
 
@@ -242,6 +317,7 @@ function AutonomousSwitch() {
       type="button"
       role="switch"
       aria-checked={on}
+      aria-label="Autonomous"
       title={on ? 'Autonomous: Spotlight applies its changes and tests and fixes the flow by itself. Click to ask first.' : 'Asks before applying and testing. Click to let Spotlight do it by itself.'}
       onClick={() => set(!on)}
       className={cn(
@@ -249,7 +325,7 @@ function AutonomousSwitch() {
         on ? 'border-acbd bg-acdim text-ac' : 'border-hair text-t3 hover:text-t1',
       )}
     >
-      <Zap className="size-3" fill={on ? 'currentColor' : 'none'} /> Autonomous
+      <Zap className="size-3" fill={on ? 'currentColor' : 'none'} /> <span className="max-md:sr-only">Autonomous</span>
     </button>
   );
 }
@@ -379,6 +455,8 @@ function ReplyView({ item, live, status }: { item: Reply; live: boolean; status?
             <ActionView key={i} itemId={item.id} action={part} />
           ) : part.kind === 'needs' ? (
             <NeedRow key={i} itemId={item.id} need={part.need} />
+          ) : part.kind === 'outcome' ? (
+            <OutcomeCard key={i} itemId={item.id} outcome={part.outcome} />
           ) : null,
         )}
         {steps && <LiveSteps live={steps} />}
@@ -408,6 +486,13 @@ function Timeline({ live, status }: { live: boolean; status?: string }) {
   }, [items, agents, lastRole]);
   const lastId = items.at(-1)?.id;
   const placed = new Set(items.map((i) => i.id));
+  // A finished session folds to one line; the person opens it. The one running stays open.
+  const runningTest = useAssistant((s) => s.testingId);
+  const [opened, setOpened] = useState<Set<string>>(new Set());
+  const folds = new Map<string, ReturnType<typeof sessionFold>>();
+  for (const item of items) if (item.testId && !folds.has(item.testId)) folds.set(item.testId, sessionFold(items, item.testId, item.testId === runningTest));
+  const folded = (item: ChatItem) => Boolean(item.testId && folds.get(item.testId) && !opened.has(item.testId));
+  const firstOf = new Set([...folds.keys()].map((id) => items.find((i) => i.testId === id)?.id));
   return (
     <div
       ref={scroller}
@@ -419,8 +504,20 @@ function Timeline({ live, status }: { live: boolean; status?: string }) {
     >
       {/* A test-and-fix session's own requests ("Test run 2 failed at …") say what its run row says: left out. */}
       {items.map((item) => (
-        <div key={item.id} className={cn('space-y-3', item.role === 'user' && item.auto && !agents.some((a) => a.after === item.id) && 'hidden')}>
-          {item.role === 'user' && item.auto ? null : item.role === 'user' ? (
+        <div key={item.id} className={cn('space-y-3', ((item.role === 'user' && item.auto && !agents.some((a) => a.after === item.id)) || (folded(item) && !firstOf.has(item.id))) && 'hidden')}>
+          {item.testId && firstOf.has(item.id) && folds.get(item.testId) && (
+            <button
+              type="button"
+              aria-expanded={!folded(item)}
+              onClick={() => setOpened((o) => { const next = new Set(o); if (next.has(item.testId!)) next.delete(item.testId!); else next.add(item.testId!); return next; })}
+              className="flex min-h-7 w-full items-center gap-1.5 rounded-md text-left text-[12.5px] leading-snug text-t2 hover:bg-acdim"
+            >
+              {folds.get(item.testId)!.state === 'passed' ? <CircleCheck className="size-3.5 shrink-0 text-gn" /> : <CircleStop className="size-3.5 shrink-0 text-t3" />}
+              <span className="min-w-0 flex-1 truncate">{foldLine(folds.get(item.testId)!)}</span>
+              <ChevronRight className={cn('size-3.5 shrink-0 text-t3 transition-transform', !folded(item) && 'rotate-90')} />
+            </button>
+          )}
+          {folded(item) ? null : item.role === 'user' && item.auto ? null : item.role === 'user' ? (
             <div className="ml-auto w-fit max-w-[90%] animate-in whitespace-pre-wrap rounded-xl bg-ac2 px-3 py-1.5 text-[13px] leading-relaxed text-on-ac [overflow-wrap:anywhere]">{item.text}</div>
           ) : (
             <ReplyView item={item} live={live && item.id === lastId} status={status} />
@@ -441,9 +538,12 @@ function Timeline({ live, status }: { live: boolean; status?: string }) {
   );
 }
 
-/** While Spotlight works, the canvas keeps the whole flow in view as the panel and the logs change its size. */
-function useFlowInView(working: boolean) {
-  const { fitView } = useReactFlow();
+/**
+ * While Spotlight works, the canvas keeps the whole flow in view as the panel and the logs change its size; once it is on
+ * one node (fixing it, or it needs the person there), the camera goes to that node at a zoom you can read instead.
+ */
+function useFlowInView(working: boolean, focus: string | undefined) {
+  const { fitView, setCenter, getZoom, getViewport } = useReactFlow();
   const nodeCount = useEditor((s) => s.nodes.length);
   const [size, setSize] = useState('');
   const moved = useRef(false);
@@ -463,15 +563,55 @@ function useFlowInView(working: boolean) {
       pane.removeEventListener('pointerdown', mine);
     };
   }, [working]);
+  // On a node: pan there, at least at a readable zoom. A node out of the flow's fit is the point of it.
   useEffect(() => {
-    if (!working || !nodeCount || moved.current) return;
+    if (!focus || moved.current) return;
+    const node = useEditor.getState().nodes.find((n) => n.data.wf.name === focus);
+    if (!node) return;
+    const timer = setTimeout(() => {
+      if (moved.current) return;
+      const pane = document.querySelector('.react-flow');
+      const width = node.measured?.width ?? 200;
+      const height = node.measured?.height ?? 80;
+      const narrow = (pane?.clientWidth ?? 1000) < 600;
+      // A desktop shows the whole flow readably at fit: move only when the node is out of the clear part of the canvas
+      // (not under the zoom rail, the toolbar and minimap, or the Execute bar) or too small to read, and then pan rather
+      // than zoom when the zoom is readable already.
+      const zoom = getZoom();
+      if (!narrow && pane) {
+        const { x, y } = getViewport();
+        const left = node.position.x * zoom + x;
+        const top = node.position.y * zoom + y;
+        const clear = { left: 72, top: 48, right: pane.clientWidth - 300, bottom: pane.clientHeight - 120 };
+        if (zoom >= 0.75 && left >= clear.left && top >= clear.top && left + width * zoom <= clear.right && top + height * zoom <= clear.bottom) return;
+      }
+      void setCenter(node.position.x + width / 2, node.position.y + height / 2, { zoom: narrow ? Math.max(zoom, 0.85) : zoom >= 0.75 ? zoom : 1, duration: 500 });
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [focus, size, setCenter, getZoom, getViewport]);
+  useEffect(() => {
+    if (!working || !nodeCount || moved.current || focus) return;
     const timer = setTimeout(() => {
       const narrow = (document.querySelector('.react-flow')?.clientWidth ?? 1000) < 600;
       void fitView({ padding: narrow ? { left: '16px', top: '16px', bottom: '72px', right: '64px' } : { left: '72px', top: '56px', bottom: '120px', right: '72px' }, duration: 500, maxZoom: 1 });
     }, 160);
     return () => clearTimeout(timer);
-  }, [working, nodeCount, size, fitView]);
+  }, [working, nodeCount, size, fitView, focus]);
 }
+
+/** Whole seconds since `on` turned true; 0 while off. */
+function useSeconds(on: boolean): number {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    setSeconds(0);
+    if (!on) return;
+    const started = Date.now();
+    const timer = setInterval(() => setSeconds(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [on]);
+  return seconds;
+}
+
 
 /**
  * The Spotlight panel, at the right of the editor. Desktop: a column beside the canvas (and its logs), folded to a thin
@@ -493,6 +633,7 @@ export function SpotlightPanel({ hiddenOnPhone = false }: { hiddenOnPhone?: bool
   // How the last test ended, since the person last asked for something: older verdicts no longer hold.
   const run = lastRunOf(items.slice(items.findLastIndex((i) => i.role === 'user' && !i.auto) + 1));
   const need = openNeedOf(items);
+  const ended = lastOutcomeOf(items);
   const title = titleOf({
     drafting,
     testing,
@@ -502,10 +643,14 @@ export function SpotlightPanel({ hiddenOnPhone = false }: { hiddenOnPhone?: bool
     hasItems: items.length > 0,
     ...(need && !testing && { needs: need.what }),
     ...(run && run.state !== 'running' && !testing && { lastRun: run.state, stoppedAt: stoppedAtOf(run) }),
+    // A pass the review said no to stopped, whatever the last run said.
+    ...(ended && !testing && { lastRun: 'failed' as const, stoppedAt: ended.node }),
   });
   const { steps } = stepsOf(items, { live, drafting, agents });
   const latest = steps.at(-1)?.text;
-  useFlowInView(drafting || testing);
+  // The node Spotlight is on: the one it fixes, or the one it needs the person at.
+  // An open need is where Spotlight waits only while it is idle: a new session fits the flow again.
+  useFlowInView(drafting || testing, fixingName ?? (testing || drafting ? undefined : need?.node));
 
   const panel = useRef<HTMLElement>(null);
 
@@ -530,7 +675,20 @@ export function SpotlightPanel({ hiddenOnPhone = false }: { hiddenOnPhone?: bool
   }, []);
 
   const { setCollapsed, reset, stop } = useAssistant.getState();
-  const icon = busy ? <Loader2 className="size-3.5 shrink-0 animate-spin text-viz-7" /> : run?.state === 'passed' && !testing ? <CircleCheck className="size-3.5 shrink-0 text-gn" /> : <Sparkles className="size-3.5 shrink-0 text-viz-7" />;
+  // One set of colours: violet while it works, amber when it needs you, green when it passed; a stop is neutral.
+  const icon = busy ? (
+    <Loader2 className="size-3.5 shrink-0 animate-spin text-viz-7" />
+  ) : need ? (
+    <Hand className="size-3.5 shrink-0 text-warn" />
+  ) : run?.state === 'passed' && !ended ? (
+    <CircleCheck className="size-3.5 shrink-0 text-gn" />
+  ) : run?.state === 'failed' || ended ? (
+    <CircleStop className="size-3.5 shrink-0 text-t3" />
+  ) : (
+    <Sparkles className="size-3.5 shrink-0 text-viz-7" />
+  );
+  // Drafting is one request: the header counts its seconds, and Stop cancels it.
+  const draftSeconds = useSeconds(drafting);
 
   return (
     <aside
@@ -570,9 +728,15 @@ export function SpotlightPanel({ hiddenOnPhone = false }: { hiddenOnPhone?: bool
           <span role="status" aria-live="polite" className="min-w-0 flex-1 truncate text-[13px] font-semibold text-t1" title={latest}>
             {title}
           </span>
+          {/* Outside the live region: a screen reader would read the title again every second. */}
+          {drafting && draftSeconds >= 2 && (
+            <span aria-hidden className="-ml-1 shrink-0 text-[13px] text-t3 tabular-nums">
+              · {draftSeconds} s
+            </span>
+          )}
           <AutonomousSwitch />
           {(live || testing) && (
-            <button title="Stop" aria-label="Stop" onClick={stop} disabled={drafting} className="grid size-7 place-items-center rounded-full text-t3 hover:bg-rddim hover:text-rd disabled:opacity-40">
+            <button title="Stop" aria-label="Stop" onClick={stop} className="grid size-7 place-items-center rounded-full text-t3 hover:bg-rddim hover:text-rd disabled:opacity-40">
               <Square className="size-3" fill="currentColor" />
             </button>
           )}
@@ -629,6 +793,7 @@ function useSpotlightContext(): SpotlightContext {
     if (s.testing || s.pending) return undefined;
     if (openNeedOf(s.items)) return 'needs' as const;
     const run = lastRunOf(s.items.slice(s.items.findLastIndex((i) => i.role === 'user' && !i.auto) + 1));
+    if (lastOutcomeOf(s.items)) return 'stopped' as const;
     return run?.state === 'passed' ? ('passed' as const) : run?.state === 'failed' ? ('stopped' as const) : undefined;
   });
   return useMemo(
@@ -684,6 +849,7 @@ function Composer() {
   const hasItems = useAssistant((s) => s.items.length > 0);
   const pending = useAssistant((s) => s.pending || Boolean(s.testing));
   const drafting = useAssistant((s) => s.drafting);
+  const phone = usePhone();
   const working = useWorking();
   const empty = useEditor((s) => s.nodes.length === 0);
   const selectedName = useEditor((s) => {
@@ -697,6 +863,8 @@ function Composer() {
   const [draft, setDraft] = useState('');
   const [caret, setCaret] = useState(0);
   const [focused, setFocused] = useState(false);
+  const blurTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(blurTimer.current), []);
   const [active, setActive] = useState(-1);
   const [mentions, setMentions] = useState<Mention[]>([]);
   const [withoutSelection, setWithoutSelection] = useState(false);
@@ -719,7 +887,7 @@ function Composer() {
     if (live) return [];
     if (draft.trim()) return focused ? completeBubbles(draft, caret, ctx) : [];
     if (working) return [];
-    const offer: Bubble[] = fix ? [{ id: `fix:${fix.suggestion.id}`, label: `Fix: ${fix.suggestion.title}`, kind: 'ask', text: '', caret: 0 }] : [];
+    const offer: Bubble[] = fix ? [{ id: `fix:${fix.suggestion.id}`, label: /^fix\b/i.test(fix.suggestion.title) ? fix.suggestion.title : `Fix: ${fix.suggestion.title}`, kind: 'ask', text: '', caret: 0 }] : [];
     const idle = idleBubbles(ctx);
     // Unfocused, only what needs attention (a failure) or a start on an empty canvas.
     const quiet = focused || empty ? idle : idle.filter((b) => b.id.startsWith('why-'));
@@ -772,8 +940,9 @@ function Composer() {
       useAssistant.getState().append([{ id: nanoid(8), role: 'user', text: message }, reply]);
       const patch = (fields: Partial<Reply>) => useAssistant.setState((s) => ({ items: s.items.map((i) => (i.id === reply.id ? { ...(i as Reply), ...fields } : i)) }));
       useAssistant.setState({ drafting: true });
+      const abort = (draftCall.request = new AbortController());
       try {
-        const flow = await build(message);
+        const flow = await build(message, abort.signal);
         const auto = useAutonomous.getState().on;
         const skipped = flow.dropped ? ` I left out ${flow.dropped} part${flow.dropped === 1 ? '' : 's'} that didn’t fit.` : '';
         const pinned = flow.pinned ? ' Test data is pinned on the trigger.' : '';
@@ -784,8 +953,10 @@ function Composer() {
         // Autonomous: no "Test and fix" click. It starts once the drafting card is gone (finally, below).
         if (auto) queueMicrotask(() => testDraft(reply.id, message));
       } catch (e) {
-        patch({ error: `Couldn’t build the flow: ${(e as Error).message}` });
+        if (abort.signal.aborted) patch({ parts: [{ kind: 'text', text: 'Stopped: nothing was drafted.' }] });
+        else patch({ error: `Couldn’t build the flow: ${(e as Error).message}` });
       } finally {
+        if (draftCall.request === abort) draftCall.request = undefined;
         useAssistant.setState({ drafting: false });
       }
       return;
@@ -860,7 +1031,8 @@ function Composer() {
     }
   };
 
-  const placeholder = drafting || pending ? 'Spotlight is working on the flow…' : empty ? 'Describe the workflow you want…' : 'Ask, or describe a change…  @ tags a node';
+  // A phone's box is narrow: the short form, without the @ hint.
+  const placeholder = drafting || pending ? 'Spotlight is working on the flow…' : empty ? 'Describe the workflow you want…' : phone ? 'Ask or describe a change' : 'Ask, or describe a change…  @ tags a node';
 
   return (
     <div className="shrink-0 space-y-2 border-t border-hair p-2.5">
@@ -915,15 +1087,23 @@ function Composer() {
             setCaret(e.target.selectionStart);
           }}
           onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
+          onFocus={() => {
+            clearTimeout(blurTimer.current);
+            setFocused(true);
+          }}
+          // The bubbles fold a moment after the input loses focus: folding at once moves the timeline under a tap, which
+          // then lands on nothing (a phone's first tap on a row after typing).
+          onBlur={() => {
+            if (phone) blurTimer.current = setTimeout(() => setFocused(false), 250);
+            else setFocused(false);
+          }}
           onKeyDown={onKeyDown}
           placeholder={placeholder}
           aria-label="Ask Spotlight"
           aria-autocomplete="list"
           className="max-h-[120px] min-h-[32px] min-w-0 flex-1 resize-none bg-transparent py-1.5 text-[13.5px] leading-5 text-t1 max-md:text-base outline-none placeholder:text-t3"
         />
-        {!focused && !draft && !hasItems && <kbd className="mb-[9px] shrink-0 rounded border border-hair px-1 font-mono text-[10.5px] text-t3">⌘I</kbd>}
+        {!focused && !draft && !hasItems && <kbd className="mb-[9px] shrink-0 max-md:hidden rounded border border-hair px-1 font-mono text-[10.5px] text-t3">⌘I</kbd>}
         {canDictate && !live && (
           <button
             onMouseDown={(e) => e.preventDefault()}
@@ -945,12 +1125,11 @@ function Composer() {
         {live ? (
           <button
             onClick={() => useAssistant.getState().stop()}
-            disabled={drafting}
             aria-label="Stop"
             title="Stop"
             className="mb-[2px] grid size-8 shrink-0 place-items-center rounded-full border border-bd text-t2 transition-colors hover:border-rd hover:text-rd disabled:opacity-50"
           >
-            {drafting ? <Loader2 className="size-3.5 animate-spin" /> : <Square className="size-3" fill="currentColor" />}
+            <Square className="size-3" fill="currentColor" />
           </button>
         ) : (
           <button

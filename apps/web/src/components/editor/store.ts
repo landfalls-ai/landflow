@@ -146,6 +146,8 @@ interface EditorState {
   groups: GroupFlowNode[];
   /** Undo / redo depth, for the toolbar buttons. */
   history: { past: number; future: number };
+  /** Counts every recorded edit, undo and redo: whether the graph changed since a moment (Spotlight's Undo all fixes). */
+  edits: number;
   nodeTypes: Record<string, NodeTypeInfo>;
   /** Composite types (GET /api/composites): the contracts composite frames are checked against. */
   composites: CompositeTypeInfo[];
@@ -415,7 +417,7 @@ export const useEditor = create<EditorState>((set, get) => {
     if (history.past.length > HISTORY_LIMIT) history.past.shift();
     history.future = [];
     history.last = key ? { key, at: now } : undefined;
-    set({ history: { past: history.past.length, future: 0 } });
+    set((s) => ({ history: { past: history.past.length, future: 0 }, edits: s.edits + 1 }));
   };
   const batch = <T,>(fn: () => T): T => {
     record();
@@ -439,6 +441,7 @@ export const useEditor = create<EditorState>((set, get) => {
       settings: snapshot.settings,
       openNodeId: snapshot.nodes.some((n) => n.id === s.openNodeId) ? s.openNodeId : undefined,
       history: { past: history.past.length, future: history.future.length },
+      edits: s.edits + 1,
       // Back at what was saved: "Saved" again.
       dirty: savedContent(snapshot) !== history.saved,
     }));
@@ -531,6 +534,7 @@ export const useEditor = create<EditorState>((set, get) => {
   stickies: [],
   groups: [],
   history: { past: 0, future: 0 },
+  edits: 0,
   nodeTypes: {},
   composites: [],
   dirty: false,
@@ -819,7 +823,11 @@ export const useEditor = create<EditorState>((set, get) => {
         dirty: true,
       };
     });
-    return () => set({ ...before, dirty: true });
+    // Undoing is an edit too: ⌘Z afterwards goes back to before the undo.
+    return () => {
+      record();
+      set({ ...before, dirty: true });
+    };
   },
 
   tidyUp() {

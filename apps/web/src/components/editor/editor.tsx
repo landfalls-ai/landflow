@@ -631,6 +631,8 @@ export function Editor({ workflowId }: { workflowId: string }) {
   // A run this editor started before a reload goes on: show it live again.
   useFollowRun();
   const spotlightOpen = useAssistant((s) => !s.collapsed);
+  // On a phone, Spotlight's own runs take the canvas: the Execute bar steps aside while it drafts or tests.
+  const spotlightWorks = useAssistant((s) => s.drafting || Boolean(s.testing));
 
   // The assistant's conversation lasts while this workflow is open.
   useEffect(() => useAssistant.getState().bind(workflowId), [workflowId]);
@@ -941,7 +943,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
               <BuildProgressBar />
               <BrainCanvasCard />
               {/* The run controls at the bottom, clear of zoom and the minimap. */}
-              <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex flex-wrap-reverse items-start justify-center gap-2 pl-14 pr-[232px] max-md:bottom-3 max-md:pr-3">
+              <div className={cn('pointer-events-none absolute inset-x-0 bottom-4 z-20 flex flex-wrap-reverse items-start justify-center gap-2 pl-14 pr-[232px] max-md:bottom-3 max-md:pr-3', spotlightWorks && 'max-md:hidden')}>
                 <ExecuteBar
                   running={running}
                   breakpoints={breakpoints.length}

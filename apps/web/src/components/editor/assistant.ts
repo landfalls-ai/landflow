@@ -53,6 +53,9 @@ export function sendFeedback(kind: ChangeKind, action: 'applied' | 'dismissed', 
  * with one undo. Ops that no longer fit (the workflow changed since they were
  * proposed) are skipped. Returns false when nothing applied.
  */
+/** The flow being drafted on an empty canvas: one request, which Stop, New conversation and another workflow cancel. */
+export const draft: { request?: AbortController } = {};
+
 /** Undo for a change Spotlight applied by itself, by proposal id: its row's Undo button (a phone has no ⌘Z). */
 export const undos = new Map<string, () => void>();
 
@@ -247,6 +250,22 @@ export interface Need {
   state?: 'done' | 'dismissed';
 }
 
+/**
+ * How a test-and-fix session that didn't pass ended, as a card: why, in one line, and what to do next: open the node it
+ * stopped at, undo every fix it applied (back to the flow as it was before), or try again.
+ */
+export interface Outcome {
+  text: string;
+  /** The node it stopped at. */
+  node?: string;
+  goal?: string;
+  /** The fixes it applied, oldest first: undoing the oldest puts the flow back as it was before the session. */
+  fixes: Array<{ item: string; proposal: string }>;
+  /** The editor's edit count when it stopped (`edits` in ./store.ts): any edit since and Undo all is no longer offered. */
+  edits: number;
+  state?: 'undone';
+}
+
 export interface ToolActivity {
   name: string;
   label: string;
@@ -275,6 +294,7 @@ export type ReplyPart =
   | { kind: 'proposal'; proposal: Proposal }
   | { kind: 'run'; run: TestRun }
   | { kind: 'needs'; need: Need }
+  | { kind: 'outcome'; outcome: Outcome }
   | ({ kind: 'action' } & ReplyAction);
 
 /** `testId`: the test-and-fix session the turn belongs to; Spotlight folds a finished session into one line. */
@@ -348,6 +368,8 @@ interface AssistantState {
   abort?: AbortController;
   /** A test-and-fix session is running (./test-session.ts); aborting it stops the session. */
   testing?: AbortController;
+  /** The running session's id (its items' `testId`): that session stays unfolded. */
+  testingId?: string;
   /** The flow builder is drafting a flow on the empty canvas. */
   drafting: boolean;
   /** The node a test-and-fix session is asking a fix for: the canvas marks it. */
@@ -438,7 +460,8 @@ export const useAssistant = create<AssistantState>((set, get) => ({
     if (get().workflowId === workflowId) return;
     get().abort?.abort();
     get().testing?.abort();
-    set({ workflowId, items: [], agents: [], fixNotes: {}, pending: false, drafting: false, abort: undefined, testing: undefined, fixing: undefined });
+    draft.request?.abort();
+    set({ workflowId, items: [], agents: [], fixNotes: {}, pending: false, drafting: false, abort: undefined, testing: undefined, testingId: undefined, fixing: undefined });
     useSuggestions.getState().clear();
   },
 
@@ -494,13 +517,15 @@ export const useAssistant = create<AssistantState>((set, get) => ({
   stop() {
     get().abort?.abort();
     get().testing?.abort();
-    set({ pending: false, abort: undefined, testing: undefined, fixing: undefined });
+    draft.request?.abort();
+    set({ pending: false, abort: undefined, testing: undefined, testingId: undefined, fixing: undefined });
   },
 
   reset() {
     get().abort?.abort();
     get().testing?.abort();
-    set({ items: [], agents: [], fixNotes: {}, pending: false, drafting: false, abort: undefined, testing: undefined, fixing: undefined });
+    draft.request?.abort();
+    set({ items: [], agents: [], fixNotes: {}, pending: false, drafting: false, abort: undefined, testing: undefined, testingId: undefined, fixing: undefined });
   },
 
   setProposalState(itemId, proposalId, state, skipped) {
