@@ -1859,8 +1859,8 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Second brain',
     id: 'usageReport',
     summary: 'A grouped report of the usage ledger',
-    description: '`groupBy`: day, kind, workflow, nodeType, signature, agent or model (default kind). Counts, failures, durations, items, tokens and cost per group; windows past USAGE_RETENTION_DAYS read the daily rollups. Members see the workflows and agents they can open.',
-    query: [{ name: 'groupBy', description: 'What to group by', schema: { type: 'string', enum: ['day', 'kind', 'workflow', 'nodeType', 'signature', 'agent', 'model'] } }, ...usageQuery],
+    description: '`groupBy`: day, kind, workflow, nodeType, signature, agent, model or attr (default kind; attr needs `groupAttr`, and reads the raw events). `kinds` takes custom kinds too (work.ticket_moved). Counts, failures, durations, items, tokens and cost per group; windows past USAGE_RETENTION_DAYS read the daily rollups. Members see the workflows and agents they can open.',
+    query: [{ name: 'groupBy', description: 'What to group by', schema: { type: 'string', enum: ['day', 'kind', 'workflow', 'nodeType', 'signature', 'agent', 'model', 'attr'] } }, text('groupAttr', 'For groupBy=attr: the attribute to group by, such as team'), text('attr.<name>', 'Only events whose attribute <name> equals the value, such as attr.team=billing'), ...usageQuery],
     responses: { 200: reply('The report', object({ from: { type: 'string' }, to: { type: 'string' }, groupBy: { type: 'string' }, rows: array({ type: 'object' }), totals: { type: 'object' } }, ['rows', 'totals'])) },
   });
   add('get', '/api/usage/events', {
@@ -1869,6 +1869,29 @@ function paths(): Record<string, Record<string, Json>> {
     summary: 'Usage events, newest first',
     query: usageQuery,
     responses: { 200: reply('The events', object({ events: array({ type: 'object' }) }, ['events'])) },
+  });
+  const usageKind = { type: 'object', description: 'A declared custom kind: kind, description, fields [{ name, type: string|number|boolean, required, description }], projectId, createdBy, createdAt, updatedAt' };
+  const kindBody = object({ kind: { type: 'string', description: '<namespace>.<name>, such as work.ticket_moved; not a built-in namespace (run, node, ai, workflow, credential, assistant, spotlight, search, agent, feedback, template, plugin, proposal, tool)' }, description: { type: 'string' }, fields: array({ type: 'object' }) }, ['kind']);
+  add('get', '/api/usage/kinds', {
+    tag: 'Second brain',
+    id: 'listUsageKinds',
+    summary: 'List the custom event kinds',
+    description: 'The kinds flows record with the Record Event node, with the attributes each declares.',
+    responses: { 200: reply('The kinds', object({ kinds: array(usageKind) }, ['kinds'])) },
+  });
+  add('post', '/api/usage/kinds', {
+    tag: 'Second brain',
+    id: 'declareUsageKind',
+    summary: 'Declare a custom event kind, or update its fields',
+    body: jsonBody(kindBody, 'The kind and its attributes'),
+    responses: { 200: reply('Updated', object({ kind: usageKind }, ['kind'])), 201: reply('Declared', object({ kind: usageKind }, ['kind'])), 400: invalid },
+  });
+  add('delete', '/api/usage/kinds/{kind}', {
+    tag: 'Second brain',
+    id: 'deleteUsageKind',
+    summary: 'Forget a custom event kind’s declaration',
+    description: 'Events already recorded stay in the ledger.',
+    responses: { 200: reply('Forgotten', object({ ok: { type: 'boolean' } }, ['ok'])), 404: notFound },
   });
   add('get', '/api/proposals', {
     tag: 'Second brain',

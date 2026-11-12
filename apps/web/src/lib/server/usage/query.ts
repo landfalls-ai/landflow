@@ -9,7 +9,7 @@
  * Scope: `only` lists the workflows and agents a member sees (undefined: everything, for owners and admins). Events tied
  * to neither (Spotlight asks, empty searches) are left out of a scoped report.
  */
-import { USAGE_KINDS, type UsageEvent, type UsageFilter, type UsageGroup, type UsageGroupRow, type UsageKind, type UsageReport } from '../../shared/brain';
+import { ATTR_NAME, isUsageKind, type UsageEvent, type UsageFilter, type UsageGroup, type UsageGroupRow, type UsageKind, type UsageReport } from '../../shared/brain';
 import { database, type Database, type SqlValue } from '../db';
 import { dayOf, fromRow, type UsageRow } from './ledger';
 
@@ -82,6 +82,17 @@ function filterClause(filter: UsageFilter, timeColumn: 'at' | 'day', scope?: Usa
   eq('agent_id', filter.agentId);
   eq('node_type', filter.nodeType);
   eq('signature', filter.signature);
+  // Attributes live in the raw events only (usage_daily keeps none): usageReport reads those whenever they are asked for.
+  if (timeColumn === 'at') {
+    for (const [name, value] of Object.entries(filter.attrEquals ?? {})) {
+      if (!ATTR_NAME.test(name)) continue;
+      // SQLite reads a stored true/false back as 1/0, so a boolean matches either way.
+      const bool = value === 'true' ? '1' : value === 'false' ? '0' : undefined;
+      const text = `CAST(json_extract(attrs, '$.${name}') AS TEXT)`;
+      where.push(bool ? `(${text} = ? OR ${text} = ?)` : `${text} = ?`);
+      params.push(value, ...(bool ? [bool] : []));
+    }
+  }
   scopeClause(scope, where, params);
   return { sql: where.join(' AND '), params };
 }
@@ -101,6 +112,8 @@ const GROUP_COLUMNS: Record<UsageGroup, string> = {
   signature: 'signature',
   agent: 'agent_id',
   model: "json_extract(attrs, '$.model')",
+  // Replaced by the attribute `usageReport` was asked for (a name checked against ATTR_NAME).
+  attr: 'NULL',
 };
 
 interface GroupRow {
@@ -126,13 +139,16 @@ export function usageReport(filter: UsageFilter = {}, groupBy: UsageGroup = 'kin
   const now = Date.now();
   const from = isoOf(filter.from, now - 7 * DAY_MS);
   const to = isoOf(filter.to, now, true);
+  const attrName = groupBy === 'attr' && filter.attr && ATTR_NAME.test(filter.attr) ? filter.attr : undefined;
+  if (groupBy === 'attr' && !attrName) throw new Error('Group by an attribute needs its name: groupAttr=team');
   const raw = Date.parse(from) >= now - rawRetentionDays() * DAY_MS;
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 1_000);
   let rows: GroupRow[];
-  if (raw || groupBy === 'model') {
+  if (raw || groupBy === 'model' || attrName || Object.keys(filter.attrEquals ?? {}).length) {
     const { sql, params } = filterClause({ ...filter, from, to }, 'at', options.scope);
+    const column = attrName ? `json_extract(attrs, '$.${attrName}')` : GROUP_COLUMNS[groupBy];
     rows = db.all<GroupRow>(
-      `SELECT ${GROUP_COLUMNS[groupBy]} AS key, COUNT(*) AS count, SUM(${FAILURE_SQL}) AS failures,
+      `SELECT ${column} AS key, COUNT(*) AS count, SUM(${FAILURE_SQL}) AS failures,
         COALESCE(SUM(duration_ms), 0) AS duration_sum, COALESCE(MAX(duration_ms), 0) AS duration_max, COUNT(duration_ms) AS duration_n,
         COALESCE(SUM(items), 0) AS items, COALESCE(SUM(tokens), 0) AS tokens, COALESCE(SUM(cost), 0) AS cost
        FROM usage_events WHERE ${sql} GROUP BY key ORDER BY count DESC LIMIT ${limit}`,
@@ -277,8 +293,13 @@ export function usageFilter(url: URL): UsageFilter {
   const kinds = (param('kinds') ?? '')
     .split(',')
     .map((k) => k.trim())
-    .filter((k): k is UsageKind => (USAGE_KINDS as readonly string[]).includes(k));
+    .filter((k): k is UsageKind => isUsageKind(k));
+  // `attr.team=billing` keeps events whose attribute equals the value; `groupAttr=team` names the attribute groupBy=attr groups by.
+  const attrEquals: Record<string, string> = {};
+  for (const [key, value] of url.searchParams) if (key.startsWith('attr.') && ATTR_NAME.test(key.slice(5))) attrEquals[key.slice(5)] = value;
   return {
+    ...(Object.keys(attrEquals).length && { attrEquals }),
+    ...(param('groupAttr') && { attr: param('groupAttr') }),
     ...(kinds.length && { kinds }),
     from: param('from'),
     to: param('to'),

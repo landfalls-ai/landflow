@@ -1477,6 +1477,23 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS debug_tokens_execution ON debug_tokens (execution_id)`,
     ],
   },
+  {
+    version: 2062,
+    name: 'usage_kinds',
+    statements: [
+      // Custom usage event kinds (lib/server/usage/kinds.ts, docs/second-brain.md#your-own-event-kinds): a name like
+      // work.ticket_moved and the attributes its events declare. `fields` is a JSON list of { name, type, required, description }.
+      `CREATE TABLE IF NOT EXISTS usage_kinds (
+        kind TEXT PRIMARY KEY,
+        description TEXT NOT NULL DEFAULT '',
+        fields TEXT NOT NULL,
+        project_id TEXT,
+        created_by TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -1564,6 +1581,7 @@ export const TABLES = {
   composite_types: ['name', 'version'],
   usage_events: ['id'],
   usage_daily: ['day', 'kind', 'workflow_id', 'node_type', 'signature', 'agent_id'],
+  usage_kinds: ['kind'],
   brain_profiles: ['subject_type', 'subject_id'],
   brain_facts: ['id'],
   proposals: ['id'],
