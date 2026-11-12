@@ -468,7 +468,9 @@ function insertBefore(
 
 /** An inserted node takes its target's place; the target and everything after it move one column right. */
 function makeRoom(workflow: Workflow, id: string, target: string): Workflow {
-  const anchor = workflow.nodes.find((n) => n.id === target)!;
+  const anchor = workflow.nodes.find((n) => n.id === target);
+  // The node to go in front of isn't there (removed by an earlier op of the same change): nothing to move.
+  if (!anchor) return workflow;
   const moved = new Set<string>();
   const queue = [target];
   while (queue.length) {
@@ -766,7 +768,7 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
   // Lay out new nodes once their connections are known, in the order they were added.
   for (const id of added) {
     const target = insertions.get(id);
-    wf = target ? makeRoom(wf, id, target) : { ...wf, nodes: wf.nodes.map((n) => (n.id === id ? { ...n, position: placeAdded(wf, lookup, id) } : n)) };
+    wf = target && wf.nodes.some((n) => n.id === target) ? makeRoom(wf, id, target) : { ...wf, nodes: wf.nodes.map((n) => (n.id === id ? { ...n, position: placeAdded(wf, lookup, id) } : n)) };
   }
   return { workflow: wf, applied, dropped, ignored, added };
 }
@@ -1100,6 +1102,44 @@ export function describeOps(ops: AssistantOp[], lookup?: DescriptorLookup): Diff
         return { sign: '~', text: `workflow settings: ${Object.entries(op.settings).map(([key, value]) => `${key} = ${preview(value)}`).join(', ')}` };
     }
   });
+}
+
+/**
+ * What a change did, in a few words and the past tense, read from its ops rather than the model's summary: the title of
+ * Spotlight's fix rows and node bubbles ("Set channel on “Post to Slack”", "Added “Format Message” before “Post to Slack”").
+ */
+export function opsTitle(ops: AssistantOp[]): string {
+  const one = (op: AssistantOp): string => {
+    switch (op.op) {
+      case 'addNode':
+        if (op.newAgent) return `Added the agent “${op.newAgent.name}”`;
+        return `Added “${op.name ?? op.type}”${op.before ? ` before “${op.before}”` : op.after ? ` after “${op.after}”` : ''}`;
+      case 'setParameters': {
+        const keys = Object.keys(op.parameters);
+        return keys.length && keys.length <= 2 ? `Set ${keys.join(' and ')} on “${op.node}”` : `Changed ${keys.length} settings on “${op.node}”`;
+      }
+      case 'setNodeSettings':
+        return `Changed how “${op.node}” runs`;
+      case 'connect':
+        return `Connected “${op.from}” to “${op.to}”`;
+      case 'disconnect':
+        return `Disconnected “${op.from}” from “${op.to}”`;
+      case 'removeNode':
+        return `Removed “${op.node}”`;
+      case 'renameNode':
+        return `Renamed “${op.node}” to “${op.name}”`;
+      case 'turnIntoTeam':
+        return `Turned “${op.node}” into a team`;
+      case 'setWorkflowSettings':
+        return 'Changed the workflow settings';
+    }
+  };
+  if (!ops.length) return 'Changed nothing';
+  if (ops.length === 1) return one(ops[0]);
+  const nodes = new Set(ops.map((op) => ('node' in op ? op.node : op.op === 'connect' || op.op === 'disconnect' ? op.to : op.op === 'addNode' ? (op.before ?? op.after) : undefined)));
+  const [only] = nodes;
+  if (nodes.size === 1 && only) return `Changed ${ops.length} things at “${only}”`;
+  return `${one(ops[0])}, and ${ops.length - 1} more`;
 }
 
 // ---------------------------------------------------------------------------

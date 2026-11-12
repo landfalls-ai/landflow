@@ -2,7 +2,7 @@
 import { memo, useEffect } from 'react';
 import { NodeToolbar, Position, type NodeProps } from '@xyflow/react';
 import { useShallow } from 'zustand/react/shallow';
-import { CircleDot, Copy, Loader2, Play, Power, Settings2, SkipForward, Trash2, UsersRound, Wrench, X } from 'lucide-react';
+import { CircleDot, Copy, Hand, Loader2, Play, Power, Settings2, SkipForward, Trash2, UsersRound, Wrench, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ExecutionEvent } from '@/lib/shared/types';
 import { progressDetail, progressLine } from '@/lib/client/node-progress';
@@ -10,6 +10,7 @@ import { decideToolApprovals } from '@/lib/client/run-trace';
 import { useNodeFace, useShownParameters } from '../agents/faces';
 import { isCompact, NodeTile, ranFor } from '../canvas/node-tile';
 import { useAssistant } from './assistant';
+import { openNeedOf } from './timeline';
 import { activityOfRuns } from '@/lib/shared/team-progress';
 import { teamQuestionOf, useTeamTile } from './team-live';
 import { liveTeam, TeamStrip } from './team-strip';
@@ -64,6 +65,8 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
   const fixing = useAssistant((s) => s.fixing === id);
   // What the session fixed here: a bubble until dismissed or a minute passes.
   const fixNote = useAssistant((s) => s.fixNotes[id]);
+  const needsYou = useAssistant((s) => openNeedOf(s.items)?.node === wf.name);
+  const designing = useAssistant((s) => s.agents.some((a) => a.nodeId === id && a.state === 'designing'));
   // What it reports while it runs: a team's working member, a remote agent's step.
   const progress = useEditor((s) => s.progress[id]);
   const runs = useEditor((s) => s.runs[id]);
@@ -145,17 +148,20 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
           </NodeToolbar>
         )
       )}
-      {fixNote && (
-        // Above the progress line or the selection toolbar when either shows.
-        <NodeToolbar isVisible={!fixing} position={Position.Top} offset={(compact ? 12 : 14) + (selected || progress || teamId ? 36 : 0)}>
-          <FixNote nodeId={id} text={fixNote.text} at={fixNote.at} />
+      {/* Spotlight's one chip on this node: fixing, designing its agent, needs you, or what the last fix did. */}
+      {(fixing || designing || needsYou || fixNote) && (
+        <NodeToolbar isVisible position={Position.Top} offset={(compact ? 12 : 14) + (selected || progress || teamId ? 36 : 0)}>
+          {fixing ? (
+            <SpotlightChip tone="busy" text="Fixing…" />
+          ) : designing ? (
+            <SpotlightChip tone="busy" text="Designing its agent…" />
+          ) : needsYou ? (
+            <SpotlightChip tone="needs" text="Needs you" />
+          ) : (
+            fixNote && <FixNote nodeId={id} text={fixNote.text} at={fixNote.at} />
+          )}
         </NodeToolbar>
       )}
-      <NodeToolbar isVisible={fixing && !selected} position={Position.Top} offset={compact ? 12 : 14}>
-        <span className="flex animate-pop items-center gap-1 rounded-full border border-acbd bg-sf px-2 py-0.5 text-[11px] font-semibold text-viz-7 shadow-pop">
-          <Loader2 className="size-3 animate-spin" /> Spotlight is fixing this
-        </span>
-      </NodeToolbar>
       <NodeToolbar isVisible={selected} position={Position.Top} offset={compact ? 12 : 14}>
         <div className="flex animate-in items-center gap-0.5 rounded-full border border-hair bg-sf p-0.5 shadow-pop">
           <ToolbarButton title="Open (double-click)" onClick={() => openNode(id)}>
@@ -195,6 +201,21 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
   );
 });
 
+/** Spotlight's state on a node, in the words its panel uses: violet while it works, amber when the person is needed. */
+function SpotlightChip({ tone, text }: { tone: 'busy' | 'needs'; text: string }) {
+  return (
+    <span
+      role="status"
+      className={cn(
+        'flex animate-pop items-center gap-1 rounded-full border bg-sf px-2 py-0.5 text-[11px] font-semibold shadow-pop',
+        tone === 'busy' ? 'border-acbd text-viz-7' : 'border-warnbd text-warn',
+      )}
+    >
+      {tone === 'busy' ? <Loader2 className="size-3 animate-spin" /> : <Hand className="size-3" />} {text}
+    </span>
+  );
+}
+
 /** How long a fix's bubble stays on its node unless dismissed. */
 const FIX_NOTE_MS = 60_000;
 
@@ -208,7 +229,7 @@ function FixNote({ nodeId, text, at }: { nodeId: string; text: string; at: numbe
     <div role="status" className="nodrag flex w-max max-w-[min(240px,70vw)] animate-pop items-start gap-1.5 rounded-xl border border-acbd bg-sf py-1 pl-2 pr-1 text-[11.5px] leading-snug text-t1 shadow-pop">
       <Wrench className="mt-px size-3 shrink-0 text-viz-7" />
       <span className="min-w-0 [overflow-wrap:anywhere]">
-        <span className="font-semibold text-viz-7">Fixed: </span>
+        <span className="font-semibold text-viz-7">Fixed · </span>
         {text}
       </span>
       <button type="button" aria-label="Dismiss" title="Dismiss" onClick={() => useAssistant.getState().dismissFix(nodeId)} className="-my-1 grid size-7 shrink-0 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1 max-md:size-9">

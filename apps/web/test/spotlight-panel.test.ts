@@ -12,7 +12,7 @@ vi.mock('@/components/editor/assistant', async (original) => ({
   applyChanges: vi.fn(() => true),
 }));
 
-const { fixedNodes, spotlightOwnsRun, useAssistant } = await import('@/components/editor/assistant');
+const { fixedNodes, ownRun, spotlightOwnsRun, useAssistant } = await import('@/components/editor/assistant');
 const { useEditor } = await import('@/components/editor/store');
 const { afterReply, useAutonomous } = await import('@/components/editor/autonomous');
 const { agentStep, lastRunOf, stepsOf, titleOf } = await import('@/components/editor/timeline');
@@ -23,7 +23,7 @@ const session: ChatItem[] = [
   { id: 'd', role: 'assistant', parts: [{ kind: 'text', text: 'Built “Tickets” with 4 nodes. ⌘Z undoes it.' }, { kind: 'action', action: 'test', state: 'done' }] },
   { id: 'r1', role: 'assistant', testId: 't', parts: [{ kind: 'run', run: { round: 1, state: 'failed', summary: 'failed at “Post to Slack”: No credential' } }] },
   { id: 'f1', role: 'user', testId: 't', auto: true, text: 'Fix “Post to Slack”: No credential. It failed at run 1.' },
-  { id: 'a1', role: 'assistant', testId: 't', parts: [{ kind: 'text', text: 'Set the credential. Then it posts.' }, { kind: 'proposal', proposal: { id: 'p1', summary: 'Pick the Slack credential', ops: [], dropped: [], warnings: [], state: 'applied' } }] },
+  { id: 'a1', role: 'assistant', testId: 't', parts: [{ kind: 'text', text: 'Set the credential. Then it posts.' }, { kind: 'proposal', proposal: { id: 'p1', summary: 'Pick the Slack credential', ops: [{ op: 'setParameters', node: 'Post to Slack', parameters: { channel: '#support' } }], dropped: [], warnings: [], state: 'applied' } }] },
   { id: 'r2', role: 'assistant', testId: 't', parts: [{ kind: 'run', run: { round: 2, state: 'passed', summary: '4 steps, 1 item reached “Post to Slack”' } }] },
 ];
 
@@ -41,7 +41,7 @@ describe('the timeline', () => {
     expect(steps.map((s) => [s.kind, s.text])).toEqual([
       ['draft', 'Built “Tickets” with 4 nodes.'],
       ['run', 'Run 1 · failed at “Post to Slack”: No credential'],
-      ['fix', 'Fixed: Pick the Slack credential'],
+      ['fix', 'Fixed · Set channel on “Post to Slack”'],
       ['agent', 'Agent “Contract Reviewer” published · ollama/qwen3-coder:30b · 1 knowledge base'],
       ['run', 'Run 2 · no errors: 4 steps, 1 item reached “Post to Slack”'],
     ]);
@@ -57,7 +57,9 @@ describe('the timeline', () => {
     expect(titleOf({ ...base, testing: true, fixingName: 'Triage' })).toBe('Fixing “Triage”');
     expect(titleOf({ ...base, testing: true })).toBe('Testing the flow');
     expect(titleOf({ ...base, lastRun: 'passed' })).toBe('Passed');
-    expect(titleOf({ ...base, lastRun: 'failed' })).toBe('Stopped: still failing');
+    expect(titleOf({ ...base, lastRun: 'failed' })).toBe('Stopped');
+    expect(titleOf({ ...base, lastRun: 'failed', stoppedAt: 'Post to Slack' })).toBe('Stopped at “Post to Slack”');
+    expect(titleOf({ ...base, lastRun: 'failed', needs: 'credential' })).toBe('Needs you: pick a credential');
     expect(titleOf({ ...base, hasItems: false })).toBe('Ask Spotlight');
   });
 
@@ -104,6 +106,10 @@ describe('the panel stays where the person put it', () => {
     expect(useAssistant.getState().fixNotes.n1).toMatchObject({ text: 'Pick the Slack credential' });
     useAssistant.getState().dismissFix('n1');
     expect(useAssistant.getState().fixNotes).toEqual({});
+    // Undoing the fix takes its bubble away too.
+    useAssistant.getState().noteFix(['n1'], 'Pick the Slack credential');
+    useAssistant.getState().setProposalState('x', 'p', 'undone');
+    expect(useAssistant.getState().fixNotes).toEqual({});
   });
 
   it('owns the runs it starts: no run toast while it tests or a run row is still running', () => {
@@ -114,6 +120,12 @@ describe('the panel stays where the person put it', () => {
     useAssistant.setState({ testing: new AbortController() });
     expect(spotlightOwnsRun()).toBe(true);
     useAssistant.setState({ testing: undefined });
+    expect(spotlightOwnsRun()).toBe(false);
+    // Its run ends after the session asked the person and ended: still its own.
+    useEditor.setState({ executionId: 'ex_1' });
+    ownRun('ex_1');
+    expect(spotlightOwnsRun()).toBe(true);
+    useEditor.setState({ executionId: 'ex_2' });
     expect(spotlightOwnsRun()).toBe(false);
   });
 });

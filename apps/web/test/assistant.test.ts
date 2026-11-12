@@ -841,3 +841,19 @@ describe('multi-part requests, pending proposals, branches and loops', () => {
     expect(notify.ops).toEqual([{ op: 'addNode', ref: 'n', type: 'core.set', name: 'Notify', after: 'Merge PR' }]);
   });
 });
+
+describe('an insert before a node the same change removes', () => {
+  it('places the new node instead of throwing', async () => {
+    const workflow = {
+      id: 'w',
+      name: 'w',
+      nodes: [
+        { id: 't', name: 'Start', type: 'core.manualTrigger', position: [0, 0] as [number, number], parameters: {} },
+        { id: 'p', name: 'Post', type: 'core.noOp', position: [280, 0] as [number, number], parameters: {} },
+      ],
+      connections: [{ source: 't', target: 'p', type: 'main' as const, sourceIndex: 0, targetIndex: 0 }],
+    };
+    const result = applyOps(workflow as never, [{ op: 'addNode', type: 'core.noOp', name: 'Extract', before: 'Post' }, { op: 'removeNode', node: 'Post' }], lookup());
+    expect(result.workflow.nodes.map((n) => n.name)).toContain('Extract');
+  });
+});
