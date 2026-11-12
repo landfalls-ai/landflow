@@ -543,3 +543,6 @@ Routes are also in [reference/api.md](reference/api.md), and variables in
 - `apps/web/src/lib/server/nodes/usage.ts`: the seven nodes, `nodes/entities.ts` the Entity node; `nodes/vector-stores.ts` refuses the brain's collections.
 - `apps/web/src/components/brain/`: the inbox, the canvas card and the Insights panel.
 - Tests: `apps/web/test/brain.test.ts`, `apps/web/test/brain-events.test.ts` (custom kinds), `apps/web/test/brain-metrics.test.ts` (declared effect metrics), `apps/web/test/brain-actions.test.ts` (actions and On Suggestion Decided), `apps/web/test/brain-entities.test.ts` (entities), `apps/web/test/brain-audience.test.ts` (audiences and the Slack mirror).
+- The newer pieces have their own limits, listed in their sections and in [limitations.md](limitations.md): custom kinds
+  have no UI; entities are four fixed types without relations; a flow's button only records a decision unless a flow
+  listens; Slack mirroring is DMs only and not retried; a flow backtest runs every node of the flow once per point.

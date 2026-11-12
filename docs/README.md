@@ -18,9 +18,9 @@ how to run it and how to change it. The [project README](../README.md) has the q
 |---|---|---|
 | Editor: canvas, node creator, runs, pinned data, debugging, versions, templates; importing from n8n and Flowise | [features/editor.md](features/editor.md) | [ui-review.md](ui-review.md) |
 | Editor assistant: suggestions after a run, Spotlight (the builder chat) | [assistant.md](assistant.md) | |
-| Second brain: the usage ledger, detectors and the Suggestions inbox, facts, the Platform analyst, your own conclusions, flow detectors (Detector Trigger) | [second-brain.md](second-brain.md) | [observability.md](observability.md) |
+| Second brain: the usage ledger, detectors and the Suggestions inbox, facts, the Platform analyst, your own conclusions, flow detectors (Detector Trigger), custom event kinds (Record Event), entities, flow buttons (On Suggestion Decided), audiences and Slack DMs, Find Similar and `check_overlap`, declared metrics, backtests | [second-brain.md](second-brain.md) | [observability.md](observability.md) |
 | Composite nodes: groups typed by a contract (slots, rules, ports), checked in the editor, run as one step | [composites.md](composites.md) | [protocol.md](protocol.md) §3 |
-| Engine: data model, durable runtime, queue mode and HA, triggers and flow nodes, debounce and rate limits, Code node | [features/engine.md](features/engine.md) | [architecture.md](architecture.md) |
+| Engine: data model, durable runtime, queue mode and HA, triggers and flow nodes (Ask a Person), debounce and rate limits, Code node | [features/engine.md](features/engine.md) | [architecture.md](architecture.md) |
 | Plugins: the node interface in each SDK, autodiscovery, branding | [plugins.md](plugins.md) | [protocol.md](protocol.md) |
 | Transports: HTTP, gRPC, ten brokers, Auto, the claim check, MCP faces | [transports.md](transports.md) | [protocol.md](protocol.md) §14–15 |
 | MCP gateway (agentgateway): sync, identity, tokens | [mcp-gateway.md](mcp-gateway.md) | [transports.md](transports.md) |

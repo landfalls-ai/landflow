@@ -1147,23 +1147,46 @@ tick and on Run now, handing it `quiet`, `minConfidence` and `lastRunAt`; its Su
 detector. Quieting (with a confidence bar), the 14-day expiry, the effect baseline, Insights (record and a **Run** per
 detector) and **Suggestion From** all work for it unchanged ([second-brain.md](second-brain.md#flow-detectors)).
 
+## The brain's own conclusions, wave 2 (built 2026-11-12)
+
+The nine items planned after flow detectors, built the same day ([second-brain.md](second-brain.md)):
+
+- **Custom event kinds and Record Event.** Flows can now write their own events into the usage ledger. A kind such as
+  `work.ticket_moved` is declared once with its fields (`usage_kinds`, `/api/usage/kinds`); the Record Event node
+  checks each event against that shape and records it about the workflow or agent it concerns. On Usage Event fires on
+  custom kinds and filters on attributes, and Landflow Usage and `/api/usage` filter and group by an attribute ("tickets
+  moved per team"). A flow that starts from On Usage Event can't start another through the events it records.
+- **Entities.** The brain reasons about more than workflows and agents. An entity registry (initiatives, people, customers, systems) with
+  an owner, a project and flat attributes gives it things no workflow holds; facts and suggestions are addressed to
+  `entity:<type>/<id>`, the study profiles them, Find Similar and the MCP `check_overlap` search them (other projects only as
+  the six-field projection), and an Entity node lets flows and agents keep the registry and note facts. This is what an
+  overlap finder ("two teams run the same initiative") needs.
+- **Actions decided by the flow.** The brain's suggestions are no longer dead ends. A flow can put its own buttons ("Intro us", "Book 15 min") on a suggestion, and every decision (apply, dismiss, snooze or a button) starts the workflows on On Suggestion Decided with the whole suggestion and what was decided, so the loop closes in a flow: the detector finds, a person decides, a flow acts. Build it for missing tools runs on the same path.
+- **Suggestions with an audience.** A suggestion can now be about two people in two projects. A flow addresses it to named people (emails or Slack ids); they see it in their inbox whatever it is about, with only what it says, and optionally get it as a Slack DM with the suggestion's own buttons plus Apply, Dismiss and Snooze. Deciding in either place updates the other: one record, every message shows who decided what.
+- **Find Similar and the brain over MCP.** a Find Similar node and `check_overlap` tool answer "is anyone already doing this?"
+  with the nearest workflows, agents and facts, in full for the caller's projects and as a six-field projection (type, title,
+  owner, goal, project, score) for the rest. The instance MCP server serves the brain (`brain_search_facts`,
+  `brain_list_suggestions`, `brain_workflow_knowledge`, `brain_usage_report`, `check_overlap`, `brain_suggest`). Workflows and
+  agents can no longer read the brain's vector collections with a Vector Store node. Open: a stricter embedding-only ranking
+  mode, a per-token read-only flag for `brain_suggest`, and showing Find Similar in the editor when a workflow is created.
+- **Effect metrics declared by the flow.** A detector flow can say how its own suggestions are judged: a query over the usage ledger (custom events included, counted,
+  summed or averaged, about the target or the whole instance) or a sub-workflow returning a number, with a name and a
+  direction. The suggestion keeps it, the baseline and the 7 and 14 day checks use it, and the outcome fact names it, so an
+  overlap finder can report "initiatives merged or reused" going up.
+- **Backtesting detectors.** Backtesting closes the loop on tuning: detectors were quieted only after people dismissed noise. Now a detector, or a threshold change (the `quiet` override), is replayed over the last 30 days and scored against the decisions already made, so a change can be judged before it ships. Built-ins run on a ledger view that stops at each point; detector flows run with a run-level backtest flag that makes Suggest Improvement return findings instead of posting.
+- **Ask a Person.** A flow can now ask a person without an AI Agent: the Ask a Person node waits durably, on the
+  same mechanism as tool approvals, and outputs the person's answer (approved or rejected, the text as they edited it, a comment, who and
+  when). The Run Trace shows "Waiting for <person>: <title>" with the draft and Approve / Edit / Reject; Slack gets the same three buttons
+  and an edit modal; email gets signed links. A timeout settles with the node's default (reject, approve or fail). Still open: asking per item,
+  editing from email, and a Landflow inbox page of its own (the Run Trace's Needs you is the inbox).
+
 ## Planned next
 
-The brain, in this order, after flow detectors (from the gap review of 2026-11-12):
-
-1. **Custom event kinds and a Record Event node**: namespaced kinds (`work.ticket_moved`) with a declared shape, which
-   On Usage Event and Landflow Usage filter and report on.
-2. **Generic entities**: an entity registry (initiative, person, customer, system), so facts and suggestion targets can
-   be `entity:<type>/<id>`.
-3. **Actions decided by the flow**: an On Suggestion Decided trigger for any detector or label, with the flow's own
-   buttons.
-4. **Suggestions with an audience**: addressed to people, mirrored to Slack DMs, decided from either place.
-5. **Find Similar** across brain collections, with a projection as the only output that crosses projects, closing the
-   Vector Store gap in [limitations.md](limitations.md).
-6. **Effect metrics declared by the flow**: a metric query or a sub-workflow that returns a number.
-7. **Backtesting detectors** against past apply and dismiss decisions, on the eval gate's machinery.
-8. **A human-confirm node**: send a draft, wait for approve or edit, the reply back into the flow.
-9. **The brain over the instance MCP server**: facts, suggestions and check_overlap at `/mcp/landflow`.
+1. **Declare event kinds in the UI**: kinds are declared over the API or by Record Event's *Declare Kind If New* only.
+2. **A page per entity**, relations between entities, and a detector that looks at them (two initiatives with the same goal).
+3. **Find Similar in the editor**: show likely overlaps when a workflow is created; a stricter embedding-only ranking mode.
+4. **Ask a Person per item**, and editing from email.
+5. **A chart of a declared metric**: baseline and checks over time on the card.
 
 Other follow-ups above are candidates too, among them making a runbook automatically when a room ends and steps that call a plugin instead of asking a person ([runbooks.md](runbooks.md#not-built)).
 
