@@ -46,9 +46,27 @@ export function schemaFields(schema: unknown): string[] | undefined {
   return names.length ? names : undefined;
 }
 
-/** The schema of what a node writes: the selected `operation` option's, else the node's own. */
+/**
+ * The schema of what a node writes: the selected `operation` option's, else the node's own. A node with resources
+ * declares one `operation` property per resource (each shown for its resource), so the one that shows for the node's
+ * parameters is read, parameters missing from them taking their defaults.
+ */
 export function outputSchemaOf(descriptor: NodeDescriptor, parameters: Record<string, unknown>): unknown {
-  const operation = descriptor.properties.find((p) => p.name === 'operation');
+  const resolving = new Set<string>(); // a show condition that refers back to itself counts as unset
+  const valueOf = (name: string): unknown => {
+    if (name in parameters) return parameters[name];
+    if (resolving.has(name)) return undefined;
+    resolving.add(name);
+    try {
+      return descriptor.properties.find((p) => p.name === name && shows(p.displayOptions?.show))?.default;
+    } finally {
+      resolving.delete(name);
+    }
+  };
+  const shows = (show: Record<string, unknown[]> | undefined): boolean =>
+    !show || Object.entries(show).every(([name, allowed]) => name === 'operation' || allowed.includes(valueOf(name)));
+  const candidates = descriptor.properties.filter((p) => p.name === 'operation');
+  const operation = candidates.find((p) => shows(p.displayOptions?.show)) ?? candidates[0];
   const chosen = parameters.operation ?? operation?.default;
   const option = operation?.options?.find((o) => (o as { value?: unknown }).value === chosen) as { outputSchema?: unknown } | undefined;
   return option?.outputSchema ?? descriptor.outputSchema;
