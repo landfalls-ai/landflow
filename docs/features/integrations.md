@@ -26,4 +26,23 @@ Run them with `pnpm plugin:messaging`, `plugin:productivity`, `plugin:google` an
 
 **Activity items.** The integrations that report what people do (Slack, Google Drive and Calendar, Notion) output one shape, the [activity item](../protocol.md#16-activity-items): a stable `sourceId`, URL, author email, time, a suggested event kind (`work.discussion`, `work.doc_edited`…), title, a summary of at most 600 characters, team, initiative and customer hints, and the trimmed vendor object. Each has a trigger (an app webhook where the vendor can call Landflow, else a poll with a cursor whose first poll replays nothing) and a **List Changed Since** operation for backfill and catch-up, so one flow can record any of them.
 
+## Work ingest templates
+
+Built-in templates (**Templates → Productivity**) that feed the [second brain](../second-brain.md) from the activity integrations.
+Each is the source's trigger, then **Record work event** (Record Event with kind `{{ $json.kind }}`, the item's fields as the
+attributes of the [`work.*` kinds](../second-brain.md#your-own-event-kinds), **Declare Kind If New** on), and two branches that
+keep the item's `customerHint` as a customer and its `initiativeHint` as an initiative (Entity → Create or Update, the id made
+from the name, so the same customer from Slack and Drive is one entity):
+
+| Template | Trigger | Kinds |
+|---|---|---|
+| `work-slack-activity` | Slack Activity Trigger (Events API) | `work.discussion` |
+| `work-google-drive` | Google Drive Trigger (poll) | `work.doc_edited` |
+| `work-google-calendar` | Google Calendar Trigger (poll) | `work.meeting_scheduled`, `work.meeting_held` (`work.meeting_cancelled` when asked) |
+| `work-notion` | Notion Trigger (poll) | `work.doc_edited` |
+| `work-google-directory` | Schedule, daily at 6 → Google Directory → Entity | none: each person as a `person` entity keyed by email, with title, department, org unit and manager |
+
+Declare the kinds first with `pnpm brain:work-kinds` (the templates' fallback declares a kind from the first event's fields,
+all optional). The events show in **Insights**, the entities in **What Landflow knows**.
+
 **App webhook triggers.** A node with `triggerSource: "appWebhook"` registers a webhook at the service when its workflow is published and removes it when it is unpublished, so events arrive as they happen instead of on a poll. The TypeScript, Go and Python SDKs check GitHub (`X-Hub-Signature-256`), Stripe (`Stripe-Signature`, with a timestamp tolerance) and Slack (`X-Slack-Signature`) signatures in constant time ([docs/protocol.md §12](../protocol.md#12-app-webhook-triggers)).

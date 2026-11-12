@@ -26,6 +26,7 @@
     "plugin:messaging": "pnpm --filter @landflow/plugin-messaging start",
     "plugin:productivity": "cd plugins/productivity && (test -x .venv/bin/python && .venv/bin/python main.py || python3 main.py)",
     "plugin:google": "cd plugins/google-workspace && go run .",
+    "brain:work-kinds": "node deploy/scripts/declare-work-kinds.mjs",
     "plugin:databases": "cd plugins/databases && go run .",
     "plugin:landfall": "pnpm --filter @landflow/plugin-landfall start",
     "plugin:triage": "pnpm --filter @landflow/plugin-triage start",

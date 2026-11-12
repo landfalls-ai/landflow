@@ -1,0 +1,127 @@
+{
+  "$comment": "The work.* event kinds the activity integrations suggest (docs/protocol.md §16). Declared with deploy/scripts/declare-work-kinds.mjs; every kind has the same fields, the activity item's flat part.",
+  "fields": [
+    {
+      "name": "source",
+      "type": "string",
+      "required": true,
+      "description": "The tool the activity happened in: slack, google-drive, notion, linear…"
+    },
+    {
+      "name": "sourceId",
+      "type": "string",
+      "required": true,
+      "description": "Stable id of this version of the item in its tool (replaying it is the same event)"
+    },
+    {
+      "name": "url",
+      "type": "string",
+      "description": "Link to the item"
+    },
+    {
+      "name": "actor",
+      "type": "string",
+      "description": "Email of the person who did it"
+    },
+    {
+      "name": "title",
+      "type": "string",
+      "description": "One line: the message, page, issue, deal or meeting"
+    },
+    {
+      "name": "summary",
+      "type": "string",
+      "description": "What happened, clipped to 200 characters"
+    },
+    {
+      "name": "team",
+      "type": "string",
+      "description": "Team hint (a shared drive, a Linear team, a channel mapping)"
+    },
+    {
+      "name": "initiative",
+      "type": "string",
+      "description": "Initiative or project hint"
+    },
+    {
+      "name": "customer",
+      "type": "string",
+      "description": "Customer hint (a customer channel, folder, company or attendee domain)"
+    },
+    {
+      "name": "occurredAt",
+      "type": "string",
+      "description": "When it happened (ISO 8601)"
+    }
+  ],
+  "kinds": [
+    {
+      "kind": "work.discussion",
+      "description": "A message or comment in a discussion (Slack, Linear or Attio comments)"
+    },
+    {
+      "kind": "work.decision",
+      "description": "A decision someone recorded"
+    },
+    {
+      "kind": "work.bug_reported",
+      "description": "A bug was reported"
+    },
+    {
+      "kind": "work.release",
+      "description": "Something shipped: a release, a completed project or cycle"
+    },
+    {
+      "kind": "work.deal_won",
+      "description": "A deal was won"
+    },
+    {
+      "kind": "work.deal_moved",
+      "description": "A deal or pipeline entry changed stage"
+    },
+    {
+      "kind": "work.meeting_scheduled",
+      "description": "A meeting was scheduled or changed (it hasn't ended)"
+    },
+    {
+      "kind": "work.meeting_held",
+      "description": "A meeting took place"
+    },
+    {
+      "kind": "work.meeting_cancelled",
+      "description": "A meeting was cancelled (only when a trigger's Include Cancelled Events is on)"
+    },
+    {
+      "kind": "work.meeting_notes",
+      "description": "Notes or a summary of a meeting"
+    },
+    {
+      "kind": "work.action_item",
+      "description": "An action item or task someone owns"
+    },
+    {
+      "kind": "work.doc_edited",
+      "description": "A document or page was created or edited"
+    },
+    {
+      "kind": "work.ticket_moved",
+      "description": "A ticket or issue changed state"
+    },
+    {
+      "kind": "work.feature_request",
+      "description": "A feature was requested"
+    },
+    {
+      "kind": "work.pr_opened",
+      "description": "A pull request was opened"
+    },
+    {
+      "kind": "work.pr_merged",
+      "description": "A pull request was merged"
+    },
+    {
+      "kind": "work.self_update",
+      "description": "Someone posted an update on their own work (a project update, a stand-up)"
+    }
+  ]
+}

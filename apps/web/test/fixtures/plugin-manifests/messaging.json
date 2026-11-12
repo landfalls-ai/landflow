@@ -24,7 +24,7 @@
    "categories": [
     "Communication"
    ],
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtdGctYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjMzRBRUU2Ii8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzFBOEJDMiIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtdGctYmcpIi8+CiAgPHBhdGggZD0iTTM5IDExIDkgMjIuNWwxMi41IDR6IiBmaWxsPSIjZmZmIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+CiAgPHBhdGggZD0iTTM5IDExIDIxLjUgMjYuNSAyNSAzOHoiIGZpbGw9IiNkM2YwZmMiIHN0cm9rZT0iI2QzZjBmYyIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8cGF0aCBkPSJNMjEuNSAyNi41IDIwIDMzLjVsMy42LTMuNHoiIGZpbGw9IiM5ZmQ4ZjIiIHN0cm9rZT0iIzlmZDhmMiIgc3Ryb2tlLXdpZHRoPSIxLjIiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+Cg==",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyNTYiPjxkZWZzPjxsaW5lYXJHcmFkaWVudCBpZD0iU1ZHNkRhT1pjd3QiIHgxPSI1MCUiIHgyPSI1MCUiIHkxPSIwJSIgeTI9IjEwMCUiPjxzdG9wIG9mZnNldD0iMCUiIHN0b3AtY29sb3I9IiMyYWFiZWUiLz48c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiMyMjllZDkiLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48cGF0aCBmaWxsPSJ1cmwoI1NWRzZEYU9aY3d0KSIgZD0iTTEyOCAwQzk0LjA2IDAgNjEuNDggMTMuNDk0IDM3LjUgMzcuNDlBMTI4LjA0IDEyOC4wNCAwIDAgMCAwIDEyOGMwIDMzLjkzNCAxMy41IDY2LjUxNCAzNy41IDkwLjUxQzYxLjQ4IDI0Mi41MDYgOTQuMDYgMjU2IDEyOCAyNTZzNjYuNTItMTMuNDk0IDkwLjUtMzcuNDljMjQtMjMuOTk2IDM3LjUtNTYuNTc2IDM3LjUtOTAuNTFzLTEzLjUtNjYuNTE0LTM3LjUtOTAuNTFDMTk0LjUyIDEzLjQ5NCAxNjEuOTQgMCAxMjggMCIvPjxwYXRoIGZpbGw9IiNmZmYiIGQ9Ik01Ny45NCAxMjYuNjQ4cTU1Ljk4LTI0LjM4NCA3NC42NC0zMi4xNTJjMzUuNTYtMTQuNzg2IDQyLjk0LTE3LjM1NCA0Ny43Ni0xNy40NDFjMS4wNi0uMDE3IDMuNDIuMjQ1IDQuOTYgMS40OWMxLjI4IDEuMDUgMS42NCAyLjQ3IDEuODIgMy40NjdjLjE2Ljk5Ni4zOCAzLjI2Ni4yIDUuMDM4Yy0xLjkyIDIwLjI0LTEwLjI2IDY5LjM1Ni0xNC41IDkyLjAyNmMtMS43OCA5LjU5Mi01LjMyIDEyLjgwOC04Ljc0IDEzLjEyMmMtNy40NC42ODQtMTMuMDgtNC45MTItMjAuMjgtOS42M2MtMTEuMjYtNy4zODYtMTcuNjItMTEuOTgyLTI4LjU2LTE5LjE4OGMtMTIuNjQtOC4zMjgtNC40NC0xMi45MDYgMi43Ni0yMC4zODZjMS44OC0xLjk1OCAzNC42NC0zMS43NDggMzUuMjYtMzQuNDVjLjA4LS4zMzguMTYtMS41OTgtLjYtMi4yNjJjLS43NC0uNjY2LTEuODQtLjQzOC0yLjY0LS4yNThjLTEuMTQuMjU2LTE5LjEyIDEyLjE1Mi01NCAzNS42ODZjLTUuMSAzLjUwOC05LjcyIDUuMjE4LTEzLjg4IDUuMTI4Yy00LjU2LS4wOTgtMTMuMzYtMi41ODQtMTkuOS00LjcwOGMtOC0yLjYwNi0xNC4zOC0zLjk4NC0xMy44Mi04LjQxYy4yOC0yLjMwNCAzLjQ2LTQuNjYyIDkuNTItNy4wNzIiLz48L3N2Zz4KPC9zdmc+Cg==",
    "color": "#229ED9",
    "subtitle": "{{operation}}: {{resource}}",
    "documentationUrl": "https://core.telegram.org/bots/api",
@@ -674,7 +674,7 @@
    "categories": [
     "Communication"
    ],
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtdGd0LWJnIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iIzM0QUVFNiIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMxQThCQzIiLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgPC9kZWZzPgogIDxyZWN0IHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgcng9IjEyIiBmaWxsPSJ1cmwoI2xmLXRndC1iZykiLz4KICA8cGF0aCBkPSJNMzQgOSA3LjUgMTlsMTEgMy42eiIgZmlsbD0iI2ZmZiIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjEuNCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxwYXRoIGQ9Ik0zNCA5IDE4LjUgMjIuNmwzLjEgMTAuMnoiIGZpbGw9IiNkM2YwZmMiIHN0cm9rZT0iI2QzZjBmYyIgc3Ryb2tlLXdpZHRoPSIxLjQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8cGF0aCBkPSJNMTguNSAyMi42IDE3LjIgMjguOGwzLjItM3oiIGZpbGw9IiM5ZmQ4ZjIiIHN0cm9rZT0iIzlmZDhmMiIgc3Ryb2tlLXdpZHRoPSIxLjEiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8Y2lyY2xlIGN4PSIzNSIgY3k9IjM1IiByPSI5IiBmaWxsPSIjZmZmIi8+CiAgPHBhdGggZD0iTTM1IDMwLjJWMzVsMy4yIDIiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzFBOEJDMiIgc3Ryb2tlLXdpZHRoPSIyLjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4K",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjgiIHk9IjgiIHdpZHRoPSIyNiIgaGVpZ2h0PSIyNiIgdmlld0JveD0iMCAwIDI1NiAyNTYiPjxkZWZzPjxsaW5lYXJHcmFkaWVudCBpZD0iU1ZHNkRhT1pjd3QiIHgxPSI1MCUiIHgyPSI1MCUiIHkxPSIwJSIgeTI9IjEwMCUiPjxzdG9wIG9mZnNldD0iMCUiIHN0b3AtY29sb3I9IiMyYWFiZWUiLz48c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiMyMjllZDkiLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48cGF0aCBmaWxsPSJ1cmwoI1NWRzZEYU9aY3d0KSIgZD0iTTEyOCAwQzk0LjA2IDAgNjEuNDggMTMuNDk0IDM3LjUgMzcuNDlBMTI4LjA0IDEyOC4wNCAwIDAgMCAwIDEyOGMwIDMzLjkzNCAxMy41IDY2LjUxNCAzNy41IDkwLjUxQzYxLjQ4IDI0Mi41MDYgOTQuMDYgMjU2IDEyOCAyNTZzNjYuNTItMTMuNDk0IDkwLjUtMzcuNDljMjQtMjMuOTk2IDM3LjUtNTYuNTc2IDM3LjUtOTAuNTFzLTEzLjUtNjYuNTE0LTM3LjUtOTAuNTFDMTk0LjUyIDEzLjQ5NCAxNjEuOTQgMCAxMjggMCIvPjxwYXRoIGZpbGw9IiNmZmYiIGQ9Ik01Ny45NCAxMjYuNjQ4cTU1Ljk4LTI0LjM4NCA3NC42NC0zMi4xNTJjMzUuNTYtMTQuNzg2IDQyLjk0LTE3LjM1NCA0Ny43Ni0xNy40NDFjMS4wNi0uMDE3IDMuNDIuMjQ1IDQuOTYgMS40OWMxLjI4IDEuMDUgMS42NCAyLjQ3IDEuODIgMy40NjdjLjE2Ljk5Ni4zOCAzLjI2Ni4yIDUuMDM4Yy0xLjkyIDIwLjI0LTEwLjI2IDY5LjM1Ni0xNC41IDkyLjAyNmMtMS43OCA5LjU5Mi01LjMyIDEyLjgwOC04Ljc0IDEzLjEyMmMtNy40NC42ODQtMTMuMDgtNC45MTItMjAuMjgtOS42M2MtMTEuMjYtNy4zODYtMTcuNjItMTEuOTgyLTI4LjU2LTE5LjE4OGMtMTIuNjQtOC4zMjgtNC40NC0xMi45MDYgMi43Ni0yMC4zODZjMS44OC0xLjk1OCAzNC42NC0zMS43NDggMzUuMjYtMzQuNDVjLjA4LS4zMzguMTYtMS41OTgtLjYtMi4yNjJjLS43NC0uNjY2LTEuODQtLjQzOC0yLjY0LS4yNThjLTEuMTQuMjU2LTE5LjEyIDEyLjE1Mi01NCAzNS42ODZjLTUuMSAzLjUwOC05LjcyIDUuMjE4LTEzLjg4IDUuMTI4Yy00LjU2LS4wOTgtMTMuMzYtMi41ODQtMTkuOS00LjcwOGMtOC0yLjYwNi0xNC4zOC0zLjk4NC0xMy44Mi04LjQxYy4yOC0yLjMwNCAzLjQ2LTQuNjYyIDkuNTItNy4wNzIiLz48L3N2Zz4KICA8Y2lyY2xlIGN4PSIzOCIgY3k9IjM4IiByPSI5IiBmaWxsPSIjZmJiZjI0IiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMiIvPgogIDxwYXRoIGQ9Ik0zOS41IDMxLjUgMzQgMzloNGwtMS41IDUuNUw0MiAzN2gtNFoiIGZpbGw9IiMxZjI5MzciLz4KPC9zdmc+Cg==",
    "color": "#229ED9",
    "subtitle": "every {{pollInterval}}s",
    "documentationUrl": "https://core.telegram.org/bots/api#getupdates",
@@ -761,13 +761,13 @@
   {
    "name": "slack",
    "displayName": "Slack",
-   "description": "Send, update and delete Slack messages, upload and download files, list channels, look up users and add reactions",
+   "description": "Send, update and delete Slack messages, read them since a time as activity items, upload and download files, list channels and members, look up users and add reactions",
    "version": 1,
    "kind": "action",
    "categories": [
     "Communication"
    ],
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtc2xhY2stYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjNUUxRjYwIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzNCMEYzQyIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtc2xhY2stYmcpIi8+CiAgPHBhdGggZD0iTTIwLjUgMTIgMTcuNSAzNk0zMC41IDEyIDI3LjUgMzZNMTMgMTkuNWgyM00xMiAyOC41aDIzIiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iNC4yIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPC9zdmc+Cg==",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyNTYiPjxwYXRoIGZpbGw9IiNlMDFlNWEiIGQ9Ik01My44NDEgMTYxLjMyYzAgMTQuODMyLTExLjk4NyAyNi44Mi0yNi44MTkgMjYuODJTLjIwMyAxNzYuMTUyLjIwMyAxNjEuMzJjMC0xNC44MzEgMTEuOTg3LTI2LjgxOCAyNi44Mi0yNi44MThINTMuODR6bTEzLjQxIDBjMC0xNC44MzEgMTEuOTg3LTI2LjgxOCAyNi44MTktMjYuODE4czI2LjgxOSAxMS45ODcgMjYuODE5IDI2LjgxOXY2Ny4wNDdjMCAxNC44MzItMTEuOTg3IDI2LjgyLTI2LjgyIDI2LjgyYy0xNC44MyAwLTI2LjgxOC0xMS45ODgtMjYuODE4LTI2LjgyeiIvPjxwYXRoIGZpbGw9IiMzNmM1ZjAiIGQ9Ik05NC4wNyA1My42MzhjLTE0LjgzMiAwLTI2LjgyLTExLjk4Ny0yNi44Mi0yNi44MTlTNzkuMjM5IDAgOTQuMDcgMHMyNi44MTkgMTEuOTg3IDI2LjgxOSAyNi44MTl2MjYuODJ6bTAgMTMuNjEzYzE0LjgzMiAwIDI2LjgxOSAxMS45ODcgMjYuODE5IDI2LjgxOXMtMTEuOTg3IDI2LjgxOS0yNi44MiAyNi44MTlIMjYuODJDMTEuOTg3IDEyMC44ODkgMCAxMDguOTAyIDAgOTQuMDY5YzAtMTQuODMgMTEuOTg3LTI2LjgxOCAyNi44MTktMjYuODE4eiIvPjxwYXRoIGZpbGw9IiMyZWI2N2QiIGQ9Ik0yMDEuNTUgOTQuMDdjMC0xNC44MzIgMTEuOTg3LTI2LjgyIDI2LjgxOC0yNi44MnMyNi44MiAxMS45ODggMjYuODIgMjYuODJzLTExLjk4OCAyNi44MTktMjYuODIgMjYuODE5SDIwMS41NXptLTEzLjQxIDBjMCAxNC44MzItMTEuOTg4IDI2LjgxOS0yNi44MiAyNi44MTljLTE0LjgzMSAwLTI2LjgxOC0xMS45ODctMjYuODE4LTI2LjgyVjI2LjgyQzEzNC41MDIgMTEuOTg3IDE0Ni40ODkgMCAxNjEuMzIgMHMyNi44MTkgMTEuOTg3IDI2LjgxOSAyNi44MTl6Ii8+PHBhdGggZmlsbD0iI2VjYjIyZSIgZD0iTTE2MS4zMiAyMDEuNTVjMTQuODMyIDAgMjYuODIgMTEuOTg3IDI2LjgyIDI2LjgxOHMtMTEuOTg4IDI2LjgyLTI2LjgyIDI2LjgyYy0xNC44MzEgMC0yNi44MTgtMTEuOTg4LTI2LjgxOC0yNi44MlYyMDEuNTV6bTAtMTMuNDFjLTE0LjgzMSAwLTI2LjgxOC0xMS45ODgtMjYuODE4LTI2LjgyYzAtMTQuODMxIDExLjk4Ny0yNi44MTggMjYuODE5LTI2LjgxOGg2Ny4yNWMxNC44MzIgMCAyNi44MiAxMS45ODcgMjYuODIgMjYuODE5cy0xMS45ODggMjYuODE5LTI2LjgyIDI2LjgxOXoiLz48L3N2Zz4KPC9zdmc+Cg==",
    "color": "#4A154B",
    "subtitle": "{{operation}}: {{resource}}",
    "documentationUrl": "https://api.slack.com/methods",
@@ -782,7 +782,7 @@
    ],
    "usableAsTool": true,
    "idempotent": false,
-   "toolDescription": "Send, update or delete a Slack message, get its permalink, upload or download a file, list channels, find a user by email, or add an emoji reaction.",
+   "toolDescription": "Send, update or delete a Slack message, read one or the messages posted since a time in matching channels, get its permalink, upload or download a file, list channels or members, find a user by email, or add an emoji reaction.",
    "inputs": [
     {
      "type": "main"
@@ -931,6 +931,13 @@
        "description": "Find a user by email address",
        "action": "Get a user by email",
        "idempotent": true
+      },
+      {
+       "name": "Get Many",
+       "value": "getAll",
+       "description": "List the workspace’s members with their email addresses",
+       "action": "Get many users",
+       "idempotent": true
       }
      ]
     },
@@ -983,6 +990,213 @@
        "action": "Delete a message"
       },
       {
+       "name": "Get",
+       "value": "get",
+       "description": "One message as an activity item, with its full text",
+       "action": "Get a message",
+       "idempotent": true,
+       "outputSchema": {
+        "type": "object",
+        "properties": {
+         "source": {
+          "type": "string",
+          "description": "The tool, lowercase: slack, google-drive, google-calendar, notion, …"
+         },
+         "sourceId": {
+          "type": "string",
+          "description": "Stable id of the change, '<source>:<tool ids>': the same change always has the same id, so a replay is recognised"
+         },
+         "url": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Where a person opens it"
+         },
+         "actorEmail": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Email of the person who made the change, lowercase; null when the tool doesn't say"
+         },
+         "occurredAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When it happened, ISO 8601 in UTC with milliseconds"
+         },
+         "kind": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+          "description": "Suggested event kind, such as work.discussion or work.doc_edited; a flow may change it"
+         },
+         "title": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "One line: the document, ticket or meeting title, or the channel and first words"
+         },
+         "summary": {
+          "type": "string",
+          "maxLength": 600,
+          "description": "The text, whitespace collapsed, at most 600 characters"
+         },
+         "teamHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The team it seems to belong to, from the tool's own grouping, when there is one"
+         },
+         "initiativeHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The project or initiative it seems to belong to, when there is one"
+         },
+         "customerHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The customer it is about, when there is one (a #customer-<name> channel, a CRM company…)"
+         },
+         "raw": {
+          "type": "object",
+          "description": "The tool's own object, trimmed: long strings clipped, long lists cut, deep nesting dropped"
+         },
+         "cursor": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Pass it back as Since to continue after this item (List Changed Since operations)"
+         },
+         "text": {
+          "type": "string",
+          "description": "The message’s full text, Slack markup made readable"
+         }
+        },
+        "required": [
+         "source",
+         "sourceId",
+         "url",
+         "actorEmail",
+         "occurredAt",
+         "kind",
+         "title",
+         "summary",
+         "teamHint",
+         "initiativeHint",
+         "customerHint",
+         "raw",
+         "text"
+        ],
+        "additionalProperties": false
+       }
+      },
+      {
+       "name": "Get Many Since",
+       "value": "getManySince",
+       "description": "Messages posted since a time, across the channels whose names match, as activity items (oldest first)",
+       "action": "Get messages since a time",
+       "idempotent": true,
+       "outputSchema": {
+        "type": "object",
+        "properties": {
+         "source": {
+          "type": "string",
+          "description": "The tool, lowercase: slack, google-drive, google-calendar, notion, …"
+         },
+         "sourceId": {
+          "type": "string",
+          "description": "Stable id of the change, '<source>:<tool ids>': the same change always has the same id, so a replay is recognised"
+         },
+         "url": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Where a person opens it"
+         },
+         "actorEmail": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Email of the person who made the change, lowercase; null when the tool doesn't say"
+         },
+         "occurredAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When it happened, ISO 8601 in UTC with milliseconds"
+         },
+         "kind": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+          "description": "Suggested event kind, such as work.discussion or work.doc_edited; a flow may change it"
+         },
+         "title": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "One line: the document, ticket or meeting title, or the channel and first words"
+         },
+         "summary": {
+          "type": "string",
+          "maxLength": 600,
+          "description": "The text, whitespace collapsed, at most 600 characters"
+         },
+         "teamHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The team it seems to belong to, from the tool's own grouping, when there is one"
+         },
+         "initiativeHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The project or initiative it seems to belong to, when there is one"
+         },
+         "customerHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The customer it is about, when there is one (a #customer-<name> channel, a CRM company…)"
+         },
+         "raw": {
+          "type": "object",
+          "description": "The tool's own object, trimmed: long strings clipped, long lists cut, deep nesting dropped"
+         },
+         "cursor": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Pass it back as Since to continue after this item (List Changed Since operations)"
+         }
+        },
+        "required": [
+         "source",
+         "sourceId",
+         "url",
+         "actorEmail",
+         "occurredAt",
+         "kind",
+         "title",
+         "summary",
+         "teamHint",
+         "initiativeHint",
+         "customerHint",
+         "raw"
+        ],
+        "additionalProperties": false
+       }
+      },
+      {
        "name": "Get Permalink",
        "value": "getPermalink",
        "action": "Get a message permalink",
@@ -1015,9 +1229,125 @@
         "message",
         "reaction"
        ]
+      },
+      "hide": {
+       "operation": [
+        "getManySince"
+       ]
       }
      },
      "description": "Pick a channel, or set a channel ID (C0123ABCD) with an expression"
+    },
+    {
+     "name": "channelNames",
+     "displayName": "Channel Names",
+     "type": "string",
+     "default": "*",
+     "required": true,
+     "placeholder": "customer-*, proj-*",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "message"
+       ],
+       "operation": [
+        "getManySince"
+       ]
+      }
+     },
+     "description": "Channels whose name matches one of these patterns (* any characters, ? one; comma-separated). * is every channel the app is in. The app reads only channels it was invited to."
+    },
+    {
+     "name": "since",
+     "displayName": "Since",
+     "type": "string",
+     "default": "",
+     "placeholder": "2026-11-12T08:00:00Z or 1762934400.000100",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "message"
+       ],
+       "operation": [
+        "getManySince"
+       ]
+      }
+     },
+     "description": "Messages posted after this ISO time or Slack timestamp (a cursor from an earlier item). Empty: the last 24 hours."
+    },
+    {
+     "name": "activityOptions",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add option",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "message"
+       ],
+       "operation": [
+        "getManySince",
+        "get"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "channelIds",
+       "displayName": "Channel IDs Instead",
+       "type": "string",
+       "default": "",
+       "placeholder": "C0123456789, C0987654321",
+       "description": "Get Many Since: read these channels instead of matching names"
+      },
+      {
+       "name": "includeReplies",
+       "displayName": "Include Thread Replies",
+       "type": "boolean",
+       "default": false,
+       "description": "Get Many Since: also read the replies of threads with new replies (one more call per thread; mind Slack’s rate limits)"
+      },
+      {
+       "name": "includePrivate",
+       "displayName": "Include Private Channels and DMs",
+       "type": "boolean",
+       "default": false,
+       "description": "Whether private channels, group DMs and DMs the app is in are read too (needs groups:history, mpim:history, im:history)"
+      },
+      {
+       "name": "includeBots",
+       "displayName": "Include Bot Messages",
+       "type": "boolean",
+       "default": false
+      },
+      {
+       "name": "customerPrefix",
+       "displayName": "Customer Channel Prefix",
+       "type": "string",
+       "default": "customer-",
+       "description": "A channel named <prefix><name> is about the customer <name> (customerHint). Empty: no customer hints."
+      },
+      {
+       "name": "initiativePrefix",
+       "displayName": "Initiative Channel Prefix",
+       "type": "string",
+       "default": "",
+       "placeholder": "proj-",
+       "description": "A channel named <prefix><name> belongs to the initiative <name> (initiativeHint)"
+      },
+      {
+       "name": "teamMap",
+       "displayName": "Team Map",
+       "type": "string",
+       "default": "",
+       "typeOptions": {
+        "rows": 3
+       },
+       "placeholder": "eng-*=R&D\ncs-*=CS\nsales-*=Sales",
+       "description": "One <channel pattern>=<team> per line; the first match is the teamHint"
+      }
+     ]
     },
     {
      "name": "channelId",
@@ -1221,7 +1551,8 @@
        "operation": [
         "update",
         "delete",
-        "getPermalink"
+        "getPermalink",
+        "get"
        ]
       }
      },
@@ -1314,6 +1645,9 @@
       "show": {
        "resource": [
         "user"
+       ],
+       "operation": [
+        "getByEmail"
        ]
       }
      }
@@ -1326,7 +1660,13 @@
      "displayOptions": {
       "show": {
        "resource": [
-        "channel"
+        "channel",
+        "user",
+        "message"
+       ],
+       "operation": [
+        "getAll",
+        "getManySince"
        ]
       }
      },
@@ -1344,7 +1684,13 @@
      "displayOptions": {
       "show": {
        "resource": [
-        "channel"
+        "channel",
+        "user",
+        "message"
+       ],
+       "operation": [
+        "getAll",
+        "getManySince"
        ],
        "returnAll": [
         false
@@ -1372,6 +1718,14 @@
        "displayName": "Exclude Archived Channels",
        "type": "boolean",
        "default": true
+      },
+      {
+       "name": "names",
+       "displayName": "Name Patterns",
+       "type": "string",
+       "default": "",
+       "placeholder": "customer-*, proj-*",
+       "description": "Only channels whose name matches one of these patterns (* any characters, ? one; comma-separated)"
       },
       {
        "name": "types",
@@ -1415,6 +1769,37 @@
       }
      },
      "description": "Whether to return a few flat fields instead of the raw Slack object"
+    },
+    {
+     "name": "userFilters",
+     "displayName": "Filters",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add filter",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "user"
+       ],
+       "operation": [
+        "getAll"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "includeBots",
+       "displayName": "Include Bots",
+       "type": "boolean",
+       "default": false
+      },
+      {
+       "name": "includeDeleted",
+       "displayName": "Include Deactivated Members",
+       "type": "boolean",
+       "default": false
+      }
+     ]
     }
    ]
   },
@@ -1428,7 +1813,7 @@
    "categories": [
     "Communication"
    ],
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzRBMTU0QiIvPgogIDxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CiAgICA8cGF0aCBkPSJNMTkgMTJsLTMgMjRNMzEgMTJsLTMgMjRNMTIgMjBoMjRNMTEgMjhoMjQiLz4KICA8L2c+CiAgPHBhdGggZD0iTTMzIDZsLTUgOGg0bC0zIDcgNy05aC00eiIgZmlsbD0iI0VDQjIyRSIvPgo8L3N2Zz4K",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjgiIHk9IjgiIHdpZHRoPSIyNiIgaGVpZ2h0PSIyNiIgdmlld0JveD0iMCAwIDI1NiAyNTYiPjxwYXRoIGZpbGw9IiNlMDFlNWEiIGQ9Ik01My44NDEgMTYxLjMyYzAgMTQuODMyLTExLjk4NyAyNi44Mi0yNi44MTkgMjYuODJTLjIwMyAxNzYuMTUyLjIwMyAxNjEuMzJjMC0xNC44MzEgMTEuOTg3LTI2LjgxOCAyNi44Mi0yNi44MThINTMuODR6bTEzLjQxIDBjMC0xNC44MzEgMTEuOTg3LTI2LjgxOCAyNi44MTktMjYuODE4czI2LjgxOSAxMS45ODcgMjYuODE5IDI2LjgxOXY2Ny4wNDdjMCAxNC44MzItMTEuOTg3IDI2LjgyLTI2LjgyIDI2LjgyYy0xNC44MyAwLTI2LjgxOC0xMS45ODgtMjYuODE4LTI2LjgyeiIvPjxwYXRoIGZpbGw9IiMzNmM1ZjAiIGQ9Ik05NC4wNyA1My42MzhjLTE0LjgzMiAwLTI2LjgyLTExLjk4Ny0yNi44Mi0yNi44MTlTNzkuMjM5IDAgOTQuMDcgMHMyNi44MTkgMTEuOTg3IDI2LjgxOSAyNi44MTl2MjYuODJ6bTAgMTMuNjEzYzE0LjgzMiAwIDI2LjgxOSAxMS45ODcgMjYuODE5IDI2LjgxOXMtMTEuOTg3IDI2LjgxOS0yNi44MiAyNi44MTlIMjYuODJDMTEuOTg3IDEyMC44ODkgMCAxMDguOTAyIDAgOTQuMDY5YzAtMTQuODMgMTEuOTg3LTI2LjgxOCAyNi44MTktMjYuODE4eiIvPjxwYXRoIGZpbGw9IiMyZWI2N2QiIGQ9Ik0yMDEuNTUgOTQuMDdjMC0xNC44MzIgMTEuOTg3LTI2LjgyIDI2LjgxOC0yNi44MnMyNi44MiAxMS45ODggMjYuODIgMjYuODJzLTExLjk4OCAyNi44MTktMjYuODIgMjYuODE5SDIwMS41NXptLTEzLjQxIDBjMCAxNC44MzItMTEuOTg4IDI2LjgxOS0yNi44MiAyNi44MTljLTE0LjgzMSAwLTI2LjgxOC0xMS45ODctMjYuODE4LTI2LjgyVjI2LjgyQzEzNC41MDIgMTEuOTg3IDE0Ni40ODkgMCAxNjEuMzIgMHMyNi44MTkgMTEuOTg3IDI2LjgxOSAyNi44MTl6Ii8+PHBhdGggZmlsbD0iI2VjYjIyZSIgZD0iTTE2MS4zMiAyMDEuNTVjMTQuODMyIDAgMjYuODIgMTEuOTg3IDI2LjgyIDI2LjgxOHMtMTEuOTg4IDI2LjgyLTI2LjgyIDI2LjgyYy0xNC44MzEgMC0yNi44MTgtMTEuOTg4LTI2LjgxOC0yNi44MlYyMDEuNTV6bTAtMTMuNDFjLTE0LjgzMSAwLTI2LjgxOC0xMS45ODgtMjYuODE4LTI2LjgyYzAtMTQuODMxIDExLjk4Ny0yNi44MTggMjYuODE5LTI2LjgxOGg2Ny4yNWMxNC44MzIgMCAyNi44MiAxMS45ODcgMjYuODIgMjYuODE5cy0xMS45ODggMjYuODE5LTI2LjgyIDI2LjgxOXoiLz48L3N2Zz4KICA8Y2lyY2xlIGN4PSIzOCIgY3k9IjM4IiByPSI5IiBmaWxsPSIjZmJiZjI0IiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMiIvPgogIDxwYXRoIGQ9Ik0zOS41IDMxLjUgMzQgMzloNGwtMS41IDUuNUw0MiAzN2gtNFoiIGZpbGw9IiMxZjI5MzciLz4KPC9zdmc+Cg==",
    "color": "#4A154B",
    "subtitle": "{{events}}",
    "documentationUrl": "https://api.slack.com/apis/events-api",
@@ -1597,6 +1982,14 @@
      }
     },
     {
+     "name": "channelNames",
+     "displayName": "Channel Name Filter",
+     "type": "string",
+     "default": "",
+     "placeholder": "customer-*, proj-*",
+     "description": "Only events in channels whose name matches one of these patterns (* any characters, ? one; comma-separated). The names are looked up (conversations.info, cached) and need channels:read. Empty: no name filter."
+    },
+    {
      "name": "ignoreBots",
      "displayName": "Ignore Bot Messages",
      "type": "boolean",
@@ -1632,6 +2025,256 @@
    ]
   },
   {
+   "name": "slackActivityTrigger",
+   "displayName": "Slack Activity Trigger",
+   "description": "Starts the workflow when someone posts in a matching channel, with the message as an activity item (author email, permalink, customer and team hints)",
+   "version": 1,
+   "kind": "trigger",
+   "triggerSource": "appWebhook",
+   "categories": [
+    "Communication"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjgiIHk9IjgiIHdpZHRoPSIyNiIgaGVpZ2h0PSIyNiIgdmlld0JveD0iMCAwIDI1NiAyNTYiPjxwYXRoIGZpbGw9IiNlMDFlNWEiIGQ9Ik01My44NDEgMTYxLjMyYzAgMTQuODMyLTExLjk4NyAyNi44Mi0yNi44MTkgMjYuODJTLjIwMyAxNzYuMTUyLjIwMyAxNjEuMzJjMC0xNC44MzEgMTEuOTg3LTI2LjgxOCAyNi44Mi0yNi44MThINTMuODR6bTEzLjQxIDBjMC0xNC44MzEgMTEuOTg3LTI2LjgxOCAyNi44MTktMjYuODE4czI2LjgxOSAxMS45ODcgMjYuODE5IDI2LjgxOXY2Ny4wNDdjMCAxNC44MzItMTEuOTg3IDI2LjgyLTI2LjgyIDI2LjgyYy0xNC44MyAwLTI2LjgxOC0xMS45ODgtMjYuODE4LTI2LjgyeiIvPjxwYXRoIGZpbGw9IiMzNmM1ZjAiIGQ9Ik05NC4wNyA1My42MzhjLTE0LjgzMiAwLTI2LjgyLTExLjk4Ny0yNi44Mi0yNi44MTlTNzkuMjM5IDAgOTQuMDcgMHMyNi44MTkgMTEuOTg3IDI2LjgxOSAyNi44MTl2MjYuODJ6bTAgMTMuNjEzYzE0LjgzMiAwIDI2LjgxOSAxMS45ODcgMjYuODE5IDI2LjgxOXMtMTEuOTg3IDI2LjgxOS0yNi44MiAyNi44MTlIMjYuODJDMTEuOTg3IDEyMC44ODkgMCAxMDguOTAyIDAgOTQuMDY5YzAtMTQuODMgMTEuOTg3LTI2LjgxOCAyNi44MTktMjYuODE4eiIvPjxwYXRoIGZpbGw9IiMyZWI2N2QiIGQ9Ik0yMDEuNTUgOTQuMDdjMC0xNC44MzIgMTEuOTg3LTI2LjgyIDI2LjgxOC0yNi44MnMyNi44MiAxMS45ODggMjYuODIgMjYuODJzLTExLjk4OCAyNi44MTktMjYuODIgMjYuODE5SDIwMS41NXptLTEzLjQxIDBjMCAxNC44MzItMTEuOTg4IDI2LjgxOS0yNi44MiAyNi44MTljLTE0LjgzMSAwLTI2LjgxOC0xMS45ODctMjYuODE4LTI2LjgyVjI2LjgyQzEzNC41MDIgMTEuOTg3IDE0Ni40ODkgMCAxNjEuMzIgMHMyNi44MTkgMTEuOTg3IDI2LjgxOSAyNi44MTl6Ii8+PHBhdGggZmlsbD0iI2VjYjIyZSIgZD0iTTE2MS4zMiAyMDEuNTVjMTQuODMyIDAgMjYuODIgMTEuOTg3IDI2LjgyIDI2LjgxOHMtMTEuOTg4IDI2LjgyLTI2LjgyIDI2LjgyYy0xNC44MzEgMC0yNi44MTgtMTEuOTg4LTI2LjgxOC0yNi44MlYyMDEuNTV6bTAtMTMuNDFjLTE0LjgzMSAwLTI2LjgxOC0xMS45ODgtMjYuODE4LTI2LjgyYzAtMTQuODMxIDExLjk4Ny0yNi44MTggMjYuODE5LTI2LjgxOGg2Ny4yNWMxNC44MzIgMCAyNi44MiAxMS45ODcgMjYuODIgMjYuODE5cy0xMS45ODggMjYuODE5LTI2LjgyIDI2LjgxOXoiLz48L3N2Zz4KICA8Y2lyY2xlIGN4PSIzOCIgY3k9IjM4IiByPSI5IiBmaWxsPSIjZmJiZjI0IiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMiIvPgogIDxwYXRoIGQ9Ik0zOS41IDMxLjUgMzQgMzloNGwtMS41IDUuNUw0MiAzN2gtNFoiIGZpbGw9IiMxZjI5MzciLz4KPC9zdmc+Cg==",
+   "color": "#4A154B",
+   "subtitle": "{{channelNames}}",
+   "documentationUrl": "https://docs.slack.dev/apis/events-api/",
+   "keywords": [
+    "slack",
+    "trigger",
+    "activity",
+    "channel",
+    "message",
+    "customer",
+    "events api"
+   ],
+   "inputs": [],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputSchema": {
+    "type": "object",
+    "properties": {
+     "source": {
+      "type": "string",
+      "description": "The tool, lowercase: slack, google-drive, google-calendar, notion, …"
+     },
+     "sourceId": {
+      "type": "string",
+      "description": "Stable id of the change, '<source>:<tool ids>': the same change always has the same id, so a replay is recognised"
+     },
+     "url": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Where a person opens it"
+     },
+     "actorEmail": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Email of the person who made the change, lowercase; null when the tool doesn't say"
+     },
+     "occurredAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When it happened, ISO 8601 in UTC with milliseconds"
+     },
+     "kind": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+      "description": "Suggested event kind, such as work.discussion or work.doc_edited; a flow may change it"
+     },
+     "title": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "One line: the document, ticket or meeting title, or the channel and first words"
+     },
+     "summary": {
+      "type": "string",
+      "maxLength": 600,
+      "description": "The text, whitespace collapsed, at most 600 characters"
+     },
+     "teamHint": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "The team it seems to belong to, from the tool's own grouping, when there is one"
+     },
+     "initiativeHint": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "The project or initiative it seems to belong to, when there is one"
+     },
+     "customerHint": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "The customer it is about, when there is one (a #customer-<name> channel, a CRM company…)"
+     },
+     "raw": {
+      "type": "object",
+      "description": "The tool's own object, trimmed: long strings clipped, long lists cut, deep nesting dropped"
+     },
+     "cursor": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Pass it back as Since to continue after this item (List Changed Since operations)"
+     }
+    },
+    "required": [
+     "source",
+     "sourceId",
+     "url",
+     "actorEmail",
+     "occurredAt",
+     "kind",
+     "title",
+     "summary",
+     "teamHint",
+     "initiativeHint",
+     "customerHint",
+     "raw"
+    ],
+    "additionalProperties": false
+   },
+   "credentials": [
+    {
+     "name": "slackApi",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "accessToken"
+       ]
+      }
+     }
+    },
+    {
+     "name": "slackOAuth2Api",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "oAuth2"
+       ]
+      }
+     }
+    }
+   ],
+   "properties": [
+    {
+     "name": "authentication",
+     "displayName": "Authentication",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "accessToken",
+     "options": [
+      {
+       "name": "Access Token",
+       "value": "accessToken",
+       "description": "A bot token pasted from the Slack app"
+      },
+      {
+       "name": "OAuth2",
+       "value": "oAuth2",
+       "description": "Connect with Slack; the token is renewed for you"
+      }
+     ]
+    },
+    {
+     "name": "notice",
+     "displayName": "Slack has no API to register an Events subscription. Publish the workflow, copy this node's Request URL from the editor's Publish menu (App webhooks) into the Slack app's Event Subscriptions page, and subscribe to the bot event message.channels (add message.groups, message.mpim and message.im only with Include Private Channels and DMs). Invite the app to the channels to watch. The credential's Signing Secret is required: Landflow verifies every call with it.",
+     "type": "notice",
+     "default": ""
+    },
+    {
+     "name": "channelNames",
+     "displayName": "Channel Names",
+     "type": "string",
+     "default": "*",
+     "required": true,
+     "placeholder": "customer-*, proj-*",
+     "description": "Messages in channels whose name matches one of these patterns (* any characters, ? one; comma-separated); * is every channel the app is in"
+    },
+    {
+     "name": "includeReplies",
+     "displayName": "Include Thread Replies",
+     "type": "boolean",
+     "default": true,
+     "description": "Whether replies in threads start a run too"
+    },
+    {
+     "name": "includePrivate",
+     "displayName": "Include Private Channels and DMs",
+     "type": "boolean",
+     "default": false,
+     "description": "Whether messages in private channels, group DMs and DMs the app is in start a run (subscribe to message.groups, message.mpim, message.im)"
+    },
+    {
+     "name": "includeBots",
+     "displayName": "Include Bot Messages",
+     "type": "boolean",
+     "default": false,
+     "description": "Whether messages from bots and integrations start a run (this app’s own never do)"
+    },
+    {
+     "name": "options",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add option",
+     "values": [
+      {
+       "name": "customerPrefix",
+       "displayName": "Customer Channel Prefix",
+       "type": "string",
+       "default": "customer-",
+       "description": "A channel named <prefix><name> is about the customer <name> (customerHint). Empty: no customer hints."
+      },
+      {
+       "name": "initiativePrefix",
+       "displayName": "Initiative Channel Prefix",
+       "type": "string",
+       "default": "",
+       "placeholder": "proj-",
+       "description": "A channel named <prefix><name> belongs to the initiative <name> (initiativeHint)"
+      },
+      {
+       "name": "teamMap",
+       "displayName": "Team Map",
+       "type": "string",
+       "default": "",
+       "typeOptions": {
+        "rows": 3
+       },
+       "placeholder": "eng-*=R&D\ncs-*=CS\nsales-*=Sales",
+       "description": "One <channel pattern>=<team> per line; the first match is the teamHint"
+      },
+      {
+       "name": "tolerance",
+       "displayName": "Signature Tolerance (s)",
+       "type": "number",
+       "default": 300,
+       "typeOptions": {
+        "minValue": 0
+       },
+       "description": "How far the signed request timestamp may be from now before the call is rejected as a replay"
+      }
+     ]
+    }
+   ]
+  },
+  {
    "name": "discord",
    "displayName": "Discord",
    "description": "Send, list, delete and react to Discord messages with a bot, or post through a channel webhook",
@@ -1640,7 +2283,7 @@
    "categories": [
     "Communication"
    ],
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtZGlzY29yZC1iZyIgeDE9IjAiIHkxPSIwIiB4Mj0iMSIgeTI9IjEiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiM2QTc2RjUiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjNDc1MkUwIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0idXJsKCNsZi1kaXNjb3JkLWJnKSIvPgogIDxwYXRoIGQ9Ik0xNCAxMmgyMGE1IDUgMCAwIDEgNSA1djExYTUgNSAwIDAgMS01IDVIMjNsLTcgNS41VjMzaC0yYTUgNSAwIDAgMS01LTVWMTdhNSA1IDAgMCAxIDUtNXoiIGZpbGw9IiNmZmYiLz4KICA8Y2lyY2xlIGN4PSIxOSIgY3k9IjIyLjUiIHI9IjIuNyIgZmlsbD0iIzU4NjVGMiIvPgogIDxjaXJjbGUgY3g9IjI5IiBjeT0iMjIuNSIgcj0iMi43IiBmaWxsPSIjNTg2NUYyIi8+Cjwvc3ZnPgo=",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAxOTkiPjxwYXRoIGZpbGw9IiM1ODY1ZjIiIGQ9Ik0yMTYuODU2IDE2LjU5N0EyMDguNSAyMDguNSAwIDAgMCAxNjQuMDQyIDBjLTIuMjc1IDQuMTEzLTQuOTMzIDkuNjQ1LTYuNzY2IDE0LjA0NnEtMjkuNTM4LTQuNDQyLTU4LjUzMyAwYy0xLjgzMi00LjQtNC41NS05LjkzMy02Ljg0Ni0xNC4wNDZhMjA3LjggMjA3LjggMCAwIDAtNTIuODU1IDE2LjYzOEM1LjYxOCA2Ny4xNDctMy40NDMgMTE2LjQgMS4wODcgMTY0Ljk1NmMyMi4xNjkgMTYuNTU1IDQzLjY1MyAyNi42MTIgNjQuNzc1IDMzLjE5M0ExNjEgMTYxIDAgMCAwIDc5LjczNSAxNzUuM2ExMzYuNCAxMzYuNCAwIDAgMS0yMS44NDYtMTAuNjMyYTEwOSAxMDkgMCAwIDAgNS4zNTYtNC4yMzdjNDIuMTIyIDE5LjcwMiA4Ny44OSAxOS43MDIgMTI5LjUxIDBhMTMyIDEzMiAwIDAgMCA1LjM1NSA0LjIzN2ExMzYgMTM2IDAgMCAxLTIxLjg4NiAxMC42NTNjNC4wMDYgOC4wMiA4LjYzOCAxNS42NyAxMy44NzMgMjIuODQ4YzIxLjE0Mi02LjU4IDQyLjY0Ni0xNi42MzcgNjQuODE1LTMzLjIxM2M1LjMxNi01Ni4yODgtOS4wOC0xMDUuMDktMzguMDU2LTE0OC4zNk04NS40NzQgMTM1LjA5NWMtMTIuNjQ1IDAtMjMuMDE1LTExLjgwNS0yMy4wMTUtMjYuMThzMTAuMTQ5LTI2LjIgMjMuMDE1LTI2LjJzMjMuMjM2IDExLjgwNCAyMy4wMTUgMjYuMmMuMDIgMTQuMzc1LTEwLjE0OCAyNi4xOC0yMy4wMTUgMjYuMThtODUuMDUxIDBjLTEyLjY0NSAwLTIzLjAxNC0xMS44MDUtMjMuMDE0LTI2LjE4czEwLjE0OC0yNi4yIDIzLjAxNC0yNi4yYzEyLjg2NyAwIDIzLjIzNiAxMS44MDQgMjMuMDE1IDI2LjJjMCAxNC4zNzUtMTAuMTQ4IDI2LjE4LTIzLjAxNSAyNi4xOCIvPjwvc3ZnPgo8L3N2Zz4K",
    "color": "#5865F2",
    "subtitle": "{{operation}}: {{resource}}",
    "documentationUrl": "https://discord.com/developers/docs/resources/message",
@@ -2098,7 +2741,7 @@
    "categories": [
     "Communication"
    ],
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtd2EtYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjMzREQjc0Ii8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzFEQjk1NSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtd2EtYmcpIi8+CiAgPHBhdGggZD0iTTI0IDEwLjVhMTMuNSAxMy41IDAgMSAxLTYuOSAyNS4xbC02LjYgMS45IDEuOS02LjNBMTMuNSAxMy41IDAgMCAxIDI0IDEwLjV6IiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMyIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxwYXRoIGQ9Ik0xOS42IDE3LjhjLjUtLjUgMS4zLS40IDEuNy4ybDEuNSAyLjNjLjMuNS4yIDEuMi0uMiAxLjZsLS44LjhjLjggMS44IDIuMiAzLjIgNCA0bC44LS44Yy40LS40IDEuMS0uNSAxLjYtLjJsMi4zIDEuNWMuNi40LjcgMS4yLjIgMS43bC0xLjEgMS4xYy0uOS45LTIuMyAxLjItMy41LjYtMy4zLTEuNi02LTQuMy03LjYtNy42LS42LTEuMi0uMy0yLjYuNi0zLjV6IiBmaWxsPSIjZmZmIi8+Cjwvc3ZnPgo=",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyNTgiPjxkZWZzPjxsaW5lYXJHcmFkaWVudCBpZD0iU1ZHSzNLWnE0OVUiIHgxPSI1MCUiIHgyPSI1MCUiIHkxPSIxMDAlIiB5Mj0iMCUiPjxzdG9wIG9mZnNldD0iMCUiIHN0b3AtY29sb3I9IiMxZmFmMzgiLz48c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiM2MGQ2NjkiLz48L2xpbmVhckdyYWRpZW50PjxsaW5lYXJHcmFkaWVudCBpZD0iU1ZHZWZNa29FT2QiIHgxPSI1MCUiIHgyPSI1MCUiIHkxPSIxMDAlIiB5Mj0iMCUiPjxzdG9wIG9mZnNldD0iMCUiIHN0b3AtY29sb3I9IiNmOWY5ZjkiLz48c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiNmZmYiLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48cGF0aCBmaWxsPSJ1cmwoI1NWR0szS1pxNDlVKSIgZD0iTTUuNDYzIDEyNy40NTZjLS4wMDYgMjEuNjc3IDUuNjU4IDQyLjg0MyAxNi40MjggNjEuNDk5TDQuNDMzIDI1Mi42OTdsNjUuMjMyLTE3LjEwNGExMjMgMTIzIDAgMCAwIDU4LjggMTQuOTdoLjA1NGM2Ny44MTUgMCAxMjMuMDE4LTU1LjE4MyAxMjMuMDQ3LTEyMy4wMWMuMDEzLTMyLjg2Ny0xMi43NzUtNjMuNzczLTM2LjAwOS04Ny4wMjVjLTIzLjIzLTIzLjI1LTU0LjEyNS0zNi4wNjEtODcuMDQzLTM2LjA3NmMtNjcuODIzIDAtMTIzLjAyMiA1NS4xOC0xMjMuMDUgMTIzLjAwNCIvPjxwYXRoIGZpbGw9InVybCgjU1ZHZWZNa29FT2QpIiBkPSJNMS4wNyAxMjcuNDE2Yy0uMDA3IDIyLjQ1NyA1Ljg2IDQ0LjM4IDE3LjAxNCA2My43MDRMMCAyNTcuMTQ3bDY3LjU3MS0xNy43MTdjMTguNjE4IDEwLjE1MSAzOS41OCAxNS41MDMgNjAuOTEgMTUuNTExaC4wNTVjNzAuMjQ4IDAgMTI3LjQzNC01Ny4xNjggMTI3LjQ2NC0xMjcuNDIzYy4wMTItMzQuMDQ4LTEzLjIzNi02Ni4wNjUtMzcuMy05MC4xNUMxOTQuNjMzIDEzLjI4NiAxNjIuNjMzLjAxNCAxMjguNTM2IDBDNTguMjc2IDAgMS4wOTkgNTcuMTYgMS4wNzEgMTI3LjQxNm00MC4yNCA2MC4zNzZsLTIuNTIzLTQuMDA1Yy0xMC42MDYtMTYuODY0LTE2LjIwNC0zNi4zNTItMTYuMTk2LTU2LjM2M0MyMi42MTQgNjkuMDI5IDcwLjEzOCAyMS41MiAxMjguNTc2IDIxLjUyYzI4LjMuMDEyIDU0Ljg5NiAxMS4wNDQgNzQuOSAzMS4wNmMyMC4wMDMgMjAuMDE4IDMxLjAxIDQ2LjYyOCAzMS4wMDMgNzQuOTNjLS4wMjYgNTguMzk1LTQ3LjU1MSAxMDUuOTEtMTA1Ljk0MyAxMDUuOTFoLS4wNDJjLTE5LjAxMy0uMDEtMzcuNjYtNS4xMTYtNTMuOTIyLTE0Ljc2NWwtMy44Ny0yLjI5NWwtNDAuMDk4IDEwLjUxM3oiLz48cGF0aCBmaWxsPSIjZmZmIiBkPSJNOTYuNjc4IDc0LjE0OGMtMi4zODYtNS4zMDMtNC44OTctNS40MS03LjE2Ni01LjUwM2MtMS44NTgtLjA4LTMuOTgyLS4wNzQtNi4xMDQtLjA3NGMtMi4xMjQgMC01LjU3NS43OTktOC40OTIgMy45ODRjLTIuOTIgMy4xODgtMTEuMTQ4IDEwLjg5Mi0xMS4xNDggMjYuNTYxczExLjQxMyAzMC44MTMgMTMuMDA0IDMyLjk0YzEuNTkzIDIuMTIzIDIyLjAzMyAzNS4zMDcgNTQuNDA1IDQ4LjA3M2MyNi45MDQgMTAuNjA5IDMyLjM3OSA4LjQ5OSAzOC4yMTggNy45NjdjNS44NC0uNTMgMTguODQ0LTcuNzAyIDIxLjQ5Ny0xNS4xMzljMi42NTUtNy40MzYgMi42NTUtMTMuODEgMS44NTktMTUuMTQyYy0uNzk2LTEuMzI3LTIuOTItMi4xMjQtNi4xMDUtMy43MTZzLTE4Ljg0NC05LjI5OC0yMS43NjMtMTAuMzYxYy0yLjkyLTEuMDYyLTUuMDQzLTEuNTkyLTcuMTY3IDEuNTk3Yy0yLjEyNCAzLjE4NC04LjIyMyAxMC4zNTYtMTAuMDgyIDEyLjQ4Yy0xLjg1NyAyLjEyOS0zLjcxNiAyLjM5NC02LjkuODAxYy0zLjE4Ny0xLjU5OC0xMy40NDQtNC45NTctMjUuNjEzLTE1LjgwNmMtOS40NjgtOC40NDItMTUuODYtMTguODY3LTE3LjcxOC0yMi4wNTZjLTEuODU4LTMuMTg0LS4xOTktNC45MSAxLjM5OC02LjQ5N2MxLjQzMS0xLjQyNyAzLjE4Ni0zLjcxOSA0Ljc4LTUuNTc4YzEuNTg4LTEuODYgMi4xMTgtMy4xODcgMy4xOC01LjMxMWMxLjA2My0yLjEyNi41MzEtMy45ODYtLjI2NC01LjU3OWMtLjc5OC0xLjU5My02Ljk4Ny0xNy4zNDMtOS44MTktMjMuNjQiLz48L3N2Zz4KPC9zdmc+Cg==",
    "color": "#25D366",
    "subtitle": "{{operation}}: {{resource}}",
    "documentationUrl": "https://developers.facebook.com/docs/whatsapp/cloud-api/reference/messages",
@@ -2598,7 +3241,7 @@
    "categories": [
     "Communication"
    ],
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtdHctYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjRjc0NjRDIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iI0QyMUUyNSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtdHctYmcpIi8+CiAgPGNpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMTQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIzIi8+CiAgPGNpcmNsZSBjeD0iMTguNSIgY3k9IjE4LjUiIHI9IjMuMiIgZmlsbD0iI2ZmZiIvPgogIDxjaXJjbGUgY3g9IjI5LjUiIGN5PSIxOC41IiByPSIzLjIiIGZpbGw9IiNmZmYiLz4KICA8Y2lyY2xlIGN4PSIxOC41IiBjeT0iMjkuNSIgcj0iMy4yIiBmaWxsPSIjZmZmIi8+CiAgPGNpcmNsZSBjeD0iMjkuNSIgY3k9IjI5LjUiIHI9IjMuMiIgZmlsbD0iI2ZmZiIvPgo8L3N2Zz4K",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyNTYiPjxwYXRoIGZpbGw9IiNmMTJlNDUiIGQ9Ik0xMjggMGM3MC42NTYgMCAxMjggNTcuMzQ0IDEyOCAxMjhzLTU3LjM0NCAxMjgtMTI4IDEyOFMwIDE5OC42NTYgMCAxMjhTNTcuMzQ0IDAgMTI4IDBtMCAzMy43OTJjLTUyLjIyNCAwLTk0LjIwOCA0MS45ODQtOTQuMjA4IDk0LjIwOFM3NS43NzYgMjIyLjIwOCAxMjggMjIyLjIwOHM5NC4yMDgtNDEuOTg0IDk0LjIwOC05NC4yMDhTMTgwLjIyNCAzMy43OTIgMTI4IDMzLjc5Mm0zMS43NDQgOTkuMzI4YzE0LjcwNCAwIDI2LjYyNCAxMS45MiAyNi42MjQgMjYuNjI0cy0xMS45MiAyNi42MjQtMjYuNjI0IDI2LjYyNHMtMjYuNjI0LTExLjkyLTI2LjYyNC0yNi42MjRzMTEuOTItMjYuNjI0IDI2LjYyNC0yNi42MjRtLTYzLjQ4OCAwYzE0LjcwNCAwIDI2LjYyNCAxMS45MiAyNi42MjQgMjYuNjI0cy0xMS45MiAyNi42MjQtMjYuNjI0IDI2LjYyNHMtMjYuNjI0LTExLjkyLTI2LjYyNC0yNi42MjRzMTEuOTItMjYuNjI0IDI2LjYyNC0yNi42MjRtNjMuNDg4LTYzLjQ4OGMxNC43MDQgMCAyNi42MjQgMTEuOTIgMjYuNjI0IDI2LjYyNHMtMTEuOTIgMjYuNjI0LTI2LjYyNCAyNi42MjRzLTI2LjYyNC0xMS45Mi0yNi42MjQtMjYuNjI0czExLjkyLTI2LjYyNCAyNi42MjQtMjYuNjI0bS02My40ODggMGMxNC43MDQgMCAyNi42MjQgMTEuOTIgMjYuNjI0IDI2LjYyNHMtMTEuOTIgMjYuNjI0LTI2LjYyNCAyNi42MjRzLTI2LjYyNC0xMS45Mi0yNi42MjQtMjYuNjI0czExLjkyLTI2LjYyNCAyNi42MjQtMjYuNjI0Ii8+PC9zdmc+Cjwvc3ZnPgo=",
    "color": "#F22F46",
    "subtitle": "{{operation}}: {{resource}}",
    "documentationUrl": "https://www.twilio.com/docs/messaging/api/message-resource",
@@ -4027,7 +4670,7 @@
   {
    "name": "telegramApi",
    "displayName": "Telegram API",
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtdGctYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjMzRBRUU2Ii8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzFBOEJDMiIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtdGctYmcpIi8+CiAgPHBhdGggZD0iTTM5IDExIDkgMjIuNWwxMi41IDR6IiBmaWxsPSIjZmZmIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+CiAgPHBhdGggZD0iTTM5IDExIDIxLjUgMjYuNSAyNSAzOHoiIGZpbGw9IiNkM2YwZmMiIHN0cm9rZT0iI2QzZjBmYyIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8cGF0aCBkPSJNMjEuNSAyNi41IDIwIDMzLjVsMy42LTMuNHoiIGZpbGw9IiM5ZmQ4ZjIiIHN0cm9rZT0iIzlmZDhmMiIgc3Ryb2tlLXdpZHRoPSIxLjIiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+Cg==",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyNTYiPjxkZWZzPjxsaW5lYXJHcmFkaWVudCBpZD0iU1ZHNkRhT1pjd3QiIHgxPSI1MCUiIHgyPSI1MCUiIHkxPSIwJSIgeTI9IjEwMCUiPjxzdG9wIG9mZnNldD0iMCUiIHN0b3AtY29sb3I9IiMyYWFiZWUiLz48c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiMyMjllZDkiLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48cGF0aCBmaWxsPSJ1cmwoI1NWRzZEYU9aY3d0KSIgZD0iTTEyOCAwQzk0LjA2IDAgNjEuNDggMTMuNDk0IDM3LjUgMzcuNDlBMTI4LjA0IDEyOC4wNCAwIDAgMCAwIDEyOGMwIDMzLjkzNCAxMy41IDY2LjUxNCAzNy41IDkwLjUxQzYxLjQ4IDI0Mi41MDYgOTQuMDYgMjU2IDEyOCAyNTZzNjYuNTItMTMuNDk0IDkwLjUtMzcuNDljMjQtMjMuOTk2IDM3LjUtNTYuNTc2IDM3LjUtOTAuNTFzLTEzLjUtNjYuNTE0LTM3LjUtOTAuNTFDMTk0LjUyIDEzLjQ5NCAxNjEuOTQgMCAxMjggMCIvPjxwYXRoIGZpbGw9IiNmZmYiIGQ9Ik01Ny45NCAxMjYuNjQ4cTU1Ljk4LTI0LjM4NCA3NC42NC0zMi4xNTJjMzUuNTYtMTQuNzg2IDQyLjk0LTE3LjM1NCA0Ny43Ni0xNy40NDFjMS4wNi0uMDE3IDMuNDIuMjQ1IDQuOTYgMS40OWMxLjI4IDEuMDUgMS42NCAyLjQ3IDEuODIgMy40NjdjLjE2Ljk5Ni4zOCAzLjI2Ni4yIDUuMDM4Yy0xLjkyIDIwLjI0LTEwLjI2IDY5LjM1Ni0xNC41IDkyLjAyNmMtMS43OCA5LjU5Mi01LjMyIDEyLjgwOC04Ljc0IDEzLjEyMmMtNy40NC42ODQtMTMuMDgtNC45MTItMjAuMjgtOS42M2MtMTEuMjYtNy4zODYtMTcuNjItMTEuOTgyLTI4LjU2LTE5LjE4OGMtMTIuNjQtOC4zMjgtNC40NC0xMi45MDYgMi43Ni0yMC4zODZjMS44OC0xLjk1OCAzNC42NC0zMS43NDggMzUuMjYtMzQuNDVjLjA4LS4zMzguMTYtMS41OTgtLjYtMi4yNjJjLS43NC0uNjY2LTEuODQtLjQzOC0yLjY0LS4yNThjLTEuMTQuMjU2LTE5LjEyIDEyLjE1Mi01NCAzNS42ODZjLTUuMSAzLjUwOC05LjcyIDUuMjE4LTEzLjg4IDUuMTI4Yy00LjU2LS4wOTgtMTMuMzYtMi41ODQtMTkuOS00LjcwOGMtOC0yLjYwNi0xNC4zOC0zLjk4NC0xMy44Mi04LjQxYy4yOC0yLjMwNCAzLjQ2LTQuNjYyIDkuNTItNy4wNzIiLz48L3N2Zz4KPC9zdmc+Cg==",
    "documentationUrl": "https://core.telegram.org/bots/features#botfather",
    "properties": [
     {
@@ -4054,7 +4697,7 @@
   {
    "name": "slackApi",
    "displayName": "Slack API",
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtc2xhY2stYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjNUUxRjYwIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzNCMEYzQyIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtc2xhY2stYmcpIi8+CiAgPHBhdGggZD0iTTIwLjUgMTIgMTcuNSAzNk0zMC41IDEyIDI3LjUgMzZNMTMgMTkuNWgyM00xMiAyOC41aDIzIiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iNC4yIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPC9zdmc+Cg==",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyNTYiPjxwYXRoIGZpbGw9IiNlMDFlNWEiIGQ9Ik01My44NDEgMTYxLjMyYzAgMTQuODMyLTExLjk4NyAyNi44Mi0yNi44MTkgMjYuODJTLjIwMyAxNzYuMTUyLjIwMyAxNjEuMzJjMC0xNC44MzEgMTEuOTg3LTI2LjgxOCAyNi44Mi0yNi44MThINTMuODR6bTEzLjQxIDBjMC0xNC44MzEgMTEuOTg3LTI2LjgxOCAyNi44MTktMjYuODE4czI2LjgxOSAxMS45ODcgMjYuODE5IDI2LjgxOXY2Ny4wNDdjMCAxNC44MzItMTEuOTg3IDI2LjgyLTI2LjgyIDI2LjgyYy0xNC44MyAwLTI2LjgxOC0xMS45ODgtMjYuODE4LTI2LjgyeiIvPjxwYXRoIGZpbGw9IiMzNmM1ZjAiIGQ9Ik05NC4wNyA1My42MzhjLTE0LjgzMiAwLTI2LjgyLTExLjk4Ny0yNi44Mi0yNi44MTlTNzkuMjM5IDAgOTQuMDcgMHMyNi44MTkgMTEuOTg3IDI2LjgxOSAyNi44MTl2MjYuODJ6bTAgMTMuNjEzYzE0LjgzMiAwIDI2LjgxOSAxMS45ODcgMjYuODE5IDI2LjgxOXMtMTEuOTg3IDI2LjgxOS0yNi44MiAyNi44MTlIMjYuODJDMTEuOTg3IDEyMC44ODkgMCAxMDguOTAyIDAgOTQuMDY5YzAtMTQuODMgMTEuOTg3LTI2LjgxOCAyNi44MTktMjYuODE4eiIvPjxwYXRoIGZpbGw9IiMyZWI2N2QiIGQ9Ik0yMDEuNTUgOTQuMDdjMC0xNC44MzIgMTEuOTg3LTI2LjgyIDI2LjgxOC0yNi44MnMyNi44MiAxMS45ODggMjYuODIgMjYuODJzLTExLjk4OCAyNi44MTktMjYuODIgMjYuODE5SDIwMS41NXptLTEzLjQxIDBjMCAxNC44MzItMTEuOTg4IDI2LjgxOS0yNi44MiAyNi44MTljLTE0LjgzMSAwLTI2LjgxOC0xMS45ODctMjYuODE4LTI2LjgyVjI2LjgyQzEzNC41MDIgMTEuOTg3IDE0Ni40ODkgMCAxNjEuMzIgMHMyNi44MTkgMTEuOTg3IDI2LjgxOSAyNi44MTl6Ii8+PHBhdGggZmlsbD0iI2VjYjIyZSIgZD0iTTE2MS4zMiAyMDEuNTVjMTQuODMyIDAgMjYuODIgMTEuOTg3IDI2LjgyIDI2LjgxOHMtMTEuOTg4IDI2LjgyLTI2LjgyIDI2LjgyYy0xNC44MzEgMC0yNi44MTgtMTEuOTg4LTI2LjgxOC0yNi44MlYyMDEuNTV6bTAtMTMuNDFjLTE0LjgzMSAwLTI2LjgxOC0xMS45ODgtMjYuODE4LTI2LjgyYzAtMTQuODMxIDExLjk4Ny0yNi44MTggMjYuODE5LTI2LjgxOGg2Ny4yNWMxNC44MzIgMCAyNi44MiAxMS45ODcgMjYuODIgMjYuODE5cy0xMS45ODggMjYuODE5LTI2LjgyIDI2LjgxOXoiLz48L3N2Zz4KPC9zdmc+Cg==",
    "documentationUrl": "https://api.slack.com/authentication/token-types#bot",
    "properties": [
     {
@@ -4091,7 +4734,7 @@
   {
    "name": "slackOAuth2Api",
    "displayName": "Slack OAuth2 API",
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtc2xhY2stYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjNUUxRjYwIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzNCMEYzQyIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtc2xhY2stYmcpIi8+CiAgPHBhdGggZD0iTTIwLjUgMTIgMTcuNSAzNk0zMC41IDEyIDI3LjUgMzZNMTMgMTkuNWgyM00xMiAyOC41aDIzIiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iNC4yIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPC9zdmc+Cg==",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyNTYiPjxwYXRoIGZpbGw9IiNlMDFlNWEiIGQ9Ik01My44NDEgMTYxLjMyYzAgMTQuODMyLTExLjk4NyAyNi44Mi0yNi44MTkgMjYuODJTLjIwMyAxNzYuMTUyLjIwMyAxNjEuMzJjMC0xNC44MzEgMTEuOTg3LTI2LjgxOCAyNi44Mi0yNi44MThINTMuODR6bTEzLjQxIDBjMC0xNC44MzEgMTEuOTg3LTI2LjgxOCAyNi44MTktMjYuODE4czI2LjgxOSAxMS45ODcgMjYuODE5IDI2LjgxOXY2Ny4wNDdjMCAxNC44MzItMTEuOTg3IDI2LjgyLTI2LjgyIDI2LjgyYy0xNC44MyAwLTI2LjgxOC0xMS45ODgtMjYuODE4LTI2LjgyeiIvPjxwYXRoIGZpbGw9IiMzNmM1ZjAiIGQ9Ik05NC4wNyA1My42MzhjLTE0LjgzMiAwLTI2LjgyLTExLjk4Ny0yNi44Mi0yNi44MTlTNzkuMjM5IDAgOTQuMDcgMHMyNi44MTkgMTEuOTg3IDI2LjgxOSAyNi44MTl2MjYuODJ6bTAgMTMuNjEzYzE0LjgzMiAwIDI2LjgxOSAxMS45ODcgMjYuODE5IDI2LjgxOXMtMTEuOTg3IDI2LjgxOS0yNi44MiAyNi44MTlIMjYuODJDMTEuOTg3IDEyMC44ODkgMCAxMDguOTAyIDAgOTQuMDY5YzAtMTQuODMgMTEuOTg3LTI2LjgxOCAyNi44MTktMjYuODE4eiIvPjxwYXRoIGZpbGw9IiMyZWI2N2QiIGQ9Ik0yMDEuNTUgOTQuMDdjMC0xNC44MzIgMTEuOTg3LTI2LjgyIDI2LjgxOC0yNi44MnMyNi44MiAxMS45ODggMjYuODIgMjYuODJzLTExLjk4OCAyNi44MTktMjYuODIgMjYuODE5SDIwMS41NXptLTEzLjQxIDBjMCAxNC44MzItMTEuOTg4IDI2LjgxOS0yNi44MiAyNi44MTljLTE0LjgzMSAwLTI2LjgxOC0xMS45ODctMjYuODE4LTI2LjgyVjI2LjgyQzEzNC41MDIgMTEuOTg3IDE0Ni40ODkgMCAxNjEuMzIgMHMyNi44MTkgMTEuOTg3IDI2LjgxOSAyNi44MTl6Ii8+PHBhdGggZmlsbD0iI2VjYjIyZSIgZD0iTTE2MS4zMiAyMDEuNTVjMTQuODMyIDAgMjYuODIgMTEuOTg3IDI2LjgyIDI2LjgxOHMtMTEuOTg4IDI2LjgyLTI2LjgyIDI2LjgyYy0xNC44MzEgMC0yNi44MTgtMTEuOTg4LTI2LjgxOC0yNi44MlYyMDEuNTV6bTAtMTMuNDFjLTE0LjgzMSAwLTI2LjgxOC0xMS45ODgtMjYuODE4LTI2LjgyYzAtMTQuODMxIDExLjk4Ny0yNi44MTggMjYuODE5LTI2LjgxOGg2Ny4yNWMxNC44MzIgMCAyNi44MiAxMS45ODcgMjYuODIgMjYuODE5cy0xMS45ODggMjYuODE5LTI2LjgyIDI2LjgxOXoiLz48L3N2Zz4KPC9zdmc+Cg==",
    "documentationUrl": "https://api.slack.com/authentication/oauth-v2",
    "description": "Sign in with Slack: create an app at api.slack.com/apps, add the redirect URL shown below under OAuth & Permissions, add the bot scopes, then Connect. The bot token is renewed for you when token rotation is on. For the Slack Trigger also fill in the Signing Secret, publish the workflow and paste the node's Request URL (editor Publish menu, App webhooks: {public URL}/api/webhook/app/<workflow id>/<node id>) into Event Subscriptions, then subscribe to the bot events and add the matching scopes (app_mentions:read, channels:history, groups:history, im:history, mpim:history, reactions:read, files:read, …). Reinstall the app after changing scopes.",
    "extends": [
@@ -4126,8 +4769,8 @@
      "name": "scope",
      "displayName": "Bot Scopes",
      "type": "string",
-     "default": "chat:write,channels:read,groups:read,reactions:write,users:read,users:read.email,files:write,files:read",
-     "description": "Comma-separated bot scopes asked for at Connect. Drop the ones your workflows do not need."
+     "default": "chat:write,channels:read,channels:history,groups:read,reactions:write,users:read,users:read.email,files:write,files:read",
+     "description": "Comma-separated bot scopes asked for at Connect. Drop the ones your workflows do not need. channels:history reads public channels (Get Many Since, the Slack Activity Trigger); add groups:history, im:history and mpim:history only to read private channels and DMs."
     },
     {
      "name": "baseUrl",
@@ -4152,7 +4795,7 @@
   {
    "name": "discordBotApi",
    "displayName": "Discord Bot API",
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtZGlzY29yZC1iZyIgeDE9IjAiIHkxPSIwIiB4Mj0iMSIgeTI9IjEiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiM2QTc2RjUiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjNDc1MkUwIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0idXJsKCNsZi1kaXNjb3JkLWJnKSIvPgogIDxwYXRoIGQ9Ik0xNCAxMmgyMGE1IDUgMCAwIDEgNSA1djExYTUgNSAwIDAgMS01IDVIMjNsLTcgNS41VjMzaC0yYTUgNSAwIDAgMS01LTVWMTdhNSA1IDAgMCAxIDUtNXoiIGZpbGw9IiNmZmYiLz4KICA8Y2lyY2xlIGN4PSIxOSIgY3k9IjIyLjUiIHI9IjIuNyIgZmlsbD0iIzU4NjVGMiIvPgogIDxjaXJjbGUgY3g9IjI5IiBjeT0iMjIuNSIgcj0iMi43IiBmaWxsPSIjNTg2NUYyIi8+Cjwvc3ZnPgo=",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAxOTkiPjxwYXRoIGZpbGw9IiM1ODY1ZjIiIGQ9Ik0yMTYuODU2IDE2LjU5N0EyMDguNSAyMDguNSAwIDAgMCAxNjQuMDQyIDBjLTIuMjc1IDQuMTEzLTQuOTMzIDkuNjQ1LTYuNzY2IDE0LjA0NnEtMjkuNTM4LTQuNDQyLTU4LjUzMyAwYy0xLjgzMi00LjQtNC41NS05LjkzMy02Ljg0Ni0xNC4wNDZhMjA3LjggMjA3LjggMCAwIDAtNTIuODU1IDE2LjYzOEM1LjYxOCA2Ny4xNDctMy40NDMgMTE2LjQgMS4wODcgMTY0Ljk1NmMyMi4xNjkgMTYuNTU1IDQzLjY1MyAyNi42MTIgNjQuNzc1IDMzLjE5M0ExNjEgMTYxIDAgMCAwIDc5LjczNSAxNzUuM2ExMzYuNCAxMzYuNCAwIDAgMS0yMS44NDYtMTAuNjMyYTEwOSAxMDkgMCAwIDAgNS4zNTYtNC4yMzdjNDIuMTIyIDE5LjcwMiA4Ny44OSAxOS43MDIgMTI5LjUxIDBhMTMyIDEzMiAwIDAgMCA1LjM1NSA0LjIzN2ExMzYgMTM2IDAgMCAxLTIxLjg4NiAxMC42NTNjNC4wMDYgOC4wMiA4LjYzOCAxNS42NyAxMy44NzMgMjIuODQ4YzIxLjE0Mi02LjU4IDQyLjY0Ni0xNi42MzcgNjQuODE1LTMzLjIxM2M1LjMxNi01Ni4yODgtOS4wOC0xMDUuMDktMzguMDU2LTE0OC4zNk04NS40NzQgMTM1LjA5NWMtMTIuNjQ1IDAtMjMuMDE1LTExLjgwNS0yMy4wMTUtMjYuMThzMTAuMTQ5LTI2LjIgMjMuMDE1LTI2LjJzMjMuMjM2IDExLjgwNCAyMy4wMTUgMjYuMmMuMDIgMTQuMzc1LTEwLjE0OCAyNi4xOC0yMy4wMTUgMjYuMThtODUuMDUxIDBjLTEyLjY0NSAwLTIzLjAxNC0xMS44MDUtMjMuMDE0LTI2LjE4czEwLjE0OC0yNi4yIDIzLjAxNC0yNi4yYzEyLjg2NyAwIDIzLjIzNiAxMS44MDQgMjMuMDE1IDI2LjJjMCAxNC4zNzUtMTAuMTQ4IDI2LjE4LTIzLjAxNSAyNi4xOCIvPjwvc3ZnPgo8L3N2Zz4K",
    "documentationUrl": "https://discord.com/developers/docs/topics/oauth2#bots",
    "properties": [
     {
@@ -4178,7 +4821,7 @@
   {
    "name": "discordOAuth2Api",
    "displayName": "Discord OAuth2 API",
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtZGlzY29yZC1iZyIgeDE9IjAiIHkxPSIwIiB4Mj0iMSIgeTI9IjEiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiM2QTc2RjUiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjNDc1MkUwIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0idXJsKCNsZi1kaXNjb3JkLWJnKSIvPgogIDxwYXRoIGQ9Ik0xNCAxMmgyMGE1IDUgMCAwIDEgNSA1djExYTUgNSAwIDAgMS01IDVIMjNsLTcgNS41VjMzaC0yYTUgNSAwIDAgMS01LTVWMTdhNSA1IDAgMCAxIDUtNXoiIGZpbGw9IiNmZmYiLz4KICA8Y2lyY2xlIGN4PSIxOSIgY3k9IjIyLjUiIHI9IjIuNyIgZmlsbD0iIzU4NjVGMiIvPgogIDxjaXJjbGUgY3g9IjI5IiBjeT0iMjIuNSIgcj0iMi43IiBmaWxsPSIjNTg2NUYyIi8+Cjwvc3ZnPgo=",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAxOTkiPjxwYXRoIGZpbGw9IiM1ODY1ZjIiIGQ9Ik0yMTYuODU2IDE2LjU5N0EyMDguNSAyMDguNSAwIDAgMCAxNjQuMDQyIDBjLTIuMjc1IDQuMTEzLTQuOTMzIDkuNjQ1LTYuNzY2IDE0LjA0NnEtMjkuNTM4LTQuNDQyLTU4LjUzMyAwYy0xLjgzMi00LjQtNC41NS05LjkzMy02Ljg0Ni0xNC4wNDZhMjA3LjggMjA3LjggMCAwIDAtNTIuODU1IDE2LjYzOEM1LjYxOCA2Ny4xNDctMy40NDMgMTE2LjQgMS4wODcgMTY0Ljk1NmMyMi4xNjkgMTYuNTU1IDQzLjY1MyAyNi42MTIgNjQuNzc1IDMzLjE5M0ExNjEgMTYxIDAgMCAwIDc5LjczNSAxNzUuM2ExMzYuNCAxMzYuNCAwIDAgMS0yMS44NDYtMTAuNjMyYTEwOSAxMDkgMCAwIDAgNS4zNTYtNC4yMzdjNDIuMTIyIDE5LjcwMiA4Ny44OSAxOS43MDIgMTI5LjUxIDBhMTMyIDEzMiAwIDAgMCA1LjM1NSA0LjIzN2ExMzYgMTM2IDAgMCAxLTIxLjg4NiAxMC42NTNjNC4wMDYgOC4wMiA4LjYzOCAxNS42NyAxMy44NzMgMjIuODQ4YzIxLjE0Mi02LjU4IDQyLjY0Ni0xNi42MzcgNjQuODE1LTMzLjIxM2M1LjMxNi01Ni4yODgtOS4wOC0xMDUuMDktMzguMDU2LTE0OC4zNk04NS40NzQgMTM1LjA5NWMtMTIuNjQ1IDAtMjMuMDE1LTExLjgwNS0yMy4wMTUtMjYuMThzMTAuMTQ5LTI2LjIgMjMuMDE1LTI2LjJzMjMuMjM2IDExLjgwNCAyMy4wMTUgMjYuMmMuMDIgMTQuMzc1LTEwLjE0OCAyNi4xOC0yMy4wMTUgMjYuMThtODUuMDUxIDBjLTEyLjY0NSAwLTIzLjAxNC0xMS44MDUtMjMuMDE0LTI2LjE4czEwLjE0OC0yNi4yIDIzLjAxNC0yNi4yYzEyLjg2NyAwIDIzLjIzNiAxMS44MDQgMjMuMDE1IDI2LjJjMCAxNC4zNzUtMTAuMTQ4IDI2LjE4LTIzLjAxNSAyNi4xOCIvPjwvc3ZnPgo8L3N2Zz4K",
    "documentationUrl": "https://discord.com/developers/docs/topics/oauth2",
    "description": "Sign in with Discord: add the redirect URL shown below under OAuth2 in your application, then Connect. Add a Bot Token to message channels, which only bots can do.",
    "extends": [
@@ -4245,7 +4888,7 @@
   {
    "name": "discordWebhookApi",
    "displayName": "Discord Webhook",
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtZGlzY29yZC1iZyIgeDE9IjAiIHkxPSIwIiB4Mj0iMSIgeTI9IjEiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiM2QTc2RjUiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjNDc1MkUwIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0idXJsKCNsZi1kaXNjb3JkLWJnKSIvPgogIDxwYXRoIGQ9Ik0xNCAxMmgyMGE1IDUgMCAwIDEgNSA1djExYTUgNSAwIDAgMS01IDVIMjNsLTcgNS41VjMzaC0yYTUgNSAwIDAgMS01LTVWMTdhNSA1IDAgMCAxIDUtNXoiIGZpbGw9IiNmZmYiLz4KICA8Y2lyY2xlIGN4PSIxOSIgY3k9IjIyLjUiIHI9IjIuNyIgZmlsbD0iIzU4NjVGMiIvPgogIDxjaXJjbGUgY3g9IjI5IiBjeT0iMjIuNSIgcj0iMi43IiBmaWxsPSIjNTg2NUYyIi8+Cjwvc3ZnPgo=",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAxOTkiPjxwYXRoIGZpbGw9IiM1ODY1ZjIiIGQ9Ik0yMTYuODU2IDE2LjU5N0EyMDguNSAyMDguNSAwIDAgMCAxNjQuMDQyIDBjLTIuMjc1IDQuMTEzLTQuOTMzIDkuNjQ1LTYuNzY2IDE0LjA0NnEtMjkuNTM4LTQuNDQyLTU4LjUzMyAwYy0xLjgzMi00LjQtNC41NS05LjkzMy02Ljg0Ni0xNC4wNDZhMjA3LjggMjA3LjggMCAwIDAtNTIuODU1IDE2LjYzOEM1LjYxOCA2Ny4xNDctMy40NDMgMTE2LjQgMS4wODcgMTY0Ljk1NmMyMi4xNjkgMTYuNTU1IDQzLjY1MyAyNi42MTIgNjQuNzc1IDMzLjE5M0ExNjEgMTYxIDAgMCAwIDc5LjczNSAxNzUuM2ExMzYuNCAxMzYuNCAwIDAgMS0yMS44NDYtMTAuNjMyYTEwOSAxMDkgMCAwIDAgNS4zNTYtNC4yMzdjNDIuMTIyIDE5LjcwMiA4Ny44OSAxOS43MDIgMTI5LjUxIDBhMTMyIDEzMiAwIDAgMCA1LjM1NSA0LjIzN2ExMzYgMTM2IDAgMCAxLTIxLjg4NiAxMC42NTNjNC4wMDYgOC4wMiA4LjYzOCAxNS42NyAxMy44NzMgMjIuODQ4YzIxLjE0Mi02LjU4IDQyLjY0Ni0xNi42MzcgNjQuODE1LTMzLjIxM2M1LjMxNi01Ni4yODgtOS4wOC0xMDUuMDktMzguMDU2LTE0OC4zNk04NS40NzQgMTM1LjA5NWMtMTIuNjQ1IDAtMjMuMDE1LTExLjgwNS0yMy4wMTUtMjYuMThzMTAuMTQ5LTI2LjIgMjMuMDE1LTI2LjJzMjMuMjM2IDExLjgwNCAyMy4wMTUgMjYuMmMuMDIgMTQuMzc1LTEwLjE0OCAyNi4xOC0yMy4wMTUgMjYuMThtODUuMDUxIDBjLTEyLjY0NSAwLTIzLjAxNC0xMS44MDUtMjMuMDE0LTI2LjE4czEwLjE0OC0yNi4yIDIzLjAxNC0yNi4yYzEyLjg2NyAwIDIzLjIzNiAxMS44MDQgMjMuMDE1IDI2LjJjMCAxNC4zNzUtMTAuMTQ4IDI2LjE4LTIzLjAxNSAyNi4xOCIvPjwvc3ZnPgo8L3N2Zz4K",
    "documentationUrl": "https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks",
    "properties": [
     {
@@ -4265,7 +4908,7 @@
   {
    "name": "whatsAppApi",
    "displayName": "WhatsApp API",
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtd2EtYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjMzREQjc0Ii8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzFEQjk1NSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtd2EtYmcpIi8+CiAgPHBhdGggZD0iTTI0IDEwLjVhMTMuNSAxMy41IDAgMSAxLTYuOSAyNS4xbC02LjYgMS45IDEuOS02LjNBMTMuNSAxMy41IDAgMCAxIDI0IDEwLjV6IiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMyIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxwYXRoIGQ9Ik0xOS42IDE3LjhjLjUtLjUgMS4zLS40IDEuNy4ybDEuNSAyLjNjLjMuNS4yIDEuMi0uMiAxLjZsLS44LjhjLjggMS44IDIuMiAzLjIgNCA0bC44LS44Yy40LS40IDEuMS0uNSAxLjYtLjJsMi4zIDEuNWMuNi40LjcgMS4yLjIgMS43bC0xLjEgMS4xYy0uOS45LTIuMyAxLjItMy41LjYtMy4zLTEuNi02LTQuMy03LjYtNy42LS42LTEuMi0uMy0yLjYuNi0zLjV6IiBmaWxsPSIjZmZmIi8+Cjwvc3ZnPgo=",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyNTgiPjxkZWZzPjxsaW5lYXJHcmFkaWVudCBpZD0iU1ZHSzNLWnE0OVUiIHgxPSI1MCUiIHgyPSI1MCUiIHkxPSIxMDAlIiB5Mj0iMCUiPjxzdG9wIG9mZnNldD0iMCUiIHN0b3AtY29sb3I9IiMxZmFmMzgiLz48c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiM2MGQ2NjkiLz48L2xpbmVhckdyYWRpZW50PjxsaW5lYXJHcmFkaWVudCBpZD0iU1ZHZWZNa29FT2QiIHgxPSI1MCUiIHgyPSI1MCUiIHkxPSIxMDAlIiB5Mj0iMCUiPjxzdG9wIG9mZnNldD0iMCUiIHN0b3AtY29sb3I9IiNmOWY5ZjkiLz48c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiNmZmYiLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48cGF0aCBmaWxsPSJ1cmwoI1NWR0szS1pxNDlVKSIgZD0iTTUuNDYzIDEyNy40NTZjLS4wMDYgMjEuNjc3IDUuNjU4IDQyLjg0MyAxNi40MjggNjEuNDk5TDQuNDMzIDI1Mi42OTdsNjUuMjMyLTE3LjEwNGExMjMgMTIzIDAgMCAwIDU4LjggMTQuOTdoLjA1NGM2Ny44MTUgMCAxMjMuMDE4LTU1LjE4MyAxMjMuMDQ3LTEyMy4wMWMuMDEzLTMyLjg2Ny0xMi43NzUtNjMuNzczLTM2LjAwOS04Ny4wMjVjLTIzLjIzLTIzLjI1LTU0LjEyNS0zNi4wNjEtODcuMDQzLTM2LjA3NmMtNjcuODIzIDAtMTIzLjAyMiA1NS4xOC0xMjMuMDUgMTIzLjAwNCIvPjxwYXRoIGZpbGw9InVybCgjU1ZHZWZNa29FT2QpIiBkPSJNMS4wNyAxMjcuNDE2Yy0uMDA3IDIyLjQ1NyA1Ljg2IDQ0LjM4IDE3LjAxNCA2My43MDRMMCAyNTcuMTQ3bDY3LjU3MS0xNy43MTdjMTguNjE4IDEwLjE1MSAzOS41OCAxNS41MDMgNjAuOTEgMTUuNTExaC4wNTVjNzAuMjQ4IDAgMTI3LjQzNC01Ny4xNjggMTI3LjQ2NC0xMjcuNDIzYy4wMTItMzQuMDQ4LTEzLjIzNi02Ni4wNjUtMzcuMy05MC4xNUMxOTQuNjMzIDEzLjI4NiAxNjIuNjMzLjAxNCAxMjguNTM2IDBDNTguMjc2IDAgMS4wOTkgNTcuMTYgMS4wNzEgMTI3LjQxNm00MC4yNCA2MC4zNzZsLTIuNTIzLTQuMDA1Yy0xMC42MDYtMTYuODY0LTE2LjIwNC0zNi4zNTItMTYuMTk2LTU2LjM2M0MyMi42MTQgNjkuMDI5IDcwLjEzOCAyMS41MiAxMjguNTc2IDIxLjUyYzI4LjMuMDEyIDU0Ljg5NiAxMS4wNDQgNzQuOSAzMS4wNmMyMC4wMDMgMjAuMDE4IDMxLjAxIDQ2LjYyOCAzMS4wMDMgNzQuOTNjLS4wMjYgNTguMzk1LTQ3LjU1MSAxMDUuOTEtMTA1Ljk0MyAxMDUuOTFoLS4wNDJjLTE5LjAxMy0uMDEtMzcuNjYtNS4xMTYtNTMuOTIyLTE0Ljc2NWwtMy44Ny0yLjI5NWwtNDAuMDk4IDEwLjUxM3oiLz48cGF0aCBmaWxsPSIjZmZmIiBkPSJNOTYuNjc4IDc0LjE0OGMtMi4zODYtNS4zMDMtNC44OTctNS40MS03LjE2Ni01LjUwM2MtMS44NTgtLjA4LTMuOTgyLS4wNzQtNi4xMDQtLjA3NGMtMi4xMjQgMC01LjU3NS43OTktOC40OTIgMy45ODRjLTIuOTIgMy4xODgtMTEuMTQ4IDEwLjg5Mi0xMS4xNDggMjYuNTYxczExLjQxMyAzMC44MTMgMTMuMDA0IDMyLjk0YzEuNTkzIDIuMTIzIDIyLjAzMyAzNS4zMDcgNTQuNDA1IDQ4LjA3M2MyNi45MDQgMTAuNjA5IDMyLjM3OSA4LjQ5OSAzOC4yMTggNy45NjdjNS44NC0uNTMgMTguODQ0LTcuNzAyIDIxLjQ5Ny0xNS4xMzljMi42NTUtNy40MzYgMi42NTUtMTMuODEgMS44NTktMTUuMTQyYy0uNzk2LTEuMzI3LTIuOTItMi4xMjQtNi4xMDUtMy43MTZzLTE4Ljg0NC05LjI5OC0yMS43NjMtMTAuMzYxYy0yLjkyLTEuMDYyLTUuMDQzLTEuNTkyLTcuMTY3IDEuNTk3Yy0yLjEyNCAzLjE4NC04LjIyMyAxMC4zNTYtMTAuMDgyIDEyLjQ4Yy0xLjg1NyAyLjEyOS0zLjcxNiAyLjM5NC02LjkuODAxYy0zLjE4Ny0xLjU5OC0xMy40NDQtNC45NTctMjUuNjEzLTE1LjgwNmMtOS40NjgtOC40NDItMTUuODYtMTguODY3LTE3LjcxOC0yMi4wNTZjLTEuODU4LTMuMTg0LS4xOTktNC45MSAxLjM5OC02LjQ5N2MxLjQzMS0xLjQyNyAzLjE4Ni0zLjcxOSA0Ljc4LTUuNTc4YzEuNTg4LTEuODYgMi4xMTgtMy4xODcgMy4xOC01LjMxMWMxLjA2My0yLjEyNi41MzEtMy45ODYtLjI2NC01LjU3OWMtLjc5OC0xLjU5My02Ljk4Ny0xNy4zNDMtOS44MTktMjMuNjQiLz48L3N2Zz4KPC9zdmc+Cg==",
    "documentationUrl": "https://developers.facebook.com/docs/whatsapp/cloud-api/get-started",
    "properties": [
     {
@@ -4299,7 +4942,7 @@
   {
    "name": "twilioApi",
    "displayName": "Twilio API",
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtdHctYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjRjc0NjRDIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iI0QyMUUyNSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtdHctYmcpIi8+CiAgPGNpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMTQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIzIi8+CiAgPGNpcmNsZSBjeD0iMTguNSIgY3k9IjE4LjUiIHI9IjMuMiIgZmlsbD0iI2ZmZiIvPgogIDxjaXJjbGUgY3g9IjI5LjUiIGN5PSIxOC41IiByPSIzLjIiIGZpbGw9IiNmZmYiLz4KICA8Y2lyY2xlIGN4PSIxOC41IiBjeT0iMjkuNSIgcj0iMy4yIiBmaWxsPSIjZmZmIi8+CiAgPGNpcmNsZSBjeD0iMjkuNSIgY3k9IjI5LjUiIHI9IjMuMiIgZmlsbD0iI2ZmZiIvPgo8L3N2Zz4K",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyNTYiPjxwYXRoIGZpbGw9IiNmMTJlNDUiIGQ9Ik0xMjggMGM3MC42NTYgMCAxMjggNTcuMzQ0IDEyOCAxMjhzLTU3LjM0NCAxMjgtMTI4IDEyOFMwIDE5OC42NTYgMCAxMjhTNTcuMzQ0IDAgMTI4IDBtMCAzMy43OTJjLTUyLjIyNCAwLTk0LjIwOCA0MS45ODQtOTQuMjA4IDk0LjIwOFM3NS43NzYgMjIyLjIwOCAxMjggMjIyLjIwOHM5NC4yMDgtNDEuOTg0IDk0LjIwOC05NC4yMDhTMTgwLjIyNCAzMy43OTIgMTI4IDMzLjc5Mm0zMS43NDQgOTkuMzI4YzE0LjcwNCAwIDI2LjYyNCAxMS45MiAyNi42MjQgMjYuNjI0cy0xMS45MiAyNi42MjQtMjYuNjI0IDI2LjYyNHMtMjYuNjI0LTExLjkyLTI2LjYyNC0yNi42MjRzMTEuOTItMjYuNjI0IDI2LjYyNC0yNi42MjRtLTYzLjQ4OCAwYzE0LjcwNCAwIDI2LjYyNCAxMS45MiAyNi42MjQgMjYuNjI0cy0xMS45MiAyNi42MjQtMjYuNjI0IDI2LjYyNHMtMjYuNjI0LTExLjkyLTI2LjYyNC0yNi42MjRzMTEuOTItMjYuNjI0IDI2LjYyNC0yNi42MjRtNjMuNDg4LTYzLjQ4OGMxNC43MDQgMCAyNi42MjQgMTEuOTIgMjYuNjI0IDI2LjYyNHMtMTEuOTIgMjYuNjI0LTI2LjYyNCAyNi42MjRzLTI2LjYyNC0xMS45Mi0yNi42MjQtMjYuNjI0czExLjkyLTI2LjYyNCAyNi42MjQtMjYuNjI0bS02My40ODggMGMxNC43MDQgMCAyNi42MjQgMTEuOTIgMjYuNjI0IDI2LjYyNHMtMTEuOTIgMjYuNjI0LTI2LjYyNCAyNi42MjRzLTI2LjYyNC0xMS45Mi0yNi42MjQtMjYuNjI0czExLjkyLTI2LjYyNCAyNi42MjQtMjYuNjI0Ii8+PC9zdmc+Cjwvc3ZnPgo=",
    "documentationUrl": "https://www.twilio.com/docs/usage/api",
    "properties": [
     {
@@ -4456,5 +5099,11 @@
    ],
    "testable": true
   }
- ]
+ ],
+ "transports": [
+  "http",
+  "grpc",
+  "mcp"
+ ],
+ "maxConcurrency": 16
 }

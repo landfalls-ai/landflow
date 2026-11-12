@@ -34,6 +34,21 @@ const SLOT = {
   hubspot: { id: 'hubspot', key: 'hubspotAppToken', type: 'productivity.hubspotAppToken', name: 'HubSpot', description: 'A private app token with the contacts scopes.' },
   postgres: { id: 'postgres', key: 'postgres', type: 'databases.postgres', name: 'Postgres database', description: 'Host, database, user and password.' },
   smtp: { id: 'smtp', key: 'smtp', type: 'messaging.smtp', name: 'SMTP server', description: 'The mail server that sends the report.' },
+  slackActivity: {
+    id: 'slack-activity',
+    key: 'slackApi',
+    type: 'messaging.slackApi',
+    name: 'Slack app (activity)',
+    description: 'A bot token with channels:history, channels:read, users:read and users:read.email, and the app’s Signing Secret.',
+  },
+  googleWorkspace: {
+    id: 'google-workspace',
+    key: 'googleApi',
+    type: 'google.googleApi',
+    name: 'Google service account',
+    description: 'A service account with domain-wide delegation for the read-only Drive, Calendar and Directory scopes, impersonating a user.',
+  },
+  notion: { id: 'notion', key: 'notionApi', type: 'productivity.notionApi', name: 'Notion', description: 'An internal integration secret, with the pages and databases shared with it.' },
 } satisfies Record<string, Slot>;
 
 /** Root nodes with sub-node inputs are drawn wide. */
@@ -955,5 +970,121 @@ const WORKFLOW_TEMPLATES: TemplateDetail[] = [
   ),
 ];
 
-/** Every built-in template: the workflows above, then the agent teams. */
-export const BUILTIN_TEMPLATES: TemplateDetail[] = [...WORKFLOW_TEMPLATES, ...BUILTIN_TEAM_TEMPLATES];
+/**
+ * Work ingest templates (docs/features/integrations.md#work-ingest-templates): an integration's activity trigger, its
+ * items recorded as work.* events in the usage ledger, and the customer or initiative an item names kept as an entity,
+ * so the second brain sees what every team works on and where it overlaps. The event attributes are the fields of
+ * deploy/brain/work-kinds.json; a kind not declared yet is declared from them.
+ */
+const WORK_ATTRIBUTES =
+  '{{ ({ source: $json.source, sourceId: $json.sourceId, url: $json.url, actor: $json.actorEmail, title: $json.title, summary: $json.summary, team: $json.teamHint, initiative: $json.initiativeHint, customer: $json.customerHint, occurredAt: $json.occurredAt }) }}';
+/** An entity id from a free name: lowercase, runs of other characters made one "-". */
+const entityIdOf = (field: string) => `{{ String(${field}).toLowerCase().replace(/[^a-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) }}`;
+const WORK_SETUP = 'Declare the work kinds once with `pnpm brain:work-kinds` (or leave **Declare Kind If New** on in **Record work event**).';
+const WORK_SEEN = '{{ ({ lastSource: $json.source, lastSeenAt: $json.occurredAt }) }}';
+
+function workIngest(def: { id: string; name: string; description: string; setup: string[]; trigger: WorkflowNode }): TemplateDetail {
+  const at = (x: number, y: number): [number, number] => [x, y];
+  return template({
+    id: def.id,
+    name: def.name,
+    description: def.description,
+    categories: ['productivity', 'data'],
+    setup: [...def.setup, WORK_SETUP, 'Publish the workflow; the events show in **Insights**, the customers and initiatives in **What Landflow knows**.'],
+    nodes: [
+      { ...def.trigger, position: at(0, 0) },
+      node('record', 'Record work event', 'recordEvent', at(260, -160), { kind: '{{ $json.kind }}', attributes: WORK_ATTRIBUTES, declareIfNew: true, message: '{{ $json.title }}' }),
+      node('hasCustomer', 'Names a customer?', 'if', at(260, 20), { conditions: { condition: [notEmpty('{{ $json.customerHint }}')] } }),
+      node('customer', 'Keep the customer', 'brainEntity', at(520, 20), {
+        operation: 'upsert',
+        type: 'customer',
+        entityId: entityIdOf('$json.customerHint'),
+        name: '{{ $json.customerHint }}',
+        attributes: WORK_SEEN,
+      }),
+      node('hasInitiative', 'Part of an initiative?', 'if', at(260, 200), { conditions: { condition: [notEmpty('{{ $json.initiativeHint }}')] } }),
+      node('initiative', 'Keep the initiative', 'brainEntity', at(520, 200), {
+        operation: 'upsert',
+        type: 'initiative',
+        entityId: entityIdOf('$json.initiativeHint'),
+        name: '{{ $json.initiativeHint }}',
+        attributes: WORK_SEEN,
+      }),
+    ],
+    links: [main('trigger', 'record'), main('trigger', 'hasCustomer'), main('hasCustomer', 'customer'), main('trigger', 'hasInitiative'), main('hasInitiative', 'initiative')],
+  });
+}
+
+const WORK_TEMPLATES: TemplateDetail[] = [
+  workIngest({
+    id: 'work-slack-activity',
+    name: 'Work from Slack into the second brain',
+    description: 'Every message in the Slack channels you pick becomes a work.discussion event, and a #customer-… or project channel keeps its customer or initiative, so the second brain sees overlapping work across teams.',
+    setup: [
+      'Pick or add the Slack app: a bot token and its Signing Secret (private channels and DMs stay out unless you turn them on in the trigger).',
+      'Publish, then paste the trigger’s Request URL into the app’s **Event Subscriptions** with the `message.channels` bot event, and invite the bot to the channels.',
+      'Set **Channel Names**, and the customer and initiative channel prefixes and team map in the trigger’s options.',
+    ],
+    trigger: node('trigger', 'Slack Activity Trigger', 'messaging.slackActivityTrigger', [0, 0], { channelNames: '*' }, { uses: [SLOT.slackActivity] }),
+  }),
+  workIngest({
+    id: 'work-google-drive',
+    name: 'Work from Google Drive into the second brain',
+    description: 'Docs, sheets and slides edited in Google Drive become work.doc_edited events every five minutes, and a file under a customer or project folder keeps that customer or initiative in the second brain.',
+    setup: [
+      'Pick or add the Google service account, impersonating the user whose Drive to read (or switch the trigger to OAuth2).',
+      'In the trigger’s options, set the folders to watch and the folder names that mean a customer or an initiative.',
+      'The first poll takes a baseline: only edits after it come through.',
+    ],
+    trigger: node('trigger', 'Google Drive Trigger', 'google.googleDriveTrigger', [0, 0], { pollInterval: 300, sharedDrives: true }, { uses: [SLOT.googleWorkspace] }),
+  }),
+  workIngest({
+    id: 'work-google-calendar',
+    name: 'Meetings from Google Calendar into the second brain',
+    description: 'Meetings on a Google Calendar become work.meeting_scheduled and work.meeting_held events with their attendees, and a meeting with a customer keeps that customer in the second brain.',
+    setup: [
+      'Pick or add the Google service account, impersonating the calendar’s owner (or switch the trigger to OAuth2).',
+      'Choose the calendar and set **Internal Domains** in the trigger’s options: the first attendee from another domain names the customer. Cancelled meetings stay out unless you turn on **Include Cancelled Events**.',
+      'The first poll takes a baseline: only changes after it come through.',
+    ],
+    trigger: node('trigger', 'Google Calendar Trigger', 'google.googleCalendarTrigger', [0, 0], { pollInterval: 300, calendar: 'primary' }, { uses: [SLOT.googleWorkspace] }),
+  }),
+  workIngest({
+    id: 'work-notion',
+    name: 'Work from Notion into the second brain',
+    description: 'Notion pages and database rows edited under the roots you pick become work.doc_edited events, and a page under a customer or project keeps that customer or initiative in the second brain.',
+    setup: [
+      'Pick or add the Notion integration and share the pages and databases to watch with it.',
+      'Set **Roots** to the pages or databases to watch (empty: everything shared with the integration).',
+      'The first poll takes a baseline: only edits after it come through.',
+    ],
+    trigger: node('trigger', 'Notion Trigger', 'productivity.notionTrigger', [0, 0], { pollInterval: 300, roots: '' }, { uses: [SLOT.notion] }),
+  }),
+  template({
+    id: 'work-google-directory',
+    name: 'People from Google Directory into the second brain',
+    description: 'Every morning, keep each active person in the Google Directory as a person in the second brain, with title, department, org unit and manager, keyed by email so work from every tool joins up.',
+    categories: ['productivity', 'data'],
+    setup: [
+      'Pick or add the Google service account with domain-wide delegation for `admin.directory.user.readonly`.',
+      'Set **Admin Email** in **List people** to a Workspace admin to impersonate.',
+      'Publish; the people show in **What Landflow knows**.',
+    ],
+    nodes: [
+      node('daily', 'Every morning', 'schedule', [0, 0], daily(6)),
+      node('people', 'List people', 'google.googleDirectory', [260, 0], { resource: 'user', operation: 'getAll', adminEmail: 'admin@example.com', returnAll: true, simple: true }, { uses: [SLOT.googleWorkspace] }),
+      node('valid', 'Has email', 'filter', [520, 0], { conditions: { condition: [notEmpty('{{ $json.email }}')] } }),
+      node('person', 'Keep the person', 'brainEntity', [780, 0], {
+        operation: 'upsert',
+        type: 'person',
+        entityId: entityIdOf('$json.email'),
+        name: '{{ $json.name || $json.email }}',
+        attributes: '{{ ({ email: $json.email, title: $json.title, department: $json.department, orgUnitPath: $json.orgUnitPath, managerEmail: $json.managerEmail }) }}',
+      }),
+    ],
+    links: [main('daily', 'people'), main('people', 'valid'), main('valid', 'person')],
+  }),
+];
+
+/** Every built-in template: the workflows above, the work ingest ones, then the agent teams. */
+export const BUILTIN_TEMPLATES: TemplateDetail[] = [...WORKFLOW_TEMPLATES, ...WORK_TEMPLATES, ...BUILTIN_TEAM_TEMPLATES];
