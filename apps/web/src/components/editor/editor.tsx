@@ -873,7 +873,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
 
   if (!loaded) {
     return (
-      <div className="grid h-dvh place-items-center max-md:h-[calc(100dvh-2.75rem)]">
+      <div className="grid h-dvh place-items-center">
         <Loader2 className="size-5 animate-spin text-t3" />
       </div>
     );
@@ -881,13 +881,14 @@ export function Editor({ workflowId }: { workflowId: string }) {
 
   return (
     <ReactFlowProvider>
-      {/* The whole screen, less the phone bar above it (sidebar.tsx): the box at the bottom of Spotlight stays on screen. */}
-      <div className="flex h-dvh flex-col max-md:h-[calc(100dvh-2.75rem)]">
-        <header className="relative flex h-[52px] shrink-0 items-center gap-3 border-b border-hair bg-bg px-4">
-          <Link href="/workflows" aria-label="Back to workflows" className="grid size-8 place-items-center rounded-full text-t2 hover:bg-acdim hover:text-t1">
+      {/* The whole screen (a phone has no tab bar here, sidebar.tsx): the box at the bottom of Spotlight stays on screen. */}
+      <div className="flex h-dvh flex-col">
+        {/* Phone: two rows. Back, name, saved state, Save and ⋯; then the tabs, Publish and History. */}
+        <header className="relative flex h-[52px] shrink-0 items-center gap-3 border-b border-hair bg-bg px-4 max-md:h-auto max-md:flex-wrap max-md:gap-x-1.5 max-md:gap-y-1.5 max-md:px-2 max-md:pb-2 max-md:pt-[max(6px,env(safe-area-inset-top))]">
+          <Link href="/workflows" aria-label="Back to workflows" className="grid size-8 shrink-0 place-items-center rounded-full text-t2 hover:bg-acdim hover:text-t1 max-md:size-11">
             <ArrowLeft className="size-4" />
           </Link>
-          <div className="flex min-w-0 max-w-[calc(50%-150px)] items-center gap-3">
+          <div className="flex min-w-0 max-w-[calc(50%-150px)] items-center gap-3 max-md:max-w-none max-md:flex-1 max-md:gap-2">
             <input
               value={name}
               onChange={(e) => useEditor.getState().setMeta({ name: e.target.value })}
@@ -898,10 +899,12 @@ export function Editor({ workflowId }: { workflowId: string }) {
               size={Math.max(12, Math.min(name.length + 1, 40))}
               className="min-w-0 max-w-[300px] shrink bg-transparent text-[15px] font-semibold text-t1 outline-none"
             />
-            <TagsEditor />
-            <span className={cn('flex shrink-0 items-center gap-1.5 text-[12px]', dirty ? 'text-warn' : 'text-t3')}>
+            <span className="contents max-md:hidden">
+              <TagsEditor />
+            </span>
+            <span className={cn('flex shrink-0 items-center gap-1.5 text-[12px]', dirty ? 'text-warn' : 'text-t3')} title={dirty ? 'Unsaved' : 'Saved'}>
               <span className={cn('size-1.5 rounded-full transition-colors', dirty ? 'bg-warn' : 'bg-gn')} />
-              {dirty ? 'Unsaved' : 'Saved'}
+              <span className="max-md:sr-only">{dirty ? 'Unsaved' : 'Saved'}</span>
             </span>
           </div>
 
@@ -909,25 +912,29 @@ export function Editor({ workflowId }: { workflowId: string }) {
             workflowId={workflowId}
             active="editor"
             beforeLeave={async () => useEditor.getState().dirty && (await save())}
-            className="absolute left-1/2 -translate-x-1/2"
+            className="absolute left-1/2 -translate-x-1/2 max-md:static max-md:order-3 max-md:translate-x-0"
           />
 
-          <div className="ml-auto flex items-center gap-2">
-            <PublishControl workflowId={workflowId} onSave={save} />
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => useVersionHistory.getState().setOpen(true)}
-              title="Version history: every save is a version"
-              aria-label="Version history"
-            >
-              <History className="size-4" />
-            </Button>
+          <div className="ml-auto flex items-center gap-2 max-md:contents">
+            <span className="contents max-md:[&>*]:order-4 max-md:[&>*:first-child]:ml-auto">
+              <PublishControl workflowId={workflowId} onSave={save} />
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => useVersionHistory.getState().setOpen(true)}
+                title="Version history: every save is a version"
+                aria-label="Version history"
+              >
+                <History className="size-4" />
+              </Button>
+            </span>
             <Button onClick={() => void save()} loading={saving} disabled={readOnly} title="Save (⌘S)" variant={dirty ? 'primary' : 'outline'}>
               Save
             </Button>
             <WorkflowMenu onSave={save} />
           </div>
+          {/* Phone: the second row starts here. */}
+          <span className="hidden max-md:order-2 max-md:block max-md:basis-full" aria-hidden />
           {running && <span className="lf-shimmer absolute inset-x-0 bottom-[-1px] h-[2px]" />}
         </header>
 

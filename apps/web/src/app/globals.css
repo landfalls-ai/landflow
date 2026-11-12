@@ -512,6 +512,21 @@ body {
   }
 }
 
+/*
+ * Phones (below md): text fields at 16px so iOS doesn't zoom into them on focus, and room under the page for the tab bar
+ * (sidebar.tsx) where it shows.
+ */
+@media (max-width: 767px) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+  body:has(nav[data-tabbar]) main {
+    padding-bottom: calc(56px + env(safe-area-inset-bottom));
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

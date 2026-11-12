@@ -2,7 +2,8 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { Activity, BookOpenCheck, BookOpenText, Bot, Brain, ChartColumn, House, KeyRound, LayoutTemplate, Menu, PanelLeftClose, PanelLeftOpen, Puzzle, Search, Settings, Store, Table2, Workflow, X } from 'lucide-react';
+import { Activity, BookOpenCheck, BookOpenText, Bot, Brain, ChartColumn, Ellipsis, House, KeyRound, LayoutTemplate, PanelLeftClose, PanelLeftOpen, Puzzle, Search, Settings, Store, Table2, Workflow, X } from 'lucide-react';
+import { useNeedsYou } from '@/lib/client/run-trace';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { useLiveConnected, useLiveEvents } from '@/lib/client/live';
@@ -46,9 +47,11 @@ const GROUPS: Array<{ label: string; items: Array<{ href: string; label: string;
 const RAIL_KEY = 'landflow-rail-collapsed';
 
 /**
- * The left rail: product mark, grouped navigation, live status, the user menu. Not on sign-in and public pages. On a phone
- * (below `md`) the rail is a drawer behind a slim top bar with a menu button. On a desktop it folds to its icons (the
- * button beside the mark), so the editor's canvas and Spotlight get the room; the choice is kept in the browser.
+ * The left rail: product mark, grouped navigation, live status, the user menu. Not on sign-in and public pages. On a desktop
+ * it folds to its icons (the button beside the mark), so the editor's canvas and Spotlight get the room; the choice is kept
+ * in the browser. On a phone (below `md`) a tab bar at the bottom takes its place (Home, Flows, Runs, Agents, More), and
+ * More opens the rail as a drawer with everything else. Full-screen pages (the editor, a run's trace) have neither: their
+ * own header has a back arrow.
  */
 export function Sidebar() {
   const pathname = usePathname();
@@ -59,28 +62,49 @@ export function Sidebar() {
   const open = openOn === pathname;
   return (
     <>
-      <PhoneBar onMenu={() => setOpenOn(pathname)} />
+      {!fullScreen(pathname) && <TabBar pathname={pathname} more={open} onMore={() => setOpenOn(open ? undefined : pathname)} />}
       {open && <div className="fixed inset-0 z-40 bg-black/30 md:hidden" onClick={() => setOpenOn(undefined)} aria-hidden />}
       <Rail pathname={pathname} open={open} onClose={() => setOpenOn(undefined)} />
     </>
   );
 }
 
-function PhoneBar({ onMenu }: { onMenu: () => void }) {
-  const connected = useLiveConnected();
+/** Pages that take the whole phone screen, with a back arrow of their own: the editor and its tabs, an agent, a run's trace. */
+export const fullScreen = (pathname: string) => /^\/(workflows|agents)\/[^/]+/.test(pathname) || (/^\/runs\/[^/]+/.test(pathname) && pathname !== '/runs/compare');
+
+const TABS = [
+  { href: '/', label: 'Home', icon: House, match: (p: string) => p === '/' },
+  { href: '/workflows', label: 'Flows', icon: Workflow, match: (p: string) => p.startsWith('/workflows') || p.startsWith('/templates') },
+  { href: '/executions', label: 'Runs', icon: Activity, match: (p: string) => p.startsWith('/executions') || p.startsWith('/runs') },
+  { href: '/agents', label: 'Agents', icon: Bot, match: (p: string) => p.startsWith('/agents') },
+];
+
+/** The phone's tab bar: four places and More (the rest, in the rail's drawer). Runs counts what waits for a person. */
+function TabBar({ pathname, more, onMore }: { pathname: string; more: boolean; onMore: () => void }) {
+  const { items } = useNeedsYou();
+  const waiting = items?.length ?? 0;
+  const inTabs = TABS.some((t) => t.match(pathname));
   return (
-    <div className="flex h-11 shrink-0 items-center gap-2 border-b border-hair bg-sf2 px-2 md:hidden">
-      <button type="button" aria-label="Open the menu" onClick={onMenu} className="grid size-9 place-items-center rounded-lg text-t2 hover:bg-acdim hover:text-t1">
-        <Menu className="size-[18px]" strokeWidth={1.7} />
+    <nav data-tabbar aria-label="Main" className="fixed inset-x-0 bottom-0 z-40 flex border-t border-hair bg-sf2/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
+      {TABS.map(({ href, label, icon: Icon, match }) => {
+        const active = !more && match(pathname);
+        return (
+          <Link key={href} href={href} aria-current={active ? 'page' : undefined} className={cn('relative flex h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[11px]', active ? 'font-semibold text-t1' : 'text-t3')}>
+            <Icon className={cn('size-[22px]', active && 'text-ac')} strokeWidth={active ? 2 : 1.7} />
+            {label}
+            {href === '/executions' && waiting > 0 && (
+              <span aria-label={`${waiting} waiting for you`} className="absolute left-1/2 top-1.5 ml-2 min-w-[18px] rounded-full bg-warn px-1 text-center text-[10.5px] font-semibold leading-[18px] text-bg">
+                {waiting > 99 ? '99+' : waiting}
+              </span>
+            )}
+          </Link>
+        );
+      })}
+      <button type="button" onClick={onMore} aria-expanded={more} aria-label="More" className={cn('flex h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[11px]', more || !inTabs ? 'font-semibold text-t1' : 'text-t3')}>
+        <Ellipsis className={cn('size-[22px]', (more || !inTabs) && 'text-ac')} strokeWidth={more || !inTabs ? 2 : 1.7} />
+        More
       </button>
-      <Link href="/" className="flex items-center gap-2">
-        <span className="grid size-7 place-items-center rounded-[8px] border border-acbd bg-ac2 text-[11px] font-bold text-on-ac">LF</span>
-        <span className="text-[13px] font-semibold text-t1">Landflow</span>
-      </Link>
-      <span className="ml-auto pr-1" title={connected ? 'Receiving live events' : 'Reconnecting to the event stream'}>
-        <StatusDot status={connected ? 'online' : 'offline'} />
-      </span>
-    </div>
+    </nav>
   );
 }
 

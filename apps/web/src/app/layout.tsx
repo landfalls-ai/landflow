@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { GeistMono } from 'geist/font/mono';
 import { GeistSans } from 'geist/font/sans';
 import { Toaster } from 'sonner';
@@ -14,6 +14,9 @@ export const metadata: Metadata = {
   description: 'Low-code workflows with autodiscovered, polyglot node plugins',
 };
 
+// The page runs under a phone's notch and home bar (`viewport-fit=cover`); the tab bar and headers pad by the safe areas.
+export const viewport: Viewport = { width: 'device-width', initialScale: 1, viewportFit: 'cover' };
+
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   // Sign-in: the viewer, or a redirect to /login (/setup on a fresh instance) for pages that aren't public.
   const viewer = await pageViewer();
@@ -24,17 +27,23 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <script dangerouslySetInnerHTML={{ __html: lookScript }} />
       </head>
       <body className="min-h-screen">
+        <a href="#main" className="sr-only rounded-lg bg-ac2 px-3 py-2 text-[13px] font-semibold text-on-ac focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[100]">
+          Skip to content
+        </a>
         <ViewerProvider viewer={viewer}>
           <div className="flex min-h-screen flex-col md:flex-row">
             <Sidebar />
-            <main className="relative min-w-0 flex-1">{children}</main>
+            <main id="main" tabIndex={-1} className="relative min-w-0 flex-1 outline-none">
+              {children}
+            </main>
           </div>
         </ViewerProvider>
         {/* Clear of the editor's Spotlight panel: it sets --toast-right (desktop) and --toast-bottom (its phone sheet). */}
         <Toaster
           position="bottom-right"
           offset={{ right: 'var(--toast-right, 24px)', bottom: 'var(--toast-bottom, 24px)' }}
-          mobileOffset={{ bottom: 'var(--toast-bottom, 16px)' }}
+          // Above the phone's tab bar (56 px and the home bar), unless Spotlight's sheet set its own.
+          mobileOffset={{ bottom: 'var(--toast-bottom, calc(72px + env(safe-area-inset-bottom)))' }}
           toastOptions={{ className: '!bg-sf !border-hair !text-t1 !rounded-xl !shadow-pop !text-[13px]' }}
         />
       </body>
