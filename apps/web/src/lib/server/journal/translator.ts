@@ -554,6 +554,12 @@ export function createTranslator(options: TranslatorOptions) {
       attrs.calls = calls.map((c) => ({ id: c.id, tool: c.tool, input: c.input }));
       const tools = calls.map((c) => String(c.tool)).filter(Boolean);
       name = tools.length ? `Approve ${tools.join(', ')}` : 'Approve a tool call';
+      // Ask a Person: the question and the draft, answered with Approve, Edit or Reject.
+      const confirm = isObject(approval.confirm) ? approval.confirm : undefined;
+      if (confirm) {
+        attrs.confirm = { title: confirm.title, text: confirm.text, allowEdit: confirm.allowEdit !== false, ...(Array.isArray(confirm.approvers) && confirm.approvers.length && { approvers: confirm.approvers }) };
+        name = `Waiting for ${Array.isArray(confirm.approvers) && confirm.approvers.length ? confirm.approvers.map(String).join(', ') : 'a person'}: ${String(confirm.title)}`;
+      }
       // A team member's tool (Run a Team): who wants it, and what with.
       const team = isObject(data.teamApproval) ? data.teamApproval : undefined;
       if (team) {

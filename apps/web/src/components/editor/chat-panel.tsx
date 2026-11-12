@@ -26,6 +26,8 @@ export interface ChatApproval {
   channel: 'chat' | 'slack';
   calls: Array<{ id: string; tool: string; input?: unknown }>;
   decisions?: Record<string, { approved: boolean; by?: string }>;
+  /** An Ask a Person node's request: the heading and the draft instead of a tool call. */
+  confirm?: { title: string; text: string };
 }
 
 /** A file attached in the panel, sent base64 with the message (the trigger item's binary data0, data1…). */
@@ -436,7 +438,7 @@ function ApprovalCard({ approval, disabled, onDecide }: { approval: NonNullable<
     <div className="space-y-1.5 rounded-xl border border-warnbd bg-warndim px-3 py-2 text-[12px] text-t1">
       <div className="flex items-center gap-1.5 font-medium">
         <ShieldAlert className="size-3.5 text-warn" />
-        {approval.nodeName} wants to run {approval.calls.length === 1 ? 'a tool' : `${approval.calls.length} tools`}
+        {approval.confirm ? `Waiting for a person: ${approval.confirm.title}` : `${approval.nodeName} wants to run ${approval.calls.length === 1 ? 'a tool' : `${approval.calls.length} tools`}`}
       </div>
       {approval.channel === 'slack' && <div className="text-t2">Waiting for an approval in Slack — the run continues once someone decides there.</div>}
       {approval.calls.map((call) => {
@@ -445,12 +447,12 @@ function ApprovalCard({ approval, disabled, onDecide }: { approval: NonNullable<
           <div key={call.id} className="rounded-[8px] border border-hair bg-wl px-2 py-1.5">
             <div className="flex items-center gap-1.5">
               <Wrench className="size-3 text-t3" />
-              <span className="font-medium">{call.tool}</span>
+              <span className="font-medium">{approval.confirm ? approval.nodeName : call.tool}</span>
               {decided === true && <span className="ml-auto flex items-center gap-0.5 text-gn"><Check className="size-3" /> approved</span>}
               {decided === false && <span className="ml-auto flex items-center gap-0.5 text-rd"><X className="size-3" /> rejected</span>}
               {decided === 'busy' && <Loader2 className="ml-auto size-3 animate-spin text-t3" />}
             </div>
-            {call.input !== undefined && <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-[11px] text-t2">{pretty(call.input)}</pre>}
+            {call.input !== undefined && <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-[11px] text-t2">{approval.confirm ? approval.confirm.text : pretty(call.input)}</pre>}
             {approval.channel === 'chat' && decided === undefined && (
               <div className="mt-1.5 flex gap-1.5">
                 <button disabled={disabled} onClick={() => onDecide(call.id, true)} className="flex items-center gap-1 rounded-full bg-ac2 px-2.5 py-0.5 text-[11px] font-medium text-on-ac hover:bg-ac2-hover disabled:opacity-40">

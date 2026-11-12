@@ -45,6 +45,12 @@ function waitItem(record: ExecutionRecord): NeedsYouItem | undefined {
   const base = { executionId: record.executionId, workflowId: record.workflowId, workflowName: record.workflowName, actor, since: wait.since, ...(spanId && { spanId }) };
   const approval = isObject(data.approval) && Array.isArray(data.approval.calls) ? data.approval : undefined;
   if (approval) {
+    // Ask a Person: the node's question, and who is asked.
+    const confirm = isObject(approval.confirm) ? approval.confirm : undefined;
+    if (confirm) {
+      const who = Array.isArray(confirm.approvers) && confirm.approvers.length ? confirm.approvers.map(String).join(', ') : undefined;
+      return { ...base, kind: 'approval', title: `Waiting for ${who ?? 'a person'}: ${String(confirm.title)}`, detail: record.workflowName };
+    }
     const tools = (approval.calls as unknown[]).filter(isObject).map((c) => String(c.tool)).filter(Boolean);
     // A team member's tool (Run a Team): who wants it, and what for.
     const team = isObject(data.teamApproval) ? data.teamApproval : undefined;

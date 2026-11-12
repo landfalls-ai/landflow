@@ -23,6 +23,7 @@ import { kagentCredential } from './kagent-credential';
 import { microsoftBotCredential } from './microsoft-bot-credential';
 import { evaluationNode, evaluationTrigger } from './evaluation';
 import { convertToFileNode, extractFromFileNode, readWriteFileNode } from './files';
+import { confirmDraftNode } from './confirm';
 import { filterNode, ifNode, limitNode, mergeNode, noOpNode, respondToWebhookNode, sortNode, splitInBatchesNode, stopAndErrorNode, switchNode, waitNode } from './flow';
 import { formNode, formTrigger } from './forms';
 import { guardrailsNode } from './guardrails';
@@ -82,6 +83,7 @@ export const corePlugin = definePlugin({
     renameKeysNode,
     dateTimeNode,
     waitNode,
+    confirmDraftNode,
     splitInBatchesNode,
     executeWorkflowNode,
     findRunbookNode,

@@ -26,6 +26,7 @@ import { useNow } from '../run/run-status';
 import { useNewLook } from '../shell/look-toggle';
 import { Badge } from '../ui/badge';
 import { ApprovalCard, NeedFaces } from './approval-card';
+import { ConfirmCard, isConfirm } from './confirm-card';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
 import { Textarea } from '../ui/inputs';
@@ -201,7 +202,10 @@ function NeedsYou({
     <div className="flex flex-col gap-2" aria-label="Needs you">
       {faces.length > 0 && <NeedFaces faces={faces} className="px-1" />}
       {shown.map((n) =>
-        // The new look: a tool approval is a decision card with the member's reasons and the evidence it looked at.
+        // An Ask a Person node: the draft, to approve, edit or reject.
+        n.kind === 'wait' && n.attrs.wait === 'approval' && isConfirm(n.attrs.confirm) ? (
+          <ConfirmCard key={`w${n.spanId}`} executionId={executionId} since={n.since} request={n.attrs.confirm} nodeName={String(n.attrs.nodeName ?? n.actor.name)} onDecided={onDecided} open={() => open({ kind: 'span', id: n.spanId })} />
+        ) : // The new look: a tool approval is a decision card with the member's reasons and the evidence it looked at.
         newLook && n.kind === 'wait' && n.attrs.wait === 'approval' ? (
           <ApprovalCard key={`w${n.spanId}`} wait={n} model={model} executionId={executionId} executionHref={executionHref} changes={changes} profile={profile} open={open} onTab={(tab, member) => (member && tab === 'team' ? open({ kind: 'actor', id: model.actors.find((a) => a.actor.name.trim().toLowerCase() === member.trim().toLowerCase())?.actor.id ?? '' }) : onTab(tab))} onDecided={onDecided} />
         ) : n.kind === 'wait' ? (
