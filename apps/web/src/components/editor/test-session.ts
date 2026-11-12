@@ -14,7 +14,8 @@ import { nanoid } from 'nanoid';
 import { toast } from 'sonner';
 import { opsTitle } from '@/lib/shared/assistant-ops';
 import { checkRun, hollowSteps, multipliedSteps, needsPerson, sameFailure, sendingSteps, type CheckedRun, type RunVerdict } from '@/lib/shared/run-check';
-import { applyChanges, fixedNodes, ownRun, runDigests, undos, useAssistant, type Need, type ReplyPart } from './assistant';
+import { applyChanges, fixedNodes, ownRun, runDigests, undos, useAssistant, type Need, type Outcome, type ReplyPart } from './assistant';
+import { nextRound } from './timeline';
 import { agentsSettled } from './new-agent';
 import { publishVersion, toastApprovalRequested } from './publish-control';
 import { useEditor } from './store';
@@ -184,7 +185,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
   const abort = new AbortController();
   const { signal } = abort;
   const testId = nanoid(8);
-  useAssistant.setState({ testing: abort, fixNotes: {} });
+  useAssistant.setState({ testing: abort, testingId: testId, fixNotes: {} });
   try {
     // What only the person can do comes first: no run, no fix spent on it.
     const first = beforeTesting(goal);
@@ -198,9 +199,13 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
     let lastFailure: string | undefined;
     /** What was applied so far: the assistant gets no history, so it hears what didn't help. */
     const tried: string[] = [];
-    /** The fixes applied, newest last, for undoing one that changed nothing. */
-    const lastApplied: Array<{ item: string; proposal: string }> = [];
-    for (let round = 1; !signal.aborted; round++) {
+    /** The fixes applied, newest last, for undoing one that changed nothing (or all of them, from the outcome card). */
+    const lastApplied: Array<{ item: string; proposals: string[] }> = [];
+    /** The session ends without a pass: a card with why and what to do next. */
+    const stop = (text: string, node?: string) =>
+      say([{ kind: 'outcome', outcome: { text, ...(node && { node }), ...(goal && { goal }), fixes: lastApplied.flatMap((a) => a.proposals.map((proposal) => ({ item: a.item, proposal }))), edits: useEditor.getState().edits } satisfies Outcome }]);
+    // Runs count on through the conversation.
+    for (let round = nextRound(useAssistant.getState().items); !signal.aborted; round++) {
       // An agent Spotlight is still designing (./new-agent.ts): the run needs it saved and pointed at first.
       await agentsSettled();
       const runItem = say([{ kind: 'run', run: { round, state: 'running' } }], testId);
@@ -224,9 +229,14 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         // The same failure after a fix: the fix didn't help. Undo it and stop, rather than spend another.
         if (lastFailure && sameFailure(result.summary) === lastFailure) {
           const last = lastApplied.at(-1);
-          if (last) undos.get(last.proposal)?.();
-          if (last) useAssistant.getState().setProposalState(last.item, last.proposal, 'undone');
-          say([{ kind: 'text', text: `The last fix didn’t change the error${result.node ? ` at “${result.node}”` : ''}, so I undid it and stopped.` }]);
+          // One apply: its proposals share one undo.
+          if (last) undos.get(last.proposals[0])?.();
+          for (const proposal of last?.proposals ?? []) {
+            undos.delete(proposal);
+            useAssistant.getState().setProposalState(last!.item, proposal, 'undone');
+          }
+          lastApplied.pop();
+          stop(`The last fix didn’t change the error${result.node ? ` at “${result.node}”` : ''}, so I undid it.`, result.node);
           return;
         }
         lastFailure = sameFailure(result.summary);
@@ -241,7 +251,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         return;
       }
       if (fixes >= MAX_FIXES) {
-        say([{ kind: 'text', text: `Still failing${result.node ? ` at “${result.node}”` : ''} after ${MAX_FIXES} fixes${result.summary ? `: ${result.summary.replace(/^failed at “[^”]+”:\s*/, '').slice(0, 80)}` : ''}.` }]);
+        stop(`Still failing${result.node ? ` at “${result.node}”` : ''} after ${MAX_FIXES} fixes${result.summary ? `: ${result.summary.replace(/^failed at “[^”]+”:\s*/, '').slice(0, 80)}` : ''}.`, result.node);
         return;
       }
       const at = hollow[0]?.node ?? result.node;
@@ -260,7 +270,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
       if (signal.aborted) return;
       const reply = useAssistant.getState().items.at(-1);
       if (reply?.role !== 'assistant' || reply.error) {
-        say([{ kind: 'text', text: `I couldn’t work out a fix${result.node ? ` for “${result.node}”` : ''}, so I stopped.` }]);
+        stop(`I couldn’t work out a fix${result.node ? ` for “${result.node}”` : ''}.`, result.node);
         return;
       }
       const proposals = reply.parts.flatMap((p) => (p.kind === 'proposal' && !p.proposal.state ? [p.proposal] : []));
@@ -269,9 +279,9 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         const said = reply.parts.find((p) => p.kind === 'text');
         const yes = said?.kind === 'text' && /^\s*yes\b/i.test(said.text);
         if (!failed && yes) say([{ kind: 'action', action: 'publish' }]);
-        else if (!failed) say([{ kind: 'text', text: 'It runs, but doesn’t do all you asked yet, and I have no change for it: tell me what to change.' }]);
+        else if (!failed) stop('It runs, but doesn’t do all you asked yet, and I have no change for it: tell me what to change.', result.node);
         // The reply above already says why.
-        else say([{ kind: 'text', text: `I found no fix for “${result.node ?? 'this step'}”, so I stopped. Tell me what it should do, or open it.` }]);
+        else stop(`I found no fix for “${result.node ?? 'this step'}”. Tell me what it should do, or open it.`, at);
         return;
       }
       const label = proposals.length === 1 ? `Spotlight applied “${proposals[0].summary}”` : `Spotlight applied ${proposals.length} fixes`;
@@ -286,10 +296,10 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
       });
       if (!applied) {
         for (const proposal of proposals) useAssistant.getState().setProposalState(reply.id, proposal.id, 'dismissed');
-        say([{ kind: 'text', text: 'The canvas changed while I worked, so the fix no longer fits: I stopped.' }]);
+        stop('The canvas changed while I worked, so the fix no longer fits.', at);
         return;
       }
-      lastApplied.push({ item: reply.id, proposal: proposals.at(-1)!.id });
+      lastApplied.push({ item: reply.id, proposals: proposals.map((p) => p.id) });
       for (const proposal of proposals) {
         useAssistant.getState().setProposalState(reply.id, proposal.id, 'applied', skipped);
         // A bubble on what it fixed, until dismissed.
@@ -303,7 +313,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
     if (!signal.aborted) say([{ kind: 'text', text: `Testing stopped: ${(e as Error).message}` }]);
   } finally {
     // Over: the conversation comes back from the side with the outcome.
-    if (useAssistant.getState().testing === abort) useAssistant.setState({ testing: undefined, fixing: undefined });
+    if (useAssistant.getState().testing === abort) useAssistant.setState({ testing: undefined, testingId: undefined, fixing: undefined });
   }
 }
 

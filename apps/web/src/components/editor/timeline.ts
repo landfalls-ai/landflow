@@ -36,6 +36,70 @@ export function firstSentence(text: string): string {
 /** "failed at “Post to Slack”: …" → Post to Slack. */
 const failedAt = (summary: string | undefined) => /failed at “([^”]+)”/.exec(summary ?? '')?.[1];
 
+/**
+ * A run as one row of the ledger: *Run 3 · “Post to Slack” · No Bearer Auth credential selected*. The reason is the
+ * error's first clause; the whole summary goes in the row's title.
+ */
+export function runRow(run: { round: number; state: 'running' | 'passed' | 'failed'; summary?: string }): { node?: string; reason: string } {
+  if (run.state === 'running') return { reason: 'running…' };
+  if (run.state === 'passed') return { reason: run.summary ? `passed · ${run.summary}` : 'passed' };
+  const node = failedAt(run.summary);
+  const rest = (run.summary ?? '').replace(/^failed at “[^”]+”:?\s*/, '').replace(/^failed:?\s*/, '');
+  // "Expression error — Parameter …" keeps its kind; "No Bearer Auth credential selected — choose one …" its first clause.
+  // No lookbehind: Safari before 16.4 can't parse one, and this runs in the browser.
+  const dash = rest.split(/\s+—\s+/)[0] ?? '';
+  const clause = /^(.*?[a-z0-9)])\.\s/.exec(dash)?.[1] ?? dash;
+  const reason = clause.length > 90 ? `${clause.slice(0, 88).trimEnd()}…` : clause;
+  return { ...(node && { node }), reason: reason || 'failed' };
+}
+
+/** The next run's number: runs count on through the conversation, so "Run 4" is never two runs. */
+export function nextRound(items: ChatItem[]): number {
+  let last = 0;
+  for (const item of items) if (item.role === 'assistant') for (const p of item.parts) if (p.kind === 'run') last = Math.max(last, p.run.round);
+  return last + 1;
+}
+
+export interface SessionFold {
+  testId: string;
+  runs: number;
+  fixes: number;
+  state: 'passed' | 'failed';
+}
+
+/**
+ * A finished test-and-fix session folded to a line: *Tested 3× · 2 fixes · stopped*. The session's items are the ones
+ * with its `testId`; the outcome said after it stays out. Undefined while it is running (or has no run).
+ */
+export function sessionFold(items: ChatItem[], testId: string, running: boolean): SessionFold | undefined {
+  if (running) return undefined;
+  const mine = items.filter((item) => item.testId === testId && item.role === 'assistant');
+  const runs = mine.flatMap((item) => (item.role === 'assistant' ? item.parts.flatMap((p) => (p.kind === 'run' ? [p.run] : [])) : []));
+  if (!runs.length || runs.some((r) => r.state === 'running')) return undefined;
+  const fixes = mine.reduce((n, item) => n + (item.role === 'assistant' ? item.parts.filter((p) => p.kind === 'proposal' && p.proposal.state === 'applied').length : 0), 0);
+  // A pass the review said no to ends in an outcome card ("It runs, but doesn't do all you asked"): stopped, not passed.
+  const last = items.findLastIndex((item) => item.testId === testId);
+  const after = items.slice(last + 1);
+  const end = after.findIndex((item) => item.role === 'user' && !item.auto);
+  const stopped = (end < 0 ? after : after.slice(0, end)).some((item) => item.role === 'assistant' && !item.testId && item.parts.some((p) => p.kind === 'outcome' || p.kind === 'needs'));
+  return { testId, runs: runs.length, fixes, state: runs.at(-1)!.state === 'passed' && !stopped ? 'passed' : 'failed' };
+}
+
+/** The outcome card since the person last asked for something: how the last session stopped, if it did. */
+export function lastOutcomeOf(items: ChatItem[]): import('./assistant').Outcome | undefined {
+  const start = items.findLastIndex((item) => item.role === 'user' && !item.auto);
+  for (const item of items.slice(start + 1).reverse()) {
+    if (item.role !== 'assistant') continue;
+    if (item.parts.some((p) => p.kind === 'run')) return undefined;
+    const part = item.parts.find((p) => p.kind === 'outcome');
+    if (part?.kind === 'outcome') return part.outcome;
+  }
+  return undefined;
+}
+
+export const foldLine = (fold: SessionFold) =>
+  `Tested ${fold.runs}×${fold.fixes ? ` · ${fold.fixes} fix${fold.fixes === 1 ? '' : 'es'}` : ''} · ${fold.state === 'passed' ? 'passed' : 'stopped'}`;
+
 export function agentStep(agent: AgentProgress): Step {
   const text =
     agent.state === 'designing'
@@ -69,13 +133,15 @@ export function stepsOf(items: ChatItem[], options: { live?: boolean; drafting?:
         id: key(`run${run.round}`),
         kind: 'run',
         icon: run.state === 'running' ? 'busy' : run.state,
-        text: `Run ${run.round} · ${run.state === 'running' ? 'running…' : run.state === 'passed' ? `no errors: ${run.summary}` : run.summary}`,
+        text: (({ node, reason }) => `Run ${run.round} · ${node ? `“${node}” · ` : ''}${reason}`)(runRow(run)),
         ...(run.state === 'failed' && failedAt(run.summary) && { nodeName: failedAt(run.summary) }),
       });
     }
     if (!runs.length) {
       const proposals = item.parts.flatMap((p) => (p.kind === 'proposal' ? [p.proposal] : []));
       for (const proposal of proposals) steps.push({ id: key(proposal.id), kind: 'fix', icon: 'fix', text: `${proposal.state === 'applied' ? (item.testId ? 'Fixed' : 'Done') : proposal.state === 'dismissed' ? 'Not applied' : proposal.state === 'undone' ? 'Undone' : 'Proposed'} · ${opsTitle(proposal.ops)}` });
+      const ended = item.parts.find((p) => p.kind === 'outcome');
+      if (ended?.kind === 'outcome') steps.push({ id: key('outcome'), kind: 'outcome', icon: 'note', text: `Stopped · ${ended.outcome.text}`, ...(ended.outcome.node && { nodeName: ended.outcome.node }) });
       const need = item.parts.find((p) => p.kind === 'needs');
       if (need?.kind === 'needs' && !need.need.state) steps.push({ id: key('needs'), kind: 'needs', icon: 'needs', text: `Needs you · ${need.need.text}`, ...(need.need.node && { nodeName: need.need.node }) });
       if (options.live && i === rest.length - 1) {

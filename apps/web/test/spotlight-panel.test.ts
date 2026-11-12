@@ -40,10 +40,10 @@ describe('the timeline', () => {
     expect(ask).toBe('When a ticket arrives, triage it and post to Slack');
     expect(steps.map((s) => [s.kind, s.text])).toEqual([
       ['draft', 'Built “Tickets” with 4 nodes.'],
-      ['run', 'Run 1 · failed at “Post to Slack”: No credential'],
+      ['run', 'Run 1 · “Post to Slack” · No credential'],
       ['fix', 'Fixed · Set channel on “Post to Slack”'],
       ['agent', 'Agent “Contract Reviewer” published · ollama/qwen3-coder:30b · 1 knowledge base'],
-      ['run', 'Run 2 · no errors: 4 steps, 1 item reached “Post to Slack”'],
+      ['run', 'Run 2 · passed · 4 steps, 1 item reached “Post to Slack”'],
     ]);
     expect(steps[1]).toMatchObject({ icon: 'failed', nodeName: 'Post to Slack' });
     expect(steps[3]).toMatchObject({ agentId: 'ag_1' });

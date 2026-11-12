@@ -204,6 +204,15 @@
     translate: 3px;
   }
 }
+/* A drafted flow's nodes arrive left to right (ai-builder.tsx): opacity only, as the node's wrapper carries its position. */
+.lf-arrive {
+  animation: lf-arrive 0.45s ease-out both;
+}
+@keyframes lf-arrive {
+  from {
+    opacity: 0;
+  }
+}
 @keyframes lf-fade-up {
   from {
     opacity: 0;
@@ -510,5 +519,9 @@ body {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+  }
+  .lf-arrive,
+  .react-flow__edge-path {
+    animation-delay: 0s !important;
   }
 }
