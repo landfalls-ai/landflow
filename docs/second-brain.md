@@ -88,7 +88,8 @@ The leader runs the brain (`leaderService('second brain')`). Every `LANDFLOW_BRA
 1. rolls up and prunes the ledger;
 2. expires detector suggestions no detector confirmed for 14 days;
 3. checks the effect of applied ones ([7](#7-measuring-the-effect));
-4. runs the detectors, and studies when the last study is a day old.
+4. runs the detectors, then the published [detector flows](#flow-detectors) one after another, and studies when the
+   last study is a day old.
 
 The first tick is 30 s after start.
 
@@ -119,8 +120,9 @@ The first tick is 30 s after start.
   stays away 30 days, and an applied one 14 days.
 - **Weekly cap**: at most `LANDFLOW_BRAIN_WEEKLY_CAP` (3) per workflow per week. A stronger suggestion replaces the
   weakest open one.
-- **Quieter detectors**: a detector whose decided suggestions are mostly dismissed as wrong or not relevant gets its
-  thresholds multiplied (×1.5, ×2, ×3).
+- **Quieter detectors**: a detector whose decided suggestions (5 or more) are mostly dismissed as wrong or not relevant
+  gets its thresholds multiplied (×1.5 from 40% rejected, ×2 from 60%, ×3 from 80%). A [flow detector](#flow-detectors)
+  gets the multiplier as `quiet`, and its findings also need a minimum confidence (0.5, 0.65, 0.8).
 
 ### 5. Where you see it
 
@@ -140,14 +142,16 @@ The first tick is 30 s after start.
 - **Insights → What Landflow knows**:
   - the ledger's size, the facts, the model, and when the brain last studied and detected;
   - a search over the facts;
-  - each detector's record;
+  - each detector's record (made, applied, dismissed, quieted) with **Run**, which runs that detector alone. Flow
+    detectors are listed from the moment they exist, linked to their workflow; one not yet published says so and has
+    no **Run**;
   - **Create the Platform analyst**;
   - **Run now**.
 - **Project settings → Governance**: **Let the second brain read run data**.
 
 ### 6. Your own conclusions
 
-Three nodes make the brain something workflows can use:
+Four nodes make the brain something workflows can use:
 
 - **Landflow Usage** (`core.landflowUsage`, usable as an agent tool). Its operations:
   - Report: grouped by day, kind, workflow, node type, signature, agent or model;
@@ -165,6 +169,30 @@ Three nodes make the brain something workflows can use:
 - **Suggest Improvement** (`core.suggestImprovement`, usable as a tool) posts a suggestion to the inbox: a title, why,
   the workflow and node, the expected effect, ops as JSON (checked against the workflow; `[]` for advice), risk,
   confidence, and a fingerprint.
+- **Detector Trigger** (`core.detectorTrigger`) makes the workflow one of the brain's detectors (below).
+
+#### Flow detectors
+
+A suggestion a workflow posts is source `workflow`: it never expires, never quiets anything and isn't in Insights. A
+published workflow that starts from **Detector Trigger** is a detector instead, as first-class as the built-in ones,
+with the id `flow:<workflowId>` and its workflow's name as its label:
+
+- **When it runs**: on the brain's tick after the built-in detectors, on **Insights → Run now**, and alone from its
+  **Run** in the detectors table (`POST /api/brain/run { what: "detect", detector: "flow:<id>" }`). Flows run one
+  after another, each for at most 10 minutes. Only the published version runs; **Run** in the editor starts at the
+  trigger with this workflow's real values.
+- **What it gets**: one item, `{ detector, name, quiet, minConfidence, at, lastRunAt, reason }`. `quiet` is the
+  multiplier above (1 is normal): multiply your thresholds by it. `lastRunAt` is when the brain last ran it, for a flow
+  that reads only what is new. `reason` is `tick`, `run-now` or `manual`.
+- **What it returns**: its findings, through Suggest Improvement nodes. In a workflow with a Detector Trigger they post
+  as the detector (source `detector`). Their fingerprints are the detector's own, so the same finding refreshes the open
+  suggestion, and a finding under `minConfidence` is held back (the node's item says why).
+- **What follows**: everything a built-in detector has. People's dismissals quiet it. A suggestion it stops finding
+  expires after 14 days. An applied one is measured ([7](#7-measuring-the-effect)). Insights lists its record. **Suggestion
+  From** on On Usage Event lists it, so a flow can act when one of its suggestions is applied.
+
+For example, an overlap finder: Detector Trigger → Landflow Usage (Search Facts) → an AI Agent judging which pairs are
+the same work, with its threshold times `quiet` → Suggest Improvement per pair, confidence from the agent.
 
 A workflow reads what the person who created it can see. A workflow nobody created, and an agent's tools, see their
 own project.
@@ -208,7 +236,8 @@ Ask it in its chat, from Slack, or use it in a flow with [Run an Agent](agents.m
 ### 7. Measuring the effect
 
 - **Baseline**: on Apply, the suggestion records a baseline from the week before. The metric depends on the detector:
-  failure rate; p95; cost per run; runs by hand; or the thumbs-down rate for agents.
+  failure rate; p95; cost per run; runs by hand; or the thumbs-down rate for agents. A flow detector's suggestion about
+  a workflow is measured by that workflow's failure rate; one about the instance isn't measured.
 - **Checks**: after 7 days it checks again. After 14 days it marks the outcome: worked, no effect, or worse (a 10%
   change either way decides).
 - **Memory**: the outcome becomes a `change` fact ("Applying “Retry the CRM call” helped: 12% of runs failing before,
@@ -225,13 +254,13 @@ Routes are also in [reference/api.md](reference/api.md), and variables in
 | `GET /api/usage` | a grouped report | `executions:read`, scoped |
 | `GET /api/usage/events` | the events | `executions:read`, scoped |
 | `POST /api/usage/signal` | an editor signal (`search.empty`) | `workflows:write` |
-| `GET /api/proposals`, `GET /api/proposals/:id` | suggestions | `workflows:read`, scoped |
+| `GET /api/proposals`, `GET /api/proposals/:id` | suggestions (`?detector=` a built-in id or `flow:<workflowId>`) | `workflows:read`, scoped |
 | `POST /api/proposals` | a suggestion from outside (source `analyst`) | edit access to its workflow or agent |
 | `PATCH /api/proposals/:id` | dismiss with a reason, or snooze | edit access to its target |
 | `POST /api/proposals/:id/apply` | apply on the server | edit access to its target; any builder for a draft |
 | `POST /api/proposals/:id/applied` | the editor applied it itself | edit access to its target |
 | `GET /api/brain/status`, `/api/brain/facts`, `/api/brain/workflows/:id` | what it knows | `executions:read`, scoped |
-| `POST /api/brain/run` | detect, study, effects or all, now | owners and admins |
+| `POST /api/brain/run` | detect, study, effects or all, now; `detector` runs one detector alone (built-in or `flow:<id>`, published) | owners and admins |
 | `POST /api/brain/analyst` | make the Platform analyst | `workflows:write` |
 
 ## Limits
@@ -244,7 +273,10 @@ Routes are also in [reference/api.md](reference/api.md), and variables in
   holds one process's events.
 - Ollama calls cost $0, so the AI-cost detector never suggests a smaller local model.
 - The model writes fixes and drafts one at a time on the leader. A slow local model makes a study or detect run take
-  minutes. `POST /api/brain/run` waits for it.
+  minutes. `POST /api/brain/run` waits for it, detector flows included (up to 10 minutes each).
+- A flow detector's effect is measured by its target workflow's failure rate, the default. It can't name its own
+  metric yet. Apply does something only when the suggestion carries ops, a draft or persona rules; otherwise it is
+  advice, marked done.
 
 ## Where the code is
 
@@ -254,7 +286,8 @@ Routes are also in [reference/api.md](reference/api.md), and variables in
   - the loop (`index.ts`);
   - detectors, suggestions (`proposals.ts`), effects, the model's writing (`writer.ts`);
   - study and facts;
-  - scope, the analyst and On Usage Event (`usage-trigger.ts`).
-- `apps/web/src/lib/server/nodes/usage.ts`: the three nodes.
+  - scope, the analyst and On Usage Event (`usage-trigger.ts`);
+  - flow detectors (`flow-detectors.ts`).
+- `apps/web/src/lib/server/nodes/usage.ts`: the four nodes.
 - `apps/web/src/components/brain/`: the inbox, the canvas card and the Insights panel.
 - Tests: `apps/web/test/brain.test.ts`.

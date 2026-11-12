@@ -2,7 +2,8 @@
  * The second brain (docs/second-brain.md): the usage ledger (redaction, signatures, what executions and audit events
  * record, reports, rollups and scope), the detectors on seeded events, the suggestion lifecycle (dedupe, held back, the
  * weekly cap, dismiss as intended, apply ops / a draft / persona rules, the effect checks), what study() learns without a
- * model, the Landflow Usage, Suggest Improvement and On Usage Event nodes, the new edit operations, and the routes.
+ * model, the Landflow Usage, Suggest Improvement and On Usage Event nodes, flow detectors (Detector Trigger), the new edit
+ * operations, and the routes.
  * No model and no embeddings: LANDFLOW_BRAIN_MODEL and LANDFLOW_BRAIN_EMBEDDINGS are off.
  */
 import { mkdtempSync } from 'node:fs';
@@ -56,6 +57,8 @@ const statusRoute = await import('@/app/api/brain/status/route');
 const factsRoute = await import('@/app/api/brain/facts/route');
 const knowledgeRoute = await import('@/app/api/brain/workflows/[id]/route');
 const analystRoute = await import('@/app/api/brain/analyst/route');
+const runRoute = await import('@/app/api/brain/run/route');
+const { listFlowDetectors } = await import('@/lib/server/brain/flow-detectors');
 
 registry.registerBuiltin(corePlugin);
 const owner = await createUser({ email: 'owner@brain.test', name: 'Owner', role: 'owner', password: 'owner-password-1' });
@@ -398,6 +401,88 @@ describe('suggestions', () => {
       proposals.dismissProposal(p.id, 'wrong');
     }
     expect(proposals.detectorStats().find((s) => s.id === 'slow-step')).toMatchObject({ dismissed: 5, quiet: 3 });
+  });
+});
+
+describe('flow detectors', () => {
+  /** A detector flow: Detector Trigger → Suggest Improvement, whose why echoes the trigger's quiet. */
+  const detectorFlow = (active = true, confidence = 0.6) =>
+    workflow(
+      'wf_overlap',
+      'Overlap finder',
+      [
+        node('t', 'Detector', 'core.detectorTrigger'),
+        node('s', 'Suggest', 'core.suggestImprovement', { title: 'Two teams build the same thing', why: "=Quiet {{ $json.quiet }}, bar {{ $json.minConfidence }}", risk: 'low', confidence }),
+      ],
+      [['t', 's']],
+      { active },
+    );
+
+  it('run on the brain’s look, post as the detector, refresh instead of duplicating, and expire once unconfirmed', async () => {
+    detectorFlow();
+    expect(listFlowDetectors()).toEqual([{ id: 'flow:wf_overlap', workflowId: 'wf_overlap', name: 'Overlap finder', active: true }]);
+    const result = await runDetectors({ enrich: false });
+    expect(result.byDetector['flow:wf_overlap']).toBe(1);
+    expect(result.flows).toEqual([expect.objectContaining({ id: 'flow:wf_overlap', status: 'success', found: 1, saved: 1 })]);
+    const [suggestion] = proposals.listProposals({ status: 'open', detector: 'flow:wf_overlap' });
+    expect(suggestion).toMatchObject({ source: 'detector', detector: 'flow:wf_overlap', label: 'Overlap finder', why: 'Quiet 1, bar 0', target: { type: 'instance' } });
+
+    // Found again: the same suggestion, refreshed.
+    const again = await runDetectors({ enrich: false, only: ['flow:wf_overlap'] });
+    expect(again.flows?.[0]).toMatchObject({ found: 1, saved: 1 });
+    expect(proposals.listProposals({ status: 'open' })).toHaveLength(1);
+
+    // Nobody confirmed it for 14 days: it expires, as built-in detectors' suggestions do.
+    expect(proposals.expireStale(database(), Date.now() + 15 * DAY)).toBe(1);
+  });
+
+  it('get quieter when people reject them, and the flow sees how quiet', async () => {
+    detectorFlow(true, 0.7);
+    const db = database();
+    for (let i = 0; i < 5; i++) {
+      const p = proposals.upsertProposal({ source: 'detector', detector: 'flow:wf_overlap', label: 'Overlap finder', fingerprint: `o-${i}`, target: { type: 'instance' }, title: `Overlap ${i}`, why: 'same goal', evidence: [], ops: [], risk: 'low', confidence: 0.7, score: 1 }, db)!;
+      proposals.dismissProposal(p.id, 'wrong');
+    }
+    expect(proposals.quietOf('flow:wf_overlap')).toBe(3);
+    expect(proposals.detectorStats().find((s) => s.id === 'flow:wf_overlap')).toMatchObject({ label: 'Overlap finder', workflowId: 'wf_overlap', active: true, dismissed: 5, quiet: 3 });
+
+    // Confidence 0.7 is under the bar at quiet 3 (0.8): held back, and the node says why.
+    const result = await runDetectors({ enrich: false, only: ['flow:wf_overlap'] });
+    expect(result.flows?.[0]).toMatchObject({ found: 1, saved: 0 });
+    const record = store.getExecution(result.flows![0].executionId!)!;
+    const out = record.runData.s?.[0].outputs[0][0].json as { saved: boolean; reason: string };
+    expect(out).toMatchObject({ saved: false });
+    expect(out.reason).toContain('quieted');
+    expect(proposals.listProposals({ status: 'open' })).toHaveLength(0);
+  });
+
+  it('only run when published, are listed with their record, and run alone from Run now', async () => {
+    detectorFlow(false);
+    expect((await runDetectors({ enrich: false })).flows).toBeUndefined();
+    expect(brainStatus().detectors.find((d) => d.id === 'flow:wf_overlap')).toMatchObject({ label: 'Overlap finder', active: false, made: 0 });
+    expect((await call(runRoute.POST, '/api/brain/run', { json: { what: 'detect', detector: 'flow:wf_overlap' } })).status).toBe(409);
+    expect((await call(runRoute.POST, '/api/brain/run', { json: { what: 'detect', detector: 'flow:wf_nope' } })).status).toBe(404);
+    expect((await call(runRoute.POST, '/api/brain/run', { json: { what: 'detect', detector: 'not-a-detector' } })).status).toBe(400);
+
+    detectorFlow(true);
+    const ran = await call(runRoute.POST, '/api/brain/run', { json: { what: 'detect', detector: 'flow:wf_overlap' } });
+    expect(ran.status).toBe(200);
+    expect(ran.body.detect).toMatchObject({ found: 1, saved: 1, byDetector: { 'flow:wf_overlap': 1 } });
+    const listed = await call(proposalsRoute.GET, '/api/proposals?detector=flow:wf_overlap');
+    expect((listed.body.proposals as Proposal[]).map((p) => p.detector)).toEqual(['flow:wf_overlap']);
+
+    // A built-in detector alone runs no flows.
+    const builtin = await call(runRoute.POST, '/api/brain/run', { json: { what: 'detect', detector: 'flaky-call' } });
+    expect((builtin.body.detect as { flows?: unknown }).flows).toBeUndefined();
+  });
+
+  it('measure an applied finding about a workflow like any other', async () => {
+    workflow('wf_target', 'Target', [node('h', 'Call', 'core.httpRequest')]);
+    workflow('wf_overlap', 'Overlap finder', [node('t', 'Detector', 'core.detectorTrigger'), node('s', 'Suggest', 'core.suggestImprovement')], [['t', 's']], { active: true });
+    const p = proposals.proposeFrom({ title: 'Retry the call', why: 'timeouts', workflowId: 'wf_target', ops: [{ op: 'setNodeSettings', node: 'Call', settings: { retryOnFail: true } }] }, 'workflow', database(), { detector: 'flow:wf_overlap' })!;
+    expect(p).toMatchObject({ source: 'detector', detector: 'flow:wf_overlap' });
+    const applied = proposals.applyProposal(p.id);
+    expect(applied.proposal.baseline).toMatchObject({ metric: 'failureRate' });
   });
 });
 

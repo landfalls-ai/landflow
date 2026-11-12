@@ -13,8 +13,8 @@
 import { createHash } from 'node:crypto';
 import { nanoid } from 'nanoid';
 import type { Workflow } from '@landflow/engine';
-import type { DetectorId, DismissReason, Proposal, ProposalInput, ProposalRisk, ProposalSource, ProposalStatus } from '../../shared/brain';
-import { DETECTORS } from '../../shared/brain';
+import type { DetectorId, DetectorStat, DismissReason, FlowDetectorId, Proposal, ProposalInput, ProposalRisk, ProposalSource, ProposalStatus } from '../../shared/brain';
+import { DETECTOR_LABELS, DETECTORS, flowDetectorWorkflow, isFlowDetector, quietBar } from '../../shared/brain';
 import { agentStore } from '../agents/store';
 import { validateOps } from '../assistant/ops';
 import { database, type Database } from '../db';
@@ -27,6 +27,7 @@ import { recordUsage } from '../usage/ledger';
 import type { UsageScope } from '../usage/query';
 import { baselineFor, checkEffect } from './effect';
 import { upsertFact } from './facts';
+import { listFlowDetectors } from './flow-detectors';
 
 const DAY_MS = 86_400_000;
 export const STALE_DAYS = 14;
@@ -165,8 +166,17 @@ export function upsertProposal(input: NewProposal, db: Database = database(), no
   return save({ ...input, id: `pr_${nanoid(12)}`, status: 'open', createdAt: at, updatedAt: at }, db);
 }
 
-/** A suggestion from a workflow (Suggest Improvement) or the analyst: its ops are checked against the target workflow. */
-export function proposeFrom(input: ProposalInput, source: Exclude<ProposalSource, 'detector'>, db: Database = database()): Proposal | undefined {
+/**
+ * A suggestion from a workflow (Suggest Improvement) or the analyst: its ops are checked against the target workflow.
+ * `detector`: a flow detector's Suggest Improvement (./flow-detectors.ts) posts as that detector, and a finding under the
+ * bar its quieting sets (quietBar) is held back.
+ */
+export function proposeFrom(
+  input: ProposalInput,
+  source: Exclude<ProposalSource, 'detector'>,
+  db: Database = database(),
+  options: { detector?: FlowDetectorId } = {},
+): Proposal | undefined {
   const title = input.title?.trim();
   const why = input.why?.trim();
   if (!title || !why) throw new ProposalError('A suggestion needs a title and a reason (why)');
@@ -181,18 +191,26 @@ export function proposeFrom(input: ProposalInput, source: Exclude<ProposalSource
     : agent
       ? { type: 'agent', id: agent.id, name: agent.name }
       : { type: 'instance' };
-  // Advice about a node that already has open advice is the same suggestion in other words.
+  // A flow detector's fingerprints are its own, as a built-in detector's are (detectors.ts `base`).
+  const given = input.fingerprint?.trim().slice(0, 64);
+  const fingerprint = options.detector
+    ? fingerprintOf(options.detector, ...(given ? [given] : [target.type, target.id, title]))
+    : given || fingerprintOf(source, input.label, target.type, target.id, title);
+  // Advice about a node that already has open advice is the same suggestion in other words (the same one again refreshes it).
   if (node && !validated?.ops.length && !input.draft && !input.agentChange) {
     const open = listProposals({ status: 'open', workflowId: workflow!.id }, db);
-    if (open.some((p) => p.target.nodeId === node.id && !p.ops.length && !p.draft && !p.agentChange)) return undefined;
+    if (open.some((p) => p.fingerprint !== fingerprint && p.target.nodeId === node.id && !p.ops.length && !p.draft && !p.agentChange)) return undefined;
   }
   const risk: ProposalRisk = input.risk ?? (validated?.ops.length ? 'medium' : 'low');
   const confidence = Math.max(0, Math.min(1, input.confidence ?? 0.6));
+  const detector = options.detector;
+  if (detector && confidence < quietBar(quietOf(detector, db))) return undefined;
   return upsertProposal(
     {
-      source,
+      source: detector ? 'detector' : source,
+      ...(detector && { detector }),
       ...(input.label && { label: input.label.slice(0, 80) }),
-      fingerprint: input.fingerprint?.slice(0, 64) || fingerprintOf(source, input.label, target.type, target.id, title),
+      fingerprint,
       ...((workflow || agent) && { projectId: homeProjectId(workflow ? 'workflow' : 'agent', (workflow ?? agent)!.id) }),
       target,
       title: title.slice(0, 160),
@@ -394,24 +412,33 @@ export function checkEffects(db: Database = database(), now = Date.now()): numbe
 // Learning from dismissals
 // ---------------------------------------------------------------------------
 
-export interface DetectorStat {
-  id: DetectorId;
-  made: number;
-  applied: number;
-  dismissed: number;
-  /** 1 = normal; higher means its thresholds are multiplied (it was mostly dismissed as wrong or not relevant). */
-  quiet: number;
+export type { DetectorStat };
+
+/** How a set of a detector's suggestions decides its quiet factor: 5 decided, then the share rejected. */
+function statOf(rows: Array<{ status: string; data: string }>): Pick<DetectorStat, 'made' | 'applied' | 'dismissed' | 'quiet'> {
+  const applied = rows.filter((r) => r.status === 'applied').length;
+  const rejected = rows.filter((r) => r.status === 'dismissed' && ['wrong', 'not-relevant'].includes(parse(r.data)?.reason ?? '')).length;
+  const decided = applied + rejected;
+  const rate = decided ? rejected / decided : 0;
+  const quiet = decided < 5 ? 1 : rate >= 0.8 ? 3 : rate >= 0.6 ? 2 : rate >= 0.4 ? 1.5 : 1;
+  return { made: rows.length, applied, dismissed: rejected, quiet };
 }
 
+/** One detector's quiet factor (1 = normal). */
+export function quietOf(id: DetectorId, db: Database = database()): number {
+  return statOf(db.all<{ status: string; data: string }>("SELECT status, data FROM proposals WHERE source = 'detector' AND detector = ?", id)).quiet;
+}
+
+/** Every built-in detector, then every flow detector (a workflow with a Detector Trigger, or one that made suggestions). */
 export function detectorStats(db: Database = database()): DetectorStat[] {
   const rows = db.all<{ detector: string; status: string; data: string }>("SELECT detector, status, data FROM proposals WHERE source = 'detector'");
-  return DETECTORS.map((id) => {
-    const mine = rows.filter((r) => r.detector === id);
-    const applied = mine.filter((r) => r.status === 'applied').length;
-    const rejected = mine.filter((r) => r.status === 'dismissed' && ['wrong', 'not-relevant'].includes(parse(r.data)?.reason ?? '')).length;
-    const decided = applied + rejected;
-    const rate = decided ? rejected / decided : 0;
-    const quiet = decided < 5 ? 1 : rate >= 0.8 ? 3 : rate >= 0.6 ? 2 : rate >= 0.4 ? 1.5 : 1;
-    return { id, made: mine.length, applied, dismissed: rejected, quiet };
-  });
+  const builtin = DETECTORS.map((id) => ({ id, label: DETECTOR_LABELS[id], ...statOf(rows.filter((r) => r.detector === id)) }));
+  const flows = new Map(listFlowDetectors().map((f) => [f.id, f]));
+  for (const r of rows) {
+    if (!isFlowDetector(r.detector) || flows.has(r.detector)) continue;
+    // The workflow is gone or no longer a detector: its record stays, under the name its suggestions carry.
+    flows.set(r.detector, { id: r.detector, workflowId: flowDetectorWorkflow(r.detector), name: parse(r.data)?.label ?? 'Flow detector', active: false });
+  }
+  const flow = [...flows.values()].map((f) => ({ id: f.id, label: f.name, workflowId: f.workflowId, active: f.active, ...statOf(rows.filter((r) => r.detector === f.id)) }));
+  return [...builtin, ...flow];
 }

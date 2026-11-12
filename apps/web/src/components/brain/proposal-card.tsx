@@ -10,7 +10,7 @@ import { ChevronDown, ChevronRight, Clock, FilePlus2, MoreHorizontal } from 'luc
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
-import { DETECTOR_LABELS, type DismissReason, type Proposal } from '@/lib/shared/brain';
+import { detectorLabel, type DismissReason, type Proposal } from '@/lib/shared/brain';
 import { Badge, Chip, type Tone } from '../ui/badge';
 import { Button } from '../ui/button';
 import { MenuItem, Popover } from '../ui/popover';
@@ -154,7 +154,7 @@ function Changes({ proposal }: { proposal: Proposal }) {
 }
 
 export function ProposalCard({ proposal, actions, compact, onFocus }: { proposal: Proposal; actions: ProposalActions; compact?: boolean; onFocus?: () => void }) {
-  const tag = proposal.detector ? DETECTOR_LABELS[proposal.detector] : (proposal.label ?? 'Suggestion');
+  const tag = proposal.detector ? detectorLabel(proposal.detector, proposal.label) : (proposal.label ?? 'Suggestion');
   const kind = proposalKind(proposal);
   const busy = actions.busy === proposal.id;
   const target = [proposal.target.name, proposal.target.nodeName].filter(Boolean).join(' · ');

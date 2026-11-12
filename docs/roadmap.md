@@ -1137,9 +1137,35 @@ Then **Jev and AWS Strands Decider as guardrail judges** ([agents.md](agents.md#
 yes/no questions in, a probability per question out), so it cannot be a chat provider; it answers the guardrail checks that need a
 model instead, from a *TypeSafe API* credential chosen on the rule. Open: a Decide node, the model router and cost counting.
 
+## Flow detectors (built 2026-11-12)
+
+A workflow could already reach the same conclusions as the brain (Schedule or On Usage Event → Landflow Usage → an AI
+Agent → Suggest Improvement), but its suggestions were second-class: source `workflow`, so they never quieted, expired,
+were measured by detector or showed in Insights. **Built:** **Detector Trigger** (`core.detectorTrigger`). A published
+workflow that starts from it is the detector `flow:<workflowId>`. The brain runs it after the built-in detectors on its
+tick and on Run now, handing it `quiet`, `minConfidence` and `lastRunAt`; its Suggest Improvement nodes post as the
+detector. Quieting (with a confidence bar), the 14-day expiry, the effect baseline, Insights (record and a **Run** per
+detector) and **Suggestion From** all work for it unchanged ([second-brain.md](second-brain.md#flow-detectors)).
+
 ## Planned next
 
-The follow-ups above are candidates, among them making a runbook automatically when a room ends and steps that call a plugin instead of asking a person ([runbooks.md](runbooks.md#not-built)).
+The brain, in this order, after flow detectors (from the gap review of 2026-11-12):
+
+1. **Custom event kinds and a Record Event node**: namespaced kinds (`work.ticket_moved`) with a declared shape, which
+   On Usage Event and Landflow Usage filter and report on.
+2. **Generic entities**: an entity registry (initiative, person, customer, system), so facts and suggestion targets can
+   be `entity:<type>/<id>`.
+3. **Actions decided by the flow**: an On Suggestion Decided trigger for any detector or label, with the flow's own
+   buttons.
+4. **Suggestions with an audience**: addressed to people, mirrored to Slack DMs, decided from either place.
+5. **Find Similar** across brain collections, with a projection as the only output that crosses projects, closing the
+   Vector Store gap in [limitations.md](limitations.md).
+6. **Effect metrics declared by the flow**: a metric query or a sub-workflow that returns a number.
+7. **Backtesting detectors** against past apply and dismiss decisions, on the eval gate's machinery.
+8. **A human-confirm node**: send a draft, wait for approve or edit, the reply back into the flow.
+9. **The brain over the instance MCP server**: facts, suggestions and check_overlap at `/mcp/landflow`.
+
+Other follow-ups above are candidates too, among them making a runbook automatically when a room ends and steps that call a plugin instead of asking a person ([runbooks.md](runbooks.md#not-built)).
 
 ## Not planned
 

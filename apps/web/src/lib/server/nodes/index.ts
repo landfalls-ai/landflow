@@ -7,7 +7,7 @@ import { definePlugin } from '@landflow/sdk';
 import { a2aAgentNode } from './a2a';
 import { runTeamNode } from './run-team';
 import { messageAgentNode, workflowTrigger } from './agents';
-import { landflowUsageNode, suggestImprovementNode, usageTriggerNode } from './usage';
+import { detectorTriggerNode, landflowUsageNode, suggestImprovementNode, usageTriggerNode } from './usage';
 import { aiAgentNode, anthropicChatModelNode, calculatorToolNode, ollamaChatModelNode, simpleMemoryNode } from './ai';
 import { chainLlmNode, informationExtractorNode, textClassifierNode } from './chains';
 import { aiStep } from './composites';
@@ -100,6 +100,7 @@ export const corePlugin = definePlugin({
     a2aAgentNode,
     landflowUsageNode,
     usageTriggerNode,
+    detectorTriggerNode,
     suggestImprovementNode,
     chainLlmNode,
     textClassifierNode,

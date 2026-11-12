@@ -1,12 +1,13 @@
 /**
  * Suggestions (docs/second-brain.md#4-detectors-and-suggestions).
- * GET  ?status=open|applied|dismissed|snoozed|expired|all&workflowId=&agentId=&detector=&limit= — highest score first; the
+ * GET  ?status=open|applied|dismissed|snoozed|expired|all&workflowId=&agentId=&detector=&limit= — highest score first
+ *      (`detector`: a built-in one or `flow:<workflowId>`); the
  *      viewer's workflows and agents only (owners and admins: also the instance's).
  * POST ProposalInput — a suggestion from outside (an agent or a script over the API), source `analyst`; its ops are
  *      checked against the workflow. Needs edit access to the workflow or agent it is about.
  */
 import { z } from 'zod';
-import { DETECTORS, type DetectorId, type ProposalStatus } from '@/lib/shared/brain';
+import { isDetectorId, type ProposalStatus } from '@/lib/shared/brain';
 import { listProposals, proposeFrom, ProposalError } from '@/lib/server/brain/proposals';
 import { canProposal, scopeForActor } from '@/lib/server/brain/scope';
 import { error, handler, json, parseBody } from '@/lib/server/http';
@@ -22,7 +23,8 @@ export const GET = handler(async (request: Request) => {
   const url = new URL(request.url);
   const param = (name: string) => url.searchParams.get(name)?.trim() || undefined;
   const status = STATUSES.includes(param('status') ?? '') ? (param('status') as ProposalStatus | 'all') : 'open';
-  const detector = (DETECTORS as readonly string[]).includes(param('detector') ?? '') ? (param('detector') as DetectorId) : undefined;
+  const wanted = param('detector');
+  const detector = isDetectorId(wanted) ? wanted : undefined;
   const actor = routeActor();
   const proposals = listProposals({ status, workflowId: param('workflowId'), agentId: param('agentId'), detector, scope: scopeForActor(actor), limit: Number(param('limit') ?? 200) || 200 });
   return json({ proposals: proposals.filter((p) => canProposal(actor, p, 'read')) });

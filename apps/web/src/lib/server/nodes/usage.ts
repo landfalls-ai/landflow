@@ -1,12 +1,13 @@
 /**
  * The second brain's nodes (docs/second-brain.md#6-your-own-conclusions): read the usage ledger and what the brain knows
- * (Landflow Usage), start a workflow when something happens (On Usage Event), and post a suggestion to the inbox next to
- * the built-in ones (Suggest Improvement). All three are tools too, which is how the Platform analyst agent uses them.
+ * (Landflow Usage), start a workflow when something happens (On Usage Event), make a workflow a detector the brain runs
+ * (Detector Trigger, docs/second-brain.md#flow-detectors), and post a suggestion to the inbox next to the built-in ones
+ * (Suggest Improvement). Landflow Usage and Suggest Improvement are tools too, which is how the Platform analyst agent uses them.
  *
  * A workflow sees the usage its creator could see (lib/server/brain/scope.ts).
  */
 import { defineNode, NodeOperationError, type JsonObject, type NodeItem } from '@landflow/sdk';
-import { DETECTOR_LABELS, DETECTORS, USAGE_KINDS, type UsageGroup, type UsageKind } from '../../shared/brain';
+import { DETECTOR_LABELS, DETECTORS, detectorLabel, flowDetectorId, quietBar, USAGE_KINDS, type UsageGroup, type UsageKind } from '../../shared/brain';
 import { store } from '../store';
 
 const main = [{ type: 'main' as const }];
@@ -15,6 +16,16 @@ const kindOptions = USAGE_KINDS.map((kind) => ({ name: kind, value: kind }));
 const anyWorkflow = () => [{ name: 'Any workflow', value: '' }, ...store.listWorkflows().map((w) => ({ name: w.name, value: w.id })).sort((a, b) => a.name.localeCompare(b.name))];
 
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as JsonObject;
+
+/** The built-in detectors, then the flow detectors, for "Suggestion From". */
+const anyDetector = async () => {
+  const { listFlowDetectors } = await import('../brain/flow-detectors');
+  return [
+    { name: 'Any detector', value: '' },
+    ...DETECTORS.map((id) => ({ name: DETECTOR_LABELS[id], value: id })),
+    ...listFlowDetectors().map((f) => ({ name: `${f.name} (flow)`, value: f.id })),
+  ];
+};
 
 const list = (value: unknown): string[] => (Array.isArray(value) ? value.map(String).filter(Boolean) : typeof value === 'string' && value.trim() ? value.split(',').map((v) => v.trim()).filter(Boolean) : []);
 
@@ -136,7 +147,7 @@ export const landflowUsageNode = defineNode({
         }
         case 'proposals': {
           const status = ctx.getNodeParameter<string>('status', i) as 'open';
-          rows.push(...listProposals({ status, workflowId, scope, limit }).map((p) => ({ ...p, ...(p.detector && { detectorLabel: DETECTOR_LABELS[p.detector] }) })));
+          rows.push(...listProposals({ status, workflowId, scope, limit }).map((p) => ({ ...p, ...(p.detector && { detectorLabel: detectorLabel(p.detector, p.label) }) })));
           whole = { proposals: rows };
           break;
         }
@@ -174,7 +185,7 @@ export const usageTriggerNode = defineNode({
         displayName: 'Suggestion From',
         type: 'options',
         default: '',
-        options: [{ name: 'Any detector', value: '' }, ...DETECTORS.map((id) => ({ name: DETECTOR_LABELS[id], value: id }))],
+        typeOptions: { loadOptionsMethod: 'detectors' },
         description: 'For proposal.applied: only suggestions this detector made. Each item carries the whole suggestion in `proposal`',
         displayOptions: { show: { kinds: ['proposal.applied'] } },
       },
@@ -189,7 +200,7 @@ export const usageTriggerNode = defineNode({
       },
     ],
   },
-  methods: { loadOptions: { workflows: anyWorkflow } },
+  methods: { loadOptions: { workflows: anyWorkflow, detectors: anyDetector } },
   execute(ctx) {
     const items = ctx.getInputData();
     if (items.some((item) => Object.keys(item.json).length)) return [items];
@@ -214,6 +225,42 @@ export const usageTriggerNode = defineNode({
         },
       ],
     ];
+  },
+});
+
+export const detectorTriggerNode = defineNode({
+  description: {
+    name: 'detectorTrigger',
+    displayName: 'Detector Trigger',
+    description: 'Make this workflow one of the second brain’s detectors: it runs on the brain’s hourly look and on Run now, and its suggestions tune, expire and are measured like the built-in ones',
+    version: 1,
+    kind: 'trigger',
+    // "Run" in the editor starts here with this workflow's real detector values; the brain starts it once published.
+    triggerSource: 'manual',
+    categories: ['Triggers', 'AI'],
+    icon: 'lucide:scan-search',
+    color: '#8b5cf6',
+    keywords: ['detector', 'second brain', 'insights', 'suggestion', 'finding', 'brain tick', 'quiet', 'overlap'],
+    inputs: [],
+    outputs: main,
+    properties: [
+      {
+        name: 'notice',
+        displayName:
+          'Publish the workflow to make it a detector (detector id flow:<this workflow’s id>). Each run has one item: { detector, name, quiet, minConfidence, at, lastRunAt, reason }. Multiply your thresholds by `quiet` (1 is normal; it rises to 3 as people dismiss this detector’s suggestions as wrong or not relevant). Suggest Improvement nodes in this workflow post as the detector, and a suggestion under `minConfidence` is held back.',
+        type: 'notice',
+      },
+    ],
+  },
+  async execute(ctx) {
+    const items = ctx.getInputData();
+    if (items.some((item) => Object.keys(item.json).length)) return [items];
+    // A run from the editor: this workflow's detector values now.
+    const workflowId = ctx.getWorkflowId() ?? 'wf_example';
+    const { quietOf } = await import('../brain/proposals');
+    const id = flowDetectorId(workflowId);
+    const quiet = quietOf(id);
+    return [[{ json: { detector: id, name: store.getWorkflow(workflowId)?.name ?? 'Example detector', quiet, minConfidence: quietBar(quiet), at: new Date().toISOString(), reason: 'manual' } }]];
   },
 });
 
@@ -267,7 +314,13 @@ export const suggestImprovementNode = defineNode({
     const runId = ctx.getWorkflowId();
     // An agent's tools run as `agent:<id>`: its suggestions carry the agent's name.
     const { agentStore } = await import('../agents/store');
-    const own = runId?.startsWith('agent:') ? agentStore.get(runId.slice('agent:'.length)) : runId ? store.getWorkflow(runId) : undefined;
+    const ownWorkflow = runId && !runId.startsWith('agent:') ? store.getWorkflow(runId) : undefined;
+    const own = runId?.startsWith('agent:') ? agentStore.get(runId.slice('agent:'.length)) : ownWorkflow;
+    // In a workflow with a Detector Trigger, suggestions are that detector's (docs/second-brain.md#flow-detectors).
+    const { isDetectorFlow } = await import('../brain/flow-detectors');
+    const detector = ownWorkflow && isDetectorFlow(ownWorkflow) ? flowDetectorId(ownWorkflow.id) : undefined;
+    const { quietOf } = await import('../brain/proposals');
+    const bar = detector ? quietBar(quietOf(detector)) : 0;
     const items = ctx.getInputData();
     const out: NodeItem[] = [];
     for (let i = 0; i < Math.max(items.length, 1); i++) {
@@ -281,6 +334,7 @@ export const suggestImprovementNode = defineNode({
           throw new NodeOperationError('Changes (JSON) is not valid JSON', { itemIndex: i });
         }
       }
+      const confidence = Number(ctx.getNodeParameter('confidence', i, 0.6));
       try {
         const proposal = proposeFrom(
           {
@@ -292,12 +346,15 @@ export const suggestImprovementNode = defineNode({
             effect: String(ctx.getNodeParameter('effect', i, '') ?? '').trim() || undefined,
             ops,
             risk: ctx.getNodeParameter('risk', i, 'medium') as 'medium',
-            confidence: Number(ctx.getNodeParameter('confidence', i, 0.6)),
+            confidence,
             fingerprint: String(ctx.getNodeParameter('fingerprint', i, '') ?? '').trim() || undefined,
           },
           'workflow',
+          undefined,
+          { detector },
         );
-        out.push({ json: proposal ? json({ saved: true, proposal }) : { saved: false, reason: HELD_BACK }, pairedItem: { item: i } });
+        const reason = detector && confidence < bar ? `held back: this detector is quieted (people dismissed most of its suggestions), so a suggestion needs a confidence of at least ${bar}` : HELD_BACK;
+        out.push({ json: proposal ? json({ saved: true, proposal }) : { saved: false, reason, ...(detector && { detector }) }, pairedItem: { item: i } });
       } catch (caught) {
         if (caught instanceof ProposalError) throw new NodeOperationError(caught.message, { itemIndex: i });
         throw caught;

@@ -117,9 +117,26 @@ export const DETECTORS = [
   'missing-tool',
 ] as const;
 
-export type DetectorId = (typeof DETECTORS)[number];
+/** A detector built into Landflow (lib/server/brain/detectors.ts). */
+export type BuiltinDetectorId = (typeof DETECTORS)[number];
+/** A workflow that starts from a Detector Trigger is a detector too, `flow:<workflowId>` (docs/second-brain.md#flow-detectors). */
+export type FlowDetectorId = `flow:${string}`;
+export type DetectorId = BuiltinDetectorId | FlowDetectorId;
 
-export const DETECTOR_LABELS: Record<DetectorId, string> = {
+export const isBuiltinDetector = (id: unknown): id is BuiltinDetectorId => (DETECTORS as readonly unknown[]).includes(id);
+export const isFlowDetector = (id: unknown): id is FlowDetectorId => typeof id === 'string' && id.startsWith('flow:') && id.length > 'flow:'.length;
+export const isDetectorId = (id: unknown): id is DetectorId => isBuiltinDetector(id) || isFlowDetector(id);
+export const flowDetectorId = (workflowId: string): FlowDetectorId => `flow:${workflowId}`;
+export const flowDetectorWorkflow = (id: FlowDetectorId) => id.slice('flow:'.length);
+
+/**
+ * The lowest confidence a quieted flow detector's finding needs to reach the inbox: none at 1 (normal), 0.5 at 1.5, 0.65 at
+ * 2 and 0.8 at 3. Built-in detectors multiply their thresholds instead; a flow gets the multiplier too (Detector Trigger's
+ * `quiet`) and can do both.
+ */
+export const quietBar = (quiet: number) => (quiet >= 3 ? 0.8 : quiet >= 2 ? 0.65 : quiet >= 1.5 ? 0.5 : 0);
+
+export const DETECTOR_LABELS: Record<BuiltinDetectorId, string> = {
   'failure-hot-spot': 'Failure hot spot',
   'flaky-call': 'Flaky call',
   'slow-step': 'Slow step',
@@ -133,6 +150,9 @@ export const DETECTOR_LABELS: Record<DetectorId, string> = {
   'repeated-sequence': 'Repeated by hand',
   'missing-tool': 'Missing tool',
 };
+
+/** A detector's name: a built-in one's label, or a flow detector's workflow name (`name`, or the suggestion's label). */
+export const detectorLabel = (id: DetectorId, name?: string) => (isBuiltinDetector(id) ? DETECTOR_LABELS[id] : name || 'Flow detector');
 
 /** Who wrote a suggestion: a built-in detector, a workflow's Suggest Improvement node, or the Platform analyst agent. */
 /** `notebook`: a team's notebook proposes keeping a note for the project (docs/team-notebook.md). */
@@ -174,7 +194,7 @@ export interface ProposalMetric {
 export interface Proposal {
   id: string;
   source: ProposalSource;
-  /** Detector suggestions; workflow and analyst ones say what they are in `label`. */
+  /** Detector suggestions; workflow and analyst ones say what they are in `label`, and so do flow detectors (the workflow's name). */
   detector?: DetectorId;
   /** A short tag for workflow and analyst suggestions ("Weekly AI cost review"). */
   label?: string;
@@ -297,6 +317,20 @@ export interface WorkflowKnowledge {
 }
 
 /** GET /api/brain/status. */
+export interface DetectorStat {
+  id: DetectorId;
+  /** The built-in label, or the flow detector's workflow name. */
+  label: string;
+  made: number;
+  applied: number;
+  dismissed: number;
+  /** 1 = normal; higher means its thresholds are multiplied (it was mostly dismissed as wrong or not relevant). */
+  quiet: number;
+  /** A flow detector's workflow, and whether it is published (only published ones run). */
+  workflowId?: string;
+  active?: boolean;
+}
+
 export interface BrainStatus {
   enabled: boolean;
   model: string;
@@ -309,5 +343,5 @@ export interface BrainStatus {
   lastStudy?: string;
   lastEffects?: string;
   /** Per detector: suggestions made, applied and dismissed, and how much it is quieted. */
-  detectors: Array<{ id: DetectorId; made: number; applied: number; dismissed: number; quiet: number }>;
+  detectors: DetectorStat[];
 }

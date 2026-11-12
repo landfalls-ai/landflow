@@ -7,7 +7,7 @@ import type { NodeItem } from '@landflow/protocol';
 import { hostMetrics } from './metrics';
 import { failSpan, startSpan, traceparentHeader, withSpan } from './spans';
 
-export type TriggerSource = 'manual' | 'webhook' | 'schedule' | 'poll' | 'chat' | 'form' | 'error' | 'mcp' | 'retry' | 'usage';
+export type TriggerSource = 'manual' | 'webhook' | 'schedule' | 'poll' | 'chat' | 'form' | 'error' | 'mcp' | 'retry' | 'usage' | 'detector';
 
 export interface TriggerInfo {
   source: TriggerSource;

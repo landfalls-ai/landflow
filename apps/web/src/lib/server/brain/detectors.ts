@@ -11,7 +11,7 @@
 import type { Workflow, WorkflowNode } from '@landflow/engine';
 import { missingSystem } from '../../shared/agent-architect';
 import type { AssistantOp } from '../../shared/assistant-ops';
-import type { DetectorId, ProposalEvidence, ProposalRisk } from '../../shared/brain';
+import type { BuiltinDetectorId, DetectorId, ProposalEvidence, ProposalRisk } from '../../shared/brain';
 import { agentStore } from '../agents/store';
 import { DEFAULT_PRICES, priceOverrides } from '../ai-usage/prices';
 import { credentials } from '../credentials/vault';
@@ -790,7 +790,7 @@ export function noSafetyNet(ctx: DetectContext): Finding[] {
   ];
 }
 
-export const DETECTOR_RUNS: Record<DetectorId, (ctx: DetectContext) => Finding[]> = {
+export const DETECTOR_RUNS: Record<BuiltinDetectorId, (ctx: DetectContext) => Finding[]> = {
   'failure-hot-spot': failureHotSpots,
   'flaky-call': flakyCalls,
   'slow-step': slowSteps,

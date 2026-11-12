@@ -1,12 +1,16 @@
 'use client';
-/** "What Landflow knows" on Insights: the second brain's status, its facts, and how each detector has done (docs/second-brain.md). */
+/**
+ * "What Landflow knows" on Insights: the second brain's status, its facts, and how each detector has done, the flow
+ * detectors among them, each with Run (docs/second-brain.md).
+ */
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Brain, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
-import { DETECTOR_LABELS, type BrainFact, type BrainStatus } from '@/lib/shared/brain';
+import type { BrainFact, BrainStatus, DetectorId } from '@/lib/shared/brain';
 import { Card } from '../shell/page-header';
 import { Button } from '../ui/button';
 import { Input, SectionLabel } from '../ui/inputs';
@@ -19,6 +23,7 @@ export function BrainPanel() {
   const [running, setRunning] = useState(false);
   const [creating, setCreating] = useState(false);
   const [canRun, setCanRun] = useState(true);
+  const [runningOne, setRunningOne] = useState<DetectorId>();
 
   const loadStatus = useCallback(() => {
     api<BrainStatus>('/api/brain/status')
@@ -50,6 +55,22 @@ export function BrainPanel() {
     }
   };
 
+  const runOne = async (detector: DetectorId) => {
+    setRunningOne(detector);
+    try {
+      const { detect } = await api<{ detect: { found: number; saved: number; flows?: Array<{ error?: string }> } }>('/api/brain/run', { method: 'POST', json: { what: 'detect', detector } });
+      loadStatus();
+      const failed = detect.flows?.find((f) => f.error)?.error;
+      if (failed) toast.error(failed);
+      else toast.success(detect.found ? `${detect.found} found, ${detect.saved} in the inbox` : 'Nothing found');
+    } catch (e) {
+      if ((e as { status?: number }).status === 403) setCanRun(false);
+      else toast.error((e as Error).message);
+    } finally {
+      setRunningOne(undefined);
+    }
+  };
+
   const createAnalyst = async () => {
     setCreating(true);
     try {
@@ -62,7 +83,8 @@ export function BrainPanel() {
   };
 
   if (!status) return null;
-  const detectors = status.detectors.filter((d) => d.made || d.applied || d.dismissed || d.quiet > 1);
+  // Built-in detectors once they have a record; flow detectors always, so a new one shows up with its Run.
+  const detectors = status.detectors.filter((d) => d.workflowId || d.made || d.applied || d.dismissed || d.quiet > 1);
   return (
     <Card className="space-y-3 p-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -113,16 +135,33 @@ export function BrainPanel() {
               <th className="py-1 text-right font-medium">Applied</th>
               <th className="py-1 text-right font-medium">Dismissed</th>
               <th className="py-1 text-right font-medium" />
+              <th className="py-1 text-right font-medium" />
             </tr>
           </thead>
           <tbody className="divide-y divide-hair text-t2">
             {detectors.map((d) => (
               <tr key={d.id}>
-                <td className="py-1.5 text-t1">{DETECTOR_LABELS[d.id]}</td>
+                <td className="py-1.5 text-t1">
+                  {d.workflowId ? (
+                    <Link href={`/workflows/${d.workflowId}`} className="hover:underline">
+                      {d.label}
+                      <span className="text-t3">{d.active ? ' · flow' : ' · flow, not published'}</span>
+                    </Link>
+                  ) : (
+                    d.label
+                  )}
+                </td>
                 <td className="py-1.5 text-right tabular-nums">{d.made}</td>
                 <td className="py-1.5 text-right tabular-nums">{d.applied}</td>
                 <td className="py-1.5 text-right tabular-nums">{d.dismissed}</td>
                 <td className="py-1.5 text-right text-warn">{d.quiet > 1 ? 'quieted' : ''}</td>
+                <td className="py-1.5 text-right">
+                  {canRun && (!d.workflowId || d.active) && (
+                    <Button size="sm" variant="ghost" onClick={() => void runOne(d.id)} loading={runningOne === d.id} disabled={Boolean(runningOne) && runningOne !== d.id}>
+                      Run
+                    </Button>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
