@@ -1,12 +1,13 @@
 # productivity: Notion, Airtable, GitHub, Jira, HubSpot, Stripe and RSS (Python)
 
-Ten nodes built with [`landflow-sdk`](../../sdks/python), served over HTTP (`:7105`) and gRPC (`:7205`).
+Eleven nodes built with [`landflow-sdk`](../../sdks/python), served over HTTP (`:7105`) and gRPC (`:7205`).
 Standard library only (plus the SDK): every API call goes through the SDK's traced `ctx.http`, feeds are
 parsed with `xml.parsers.expat` + `xml.etree.ElementTree`.
 
 | Node | Type | Resources and operations |
 |---|---|---|
-| Notion | `productivity.notion` | **Database Page**: Create (database picker, title, typed key/value properties, Properties (JSON)), Get Many (filter / sorts JSON, `start_cursor` paging) · **Page**: Get, Archive, Search · **Block**: Append After (paragraph text or blocks JSON, 100 per request) · **Block** Append File, **Page** Attach File: binary data uploaded with the file upload API (image / video / audio / PDF / file block by MIME type, or a Files property) |
+| Notion | `productivity.notion` | **Database Page**: Create (database picker, title, typed key/value properties, Properties (JSON)), Get Many (filter / sorts JSON, `start_cursor` paging) · **Page**: Get, Archive, Search, **Get Many Changed Since**, **Get Content** ([activity items](#notion-activity)) · **User**: Get Many (with email) · **Comment**: Create (on a page, or a reply in a discussion) · **Block**: Append After (paragraph text or blocks JSON, 100 per request) · **Block** Append File, **Page** Attach File: binary data uploaded with the file upload API (image / video / audio / PDF / file block by MIME type, or a Files property) |
+| Notion Trigger | `productivity.notionTrigger` | poll (300 s): pages created or edited, everywhere or under chosen pages and databases, one [activity item](#notion-activity) per edit |
 | Airtable | `productivity.airtable` | **Record**: Create, Create or Update (`performUpsert.fieldsToMergeOn`), Get, Search (formula, sort, view, fields, `offset` paging), Update, Delete. Base and table pickers. Fields: map the input item, define below, or JSON. Writes are batched 10 records per request · **Attachment**: Upload (`uploadAttachment`, base64 JSON, up to 5 MB), Download (one item per file of a field) |
 | GitHub | `productivity.github` | **Issue**: Create, Get, Edit, Create Comment, Get Many (state, labels, since…, `Link` paging, pull requests excluded) · **Repository**: Get · **Release**: Get Many · **File**: Get (base64 decoded into `content`; a directory lists its entries). Owner + name, or a picker from `/user/repos` · **File** Download, Create or Update (from binary), **Release** Download Asset, Upload Asset, **Repository** Download Archive |
 | GitHub Trigger | `productivity.githubTrigger` | poll (60 s): New Issue, New Pull Request, New Release |
@@ -54,7 +55,7 @@ URLs refuse a request that also carries a token.
 
 | Type | Fields (secrets are `password`) | Test |
 |---|---|---|
-| `notionApi` | `apiKey`, `baseUrl` = `https://api.notion.com` (sends `Notion-Version: 2022-06-28`) | `GET /v1/users/me` |
+| `notionApi` | `apiKey`, `baseUrl` = `https://api.notion.com` (sends `Notion-Version: 2022-06-28`; the [activity operations](#notion-activity) `2026-03-11`) | `GET /v1/users/me` |
 | `airtableTokenApi` | `accessToken`, `baseUrl` = `https://api.airtable.com` | `GET /v0/meta/whoami` |
 | `githubApi` | `accessToken`, `baseUrl` = `https://api.github.com` (Enterprise: `https://host/api/v3`) | `GET /user` → login |
 | `jiraSoftwareCloudApi` | `email`, `apiToken`, `domain` (`https://your-domain.atlassian.net`) | `GET /rest/api/3/myself` |
@@ -90,9 +91,50 @@ The Jira node declares both Jira credentials with `displayOptions` on `jiraVersi
 | Trigger | State | First poll | Later polls | Manual (Execute in the editor) |
 |---|---|---|---|---|
 | GitHub Trigger | `{lastId}`: the highest id seen | baseline, no items | list sorted newest first (following `Link` pages until `lastId` is reached, at most 10), emit `id > lastId` oldest first | the latest 5, oldest first |
+| Notion Trigger | `{since, seen}`: the latest edit time seen and the page versions (`id@last_edited_time`) of the last 5 minutes | baseline: the time now, the versions edited in the last 5 minutes recorded as seen, no items | search pages by last edit from `since − 5 min` (and query each root database), emit versions not in `seen`, oldest first | the 5 pages edited last |
 | RSS Feed Trigger | `{lastIsoDate, seen}`: newest item date and the last ~200 guids (or links) | baseline, no items | emit items not in `seen` and not older than `lastIsoDate`, oldest first, so items sharing a date or without a date are deduplicated | the latest item, as n8n does |
 
 A failed poll returns an error and no state, so the host retries from the same point.
+
+## Notion activity
+
+The Notion Trigger and Page → **Get Many Changed Since** and **Get Content** output activity items, one shape for a
+change in an outside tool ([docs/protocol.md §16](../../docs/protocol.md#16-activity-items)), declared as their output
+schema:
+
+| Field | Notion |
+|---|---|
+| `source`, `kind` | `notion`, `work.doc_edited` |
+| `sourceId` | `notion:<page id>:<last_edited_time>`: one per version, so replaying it never duplicates |
+| `actorEmail` | the last editor's email, from `GET /v1/users` (read once a run) |
+| `occurredAt`, `url`, `title` | `last_edited_time`, the page's URL, its title property |
+| `summary` | a database row's properties (`Status: Doing · Owner: Lee`), then the start of the page's text (Options → Read Page Text, one call per page); else "Notion page in Customers/Acme" |
+| `customerHint`, `initiativeHint` | the page below an ancestor titled **Customers** / **Projects** (Options → Customer / Initiative Parent Title) |
+| `raw` | id, title, path (ancestor titles), parentType, databaseId, dataSourceId, createdTime, lastEditedTime, createdBy (email), properties |
+
+- **Roots** (trigger and Get Many Changed Since): pages or databases as links or ids, separated by commas or new
+  lines. A page counts when a root is the page itself or any ancestor: the node walks `parent` up through pages, blocks,
+  data sources and databases (cached for the run). Empty: every page shared with the integration.
+- **Finding edits.** `POST /v1/search` sorted by `last_edited_time` descending, read until a page is older than the
+  window (100 a page, at most 20 pages). Notion's search index lags behind edits, so each root database's data sources
+  are also queried (`POST /v1/data_sources/{id}/query`, `last_edited_time` `on_or_after`). Pages in the trash are left out.
+- **The trigger** looks back 5 minutes past the last edit it saw and remembers which versions it already output, so a
+  page indexed late or an edit time shared by several pages is neither missed nor repeated. A page that reaches the
+  search index more than 5 minutes late and is not in a root database is missed.
+- **Get Many Changed Since**: Since is an ISO time (empty: 24 hours ago); items come oldest first, each with
+  `cursor` = its edit time, to pass as the next Since (an item at the boundary comes again, with the same `sourceId`).
+- **Get Content**: one page as an activity item plus `text`, the whole page with nested blocks (toggles, lists,
+  columns, tables), up to 2,000 blocks; child pages and databases are named, not read.
+- **User → Get Many**: `{id, name, email, type, avatarUrl}`. Emails need the integration's capability **Read user
+  information including email addresses**; without any user capability Notion answers 403 and the node says so (the
+  trigger then leaves `actorEmail` empty and logs a warning).
+- **Comment → Create**: `POST /v1/comments` with `parent.page_id`, or `discussion_id` to reply; needs the **Insert
+  comments** capability.
+
+These calls send `Notion-Version: 2026-03-11` (databases hold data sources since 2025-09-03; a database with two data
+sources fails on older versions). The other Notion operations keep `2022-06-28`, so saved workflows behave as before.
+A 429 is retried up to three times after `Retry-After` (at most 30 s each). Notion can push page events to a webhook,
+but a subscription is created by hand in the integration's settings and events carry ids only, so the trigger polls.
 
 ## Feeds are untrusted
 
@@ -147,7 +189,8 @@ Environment: `LANDFLOW_REGISTRY_URL=off`, `LANDFLOW_HTTP_PORT` / `LANDFLOW_GRPC_
 The tests start local fake servers (`tests/_support.py: FakeApi`) imitating each API, use fake tokens
 (`test-token-123`) and never call the real services. They cover each operation's request shape and
 response mapping, pagination, error mapping, credential tests, the RSS 2.0 / Atom / RDF fixtures in
-`tests/fixtures`, hostile XML, both poll triggers, metrics, and a call through the SDK's HTTP server that
+`tests/fixtures`, hostile XML, the poll triggers (`tests/test_notion_activity.py` runs the Notion Trigger against an
+in-memory workspace: baseline, new edits only, roots, search lag, paging, a 429), metrics, and a call through the SDK's HTTP server that
 checks the trace continues into the client spans.
 `tests/test_binary.py` covers the binary operations (multipart bodies, base64 uploads, signed-URL redirects that must not carry the token,
 size limits, missing files) against the same fakes.
@@ -180,7 +223,7 @@ the container image carries it. Over a broker, calls are encrypted and signed wi
 
 **`max_concurrency`** is how many calls run at once across all faces: the default is **8** (`DEFAULT_MAX_CONCURRENCY` in `main.py`): the upstream APIs are rate limited per token (Notion about 3 requests/s, Airtable 5/s per base, HubSpot about 100 per 10 s, GitHub's secondary limit, Jira's per-tenant throttle); more replicas add capacity. `LANDFLOW_MAX_CONCURRENCY` overrides it.
 
-**`idempotent`.** The action nodes are at most once over a broker (`idempotent: false`: creates, updates, upserts, archives, deletes, transitions, comments), and these read operations opt in with `idempotent: true`: Notion `page` get/search and `databasePage` getAll; Airtable `record` get/search; GitHub `file`/`repository`/`issue` get, `release`/`issue` getAll; Jira `issue` get/getAll; HubSpot `contact` get/search. `rssFeedRead` only reads a feed, so it is `idempotent: true`. The polling triggers and the GitHub webhook trigger keep the default (they hold poll state or webhooks).
+**`idempotent`.** The action nodes are at most once over a broker (`idempotent: false`: creates, updates, upserts, archives, deletes, transitions, comments), and these read operations opt in with `idempotent: true`: Notion `page` get/search/getContent/changedSince, `user` getAll and `databasePage` getAll; Airtable `record` get/search; GitHub `file`/`repository`/`issue` get, `release`/`issue` getAll; Jira `issue` get/getAll; HubSpot `contact` get/search. `rssFeedRead` only reads a feed, so it is `idempotent: true`. The polling triggers and the GitHub webhook trigger keep the default (they hold poll state or webhooks).
 
 **MCP.** Every operation is a tool (`github_issue_create`, `notion_page_archive`, `jira_issue_getAll`, `rssFeedRead`, …), with `idempotentHint` following the flags above; credentials come from the caller's grant through the host. The face listens on the HTTP port at `/mcp`; the bind address follows the SDK (`LANDFLOW_BIND_HOST`, else loopback unless
 `LANDFLOW_ADVERTISE_HOST` is set, as in a container, when it is `0.0.0.0` and `LANDFLOW_MCP_TOKEN` is required). In dev it is on, on loopback, with
