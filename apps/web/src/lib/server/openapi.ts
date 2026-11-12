@@ -1942,6 +1942,21 @@ function paths(): Record<string, Record<string, Json>> {
     query: [text('q', 'Search'), text('subjectType', 'workflow, agent, nodeType, credential or instance'), text('subjectId', 'One subject'), text('kind', 'purpose, health, cost, failure, slow, change, dependency, usage, quality or intended'), text('status', 'active (default), stale or all'), text('limit', 'At most this many (100)')],
     responses: { 200: reply('The facts', object({ facts: array({ type: 'object' }) }, ['facts'])) },
   });
+  add('post', '/api/brain/backtest', {
+    tag: 'Second brain',
+    id: 'backtestDetector',
+    summary: 'Backtest a detector against past decisions',
+    description: 'Reruns the detector as of past points (`days` back, 30 by default, one point every `step` days) without suggesting anything, and scores its findings against how people decided the same suggestions: precision, recall, hits, false alarms, misses. `quiet` tests another threshold multiplier; a precision under `threshold` (0.5) fails the gate. Owners and admins; waits for the run.',
+    body: jsonBody(object({ detector: { type: 'string', description: 'A built-in detector id or flow:<workflowId> (published)' }, days: { type: 'integer' }, step: { type: 'integer' }, quiet: { type: 'number' }, threshold: { type: 'number' } }, ['detector'])),
+    responses: { 200: reply('The result', object({ backtest: { type: 'object' } }, ['backtest'])), 400: errorRef('Bad window or detector'), 404: notFound, 409: errorRef('The flow is not published') },
+  });
+  add('get', '/api/brain/backtest', {
+    tag: 'Second brain',
+    id: 'listBacktests',
+    summary: 'Past backtests, newest first',
+    query: [text('detector', 'One detector'), text('limit', 'At most this many (10)')],
+    responses: { 200: reply('The results', object({ backtests: array({ type: 'object' }) }, ['backtests'])) },
+  });
   add('get', '/api/brain/status', { tag: 'Second brain', id: 'brainStatus', summary: 'What the second brain holds and when it last looked', responses: { 200: reply('The status', { type: 'object' }) } });
   return out;
 }

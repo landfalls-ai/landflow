@@ -144,9 +144,10 @@ The first tick is 30 s after start.
 - **Insights → What Landflow knows**:
   - the ledger's size, the facts, the model, and when the brain last studied and detected;
   - a search over the facts;
-  - each detector's record (made, applied, dismissed, quieted) with **Run**, which runs that detector alone. Flow
+  - each detector's record (made, applied, dismissed, quieted) with **Run**, which runs that detector alone, and
+    **Backtest** ([below](#backtesting-a-detector)), which shows a small card of how it would have fared. Flow
     detectors are listed from the moment they exist, linked to their workflow; one not yet published says so and has
-    no **Run**;
+    no **Run** or **Backtest**;
   - **Create the Platform analyst**;
   - **Run now**.
 - **Project settings → Governance**: **Let the second brain read run data**.
@@ -281,6 +282,45 @@ Templates built from these nodes:
 - **Weekly AI cost review** (email);
 - **Second brain weekly digest** (Slack).
 
+#### Backtesting a detector
+
+Detectors are tuned only after people dismiss their suggestions. A backtest checks one, or a change to its thresholds,
+against what people already decided, before it ships. It reruns the detector "as of" past points (one a day for the
+last 30 days by default) **without writing any suggestion**, then scores its findings against the suggestions the same
+detector made before, matched by fingerprint:
+
+| Finding | People decided | Counts as |
+| --- | --- | --- |
+| found | applied, or dismissed as *done* | hit |
+| found | dismissed as *wrong*, *not relevant* or *intended* | false alarm |
+| found | expired, still open, snoozed, or never suggested | unknown |
+| not found | decided in the window: applied or done | miss |
+| not found | decided in the window: dismissed as unwanted | avoided (right to stay quiet) |
+
+**Precision** is hits / (hits + false alarms); **recall** is hits / (hits + misses). A finding the detector makes at
+several points counts once (the card says at how many). **quiet** is the threshold multiplier to test ("what if quiet
+were 2"); without one the detector's own current multiplier is used, and the result says which.
+
+- **Built-in detectors** run with the ledger cut at each point (`asOfView` in `brain/backtest.ts` hides every event after
+  it, whatever the query), so a backtest never sees the future. The detectors all read time from `ctx.now`.
+- **Detector flows** run for real at each point, from the published version, with the trigger item carrying `asOf` and
+  `backtest: true` next to the usual fields (`at` is the point, `lastRunAt` the one before, `reason` is `backtest`, and
+  `quiet` is the multiplier under test). The run is marked a backtest without any wiring in the flow:
+  **Suggest Improvement** posts nothing and returns the finding it would have posted (`saved: false, backtest: true,
+  fingerprint, title, confidence`; a finding under the bar for that quiet comes back without a fingerprint and is not
+  counted), **Landflow Usage** reads reports and events up to `asOf`, and the run is deleted afterwards and recorded
+  neither in the ledger nor in Insights. **Find Similar** and Landflow Usage's *Search Facts*, *Workflow Knowledge* and
+  *Suggestions* do **not** honour `asOf`: they answer as of now. Every other node in the flow really runs (an HTTP call, a
+  message, Record Event), once per point, so a detector flow meant for backtests should only read.
+- **What is not replayed**: workflows and agents as they were (their definitions are as they are now), the weekly cap
+  and the hold-backs of a suggestion (30 days after a dismissal, recently applied), the model's enrichment.
+- **Limits**: at most 90 days back; 200 points for a built-in detector and 40 for a flow (raise `step`); a backtest
+  stops with the points it has after 5 minutes (`partial`). A flow backtest needs regular execution mode, not queue mode.
+- **The gate**: a precision under `threshold` (default 0.5) marks the result failing (`gate.ok: false`), as the eval gate
+  does for an agent's draft; nothing is blocked by it, the result says so. A backtest in which nothing found was decided
+  passes with "nothing to score". Results are kept in `brain_backtests` (the last 30 per detector) and listed with
+  `GET /api/brain/backtest?detector=`.
+
 #### The analyst agent
 
 **Create the Platform analyst** (Insights, or `POST /api/brain/analyst`) makes and publishes an ordinary agent:
@@ -398,6 +438,8 @@ Routes are also in [reference/api.md](reference/api.md), and variables in
 | `POST /api/proposals/:id/applied` | the editor applied it itself | edit access to its target |
 | `GET /api/brain/status`, `/api/brain/facts`, `/api/brain/workflows/:id` | what it knows | `executions:read`, scoped |
 | `POST /api/brain/run` | detect, study, effects or all, now; `detector` runs one detector alone (built-in or `flow:<id>`, published) | owners and admins |
+| `POST /api/brain/backtest` | backtest a detector `{ detector, days?, step?, quiet?, threshold? }`: precision, recall, hits, false alarms, misses; waits for it | owners and admins |
+| `GET /api/brain/backtest?detector=` | past backtests, newest first | owners and admins |
 | `POST /api/brain/analyst` | make the Platform analyst | `workflows:write` |
 
 ## Limits
@@ -425,6 +467,7 @@ Routes are also in [reference/api.md](reference/api.md), and variables in
   - scope, the analyst and On Usage Event (`usage-trigger.ts`);
   - On Suggestion Decided (`decision-trigger.ts`; the decisions and actions are in `proposals.ts`);
   - flow detectors (`flow-detectors.ts`);
+  - backtests (`backtest.ts`; the run-level flag nodes read is `backtest-scope.ts`; table `brain_backtests`);
   - Find Similar (`similar.ts`).
 - `apps/web/src/lib/server/usage/kinds.ts`: the declared custom kinds and the attribute checks;
   `apps/web/src/app/api/usage/kinds/`: their routes.

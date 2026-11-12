@@ -17,6 +17,7 @@ import { currentActorId } from './auth/context';
 import { database, dataDir, type Database } from './db';
 import { executionRow, parse, pollRow, summarize, trimRunData, workflowRow } from './db/rows';
 import { recordExecutionInsights } from './insights';
+import { backtestScope } from './brain/backtest-scope';
 import { recordExecutionUsage } from './usage/ledger';
 import { pruneExecutions } from './settings';
 import { singleton } from './singleton';
@@ -156,6 +157,8 @@ class Store {
   saveExecution(record: ExecutionRecord) {
     this.db.upsert('executions', executionRow(trimRunData(record)));
     if (IN_FLIGHT.has(record.status)) return;
+    // A backtest's run of a detector flow (brain/backtest.ts) is deleted afterwards and counts nowhere.
+    if (backtestScope()) return;
     const summary = summarize(record);
     // Insights first: its rollup keeps the run's counts after retention deletes the execution.
     recordExecutionInsights(summary);

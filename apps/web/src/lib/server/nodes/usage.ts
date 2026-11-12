@@ -9,6 +9,7 @@
 import { defineNode, NodeOperationError, type JsonObject, type NodeItem, type PropertyDescriptor } from '@landflow/sdk';
 import { customKindProblem, DETECTOR_LABELS, DETECTORS, detectorLabel, flowDetectorId, isUsageKind, METRIC_FIELDS, metricSpecFrom, parseAttrEquals, quietBar, SIMILAR_KINDS, USAGE_KINDS, type SimilarKind, type UsageGroup, type UsageKind } from '../../shared/brain';
 import { agentStore as agents } from '../agents/store';
+import { backtestScope } from '../brain/backtest-scope';
 import { listKinds } from '../usage/kinds';
 import { store } from '../store';
 
@@ -199,8 +200,10 @@ export const landflowUsageNode = defineNode({
       const oneItem = Boolean(ctx.getNodeParameter('oneItem', i, false));
       const kinds = list(ctx.getNodeParameter('kinds', i, [])).filter((k): k is UsageKind => isUsageKind(k));
       const attrEquals = parseAttrEquals(ctx.getNodeParameter('attrEquals', i, {}));
-      const from = new Date(Date.now() - days * DAY_MS).toISOString();
-      const filter = { kinds, from, workflowId, ...(Object.keys(attrEquals).length && { attrEquals }) };
+      // A backtest replays a past moment: the ledger is read as it stood then (brain/backtest-scope.ts).
+      const asOf = backtestScope()?.asOf;
+      const from = new Date((asOf ?? Date.now()) - days * DAY_MS).toISOString();
+      const filter = { kinds, from, workflowId, ...(asOf && { to: new Date(asOf).toISOString() }), ...(Object.keys(attrEquals).length && { attrEquals }) };
       const rows: unknown[] = [];
       let whole: unknown;
       switch (operation) {
@@ -563,7 +566,7 @@ export const detectorTriggerNode = defineNode({
       {
         name: 'notice',
         displayName:
-          'Publish the workflow to make it a detector (detector id flow:<this workflow’s id>). Each run has one item: { detector, name, quiet, minConfidence, at, lastRunAt, reason }. Multiply your thresholds by `quiet` (1 is normal; it rises to 3 as people dismiss this detector’s suggestions as wrong or not relevant). Suggest Improvement nodes in this workflow post as the detector, and a suggestion under `minConfidence` is held back.',
+          'Publish the workflow to make it a detector (detector id flow:<this workflow’s id>). Each run has one item: { detector, name, quiet, minConfidence, at, lastRunAt, reason }. Multiply your thresholds by `quiet` (1 is normal; it rises to 3 as people dismiss this detector’s suggestions as wrong or not relevant). Suggest Improvement nodes in this workflow post as the detector, and a suggestion under `minConfidence` is held back. In a backtest (Insights → Backtest) the item also has `asOf` (the moment being replayed, equal to `at`) and `backtest: true`: Suggest Improvement then posts nothing, and Landflow Usage reads the ledger up to `asOf`.',
         type: 'notice',
       },
       ...metricProperties(false),
@@ -668,7 +671,9 @@ export const suggestImprovementNode = defineNode({
     const { isDetectorFlow } = await import('../brain/flow-detectors');
     const detector = ownWorkflow && isDetectorFlow(ownWorkflow) ? flowDetectorId(ownWorkflow.id) : undefined;
     const { quietOf } = await import('../brain/proposals');
-    const bar = detector ? quietBar(quietOf(detector)) : 0;
+    // In a backtest nothing is posted: the node returns the finding it would have posted, under the quiet multiplier being tested.
+    const backtest = detector ? backtestScope() : undefined;
+    const bar = detector ? quietBar(backtest ? backtest.quiet : quietOf(detector)) : 0;
     // The detector's declared effect metric (Detector Trigger), unless this node declares its own or says "Landflow's own".
     const trigger = ownWorkflow && detector ? (await import('../brain/flow-detectors')).detectorTriggerOf(ownWorkflow) : undefined;
     const items = ctx.getInputData();
@@ -706,8 +711,19 @@ export const suggestImprovementNode = defineNode({
           },
           'workflow',
           undefined,
-          { detector },
+          { detector, ...(backtest && { preview: { quiet: backtest.quiet, at: backtest.asOf } }) },
         );
+        if (backtest && detector) {
+          out.push({
+            json: json(
+              proposal
+                ? { saved: false, backtest: true, detector, fingerprint: proposal.fingerprint, title: proposal.title, confidence: proposal.confidence, score: proposal.score, target: proposal.target }
+                : { saved: false, backtest: true, detector, reason: `held back: under the bar for a quiet of ${backtest.quiet}` },
+            ),
+            pairedItem: { item: i },
+          });
+          continue;
+        }
         const reason = detector && confidence < bar ? `held back: this detector is quieted (people dismissed most of its suggestions), so a suggestion needs a confidence of at least ${bar}` : HELD_BACK;
         out.push({ json: proposal ? json({ saved: true, proposal }) : { saved: false, reason, ...(detector && { detector }) }, pairedItem: { item: i } });
       } catch (caught) {

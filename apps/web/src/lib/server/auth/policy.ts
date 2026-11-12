@@ -84,7 +84,7 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   // Declaring a custom event kind (Record Event's shapes) is building, like editing a workflow.
   if (under('/api/usage/kinds')) return { scope: read ? 'executions:read' : 'workflows:write' };
   if (under('/api/usage')) return { scope: 'executions:read' };
-  if (path === '/api/brain/run') return { scope: 'admin', action: 'settings:manage' };
+  if (path === '/api/brain/run' || path === '/api/brain/backtest') return { scope: 'admin', action: 'settings:manage' };
   if (path === '/api/brain/analyst') return { scope: 'workflows:write' };
   if (under('/api/brain')) return { scope: 'executions:read' };
   if (under('/api/proposals')) return { scope: read ? 'workflows:read' : 'workflows:write' };

@@ -118,3 +118,56 @@ export async function runFlowDetectors(
   }
   return results;
 }
+
+export interface FlowBacktestPoint {
+  /** The findings the flow would have posted at this point (Suggest Improvement items, nothing written). */
+  findings: Array<{ fingerprint: string; title: string; confidence: number }>;
+  /** Suggest Improvement items that stayed under the bar for the quiet being tested. */
+  held: number;
+  error?: string;
+}
+
+/**
+ * Run a published detector flow as of `at` for a backtest (./backtest.ts): the Detector Trigger item carries
+ * `asOf` (= `at`) and `backtest: true` next to the usual fields, the run is marked a backtest for the nodes in it
+ * (backtest-scope.ts: Suggest Improvement posts nothing, Landflow Usage reads the ledger up to `at`), and the execution is
+ * deleted afterwards. Throws when the flow is not an armed detector.
+ */
+export async function backtestFlowAt(id: FlowDetectorId, options: { at: number; quiet: number; lastAt?: number; signal?: AbortSignal }): Promise<FlowBacktestPoint> {
+  const found = armed([id])[0];
+  if (!found) throw new Error(`No published detector flow ${id}`);
+  const { runWorkflow } = await import('../runner');
+  const { inBacktest } = await import('./backtest-scope');
+  const at = new Date(options.at).toISOString();
+  const item = {
+    detector: id,
+    name: found.workflow.name,
+    quiet: options.quiet,
+    minConfidence: quietBar(options.quiet),
+    at,
+    asOf: at,
+    backtest: true,
+    ...(options.lastAt !== undefined && { lastRunAt: new Date(options.lastAt).toISOString() }),
+    reason: 'backtest',
+  };
+  const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(FLOW_TIMEOUT_MS)]) : AbortSignal.timeout(FLOW_TIMEOUT_MS);
+  const record = await inBacktest({ asOf: options.at, quiet: options.quiet }, () =>
+    runWorkflow({ workflow: found.workflow, mode: 'trigger', startNodeId: found.node.id, triggerItems: [{ json: item }], signal, bypassConcurrency: true }),
+  );
+  store.deleteExecution(record.executionId);
+  const suggest = new Set(found.workflow.nodes.filter((n) => n.type === SUGGEST).flatMap((n) => [n.id, n.name]));
+  const out: FlowBacktestPoint = { findings: [], held: 0 };
+  for (const [key, runs] of Object.entries(record.runData ?? {})) {
+    if (!suggest.has(key)) continue;
+    for (const run of runs) {
+      for (const result of run.outputs?.[0] ?? []) {
+        const json = result.json as { fingerprint?: unknown; title?: unknown; confidence?: unknown };
+        if (typeof json.fingerprint === 'string') out.findings.push({ fingerprint: json.fingerprint, title: String(json.title ?? ''), confidence: Number(json.confidence ?? 0) });
+        else out.held++;
+      }
+    }
+  }
+  if (record.status === 'error') out.error = record.error?.message ?? 'The run failed';
+  else if (record.status !== 'success') out.error = `The run ended ${record.status}`;
+  return out;
+}
