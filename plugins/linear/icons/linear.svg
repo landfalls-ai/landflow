@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <!-- Original Landflow glyph: stacked progress bars on an indigo tile. Not Linear's logo. -->
+  <rect x="0.75" y="0.75" width="46.5" height="46.5" rx="11.25" fill="#5E6AD2"/>
+  <g fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round">
+    <path d="M13 17h22"/>
+    <path d="M13 24h15" opacity="0.85"/>
+    <path d="M13 31h8" opacity="0.7"/>
+  </g>
+  <circle cx="35" cy="31" r="2.6" fill="#fff"/>
+</svg>

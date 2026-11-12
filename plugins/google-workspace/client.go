@@ -24,12 +24,13 @@ type api struct {
 }
 
 var (
-	apiSheets   = api{"sheets", "Google Sheets", "https://sheets.googleapis.com"}
-	apiGmail    = api{"gmail", "Gmail", "https://gmail.googleapis.com"}
-	apiDrive    = api{"drive", "Google Drive", "https://www.googleapis.com"}
-	apiCalendar = api{"calendar", "Google Calendar", "https://www.googleapis.com"}
-	apiDocs     = api{"docs", "Google Docs", "https://docs.googleapis.com"}
-	apiUserinfo = api{"oauth2", "Google OAuth2", "https://www.googleapis.com"}
+	apiSheets    = api{"sheets", "Google Sheets", "https://sheets.googleapis.com"}
+	apiGmail     = api{"gmail", "Gmail", "https://gmail.googleapis.com"}
+	apiDrive     = api{"drive", "Google Drive", "https://www.googleapis.com"}
+	apiCalendar  = api{"calendar", "Google Calendar", "https://www.googleapis.com"}
+	apiDocs      = api{"docs", "Google Docs", "https://docs.googleapis.com"}
+	apiUserinfo  = api{"oauth2", "Google OAuth2", "https://www.googleapis.com"}
+	apiDirectory = api{"directory", "Google Directory", "https://admin.googleapis.com"}
 )
 
 // client calls Google APIs with one credential's access tokens.

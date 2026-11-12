@@ -4,13 +4,13 @@
   "id": "google",
   "name": "Google Workspace",
   "version": "0.1.0",
-  "description": "Google Sheets, Gmail, Drive, Calendar and Docs, with polling triggers for new rows and new emails.",
+  "description": "Google Sheets, Gmail, Drive, Calendar, Docs and the Workspace directory, with polling triggers for new rows, new emails, Drive changes and calendar changes.",
   "language": "go",
   "sdk": {
    "name": "landflow-sdk-go",
    "version": "0.2.0"
   },
-  "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iI2Y4ZmFmYyIvPgogIDxyZWN0IHg9IjAuNzUiIHk9IjAuNzUiIHdpZHRoPSI0Ni41IiBoZWlnaHQ9IjQ2LjUiIHJ4PSIxMS4yNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjY2JkNWUxIiBzdHJva2Utd2lkdGg9IjEuNSIvPgogIDxwYXRoIGQ9Ik0xMSAyMlYxNmE1IDUgMCAwIDEgNS01aDZ2MTFaIiBmaWxsPSIjNDI4NUY0Ii8+CiAgPHBhdGggZD0iTTI2IDExaDZhNSA1IDAgMCAxIDUgNXY2SDI2WiIgZmlsbD0iI0VBNDMzNSIvPgogIDxwYXRoIGQ9Ik0zNyAyNnY2YTUgNSAwIDAgMS01IDVoLTZWMjZaIiBmaWxsPSIjRkJCQzA0Ii8+CiAgPHBhdGggZD0iTTIyIDM3aC02YTUgNSAwIDAgMS01LTV2LTZoMTFaIiBmaWxsPSIjMzRBODUzIi8+CiAgPGNpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMy4yIiBmaWxsPSIjZjhmYWZjIi8+Cjwvc3ZnPgo=",
+  "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyNjIiPjxwYXRoIGZpbGw9IiM0Mjg1ZjQiIGQ9Ik0yNTUuODc4IDEzMy40NTFjMC0xMC43MzQtLjg3MS0xOC41NjctMi43NTYtMjYuNjlIMTMwLjU1djQ4LjQ0OGg3MS45NDdjLTEuNDUgMTIuMDQtOS4yODMgMzAuMTcyLTI2LjY5IDQyLjM1NmwtLjI0NCAxLjYyMmwzOC43NTUgMzAuMDIzbDIuNjg1LjI2OGMyNC42NTktMjIuNzc0IDM4Ljg3NS01Ni4yODIgMzguODc1LTk2LjAyNyIvPjxwYXRoIGZpbGw9IiMzNGE4NTMiIGQ9Ik0xMzAuNTUgMjYxLjFjMzUuMjQ4IDAgNjQuODM5LTExLjYwNSA4Ni40NTMtMzEuNjIybC00MS4xOTYtMzEuOTEzYy0xMS4wMjQgNy42ODgtMjUuODIgMTMuMDU1LTQ1LjI1NyAxMy4wNTVjLTM0LjUyMyAwLTYzLjgyNC0yMi43NzMtNzQuMjY5LTU0LjI1bC0xLjUzMS4xM2wtNDAuMjk4IDMxLjE4N2wtLjUyNyAxLjQ2NUMzNS4zOTMgMjMxLjc5OCA3OS40OSAyNjEuMSAxMzAuNTUgMjYxLjEiLz48cGF0aCBmaWxsPSIjZmJiYzA1IiBkPSJNNTYuMjgxIDE1Ni4zN2MtMi43NTYtOC4xMjMtNC4zNTEtMTYuODI3LTQuMzUxLTI1LjgyYzAtOC45OTQgMS41OTUtMTcuNjk3IDQuMjA2LTI1LjgybC0uMDczLTEuNzNMMTUuMjYgNzEuMzEybC0xLjMzNS42MzVDNS4wNzcgODkuNjQ0IDAgMTA5LjUxNyAwIDEzMC41NXM1LjA3NyA0MC45MDUgMTMuOTI1IDU4LjYwMnoiLz48cGF0aCBmaWxsPSIjZWI0MzM1IiBkPSJNMTMwLjU1IDUwLjQ3OWMyNC41MTQgMCA0MS4wNSAxMC41ODkgNTAuNDc5IDE5LjQzOGwzNi44NDQtMzUuOTc0QzE5NS4yNDUgMTIuOTEgMTY1Ljc5OCAwIDEzMC41NSAwQzc5LjQ5IDAgMzUuMzkzIDI5LjMwMSAxMy45MjUgNzEuOTQ3bDQyLjIxMSAzMi43ODNjMTAuNTktMzEuNDc3IDM5Ljg5MS01NC4yNTEgNzQuNDE0LTU0LjI1MSIvPjwvc3ZnPgo8L3N2Zz4K",
   "color": "#4285F4",
   "author": "Landflow",
   "homepage": "https://developers.google.com/workspace"
@@ -26,7 +26,7 @@
     "Data & Storage",
     "Productivity"
    ],
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzBGOUQ1OCIvPgogIDxwYXRoIGQ9Ik0xNSA5aDEybDggOHYyMGEyIDIgMCAwIDEtMiAySDE1YTIgMiAwIDAgMS0yLTJWMTFhMiAyIDAgMCAxIDItMloiIGZpbGw9IiNmZmYiLz4KICA8cGF0aCBkPSJNMjcgOXY2YTIgMiAwIDAgMCAyIDJoNloiIGZpbGw9IiNhN2RjYzIiLz4KICA8cGF0aCBkPSJNMTcuNSAyMi41aDEzdjExaC0xM1ptMCA1LjVoMTNNMjQgMjIuNXYxMSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMEY5RDU4IiBzdHJva2Utd2lkdGg9IjIuMiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4K",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIFNpbXBsZSBJY29ucyAxNi4zNi4wLCBDQzAtMS4wIC0tPgogIDxyZWN0IHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgcng9IjEyIiBmaWxsPSIjMzRBODUzIi8+CiAgPHN2ZyB4PSIxMSIgeT0iMTEiIHdpZHRoPSIyNiIgaGVpZ2h0PSIyNiIgdmlld0JveD0iMCAwIDI0IDI0Ij48cGF0aCBmaWxsPSIjZmZmIiBkPSJNMTEuMzE4IDEyLjU0NUg3Ljkxdi0xLjkwOWgzLjQxdjEuOTF6TTE0LjcyOCAwdjZoNmwtNi02em0xLjM2MyAxMC42MzZoLTMuNDF2MS45MWgzLjQxdi0xLjkxem0wIDMuMjczaC0zLjQxdjEuOTFoMy40MXYtMS45MXpNMjAuNzI3IDYuNXYxNS44NjRjMCAuOTA0LS43MzIgMS42MzYtMS42MzYgMS42MzZINC45MDlhMS42MzYgMS42MzYgMCAwIDEtMS42MzYtMS42MzZWMS42MzZDMy4yNzMuNzMyIDQuMDA1IDAgNC45MDkgMGg5LjMxOHY2LjVoNi41em0tMy4yNzMgMi43NzNINi41NDV2Ny45MDloMTAuOTF2LTcuOTF6bS02LjEzNiA0LjYzNkg3LjkxdjEuOTFoMy40MXYtMS45MXoiLz48L3N2Zz4KPC9zdmc+Cg==",
    "color": "#0F9D58",
    "subtitle": "{{operation}}: {{resource}}",
    "inputs": [
@@ -641,7 +641,7 @@
     "Data & Storage",
     "Productivity"
    ],
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzBGOUQ1OCIvPgogIDxwYXRoIGQ9Ik0xNSA5aDEybDggOHYyMGEyIDIgMCAwIDEtMiAySDE1YTIgMiAwIDAgMS0yLTJWMTFhMiAyIDAgMCAxIDItMloiIGZpbGw9IiNmZmYiLz4KICA8cGF0aCBkPSJNMjcgOXY2YTIgMiAwIDAgMCAyIDJoNloiIGZpbGw9IiNhN2RjYzIiLz4KICA8cGF0aCBkPSJNMTcuNSAyMi41aDEzdjExaC0xM1ptMCA1LjVoMTNNMjQgMjIuNXYxMSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMEY5RDU4IiBzdHJva2Utd2lkdGg9IjIuMiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4K",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIFNpbXBsZSBJY29ucyAxNi4zNi4wLCBDQzAtMS4wIC0tPgogIDxyZWN0IHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgcng9IjEyIiBmaWxsPSIjMzRBODUzIi8+CiAgPHN2ZyB4PSIxMSIgeT0iMTEiIHdpZHRoPSIyNiIgaGVpZ2h0PSIyNiIgdmlld0JveD0iMCAwIDI0IDI0Ij48cGF0aCBmaWxsPSIjZmZmIiBkPSJNMTEuMzE4IDEyLjU0NUg3Ljkxdi0xLjkwOWgzLjQxdjEuOTF6TTE0LjcyOCAwdjZoNmwtNi02em0xLjM2MyAxMC42MzZoLTMuNDF2MS45MWgzLjQxdi0xLjkxem0wIDMuMjczaC0zLjQxdjEuOTFoMy40MXYtMS45MXpNMjAuNzI3IDYuNXYxNS44NjRjMCAuOTA0LS43MzIgMS42MzYtMS42MzYgMS42MzZINC45MDlhMS42MzYgMS42MzYgMCAwIDEtMS42MzYtMS42MzZWMS42MzZDMy4yNzMuNzMyIDQuMDA1IDAgNC45MDkgMGg5LjMxOHY2LjVoNi41em0tMy4yNzMgMi43NzNINi41NDV2Ny45MDloMTAuOTF2LTcuOTF6bS02LjEzNiA0LjYzNkg3LjkxdjEuOTFoMy40MXYtMS45MXoiLz48L3N2Zz4KPC9zdmc+Cg==",
    "color": "#0F9D58",
    "subtitle": "{{event}}",
    "inputs": [],
@@ -762,7 +762,7 @@
    "categories": [
     "Communication"
    ],
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iI0VBNDMzNSIvPgogIDxyZWN0IHg9IjkiIHk9IjEzIiB3aWR0aD0iMzAiIGhlaWdodD0iMjIiIHJ4PSIzLjUiIGZpbGw9IiNmZmYiLz4KICA8cGF0aCBkPSJNMTEuNSAxNi41IDI0IDI2bDEyLjUtOS41IiBmaWxsPSJub25lIiBzdHJva2U9IiNFQTQzMzUiIHN0cm9rZS13aWR0aD0iMy4yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+Cg==",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyMDQiPjxkZWZzPjxsaW5lYXJHcmFkaWVudCBpZD0iU1ZHSHpEYkhjd0ciIHgxPSIxNjUiIHgyPSIxNjUiIHkxPSI0NCIgeTI9IjE2NiIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPjxzdG9wIHN0b3AtY29sb3I9IiM2MGQ2NzMiLz48c3RvcCBvZmZzZXQ9Ii4xNyIgc3RvcC1jb2xvcj0iIzQyYzg2OCIvPjxzdG9wIG9mZnNldD0iLjM5IiBzdG9wLWNvbG9yPSIjMGViYzVmIi8+PHN0b3Agb2Zmc2V0PSIuNjIiIHN0b3AtY29sb3I9IiMwMGE5YmIiLz48c3RvcCBvZmZzZXQ9Ii44NiIgc3RvcC1jb2xvcj0iIzNjOTBmZiIvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzMxODZmZiIvPjwvbGluZWFyR3JhZGllbnQ+PGxpbmVhckdyYWRpZW50IGlkPSJTVkc0MUFUWGJvWiIgeDE9IjgiIHgyPSIxODQiIHkxPSI0Ni4xMyIgeTI9IjQ2LjEzIiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHN0b3Agb2Zmc2V0PSIuMDgiIHN0b3AtY29sb3I9IiNmZjYzYTAiLz48c3RvcCBvZmZzZXQ9Ii4zIiBzdG9wLWNvbG9yPSIjZmM0MTNkIi8+PHN0b3Agb2Zmc2V0PSIuNSIgc3RvcC1jb2xvcj0iI2ZjNDEzZCIvPjxzdG9wIG9mZnNldD0iLjY1IiBzdG9wLWNvbG9yPSIjZmM0MTNkIi8+PHN0b3Agb2Zmc2V0PSIuNzIiIHN0b3AtY29sb3I9IiNmYzVjMzAiLz48c3RvcCBvZmZzZXQ9Ii44NiIgc3RvcC1jb2xvcj0iI2ZlYjEwYyIvPjxzdG9wIG9mZnNldD0iLjkxIiBzdG9wLWNvbG9yPSIjZmVjNzAwIi8+PHN0b3Agb2Zmc2V0PSIuOTYiIHN0b3AtY29sb3I9IiNmZmRiMGYiLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48cGF0aCBmaWxsPSJ1cmwoI1NWR0h6RGJIY3dHKSIgZD0iTTE0NiA0NGgzOHYxMTBjMCA2LjYyNy01LjM3MyAxMi0xMiAxMmgtMjBhNiA2IDAgMCAxLTYtNnoiIHRyYW5zZm9ybT0idHJhbnNsYXRlKC0xMS42MzYgLTM3LjgxOClzY2FsZSgxLjQ1NDU0KSIvPjxwYXRoIGZpbGw9IiNmYzQxM2QiIGQ9Ik01NS4yNzMgMjYuMTgySDB2MTYwYzAgOS42MzggNy44MTYgMTcuNDU0IDE3LjQ1NSAxNy40NTRoMjkuMDlhOC43MjcgOC43MjcgMCAwIDAgOC43MjgtOC43Mjh6Ii8+PHBhdGggZmlsbD0idXJsKCNTVkc0MUFUWGJvWikiIGQ9Ik0zOS4yMjYgMzAuNDU2Yy04LjAzMy02Ljc1Mi0yMC4wMTgtNS43MTQtMjYuNzcgMi4zMTljLTYuNzUyIDguMDMyLTUuNzE0IDIwLjAxNyAyLjMxOSAyNi43N2w3Ni4wNzggNjMuOTQ5YTggOCAwIDAgMCAxMC4yOTUgMGw3Ni4wNzgtNjMuOTVjOC4wMzItNi43NTIgOS4wNy0xOC43MzcgMi4zMTgtMjYuNzdjLTYuNzUyLTguMDMyLTE4LjczNy05LjA3LTI2Ljc2OS0yLjMxOEw5NiA3OC4xOHoiIHRyYW5zZm9ybT0idHJhbnNsYXRlKC0xMS42MzYgLTM3LjgxOClzY2FsZSgxLjQ1NDU0KSIvPjwvc3ZnPgo8L3N2Zz4K",
    "color": "#EA4335",
    "subtitle": "{{operation}}: {{resource}}",
    "inputs": [
@@ -1423,7 +1423,7 @@
    "categories": [
     "Communication"
    ],
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iI0VBNDMzNSIvPgogIDxyZWN0IHg9IjkiIHk9IjEzIiB3aWR0aD0iMzAiIGhlaWdodD0iMjIiIHJ4PSIzLjUiIGZpbGw9IiNmZmYiLz4KICA8cGF0aCBkPSJNMTEuNSAxNi41IDI0IDI2bDEyLjUtOS41IiBmaWxsPSJub25lIiBzdHJva2U9IiNFQTQzMzUiIHN0cm9rZS13aWR0aD0iMy4yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+Cg==",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyMDQiPjxkZWZzPjxsaW5lYXJHcmFkaWVudCBpZD0iU1ZHSHpEYkhjd0ciIHgxPSIxNjUiIHgyPSIxNjUiIHkxPSI0NCIgeTI9IjE2NiIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPjxzdG9wIHN0b3AtY29sb3I9IiM2MGQ2NzMiLz48c3RvcCBvZmZzZXQ9Ii4xNyIgc3RvcC1jb2xvcj0iIzQyYzg2OCIvPjxzdG9wIG9mZnNldD0iLjM5IiBzdG9wLWNvbG9yPSIjMGViYzVmIi8+PHN0b3Agb2Zmc2V0PSIuNjIiIHN0b3AtY29sb3I9IiMwMGE5YmIiLz48c3RvcCBvZmZzZXQ9Ii44NiIgc3RvcC1jb2xvcj0iIzNjOTBmZiIvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzMxODZmZiIvPjwvbGluZWFyR3JhZGllbnQ+PGxpbmVhckdyYWRpZW50IGlkPSJTVkc0MUFUWGJvWiIgeDE9IjgiIHgyPSIxODQiIHkxPSI0Ni4xMyIgeTI9IjQ2LjEzIiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHN0b3Agb2Zmc2V0PSIuMDgiIHN0b3AtY29sb3I9IiNmZjYzYTAiLz48c3RvcCBvZmZzZXQ9Ii4zIiBzdG9wLWNvbG9yPSIjZmM0MTNkIi8+PHN0b3Agb2Zmc2V0PSIuNSIgc3RvcC1jb2xvcj0iI2ZjNDEzZCIvPjxzdG9wIG9mZnNldD0iLjY1IiBzdG9wLWNvbG9yPSIjZmM0MTNkIi8+PHN0b3Agb2Zmc2V0PSIuNzIiIHN0b3AtY29sb3I9IiNmYzVjMzAiLz48c3RvcCBvZmZzZXQ9Ii44NiIgc3RvcC1jb2xvcj0iI2ZlYjEwYyIvPjxzdG9wIG9mZnNldD0iLjkxIiBzdG9wLWNvbG9yPSIjZmVjNzAwIi8+PHN0b3Agb2Zmc2V0PSIuOTYiIHN0b3AtY29sb3I9IiNmZmRiMGYiLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48cGF0aCBmaWxsPSJ1cmwoI1NWR0h6RGJIY3dHKSIgZD0iTTE0NiA0NGgzOHYxMTBjMCA2LjYyNy01LjM3MyAxMi0xMiAxMmgtMjBhNiA2IDAgMCAxLTYtNnoiIHRyYW5zZm9ybT0idHJhbnNsYXRlKC0xMS42MzYgLTM3LjgxOClzY2FsZSgxLjQ1NDU0KSIvPjxwYXRoIGZpbGw9IiNmYzQxM2QiIGQ9Ik01NS4yNzMgMjYuMTgySDB2MTYwYzAgOS42MzggNy44MTYgMTcuNDU0IDE3LjQ1NSAxNy40NTRoMjkuMDlhOC43MjcgOC43MjcgMCAwIDAgOC43MjgtOC43Mjh6Ii8+PHBhdGggZmlsbD0idXJsKCNTVkc0MUFUWGJvWikiIGQ9Ik0zOS4yMjYgMzAuNDU2Yy04LjAzMy02Ljc1Mi0yMC4wMTgtNS43MTQtMjYuNzcgMi4zMTljLTYuNzUyIDguMDMyLTUuNzE0IDIwLjAxNyAyLjMxOSAyNi43N2w3Ni4wNzggNjMuOTQ5YTggOCAwIDAgMCAxMC4yOTUgMGw3Ni4wNzgtNjMuOTVjOC4wMzItNi43NTIgOS4wNy0xOC43MzcgMi4zMTgtMjYuNzdjLTYuNzUyLTguMDMyLTE4LjczNy05LjA3LTI2Ljc2OS0yLjMxOEw5NiA3OC4xOHoiIHRyYW5zZm9ybT0idHJhbnNsYXRlKC0xMS42MzYgLTM3LjgxOClzY2FsZSgxLjQ1NDU0KSIvPjwvc3ZnPgo8L3N2Zz4K",
    "color": "#EA4335",
    "subtitle": "{{event}}",
    "inputs": [],
@@ -1638,7 +1638,7 @@
    "categories": [
     "Data & Storage"
    ],
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzFGQTQ2MyIvPgogIDxwYXRoIGQ9Ik0xOS4yIDEwLjVoOS42bDExIDE5LjItNC44IDguM0gxM2wtNC44LTguM1oiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIzIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+CiAgPHBhdGggZD0iTTE5LjIgMTAuNSAzMCAyOS43SDguMk0yOC44IDEwLjUgMTggMjkuN00zNSAzOCAzMCAyOS43IiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMyIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+Cjwvc3ZnPgo=",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyMzgiPjxkZWZzPjxsaW5lYXJHcmFkaWVudCBpZD0iU1ZHanprNnVldmEiIHgxPSI4Ni45MjQlIiB4Mj0iNy42MyUiIHkxPSI5NC4yOTQlIiB5Mj0iNDUuOTUyJSI+PHN0b3Agb2Zmc2V0PSI5JSIgc3RvcC1jb2xvcj0iI2ZmZTkyMSIvPjxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iI2ZlYzcwMCIvPjwvbGluZWFyR3JhZGllbnQ+PGxpbmVhckdyYWRpZW50IGlkPSJTVkdiMGY3QWNGSiIgeDE9Ijk5LjUzOCUiIHgyPSIyMy40MzclIiB5MT0iOTMuOTAxJSIgeTI9IjU0LjAzMyUiPjxzdG9wIG9mZnNldD0iMTUlIiBzdG9wLWNvbG9yPSIjYTlhOGZmIi8+PHN0b3Agb2Zmc2V0PSIzMyUiIHN0b3AtY29sb3I9IiM2ZDk3ZmYiLz48c3RvcCBvZmZzZXQ9IjQ4JSIgc3RvcC1jb2xvcj0iIzMxODZmZiIvPjwvbGluZWFyR3JhZGllbnQ+PGxpbmVhckdyYWRpZW50IGlkPSJTVkd4TXd6NmRZayIgeDE9Ijg3LjEyOCUiIHgyPSItLjYzOSUiIHkxPSI1MS41MTglIiB5Mj0iOTMuMDc4JSI+PHN0b3Agb2Zmc2V0PSI1NSUiIHN0b3AtY29sb3I9IiMwZWJjNWYiLz48c3RvcCBvZmZzZXQ9Ijg1JSIgc3RvcC1jb2xvcj0iIzc4YzlmZiIvPjwvbGluZWFyR3JhZGllbnQ+PHBhdGggaWQ9IlNWR0FpSXQzYnRTIiBkPSJNNzcuMzAzIDI5LjI3YzIyLjUzMS0zOS4wMjYgNzguODYzLTM5LjAyNyAxMDEuMzk0IDBsNjkuMzczIDEyMC4xNThjMjIuNTMxIDM5LjAyNy01LjYzMyA4Ny44MS01MC42OTggODcuODFINTguNjI4Yy00NS4wNjUgMC03My4yMy00OC43ODMtNTAuNjk4LTg3LjgxeiIvPjwvZGVmcz48bWFzayBpZD0iU1ZHNkZMWHNjZXEiIGZpbGw9IiNmZmYiPjx1c2UgaHJlZj0iI1NWR0FpSXQzYnRTIi8+PC9tYXNrPjxnIG1hc2s9InVybCgjU1ZHNkZMWHNjZXEpIj48cGF0aCBmaWxsPSJ1cmwoI1NWR2p6azZ1ZXZhKSIgZD0iTTM0MS43MTkgMjk1LjkzN0gyMDAuMTY2bC0yOS4yOTMtNTAuNzM1bDcwLjc3Ny0xMjIuNTg5eiIgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoLTQyLjg3IC01OC42NykiLz48cGF0aCBmaWxsPSJ1cmwoI1NWR2IwZjdBY0ZKKSIgZD0ibTAgMjk1LjkxNmwxMDAuMDY5LTE3My4zMjV2LjAwM2wtMjkuMjgyIDUwLjcyM2g1OC41N2w3MC43ODMgMTIyLjU5NmwtMjAwLjEzOC4wMDF6IiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgtNDIuODcgLTU4LjY3KSIvPjxwYXRoIGZpbGw9InVybCgjU1ZHeE13ejZkWWspIiBkPSJtMTcwLjg4MSAwbDcwLjc4MSAxMjIuNmwtMjkuMjg2IDUwLjcyNkg3MC44MTJ6IiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgtNDIuODcgLTU4LjY3KSIvPjwvZz48L3N2Zz4KPC9zdmc+Cg==",
    "color": "#1FA463",
    "subtitle": "{{operation}}: {{resource}}",
    "inputs": [
@@ -1718,6 +1718,213 @@
        "description": "Export a Google Doc, Sheet, Slides or Drawing as a file (PDF, Word, Excel…)",
        "action": "Export a Google file",
        "idempotent": true
+      },
+      {
+       "name": "Get Item",
+       "value": "getItem",
+       "description": "One file as an activity item, with the full text of a Google Doc or text file",
+       "action": "Get a file as an activity item",
+       "idempotent": true,
+       "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+         "actorEmail": {
+          "description": "Email of the person who made the change, lowercase; null when the tool doesn't say",
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "cursor": {
+          "description": "Pass it back as Since to continue after this item (List Changed Since operations)",
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "customerHint": {
+          "description": "The customer it is about, when there is one (a #customer-<name> channel, a CRM company…)",
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "initiativeHint": {
+          "description": "The project or initiative it seems to belong to, when there is one",
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "kind": {
+          "description": "Suggested event kind, such as work.discussion or work.doc_edited; a flow may change it",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+          "type": "string"
+         },
+         "occurredAt": {
+          "description": "When it happened, ISO 8601 in UTC with milliseconds",
+          "format": "date-time",
+          "type": "string"
+         },
+         "raw": {
+          "description": "The tool's own object, trimmed: long strings clipped, long lists cut, deep nesting dropped",
+          "type": "object"
+         },
+         "source": {
+          "description": "The tool, lowercase: slack, google-drive, google-calendar, notion, …",
+          "type": "string"
+         },
+         "sourceId": {
+          "description": "Stable id of the change, '<source>:<tool ids>': the same change always has the same id, so a replay is recognised",
+          "type": "string"
+         },
+         "summary": {
+          "description": "The text, whitespace collapsed, at most 600 characters",
+          "maxLength": 600,
+          "type": "string"
+         },
+         "teamHint": {
+          "description": "The team it seems to belong to, from the tool's own grouping, when there is one",
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "text": {
+          "description": "The full text of a Google Doc or a text file (up to 10 MB); empty for other files",
+          "type": "string"
+         },
+         "title": {
+          "description": "One line: the document, ticket or meeting title, or the channel and first words",
+          "maxLength": 200,
+          "type": "string"
+         },
+         "url": {
+          "description": "Where a person opens it",
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        },
+        "required": [
+         "source",
+         "sourceId",
+         "url",
+         "actorEmail",
+         "occurredAt",
+         "kind",
+         "title",
+         "summary",
+         "teamHint",
+         "initiativeHint",
+         "customerHint",
+         "raw",
+         "text"
+        ],
+        "type": "object"
+       }
+      },
+      {
+       "name": "Get Many Changed Since",
+       "value": "changesSince",
+       "description": "Files changed after a time or a cursor, as activity items (oldest first)",
+       "action": "Get files changed since",
+       "idempotent": true,
+       "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+         "actorEmail": {
+          "description": "Email of the person who made the change, lowercase; null when the tool doesn't say",
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "cursor": {
+          "description": "Pass it back as Since to continue after this item (List Changed Since operations)",
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "customerHint": {
+          "description": "The customer it is about, when there is one (a #customer-<name> channel, a CRM company…)",
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "initiativeHint": {
+          "description": "The project or initiative it seems to belong to, when there is one",
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "kind": {
+          "description": "Suggested event kind, such as work.discussion or work.doc_edited; a flow may change it",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+          "type": "string"
+         },
+         "occurredAt": {
+          "description": "When it happened, ISO 8601 in UTC with milliseconds",
+          "format": "date-time",
+          "type": "string"
+         },
+         "raw": {
+          "description": "The tool's own object, trimmed: long strings clipped, long lists cut, deep nesting dropped",
+          "type": "object"
+         },
+         "source": {
+          "description": "The tool, lowercase: slack, google-drive, google-calendar, notion, …",
+          "type": "string"
+         },
+         "sourceId": {
+          "description": "Stable id of the change, '<source>:<tool ids>': the same change always has the same id, so a replay is recognised",
+          "type": "string"
+         },
+         "summary": {
+          "description": "The text, whitespace collapsed, at most 600 characters",
+          "maxLength": 600,
+          "type": "string"
+         },
+         "teamHint": {
+          "description": "The team it seems to belong to, from the tool's own grouping, when there is one",
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "title": {
+          "description": "One line: the document, ticket or meeting title, or the channel and first words",
+          "maxLength": 200,
+          "type": "string"
+         },
+         "url": {
+          "description": "Where a person opens it",
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        },
+        "required": [
+         "source",
+         "sourceId",
+         "url",
+         "actorEmail",
+         "occurredAt",
+         "kind",
+         "title",
+         "summary",
+         "teamHint",
+         "initiativeHint",
+         "customerHint",
+         "raw"
+        ],
+        "type": "object"
+       }
       },
       {
        "name": "Upload",
@@ -1958,7 +2165,139 @@
        "operation": [
         "download",
         "deleteFile",
-        "export"
+        "export",
+        "getItem"
+       ],
+       "resource": [
+        "file"
+       ]
+      }
+     }
+    },
+    {
+     "name": "since",
+     "displayName": "Since",
+     "type": "string",
+     "default": "",
+     "description": "Files changed after this ISO time, or after a cursor from an earlier item (a changes-feed page token). Empty: the last 24 hours.",
+     "placeholder": "2026-11-12T08:00:00Z",
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "changesSince"
+       ],
+       "resource": [
+        "file"
+       ]
+      }
+     }
+    },
+    {
+     "name": "sharedDrives",
+     "displayName": "Include Shared Drives",
+     "type": "boolean",
+     "default": true,
+     "description": "Whether files in shared drives the account is a member of are included",
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "changesSince"
+       ],
+       "resource": [
+        "file"
+       ]
+      }
+     }
+    },
+    {
+     "name": "returnAll",
+     "displayName": "Return All",
+     "type": "boolean",
+     "default": false,
+     "description": "Whether to return all results or only up to a given limit",
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "changesSince"
+       ],
+       "resource": [
+        "file"
+       ]
+      }
+     }
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 50,
+     "description": "Max number of results to return",
+     "typeOptions": {
+      "minValue": 1,
+      "maxValue": 1000,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "changesSince"
+       ],
+       "resource": [
+        "file"
+       ],
+       "returnAll": [
+        false
+       ]
+      }
+     }
+    },
+    {
+     "name": "activityOptions",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Option",
+     "values": [
+      {
+       "name": "includeText",
+       "displayName": "Read Google Docs Text",
+       "type": "boolean",
+       "default": true,
+       "description": "Whether a Google Doc's summary is its first 600 characters (one export per Doc; needs a Drive scope that can read content, not drive.metadata.readonly)"
+      },
+      {
+       "name": "includeFolders",
+       "displayName": "Include Folders",
+       "type": "boolean",
+       "default": false
+      },
+      {
+       "name": "folderId",
+       "displayName": "Only Under Folder",
+       "type": "string",
+       "default": "",
+       "description": "ID or link of a folder: only files anywhere below it"
+      },
+      {
+       "name": "customerFolder",
+       "displayName": "Customer Folder Name",
+       "type": "string",
+       "default": "Customers",
+       "description": "A file in <this folder>/<name>/… is about the customer <name> (customerHint)"
+      },
+      {
+       "name": "initiativeFolder",
+       "displayName": "Initiative Folder Name",
+       "type": "string",
+       "default": "Projects",
+       "description": "A file in <this folder>/<name>/… belongs to the initiative <name> (initiativeHint)"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "changesSince",
+        "getItem"
        ],
        "resource": [
         "file"
@@ -2391,7 +2730,7 @@
     }
    ],
    "usableAsTool": true,
-   "toolDescription": "Work with Google Drive files. resource=fileFolder, operation=search finds files by name (queryString) or Drive query syntax; resource=file: upload creates a file from fileContent text, download returns `content` (text, or base64 for binary files, max 10 MB) or, with downloadAs=binary, the file as the item's binary data; export converts a Google Doc/Sheet/Slides to a binary file (exportFormat pdf, docx, xlsx…); upload with uploadFrom=binary sends the input item's binary file; deleteFile trashes fileId; resource=folder, operation=create makes a folder.",
+   "toolDescription": "Work with Google Drive files. resource=fileFolder, operation=search finds files by name (queryString) or Drive query syntax; resource=file: upload creates a file from fileContent text, download returns `content` (text, or base64 for binary files, max 10 MB) or, with downloadAs=binary, the file as the item's binary data; export converts a Google Doc/Sheet/Slides to a binary file (exportFormat pdf, docx, xlsx…); upload with uploadFrom=binary sends the input item's binary file; deleteFile trashes fileId; getItem returns a file as an activity item with its text; changesSince lists files changed after `since` (an ISO time or a cursor) as activity items; resource=folder, operation=create makes a folder.",
    "documentationUrl": "https://developers.google.com/workspace/drive/api/reference/rest/v3",
    "keywords": [
     "files",
@@ -2427,6 +2766,241 @@
    ]
   },
   {
+   "name": "googleDriveTrigger",
+   "displayName": "Google Drive Trigger",
+   "description": "Starts the workflow when files change in Google Drive (shared drives included), with each file as an activity item",
+   "version": 1,
+   "kind": "trigger",
+   "triggerSource": "poll",
+   "categories": [
+    "Data & Storage"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyMzgiPjxkZWZzPjxsaW5lYXJHcmFkaWVudCBpZD0iU1ZHanprNnVldmEiIHgxPSI4Ni45MjQlIiB4Mj0iNy42MyUiIHkxPSI5NC4yOTQlIiB5Mj0iNDUuOTUyJSI+PHN0b3Agb2Zmc2V0PSI5JSIgc3RvcC1jb2xvcj0iI2ZmZTkyMSIvPjxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iI2ZlYzcwMCIvPjwvbGluZWFyR3JhZGllbnQ+PGxpbmVhckdyYWRpZW50IGlkPSJTVkdiMGY3QWNGSiIgeDE9Ijk5LjUzOCUiIHgyPSIyMy40MzclIiB5MT0iOTMuOTAxJSIgeTI9IjU0LjAzMyUiPjxzdG9wIG9mZnNldD0iMTUlIiBzdG9wLWNvbG9yPSIjYTlhOGZmIi8+PHN0b3Agb2Zmc2V0PSIzMyUiIHN0b3AtY29sb3I9IiM2ZDk3ZmYiLz48c3RvcCBvZmZzZXQ9IjQ4JSIgc3RvcC1jb2xvcj0iIzMxODZmZiIvPjwvbGluZWFyR3JhZGllbnQ+PGxpbmVhckdyYWRpZW50IGlkPSJTVkd4TXd6NmRZayIgeDE9Ijg3LjEyOCUiIHgyPSItLjYzOSUiIHkxPSI1MS41MTglIiB5Mj0iOTMuMDc4JSI+PHN0b3Agb2Zmc2V0PSI1NSUiIHN0b3AtY29sb3I9IiMwZWJjNWYiLz48c3RvcCBvZmZzZXQ9Ijg1JSIgc3RvcC1jb2xvcj0iIzc4YzlmZiIvPjwvbGluZWFyR3JhZGllbnQ+PHBhdGggaWQ9IlNWR0FpSXQzYnRTIiBkPSJNNzcuMzAzIDI5LjI3YzIyLjUzMS0zOS4wMjYgNzguODYzLTM5LjAyNyAxMDEuMzk0IDBsNjkuMzczIDEyMC4xNThjMjIuNTMxIDM5LjAyNy01LjYzMyA4Ny44MS01MC42OTggODcuODFINTguNjI4Yy00NS4wNjUgMC03My4yMy00OC43ODMtNTAuNjk4LTg3LjgxeiIvPjwvZGVmcz48bWFzayBpZD0iU1ZHNkZMWHNjZXEiIGZpbGw9IiNmZmYiPjx1c2UgaHJlZj0iI1NWR0FpSXQzYnRTIi8+PC9tYXNrPjxnIG1hc2s9InVybCgjU1ZHNkZMWHNjZXEpIj48cGF0aCBmaWxsPSJ1cmwoI1NWR2p6azZ1ZXZhKSIgZD0iTTM0MS43MTkgMjk1LjkzN0gyMDAuMTY2bC0yOS4yOTMtNTAuNzM1bDcwLjc3Ny0xMjIuNTg5eiIgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoLTQyLjg3IC01OC42NykiLz48cGF0aCBmaWxsPSJ1cmwoI1NWR2IwZjdBY0ZKKSIgZD0ibTAgMjk1LjkxNmwxMDAuMDY5LTE3My4zMjV2LjAwM2wtMjkuMjgyIDUwLjcyM2g1OC41N2w3MC43ODMgMTIyLjU5NmwtMjAwLjEzOC4wMDF6IiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgtNDIuODcgLTU4LjY3KSIvPjxwYXRoIGZpbGw9InVybCgjU1ZHeE13ejZkWWspIiBkPSJtMTcwLjg4MSAwbDcwLjc4MSAxMjIuNmwtMjkuMjg2IDUwLjcyNkg3MC44MTJ6IiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgtNDIuODcgLTU4LjY3KSIvPjwvZz48L3N2Zz4KPC9zdmc+Cg==",
+   "color": "#1FA463",
+   "inputs": [],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "properties": [
+    {
+     "name": "authentication",
+     "displayName": "Authentication",
+     "type": "options",
+     "default": "serviceAccount",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Service Account",
+       "value": "serviceAccount",
+       "description": "A service account key; share files with its email"
+      },
+      {
+       "name": "OAuth2",
+       "value": "oAuth2",
+       "description": "Act as a Google user: Connect the credential, or give it a refresh token"
+      }
+     ]
+    },
+    {
+     "name": "pollInterval",
+     "displayName": "Poll Interval",
+     "type": "number",
+     "default": 300,
+     "description": "Seconds between checks for new events while the workflow is active (minimum 10)",
+     "noDataExpression": true,
+     "typeOptions": {
+      "minValue": 10,
+      "numberPrecision": 0
+     }
+    },
+    {
+     "name": "pollNotice",
+     "displayName": "The first poll only records where Drive's changes feed is; later polls return the files changed since, once each (the latest version). Executing the node in the editor returns the 5 most recently modified files.",
+     "type": "notice",
+     "default": ""
+    },
+    {
+     "name": "sharedDrives",
+     "displayName": "Include Shared Drives",
+     "type": "boolean",
+     "default": true,
+     "description": "Whether files in shared drives the account is a member of are included"
+    },
+    {
+     "name": "activityOptions",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Option",
+     "values": [
+      {
+       "name": "includeText",
+       "displayName": "Read Google Docs Text",
+       "type": "boolean",
+       "default": true,
+       "description": "Whether a Google Doc's summary is its first 600 characters (one export per Doc; needs a Drive scope that can read content, not drive.metadata.readonly)"
+      },
+      {
+       "name": "includeFolders",
+       "displayName": "Include Folders",
+       "type": "boolean",
+       "default": false
+      },
+      {
+       "name": "folderId",
+       "displayName": "Only Under Folder",
+       "type": "string",
+       "default": "",
+       "description": "ID or link of a folder: only files anywhere below it"
+      },
+      {
+       "name": "customerFolder",
+       "displayName": "Customer Folder Name",
+       "type": "string",
+       "default": "Customers",
+       "description": "A file in <this folder>/<name>/… is about the customer <name> (customerHint)"
+      },
+      {
+       "name": "initiativeFolder",
+       "displayName": "Initiative Folder Name",
+       "type": "string",
+       "default": "Projects",
+       "description": "A file in <this folder>/<name>/… belongs to the initiative <name> (initiativeHint)"
+      }
+     ]
+    }
+   ],
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "actorEmail": {
+      "description": "Email of the person who made the change, lowercase; null when the tool doesn't say",
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "cursor": {
+      "description": "Pass it back as Since to continue after this item (List Changed Since operations)",
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "customerHint": {
+      "description": "The customer it is about, when there is one (a #customer-<name> channel, a CRM company…)",
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "initiativeHint": {
+      "description": "The project or initiative it seems to belong to, when there is one",
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "kind": {
+      "description": "Suggested event kind, such as work.discussion or work.doc_edited; a flow may change it",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+      "type": "string"
+     },
+     "occurredAt": {
+      "description": "When it happened, ISO 8601 in UTC with milliseconds",
+      "format": "date-time",
+      "type": "string"
+     },
+     "raw": {
+      "description": "The tool's own object, trimmed: long strings clipped, long lists cut, deep nesting dropped",
+      "type": "object"
+     },
+     "source": {
+      "description": "The tool, lowercase: slack, google-drive, google-calendar, notion, …",
+      "type": "string"
+     },
+     "sourceId": {
+      "description": "Stable id of the change, '<source>:<tool ids>': the same change always has the same id, so a replay is recognised",
+      "type": "string"
+     },
+     "summary": {
+      "description": "The text, whitespace collapsed, at most 600 characters",
+      "maxLength": 600,
+      "type": "string"
+     },
+     "teamHint": {
+      "description": "The team it seems to belong to, from the tool's own grouping, when there is one",
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "title": {
+      "description": "One line: the document, ticket or meeting title, or the channel and first words",
+      "maxLength": 200,
+      "type": "string"
+     },
+     "url": {
+      "description": "Where a person opens it",
+      "type": [
+       "string",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "source",
+     "sourceId",
+     "url",
+     "actorEmail",
+     "occurredAt",
+     "kind",
+     "title",
+     "summary",
+     "teamHint",
+     "initiativeHint",
+     "customerHint",
+     "raw"
+    ],
+    "type": "object"
+   },
+   "documentationUrl": "https://developers.google.com/workspace/drive/api/guides/manage-changes",
+   "keywords": [
+    "drive",
+    "changes",
+    "file changed",
+    "document edited",
+    "activity",
+    "poll"
+   ],
+   "credentials": [
+    {
+     "name": "googleApi",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "serviceAccount"
+       ]
+      }
+     }
+    },
+    {
+     "name": "googleOAuth2Api",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "oAuth2"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
    "name": "googleCalendar",
    "displayName": "Google Calendar",
    "description": "Create, read, update and delete Google Calendar events",
@@ -2435,7 +3009,7 @@
    "categories": [
     "Productivity"
    ],
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzQyODVGNCIvPgogIDxyZWN0IHg9IjEwIiB5PSIxMiIgd2lkdGg9IjI4IiBoZWlnaHQ9IjI2IiByeD0iMy41IiBmaWxsPSIjZmZmIi8+CiAgPHBhdGggZD0iTTEwIDE1LjVBMy41IDMuNSAwIDAgMSAxMy41IDEyaDIxYTMuNSAzLjUgMCAwIDEgMy41IDMuNVYxOUgxMFoiIGZpbGw9IiNjNmRhZmMiLz4KICA8cGF0aCBkPSJNMTcgOXY2TTMxIDl2NiIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxwYXRoIGQ9Ik0xNiAyNGg0djRoLTRabTYgMGg0djRoLTRabTYgMGg0djRoLTRabS0xMiA2aDR2NGgtNFptNiAwaDR2NGgtNFoiIGZpbGw9IiM0Mjg1RjQiLz4KPC9zdmc+Cg==",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyNzUiPjxkZWZzPjxsaW5lYXJHcmFkaWVudCBpZD0iU1ZHQVVUcU5jd1EiIHgxPSI4MyIgeDI9IjgzIiB5MT0iNzYiIGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIj48c3RvcCBzdG9wLWNvbG9yPSIjNGZhMGZmIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMzE4NmZmIi8+PC9saW5lYXJHcmFkaWVudD48bGluZWFyR3JhZGllbnQgaWQ9IlNWR01KZW1hYzdiIiB4MT0iODkuMDYiIHgyPSI4OS4wNiIgeTE9IjIxLjc1IiB5Mj0iOTYuMzkiIGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIj48c3RvcCBzdG9wLWNvbG9yPSIjYTlhOGZmIi8+PHN0b3Agb2Zmc2V0PSIuOCIgc3RvcC1jb2xvcj0iIzNjOTBmZiIvPjwvbGluZWFyR3JhZGllbnQ+PGZpbHRlciBpZD0iU1ZHR1F5SzRiUmoiIHdpZHRoPSIxNTIiIGhlaWdodD0iMTEyIiB4PSIyMCIgeT0iLTQiIGNvbG9yLWludGVycG9sYXRpb24tZmlsdGVycz0ic1JHQiIgZmlsdGVyVW5pdHM9InVzZXJTcGFjZU9uVXNlIj48ZmVGbG9vZCBmbG9vZC1vcGFjaXR5PSIwIiByZXN1bHQ9IkJhY2tncm91bmRJbWFnZUZpeCIvPjxmZUJsZW5kIGluPSJTb3VyY2VHcmFwaGljIiBpbjI9IkJhY2tncm91bmRJbWFnZUZpeCIgcmVzdWx0PSJzaGFwZSIvPjxmZUdhdXNzaWFuQmx1ciByZXN1bHQ9ImVmZmVjdDFfZm9yZWdyb3VuZEJsdXJfMzczMzBfNzY3MyIgc3RkRGV2aWF0aW9uPSI2Ii8+PC9maWx0ZXI+PC9kZWZzPjxtYXNrIGlkPSJTVkdjVFZWT2JJdyIgd2lkdGg9IjE1NCIgaGVpZ2h0PSIxNTIiIHg9IjE5IiB5PSIyMCIgbWFza1VuaXRzPSJ1c2VyU3BhY2VPblVzZSIgc3R5bGU9Im1hc2stdHlwZTphbHBoYSI+PHBhdGggZmlsbD0iIzNjOTBmZiIgZD0iTTE5Ljg2NyA0OS4zOTJDMTcuODE4IDMzLjgyIDI5Ljk0IDIwIDQ1LjY0NSAyMGgxMDAuNzFjMTUuNzA2IDAgMjcuODI3IDEzLjgyIDI1Ljc3OCAyOS4zOTJMMTY2IDk2bDYuMTMzIDQ2LjYwOEMxNzQuMTgyIDE1OC4xOCAxNjIuMDYxIDE3MiAxNDYuMzU1IDE3Mkg0NS42NDVjLTE1LjcwNiAwLTI3LjgyNy0xMy44Mi0yNS43NzgtMjkuMzkyTDI2IDk2eiIvPjwvbWFzaz48bWFzayBpZD0iU1ZHQndWNFhiNGsiIHdpZHRoPSIxNTQiIGhlaWdodD0iMTUyIiB4PSIxOSIgeT0iMjAiIG1hc2tVbml0cz0idXNlclNwYWNlT25Vc2UiIHN0eWxlPSJtYXNrLXR5cGU6YWxwaGEiPjxwYXRoIGZpbGw9IiMzMTg2ZmYiIGQ9Ik0xOS44NjcgNDkuMzkyQzE3LjgxOCAzMy44MiAyOS45NCAyMCA0NS42NDUgMjBoMTAwLjcxYzE1LjcwNiAwIDI3LjgyNyAxMy44MiAyNS43NzggMjkuMzkyTDE2NiA5Nmw2LjEzMyA0Ni42MDhDMTc0LjE4MiAxNTguMTggMTYyLjA2MSAxNzIgMTQ2LjM1NSAxNzJINDUuNjQ1Yy0xNS43MDYgMC0yNy44MjctMTMuODItMjUuNzc4LTI5LjM5MkwyNiA5NnoiLz48L21hc2s+PHBhdGggZmlsbD0iI2JiZTJmZiIgZD0iTTIwLjgyNCA0OC4wNzhjMC0yNi42NDEgMjEuNTk2LTQ4LjIzOSA0OC4yMzgtNDguMjM5aDExNy45MTdjMjYuNjQxIDAgNDguMjM4IDIxLjU5OCA0OC4yMzggNDguMjM5djUwLjkxOGMwIDI2LjY0MS0yMS41OTcgNDguMjM5LTQ4LjIzOCA0OC4yMzlINjkuMDYyYy0yNi42NDIgMC00OC4yMzgtMjEuNTk4LTQ4LjIzOC00OC4yMzl6Ii8+PHBhdGggZmlsbD0iIzNjOTBmZiIgZD0iTS41MDIgNjkuMTY5Yy0zLjQzMi0yNi4wODIgMTYuODcxLTQ5LjIzIDQzLjE3Ny00OS4yM2gxNjguNjgzYzI2LjMwNiAwIDQ2LjYwOSAyMy4xNDggNDMuMTc4IDQ5LjIzbC0xMC4yNzMgNzguMDY2bDEwLjI3MyA3OC4wNjZjMy40MzEgMjYuMDgyLTE2Ljg3MiA0OS4yMy00My4xNzggNDkuMjNINDMuNjc5Yy0yNi4zMDcgMC00Ni42MDktMjMuMTQ4LTQzLjE3Ny00OS4yM2wxMC4yNzItNzguMDY2eiIvPjxnIG1hc2s9InVybCgjU1ZHY1RWVk9iSXcpIiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgtMzIuNzc1IC0xMy41NilzY2FsZSgxLjY3NDk1KSI+PHBhdGggZmlsbD0idXJsKCNTVkdBVVRxTmN3USkiIGQ9Ik0wIDBoMTY2djc2SDB6IiB0cmFuc2Zvcm09Im1hdHJpeCgxIDAgMCAtMSAxMyAxNzIpIi8+PC9nPjxnIG1hc2s9InVybCgjU1ZHQndWNFhiNGspIiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgtMzIuNzc1IC0xMy41NilzY2FsZSgxLjY3NDk1KSI+PHBhdGggZmlsbD0idXJsKCNTVkdNSmVtYWM3YikiIGQ9Ik0zMiAyNy4yQzMyIDE2LjU5NiA0MC41OTYgOCA1MS4yIDhoODkuNmMxMC42MDQgMCAxOS4yIDguNTk2IDE5LjIgMTkuMlY5NkgzMnoiIGZpbHRlcj0idXJsKCNTVkdHUXlLNGJSaikiLz48L2c+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTkzLjQzOCAyMDkuNzdxLTEwLjUyMSAwLTE4LjA1MS0zLjQyMXEtNy41MjgtMy40MjItMTIuNzQ2LTkuMTUzcS01LjEzMy01LjgyLTcuMjczLTExLjM3OXEtMi4xMzctNS41NTgtMS43MTEtNi43NThhMy40NyAzLjQ3IDAgMCAxIDEuNzExLTEuODgybDkuNDk3LTMuNzY1cTEuMTk2LS41OTggMi4zOTUtLjE3cTEuMTk2LjM0IDIuODIyIDMuOTM1cTEuNzE0IDMuNTkyIDQuNzkgNy42MTNhMjQgMjQgMCAwIDAgNy41MjkgNi4yNDVxNC4zNjggMi4yMjYgMTAuNzc5IDIuMjI1cTEwLjM1MSAwIDE2LjQyNi01Ljk5cTYuMTYtNS45ODYgNi4xNi0xNS4yMjZxMC0xMC4wMS02LjUwMy0xNS40cS02LjUtNS40NzYtMTcuMTk1LTUuNDc2aC04Ljk4MWEzLjE3IDMuMTcgMCAwIDEtMi4yMjUtLjg1M3EtLjg1My0uOTQtLjg1NS0yLjEzOXYtOS4xNTNxMC0xLjI4NC44NTQtMi4xNGEzLjA2IDMuMDYgMCAwIDEgMi4yMjYtLjk0aDcuNzgzcTkuNTgzIDAgMTUuNC01LjIycTUuODE3LTUuMjE4IDUuODE2LTEzLjUxN3EuMDAyLTguMjEtNS4yMTgtMTMuMjU4dC0xNC4zNzEtNS4wNDlxLTUuMTM1LjAwMS04Ljg5OCAxLjcxMmExOS4zIDE5LjMgMCAwIDAtNi41MDIgNC43OTFhMzguMyAzOC4zIDAgMCAwLTQuNzA1IDYuMzNxLTEuOTY0IDMuMjUyLTMuMTY1IDMuNTkzcS0xLjE5NS4yNTYtMi4zMS0uNDI2bC04Ljk4My00LjM2NHEtMS4xMS0uNTk5LTEuNDU0LTEuODgycS0uMzQyLTEuMjg0IDIuMDU1LTUuOTg5cTIuNDgtNC43ODggNy41MjYtOS43NTJhMzUuMiAzNS4yIDAgMCAxIDExLjgwNy03LjdxNi43NTgtMi43NCAxNS43NDEtMi43MzhxMTYuNjgxLjAwMSAyNi40MzQgOC44MXE5Ljc1MiA4LjczIDkuNzUzIDIzLjA5OXEwIDkuOTI2LTQuNzkgMTcuMTk2cS00LjcwNiA3LjI3LTEzLjM0NyAxMC4yNjh2LjM0MXExMC40MzggMy4wOCAxNi40MjUgMTEuMjkxYzQuMDUgNS40MjEgNi4wNzUgMTEuODkxIDYuMDc0IDE5LjQxOXEwIDE2LjE3LTExLjI5MyAyNi41MjJxLTExLjI5IDEwLjM1LTI5LjQyOSAxMC4zNXptODUuODQxLTEuOTY3cS0xLjQ1MiAwLTIuNTY3LTEuMTEyYTMuNzggMy43OCAwIDAgMS0xLjAyNi0yLjY1MnYtOTUuMTMxbC0xOS4yNDkgMTMuODU5cS0xLjAyNi43Ny0yLjM5Ni41MTRhMy4zIDMuMyAwIDAgMS0yLjA1Mi0xLjI4M2wtNS41NjEtNy44NzFhMy4zMiAzLjMyIDAgMCAxLS42LTIuMzk3cS4yNTgtMS4zNjUgMS4zNjktMi4xMzZsMzQuMTMzLTI0LjM4MnEuNDMtLjM0My45NDItLjUxNHEuNTE1LS4yNTYgMS4xOTctLjI1Nmg3LjE4OHExLjQ1NS4wMDEgMi4zMSAxLjAyN3EuOTQxLjk0Ljk0MSAyLjM5NnYxMTYuMTc0cTAgMS41NDItMS4xMTIgMi42NTJhMy4zNSAzLjM1IDAgMCAxLTIuNTY4IDEuMTEyeiIvPjwvc3ZnPgo8L3N2Zz4K",
    "color": "#4285F4",
    "subtitle": "{{operation}}: {{resource}}",
    "inputs": [
@@ -2513,6 +3087,107 @@
        "description": "Retrieve many events from a calendar",
        "action": "Get many events",
        "idempotent": true
+      },
+      {
+       "name": "Get Many Changed Since",
+       "value": "changedSince",
+       "description": "Events created, changed or cancelled after a time, with attendees, as activity items (oldest change first)",
+       "action": "Get events changed since",
+       "idempotent": true,
+       "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+         "actorEmail": {
+          "description": "Email of the person who made the change, lowercase; null when the tool doesn't say",
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "cursor": {
+          "description": "Pass it back as Since to continue after this item (List Changed Since operations)",
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "customerHint": {
+          "description": "The customer it is about, when there is one (a #customer-<name> channel, a CRM company…)",
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "initiativeHint": {
+          "description": "The project or initiative it seems to belong to, when there is one",
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "kind": {
+          "description": "Suggested event kind, such as work.discussion or work.doc_edited; a flow may change it",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+          "type": "string"
+         },
+         "occurredAt": {
+          "description": "When it happened, ISO 8601 in UTC with milliseconds",
+          "format": "date-time",
+          "type": "string"
+         },
+         "raw": {
+          "description": "The tool's own object, trimmed: long strings clipped, long lists cut, deep nesting dropped",
+          "type": "object"
+         },
+         "source": {
+          "description": "The tool, lowercase: slack, google-drive, google-calendar, notion, …",
+          "type": "string"
+         },
+         "sourceId": {
+          "description": "Stable id of the change, '<source>:<tool ids>': the same change always has the same id, so a replay is recognised",
+          "type": "string"
+         },
+         "summary": {
+          "description": "The text, whitespace collapsed, at most 600 characters",
+          "maxLength": 600,
+          "type": "string"
+         },
+         "teamHint": {
+          "description": "The team it seems to belong to, from the tool's own grouping, when there is one",
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "title": {
+          "description": "One line: the document, ticket or meeting title, or the channel and first words",
+          "maxLength": 200,
+          "type": "string"
+         },
+         "url": {
+          "description": "Where a person opens it",
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        },
+        "required": [
+         "source",
+         "sourceId",
+         "url",
+         "actorEmail",
+         "occurredAt",
+         "kind",
+         "title",
+         "summary",
+         "teamHint",
+         "initiativeHint",
+         "customerHint",
+         "raw"
+        ],
+        "type": "object"
+       }
       },
       {
        "name": "Update",
@@ -2838,6 +3513,107 @@
      }
     },
     {
+     "name": "since",
+     "displayName": "Since",
+     "type": "string",
+     "default": "",
+     "description": "Events changed after this ISO time (or a cursor from an earlier item). Empty: the last 24 hours.",
+     "placeholder": "2026-11-12T08:00:00Z",
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "changedSince"
+       ],
+       "resource": [
+        "event"
+       ]
+      }
+     }
+    },
+    {
+     "name": "returnAll",
+     "displayName": "Return All",
+     "type": "boolean",
+     "default": false,
+     "description": "Whether to return all results or only up to a given limit",
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "changedSince"
+       ],
+       "resource": [
+        "event"
+       ]
+      }
+     }
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 50,
+     "description": "Max number of results to return",
+     "typeOptions": {
+      "minValue": 1,
+      "maxValue": 2500,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "changedSince"
+       ],
+       "resource": [
+        "event"
+       ],
+       "returnAll": [
+        false
+       ]
+      }
+     }
+    },
+    {
+     "name": "activityOptions",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Option",
+     "values": [
+      {
+       "name": "includeCancelled",
+       "displayName": "Include Cancelled Events",
+       "type": "boolean",
+       "default": false,
+       "description": "Whether cancelled and deleted events are output too (kind work.meeting_cancelled)"
+      },
+      {
+       "name": "internalDomains",
+       "displayName": "Internal Domains",
+       "type": "string",
+       "default": "",
+       "description": "Your company's email domains: the first attendee from another domain names the customer (customerHint). Empty: the organizer's domain is internal.",
+       "placeholder": "acme.com, acme.io"
+      },
+      {
+       "name": "includeDescription",
+       "displayName": "Include Description",
+       "type": "boolean",
+       "default": true,
+       "description": "Whether the event description is the summary (else only the attendees)"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "changedSince"
+       ],
+       "resource": [
+        "event"
+       ]
+      }
+     }
+    },
+    {
      "name": "returnAll",
      "displayName": "Return All",
      "type": "boolean",
@@ -2971,7 +3747,7 @@
     }
    ],
    "usableAsTool": true,
-   "toolDescription": "Manage Google Calendar events in `calendar` (default primary). operation=create needs start and end (ISO 8601) and takes additionalFields summary, description, location, attendees (comma-separated emails) and allday; getAll lists events between timeMin and timeMax (options.query searches text); get, update (updateFields) and delete act on eventId.",
+   "toolDescription": "Manage Google Calendar events in `calendar` (default primary). operation=create needs start and end (ISO 8601) and takes additionalFields summary, description, location, attendees (comma-separated emails) and allday; getAll lists events between timeMin and timeMax (options.query searches text); changedSince lists events changed after `since` as activity items with attendees; get, update (updateFields) and delete act on eventId.",
    "documentationUrl": "https://developers.google.com/workspace/calendar/api/v3/reference/events",
    "keywords": [
     "calendar",
@@ -2979,6 +3755,239 @@
     "meeting",
     "schedule",
     "appointment"
+   ],
+   "credentials": [
+    {
+     "name": "googleApi",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "serviceAccount"
+       ]
+      }
+     }
+    },
+    {
+     "name": "googleOAuth2Api",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "oAuth2"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "googleCalendarTrigger",
+   "displayName": "Google Calendar Trigger",
+   "description": "Starts the workflow when events are created, changed or cancelled in a Google Calendar, with each event (and its attendees) as an activity item",
+   "version": 1,
+   "kind": "trigger",
+   "triggerSource": "poll",
+   "categories": [
+    "Productivity"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyNzUiPjxkZWZzPjxsaW5lYXJHcmFkaWVudCBpZD0iU1ZHQVVUcU5jd1EiIHgxPSI4MyIgeDI9IjgzIiB5MT0iNzYiIGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIj48c3RvcCBzdG9wLWNvbG9yPSIjNGZhMGZmIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMzE4NmZmIi8+PC9saW5lYXJHcmFkaWVudD48bGluZWFyR3JhZGllbnQgaWQ9IlNWR01KZW1hYzdiIiB4MT0iODkuMDYiIHgyPSI4OS4wNiIgeTE9IjIxLjc1IiB5Mj0iOTYuMzkiIGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIj48c3RvcCBzdG9wLWNvbG9yPSIjYTlhOGZmIi8+PHN0b3Agb2Zmc2V0PSIuOCIgc3RvcC1jb2xvcj0iIzNjOTBmZiIvPjwvbGluZWFyR3JhZGllbnQ+PGZpbHRlciBpZD0iU1ZHR1F5SzRiUmoiIHdpZHRoPSIxNTIiIGhlaWdodD0iMTEyIiB4PSIyMCIgeT0iLTQiIGNvbG9yLWludGVycG9sYXRpb24tZmlsdGVycz0ic1JHQiIgZmlsdGVyVW5pdHM9InVzZXJTcGFjZU9uVXNlIj48ZmVGbG9vZCBmbG9vZC1vcGFjaXR5PSIwIiByZXN1bHQ9IkJhY2tncm91bmRJbWFnZUZpeCIvPjxmZUJsZW5kIGluPSJTb3VyY2VHcmFwaGljIiBpbjI9IkJhY2tncm91bmRJbWFnZUZpeCIgcmVzdWx0PSJzaGFwZSIvPjxmZUdhdXNzaWFuQmx1ciByZXN1bHQ9ImVmZmVjdDFfZm9yZWdyb3VuZEJsdXJfMzczMzBfNzY3MyIgc3RkRGV2aWF0aW9uPSI2Ii8+PC9maWx0ZXI+PC9kZWZzPjxtYXNrIGlkPSJTVkdjVFZWT2JJdyIgd2lkdGg9IjE1NCIgaGVpZ2h0PSIxNTIiIHg9IjE5IiB5PSIyMCIgbWFza1VuaXRzPSJ1c2VyU3BhY2VPblVzZSIgc3R5bGU9Im1hc2stdHlwZTphbHBoYSI+PHBhdGggZmlsbD0iIzNjOTBmZiIgZD0iTTE5Ljg2NyA0OS4zOTJDMTcuODE4IDMzLjgyIDI5Ljk0IDIwIDQ1LjY0NSAyMGgxMDAuNzFjMTUuNzA2IDAgMjcuODI3IDEzLjgyIDI1Ljc3OCAyOS4zOTJMMTY2IDk2bDYuMTMzIDQ2LjYwOEMxNzQuMTgyIDE1OC4xOCAxNjIuMDYxIDE3MiAxNDYuMzU1IDE3Mkg0NS42NDVjLTE1LjcwNiAwLTI3LjgyNy0xMy44Mi0yNS43NzgtMjkuMzkyTDI2IDk2eiIvPjwvbWFzaz48bWFzayBpZD0iU1ZHQndWNFhiNGsiIHdpZHRoPSIxNTQiIGhlaWdodD0iMTUyIiB4PSIxOSIgeT0iMjAiIG1hc2tVbml0cz0idXNlclNwYWNlT25Vc2UiIHN0eWxlPSJtYXNrLXR5cGU6YWxwaGEiPjxwYXRoIGZpbGw9IiMzMTg2ZmYiIGQ9Ik0xOS44NjcgNDkuMzkyQzE3LjgxOCAzMy44MiAyOS45NCAyMCA0NS42NDUgMjBoMTAwLjcxYzE1LjcwNiAwIDI3LjgyNyAxMy44MiAyNS43NzggMjkuMzkyTDE2NiA5Nmw2LjEzMyA0Ni42MDhDMTc0LjE4MiAxNTguMTggMTYyLjA2MSAxNzIgMTQ2LjM1NSAxNzJINDUuNjQ1Yy0xNS43MDYgMC0yNy44MjctMTMuODItMjUuNzc4LTI5LjM5MkwyNiA5NnoiLz48L21hc2s+PHBhdGggZmlsbD0iI2JiZTJmZiIgZD0iTTIwLjgyNCA0OC4wNzhjMC0yNi42NDEgMjEuNTk2LTQ4LjIzOSA0OC4yMzgtNDguMjM5aDExNy45MTdjMjYuNjQxIDAgNDguMjM4IDIxLjU5OCA0OC4yMzggNDguMjM5djUwLjkxOGMwIDI2LjY0MS0yMS41OTcgNDguMjM5LTQ4LjIzOCA0OC4yMzlINjkuMDYyYy0yNi42NDIgMC00OC4yMzgtMjEuNTk4LTQ4LjIzOC00OC4yMzl6Ii8+PHBhdGggZmlsbD0iIzNjOTBmZiIgZD0iTS41MDIgNjkuMTY5Yy0zLjQzMi0yNi4wODIgMTYuODcxLTQ5LjIzIDQzLjE3Ny00OS4yM2gxNjguNjgzYzI2LjMwNiAwIDQ2LjYwOSAyMy4xNDggNDMuMTc4IDQ5LjIzbC0xMC4yNzMgNzguMDY2bDEwLjI3MyA3OC4wNjZjMy40MzEgMjYuMDgyLTE2Ljg3MiA0OS4yMy00My4xNzggNDkuMjNINDMuNjc5Yy0yNi4zMDcgMC00Ni42MDktMjMuMTQ4LTQzLjE3Ny00OS4yM2wxMC4yNzItNzguMDY2eiIvPjxnIG1hc2s9InVybCgjU1ZHY1RWVk9iSXcpIiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgtMzIuNzc1IC0xMy41NilzY2FsZSgxLjY3NDk1KSI+PHBhdGggZmlsbD0idXJsKCNTVkdBVVRxTmN3USkiIGQ9Ik0wIDBoMTY2djc2SDB6IiB0cmFuc2Zvcm09Im1hdHJpeCgxIDAgMCAtMSAxMyAxNzIpIi8+PC9nPjxnIG1hc2s9InVybCgjU1ZHQndWNFhiNGspIiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgtMzIuNzc1IC0xMy41NilzY2FsZSgxLjY3NDk1KSI+PHBhdGggZmlsbD0idXJsKCNTVkdNSmVtYWM3YikiIGQ9Ik0zMiAyNy4yQzMyIDE2LjU5NiA0MC41OTYgOCA1MS4yIDhoODkuNmMxMC42MDQgMCAxOS4yIDguNTk2IDE5LjIgMTkuMlY5NkgzMnoiIGZpbHRlcj0idXJsKCNTVkdHUXlLNGJSaikiLz48L2c+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTkzLjQzOCAyMDkuNzdxLTEwLjUyMSAwLTE4LjA1MS0zLjQyMXEtNy41MjgtMy40MjItMTIuNzQ2LTkuMTUzcS01LjEzMy01LjgyLTcuMjczLTExLjM3OXEtMi4xMzctNS41NTgtMS43MTEtNi43NThhMy40NyAzLjQ3IDAgMCAxIDEuNzExLTEuODgybDkuNDk3LTMuNzY1cTEuMTk2LS41OTggMi4zOTUtLjE3cTEuMTk2LjM0IDIuODIyIDMuOTM1cTEuNzE0IDMuNTkyIDQuNzkgNy42MTNhMjQgMjQgMCAwIDAgNy41MjkgNi4yNDVxNC4zNjggMi4yMjYgMTAuNzc5IDIuMjI1cTEwLjM1MSAwIDE2LjQyNi01Ljk5cTYuMTYtNS45ODYgNi4xNi0xNS4yMjZxMC0xMC4wMS02LjUwMy0xNS40cS02LjUtNS40NzYtMTcuMTk1LTUuNDc2aC04Ljk4MWEzLjE3IDMuMTcgMCAwIDEtMi4yMjUtLjg1M3EtLjg1My0uOTQtLjg1NS0yLjEzOXYtOS4xNTNxMC0xLjI4NC44NTQtMi4xNGEzLjA2IDMuMDYgMCAwIDEgMi4yMjYtLjk0aDcuNzgzcTkuNTgzIDAgMTUuNC01LjIycTUuODE3LTUuMjE4IDUuODE2LTEzLjUxN3EuMDAyLTguMjEtNS4yMTgtMTMuMjU4dC0xNC4zNzEtNS4wNDlxLTUuMTM1LjAwMS04Ljg5OCAxLjcxMmExOS4zIDE5LjMgMCAwIDAtNi41MDIgNC43OTFhMzguMyAzOC4zIDAgMCAwLTQuNzA1IDYuMzNxLTEuOTY0IDMuMjUyLTMuMTY1IDMuNTkzcS0xLjE5NS4yNTYtMi4zMS0uNDI2bC04Ljk4My00LjM2NHEtMS4xMS0uNTk5LTEuNDU0LTEuODgycS0uMzQyLTEuMjg0IDIuMDU1LTUuOTg5cTIuNDgtNC43ODggNy41MjYtOS43NTJhMzUuMiAzNS4yIDAgMCAxIDExLjgwNy03LjdxNi43NTgtMi43NCAxNS43NDEtMi43MzhxMTYuNjgxLjAwMSAyNi40MzQgOC44MXE5Ljc1MiA4LjczIDkuNzUzIDIzLjA5OXEwIDkuOTI2LTQuNzkgMTcuMTk2cS00LjcwNiA3LjI3LTEzLjM0NyAxMC4yNjh2LjM0MXExMC40MzggMy4wOCAxNi40MjUgMTEuMjkxYzQuMDUgNS40MjEgNi4wNzUgMTEuODkxIDYuMDc0IDE5LjQxOXEwIDE2LjE3LTExLjI5MyAyNi41MjJxLTExLjI5IDEwLjM1LTI5LjQyOSAxMC4zNXptODUuODQxLTEuOTY3cS0xLjQ1MiAwLTIuNTY3LTEuMTEyYTMuNzggMy43OCAwIDAgMS0xLjAyNi0yLjY1MnYtOTUuMTMxbC0xOS4yNDkgMTMuODU5cS0xLjAyNi43Ny0yLjM5Ni41MTRhMy4zIDMuMyAwIDAgMS0yLjA1Mi0xLjI4M2wtNS41NjEtNy44NzFhMy4zMiAzLjMyIDAgMCAxLS42LTIuMzk3cS4yNTgtMS4zNjUgMS4zNjktMi4xMzZsMzQuMTMzLTI0LjM4MnEuNDMtLjM0My45NDItLjUxNHEuNTE1LS4yNTYgMS4xOTctLjI1Nmg3LjE4OHExLjQ1NS4wMDEgMi4zMSAxLjAyN3EuOTQxLjk0Ljk0MSAyLjM5NnYxMTYuMTc0cTAgMS41NDItMS4xMTIgMi42NTJhMy4zNSAzLjM1IDAgMCAxLTIuNTY4IDEuMTEyeiIvPjwvc3ZnPgo8L3N2Zz4K",
+   "color": "#4285F4",
+   "inputs": [],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "properties": [
+    {
+     "name": "authentication",
+     "displayName": "Authentication",
+     "type": "options",
+     "default": "serviceAccount",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Service Account",
+       "value": "serviceAccount",
+       "description": "A service account key; share files with its email"
+      },
+      {
+       "name": "OAuth2",
+       "value": "oAuth2",
+       "description": "Act as a Google user: Connect the credential, or give it a refresh token"
+      }
+     ]
+    },
+    {
+     "name": "pollInterval",
+     "displayName": "Poll Interval",
+     "type": "number",
+     "default": 300,
+     "description": "Seconds between checks for new events while the workflow is active (minimum 10)",
+     "noDataExpression": true,
+     "typeOptions": {
+      "minValue": 10,
+      "numberPrecision": 0
+     }
+    },
+    {
+     "name": "pollNotice",
+     "displayName": "The first poll reads the calendar once to get Google's sync token and outputs nothing; later polls output the events changed since. Executing the node in the editor returns the 5 most recently updated events.",
+     "type": "notice",
+     "default": ""
+    },
+    {
+     "name": "calendar",
+     "displayName": "Calendar",
+     "type": "options",
+     "default": "primary",
+     "description": "Calendar to watch. An expression may also give a calendar ID (often an email address).",
+     "required": true,
+     "options": [
+      {
+       "name": "Primary Calendar",
+       "value": "primary"
+      }
+     ],
+     "typeOptions": {
+      "loadOptionsMethod": "calendars"
+     }
+    },
+    {
+     "name": "activityOptions",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Option",
+     "values": [
+      {
+       "name": "includeCancelled",
+       "displayName": "Include Cancelled Events",
+       "type": "boolean",
+       "default": false,
+       "description": "Whether cancelled and deleted events are output too (kind work.meeting_cancelled)"
+      },
+      {
+       "name": "internalDomains",
+       "displayName": "Internal Domains",
+       "type": "string",
+       "default": "",
+       "description": "Your company's email domains: the first attendee from another domain names the customer (customerHint). Empty: the organizer's domain is internal.",
+       "placeholder": "acme.com, acme.io"
+      },
+      {
+       "name": "includeDescription",
+       "displayName": "Include Description",
+       "type": "boolean",
+       "default": true,
+       "description": "Whether the event description is the summary (else only the attendees)"
+      }
+     ]
+    }
+   ],
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "actorEmail": {
+      "description": "Email of the person who made the change, lowercase; null when the tool doesn't say",
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "cursor": {
+      "description": "Pass it back as Since to continue after this item (List Changed Since operations)",
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "customerHint": {
+      "description": "The customer it is about, when there is one (a #customer-<name> channel, a CRM company…)",
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "initiativeHint": {
+      "description": "The project or initiative it seems to belong to, when there is one",
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "kind": {
+      "description": "Suggested event kind, such as work.discussion or work.doc_edited; a flow may change it",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+      "type": "string"
+     },
+     "occurredAt": {
+      "description": "When it happened, ISO 8601 in UTC with milliseconds",
+      "format": "date-time",
+      "type": "string"
+     },
+     "raw": {
+      "description": "The tool's own object, trimmed: long strings clipped, long lists cut, deep nesting dropped",
+      "type": "object"
+     },
+     "source": {
+      "description": "The tool, lowercase: slack, google-drive, google-calendar, notion, …",
+      "type": "string"
+     },
+     "sourceId": {
+      "description": "Stable id of the change, '<source>:<tool ids>': the same change always has the same id, so a replay is recognised",
+      "type": "string"
+     },
+     "summary": {
+      "description": "The text, whitespace collapsed, at most 600 characters",
+      "maxLength": 600,
+      "type": "string"
+     },
+     "teamHint": {
+      "description": "The team it seems to belong to, from the tool's own grouping, when there is one",
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "title": {
+      "description": "One line: the document, ticket or meeting title, or the channel and first words",
+      "maxLength": 200,
+      "type": "string"
+     },
+     "url": {
+      "description": "Where a person opens it",
+      "type": [
+       "string",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "source",
+     "sourceId",
+     "url",
+     "actorEmail",
+     "occurredAt",
+     "kind",
+     "title",
+     "summary",
+     "teamHint",
+     "initiativeHint",
+     "customerHint",
+     "raw"
+    ],
+    "type": "object"
+   },
+   "documentationUrl": "https://developers.google.com/workspace/calendar/api/guides/sync",
+   "keywords": [
+    "calendar",
+    "meeting",
+    "event changed",
+    "attendees",
+    "activity",
+    "poll"
    ],
    "credentials": [
     {
@@ -3014,7 +4023,7 @@
    "categories": [
     "Productivity"
    ],
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzQyODVGNCIvPgogIDxwYXRoIGQ9Ik0xNSA5aDEybDggOHYyMGEyIDIgMCAwIDEtMiAySDE1YTIgMiAwIDAgMS0yLTJWMTFhMiAyIDAgMCAxIDItMloiIGZpbGw9IiNmZmYiLz4KICA8cGF0aCBkPSJNMjcgOXY2YTIgMiAwIDAgMCAyIDJoNloiIGZpbGw9IiNjNmRhZmMiLz4KICA8cGF0aCBkPSJNMTggMjNoMTJNMTggMjcuNWgxMk0xOCAzMmg4IiBmaWxsPSJub25lIiBzdHJva2U9IiM0Mjg1RjQiIHN0cm9rZS13aWR0aD0iMi40IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPC9zdmc+Cg==",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIFNpbXBsZSBJY29ucyAxNi4zNi4wLCBDQzAtMS4wIC0tPgogIDxyZWN0IHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgcng9IjEyIiBmaWxsPSIjNDI4NUY0Ii8+CiAgPHN2ZyB4PSIxMSIgeT0iMTEiIHdpZHRoPSIyNiIgaGVpZ2h0PSIyNiIgdmlld0JveD0iMCAwIDI0IDI0Ij48cGF0aCBmaWxsPSIjZmZmIiBkPSJNMTQuNzI3IDYuNzI3SDE0VjBINC45MWMtLjkwNSAwLTEuNjM3LjczMi0xLjYzNyAxLjYzNnYyMC43MjhjMCAuOTA0LjczMiAxLjYzNiAxLjYzNiAxLjYzNmgxNC4xODJjLjkwNCAwIDEuNjM2LS43MzIgMS42MzYtMS42MzZWNi43MjdoLTZ6bS0uNTQ1IDEwLjQ1NUg3LjA5di0xLjM2NGg3LjA5djEuMzY0em0yLjcyNy0zLjI3M0g3LjA5MXYtMS4zNjRoOS44MTh2MS4zNjR6bTAtMy4yNzNINy4wOTFWOS4yNzNoOS44MTh2MS4zNjN6TTE0LjcyNyA2aDZsLTYtNnY2eiIvPjwvc3ZnPgo8L3N2Zz4K",
    "color": "#4285F4",
    "subtitle": "{{operation}}: {{resource}}",
    "inputs": [
@@ -3388,6 +4397,260 @@
      }
     }
    ]
+  },
+  {
+   "name": "googleDirectory",
+   "displayName": "Google Directory",
+   "description": "List and look up the people in your Google Workspace: email, org unit, title, department and manager",
+   "version": 1,
+   "kind": "action",
+   "categories": [
+    "Productivity"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyNjIiPjxwYXRoIGZpbGw9IiM0Mjg1ZjQiIGQ9Ik0yNTUuODc4IDEzMy40NTFjMC0xMC43MzQtLjg3MS0xOC41NjctMi43NTYtMjYuNjlIMTMwLjU1djQ4LjQ0OGg3MS45NDdjLTEuNDUgMTIuMDQtOS4yODMgMzAuMTcyLTI2LjY5IDQyLjM1NmwtLjI0NCAxLjYyMmwzOC43NTUgMzAuMDIzbDIuNjg1LjI2OGMyNC42NTktMjIuNzc0IDM4Ljg3NS01Ni4yODIgMzguODc1LTk2LjAyNyIvPjxwYXRoIGZpbGw9IiMzNGE4NTMiIGQ9Ik0xMzAuNTUgMjYxLjFjMzUuMjQ4IDAgNjQuODM5LTExLjYwNSA4Ni40NTMtMzEuNjIybC00MS4xOTYtMzEuOTEzYy0xMS4wMjQgNy42ODgtMjUuODIgMTMuMDU1LTQ1LjI1NyAxMy4wNTVjLTM0LjUyMyAwLTYzLjgyNC0yMi43NzMtNzQuMjY5LTU0LjI1bC0xLjUzMS4xM2wtNDAuMjk4IDMxLjE4N2wtLjUyNyAxLjQ2NUMzNS4zOTMgMjMxLjc5OCA3OS40OSAyNjEuMSAxMzAuNTUgMjYxLjEiLz48cGF0aCBmaWxsPSIjZmJiYzA1IiBkPSJNNTYuMjgxIDE1Ni4zN2MtMi43NTYtOC4xMjMtNC4zNTEtMTYuODI3LTQuMzUxLTI1LjgyYzAtOC45OTQgMS41OTUtMTcuNjk3IDQuMjA2LTI1LjgybC0uMDczLTEuNzNMMTUuMjYgNzEuMzEybC0xLjMzNS42MzVDNS4wNzcgODkuNjQ0IDAgMTA5LjUxNyAwIDEzMC41NXM1LjA3NyA0MC45MDUgMTMuOTI1IDU4LjYwMnoiLz48cGF0aCBmaWxsPSIjZWI0MzM1IiBkPSJNMTMwLjU1IDUwLjQ3OWMyNC41MTQgMCA0MS4wNSAxMC41ODkgNTAuNDc5IDE5LjQzOGwzNi44NDQtMzUuOTc0QzE5NS4yNDUgMTIuOTEgMTY1Ljc5OCAwIDEzMC41NSAwQzc5LjQ5IDAgMzUuMzkzIDI5LjMwMSAxMy45MjUgNzEuOTQ3bDQyLjIxMSAzMi43ODNjMTAuNTktMzEuNDc3IDM5Ljg5MS01NC4yNTEgNzQuNDE0LTU0LjI1MSIvPjwvc3ZnPgo8L3N2Zz4K",
+   "color": "#4285F4",
+   "subtitle": "{{operation}}: {{resource}}",
+   "inputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "properties": [
+    {
+     "name": "authentication",
+     "displayName": "Authentication",
+     "type": "options",
+     "default": "serviceAccount",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Service Account",
+       "value": "serviceAccount",
+       "description": "A service account key; share files with its email"
+      },
+      {
+       "name": "OAuth2",
+       "value": "oAuth2",
+       "description": "Act as a Google user: Connect the credential, or give it a refresh token"
+      }
+     ]
+    },
+    {
+     "name": "resource",
+     "displayName": "Resource",
+     "type": "options",
+     "default": "user",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "User",
+       "value": "user"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "default": "getAll",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Get",
+       "value": "get",
+       "description": "Get one person by email or id",
+       "action": "Get a user",
+       "idempotent": true
+      },
+      {
+       "name": "Get Many",
+       "value": "getAll",
+       "description": "List the people in the directory",
+       "action": "Get many users",
+       "idempotent": true
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "user"
+       ]
+      }
+     }
+    },
+    {
+     "name": "adminEmail",
+     "displayName": "Admin to Impersonate",
+     "type": "string",
+     "default": "",
+     "description": "Service account only: an admin the service account acts as (domain-wide delegation for https://www.googleapis.com/auth/admin.directory.user.readonly). Empty: the credential's Delegated Email.",
+     "placeholder": "admin@example.com"
+    },
+    {
+     "name": "userKey",
+     "displayName": "User",
+     "type": "string",
+     "default": "",
+     "description": "Primary email, alias or user id",
+     "placeholder": "dana@example.com",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "get"
+       ],
+       "resource": [
+        "user"
+       ]
+      }
+     }
+    },
+    {
+     "name": "returnAll",
+     "displayName": "Return All",
+     "type": "boolean",
+     "default": false,
+     "description": "Whether to return all results or only up to a given limit",
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "getAll"
+       ],
+       "resource": [
+        "user"
+       ]
+      }
+     }
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 100,
+     "description": "Max number of results to return",
+     "typeOptions": {
+      "minValue": 1,
+      "maxValue": 500,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "getAll"
+       ],
+       "resource": [
+        "user"
+       ],
+       "returnAll": [
+        false
+       ]
+      }
+     }
+    },
+    {
+     "name": "filters",
+     "displayName": "Filters",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Filter",
+     "values": [
+      {
+       "name": "domain",
+       "displayName": "Domain",
+       "type": "string",
+       "default": "",
+       "description": "Only this domain of the account (default: all domains, customer my_customer)"
+      },
+      {
+       "name": "orgUnitPath",
+       "displayName": "Org Unit",
+       "type": "string",
+       "default": "",
+       "description": "Only people in this org unit or below it",
+       "placeholder": "/Engineering"
+      },
+      {
+       "name": "showSuspended",
+       "displayName": "Include Suspended",
+       "type": "boolean",
+       "default": false
+      },
+      {
+       "name": "query",
+       "displayName": "Query",
+       "type": "string",
+       "default": "",
+       "description": "More Directory search clauses (https://developers.google.com/workspace/admin/directory/v1/guides/search-users)",
+       "placeholder": "orgTitle:Engineer"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "getAll"
+       ],
+       "resource": [
+        "user"
+       ]
+      }
+     }
+    },
+    {
+     "name": "simple",
+     "displayName": "Simplify",
+     "type": "boolean",
+     "default": true,
+     "description": "Whether to return a simplified version of the response instead of the raw data",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "user"
+       ]
+      }
+     }
+    }
+   ],
+   "usableAsTool": true,
+   "toolDescription": "Read the Google Workspace directory. resource=user: getAll lists people (filters.orgUnitPath, filters.query, filters.domain) with email, name, orgUnitPath, title, department and managerEmail; get returns one by userKey (email or id).",
+   "documentationUrl": "https://developers.google.com/workspace/admin/directory/reference/rest/v1/users/list",
+   "keywords": [
+    "directory",
+    "users",
+    "people",
+    "employees",
+    "org chart",
+    "manager",
+    "admin"
+   ],
+   "credentials": [
+    {
+     "name": "googleApi",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "serviceAccount"
+       ]
+      }
+     }
+    },
+    {
+     "name": "googleOAuth2Api",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "oAuth2"
+       ]
+      }
+     }
+    }
+   ]
   }
  ],
  "credentialTypes": [
@@ -3395,7 +4658,7 @@
    "name": "googleApi",
    "displayName": "Google Service Account",
    "description": "A service account key. Share spreadsheets, files and calendars with the service account's email; Gmail needs domain-wide delegation (Impersonate a User).",
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iI2Y4ZmFmYyIvPgogIDxyZWN0IHg9IjAuNzUiIHk9IjAuNzUiIHdpZHRoPSI0Ni41IiBoZWlnaHQ9IjQ2LjUiIHJ4PSIxMS4yNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjY2JkNWUxIiBzdHJva2Utd2lkdGg9IjEuNSIvPgogIDxwYXRoIGQ9Ik0xMSAyMlYxNmE1IDUgMCAwIDEgNS01aDZ2MTFaIiBmaWxsPSIjNDI4NUY0Ii8+CiAgPHBhdGggZD0iTTI2IDExaDZhNSA1IDAgMCAxIDUgNXY2SDI2WiIgZmlsbD0iI0VBNDMzNSIvPgogIDxwYXRoIGQ9Ik0zNyAyNnY2YTUgNSAwIDAgMS01IDVoLTZWMjZaIiBmaWxsPSIjRkJCQzA0Ii8+CiAgPHBhdGggZD0iTTIyIDM3aC02YTUgNSAwIDAgMS01LTV2LTZoMTFaIiBmaWxsPSIjMzRBODUzIi8+CiAgPGNpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMy4yIiBmaWxsPSIjZjhmYWZjIi8+Cjwvc3ZnPgo=",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyNjIiPjxwYXRoIGZpbGw9IiM0Mjg1ZjQiIGQ9Ik0yNTUuODc4IDEzMy40NTFjMC0xMC43MzQtLjg3MS0xOC41NjctMi43NTYtMjYuNjlIMTMwLjU1djQ4LjQ0OGg3MS45NDdjLTEuNDUgMTIuMDQtOS4yODMgMzAuMTcyLTI2LjY5IDQyLjM1NmwtLjI0NCAxLjYyMmwzOC43NTUgMzAuMDIzbDIuNjg1LjI2OGMyNC42NTktMjIuNzc0IDM4Ljg3NS01Ni4yODIgMzguODc1LTk2LjAyNyIvPjxwYXRoIGZpbGw9IiMzNGE4NTMiIGQ9Ik0xMzAuNTUgMjYxLjFjMzUuMjQ4IDAgNjQuODM5LTExLjYwNSA4Ni40NTMtMzEuNjIybC00MS4xOTYtMzEuOTEzYy0xMS4wMjQgNy42ODgtMjUuODIgMTMuMDU1LTQ1LjI1NyAxMy4wNTVjLTM0LjUyMyAwLTYzLjgyNC0yMi43NzMtNzQuMjY5LTU0LjI1bC0xLjUzMS4xM2wtNDAuMjk4IDMxLjE4N2wtLjUyNyAxLjQ2NUMzNS4zOTMgMjMxLjc5OCA3OS40OSAyNjEuMSAxMzAuNTUgMjYxLjEiLz48cGF0aCBmaWxsPSIjZmJiYzA1IiBkPSJNNTYuMjgxIDE1Ni4zN2MtMi43NTYtOC4xMjMtNC4zNTEtMTYuODI3LTQuMzUxLTI1LjgyYzAtOC45OTQgMS41OTUtMTcuNjk3IDQuMjA2LTI1LjgybC0uMDczLTEuNzNMMTUuMjYgNzEuMzEybC0xLjMzNS42MzVDNS4wNzcgODkuNjQ0IDAgMTA5LjUxNyAwIDEzMC41NXM1LjA3NyA0MC45MDUgMTMuOTI1IDU4LjYwMnoiLz48cGF0aCBmaWxsPSIjZWI0MzM1IiBkPSJNMTMwLjU1IDUwLjQ3OWMyNC41MTQgMCA0MS4wNSAxMC41ODkgNTAuNDc5IDE5LjQzOGwzNi44NDQtMzUuOTc0QzE5NS4yNDUgMTIuOTEgMTY1Ljc5OCAwIDEzMC41NSAwQzc5LjQ5IDAgMzUuMzkzIDI5LjMwMSAxMy45MjUgNzEuOTQ3bDQyLjIxMSAzMi43ODNjMTAuNTktMzEuNDc3IDM5Ljg5MS01NC4yNTEgNzQuNDE0LTU0LjI1MSIvPjwvc3ZnPgo8L3N2Zz4K",
    "documentationUrl": "https://developers.google.com/identity/protocols/oauth2/service-account",
    "properties": [
     {
@@ -3447,7 +4710,7 @@
    "name": "googleOAuth2Api",
    "displayName": "Google OAuth2",
    "description": "Sign in with Google: create an OAuth client (Web application) in Google Cloud, add the redirect URL shown below, then Connect. A refresh token obtained elsewhere (OAuth Playground, gcloud) works too.",
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iI2Y4ZmFmYyIvPgogIDxyZWN0IHg9IjAuNzUiIHk9IjAuNzUiIHdpZHRoPSI0Ni41IiBoZWlnaHQ9IjQ2LjUiIHJ4PSIxMS4yNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjY2JkNWUxIiBzdHJva2Utd2lkdGg9IjEuNSIvPgogIDxwYXRoIGQ9Ik0xMSAyMlYxNmE1IDUgMCAwIDEgNS01aDZ2MTFaIiBmaWxsPSIjNDI4NUY0Ii8+CiAgPHBhdGggZD0iTTI2IDExaDZhNSA1IDAgMCAxIDUgNXY2SDI2WiIgZmlsbD0iI0VBNDMzNSIvPgogIDxwYXRoIGQ9Ik0zNyAyNnY2YTUgNSAwIDAgMS01IDVoLTZWMjZaIiBmaWxsPSIjRkJCQzA0Ii8+CiAgPHBhdGggZD0iTTIyIDM3aC02YTUgNSAwIDAgMS01LTV2LTZoMTFaIiBmaWxsPSIjMzRBODUzIi8+CiAgPGNpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMy4yIiBmaWxsPSIjZjhmYWZjIi8+Cjwvc3ZnPgo=",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyNjIiPjxwYXRoIGZpbGw9IiM0Mjg1ZjQiIGQ9Ik0yNTUuODc4IDEzMy40NTFjMC0xMC43MzQtLjg3MS0xOC41NjctMi43NTYtMjYuNjlIMTMwLjU1djQ4LjQ0OGg3MS45NDdjLTEuNDUgMTIuMDQtOS4yODMgMzAuMTcyLTI2LjY5IDQyLjM1NmwtLjI0NCAxLjYyMmwzOC43NTUgMzAuMDIzbDIuNjg1LjI2OGMyNC42NTktMjIuNzc0IDM4Ljg3NS01Ni4yODIgMzguODc1LTk2LjAyNyIvPjxwYXRoIGZpbGw9IiMzNGE4NTMiIGQ9Ik0xMzAuNTUgMjYxLjFjMzUuMjQ4IDAgNjQuODM5LTExLjYwNSA4Ni40NTMtMzEuNjIybC00MS4xOTYtMzEuOTEzYy0xMS4wMjQgNy42ODgtMjUuODIgMTMuMDU1LTQ1LjI1NyAxMy4wNTVjLTM0LjUyMyAwLTYzLjgyNC0yMi43NzMtNzQuMjY5LTU0LjI1bC0xLjUzMS4xM2wtNDAuMjk4IDMxLjE4N2wtLjUyNyAxLjQ2NUMzNS4zOTMgMjMxLjc5OCA3OS40OSAyNjEuMSAxMzAuNTUgMjYxLjEiLz48cGF0aCBmaWxsPSIjZmJiYzA1IiBkPSJNNTYuMjgxIDE1Ni4zN2MtMi43NTYtOC4xMjMtNC4zNTEtMTYuODI3LTQuMzUxLTI1LjgyYzAtOC45OTQgMS41OTUtMTcuNjk3IDQuMjA2LTI1LjgybC0uMDczLTEuNzNMMTUuMjYgNzEuMzEybC0xLjMzNS42MzVDNS4wNzcgODkuNjQ0IDAgMTA5LjUxNyAwIDEzMC41NXM1LjA3NyA0MC45MDUgMTMuOTI1IDU4LjYwMnoiLz48cGF0aCBmaWxsPSIjZWI0MzM1IiBkPSJNMTMwLjU1IDUwLjQ3OWMyNC41MTQgMCA0MS4wNSAxMC41ODkgNTAuNDc5IDE5LjQzOGwzNi44NDQtMzUuOTc0QzE5NS4yNDUgMTIuOTEgMTY1Ljc5OCAwIDEzMC41NSAwQzc5LjQ5IDAgMzUuMzkzIDI5LjMwMSAxMy45MjUgNzEuOTQ3bDQyLjIxMSAzMi43ODNjMTAuNTktMzEuNDc3IDM5Ljg5MS01NC4yNTEgNzQuNDE0LTU0LjI1MSIvPjwvc3ZnPgo8L3N2Zz4K",
    "documentationUrl": "https://developers.google.com/identity/protocols/oauth2/web-server",
    "properties": [
     {
@@ -3534,5 +4797,11 @@
     "oAuth2Api"
    ]
   }
- ]
+ ],
+ "transports": [
+  "http",
+  "grpc",
+  "mcp"
+ ],
+ "maxConcurrency": 10
 }

@@ -157,6 +157,9 @@ type tokenSource struct {
 	email   string
 	subject string // delegatedEmail
 	key     *rsa.PrivateKey
+	// scopes replaces googleScopes in the assertion (the Directory node asks
+	// only for its own, so domain-wide delegation needs nothing more for the rest).
+	scopes []string
 
 	// OAuth2
 	clientID, clientSecret, refreshToken string
@@ -241,6 +244,28 @@ func oauth2TokenURL(data landflow.CredentialData) string {
 		return u
 	}
 	return strings.TrimSpace(data.StringOr("tokenUrl", defaultTokenURL))
+}
+
+// scopeList is what a service-account token asks for.
+func (ts *tokenSource) scopeList() []string {
+	if len(ts.scopes) > 0 {
+		return ts.scopes
+	}
+	return googleScopes
+}
+
+// narrow makes a service-account token source ask for scopes only and, when
+// subject is set, impersonate subject instead of the credential's delegated
+// user. OAuth2 tokens keep the scopes granted at Connect.
+func (ts *tokenSource) narrow(scopes []string, subject string) {
+	if ts.kind != authServiceAccount {
+		return
+	}
+	if subject = strings.TrimSpace(subject); subject != "" {
+		ts.subject = subject
+	}
+	ts.scopes = scopes
+	ts.cacheKey = cacheKey(ts.cacheKey, strings.Join(scopes, " "), ts.subject)
 }
 
 // renewable reports whether a 401 can be answered with a new token here: not
@@ -383,7 +408,7 @@ func (ts *tokenSource) assertion() (string, error) {
 	iat := now().Unix()
 	claims := map[string]any{
 		"iss":   ts.email,
-		"scope": strings.Join(googleScopes, " "),
+		"scope": strings.Join(ts.scopeList(), " "),
 		"aud":   ts.tokenURL,
 		"iat":   iat,
 		"exp":   iat + int64(jwtLifetime/time.Second),

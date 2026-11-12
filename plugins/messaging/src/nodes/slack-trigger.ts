@@ -1,5 +1,6 @@
 import { defineNode, NodeOperationError, verifySlackSignature, type IWebhookContext, type IWebhookMethodContext, type JsonObject } from '@landflow/sdk';
 import { METRICS } from '../shared';
+import { channelPatterns, matchesAny, SlackLookup, type LookupCache } from '../slack-activity';
 import { slackCall, slackCredentials, type SlackCredentials } from './slack';
 
 /** Events API event types the trigger offers; `*` is every event Slack sends to the Request URL. */
@@ -21,16 +22,16 @@ const EVENTS: Array<{ name: string; value: string; description?: string }> = [
 ];
 
 /** `message` subtypes for an edit or a deletion of an earlier message. */
-const EDIT_SUBTYPES = new Set(['message_changed', 'message_deleted']);
-const DEFAULT_TOLERANCE_SECONDS = 300;
+export const EDIT_SUBTYPES = new Set(['message_changed', 'message_deleted']);
+export const DEFAULT_TOLERANCE_SECONDS = 300;
 
-const NOTICE =
+export const NOTICE =
   'Slack has no API to register an Events subscription. Publish the workflow, copy this node\'s Request URL from the editor\'s Publish menu (App webhooks) into the Slack app\'s ' +
   'Event Subscriptions page (Enable Events), and subscribe to the bot events you picked below. The credential\'s Signing Secret ("Basic Information" page) is required: Landflow ' +
   'verifies every call with it and answers Slack\'s URL verification.';
 
-const asObject = (value: unknown): JsonObject | undefined => (value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonObject) : undefined);
-const asString = (value: unknown): string | undefined => (typeof value === 'string' && value ? value : undefined);
+export const asObject = (value: unknown): JsonObject | undefined => (value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonObject) : undefined);
+export const asString = (value: unknown): string | undefined => (typeof value === 'string' && value ? value : undefined);
 const idOf = (value: unknown): string | undefined => asString(value) ?? asString(asObject(value)?.id);
 
 /** The channel an event is about: messages and mentions `channel`, reactions `item.channel`, channel_created `channel.id`, file_shared `channel_id`. */
@@ -44,7 +45,7 @@ export function userOf(event: JsonObject): string | undefined {
 }
 
 /** Written by a bot or integration: `bot_id`, subtype `bot_message`, or one of the app's own users (also inside an edited message). */
-function isBotEvent(event: JsonObject, own: Set<string>): boolean {
+export function isBotEvent(event: JsonObject, own: Set<string>): boolean {
   const message = asObject(event.message);
   const user = userOf(event);
   return Boolean(event.bot_id) || event.subtype === 'bot_message' || Boolean(message?.bot_id) || message?.subtype === 'bot_message' || (user !== undefined && own.has(user));
@@ -56,12 +57,33 @@ const channelList = (value: unknown): string[] =>
     .map((id) => id.trim())
     .filter(Boolean);
 
-const credentialsOf = (ctx: IWebhookContext | IWebhookMethodContext) => slackCredentials(ctx, ctx.getNodeParameter('authentication', 'accessToken'));
+export const credentialsOf = (ctx: IWebhookContext | IWebhookMethodContext) => slackCredentials(ctx, ctx.getNodeParameter('authentication', 'accessToken'));
 
-interface TriggerStatic extends JsonObject {
+export interface TriggerStatic extends JsonObject {
   url: string;
   teamId: string;
   botUserId: string;
+}
+
+/** Channel names and user emails looked up for the name filter and activity items, kept in the static data as `lookups`. */
+export const storedLookups = (data: JsonObject): LookupCache | undefined => (asObject(data.lookups) as LookupCache | undefined);
+
+/**
+ * Checks a call's Slack signature with the credential's Signing Secret: undefined when it is valid, else the 401 to
+ * answer. Shared with the Slack Activity Trigger.
+ */
+export function rejectUnsigned(ctx: IWebhookContext, credentials: SlackCredentials): { response: { status: number; json: JsonObject } } | undefined {
+  const options = (ctx.getNodeParameter<JsonObject>('options', {}) ?? {}) as JsonObject;
+  const tolerance = Number(options.tolerance ?? DEFAULT_TOLERANCE_SECONDS);
+  const secret = String(credentials.signingSecret ?? '').trim();
+  const signed =
+    secret !== '' &&
+    verifySlackSignature(secret, ctx.getRawBody(), ctx.getHeader('x-slack-request-timestamp'), ctx.getHeader('x-slack-signature'), {
+      toleranceSeconds: Number.isFinite(tolerance) && tolerance >= 0 ? tolerance : DEFAULT_TOLERANCE_SECONDS,
+    });
+  if (signed) return undefined;
+  ctx.logger.warn(secret ? 'rejected a call with a missing, invalid or stale Slack signature' : 'rejected a call: the Slack credential has no Signing Secret');
+  return { response: { status: 401, json: { error: 'invalid signature' } } };
 }
 
 export const SlackTrigger = defineNode({
@@ -122,6 +144,14 @@ export const SlackTrigger = defineNode({
         placeholder: 'C0123456789, C0987654321',
         description: 'Channel IDs, comma-separated (the channel\'s "Copy channel ID"). Events without a channel (new members, profile changes) do not match.',
         displayOptions: { show: { watchWorkspace: [false] } },
+      },
+      {
+        name: 'channelNames',
+        displayName: 'Channel Name Filter',
+        type: 'string',
+        default: '',
+        placeholder: 'customer-*, proj-*',
+        description: 'Only events in channels whose name matches one of these patterns (* any characters, ? one; comma-separated). The names are looked up (conversations.info, cached) and need channels:read. Empty: no name filter.',
       },
       {
         name: 'ignoreBots',
@@ -192,18 +222,8 @@ export const SlackTrigger = defineNode({
   },
   async webhook(ctx) {
     const credentials: SlackCredentials = credentialsOf(ctx);
-    const options = (ctx.getNodeParameter<JsonObject>('options', {}) ?? {}) as JsonObject;
-    const tolerance = Number(options.tolerance ?? DEFAULT_TOLERANCE_SECONDS);
-    const secret = String(credentials.signingSecret ?? '').trim();
-    const signed =
-      secret !== '' &&
-      verifySlackSignature(secret, ctx.getRawBody(), ctx.getHeader('x-slack-request-timestamp'), ctx.getHeader('x-slack-signature'), {
-        toleranceSeconds: Number.isFinite(tolerance) && tolerance >= 0 ? tolerance : DEFAULT_TOLERANCE_SECONDS,
-      });
-    if (!signed) {
-      ctx.logger.warn(secret ? 'rejected a call with a missing, invalid or stale Slack signature' : 'rejected a call: the Slack credential has no Signing Secret');
-      return { response: { status: 401, json: { error: 'invalid signature' } } };
-    }
+    const rejected = rejectUnsigned(ctx, credentials);
+    if (rejected) return rejected;
 
     const body = ctx.getBody<JsonObject>();
     if (body?.type === 'url_verification') return { response: { status: 200, json: { challenge: String(body.challenge ?? '') } } };
@@ -231,6 +251,15 @@ export const SlackTrigger = defineNode({
     if (ctx.getNodeParameter<boolean>('watchWorkspace', true) === false) {
       const wanted = channelList(ctx.getNodeParameter('channelIds', ''));
       if (!channel || !wanted.includes(channel)) return ignored('channel');
+    }
+    const names = channelPatterns(ctx.getNodeParameter('channelNames', ''));
+    if (names.length) {
+      if (!channel) return ignored('channel');
+      const stored = ctx.getStaticData<TriggerStatic>();
+      const lookup = new SlackLookup({ http: ctx.http, metrics: ctx.metrics }, credentials, (m) => ctx.logger.warn(m), storedLookups(stored));
+      const info = await lookup.channel(channel);
+      if (lookup.changed) ctx.setStaticData({ ...stored, lookups: lookup.cache });
+      if (!info || !matchesAny(info.name, names)) return ignored('channel');
     }
 
     const message = asObject(event.message);

@@ -284,6 +284,12 @@ shows up in the ledger and can start other flows.
 - **Reports** take custom kinds in the `kinds` filter. `groupBy=attr&groupAttr=team` gives "tickets moved per team",
   and `attr.team=billing` keeps matching events. Both read the raw events (the daily rollups keep no attributes), so
   they reach back `USAGE_RETENTION_DAYS`; the rollups themselves count a custom kind like any other.
+- **The `work.*` kinds** the activity integrations suggest (`work.discussion`, `work.doc_edited`, `work.meeting_held`,
+  `work.deal_moved`…) are catalogued in `deploy/brain/work-kinds.json` with one shared set of fields (`source`,
+  `sourceId`, `url`, `actor`, `title`, `summary`, `team`, `initiative`, `customer`, `occurredAt`). `pnpm brain:work-kinds
+  [url]` declares them all on an instance (again: it updates them), signing in with `LANDFLOW_API_KEY` or the owner in
+  `LANDFLOW_OWNER_EMAIL` / `LANDFLOW_OWNER_PASSWORD`. The [work ingest templates](features/integrations.md#work-ingest-templates)
+  record into them.
 
 #### Flow detectors
 

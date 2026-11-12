@@ -28,6 +28,7 @@ func TestManifest(t *testing.T) {
 		"googleSheets": landflow.KindAction, "googleSheetsTrigger": landflow.KindTrigger,
 		"gmail": landflow.KindAction, "gmailTrigger": landflow.KindTrigger,
 		"googleDrive": landflow.KindAction, "googleCalendar": landflow.KindAction, "googleDocs": landflow.KindAction,
+		"googleDriveTrigger": landflow.KindTrigger, "googleCalendarTrigger": landflow.KindTrigger, "googleDirectory": landflow.KindAction,
 	}
 	if len(m.Nodes) != len(want) {
 		t.Errorf("%d nodes, want %d", len(m.Nodes), len(want))

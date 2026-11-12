@@ -1,0 +1,5 @@
+{
+  "id": "attio",
+  "runtime": "node",
+  "start": ["tsx", "src/main.ts"]
+}

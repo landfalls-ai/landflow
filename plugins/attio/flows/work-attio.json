@@ -1,0 +1,188 @@
+{
+  "kind": "landflow/template",
+  "version": 1,
+  "template": {
+    "name": "Deals and notes from Attio into the second brain",
+    "description": "Deals that move or are won, records that change, and notes and tasks in Attio become work.deal_moved, work.deal_won, work.discussion and work.action_item events, keeping each deal’s company as a customer in the second brain.",
+    "categories": [
+      "productivity",
+      "data"
+    ],
+    "credentials": [
+      {
+        "id": "attio",
+        "type": "attio.attioApi",
+        "name": "Attio",
+        "description": "A workspace access token with read access to records, lists and notes, and webhook write access."
+      }
+    ],
+    "setup": [
+      "Pick or add the Attio credential: a workspace access token (Attio sends webhooks to HTTPS addresses only, so Landflow must be reachable over HTTPS).",
+      "Choose the events and objects in the trigger (default: companies, people and deals), and in its options the stages that mean won.",
+      "Publishing registers the webhook in Attio; unpublishing removes it.",
+      "Declare the work kinds once with `pnpm brain:work-kinds` (or leave **Declare Kind If New** on in **Record work event**).",
+      "Publish the workflow; the events show in **Insights**, the customers and initiatives in **What Landflow knows**."
+    ],
+    "dataTables": [],
+    "workflow": {
+      "id": "",
+      "name": "Deals and notes from Attio into the second brain",
+      "description": "Deals that move or are won, records that change, and notes and tasks in Attio become work.deal_moved, work.deal_won, work.discussion and work.action_item events, keeping each deal’s company as a customer in the second brain.",
+      "nodes": [
+        {
+          "id": "trigger",
+          "name": "Attio Trigger",
+          "type": "attio.attioTrigger",
+          "typeVersion": 1,
+          "position": [
+            0,
+            0
+          ],
+          "parameters": {
+            "objects": "companies,people,deals"
+          },
+          "credentials": {
+            "attioApi": {
+              "id": "attio",
+              "name": "Attio"
+            }
+          }
+        },
+        {
+          "id": "record",
+          "name": "Record work event",
+          "type": "core.recordEvent",
+          "typeVersion": 1,
+          "position": [
+            260,
+            -160
+          ],
+          "parameters": {
+            "kind": "{{ $json.kind }}",
+            "attributes": "{{ ({ source: $json.source, sourceId: $json.sourceId, url: $json.url, actor: $json.actorEmail, title: $json.title, summary: $json.summary, team: $json.teamHint, initiative: $json.initiativeHint, customer: $json.customerHint, occurredAt: $json.occurredAt }) }}",
+            "declareIfNew": true,
+            "message": "{{ $json.title }}"
+          }
+        },
+        {
+          "id": "hasCustomer",
+          "name": "Names a customer?",
+          "type": "core.if",
+          "typeVersion": 1,
+          "position": [
+            260,
+            20
+          ],
+          "parameters": {
+            "conditions": {
+              "condition": [
+                {
+                  "left": "{{ $json.customerHint }}",
+                  "operator": "isNotEmpty",
+                  "right": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "customer",
+          "name": "Keep the customer",
+          "type": "core.brainEntity",
+          "typeVersion": 1,
+          "position": [
+            520,
+            20
+          ],
+          "parameters": {
+            "operation": "upsert",
+            "type": "customer",
+            "entityId": "{{ String($json.customerHint).toLowerCase().replace(/[^a-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) }}",
+            "name": "{{ $json.customerHint }}",
+            "attributes": "{{ ({ lastSource: $json.source, lastSeenAt: $json.occurredAt }) }}"
+          }
+        },
+        {
+          "id": "hasInitiative",
+          "name": "Part of an initiative?",
+          "type": "core.if",
+          "typeVersion": 1,
+          "position": [
+            260,
+            200
+          ],
+          "parameters": {
+            "conditions": {
+              "condition": [
+                {
+                  "left": "{{ $json.initiativeHint }}",
+                  "operator": "isNotEmpty",
+                  "right": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "initiative",
+          "name": "Keep the initiative",
+          "type": "core.brainEntity",
+          "typeVersion": 1,
+          "position": [
+            520,
+            200
+          ],
+          "parameters": {
+            "operation": "upsert",
+            "type": "initiative",
+            "entityId": "{{ String($json.initiativeHint).toLowerCase().replace(/[^a-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) }}",
+            "name": "{{ $json.initiativeHint }}",
+            "attributes": "{{ ({ lastSource: $json.source, lastSeenAt: $json.occurredAt }) }}"
+          }
+        }
+      ],
+      "connections": [
+        {
+          "id": "c1",
+          "type": "main",
+          "source": "trigger",
+          "sourceIndex": 0,
+          "target": "record",
+          "targetIndex": 0
+        },
+        {
+          "id": "c2",
+          "type": "main",
+          "source": "trigger",
+          "sourceIndex": 0,
+          "target": "hasCustomer",
+          "targetIndex": 0
+        },
+        {
+          "id": "c3",
+          "type": "main",
+          "source": "hasCustomer",
+          "sourceIndex": 0,
+          "target": "customer",
+          "targetIndex": 0
+        },
+        {
+          "id": "c4",
+          "type": "main",
+          "source": "trigger",
+          "sourceIndex": 0,
+          "target": "hasInitiative",
+          "targetIndex": 0
+        },
+        {
+          "id": "c5",
+          "type": "main",
+          "source": "hasInitiative",
+          "sourceIndex": 0,
+          "target": "initiative",
+          "targetIndex": 0
+        }
+      ]
+    }
+  }
+}

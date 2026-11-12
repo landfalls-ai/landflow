@@ -45,7 +45,7 @@ describe('manifest', () => {
   function check(manifest: PluginManifest) {
     expect(manifestSchema.safeParse(manifest).success).toBe(true);
     expect(manifest.plugin).toMatchObject({ id: 'messaging', name: 'Messaging', color: '#229ED9', language: 'typescript' });
-    expect(manifest.nodes.map((n) => n.name)).toEqual(['telegram', 'telegramTrigger', 'slack', 'slackTrigger', 'discord', 'whatsApp', 'twilio', 'emailSend']);
+    expect(manifest.nodes.map((n) => n.name)).toEqual(['telegram', 'telegramTrigger', 'slack', 'slackTrigger', 'slackActivityTrigger', 'discord', 'whatsApp', 'twilio', 'emailSend']);
     for (const icon of [manifest.plugin.icon, ...manifest.nodes.map((n) => n.icon), ...(manifest.credentialTypes ?? []).map((c) => c.icon)]) {
       expect(icon).toMatch(/^data:image\/svg\+xml;base64,/);
     }
@@ -77,7 +77,10 @@ describe('manifest', () => {
       'telegram.get',
       'slack.getAll',
       'slack.getByEmail',
+      'slack.getAll',
       'slack.get',
+      'slack.get',
+      'slack.getManySince',
       'slack.getPermalink',
       'discord.getAll',
       'whatsApp.get',

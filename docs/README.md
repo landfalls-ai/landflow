@@ -99,6 +99,8 @@ how to run it and how to change it. The [project README](../README.md) has the q
   [02-n8n-workflow-engine.md](research/02-n8n-workflow-engine.md),
   [03-n8n-ai-agents.md](research/03-n8n-ai-agents.md),
   [04-n8n-integrations.md](research/04-n8n-integrations.md): the n8n research that drove the design.
+- [research/company-brain-next-sources.md](research/company-brain-next-sources.md): what the Company Brain's P1 and P2
+  sources (Base44 Report Scheduler, the Brandlight platform, Shapes, Clay, Mesh, Scytale, Microsoft 365) would need.
 - [reports/Workflow platform feature gaps.md](<../reports/Workflow platform feature gaps.md>) and its notes in
   [research_notes/](<../research_notes/Workflow platform feature gaps>): the 2026 comparison with other workflow
   platforms that the roadmap's waves came from.
@@ -115,7 +117,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | [packages/cli](../packages/cli/README.md) | every `landflow` command and its JSON output |
 | [services/landflow-bridge](../services/landflow-bridge/README.md) | broker kinds for plugins whose SDK lacks a driver |
 | [plugins/text-toolkit](../plugins/text-toolkit/README.md), [py-insights](../plugins/py-insights/README.md), [go-crypto](../plugins/go-crypto/README.md) | the example plugins, one per SDK |
-| [plugins/messaging](../plugins/messaging/README.md), [productivity](../plugins/productivity/README.md), [google-workspace](../plugins/google-workspace/README.md), [databases](../plugins/databases/README.md), [github](../plugins/github/README.md), [browser](../plugins/browser/README.md), [web-search](../plugins/web-search/README.md) | the integration plugins |
+| [plugins/messaging](../plugins/messaging/README.md), [productivity](../plugins/productivity/README.md), [google-workspace](../plugins/google-workspace/README.md), [databases](../plugins/databases/README.md), [github](../plugins/github/README.md), [browser](../plugins/browser/README.md), [web-search](../plugins/web-search/README.md), [linear](../plugins/linear/README.md), [attio](../plugins/attio/README.md), [fathom](../plugins/fathom/README.md) | the integration plugins |
 | [research/json-render-verdict](research/json-render-verdict.md), [ai-sdk-verdict](research/ai-sdk-verdict.md), [just-bash-verdict](research/just-bash-verdict.md) | what each Vercel open-source prototype showed and whether to keep it (all three stay as flags) |
 | [research/workflow-sdk-spike](research/workflow-sdk-spike.md) | a test of Vercel's Workflow SDK as a home for runs: events per node, replay cost, crash recovery |
 | [plugins/triage](../plugins/triage/README.md), [landfall](../plugins/landfall/README.md), [threat-intel](../plugins/threat-intel/README.md) | the triage plugins ([triage.md](triage.md)) |

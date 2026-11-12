@@ -70,6 +70,8 @@ func folderProperty(name, displayName, description string, d *landflow.DisplayOp
 func (DriveNode) Description() landflow.NodeDescriptor {
 	search := show("fileFolder", "search")
 	paging := returnAllLimit(search, 50, 1000)
+	changed := show("file", "changesSince")
+	changedPaging := returnAllLimit(changed, 50, 1000)
 	return landflow.NodeDescriptor{
 		Name:             "googleDrive",
 		DisplayName:      "Google Drive",
@@ -91,7 +93,8 @@ func (DriveNode) Description() landflow.NodeDescriptor {
 			"(queryString) or Drive query syntax; resource=file: upload creates a file from fileContent text, " +
 			"download returns `content` (text, or base64 for binary files, max 10 MB) or, with downloadAs=binary, the file as the item's binary data; " +
 			"export converts a Google Doc/Sheet/Slides to a binary file (exportFormat pdf, docx, xlsx…); upload with uploadFrom=binary " +
-			"sends the input item's binary file; deleteFile trashes fileId; " +
+			"sends the input item's binary file; deleteFile trashes fileId; getItem returns a file as an activity item with its text; " +
+			"changesSince lists files changed after `since` (an ISO time or a cursor) as activity items; " +
 			"resource=folder, operation=create makes a folder.",
 
 		Properties: []landflow.PropertyDescriptor{
@@ -105,6 +108,10 @@ func (DriveNode) Description() landflow.NodeDescriptor {
 				landflow.PropertyOption{Name: "Delete", Value: "deleteFile", Description: "Move a file to the trash, or delete it permanently", Action: "Delete a file"},
 				landflow.PropertyOption{Name: "Download", Value: "download", Description: "Download a file's content as text or as a binary file", Action: "Download a file", Idempotent: true},
 				landflow.PropertyOption{Name: "Export", Value: "export", Description: "Export a Google Doc, Sheet, Slides or Drawing as a file (PDF, Word, Excel…)", Action: "Export a Google file", Idempotent: true},
+				landflow.PropertyOption{Name: "Get Item", Value: "getItem", Description: "One file as an activity item, with the full text of a Google Doc or text file", Action: "Get a file as an activity item", Idempotent: true,
+					OutputSchema: activityWithTextSchema("The full text of a Google Doc or a text file (up to 10 MB); empty for other files")},
+				landflow.PropertyOption{Name: "Get Many Changed Since", Value: "changesSince", Description: "Files changed after a time or a cursor, as activity items (oldest first)", Action: "Get files changed since", Idempotent: true,
+					OutputSchema: landflow.ActivityItemSchema()},
 				landflow.PropertyOption{Name: "Upload", Value: "upload", Description: "Upload a file", Action: "Upload a file"},
 			),
 			operationProperty("fileFolder", "search",
@@ -144,7 +151,17 @@ func (DriveNode) Description() landflow.NodeDescriptor {
 
 			// File → Download / Delete
 			{Name: "fileId", DisplayName: "File ID", Type: landflow.PropString, Default: "", Required: true,
-				Description: "ID or link of the file", DisplayOptions: show("file", "download", "deleteFile", "export")},
+				Description: "ID or link of the file", DisplayOptions: show("file", "download", "deleteFile", "export", "getItem")},
+
+			// File → Get Many Changed Since, Get Item
+			{Name: "since", DisplayName: "Since", Type: landflow.PropString, Default: "",
+				Placeholder: "2026-11-12T08:00:00Z", DisplayOptions: changed,
+				Description: "Files changed after this ISO time, or after a cursor from an earlier item (a changes-feed page token). Empty: the last 24 hours."},
+			{Name: "sharedDrives", DisplayName: "Include Shared Drives", Type: landflow.PropBoolean, Default: true, DisplayOptions: changed,
+				Description: "Whether files in shared drives the account is a member of are included"},
+			changedPaging[0],
+			changedPaging[1],
+			driveActivityOptions(show("file", "changesSince", "getItem")),
 			{Name: "downloadAs", DisplayName: "Return Content As", Type: landflow.PropOptions, Default: "json",
 				Options: []landflow.PropertyOption{
 					{Name: "Text or Base64 (in the JSON)", Value: "json", Description: "`content` in the item, up to 10 MB"},
@@ -231,6 +248,10 @@ func (DriveNode) Execute(ctx *landflow.ExecuteContext) ([][]landflow.Item, error
 			}
 		case "file.export":
 			err = d.exportBinary(i, &out)
+		case "file.changesSince":
+			results, err = d.changesSince(i)
+		case "file.getItem":
+			results, err = one(d.getItem(i))
 		case "file.deleteFile":
 			results, err = one(d.delete(i))
 		case "folder.create":

@@ -1,0 +1,882 @@
+{
+ "protocol": "landflow.plugin/v1",
+ "plugin": {
+  "language": "typescript",
+  "sdk": {
+   "name": "landflow-sdk-typescript",
+   "version": "0.2.0"
+  },
+  "id": "fathom",
+  "name": "Fathom",
+  "version": "0.1.0",
+  "description": "Fathom meetings as activity items: a new-meeting webhook trigger, meetings since a time, summaries, action items and opt-in transcripts, teams and users",
+  "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8IS0tIG9yaWdpbmFsIGdseXBoOiBhIHJlY29yZGluZyBkb3Qgb3ZlciB0aHJlZSBub3RlIGxpbmVzIC0tPgogIDxjaXJjbGUgY3g9IjE2IiBjeT0iMTciIHI9IjQuNSIgZmlsbD0iIzAwYjM4NiIvPgogIDxyZWN0IHg9IjI1IiB5PSIxNC41IiB3aWR0aD0iMTIiIGhlaWdodD0iNSIgcng9IjIuNSIgZmlsbD0iIzAwYjM4NiIvPgogIDxyZWN0IHg9IjExIiB5PSIyNS41IiB3aWR0aD0iMjYiIGhlaWdodD0iNCIgcng9IjIiIGZpbGw9IiMxZjI5MzciLz4KICA8cmVjdCB4PSIxMSIgeT0iMzMiIHdpZHRoPSIxOCIgaGVpZ2h0PSI0IiByeD0iMiIgZmlsbD0iIzFmMjkzNyIvPgo8L3N2Zz4K",
+  "color": "#00b386",
+  "author": "Landflow"
+ },
+ "nodes": [
+  {
+   "name": "fathom",
+   "displayName": "Fathom",
+   "description": "Read Fathom meetings (summary, action items, opt-in transcript) as activity items, plus teams, team members and users",
+   "version": 1,
+   "kind": "action",
+   "categories": [
+    "Productivity"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8IS0tIG9yaWdpbmFsIGdseXBoOiBhIHJlY29yZGluZyBkb3Qgb3ZlciB0aHJlZSBub3RlIGxpbmVzIC0tPgogIDxjaXJjbGUgY3g9IjE2IiBjeT0iMTciIHI9IjQuNSIgZmlsbD0iIzAwYjM4NiIvPgogIDxyZWN0IHg9IjI1IiB5PSIxNC41IiB3aWR0aD0iMTIiIGhlaWdodD0iNSIgcng9IjIuNSIgZmlsbD0iIzAwYjM4NiIvPgogIDxyZWN0IHg9IjExIiB5PSIyNS41IiB3aWR0aD0iMjYiIGhlaWdodD0iNCIgcng9IjIiIGZpbGw9IiMxZjI5MzciLz4KICA8cmVjdCB4PSIxMSIgeT0iMzMiIHdpZHRoPSIxOCIgaGVpZ2h0PSI0IiByeD0iMiIgZmlsbD0iIzFmMjkzNyIvPgo8L3N2Zz4K",
+   "color": "#00b386",
+   "subtitle": "{{resource}}: {{operation}}",
+   "documentationUrl": "https://developers.fathom.ai/api-overview",
+   "keywords": [
+    "fathom",
+    "meeting",
+    "notes",
+    "transcript",
+    "summary",
+    "action items",
+    "recorder",
+    "activity"
+   ],
+   "usableAsTool": true,
+   "inputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "credentials": [
+    {
+     "name": "fathomApi",
+     "required": true
+    }
+   ],
+   "properties": [
+    {
+     "name": "resource",
+     "displayName": "Resource",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "meeting",
+     "options": [
+      {
+       "name": "Meeting",
+       "value": "meeting"
+      },
+      {
+       "name": "Meeting Type",
+       "value": "meetingType"
+      },
+      {
+       "name": "Recording",
+       "value": "recording"
+      },
+      {
+       "name": "Team",
+       "value": "team"
+      },
+      {
+       "name": "Team Member",
+       "value": "teamMember"
+      },
+      {
+       "name": "User",
+       "value": "user"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "getAll",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "meetingType"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Get Many",
+       "value": "getAll",
+       "action": "Get many meeting types",
+       "idempotent": true
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "getSummary",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "recording"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Get Summary",
+       "value": "getSummary",
+       "description": "The summary of one recording",
+       "action": "Get a recording summary",
+       "idempotent": true
+      },
+      {
+       "name": "Get Transcript",
+       "value": "getTranscript",
+       "description": "The transcript of one recording (needs Include Transcript on)",
+       "action": "Get a recording transcript",
+       "idempotent": true
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "getAll",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "team"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Get Many",
+       "value": "getAll",
+       "action": "Get many teams",
+       "idempotent": true
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "getAll",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "teamMember"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Get Many",
+       "value": "getAll",
+       "description": "Members of your teams, with their email addresses",
+       "action": "Get many team members",
+       "idempotent": true
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "getAll",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "user"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Get Many",
+       "value": "getAll",
+       "description": "The account's users (admin API keys only)",
+       "action": "Get many users",
+       "idempotent": true
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "getManySince",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "meeting"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Get",
+       "value": "get",
+       "description": "One meeting as an activity item, with its text (summary, action items, transcript only on request). Fathom has no get-by-id endpoint: the meeting is found in the list.",
+       "action": "Get a meeting",
+       "idempotent": true,
+       "outputSchema": {
+        "type": "object",
+        "properties": {
+         "source": {
+          "type": "string",
+          "description": "The tool, lowercase: slack, google-drive, google-calendar, notion, …"
+         },
+         "sourceId": {
+          "type": "string",
+          "description": "Stable id of the change, '<source>:<tool ids>': the same change always has the same id, so a replay is recognised"
+         },
+         "url": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Where a person opens it"
+         },
+         "actorEmail": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Email of the person who made the change, lowercase; null when the tool doesn't say"
+         },
+         "occurredAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When it happened, ISO 8601 in UTC with milliseconds"
+         },
+         "kind": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+          "description": "Suggested event kind, such as work.discussion or work.doc_edited; a flow may change it"
+         },
+         "title": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "One line: the document, ticket or meeting title, or the channel and first words"
+         },
+         "summary": {
+          "type": "string",
+          "maxLength": 600,
+          "description": "The text, whitespace collapsed, at most 600 characters"
+         },
+         "teamHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The team it seems to belong to, from the tool's own grouping, when there is one"
+         },
+         "initiativeHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The project or initiative it seems to belong to, when there is one"
+         },
+         "customerHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The customer it is about, when there is one (a #customer-<name> channel, a CRM company…)"
+         },
+         "raw": {
+          "type": "object",
+          "description": "The tool's own object, trimmed: long strings clipped, long lists cut, deep nesting dropped"
+         },
+         "cursor": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Pass it back as Since to continue after this item (List Changed Since operations)"
+         },
+         "text": {
+          "type": "string",
+          "description": "Summary, action items and (with Include Transcript) the transcript"
+         }
+        },
+        "required": [
+         "source",
+         "sourceId",
+         "url",
+         "actorEmail",
+         "occurredAt",
+         "kind",
+         "title",
+         "summary",
+         "teamHint",
+         "initiativeHint",
+         "customerHint",
+         "raw"
+        ],
+        "additionalProperties": false
+       }
+      },
+      {
+       "name": "Get Many Changed Since",
+       "value": "getManySince",
+       "description": "Meetings created after a time or cursor, as activity items, oldest first",
+       "action": "Get meetings since a time",
+       "idempotent": true,
+       "outputSchema": {
+        "type": "object",
+        "properties": {
+         "source": {
+          "type": "string",
+          "description": "The tool, lowercase: slack, google-drive, google-calendar, notion, …"
+         },
+         "sourceId": {
+          "type": "string",
+          "description": "Stable id of the change, '<source>:<tool ids>': the same change always has the same id, so a replay is recognised"
+         },
+         "url": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Where a person opens it"
+         },
+         "actorEmail": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Email of the person who made the change, lowercase; null when the tool doesn't say"
+         },
+         "occurredAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When it happened, ISO 8601 in UTC with milliseconds"
+         },
+         "kind": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+          "description": "Suggested event kind, such as work.discussion or work.doc_edited; a flow may change it"
+         },
+         "title": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "One line: the document, ticket or meeting title, or the channel and first words"
+         },
+         "summary": {
+          "type": "string",
+          "maxLength": 600,
+          "description": "The text, whitespace collapsed, at most 600 characters"
+         },
+         "teamHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The team it seems to belong to, from the tool's own grouping, when there is one"
+         },
+         "initiativeHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The project or initiative it seems to belong to, when there is one"
+         },
+         "customerHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The customer it is about, when there is one (a #customer-<name> channel, a CRM company…)"
+         },
+         "raw": {
+          "type": "object",
+          "description": "The tool's own object, trimmed: long strings clipped, long lists cut, deep nesting dropped"
+         },
+         "cursor": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Pass it back as Since to continue after this item (List Changed Since operations)"
+         }
+        },
+        "required": [
+         "source",
+         "sourceId",
+         "url",
+         "actorEmail",
+         "occurredAt",
+         "kind",
+         "title",
+         "summary",
+         "teamHint",
+         "initiativeHint",
+         "customerHint",
+         "raw"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ]
+    },
+    {
+     "name": "recordingId",
+     "displayName": "Recording ID",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "meeting",
+        "recording"
+       ],
+       "operation": [
+        "get",
+        "getSummary",
+        "getTranscript"
+       ]
+      }
+     },
+     "description": "The meeting's recording_id (the number in fathom:meeting:<id>)"
+    },
+    {
+     "name": "includeTranscript",
+     "displayName": "Include Transcript",
+     "type": "boolean",
+     "default": false,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "recording"
+       ],
+       "operation": [
+        "getTranscript"
+       ]
+      }
+     },
+     "description": "Transcripts are private by default: turn this on to read it"
+    },
+    {
+     "name": "since",
+     "displayName": "Since",
+     "type": "string",
+     "default": "",
+     "placeholder": "2026-11-12T08:00:00Z",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "meeting"
+       ],
+       "operation": [
+        "getManySince"
+       ]
+      }
+     },
+     "description": "Meetings created after this ISO time or a cursor from an earlier item. Empty: the last 24 hours."
+    },
+    {
+     "name": "returnAll",
+     "displayName": "Return All",
+     "type": "boolean",
+     "default": false,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "meeting",
+        "meetingType",
+        "team",
+        "teamMember",
+        "user"
+       ],
+       "operation": [
+        "getAll",
+        "getManySince"
+       ]
+      }
+     }
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 50,
+     "typeOptions": {
+      "minValue": 1
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "meeting",
+        "meetingType",
+        "team",
+        "teamMember",
+        "user"
+       ],
+       "operation": [
+        "getAll",
+        "getManySince"
+       ],
+       "returnAll": [
+        false
+       ]
+      }
+     }
+    },
+    {
+     "name": "meetingOptions",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add option",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "meeting"
+       ],
+       "operation": [
+        "getManySince",
+        "get"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "includeTranscript",
+       "displayName": "Include Transcript",
+       "type": "boolean",
+       "default": false,
+       "description": "Whether the transcript is read and added (to Get's text and to raw). Off by default: transcripts are private and Fathom rate-limits them harder."
+      },
+      {
+       "name": "includeSummary",
+       "displayName": "Include Summary",
+       "type": "boolean",
+       "default": true,
+       "description": "Whether summaries are read (they count as heavy calls: 30 a minute)"
+      },
+      {
+       "name": "recordedBy",
+       "displayName": "Recorded By",
+       "type": "string",
+       "default": "",
+       "placeholder": "dana@acme.com",
+       "description": "Only meetings recorded by these emails (comma-separated)"
+      },
+      {
+       "name": "teams",
+       "displayName": "Teams",
+       "type": "string",
+       "default": "",
+       "description": "Only meetings of these teams (comma-separated names)"
+      },
+      {
+       "name": "createdBefore",
+       "displayName": "Created Before",
+       "type": "string",
+       "default": "",
+       "description": "Only meetings created before this ISO time (Get: narrows the search)"
+      },
+      {
+       "name": "internalDomains",
+       "displayName": "Internal Domains",
+       "type": "string",
+       "default": "",
+       "placeholder": "acme.com, acme.io",
+       "description": "Email domains that are your own. The customerHint is the first invitee outside them. Empty: the recorder's own domain."
+      },
+      {
+       "name": "actionItemItems",
+       "displayName": "Also Output One Item per Action Item",
+       "type": "boolean",
+       "default": false,
+       "description": "Whether each action item becomes its own activity item (kind work.action_item, assignee as actorEmail) after its meeting's item"
+      }
+     ]
+    },
+    {
+     "name": "teamName",
+     "displayName": "Team",
+     "type": "string",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "teamMember"
+       ],
+       "operation": [
+        "getAll"
+       ]
+      }
+     },
+     "description": "Only members of this team (name). Empty: all."
+    }
+   ]
+  },
+  {
+   "name": "fathomTrigger",
+   "displayName": "Fathom Trigger",
+   "description": "Starts the workflow when a Fathom meeting's content is ready, with the meeting (and optionally its action items) as activity items",
+   "version": 1,
+   "kind": "trigger",
+   "triggerSource": "appWebhook",
+   "categories": [
+    "Productivity"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8IS0tIG9yaWdpbmFsIGdseXBoOiBhIHJlY29yZGluZyBkb3Qgb3ZlciB0aHJlZSBub3RlIGxpbmVzIC0tPgogIDxjaXJjbGUgY3g9IjE2IiBjeT0iMTciIHI9IjQuNSIgZmlsbD0iIzAwYjM4NiIvPgogIDxyZWN0IHg9IjI1IiB5PSIxNC41IiB3aWR0aD0iMTIiIGhlaWdodD0iNSIgcng9IjIuNSIgZmlsbD0iIzAwYjM4NiIvPgogIDxyZWN0IHg9IjExIiB5PSIyNS41IiB3aWR0aD0iMjYiIGhlaWdodD0iNCIgcng9IjIiIGZpbGw9IiMxZjI5MzciLz4KICA8cmVjdCB4PSIxMSIgeT0iMzMiIHdpZHRoPSIxOCIgaGVpZ2h0PSI0IiByeD0iMiIgZmlsbD0iIzFmMjkzNyIvPgo8L3N2Zz4K",
+   "color": "#00b386",
+   "subtitle": "{{triggeredFor}}",
+   "documentationUrl": "https://developers.fathom.ai/webhooks",
+   "keywords": [
+    "fathom",
+    "trigger",
+    "webhook",
+    "meeting",
+    "notes",
+    "action items",
+    "activity"
+   ],
+   "inputs": [],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputSchema": {
+    "type": "object",
+    "properties": {
+     "source": {
+      "type": "string",
+      "description": "The tool, lowercase: slack, google-drive, google-calendar, notion, …"
+     },
+     "sourceId": {
+      "type": "string",
+      "description": "Stable id of the change, '<source>:<tool ids>': the same change always has the same id, so a replay is recognised"
+     },
+     "url": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Where a person opens it"
+     },
+     "actorEmail": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Email of the person who made the change, lowercase; null when the tool doesn't say"
+     },
+     "occurredAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When it happened, ISO 8601 in UTC with milliseconds"
+     },
+     "kind": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+      "description": "Suggested event kind, such as work.discussion or work.doc_edited; a flow may change it"
+     },
+     "title": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "One line: the document, ticket or meeting title, or the channel and first words"
+     },
+     "summary": {
+      "type": "string",
+      "maxLength": 600,
+      "description": "The text, whitespace collapsed, at most 600 characters"
+     },
+     "teamHint": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "The team it seems to belong to, from the tool's own grouping, when there is one"
+     },
+     "initiativeHint": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "The project or initiative it seems to belong to, when there is one"
+     },
+     "customerHint": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "The customer it is about, when there is one (a #customer-<name> channel, a CRM company…)"
+     },
+     "raw": {
+      "type": "object",
+      "description": "The tool's own object, trimmed: long strings clipped, long lists cut, deep nesting dropped"
+     },
+     "cursor": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Pass it back as Since to continue after this item (List Changed Since operations)"
+     }
+    },
+    "required": [
+     "source",
+     "sourceId",
+     "url",
+     "actorEmail",
+     "occurredAt",
+     "kind",
+     "title",
+     "summary",
+     "teamHint",
+     "initiativeHint",
+     "customerHint",
+     "raw"
+    ],
+    "additionalProperties": false
+   },
+   "credentials": [
+    {
+     "name": "fathomApi",
+     "required": true
+    }
+   ],
+   "properties": [
+    {
+     "name": "notice",
+     "displayName": "Fathom's API registers the webhook for you: publishing the workflow creates it (the signing secret is kept for you) and unpublishing deletes it. Landflow must be reachable from the internet at the published URL. Transcripts stay out unless Include Transcript is on.",
+     "type": "notice",
+     "default": ""
+    },
+    {
+     "name": "triggeredFor",
+     "displayName": "Triggered For",
+     "type": "multiOptions",
+     "default": [
+      "my_recordings"
+     ],
+     "options": [
+      {
+       "name": "My Recordings",
+       "value": "my_recordings"
+      },
+      {
+       "name": "Shared External Recordings",
+       "value": "shared_external_recordings"
+      },
+      {
+       "name": "My Recordings Shared With Team",
+       "value": "my_shared_with_team_recordings"
+      },
+      {
+       "name": "Shared Team Recordings",
+       "value": "shared_team_recordings"
+      }
+     ],
+     "description": "Which meetings send a webhook"
+    },
+    {
+     "name": "options",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add option",
+     "values": [
+      {
+       "name": "includeSummary",
+       "displayName": "Include Summary",
+       "type": "boolean",
+       "default": true
+      },
+      {
+       "name": "includeActionItems",
+       "displayName": "Include Action Items",
+       "type": "boolean",
+       "default": true
+      },
+      {
+       "name": "includeTranscript",
+       "displayName": "Include Transcript",
+       "type": "boolean",
+       "default": false,
+       "description": "Whether the transcript is requested from Fathom and added to each item's raw data. Off by default: transcripts are private."
+      },
+      {
+       "name": "internalDomains",
+       "displayName": "Internal Domains",
+       "type": "string",
+       "default": "",
+       "placeholder": "acme.com, acme.io",
+       "description": "Email domains that are your own. The customerHint is the first invitee outside them. Empty: the recorder's own domain."
+      },
+      {
+       "name": "actionItemItems",
+       "displayName": "Also Output One Item per Action Item",
+       "type": "boolean",
+       "default": false,
+       "description": "Whether each action item becomes its own activity item (kind work.action_item, assignee as actorEmail) after its meeting's item"
+      },
+      {
+       "name": "tolerance",
+       "displayName": "Signature Tolerance (s)",
+       "type": "number",
+       "default": 300,
+       "typeOptions": {
+        "minValue": 0
+       },
+       "description": "How far the signed webhook-timestamp may be from now before the call is rejected as a replay"
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "credentialTypes": [
+  {
+   "name": "fathomApi",
+   "displayName": "Fathom API",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8IS0tIG9yaWdpbmFsIGdseXBoOiBhIHJlY29yZGluZyBkb3Qgb3ZlciB0aHJlZSBub3RlIGxpbmVzIC0tPgogIDxjaXJjbGUgY3g9IjE2IiBjeT0iMTciIHI9IjQuNSIgZmlsbD0iIzAwYjM4NiIvPgogIDxyZWN0IHg9IjI1IiB5PSIxNC41IiB3aWR0aD0iMTIiIGhlaWdodD0iNSIgcng9IjIuNSIgZmlsbD0iIzAwYjM4NiIvPgogIDxyZWN0IHg9IjExIiB5PSIyNS41IiB3aWR0aD0iMjYiIGhlaWdodD0iNCIgcng9IjIiIGZpbGw9IiMxZjI5MzciLz4KICA8cmVjdCB4PSIxMSIgeT0iMzMiIHdpZHRoPSIxOCIgaGVpZ2h0PSI0IiByeD0iMiIgZmlsbD0iIzFmMjkzNyIvPgo8L3N2Zz4K",
+   "documentationUrl": "https://developers.fathom.ai/quickstart",
+   "description": "An API key from Fathom (Settings → API Access), sent as the X-Api-Key header. Fathom also offers OAuth for public apps, but publishes no authorize URL, so there is no OAuth2 credential here. The key sees your own meetings and those shared with you.",
+   "properties": [
+    {
+     "name": "apiKey",
+     "displayName": "API Key",
+     "type": "string",
+     "required": true,
+     "typeOptions": {
+      "password": true
+     },
+     "description": "Created in Fathom under Settings → API Access"
+    },
+    {
+     "name": "baseUrl",
+     "displayName": "Base URL",
+     "type": "string",
+     "default": "https://api.fathom.ai/external/v1",
+     "description": "Change it only for a proxy or a test double"
+    }
+   ],
+   "testable": true
+  }
+ ],
+ "transports": [
+  "http",
+  "grpc",
+  "mcp"
+ ],
+ "maxConcurrency": 4
+}

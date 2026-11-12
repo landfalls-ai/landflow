@@ -1180,6 +1180,35 @@ The nine items planned after flow detectors, built the same day ([second-brain.m
   and an edit modal; email gets signed links. A timeout settles with the node's default (reject, approve or fail). Still open: asking per item,
   editing from email, and a Landflow inbox page of its own (the Run Trace's Needs you is the inbox).
 
+## Integrations that report activity (built 2026-11-12)
+
+Phase A of the Company Brain sources: integrations that report what people do, in one shape, so one flow can record any
+of them ([protocol.md §16](protocol.md#16-activity-items), [integrations.md](features/integrations.md)). **Built:**
+
+- **Activity items** in all three SDKs (`activityItem`, `landflow.ActivityItem`, `activity_item`) with a JSON Schema and
+  shared cases.
+- **Slack**: Message → Get Many Since and Get, User → Get Many with email, channel name patterns, the **Slack Activity
+  Trigger** (Events API, signature checked).
+- **Google**: the **Google Drive Trigger** (changes feed, shared drives) and **Google Calendar Trigger** (sync token,
+  attendees), Drive → Get Many Changed Since and Get Item, Calendar → Get Many Changed Since, and the **Google Directory**
+  node.
+- **Notion**: the **Notion Trigger** (under chosen roots), Page → Get Many Changed Since and Get Content, User → Get
+  Many with email, Comment → Create.
+
+**Built (Phase B):** the [Linear](../plugins/linear/README.md), [Attio](../plugins/attio/README.md) and
+[Fathom](../plugins/fathom/README.md) plugins (TypeScript, 7116–7118): each a trigger that registers its own signed
+webhook, Get Many Changed Since and Get as activity items, users with email, and actions that create (Linear issues,
+links and comments; Attio notes, tasks and list entries), none that delete or merge. In `pnpm dev:all`, compose and
+the Kubernetes base.
+
+**Built (Phase C, part 1):** the `work.*` kinds catalogued in `deploy/brain/work-kinds.json` and declared with
+`pnpm brain:work-kinds`, and the [work ingest templates](features/integrations.md#work-ingest-templates) for Slack, Drive,
+Calendar, Notion and the Directory, then for Linear, Attio and Fathom.
+
+**Next:** the P1/P2 sources ([follow-up note](research/company-brain-next-sources.md)), and a way to join a customer named by a domain (Calendar, Fathom) with
+the same customer named by a channel or folder. Open from Phase A: a Notion webhook trigger once Notion can create subscriptions over its API; push channels for Drive and Calendar
+once app webhooks can renew themselves; Slack message edits and deletions; the Directory's groups and org units.
+
 ## Planned next
 
 1. **Declare event kinds in the UI**: kinds are declared over the API or by Record Event's *Declare Kind If New* only.

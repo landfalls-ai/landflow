@@ -1,7 +1,7 @@
 # Google Workspace plugin (`google`)
 
-Google Sheets and Gmail (each with a polling trigger), Google Drive, Google Calendar and Google Docs for Landflow,
-written with the Go SDK. Nodes follow n8n's names and resource → operation shape. The plugin calls the Google REST APIs
+Google Sheets, Gmail, Google Drive and Google Calendar (each with a polling trigger), Google Docs and the Google
+Directory for Landflow, written with the Go SDK. Nodes follow n8n's names and resource → operation shape. The plugin calls the Google REST APIs
 directly, with no Google client libraries.
 
 ```sh
@@ -31,8 +31,11 @@ full URL instead.
 | **Google Sheets Trigger** (`google.googleSheetsTrigger`) | poll trigger, Row Added, default every 60 s | Document, Sheet (empty: the first) |
 | **Gmail** (`google.gmail`) | Message → Send, Reply, Get, Get Many, Add Labels, Remove Labels, Mark as Read, Mark as Unread | Send/Reply: To, Subject, Email Type (Text/HTML), Message; Options: Attachments, CC, BCC, Reply To, Sender Name, Reply to Sender Only ([attachments](#gmail-attachments)). Get Many: Return All / Limit, Simplify, Filters (Search, Read Status, Sender, labels, include spam and trash) |
 | **Gmail Trigger** (`google.gmailTrigger`) | poll trigger, new emails, default every 60 s | Same Filters as Get Many, Simplify |
-| **Google Drive** (`google.googleDrive`) | File → Upload, Download, Export, Delete · File/Folder → Search · Folder → Create | Upload: text, base64 or **a binary file of the item** (≤ 5 MB in one multipart request, bigger files streamed through a resumable session), parent folder, MIME type ([files](#drive-and-files)). Download: ≤ 10 MB into the item as `content` (`encoding` `utf8` for text, else `base64`), or **Return Content As → Binary File** (streamed, no size limit); Docs, Sheets, Slides and Drawings are exported as text, CSV, text and PNG. Export converts a Google file to PDF, Word, Excel, OpenDocument, EPUB, HTML (zip), PowerPoint, PNG… as a binary file. Delete trashes unless Delete Permanently. Search by name or with a raw Drive query, filtered by folder, files/folders, MIME types, trash |
-| **Google Calendar** (`google.googleCalendar`) | Event → Create, Delete, Get, Get Many, Update | Calendar picker (`calendarList`). Start/End as ISO 8601: with an offset as given, without one in the event's Time Zone or the calendar's. All Day uses dates (a same-day end becomes the next day, as the API's end date is exclusive). Additional/Update Fields: summary, description, location, attendees, time zone, send updates. Get Many: After/Before, order by start time or updated, search, single events, show deleted |
+| **Google Drive** (`google.googleDrive`) | File → Upload, Download, Export, Delete, Get Many Changed Since, Get Item · File/Folder → Search · Folder → Create | Upload: text, base64 or **a binary file of the item** (≤ 5 MB in one multipart request, bigger files streamed through a resumable session), parent folder, MIME type ([files](#drive-and-files)). Download: ≤ 10 MB into the item as `content` (`encoding` `utf8` for text, else `base64`), or **Return Content As → Binary File** (streamed, no size limit); Docs, Sheets, Slides and Drawings are exported as text, CSV, text and PNG. Export converts a Google file to PDF, Word, Excel, OpenDocument, EPUB, HTML (zip), PowerPoint, PNG… as a binary file. Delete trashes unless Delete Permanently. Search by name or with a raw Drive query, filtered by folder, files/folders, MIME types, trash |
+| **Google Drive Trigger** (`google.googleDriveTrigger`) | poll trigger, files changed, default every 300 s | Shared drives on or off, Options as for Get Many Changed Since. Outputs [activity items](#activity-items) |
+| **Google Calendar** (`google.googleCalendar`) | Event → Create, Delete, Get, Get Many, Get Many Changed Since, Update | Calendar picker (`calendarList`). Start/End as ISO 8601: with an offset as given, without one in the event's Time Zone or the calendar's. All Day uses dates (a same-day end becomes the next day, as the API's end date is exclusive). Additional/Update Fields: summary, description, location, attendees, time zone, send updates. Get Many: After/Before, order by start time or updated, search, single events, show deleted |
+| **Google Calendar Trigger** (`google.googleCalendarTrigger`) | poll trigger, events created, changed or cancelled, default every 300 s | Calendar picker, Options: Include Cancelled Events, Internal Domains, Include Description. Outputs [activity items](#activity-items) |
+| **Google Directory** (`google.googleDirectory`) | User → Get, Get Many | Read-only. Simplified: `email`, `name`, `orgUnitPath`, `title`, `department`, `managerEmail`, `suspended`, `isAdmin`… Filters: Domain, Org Unit, Include Suspended, Query. [Needs an admin](#google-directory) |
 | **Google Docs** (`google.googleDocs`) | Document → Create, Get, Update, Export | Create in a folder (moved there through Drive). Get returns `{documentId, title, content}` with the text of paragraphs, tables and the table of contents (Simplify off: the raw document). Update applies Actions in one `batchUpdate`: Insert (at the end) and Replace All (match case optional) and returns `occurrencesChanged`. Export returns the document as a binary file (docx, pdf, odt, rtf, txt, html zip, epub, md) |
 
 ### Google Sheets
@@ -76,7 +79,7 @@ honours the credential's base URL. Gmail refuses messages over 35 MB, and so doe
 
 ### Polling triggers
 
-Both triggers emit nothing on the first poll after activation. They record a baseline, so turning a workflow on never
+All four triggers emit nothing on the first poll after activation. They record a baseline, so turning a workflow on never
 replays old rows or mail. **Execute** in the editor (`mode: manual`) shows recent data without touching the state.
 
 - **Sheets**: state `{lastRow, documentId, sheetName}`. Each poll reads the header and the rows below `lastRow`
@@ -85,6 +88,55 @@ replays old rows or mail. **Execute** in the editor (`mode: manual`) shows recen
 - **Gmail**: state `{lastInternalDate, seenIds}`. Each poll searches `after:<last second − 1>` plus the filters, drops
   ids already seen (the newest 100 are kept), fetches the rest and emits them oldest first. Manual: the 5 newest
   matching messages.
+
+### Activity items
+
+The Drive and Calendar triggers and the **Get Many Changed Since** / **Get Item** operations output activity items,
+one shape for a change in an outside tool ([docs/protocol.md §16](../../docs/protocol.md#16-activity-items)):
+`source, sourceId, url, actorEmail, occurredAt, kind, title, summary, teamHint, initiativeHint, customerHint, raw`
+(and `cursor` on Get Many Changed Since). The nodes declare it as their output schema, so the editor offers its fields.
+
+| | Drive | Calendar |
+|---|---|---|
+| `source`, `kind` | `google-drive`, `work.doc_edited` | `google-calendar`, `work.meeting_scheduled` (ends in the future), `work.meeting_held` (ended), `work.meeting_cancelled` (only with Include Cancelled Events) |
+| `sourceId` | `google-drive:<file id>:<modifiedTime>` (one per version) | `google-calendar:<calendar>:<event id>:<updated>` |
+| `actorEmail` | the last modifying user, else the owner | the organizer |
+| `occurredAt` | `modifiedTime` | the event's start |
+| `summary` | a Google Doc's first 600 characters (Options → Read Google Docs Text, on by default), else "Google Sheet in R&D/Projects/Atlas" | the description without HTML, then "Attendees: …" |
+| `teamHint` | the shared drive's name | — |
+| `initiativeHint` | the folder below a folder named **Projects** (Options → Initiative Folder Name) | — |
+| `customerHint` | the folder below a folder named **Customers** (Options → Customer Folder Name) | the first attendee's domain outside Internal Domains (empty: the organizer's domain) |
+| `raw` | id, name, mimeType, owner, lastModifyingUser, folderPath, driveId, driveName, modifiedTime, size | id, calendarId, status, start, end, organizer, attendees (rooms left out), location, hangoutLink, recurringEventId |
+
+- **Google Drive Trigger**: state `{pageToken}`. The first poll asks `changes.getStartPageToken` and outputs nothing;
+  later polls read `changes.list` from the token (1,000 changes a page, up to 20 pages a poll, shared drives with
+  `supportsAllDrives` and `includeItemsFromAllDrives`) and output the latest version of each changed file, oldest first.
+  Removed, trashed and folder changes are left out (folders: Options → Include Folders). Options → Only Under Folder
+  keeps files anywhere below a folder. Manual: the 5 most recently modified files.
+- **Google Calendar Trigger**: state `{syncToken, pageToken}`. The first poll reads the calendar once for Google's
+  `nextSyncToken` and outputs nothing; later polls list with the sync token, which returns changed and deleted events.
+  When Google answers 410 Gone (an expired token) the trigger takes a new baseline and logs a warning; the changes in
+  between are not output. Manual: the 5 events updated last in the past week.
+- **Drive → Get Many Changed Since**: Since is an ISO time (`files.list` with `modifiedTime >`, each item's `cursor` is
+  its `modifiedTime`) or a page token from an earlier item's `cursor` (the changes feed; `cursor` is the token to read
+  from next). Empty: the last 24 hours. **Get Item** returns one file as an activity item plus `text`, the whole text of
+  a Doc or a text file.
+- **Calendar → Get Many Changed Since**: events updated since a time (`updatedMin`), each with `cursor` = `updated`.
+
+Drive and Calendar can push changes (`changes.watch`, `events.watch`), but a channel expires within a week and must be
+renewed by the caller. Landflow's app webhooks have no renewal step, so both triggers poll.
+
+### Google Directory
+
+**User → Get Many** pages the Admin SDK's `users.list` (`customer=my_customer` or a Domain, `projection=full`,
+`viewType=admin_view`, ordered by email, 500 a page) and leaves suspended people out unless asked. **Get** takes an
+email, alias or id. Simplified people have the primary organization's `title` and `department` and the manager's
+email from `relations`.
+
+Google allows this API only to admins. A service account must impersonate one: set **Admin to Impersonate** on the node
+(or the credential's Impersonate a User), and add `https://www.googleapis.com/auth/admin.directory.user.readonly` to
+the service account's client ID under domain-wide delegation. The node asks for that scope alone, so the scopes already
+delegated for the other nodes don't change. With OAuth2, the signed-in user must be an admin and grant that scope.
 
 ## Credentials
 
@@ -102,7 +154,8 @@ the paths, for a proxy or a test double.
 | `googleOAuth2Api` (extends the host's `oAuth2Api`) | Client ID, Client Secret, Scope, then **Connect**; or Refresh Token instead of Connect | Connected: asks `userinfo` with the host's token, "Connected as you@…". Refresh token: refreshes, then "Authenticated as you@… (N scopes granted)" ("Refresh token works" without the email scope) |
 
 Service-account tokens request these scopes: `spreadsheets`, `drive`, `gmail.modify`, `calendar` and `documents`
-(all under `https://www.googleapis.com/auth/`).
+(all under `https://www.googleapis.com/auth/`). The Google Directory node asks for `admin.directory.user.readonly`
+alone.
 
 ### Service account
 
@@ -226,8 +279,10 @@ The SDK adds `landflow.plugin.id`, `landflow.node.type` and `landflow.workflow.i
 ## Trying it without Google
 
 `cmd/fakegoogle` serves the test double: a token endpoint that verifies the JWT signature, plus enough of Sheets, Gmail,
-Drive, Calendar and Docs for every operation. It generates a throwaway key and seeds spreadsheet `sheet-demo` (sheet
-`Leads`) and two emails in `me@example.com`'s mailbox.
+Drive (with the changes feed and shared drives), Calendar (with sync tokens), Docs and the Directory for every
+operation. It generates a throwaway key and seeds spreadsheet `sheet-demo` (sheet `Leads`), two emails in
+`me@example.com`'s mailbox, the folders `Customers/Acme` and the shared drive `R&D` with `Projects/Atlas`, and four
+people in the directory.
 
 ```sh
 go run ./cmd/fakegoogle -addr 127.0.0.1:7999 -key-out /tmp/fake-sa.pem
@@ -240,6 +295,9 @@ and API Base URL `http://127.0.0.1:7999`. Add mail or rows while a trigger is ac
 ```sh
 curl -X POST localhost:7999/_fake/gmail/messages -d '{"from":"ada@example.com","to":"me@example.com","subject":"Hi","text":"Hello"}'
 curl -X POST localhost:7999/_fake/sheets/sheet-demo/rows -d '{"sheet":"Leads","rows":[["Dee","dee@example.com",70]]}'
+curl -X POST localhost:7999/_fake/drive/docs -d '{"id":"doc-1","title":"Acme plan","text":"Rollout plan…","parents":["folder-acme"],"editor":"dana@example.com"}'
+curl -X POST localhost:7999/_fake/calendar/me@example.com/events -d '{"id":"ev-1","summary":"Acme sync","organizer":{"email":"me@example.com"},"start":{"dateTime":"2026-12-01T10:00:00Z"},"end":{"dateTime":"2026-12-01T11:00:00Z"},"attendees":[{"email":"buyer@acme.io"}]}'
+curl -X POST localhost:7999/_fake/directory/users -d '{"primaryEmail":"new@example.com","orgUnitPath":"/Sales"}'
 curl localhost:7999/_fake/state
 ```
 
@@ -251,6 +309,9 @@ auth.go                 credential types, JWT and refresh grants, token cache, c
 client.go               API hosts, base URL override, requests, 401 retry, error mapping, pagination
 params.go               shared properties and parameter helpers
 sheets.go, sheets_trigger.go, gmail.go, gmail_mime.go, gmail_trigger.go, drive.go, drive_binary.go, calendar.go, docs.go
+drive_activity.go       Drive changes as activity items: Google Drive Trigger, Get Many Changed Since, Get Item
+calendar_activity.go    Calendar changes as activity items: Google Calendar Trigger, Get Many Changed Since
+directory.go            Google Directory (Admin SDK users)
 icons/                  original SVG icons
 internal/fakegoogle/    the fake Google used by the tests and cmd/fakegoogle
 cmd/fakegoogle/         the fake as a standalone server

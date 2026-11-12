@@ -6,7 +6,7 @@ import re
 from typing import Any
 from urllib.parse import quote
 
-from landflow_sdk import CredentialType, Node, NodeOperationError
+from landflow_sdk import ACTIVITY_ITEM_SCHEMA, CredentialType, Node, NodeOperationError
 
 from .common import (
     Api,
@@ -214,6 +214,44 @@ def paragraph_blocks(text: str) -> list[dict[str, Any]]:
     return [{"object": "block", "type": "paragraph", "paragraph": {"rich_text": rich_text(p)}} for p in paragraphs]
 
 
+# ------------------------------------------------------- activity item bits
+
+
+def with_output_schemas(prop: dict[str, Any], schemas: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Declares an output schema on some options of an ``operation`` property."""
+    for option in prop["options"]:
+        if option["value"] in schemas:
+            option["outputSchema"] = schemas[option["value"]]
+    return prop
+
+
+def activity_options_property(show: dict[str, list[Any]] | None = None) -> dict[str, Any]:
+    prop: dict[str, Any] = {
+        "name": "activityOptions", "displayName": "Options", "type": "collection", "default": {}, "placeholder": "Add option",
+        "values": [
+            {"name": "includeText", "displayName": "Read Page Text", "type": "boolean", "default": True,
+             "description": "Whether the summary includes the start of the page's text (one more call per page)"},
+            {"name": "customerParent", "displayName": "Customer Parent Title", "type": "string", "default": "Customers",
+             "description": "A page under <this page>/<name>/… is about the customer <name> (customerHint)"},
+            {"name": "initiativeParent", "displayName": "Initiative Parent Title", "type": "string", "default": "Projects",
+             "description": "A page under <this page>/<name>/… belongs to the initiative <name> (initiativeHint)"},
+        ],
+    }
+    if show:
+        prop["displayOptions"] = {"show": show}
+    return prop
+
+
+ROOTS_DESCRIPTION = ("Pages or databases to watch, as links or ids separated by commas or new lines: only pages anywhere below them. "
+                     "Empty: every page shared with the integration.")
+
+ACTIVITY_WITH_TEXT_SCHEMA: dict[str, Any] = {
+    **ACTIVITY_ITEM_SCHEMA,
+    "properties": {**ACTIVITY_ITEM_SCHEMA["properties"], "text": {"type": "string", "description": "The page's text, nested blocks included"}},
+    "required": [*ACTIVITY_ITEM_SCHEMA["required"], "text"],
+}
+
+
 # -------------------------------------------------------------------- node
 
 DB_PAGE = {"resource": ["databasePage"]}
@@ -228,7 +266,7 @@ class Notion(Node):
     description = {
         "name": "notion",
         "displayName": "Notion",
-        "description": "Create and query Notion database pages, get, archive and search pages, append blocks, upload files from binary data",
+        "description": "Create and query Notion database pages, get, archive and search pages, read edited pages and their text, list users, comment, append blocks, upload files from binary data",
         "version": 1,
         "kind": "action",
         "idempotent": False,  # creates, updates, archives and comments are at most once over a broker; the read operations opt in below
@@ -244,24 +282,34 @@ class Notion(Node):
         "toolDescription": (
             "Work with Notion. Pick `resource` (databasePage, page, block) and `operation`: create a database page "
             "(`databaseId`, `title`), query a database (`databaseId`, optional `filterJson`), get or archive a page "
-            "(`pageId`), search pages (`text`), or append paragraphs to a page (`blockId`, `text`). Files uploaded from binary data on the "
+            "(`pageId`), search pages (`text`), list pages edited since a time (page `changedSince`, `since`, optional `roots`), read a "
+            "page's whole text (page `getContent`, `pageId`), list users with email (user `getAll`), comment on a page (comment `create`, "
+            "`commentPageId`, `commentText`), or append paragraphs to a page (`blockId`, `text`). Files uploaded from binary data on the "
             "item: block `appendFile` adds an image, video, audio, PDF or file block; page `attachFile` adds to a Files property."
         ),
         "keywords": ["notion", "wiki", "database", "page", "notes", "docs"],
         "properties": [
             authentication_property("Internal Integration Secret"),
-            resource_property([("Block", "block"), ("Database Page", "databasePage"), ("Page", "page")], "databasePage"),
+            resource_property([("Block", "block"), ("Comment", "comment"), ("Database Page", "databasePage"), ("Page", "page"), ("User", "user")], "databasePage"),
             # The default resource's operation comes last: fresh nodes take the last default of a repeated name.
             operation_property("block", [
                 ("Append After", "append", "Append a block"),
                 ("Append File", "appendFile", "Upload binary data and append it as a file, image, video, audio or PDF block"),
             ], "append"),
-            operation_property("page", [
+            operation_property("comment", [
+                ("Create", "create", "Comment on a page or reply in a discussion"),
+            ], "create"),
+            operation_property("user", [
+                ("Get Many", "getAll", "Get many users with their email", True),
+            ], "getAll"),
+            with_output_schemas(operation_property("page", [
                 ("Archive", "archive", "Archive a page"),
                 ("Attach File", "attachFile", "Upload binary data into a Files property of a page"),
                 ("Get", "get", "Get a page", True),
+                ("Get Content", "getContent", "Get a page's whole text as an activity item", True),
+                ("Get Many Changed Since", "changedSince", "Get pages edited since a time, as activity items", True),
                 ("Search", "search", "Search pages", True),
-            ], "get"),
+            ], "get"), {"getContent": ACTIVITY_WITH_TEXT_SCHEMA, "changedSince": ACTIVITY_ITEM_SCHEMA}),
             operation_property("databasePage", [
                 ("Create", "create", "Create a database page"),
                 ("Get Many", "getAll", "Get many database pages", True),
@@ -314,7 +362,7 @@ class Notion(Node):
                 "name": "pageId", "displayName": "Page", "type": "string", "default": "", "required": True,
                 "placeholder": "https://www.notion.so/My-page-0123456789abcdef0123456789abcdef",
                 "description": "Page id or URL",
-                "displayOptions": {"show": {"resource": ["page"], "operation": ["archive", "attachFile", "get"]}},
+                "displayOptions": {"show": {"resource": ["page"], "operation": ["archive", "attachFile", "get", "getContent"]}},
             },
             {
                 "name": "text", "displayName": "Search Text", "type": "string", "default": "",
@@ -332,6 +380,27 @@ class Notion(Node):
                      "options": [{"name": "Newest First", "value": "descending"}, {"name": "Oldest First", "value": "ascending"}]},
                 ],
             },
+            # ---- page: changed since, content
+            {
+                "name": "since", "displayName": "Since", "type": "string", "default": "", "placeholder": "2026-11-12T08:00:00Z",
+                "description": "Pages edited on or after this ISO time (empty: 24 hours ago); pass the last item's cursor to continue",
+                "displayOptions": {"show": {"resource": ["page"], "operation": ["changedSince"]}},
+            },
+            {"name": "roots", "displayName": "Roots", "type": "string", "default": "", "typeOptions": {"rows": 2},
+             "description": ROOTS_DESCRIPTION, "displayOptions": {"show": {"resource": ["page"], "operation": ["changedSince"]}}},
+            *return_all_properties({"resource": ["page"], "operation": ["changedSince"]}),
+            activity_options_property({"resource": ["page"], "operation": ["changedSince", "getContent"]}),
+            # ---- user, comment
+            *return_all_properties({"resource": ["user"], "operation": ["getAll"]}, default_limit=100),
+            {"name": "commentPageId", "displayName": "Page", "type": "string", "default": "",
+             "placeholder": "https://www.notion.so/My-page-0123456789abcdef0123456789abcdef",
+             "description": "Page id or URL to comment on (ignored when replying in a discussion)",
+             "displayOptions": {"show": {"resource": ["comment"], "operation": ["create"]}}},
+            {"name": "commentText", "displayName": "Comment", "type": "string", "default": "", "required": True, "typeOptions": {"rows": 3},
+             "displayOptions": {"show": {"resource": ["comment"], "operation": ["create"]}}},
+            {"name": "discussionId", "displayName": "Discussion ID", "type": "string", "default": "",
+             "description": "Reply in this discussion thread instead of starting one on the page",
+             "displayOptions": {"show": {"resource": ["comment"], "operation": ["create"]}}},
             simplify_property({"resource": ["databasePage", "page"], "operation": ["create", "getAll", "get", "archive", "attachFile", "search"]}),
             # ---- block
             {
@@ -387,7 +456,11 @@ class Notion(Node):
         return super().load_options(method, parameters, ctx)
 
     def execute(self, ctx):
-        api = notion_api(ctx, notion_credentials(ctx, ctx.get_node_parameter("authentication")))
+        from . import notion_activity  # noqa: PLC0415 - it imports this module
+
+        creds = notion_credentials(ctx, ctx.get_node_parameter("authentication"))
+        api = notion_api(ctx, creds)
+        activity = notion_activity.activity_api(ctx, creds)  # Notion-Version 2026-03-11, for the activity operations
         schemas: dict[str, dict[str, Any]] = {}
         results = []
         for i, _item in enumerate(items_of(ctx)):
@@ -408,6 +481,19 @@ class Notion(Node):
                     page = api.call("PATCH", f"/v1/pages/{page_id(ctx.get_node_parameter('pageId', i), 'Page', i)}", json={"archived": True})
                     results.append(out(shape(page), i))
                     count_written(ctx, "notion", "archive")
+                elif resource == "page" and operation == "changedSince":
+                    activity.item_index = i
+                    results.extend(outs(notion_activity.changed_since(ctx, activity, i, limit_of(ctx, i)), i))
+                elif resource == "page" and operation == "getContent":
+                    activity.item_index = i
+                    results.append(out(notion_activity.get_content(ctx, activity, i), i))
+                elif resource == "user" and operation == "getAll":
+                    activity.item_index = i
+                    results.extend(outs(notion_activity.list_users(ctx, activity, i, limit_of(ctx, i)), i))
+                elif resource == "comment" and operation == "create":
+                    activity.item_index = i
+                    results.append(out(notion_activity.create_comment(ctx, activity, i), i))
+                    count_written(ctx, "notion", "comment")
                 elif resource == "page" and operation == "search":
                     results.extend(outs(map(shape, self._search(ctx, api, i)), i))
                 elif resource == "block" and operation == "append":

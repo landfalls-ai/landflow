@@ -2,7 +2,7 @@
   "name": "landflow-soc",
   "owner": { "name": "Landflow" },
   "metadata": {
-    "description": "Landflow Ops & SOC: alert triage, Landfall war rooms and threat intel, as node plugins with ready-made flows."
+    "description": "Landflow Ops & SOC and work integrations: alert triage, Landfall war rooms, threat intel, and Linear, Attio and Fathom activity for the second brain, as node plugins with ready-made flows."
   },
   "plugins": [
     {
@@ -34,6 +34,36 @@
       "category": "security",
       "keywords": ["threat intel", "ioc", "virustotal", "abuseipdb", "greynoise", "urlscan", "shodan", "otx", "misp"],
       "flows": ["./flows/ioc-lookup.json"]
+    },
+    {
+      "name": "linear",
+      "source": "./plugins/linear",
+      "description": "Linear issues, comments and project updates as activity items: a trigger that registers its own signed webhook, Get Many Changed Since and Get, users with email, and Create Issue, Add Link and Create Comment (nothing that deletes). Flow: work from Linear into the second brain.",
+      "version": "0.1.0",
+      "author": { "name": "Landflow" },
+      "category": "productivity",
+      "keywords": ["linear", "issues", "work", "activity", "second brain"],
+      "flows": ["./flows/work-linear.json"]
+    },
+    {
+      "name": "attio",
+      "source": "./plugins/attio",
+      "description": "Attio records, deals, list entries, notes and tasks as activity items: a trigger that registers its own signed webhook, Get Many Changed Since and Get, workspace members with email, and Note, Task and Add to List actions (nothing that deletes or merges). Flow: deals and notes from Attio into the second brain.",
+      "version": "0.1.0",
+      "author": { "name": "Landflow" },
+      "category": "sales",
+      "keywords": ["attio", "crm", "deals", "work", "activity", "second brain"],
+      "flows": ["./flows/work-attio.json"]
+    },
+    {
+      "name": "fathom",
+      "source": "./plugins/fathom",
+      "description": "Fathom meetings and action items as activity items, read-only: a new-meeting trigger that registers its own signed webhook, Get Many Changed Since and Get, summaries, transcripts only when asked, teams and members. Flow: meetings from Fathom into the second brain.",
+      "version": "0.1.0",
+      "author": { "name": "Landflow" },
+      "category": "productivity",
+      "keywords": ["fathom", "meetings", "notes", "action items", "second brain"],
+      "flows": ["./flows/work-fathom.json"]
     }
   ]
 }

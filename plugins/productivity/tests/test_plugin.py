@@ -12,7 +12,7 @@ from _support import PARENT_SPAN_ID, TOKEN, TRACE_ID, TRACEPARENT, FakeApi, LogC
 from landflow_sdk.http_server import HttpPluginServer
 
 ACTIONS = {"notion", "airtable", "github", "jira", "hubspot", "rssFeedRead"}
-TRIGGERS = {"githubTrigger", "rssFeedReadTrigger"}
+TRIGGERS = {"githubTrigger", "rssFeedReadTrigger", "notionTrigger"}
 APP_WEBHOOKS = {"githubWebhookTrigger", "stripeWebhookTrigger"}
 
 

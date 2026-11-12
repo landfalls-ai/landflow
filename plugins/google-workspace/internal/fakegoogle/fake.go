@@ -55,6 +55,13 @@ type Server struct {
 	Files        map[string]*File
 	Calendars    map[string]*Calendar
 	Documents    map[string]*Document
+	// Changes is Drive's changes feed; Drives names shared drives.
+	Changes []Change
+	Drives  map[string]string
+	// Users are the Directory's users; DirectoryAdmins, when set, are the
+	// only subjects a service account may impersonate to read them.
+	Users           []DirectoryUser
+	DirectoryAdmins []string
 
 	tokens   map[string]tokenInfo
 	sessions map[string]*File // open resumable Drive uploads
@@ -104,6 +111,7 @@ func New() *Server {
 			"me@example.com": {ID: "me@example.com", Summary: "Me", TimeZone: "Europe/Berlin", Primary: true},
 		},
 		Documents: map[string]*Document{},
+		Drives:    map[string]string{},
 	}
 }
 
@@ -201,6 +209,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.gmail(w, r, segs[4:], body)
 	case hasPrefix(segs, "drive", "v3", "files"):
 		s.drive(w, r, segs[3:], body)
+	case hasPrefix(segs, "drive", "v3", "changes"):
+		s.changes(w, r, segs[3:])
+	case hasPrefix(segs, "drive", "v3", "drives"):
+		s.drives(w, segs[3:])
+	case hasPrefix(segs, "admin", "directory", "v1", "users"):
+		s.directory(w, r, segs[4:], info)
 	case hasPrefix(segs, "upload", "gmail", "v1", "users", "me", "messages", "send"):
 		if info.serviceAccount && info.subject == "" {
 			writeError(w, http.StatusBadRequest, "Precondition check failed.")
@@ -366,6 +380,7 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, segs []string, bo
 		writeJSON(w, http.StatusOK, map[string]any{"rows": len(sh.Rows)})
 	case r.Method == http.MethodGet && hasPrefix(segs, "state"):
 		writeJSON(w, http.StatusOK, s.state())
+	case s.activityAdmin(w, r, segs, body):
 	default:
 		writeError(w, http.StatusNotFound, "unknown admin endpoint")
 	}

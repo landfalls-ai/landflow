@@ -42,6 +42,7 @@ from .protocol import (
     HTTP_PATHS,
     PROTOCOL_VERSION,
 )
+from .activity import ACTIVITY_ITEM_SCHEMA, activity_item
 from .registry_proof import registry_proof, verify_registry_proof
 from .serve import PluginServer, serve
 from .signatures import (
@@ -60,6 +61,8 @@ from .telemetry import Span, SpanContext, Telemetry, current_span
 from .webhooks import WebhookContext
 
 __all__ = [
+    "ACTIVITY_ITEM_SCHEMA",
+    "activity_item",
     "validate_composite",
     "BinaryClient",
     "Binding",
