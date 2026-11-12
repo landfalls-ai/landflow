@@ -25,7 +25,7 @@ import { workflowForCall } from '../publish';
 import { store } from '../store';
 import { recordUsage } from '../usage/ledger';
 import type { UsageScope } from '../usage/query';
-import { baselineFor, checkEffect } from './effect';
+import { baselineFor, checkEffectAsync, settleBaseline, unsettled } from './effect';
 import { upsertFact } from './facts';
 import { listFlowDetectors } from './flow-detectors';
 
@@ -221,6 +221,7 @@ export function proposeFrom(
       ...(validated && (validated.warnings.length || validated.dropped.length) && { warnings: [...validated.warnings, ...validated.dropped] }),
       ...(input.draft && { draft: input.draft }),
       ...(input.agentChange && agent && { agentChange: input.agentChange }),
+      ...(detector && input.metricSpec && { metricSpec: input.metricSpec }),
       risk,
       confidence,
       score: confidence * (risk === 'low' ? 10 : risk === 'medium' ? 8 : 5),
@@ -339,7 +340,21 @@ export function markApplied(proposalOrId: Proposal | string, options: { actorId?
     ...(options.actorId && { actorId: options.actorId }),
     attrs: { proposal: proposal.id, source: proposal.source, ...(proposal.detector && { detector: proposal.detector }) },
   });
+  // A declared sub-workflow metric needs a run for its baseline: it starts now and is saved when it is done, so Apply
+  // doesn't wait for it (the brain's next look retries a baseline that failed).
+  if (unsettled(next)) void settleBaselineOf(next.id, db).catch(() => undefined);
   return next;
+}
+
+/** Run a pending (or failed) sub-workflow baseline and save it. Returns the suggestion as saved. */
+export async function settleBaselineOf(id: string, db: Database = database()): Promise<Proposal | undefined> {
+  const proposal = getProposal(id, db);
+  if (!proposal || !unsettled(proposal)) return proposal;
+  const baseline = await settleBaseline(proposal);
+  if (!baseline) return proposal;
+  // Read it again: the person may have acted while the sub-workflow ran.
+  const latest = getProposal(id, db) ?? proposal;
+  return save({ ...latest, baseline }, db);
 }
 
 export function dismissProposal(id: string, reason: DismissReason, options: { note?: string; actorId?: string } = {}, db: Database = database()): Proposal {
@@ -394,12 +409,22 @@ export function expireStale(db: Database = database(), now = Date.now()): number
   return rows.length;
 }
 
-/** Run the effect checks that are due (./effect.ts). Returns how many suggestions changed. */
-export function checkEffects(db: Database = database(), now = Date.now()): number {
+/**
+ * Run the effect checks that are due (./effect.ts), settling baselines that still wait for their sub-workflow first.
+ * Returns how many suggestions changed.
+ */
+export async function checkEffects(db: Database = database(), now = Date.now()): Promise<number> {
   let changed = 0;
   for (const row of db.all<{ data: string }>("SELECT data FROM proposals WHERE status = 'applied'")) {
-    const p = parse(row.data);
-    const next = p && checkEffect(p, now, db);
+    let p = parse(row.data);
+    if (p && unsettled(p)) {
+      const settled = await settleBaselineOf(p.id, db);
+      if (settled && !unsettled(settled)) {
+        p = settled;
+        changed++;
+      }
+    }
+    const next = p && (await checkEffectAsync(p, now, db));
     if (next) {
       save(next, db);
       changed++;

@@ -263,7 +263,7 @@ export interface ProposalEvidence {
 }
 
 /** What a suggestion is measured by after it is applied (docs/second-brain.md#7-measuring-the-effect). */
-export type ProposalMetricName = 'failureRate' | 'p95Ms' | 'costPerRun' | 'manualRuns' | 'thumbsDownRate' | 'runs';
+export type ProposalMetricName = 'failureRate' | 'p95Ms' | 'costPerRun' | 'manualRuns' | 'thumbsDownRate' | 'runs' | 'custom';
 
 export interface ProposalMetric {
   metric: ProposalMetricName;
@@ -271,8 +271,85 @@ export interface ProposalMetric {
   /** Over how many days before `at`. */
   days: number;
   at: string;
-  /** Lower is better for every metric but `runs`. */
+  /** Lower is better for every metric but `runs` and a declared one that says otherwise. */
   better?: 'lower' | 'higher';
+  /** A declared metric's name ("Initiatives merged or reused"). */
+  label?: string;
+  /** A baseline that is still being measured (a sub-workflow runs right after Apply): `value` is not real yet. */
+  pending?: boolean;
+  /** The sub-workflow failed or returned no number, so there is no value (never a made-up 0); it is tried again on the brain's next look. */
+  failed?: boolean;
+}
+
+/** What a declared metric can sum or average besides an event attribute. */
+export const METRIC_FIELDS = ['cost', 'tokens', 'durationMs', 'items'] as const;
+
+/**
+ * A metric a detector flow declares for its suggestions (docs/second-brain.md#7-measuring-the-effect): a query over the
+ * usage ledger, or a sub-workflow that returns the number. It is set on the Detector Trigger, and a Suggest Improvement
+ * node may override it. The suggestion keeps it as `metricSpec`.
+ */
+export interface MetricSpec {
+  source: 'usage' | 'workflow';
+  /** "Initiatives merged or reused". */
+  label: string;
+  better: 'higher' | 'lower';
+  usage?: {
+    kinds: UsageKind[];
+    attrEquals?: Record<string, string>;
+    aggregate: 'count' | 'sum' | 'avg';
+    /** For sum and avg: an event attribute, or one of METRIC_FIELDS. */
+    field?: string;
+    /** `target`: events about the suggestion's workflow or agent. `instance`: everything the flow's creator can see. */
+    about: 'target' | 'instance';
+  };
+  workflow?: {
+    workflowId: string;
+    /** The field of the first output item that holds the number. */
+    field: string;
+    timeoutSeconds?: number;
+  };
+}
+
+/**
+ * The metric a node's parameters declare, or undefined for none (`default`, empty), or a `problem` to tell the person.
+ * `read` returns a parameter by name: metricSource, metricLabel, metricBetter, metricKinds, metricAttrEquals,
+ * metricAggregate, metricField, metricAbout, metricWorkflowId, metricOutputField, metricTimeout.
+ */
+export function metricSpecFrom(read: (name: string) => unknown): { spec?: MetricSpec; problem?: string } {
+  const source = String(read('metricSource') ?? '');
+  if (source !== 'usage' && source !== 'workflow') return {};
+  const text = (name: string) => String(read(name) ?? '').trim();
+  const label = text('metricLabel').slice(0, 80);
+  if (!label) return { problem: 'Name the metric (Metric Name), so people know what is measured' };
+  const better = text('metricBetter') === 'lower' ? 'lower' : 'higher';
+  if (source === 'workflow') {
+    const workflowId = text('metricWorkflowId');
+    const field = text('metricOutputField');
+    if (!workflowId) return { problem: 'Choose the metric’s sub-workflow' };
+    if (!field) return { problem: 'Name the field of the sub-workflow’s first output item that holds the number' };
+    const timeout = Number(read('metricTimeout'));
+    return { spec: { source, label, better, workflow: { workflowId, field, ...(Number.isFinite(timeout) && timeout > 0 && { timeoutSeconds: Math.min(600, Math.floor(timeout)) }) } } };
+  }
+  const rawKinds = read('metricKinds');
+  const kinds = (Array.isArray(rawKinds) ? rawKinds.map(String) : String(rawKinds ?? '').split(',')).map((k) => k.trim()).filter(Boolean);
+  if (!kinds.length) return { problem: 'Choose at least one event kind to count' };
+  const unknown = kinds.find((k) => !isUsageKind(k));
+  if (unknown) return { problem: `“${unknown}” is not an event kind` };
+  const aggregate = ['sum', 'avg'].includes(text('metricAggregate')) ? (text('metricAggregate') as 'sum' | 'avg') : 'count';
+  const field = text('metricField');
+  if (aggregate !== 'count' && !(METRIC_FIELDS as readonly string[]).includes(field) && !ATTR_NAME.test(field)) {
+    return { problem: `Name what to ${aggregate}: an attribute, or one of ${METRIC_FIELDS.join(', ')}` };
+  }
+  const attrEquals = parseAttrEquals(read('metricAttrEquals'));
+  return {
+    spec: {
+      source,
+      label,
+      better,
+      usage: { kinds: kinds as UsageKind[], ...(Object.keys(attrEquals).length && { attrEquals }), aggregate, ...(aggregate !== 'count' && { field }), about: text('metricAbout') === 'instance' ? 'instance' : 'target' },
+    },
+  };
 }
 
 export interface Proposal {
@@ -315,6 +392,8 @@ export interface Proposal {
   appliedBy?: string;
   /** The workflow created from `draft`, once applied. */
   createdWorkflowId?: string;
+  /** The metric the flow that made it declared; measured instead of the detector's own (./effect.ts). */
+  metricSpec?: MetricSpec;
   baseline?: ProposalMetric;
   outcome?: ProposalOutcome;
   /** The checks after 7 and 14 days. */
@@ -340,6 +419,8 @@ export interface ProposalInput {
   confidence?: number;
   /** Defaults to a hash of the label, target and title. */
   fingerprint?: string;
+  /** Only flow detectors declare one (the Detector Trigger and Suggest Improvement nodes). */
+  metricSpec?: MetricSpec;
 }
 
 // ---------------------------------------------------------------------------

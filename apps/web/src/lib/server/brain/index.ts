@@ -98,7 +98,7 @@ export async function runBrain(what: 'detect' | 'study' | 'effects' | 'all', opt
     rollupRecent(db);
     result.pruned = pruneUsage(db, options.now);
     result.expired = expireStale(db, options.now);
-    result.effects = checkEffects(db, options.now);
+    result.effects = await checkEffects(db, options.now);
     stamp(KEYS.effects, db);
   }
   if (what === 'study' || what === 'all') {
