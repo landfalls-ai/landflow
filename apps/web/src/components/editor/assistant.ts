@@ -345,8 +345,9 @@ const COLLAPSED_KEY = 'landflow-spotlight-collapsed';
 function readCollapsed(): boolean {
   try {
     const saved = localStorage.getItem(COLLAPSED_KEY);
-    // Not set yet: folded on a tablet or a small laptop, where the column would leave the canvas too narrow.
-    return saved ? saved === 'yes' : window.matchMedia('(min-width: 768px) and (max-width: 1099px)').matches;
+    // Not set yet: folded on a tablet or a small laptop, where the column would leave the canvas too narrow, and on a
+    // phone, where the open sheet would cover the steps (docs/mobile.md#spotlights-dock).
+    return saved ? saved === 'yes' : window.matchMedia('(max-width: 1099px)').matches;
   } catch {
     return false;
   }
@@ -359,6 +360,10 @@ interface AssistantState {
    */
   collapsed: boolean;
   setCollapsed(collapsed: boolean): void;
+  /** A phone's open sheet: a third of the screen with the newest of the timeline, or half (docs/mobile.md#spotlights-dock). */
+  phoneHeight: 'peek' | 'half';
+  /** A phone's three heights: folded to its bar, peek or half. Only the person moves it, as with `collapsed`. */
+  setDock(dock: 'bar' | 'peek' | 'half'): void;
   /** Agents being designed and those done, in the order they were asked for. */
   agents: AgentProgress[];
   setAgent(nodeId: string, patch: Partial<AgentProgress> & { name?: string }): void;
@@ -416,6 +421,7 @@ export function pendingProposals(items: ChatItem[]): Array<{ summary: string; op
 
 export const useAssistant = create<AssistantState>((set, get) => ({
   collapsed: readCollapsed(),
+  phoneHeight: 'half',
   agents: [],
   fixNotes: {},
 
@@ -446,6 +452,11 @@ export const useAssistant = create<AssistantState>((set, get) => ({
 
   setOpen(open) {
     get().setCollapsed(!open);
+  },
+
+  setDock(dock) {
+    if (dock !== 'bar') set({ phoneHeight: dock });
+    get().setCollapsed(dock === 'bar');
   },
 
   setAgent(nodeId, patch) {

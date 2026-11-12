@@ -19,3 +19,16 @@ describe('the phone check outside React', () => {
     expect(isPhone()).toBe(false);
   });
 });
+
+describe('Spotlight’s dock on a phone', () => {
+  it('goes between the bar, peek and half, and unfolds to the height it had', async () => {
+    const { useAssistant } = await import('@/components/editor/assistant');
+    const { setDock } = useAssistant.getState();
+    setDock('peek');
+    expect(useAssistant.getState()).toMatchObject({ collapsed: false, phoneHeight: 'peek' });
+    setDock('bar');
+    expect(useAssistant.getState()).toMatchObject({ collapsed: true, phoneHeight: 'peek' });
+    setDock('half');
+    expect(useAssistant.getState()).toMatchObject({ collapsed: false, phoneHeight: 'half' });
+  });
+});
