@@ -8,11 +8,12 @@ import { nanoid } from 'nanoid';
 import { toast } from 'sonner';
 import { create } from 'zustand';
 import { api, streamEvents } from '@/lib/client/api';
-import { applyOps, digestRun, type AssistantOp, type DescriptorLookup, type RunDigest } from '@/lib/shared/assistant-ops';
+import { applyOps, digestRun, type AssistantOp, type DescriptorLookup, type NewAgentSpec, type RunDigest } from '@/lib/shared/assistant-ops';
 import type { AgentTeamConfig } from '@/lib/shared/agent-teams';
 import { teamFromLead } from '@/lib/shared/turn-into-team';
 import type { NodeRun } from '@/lib/shared/types';
 import { useEditor } from './store';
+import { saveAgentFor, type AgentPlace } from './new-agent';
 import { saveTeamFor } from './turn-into-team';
 
 export type SuggestionKind = 'fix' | 'param' | 'data' | 'next';
@@ -52,7 +53,7 @@ export function sendFeedback(kind: ChangeKind, action: 'applied' | 'dismissed', 
  * with one undo. Ops that no longer fit (the workflow changed since they were
  * proposed) are skipped. Returns false when nothing applied.
  */
-export function applyChanges(changes: Array<{ ops: AssistantOp[]; kind: ChangeKind; nodeType?: string }>, label: string): boolean {
+export function applyChanges(changes: Array<{ ops: AssistantOp[]; kind: ChangeKind; nodeType?: string }>, label: string, options: { publishAgents?: boolean; quiet?: boolean } = {}): boolean {
   const state = useEditor.getState();
   const lookup = editorLookup();
   let workflow = state.toWorkflow();
@@ -62,11 +63,25 @@ export function applyChanges(changes: Array<{ ops: AssistantOp[]; kind: ChangeKi
   let count = 0;
   /** Teams to save once the graph is swapped: Spotlight's turnIntoTeam ops, read from the graph as it was. */
   const teams: Array<{ nodeId: string; config: AgentTeamConfig }> = [];
+  /** Agents to save once the graph is swapped: Spotlight's newAgent ops, each with the Run an Agent node it added. */
+  const agents: Array<{ nodeId: string; spec: NewAgentSpec; place: AgentPlace }> = [];
   for (const change of changes) {
     const before = workflow;
     const result = applyOps(workflow, change.ops, lookup);
     workflow = result.workflow;
     for (const op of result.applied) {
+      if (op.op === 'addNode' && op.newAgent) {
+        const node = result.workflow.nodes.find((n) => n.name === op.name && result.added.includes(n.id));
+        if (node) {
+          // Where it sits, by the steps either side of it, for the architect's request.
+          const nameOf = (id: string) => result.workflow.nodes.find((n) => n.id === id)?.name;
+          const main = result.workflow.connections.filter((c) => c.type === 'main');
+          const after = nameOf(main.find((c) => c.target === node.id)?.source ?? '');
+          const before = nameOf(main.find((c) => c.source === node.id)?.target ?? '');
+          agents.push({ nodeId: node.id, spec: op.newAgent, place: { workflow: result.workflow.name, ...(after && { after }), ...(before && { before }) } });
+        }
+        continue;
+      }
       if (op.op !== 'turnIntoTeam') continue;
       const lead = before.nodes.find((n) => n.name === op.node || n.id === op.node);
       const made = lead && teamFromLead(before, lead.id);
@@ -88,6 +103,9 @@ export function applyChanges(changes: Array<{ ops: AssistantOp[]; kind: ChangeKi
   const focusId = added.at(-1) ?? edited;
   const undo = state.replaceGraph(workflow, focusId ? { id: focusId, added: added.includes(focusId) } : undefined);
   for (const { nodeId, config } of teams) void saveTeamFor(nodeId, config);
+  for (const { nodeId, spec, place } of agents) void saveAgentFor(nodeId, spec, place, { publish: options.publishAgents });
+  // Spotlight's own applies (autonomous mode, a test-and-fix session) are rows in its timeline; ⌘Z undoes them.
+  if (options.quiet) return true;
   const skipped = dropped.length ? `Skipped ${dropped.length}: ${dropped[0]}` : undefined;
   // Long enough to look at the canvas before deciding to undo.
   toast.success(label, { description: skipped, action: { label: 'Undo', onClick: undo }, duration: 15_000 });
@@ -263,9 +281,41 @@ export interface SendOptions {
   testId?: string;
 }
 
+/** An agent Spotlight is having the Agent architect design (./new-agent.ts), shown as a row of its timeline. */
+export interface AgentProgress {
+  /** The Run an Agent node it is for. */
+  nodeId: string;
+  name: string;
+  state: 'designing' | 'published' | 'draft' | 'failed';
+  /** "ollama/qwen3-coder:30b · 1 knowledge base", or why it failed. */
+  summary?: string;
+  agentId?: string;
+  /** The conversation item it follows. */
+  after?: string;
+}
+
+const COLLAPSED_KEY = 'landflow-spotlight-collapsed';
+
+function readCollapsed(): boolean {
+  try {
+    const saved = localStorage.getItem(COLLAPSED_KEY);
+    // Not set yet: folded on a tablet or a small laptop, where the column would leave the canvas too narrow.
+    return saved ? saved === 'yes' : window.matchMedia('(min-width: 768px) and (max-width: 1099px)').matches;
+  } catch {
+    return false;
+  }
+}
+
 interface AssistantState {
-  /** The conversation is shown above Spotlight's bar. */
-  open: boolean;
+  /**
+   * The Spotlight panel is folded to its pill (docs/assistant.md#the-spotlight-panel). Only the person changes it: no
+   * draft, reply or test session opens, closes or moves the panel. Kept in the browser.
+   */
+  collapsed: boolean;
+  setCollapsed(collapsed: boolean): void;
+  /** Agents being designed and those done, in the order they were asked for. */
+  agents: AgentProgress[];
+  setAgent(nodeId: string, patch: Partial<AgentProgress> & { name?: string }): void;
   workflowId?: string;
   items: ChatItem[];
   pending: boolean;
@@ -276,11 +326,11 @@ interface AssistantState {
   drafting: boolean;
   /** The node a test-and-fix session is asking a fix for: the canvas marks it. */
   fixing?: string;
-  /**
-   * While Spotlight works on its own (drafting, testing and fixing), the conversation waits in a card at the side of the
-   * canvas so the flow stays in view; true shows it in full instead.
-   */
-  detail: boolean;
+  /** What a test-and-fix session fixed, by node id: a bubble on the node until dismissed (or a minute passes). */
+  fixNotes: Record<string, { text: string; at: number }>;
+  noteFix(nodeIds: string[], text: string): void;
+  dismissFix(nodeId: string): void;
+  /** ⌘I: unfold the panel (setCollapsed(!open)). */
   setOpen(open: boolean): void;
   /** Start over when another workflow is opened. */
   bind(workflowId: string): void;
@@ -317,21 +367,51 @@ export function pendingProposals(items: ChatItem[]): Array<{ summary: string; op
 }
 
 export const useAssistant = create<AssistantState>((set, get) => ({
-  open: false,
+  collapsed: readCollapsed(),
+  agents: [],
+  fixNotes: {},
+
+  noteFix(nodeIds, text) {
+    const at = Date.now();
+    set((s) => ({ fixNotes: { ...s.fixNotes, ...Object.fromEntries(nodeIds.map((id) => [id, { text, at }])) } }));
+  },
+
+  dismissFix(nodeId) {
+    set((s) => {
+      const { [nodeId]: _gone, ...rest } = s.fixNotes;
+      return { fixNotes: rest };
+    });
+  },
   items: [],
   pending: false,
   drafting: false,
-  detail: false,
+
+  setCollapsed(collapsed) {
+    try {
+      localStorage.setItem(COLLAPSED_KEY, collapsed ? 'yes' : 'no');
+    } catch {
+      // Private mode: the choice still holds for this page.
+    }
+    set({ collapsed });
+  },
 
   setOpen(open) {
-    set({ open });
+    get().setCollapsed(!open);
+  },
+
+  setAgent(nodeId, patch) {
+    set((s) => {
+      const known = s.agents.some((a) => a.nodeId === nodeId);
+      if (known) return { agents: s.agents.map((a) => (a.nodeId === nodeId ? { ...a, ...patch } : a)) };
+      return { agents: [...s.agents, { nodeId, name: patch.name ?? 'Agent', state: 'designing', after: s.items.at(-1)?.id, ...patch }] };
+    });
   },
 
   bind(workflowId) {
     if (get().workflowId === workflowId) return;
     get().abort?.abort();
     get().testing?.abort();
-    set({ workflowId, items: [], pending: false, abort: undefined, testing: undefined, fixing: undefined, detail: false });
+    set({ workflowId, items: [], agents: [], fixNotes: {}, pending: false, drafting: false, abort: undefined, testing: undefined, fixing: undefined });
     useSuggestions.getState().clear();
   },
 
@@ -345,7 +425,7 @@ export const useAssistant = create<AssistantState>((set, get) => ({
     const abort = new AbortController();
     const messages = historyOf(options.fresh ? [user] : [...get().items, user]);
     const pending = options.fresh ? [] : pendingProposals(get().items).slice(-20);
-    set((s) => ({ open: true, items: [...s.items, user, reply], pending: true, abort }));
+    set((s) => ({ items: [...s.items, user, reply], pending: true, abort }));
     const patch = (fn: (item: Extract<ChatItem, { role: 'assistant' }>) => Partial<Extract<ChatItem, { role: 'assistant' }>>) =>
       set((s) => ({ items: s.items.map((item) => (item.id === reply.id && item.role === 'assistant' ? { ...item, ...fn(item) } : item)) }));
     try {
@@ -381,7 +461,7 @@ export const useAssistant = create<AssistantState>((set, get) => ({
   },
 
   append(items) {
-    set((s) => ({ open: true, items: [...s.items, ...items] }));
+    set((s) => ({ items: [...s.items, ...items] }));
   },
 
   stop() {
@@ -393,7 +473,7 @@ export const useAssistant = create<AssistantState>((set, get) => ({
   reset() {
     get().abort?.abort();
     get().testing?.abort();
-    set({ items: [], pending: false, abort: undefined, testing: undefined, fixing: undefined, detail: false });
+    set({ items: [], agents: [], fixNotes: {}, pending: false, drafting: false, abort: undefined, testing: undefined, fixing: undefined });
   },
 
   setProposalState(itemId, proposalId, state) {
@@ -419,3 +499,30 @@ export const offersTest = (items: ChatItem[]) => {
 
 /** Spotlight works on its own: drafting a flow, testing and fixing it, or a drafted flow waiting for its test. */
 export const useWorking = () => useAssistant((s) => s.drafting || Boolean(s.testing) || offersTest(s.items));
+
+/** A run Spotlight started (a test-and-fix session, a draft's first test): its timeline says how it went, not a toast. */
+export function spotlightOwnsRun(): boolean {
+  const s = useAssistant.getState();
+  return Boolean(s.testing || s.pending || s.drafting) || s.items.some((item) => item.role === 'assistant' && item.parts.some((p) => p.kind === 'run' && p.run.state === 'running'));
+}
+
+/**
+ * The node that shows what a fix changed, once applied: the node the fix was asked for when the fix touched it (or touched
+ * nothing by name), else the first node its ops change or add (by its name after the change). One bubble, not one per
+ * node: on a small canvas several would cover the flow.
+ */
+export function fixedNodes(ops: AssistantOp[], fallback?: string): string[] {
+  const nodes = useEditor.getState().nodes;
+  const byName = (name: string) => nodes.find((n) => n.data.wf.name === name || n.id === name)?.id;
+  const names = ops.flatMap((op) => {
+    if (op.op === 'addNode') return [op.name];
+    if (op.op === 'renameNode') return [op.name];
+    if (op.op === 'setParameters' || op.op === 'setNodeSettings') return [op.node];
+    if (op.op === 'connect') return [op.to];
+    return [];
+  });
+  const ids = [...new Set(names.flatMap((name) => (name ? [byName(name)] : [])).filter((id): id is string => Boolean(id)))];
+  const asked = fallback && nodes.some((n) => n.id === fallback) ? fallback : undefined;
+  if (asked && (!ids.length || ids.includes(asked))) return [asked];
+  return ids.slice(0, 1);
+}

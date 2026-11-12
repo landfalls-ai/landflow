@@ -79,12 +79,33 @@ the model missed it, and the architect notes what it dropped. Each is recorded a
 [Missing tool](second-brain.md#4-detectors-and-suggestions) detector turns them into a "Build a tool for …" suggestion
 on Home, with a sketch of the plugin to write.
 
+**Models and knowledge.** The architect also picks what the agent runs on and what it searches (`agentResources()` in
+`lib/server/assistant/agent-resources.ts`, read per request). `list_models` gives the chat models this host has, best
+first: Ollama's, the assistant's own model first, then those that call tools; the first Anthropic model is added when
+`ANTHROPIC_API_KEY` is set. A model it names that the host doesn't have becomes the first one, and the draft says so.
+`list_knowledge_bases` gives the knowledge bases other agents you can read already search (one per store and
+collection, with who uses them). A `knowledge` tool reuses one of those, or starts an empty one under a new collection
+name (SQLite store, embedded with a local embeddings model: `nomic-embed-text`, else `mxbai-embed-large`, else any
+`*embed*` model) and adds "add documents to the new … knowledge base" to what you still have to do. With no embeddings
+model pulled, the draft gets no knowledge base and says why.
+
+**For Spotlight.** When Spotlight proposes a new agent ([newAgent](assistant.md#agents-and-teams)), the editor calls
+`POST /api/agents/design` and the architect designs it without a conversation (`designAgent`): the name, what it does,
+its instructions and where its step sits in the flow. The first try hands the model what it would otherwise look up
+(`designBrief`: the models, the knowledge bases, and the nodes whose name, type or keywords match the request, with
+two-letter and filler words left out of the search) and offers one call, `propose_design`, whose values are all plain
+text: qwen3-coder writes tool calls as XML, and Ollama's parser fails on `propose_agent`'s nested arrays of objects
+(*XML syntax error … unexpected EOF*). If that proposes nothing, the architect gets the full conversation with its
+tools. If neither does, the agent is what Spotlight gave, on the first model. The draft keeps Spotlight's name, gets a
+face, and is saved in your project; tool-call markup a model leaks into a value (`<parameter=0>`) is dropped.
+
 The avatar, colour and team you change in the dialog stay through later drafts. **Create agent** makes a draft agent
-from it (`POST /api/agents/import`); finish the open items and pick a model on its page. The architect never creates or
+from it (`POST /api/agents/import`); finish the open items on its page. The architect never creates or
 changes an agent itself. It uses the assistant's model (`LANDFLOW_BUILDER_MODEL` on Ollama by default, as the
 [editor assistant](assistant.md)), at most 10 model calls a message. Each message is recorded in the
 [second brain](second-brain.md) as a `spotlight.asked` event with `architect: true`. Code:
-`apps/web/src/lib/server/assistant/architect.ts`, `apps/web/src/components/agents/architect.tsx`.
+`apps/web/src/lib/server/assistant/architect.ts`, `apps/web/src/lib/server/assistant/agent-resources.ts`,
+`apps/web/src/components/agents/architect.tsx`. Tests: `test/agent-architect.test.ts`, `test/agent-design.test.ts`.
 
 ### Avatars
 

@@ -8,6 +8,7 @@
 import { nanoid } from 'nanoid';
 import type { AgentMessage, LanguageModel, ToolCall, ToolResult, ToolSpec } from '@landflow/engine';
 import type { AssistantOp, RunDigest } from '@/lib/shared/assistant-ops';
+import { describeAgents, withAgentId, type AgentBrief } from '@/lib/shared/agent-brief';
 import { describeTeams, withTeamId, type TeamBrief } from '@/lib/shared/agent-teams';
 import type { NodeTypeInfo, PropertyDescriptor, Workflow } from '@/lib/shared/types';
 import { compositeOutline } from '../composites';
@@ -45,6 +46,8 @@ export interface ChatInput {
   types?: NodeTypeInfo[];
   /** The published agent teams the flow can run with a Run a Team node (docs/agent-teams.md). The route reads them from the store. */
   teams?: TeamBrief[];
+  /** The published agents the flow can run with a Run an Agent node (docs/assistant.md#agents-and-teams). The route reads them from the store. */
+  agents?: AgentBrief[];
   /**
    * Proposals from earlier replies that are still waiting (not applied, not dismissed). They count as part of the
    * workflow the model reads, and a new proposal that repeats one is dropped.
@@ -64,10 +67,12 @@ export interface ChatInput {
 const OP_SCHEMA = {
   type: 'object',
   properties: {
-    op: { type: 'string', enum: ['addNode', 'setParameters', 'setNodeSettings', 'connect', 'disconnect', 'removeNode', 'renameNode', 'turnIntoTeam'] },
+    op: { type: 'string', enum: ['addNode', 'newAgent', 'setParameters', 'setNodeSettings', 'connect', 'disconnect', 'removeNode', 'renameNode', 'turnIntoTeam'] },
     ref: { type: 'string', description: 'addNode: handle for this new node in later ops' },
     type: { type: 'string', description: 'addNode: node type id. connect/disconnect: main, ai_languageModel, ai_memory or ai_tool' },
-    name: { type: 'string', description: 'addNode: node name. renameNode: the new name' },
+    name: { type: 'string', description: 'addNode: node name. renameNode: the new name. newAgent: the new agent\'s name' },
+    description: { type: 'string', description: 'newAgent: what the new agent does, one or two sentences' },
+    instructions: { type: 'string', description: 'newAgent: the new agent\'s instructions: how it does the job' },
     parameters: { type: 'object', description: 'addNode / setParameters: parameter values (merged)' },
     after: { type: 'string', description: 'addNode: existing node name or ref to wire the new node after' },
     before: { type: 'string', description: 'addNode: insert the new node in front of this node (what fed it feeds the new node)' },
@@ -135,6 +140,7 @@ How to work:
 - A connection back to an earlier node is allowed and makes a loop; the engine runs loops. To limit the rounds, use a round counter: a Code node that adds 1 to a round number (kept in a field the loop's nodes pass on, or read from the counter node's own previous output), then an If "round < N" whose true branch connects back to the node to repeat and whose false branch goes on to what happens after the last round.
 - To fix a node's input, prefer changing the node's own parameters (read a field the items have). To put a node between two nodes, use addNode with "before": "<the later node>".
 - ops: {"op":"addNode","ref":"r1","type":"<type id>","name":"Short name","parameters":{…},"after":"<node name or ref>","output":0} (or "before":"<node name>" to insert it in front of a node, rewiring what fed that node), {"op":"setParameters","node":"<name>","parameters":{…}}, {"op":"setNodeSettings","node":"<name>","settings":{"executeOnce":true}} (a node's settings, not its parameters: executeOnce runs it once for all its input items instead of once per item; also retryOnFail, maxTries, waitBetweenTriesMs, retryBackoff, onError, timeoutSeconds, alwaysOutputData, disabled), {"op":"connect","from":"<name or ref>","to":"<name or ref>","output":0,"type":"main"}, {"op":"disconnect","from":"…","to":"…"}, {"op":"removeNode","node":"…"}, {"op":"renameNode","node":"…","name":"…"}, {"op":"turnIntoTeam","node":"<a Run an Agent node with A2A Agent or Run an Agent nodes attached as its tools>"}. A new workflow starts with a trigger (core.manualTrigger unless the user wants a webhook, schedule or chat). Sub-nodes (chat models, memory, tools) attach to an AI Agent with "after": "<agent>" or connect with type ai_languageModel / ai_memory / ai_tool.
+- Agents: before you add an AI Agent (core.aiAgent) for a job, check "Your agents" and "Published agent teams" below. If one's description, skills and tools cover the job, run it: Run an Agent (core.messageAgent, parameters agentId and message, what to do with the item) or Run a Team, and say in your closing sentence which one you picked and why. Use core.aiAgent only for a small step that needs no specialist (classify, summarize, extract, draft a reply). When the job needs a specialist none of them is (its own instructions, tools or knowledge, work other flows will reuse, or the user asks for an agent, a specialist or an expert to do it: that is an agent, never Ask a Person or a Confirm step), say so and propose {"op":"newAgent","ref":"a1","name":"<agent name>","description":"<what it does, one or two sentences>","instructions":"<how it does the job>","parameters":{"message":"…"},"before":"<the step it goes in front of>"} ("after" to add it after a step): applying it saves the agent as a draft and adds a Run an Agent node for it. That node runs the agent with the agent's own model and instructions: attach no chat model, memory or tools to it, and don't also add an AI Agent for the same job. One newAgent per agent, then stop. Then tell the user to give it tools on the Agents page (the Agent architect can) and publish it before the flow runs. Never invent an agentId.
 - Teams: an agent team (Agents page → Teams) is a lead with members who report to it, with reviews and budgets; the Run a Team node (core.runTeam, parameters teamId and teamName, message) runs a published one as a single step, with Done and Needs a person outputs. When the user wants a team that already exists, add that node with its teamId and teamName from "Published agent teams" below; the chat model, memory and tools attached to the node go to the lead. When the user wants a lead and the agents under it turned into a team, propose {"op":"turnIntoTeam","node":"<the lead>"}: applying it creates and publishes the team and swaps the nodes, so never tell the person to create a team first or to pick one afterwards. The same action is "Turn into a team" in the toolbar of a selected Run an Agent node that has agents as tools. Never invent a teamId.
 - Expressions read the current item with "{{ $json.field }}" and other nodes with "{{ $('Node name').item.json.field }}".
 - Never make up ids, channels, email addresses, URLs or keys the user didn't give: leave those parameters empty and say the user fills them in.
@@ -291,6 +297,101 @@ export function withTeamIds(ops: unknown, teams: readonly TeamBrief[], typeOf: (
     if (o.op === 'setParameters' && typeOf(String(o.node ?? '')) === 'core.runTeam') return { ...o, parameters: resolve(o.parameters) };
     return op;
   });
+}
+
+/**
+ * A Run an Agent node's agent as the model wrote it: its name where the id goes becomes the id of the one published agent
+ * of that name. A newAgent op names an agent that doesn't exist yet: any agentId on it is dropped (the editor sets it).
+ */
+export function withAgentIds(ops: unknown, agents: readonly AgentBrief[], typeOf: (node: string) => string | undefined = () => undefined): unknown {
+  if (!Array.isArray(ops)) return ops;
+  const resolve = (parameters: unknown) => withAgentId(parameters, agents);
+  return ops.map((op) => {
+    if (!op || typeof op !== 'object') return op;
+    const o = op as Record<string, unknown>;
+    if (o.op === 'newAgent' || (o.op === 'addNode' && o.newAgent)) {
+      const { agentId: _agentId, ...parameters } = (o.parameters && typeof o.parameters === 'object' ? o.parameters : {}) as Record<string, unknown>;
+      return { ...o, parameters };
+    }
+    if (o.op === 'addNode' && o.type === 'core.messageAgent') return { ...o, parameters: resolve(o.parameters) };
+    if (o.op === 'setParameters' && typeOf(String(o.node ?? '')) === 'core.messageAgent') return { ...o, parameters: resolve(o.parameters) };
+    return op;
+  });
+}
+
+const standInKey = (name: string) => name.trim().toLowerCase().replace(/\s+\d+$/, '').replace(/\s+agent$/, '');
+
+/**
+ * Local models propose a `newAgent` and then, in the same conversation, an AI Agent for the same job, or a chat model for
+ * the new agent's node, believing it needs one (it runs with the agent's own). Those are left out, with what refers to
+ * them, and the model is told why. `agents`: the new agents proposed so far, by `standInKey` of their names.
+ */
+export function withoutAgentStandIns(ops: unknown, agents: ReadonlySet<string>, kindOf: (type: string) => string | undefined = () => undefined): { ops: unknown; notes: string[] } {
+  if (!Array.isArray(ops) || !agents.size) return { ops, notes: [] };
+  const notes: string[] = [];
+  const gone = new Set<string>();
+  const isAgent = (name: unknown) => typeof name === 'string' && agents.has(standInKey(name));
+  const kept = ops.filter((op) => {
+    if (!op || typeof op !== 'object') return true;
+    const o = op as Record<string, unknown>;
+    if (o.op === 'addNode' && o.type === 'core.aiAgent' && isAgent(o.name)) {
+      notes.push(`“${String(o.name)}” does the new agent's job: its Run an Agent step already runs it`);
+      for (const handle of [o.ref, o.name]) if (typeof handle === 'string') gone.add(handle);
+      return false;
+    }
+    const attached = (o.op === 'addNode' && kindOf(String(o.type ?? '')) === 'subnode' && isAgent(o.after)) || (o.op === 'connect' && typeof o.type === 'string' && o.type !== 'main' && isAgent(o.to));
+    if (attached) {
+      notes.push(`nothing attaches to the new agent's step: it runs with the agent's own model and tools`);
+      for (const handle of [o.ref, o.name]) if (typeof handle === 'string') gone.add(handle);
+      return false;
+    }
+    return !(o.op === 'connect' || o.op === 'disconnect') || !(gone.has(String(o.from)) || gone.has(String(o.to)));
+  });
+  return { ops: kept, notes: [...new Set(notes)] };
+}
+
+/**
+ * A new AI Agent step that wouldn't run here (no chat model attached, so OpenAI's, or a hosted one) becomes a dedicated
+ * agent: a newAgent the Agent architect designs on a local model, with the tools and knowledge base it needs. One with an
+ * Ollama chat model stays, as a small inline step. Its sub-nodes go with withoutAgentStandIns, given the names returned.
+ */
+export function asNewAgents(ops: unknown, typeOf: (name: string) => string | undefined = () => undefined, already: ReadonlySet<string> = new Set()): { ops: unknown; names: string[]; handles: string[]; notes: string[] } {
+  if (!Array.isArray(ops)) return { ops, names: [], handles: [], notes: [] };
+  const handles = (o: Record<string, unknown>) => [o.ref, o.name].filter((h): h is string => typeof h === 'string');
+  const added = new Map<string, string>();
+  for (const op of ops) {
+    const o = op as Record<string, unknown>;
+    if (o?.op === 'addNode' && typeof o.type === 'string') for (const h of handles(o)) added.set(h, o.type);
+  }
+  const typeOfHandle = (h: unknown) => (typeof h === 'string' ? (added.get(h) ?? typeOf(h)) : undefined);
+  const LOCAL = 'core.ollamaChatModel';
+  const runsHere = (agent: Record<string, unknown>) =>
+    ops.some((op) => {
+      const o = op as Record<string, unknown>;
+      return (o?.op === 'addNode' && o.type === LOCAL && handles(agent).includes(String(o.after))) || (o?.op === 'connect' && o.type === 'ai_languageModel' && handles(agent).includes(String(o.to)) && typeOfHandle(o.from) === LOCAL);
+    });
+  const names: string[] = [];
+  const agentHandles: string[] = [];
+  const out = ops.map((op) => {
+    const o = op as Record<string, unknown>;
+    // One named after a new agent already proposed is its stand-in: withoutAgentStandIns drops it.
+    if (o?.op !== 'addNode' || o.type !== 'core.aiAgent' || runsHere(o) || (typeof o.name === 'string' && already.has(standInKey(o.name)))) return op;
+    const p = (o.parameters && typeof o.parameters === 'object' ? o.parameters : {}) as Record<string, unknown>;
+    const said = (v: unknown) => (typeof v === 'string' && v.trim() && !v.trim().startsWith('{{') ? v.trim() : undefined);
+    const name = (typeof o.name === 'string' && o.name.trim()) || 'Agent';
+    names.push(name);
+    agentHandles.push(name, ...(typeof o.ref === 'string' ? [o.ref] : []));
+    const instructions = said(p.systemMessage) ?? said(p.prompt) ?? '';
+    return {
+      op: 'newAgent',
+      name,
+      description: (instructions.split(/(?<=[.!?])\s/)[0] ?? '').slice(0, 300) || name,
+      instructions,
+      ...(typeof p.prompt === 'string' && p.prompt.trim() && { parameters: { message: p.prompt } }),
+      ...Object.fromEntries((['ref', 'after', 'before', 'output'] as const).filter((k) => o[k] !== undefined).map((k) => [k, o[k]])),
+    };
+  });
+  return { ops: out, names, handles: agentHandles, notes: names.map((n) => `“${n}” is a dedicated agent (newAgent), designed on a local model: an AI Agent step here has no chat model it can run on`) };
 }
 
 /** An id-like token in prose: a capital, then 8 or more capitals, digits, `_` or `-`, with a digit among them (C057L43652P). */
@@ -475,7 +576,16 @@ export async function runChat(input: ChatInput): Promise<void> {
   /** The ops of each proposal so far, as sent: a model may send the same one again and again. */
   const sent = new Set<string>();
   /** What the user and the editor said, for telling a given id from a made-up one. */
-  const known = () => [...input.messages.map((m) => m.content), JSON.stringify(working), JSON.stringify(runs), ...(input.teams?.length ? [describeTeams(input.teams)] : [])].join('\n');
+  const known = () =>
+    [...input.messages.map((m) => m.content), JSON.stringify(working), JSON.stringify(runs), ...(input.teams?.length ? [describeTeams(input.teams)] : []), ...(input.agents?.length ? [describeAgents(input.agents)] : [])].join('\n');
+  /** The agents newAgent proposed in this reply and in pending proposals, by standInKey of their names. */
+  const newAgents = new Set<string>(
+    (input.pending ?? []).flatMap((p) => (Array.isArray(p.ops) ? p.ops : []).flatMap((op) => {
+      const o = op as Record<string, unknown>;
+      const spec = (o.newAgent ?? (o.op === 'newAgent' ? o : undefined)) as { name?: unknown } | undefined;
+      return typeof spec?.name === 'string' ? [standInKey(spec.name)] : [];
+    })),
+  );
   /** Ids left out of proposals as made up: the text doesn't repeat them either. */
   const invented = new Set<string>();
   /** The text shown so far in this reply, for leaving out what it says twice. */
@@ -491,6 +601,7 @@ export async function runChat(input: ChatInput): Promise<void> {
   const system = [
     SYSTEM,
     `\nApps and plugins this workflow can use (search_nodes for the rest):\n${catalogSummary(types)}`,
+    input.agents?.length ? `\nYour agents (Run an Agent can run these; none of them may fit):\n${describeAgents(input.agents)}` : '\nYour agents: none published yet.',
     input.teams?.length ? `\nPublished agent teams (Run a Team can run these):\n${describeTeams(input.teams)}` : '',
     `\nThe editor now:\n${outline()}`,
     working.groups?.some((g) => g.composite) ? `\nComposites (frames typed by a contract: fill their slots with matching nodes, keep their rules):\n${compositeOutline(working)}` : '',
@@ -520,7 +631,8 @@ export async function runChat(input: ChatInput): Promise<void> {
           return result(`Unknown node type “${asked}”.${close.length ? ` Did you mean: ${close.join(', ')}?` : ''}`, `Looked up “${shorten(asked, 40)}”: not found`, false);
         }
         const teamsNote = info.type === 'core.runTeam' ? `\nPublished agent teams:\n${input.teams?.length ? describeTeams(input.teams) : '(none yet: build one on the Agents page, or turn a lead and its agents into a team)'}` : '';
-        return result(`${nodeDocs(info, existing?.parameters)}${teamsNote}`, `Read ${info.descriptor.displayName} docs`);
+        const agentsNote = info.type === 'core.messageAgent' ? `\nYour agents:\n${input.agents?.length ? describeAgents(input.agents) : '(none published yet: propose a newAgent for one)'}` : '';
+        return result(`${nodeDocs(info, existing?.parameters)}${teamsNote}${agentsNote}`, `Read ${info.descriptor.displayName} docs`);
       }
       case 'get_workflow':
         return result(outline(), 'Read the workflow');
@@ -541,7 +653,15 @@ export async function runChat(input: ChatInput): Promise<void> {
         };
         // A node already proposed and waiting is used, not added again.
         const { ops: fresh, repeated } = withoutRepeatedAdds(working, waiting, ops);
-        const teamed = withTeamIds(fresh, input.teams ?? [], (name) => nodeByName(name)?.type);
+        const typeOfNode = (name: string) => nodeByName(name)?.type;
+        const dedicated = asNewAgents(fresh, typeOfNode, newAgents);
+        for (const handle of dedicated.handles) newAgents.add(standInKey(handle));
+        const standIns = withoutAgentStandIns(withAgentIds(withTeamIds(dedicated.ops, input.teams ?? [], typeOfNode), input.agents ?? [], typeOfNode), newAgents, (type) => types.find((t) => t.type === type)?.descriptor.kind);
+        standIns.notes.unshift(...dedicated.notes);
+        const teamed = standIns.ops;
+        if (standIns.notes.length && Array.isArray(teamed) && !teamed.length) {
+          return result(`Nothing changes: ${standIns.notes.join('; ')}. If everything the latest message asks for is proposed, stop and say in one line what the cards do.`, 'Skipped a stand-in for the new agent');
+        }
         const { ops: proposedOps, invented: inventedNotes, values } = withoutInventedIds(teamed, known(), typeText);
         for (const value of values) invented.add(value);
         const validated = validateOps(working, proposedOps, lookup);
@@ -615,8 +735,9 @@ export async function runChat(input: ChatInput): Promise<void> {
         }
         hold(summary, validated.workflow);
         for (const op of validated.ops) if (op.op === 'addNode' && op.ref && op.name) proposedRefs.set(op.ref, op.name);
+        for (const op of validated.ops) if (op.op === 'addNode' && op.newAgent) for (const name of [op.newAgent.name, op.name]) if (name) newAgents.add(standInKey(name));
         sent.add(asSent);
-        const dropped = [...validated.dropped, ...validated.ignored, ...inventedNotes];
+        const dropped = [...validated.dropped, ...validated.ignored, ...inventedNotes, ...standIns.notes];
         const notes = `${dropped.length ? ` Left out: ${dropped.join('; ')}.` : ''}${repeated.length ? ` Not added again: ${repeated.join('; ')}.` : ''}`;
         const count = `${validated.ops.length} change${validated.ops.length === 1 ? '' : 's'}`;
         const shown = result(`Shown to the user as a card with an Apply button (${count}); nothing changes until they click it.${notes} Don't list the changes again, ask whether to apply them, or say they are applied. If the latest message asks for something this doesn't cover yet, propose it now (the nodes above are in the workflow for you to connect to); if it's all proposed, stop and say in one line what the cards do.`, `Proposed ${count}`);
@@ -645,7 +766,8 @@ export async function runChat(input: ChatInput): Promise<void> {
       const { text, calls } = turn.toolCalls.length ? { text: turn.text, calls: turn.toolCalls } : recoverToolCalls(turn.text);
       const proposing = proposed || calls.some((call) => call.name === 'propose_changes');
       if (text.trim()) {
-        const own = withoutEchoedNotes(text);
+        // A local model leaves its tool-call tags in the text ("…to test it.<tool_call>").
+        const own = withoutEchoedNotes(text).replace(/<\/?(?:tool_call|function|parameter)\b[^>]*>/g, '').trimEnd();
         const claimsOff = proposing ? withoutAppliedClaims(own) : own;
         const shown = own && withoutMadeUpIds(withoutRepeats(input.session ? withoutApplyRequests(claimsOff) : claimsOff, said), known(), invented);
         said += `\n${text}`;

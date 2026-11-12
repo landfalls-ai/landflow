@@ -1243,6 +1243,29 @@ workbench in place of a page of cards, keeping Spotlight.
 
 Other follow-ups above are candidates too, among them making a runbook automatically when a room ends and steps that call a plugin instead of asking a person ([runbooks.md](runbooks.md#not-built)).
 
+## Spotlight: your agents, and autonomous mode (built 2026-11-12)
+
+Spotlight's chat and the AI flow builder were told only the published teams, so a step that needed an agent always got a
+new AI Agent. Now they get the published agents too, with what each does, its skills and tools, and a rule: run one that
+fits with Run an Agent, use a plain AI Agent for a small step, and otherwise say a dedicated agent is needed and propose
+one (`newAgent`). The Agent architect designs it: a local model, the tools it needs and a knowledge base when it works
+from documents ([assistant.md](assistant.md#agents-and-teams), [agents.md](agents.md#agent-architect)). A new AI Agent
+step that wouldn't run here becomes such an agent. Autonomous mode, on by default, removes the clicks: a drafted flow
+goes straight into Test and fix (with test data pinned on its trigger), a chat reply's changes are applied and tested as
+it ends, and a new agent is published so the flow can run it; publishing the workflow still waits for a person
+([assistant.md](assistant.md#autonomous-mode)). Next: the first-draft builder proposing a new agent too, and the Agent architect opening on the draft with the step's
+context.
+
+## Spotlight's panel (built 2026-11-12)
+
+Spotlight's conversation used to show in three places: a bar at the bottom of the canvas, a small window above it and,
+while it worked on its own, a card at the top left that covered the flow. It is now one panel at the right of the
+canvas, never over it: a column on a desktop that folds to a strip, a sheet under the canvas on a phone. Its header says
+what Spotlight is doing, and its timeline lists each run, fix and agent it designs as a row. A fix leaves a bubble on the
+nodes it changed until you close it (or a minute passes), Spotlight's own runs make no toasts, and the app's left menu
+folds to icons ([assistant.md](assistant.md#the-spotlight-panel)). A Fable review of the old layout set the design. Next:
+resizing the column, and keeping a fix bubble's text after it closes (the timeline has it).
+
 ## Not planned
 
 Later, maybe: an agent code sandbox, and prompt management. Not planned:

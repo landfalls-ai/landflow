@@ -30,21 +30,27 @@ const createSchema = z.object({
   color: z.string().regex(/^#[0-9a-f]{6}$/i).optional(),
   icon: z.string().max(80).optional(),
   team: z.string().max(60).optional(),
+  /** What it does and how: Spotlight's newAgent gives them (docs/assistant.md#agents-and-teams). Not with a template. */
+  description: z.string().max(500).optional(),
+  instructions: z.string().max(20_000).optional(),
 });
 
 /**
  * POST — a new agent, empty or from a template (`templateId`), with the name, avatar, colour and team given. An agent made
  * without an avatar (a script, the CLI, another agent) gets a face from its name, as the New agent dialog gives one: a
- * robot icon in a team chart read as a missing picture.
+ * robot icon in a team chart read as a missing picture. `description` and `instructions` start an empty agent off
+ * (Spotlight's newAgent); it is a draft either way, published by a person.
  */
 export const POST = handler(async (request: Request) => {
   const body = await parseBody(request, createSchema);
   if (!body.ok) return body.response;
-  const { templateId, name, avatar, color, icon, team } = body.data;
+  const { templateId, name, avatar, color, icon, team, description, instructions } = body.data;
   const template = templateId ? agentTemplates.get(templateId) : undefined;
   if (templateId && (!template || !agentTemplateAccess(routeActor(), template).read)) return error('Template not found', 404);
   const overrides = { name, color, icon, team, ...(avatar !== undefined && { avatar: avatar as AgentAvatar }) };
   const face: AgentAvatar = { kind: 'face', face: randomFace(name?.trim() || nanoid(6)) };
-  const config = template ? configFromTemplate(template, overrides) : { name, ...(color && { color }), ...(icon && { icon }), ...(team && { team }), avatar: avatar !== undefined ? (avatar as AgentAvatar) : face };
+  const config = template
+    ? configFromTemplate(template, overrides)
+    : { name, ...(color && { color }), ...(icon && { icon }), ...(team && { team }), ...(description && { description }), ...(instructions && { instructions }), avatar: avatar !== undefined ? (avatar as AgentAvatar) : face };
   return json({ agent: createInProject(request, 'agent', () => agentStore.create(config), (a) => a.id) }, 201);
 });

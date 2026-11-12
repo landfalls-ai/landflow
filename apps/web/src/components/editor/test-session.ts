@@ -3,7 +3,8 @@
  * Spotlight's "Test and fix" (docs/assistant.md): run the workflow and, while a run doesn't pass
  * (lib/shared/run-check.ts) or doesn't do what the workflow was drafted for, tell the assistant what went wrong, apply
  * the fix it proposes and run again, up to MAX_FIXES times. Starting a session is the user's go-ahead for those fixes;
- * each one is applied with its own Undo.
+ * each one is applied with its own Undo. In autonomous mode (./autonomous.ts, on by default) a drafted flow or an applied
+ * chat change starts a session by itself.
  * When a run passes, Spotlight offers to publish the workflow to production. Spotlight's stop button ends the session
  * (a run already going finishes). While it runs, Spotlight shows its progress in a card at the side of the canvas; the
  * session's turns share a `testId`, and once it is over the conversation comes back with them folded into one line and
@@ -12,7 +13,8 @@
 import { nanoid } from 'nanoid';
 import { toast } from 'sonner';
 import { checkRun, hollowSteps, multipliedSteps, type CheckedRun, type RunVerdict } from '@/lib/shared/run-check';
-import { applyChanges, runDigests, useAssistant, type ReplyPart } from './assistant';
+import { applyChanges, fixedNodes, runDigests, useAssistant, type ReplyPart } from './assistant';
+import { agentsSettled } from './new-agent';
 import { publishVersion, toastApprovalRequested } from './publish-control';
 import { useEditor } from './store';
 import { useTestListener } from './test-listener';
@@ -109,23 +111,27 @@ const setRun = (itemId: string, run: Extract<ReplyPart, { kind: 'run' }>['run'])
  * the workflow was drafted from), a run without errors is checked against it as well: the assistant compares the output
  * with the goal and fixes what doesn't match.
  */
-export async function testUntilItRuns(goal?: string): Promise<void> {
+/** `publishAgents`: an agent a fix creates is published so the next run can use it (autonomous mode, ./autonomous.ts). */
+export async function testUntilItRuns(goal?: string, options: { publishAgents?: boolean } = {}): Promise<void> {
   if (useAssistant.getState().pending || useAssistant.getState().testing) return;
   const abort = new AbortController();
   const { signal } = abort;
   const testId = nanoid(8);
-  useAssistant.setState({ testing: abort, open: true, detail: false });
+  useAssistant.setState({ testing: abort });
   try {
     let fixes = 0;
     /** What was applied so far: the assistant gets no history, so it hears what didn't help. */
     const tried: string[] = [];
     for (let round = 1; !signal.aborted; round++) {
+      // An agent Spotlight is still designing (./new-agent.ts): the run needs it saved and pointed at first.
+      await agentsSettled();
       const runItem = say([{ kind: 'run', run: { round, state: 'running' } }], testId);
       const result = await runOnce(signal);
       if ('stopped' in result) {
         // The run that didn't happen gives way to why.
         useAssistant.setState((s) => ({ items: s.items.filter((item) => item.id !== runItem) }));
-        say([{ kind: 'text', text: result.stopped }]);
+        // Stopped by the person (■, New conversation, another workflow): nothing to add.
+        if (!signal.aborted) say([{ kind: 'text', text: result.stopped }]);
         return;
       }
       setRun(runItem, { round, state: result.passed ? 'passed' : 'failed', summary: result.summary });
@@ -167,17 +173,21 @@ export async function testUntilItRuns(goal?: string): Promise<void> {
         return;
       }
       const label = proposals.length === 1 ? `Spotlight applied “${proposals[0].summary}”` : `Spotlight applied ${proposals.length} fixes`;
-      if (!applyChanges(proposals.map((p) => ({ ops: p.ops, kind: 'proposal' as const })), label)) {
+      if (!applyChanges(proposals.map((p) => ({ ops: p.ops, kind: 'proposal' as const })), label, { publishAgents: options.publishAgents, quiet: true })) {
         say([{ kind: 'text', text: 'The fix no longer fits the workflow, so testing stops here.' }]);
         return;
       }
-      for (const proposal of proposals) useAssistant.getState().setProposalState(reply.id, proposal.id, 'applied');
+      for (const proposal of proposals) {
+        useAssistant.getState().setProposalState(reply.id, proposal.id, 'applied');
+        // A bubble on what it fixed, until dismissed.
+        useAssistant.getState().noteFix(fixedNodes(proposal.ops, nodeId), proposal.summary);
+      }
       tried.push(...proposals.map((p) => p.summary));
       fixes++;
     }
   } finally {
     // Over: the conversation comes back from the side with the outcome.
-    if (useAssistant.getState().testing === abort) useAssistant.setState({ testing: undefined, fixing: undefined, open: true, detail: false });
+    if (useAssistant.getState().testing === abort) useAssistant.setState({ testing: undefined, fixing: undefined });
   }
 }
 

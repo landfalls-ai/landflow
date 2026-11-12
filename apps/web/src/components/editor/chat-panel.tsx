@@ -237,7 +237,7 @@ export function ChatPanel({
 
   if (!open) return null;
   return (
-    <aside className="z-30 flex w-[380px] shrink-0 animate-panel flex-col border-l border-hair bg-sf">
+    <aside className="z-30 flex w-[380px] shrink-0 animate-panel flex-col border-l border-hair bg-sf max-md:h-[52dvh] max-md:w-full max-md:border-l-0 max-md:border-t">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-hair px-3">
         <span className="text-[13px] font-semibold text-t1">Chat</span>
         <span className="font-mono text-[11px] text-t3">{sessionId}</span>

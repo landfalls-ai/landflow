@@ -37,10 +37,10 @@ import { Button } from '../ui/button';
 import { NodeIcon } from '../ui/icon';
 import { Kbd } from '../ui/inputs';
 import { WorkflowTabs } from '../shell/workflow-tabs';
-import { prefetchFailure, useAssistant } from './assistant';
+import { prefetchFailure, spotlightOwnsRun, useAssistant } from './assistant';
 import { BrainCanvasCard } from '../brain/canvas-card';
-import { focusSpotlight, Spotlight, SpotlightActivity } from './spotlight';
-import { BuildCard, BuildProgressBar, GhostEdgeView, GhostNodeView, useGhosts } from './building';
+import { focusSpotlight, SpotlightPanel } from './spotlight';
+import { BuildProgressBar, GhostEdgeView, GhostNodeView, useGhosts } from './building';
 import { ChatPanel, type ChatApproval, type ChatChunk, type ChatFile, type ChatOutcome } from './chat-panel';
 import { parseClipboard, type ClipboardData } from './clipboard';
 import { FlowEdgeView } from './flow-edge';
@@ -110,7 +110,7 @@ async function pasteN8n(data: unknown, at?: { x: number; y: number }) {
 
 /**
  * A node that reports progress grows while it runs (a team node becomes the member at work, with the strip and moments
- * above it): when it no longer fits between the top of the canvas and Spotlight's bar, the view moves to it, never
+ * above it): when it no longer fits between the top of the canvas and the run controls, the view moves to it, never
  * zooming in. Not once the person has panned or zoomed during the run.
  */
 function KeepRunningInView({ moved }: { moved: RefObject<boolean> }) {
@@ -121,7 +121,7 @@ function KeepRunningInView({ moved }: { moved: RefObject<boolean> }) {
     return ids.some((id) => {
       const node = s.nodeLookup.get(id);
       if (!node?.measured?.height) return false;
-      // The strip and moments sit above the node; the sub-node labels and Spotlight's bar below it.
+      // The strip and moments sit above the node; the sub-node labels and the run controls below it.
       const top = (node.internals.positionAbsolute.y - 72) * zoom + y;
       const bottom = (node.internals.positionAbsolute.y + node.measured.height + 28) * zoom + y;
       return top < 8 || bottom > s.height - 64;
@@ -149,7 +149,7 @@ function KeepGhostsInView({ ids }: { ids: string[] }) {
       const { x: nx, y: ny } = node.internals.positionAbsolute;
       const w = node.measured?.width ?? 80;
       const h = node.measured?.height ?? 80;
-      // The node and its label below; Spotlight's bar sits at the bottom.
+      // The node and its label below; the run controls sit at the bottom.
       return nx * zoom + x < 8 || (nx + w) * zoom + x > s.width - 8 || ny * zoom + y < 8 || (ny + h + 40) * zoom + y > s.height - 72;
     });
   });
@@ -275,7 +275,6 @@ function Canvas({ onSave }: { onSave: () => void }) {
         state.run?.({ kind: e.shiftKey ? 'debug' : 'run' });
       } else if (mod && e.key === 'i') {
         e.preventDefault();
-        if (useAssistant.getState().items.length) useAssistant.getState().setOpen(true);
         focusSpotlight();
       } else if (e.key === 'F8' && state.paused) {
         e.preventDefault();
@@ -382,7 +381,7 @@ function Canvas({ onSave }: { onSave: () => void }) {
       </Controls>
       <MiniMap
         position="bottom-right"
-        className="!bottom-3 !right-3"
+        className="!bottom-3 !right-3 max-md:!hidden"
         pannable
         zoomable
         nodeColor={(node) => (node.type === 'sticky' ? 'var(--acbd)' : node.type === 'frame' ? 'color-mix(in oklab, var(--t3) 14%, transparent)' : 'var(--bd)')}
@@ -452,7 +451,7 @@ function EmptyCanvas() {
         </span>
       </button>
       <button onClick={focusSpotlight} className="pointer-events-auto -mt-4 animate-fade-up text-[12.5px] text-t3 transition-colors hover:text-t1" style={{ animationDelay: '80ms' }}>
-        or describe it to Spotlight below <Kbd>⌘I</Kbd>
+        or describe it to Spotlight <Kbd>⌘I</Kbd>
       </button>
       {templates.length > 0 && (
         <div className="pointer-events-auto flex w-full max-w-[880px] flex-col items-center gap-3 px-6">
@@ -631,6 +630,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
   useFollowWaiting();
   // A run this editor started before a reload goes on: show it live again.
   useFollowRun();
+  const spotlightOpen = useAssistant((s) => !s.collapsed);
 
   // The assistant's conversation lasts while this workflow is open.
   useEffect(() => useAssistant.getState().bind(workflowId), [workflowId]);
@@ -772,6 +772,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
   const report = useCallback((result: RunResult | undefined, started: number, label: string) => {
     if (!result) return;
     if (result.status === 'error') prefetchFailure();
+    if (spotlightOwnsRun()) return;
     if (result.status === 'success') toast.success(`${label} succeeded in ${duration(Date.now() - started)}`);
     else if (result.status === 'canceled') toast(`${label} stopped`);
     else if (result.status === 'waiting') toast(`${label} is waiting; it continues in the background`);
@@ -870,7 +871,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
 
   if (!loaded) {
     return (
-      <div className="grid h-screen place-items-center">
+      <div className="grid h-dvh place-items-center max-md:h-[calc(100dvh-2.75rem)]">
         <Loader2 className="size-5 animate-spin text-t3" />
       </div>
     );
@@ -878,7 +879,8 @@ export function Editor({ workflowId }: { workflowId: string }) {
 
   return (
     <ReactFlowProvider>
-      <div className="flex h-screen flex-col">
+      {/* The whole screen, less the phone bar above it (sidebar.tsx): the box at the bottom of Spotlight stays on screen. */}
+      <div className="flex h-dvh flex-col max-md:h-[calc(100dvh-2.75rem)]">
         <header className="relative flex h-[52px] shrink-0 items-center gap-3 border-b border-hair bg-bg px-4">
           <Link href="/workflows" aria-label="Back to workflows" className="grid size-8 place-items-center rounded-full text-t2 hover:bg-acdim hover:text-t1">
             <ArrowLeft className="size-4" />
@@ -930,19 +932,16 @@ export function Editor({ workflowId }: { workflowId: string }) {
         <EditLockBanner onTakeOver={() => void takeOver()} />
         <StatusStrip />
 
-        <div className="relative flex min-h-0 flex-1">
-          <div className="flex min-w-0 flex-1 flex-col">
+        <div className="relative flex min-h-0 flex-1 max-md:flex-col">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <div className="relative min-h-0 flex-1">
               <Canvas onSave={() => void save()} />
               <EmptyCanvas />
               <CanvasToolbar />
-              <SpotlightActivity />
               <BuildProgressBar />
-              <BuildCard />
               <BrainCanvasCard />
-              {/* One dock at the bottom: run controls, then Spotlight. The side padding keeps clear of zoom and the minimap.
-                  When the canvas is narrow (a side panel open), Spotlight wraps to its own line above the run controls. */}
-              <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex flex-wrap-reverse items-start justify-center gap-2 pl-14 pr-[232px]">
+              {/* The run controls at the bottom, clear of zoom and the minimap. */}
+              <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex flex-wrap-reverse items-start justify-center gap-2 pl-14 pr-[232px] max-md:bottom-3 max-md:pr-3">
                 <ExecuteBar
                   running={running}
                   breakpoints={breakpoints.length}
@@ -953,11 +952,15 @@ export function Editor({ workflowId }: { workflowId: string }) {
                   onStop={stop}
                   onChat={() => setChatOpen((o) => !o)}
                 />
-                <Spotlight />
               </div>
             </div>
-            <EditorLogs />
+            {/* On a phone, Spotlight's open sheet says how each run went: the logs give the canvas their room. */}
+            <div className={cn('contents', spotlightOpen && 'max-md:hidden')}>
+              <EditorLogs />
+            </div>
           </div>
+          {/* Spotlight beside the canvas (under it on a phone), never over it: the canvas shrinks when it is open. */}
+          <SpotlightPanel hiddenOnPhone={chatOpen} />
           <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} onSend={sendChat} onDecide={decideChat} />
           <NodeCreator />
         </div>

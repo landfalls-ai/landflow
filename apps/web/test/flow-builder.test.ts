@@ -117,3 +117,60 @@ describe('AI builder on Claude or an OpenAI-compatible API', () => {
     }
   });
 });
+
+describe('AI builder agents', () => {
+  const agents = [
+    { id: 'ag_triage', name: 'Support triage', description: 'Routes support tickets', version: 3, skills: [], tools: ['search_crm'] },
+    { id: 'ag_notes', name: 'Release notes writer', version: 1, skills: [], tools: [] },
+  ];
+  const withAgent = (agentId: string) =>
+    JSON.stringify({ name: 'Tickets', nodes: [{ key: 'start', type: 'core.manualTrigger', name: 'Start' }, { key: 'agent', type: 'core.messageAgent', name: 'Triage', parameters: { agentId, message: 'Route it' } }], connections: [{ from: 'start', to: 'agent' }] });
+
+  it('tells the model the published agents and when to run one, and turns the agent name it writes into the id', async () => {
+    answer = withAgent('Support triage');
+    const flow = await buildFlow('route each new ticket', undefined, [], agents);
+    expect(flow.nodes.find((n) => n.key === 'agent')!.parameters).toEqual({ agentId: 'ag_triage', message: 'Route it' });
+    const prompt = JSON.stringify(fake.last('/api/chat')?.body);
+    expect(prompt).toContain('agentId ag_triage');
+    expect(prompt).toContain('Tools: search_crm.');
+    expect(prompt).toContain('when a step needs an agent, first look at');
+  });
+
+  it('clears an agent id nobody has, so the node asks for one', async () => {
+    answer = withAgent('ag_made_up');
+    expect((await buildFlow('route each new ticket', undefined, [], agents)).nodes.find((n) => n.key === 'agent')!.parameters).toEqual({ agentId: '', message: 'Route it' });
+    answer = withAgent('ag_made_up');
+    expect((await buildFlow('route each new ticket')).nodes.find((n) => n.key === 'agent')!.parameters).toEqual({ agentId: '', message: 'Route it' });
+  });
+});
+
+describe('AI builder test items on a webhook', () => {
+  it('pins them on a Webhook trigger too, so a test runs at once instead of waiting for a call', async () => {
+    answer = JSON.stringify({
+      name: 'Tickets',
+      nodes: [{ key: 'hook', type: 'core.webhook', name: 'Ticket in', parameters: { path: 'tickets' } }, { key: 'set', type: 'core.set', name: 'Subject', parameters: { mode: 'manual' } }],
+      connections: [{ from: 'hook', to: 'set' }],
+      testData: [{ body: { subject: 'Export times out' } }],
+    });
+    expect((await buildFlow('take tickets by webhook')).pinData).toEqual({ hook: [{ json: { body: { subject: 'Export times out' } } }] });
+    expect(JSON.stringify(fake.last('/api/chat')?.body)).toContain('With a Webhook trigger, each item is what a call brings');
+  });
+
+  it('pins a made-up item with the fields the steps read when the model gave none that fit', async () => {
+    const flow = (testData?: unknown[]) =>
+      JSON.stringify({
+        name: 'Tickets',
+        nodes: [
+          { key: 'hook', type: 'core.webhook', name: 'Ticket in', parameters: { path: 'tickets' } },
+          { key: 'set', type: 'core.set', name: 'Subject', parameters: { mode: 'manual', fields: { values: [{ name: 'line', type: 'string', value: '{{ $json.ticketDescription }} from {{ $json.body.customer_name }}' }] } } },
+        ],
+        connections: [{ from: 'hook', to: 'set' }],
+        ...(testData && { testData }),
+      });
+    answer = flow();
+    expect((await buildFlow('take tickets by webhook')).pinData).toEqual({ hook: [{ json: { ticketDescription: 'Sample ticket description', body: { customer_name: 'Sample customer name' } } }] });
+    // Items that carry none of the fields read are dropped as noise, and the sample takes their place.
+    answer = flow([{ subject: 'x' }]);
+    expect((await buildFlow('take tickets by webhook')).pinData?.hook[0].json).toHaveProperty('ticketDescription');
+  });
+});

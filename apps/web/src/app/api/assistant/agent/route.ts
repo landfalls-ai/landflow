@@ -4,6 +4,7 @@
  * agents; creating one is POST /api/agents/import with the draft.
  */
 import { z } from 'zod';
+import { agentResources } from '@/lib/server/assistant/agent-resources';
 import type { AgentConfig } from '@/lib/shared/agents';
 import type { ArchitectEvent } from '@/lib/shared/agent-architect';
 import { runArchitect } from '@/lib/server/assistant/architect';
@@ -34,6 +35,8 @@ export const POST = handler(async (request: Request) => {
   const draft = parsed.data.draft as Partial<AgentConfig> | undefined;
   const actor = routeActor();
   const types = allowedTypes(undefined, actor);
+  // The models and knowledge bases the draft can use: a local model by default (docs/agents.md#agent-architect).
+  const resources = await agentResources(actor);
   const encoder = new TextEncoder();
   const abort = new AbortController();
   request.signal.addEventListener('abort', () => abort.abort());
@@ -51,7 +54,7 @@ export const POST = handler(async (request: Request) => {
         }
       };
       try {
-        await runArchitect({ messages, ...(draft && { draft }), ...(model && { model }), types, actor, signal: abort.signal, onEvent: send });
+        await runArchitect({ messages, ...(draft && { draft }), ...(model && { model }), types, actor, resources, signal: abort.signal, onEvent: send });
       } catch (caught) {
         if (!abort.signal.aborted) send({ type: 'error', message: errorText(caught) });
       } finally {
