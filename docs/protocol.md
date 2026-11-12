@@ -1263,3 +1263,36 @@ templates** (`resources/templates/list`) for callers whose grant covers `trigger
   (`LANDFLOW_MCP_TRIGGER_SWEEP_SECONDS`, 60) deregisters webhooks and stops polls that lost their stream.
 - **Queue mode**: the main holding the stream polls; events live in the database, and a 1 s watch lets that main see
   a webhook another main received. A client that reconnects to another main starts a new baseline.
+
+## 16. Activity items
+
+Integration triggers and their **List Changed Since** operations (Slack, Google Drive and Calendar, Notion, …) output
+one shape whatever the tool, so one flow can take items from any of them: an ingest flow that records events, a digest,
+a search index. The schema is [`packages/protocol/activity-items/activity-item.schema.json`](../packages/protocol/activity-items/activity-item.schema.json);
+a node declares it as its (or its operation's) `outputSchema`.
+
+| Field | |
+|---|---|
+| `source` | the tool, lowercase (`slack`, `google-drive`, `google-calendar`, `notion`, …) |
+| `sourceId` | stable id, `<source>:<the tool's ids>`: the same change always has the same id, so a replay is recognised |
+| `url` | where a person opens it, or null |
+| `actorEmail` | the person who made the change, lowercase, or null; email is the identity key across tools |
+| `occurredAt` | ISO 8601 in UTC with milliseconds |
+| `kind` | a suggested event kind such as `work.discussion` or `work.doc_edited` (`<namespace>.<name>`); a flow may change it |
+| `title` | one line, at most 200 characters (the `sourceId` when the tool has none) |
+| `summary` | the text with whitespace collapsed, at most 600 characters |
+| `teamHint`, `initiativeHint`, `customerHint` | what the tool's own grouping suggests (a `#customer-<name>` channel, a folder, a project), or null |
+| `raw` | the tool's object, trimmed: strings at 1,000 characters, lists at 25 entries, nesting below five levels replaced by `…` |
+| `cursor` | only on List Changed Since output: pass it back as **Since** to continue after this item |
+
+The SDKs build it, with the same clipping, time parsing and errors: `activityItem()` and `ACTIVITY_ITEM_SCHEMA`
+(`@landflow/sdk`), `landflow.ActivityItem(landflow.Activity{…})` and `landflow.ActivityItemSchema()` (Go),
+`activity_item(…)` and `ACTIVITY_ITEM_SCHEMA` (`landflow_sdk`). Each throws on a missing `source` or `sourceId`, a
+`kind` that is not `<namespace>.<name>`, or a time it can't read (ISO 8601, where a date alone or a time without an
+offset is UTC; epoch milliseconds; a native date). The shared cases in
+[`activity-items/cases.json`](../packages/protocol/activity-items/cases.json) are run by all three SDKs' tests, and
+`packages/protocol` checks every expected output against the schema.
+
+Plugins that produce activity items follow the same rules: a poll trigger's first poll sets a baseline and returns
+nothing; an app-webhook trigger checks the vendor's signature; private channels, direct messages and email bodies are
+left out unless the node has an explicit option on.

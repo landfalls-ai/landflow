@@ -1,0 +1,150 @@
+{
+  "kit": "landflow.activity-items/v1",
+  "description": "activityItem (TypeScript), landflow.ActivityItem (Go) and activity_item (Python) must turn each input into exactly this output, or fail with an error containing the given text. occurredAt is an ISO string or epoch milliseconds.",
+  "cases": [
+    {
+      "id": "full",
+      "input": {
+        "source": " Slack ",
+        "sourceId": "slack:T1:C1:1762941600.000100",
+        "url": "https://acme.slack.com/archives/C1/p1762941600000100",
+        "actorEmail": " Dana@Example.COM ",
+        "occurredAt": "2026-11-12T10:00:00Z",
+        "kind": "work.discussion",
+        "title": "  #customer-acme:\n  renewal   call  ",
+        "summary": "We agreed\n\nto ship\tthe export.",
+        "teamHint": " cs ",
+        "initiativeHint": "",
+        "customerHint": "acme",
+        "raw": { "ts": "1762941600.000100", "user": "U1", "reply_count": 2, "edited": null, "flags": [true, false] },
+        "cursor": "1762941600.000100"
+      },
+      "output": {
+        "source": "slack",
+        "sourceId": "slack:T1:C1:1762941600.000100",
+        "url": "https://acme.slack.com/archives/C1/p1762941600000100",
+        "actorEmail": "dana@example.com",
+        "occurredAt": "2026-11-12T10:00:00.000Z",
+        "kind": "work.discussion",
+        "title": "#customer-acme: renewal call",
+        "summary": "We agreed to ship the export.",
+        "teamHint": "cs",
+        "initiativeHint": null,
+        "customerHint": "acme",
+        "raw": { "ts": "1762941600.000100", "user": "U1", "reply_count": 2, "edited": null, "flags": [true, false] },
+        "cursor": "1762941600.000100"
+      }
+    },
+    {
+      "id": "minimal-defaults",
+      "input": { "source": "notion", "sourceId": "notion:page:abc", "occurredAt": 1794477600123, "kind": "work.doc_edited" },
+      "output": {
+        "source": "notion",
+        "sourceId": "notion:page:abc",
+        "url": null,
+        "actorEmail": null,
+        "occurredAt": "2026-11-12T10:00:00.123Z",
+        "kind": "work.doc_edited",
+        "title": "notion:page:abc",
+        "summary": "",
+        "teamHint": null,
+        "initiativeHint": null,
+        "customerHint": null,
+        "raw": {}
+      }
+    },
+    {
+      "id": "offset-and-fraction",
+      "input": { "source": "google-calendar", "sourceId": "google-calendar:primary:e1", "occurredAt": "2026-11-12T12:00:00.987654+02:00", "kind": "work.meeting_held", "title": "Weekly sync", "actorEmail": "not-an-email", "cursor": null },
+      "output": {
+        "source": "google-calendar",
+        "sourceId": "google-calendar:primary:e1",
+        "url": null,
+        "actorEmail": null,
+        "occurredAt": "2026-11-12T10:00:00.987Z",
+        "kind": "work.meeting_held",
+        "title": "Weekly sync",
+        "summary": "",
+        "teamHint": null,
+        "initiativeHint": null,
+        "customerHint": null,
+        "raw": {},
+        "cursor": null
+      }
+    },
+    {
+      "id": "date-only",
+      "input": { "source": "google-drive", "sourceId": "google-drive:f1", "occurredAt": "2026-11-12", "kind": "work.doc_edited", "title": "Plan" },
+      "output": {
+        "source": "google-drive",
+        "sourceId": "google-drive:f1",
+        "url": null,
+        "actorEmail": null,
+        "occurredAt": "2026-11-12T00:00:00.000Z",
+        "kind": "work.doc_edited",
+        "title": "Plan",
+        "summary": "",
+        "teamHint": null,
+        "initiativeHint": null,
+        "customerHint": null,
+        "raw": {}
+      }
+    },
+    {
+      "id": "clipping",
+      "input": {
+        "source": "notion",
+        "sourceId": "notion:page:long",
+        "occurredAt": "2026-11-12T10:00:00Z",
+        "kind": "work.doc_edited",
+        "title": "{{repeat:T:250}}",
+        "summary": "{{repeat:é:700}}",
+        "raw": {
+          "text": "{{repeat:x:1200}}",
+          "list": "{{range:30}}",
+          "deep": { "a": { "b": { "c": { "d": { "e": { "f": 1 } } } } } }
+        }
+      },
+      "output": {
+        "source": "notion",
+        "sourceId": "notion:page:long",
+        "url": null,
+        "actorEmail": null,
+        "occurredAt": "2026-11-12T10:00:00.000Z",
+        "kind": "work.doc_edited",
+        "title": "{{repeat:T:199}}…",
+        "summary": "{{repeat:é:599}}…",
+        "teamHint": null,
+        "initiativeHint": null,
+        "customerHint": null,
+        "raw": {
+          "text": "{{repeat:x:999}}…",
+          "list": "{{range:25}}",
+          "deep": { "a": { "b": { "c": { "d": "…" } } } }
+        }
+      }
+    },
+    {
+      "id": "raw-not-an-object",
+      "input": { "source": "slack", "sourceId": "slack:x", "occurredAt": "2026-11-12T10:00:00Z", "kind": "work.discussion", "raw": "plain" },
+      "output": {
+        "source": "slack",
+        "sourceId": "slack:x",
+        "url": null,
+        "actorEmail": null,
+        "occurredAt": "2026-11-12T10:00:00.000Z",
+        "kind": "work.discussion",
+        "title": "slack:x",
+        "summary": "",
+        "teamHint": null,
+        "initiativeHint": null,
+        "customerHint": null,
+        "raw": { "value": "plain" }
+      }
+    },
+    { "id": "no-source", "input": { "source": " ", "sourceId": "x", "occurredAt": "2026-11-12T10:00:00Z", "kind": "work.discussion" }, "error": "source" },
+    { "id": "no-source-id", "input": { "source": "slack", "sourceId": "", "occurredAt": "2026-11-12T10:00:00Z", "kind": "work.discussion" }, "error": "sourceId" },
+    { "id": "bad-kind", "input": { "source": "slack", "sourceId": "x", "occurredAt": "2026-11-12T10:00:00Z", "kind": "discussion" }, "error": "kind" },
+    { "id": "bad-time", "input": { "source": "slack", "sourceId": "x", "occurredAt": "yesterday", "kind": "work.discussion" }, "error": "occurredAt" }
+  ]
+}

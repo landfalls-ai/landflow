@@ -266,6 +266,12 @@ transport and Valkey Cluster settings).
 | (guardrail gaps) | A second look at the reel's scenes found three gaps in agent guardrails, all built. **Tool-result stage** (`guardrails.toolResult`): what a tool returns is checked before the model reads it, because an email or page the agent reads can carry planted instructions the input stage never saw (a block hands the model a failed-call notice and the run goes on; a sanitize cleans it; shown in the session and as a *Tool result guardrail* check in Run Trace, with the tool's name). **Grounded** output check: the agent's model judges the answer against the passages its knowledge bases returned in the run (`context` option of `runGuardrails`, `BuiltTool.knowledge`); skipped for an agent with no knowledge base. **Stay on topic** (the engine's topical-alignment check) is now in the builder. Tests: `agent-guardrails`, `agent-grounded`. |
 | (Jev judge) | TypeSafe AI’s Jev and AWS’s Strands Decider (both speak the System One API, `POST /v1/systemone`; client in `nodes/systemone.ts`, credentials `core.typesafeApi` and `core.strandsDeciderApi`) are a decision model (text and yes/no questions in, a probability out), not a chat model, so it joins as a **guardrail judge** instead of a fourth provider. New `core.typesafeApi` credential and client (`nodes/typesafe.ts`: `POST /v1/systemone`, Bearer key, retries 429/529); `runGuardrails` takes a `judge` that answers the model checks in place of the chat model; an agent rule gets `judge: { provider, credential }`, chosen in the Guardrails card; providers register in `agents/judges.ts` (`registerJudgeProvider`) and the builder lists `JUDGE_PROVIDERS`, so another service is a registration, not a change to the guardrail code. Fails closed. Tests: `typesafe`, `agent-judges`. Open: Decide node, router, cost counting, a live key. |
 
+## 2026-11-12: integrations that report activity
+
+| Commit | What it built | Documented in |
+|---|---|---|
+| (activity items) | One shape for a change in an outside tool, the **activity item** (`source`, stable `sourceId`, `url`, `actorEmail`, `occurredAt`, a suggested `kind`, `title`, `summary` ≤ 600, team, initiative and customer hints, trimmed `raw`, optional `cursor`): a JSON Schema in `packages/protocol/activity-items`, a builder in each SDK (`activityItem`, `landflow.ActivityItem`, `activity_item`) and shared cases all three SDKs run | [protocol.md](protocol.md#16-activity-items) |
+
 ## What is next
 
 [roadmap.md, "Planned next"](roadmap.md#planned-next): the brain's next nine items (custom event kinds, entities,
