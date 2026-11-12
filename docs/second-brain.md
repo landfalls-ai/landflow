@@ -134,6 +134,8 @@ The first tick is 30 s after start.
     whole suggestion and build the tool, for example agents writing the plugin and opening a draft pull request. The
     toast names them. With none published it is approved all the same, with a warning saying what to publish
     (`POST /api/proposals/:id/apply` returns `started`).
+  - **Your own buttons**, when a flow added [actions](#actions-decided-by-the-flow) ("Intro us"). They sit next to
+    Apply, and replace **Mark done** on advice.
   - **Dismiss** with a reason: intended, not relevant, wrong, or already done.
   - **Snooze 7 days**.
 - **The canvas**: a "N suggestions" pill at the top left of the workflow it is about. It folds out into a side card,
@@ -308,6 +310,32 @@ In its chat (Test agent), the **new look** draws the analyst differently (the cl
 Ask it in its chat, from Slack, or use it in a flow with [Run an Agent](agents.md). Its suggestions have the source
 `workflow`. Suggestions from `POST /api/proposals` have the source `analyst`.
 
+#### Actions decided by the flow
+
+A suggestion is no longer limited to "apply" or "mark done": the flow that makes it can say what the buttons are, and
+other flows react to what was decided.
+
+- **Buttons.** Suggest Improvement's **Actions** (or `actions` in `POST /api/proposals`) add up to four buttons:
+  `{ id, label, style?: primary|default, confirm? }`. An id is lowercase letters, digits, `-` or `_` (up to 32) and
+  can't be `applied`, `dismissed`, `snoozed` or `action`. `confirm` asks first. Both cards (Home and the canvas) show
+  them next to Apply; Dismiss and Snooze stay.
+- **Taking one.** `POST /api/proposals/:id/act { action, note? }` (edit access, like apply) saves
+  `decision: { action, label, by, at, note }` on the suggestion, marks it applied (so effect measurement and quieting
+  count it as applied) and starts the listening flows. It changes nothing else: what a button means is up to the flow.
+  Apply, Dismiss (with its reason) and Snooze record a decision too (`applied`, `dismissed`, `snoozed`). Applying advice
+  that has a listening flow no longer fails: it records the go-ahead, as a missing tool does.
+- **On Suggestion Decided** (`core.suggestionDecidedTrigger`) starts a published workflow when a decision is made. Its
+  filters are **Suggestion From** (a built-in detector or `flow:<id>`), **Label**, **Decisions** (a comma-separated
+  list of `applied`, `dismissed`, `snoozed` and action ids; empty is all) and **About Workflow**. One run per decision,
+  one item: the whole suggestion (`id, source, detector, label, title, why, evidence, effect, target, actions, ops,
+  risk, confidence`) and `decision` (`applied`, `dismissed`, `snoozed` or `action`), `action` (the button's id),
+  `actionLabel` (the button's text: `label` is the suggestion's), `reason`, `note`, `by`, `at`. The run starts in the
+  background after the decision is saved. A trigger sees the suggestions its workflow's creator could see.
+  No loops: a decision made by a workflow that starts from this trigger, or about one, starts nothing.
+- **Build it** still works through On Usage Event on `proposal.applied`, and an On Suggestion Decided on missing-tool
+  applies counts as a builder too. `started` in the apply and act replies lists every workflow a decision starts, and
+  the toast names them.
+
 ### 7. Measuring the effect
 
 - **Baseline**: on Apply, the suggestion records a baseline from the week before. The metric depends on the detector:
@@ -335,6 +363,7 @@ Routes are also in [reference/api.md](reference/api.md), and variables in
 | `POST /api/proposals` | a suggestion from outside (source `analyst`) | edit access to its workflow or agent |
 | `PATCH /api/proposals/:id` | dismiss with a reason, or snooze | edit access to its target |
 | `POST /api/proposals/:id/apply` | apply on the server | edit access to its target; any builder for a draft |
+| `POST /api/proposals/:id/act` | take a flow-defined action `{ action, note? }`: records the decision, counts as applied, starts the listening flows → `{ proposal, warnings, started? }` | edit access to its target |
 | `POST /api/proposals/:id/applied` | the editor applied it itself | edit access to its target |
 | `GET /api/brain/status`, `/api/brain/facts`, `/api/brain/workflows/:id` | what it knows | `executions:read`, scoped |
 | `POST /api/brain/run` | detect, study, effects or all, now; `detector` runs one detector alone (built-in or `flow:<id>`, published) | owners and admins |
@@ -362,11 +391,12 @@ Routes are also in [reference/api.md](reference/api.md), and variables in
   - detectors, suggestions (`proposals.ts`), effects, the model's writing (`writer.ts`);
   - study and facts;
   - scope, the analyst and On Usage Event (`usage-trigger.ts`);
+  - On Suggestion Decided (`decision-trigger.ts`; the decisions and actions are in `proposals.ts`);
   - flow detectors (`flow-detectors.ts`);
   - Find Similar (`similar.ts`).
 - `apps/web/src/lib/server/usage/kinds.ts`: the declared custom kinds and the attribute checks;
   `apps/web/src/app/api/usage/kinds/`: their routes.
 - `apps/web/src/lib/server/mcp/brain-tools.ts`: the brain's tools on the instance MCP server.
-- `apps/web/src/lib/server/nodes/usage.ts`: the six nodes; `nodes/vector-stores.ts` refuses the brain's collections.
+- `apps/web/src/lib/server/nodes/usage.ts`: the seven nodes; `nodes/vector-stores.ts` refuses the brain's collections.
 - `apps/web/src/components/brain/`: the inbox, the canvas card and the Insights panel.
-- Tests: `apps/web/test/brain.test.ts`, `apps/web/test/brain-events.test.ts` (custom kinds).
+- Tests: `apps/web/test/brain.test.ts`, `apps/web/test/brain-events.test.ts` (custom kinds), `apps/web/test/brain-actions.test.ts` (actions and On Suggestion Decided).

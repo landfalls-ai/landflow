@@ -299,6 +299,62 @@ export const usageTriggerNode = defineNode({
   },
 });
 
+const DECIDED_EXAMPLE = {
+  id: 'pr_example',
+  source: 'workflow',
+  label: 'Warm intros',
+  title: 'Ask Dana for an intro to Acme',
+  why: 'Dana worked with Acme for three years',
+  evidence: [{ label: 'Shared history', value: '3 years' }],
+  target: { type: 'instance' },
+  actions: [{ id: 'intro', label: 'Intro us' }],
+  ops: [],
+  risk: 'low',
+  confidence: 0.8,
+  decision: 'action',
+  action: 'intro',
+  actionLabel: 'Intro us',
+  by: 'u_example',
+  at: new Date().toISOString(),
+};
+
+export const suggestionDecidedTriggerNode = defineNode({
+  description: {
+    name: 'suggestionDecidedTrigger',
+    displayName: 'On Suggestion Decided',
+    description: 'Start the workflow when someone applies, dismisses or snoozes a suggestion, or takes one of the buttons a flow put on it',
+    version: 1,
+    kind: 'trigger',
+    // "Run" in the editor starts here with an example; a decision starts it once the workflow is published.
+    triggerSource: 'manual',
+    categories: ['Triggers', 'AI'],
+    icon: 'lucide:mouse-pointer-click',
+    color: '#8b5cf6',
+    subtitle: '{{decisions}}',
+    keywords: ['suggestion', 'decision', 'action', 'button', 'approve', 'apply', 'dismiss', 'second brain', 'inbox'],
+    inputs: [],
+    outputs: main,
+    properties: [
+      { name: 'detector', displayName: 'Suggestion From', type: 'options', default: '', typeOptions: { loadOptionsMethod: 'detectors' }, description: 'Only suggestions this detector made (a built-in one or a flow detector)' },
+      { name: 'label', displayName: 'Label', type: 'string', default: '', description: 'Only suggestions with this label (Suggest Improvement’s Label)' },
+      { name: 'decisions', displayName: 'Decisions', type: 'string', default: '', placeholder: 'applied, intro', description: 'Comma-separated: applied, dismissed, snoozed, and the ids of actions. Empty: every decision' },
+      { name: 'workflowId', displayName: 'About Workflow', type: 'options', default: '', typeOptions: { loadOptionsMethod: 'workflows' }, description: 'Only suggestions about this workflow' },
+      {
+        name: 'notice',
+        displayName:
+          'Publish the workflow to listen. Each decision is one item: the whole suggestion { id, source, detector, label, title, why, evidence, effect, target, actions, ops, risk, confidence } and { decision (applied, dismissed, snoozed or action), action (the button’s id), actionLabel, reason, note, by, at }. A decision made by a workflow that starts from this trigger, or about one, never starts one, so they can’t loop.',
+        type: 'notice',
+      },
+    ],
+  },
+  methods: { loadOptions: { workflows: anyWorkflow, detectors: anyDetector } },
+  execute(ctx) {
+    const items = ctx.getInputData();
+    if (items.some((item) => Object.keys(item.json).length)) return [items];
+    return [[{ json: DECIDED_EXAMPLE as unknown as JsonObject }]];
+  },
+});
+
 /** The attributes parameter: an object, or JSON text of one (empty is none). */
 function attributesOf(value: unknown, itemIndex: number): Record<string, unknown> {
   let parsed = value;
@@ -489,6 +545,35 @@ export const suggestImprovementNode = defineNode({
       },
       { name: 'confidence', displayName: 'Confidence', type: 'number', default: 0.6, typeOptions: { minValue: 0, maxValue: 1, numberPrecision: 2 } },
       { name: 'fingerprint', displayName: 'Fingerprint', type: 'string', default: '', description: 'The same fingerprint refreshes the open suggestion instead of adding one (default: from the label, workflow and title)' },
+      {
+        name: 'actions',
+        displayName: 'Actions',
+        type: 'fixedCollection',
+        typeOptions: { multipleValues: true, maxValue: 4 },
+        default: {},
+        description: 'Buttons on the card next to Apply ("Intro us", "Book 15 min"). Taking one records the decision and starts the workflows on On Suggestion Decided',
+        groups: [
+          {
+            name: 'buttons',
+            displayName: 'Action',
+            values: [
+              { name: 'id', displayName: 'ID', type: 'string', default: '', noDataExpression: true, description: 'Lowercase letters, digits, - or _ (what On Suggestion Decided filters on)' },
+              { name: 'label', displayName: 'Label', type: 'string', default: '', description: 'The button’s text' },
+              {
+                name: 'style',
+                displayName: 'Style',
+                type: 'options',
+                default: 'default',
+                options: [
+                  { name: 'Default', value: 'default' },
+                  { name: 'Primary', value: 'primary' },
+                ],
+              },
+              { name: 'confirm', displayName: 'Ask First', type: 'string', default: '', description: 'If set, the person confirms with this text before the action is taken' },
+            ],
+          },
+        ],
+      },
     ],
   },
   methods: { loadOptions: { workflows: anyWorkflow } },
@@ -533,6 +618,7 @@ export const suggestImprovementNode = defineNode({
             risk: ctx.getNodeParameter('risk', i, 'medium') as 'medium',
             confidence,
             fingerprint: String(ctx.getNodeParameter('fingerprint', i, '') ?? '').trim() || undefined,
+            actions: ctx.getNodeParameter('actions', i, {}),
           },
           'workflow',
           undefined,

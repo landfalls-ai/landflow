@@ -36,7 +36,7 @@ export const PATCH = handler(async (request: Request, ctx: Ctx) => {
   if (!canProposal(actor, proposal, 'update')) return error('You can’t decide this suggestion', 403);
   try {
     const body = parsed.data;
-    const next = body.action === 'dismiss' ? dismissProposal(id, body.reason, { note: body.note, actorId: actor.id }) : snoozeProposal(id, body.days);
+    const next = body.action === 'dismiss' ? dismissProposal(id, body.reason, { note: body.note, actorId: actor.id }) : snoozeProposal(id, body.days, undefined, { actorId: actor.id });
     return json({ proposal: next });
   } catch (caught) {
     if (caught instanceof ProposalError) return error(caught.message, caught.status);

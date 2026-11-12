@@ -4,7 +4,7 @@
  *      (`detector`: a built-in one or `flow:<workflowId>`); the
  *      viewer's workflows and agents only (owners and admins: also the instance's).
  * POST ProposalInput — a suggestion from outside (an agent or a script over the API), source `analyst`; its ops are
- *      checked against the workflow. Needs edit access to the workflow or agent it is about.
+ *      checked against the workflow, and `actions` (up to 4 buttons) go on its card. Needs edit access to the workflow or agent it is about.
  */
 import { z } from 'zod';
 import { isDetectorId, type ProposalStatus } from '@/lib/shared/brain';
@@ -45,6 +45,7 @@ const Body = z.object({
   agentChange: z.object({ always: z.array(z.string().max(200)).max(3).optional(), never: z.array(z.string().max(200)).max(3).optional() }).optional(),
   risk: z.enum(['low', 'medium', 'high']).optional(),
   confidence: z.number().min(0).max(1).optional(),
+  actions: z.array(z.object({ id: z.string().max(32), label: z.string().max(40), style: z.enum(['primary', 'default']).optional(), confirm: z.string().max(200).optional() })).max(4).optional(),
   fingerprint: z.string().max(64).optional(),
 });
 

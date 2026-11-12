@@ -1854,7 +1854,7 @@ function paths(): Record<string, Record<string, Json>> {
     text('signature', 'One failure signature'),
     text('limit', 'At most this many rows'),
   ];
-  const proposal = { type: 'object', description: 'A Proposal (lib/shared/brain.ts): target, title, why, evidence, effect, ops or a draft or persona rules, risk, confidence, score, status' };
+  const proposal = { type: 'object', description: 'A Proposal (lib/shared/brain.ts): target, title, why, evidence, effect, actions (buttons a flow added), decision (the latest), ops or a draft or persona rules, risk, confidence, score, status' };
   add('get', '/api/usage', {
     tag: 'Second brain',
     id: 'usageReport',
@@ -1906,7 +1906,7 @@ function paths(): Record<string, Record<string, Json>> {
     id: 'createProposal',
     summary: 'Add a suggestion',
     description: 'Source `analyst`. Its ops are checked against the workflow; the same fingerprint refreshes the open suggestion. Needs edit access to the workflow or agent. `proposal: null` when it is held back (dismissed or applied recently, or the weekly cap is full).',
-    body: jsonBody(object({ title: { type: 'string' }, why: { type: 'string' }, workflowId: { type: 'string' }, agentId: { type: 'string' }, nodeName: { type: 'string' }, effect: { type: 'string' }, ops: array({ type: 'object' }), risk: { type: 'string', enum: ['low', 'medium', 'high'] }, confidence: { type: 'number' }, fingerprint: { type: 'string' } }, ['title', 'why'])),
+    body: jsonBody(object({ title: { type: 'string' }, why: { type: 'string' }, workflowId: { type: 'string' }, agentId: { type: 'string' }, nodeName: { type: 'string' }, effect: { type: 'string' }, ops: array({ type: 'object' }), risk: { type: 'string', enum: ['low', 'medium', 'high'] }, confidence: { type: 'number' }, fingerprint: { type: 'string' }, actions: array(object({ id: { type: 'string' }, label: { type: 'string' }, style: { type: 'string', enum: ['primary', 'default'] }, confirm: { type: 'string' } }, ['id', 'label'])) }, ['title', 'why'])),
     responses: { 200: reply('Held back', object({ proposal: { type: 'null' }, reason: { type: 'string' } })), 201: reply('The suggestion', object({ proposal }, ['proposal'])), 400: invalid, 404: notFound },
   });
   add('get', '/api/proposals/{id}', { tag: 'Second brain', id: 'getProposal', summary: 'Get a suggestion', responses: { 200: reply('The suggestion', object({ proposal }, ['proposal'])), 404: notFound } });
@@ -1924,6 +1924,15 @@ function paths(): Record<string, Record<string, Json>> {
     summary: 'Apply a suggestion',
     description: 'Ops are checked against the workflow as it is now and saved through governance; a draft becomes a new workflow (`?projectId=`); persona rules go to the agent’s draft.',
     responses: { 200: reply('Applied', object({ proposal, workflow: ref('Workflow'), warnings: array({ type: 'string' }) }, ['proposal', 'warnings'])), 400: errorRef('Advice only: nothing to apply'), 404: notFound, 409: errorRef('The changes no longer fit, or it is already decided') },
+  });
+  add('post', '/api/proposals/{id}/act', {
+    tag: 'Second brain',
+    id: 'actOnProposal',
+    summary: 'Take one of a suggestion’s actions',
+    description:
+      'The buttons a flow put on the suggestion (`actions`). Records `decision: { action, label, by, at, note }`, counts it as applied and starts the workflows on On Suggestion Decided. `started` names them; `warnings` says when none listens.',
+    body: jsonBody(object({ action: { type: 'string' }, note: { type: 'string' } }, ['action'])),
+    responses: { 200: reply('Done', object({ proposal, warnings: array({ type: 'string' }), started: array(object({ id: { type: 'string' }, name: { type: 'string' } })) }, ['proposal', 'warnings'])), 400: errorRef('No such action'), 404: notFound, 409: errorRef('Already decided') },
   });
   add('get', '/api/brain/facts', {
     tag: 'Second brain',

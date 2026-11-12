@@ -275,6 +275,30 @@ export interface ProposalMetric {
   better?: 'lower' | 'higher';
 }
 
+/** A button a flow put on a suggestion ("Intro us"): taking it records the decision and starts the flows listening. */
+export interface ProposalAction {
+  /** Slug-like, up to 32 characters: what On Suggestion Decided filters on. */
+  id: string;
+  label: string;
+  style?: 'primary' | 'default';
+  /** Ask first, with this text. */
+  confirm?: string;
+}
+
+export const MAX_PROPOSAL_ACTIONS = 4;
+export const RESERVED_ACTION_IDS = ['applied', 'dismissed', 'snoozed', 'action'];
+
+/** What was decided: `action` is applied, dismissed or snoozed, or the id of a flow-defined action. */
+export interface ProposalDecision {
+  action: string;
+  label: string;
+  by?: string;
+  at: string;
+  note?: string;
+  /** For a dismissal. */
+  reason?: DismissReason;
+}
+
 export interface Proposal {
   id: string;
   source: ProposalSource;
@@ -306,6 +330,10 @@ export interface Proposal {
   /** Ranks the inbox: higher first. */
   score: number;
   status: ProposalStatus;
+  /** Buttons a flow added (Suggest Improvement's Actions), shown next to Apply. */
+  actions?: ProposalAction[];
+  /** The latest decision made on it, for the flows that listen (On Suggestion Decided). */
+  decision?: ProposalDecision;
   reason?: DismissReason;
   note?: string;
   snoozedUntil?: string;
@@ -338,6 +366,8 @@ export interface ProposalInput {
   agentChange?: AgentChange;
   risk?: ProposalRisk;
   confidence?: number;
+  /** Buttons for the card (at most 4); taking one starts the flows on On Suggestion Decided. */
+  actions?: unknown;
   /** Defaults to a hash of the label, target and title. */
   fingerprint?: string;
 }
