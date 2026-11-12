@@ -32,7 +32,8 @@ const FILTERS: Array<{ value: Filter; label: string }> = [
 const LIMIT = 200;
 const POLL_MS = 8000;
 const AUTO_KEY = 'landflow-executions-autorefresh';
-const COLS = 'grid-cols-[minmax(180px,1.6fr)_minmax(120px,0.9fr)_minmax(150px,1fr)_96px_minmax(130px,0.8fr)_44px_40px]';
+// Desktop: seven columns. Phone: a card per run, name and menu, then status and run time, then when it started.
+const COLS = 'md:grid-cols-[minmax(180px,1.6fr)_minmax(120px,0.9fr)_minmax(150px,1fr)_96px_minmax(130px,0.8fr)_44px_40px] max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-y-1';
 const NEW_ROW: CSSProperties = { animation: 'lf-slide-right 0.24s cubic-bezier(0.22, 1, 0.36, 1) both, lf-flash 1.2s ease-out' };
 
 const hrefOf = (e: ExecutionSummary) => `/workflows/${e.workflowId}/executions/${e.id}`;
@@ -193,7 +194,7 @@ function Row({ execution, now, index, isNew, onChanged }: { execution: Execution
       {/* The whole row is a link; the menu sits above it. */}
       <Link href={hrefOf(execution)} className="absolute inset-0" aria-label={`Open execution ${execution.id} of ${execution.workflowName}`} />
       <span className={cn('absolute inset-y-0 left-0 w-[3px]', RUN_STATE[state].bar)} />
-      <div role="cell" className="flex min-w-0 items-center gap-1.5">
+      <div role="cell" className="flex min-w-0 items-center gap-1.5 max-md:col-start-1 max-md:row-start-1 max-md:flex-wrap">
         <span className="truncate font-semibold text-t1">{execution.workflowName}</span>
         {execution.rerunOf && (
           <span className="shrink-0 rounded-full bg-[color-mix(in_oklab,var(--viz-1)_14%,transparent)] px-2 text-[11px] text-viz-1">{RERUN_LABEL[execution.rerunOf.scope].toLowerCase()}</span>
@@ -218,29 +219,32 @@ function Row({ execution, now, index, isNew, onChanged }: { execution: Execution
           </span>
         )}
       </div>
-      <div role="cell" className={cn('flex min-w-0 items-center gap-1.5 font-semibold', RUN_STATE[state].text)}>
+      <div role="cell" className={cn('flex min-w-0 items-center gap-1.5 font-semibold max-md:col-start-1 max-md:row-start-2', RUN_STATE[state].text)}>
         <RunStateIcon state={state} />
         <span className="truncate">{state === 'paused' && execution.paused ? `Paused · ${execution.paused.nodeName}` : RUN_STATE[state].label}</span>
       </div>
-      <div role="cell" className="min-w-0">
-        <div className="truncate tabular-nums text-t1">{formatStamp(execution.startedAt)}</div>
-        <div className="text-[11px] text-t3">{timeAgo(execution.startedAt)}</div>
+      <div role="cell" className="min-w-0 max-md:col-span-full max-md:row-start-3 max-md:flex max-md:gap-1.5 max-md:text-[12px]">
+        <div className="truncate tabular-nums text-t1 max-md:text-t2">{formatStamp(execution.startedAt)}</div>
+        <div className="text-[11px] text-t3 max-md:text-[12px]">
+          <span className="md:hidden">· </span>
+          {timeAgo(execution.startedAt)}
+        </div>
       </div>
-      <div role="cell" className={cn('font-mono text-[12px] tabular-nums', live ? 'text-warn' : 'text-t2')}>
+      <div role="cell" className={cn('font-mono text-[12px] tabular-nums max-md:col-start-2 max-md:row-start-2 max-md:justify-self-end', live ? 'text-warn' : 'text-t2')}>
         {queued ? '—' : duration(ms)}
       </div>
-      <div role="cell" className="truncate font-mono text-[12px] text-t3">
+      <div role="cell" className="truncate font-mono text-[12px] text-t3 max-md:hidden">
         {execution.id}
       </div>
-      <div role="cell" className="flex justify-center">
+      <div role="cell" className="flex justify-center max-md:hidden">
         <ExecutionMarks execution={{ mode: execution.mode }} />
       </div>
-      <div role="cell" className="flex justify-end">
+      <div role="cell" className="flex justify-end max-md:col-start-2 max-md:row-start-1">
         <RowMenu execution={execution} onChanged={onChanged} />
       </div>
       {failed && execution.error && (
-        <div className="col-span-full -mt-1 flex min-w-0 items-center gap-3 text-[12px] text-rd">
-          <span className="truncate">
+        <div className="col-span-full -mt-1 flex min-w-0 items-center gap-3 text-[12px] text-rd max-md:mt-0 max-md:flex-wrap max-md:gap-y-1">
+          <span className="truncate max-md:line-clamp-2 max-md:whitespace-normal">
             {execution.error.nodeName && <span className="font-semibold">{execution.error.nodeName}: </span>}
             {execution.error.message}
           </span>
@@ -464,7 +468,7 @@ function ExecutionsInner() {
         </div>
 
         <div role="table" aria-label="Executions" className="overflow-hidden rounded-2xl border border-hair bg-sf">
-          <div role="row" className={cn('grid items-center gap-3 border-b border-hair px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3', COLS)}>
+          <div role="row" className={cn('grid items-center gap-3 border-b border-hair px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3 max-md:hidden', COLS)}>
             <span role="columnheader">Workflow</span>
             <span role="columnheader">Status</span>
             <span role="columnheader">Started</span>

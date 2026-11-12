@@ -379,7 +379,7 @@ function PluginTile({ plugin, onToggle }: { plugin: PluginSummary; onToggle: () 
         <ChevronDown className="size-3.5 shrink-0 text-t3 transition-colors duration-[120ms] group-hover:text-t1" strokeWidth={1.7} />
       </div>
       <p className="line-clamp-2 min-h-[2lh] text-[12px] leading-[1.45] text-t2">{plugin.info.description || <span className="text-t3">No description</span>}</p>
-      <div className="mt-auto flex w-full min-w-0 items-center gap-1">
+      <div className="mt-auto flex w-full min-w-0 items-center gap-1 max-md:flex-wrap max-md:gap-y-1.5">
         {shown.map((node) => {
           const color = descriptorColor(node, plugin.info.color);
           return (
