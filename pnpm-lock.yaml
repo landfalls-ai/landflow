@@ -462,6 +462,61 @@ importers:
         specifier: ^5.0.5
         version: 5.0.5(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
 
+  plugins/attio:
+    dependencies:
+      '@aws-sdk/client-sqs':
+        specifier: 3.1156.0
+        version: 3.1156.0
+      '@azure/service-bus':
+        specifier: 7.10.0
+        version: 7.10.0
+      '@confluentinc/kafka-javascript':
+        specifier: 1.11.0
+        version: 1.11.0
+      '@google-cloud/pubsub':
+        specifier: 6.3.1
+        version: 6.3.1
+      '@landflow/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+      '@landflow/transports':
+        specifier: workspace:*
+        version: link:../../packages/transports
+      '@nats-io/jetstream':
+        specifier: 3.4.0
+        version: 3.4.0
+      '@nats-io/transport-node':
+        specifier: 3.4.0
+        version: 3.4.0
+      amqplib:
+        specifier: 2.2.0
+        version: 2.2.0
+      iovalkey:
+        specifier: 0.4.0
+        version: 0.4.0
+      mqtt:
+        specifier: 5.16.1
+        version: 5.16.1
+      pulsar-client:
+        specifier: 1.18.0
+        version: 1.18.0(patch_hash=3ea1387fc3d182634bfdc4e6d9ae25ff3fdccd785749826454c3eb827dabbd2e)
+      rhea:
+        specifier: 3.0.5
+        version: 3.0.5
+    devDependencies:
+      '@landflow/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@types/node':
+        specifier: ^22.20.5
+        version: 22.20.5
+      tsx:
+        specifier: ^4.23.15
+        version: 4.23.15
+      vitest:
+        specifier: ^5.0.5
+        version: 5.0.5(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+
   plugins/browser:
     dependencies:
       '@landflow/sdk':
