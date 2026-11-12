@@ -19,10 +19,10 @@ const SUGGEST = 'core.suggestImprovement';
 /** How long one detector flow may run before the brain stops it. */
 export const FLOW_TIMEOUT_MS = 10 * 60_000;
 
-const triggerOf = (workflow: Workflow | undefined): WorkflowNode | undefined => workflow?.nodes.find((n) => n.type === DETECTOR_TRIGGER && !n.disabled);
+export const detectorTriggerOf = (workflow: Workflow | undefined): WorkflowNode | undefined => workflow?.nodes.find((n) => n.type === DETECTOR_TRIGGER && !n.disabled);
 
 /** Whether this workflow is a detector: it has an enabled Detector Trigger. */
-export const isDetectorFlow = (workflow: Workflow | undefined) => Boolean(triggerOf(workflow));
+export const isDetectorFlow = (workflow: Workflow | undefined) => Boolean(detectorTriggerOf(workflow));
 
 export interface FlowDetector {
   id: FlowDetectorId;
@@ -48,7 +48,7 @@ function armed(only?: FlowDetectorId[]): Array<{ id: FlowDetectorId; workflow: W
     const id = flowDetectorId(saved.id);
     if (only && !only.includes(id)) continue;
     const workflow = workflowForCall(saved.id, 'trigger') ?? saved;
-    const node = triggerOf(workflow);
+    const node = detectorTriggerOf(workflow);
     if (node) out.push({ id, workflow, node });
   }
   return out;

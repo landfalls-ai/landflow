@@ -104,6 +104,29 @@ export function listUsageEvents(filter: UsageFilter = {}, options: { limit?: num
   return db.all<UsageRow>(`SELECT * FROM usage_events WHERE ${sql} ORDER BY at DESC LIMIT ${limit}`, ...params).map(fromRow);
 }
 
+const AGGREGATE_COLUMNS: Record<string, string> = { cost: 'cost', tokens: 'tokens', durationMs: 'duration_ms', items: 'items' };
+
+/**
+ * One number over the raw events matching `filter` (read from `from` up to, not including, `to`): how many, or the sum or
+ * average of a column (cost, tokens, durationMs, items) or of a numeric attribute. Events without the value are left out
+ * of an average. This is what a flow detector's declared metric measures (brain/effect.ts).
+ */
+export function usageAggregate(
+  filter: UsageFilter,
+  how: { aggregate: 'count' | 'sum' | 'avg'; field?: string; scope?: UsageScope },
+  db: Database = database(),
+): number {
+  const { sql, params } = filterClause(filter, 'at', how.scope);
+  // `to` is exclusive here, so two windows that meet don't count an event twice.
+  const where = `${sql.replace('at <= ?', 'at < ?')}`;
+  if (how.aggregate === 'count') return Number(db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM usage_events WHERE ${where}`, ...params)?.n ?? 0);
+  const field = how.field ?? '';
+  const column = AGGREGATE_COLUMNS[field] ?? (ATTR_NAME.test(field) ? `CAST(json_extract(attrs, '$.${field}') AS DOUBLE PRECISION)` : undefined);
+  if (!column) return 0;
+  const fn = how.aggregate === 'sum' ? 'SUM' : 'AVG';
+  return Number(db.get<{ v: number | null }>(`SELECT ${fn}(${column}) AS v FROM usage_events WHERE ${where} AND ${column} IS NOT NULL`, ...params)?.v ?? 0);
+}
+
 const GROUP_COLUMNS: Record<UsageGroup, string> = {
   day: 'day',
   kind: 'kind',

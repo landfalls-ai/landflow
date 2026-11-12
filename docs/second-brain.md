@@ -312,12 +312,43 @@ Ask it in its chat, from Slack, or use it in a flow with [Run an Agent](agents.m
 
 - **Baseline**: on Apply, the suggestion records a baseline from the week before. The metric depends on the detector:
   failure rate; p95; cost per run; runs by hand; or the thumbs-down rate for agents. A flow detector's suggestion about
-  a workflow is measured by that workflow's failure rate; one about the instance isn't measured.
+  a workflow is measured by that workflow's failure rate, unless the flow [declares its own metric](#a-metric-your-flow-declares);
+  one about the instance isn't measured unless it does.
 - **Checks**: after 7 days it checks again. After 14 days it marks the outcome: worked, no effect, or worse (a 10%
-  change either way decides).
+  change either way decides; "better" is lower unless the metric says higher).
 - **Memory**: the outcome becomes a `change` fact ("Applying “Retry the CRM call” helped: 12% of runs failing before,
   2% after").
 - **Dismissals**: *intended* becomes an `intended` fact, so the brain and the analyst know it isn't a problem.
+
+#### A metric your flow declares
+
+A detector flow says how its own suggestions are judged, on the **Detector Trigger** (for all its suggestions) and,
+optionally, on a **Suggest Improvement** node (for that one: *Same as the Detector Trigger*, *Landflow's own*, or its own
+declaration). The suggestion keeps the declaration as `metricSpec`, and the card shows "Measured by: <name>".
+
+- **Metric Name** ("Initiatives merged or reused") and **Better When** (higher or lower).
+- **A usage query** (`usage`): event kinds (built-in, or custom ones from [Record Event](#your-own-event-kinds), such as
+  `work.initiative_merged`), an optional attribute filter (as On Usage Event takes it), a measure (how many events; the
+  sum of an attribute or of `cost`, `tokens`, `durationMs`, `items`; or their average), and whether it is about the
+  suggestion's workflow or agent, or the whole instance. The instance is what the flow's creator can see
+  ([scope](#principles)). Counts and sums are per week, so the 7-day and 14-day checks compare with the week before;
+  an average is compared as it is.
+- **A sub-workflow** (`workflow`): a workflow with a *When Called by a Workflow or Agent* trigger, run with one item
+  `{ proposal, from, to, phase }` (`phase` is `baseline` or `check`, `from` and `to` ISO times of the window to
+  measure). The number is read from a named field of its first output item (a numeric string counts). It runs as the
+  production version with a timeout (120 s unless set, at most 600). If it is missing, fails, times out or answers with no
+  number, **no value is recorded** (never a 0): a baseline is marked `failed` and a check is skipped, and the brain's
+  next look tries again.
+- **When it is measured**: a usage query is measured on Apply, like the built-in metrics. A sub-workflow takes a run, so
+  Apply doesn't wait: the baseline is saved `pending` and filled in a moment later (`checkEffects` also settles any
+  that are still pending or failed before it checks). The checks at 7 and 14 days run on the brain's effects look.
+- **Words**: the card shows the name and the numbers ("Initiatives merged or reused: 9"), and the outcome fact says
+  "Applying “…” helped: Initiatives merged or reused was 2 before and 9 in the two weeks after (higher is better)."
+
+For example, the overlap finder: Detector Trigger with *A usage query*, name "Initiatives merged or reused", kinds
+`work.initiative_merged`, how many, about the whole instance, better when higher. When people apply "merge these two
+initiatives" and the flow (or whatever merges them) records `work.initiative_merged` events, the report can say how much
+duplicate work was avoided.
 
 ## API and settings
 
@@ -349,9 +380,10 @@ Routes are also in [reference/api.md](reference/api.md), and variables in
 - Ollama calls cost $0, so the AI-cost detector never suggests a smaller local model.
 - The model writes fixes and drafts one at a time on the leader. A slow local model makes a study or detect run take
   minutes. `POST /api/brain/run` waits for it, detector flows included (up to 10 minutes each).
-- A flow detector's effect is measured by its target workflow's failure rate, the default. It can't name its own
-  metric yet. Apply does something only when the suggestion carries ops, a draft or persona rules; otherwise it is
-  advice, marked done.
+- A flow detector's effect is measured by its target workflow's failure rate unless it [declares a metric](#a-metric-your-flow-declares).
+  A declared metric is a usage query or a sub-workflow, set on the nodes (not through `POST /api/proposals`). A
+  sub-workflow metric's baseline lands a moment after Apply, and one that never gives a number is retried on every look.
+  Apply does something only when the suggestion carries ops, a draft or persona rules; otherwise it is advice, marked done.
 
 ## Where the code is
 
@@ -359,7 +391,7 @@ Routes are also in [reference/api.md](reference/api.md), and variables in
   and the backfill.
 - `apps/web/src/lib/server/brain/`:
   - the loop (`index.ts`);
-  - detectors, suggestions (`proposals.ts`), effects, the model's writing (`writer.ts`);
+  - detectors, suggestions (`proposals.ts`), effects and declared metrics (`effect.ts`; the usage query is `usageAggregate` in `usage/query.ts`), the model's writing (`writer.ts`);
   - study and facts;
   - scope, the analyst and On Usage Event (`usage-trigger.ts`);
   - flow detectors (`flow-detectors.ts`);
@@ -369,4 +401,4 @@ Routes are also in [reference/api.md](reference/api.md), and variables in
 - `apps/web/src/lib/server/mcp/brain-tools.ts`: the brain's tools on the instance MCP server.
 - `apps/web/src/lib/server/nodes/usage.ts`: the six nodes; `nodes/vector-stores.ts` refuses the brain's collections.
 - `apps/web/src/components/brain/`: the inbox, the canvas card and the Insights panel.
-- Tests: `apps/web/test/brain.test.ts`, `apps/web/test/brain-events.test.ts` (custom kinds).
+- Tests: `apps/web/test/brain.test.ts`, `apps/web/test/brain-events.test.ts` (custom kinds), `apps/web/test/brain-metrics.test.ts` (declared effect metrics).

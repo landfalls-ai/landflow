@@ -6,8 +6,8 @@
  *
  * A workflow sees the usage its creator could see (lib/server/brain/scope.ts).
  */
-import { defineNode, NodeOperationError, type JsonObject, type NodeItem } from '@landflow/sdk';
-import { customKindProblem, DETECTOR_LABELS, DETECTORS, detectorLabel, flowDetectorId, isUsageKind, parseAttrEquals, quietBar, SIMILAR_KINDS, USAGE_KINDS, type SimilarKind, type UsageGroup, type UsageKind } from '../../shared/brain';
+import { defineNode, NodeOperationError, type JsonObject, type NodeItem, type PropertyDescriptor } from '@landflow/sdk';
+import { customKindProblem, DETECTOR_LABELS, DETECTORS, detectorLabel, flowDetectorId, isUsageKind, METRIC_FIELDS, metricSpecFrom, parseAttrEquals, quietBar, SIMILAR_KINDS, USAGE_KINDS, type SimilarKind, type UsageGroup, type UsageKind } from '../../shared/brain';
 import { agentStore as agents } from '../agents/store';
 import { listKinds } from '../usage/kinds';
 import { store } from '../store';
@@ -21,6 +21,81 @@ const anyKind = () => [...kindOptions, ...listKinds().map((k) => ({ name: k.kind
 const declaredKind = () => listKinds().map((k) => ({ name: k.kind, value: k.kind, ...(k.description && { description: k.description }) }));
 const anyAgent = () => [{ name: 'None', value: '' }, ...agents.list().map((a) => ({ name: a.name, value: a.id })).sort((a, b) => a.name.localeCompare(b.name))];
 const anyWorkflow = () => [{ name: 'Any workflow', value: '' }, ...store.listWorkflows().map((w) => ({ name: w.name, value: w.id })).sort((a, b) => a.name.localeCompare(b.name))];
+
+const subWorkflows = () => store.listWorkflows().map((w) => ({ name: w.name, value: w.id })).sort((a, b) => a.name.localeCompare(b.name));
+
+/**
+ * The parameters that declare how a flow detector's suggestions are measured once applied (docs/second-brain.md#7-measuring-the-effect).
+ * On the Detector Trigger they are the detector's metric; Suggest Improvement shows the same ones with a first choice that
+ * keeps the detector's (`inherit`), to override it for one suggestion.
+ */
+function metricProperties(override: boolean): PropertyDescriptor[] {
+  const shown = (source: string[]) => ({ show: { metricSource: source } });
+  return [
+    {
+      name: 'metricSource',
+      displayName: override ? 'Effect Metric' : 'Effect Metric Source',
+      type: 'options',
+      default: override ? 'inherit' : 'default',
+      options: [
+        ...(override ? [{ name: 'Same as the Detector Trigger', value: 'inherit' }] : []),
+        { name: 'Landflow’s own (failure rate for a workflow)', value: 'default' },
+        { name: 'A usage query', value: 'usage' },
+        { name: 'A sub-workflow that returns a number', value: 'workflow' },
+      ],
+      description: 'How applying a suggestion is judged after 7 and 14 days',
+    },
+    { name: 'metricLabel', displayName: 'Metric Name', type: 'string', default: '', placeholder: 'Initiatives merged or reused', description: 'Shown next to the numbers and in the outcome', displayOptions: shown(['usage', 'workflow']) },
+    {
+      name: 'metricBetter',
+      displayName: 'Better When',
+      type: 'options',
+      default: 'higher',
+      options: [
+        { name: 'Higher', value: 'higher' },
+        { name: 'Lower', value: 'lower' },
+      ],
+      displayOptions: shown(['usage', 'workflow']),
+    },
+    { name: 'metricKinds', displayName: 'Metric Event Kinds', type: 'multiOptions', default: [], options: kindOptions, typeOptions: { loadOptionsMethod: 'kinds' }, description: 'The events to measure, built-in or custom (Record Event)', displayOptions: shown(['usage']) },
+    { name: 'metricAttrEquals', displayName: 'Metric Attribute Filter', type: 'json', default: '{}', description: 'Only events whose attributes equal these: {"team": "billing"} or team=billing', displayOptions: shown(['usage']) },
+    {
+      name: 'metricAggregate',
+      displayName: 'Measure',
+      type: 'options',
+      default: 'count',
+      options: [
+        { name: 'How many events (per week)', value: 'count' },
+        { name: 'Sum of a value (per week)', value: 'sum' },
+        { name: 'Average of a value', value: 'avg' },
+      ],
+      displayOptions: shown(['usage']),
+    },
+    {
+      name: 'metricField',
+      displayName: 'Value',
+      type: 'string',
+      default: '',
+      placeholder: 'cost',
+      description: `An event attribute, or one of ${METRIC_FIELDS.join(', ')}`,
+      displayOptions: { show: { metricSource: ['usage'], metricAggregate: ['sum', 'avg'] } },
+    },
+    {
+      name: 'metricAbout',
+      displayName: 'Events About',
+      type: 'options',
+      default: 'target',
+      options: [
+        { name: 'The suggestion’s workflow or agent', value: 'target' },
+        { name: 'The whole instance (what this flow’s creator can see)', value: 'instance' },
+      ],
+      displayOptions: shown(['usage']),
+    },
+    { name: 'metricWorkflowId', displayName: 'Metric Sub-Workflow', type: 'options', default: '', typeOptions: { loadOptionsMethod: 'metricWorkflows' }, description: 'Run with { proposal, from, to, phase: "baseline" or "check" }; it needs a “When Called by a Workflow or Agent” trigger', displayOptions: shown(['workflow']) },
+    { name: 'metricOutputField', displayName: 'Number Field', type: 'string', default: 'value', description: 'The field of the sub-workflow’s first output item that holds the number', displayOptions: shown(['workflow']) },
+    { name: 'metricTimeout', displayName: 'Metric Timeout (seconds)', type: 'number', default: 120, typeOptions: { minValue: 1, maxValue: 600 }, displayOptions: shown(['workflow']) },
+  ];
+}
 
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as JsonObject;
 
@@ -435,8 +510,10 @@ export const detectorTriggerNode = defineNode({
           'Publish the workflow to make it a detector (detector id flow:<this workflow’s id>). Each run has one item: { detector, name, quiet, minConfidence, at, lastRunAt, reason }. Multiply your thresholds by `quiet` (1 is normal; it rises to 3 as people dismiss this detector’s suggestions as wrong or not relevant). Suggest Improvement nodes in this workflow post as the detector, and a suggestion under `minConfidence` is held back.',
         type: 'notice',
       },
+      ...metricProperties(false),
     ],
   },
+  methods: { loadOptions: { metricWorkflows: subWorkflows, kinds: anyKind } },
   async execute(ctx) {
     const items = ctx.getInputData();
     if (items.some((item) => Object.keys(item.json).length)) return [items];
@@ -489,9 +566,10 @@ export const suggestImprovementNode = defineNode({
       },
       { name: 'confidence', displayName: 'Confidence', type: 'number', default: 0.6, typeOptions: { minValue: 0, maxValue: 1, numberPrecision: 2 } },
       { name: 'fingerprint', displayName: 'Fingerprint', type: 'string', default: '', description: 'The same fingerprint refreshes the open suggestion instead of adding one (default: from the label, workflow and title)' },
+      ...metricProperties(true),
     ],
   },
-  methods: { loadOptions: { workflows: anyWorkflow } },
+  methods: { loadOptions: { workflows: anyWorkflow, metricWorkflows: subWorkflows, kinds: anyKind } },
   async execute(ctx) {
     const { proposeFrom, ProposalError } = await import('../brain/proposals');
     const { covers, scopeForWorkflow } = await import('../brain/scope');
@@ -506,9 +584,14 @@ export const suggestImprovementNode = defineNode({
     const detector = ownWorkflow && isDetectorFlow(ownWorkflow) ? flowDetectorId(ownWorkflow.id) : undefined;
     const { quietOf } = await import('../brain/proposals');
     const bar = detector ? quietBar(quietOf(detector)) : 0;
+    // The detector's declared effect metric (Detector Trigger), unless this node declares its own or says "Landflow's own".
+    const trigger = ownWorkflow && detector ? (await import('../brain/flow-detectors')).detectorTriggerOf(ownWorkflow) : undefined;
     const items = ctx.getInputData();
     const out: NodeItem[] = [];
     for (let i = 0; i < Math.max(items.length, 1); i++) {
+      const override = String(ctx.getNodeParameter('metricSource', i, 'inherit') ?? 'inherit');
+      const declared = detector ? (override === 'inherit' ? metricSpecFrom((name) => trigger?.parameters?.[name]) : metricSpecFrom((name) => ctx.getNodeParameter(name, i, ''))) : {};
+      if (declared.problem) throw new NodeOperationError(declared.problem, { itemIndex: i });
       const workflowId = String(ctx.getNodeParameter('workflowId', i, '') ?? '').trim() || undefined;
       if (workflowId && !covers(scope, { workflowId })) throw new NodeOperationError('This workflow can’t suggest changes to that workflow', { itemIndex: i });
       let ops: unknown = ctx.getNodeParameter('ops', i, '[]');
@@ -533,6 +616,7 @@ export const suggestImprovementNode = defineNode({
             risk: ctx.getNodeParameter('risk', i, 'medium') as 'medium',
             confidence,
             fingerprint: String(ctx.getNodeParameter('fingerprint', i, '') ?? '').trim() || undefined,
+            ...(declared.spec && { metricSpec: declared.spec }),
           },
           'workflow',
           undefined,

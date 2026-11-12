@@ -183,6 +183,11 @@ export function ProposalCard({ proposal, actions, compact, onFocus }: { proposal
       <p className="text-[12px] leading-relaxed text-t2">{proposal.why}</p>
       {!compact && <Evidence proposal={proposal} />}
       {proposal.effect && <p className="text-[12px] leading-relaxed text-t1">Expected: {proposal.effect}</p>}
+      {proposal.metricSpec && (
+        <p className="text-[11.5px] leading-relaxed text-t3">
+          Measured by: {proposal.metricSpec.label} ({proposal.metricSpec.better} is better)
+        </p>
+      )}
       <Changes proposal={proposal} />
       <Warnings warnings={proposal.warnings} />
       <div className="flex items-center gap-1.5 pt-0.5">
