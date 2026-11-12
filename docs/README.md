@@ -99,6 +99,8 @@ how to run it and how to change it. The [project README](../README.md) has the q
   [02-n8n-workflow-engine.md](research/02-n8n-workflow-engine.md),
   [03-n8n-ai-agents.md](research/03-n8n-ai-agents.md),
   [04-n8n-integrations.md](research/04-n8n-integrations.md): the n8n research that drove the design.
+- [research/company-brain-next-sources.md](research/company-brain-next-sources.md): what the Company Brain's P1 and P2
+  sources (Base44 Report Scheduler, the Brandlight platform, Shapes, Clay, Mesh, Scytale, Microsoft 365) would need.
 - [reports/Workflow platform feature gaps.md](<../reports/Workflow platform feature gaps.md>) and its notes in
   [research_notes/](<../research_notes/Workflow platform feature gaps>): the 2026 comparison with other workflow
   platforms that the roadmap's waves came from.

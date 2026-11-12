@@ -48,6 +48,9 @@ const SLOT = {
     name: 'Google service account',
     description: 'A service account with domain-wide delegation for the read-only Drive, Calendar and Directory scopes, impersonating a user.',
   },
+  linear: { id: 'linear', key: 'linearApi', type: 'linear.linearApi', name: 'Linear', description: 'A personal API key; registering the webhook needs a workspace admin’s key.' },
+  attio: { id: 'attio', key: 'attioApi', type: 'attio.attioApi', name: 'Attio', description: 'A workspace access token with read access to records, lists and notes, and webhook write access.' },
+  fathom: { id: 'fathom', key: 'fathomApi', type: 'fathom.fathomApi', name: 'Fathom', description: 'An API key from Fathom’s settings (API Access).' },
   notion: { id: 'notion', key: 'notionApi', type: 'productivity.notionApi', name: 'Notion', description: 'An internal integration secret, with the pages and databases shared with it.' },
 } satisfies Record<string, Slot>;
 
@@ -1059,6 +1062,39 @@ const WORK_TEMPLATES: TemplateDetail[] = [
       'The first poll takes a baseline: only edits after it come through.',
     ],
     trigger: node('trigger', 'Notion Trigger', 'productivity.notionTrigger', [0, 0], { pollInterval: 300, roots: '' }, { uses: [SLOT.notion] }),
+  }),
+  workIngest({
+    id: 'work-linear',
+    name: 'Work from Linear into the second brain',
+    description: 'Issues, comments and project updates in Linear become work.bug_reported, work.feature_request, work.ticket_moved, work.release and work.self_update events, and a customer need or project keeps its customer or initiative in the second brain.',
+    setup: [
+      'Pick or add the Linear credential: a workspace admin’s API key, since the trigger registers its own webhook when you publish.',
+      'Pick a team in the trigger (empty: every public team) and the resources to follow.',
+      'Customers come from the issue’s customer needs, else a label such as `customer:acme` (prefix in the trigger’s options).',
+    ],
+    trigger: node('trigger', 'Linear Trigger', 'linear.linearTrigger', [0, 0], { resourceTypes: ['Issue', 'Comment', 'ProjectUpdate'] }, { uses: [SLOT.linear] }),
+  }),
+  workIngest({
+    id: 'work-attio',
+    name: 'Deals and notes from Attio into the second brain',
+    description: 'Deals that move or are won, records that change, and notes and tasks in Attio become work.deal_moved, work.deal_won, work.discussion and work.action_item events, keeping each deal’s company as a customer in the second brain.',
+    setup: [
+      'Pick or add the Attio credential: a workspace access token (Attio sends webhooks to HTTPS addresses only, so Landflow must be reachable over HTTPS).',
+      'Choose the events and objects in the trigger (default: companies, people and deals), and in its options the stages that mean won.',
+      'Publishing registers the webhook in Attio; unpublishing removes it.',
+    ],
+    trigger: node('trigger', 'Attio Trigger', 'attio.attioTrigger', [0, 0], { objects: 'companies,people,deals' }, { uses: [SLOT.attio] }),
+  }),
+  workIngest({
+    id: 'work-fathom',
+    name: 'Meetings from Fathom into the second brain',
+    description: 'Each recorded meeting in Fathom becomes a work.meeting_held event with its summary, and its action items work.action_item events, keeping the customer in the call in the second brain. Transcripts stay out.',
+    setup: [
+      'Pick or add the Fathom API key.',
+      'Choose whose recordings to follow, and set **Internal Domains** in the trigger’s options so an outside attendee names the customer.',
+      'Transcripts are off; turn on **Include Transcript** only if you mean to keep them. Publishing registers the webhook in Fathom.',
+    ],
+    trigger: node('trigger', 'Fathom Trigger', 'fathom.fathomTrigger', [0, 0], { triggeredFor: ['my_recordings'], options: { includeSummary: true, includeActionItems: true, actionItemItems: true } }, { uses: [SLOT.fathom] }),
   }),
   template({
     id: 'work-google-directory',

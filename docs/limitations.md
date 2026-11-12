@@ -81,7 +81,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
   and OAuth apps can't read summaries or transcripts); users are admin only. Transcripts are off unless asked.
 - **Work ingest templates** ([integrations.md](features/integrations.md#work-ingest-templates)) keep customers and
   initiatives by the hint's name: `#customer-acme` and a Drive folder `Customers/Acme` meet as `acme`, but the Calendar
-  names a customer by the attendee's domain (`globex.com`), which joins nothing else until someone merges them. The
+  and Fathom name a customer by the attendee's domain (`globex.com`), which joins nothing else until someone merges them. The
   person who did the work is the event's `actor` (an email), not an entity; the Directory template makes the people.
   Record Event keeps 200 characters of a string attribute, so the 600-character summary is cut in the ledger.
 - **Checked against fakes only**: Slack, Google, Notion, Linear, Attio and Fathom activity were tested against local fakes of their APIs, not a real workspace.

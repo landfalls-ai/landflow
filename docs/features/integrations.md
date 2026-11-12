@@ -43,6 +43,9 @@ from the name, so the same customer from Slack and Drive is one entity):
 | `work-google-drive` | Google Drive Trigger (poll) | `work.doc_edited` |
 | `work-google-calendar` | Google Calendar Trigger (poll) | `work.meeting_scheduled`, `work.meeting_held` (`work.meeting_cancelled` when asked) |
 | `work-notion` | Notion Trigger (poll) | `work.doc_edited` |
+| `work-linear` | Linear Trigger (webhook) | `work.bug_reported`, `work.feature_request`, `work.ticket_moved`, `work.release`, `work.self_update`, `work.discussion` |
+| `work-attio` | Attio Trigger (webhook) | `work.deal_moved`, `work.deal_won`, `work.discussion` (notes), `work.action_item` (tasks) |
+| `work-fathom` | Fathom Trigger (webhook, transcripts off) | `work.meeting_held`, `work.action_item` (one item per action item) |
 | `work-google-directory` | Schedule, daily at 6 → Google Directory → Entity | none: each person as a `person` entity keyed by email, with title, department, org unit and manager |
 
 Declare the kinds first with `pnpm brain:work-kinds` (the templates' fallback declares a kind from the first event's fields,

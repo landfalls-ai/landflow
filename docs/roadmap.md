@@ -1203,10 +1203,10 @@ the Kubernetes base.
 
 **Built (Phase C, part 1):** the `work.*` kinds catalogued in `deploy/brain/work-kinds.json` and declared with
 `pnpm brain:work-kinds`, and the [work ingest templates](features/integrations.md#work-ingest-templates) for Slack, Drive,
-Calendar, Notion and the Directory.
+Calendar, Notion and the Directory, then for Linear, Attio and Fathom.
 
-**Next:** the Linear, Attio and Fathom ingest templates. Open from Phase
-A: a Notion webhook trigger once Notion can create subscriptions over its API; push channels for Drive and Calendar
+**Next:** the P1/P2 sources ([follow-up note](research/company-brain-next-sources.md)), and a way to join a customer named by a domain (Calendar, Fathom) with
+the same customer named by a channel or folder. Open from Phase A: a Notion webhook trigger once Notion can create subscriptions over its API; push channels for Drive and Calendar
 once app webhooks can renew themselves; Slack message edits and deletions; the Directory's groups and org units.
 
 ## Planned next
