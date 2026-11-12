@@ -608,16 +608,16 @@ describe('the settings operations', () => {
   it('set whitelisted node and workflow settings, and describe them', () => {
     const wf = { id: 'w', name: 'W', nodes: [node('h', 'Call', 'core.httpRequest')], connections: [] } as unknown as Workflow;
     const { ops, dropped } = parseOps([
-      { op: 'setNodeSettings', node: 'Call', settings: { retryOnFail: true, maxTries: 4, parameters: { url: 'x' } } },
+      { op: 'setNodeSettings', node: 'Call', settings: { retryOnFail: true, maxTries: 4, executeOnce: true, parameters: { url: 'x' } } },
       { op: 'setWorkflowSettings', settings: { errorWorkflowId: 'wf_err', timeoutSeconds: 60, owner: 'me' } },
     ]);
     expect(dropped).toEqual([]);
     expect(ops).toEqual([
-      { op: 'setNodeSettings', node: 'Call', settings: { retryOnFail: true, maxTries: 4 } },
+      { op: 'setNodeSettings', node: 'Call', settings: { retryOnFail: true, maxTries: 4, executeOnce: true } },
       { op: 'setWorkflowSettings', settings: { errorWorkflowId: 'wf_err', timeoutSeconds: 60 } },
     ]);
     const result = applyOps(wf, ops, registryLookup());
-    expect(result.workflow.nodes[0]).toMatchObject({ retryOnFail: true, maxTries: 4 });
+    expect(result.workflow.nodes[0]).toMatchObject({ retryOnFail: true, maxTries: 4, executeOnce: true });
     expect(result.workflow.nodes[0].parameters).toEqual({});
     expect(result.workflow.settings).toMatchObject({ errorWorkflowId: 'wf_err', timeoutSeconds: 60 });
     expect(describeOps(ops).length).toBe(2);
