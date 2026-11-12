@@ -1516,6 +1516,23 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS brain_entities_project ON brain_entities (project_id)`,
     ],
   },
+  {
+    version: 2064,
+    name: 'brain_backtests',
+    statements: [
+      // Backtests of detectors against past decisions (lib/server/brain/backtest.ts): the result is JSON in `data`; the
+      // columns are what the list filters and sorts on.
+      `CREATE TABLE IF NOT EXISTS brain_backtests (
+        id TEXT PRIMARY KEY,
+        detector TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        precision_rate REAL,
+        failing INTEGER NOT NULL DEFAULT 0,
+        data TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS brain_backtests_detector ON brain_backtests (detector, created_at)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -1616,6 +1633,7 @@ export const TABLES = {
   agent_eval_runs: ['id'],
   agent_response_cache: ['id'],
   agent_semantic_cache: ['id'],
+  brain_backtests: ['id'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

@@ -217,12 +217,14 @@ export function cleanActions(value: unknown): ProposalAction[] {
  * A suggestion from a workflow (Suggest Improvement) or the analyst: its ops are checked against the target workflow.
  * `detector`: a flow detector's Suggest Improvement (./flow-detectors.ts) posts as that detector, and a finding under the
  * bar its quieting sets (quietBar) is held back.
+ * `preview` (a backtest, ./backtest.ts): nothing is written. A finding that clears the bar (made with the `quiet`
+ * multiplier given) comes back as the suggestion it would have been, with its fingerprint, and one under it as undefined.
  */
 export function proposeFrom(
   input: ProposalInput,
   source: Exclude<ProposalSource, 'detector'>,
   db: Database = database(),
-  options: { detector?: FlowDetectorId } = {},
+  options: { detector?: FlowDetectorId; preview?: { quiet: number; at: number } } = {},
 ): Proposal | undefined {
   const title = input.title?.trim();
   const why = input.why?.trim();
@@ -250,41 +252,43 @@ export function proposeFrom(
     ? fingerprintOf(options.detector, ...(given ? [given] : [target.type, target.id, title]))
     : given || fingerprintOf(source, input.label, target.type, target.id, title);
   // Advice about a node that already has open advice is the same suggestion in other words (the same one again refreshes it).
-  if (node && !validated?.ops.length && !input.draft && !input.agentChange) {
+  if (!options.preview && node && !validated?.ops.length && !input.draft && !input.agentChange) {
     const open = listProposals({ status: 'open', workflowId: workflow!.id }, db);
     if (open.some((p) => p.fingerprint !== fingerprint && p.target.nodeId === node.id && !p.ops.length && !p.draft && !p.agentChange)) return undefined;
   }
   const risk: ProposalRisk = input.risk ?? (validated?.ops.length ? 'medium' : 'low');
   const confidence = Math.max(0, Math.min(1, input.confidence ?? 0.6));
   const detector = options.detector;
-  if (detector && confidence < quietBar(quietOf(detector, db))) return undefined;
-  return upsertProposal(
-    {
-      source: detector ? 'detector' : source,
-      ...(detector && { detector }),
-      ...(input.label && { label: input.label.slice(0, 80) }),
-      fingerprint,
-      ...((workflow || agent) && { projectId: homeProjectId(workflow ? 'workflow' : 'agent', (workflow ?? agent)!.id) }),
-      ...(!workflow && !agent && entity && entityProject(entity) && { projectId: entityProject(entity) }),
-      target,
-      title: title.slice(0, 160),
-      why: why.slice(0, 2_000),
-      evidence: (input.evidence ?? []).slice(0, 12),
-      ...(input.effect && { effect: input.effect.slice(0, 300) }),
-      ...(actions.length && { actions }),
-      ...(audience.length && { audience }),
-      ...(audience.length && input.slackCredential && { slack: { credential: input.slackCredential, messages: [] } }),
-      ops: validated?.ops ?? [],
-      ...(validated && (validated.warnings.length || validated.dropped.length) && { warnings: [...validated.warnings, ...validated.dropped] }),
-      ...(input.draft && { draft: input.draft }),
-      ...(input.agentChange && agent && { agentChange: input.agentChange }),
-      ...(detector && input.metricSpec && { metricSpec: input.metricSpec }),
-      risk,
-      confidence,
-      score: confidence * (risk === 'low' ? 10 : risk === 'medium' ? 8 : 5),
-    },
-    db,
-  );
+  if (detector && confidence < quietBar(options.preview ? options.preview.quiet : quietOf(detector, db))) return undefined;
+  const built: NewProposal = {
+    source: detector ? 'detector' : source,
+    ...(detector && { detector }),
+    ...(input.label && { label: input.label.slice(0, 80) }),
+    fingerprint,
+    ...((workflow || agent) && { projectId: homeProjectId(workflow ? 'workflow' : 'agent', (workflow ?? agent)!.id) }),
+    ...(!workflow && !agent && entity && entityProject(entity) && { projectId: entityProject(entity) }),
+    target,
+    title: title.slice(0, 160),
+    why: why.slice(0, 2_000),
+    evidence: (input.evidence ?? []).slice(0, 12),
+    ...(input.effect && { effect: input.effect.slice(0, 300) }),
+    ...(actions.length && { actions }),
+    ...(audience.length && { audience }),
+    ...(audience.length && input.slackCredential && { slack: { credential: input.slackCredential, messages: [] } }),
+    ops: validated?.ops ?? [],
+    ...(validated && (validated.warnings.length || validated.dropped.length) && { warnings: [...validated.warnings, ...validated.dropped] }),
+    ...(input.draft && { draft: input.draft }),
+    ...(input.agentChange && agent && { agentChange: input.agentChange }),
+    ...(detector && input.metricSpec && { metricSpec: input.metricSpec }),
+    risk,
+    confidence,
+    score: confidence * (risk === 'low' ? 10 : risk === 'medium' ? 8 : 5),
+  };
+  if (options.preview) {
+    const at = new Date(options.preview.at).toISOString();
+    return { ...built, id: 'preview', status: 'open', createdAt: at, updatedAt: at };
+  }
+  return upsertProposal(built, db);
 }
 
 // ---------------------------------------------------------------------------

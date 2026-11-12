@@ -671,3 +671,66 @@ export interface SimilarOwn extends Omit<SimilarElsewhere, 'type'> {
 }
 
 export type SimilarMatch = SimilarOwn | SimilarElsewhere;
+
+// ---------------------------------------------------------------------------
+// Backtests (docs/second-brain.md#backtesting-a-detector)
+// ---------------------------------------------------------------------------
+
+/** A backtest whose precision is under this fails its gate, unless the caller sets another. */
+export const BACKTEST_GATE = 0.5;
+
+/** How a finding fared against what people decided about the same suggestion (matched by fingerprint). */
+export type BacktestVerdict = 'hit' | 'false-alarm' | 'unknown';
+
+export interface BacktestFinding {
+  fingerprint: string;
+  title: string;
+  confidence: number;
+  /** The first and last point (ISO) at which the detector found it. */
+  firstAt: string;
+  lastAt: string;
+  /** At how many points. */
+  points: number;
+  verdict: BacktestVerdict;
+  /** What people decided: `applied`, `done`, `dismissed:wrong`, `dismissed:not-relevant`, `dismissed:intended`, `expired`, `open`, `snoozed`, or `none` (no suggestion carries this fingerprint). */
+  decision: string;
+  proposalId?: string;
+}
+
+/** A suggestion people decided on in the window that the backtest did not reproduce. */
+export interface BacktestMiss {
+  proposalId: string;
+  fingerprint: string;
+  title: string;
+  decision: string;
+  /** People wanted it (applied, or dismissed as done): a miss. Otherwise they did not, and not finding it was right. */
+  wanted: boolean;
+}
+
+export interface BacktestResult {
+  id: string;
+  detector: DetectorId;
+  label: string;
+  createdAt: string;
+  /** The window, ISO, and the days between points. */
+  from: string;
+  to: string;
+  days: number;
+  step: number;
+  /** The quiet multiplier it ran with, and whether the caller gave it (else the detector's own, now). */
+  quiet: number;
+  quietGiven: boolean;
+  /** Findings per point, oldest first. */
+  points: Array<{ at: string; found: number; error?: string }>;
+  findings: BacktestFinding[];
+  missed: BacktestMiss[];
+  counts: { findings: number; hits: number; falseAlarms: number; unknown: number; misses: number; avoided: number };
+  /** hits / (hits + false alarms); null when no finding was decided. */
+  precision: number | null;
+  /** hits / (hits + misses): of what people wanted, how much it found; null when nobody wanted anything. */
+  recall: number | null;
+  gate: { threshold: number; ok: boolean; reason: string };
+  /** The time budget ran out before every point ran. */
+  partial?: boolean;
+  durationMs: number;
+}
