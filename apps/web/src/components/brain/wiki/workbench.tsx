@@ -222,7 +222,7 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
 
   return (
     <WikiNav.Provider value={open}>
-      <div className="flex h-[calc(100dvh-2.75rem)] flex-col overflow-hidden bg-bg md:h-dvh">
+      <div className="flex h-[calc(100dvh-3.5rem-env(safe-area-inset-bottom))] flex-col overflow-hidden bg-bg md:h-dvh">
         {/* Title bar: the command center. */}
         <div className="flex h-10 shrink-0 items-center gap-2 border-b border-hair bg-sf2 px-2">
           <button type="button" onClick={() => setDrawer(true)} className="grid size-7 place-items-center rounded-md text-t2 hover:bg-acdim md:hidden" aria-label="Files">

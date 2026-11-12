@@ -18,6 +18,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 |---|---|---|
 | Editor: canvas, node creator, runs, pinned data, debugging, versions, templates; importing from n8n and Flowise | [features/editor.md](features/editor.md) | [ui-review.md](ui-review.md) |
 | Editor assistant: suggestions after a run, Spotlight (the builder chat) | [assistant.md](assistant.md) | |
+| Landflow on a phone: the tab bar, full-screen pages, the app bar, the editor's header, touch and type | [mobile.md](mobile.md) | |
 | Second brain: the usage ledger, detectors and the Suggestions inbox, facts, the Platform analyst, your own conclusions, flow detectors (Detector Trigger), custom event kinds (Record Event), entities, flow buttons (On Suggestion Decided), audiences and Slack DMs, Find Similar and `check_overlap`, declared metrics, backtests | [second-brain.md](second-brain.md) | [observability.md](observability.md) |
 | The Brain page: the second brain as Markdown files in an editor's workbench (Explorer, tabs, Preview and Source, quick open, Problems), a file per person, customer and initiative with a summary the model writes, Spotlight to ask it, and work shared across teams | [second-brain.md](second-brain.md#the-brain-page) | [research/brain-ui-research.md](research/brain-ui-research.md) |
 | Composite nodes: groups typed by a contract (slots, rules, ports), checked in the editor, run as one step | [composites.md](composites.md) | [protocol.md](protocol.md) §3 |
