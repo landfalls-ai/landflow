@@ -10,7 +10,7 @@ import { ChevronDown, ChevronRight, Clock, FilePlus2, MoreHorizontal } from 'luc
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
-import { detectorLabel, type DismissReason, type Proposal } from '@/lib/shared/brain';
+import { detectorLabel, type DismissReason, type Proposal, type ProposalAction } from '@/lib/shared/brain';
 import { Badge, Chip, type Tone } from '../ui/badge';
 import { Button } from '../ui/button';
 import { MenuItem, Popover } from '../ui/popover';
@@ -41,6 +41,8 @@ const APPLY_LABEL = { draft: 'Create workflow', agent: 'Apply', ops: 'Apply', bu
 export interface ProposalActions {
   busy?: string;
   apply: (p: Proposal) => void;
+  /** Take one of the buttons a flow put on the suggestion. */
+  act: (p: Proposal, action: ProposalAction) => void;
   dismiss: (p: Proposal, reason: DismissReason) => void;
   snooze: (p: Proposal, days: number) => void;
 }
@@ -66,19 +68,34 @@ export function useProposalActions({ onDone, onForbidden, localApply }: { onDone
       setBusy(undefined);
     }
   };
+  /** The toast that names the workflows a decision started (the missing tool's "Build it" and any On Suggestion Decided). */
+  const startedToast = (started?: Array<{ id: string; name: string }>, verb = 'Started') => {
+    if (started?.length) toast.success(`${verb}: ${started.map((w) => `“${w.name}”`).join(', ')}`, { action: { label: 'Executions', onClick: () => router.push('/executions') } });
+  };
   const patch = (p: Proposal, json: unknown) => api(`/api/proposals/${encodeURIComponent(p.id)}`, { method: 'PATCH', json });
 
   return {
     busy,
     dismiss: (p, reason) => void run(p, async () => void (await patch(p, { action: 'dismiss', reason }))),
+    act: (p, action) => {
+      if (action.confirm && !window.confirm(action.confirm)) return;
+      void run(p, async () => {
+        const result = await api<{ warnings: string[]; started?: Array<{ id: string; name: string }> }>(`/api/proposals/${encodeURIComponent(p.id)}/act`, { method: 'POST', json: { action: action.id } });
+        for (const warning of result.warnings) toast.warning(warning);
+        if (result.started?.length) startedToast(result.started);
+        else toast.success(`${action.label}: done`);
+      });
+    },
     snooze: (p, days) => void run(p, async () => void (await patch(p, { action: 'snooze', days }))),
     apply: (p) => {
       const kind = proposalKind(p);
+      // Advice with buttons of its own has no Apply (see the card); without them, "Mark done".
       if (kind === 'advice') return void run(p, async () => void (await patch(p, { action: 'dismiss', reason: 'done' })));
       void run(p, async () => {
         if (kind === 'ops' && localApply) {
           if (!localApply(p)) throw new Error('The change no longer fits this workflow.');
-          await api(`/api/proposals/${encodeURIComponent(p.id)}/applied`, { method: 'POST' });
+          const applied = await api<{ started?: Array<{ id: string; name: string }> }>(`/api/proposals/${encodeURIComponent(p.id)}/applied`, { method: 'POST' });
+          startedToast(applied.started, 'Started');
           return;
         }
         const projectId = p.projectId ? `?projectId=${encodeURIComponent(p.projectId)}` : '';
@@ -89,7 +106,10 @@ export function useProposalActions({ onDone, onForbidden, localApply }: { onDone
           router.push(`/workflows/${result.workflow.id}`);
         } else if (kind === 'build') {
           if (result.started?.length) toast.success(`Approved: ${result.started.map((w) => `“${w.name}”`).join(', ')} builds it`, { action: { label: 'Executions', onClick: () => router.push('/executions') } });
-        } else toast.success(kind === 'note' ? 'Kept for the project' : 'Applied');
+        } else {
+          toast.success(kind === 'note' ? 'Kept for the project' : 'Applied');
+          startedToast(result.started);
+        }
       });
     },
   };
@@ -190,10 +210,17 @@ export function ProposalCard({ proposal, actions, compact, onFocus }: { proposal
       )}
       <Changes proposal={proposal} />
       <Warnings warnings={proposal.warnings} />
-      <div className="flex items-center gap-1.5 pt-0.5">
-        <Button size="sm" variant="primary" onClick={() => actions.apply(proposal)} loading={busy} disabled={!!actions.busy && !busy}>
-          {APPLY_LABEL[kind]}
-        </Button>
+      <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+        {proposal.actions?.map((a) => (
+          <Button key={a.id} size="sm" variant={a.style === 'primary' ? 'primary' : 'outline'} onClick={() => actions.act(proposal, a)} loading={busy} disabled={!!actions.busy && !busy}>
+            {a.label}
+          </Button>
+        ))}
+        {(kind !== 'advice' || !proposal.actions?.length) && (
+          <Button size="sm" variant={proposal.actions?.length ? 'outline' : 'primary'} onClick={() => actions.apply(proposal)} loading={busy} disabled={!!actions.busy && !busy}>
+            {APPLY_LABEL[kind]}
+          </Button>
+        )}
         <Popover
           align="start"
           trigger={({ toggle }) => (
