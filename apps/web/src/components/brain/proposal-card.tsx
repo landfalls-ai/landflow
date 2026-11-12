@@ -6,7 +6,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ChevronDown, ChevronRight, Clock, FilePlus2, MoreHorizontal } from 'lucide-react';
+import { ChevronDown, ChevronRight, Clock, FilePlus2, MessageSquare, MoreHorizontal } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
@@ -62,7 +62,8 @@ export function useProposalActions({ onDone, onForbidden, localApply }: { onDone
       onDone(p.id);
     } catch (e) {
       const status = (e as { status?: number }).status;
-      if (status === 403) onForbidden?.();
+      // A person it is addressed to may not edit what it is about: say so instead of hiding the inbox.
+      if (status === 403 && !p.audience?.length) onForbidden?.();
       else toast.error((e as Error).message);
     } finally {
       setBusy(undefined);
@@ -202,6 +203,12 @@ export function ProposalCard({ proposal, actions, compact, onFocus }: { proposal
         ) : (
           <div className="text-[11.5px] text-t3">{target}</div>
         ))}
+      {!!proposal.audience?.length && (
+        <div className="flex items-center gap-1.5 text-[11.5px] text-t3">
+          <span>For {proposal.audience.map((m) => m.name ?? m.email ?? m.slackUserId).join(', ')}</span>
+          {!!proposal.slack?.messages.length && <MessageSquare className="size-3 text-ac" aria-label="Mirrored to Slack" />}
+        </div>
+      )}
       <p className="text-[12px] leading-relaxed text-t2">{proposal.why}</p>
       {!compact && <Evidence proposal={proposal} />}
       {proposal.effect && <p className="text-[12px] leading-relaxed text-t1">Expected: {proposal.effect}</p>}

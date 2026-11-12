@@ -5,8 +5,8 @@
  * suggestion has no such action, 409 when it is already decided.
  */
 import { z } from 'zod';
+import { canDecide, canSee } from '@/lib/server/brain/audience';
 import { actOnProposal, getProposal, ProposalError } from '@/lib/server/brain/proposals';
-import { canProposal } from '@/lib/server/brain/scope';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { routeActor } from '@/lib/server/projects/http';
 
@@ -22,8 +22,8 @@ export const POST = handler(async (request: Request, ctx: Ctx) => {
   if (!parsed.ok) return parsed.response;
   const actor = routeActor();
   const proposal = getProposal(id);
-  if (!proposal || !canProposal(actor, proposal, 'read')) return error('Suggestion not found', 404);
-  if (!canProposal(actor, proposal, 'update')) return error('You can’t decide this suggestion', 403);
+  if (!proposal || !canSee(actor, proposal)) return error('Suggestion not found', 404);
+  if (!canDecide(actor, proposal, 'other')) return error('You can’t decide this suggestion', 403);
   try {
     return json(actOnProposal(id, parsed.data.action, { note: parsed.data.note, actorId: actor.id }));
   } catch (caught) {

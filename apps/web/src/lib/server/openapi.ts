@@ -1897,8 +1897,8 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Second brain',
     id: 'listProposals',
     summary: 'List suggestions',
-    description: 'Best first. `status`: open (default), applied, dismissed, snoozed, expired or all. Members see suggestions about the workflows and agents they can open.',
-    query: [text('status', 'open (default), applied, dismissed, snoozed, expired or all'), text('workflowId', 'About one workflow'), text('agentId', 'About one agent'), text('detector', 'From one detector'), text('limit', 'At most this many (200)')],
+    description: 'Best first. `status`: open (default), applied, dismissed, snoozed, expired or all. Members see suggestions about the workflows and agents they can open, and the ones addressed to them (`audience`).',
+    query: [text('status', 'open (default), applied, dismissed, snoozed, expired or all'), text('workflowId', 'About one workflow'), text('agentId', 'About one agent'), text('detector', 'From one detector'), text('for', '`me`: only suggestions addressed to the caller'), text('limit', 'At most this many (200)')],
     responses: { 200: reply('The suggestions', object({ proposals: array(proposal) }, ['proposals'])) },
   });
   add('post', '/api/proposals', {
@@ -1906,7 +1906,7 @@ function paths(): Record<string, Record<string, Json>> {
     id: 'createProposal',
     summary: 'Add a suggestion',
     description: 'Source `analyst`. Its ops are checked against the workflow; the same fingerprint refreshes the open suggestion. Needs edit access to the workflow or agent. `proposal: null` when it is held back (dismissed or applied recently, or the weekly cap is full).',
-    body: jsonBody(object({ title: { type: 'string' }, why: { type: 'string' }, workflowId: { type: 'string' }, agentId: { type: 'string' }, entity: object({ type: { type: 'string', enum: ['initiative', 'person', 'customer', 'system'] }, id: { type: 'string' } }, ['type', 'id']), nodeName: { type: 'string' }, effect: { type: 'string' }, ops: array({ type: 'object' }), risk: { type: 'string', enum: ['low', 'medium', 'high'] }, confidence: { type: 'number' }, fingerprint: { type: 'string' }, actions: array(object({ id: { type: 'string' }, label: { type: 'string' }, style: { type: 'string', enum: ['primary', 'default'] }, confirm: { type: 'string' } }, ['id', 'label'])) }, ['title', 'why'])),
+    body: jsonBody(object({ title: { type: 'string' }, why: { type: 'string' }, workflowId: { type: 'string' }, agentId: { type: 'string' }, entity: object({ type: { type: 'string', enum: ['initiative', 'person', 'customer', 'system'] }, id: { type: 'string' } }, ['type', 'id']), nodeName: { type: 'string' }, effect: { type: 'string' }, ops: array({ type: 'object' }), risk: { type: 'string', enum: ['low', 'medium', 'high'] }, confidence: { type: 'number' }, fingerprint: { type: 'string' }, actions: array(object({ id: { type: 'string' }, label: { type: 'string' }, style: { type: 'string', enum: ['primary', 'default'] }, confirm: { type: 'string' } }, ['id', 'label'])), audience: array(object({ userId: { type: 'string' }, email: { type: 'string' }, slackUserId: { type: 'string' }, name: { type: 'string' } })) }, ['title', 'why'])),
     responses: { 200: reply('Held back', object({ proposal: { type: 'null' }, reason: { type: 'string' } })), 201: reply('The suggestion', object({ proposal }, ['proposal'])), 400: invalid, 404: notFound },
   });
   add('get', '/api/proposals/{id}', { tag: 'Second brain', id: 'getProposal', summary: 'Get a suggestion', responses: { 200: reply('The suggestion', object({ proposal }, ['proposal'])), 404: notFound } });

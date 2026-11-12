@@ -25,6 +25,7 @@ import { workflowForCall } from '../publish';
 import { store } from '../store';
 import { recordUsage } from '../usage/ledger';
 import type { UsageScope } from '../usage/query';
+import { cleanAudience, inAudience, mirrorDecision, mirrorNew } from './audience';
 import { decidedBuilders, decisionListeners, dispatchDecision } from './decision-trigger';
 import { baselineFor, checkEffectAsync, settleBaseline, unsettled } from './effect';
 import { getEntity, entityKey, entityProject } from './entities';
@@ -62,6 +63,9 @@ const parse = (text: string): Proposal | undefined => {
     return undefined;
   }
 };
+
+/** Write a suggestion as it is (the Slack mirror records its message refs this way). */
+export const saveProposal = (proposal: Proposal, db: Database = database()): Proposal => save(proposal, db);
 
 function save(proposal: Proposal, db: Database = database()): Proposal {
   db.upsert('proposals', {
@@ -101,7 +105,7 @@ function inScope(p: Proposal, scope?: UsageScope): boolean {
 }
 
 export function listProposals(
-  filter: { status?: ProposalStatus | 'all'; workflowId?: string; agentId?: string; detector?: DetectorId; scope?: UsageScope; limit?: number } = {},
+  filter: { status?: ProposalStatus | 'all'; workflowId?: string; agentId?: string; detector?: DetectorId; scope?: UsageScope; limit?: number; viewer?: { id: string; email?: string }; forMe?: boolean } = {},
   db: Database = database(),
 ): Proposal[] {
   const where: string[] = [];
@@ -121,7 +125,8 @@ export function listProposals(
     .map((p) => awake(p))
     .filter((p) => (status === 'all' ? true : p.status === status))
     .filter((p) => !filter.agentId || (p.target.type === 'agent' && p.target.id === filter.agentId))
-    .filter((p) => inScope(p, filter.scope))
+    // The people a suggestion is addressed to see it wherever it is about.
+    .filter((p) => (filter.forMe ? inAudience(filter.viewer, p) : inScope(p, filter.scope) || inAudience(filter.viewer, p)))
     .slice(0, filter.limit ?? 200);
 }
 
@@ -154,7 +159,13 @@ export function upsertProposal(input: NewProposal, db: Database = database(), no
   const open = db
     .all<{ data: string }>("SELECT data FROM proposals WHERE fingerprint = ? AND status IN ('open', 'snoozed')", input.fingerprint)
     .flatMap((r) => parse(r.data) ?? [])[0];
-  if (open) return save({ ...open, ...input, id: open.id, status: open.status, createdAt: open.createdAt, updatedAt: at, ...(open.snoozedUntil && { snoozedUntil: open.snoozedUntil }) }, db);
+  if (open) {
+    // A refresh keeps the Slack messages already posted (they are not posted again); a member added since gets one.
+    const slack = input.slack || open.slack ? { credential: (input.slack ?? open.slack)!.credential, messages: open.slack?.messages ?? [] } : undefined;
+    const refreshed = save({ ...open, ...input, ...(slack && { slack }), id: open.id, status: open.status, createdAt: open.createdAt, updatedAt: at, ...(open.snoozedUntil && { snoozedUntil: open.snoozedUntil }) }, db);
+    mirrorNew(refreshed);
+    return refreshed;
+  }
   if (heldBack(input.fingerprint, now, db)) return undefined;
   if (input.target.type === 'workflow' && input.target.id) {
     const week = db
@@ -166,7 +177,9 @@ export function upsertProposal(input: NewProposal, db: Database = database(), no
       save({ ...weakest, status: 'expired', updatedAt: at, note: 'Replaced by a stronger suggestion' }, db);
     }
   }
-  return save({ ...input, id: `pr_${nanoid(12)}`, status: 'open', createdAt: at, updatedAt: at }, db);
+  const added = save({ ...input, id: `pr_${nanoid(12)}`, status: 'open', createdAt: at, updatedAt: at }, db);
+  mirrorNew(added);
+  return added;
 }
 
 /** The buttons a flow asked for: at most 4, slug-like ids, none of the decisions' own names. Throws ProposalError when they don't fit. */
@@ -221,6 +234,7 @@ export function proposeFrom(
   const actions = cleanActions(input.actions);
   const entity = input.entity ? getEntity(input.entity.type, input.entity.id, db) : undefined;
   if (input.entity && !entity) throw new ProposalError(`No ${input.entity.type} ${input.entity.id}`, 404);
+  const audience = cleanAudience(input.audience);
   const validated = workflow && input.ops ? validateOps(workflow, input.ops) : undefined;
   const node = workflow && input.nodeName ? workflow.nodes.find((n) => n.name === input.nodeName) : undefined;
   const target: Proposal['target'] = workflow
@@ -258,6 +272,8 @@ export function proposeFrom(
       evidence: (input.evidence ?? []).slice(0, 12),
       ...(input.effect && { effect: input.effect.slice(0, 300) }),
       ...(actions.length && { actions }),
+      ...(audience.length && { audience }),
+      ...(audience.length && input.slackCredential && { slack: { credential: input.slackCredential, messages: [] } }),
       ops: validated?.ops ?? [],
       ...(validated && (validated.warnings.length || validated.dropped.length) && { warnings: [...validated.warnings, ...validated.dropped] }),
       ...(input.draft && { draft: input.draft }),
@@ -446,6 +462,7 @@ export function markApplied(
     snoozedUntil: undefined,
   };
   save(next, db);
+  mirrorDecision(next);
   recordUsage({
     kind: 'proposal.applied',
     ...(proposal.target.type === 'workflow' && proposal.target.id && { workflowId: proposal.target.id }),
@@ -478,6 +495,7 @@ export function dismissProposal(id: string, reason: DismissReason, options: { no
   const decision = decisionOf('dismissed', options.actorId, { note: options.note, reason });
   const next: Proposal = { ...proposal, status: 'dismissed', reason, decision, updatedAt: at, snoozedUntil: undefined, ...(options.note && { note: options.note.slice(0, 500) }) };
   save(next, db);
+  mirrorDecision(next);
   if (reason === 'intended' && proposal.target.id && (proposal.target.type === 'workflow' || proposal.target.type === 'agent' || proposal.target.type === 'credential' || proposal.target.type === 'entity')) {
     upsertFact(
       {
@@ -512,6 +530,7 @@ export function snoozeProposal(id: string, days: number, db: Database = database
   const until = new Date(Date.now() + Math.max(1, Math.min(90, days)) * DAY_MS).toISOString();
   const decision = decisionOf('snoozed', options.actorId, { note: `${Math.max(1, Math.min(90, days))} days` });
   const next = save({ ...proposal, status: 'snoozed', snoozedUntil: until, decision, updatedAt: new Date().toISOString() }, db);
+  mirrorDecision(next);
   dispatchDecision(next, decision, options.viaWorkflowId);
   return next;
 }

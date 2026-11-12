@@ -372,6 +372,33 @@ other flows react to what was decided.
   applies counts as a builder too. `started` in the apply and act replies lists every workflow a decision starts, and
   the toast names them.
 
+#### Suggestions with an audience
+
+An overlap alert concerns two owners in two projects; a suggestion that belongs to one project can't reach both. So a
+suggestion may be addressed to named people.
+
+- **Audience.** `audience: [{ userId?, email?, slackUserId?, name? }]` (up to 10) on `POST /api/proposals`, or Suggest
+  Improvement's **Send To** (emails and Slack member ids, comma-separated, expressions allowed). An email is resolved to
+  the Landflow user who has it (their id and name are filled in). The people in it see the suggestion in their Home
+  inbox (`GET /api/proposals`, and `?for=me` for only what is addressed to them; Home's **For me** switch) even when it
+  is about something outside their projects, and `GET /api/proposals/:id` opens it. They get only what the suggestion says
+  (title, why, evidence, actions), not the target.
+- **What they may do.** Dismiss, snooze and take a flow's buttons: yes. Apply: only when it changes nothing (advice, so
+  "Mark done"); changes to a workflow or agent still need edit access to it, and a draft is any builder's, as before.
+- **Mirror to Slack.** Suggest Improvement's **Mirror to Slack** (a Slack credential, as Ask a Person and tool approvals
+  use) sends each audience member with a Slack id (or an email Slack's `users.lookupByEmail` knows) a direct message: title,
+  why, evidence, and the buttons: the suggestion's own actions, **Apply** (only when there is something to apply),
+  **Dismiss** (reason `not-relevant`) and **Snooze 7 days**. The message refs (channel and ts) are kept on the suggestion
+  (`slack`), so a refresh with the same fingerprint doesn't post again (a member added since gets a message).
+- **A click in Slack** reaches `/api/slack/interactions` (button ids start with `landflow_pr_`), must be signed by the app
+  that posted it, and must come from a member of the audience. It calls the inbox's own functions (`applyProposal`,
+  `dismissProposal`, `snoozeProposal`, `actOnProposal`), so one record holds both. The actor is the Landflow user behind
+  the member (by user id, or email) or else `slack:<member id>`. Apply from Slack needs that Landflow user to have edit
+  access; otherwise the member is told to open it in Landflow.
+- **Both ways.** After any decision, from the inbox, the API or Slack, every mirrored message is updated to show what was
+  decided and by whom (a snooze keeps the buttons).
+- The card shows "For Dana, Lee" and a small chat mark when mirrored.
+
 ### 7. Measuring the effect
 
 - **Baseline**: on Apply, the suggestion records a baseline from the week before. The metric depends on the detector:
@@ -426,8 +453,8 @@ Routes are also in [reference/api.md](reference/api.md), and variables in
 | `GET /api/usage/kinds`, `GET /api/usage/kinds/:kind` | the custom event kinds and their fields | `executions:read` |
 | `POST /api/usage/kinds`, `DELETE /api/usage/kinds/:kind` | declare or update a kind; forget one | `workflows:write` |
 | `POST /api/usage/signal` | an editor signal (`search.empty`) | `workflows:write` |
-| `GET /api/proposals`, `GET /api/proposals/:id` | suggestions (`?detector=` a built-in id or `flow:<workflowId>`) | `workflows:read`, scoped |
-| `POST /api/proposals` | a suggestion from outside (source `analyst`) | edit access to its workflow or agent |
+| `GET /api/proposals`, `GET /api/proposals/:id` | suggestions (`?detector=` a built-in id or `flow:<workflowId>`; `?for=me`: only those addressed to the caller) | `workflows:read`, scoped; plus the ones addressed to the caller |
+| `POST /api/proposals` | a suggestion from outside (source `analyst`; `audience` up to 10 people) | edit access to its workflow or agent |
 | `PATCH /api/proposals/:id` | dismiss with a reason, or snooze | edit access to its target |
 | `POST /api/proposals/:id/apply` | apply on the server | edit access to its target; any builder for a draft |
 | `POST /api/proposals/:id/act` | take a flow-defined action `{ action, note? }`: records the decision, counts as applied, starts the listening flows → `{ proposal, warnings, started? }` | edit access to its target |
@@ -466,9 +493,10 @@ Routes are also in [reference/api.md](reference/api.md), and variables in
   - flow detectors (`flow-detectors.ts`);
   - Find Similar (`similar.ts`);
   - entities (`entities.ts`; `apps/web/src/app/api/entities/` for their routes).
+  - audiences and the Slack mirror (`audience.ts`; the Slack side of a click is in `slack/handlers.ts`).
 - `apps/web/src/lib/server/usage/kinds.ts`: the declared custom kinds and the attribute checks;
   `apps/web/src/app/api/usage/kinds/`: their routes.
 - `apps/web/src/lib/server/mcp/brain-tools.ts`: the brain's tools on the instance MCP server.
 - `apps/web/src/lib/server/nodes/usage.ts`: the seven nodes, `nodes/entities.ts` the Entity node; `nodes/vector-stores.ts` refuses the brain's collections.
 - `apps/web/src/components/brain/`: the inbox, the canvas card and the Insights panel.
-- Tests: `apps/web/test/brain.test.ts`, `apps/web/test/brain-events.test.ts` (custom kinds), `apps/web/test/brain-metrics.test.ts` (declared effect metrics), `apps/web/test/brain-actions.test.ts` (actions and On Suggestion Decided), `apps/web/test/brain-entities.test.ts` (entities).
+- Tests: `apps/web/test/brain.test.ts`, `apps/web/test/brain-events.test.ts` (custom kinds), `apps/web/test/brain-metrics.test.ts` (declared effect metrics), `apps/web/test/brain-actions.test.ts` (actions and On Suggestion Decided), `apps/web/test/brain-entities.test.ts` (entities), `apps/web/test/brain-audience.test.ts` (audiences and the Slack mirror).

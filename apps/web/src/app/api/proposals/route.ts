@@ -2,13 +2,16 @@
  * Suggestions (docs/second-brain.md#4-detectors-and-suggestions).
  * GET  ?status=open|applied|dismissed|snoozed|expired|all&workflowId=&agentId=&detector=&limit= — highest score first
  *      (`detector`: a built-in one or `flow:<workflowId>`); the
- *      viewer's workflows and agents only (owners and admins: also the instance's).
+ *      viewer's workflows and agents only (owners and admins: also the instance's), and the ones addressed to them
+ *      (`audience`). `?for=me` keeps only those addressed to the caller.
  * POST ProposalInput — a suggestion from outside (an agent or a script over the API), source `analyst`; its ops are
- *      checked against the workflow, `actions` (up to 4 buttons) go on its card, and `entity: { type, id }` makes it about
- *      an initiative, person, customer or system. Needs edit access to the workflow or agent it is about.
+ *      checked against the workflow, `actions` (up to 4 buttons) go on its card, `entity: { type, id }` makes it about
+ *      an initiative, person, customer or system, and `audience` (up to 10 people: emails, user ids or Slack member ids)
+ *      addresses it to people. Needs edit access to the workflow or agent it is about.
  */
 import { z } from 'zod';
 import { ENTITY_TYPES, entityRef, isDetectorId, type ProposalStatus } from '@/lib/shared/brain';
+import { canSee } from '@/lib/server/brain/audience';
 import { listProposals, proposeFrom, ProposalError } from '@/lib/server/brain/proposals';
 import { getEntity } from '@/lib/server/brain/entities';
 import { canProposal, scopeForActor } from '@/lib/server/brain/scope';
@@ -28,8 +31,8 @@ export const GET = handler(async (request: Request) => {
   const wanted = param('detector');
   const detector = isDetectorId(wanted) ? wanted : undefined;
   const actor = routeActor();
-  const proposals = listProposals({ status, workflowId: param('workflowId'), agentId: param('agentId'), detector, scope: scopeForActor(actor), limit: Number(param('limit') ?? 200) || 200 });
-  return json({ proposals: proposals.filter((p) => canProposal(actor, p, 'read')) });
+  const proposals = listProposals({ status, workflowId: param('workflowId'), agentId: param('agentId'), detector, scope: scopeForActor(actor), limit: Number(param('limit') ?? 200) || 200, viewer: actor, forMe: param('for') === 'me' });
+  return json({ proposals: proposals.filter((p) => canSee(actor, p)) });
 });
 
 const Evidence = z.object({ label: z.string().max(120), value: z.union([z.string().max(300), z.number()]).optional(), href: z.string().max(500).optional() });
@@ -50,6 +53,7 @@ const Body = z.object({
   confidence: z.number().min(0).max(1).optional(),
   actions: z.array(z.object({ id: z.string().max(32), label: z.string().max(40), style: z.enum(['primary', 'default']).optional(), confirm: z.string().max(200).optional() })).max(4).optional(),
   fingerprint: z.string().max(64).optional(),
+  audience: z.array(z.object({ userId: z.string().max(200).optional(), email: z.string().max(200).optional(), slackUserId: z.string().max(40).optional(), name: z.string().max(80).optional() })).max(10).optional(),
 });
 
 export const POST = handler(async (request: Request) => {

@@ -27,6 +27,7 @@ const { study } = await import('@/lib/server/brain/study');
 const { brainStatus } = await import('@/lib/server/brain');
 const { findSimilar } = await import('@/lib/server/brain/similar');
 const { scopeForActor } = await import('@/lib/server/brain/scope');
+const { canSee } = await import('@/lib/server/brain/audience');
 const { brainEntityNode } = await import('@/lib/server/nodes/entities');
 const { landflowUsageNode, suggestImprovementNode } = await import('@/lib/server/nodes/usage');
 const { instanceServer } = await import('@/lib/server/mcp/instance-tools');
@@ -162,6 +163,9 @@ describe('facts and suggestions about an entity', () => {
     proposals.proposeFrom({ title: 'Retire it', why: 'Unused', entity: { type: 'initiative', id: theirs.id } }, 'analyst');
     expect(proposals.listProposals({ scope: scopeForActor(aliceActor) }).map((p) => p.title)).toEqual(['Merge with the nagger']);
     expect(proposals.listProposals({}).length).toBe(2);
+    // The routes' check (audience.ts canSee) lets the entity's project members in, and no one else.
+    expect(canSee(alice, made)).toBe(true);
+    expect(canSee(alice, proposals.listProposals({}).find((p) => p.title === 'Retire it')!)).toBe(false);
     expect(() => proposals.proposeFrom({ title: 'x', why: 'y', entity: { type: 'initiative', id: 'nope' } }, 'analyst')).toThrow(/No initiative nope/);
 
     proposals.dismissProposal(made.id, 'intended', { note: 'on purpose' });
