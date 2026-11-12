@@ -7,12 +7,19 @@
  * A workflow sees the usage its creator could see (lib/server/brain/scope.ts).
  */
 import { defineNode, NodeOperationError, type JsonObject, type NodeItem } from '@landflow/sdk';
-import { DETECTOR_LABELS, DETECTORS, detectorLabel, flowDetectorId, quietBar, USAGE_KINDS, type UsageGroup, type UsageKind } from '../../shared/brain';
+import { customKindProblem, DETECTOR_LABELS, DETECTORS, detectorLabel, flowDetectorId, isUsageKind, parseAttrEquals, quietBar, USAGE_KINDS, type UsageGroup, type UsageKind } from '../../shared/brain';
+import { agentStore as agents } from '../agents/store';
+import { listKinds } from '../usage/kinds';
 import { store } from '../store';
 
 const main = [{ type: 'main' as const }];
 const DAY_MS = 86_400_000;
 const kindOptions = USAGE_KINDS.map((kind) => ({ name: kind, value: kind }));
+/** Landflow's own kinds, then the custom kinds flows declared (Record Event). */
+const anyKind = () => [...kindOptions, ...listKinds().map((k) => ({ name: k.kind, value: k.kind, ...(k.description && { description: k.description }) }))];
+/** Only the declared custom kinds, for Record Event. */
+const declaredKind = () => listKinds().map((k) => ({ name: k.kind, value: k.kind, ...(k.description && { description: k.description }) }));
+const anyAgent = () => [{ name: 'None', value: '' }, ...agents.list().map((a) => ({ name: a.name, value: a.id })).sort((a, b) => a.name.localeCompare(b.name))];
 const anyWorkflow = () => [{ name: 'Any workflow', value: '' }, ...store.listWorkflows().map((w) => ({ name: w.name, value: w.id })).sort((a, b) => a.name.localeCompare(b.name))];
 
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as JsonObject;
@@ -43,7 +50,7 @@ export const landflowUsageNode = defineNode({
     keywords: ['usage', 'analytics', 'second brain', 'insights', 'failures', 'cost', 'facts', 'suggestions', 'ledger'],
     usableAsTool: true,
     toolDescription:
-      'Read Landflow usage. Arguments: `operation` (report, events, facts, workflow, proposals), `groupBy` for reports (day, kind, workflow, nodeType, signature, agent, model), `kinds` (comma-separated, e.g. node.failed,ai.call), `days`, `workflowId`, `query` for facts.',
+      'Read Landflow usage. Arguments: `operation` (report, events, facts, workflow, proposals), `groupBy` for reports (day, kind, workflow, nodeType, signature, agent, model, attr), `groupAttr` (the attribute to group by when groupBy is attr), `kinds` (comma-separated, built-in like node.failed,ai.call or custom like work.ticket_moved), `attrEquals` (JSON object or key=value pairs an event’s attributes must have), `days`, `workflowId`, `query` for facts.',
     inputs: main,
     outputs: main,
     properties: [
@@ -66,10 +73,12 @@ export const landflowUsageNode = defineNode({
         displayName: 'Group By',
         type: 'options',
         default: 'workflow',
-        options: (['day', 'kind', 'workflow', 'nodeType', 'signature', 'agent', 'model'] as UsageGroup[]).map((g) => ({ name: g, value: g })),
+        options: (['day', 'kind', 'workflow', 'nodeType', 'signature', 'agent', 'model', 'attr'] as UsageGroup[]).map((g) => ({ name: g === 'attr' ? 'attribute' : g, value: g })),
         displayOptions: { show: { operation: ['report'] } },
       },
-      { name: 'kinds', displayName: 'Kinds', type: 'multiOptions', default: [], options: kindOptions, description: 'Empty: every kind', displayOptions: { show: { operation: ['report', 'events'] } } },
+      { name: 'groupAttr', displayName: 'Attribute', type: 'string', default: '', placeholder: 'team', description: 'The attribute to group by (reads the raw events, not the daily rollups)', displayOptions: { show: { operation: ['report'], groupBy: ['attr'] } } },
+      { name: 'kinds', displayName: 'Kinds', type: 'multiOptions', default: [], options: kindOptions, typeOptions: { loadOptionsMethod: 'kinds' }, description: 'Empty: every kind. Custom kinds are listed too', displayOptions: { show: { operation: ['report', 'events'] } } },
+      { name: 'attrEquals', displayName: 'Attribute Filter', type: 'json', default: '{}', description: 'Only events whose attributes equal these, for any kind: {"team": "billing"} or team=billing', displayOptions: { show: { operation: ['report', 'events'] } } },
       { name: 'days', displayName: 'Days', type: 'number', default: 7, typeOptions: { minValue: 1, maxValue: 400 }, displayOptions: { show: { operation: ['report', 'events'] } } },
       {
         name: 'workflowId',
@@ -92,7 +101,7 @@ export const landflowUsageNode = defineNode({
       { name: 'oneItem', displayName: 'As One Item', type: 'boolean', default: false, description: 'Output the whole answer as one item instead of one item per row', displayOptions: { show: { operation: ['report', 'events', 'facts', 'proposals'] } } },
     ],
   },
-  methods: { loadOptions: { workflows: anyWorkflow } },
+  methods: { loadOptions: { workflows: anyWorkflow, kinds: anyKind } },
   async execute(ctx) {
     const { usageReport, listUsageEvents } = await import('../usage/query');
     const { scopeForWorkflow, covers } = await import('../brain/scope');
@@ -113,19 +122,23 @@ export const landflowUsageNode = defineNode({
       const days = Math.max(1, Math.min(400, Number(ctx.getNodeParameter('days', i, 7)) || 7));
       const limit = Math.max(1, Math.min(1_000, Number(ctx.getNodeParameter('limit', i, 50)) || 50));
       const oneItem = Boolean(ctx.getNodeParameter('oneItem', i, false));
-      const kinds = list(ctx.getNodeParameter('kinds', i, [])).filter((k): k is UsageKind => (USAGE_KINDS as readonly string[]).includes(k));
+      const kinds = list(ctx.getNodeParameter('kinds', i, [])).filter((k): k is UsageKind => isUsageKind(k));
+      const attrEquals = parseAttrEquals(ctx.getNodeParameter('attrEquals', i, {}));
       const from = new Date(Date.now() - days * DAY_MS).toISOString();
+      const filter = { kinds, from, workflowId, ...(Object.keys(attrEquals).length && { attrEquals }) };
       const rows: unknown[] = [];
       let whole: unknown;
       switch (operation) {
         case 'report': {
           const groupBy = ctx.getNodeParameter<UsageGroup>('groupBy', i);
-          whole = usageReport({ kinds, from, workflowId }, groupBy, { scope, limit, labels });
+          const attr = String(ctx.getNodeParameter('groupAttr', i, '') ?? '').trim();
+          if (groupBy === 'attr' && !attr) throw new NodeOperationError('Name the attribute to group by', { itemIndex: i });
+          whole = usageReport({ ...filter, ...(groupBy === 'attr' && { attr }) }, groupBy, { scope, limit, labels });
           rows.push(...(whole as { rows: unknown[] }).rows);
           break;
         }
         case 'events':
-          rows.push(...listUsageEvents({ kinds, from, workflowId }, { limit, scope }));
+          rows.push(...listUsageEvents(filter, { limit, scope }));
           whole = { events: rows };
           break;
         case 'facts': {
@@ -165,7 +178,7 @@ export const usageTriggerNode = defineNode({
   description: {
     name: 'usageTrigger',
     displayName: 'On Usage Event',
-    description: 'Start the workflow when something happens on the platform: a node fails, a run is slow, an AI call costs too much…',
+    description: 'Start the workflow when something happens on the platform: a node fails, a run is slow, an AI call costs too much, or a flow records its own event…',
     version: 1,
     kind: 'trigger',
     // "Run" in the editor starts here with an example; the ledger starts it once the workflow is published.
@@ -178,7 +191,8 @@ export const usageTriggerNode = defineNode({
     inputs: [],
     outputs: main,
     properties: [
-      { name: 'kinds', displayName: 'Kinds', type: 'multiOptions', default: ['node.failed'], options: kindOptions, description: 'Empty: every kind' },
+      { name: 'kinds', displayName: 'Kinds', type: 'multiOptions', default: ['node.failed'], options: kindOptions, typeOptions: { loadOptionsMethod: 'kinds' }, description: 'Empty: every kind. Custom kinds (Record Event) are listed too' },
+      { name: 'attrEquals', displayName: 'Attribute Filter', type: 'json', default: '{}', description: 'Only events whose attributes equal these, for any kind: {"team": "billing"} or team=billing' },
       { name: 'workflowId', displayName: 'Workflow', type: 'options', default: '', typeOptions: { loadOptionsMethod: 'workflows' }, description: 'Only events of this workflow' },
       {
         name: 'detector',
@@ -195,12 +209,12 @@ export const usageTriggerNode = defineNode({
       {
         name: 'notice',
         displayName:
-          'Publish the workflow to listen. Each event is an item: { kind, at, workflowId, nodeId, nodeType, agentId, executionId, signature, message, durationMs, items, tokens, cost, attrs }, and for proposal.applied the suggestion in `proposal`. Events from workflows that start from On Usage Event never start one, so they can’t loop.',
+          'Publish the workflow to listen. Each event is an item: { kind, at, workflowId, nodeId, nodeType, agentId, executionId, signature, message, durationMs, items, tokens, cost, attrs }, and for proposal.applied the suggestion in `proposal`. Events that workflows starting from On Usage Event cause (or record with Record Event) never start one, so they can’t loop.',
         type: 'notice',
       },
     ],
   },
-  methods: { loadOptions: { workflows: anyWorkflow, detectors: anyDetector } },
+  methods: { loadOptions: { workflows: anyWorkflow, detectors: anyDetector, kinds: anyKind } },
   execute(ctx) {
     const items = ctx.getInputData();
     if (items.some((item) => Object.keys(item.json).length)) return [items];
@@ -225,6 +239,120 @@ export const usageTriggerNode = defineNode({
         },
       ],
     ];
+  },
+});
+
+/** The attributes parameter: an object, or JSON text of one (empty is none). */
+function attributesOf(value: unknown, itemIndex: number): Record<string, unknown> {
+  let parsed = value;
+  if (typeof value === 'string') {
+    if (!value.trim()) return {};
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      throw new NodeOperationError('Attributes must be a JSON object, such as {"team": "billing"}', { itemIndex });
+    }
+  }
+  if (parsed === undefined || parsed === null) return {};
+  if (typeof parsed !== 'object' || Array.isArray(parsed)) throw new NodeOperationError('Attributes must be a JSON object, such as {"team": "billing"}', { itemIndex });
+  return parsed as Record<string, unknown>;
+}
+
+const optionalNumber = (value: unknown) => (value === '' || value === undefined || value === null || !Number.isFinite(Number(value)) ? undefined : Number(value));
+
+export const recordEventNode = defineNode({
+  description: {
+    name: 'recordEvent',
+    displayName: 'Record Event',
+    description: 'Write your own event into the usage ledger, under a kind you declared (work.ticket_moved…), so On Usage Event can start flows on it and Landflow Usage can report on it',
+    version: 1,
+    kind: 'action',
+    categories: ['AI', 'Core'],
+    icon: 'lucide:radio-tower',
+    color: '#8b5cf6',
+    subtitle: '{{kind}}',
+    keywords: ['event', 'usage', 'ledger', 'record', 'log', 'metric', 'custom event', 'second brain', 'emit'],
+    usableAsTool: true,
+    toolDescription:
+      'Record an event in the usage ledger. Arguments: `kind` (a declared custom kind, such as work.ticket_moved), `attributes` (a JSON object checked against the kind’s declared fields), optional `workflowId` or `agentId` the event is about (default: this workflow), `message`, `durationMs`, `items`, `cost`.',
+    inputs: main,
+    outputs: main,
+    properties: [
+      { name: 'kind', displayName: 'Kind', type: 'options', default: '', required: true, typeOptions: { loadOptionsMethod: 'declaredKinds' }, description: 'A kind declared in Insights or with POST /api/usage/kinds: <namespace>.<name>' },
+      { name: 'attributes', displayName: 'Attributes (JSON)', type: 'json', default: '{}', description: 'Checked against the kind’s declared fields: a missing required one or one of the wrong type fails the node; undeclared ones are dropped and listed in `dropped`' },
+      { name: 'declareIfNew', displayName: 'Declare Kind If New', type: 'boolean', default: false, description: 'When the kind (set by an expression) isn’t declared yet, declare it from these attributes’ names and types, all optional' },
+      { name: 'workflowId', displayName: 'About Workflow', type: 'options', default: '', typeOptions: { loadOptionsMethod: 'workflows' }, description: 'The workflow the event is about (empty: this workflow). Only workflows this workflow’s creator can see' },
+      { name: 'agentId', displayName: 'About Agent', type: 'options', default: '', typeOptions: { loadOptionsMethod: 'agents' }, description: 'The agent the event is about, when it isn’t about a workflow' },
+      { name: 'message', displayName: 'Message', type: 'string', default: '', description: 'A short text; personal details and secrets are redacted and it is clipped to 300 characters' },
+      { name: 'durationMs', displayName: 'Duration (ms)', type: 'number', default: '' as unknown as number },
+      { name: 'items', displayName: 'Items', type: 'number', default: '' as unknown as number },
+      { name: 'cost', displayName: 'Cost (USD)', type: 'number', default: '' as unknown as number, typeOptions: { numberPrecision: 4 } },
+    ],
+  },
+  methods: { loadOptions: { declaredKinds: declaredKind, workflows: anyWorkflow, agents: anyAgent } },
+  async execute(ctx) {
+    const { getKind, saveKind, inferFields, checkAttrs, KindError } = await import('../usage/kinds');
+    const { recordUsage } = await import('../usage/ledger');
+    const { scopeForWorkflow, covers } = await import('../brain/scope');
+    const own = ctx.getWorkflowId();
+    const scope = scopeForWorkflow(own);
+    const out: NodeItem[] = [];
+    const items = ctx.getInputData();
+    for (let i = 0; i < Math.max(items.length, 1); i++) {
+      const kind = String(ctx.getNodeParameter('kind', i, '') ?? '').trim();
+      if (!kind) throw new NodeOperationError('Choose the kind of event to record', { itemIndex: i });
+      const problem = customKindProblem(kind);
+      if (problem) throw new NodeOperationError(problem, { itemIndex: i });
+      const given = attributesOf(ctx.getNodeParameter('attributes', i, {}), i);
+      let def = getKind(kind);
+      if (!def) {
+        if (!ctx.getNodeParameter('declareIfNew', i, false)) {
+          throw new NodeOperationError(`The kind ${kind} isn’t declared`, { itemIndex: i, description: 'Declare it first (POST /api/usage/kinds, or turn on Declare Kind If New)' });
+        }
+        try {
+          def = saveKind({ kind, description: 'Declared by Record Event', fields: inferFields(given) });
+        } catch (caught) {
+          throw new NodeOperationError((caught as Error).message, { itemIndex: i });
+        }
+      }
+      let checked: ReturnType<typeof checkAttrs>;
+      try {
+        checked = checkAttrs(def, given);
+      } catch (caught) {
+        if (caught instanceof KindError) throw new NodeOperationError(caught.message, { itemIndex: i });
+        throw caught;
+      }
+      // About this workflow (or this agent, for a tool) unless told otherwise; a flow only writes about what its creator can see.
+      let workflowId = String(ctx.getNodeParameter('workflowId', i, '') ?? '').trim() || undefined;
+      let agentId = String(ctx.getNodeParameter('agentId', i, '') ?? '').trim() || undefined;
+      if (workflowId) {
+        if (!store.getWorkflow(workflowId)) throw new NodeOperationError(`No workflow ${workflowId}`, { itemIndex: i });
+        if (!covers(scope, { workflowId })) throw new NodeOperationError('This workflow can’t record events about that workflow', { itemIndex: i });
+        agentId = undefined;
+      } else if (agentId) {
+        if (!agents.get(agentId)) throw new NodeOperationError(`No agent ${agentId}`, { itemIndex: i });
+        if (!covers(scope, { agentId })) throw new NodeOperationError('This workflow can’t record events about that agent', { itemIndex: i });
+      } else if (own?.startsWith('agent:')) agentId = own.slice('agent:'.length);
+      else workflowId = own;
+      const event = recordUsage({
+        kind: def.kind,
+        ...(workflowId && { workflowId }),
+        ...(agentId && { agentId }),
+        executionId: ctx.getExecutionId(),
+        nodeId: ctx.getNode().id,
+        message: String(ctx.getNodeParameter('message', i, '') ?? '') || undefined,
+        durationMs: optionalNumber(ctx.getNodeParameter('durationMs', i, '')),
+        items: optionalNumber(ctx.getNodeParameter('items', i, '')),
+        cost: optionalNumber(ctx.getNodeParameter('cost', i, '')),
+        // recordedBy is how On Usage Event keeps a triggered flow's events from starting anything (no loops).
+        attrs: { ...checked.attrs, ...(own && { recordedBy: own }) },
+      });
+      out.push({
+        json: json({ recorded: Boolean(event), kind: def.kind, ...(event && { id: event.id, at: event.at, attrs: event.attrs ?? {} }), dropped: checked.dropped, ...(!event && { note: 'The ledger is off (LANDFLOW_BRAIN=false) or the write failed' }) }),
+        pairedItem: { item: i },
+      });
+    }
+    return [out];
   },
 });
 

@@ -151,25 +151,56 @@ The first tick is 30 s after start.
 
 ### 6. Your own conclusions
 
-Four nodes make the brain something workflows can use:
+Five nodes make the brain something workflows can use:
 
 - **Landflow Usage** (`core.landflowUsage`, usable as an agent tool). Its operations:
-  - Report: grouped by day, kind, workflow, node type, signature, agent or model;
+  - Report: grouped by day, kind, workflow, node type, signature, agent, model or one attribute (`groupAttr`);
   - Events;
   - Search Facts;
   - Workflow Knowledge: the outline, profile, facts and open suggestions;
   - Suggestions.
-- **On Usage Event** (`core.usageTrigger`) fires on ledger kinds.
-  - Filters: one workflow, *only new failures* (a signature never seen before), a minimum AI-call cost, and for
+- **Record Event** (`core.recordEvent`, usable as a tool) writes your own event into the ledger (below).
+- **On Usage Event** (`core.usageTrigger`) fires on ledger kinds, built-in and custom.
+  - Filters: an **Attribute Filter** (`{"team": "billing"}` or `team=billing`, for any kind), one workflow, *only new failures* (a signature never seen before), a minimum AI-call cost, and for
     `proposal.applied` the detector that made the suggestion (**Suggestion From**).
   - It batches events for `batchSeconds`. Items carry `workflowName` and `agentName`, and a `proposal.applied` item the
     whole suggestion in `proposal` (id, detector, title, why, target, evidence, effect, appliedBy): an event's
     attributes keep 200 characters, too few for a plugin sketch.
-  - Events from workflows that have this trigger never start one (no loops).
+  - Events from workflows that have this trigger never start one, nor do events such a workflow records with Record
+    Event (no loops).
 - **Suggest Improvement** (`core.suggestImprovement`, usable as a tool) posts a suggestion to the inbox: a title, why,
   the workflow and node, the expected effect, ops as JSON (checked against the workflow; `[]` for advice), risk,
   confidence, and a fingerprint.
 - **Detector Trigger** (`core.detectorTrigger`) makes the workflow one of the brain's detectors (below).
+
+#### Your own event kinds
+
+Landflow's kinds are a fixed list. A flow can add its own, so a board sync, an agent's self-update or a billing step
+shows up in the ledger and can start other flows.
+
+- **A kind** is `<namespace>.<name>` in lowercase letters, digits and underscores (`work.ticket_moved`,
+  `work.self_update`; 3 to 64 characters, more dots allowed). The namespace can't be one Landflow uses: `run`, `node`,
+  `ai`, `workflow`, `credential`, `assistant`, `spotlight`, `search`, `agent`, `feedback`, `template`, `plugin`,
+  `proposal` or `tool`.
+- **A declared shape** comes first: `POST /api/usage/kinds` with a description and up to 20 fields, each a name, a type
+  (`string`, `number` or `boolean`), whether it is required, and a description. The declarations live in the
+  `usage_kinds` table. Deleting one leaves the events already recorded.
+- **Record Event** picks a declared kind, takes **Attributes (JSON)** and checks them against the shape:
+  - a missing required field, or a value of the wrong type, fails the node with the field's name (a string that plainly
+    reads as the declared number or boolean, such as `"12"` or `"true"`, is accepted);
+  - attributes the kind doesn't declare are dropped, not rejected, and the output's `dropped` lists them;
+  - an undeclared kind fails, unless **Declare Kind If New** is on: it declares the kind from the attributes' names and
+    types, all optional;
+  - the event is about **About Workflow** or **About Agent**, by default the workflow that records it (the agent, for
+    a tool call). A flow may only record about workflows and agents its creator can see;
+  - **Message**, **Duration**, **Items** and **Cost** fill the ledger's own columns. The message is redacted and clipped
+    like any other, and a string attribute keeps 200 characters. The event carries `attrs.recordedBy`, the workflow that wrote it.
+- **On Usage Event** lists declared kinds in its Kinds picker. Its **Attribute Filter** compares as text, so `3` equals
+  `"3"`. A workflow that starts from On Usage Event never starts anything with the events it records, whatever they
+  are about.
+- **Reports** take custom kinds in the `kinds` filter. `groupBy=attr&groupAttr=team` gives "tickets moved per team",
+  and `attr.team=billing` keeps matching events. Both read the raw events (the daily rollups keep no attributes), so
+  they reach back `USAGE_RETENTION_DAYS`; the rollups themselves count a custom kind like any other.
 
 #### Flow detectors
 
@@ -251,8 +282,10 @@ Routes are also in [reference/api.md](reference/api.md), and variables in
 
 | Route | What | Who |
 |---|---|---|
-| `GET /api/usage` | a grouped report | `executions:read`, scoped |
+| `GET /api/usage` | a grouped report (`groupBy=attr&groupAttr=`, `attr.<name>=` for custom attributes) | `executions:read`, scoped |
 | `GET /api/usage/events` | the events | `executions:read`, scoped |
+| `GET /api/usage/kinds`, `GET /api/usage/kinds/:kind` | the custom event kinds and their fields | `executions:read` |
+| `POST /api/usage/kinds`, `DELETE /api/usage/kinds/:kind` | declare or update a kind; forget one | `workflows:write` |
 | `POST /api/usage/signal` | an editor signal (`search.empty`) | `workflows:write` |
 | `GET /api/proposals`, `GET /api/proposals/:id` | suggestions (`?detector=` a built-in id or `flow:<workflowId>`) | `workflows:read`, scoped |
 | `POST /api/proposals` | a suggestion from outside (source `analyst`) | edit access to its workflow or agent |
@@ -288,6 +321,8 @@ Routes are also in [reference/api.md](reference/api.md), and variables in
   - study and facts;
   - scope, the analyst and On Usage Event (`usage-trigger.ts`);
   - flow detectors (`flow-detectors.ts`).
-- `apps/web/src/lib/server/nodes/usage.ts`: the four nodes.
+- `apps/web/src/lib/server/usage/kinds.ts`: the declared custom kinds and the attribute checks;
+  `apps/web/src/app/api/usage/kinds/`: their routes.
+- `apps/web/src/lib/server/nodes/usage.ts`: the five nodes.
 - `apps/web/src/components/brain/`: the inbox, the canvas card and the Insights panel.
-- Tests: `apps/web/test/brain.test.ts`.
+- Tests: `apps/web/test/brain.test.ts`, `apps/web/test/brain-events.test.ts` (custom kinds).

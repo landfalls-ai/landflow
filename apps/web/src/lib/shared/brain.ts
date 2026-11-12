@@ -30,7 +30,52 @@ export const USAGE_KINDS = [
   'tool.missing',
 ] as const;
 
-export type UsageKind = (typeof USAGE_KINDS)[number];
+/** A kind Landflow records itself. */
+export type BuiltinUsageKind = (typeof USAGE_KINDS)[number];
+/** A kind a flow records through Record Event: `<namespace>.<name>`, such as `work.ticket_moved` (see isCustomKind). */
+export type CustomUsageKind = `${string}.${string}`;
+export type UsageKind = BuiltinUsageKind | CustomUsageKind;
+
+/** The first segment of every built-in kind (run, node, ai, … feedback): a custom kind can't start with one. */
+export const BUILTIN_NAMESPACES: readonly string[] = [...new Set(USAGE_KINDS.map((k) => k.split('.')[0]))];
+
+const CUSTOM_KIND = /^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/;
+
+/** Why `kind` can't be a custom kind, or undefined when it can: lowercase `<namespace>.<name>`, 3 to 64 characters, a namespace no built-in kind uses. */
+export function customKindProblem(kind: string): string | undefined {
+  if (kind.length < 3 || kind.length > 64 || !CUSTOM_KIND.test(kind)) {
+    return 'A kind is <namespace>.<name> in lowercase letters, digits and underscores, such as work.ticket_moved (3 to 64 characters)';
+  }
+  const namespace = kind.split('.')[0];
+  if (BUILTIN_NAMESPACES.includes(namespace)) return `The namespace “${namespace}” belongs to Landflow’s own events; pick another, such as work or ops`;
+  return undefined;
+}
+
+export const isCustomKind = (kind: unknown): kind is CustomUsageKind => typeof kind === 'string' && customKindProblem(kind) === undefined;
+export const isBuiltinKind = (kind: unknown): kind is BuiltinUsageKind => (USAGE_KINDS as readonly unknown[]).includes(kind);
+/** A kind the ledger knows how to hold: one of ours, or a well-formed custom one. */
+export const isUsageKind = (kind: unknown): kind is UsageKind => isBuiltinKind(kind) || isCustomKind(kind);
+
+export type UsageFieldType = 'string' | 'number' | 'boolean';
+
+/** One attribute a custom kind declares. */
+export interface UsageKindField {
+  name: string;
+  type: UsageFieldType;
+  required?: boolean;
+  description?: string;
+}
+
+/** A custom kind's declared shape (the `usage_kinds` table, GET /api/usage/kinds). */
+export interface UsageKindDef {
+  kind: CustomUsageKind;
+  description: string;
+  fields: UsageKindField[];
+  projectId?: string;
+  createdBy?: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 /** Kinds the editor reports itself (POST /api/usage/signal); the rest the server records where the data passes. */
 export const CLIENT_SIGNALS = ['search.empty'] as const satisfies readonly UsageKind[];
@@ -63,7 +108,10 @@ export interface UsageEvent {
   attrs?: Record<string, UsageAttr>;
 }
 
-export type UsageGroup = 'day' | 'kind' | 'workflow' | 'nodeType' | 'signature' | 'agent' | 'model';
+export type UsageGroup = 'day' | 'kind' | 'workflow' | 'nodeType' | 'signature' | 'agent' | 'model' | 'attr';
+
+/** An attribute name as it can be grouped or filtered by. */
+export const ATTR_NAME = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
 
 export interface UsageFilter {
   kinds?: UsageKind[];
@@ -74,7 +122,43 @@ export interface UsageFilter {
   agentId?: string;
   nodeType?: string;
   signature?: string;
+  /** Only events whose attribute equals the value (any kind): `{ team: 'billing' }`. Compared as text. */
+  attrEquals?: Record<string, string>;
+  /** For groupBy `attr`: the attribute to group by. */
+  attr?: string;
 }
+
+/**
+ * Key/value pairs from a parameter: an object, a JSON object as text, or `team=billing, priority=high` lines. Names that
+ * aren't attribute names are left out. Values are compared as text.
+ */
+export function parseAttrEquals(value: unknown): Record<string, string> {
+  let source: unknown = value;
+  if (typeof source === 'string') {
+    const text = source.trim();
+    if (!text) return {};
+    try {
+      source = JSON.parse(text);
+    } catch {
+      source = Object.fromEntries(
+        text
+          .split(/[,\n]/)
+          .map((part) => part.split(/=(.*)/s))
+          .filter((pair) => pair.length >= 2 && pair[0].trim())
+          .map((pair) => [pair[0].trim(), pair[1].trim()]),
+      );
+    }
+  }
+  const out: Record<string, string> = {};
+  if (source && typeof source === 'object' && !Array.isArray(source)) {
+    for (const [key, raw] of Object.entries(source)) if (ATTR_NAME.test(key) && ['string', 'number', 'boolean'].includes(typeof raw)) out[key] = String(raw);
+  }
+  return out;
+}
+
+/** Whether an event's attributes hold every pair (compared as text, so 3 equals "3" and true equals "true"). */
+export const attrsMatch = (attrs: Record<string, UsageAttr> | undefined, equals: Record<string, string> | undefined): boolean =>
+  !equals || Object.entries(equals).every(([key, want]) => attrs?.[key] !== undefined && String(attrs[key]) === want);
 
 /** One group of a usage report (GET /api/usage?groupBy=…). */
 export interface UsageGroupRow {
