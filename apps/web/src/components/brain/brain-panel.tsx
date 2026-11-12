@@ -102,7 +102,7 @@ export function BrainPanel() {
         </div>
       </div>
       <p className="text-[12px] leading-relaxed text-t2">
-        {status.enabled ? `Model: ${status.model}` : 'Model: off'} · {status.events.toLocaleString()} events · {status.facts.toLocaleString()} facts · {status.profiles.toLocaleString()} profiles ·{' '}
+        {status.enabled ? `Model: ${status.model}` : 'Model: off'} · {status.events.toLocaleString()} events · {status.facts.toLocaleString()} facts · {status.profiles.toLocaleString()} profiles · {(status.entities ?? 0).toLocaleString()} entities ·{' '}
         {status.open.toLocaleString()} open suggestions · last study {status.lastStudy ? timeAgo(status.lastStudy) : 'never'} · last detect {status.lastDetect ? timeAgo(status.lastDetect) : 'never'}
       </p>
 
@@ -117,6 +117,7 @@ export function BrainPanel() {
             <div key={f.id} className="flex items-start gap-3 px-3 py-2 text-[12px]">
               <div className="w-[140px] shrink-0 truncate font-semibold text-t1" title={f.subjectName ?? f.subjectId}>
                 {f.subjectName ?? f.subjectId}
+                {f.subjectType === 'entity' && <span className="ml-1 font-normal text-t3">{f.subjectId.split('/')[0]}</span>}
               </div>
               <div className="w-[64px] shrink-0 text-t3">{f.kind}</div>
               <div className="min-w-0 flex-1 text-t2 [overflow-wrap:anywhere]">{f.statement}</div>

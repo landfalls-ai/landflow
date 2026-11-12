@@ -9,6 +9,7 @@ import { brainModelName } from './writer';
 
 const USAGE = 'core.landflowUsage';
 const SUGGEST = 'core.suggestImprovement';
+const ENTITY = 'core.brainEntity';
 
 const tool = (id: string, name: string, description: string, nodeType: string, parameters: Record<string, unknown>): NodeToolConfig => ({ type: 'node', id, name, description, nodeType, parameters });
 
@@ -50,6 +51,7 @@ export function analystConfig(): Partial<AgentConfig> {
       '- usage_report groups the ledger: groupBy is day, kind, workflow, nodeType, signature (failure messages with the numbers taken out), agent or model; kinds is a comma-separated list such as node.failed,node.slow,ai.call,run.finished (empty: all).',
       '- search_facts finds what the second brain already learned (purposes, health, cost, failures, past changes and what people marked as intended).',
       '- workflow_knowledge gives one workflow’s outline, profile, facts and open suggestions: use it before suggesting a change to that workflow.',
+      '- entity_knowledge gives one initiative, person, customer or system: its profile, facts and open suggestions. entities lists or searches them (type, owner, text) and note_entity_fact keeps a statement about one: the registry holds what the workflows do not, such as who owns an initiative.',
       '- open_suggestions lists what is already in the inbox. When one already covers the problem, point to it instead of filing another.',
       '- suggest_improvement files a suggestion. ops is a JSON array of edit operations (setParameters, setNodeSettings, setWorkflowSettings, addNode, connect…) or [] for advice; a change that no longer fits is refused, so check the workflow first.',
       '',
@@ -75,10 +77,32 @@ export function analystConfig(): Partial<AgentConfig> {
         workflowId: "{{ $fromAI('workflowId', 'The workflow id, from usage_report grouped by workflow', 'string') }}",
       }),
       tool('open_suggestions', 'open_suggestions', 'The suggestions already open in the inbox', USAGE, { operation: 'proposals', status: 'open', limit: 30, oneItem: true }),
+      tool('entity_knowledge', 'entity_knowledge', 'One initiative, person, customer or system: its profile, facts and open suggestions', USAGE, {
+        operation: 'entity',
+        entityType: "{{ $fromAI('entityType', 'initiative, person, customer or system', 'string') }}",
+        entityId: "{{ $fromAI('entityId', 'The entity id, from the entities tool', 'string') }}",
+      }),
+      tool('entities', 'entities', 'The initiatives, people, customers and systems on file, filtered by type, owner or words', ENTITY, {
+        operation: 'list',
+        type: "{{ $fromAI('type', 'initiative, person, customer or system; empty for every type', 'string') }}",
+        owner: "{{ $fromAI('owner', 'Only this owner’s; empty for all', 'string') }}",
+        text: "{{ $fromAI('text', 'Only entities with these words; empty for all', 'string') }}",
+        limit: 30,
+        oneItem: true,
+      }),
+      tool('note_entity_fact', 'note_entity_fact', 'Note a statement about one initiative, person, customer or system, for the brain to keep', ENTITY, {
+        operation: 'addFact',
+        type: "{{ $fromAI('type', 'initiative, person, customer or system', 'string') }}",
+        entityId: "{{ $fromAI('entityId', 'The entity id, from the entities tool', 'string') }}",
+        factKind: "{{ $fromAI('factKind', 'purpose, health, cost, failure, slow, change, dependency, usage or quality', 'string') }}",
+        statement: "{{ $fromAI('statement', 'The statement, one sentence with its evidence', 'string') }}",
+      }),
       tool('suggest_improvement', 'suggest_improvement', 'File one suggestion to the inbox, for a person to apply or dismiss', SUGGEST, {
         title: "{{ $fromAI('title', 'The change, as a short imperative sentence', 'string') }}",
         why: "{{ $fromAI('why', 'Why, with the numbers behind it', 'string') }}",
-        workflowId: "{{ $fromAI('workflowId', 'The workflow it is about; empty for the whole instance', 'string') }}",
+        workflowId: "{{ $fromAI('workflowId', 'The workflow it is about; empty for the whole instance or an entity', 'string') }}",
+        entityType: "{{ $fromAI('entityType', 'When it is about an initiative, person, customer or system: its type; else empty', 'string') }}",
+        entityId: "{{ $fromAI('entityId', 'That entity’s id; else empty', 'string') }}",
         nodeName: "{{ $fromAI('nodeName', 'The node it is about, by name; empty for the whole workflow', 'string') }}",
         effect: "{{ $fromAI('effect', 'The expected effect, such as fewer failures', 'string') }}",
         ops: "{{ $fromAI('ops', 'Edit operations as a JSON array; [] for advice only', 'json') }}",

@@ -27,6 +27,7 @@ import { recordUsage } from '../usage/ledger';
 import type { UsageScope } from '../usage/query';
 import { decidedBuilders, decisionListeners, dispatchDecision } from './decision-trigger';
 import { baselineFor, checkEffectAsync, settleBaseline, unsettled } from './effect';
+import { getEntity, entityKey, entityProject } from './entities';
 import { upsertFact } from './facts';
 import { listFlowDetectors } from './flow-detectors';
 
@@ -95,6 +96,7 @@ function inScope(p: Proposal, scope?: UsageScope): boolean {
   if (p.target.type === 'workflow') return Boolean(p.target.id && scope.workflows?.has(p.target.id));
   if (p.target.type === 'agent') return Boolean(p.target.id && scope.agents?.has(p.target.id));
   if (p.target.type === 'team') return Boolean(p.target.id && scope.teams?.has(p.target.id));
+  if (p.target.type === 'entity') return Boolean(p.target.id && scope.entities?.has(p.target.id));
   return false;
 }
 
@@ -217,13 +219,17 @@ export function proposeFrom(
   const agent = input.agentId ? agentStore.get(input.agentId) : undefined;
   if (input.agentId && !agent) throw new ProposalError(`No agent ${input.agentId}`, 404);
   const actions = cleanActions(input.actions);
+  const entity = input.entity ? getEntity(input.entity.type, input.entity.id, db) : undefined;
+  if (input.entity && !entity) throw new ProposalError(`No ${input.entity.type} ${input.entity.id}`, 404);
   const validated = workflow && input.ops ? validateOps(workflow, input.ops) : undefined;
   const node = workflow && input.nodeName ? workflow.nodes.find((n) => n.name === input.nodeName) : undefined;
   const target: Proposal['target'] = workflow
     ? { type: 'workflow', id: workflow.id, name: workflow.name, ...(node && { nodeId: node.id, nodeName: node.name }) }
     : agent
       ? { type: 'agent', id: agent.id, name: agent.name }
-      : { type: 'instance' };
+      : entity
+        ? { type: 'entity', id: entityKey(entity), name: entity.name }
+        : { type: 'instance' };
   // A flow detector's fingerprints are its own, as a built-in detector's are (detectors.ts `base`).
   const given = input.fingerprint?.trim().slice(0, 64);
   const fingerprint = options.detector
@@ -245,6 +251,7 @@ export function proposeFrom(
       ...(input.label && { label: input.label.slice(0, 80) }),
       fingerprint,
       ...((workflow || agent) && { projectId: homeProjectId(workflow ? 'workflow' : 'agent', (workflow ?? agent)!.id) }),
+      ...(!workflow && !agent && entity && entityProject(entity) && { projectId: entityProject(entity) }),
       target,
       title: title.slice(0, 160),
       why: why.slice(0, 2_000),
@@ -471,7 +478,7 @@ export function dismissProposal(id: string, reason: DismissReason, options: { no
   const decision = decisionOf('dismissed', options.actorId, { note: options.note, reason });
   const next: Proposal = { ...proposal, status: 'dismissed', reason, decision, updatedAt: at, snoozedUntil: undefined, ...(options.note && { note: options.note.slice(0, 500) }) };
   save(next, db);
-  if (reason === 'intended' && proposal.target.id && (proposal.target.type === 'workflow' || proposal.target.type === 'agent' || proposal.target.type === 'credential')) {
+  if (reason === 'intended' && proposal.target.id && (proposal.target.type === 'workflow' || proposal.target.type === 'agent' || proposal.target.type === 'credential' || proposal.target.type === 'entity')) {
     upsertFact(
       {
         id: `${proposal.target.type}:${proposal.target.id}:intended:${proposal.fingerprint}`,

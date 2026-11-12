@@ -1494,6 +1494,28 @@ export const MIGRATIONS: Migration[] = [
       )`,
     ],
   },
+  {
+    version: 2063,
+    name: 'brain_entities',
+    statements: [
+      // The entity registry (lib/server/brain/entities.ts, docs/second-brain.md#entities): initiatives, people, customers
+      // and systems the brain reasons about next to workflows and agents. `attrs` is a JSON object of flat values.
+      `CREATE TABLE IF NOT EXISTS brain_entities (
+        type TEXT NOT NULL,
+        id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        owner TEXT NOT NULL DEFAULT '',
+        project_id TEXT,
+        attrs TEXT NOT NULL,
+        source TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (type, id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS brain_entities_project ON brain_entities (project_id)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -1582,6 +1604,7 @@ export const TABLES = {
   usage_events: ['id'],
   usage_daily: ['day', 'kind', 'workflow_id', 'node_type', 'signature', 'agent_id'],
   usage_kinds: ['kind'],
+  brain_entities: ['type', 'id'],
   brain_profiles: ['subject_type', 'subject_id'],
   brain_facts: ['id'],
   proposals: ['id'],

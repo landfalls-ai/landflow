@@ -7,7 +7,7 @@
  * A workflow sees the usage its creator could see (lib/server/brain/scope.ts).
  */
 import { defineNode, NodeOperationError, type JsonObject, type NodeItem, type PropertyDescriptor } from '@landflow/sdk';
-import { customKindProblem, DETECTOR_LABELS, DETECTORS, detectorLabel, flowDetectorId, isUsageKind, METRIC_FIELDS, metricSpecFrom, parseAttrEquals, quietBar, SIMILAR_KINDS, USAGE_KINDS, type SimilarKind, type UsageGroup, type UsageKind } from '../../shared/brain';
+import { customKindProblem, DETECTOR_LABELS, DETECTORS, detectorLabel, ENTITY_LABELS, ENTITY_TYPES, entityRef, FACT_SUBJECTS, flowDetectorId, isEntityType, isUsageKind, METRIC_FIELDS, metricSpecFrom, parseAttrEquals, parseEntityRef, quietBar, SIMILAR_KINDS, USAGE_KINDS, type SimilarKind, type UsageGroup, type UsageKind } from '../../shared/brain';
 import { agentStore as agents } from '../agents/store';
 import { listKinds } from '../usage/kinds';
 import { store } from '../store';
@@ -125,7 +125,7 @@ export const landflowUsageNode = defineNode({
     keywords: ['usage', 'analytics', 'second brain', 'insights', 'failures', 'cost', 'facts', 'suggestions', 'ledger'],
     usableAsTool: true,
     toolDescription:
-      'Read Landflow usage. Arguments: `operation` (report, events, facts, workflow, proposals), `groupBy` for reports (day, kind, workflow, nodeType, signature, agent, model, attr), `groupAttr` (the attribute to group by when groupBy is attr), `kinds` (comma-separated, built-in like node.failed,ai.call or custom like work.ticket_moved), `attrEquals` (JSON object or key=value pairs an event’s attributes must have), `days`, `workflowId`, `query` for facts.',
+      'Read Landflow usage. Arguments: `operation` (report, events, facts, workflow, entity, proposals), `groupBy` for reports (day, kind, workflow, nodeType, signature, agent, model, attr), `groupAttr` (the attribute to group by when groupBy is attr), `kinds` (comma-separated, built-in like node.failed,ai.call or custom like work.ticket_moved), `attrEquals` (JSON object or key=value pairs an event’s attributes must have), `days`, `workflowId`, `query` for facts (`subjectType` entity limits them to initiatives, people, customers and systems), `entityType` and `entityId` for entity.',
     inputs: main,
     outputs: main,
     properties: [
@@ -140,6 +140,7 @@ export const landflowUsageNode = defineNode({
           { name: 'Events', value: 'events', description: 'The events themselves, newest first' },
           { name: 'Search Facts', value: 'facts', description: 'What the brain learned, best match first' },
           { name: 'Workflow Knowledge', value: 'workflow', description: 'A workflow’s profile, facts and open suggestions' },
+          { name: 'Entity Knowledge', value: 'entity', description: 'An initiative, person, customer or system: its profile, facts and open suggestions' },
           { name: 'Suggestions', value: 'proposals', description: 'Suggestions in the inbox' },
         ],
       },
@@ -165,6 +166,17 @@ export const landflowUsageNode = defineNode({
       },
       { name: 'query', displayName: 'Query', type: 'string', default: '', placeholder: 'invoice failures', displayOptions: { show: { operation: ['facts'] } } },
       {
+        name: 'subjectType',
+        displayName: 'About',
+        type: 'options',
+        default: '',
+        options: [{ name: 'Anything', value: '' }, ...FACT_SUBJECTS.map((s) => ({ name: s === 'nodeType' ? 'Node types' : s === 'entity' ? 'Entities' : `${s[0].toUpperCase()}${s.slice(1)}s`.replace('Instances', 'The instance'), value: s }))],
+        description: 'Only facts about this kind of thing; Entities are initiatives, people, customers and systems',
+        displayOptions: { show: { operation: ['facts'] } },
+      },
+      { name: 'entityType', displayName: 'Entity Type', type: 'options', default: 'initiative', options: ENTITY_TYPES.map((t) => ({ name: ENTITY_LABELS[t], value: t })), displayOptions: { show: { operation: ['entity'] } } },
+      { name: 'entityId', displayName: 'Entity ID', type: 'string', default: '', description: 'As in the Entity node, or the whole `<type>/<id>`', displayOptions: { show: { operation: ['entity'] } } },
+      {
         name: 'status',
         displayName: 'Status',
         type: 'options',
@@ -186,6 +198,7 @@ export const landflowUsageNode = defineNode({
     const { workflowOutline } = await import('../assistant/research');
     const { agentStore } = await import('../agents/store');
     const { projectsOf } = await import('../brain/scope');
+    const { entityKnowledge, getEntity } = await import('../brain/entities');
     const scope = scopeForWorkflow(ctx.getWorkflowId());
     const items = ctx.getInputData();
     const out: NodeItem[] = [];
@@ -218,7 +231,9 @@ export const landflowUsageNode = defineNode({
           break;
         case 'facts': {
           const query = String(ctx.getNodeParameter('query', i, '') ?? '');
-          rows.push(...searchFacts(query, { scope, limit, vectorHits: await vectorFactHits(query, projectsOf(scope)) }));
+          const subjectType = String(ctx.getNodeParameter('subjectType', i, '') ?? '');
+          const found = query.trim() ? searchFacts(query, { scope, limit: 5_000, vectorHits: await vectorFactHits(query, projectsOf(scope)) }) : listFacts({ scope, limit: 5_000 });
+          rows.push(...found.filter((f) => !subjectType || f.subjectType === subjectType).slice(0, limit));
           whole = { facts: rows };
           break;
         }
@@ -233,6 +248,15 @@ export const landflowUsageNode = defineNode({
           };
           break;
         }
+        case 'entity': {
+          const given = String(ctx.getNodeParameter('entityId', i, '') ?? '').trim();
+          const ref = given.includes('/') ? parseEntityRef(given) : { type: String(ctx.getNodeParameter('entityType', i, 'initiative')), id: given };
+          if (!ref || !ref.id || !isEntityType(ref.type)) throw new NodeOperationError('Choose an entity: its type and ID', { itemIndex: i });
+          const entity = covers(scope, { entity: entityRef(ref.type, ref.id) }) ? getEntity(ref.type, ref.id) : undefined;
+          if (!entity) throw new NodeOperationError(`No ${ref.type} ${ref.id}`, { itemIndex: i });
+          whole = entityKnowledge(entity, (key) => listProposals({ status: 'open', scope, limit: 50 }).filter((p) => p.target.type === 'entity' && p.target.id === key));
+          break;
+        }
         case 'proposals': {
           const status = ctx.getNodeParameter<string>('status', i) as 'open';
           rows.push(...listProposals({ status, workflowId, scope, limit }).map((p) => ({ ...p, ...(p.detector && { detectorLabel: detectorLabel(p.detector, p.label) }) })));
@@ -242,7 +266,7 @@ export const landflowUsageNode = defineNode({
         default:
           throw new NodeOperationError(`Unknown operation ${operation}`, { itemIndex: i });
       }
-      if (operation === 'workflow' || oneItem) out.push({ json: json(whole), pairedItem: { item: i } });
+      if (operation === 'workflow' || operation === 'entity' || oneItem) out.push({ json: json(whole), pairedItem: { item: i } });
       else out.push(...rows.map((row) => ({ json: json(row), pairedItem: { item: i } })));
     }
     return [out];
@@ -253,7 +277,7 @@ export const findSimilarNode = defineNode({
   description: {
     name: 'findSimilar',
     displayName: 'Find Similar',
-    description: 'Ask the second brain whether something like this already exists: the nearest workflows, agents and facts to a title and a goal',
+    description: 'Ask the second brain whether something like this already exists: the nearest workflows, agents, entities and facts to a title and a goal',
     version: 1,
     kind: 'action',
     categories: ['AI', 'Core'],
@@ -263,12 +287,12 @@ export const findSimilarNode = defineNode({
     keywords: ['similar', 'duplicate', 'overlap', 'already', 'second brain', 'nearest', 'search', 'is anyone doing this'],
     usableAsTool: true,
     toolDescription:
-      'Check whether something like this already exists. Arguments: `text` (a title and a goal), `what` (workflow, agent, fact; comma-separated, default all), `limit`, `minScore` (0..1), `includeOthers` (also list lookalikes in projects you can\'t open: only title, owner, goal, project and score).',
+      'Check whether something like this already exists. Arguments: `text` (a title and a goal), `what` (workflow, agent, entity, fact; comma-separated, default all), `limit`, `minScore` (0..1), `includeOthers` (also list lookalikes in projects you can\'t open: only title, owner, goal, project and score).',
     inputs: main,
     outputs: main,
     properties: [
       { name: 'text', displayName: 'Title and Goal', type: 'string', default: '', required: true, typeOptions: { rows: 3 }, placeholder: 'Remind customers of unpaid invoices', description: 'What you want to build or know about' },
-      { name: 'what', displayName: 'Search In', type: 'multiOptions', default: ['workflow', 'agent', 'fact'], options: SIMILAR_KINDS.map((k) => ({ name: k === 'fact' ? 'Facts' : k === 'agent' ? 'Agents' : 'Workflows', value: k })) },
+      { name: 'what', displayName: 'Search In', type: 'multiOptions', default: ['workflow', 'agent', 'entity', 'fact'], options: SIMILAR_KINDS.map((k) => ({ name: k === 'fact' ? 'Facts' : k === 'agent' ? 'Agents' : k === 'entity' ? 'Entities' : 'Workflows', value: k })) },
       { name: 'limit', displayName: 'Limit', type: 'number', default: 10, typeOptions: { minValue: 1, maxValue: 100 } },
       { name: 'minScore', displayName: 'Minimum Score', type: 'number', default: 0.15, typeOptions: { minValue: 0, maxValue: 1, numberPrecision: 2 }, description: '0 to 1: how much of the wording the two share (and, with embeddings, how close in meaning)' },
       {
@@ -598,13 +622,15 @@ export const suggestImprovementNode = defineNode({
     keywords: ['suggest', 'improvement', 'proposal', 'second brain', 'recommendation', 'inbox'],
     usableAsTool: true,
     toolDescription:
-      'Post a suggestion to the inbox. Arguments: `title`, `why` (with the evidence), optional `workflowId` it is about, `effect` (the expected effect), `ops` (a JSON array of edit operations on that workflow: addNode, setParameters, connect, setNodeSettings, setWorkflowSettings…).',
+      'Post a suggestion to the inbox. Arguments: `title`, `why` (with the evidence), optional `workflowId` (or `entityType` and `entityId`, for an initiative, person, customer or system) it is about, `effect` (the expected effect), `ops` (a JSON array of edit operations on that workflow: addNode, setParameters, connect, setNodeSettings, setWorkflowSettings…).',
     inputs: main,
     outputs: main,
     properties: [
       { name: 'title', displayName: 'Title', type: 'string', default: '', required: true, placeholder: 'Retry the CRM call when it times out' },
       { name: 'why', displayName: 'Why', type: 'string', default: '', required: true, typeOptions: { rows: 3 }, description: 'The reason and the evidence people see' },
       { name: 'workflowId', displayName: 'About Workflow', type: 'options', default: '', typeOptions: { loadOptionsMethod: 'workflows' }, description: 'The workflow it changes or is about (empty: the instance)' },
+      { name: 'entityType', displayName: 'About Entity: Type', type: 'options', default: '', options: [{ name: 'None', value: '' }, ...ENTITY_TYPES.map((t) => ({ name: ENTITY_LABELS[t], value: t }))], description: 'Or an initiative, person, customer or system the suggestion is about (instead of a workflow)' },
+      { name: 'entityId', displayName: 'About Entity: ID', type: 'string', default: '', description: 'The entity’s ID (see the Entity node)', displayOptions: { hide: { entityType: [''] } } },
       { name: 'nodeName', displayName: 'Node', type: 'string', default: '', description: 'The node it is about, by name' },
       { name: 'label', displayName: 'Label', type: 'string', default: '', description: 'A short tag in the inbox (default: this workflow’s name)' },
       { name: 'effect', displayName: 'Expected Effect', type: 'string', default: '' },
@@ -687,6 +713,10 @@ export const suggestImprovementNode = defineNode({
           throw new NodeOperationError('Changes (JSON) is not valid JSON', { itemIndex: i });
         }
       }
+      const entityType = String(ctx.getNodeParameter('entityType', i, '') ?? '').trim();
+      const entityId = String(ctx.getNodeParameter('entityId', i, '') ?? '').trim();
+      if (entityType && (!isEntityType(entityType) || !entityId)) throw new NodeOperationError('About Entity needs a type and an ID', { itemIndex: i });
+      if (entityType && !covers(scope, { entity: entityRef(entityType, entityId) })) throw new NodeOperationError('This workflow can’t suggest changes about that entity', { itemIndex: i });
       const confidence = Number(ctx.getNodeParameter('confidence', i, 0.6));
       try {
         const proposal = proposeFrom(
@@ -695,6 +725,7 @@ export const suggestImprovementNode = defineNode({
             why: String(ctx.getNodeParameter('why', i) ?? ''),
             label: String(ctx.getNodeParameter('label', i, '') ?? '').trim() || own?.name,
             ...(workflowId && { workflowId }),
+            ...(entityType && !workflowId && { entity: { type: entityType, id: entityId } }),
             nodeName: String(ctx.getNodeParameter('nodeName', i, '') ?? '').trim() || undefined,
             effect: String(ctx.getNodeParameter('effect', i, '') ?? '').trim() || undefined,
             ops,

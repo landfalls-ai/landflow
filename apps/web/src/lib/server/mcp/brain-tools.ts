@@ -11,8 +11,9 @@
  */
 import { z } from 'zod';
 import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
-import { FACT_KINDS, FACT_SUBJECTS, SIMILAR_KINDS, USAGE_KINDS, isDetectorId, type FactKind, type FactSubject, type ProposalStatus, type UsageGroup, type UsageKind } from '../../shared/brain';
+import { ENTITY_TYPES, entityRef, FACT_KINDS, FACT_SUBJECTS, SIMILAR_KINDS, USAGE_KINDS, isDetectorId, type FactKind, type FactSubject, type ProposalStatus, type UsageGroup, type UsageKind } from '../../shared/brain';
 import { agentStore } from '../agents/store';
+import { entityKeysIn, getEntity } from '../brain/entities';
 import { getProfile, listFacts, searchFacts } from '../brain/facts';
 import { listProposals, proposeFrom, ProposalError } from '../brain/proposals';
 import { canProposal, covers, projectsOf, scopeForActor } from '../brain/scope';
@@ -44,7 +45,9 @@ export function brainScope(actor: Actor | undefined, scope: McpScope | undefined
   if (!scope) return own;
   const workflows = new Set(store.listWorkflows().map((w) => w.id).filter((id) => inScope(scope, id) && (!own || own.workflows?.has(id))));
   const agents = new Set(agentStore.list().map((a) => a.id).filter((id) => homeProjectId('agent', id) === scope.projectId && (!own || own.agents?.has(id))));
-  return { workflows, agents, teams: new Set() };
+  const inProject = entityKeysIn(scope.projectId);
+  const entities = new Set([...inProject].filter((key) => !own || own.entities?.has(key)));
+  return { workflows, agents, teams: new Set(), entities };
 }
 
 export function registerBrainTools(server: McpServer, ctx: BrainContext) {
@@ -55,7 +58,7 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
     'brain_search_facts',
     {
       title: 'Search what the brain learned',
-      description: 'Facts the second brain learned about workflows and agents you can open (purpose, health, cost, failures, dependencies…), best match first: keywords, and meaning when embeddings are on.',
+      description: 'Facts the second brain learned about workflows, agents and entities (initiatives, people, customers, systems) you can open (purpose, health, cost, failures, dependencies…), best match first: keywords, and meaning when embeddings are on. subjectType entity limits them to entities; their subjectId is <type>/<id>.',
       inputSchema: z.object({
         query: z.string().min(1).describe('What to look for, in words'),
         subjectType: z.enum(FACT_SUBJECTS).optional(),
@@ -143,10 +146,10 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
     {
       title: 'Is anyone already doing this?',
       description:
-        'Describe what you are about to build (a title and a goal) and get the nearest workflows, agents and facts, best first. Matches in projects you can open carry their id and detail ("yours": true). Matches in projects you can\'t open (when includeOthers, the default) carry only type, title, owner, goal, project and score, so you can ask the owner instead of building a duplicate.',
+        'Describe what you are about to build (a title and a goal) and get the nearest workflows, agents, entities (initiatives, people, customers, systems) and facts, best first. Matches in projects you can open carry their id and detail ("yours": true). Matches in projects you can\'t open (when includeOthers, the default) carry only type, title, owner, goal, project and score, so you can ask the owner instead of building a duplicate.',
       inputSchema: z.object({
         text: z.string().min(1).describe('A title and a goal, e.g. "Remind customers of unpaid invoices"'),
-        what: z.array(z.enum(SIMILAR_KINDS)).optional().describe('workflow, agent, fact; default all'),
+        what: z.array(z.enum(SIMILAR_KINDS)).optional().describe('workflow, agent, entity, fact; default all'),
         limit: z.number().int().min(1).max(100).optional().describe('Default 10'),
         minScore: z.number().min(0).max(1).optional().describe('Default 0.15'),
         includeOthers: z.boolean().optional().describe('Also lookalikes in projects you can\'t open, as projections (default true)'),
@@ -167,6 +170,7 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
         why: z.string().min(1).max(2000).describe('The reason and the evidence people see'),
         workflowId: z.string().optional(),
         agentId: z.string().optional(),
+        entity: z.object({ type: z.enum(ENTITY_TYPES), id: z.string() }).optional().describe('An initiative, person, customer or system the suggestion is about'),
         nodeName: z.string().optional(),
         label: z.string().max(80).optional(),
         effect: z.string().max(300).optional(),
@@ -180,9 +184,11 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
     async (input) => {
       if (input.workflowId && !store.getWorkflow(input.workflowId)) return failure(`Workflow ${input.workflowId} not found`);
       if (input.agentId && !agentStore.get(input.agentId)) return failure(`Agent ${input.agentId} not found`);
+      const entityKey = input.entity ? entityRef(input.entity.type, input.entity.id) : undefined;
+      if (input.entity && (!getEntity(input.entity.type, input.entity.id) || (scope && !covers(scope, { entity: entityKey })))) return failure(`${input.entity.type} ${input.entity.id} not found`);
       // A server scoped to a project only suggests about what is in it, and not about the instance.
-      if (ctx.scope && !covers(scope, input.workflowId ? { workflowId: input.workflowId } : { agentId: input.agentId })) return failure(input.workflowId || input.agentId ? 'Not found in this project' : 'This server is scoped to a project: say which workflow or agent the suggestion is about');
-      const target = input.workflowId ? { type: 'workflow' as const, id: input.workflowId } : input.agentId ? { type: 'agent' as const, id: input.agentId } : { type: 'instance' as const };
+      if (ctx.scope && !input.entity && !covers(scope, input.workflowId ? { workflowId: input.workflowId } : { agentId: input.agentId })) return failure(input.workflowId || input.agentId ? 'Not found in this project' : 'This server is scoped to a project: say which workflow or agent the suggestion is about');
+      const target = input.workflowId ? { type: 'workflow' as const, id: input.workflowId } : input.agentId ? { type: 'agent' as const, id: input.agentId } : entityKey ? { type: 'entity' as const, id: entityKey } : { type: 'instance' as const };
       if (actor && !canProposal(actor, { target }, 'update')) return failure(target.type === 'workflow' ? `Workflow ${input.workflowId} not found` : 'You can’t make suggestions about this');
       try {
         const proposal = proposeFrom(input as Parameters<typeof proposeFrom>[0], 'analyst');

@@ -26,6 +26,8 @@ export interface UsageScope {
   agents?: Set<string>;
   /** Agent teams (the notebook's project suggestions). */
   teams?: Set<string>;
+  /** Entities as `<type>/<id>` (docs/second-brain.md#entities). */
+  entities?: Set<string>;
 }
 
 /** An ISO time from `from`/`to` (ISO or YYYY-MM-DD), else `fallback`. */

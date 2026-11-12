@@ -8,37 +8,40 @@ import { agentTeamStore } from '../agent-teams/store';
 import { agentStore } from '../agents/store';
 import { getUser } from '../auth/users';
 import { canResource, isInstanceAdmin, visibleIds } from '../projects/access';
+import { canEntity, entityKeysFor, entityKeysIn, entityKey, entityProject, getEntity, listEntities } from './entities';
 import { homeProjectId, resourceIdsIn } from '../projects/store';
 import type { Actor } from '../projects/access';
 import { store } from '../store';
 import type { UsageScope } from '../usage/query';
-import type { Proposal } from '../../shared/brain';
+import { parseEntityRef, type Proposal } from '../../shared/brain';
 
 export function scopeForActor(actor: Actor): UsageScope | undefined {
   const workflows = visibleIds(actor, 'workflow', store.listWorkflows().map((w) => w.id));
   const agents = visibleIds(actor, 'agent', agentStore.list().map((a) => a.id));
   const teams = visibleIds(actor, 'agentTeam', agentTeamStore.list().map((t) => t.id));
-  return workflows || agents || teams ? { workflows: workflows ?? new Set(), agents: agents ?? new Set(), teams: teams ?? new Set(agentTeamStore.list().map((t) => t.id)) } : undefined;
+  const entities = entityKeysFor(actor);
+  return workflows || agents || teams || entities ? { workflows: workflows ?? new Set(), agents: agents ?? new Set(), teams: teams ?? new Set(agentTeamStore.list().map((t) => t.id)), entities: entities ?? new Set(listEntities().map(entityKey)) } : undefined;
 }
 
 export function scopeForWorkflow(workflowId: string | undefined): UsageScope | undefined {
   // An agent's node tools run as `agent:<id>`: the agent sees its own project.
   if (workflowId?.startsWith('agent:')) {
     const projectId = homeProjectId('agent', workflowId.slice('agent:'.length));
-    if (!projectId) return { workflows: new Set(), agents: new Set([workflowId.slice('agent:'.length)]) };
-    return { workflows: new Set(resourceIdsIn(projectId, 'workflow')), agents: new Set(resourceIdsIn(projectId, 'agent')) };
+    if (!projectId) return { workflows: new Set(), agents: new Set([workflowId.slice('agent:'.length)]), entities: new Set() };
+    return { workflows: new Set(resourceIdsIn(projectId, 'workflow')), agents: new Set(resourceIdsIn(projectId, 'agent')), entities: entityKeysIn(projectId) };
   }
   const workflow = workflowId ? store.getWorkflow(workflowId) : undefined;
   const creator = workflow?.createdBy ? getUser(workflow.createdBy) : undefined;
   if (creator) return scopeForActor(creator as Actor);
   const projectId = workflowId ? homeProjectId('workflow', workflowId) : undefined;
-  if (!projectId) return { workflows: new Set(workflowId ? [workflowId] : []), agents: new Set() };
-  return { workflows: new Set(resourceIdsIn(projectId, 'workflow')), agents: new Set(resourceIdsIn(projectId, 'agent')) };
+  if (!projectId) return { workflows: new Set(workflowId ? [workflowId] : []), agents: new Set(), entities: new Set() };
+  return { workflows: new Set(resourceIdsIn(projectId, 'workflow')), agents: new Set(resourceIdsIn(projectId, 'agent')), entities: entityKeysIn(projectId) };
 }
 
 /** Whether `scope` covers an event or suggestion about this workflow or agent (undefined scope: everything). */
-export function covers(scope: UsageScope | undefined, subject: { workflowId?: string; agentId?: string }): boolean {
+export function covers(scope: UsageScope | undefined, subject: { workflowId?: string; agentId?: string; entity?: string }): boolean {
   if (!scope) return true;
+  if (subject.entity) return Boolean(scope.entities?.has(subject.entity));
   if (subject.workflowId) return Boolean(scope.workflows?.has(subject.workflowId));
   if (subject.agentId) return Boolean(scope.agents?.has(subject.agentId));
   return false;
@@ -56,6 +59,12 @@ export function projectsOf(scope: UsageScope | undefined): Set<string> | undefin
     const project = homeProjectId('agent', id);
     if (project) projects.add(project);
   }
+  for (const ref of scope.entities ?? []) {
+    const parsed = parseEntityRef(ref);
+    const entity = parsed && getEntity(parsed.type, parsed.id);
+    const project = entity && entityProject(entity);
+    if (project) projects.add(project);
+  }
   return projects;
 }
 
@@ -65,5 +74,10 @@ export function canProposal(actor: Actor, proposal: Pick<Proposal, 'target'>, ac
   if (type === 'workflow' && id) return canResource(actor, 'workflow', id, action);
   if (type === 'agent' && id) return canResource(actor, 'agent', id, action);
   if (type === 'team' && id) return canResource(actor, 'agentTeam', id, action);
+  if (type === 'entity') {
+    const ref = parseEntityRef(id);
+    const entity = ref && getEntity(ref.type, ref.id);
+    return entity ? canEntity(actor, entity, action) : isInstanceAdmin(actor);
+  }
   return isInstanceAdmin(actor);
 }
