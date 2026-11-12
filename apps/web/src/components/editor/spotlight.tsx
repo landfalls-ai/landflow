@@ -11,20 +11,21 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
-import { ArrowUp, Bot, Check, ChevronDown, ChevronRight, CircleCheck, CircleX, ExternalLink, Loader2, Mic, PanelRightClose, PanelRightOpen, Play, Rocket, Sparkles, Square, SquarePen, Wrench, X, Zap } from 'lucide-react';
+import { ArrowUp, Bot, Check, ChevronDown, ChevronRight, CircleCheck, CircleX, ExternalLink, Hand, Loader2, Mic, PanelRightClose, PanelRightOpen, Play, Rocket, Sparkles, Square, SquarePen, Undo2, Wrench, X, Zap } from 'lucide-react';
 import { nanoid } from 'nanoid';
 import { cn } from '@/lib/utils';
+import { opsTitle } from '@/lib/shared/assistant-ops';
 import { completeBubbles, idleBubbles, liveMentions, TEST_BUBBLE, type Bubble, type Mention, type SpotlightContext } from '@/lib/shared/spotlight';
 import { Button } from '../ui/button';
 import { useBuildFlow } from './ai-builder';
 import { afterReply, testDraft, useAutonomous } from './autonomous';
 import { LiveSteps, useLive } from './building';
-import { applyChanges, sendFeedback, suggestionKey, useAssistant, useSuggestions, useWorking, type AgentProgress, type ChatItem, type Proposal, type ReplyAction, type Suggestion, type TestRun } from './assistant';
+import { applyChanges, sendFeedback, suggestionKey, undos, useAssistant, useSuggestions, useWorking, type AgentProgress, type ChatItem, type Need, type Proposal, type ReplyAction, type Suggestion, type TestRun } from './assistant';
 import { useEditor } from './store';
 import { dictationSupported, useDictation } from './use-dictation';
 import { OpsDiff, Warnings } from './suggestions-card';
-import { MAX_FIXES, productionNote, publishToProduction, testUntilItRuns } from './test-session';
-import { agentStep, firstSentence, lastRunOf, stepsOf, titleOf } from './timeline';
+import { MAX_FIXES, productionNote, publishToProduction, sendsAllowed, testUntilItRuns } from './test-session';
+import { agentStep, firstSentence, lastRunOf, openNeedOf, stepsOf, stoppedAtOf, titleOf } from './timeline';
 
 const INPUT_ID = 'spotlight-input';
 
@@ -84,30 +85,108 @@ function ProposalCard({ itemId, proposal }: { itemId: string; proposal: Proposal
   );
 }
 
-/** A change as a row of the timeline: applied by Spotlight (autonomous mode, a fix). Its diff opens on a click; ⌘Z undoes it. */
-function ProposalRow({ proposal, fix }: { proposal: Proposal; fix: boolean }) {
+/**
+ * A change as a row of the timeline: applied by Spotlight (autonomous mode, a fix). Its title says what it did, read from
+ * its ops; the model's words and the diff open on a click. The latest one has Undo (a phone has no ⌘Z).
+ */
+function ProposalRow({ itemId, proposal, fix }: { itemId: string; proposal: Proposal; fix: boolean }) {
   const [open, setOpen] = useState(false);
-  const verb = proposal.state === 'applied' ? (fix ? 'Fixed' : 'Applied') : proposal.state === 'dismissed' ? 'Dismissed' : 'Applying';
+  // Re-read on each render: the newest undo is the only one that is safe to use.
+  const latest = useAssistant((s) => s.items.length) >= 0 && [...undos.keys()].at(-1) === proposal.id;
+  const verb = proposal.state === 'applied' ? (fix ? 'Fixed' : 'Done') : proposal.state === 'dismissed' ? 'Not applied' : proposal.state === 'undone' ? 'Undone' : 'Applying';
+  const undo = () => {
+    undos.get(proposal.id)?.();
+    undos.delete(proposal.id);
+    useAssistant.getState().setProposalState(itemId, proposal.id, 'undone');
+  };
   return (
     <div className="animate-in">
-      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-start gap-1.5 rounded-md text-left text-[12.5px] leading-snug hover:bg-acdim">
-        {proposal.state === 'applied' ? <Wrench className="mt-px size-3.5 shrink-0 text-viz-7" /> : <Loader2 className="mt-px size-3.5 shrink-0 animate-spin text-t3" />}
-        <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
-          <span className="font-semibold text-t1">{verb}</span>
-          <span className="text-t2">: {proposal.summary}</span>
-        </span>
-        <ChevronRight className={cn('mt-px size-3.5 shrink-0 text-t3 transition-transform', open && 'rotate-90')} />
-      </button>
+      <div className="flex items-start gap-1">
+        <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex min-h-7 min-w-0 flex-1 items-start gap-1.5 rounded-md py-0.5 text-left text-[12.5px] leading-snug hover:bg-acdim">
+          {proposal.state === 'applied' ? (
+            <Wrench className="mt-px size-3.5 shrink-0 text-viz-7" />
+          ) : proposal.state ? (
+            <Undo2 className="mt-px size-3.5 shrink-0 text-t3" />
+          ) : (
+            <Loader2 className="mt-px size-3.5 shrink-0 animate-spin text-t3" />
+          )}
+          <span className={cn('min-w-0 flex-1 [overflow-wrap:anywhere]', proposal.state === 'undone' && 'line-through decoration-t3')}>
+            <span className="font-semibold text-t1">{verb}</span>
+            <span className="text-t2"> · {opsTitle(proposal.ops)}</span>
+            {proposal.skipped ? <span className="text-warn"> ({proposal.skipped} part{proposal.skipped === 1 ? '' : 's'} skipped)</span> : null}
+          </span>
+          <ChevronRight className={cn('mt-px size-3.5 shrink-0 text-t3 transition-transform', open && 'rotate-90')} />
+        </button>
+        {proposal.state === 'applied' && latest && (
+          <button type="button" onClick={undo} className="min-h-7 shrink-0 rounded-full px-2 text-[11.5px] font-semibold text-ac hover:bg-acdim max-md:min-h-9">
+            Undo
+          </button>
+        )}
+      </div>
       {open && (
         <div className="mt-1.5 space-y-1.5 pl-5">
+          <p className="text-[12px] leading-snug text-t2">{proposal.summary}</p>
           <OpsDiff ops={proposal.ops} />
           <Warnings warnings={proposal.warnings} />
           {proposal.dropped.length > 0 && <p className="text-[11px] text-t3">Left out: {proposal.dropped.join('; ')}</p>}
-          {proposal.state === 'applied' && <p className="text-[11px] text-t3">⌘Z on the canvas undoes it.</p>}
         </div>
       )}
     </div>
   );
+}
+
+/**
+ * Something only the person can do (docs/assistant.md#test-and-fix): what it is, the button that does it, and one that
+ * tests on. Picking a credential or an agent opens the node; a trigger is one op; sending for real is a yes.
+ */
+function NeedRow({ itemId, need }: { itemId: string; need: Need }) {
+  const busy = useAssistant((s) => s.pending || Boolean(s.testing));
+  const mark = (state: 'done' | 'dismissed') => useAssistant.getState().updateParts(itemId, (parts) => parts.map((p) => (p.kind === 'needs' ? { ...p, need: { ...p.need, state } } : p)));
+  const goOn = () => {
+    mark('done');
+    void testUntilItRuns(need.goal);
+  };
+  const primary =
+    need.what === 'sends'
+      ? { label: 'Run it for real', act: () => (sendsAllowed.add(useEditor.getState().workflowId), goOn()) }
+      : need.what === 'trigger'
+        ? { label: 'Add a manual trigger', act: () => applyChanges([{ ops: [{ op: 'addNode', type: 'core.manualTrigger', name: 'Start', ...(firstStep() && { before: firstStep() }) }], kind: 'proposal' }], 'Added a manual trigger', { quiet: true }) && goOn() }
+        : { label: need.what === 'credential' ? 'Pick the credential' : `Pick ${need.what === 'agent' ? 'an agent' : 'it'}`, act: () => need.node && openNodeNamed(need.node) };
+  return (
+    <div role="group" aria-label="Needs you" className="animate-fade-up space-y-2 rounded-xl border border-warnbd bg-sf p-2.5">
+      <div className="flex items-start gap-1.5 text-[12.5px] leading-snug">
+        <Hand className="mt-px size-3.5 shrink-0 text-warn" />
+        <span className="min-w-0 [overflow-wrap:anywhere]">
+          <span className="font-semibold text-t1">Needs you · </span>
+          <span className="text-t2">{need.text}</span>
+        </span>
+      </div>
+      {need.state ? (
+        <p className="pl-5 text-[11.5px] text-t3">{need.state === 'done' ? 'Done.' : 'Left for later.'}</p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5 pl-5">
+          <Button size="sm" variant="primary" disabled={busy} onClick={primary.act}>
+            {primary.label}
+          </Button>
+          {need.what === 'sends' ? (
+            <Button size="sm" variant="ghost" onClick={() => mark('dismissed')}>
+              Not now
+            </Button>
+          ) : (
+            <Button size="sm" variant="ghost" disabled={busy} onClick={goOn}>
+              Test again
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The first step after the trigger slot: where a new manual trigger goes in front of. */
+function firstStep(): string | undefined {
+  const { nodes, edges } = useEditor.getState();
+  return nodes.find((n) => !edges.some((e) => e.target === n.id && (e.data?.connectionType ?? 'main') === 'main') && !edges.some((e) => e.source === n.id && (e.data?.connectionType ?? 'main') !== 'main'))?.data.wf.name;
 }
 
 /** One run of a test-and-fix session; a failed one opens the node it failed at. */
@@ -253,6 +332,7 @@ function ReplyText({ text, short }: { text: string; short: boolean }) {
 /** A reply: its text, its changes, its runs and buttons. While it streams, its steps (new look) or one line of what it is doing. */
 function ReplyView({ item, live, status }: { item: Reply; live: boolean; status?: string }) {
   const autonomous = useAutonomous((s) => s.on);
+  const spotlightBusy = useAssistant((s) => s.pending || Boolean(s.testing));
   const building = useLive();
   const pending = item.parts.flatMap((p) => (p.kind === 'proposal' && !p.proposal.state ? [p.proposal] : []));
   const lastTool = item.parts.findLast((p) => p.kind === 'tool');
@@ -283,11 +363,18 @@ function ReplyView({ item, live, status }: { item: Reply; live: boolean; status?
               <ReplyText key={i} text={part.text} short={false} />
             )
           ) : part.kind === 'proposal' ? (
-            steps ? null : asRows ? <ProposalRow key={part.proposal.id} proposal={part.proposal} fix={Boolean(item.testId)} /> : <ProposalCard key={part.proposal.id} itemId={item.id} proposal={part.proposal} />
+            steps ? null : asRows && (part.proposal.state || live || spotlightBusy) ? (
+              <ProposalRow key={part.proposal.id} itemId={item.id} proposal={part.proposal} fix={Boolean(item.testId)} />
+            ) : (
+              // Not applied by Spotlight (a stopped reply, a change that no longer fits, a Fix bubble): the person decides.
+              <ProposalCard key={part.proposal.id} itemId={item.id} proposal={part.proposal} />
+            )
           ) : part.kind === 'run' ? (
             <RunLine key={i} run={part.run} />
           ) : part.kind === 'action' ? (
             <ActionView key={i} itemId={item.id} action={part} />
+          ) : part.kind === 'needs' ? (
+            <NeedRow key={i} itemId={item.id} need={part.need} />
           ) : null,
         )}
         {steps && <LiveSteps live={steps} />}
@@ -401,7 +488,17 @@ export function SpotlightPanel({ hiddenOnPhone = false }: { hiddenOnPhone?: bool
   const busy = live || testing || Boolean(designing);
   // How the last test ended, since the person last asked for something: older verdicts no longer hold.
   const run = lastRunOf(items.slice(items.findLastIndex((i) => i.role === 'user' && !i.auto) + 1));
-  const title = titleOf({ drafting, testing, pending, fixingName, designing, hasItems: items.length > 0, ...(run && run.state !== 'running' && !testing && { lastRun: run.state }) });
+  const need = openNeedOf(items);
+  const title = titleOf({
+    drafting,
+    testing,
+    pending,
+    fixingName,
+    designing,
+    hasItems: items.length > 0,
+    ...(need && !testing && { needs: need.what }),
+    ...(run && run.state !== 'running' && !testing && { lastRun: run.state, stoppedAt: stoppedAtOf(run) }),
+  });
   const { steps } = stepsOf(items, { live, drafting, agents });
   const latest = steps.at(-1)?.text;
   useFlowInView(drafting || testing);
@@ -523,12 +620,20 @@ function useSpotlightContext(): SpotlightContext {
   const nodeTypes = useEditor((s) => s.nodeTypes);
   const runs = useEditor((s) => s.runs);
   const selectedId = useEditor((s) => s.openNodeId ?? s.nodes.find((n) => n.selected)?.id);
+  // How the last session ended, since the person last asked: what to offer next follows from it.
+  const outcome = useAssistant((s) => {
+    if (s.testing || s.pending) return undefined;
+    if (openNeedOf(s.items)) return 'needs' as const;
+    const run = lastRunOf(s.items.slice(s.items.findLastIndex((i) => i.role === 'user' && !i.auto) + 1));
+    return run?.state === 'passed' ? ('passed' as const) : run?.state === 'failed' ? ('stopped' as const) : undefined;
+  });
   return useMemo(
     () => ({
       nodes: nodes.map((n) => {
         const { id, name, type } = n.data.wf;
         const descriptor = nodeTypes[type]?.descriptor;
-        const agent = Boolean(descriptor?.inputs.some((p) => p.type === 'ai_languageModel'));
+        // An AI Agent needs a chat model; Run an Agent and Run a Team run on the agent's own (their model port is optional).
+        const agent = type !== 'core.messageAgent' && type !== 'core.runTeam' && Boolean(descriptor?.inputs.some((p) => p.type === 'ai_languageModel'));
         return {
           id,
           name,
@@ -546,8 +651,9 @@ function useSpotlightContext(): SpotlightContext {
         .filter((t) => t.available && !t.blocked)
         .map((t) => ({ type: t.type, displayName: t.descriptor.displayName, plugin: t.pluginId === 'core' ? 'Built in' : t.pluginName, trigger: t.descriptor.kind === 'trigger', keywords: t.descriptor.keywords ?? [] })),
       selectedId,
+      ...(outcome && { outcome }),
     }),
-    [nodes, edges, nodeTypes, runs, selectedId],
+    [nodes, edges, nodeTypes, runs, selectedId, outcome],
   );
 }
 
@@ -682,6 +788,8 @@ function Composer() {
     }
     await useAssistant.getState().send(message, {
       withoutSelection,
+      // Autonomous: the model hears that its proposal is applied and tested as it ends, so it never says "click Apply".
+      ...(useAutonomous.getState().on && { session: 'auto' as const }),
       ...(tagged.length && {
         mentions: {
           nodes: tagged.flatMap((m) => (m.kind === 'node' ? [m.id] : [])),
@@ -695,6 +803,8 @@ function Composer() {
 
   const choose = (bubble: Bubble) => {
     if (bubble.id === TEST_BUBBLE) {
+      // Busy already: no message left behind without a session.
+      if (useAssistant.getState().pending || useAssistant.getState().testing) return;
       useAssistant.getState().append([{ id: nanoid(8), role: 'user', text: bubble.label }]);
       void testUntilItRuns(useEditor.getState().description?.trim() || undefined);
       return;

@@ -40,7 +40,7 @@ const Body = z.object({
     .max(20)
     .optional(),
   /** From Spotlight's test-and-fix session: a request for a fix to a failed run, or whether a run did what was asked. */
-  session: z.enum(['fix', 'review']).optional(),
+  session: z.enum(['fix', 'review', 'auto']).optional(),
 });
 
 export const POST = handler(async (request: Request) => {
@@ -72,7 +72,7 @@ export const POST = handler(async (request: Request) => {
         if (!abort.signal.aborted) send({ type: 'error', message: errorText(caught) });
       } finally {
         // What people ask for, and whether a change came of it (the brain's "unmet demand", docs/second-brain.md).
-        if (!rest.session) {
+        if (!rest.session || rest.session === 'auto') {
           recordUsage({ kind: 'spotlight.asked', workflowId, actorId, message: rest.messages.at(-1)?.content, attrs: { proposals, turn: rest.messages.length } });
         }
         try {

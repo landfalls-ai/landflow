@@ -58,8 +58,9 @@ export interface ChatInput {
   /**
    * The message comes from Spotlight's test-and-fix session, which applies proposals and runs the workflow itself:
    * `fix` asks for a fix (a reply that proposes nothing is sent back once), `review` whether a run did what was asked.
+   * `auto`: a message the person typed in autonomous mode, whose proposals Spotlight applies and tests as it ends.
    */
-  session?: 'fix' | 'review';
+  session?: 'fix' | 'review' | 'auto';
   signal?: AbortSignal;
   onEvent: (event: ChatEvent) => void;
 }
@@ -115,7 +116,7 @@ const TOOLS: ToolSpec[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        summary: { type: 'string', description: 'One line: what the change does' },
+        summary: { type: 'string', description: 'What the change does, past tense, at most 8 words, starting with a verb: "Set the Slack channel", "Added a filter for open tickets". Never "Fix…" or "This change…".' },
         ops: { type: 'array', items: OP_SCHEMA },
       },
       required: ['summary', 'ops'],
@@ -145,10 +146,10 @@ How to work:
 - Expressions read the current item with "{{ $json.field }}" and other nodes with "{{ $('Node name').item.json.field }}".
 - Never make up ids, channels, email addresses, URLs or keys the user didn't give: leave those parameters empty and say the user fills them in.
 - A tool attached to an agent: a value the agent should choose when it calls the tool (a branch, a file path, an issue or pull request number, a message) is the expression {{ $fromAI('<parameter name>', '<what it is>', 'string' | 'number' | 'boolean') }}, never a bare $fromAI; fixed values (the owner, the repository, a channel) are set plainly. Credentials are the person's to pick: never set one, name the one to pick in your closing sentence.
-- After proposing, say in one or two sentences what it does and what the user still has to do (click Apply, pick a credential, run it). Nothing is applied yet: never say the change was applied or made. Don't repeat the ops in prose.
+- After proposing, say in one sentence what it does and what the user still has to do (click Apply, pick a credential, run it). Nothing is applied yet: never say the change was applied or made. Don't repeat the ops in prose.
 - When asked whether a test run's result does what the user asked for, read the output of the last step with get_run_data and compare it with the request: if it falls short (wrong items, a filter that keeps everything, fields missing), propose the change; if it does what was asked, say so in one sentence and propose nothing.
-- When a message reports a failed test run, read the failing node's run data with get_run_data, find the cause and propose the smallest change that fixes it, without asking first. If only the user can fix it (a credential, an id, an account), say what to do in one sentence and propose nothing.
-- When no change is needed, just answer. Be brief and concrete: your text shows in a small panel at the bottom of the canvas, so one to three short sentences, no headings or lists unless asked.
+- When a message reports a failed test run, read the failing node's run data with get_run_data, find the cause and propose the smallest change that fixes it, without asking first. Say the cause in one clause of at most 12 words ("“Triage Ticket” got an empty message."). Fix the failing node or what feeds it, never something else, and never by removing a node and adding the same one back. If only the user can fix it (a credential, an id, an account), say what to do in one sentence and propose nothing.
+- When no change is needed, just answer. Write for a phone: at most two short sentences (about 25 words), no headings or lists unless asked. Start with the result or the answer. Never describe what you are about to do or what you looked at ("Let me…", "I'll…", "Looking at…", "The error indicates…").
 - A parameter that get_node_docs shows with "stored as …" (a collection or fixed collection) is written exactly in that shape: the group names, the field names and, for a field with options, one of the listed values. Never a flat list, never a field or option value the docs don't list.
 - Chat models, memory and tools are sub-nodes: attach them to the agent with a connection of type ai_languageModel, ai_memory or ai_tool (addNode "after": "<agent>" does it), never as a normal step after the agent. Don't pin test data on a trigger unless asked.
 - If the user names a model, a provider or a value you can't set (a model that isn't in the docs' options, a credential), say so in your closing sentence rather than silently picking another; a node that needs a credential gets none from you: name it.
@@ -157,6 +158,9 @@ How to work:
 ${PARAMETER_FORMATS}`;
 
 const SESSION = 'This message comes from Spotlight\'s test-and-fix session: it applies your proposal and runs the workflow again by itself. Never ask the user to click Apply or to run it.';
+
+/** Autonomous mode: what the person asked is applied and tested as soon as the reply ends (components/editor/autonomous.ts). */
+const AUTO = 'Autonomous mode: Spotlight applies your proposal as soon as you finish, then tests the flow. Never mention Apply, cards or running it. End with one sentence: what changed, then only what the person must do (pick a credential, fill in a value). A new agent you propose is designed and published by Spotlight: say only "Created the agent “<name>” for <job>."';
 
 const shorten = (value: string, max = 60) => (value.length > max ? `${value.slice(0, max - 1)}…` : value);
 
@@ -482,6 +486,64 @@ export function withoutRepeats(text: string, earlier: string): string {
   );
 }
 
+/** A reply that says only the person can fix it: a credential, an account, a key, an id. */
+const PERSON_ONLY = /\b(credential|api key|token|account|sign in|log in|permission)s?\b|\bpick (an?|the) \w+|\byou (need|have) to\b/i;
+
+/** The model saying what it is about to do or what it looked at, before the answer. */
+const NARRATION = /^(?:let me|let's|i'll|i will|i need to|i'm going to|now i|now,? let|first,|next,|looking at|based on|i can see|i see that|to fix this|the user (?:wants|needs|asked))\b/i;
+
+/** Sentences that narrate instead of answer are left out; the answer stays (and all of it, when nothing else is left). */
+export function withoutNarration(text: string): string {
+  const out = dropSentences(text, (sentence) => NARRATION.test(sentence.trim()));
+  return out === undefined || !out.trim() ? text : out;
+}
+
+/**
+ * Tool-call markup a local model leaves in its text: a `<function=…>` call with its body up to its end (or the end of
+ * the text when it isn't closed), `<think>` blocks, and stray tags.
+ */
+export function withoutLeakedMarkup(text: string): string {
+  return text
+    .replace(/<think>[\s\S]*?(?:<\/think>|$)/g, '')
+    .replace(/<tool_call>[\s\S]*?(?:<\/tool_call>|$)/g, '')
+    .replace(/<function=[\s\S]*?(?:<\/function>|$)/g, '')
+    .replace(/<\/?(?:tool_call|function|parameter)\b[^>]*>/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trimEnd();
+}
+
+/**
+ * Why a test-and-fix session's fix would be wasted, if it is: it touches neither the failing step nor anything that feeds
+ * it, it removes a node and adds the same kind back, or it only adds a No Operation step.
+ */
+export function wastedFix(ops: AssistantOp[], workflow: Workflow, failingId: string | undefined): string | undefined {
+  if (!ops.length) return undefined;
+  const byRef = (ref: string | undefined) => workflow.nodes.find((n) => n.name === ref || n.id === ref);
+  const removed = ops.flatMap((op) => (op.op === 'removeNode' ? [byRef(op.node)] : [])).filter((n): n is NonNullable<typeof n> => Boolean(n));
+  const readded = ops.find((op) => op.op === 'addNode' && removed.some((n) => n.type === op.type));
+  if (readded?.op === 'addNode') return `removing “${removed.find((n) => n.type === readded.type)?.name}” and adding the same kind of node back changes nothing.`;
+  if (ops.every((op) => op.op === 'addNode' && op.type === 'core.noOp')) return 'a No Operation step changes nothing.';
+  const failing = failingId ? workflow.nodes.find((n) => n.id === failingId) : undefined;
+  if (!failing) return undefined;
+  // The failing step and every node upstream of it.
+  const near = new Set([failing.id]);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const c of workflow.connections) if (near.has(c.target) && !near.has(c.source)) (near.add(c.source), (grew = true));
+  }
+  const touches = ops.some((op) => {
+    const refs = [
+      'node' in op ? op.node : undefined,
+      'from' in op ? op.from : undefined,
+      'to' in op ? op.to : undefined,
+      'after' in op ? op.after : undefined,
+      'before' in op ? op.before : undefined,
+    ];
+    return refs.some((ref) => typeof ref === 'string' && near.has(byRef(ref)?.id ?? ''));
+  });
+  return touches ? undefined : `the run failed at “${failing.name}”, and this change touches neither it nor what feeds it.`;
+}
+
 const APPLY_REQUEST = /\bclick (?:on )?(?:the )?["“]?apply\b|\bapply (?:this|that|the|these|those|my)(?: \w+)? (?:change|fix|proposal)e?s?\b|\b(?:run|test) (?:the workflow|it) again\b/i;
 
 /** A line that is only a JSON object: a tool call or its result written as text (`{"error": "No change needed"}`). */
@@ -572,6 +634,8 @@ export async function runChat(input: ChatInput): Promise<void> {
   let proposed = false;
   /** Whether a fix request that proposed nothing was sent back for a proposal. */
   let pressed = false;
+  /** A fix that missed the failing step was sent back once. */
+  let offTargetSent = false;
   let applyRetried = false;
   /** The ops of each proposal so far, as sent: a model may send the same one again and again. */
   const sent = new Set<string>();
@@ -607,7 +671,7 @@ export async function runChat(input: ChatInput): Promise<void> {
     working.groups?.some((g) => g.composite) ? `\nComposites (frames typed by a contract: fill their slots with matching nodes, keep their rules):\n${compositeOutline(working)}` : '',
     selected ? `\nThe user has “${selected.name}” selected:\n${nodeContext(working, selected.id, runs[selected.id], types)}` : '',
     tagged.length ? `\nThe user tagged in the message:\n${tagged.join('\n')}` : '',
-    input.session ? `\n${SESSION}` : '',
+    input.session === 'auto' ? `\n${AUTO}` : input.session ? `\n${SESSION}` : '',
   ].join('\n');
 
   const execute = async (call: ToolCall): Promise<ToolResult> => {
@@ -671,6 +735,12 @@ export async function runChat(input: ChatInput): Promise<void> {
             `Nothing changes: ${back.join(', ')} ${back.length === 1 ? 'is' : 'are'} removed by a pending proposal because the user asked; don't add ${back.length === 1 ? 'it' : 'them'}, or a node doing the same job, back. If everything the latest message asks for is proposed, stop and say in one line what the cards do.`,
             'Skipped adding back a removed node',
           );
+        }
+        // A fix must touch the step that failed or what feeds it, and must change something.
+        const wasted = input.session === 'fix' && !offTargetSent ? wastedFix(validated.ops, working, selected ? selected.id : undefined) : undefined;
+        if (wasted) {
+          offTargetSent = true;
+          return result(`Not shown: ${wasted} Propose a change to that step or what feeds it, or, if only the person can fix it, say what to do in one sentence.`, 'Skipped a fix that changes nothing');
         }
         if (!validated.ops.length && repeated.length && !validated.dropped.length) {
           return result(`Nothing changes: ${repeated.join('; ')}. Connect from it with another propose_changes call if something is still missing.`, 'Skipped a repeated proposal');
@@ -740,7 +810,9 @@ export async function runChat(input: ChatInput): Promise<void> {
         const dropped = [...validated.dropped, ...validated.ignored, ...inventedNotes, ...standIns.notes];
         const notes = `${dropped.length ? ` Left out: ${dropped.join('; ')}.` : ''}${repeated.length ? ` Not added again: ${repeated.join('; ')}.` : ''}`;
         const count = `${validated.ops.length} change${validated.ops.length === 1 ? '' : 's'}`;
-        const shown = result(`Shown to the user as a card with an Apply button (${count}); nothing changes until they click it.${notes} Don't list the changes again, ask whether to apply them, or say they are applied. If the latest message asks for something this doesn't cover yet, propose it now (the nodes above are in the workflow for you to connect to); if it's all proposed, stop and say in one line what the cards do.`, `Proposed ${count}`);
+        const shown = input.session
+          ? result(`Recorded (${count}); Spotlight applies it when you finish.${notes} Don't list the changes again. If the message asks for something this doesn't cover yet, propose it now; otherwise stop with your one sentence.`, `Proposed ${count}`)
+          : result(`Shown to the user as a card with an Apply button (${count}); nothing changes until they click it.${notes} Don't list the changes again, ask whether to apply them, or say they are applied. If the latest message asks for something this doesn't cover yet, propose it now (the nodes above are in the workflow for you to connect to); if it's all proposed, stop and say in one line what the cards do.`, `Proposed ${count}`);
         onEvent({ type: 'proposal', id: `pr_${nanoid(8)}`, summary, ops: validated.ops, dropped, warnings: [...validated.warnings, ...validated.cautions] });
         proposed = true;
         recordSuggestions(['proposal']);
@@ -767,8 +839,9 @@ export async function runChat(input: ChatInput): Promise<void> {
       const proposing = proposed || calls.some((call) => call.name === 'propose_changes');
       if (text.trim()) {
         // A local model leaves its tool-call tags in the text ("…to test it.<tool_call>").
-        const own = withoutEchoedNotes(text).replace(/<\/?(?:tool_call|function|parameter)\b[^>]*>/g, '').trimEnd();
-        const claimsOff = proposing ? withoutAppliedClaims(own) : own;
+        const own = withoutNarration(withoutLeakedMarkup(withoutEchoedNotes(text)));
+        // Spotlight applies a session's proposals itself: "it now posts…" is true there.
+        const claimsOff = proposing && !input.session ? withoutAppliedClaims(own) : own;
         const shown = own && withoutMadeUpIds(withoutRepeats(input.session ? withoutApplyRequests(claimsOff) : claimsOff, said), known(), invented);
         said += `\n${text}`;
         if (shown.trim()) onEvent({ type: 'text', text: shown });
@@ -776,7 +849,8 @@ export async function runChat(input: ChatInput): Promise<void> {
       history.push({ role: 'assistant', text, toolCalls: calls, ...(turn.raw && { raw: turn.raw }) });
       finished = !calls.length;
       // Local models describe a fix without proposing it; a test-and-fix session needs the proposal.
-      if (finished && input.session === 'fix' && !proposed && !pressed) {
+      // Not when it already said only the person can fix it: pressing makes a local model invent a fix.
+      if (finished && input.session === 'fix' && !proposed && !pressed && !PERSON_ONLY.test(text)) {
         pressed = true;
         finished = false;
         history.push({ role: 'user', content: 'Nothing was proposed: only a propose_changes call changes the workflow. Call propose_changes with the fix now, or, if only I can fix it, say what to do in one sentence.' });

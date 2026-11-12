@@ -81,3 +81,42 @@ export function multipliedSteps(run: CheckedRun, steps: Array<CheckedStep & { id
     return [{ node: step.name, problem: `“${step.name}” runs once per item but put out ${out} items from ${got}, so its code handles every item each time: use mode “all” to work on all items at once, or return only this item’s result` }];
   });
 }
+
+/** Something only a person can give the flow, read from a failed run's error. */
+export type PersonNeed = 'credential' | 'agent' | 'trigger';
+
+/**
+ * A failed run that a fix can't help: a credential that isn't picked or is refused, an agent or team that isn't chosen,
+ * a flow with nothing to start it. Spotlight asks the person instead of spending its fixes (docs/assistant.md#test-and-fix).
+ */
+export function needsPerson(error: string | undefined): PersonNeed | undefined {
+  if (!error) return undefined;
+  if (/no start node|no trigger/i.test(error)) return 'trigger';
+  if (/no (agent|team) (selected|chosen|picked)|agentId is required|teamId is required|pick an agent|pick a team/i.test(error)) return 'agent';
+  if (/credential/i.test(error) && /no |not |missing|select|choose|pick/i.test(error)) return 'credential';
+  if (/\b(401|403)\b|unauthori[sz]ed|invalid[_ ]auth|not_authed|invalid api key|api key (is )?(missing|invalid)|authentication failed|forbidden/i.test(error)) return 'credential';
+  return undefined;
+}
+
+/** The same failure with numbers, ids and quotes taken out: a fix that left it unchanged didn't help. */
+export const sameFailure = (summary: string) =>
+  summary
+    .toLowerCase()
+    .replace(/[0-9a-f]{8,}|\d+/g, '#')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/**
+ * Steps that reach outside the flow when they run: an HTTP call that isn't a GET, or an app operation that sends,
+ * posts, creates, changes or deletes. A test run executes them for real, so Spotlight asks first. A heuristic: a
+ * node can read and still be listed, and one without an operation that writes isn't.
+ */
+export function sendingSteps(steps: CheckedStep[]): string[] {
+  const writes = /^(send|post|create|update|delete|remove|upload|write|publish|comment|add|merge|archive|reply|invite|insert|upsert|append|move|close|assign|execute|trigger)/i;
+  return steps.flatMap((step) => {
+    const p = step.parameters;
+    if (step.type === 'core.httpRequest') return String(p.method ?? 'GET').toUpperCase() === 'GET' ? [] : [step.name];
+    if (/email|smtp/i.test(step.type) && !/trigger|read/i.test(step.type)) return [step.name];
+    return typeof p.operation === 'string' && writes.test(p.operation) ? [step.name] : [];
+  });
+}

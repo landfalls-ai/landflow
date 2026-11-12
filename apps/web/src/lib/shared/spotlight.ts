@@ -34,6 +34,8 @@ export interface SpotlightContext {
   /** The node types this workflow may use: online, and not blocked by governance. */
   types: SpotlightType[];
   selectedId?: string;
+  /** How Spotlight's last test session ended: what to offer next follows from it. */
+  outcome?: 'needs' | 'passed' | 'stopped';
 }
 
 export type Mention = { kind: 'node'; id: string; label: string } | { kind: 'type'; type: string; label: string };
@@ -81,11 +83,15 @@ function phrases(ctx: SpotlightContext): Bubble[] {
   if (failed) out.push(ask(`why-${failed.id}`, `Why did ${quote(failed.name)} fail?`));
   const agent = ctx.nodes.find((n) => n.agent && !n.hasModel);
   if (agent) out.push(ask(`model-${agent.id}`, `Connect a chat model to ${quote(agent.name)}`));
+  const last0 = lastNode(ctx);
+  if (ctx.outcome === 'passed' && last0) out.push(ask(`harden-${last0.id}`, `Add error handling to ${quote(last0.name)}`));
+  if (ctx.outcome === 'stopped' && failed) out.push(ask(`another-${failed.id}`, `Try another way to fix ${quote(failed.name)}`));
   const selected = ctx.nodes.find((n) => n.id === ctx.selectedId);
   if (selected) out.push(ask(`explain-${selected.id}`, `Explain ${quote(selected.name)}`));
   if (!ctx.nodes.some((n) => n.trigger)) out.push(ask('trigger', 'Add a trigger that starts this workflow'));
-  // Not a question: Spotlight runs the workflow and, while a run fails, fixes it (see testUntilItRuns).
-  else out.push({ ...ask(TEST_BUBBLE, 'Test it and fix what fails'), send: false });
+  // Not a question: Spotlight runs the workflow and, while a run fails, fixes it (see testUntilItRuns). Not while it
+  // waits for the person (a credential, a yes), nor right after a pass.
+  else if (!ctx.outcome) out.push({ ...ask(TEST_BUBBLE, 'Test it and fix what fails'), send: false });
   const last = selected && !selected.outgoing ? selected : lastNode(ctx);
   if (last) out.push(ask(`after-${last.id}`, `After ${quote(last.name)}, `, false));
   out.push(ask('explain', 'What does this workflow do?'));

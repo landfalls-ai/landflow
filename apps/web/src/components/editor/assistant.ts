@@ -53,7 +53,14 @@ export function sendFeedback(kind: ChangeKind, action: 'applied' | 'dismissed', 
  * with one undo. Ops that no longer fit (the workflow changed since they were
  * proposed) are skipped. Returns false when nothing applied.
  */
-export function applyChanges(changes: Array<{ ops: AssistantOp[]; kind: ChangeKind; nodeType?: string }>, label: string, options: { publishAgents?: boolean; quiet?: boolean } = {}): boolean {
+/** Undo for a change Spotlight applied by itself, by proposal id: its row's Undo button (a phone has no ⌘Z). */
+export const undos = new Map<string, () => void>();
+
+export function applyChanges(
+  changes: Array<{ ops: AssistantOp[]; kind: ChangeKind; nodeType?: string }>,
+  label: string,
+  options: { publishAgents?: boolean; quiet?: boolean; onApplied?: (applied: { undo: () => void; skipped: string[] }) => void } = {},
+): boolean {
   const state = useEditor.getState();
   const lookup = editorLookup();
   let workflow = state.toWorkflow();
@@ -101,10 +108,12 @@ export function applyChanges(changes: Array<{ ops: AssistantOp[]; kind: ChangeKi
   }
   // Select what changed: the last node added, else the node edited.
   const focusId = added.at(-1) ?? edited;
-  const undo = state.replaceGraph(workflow, focusId ? { id: focusId, added: added.includes(focusId) } : undefined);
+  // Spotlight's own applies leave the selection alone: selecting would hide its chip and put the node in the composer.
+  const undo = state.replaceGraph(workflow, focusId && !options.quiet ? { id: focusId, added: added.includes(focusId) } : undefined);
   for (const { nodeId, config } of teams) void saveTeamFor(nodeId, config);
   for (const { nodeId, spec, place } of agents) void saveAgentFor(nodeId, spec, place, { publish: options.publishAgents });
-  // Spotlight's own applies (autonomous mode, a test-and-fix session) are rows in its timeline; ⌘Z undoes them.
+  options.onApplied?.({ undo, skipped: dropped });
+  // Spotlight's own applies (autonomous mode, a test-and-fix session) are rows in its timeline, each with Undo.
   if (options.quiet) return true;
   const skipped = dropped.length ? `Skipped ${dropped.length}: ${dropped[0]}` : undefined;
   // Long enough to look at the canvas before deciding to undo.
@@ -219,7 +228,23 @@ export interface Proposal {
   ops: AssistantOp[];
   dropped: string[];
   warnings: string[];
-  state?: 'applied' | 'dismissed';
+  state?: 'applied' | 'dismissed' | 'undone';
+  /** Ops that no longer fit when it was applied. */
+  skipped?: number;
+}
+
+/**
+ * Something only the person can do before Spotlight tests on (docs/assistant.md#test-and-fix): pick a credential, pick
+ * an agent, add a trigger, or say a test may send for real. Its row has the button that does it and one that goes on.
+ */
+export interface Need {
+  what: 'credential' | 'agent' | 'trigger' | 'sends';
+  text: string;
+  /** The node it is about, to open. */
+  node?: string;
+  /** The session's goal, to test on with. */
+  goal?: string;
+  state?: 'done' | 'dismissed';
 }
 
 export interface ToolActivity {
@@ -249,6 +274,7 @@ export type ReplyPart =
   | { kind: 'tool'; tool: ToolActivity }
   | { kind: 'proposal'; proposal: Proposal }
   | { kind: 'run'; run: TestRun }
+  | { kind: 'needs'; need: Need }
   | ({ kind: 'action' } & ReplyAction);
 
 /** `testId`: the test-and-fix session the turn belongs to; Spotlight folds a finished session into one line. */
@@ -276,7 +302,7 @@ export interface SendOptions {
   /** Send without the earlier turns: a test-and-fix session's requests carry what they need (the run is in the context). */
   fresh?: boolean;
   /** A test-and-fix session's request: for a fix (a reply that proposes nothing is sent back once), or a review. */
-  session?: 'fix' | 'review';
+  session?: 'fix' | 'review' | 'auto';
   /** The test-and-fix session the request belongs to. */
   testId?: string;
 }
@@ -339,7 +365,7 @@ interface AssistantState {
   append(items: ChatItem[]): void;
   stop(): void;
   reset(): void;
-  setProposalState(itemId: string, proposalId: string, state: 'applied' | 'dismissed'): void;
+  setProposalState(itemId: string, proposalId: string, state: 'applied' | 'dismissed' | 'undone', skipped?: number): void;
   /** Change the parts of one reply (a test-and-fix session adds and updates its runs; buttons record what was chosen). */
   updateParts(itemId: string, fn: (parts: ReplyPart[]) => ReplyPart[]): void;
 }
@@ -373,7 +399,8 @@ export const useAssistant = create<AssistantState>((set, get) => ({
 
   noteFix(nodeIds, text) {
     const at = Date.now();
-    set((s) => ({ fixNotes: { ...s.fixNotes, ...Object.fromEntries(nodeIds.map((id) => [id, { text, at }])) } }));
+    // One note on the canvas at a time: the newest fix. Older ones are rows of the timeline.
+    set({ fixNotes: Object.fromEntries(nodeIds.map((id) => [id, { text, at }])) });
   },
 
   dismissFix(nodeId) {
@@ -476,11 +503,11 @@ export const useAssistant = create<AssistantState>((set, get) => ({
     set({ items: [], agents: [], fixNotes: {}, pending: false, drafting: false, abort: undefined, testing: undefined, fixing: undefined });
   },
 
-  setProposalState(itemId, proposalId, state) {
+  setProposalState(itemId, proposalId, state, skipped) {
     set((s) => ({
       items: s.items.map((item) =>
         item.id === itemId && item.role === 'assistant'
-          ? { ...item, parts: item.parts.map((part) => (part.kind === 'proposal' && part.proposal.id === proposalId ? { ...part, proposal: { ...part.proposal, state } } : part)) }
+          ? { ...item, parts: item.parts.map((part) => (part.kind === 'proposal' && part.proposal.id === proposalId ? { ...part, proposal: { ...part.proposal, state, ...(skipped && { skipped }) } } : part)) }
           : item,
       ),
     }));

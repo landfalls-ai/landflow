@@ -8,7 +8,8 @@
  * The choice is kept in the browser (localStorage), like the after-run suggestions' switch.
  */
 import { create } from 'zustand';
-import { applyChanges, useAssistant } from './assistant';
+import { applyChanges, undos, useAssistant } from './assistant';
+import { useEditor } from './store';
 import { testUntilItRuns } from './test-session';
 
 const KEY = 'landflow-spotlight-autonomous';
@@ -48,8 +49,9 @@ export function testDraft(replyId: string, goal: string): boolean {
 }
 
 /**
- * A chat reply has ended: apply what it proposed, as one step with one Undo, then test and fix the flow with the
- * request as its goal. Nothing happens for a reply that proposed nothing, failed, or was stopped.
+ * A chat reply has ended: apply what it proposed, as one step with one Undo, then test and fix the flow against what
+ * the workflow is for plus this request. Nothing happens for a reply that proposed nothing, failed, or was stopped; a
+ * change that only renames or moves nodes isn't tested (nothing a run does changes).
  */
 export async function afterReply(goal: string): Promise<void> {
   if (!autonomous()) return;
@@ -60,7 +62,19 @@ export async function afterReply(goal: string): Promise<void> {
   const open = reply.parts.flatMap((p) => (p.kind === 'proposal' && !p.proposal.state ? [p.proposal] : []));
   if (!open.length) return;
   const label = open.length === 1 ? `Applied: ${open[0].summary}` : `Applied ${open.length} changes`;
-  if (!applyChanges(open.map((p) => ({ ops: p.ops, kind: 'proposal' as const })), label, { publishAgents: true, quiet: true })) return;
-  for (const p of open) useAssistant.getState().setProposalState(reply.id, p.id, 'applied');
-  await testUntilItRuns(goal, { publishAgents: true });
+  let skipped = 0;
+  const applied = applyChanges(open.map((p) => ({ ops: p.ops, kind: 'proposal' as const })), label, {
+    publishAgents: true,
+    quiet: true,
+    onApplied: ({ undo, skipped: dropped }) => {
+      for (const p of open) undos.set(p.id, undo);
+      skipped = dropped.length;
+    },
+  });
+  // Not applied: the proposals stay as cards for the person to decide.
+  if (!applied) return;
+  for (const p of open) useAssistant.getState().setProposalState(reply.id, p.id, 'applied', skipped);
+  if (open.every((p) => p.ops.every((op) => op.op === 'renameNode'))) return;
+  const purpose = useEditor.getState().description?.trim();
+  await testUntilItRuns(purpose && purpose !== goal ? `${purpose} (Latest change: ${goal})` : goal, { publishAgents: true });
 }
