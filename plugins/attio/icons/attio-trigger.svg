@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <!-- Original Landflow glyph for the Attio plugin: three linked records. Not Attio's logo. -->
+  <rect x="0.75" y="0.75" width="46.5" height="46.5" rx="11.25" fill="#fff" stroke="#e4e4e7" stroke-width="1.5"/>
+  <path d="M16 31 24 15 32 31" fill="none" stroke="#4f5bd5" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <circle cx="24" cy="14" r="4" fill="#4f5bd5"/>
+  <circle cx="15" cy="32" r="4" fill="#4f5bd5"/>
+  <circle cx="33" cy="32" r="4" fill="#4f5bd5"/>
+</svg>
