@@ -1,10 +1,14 @@
 import { registry } from '@/lib/server/plugins/registry';
 import { handler, json } from '@/lib/server/http';
+import { resolvePrincipal } from '@/lib/server/auth/guard';
 import { store } from '@/lib/server/store';
 
 export const dynamic = 'force-dynamic';
 
-export const GET = handler(async () => {
+/** The route is public (the CLI and scripts probe it), so counts go only to a caller with a valid session or API key. */
+export const GET = handler(async (request: Request) => {
+  const resolved = resolvePrincipal(request);
+  if (!resolved.ok || !resolved.principal) return json({ status: 'ok' });
   const plugins = registry.list();
   return json({
     status: 'ok',

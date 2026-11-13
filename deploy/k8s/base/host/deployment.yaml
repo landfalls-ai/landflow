@@ -58,11 +58,11 @@ spec:
             - name: LANDFLOW_OWNER_PASSWORD
               valueFrom: { secretKeyRef: { name: landflow-host, key: owner-password, optional: true } }
           readinessProbe:
-            httpGet: { path: /api/health, port: http }
+            httpGet: { path: /api/health/ready, port: http }
             periodSeconds: 5
             failureThreshold: 3
           livenessProbe:
-            httpGet: { path: /api/health, port: http }
+            httpGet: { path: /api/health/live, port: http }
             initialDelaySeconds: 30
             periodSeconds: 20
             failureThreshold: 6

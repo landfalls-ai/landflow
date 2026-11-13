@@ -90,6 +90,6 @@ VOLUME ["/data"]
 # 5690: a worker's /healthz and /metrics (`node worker.mjs`, queue mode).
 EXPOSE 3000 7070 5690
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=6 \
-  CMD wget -q -O /dev/null "http://127.0.0.1:${PORT}/api/health" || exit 1
+  CMD wget -q -O /dev/null "http://127.0.0.1:${PORT}/api/health/ready" || exit 1
 WORKDIR /app/apps/web
 CMD ["node", "server.js"]

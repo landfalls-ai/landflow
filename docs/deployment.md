@@ -65,10 +65,21 @@ COMPOSE_BAKE=false docker compose -f deploy/compose.queue.yml up -d --build --wa
 python3 deploy/scripts/queue-e2e.py
 ```
 
+## Probes
+
+| Route | Checks | Used by |
+|---|---|---|
+| `GET /api/health/live` | nothing: the process answers `{ status: 'ok', uptimeSeconds }`, even while it boots or a dependency is down | Kubernetes `livenessProbe` |
+| `GET /api/health/ready` | boot finished and not draining; database answers `SELECT 1`; Postgres write queue not blocked and its oldest batch younger than `LANDFLOW_READY_MAX_WRITE_LAG_SECONDS` (30); schema at the latest migration; in queue mode Valkey answers. Each check has a 1 s limit. 200 `ready` or 503 `not_ready` with `{ ok, ms }` per check | Kubernetes `readinessProbe`, the Docker `HEALTHCHECK` (so compose `service_healthy` means ready), the smoke script |
+| `GET /api/health` | `{ status: 'ok' }`; the plugin and run counts only with a session or API key | the CLI and scripts |
+
+A long Postgres backlog keeps a pod unready until the queue drains; that is deliberate, the host should not take traffic
+while it cannot persist it. The leader state is not a check: a non-leader main is ready.
+
 ## Stopping the host
 
 On SIGTERM or SIGINT a main stops in phases, logging `shutdown: <phase>/<step>` for each and `shutdown complete` with
-the duration: new requests get `503` with `Retry-After: 5` (`/api/health` still answers) and requests in flight are
+the duration: new requests get `503` with `Retry-After: 5` (`/api/health/live` and `/ready` still answer; `/ready` says 503 from the first moment, so the load balancer stops sending traffic) and requests in flight are
 awaited; then the leader services (scheduler, timers, alerts), the MCP gateway sync; then local runs get the time that is
 left to finish (what is still running continues from its last checkpoint at the next boot); then the broker connections,
 the cluster runtime (queue mode: the leader lease is released and the instance forgotten), the database (Postgres
@@ -346,7 +357,7 @@ Tests: `(cd apps/web && LANDFLOW_INTEGRATION=oidc,smtp npx vitest run test/oidc.
 | `landflow/plugin-browser:dev` (profile `browser`) | [`plugins/browser/Dockerfile`](../plugins/browser/Dockerfile) | `tsx src/main.ts` as `node` on Debian with Chrome and agent-browser, headless: see [Browser plugin](#browser-plugin) |
 | `landflow/code-runner:dev` | [`docker/code-runner.Dockerfile`](../deploy/docker/code-runner.Dockerfile) | `node dist/main.mjs` (esbuild bundle) on Node 26 + CPython 3 (standard library) as uid 10001; `code-runner-port` runs `node dist/forward.mjs` from the same image |
 
-All builds use the repository root as context; [`/.dockerignore`](../.dockerignore) keeps out `node_modules`, `.next`, `.data`, venvs and Go binaries. Every image has a healthcheck: the host's `GET /api/health`, each plugin's `GET /landflow/v1/health`. Build one image on its own with, for example:
+All builds use the repository root as context; [`/.dockerignore`](../.dockerignore) keeps out `node_modules`, `.next`, `.data`, venvs and Go binaries. Every image has a healthcheck: the host's `GET /api/health/ready`, each plugin's `GET /landflow/v1/health`. Build one image on its own with, for example:
 
 ```bash
 docker build -f deploy/docker/go-plugin.Dockerfile --build-arg PLUGIN=databases \
@@ -712,7 +723,7 @@ helm repo add traefik https://traefik.github.io/charts
 helm --kube-context orbstack upgrade --install traefik traefik/traefik --version 42.0.0 -n landflow-ingress --create-namespace \
   --set ingressClass.name=landflow-traefik --set ingressClass.isDefaultClass=false
 kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-ingress        # namespace landflow-dev; restarts the host pod (new public URLs)
-curl -s http://landflow.localhost/api/health
+curl -s http://landflow.localhost/api/health/ready
 # MCP: a call with no token is anonymous (initialize works, tools/list is empty), same as through a port-forward
 curl -s -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' http://landflow.localhost/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'

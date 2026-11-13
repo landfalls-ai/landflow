@@ -58,7 +58,7 @@ that link.
 drown the useful traces. They are counted in metrics instead. On the host, a request is traced
 when it is an API request that changes something (`POST`, `PUT`, `PATCH`, `DELETE`) or any
 webhook request. Read-only API requests (`GET`/`HEAD`/`OPTIONS`, which the UI polls), pages and
-assets, `/api/events`, `/api/health`, `/api/metrics` and `/api/plugins/announce` get no trace.
+assets, `/api/events`, `/api/health*`, `/api/metrics` and `/api/plugins/announce` get no trace.
 Their server spans are still recorded but not sampled, so they still count in
 `http.server.request.duration`. An announce that (re-)registers a plugin starts its own
 `registry.register` trace.
@@ -432,3 +432,9 @@ the call may start, then prices and records what it used.
   threshold, once per cap per period (day or month; `alert_state`, migration 1820), checked when usage
   is recorded and by the alerts ticker on the leader. Per-execution caps aren't watched (they have
   no period).
+
+## Health probes
+
+`GET /api/health/live` (no I/O) and `GET /api/health/ready` (boot, draining, database, write queue, schema, Valkey in
+queue mode) are the probes; a failing readiness check is logged as `readiness check failed` with the check name and
+reason, while the public body carries only names and timings. Details: [Deployment, Probes](deployment.md#probes).
