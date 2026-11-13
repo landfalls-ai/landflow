@@ -250,11 +250,30 @@ ordered queue spooled to disk, so the store API stays synchronous; other process
 `LISTEN/NOTIFY`. Migrations are versioned (`db/schema.ts`, recorded in `schema_version`), each written for both
 databases; a migration can add columns only where they are missing.
 
+**The hot mirror (Postgres mode).** The copy does not hold the whole history. An execution is *hot* while it is running,
+waiting or queued, for `LANDFLOW_PG_HOT_MINUTES` (default 15) after it finished, while an automatic retry waits for it, or
+while its parent is still in flight (the parent reads it when it wakes); a hot execution keeps its row, its `data` and its
+`execution_events` in the copy. A *cold* one keeps its row (every column, the summary included) with `data` set to the empty
+string, and none of its events. Boot loads only the hot part (`db/hot-mirror.ts`, `mirrorSelect`), and each minute every
+process evicts what cooled down with `Database.evictLocal`, which changes the copy only: nothing goes to the write queue
+or the observers, and a run with a write not yet in Postgres (`sink.pendingExecutions()`) is left until it lands. Writes
+to a cold run still replay: a `delete` or `deleteBefore` on `executions` or `execution_events` is queued even when the copy
+had nothing to delete, so deleting a cold run and the retention sweeps reach its events in Postgres. In queue mode a
+change another process sends keeps `data` only for a hot run and loads no events of a cold one.
+
+Reads through the seam below follow from it: `readExecutionData` and `readExecutionEvents` go to Postgres (one query on a
+pool connection) for a cold run, and a scan (`readRows`) first waits up to two seconds for this process's queued writes
+(`Database.barrier`) and then runs the same SQL on Postgres, because the copy would miss cold runs; if the queue does not
+drain or Postgres fails it scans the copy and logs a warning. A writer that must append to a finished run's journal (a
+person's decision on a failed check, `journal/checks.ts`) first awaits `promoteExecution(id)`, which loads the run's data
+and events back into the copy and keeps them for the hot window; `journalStore.append` refuses a cold run, and
+`lastSeq` says 1 for one. The audit log, the usage ledger, insights rows and AI usage still live in the copy whole
+([limitations](limitations.md)).
+
 **The read seam for run data.** `db/reads.ts` holds the reads of `executions.data` and `execution_events` that code serving
 finished runs uses, all async: `readExecutionData`, `readExecutionEvents` and `readRows` for scans (the EXISTS search in
-`journal/runs-query.ts`, `executionsMentioningAsync`). Today each is the synchronous read in a resolved promise, so
-behaviour is unchanged; serving them from Postgres on demand instead of loading them into the in-memory copy at boot
-changes only that file. The store API follows one rule: `store.getExecution` is synchronous and is for **runs in flight**
+`journal/runs-query.ts`, `executionsMentioningAsync`). On SQLite each is the synchronous read in a resolved promise; on
+Postgres they serve what the copy does not hold, as above. The store API follows one rule: `store.getExecution` is synchronous and is for **runs in flight**
 (running, waiting, queued) and the runner, cluster, waits, approvals and resume routes that handle them; anything that may
 read a finished run uses `await store.loadExecution(id)` and the async journal readers (`journalStore.readEventsAsync`,
 `readAllAsync`, `checksSinceAsync`, `spanStartAsync`, `spanEventsAsync`). `test/execution-reads.test.ts` scans the source and

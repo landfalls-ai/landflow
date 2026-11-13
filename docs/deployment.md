@@ -461,6 +461,24 @@ LANDFLOW_REGISTRY_URL=http://localhost:53000 LANDFLOW_ADVERTISE_HOST=host.docker
   LANDFLOW_HTTP_PORT=7151 LANDFLOW_GRPC_PORT=7251 pnpm plugin:ts
 ```
 
+## Postgres memory sizing
+
+In Postgres mode ([Storage](architecture.md#storage)) each host process keeps an in-memory copy of the database, but only the
+hot part of the run history: executions in flight, those finished within `LANDFLOW_PG_HOT_MINUTES` (default 15), those with a
+retry waiting, and children of a waiting run. Older runs keep their summary row in the copy and have their record and Run
+Trace journal read from Postgres on demand, so a page of an old run waits for one query. Memory and boot time no longer grow
+with finished runs' data and journal; they grow with the other tables, which stay whole: the audit log, the usage ledger,
+insights rows, AI usage, workflows, versions and the rest.
+
+Measured with `apps/web/scripts/seed-executions.ts` (50,000 finished runs of about 10 KB each, with 20 journal events of
+1 KB each, plus 5 running; 1.8 GB in Postgres): boot 0.7 s and 164 MB resident, against 10.1 s and 14.1 GB when everything is
+hot (`LANDFLOW_PG_HOT_MINUTES=100000`, which is what every earlier version did). Size a process for its workflows, the other
+tables and the runs of the last hot window: the memory of a run in the hot window is its record and journal, so a host that
+finishes 10,000 runs of 100 KB in a quarter of an hour needs about 1 GB for them. Raise `LANDFLOW_PG_HOT_MINUTES` only if
+people open just-finished runs so often that the query per old page matters; lower it to keep the copy smaller. A host that
+has been busy does not give the memory of evicted runs back to the system at once (SQLite reuses the freed pages), so its
+resident size follows the busiest hot window it has had.
+
 ## Queue mode (two mains, two workers)
 
 [`compose.queue.yml`](../deploy/compose.queue.yml) (project `landflow-queue`) runs Landflow in queue mode with high availability ([Queue mode, workers and high availability](features/engine.md#queue-mode-workers-and-high-availability)) on the infra stack's Postgres, Valkey and MinIO. One image runs everything: the mains run `node server.js`, the workers `node worker.mjs`. Workers run the same production check as the mains, so in the production profile they need the same variables (including `LANDFLOW_PUBLIC_URL` and `LANDFLOW_REGISTRY_SECRET`, or `LANDFLOW_REGISTRY_OPEN=true`) even though they serve no registry; the bundled manifests use the development profile.

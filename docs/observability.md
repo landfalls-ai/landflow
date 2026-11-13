@@ -262,6 +262,12 @@ workflow (times every bucket on a histogram) grows with the workflows. Group by 
 
 See [postgres-write-queue.md](features/postgres-write-queue.md); `Database.writeHealth()` reports the same state.
 
+In queue mode each process also reports how far its copy trails the others:
+
+| Metric | Type | Attributes |
+|---|---|---|
+| `landflow.db.replication.lag` | gauge (s) | time between another process sending a change notice (just before its commit) and this process applying it, as of the last notice applied (not updated while none arrives) |
+
 ### Services (host)
 
 | Metric | Type | Attributes |
