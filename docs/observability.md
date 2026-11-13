@@ -544,4 +544,4 @@ the call may start, then prices and records what it used.
 
 `GET /api/health/live` (no I/O) and `GET /api/health/ready` (boot, draining, database, write queue, schema, Valkey in
 queue mode) are the probes; a failing readiness check is logged as `readiness check failed` with the check name and
-reason, while the public body carries only names and timings. Details: [Deployment, Probes](deployment.md#probes).
+reason, while the public body carries only names and timings. The audit outbox is not a readiness check on purpose (a slow SIEM must not take a host out of rotation): its health is in the `landflow.audit.outbox.*` gauges, the `LandflowAuditOutboxOld` alert and `GET /api/settings/audit`. Details: [Deployment, Probes](deployment.md#probes).
