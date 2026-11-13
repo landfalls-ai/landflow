@@ -1,10 +1,12 @@
 import type { Workflow } from '@landflow/engine';
+import { z } from 'zod';
+import { HttpError } from '@/lib/server/errors';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { workflowSchema } from '@/lib/server/schemas';
 import { currentActorId } from '@/lib/server/auth/context';
 import { ownershipOf } from '@/lib/server/projects';
 import { forgetDeleted, routeActor } from '@/lib/server/projects/http';
-import { publishedVersionId } from '@/lib/server/publications';
+import { deletePublications, publishedVersionId } from '@/lib/server/publications';
 import { forgetWorkflow } from '@/lib/server/publish';
 import { recordAudit } from '@/lib/server/audit';
 import { publishOrRequest } from '@/lib/server/governance/approvals';
@@ -21,17 +23,43 @@ export const GET = handler(async (_request: Request, { params }: Ctx) => {
   return workflow ? json({ workflow, ownership: ownershipOf(routeActor(), 'workflow', workflow.id) }) : error('Workflow not found', 404);
 });
 
+/** 412: the client based its save on a version that is no longer the stored one. */
+class WorkflowConflictError extends HttpError {
+  constructor(current: Workflow) {
+    super('This workflow changed since you opened it', 412, { code: 'workflow_conflict', details: { current: { updatedAt: current.updatedAt, ...(current.updatedBy && { updatedBy: current.updatedBy }) } } });
+  }
+}
+
+/** The `updatedAt` the client says it based the save on: `If-Match: "<updatedAt>"` (weak tags and quotes allowed) or body `baseUpdatedAt`. */
+function baseOf(request: Request, fromBody: string | undefined): string | undefined {
+  const header = request.headers.get('if-match')?.trim();
+  if (header && header !== '*') return header.replace(/^W\//, '').replace(/^"|"$/g, '');
+  return fromBody;
+}
+
+const saveSchema = workflowSchema.and(z.object({ baseUpdatedAt: z.string().optional() }));
+
+/**
+ * PUT replaces the document the client sends onto the stored one. With `If-Match` (or `baseUpdatedAt`) naming the
+ * `updatedAt` the client loaded, a save over a newer stored version is refused (412 `workflow_conflict`); without one
+ * the last write wins, as the API, CLI and MCP always did.
+ */
 export const PUT = handler(async (request: Request, { params }: Ctx) => {
   const { id } = await params;
+  if (!store.getWorkflow(id)) return error('Workflow not found', 404);
+  const body = await parseBody(request, saveSchema);
+  if (!body.ok) return body.response;
+  const { baseUpdatedAt, ...fields } = body.data;
+  // Read after the body (an await): the check and the save below run without one between them.
   const existing = store.getWorkflow(id);
   if (!existing) return error('Workflow not found', 404);
-  const body = await parseBody(request, workflowSchema);
-  if (!body.ok) return body.response;
+  const base = baseOf(request, baseUpdatedAt);
+  if (base && existing.updatedAt && base !== existing.updatedAt) throw new WorkflowConflictError(existing);
   // Governance (lib/server/governance/saves.ts): an `active` switch may be held for approval or refused; policy warnings.
-  const { workflow, extras } = governedSave({ ...existing, ...body.data, id } as Workflow, existing, (w) => store.saveWorkflow(w), { by: currentActorId() });
+  const { workflow, extras } = governedSave({ ...existing, ...fields, id } as Workflow, existing, (w) => store.saveWorkflow(w), { by: currentActorId() });
   // Saves are drafts. A client from before draft and publish sends `active: true` with an active workflow to put the
   // save live (the editor leaves `active` out): publish what it saved, as such a save used to do (or ask, four-eyes on).
-  if (body.data.active === true && existing.active) {
+  if (fields.active === true && existing.active) {
     const version = versionFor(workflow);
     if (version && version.id !== publishedVersionId(id)) {
       const outcome = await publishOrRequest({ workflowId: id, action: 'publish', versionId: version.id, by: currentActorId(), note: 'Saved as active (API)' }).catch((caught: Error) => {
@@ -47,11 +75,15 @@ export const PUT = handler(async (request: Request, { params }: Ctx) => {
 export const DELETE = handler(async (_request: Request, { params }: Ctx) => {
   const { id } = await params;
   const existing = store.getWorkflow(id);
-  if (!store.deleteWorkflow(id)) return error('Workflow not found', 404);
+  // The row, its versions, publications, project rows and policy go in one transaction: all or nothing.
+  const deleted = store.deleteWorkflow(id, () => {
+    deleteVersions(id);
+    deletePublications(id);
+    forgetDeleted('workflow', id);
+  });
+  if (!deleted) return error('Workflow not found', 404);
   recordAudit({ action: 'workflow.delete', target: { type: 'workflow', id, ...(existing?.name && { name: existing.name }) } });
-  deleteVersions(id);
-  forgetDeleted('workflow', id);
-  // Its publication goes now; app webhook triggers remove their hooks in the background.
+  // Its publication went with it; app webhook triggers remove their hooks in the background.
   void forgetWorkflow(id);
   return json({ ok: true });
 });

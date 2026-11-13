@@ -154,8 +154,8 @@ describe('routes wait on readiness', () => {
     const files = [...closure].map((file) => file.slice(src.length + 1));
     expect(files).not.toContain('lib/server/bootstrap.ts');
     expect(files).not.toContain('lib/server/runtime.ts');
-    // Measured: 401 files before this change, 72 after (+10%).
-    expect(closure.size).toBeLessThan(Math.ceil(72 * 1.1));
+    // Measured: 401 files before this change, 72 after (+10%); 73 with lib/server/errors.ts (HttpError), whose budget is raised to match.
+    expect(closure.size).toBeLessThan(Math.ceil(73 * 1.1));
   });
 
   it('handler() boots through the registered bootstrapper, and rejects rather than hangs without one', async () => {

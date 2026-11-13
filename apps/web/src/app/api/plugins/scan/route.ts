@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { registry } from '@/lib/server/plugins/registry';
-import { handler, json } from '@/lib/server/http';
+import { handler, json, parseBody } from '@/lib/server/http';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,7 +10,8 @@ const scanSchema = z.object({
 });
 
 export const POST = handler(async (request: Request) => {
-  const parsed = scanSchema.safeParse(await request.json().catch(() => ({})));
-  const result = await registry.scan(parsed.success ? parsed.data : {});
+  const body = await parseBody(request, scanSchema, { optional: true });
+  if (!body.ok) return body.response;
+  const result = await registry.scan(body.data);
   return json({ ...result, plugins: registry.list() });
 });

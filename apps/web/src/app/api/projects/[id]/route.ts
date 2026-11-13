@@ -42,8 +42,9 @@ export const DELETE = projectRoute(async (request: Request, { params }: Ctx) => 
   if (!projectRoleCan.manage(role)) return error('Only the project’s admins can delete it', 403);
   let transferTo = new URL(request.url).searchParams.get('transferTo') ?? undefined;
   if (!transferTo && request.headers.get('content-type')?.includes('json')) {
-    const body = (await request.json().catch(() => ({}))) as { transferTo?: unknown };
-    if (typeof body.transferTo === 'string') transferTo = body.transferTo;
+    const body = await parseBody(request, z.object({ transferTo: z.unknown().optional() }).passthrough(), { optional: true });
+    if (!body.ok) return body.response;
+    if (typeof body.data.transferTo === 'string') transferTo = body.data.transferTo;
   }
   if (transferTo && !projectRoleCan.create(projectRole(actor, transferTo))) return error('You can’t move things into that project', 403);
   return json({ ok: true, ...deleteProjectWithTransfer(project.id, transferTo, actor.id) });

@@ -5,7 +5,8 @@
  */
 import { adoptRun, checkPublish, EvalGateError, type GateResult } from '@/lib/server/agents/eval-gate';
 import { agentStore, configOf } from '@/lib/server/agents/store';
-import { error, handler, json } from '@/lib/server/http';
+import { z } from 'zod';
+import { error, handler, json, parseBody } from '@/lib/server/http';
 import { redeployIfDeployed } from '@/lib/server/kagent/deploy';
 import { hasPrompt } from '@/lib/shared/persona';
 
@@ -22,10 +23,11 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   if (!current) return error('Agent not found', 404);
   if (!current.model?.model) return error('Choose a model before publishing');
   if (!hasPrompt(current)) return error('Describe the persona or add instructions before publishing');
-  const body = await request.json().catch(() => ({}));
+  const body = await parseBody(request, z.object({ skipEval: z.unknown().optional() }).passthrough(), { optional: true });
+  if (!body.ok) return body.response;
   let gate: GateResult | undefined;
   const checked = JSON.stringify(configOf(current));
-  if (!(body as { skipEval?: unknown })?.skipEval) {
+  if (!body.data.skipEval) {
     try {
       gate = await checkPublish(id, { signal: request.signal });
     } catch (caught) {

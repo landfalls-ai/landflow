@@ -15,6 +15,8 @@ export interface RoutePolicy {
   action?: Action;
   /** Only with a session, never an API key. */
   sessionOnly?: boolean;
+  /** No entry named the path: the default below applied (test/policy-coverage.test.ts requires every route to be named or to guard itself). */
+  fallback?: true;
 }
 
 const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -94,7 +96,7 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (under('/api/proposals')) return { scope: read ? 'workflows:read' : 'workflows:write' };
   // Entities (initiatives, people, customers, systems): the routes check the entity's project, like suggestions.
   if (under('/api/entities')) return { scope: read ? 'workflows:read' : 'workflows:write' };
-  return { scope: 'admin' };
+  return { scope: 'admin', fallback: true };
 }
 
 /**

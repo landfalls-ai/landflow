@@ -18,6 +18,7 @@
  * webhook mode (production: counted in Insights, held by concurrency limits).
  */
 import { context } from '@opentelemetry/api';
+import { z } from 'zod';
 import type { ExecutionEvent } from '@landflow/engine';
 import { deleteExecutionBinary } from '@/lib/server/binary/access';
 import {
@@ -42,7 +43,7 @@ import {
 } from '@/lib/server/chat';
 import { CHAT_CLIENT_JS, chatPageHtml } from '@/lib/server/chat-client';
 import { cleanComment, isRating, setFeedback } from '@/lib/server/chat-feedback';
-import { handler } from '@/lib/server/http';
+import { handler, parseBody } from '@/lib/server/http';
 import { liveExecution, newExecutionId, RunBufferedError, runWorkflow, RunSkippedError, turnedDown } from '@/lib/server/runner';
 import { store } from '@/lib/server/store';
 import { chunkAgent, replyText, runStream, streamFormatOf } from '@/lib/server/streaming';
@@ -136,6 +137,10 @@ export const OPTIONS = handler(async (request: Request, { params }: Ctx) => {
   return new Response(null, { status: access.ok ? 204 : 403, headers: access.cors });
 });
 
+/** The two JSON bodies of the public chat: every field is checked where it is used (`validSessionId`, `isRating`, …), so each is open here. */
+const messageBodySchema = z.object({ sessionId: z.unknown().optional(), message: z.unknown().optional(), chatInput: z.unknown().optional(), agentKey: z.unknown().optional() }).passthrough();
+const feedbackBodySchema = z.object({ sessionId: z.unknown().optional(), executionId: z.unknown().optional(), rating: z.unknown().optional(), comment: z.unknown().optional() }).passthrough();
+
 /** The message from a JSON or multipart body. */
 async function readMessage(request: Request, config: PublicChatConfig): Promise<{ sessionId: string; message: string; files: ChatFile[]; agentKey?: unknown } | { error: string; status: number }> {
   const type = request.headers.get('content-type') ?? '';
@@ -158,12 +163,9 @@ async function readMessage(request: Request, config: PublicChatConfig): Promise<
       files.push({ fileName: entry.name || 'file', mimeType, data: new Uint8Array(await entry.arrayBuffer()) });
     }
   } else {
-    let body: { sessionId?: unknown; message?: unknown; chatInput?: unknown; agentKey?: unknown };
-    try {
-      body = (await request.json()) as typeof body;
-    } catch {
-      return { error: 'Send JSON { sessionId, message } or a multipart form', status: 400 };
-    }
+    const parsed = await parseBody(request, messageBodySchema, { message: 'Send JSON { sessionId, message } or a multipart form' });
+    if (!parsed.ok) return { error: 'Send JSON { sessionId, message } or a multipart form', status: 400 };
+    const body = parsed.data;
     sessionId = body.sessionId;
     message = body.message ?? body.chatInput;
     agentKey = body.agentKey;
@@ -178,12 +180,9 @@ async function readMessage(request: Request, config: PublicChatConfig): Promise<
 /** Rate an answer: the execution must be this chat's, and (when its trigger item is still there) of this session. */
 async function postFeedback(request: Request, found: NonNullable<ReturnType<typeof findPublicChat>>, cors: Record<string, string>): Promise<Response> {
   const { workflow, node } = found;
-  let body: { sessionId?: unknown; executionId?: unknown; rating?: unknown; comment?: unknown };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return jsonResponse({ error: 'Send JSON { sessionId, executionId, rating, comment? }' }, 400, cors);
-  }
+  const parsed = await parseBody(request, feedbackBodySchema, { message: 'Send JSON { sessionId, executionId, rating, comment? }' });
+  if (!parsed.ok) return jsonResponse({ error: 'Send JSON { sessionId, executionId, rating, comment? }' }, 400, cors);
+  const body = parsed.data;
   if (!validSessionId(body.sessionId)) return jsonResponse({ error: 'sessionId must be 1–128 letters, digits, dots, dashes, colons or underscores' }, 400, cors);
   if (typeof body.executionId !== 'string' || !/^[\w-]{1,128}$/.test(body.executionId)) return jsonResponse({ error: 'executionId is the id the chat answered with' }, 400, cors);
   if (body.rating !== null && !isRating(body.rating)) return jsonResponse({ error: "rating is 'up', 'down' or null (take it back)" }, 400, cors);

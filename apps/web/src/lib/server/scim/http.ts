@@ -4,16 +4,14 @@
  * guard (lib/shared/auth-paths.ts); `scimRoute` authenticates the bearer token itself (./auth) and runs the handler
  * as the token's user, so "who changed this" works as it does for API keys.
  */
-import { randomUUID } from 'node:crypto';
-import { withAuditRequest, noteAuditPrincipal, type AuditRequestContext } from '../audit/context';
-import { routePattern } from '../audit/http';
+import { noteAuditPrincipal } from '../audit/context';
 import { withAuth, type Principal } from '../auth/context';
 import { clientIp } from '../auth/rate-limit';
 import { publicOrigin } from '../auth/cookies';
 import { UserError } from '../auth/users';
-import { whenReady } from '../lifecycle';
+import { HttpError } from '../errors';
+import { handler } from '../http';
 import { ProjectError } from '../projects/store';
-import { logger } from '../telemetry';
 import { authenticateScim, type ScimCaller } from './auth';
 import { recordScimAuthFailure } from './audit';
 
@@ -34,13 +32,13 @@ export const SCHEMAS = {
 /** RFC 7644 §3.12 error types. */
 export type ScimType = 'invalidFilter' | 'tooMany' | 'uniqueness' | 'mutability' | 'invalidSyntax' | 'invalidPath' | 'noTarget' | 'invalidValue' | 'invalidVers' | 'sensitive';
 
-export class ScimError extends Error {
+export class ScimError extends HttpError {
   constructor(
-    readonly status: number,
+    status: number,
     message: string,
     readonly scimType?: ScimType,
   ) {
-    super(message);
+    super(message, status, { code: scimType ?? 'scim_error' });
   }
 }
 
@@ -80,51 +78,34 @@ export interface ScimContext {
 }
 
 /**
- * Wrap a /scim/v2 route: wait until the host booted, authenticate the SCIM token, then run `fn` as its user.
- * ScimError, and the user and project errors the stores throw, come back as SCIM errors.
+ * Wrap a /scim/v2 route: `handler` (lib/server/http.ts: audit context and request id, readiness wait, drain, generic
+ * 500) with the SCIM token check in place of the session guard, and every error rendered as a SCIM error document.
+ * ScimError, and the user and project errors the stores throw, come back with their status and `scimType`.
  */
 export function scimRoute<P extends Record<string, string> = Record<string, string>>(fn: (ctx: ScimContext, params: P) => Promise<Response>) {
-  return async (request: Request, context?: { params?: Promise<P> }): Promise<Response> => {
-    const params = ((await context?.params) ?? {}) as P;
-    const audit = auditContextOf(request, params);
-    return withAuditRequest(audit, async () => {
-      try {
-        await whenReady();
-        const checked = authenticateScim(request);
-        if (!checked.ok) {
-          recordScimAuthFailure(audit.ip, checked.status, checked.message, checked.keyId && checked.userId ? { keyId: checked.keyId, userId: checked.userId } : undefined);
-          return scimError(checked.status, checked.message, undefined, checked.status === 401 ? { 'www-authenticate': 'Bearer realm="landflow-scim"' } : {});
-        }
-        const { caller } = checked;
-        const principal: Principal = { user: caller.user, via: 'api-key', apiKey: { id: caller.keyId, scopes: caller.scopes } };
-        noteAuditPrincipal(principal);
-        return await withAuth({ principal }, () => fn({ request, caller, base: scimBaseUrl(request) }, params));
-      } catch (caught) {
-        if (caught instanceof ScimError) return scimError(caught.status, caught.message, caught.scimType);
-        if (caught instanceof UserError || caught instanceof ProjectError) {
-          return scimError(caught.status, caught.message, caught.status === 409 ? 'uniqueness' : caught.status === 400 ? 'invalidValue' : undefined);
-        }
-        logger.error('SCIM request failed', { error: caught, 'url.path': safePath(request) });
-        return scimError(500, (caught as Error).message ?? 'Internal error');
+  return handler(
+    async (request: Request, context?: { params?: Promise<P> }): Promise<Response> => {
+      const params = ((await context?.params) ?? {}) as P;
+      const checked = authenticateScim(request);
+      if (!checked.ok) {
+        recordScimAuthFailure(clientIp(request), checked.status, checked.message, checked.keyId && checked.userId ? { keyId: checked.keyId, userId: checked.userId } : undefined);
+        return scimError(checked.status, checked.message, undefined, checked.status === 401 ? { 'www-authenticate': 'Bearer realm="landflow-scim"' } : {});
       }
-    });
-  };
-}
-
-/** The audit context of a SCIM request (what `auditRequest` builds for /api): domain events carry its id, address, agent and route. */
-function auditContextOf(request: Request, params: Record<string, string>): AuditRequestContext {
-  const path = safePath(request) ?? '/scim/v2';
-  const agent = request.headers.get('user-agent');
-  return {
-    requestId: randomUUID(),
-    ip: clientIp(request),
-    ...(agent && { userAgent: agent.slice(0, 300) }),
-    method: request.method.toUpperCase(),
-    path,
-    route: routePattern(path, params),
-    params,
-    recorded: 0,
-  };
+      const { caller } = checked;
+      const principal: Principal = { user: caller.user, via: 'api-key', apiKey: { id: caller.keyId, scopes: caller.scopes } };
+      noteAuditPrincipal(principal);
+      return withAuth({ principal }, () => fn({ request, caller, base: scimBaseUrl(request) }, params));
+    },
+    {
+      mapError: (caught) => {
+        if (caught instanceof UserError || caught instanceof ProjectError) {
+          return new ScimError(caught.status, caught.message, caught.status === 409 ? 'uniqueness' : caught.status === 400 ? 'invalidValue' : undefined);
+        }
+        return undefined;
+      },
+      formatError: (http) => scimError(http.status, http.message, http instanceof ScimError ? http.scimType : undefined),
+    },
+  );
 }
 
 /** A discovery route (ServiceProviderConfig, Schemas, ResourceTypes): static documents, answered without a token. */
@@ -137,12 +118,4 @@ export function scimPublicRoute<P extends Record<string, string> = Record<string
       throw caught;
     }
   };
-}
-
-function safePath(request: Request): string | undefined {
-  try {
-    return new URL(request.url).pathname;
-  } catch {
-    return undefined;
-  }
 }
