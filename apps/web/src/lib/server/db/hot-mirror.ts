@@ -56,7 +56,7 @@ function coolingIds(db: Database, cutoff: string, promoted: Map<string, number>,
 /** Promoted runs stay in the copy this long past the promotion (ms by id; Database.evictLocal and the evictor read it). */
 // A singleton: a route's module graph and the evictor started at boot must see the same promotions.
 const promotedUntil = singleton('hot-promotions', () => new WeakMap<Database, Map<string, number>>());
-const promotions = (db: Database) => {
+export const promotions = (db: Database) => {
   let map = promotedUntil.get(db);
   if (!map) promotedUntil.set(db, (map = new Map()));
   return map;
@@ -70,6 +70,8 @@ export function keepHot(db: Database, executionId: string, now = Date.now()) {
 /** Evict what cooled down. Returns how many executions left the copy. */
 export function evictCold(db: Database, now = Date.now()): number {
   const promoted = promotions(db);
+  // Expired promotions go too, so a run deleted before it cooled leaves nothing behind.
+  for (const [id, until] of promoted) if (until <= now) promoted.delete(id);
   let total = 0;
   for (let round = 0; round < 20; round++) {
     const ids = coolingIds(db, hotCutoff(now), promoted, now);

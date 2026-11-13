@@ -18,6 +18,7 @@ vi.mock('@/lib/server/db', () => ({ database: () => holder.db }));
 
 const { evictCold, hotCondition, keepHot, mirrorSelect } = await import('@/lib/server/db/hot-mirror');
 const { postgresPlaceholders, promoteExecution, readExecutionData, readExecutionEvents, readRows } = await import('@/lib/server/db/reads');
+const { promotions: promotionsOf } = await import('@/lib/server/db/hot-mirror');
 const journalStore = await import('@/lib/server/journal/store');
 
 interface Fake {
@@ -215,6 +216,25 @@ describe('promotion', () => {
     expect(eventsOf(f.db, 'old')).toBe(2);
     // Nothing of this went to the sink (Postgres has it all).
     expect(f.ops).toEqual([]);
+  });
+});
+
+describe('promotion bookkeeping', () => {
+  it('leaves no promotion for an unknown id or on SQLite, and drops expired ones', async () => {
+    const f = open();
+    await promoteExecution('nope');
+    expect(promotionsOf(f.db).size).toBe(0);
+    run(f.db, 'hot', 'running');
+    await promoteExecution('hot');
+    expect(promotionsOf(f.db).has('hot')).toBe(true);
+    f.db.delete('executions', { id: 'hot' });
+    evictCold(f.db, Date.now() + 24 * 3600_000);
+    expect(promotionsOf(f.db).size).toBe(0);
+    const sqlite = new Database(openSqliteConnection(':memory:'), 'sqlite', ':memory:');
+    holder.db = sqlite;
+    sqlite.upsert('executions', { id: 'x', workflow_id: 'wf', status: 'success', mode: 'manual', started_at: minutesAgo(5), finished_at: minutesAgo(4), duration_ms: 1, summary: '{}', data: '{}' });
+    await promoteExecution('x');
+    expect(promotionsOf(sqlite).size).toBe(0);
   });
 });
 

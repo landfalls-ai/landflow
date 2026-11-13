@@ -81,6 +81,9 @@ export async function readRows<T extends object>(sql: string, ...params: SqlValu
  */
 export async function promoteExecution(id: string): Promise<void> {
   const db = database();
+  if (!remote(db)) return;
+  // A run unknown to the copy is nothing to hold (and a made-up id must not grow the promotions).
+  if (!db.get('SELECT 1 AS x FROM executions WHERE id = ?', id)) return;
   // Even a run still hot is held for the full window: it may be about to cool, and a caller reads it after an await.
   if (!isCold(db, id)) return keepHot(db, id);
   const loaded = await db.direct(async (client) => ({
