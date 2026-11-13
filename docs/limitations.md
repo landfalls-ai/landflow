@@ -104,7 +104,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
   compose) starts a second copy under the same plugin id and lists its template twice (built-in and installed); install
   from the marketplace only where the plugin isn't bundled.
 - **Checked against fakes only**: Slack, Google, Notion, Linear, Attio and Fathom activity were tested against local fakes of their APIs, not a real workspace.
-- **Postgres mode and a rejected write** ([features/postgres-write-queue.md](features/postgres-write-queue.md)): a batch Postgres keeps rejecting (not a connection failure) blocks the store: it refuses every write (a `StoreUnavailableError` with status 503; route responses are 500/400 with its message until `handler()` maps the status) until the batch applies on a retry or the host restarts with `LANDFLOW_PG_SKIP_BATCH`. Reads keep working. The spool is fsynced at most every 100 ms by default, so a power cut can lose the last 100 ms of writes not yet in Postgres.
+- **Postgres mode and a rejected write** ([features/postgres-write-queue.md](features/postgres-write-queue.md)): a batch Postgres keeps rejecting (not a connection failure) blocks the store: it refuses every write (a `StoreUnavailableError` with status 503; route responses answer 503 with `Retry-After` (`handler()` maps it)) until the batch applies on a retry or the host restarts with `LANDFLOW_PG_SKIP_BATCH`. Reads keep working. The spool is fsynced at most every 100 ms by default, so a power cut can lose the last 100 ms of writes not yet in Postgres.
 
 ## Graceful shutdown (backend hardening, 2026-11)
 
