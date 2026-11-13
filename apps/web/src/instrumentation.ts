@@ -12,6 +12,9 @@ export async function register() {
     installProcessHandlers({ role: 'main', signals: !!process.env.NEXT_MANUAL_SIG_HANDLE, exitOnUncaught: process.env.NODE_ENV === 'production' });
     // Routes no longer import the composition root: `whenReady()` (lifecycle.ts) boots through this.
     setBootstrapper(() => import('./lib/server/bootstrap').then((m) => m.ensureBootstrapped()));
+    // `next build` calls register() in its page-generation workers: they serve no traffic, so they don't boot the host
+    // (no schedulers, cluster or configuration refusal there). A route that runs at build time still boots lazily.
+    if (process.env.NEXT_PHASE === 'phase-production-build') return;
     // A failed required boot rejects here, and a rejected register() stops `next dev`. Outside production keep the
     // server up (failBoot already logged `boot failed`): routes answer 500 and the next request boots it again. Under
     // `next start` and the image the rejection stands and failBoot exits so the orchestrator restarts the process.

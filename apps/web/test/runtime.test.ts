@@ -83,6 +83,16 @@ describe('boot check', () => {
     expect(bootState()).toBe('failed');
   });
 
+  it('only warns about production-profile problems inside `next build`', async () => {
+    Object.assign(process.env, { LANDFLOW_PROFILE: 'production', NEXT_PHASE: 'phase-production-build', LANDFLOW_CODE_RUNNER_SECRET: 'landflow-dev-only' });
+    vi.resetModules();
+    const { SERVICES } = await import('@/lib/server/runtime');
+    const check = SERVICES.find((spec) => spec.name === 'config check');
+    expect(() => check?.start()).not.toThrow();
+    delete process.env.NEXT_PHASE;
+    expect(() => check?.start()).toThrow(/LANDFLOW_CODE_RUNNER_SECRET/);
+  });
+
   it('boots in the development profile', async () => {
     Object.assign(process.env, {
       LANDFLOW_PROFILE: 'development',

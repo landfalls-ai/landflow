@@ -84,7 +84,9 @@ function configCheck(): void {
   const check = checkConfig();
   for (const warning of check.warnings) logger.warn(warning);
   logger.info('effective configuration', { profile: profile(), effective: check.effective });
-  if (profile() === 'production' && check.errors.length > 0) throw new ConfigError(check.errors);
+  // `next build` runs with NODE_ENV=production but without the deployment's environment: it only warns there.
+  const building = process.env.NEXT_PHASE === 'phase-production-build';
+  if (profile() === 'production' && !building && check.errors.length > 0) throw new ConfigError(check.errors);
   for (const problem of check.errors) logger.warn(problem);
 }
 
@@ -255,7 +257,8 @@ async function bootSteps(role: Role): Promise<void> {
 function failBoot(error: unknown): never {
   markBootFailed(error);
   logger.error('boot failed', { error });
-  if (process.env.NEXT_RUNTIME === 'nodejs' && process.env.NODE_ENV === 'production' && !process.env.VITEST) setImmediate(() => process.exit(1));
+  const serving = process.env.NEXT_PHASE !== 'phase-production-build' && !process.env.VITEST;
+  if (process.env.NEXT_RUNTIME === 'nodejs' && process.env.NODE_ENV === 'production' && serving) setImmediate(() => process.exit(1));
   throw error;
 }
 

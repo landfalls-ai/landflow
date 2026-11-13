@@ -52,9 +52,11 @@ export function pagePolicy(nonce: string): string {
     "font-src 'self' data:",
     "media-src 'self' blob: data:",
     "connect-src 'self'",
-    "frame-src 'self' blob:",
+    // Chrome shows a PDF <object> in a nested frame and checks frame-src too (see object-src below).
+    "frame-src 'self' blob: data: https:",
     "worker-src 'self' blob:",
-    // The Run Trace previews a PDF artifact in an <object> (https, same-origin or data: URL); browsers no longer run other plugins.
+    // The Run Trace previews a PDF artifact in an <object> (https, same-origin or data: URL); browsers no longer run
+    // other plugins.
     "object-src 'self' data: https:",
     "base-uri 'self'",
     "form-action 'self'",
