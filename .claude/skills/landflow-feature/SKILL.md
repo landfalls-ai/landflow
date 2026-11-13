@@ -61,6 +61,7 @@ pnpm install
 pnpm typecheck
 (cd apps/web && npx vitest run)
 pnpm test        # runs the host suite again (apps/web has a test script); `pnpm -r --if-present --filter '!@landflow/web' test` skips it
+pnpm check:deps  # the dependency rules; `pnpm check` is typecheck + test + check:deps, the local gate (no hosted CI)
 # then the wave's own commands: integration flags (LANDFLOW_INTEGRATION=postgres|queue|…, Postgres files one at a time),
 # Go (go test ./...) and Python (.venv/bin/python -m unittest discover -s tests) suites for what changed
 ```

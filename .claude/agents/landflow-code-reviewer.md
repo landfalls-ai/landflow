@@ -37,12 +37,13 @@ function, its callers (`grep -rn`).
 **Conventions** (constitution "Architecture")
 - `handler()`, `parseBody()`, `json()` / `error()`; a policy entry or in-handler check; OpenAPI entry for public API
   routes; no SQL or `db` in routes; logic and audit in the library.
-- No server → UI, shared → server or `packages/` → `apps/web` imports; no new import cycle (check with `grep` on the
-  new imports).
+- No server → UI, shared → server, client component → server value, route → `lib/server/db` or `packages/` →
+  `apps/web` imports, and no new import cycle: `pnpm check:deps` checks them (run it on the branch).
 - Errors: throw `HttpError` (`lib/server/errors.ts`) or a domain error that extends it, and let `handler()` map it; no
   internal message sent to the client (anything else is a generic 500 with the request id).
 - Logs through `logger` with fields; metric labels bounded.
-- Targets of the backend refactor: used when they exist on the base, not re-implemented in parallel.
+- The backend refactor's conventions (the constitution) used, not re-implemented in parallel; no route `catch` that only
+  maps a domain error to its status (`handler()` does).
 - UI: shared components, the words in `docs/ui-review.md`, phone changes behind `max-md:` / `usePhone()`, desktop
   unchanged unless the brief says so.
 - Comments say why; a header on new files; no dead code, no debugging leftovers, no `any` or `@ts-ignore`.

@@ -119,8 +119,8 @@ filesystem access causes tracing of the whole project".
 Claude Code works on this repository with three things checked in beside the code:
 
 - **The constitution**, [constitution.md](constitution.md): the rules every research and implementation starts from.
-  `CLAUDE.md` imports it (`@docs/constitution.md`), so every session reads it. Rules marked *target* belong to the
-  backend refactor and become current as their package lands on `main`; change the page when a convention changes.
+  `CLAUDE.md` imports it (`@docs/constitution.md`), so every session reads it. Every rule describes code that exists
+  (the backend refactor's conventions have all landed); change the page when a convention changes.
 - **Agents** in `.claude/agents/`: subagents that know this repository: its paths, helpers, pitfalls and the order of
   work. Claude Code picks one by its description, or you name it ("use landflow-security-reviewer on this branch").
   Reviewers and the researcher are read-only. None of them starts sub-agents of its own.

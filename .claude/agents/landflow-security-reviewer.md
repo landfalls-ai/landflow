@@ -58,12 +58,15 @@ Read `docs/constitution.md` (its Security baseline is your checklist), `CLAUDE.m
   addresses in the production profile unless `LANDFLOW_OUTBOUND_ALLOW` lists them, at DNS lookup and on every redirect;
   the governance host allow-list (`lib/server/governance/policy.ts`) is off by default. Flag a new bare `fetch` to a
   user-influenced URL; the callers still outside `safeFetch` are listed in `docs/limitations.md`.
-- **Known open findings** (don't re-report them as new unless the diff makes them worse; do flag code that copies
-  them), each with the package that closes it: an isolate backend for expressions (P30). Drop an entry once its package
-  is on `origin/main` (S3, S6 and S10 closed with P08, P09 and P10; S1, S5, S7, S8 and S12 with P11 to P14; S11 with
-  P16: `parseBody`'s 413 over `LANDFLOW_MAX_BODY_BYTES` and the API and public-trigger rate limits in
-  `lib/server/rate-limit/api-limiter.ts`; S9, S13 and S14 with P21, P23 and P24: audit fail-closed, the key ring and
-  session hardening, above).
+- **Review findings**: every finding of the backend review is closed on `origin/main` (S3, S6 and S10 with P08, P09
+  and P10; S1, S5, S7, S8 and S12 with P11 to P14; S11 with P16: `parseBody`'s 413 over `LANDFLOW_MAX_BODY_BYTES` and
+  the API and public-trigger rate limits in `lib/server/rate-limit/api-limiter.ts`; S9, S13 and S14 with P21, P23 and
+  P24: audit fail-closed, the key ring and session hardening, above; S1's strict mode with P30:
+  `LANDFLOW_EXPRESSION_SANDBOX=isolate`, an isolated-vm backend with a heap cap). What stays open is in
+  `docs/limitations.md`: the isolate's cap does not bound resident memory and hash-table growth can still abort the
+  process, so `isolate` is no defence against a memory bomb; unauthenticated paths outside the five public trigger
+  groups have no rate limit. Don't re-report those as new unless the diff makes them worse; do flag code that copies
+  them.
 
 ## Checklist for every changed route and library function
 

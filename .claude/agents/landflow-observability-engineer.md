@@ -57,8 +57,12 @@ names, attributes, metric names, log fields) and `docs/features/observability.md
   deadline.
 - Redaction grows with the data: a new secret-like field name or value format gets added to `SECRET_KEY` or a
   scrubber, with a test.
-- Exceptions carry `exception.type`, `exception.message`, `exception.stacktrace`; group by a fingerprint (target,
-  P29), and ship alert rules and the dashboard with the metric they read (`deploy/`, target, P29).
+- Exceptions carry `exception.type`, `exception.message`, `exception.stacktrace` and `exception.fingerprint`
+  (`telemetry/fingerprint.ts`: the type and the top in-repo frames without line numbers): log the caught `Error` as
+  `{ error }` and fail spans with `failSpan()` (`telemetry/spans.ts`) so both get it. A metric worth paging on ships
+  with its alert rule (with a `runbook` annotation) and dashboard panel in `deploy/observability/prometheus-rules.yml`
+  and `landflow-dashboard.json`, copied into `deploy/k8s/components/observability/` (a test checks the copies match
+  and that every metric they name exists in the code; `promtool test rules` runs the rule tests).
 
 ## Tests
 
