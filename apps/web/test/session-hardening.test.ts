@@ -103,6 +103,27 @@ describe('session hardening', () => {
     }
   });
 
+  it('a background request (a poll, the edit lock heartbeat, the live stream) leaves last_seen_at alone; a person’s request moves it', async () => {
+    const token = tokenOf(await signIn(OWNER.email, OWNER.password));
+    const twoHoursAgo = new Date(Date.now() - 2 * 3_600_000).toISOString();
+    const lastSeen = () => authDb().get<Record<string, string>>('SELECT * FROM sessions WHERE id = ?', tokenHash(token))!.last_seen_at;
+    authDb().upsert('sessions', { ...authDb().get<Record<string, string>>('SELECT * FROM sessions WHERE id = ?', tokenHash(token))!, last_seen_at: twoHoursAgo });
+    const cookie = `landflow_session=${token}`;
+    // The edit lock's heartbeat, as the editor sends it every 10 s.
+    const heartbeat = guardRequest(
+      new Request(`${BASE}/api/workflows/wf_lock/lock`, { method: 'POST', headers: { cookie, origin: BASE, 'content-type': 'application/json', 'x-landflow-background': '1' }, body: '{}' }),
+    );
+    expect(heartbeat.ok).toBe(true);
+    expect(lastSeen()).toBe(twoHoursAgo);
+    // A poll, and the live stream's reconnect (EventSource can't send headers).
+    expect(guardRequest(new Request(`${BASE}/api/executions?limit=20`, { headers: { cookie, 'x-landflow-background': '1' } })).ok).toBe(true);
+    expect(guardRequest(new Request(`${BASE}/api/events`, { headers: { cookie } })).ok).toBe(true);
+    expect(lastSeen()).toBe(twoHoursAgo);
+    // Any other value of the header is a person's request.
+    expect(guardRequest(new Request(`${BASE}/api/executions?limit=20`, { headers: { cookie, 'x-landflow-background': 'yes' } })).ok).toBe(true);
+    expect(Date.parse(lastSeen())).toBeGreaterThan(Date.parse(twoHoursAgo));
+  });
+
   it('refuses a cookie-authenticated change with no Origin and a cross-site Sec-Fetch-Site', () => {
     const attempt = (headers: Record<string, string>) => guardRequest(new Request(`${BASE}/api/workflows`, { method: 'POST', headers: { cookie: `landflow_session=${ownerSession}`, ...headers } }));
     const refused = attempt({ 'sec-fetch-site': 'cross-site' });

@@ -147,7 +147,7 @@ function GatewaySyncStatus({ canManage }: { canManage: boolean }) {
 
   const load = useCallback(async () => {
     try {
-      setGateway(await api<McpGatewayStatusView>('/api/mcp/gateway'));
+      setGateway(await api<McpGatewayStatusView>('/api/mcp/gateway', { background: true }));
       setError(undefined);
     } catch (e) {
       setError((e as Error).message);
@@ -824,7 +824,7 @@ function ApprovalsCard() {
 
   const load = useCallback(async () => {
     try {
-      setApprovals((await api<{ approvals: McpApprovalView[] }>('/api/mcp/approvals')).approvals);
+      setApprovals((await api<{ approvals: McpApprovalView[] }>('/api/mcp/approvals', { background: true })).approvals);
       setError(undefined);
     } catch (e) {
       setError((e as Error).message);

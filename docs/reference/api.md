@@ -5,6 +5,10 @@ unless [Authentication](../features/authentication.md) lists them as public; wha
 scope, an admin role) is set in `apps/web/src/lib/server/auth/policy.ts`. The public API is also published as OpenAPI
 3.1 at `GET /api/openapi.json` (Settings → API). Part of the [Landflow docs](../README.md).
 
+**Background requests.** A request sent with `X-Landflow-Background: 1` (the browser's polls and the editor's edit-lock
+heartbeat send it) does not mark its session as used, so it does not hold off `LANDFLOW_SESSION_IDLE_HOURS`;
+`GET /api/events` never does. Any other value, or none, counts as use.
+
 **Errors.** A failed request answers `{ error, code, …details }` with the HTTP status: `error` is the text a person reads,
 `code` a stable snake_case name (the thrown class's, or `invalid_request` for a body that failed validation, which also
 carries `issues`), and any extra fields the error names (`current` of a workflow conflict, `missing` of a marketplace

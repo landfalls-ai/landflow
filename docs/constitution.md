@@ -155,7 +155,10 @@ session; people read it before they start a feature too.
   yourself.
 - **Sessions.** `sessionUser()` (`lib/server/auth/sessions.ts`) enforces the absolute and idle limits
   (`LANDFLOW_SESSION_TTL_HOURS`, `LANDFLOW_SESSION_IDLE_HOURS`) and marks the session used; a check the person did not
-  make (a stream's re-check, a timer) resolves with `touch: false` (`resolvePrincipal(request, { touch: false })`). A
+  make (a stream's re-check, a timer) resolves with `touch: false` (`resolvePrincipal(request, { touch: false })`); in
+  the browser a poll, a heartbeat or a reload after a live event calls `api(path, { background: true })`, which sends
+  `X-Landflow-Background: 1`, and `guardRequest()` resolves it (and `GET /api/events`) without the touch. A new client
+  timer that reads the API must pass `background: true`, or an open tab keeps its session alive. A
   password change ends the user's other sessions; password sign-in follows `LANDFLOW_LOCAL_SIGN_IN`
   (`localSignInAllowed()` in `auth/local-sign-in.ts`); `guardRequest()` refuses a cookie-authenticated write with a
   foreign `Origin`, or with none and a cross-site `Sec-Fetch-Site`.

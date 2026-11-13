@@ -66,7 +66,7 @@ export function NotebookTab({ teamId, faces }: { teamId: string; faces: Face[] }
     if (kind) params.set('kind', kind);
     if (asked) params.set('q', asked);
     try {
-      const next = await api<Listed>(`/api/agent-teams/${teamId}/notes${params.size ? `?${params}` : ''}`);
+      const next = await api<Listed>(`/api/agent-teams/${teamId}/notes${params.size ? `?${params}` : ''}`, { background: true });
       setData(next);
       setError(undefined);
       const ids = new Set(next.notes.map((n) => n.id));

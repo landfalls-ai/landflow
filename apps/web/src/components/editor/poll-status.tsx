@@ -18,7 +18,7 @@ export function PollStatus({ workflowId, nodeId, active, dirty, interval }: { wo
   useEffect(() => {
     if (!active) return;
     const load = () =>
-      api<{ polls: Status[] }>(`/api/workflows/${workflowId}/polls`)
+      api<{ polls: Status[] }>(`/api/workflows/${workflowId}/polls`, { background: true })
         .then((r) => setStatus(r.polls.find((p) => p.nodeId === nodeId)))
         .catch(() => {});
     void load();

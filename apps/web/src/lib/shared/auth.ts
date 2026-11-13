@@ -270,5 +270,12 @@ export interface EditLockView {
   expiresAt: string;
 }
 
+/**
+ * A request the browser makes on its own (a timer's poll, the edit lock's heartbeat, a reload after a live event) sends
+ * this header as `1`: the guard then resolves its session without marking it used, so a tab left open still reaches
+ * LANDFLOW_SESSION_IDLE_HOURS. Trusting it is safe: it can only make a session end sooner.
+ */
+export const BACKGROUND_HEADER = 'x-landflow-background';
+
 export const MIN_PASSWORD_LENGTH = 8;
 export const MAX_PASSWORD_LENGTH = 256;

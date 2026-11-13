@@ -175,7 +175,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
       execution: ExecutionRecord;
       traceUrl?: string;
       progress?: Record<string, NodeProgress>;
-    }>(`/api/executions/${executionId}`)
+    }>(`/api/executions/${executionId}`, { background: true })
       .then((r) => {
         setRecord(r.execution);
         setTraceUrl(r.traceUrl);

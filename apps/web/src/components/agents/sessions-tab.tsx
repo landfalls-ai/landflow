@@ -78,7 +78,7 @@ function SessionDetail({
 
   const load = useCallback(
     () =>
-      api<{ session: AgentSession; traceUrls?: Record<string, string>; feedback?: ChatFeedback[] }>(`/api/agents/${agentId}/sessions/${sessionId}`)
+      api<{ session: AgentSession; traceUrls?: Record<string, string>; feedback?: ChatFeedback[] }>(`/api/agents/${agentId}/sessions/${sessionId}`, { background: true })
         .then((r) => {
           setFeedback(Object.fromEntries((r.feedback ?? []).flatMap((f) => (f.entryId ? [[f.entryId, f]] : []))));
           setTraceUrls(r.traceUrls);
@@ -260,7 +260,7 @@ export function SessionsTab({
 
   const load = useCallback(() => {
     setLoading(true);
-    return api<{ sessions: SessionSummary[] }>(`/api/agents/${agentId}/sessions`)
+    return api<{ sessions: SessionSummary[] }>(`/api/agents/${agentId}/sessions`, { background: true })
       .then((r) => {
         setSessions(r.sessions);
         setError(undefined);

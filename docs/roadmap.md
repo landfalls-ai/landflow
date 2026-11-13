@@ -1385,8 +1385,10 @@ workbench in place of a page of cards, keeping Spotlight.
   every caller that may read a finished run moved onto them (execution routes, run search, lines, compare, measures,
   needs-you, OTLP export, MCP tools, Slack, approval links, the brain, the binary sweep). `store.getExecution` stays for
   runs in flight, and a source scan guards it. No behaviour change; P26 serves the seam from Postgres.
-- **Wave 4 carryover** (applied in wave 5): the live stream's 30 s re-check no longer marks the session as used, so an
-  open tab reaches `LANDFLOW_SESSION_IDLE_HOURS` (P24), and a throwing re-check closes the stream; a resumed run is left
+- **Wave 4 carryover** (applied in wave 5): the live stream's 30 s re-check no longer marks the session as used, and
+  neither do the editor's edit-lock heartbeat, the pages' polling and their reloads after a live event (they send
+  `X-Landflow-Background: 1`), so an open tab reaches `LANDFLOW_SESSION_IDLE_HOURS` (P24); a throwing re-check closes
+  the stream; a resumed run is left
   out of later executions pages too; MCP `list_executions` filters a status in SQL over pages; the effective
   configuration shows catalogued non-secret variables whose name looks secret; the renamed retention variables are read
   through `envWithAliases` (an empty new name no longer hides the old one); the rate limiter caps its keys and its
