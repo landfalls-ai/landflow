@@ -1328,6 +1328,7 @@ workbench in place of a page of cards, keeping Spotlight.
   as aliases. `config-catalog.test.ts` fails on an environment name the source reads that is not catalogued, on more
   than 88 files reading `process.env` outside `lib/server/config`, and on a stale generated page. SAML, mail, S3,
   marketplace and environment-protection flags now go through `envFlag`; the values they accept changed (`LANDFLOW_S3_FORCE_PATH_STYLE=0` is now off, `LANDFLOW_SMTP_SECURE=1` true, `LANDFLOW_MARKETPLACE_ALLOW_LOCAL=true` on, `LANDFLOW_ENVIRONMENT_PROTECTED=on`/`off` decides, an unparseable SAML flag takes its default; see history.md).
+- **P19, one SSE helper** (C14; wave 4): `lib/server/sse.ts` (`sseResponse`) bounds each client's unread bytes (1 MiB, then a closing comment and the stream ends), writes `id:` / `event:` lines, heartbeats and cleans up; the bus keeps a ring of the last 500 events with `seq` and no longer raises the EventEmitter limit. `/api/events` (`lib/server/events-stream.ts`) numbers events `<boot>.<seq>`, replays after `Last-Event-ID` or sends `event: reset`, and re-checks the viewer's access every 30 s (closing when the session or user is gone). The assistant chat, agent architect, run and approvals routes use the helper.
 
 ## Planned next
 

@@ -15,7 +15,8 @@ import { context } from '@opentelemetry/api';
 import { z } from 'zod';
 import type { Workflow } from '@landflow/engine';
 import type { NodeItem } from '@landflow/protocol';
-import { error, handler, parseBody, sseHeaders } from '@/lib/server/http';
+import { error, handler, parseBody } from '@/lib/server/http';
+import { sseResponse } from '@/lib/server/sse';
 import { idempotencyKeyOf, MAX_KEY_LENGTH } from '@/lib/server/idempotency';
 import { chatItem, MAX_CHAT_FILE_BYTES, MAX_CHAT_FILES } from '@/lib/server/chat';
 import { DuplicateRunError, findTrigger, liveExecution, newExecutionId, planRerun, RerunError, runWorkflow, type RunOptions } from '@/lib/server/runner';
@@ -111,19 +112,13 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const runContext = trigger?.context ?? context.active();
   const idempotencyKey = body.data.idempotencyKey ?? idempotencyKeyOf(request);
 
-  const encoder = new TextEncoder();
   const abort = new AbortController();
   if (body.data.debug) request.signal.addEventListener('abort', () => abort.abort());
 
-  const stream = new ReadableStream({
-    async start(controller) {
-      const send = (event: string, data: unknown) => {
-        try {
-          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
-        } catch {
-          // client went away
-        }
-      };
+  return sseResponse(
+    request,
+    async (write, close) => {
+      const send = (event: string, data: unknown) => void write(data, { event });
       try {
         const record = await context.with(runContext, () =>
           runWorkflow({
@@ -158,11 +153,9 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
           error: { message: (caught as Error).message },
         });
       } finally {
-        try {
-          controller.close();
-        } catch {}
+        close();
       }
     },
-  });
-  return new Response(stream, { headers: { ...sseHeaders, ...traceparentHeader(runContext) } });
+    { headers: traceparentHeader(runContext) },
+  );
 });

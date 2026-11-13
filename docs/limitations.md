@@ -114,6 +114,11 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - **`next dev`** keeps Next.js's own signal handling: the host's phased shutdown (flush, lease release) runs only where `NEXT_MANUAL_SIG_HANDLE=true` (`pnpm start`, the Docker image). Without it only the error handlers are ours.
 - **Streams**: in manual mode in-flight requests are awaited, but SSE streams are not; they end when the process exits.
 
+## Live streams (backend hardening, 2026-11)
+
+- **Replay is per process**: `/api/events` keeps the last 500 events in memory; a reconnect after a restart, a longer gap, or to another main (queue mode) gets `event: reset` and has to refetch. The editor's shared EventSource (`lib/client/live.ts`) does not yet listen for `reset`, so after such a gap a tab may miss updates until its next fetch.
+- A client that leaves 1 MiB unread on any SSE route is disconnected. A run started from the editor keeps running; the editor picks it up again.
+
 ## Execution retention (backend hardening, 2026-11)
 
 - **The cap can be exceeded between passes**: a finished run prunes only every `LANDFLOW_RETENTION_EVERY` runs (default
