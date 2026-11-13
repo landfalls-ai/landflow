@@ -4,18 +4,20 @@
  * Landflow yet), its README, and Install / Uninstall. A node plugin runs code on this machine, so
  * installing one first shows what will run and from where.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { ArrowUpRight, Bot, Check, ExternalLink, Eye, Package, Sparkles, TriangleAlert, Workflow, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { usePhone } from '@/lib/client/use-phone';
 import { api, ApiError } from '@/lib/client/api';
 import type { InstallConfirmation, InstalledPlugin, InstallResult, PluginDetail } from '@/lib/shared/marketplace';
 import { Badge, Chip } from '../ui/badge';
 import { Button } from '../ui/button';
 import { CopyButton } from '../ui/copy-button';
 import { SectionLabel } from '../ui/inputs';
+import { useDialogFocus } from '../ui/use-dialog-focus';
 import { UNSUPPORTED_LABEL } from './use-marketplace';
 
 const MODEL_LABEL: Record<string, string> = { sonnet: 'Sonnet', opus: 'Opus', haiku: 'Haiku', inherit: 'Sonnet (inherit)' };
@@ -57,6 +59,9 @@ export function PluginDrawer({ marketplaceId, name, onClose, onChanged }: { mark
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [marketplaceId, name]);
+  // On a phone the drawer fills the screen, so the focus moves in and stays in it (docs/mobile.md#sheets-and-dialogs).
+  const panel = useRef<HTMLElement>(null);
+  useDialogFocus(panel, usePhone());
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);
@@ -106,11 +111,12 @@ export function PluginDrawer({ marketplaceId, name, onClose, onChanged }: { mark
   return createPortal(
     <div className="fixed inset-0 z-50 flex justify-end bg-overlay animate-in" onMouseDown={onClose}>
       <aside
+        ref={panel}
         role="dialog"
         aria-modal="true"
         aria-label={`Plugin ${name}`}
         onMouseDown={(e) => e.stopPropagation()}
-        className="flex h-full w-[560px] max-w-full flex-col border-l border-hair bg-sf shadow-pop animate-slide-left"
+        className="flex h-full w-[560px] max-w-full flex-col border-l border-hair bg-sf shadow-pop animate-slide-left max-md:h-dvh max-md:w-full max-md:border-l-0 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)]"
       >
         <header className="flex items-start gap-3 border-b border-hair px-5 py-4">
           <span className="grid size-9 shrink-0 place-items-center rounded-[28%] border border-hair bg-acdim text-ac">
@@ -127,7 +133,7 @@ export function PluginDrawer({ marketplaceId, name, onClose, onChanged }: { mark
               <ExternalLink className="size-3.5" /> Homepage
             </a>
           )}
-          <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close">
+          <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close" className="max-md:size-11">
             <X className="size-4" />
           </Button>
         </header>

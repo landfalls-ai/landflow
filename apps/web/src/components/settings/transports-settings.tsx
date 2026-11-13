@@ -14,6 +14,7 @@ import type { ConnectionField, TransportConnectionCheck, TransportConnectionHeal
 import { Card } from '@/components/shell/page-header';
 import { Badge, StatusDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { confirmAction } from '@/components/ui/confirm';
 import { FieldLabel, Input, SectionLabel, Select, Switch, Textarea } from '@/components/ui/inputs';
 
 interface Draft {
@@ -197,12 +198,13 @@ function ConnectionRow({ connection, kinds, onEdit, onChanged, onDeleted }: { co
       else toast.error(check.message);
     });
   const toggle = (enabled: boolean) => act('toggle', async () => onChanged(await api<TransportConnectionView>(`/api/transports/connections/${encodeURIComponent(connection.id)}`, { method: 'PATCH', json: { enabled } })));
-  const remove = () =>
-    act('delete', async () => {
-      if (!window.confirm(`Delete ${connection.name}? Plugins reached only through it become unreachable.`)) return;
+  const remove = async () => {
+    if (!(await confirmAction(`Delete ${connection.name}? Plugins reached only through it become unreachable.`, { action: 'Delete', danger: true }))) return;
+    await act('delete', async () => {
       await api(`/api/transports/connections/${encodeURIComponent(connection.id)}`, { method: 'DELETE' });
       onDeleted();
     });
+  };
 
   return (
     <li className="py-2.5">

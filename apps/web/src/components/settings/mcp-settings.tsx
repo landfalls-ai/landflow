@@ -19,6 +19,7 @@ import { Card } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CopyButton } from '@/components/ui/copy-button';
+import { confirmAction } from '@/components/ui/confirm';
 import { EmptyState } from '@/components/ui/empty-state';
 import { FieldLabel, Input, SectionLabel, Select, Switch } from '@/components/ui/inputs';
 
@@ -1006,7 +1007,7 @@ function InstanceServerCard({ origin }: { origin: string }) {
     }
   };
   const regenerate = async () => {
-    if (access?.hasToken && !window.confirm('Replace the access token? Clients using the current one stop working at once.')) return;
+    if (access?.hasToken && !(await confirmAction('Replace the access token? Clients using the current one stop working at once.', { action: 'Replace', danger: true }))) return;
     setBusy('token');
     try {
       apply(await api<McpAccessResponse>('/api/settings/mcp', { method: 'POST' }));

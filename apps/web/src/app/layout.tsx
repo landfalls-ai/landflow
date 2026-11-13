@@ -3,6 +3,7 @@ import { GeistMono } from 'geist/font/mono';
 import { GeistSans } from 'geist/font/sans';
 import { Toaster } from 'sonner';
 import { ViewerProvider } from '@/components/auth/viewer';
+import { ConfirmHost } from '@/components/ui/confirm';
 import { Sidebar } from '@/components/shell/sidebar';
 import { lookScript } from '@/components/shell/look-toggle';
 import { themeScript } from '@/components/shell/theme-toggle';
@@ -38,6 +39,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             </main>
           </div>
         </ViewerProvider>
+        <ConfirmHost />
         {/* Clear of the editor's Spotlight panel: it sets --toast-right (desktop) and --toast-bottom (its phone sheet). */}
         <Toaster
           position="bottom-right"

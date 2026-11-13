@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils';
 import { claudeAddCommand, curlCheck, DEBUG_TTL_CHOICES, mcpConfigJson, relativeTime, tokenPrefix, tokenState } from '@/lib/shared/debug-token-snippets';
 import { Badge, type Tone } from '../ui/badge';
 import { Button } from '../ui/button';
+import { useDialogFocus } from '../ui/use-dialog-focus';
 import { CopyButton } from '../ui/copy-button';
 import { FieldLabel, Input, Select } from '../ui/inputs';
 
@@ -88,12 +89,8 @@ function DebugAccessDialog({ executionId, onClose }: { executionId: string; onCl
     const timer = setInterval(() => void load(), 5000); // so a token's last use shows while an agent works
     return () => clearInterval(timer);
   }, [load]);
-  useEffect(() => {
-    ref.current?.focus({ preventScroll: true });
-    const key = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', key);
-    return () => window.removeEventListener('keydown', key);
-  }, [onClose]);
+  // Focus moves to the dialog, Tab stays in it, Escape closes it and the focus goes back to the button that opened it.
+  useDialogFocus(ref, true, { onEscape: onClose, initial: ref });
 
   const mint = async () => {
     setBusy(true);
@@ -143,7 +140,7 @@ function DebugAccessDialog({ executionId, onClose }: { executionId: string; onCl
             <h2 className="text-[16px] font-semibold leading-tight text-t1">Debug access</h2>
             <p className="mt-1 text-[12px] leading-snug text-t3">A key an agent can use to read this one run: the trace and the failure, redacted. It cannot run or change anything.</p>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close" className="grid size-9 shrink-0 place-items-center rounded-full text-t2 hover:bg-acdim hover:text-t1">
+          <button type="button" onClick={onClose} aria-label="Close" className="grid size-9 shrink-0 place-items-center rounded-full text-t2 hover:bg-acdim hover:text-t1 max-md:size-11">
             <X className="size-4" />
           </button>
         </header>

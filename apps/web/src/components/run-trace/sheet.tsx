@@ -1,6 +1,6 @@
 'use client';
 /** The detail of a tapped row: a bottom sheet under 768 px, a side panel above. */
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
 import { ExternalLink, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { artifactShape, safeUrl } from '@/lib/shared/artifact-kinds';
@@ -9,6 +9,7 @@ import type { RunGitHub } from '@/lib/shared/run-repo';
 import { fmtMs, spendLine, type RunArtifactItem, type RunCheckItem, type RunModel, type RunSpan } from '@/lib/shared/run-trace-model';
 import { Badge, type Tone } from '../ui/badge';
 import { Button } from '../ui/button';
+import { useDialogFocus } from '../ui/use-dialog-focus';
 import { ArtifactPreview, PREVIEWED } from './artifact-preview';
 import { ChangeDiff } from './diff-view';
 import { ConnectionList } from './connections';
@@ -34,17 +35,8 @@ const STATUS_TONE: Record<string, Tone> = {
 
 function Frame({ title, kicker, onClose, children }: { title: string; kicker?: ReactNode; onClose: () => void; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
-  const last = useRef<Element | null>(null);
-  useEffect(() => {
-    last.current = document.activeElement;
-    ref.current?.focus({ preventScroll: true });
-    const key = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', key);
-    return () => {
-      window.removeEventListener('keydown', key);
-      if (last.current instanceof HTMLElement && last.current.isConnected) last.current.focus({ preventScroll: true });
-    };
-  }, [onClose]);
+  // Focus moves to the sheet, Tab stays in it, Escape closes it and the focus goes back to the row that opened it.
+  useDialogFocus(ref, true, { onEscape: onClose, initial: ref });
   return (
     <>
       <div className="fixed inset-0 z-40 bg-overlay animate-in" onClick={onClose} aria-hidden />
