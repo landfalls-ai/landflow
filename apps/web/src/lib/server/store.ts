@@ -240,15 +240,10 @@ class Store {
     await promoteExecution(id);
   }
 
-  /** The newest finished or waiting executions whose saved record contains `text` (a team id in a flow's snapshot), newest first. */
-  executionsMentioning(text: string, limit = 5): ExecutionRecord[] {
-    const pattern = `%${text.replace(/[%_\\]/g, '\\$&')}%`;
-    return this.db
-      .all<{ data: string }>("SELECT data FROM executions WHERE status <> 'running' AND data LIKE ? ESCAPE '\\' ORDER BY started_at DESC, id DESC LIMIT ?", pattern, Math.max(1, Math.floor(limit)))
-      .flatMap((row) => parse<ExecutionRecord>(row.data) ?? []);
-  }
-
-  /** `executionsMentioning` through the async read seam. */
+  /**
+   * The newest finished or waiting executions whose saved record contains `text` (a team id in a flow's snapshot), newest
+   * first, through the async read seam (in Postgres mode a scan of the whole history there).
+   */
   async executionsMentioningAsync(text: string, limit = 5): Promise<ExecutionRecord[]> {
     const pattern = `%${text.replace(/[%_\\]/g, '\\$&')}%`;
     const rows = await readRows<{ data: string }>("SELECT data FROM executions WHERE status <> 'running' AND data LIKE ? ESCAPE '\\' ORDER BY started_at DESC, id DESC LIMIT ?", pattern, Math.max(1, Math.floor(limit)));
