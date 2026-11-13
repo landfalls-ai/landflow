@@ -1065,9 +1065,9 @@ includeSubDomains` is added when the request is https (the URL, or `X-Forwarded-
 Pages (not API routes) also get a Content Security Policy with a fresh nonce per request: `script-src 'self' 'nonce-…'
 'strict-dynamic'` (plus `'unsafe-eval'` under `next dev`), inline styles, `img-src 'self' data: blob: https:` (notes,
 chat and plugin icons show remote images), `connect-src 'self'`, `frame-src 'self' blob:`, `worker-src 'self' blob:`,
-`object-src 'none'`, `base-uri 'self'`, `form-action 'self'` and `frame-ancestors 'none'`. `LANDFLOW_CSP` picks the
-mode: `enforce` (default in the production profile), `report` (`Content-Security-Policy-Report-Only`, default in
-development) or `off`. If a page breaks in production, set `LANDFLOW_CSP=report` and read the console for the blocked
+`object-src 'self' data: https:` (the Run Trace shows a PDF artifact in an `<object>`), `base-uri 'self'`,
+`form-action 'self'` and `frame-ancestors 'none'`. `LANDFLOW_CSP` picks the mode: `enforce` (default in the production
+profile), `report` (`Content-Security-Policy-Report-Only`, default in development) or `off`. If a page breaks in production, set `LANDFLOW_CSP=report` and read the console for the blocked
 source.
 
 The embeddable or self-policed paths (`/chat`, `/form`, `/form-test`, `/api/binary`, `/api/mcp/files`, `/mcp`,

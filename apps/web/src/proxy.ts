@@ -54,7 +54,8 @@ export function pagePolicy(nonce: string): string {
     "connect-src 'self'",
     "frame-src 'self' blob:",
     "worker-src 'self' blob:",
-    "object-src 'none'",
+    // The Run Trace previews a PDF artifact in an <object> (https, same-origin or data: URL); browsers no longer run other plugins.
+    "object-src 'self' data: https:",
     "base-uri 'self'",
     "form-action 'self'",
     "frame-ancestors 'none'",

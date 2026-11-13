@@ -57,7 +57,7 @@ describe('security headers', () => {
     res = run('/workflows', signedIn);
     expect(res.headers.get(ONLY)).toBeNull();
     expect(res.headers.get(CSP)).toMatch(/script-src 'self' 'nonce-[^']+' 'strict-dynamic'/);
-    expect(res.headers.get(CSP)).toContain("object-src 'none'");
+    expect(res.headers.get(CSP)).toContain("object-src 'self' data: https:");
     process.env.LANDFLOW_CSP = 'report';
     res = run('/workflows', signedIn);
     expect(res.headers.get(CSP)).toBeNull();
