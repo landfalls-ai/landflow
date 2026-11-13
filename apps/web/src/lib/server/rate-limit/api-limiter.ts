@@ -16,6 +16,8 @@ import { logger } from '../telemetry/logger';
 import { countRateLimitRefused } from './counters';
 
 const WINDOW_MS = 60_000;
+/** Keys this process counts at most: past it, the oldest key is dropped, so forged addresses can't grow the map within a window. */
+export const MAX_LOCAL_KEYS = 50_000;
 
 /** Never limited: liveness probes, plugin heartbeats and the metrics scrape. */
 const EXEMPT = ['/api/health', '/api/plugins/announce', '/api/metrics'];
@@ -56,6 +58,8 @@ async function hit(key: string, now: number): Promise<number> {
     for (const [k, w] of windows) if (w.start < windowStart) windows.delete(k);
   }
   const current = windows.get(key);
+  // A new key over the cap drops the oldest one (Map order is insertion order).
+  if (!current && windows.size >= MAX_LOCAL_KEYS) windows.delete(windows.keys().next().value!);
   const mine = current && current.start === windowStart ? current : { start: windowStart, count: 0 };
   mine.count += 1;
   windows.set(key, mine);
@@ -70,6 +74,9 @@ async function hit(key: string, now: number): Promise<number> {
     return mine.count;
   }
 }
+
+/** How many keys this process counts now (tests). */
+export const localKeyCount = (): number => local().windows.size;
 
 /** A 429 to answer with when the request is over its limit; undefined to let it through. */
 export async function limitRequest(request: Request, principalId: string | undefined, now = Date.now()): Promise<Response | undefined> {

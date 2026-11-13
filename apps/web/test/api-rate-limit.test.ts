@@ -1,6 +1,6 @@
 /** API rate limits: per principal and per public trigger group and address, 429 + Retry-After, exclusions, off in development. */
-import { afterEach, describe, expect, it } from 'vitest';
-import { apiLimit, limitRequest } from '@/lib/server/rate-limit/api-limiter';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { apiLimit, limitRequest, localKeyCount, MAX_LOCAL_KEYS } from '@/lib/server/rate-limit/api-limiter';
 
 const req = (path: string, ip = '10.0.0.1') => new Request(`http://localhost${path}`, { headers: { 'x-forwarded-for': ip } });
 const saved = { ...process.env };
@@ -56,27 +56,41 @@ describe('API rate limits', () => {
     }
   });
 
+  it('keep at most MAX_LOCAL_KEYS keys in one window, however many addresses are forged', async () => {
+    process.env.LANDFLOW_RATE_LIMIT_PUBLIC = '5';
+    const now = 4_000_000 * 60_000;
+    for (let i = 0; i < MAX_LOCAL_KEYS + 50; i += 1) await limitRequest(req('/api/webhook/abc', `10.${(i >> 16) & 255}.${(i >> 8) & 255}.${i & 255}`), undefined, now);
+    expect(localKeyCount()).toBeLessThanOrEqual(MAX_LOCAL_KEYS);
+  });
+
   it('are applied by handler(): 429 for a principal and for a public trigger, never for health', async () => {
-    const executions = await import('@/app/api/executions/route');
-    const webhook = await import('@/app/api/webhook/[...path]/route');
-    const health = await import('@/app/api/health/route');
-    const ctx = { params: Promise.resolve({ path: ['nothing-here'] }) };
-    process.env.LANDFLOW_RATE_LIMIT_API = '2';
-    const list = () => executions.GET(new Request('http://localhost/api/executions?limit=1'));
-    expect((await list()).status).toBe(200);
-    expect((await list()).status).toBe(200);
-    const refused = await list();
-    expect(refused.status).toBe(429);
-    expect(refused.headers.get('retry-after')).toBeTruthy();
+    // handler() reads the real clock: freeze Date so the calls can't straddle a minute boundary and land in two windows.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Math.floor(Date.now() / 60_000) * 60_000 + 1_000);
+    try {
+      const executions = await import('@/app/api/executions/route');
+      const webhook = await import('@/app/api/webhook/[...path]/route');
+      const health = await import('@/app/api/health/route');
+      const ctx = { params: Promise.resolve({ path: ['nothing-here'] }) };
+      process.env.LANDFLOW_RATE_LIMIT_API = '2';
+      const list = () => executions.GET(new Request('http://localhost/api/executions?limit=1'));
+      expect((await list()).status).toBe(200);
+      expect((await list()).status).toBe(200);
+      const refused = await list();
+      expect(refused.status).toBe(429);
+      expect(refused.headers.get('retry-after')).toBeTruthy();
 
-    process.env.LANDFLOW_RATE_LIMIT_PUBLIC = '1';
-    const hook = () => webhook.POST(new Request('http://localhost/api/webhook/nothing-here', { method: 'POST', headers: { 'x-forwarded-for': '10.9.9.9' } }), ctx);
-    expect((await hook()).status).not.toBe(429);
-    const limited = await hook();
-    expect(limited.status).toBe(429);
-    expect(limited.headers.get('retry-after')).toBeTruthy();
+      process.env.LANDFLOW_RATE_LIMIT_PUBLIC = '1';
+      const hook = () => webhook.POST(new Request('http://localhost/api/webhook/nothing-here', { method: 'POST', headers: { 'x-forwarded-for': '10.9.9.9' } }), ctx);
+      expect((await hook()).status).not.toBe(429);
+      const limited = await hook();
+      expect(limited.status).toBe(429);
+      expect(limited.headers.get('retry-after')).toBeTruthy();
 
-    process.env.LANDFLOW_RATE_LIMIT_API = '1';
-    for (let i = 0; i < 4; i += 1) expect((await health.GET(new Request('http://localhost/api/health'))).status).toBe(200);
+      process.env.LANDFLOW_RATE_LIMIT_API = '1';
+      for (let i = 0; i < 4; i += 1) expect((await health.GET(new Request('http://localhost/api/health'))).status).toBe(200);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
