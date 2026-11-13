@@ -16,7 +16,7 @@ const bodySchema = z.object({ rating: z.enum(['up', 'down']).nullable(), comment
 
 export const GET = handler(async (_request: Request, { params }: Ctx) => {
   const { id } = await params;
-  if (!store.getExecution(id)) return error('Execution not found', 404);
+  if (!(await store.loadExecution(id))) return error('Execution not found', 404);
   return json({ feedback: executionFeedback(id) ?? null });
 });
 
@@ -24,7 +24,7 @@ export const PUT = handler(async (request: Request, { params }: Ctx) => {
   const { id } = await params;
   const body = await parseBody(request, bodySchema);
   if (!body.ok) return body.response;
-  const record = store.getExecution(id);
+  const record = await store.loadExecution(id);
   if (!record) return error('Execution not found', 404);
   const earlier = executionFeedback(id);
   const feedback = setFeedback({ kind: 'execution', workflowId: record.workflowId, executionId: id, ...(earlier?.sessionId && { sessionId: earlier.sessionId }) }, body.data.rating, {

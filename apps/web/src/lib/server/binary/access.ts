@@ -267,11 +267,11 @@ export async function deleteExecutionBinary(executionId: string): Promise<number
  * Delete scopes whose execution no longer exists, once their newest file is older than `graceMs` (an upload's run
  * may not have started yet; a running execution isn't saved until it finishes or waits).
  */
-export async function sweepBinaryData(isKept: (scope: string) => boolean, graceMs = HOUR_MS, now = Date.now()): Promise<number> {
+export async function sweepBinaryData(isKept: (scope: string) => boolean | Promise<boolean>, graceMs = HOUR_MS, now = Date.now()): Promise<number> {
   const binary = await binaryStore();
   let removed = 0;
   for (const { scope, modifiedAt } of await binary.scopes()) {
-    if (now - modifiedAt < graceMs || isKept(scope) || isSharedScope(scope)) continue;
+    if (now - modifiedAt < graceMs || isSharedScope(scope) || (await isKept(scope))) continue;
     await binary.deleteScope(scope);
     removed++;
   }
@@ -290,7 +290,7 @@ export function startBinaryMaintenance() {
         const { liveExecution } = await import('../runner');
         const { isDatasetScope } = await import('../evaluations/store');
         // Evaluation datasets (an uploaded CSV or JSON file) live in scopes of their own, kept while their workflow exists.
-        const removed = await sweepBinaryData((scope) => Boolean(liveExecution(scope) || store.getExecution(scope) || isDatasetScope(scope, (workflowId) => Boolean(store.getWorkflow(workflowId)))));
+        const removed = await sweepBinaryData(async (scope) => Boolean(liveExecution(scope) || (await store.loadExecution(scope)) || isDatasetScope(scope, (workflowId) => Boolean(store.getWorkflow(workflowId)))));
         if (removed) logger.info('removed orphaned binary data', { 'landflow.binary.scopes': removed });
       } catch (error) {
         logger.warn('binary data sweep failed', { error: (error as Error).message });

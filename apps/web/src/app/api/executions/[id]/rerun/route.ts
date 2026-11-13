@@ -28,7 +28,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
     const id = (await params).id;
     const { askMember, ...request } = body.data;
     if (askMember && (request.scope !== 'from' || !request.nodeId)) return error('askMember needs scope "from" and the Run a Team node as nodeId');
-    const source = askMember ? store.getExecution(id) : undefined;
+    const source = askMember ? await store.loadExecution(id) : undefined;
     if (askMember && !source) return error(`Execution ${id} not found`, 404);
     const workflow = askMember && source ? askMemberAgain(request.version === 'original' && source.workflow ? source.workflow : (store.getWorkflow(source.workflowId) ?? source.workflow), request.nodeId!, askMember) : undefined;
     const executionId = await startInBackground(planRerun(id, request, workflow));

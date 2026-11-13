@@ -255,11 +255,11 @@ export const gradingIdle = () => queue.tail;
 /** The execution record once it is saved (the finished event comes just before the save). */
 async function loadRecord(executionId: string): Promise<ExecutionRecord | undefined> {
   for (let attempt = 0; attempt < 5; attempt++) {
-    const saved = store.getExecution(executionId);
+    const saved = await store.loadExecution(executionId);
     if (saved && saved.status !== 'running') return saved;
     await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)));
   }
-  return store.getExecution(executionId);
+  return store.loadExecution(executionId);
 }
 
 /** Queue a sampled grading of a finished agent session turn. */

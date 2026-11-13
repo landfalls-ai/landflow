@@ -218,6 +218,8 @@ export function validateWorkflow(input: unknown): WorkflowValidation {
  * What each node of a saved workflow wrote in its most recent runs (the newest five executions), as the fields of its
  * output items; nothing for a draft or a node that never produced output.
  */
+// Synchronous on purpose: validateWorkflow has sync callers across the host (and tests), so this reads through the sync
+// store API until validation can await (the read seam's follow-up in the Postgres on-demand work).
 export function lastRunFields(workflowId: string | undefined): (nodeId: string) => KnownFields | undefined {
   const records: ExecutionRecord[] = [];
   let loaded = false;

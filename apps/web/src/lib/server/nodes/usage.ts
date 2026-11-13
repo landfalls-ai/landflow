@@ -738,7 +738,7 @@ export const suggestImprovementNode = defineNode({
     const out: NodeItem[] = [];
     // The node's Slack credential reference (the context only hands over its data): from the workflow as it runs.
     const self = ctx.getNode();
-    const running = store.getExecution(ctx.getExecutionId())?.workflow ?? (ownWorkflow ?? undefined);
+    const running = (await store.loadExecution(ctx.getExecutionId()))?.workflow ?? (ownWorkflow ?? undefined);
     const slackCredential = slackRefOf(running?.nodes.find((n) => n.id === self.id)?.credentials)?.ref;
     for (let i = 0; i < Math.max(items.length, 1); i++) {
       const override = String(ctx.getNodeParameter('metricSource', i, 'inherit') ?? 'inherit');

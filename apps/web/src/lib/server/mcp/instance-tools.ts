@@ -465,7 +465,7 @@ export function instanceServer(actor?: Actor, scope?: McpScope): McpServer {
       annotations: READ_ONLY,
     },
     async ({ id, includeData }) => {
-      const record = liveExecution(id) ?? store.getExecution(id);
+      const record = liveExecution(id) ?? (await store.loadExecution(id));
       if (record && (denied(record.workflowId, 'read') || !inScope(scope, record.workflowId))) return failure(`Execution ${id} not found`);
       return record ? json(executionDigest(record, Boolean(includeData))) : failure(`Execution ${id} not found`);
     },

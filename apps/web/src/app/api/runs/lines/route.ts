@@ -22,9 +22,9 @@ export const GET = handler(async (request: Request) => {
   const visible = visibleIds(routeActor(), 'workflow', store.listWorkflows().map((w) => w.id));
   const lines: Record<string, RunLine> = {};
   for (const id of ids) {
-    const record = store.getExecution(id);
+    const record = await store.loadExecution(id);
     if (!record || (visible && !visible.has(record.workflowId))) continue;
-    const line = lineOf(id);
+    const line = await lineOf(id);
     if (line) lines[id] = line;
   }
   return json({ lines });

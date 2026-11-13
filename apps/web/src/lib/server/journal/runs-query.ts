@@ -9,12 +9,12 @@ import type { JournalEvent } from '../../shared/run-trace';
 import { digestRun, measureOf, type RunDigest, type RunMeasure } from '../../shared/run-compare';
 import { foldJournal } from '../../shared/run-trace-model';
 import { runLine, type RunLine } from '../../shared/run-line';
-import { database } from '../db';
 import { parse } from '../db/rows';
 import { singleton } from '../singleton';
 import { store } from '../store';
 import { rebuildJournal } from './index';
-import { lastSeq, readAll as loadEvents } from './store';
+import { lastSeqAsync as lastSeq, readAllAsync as loadEvents } from './store';
+import { readRows } from '../db/reads';
 
 export interface RunSearchFilters {
   /** Words in a span's name, input or output, a message, an artifact or a check. */
@@ -151,7 +151,7 @@ function iso(value: string | undefined, end = false): string | undefined {
  * Runs matching every filter, newest first. `visible`: the workflow ids the caller may see (undefined: all). Running
  * executions are left out, like the executions list; a run without a journal matches only the filters that need none.
  */
-export function searchRuns(filters: RunSearchFilters, visible?: Set<string>): RunSearchResult {
+export async function searchRuns(filters: RunSearchFilters, visible?: Set<string>): Promise<RunSearchResult> {
   const limit = Math.min(MAX_LIMIT, Math.max(1, Math.floor(filters.limit ?? DEFAULT_LIMIT) || DEFAULT_LIMIT));
   const offset = Math.max(0, Math.floor(filters.offset ?? 0) || 0);
   const where = ["status <> 'running'"];
@@ -185,7 +185,6 @@ export function searchRuns(filters: RunSearchFilters, visible?: Set<string>): Ru
   }
   const journalFilters = Boolean(text || actor || tool || filters.failedSteps || filters.failedCheck !== undefined);
 
-  const db = database();
   const sql = `SELECT summary FROM executions WHERE ${where.join(' AND ')} ORDER BY started_at DESC, id DESC LIMIT ? OFFSET ?`;
   const items: RunSearchHit[] = [];
   const want = offset + limit + 1;
@@ -193,13 +192,13 @@ export function searchRuns(filters: RunSearchFilters, visible?: Set<string>): Ru
   let scanned = 0;
   let truncated = false;
   search: for (let page = 0; ; page++) {
-    const rows = db.all<{ summary: string }>(sql, ...params, BATCH, page * BATCH);
+    const rows = await readRows<{ summary: string }>(sql, ...params, BATCH, page * BATCH);
     for (const row of rows) {
       const run = parse<ExecutionSummary>(row.summary);
       if (!run || (visible && !visible.has(run.workflowId))) continue;
       let hit: RunSearchHit = { executionId: run.id, workflowId: run.workflowId, workflowName: run.workflowName, status: run.status, startedAt: run.startedAt, durationMs: run.durationMs, matches: [] };
       if (journalFilters) {
-        const found = verify(loadEvents(run.id), filters);
+        const found = verify(await loadEvents(run.id), filters);
         if (!found.ok) continue;
         hit = { ...hit, matches: found.matches, failedSteps: found.failedSteps, failedChecks: found.failedChecks };
       }
@@ -225,16 +224,16 @@ const MAX_CACHED = 300;
  * The numbers of a saved run, from its journal (rebuilt first when it has none). Cached by the last journal number, so a
  * finished run is folded once.
  */
-export function digestOf(executionId: string): RunDigest | undefined {
-  const record = store.getExecution(executionId);
+export async function digestOf(executionId: string): Promise<RunDigest | undefined> {
+  const record = await store.loadExecution(executionId);
   if (!record) return undefined;
   const workflow = record.workflow ?? store.getWorkflow(record.workflowId);
   if (record.status !== 'running') rebuildJournal(record, workflow);
-  const key = `${executionId}:${lastSeq(executionId)}:${record.status}`;
+  const key = `${executionId}:${await lastSeq(executionId)}:${record.status}`;
   const digests = digestCache();
   let digest = digests.get(key);
   if (!digest) {
-    digest = digestRun(foldJournal(loadEvents(executionId)), { executionId, workflowId: record.workflowId, workflowName: record.workflowName });
+    digest = digestRun(foldJournal(await loadEvents(executionId)), { executionId, workflowId: record.workflowId, workflowName: record.workflowName });
     // A finished run's wall time is the record's when the journal never saw the run end.
     if (!digest.durationMs && record.durationMs) digest = { ...digest, durationMs: record.durationMs };
     if (digests.size >= MAX_CACHED) digests.delete(digests.keys().next().value!);
@@ -249,15 +248,15 @@ const lineCache = () => singleton('run-lines', () => new Map<string, RunLine>())
  * What a saved or running run did, in one line (lib/shared/run-line.ts): what came in, who did it, what came out. Cached
  * by the last journal number like the digest, so a finished run is folded once.
  */
-export function lineOf(executionId: string): RunLine | undefined {
-  const record = store.getExecution(executionId);
+export async function lineOf(executionId: string): Promise<RunLine | undefined> {
+  const record = await store.loadExecution(executionId);
   if (!record) return undefined;
   if (record.status !== 'running') rebuildJournal(record, record.workflow ?? store.getWorkflow(record.workflowId));
-  const key = `${executionId}:${lastSeq(executionId)}:${record.status}`;
+  const key = `${executionId}:${await lastSeq(executionId)}:${record.status}`;
   const lines = lineCache();
   let line = lines.get(key);
   if (!line) {
-    const model = foldJournal(loadEvents(executionId));
+    const model = foldJournal(await loadEvents(executionId));
     if (model.empty) return undefined;
     line = runLine(model);
     if (!line.ms && record.durationMs) line = { ...line, ms: record.durationMs };
@@ -268,11 +267,11 @@ export function lineOf(executionId: string): RunLine | undefined {
 }
 
 /** A workflow's last runs as points over time, oldest first. */
-export function measuresOf(workflowId: string, limit = 30): RunMeasure[] {
+export async function measuresOf(workflowId: string, limit = 30): Promise<RunMeasure[]> {
   const runs = store.listExecutions({ workflowId, limit: Math.min(100, Math.max(1, Math.floor(limit) || 30)) });
   const points: RunMeasure[] = [];
   for (const run of runs.reverse()) {
-    const digest = digestOf(run.id);
+    const digest = await digestOf(run.id);
     if (digest) points.push({ ...measureOf(digest), startedAt: digest.startedAt ?? run.startedAt });
   }
   return points;

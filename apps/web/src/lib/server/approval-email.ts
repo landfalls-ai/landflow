@@ -178,12 +178,12 @@ export interface LinkView {
 const isUsed = (group: string) => Boolean(database().get('SELECT group_id FROM approval_email_used WHERE group_id = ?', group));
 
 /** What a link would decide, for its confirmation page. */
-export function describeLink(token: string): LinkView {
+export async function describeLink(token: string): Promise<LinkView> {
   const payload = verifyLink(token);
   const target = payload.t;
   let view: Omit<LinkView, 'payload'>;
   if (target.t === 'wf') {
-    const record = store.getExecution(target.e);
+    const record = await store.loadExecution(target.e);
     const approval = pendingApproval(record);
     const call = approval?.calls.find((c) => c.id === target.c);
     view = { title: approval ? `${approval.nodeName} (${record?.workflowName ?? 'workflow'})` : 'A workflow', tool: call?.tool ?? 'a tool', input: call?.input ?? {}, ...(approval?.confirm && { confirm: { title: approval.confirm.title, text: String((call?.input as { text?: unknown } | undefined)?.text ?? approval.confirm.text) } }) };
@@ -208,7 +208,7 @@ export interface LinkOutcome {
 
 /** Decide with a link: spends its group first (so a second use fails), then records the decision; a failed decision frees the link. */
 export async function useLink(token: string): Promise<LinkOutcome> {
-  const view = describeLink(token);
+  const view = await describeLink(token);
   if (view.closed) throw new LinkError(view.closed, 409);
   const { payload } = view;
   const approved = payload.d === 'approve';
@@ -272,9 +272,9 @@ const PAGE = (body: string) =>
 const html = (body: string, status = 200) => new Response(PAGE(body), { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex' } });
 
 /** GET: what the link would do, with a button. Never decides. */
-export function confirmationPage(token: string): Response {
+export async function confirmationPage(token: string): Promise<Response> {
   try {
-    const view = describeLink(token);
+    const view = await describeLink(token);
     if (view.closed) return html(`<h2>Nothing to decide</h2><p>${escapeHtml(view.closed)}</p>`, 409);
     const approve = view.payload.d === 'approve';
     return html(
