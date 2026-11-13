@@ -10,11 +10,11 @@ const level = (value: string | undefined): LogLevel =>
 export const telemetryConfig = {
   serviceName: process.env.OTEL_SERVICE_NAME || 'landflow-host',
   serviceVersion: packageJson.version,
-  disabled: flag(process.env.OTEL_SDK_DISABLED, false),
+  disabled: flag(process.env.OTEL_SDK_DISABLED, false, 'OTEL_SDK_DISABLED'),
   logLevel: level(process.env.LANDFLOW_LOG_LEVEL),
   logFormat: process.env.LANDFLOW_LOG_FORMAT?.toLowerCase() === 'pretty' ? ('pretty' as const) : ('json' as const),
-  logSpans: flag(process.env.LANDFLOW_LOG_SPANS, true),
-  prometheus: flag(process.env.LANDFLOW_METRICS_PROMETHEUS, true),
+  logSpans: flag(process.env.LANDFLOW_LOG_SPANS, true, 'LANDFLOW_LOG_SPANS'),
+  prometheus: flag(process.env.LANDFLOW_METRICS_PROMETHEUS, true, 'LANDFLOW_METRICS_PROMETHEUS'),
   exportTraces:
     Boolean(process.env.OTEL_EXPORTER_OTLP_ENDPOINT || process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT) && process.env.OTEL_TRACES_EXPORTER !== 'none',
   exportMetrics:
@@ -24,7 +24,7 @@ export const telemetryConfig = {
   exportLogs:
     Boolean(process.env.OTEL_EXPORTER_OTLP_ENDPOINT || process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT) && process.env.OTEL_LOGS_EXPORTER !== 'none',
   /** With exportLogs: every log line (but `span.end`) is also an OTel log record, with its trace and span ids. */
-  logOtlp: flag(process.env.LANDFLOW_LOG_OTLP, true),
+  logOtlp: flag(process.env.LANDFLOW_LOG_OTLP, true, 'LANDFLOW_LOG_OTLP'),
 };
 
 /**
@@ -39,9 +39,9 @@ export function traceUrl(traceId: string | undefined): string | undefined {
 
 /**
  * Attribute and field names whose (string or object) values are never logged or exported.
- * Same rule as the SDKs: names of addresses, kinds and algorithms (`tokenUrl`, `tokenType`, `signatureAlgorithm`) are not secrets.
+ * Names of addresses, kinds, algorithms and ids (`tokenUrl`, `tokenType`, `signatureAlgorithm`, `landflow.api_key.id`) are not secrets.
  * `credentials` counts only as a whole key name. Plain `session` and `sessionId` stay: agent session ids are needed to
  * debug a conversation, and only `sessionToken`, `sessionSecret` and `sessionCookie` are credentials.
  */
 export const SECRET_KEY =
-  /^(?!.*(?:url|uri|endpoint|host|type|algorithm)$)(?:.*(?:token|secret|password|authorization|api[-_]?key|cookie|private[-_]?key|passphrase|signature|connection[-_]?string|session[-_]?(?:token|secret|cookie))|.*dsn$|credentials$)/i;
+  /^(?!.*(?:url|uri|endpoint|host|type|algorithm|[._-]?id)$)(?:.*(?:token|secret|password|authorization|api[-_]?key|cookie|private[-_]?key|passphrase|signature|connection[-_]?string|session[-_]?(?:token|secret|cookie))|.*dsn$|credentials$)/i;

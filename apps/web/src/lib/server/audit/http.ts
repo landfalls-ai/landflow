@@ -168,7 +168,7 @@ export async function auditRequest(args: unknown[], run: () => Promise<Response>
   try {
     response.headers.set('x-request-id', ctx.requestId);
     const parent = path.startsWith('/api/') ? traceparent() : undefined;
-    if (parent) response.headers.set('traceparent', parent);
+    if (parent && !response.headers.has('traceparent')) response.headers.set('traceparent', parent);
   } catch {
     // Immutable headers (a redirect): no id on this one.
   }

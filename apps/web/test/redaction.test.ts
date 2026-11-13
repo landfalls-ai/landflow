@@ -36,7 +36,7 @@ describe('secret key names', () => {
     'redacts %s',
     (key) => expect(SECRET_KEY.test(key)).toBe(true),
   );
-  it.each(['sessionId', 'session', 'signatureAlgorithm', 'tokenUrl', 'tokenType', 'credentialsId', 'credentialCount', 'hostname', 'publicKey', 'dsnHost'])('keeps %s', (key) =>
+  it.each(['sessionId', 'session', 'signatureAlgorithm', 'tokenUrl', 'tokenType', 'credentialsId', 'credentialCount', 'hostname', 'publicKey', 'dsnHost', 'landflow.api_key.id', 'apiKeyId', 'enduser.id', 'landflow.request_id'])('keeps %s', (key) =>
     expect(SECRET_KEY.test(key)).toBe(false),
   );
   it('redacts values by key in nested records and keeps plain session ids', () => {
@@ -85,5 +85,26 @@ describe('credential values handed to a node', () => {
     // The user name is not a secret field and stays readable.
     logger.info('user app logged in');
     expect(lines.join('')).toContain('user app logged in');
+  });
+
+  it('leaves a weak password out, so unrelated node output is not rewritten', () => {
+    const credential = credentials.create({ name: 'Weak', type: 'core.httpBasicAuth', data: { user: 'app', password: 'postgres' } });
+    credentials.dataFor({ id: credential.id, name: credential.name }, 'core.httpBasicAuth');
+    expect(redactValue({ db: 'postgres', note: 'changeme postgres' })).toEqual({ db: 'postgres', note: 'changeme postgres' });
+  });
+});
+
+describe('span attributes', () => {
+  it('keeps request, user and API key ids and redacts secret-named attributes', async () => {
+    const { TracerProvider } = await import('@opentelemetry/sdk-trace');
+    const { LandflowSpanProcessor } = await import('@/lib/server/telemetry/processors');
+    const ended: Array<{ attributes: Record<string, unknown> }> = [];
+    const collect = { onStart() {}, onEnd: (s: { attributes: Record<string, unknown> }) => void ended.push(s), forceFlush: async () => {}, shutdown: async () => {} };
+    const provider = new TracerProvider({ spanProcessors: [new LandflowSpanProcessor(), collect] });
+    const span = provider.getTracer('test').startSpan('request');
+    span.setAttributes({ 'landflow.api_key.id': 'key_1', 'enduser.id': 'usr_1', 'landflow.request_id': 'req_1', 'http.request.header.authorization': 'Bearer x' });
+    span.end();
+    const attributes = ended[0].attributes;
+    expect(attributes).toMatchObject({ 'landflow.api_key.id': 'key_1', 'enduser.id': 'usr_1', 'landflow.request_id': 'req_1', 'http.request.header.authorization': '[redacted]' });
   });
 });

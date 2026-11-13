@@ -38,13 +38,14 @@ const leaves = (value: unknown, out: string[] = [], depth = 0): string[] => {
  * a multi-line value count on their own too (a PEM key's), unless `lines` is false (a node parameter that read a
  * secret, whose other lines are the workflow's own text).
  */
-export function rememberSecretValues(value: unknown, options: { lines?: boolean } = {}): void {
+export function rememberSecretValues(value: unknown, options: { lines?: boolean; min?: number } = {}): void {
+  const min = Math.max(MIN_LENGTH, options.min ?? 0);
   const now = Date.now();
   let added = false;
   for (const text of leaves(value)) {
-    const candidates = options.lines === false ? [text] : [text, ...text.split(/\r?\n/).filter((line) => line.trim().length >= MIN_LENGTH * 2)];
+    const candidates = options.lines === false ? [text] : [text, ...text.split(/\r?\n/).filter((line) => line.trim().length >= Math.max(min, MIN_LENGTH * 2))];
     for (const candidate of candidates) {
-      if (candidate.length < MIN_LENGTH) continue;
+      if (candidate.length < min) continue;
       if (!state.values.has(candidate)) added = true;
       state.values.set(candidate, now);
     }

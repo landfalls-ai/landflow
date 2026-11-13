@@ -89,17 +89,18 @@ With `LANDFLOW_LOG_SPANS=true` (the default) every finished span is also written
   workers) have none of these. Reads are not always sampled: a `traceparent` with flags `00` names a trace the
   backend may not have.
 - **Never log** credential values, `Authorization` headers or item payloads. Log counts and ids. The
-  host and the SDKs redact attribute keys matching `token`, `secret`, `password`, `authorization`, `api[-_]?key`,
+  host redacts (the SDKs keep their narrower list) attribute keys matching `token`, `secret`, `password`, `authorization`, `api[-_]?key`,
   `cookie`, `private[-_]?key`, `passphrase`, `signature`, `connection[-_]?string`, `session[-_]?(token|secret|cookie)`,
   a name ending in `dsn`, and a key named exactly `credentials` (case-insensitive; names ending in `url`, `uri`,
-  `endpoint`, `host`, `type` or `algorithm` are kept, as are `session` and `sessionId`: agent session ids are needed to
+  `endpoint`, `host`, `type` or `algorithm` are kept, as are names ending in an id, such as `landflow.api_key.id`, and `session` and `sessionId`: agent session ids are needed to
   debug a conversation)
   when the value is a string (numbers and booleans such as `gen_ai.usage.input_tokens` are kept), in
   log fields and span attributes alike. The host also scrubs secret-shaped *values* from every string it logs, error
   messages and stacks included, wherever they appear: `Bearer <token>`, Landflow API keys (`lf_…`), URL userinfo
   (`scheme://user:password@host` becomes `scheme://[redacted]@host`) and PEM private key blocks. Credential values
   a node was handed (password-typed fields, secret fields, fields whose name says secret) are remembered for the process
-  and replaced like `$secrets` values in logs, results and stored runs (the most recent 5000, least recently used out). The SDKs also replace the credential values of the current
+  and replaced like `$secrets` values in logs, results and stored runs (the most recent 5000, least recently used out). Credential values shorter than 12 characters are not remembered (a weak password such as `postgres` would rewrite unrelated
+  node output). The SDKs also replace the credential values of the current
   request wherever they appear (messages, URLs, errors).
 - Node logs (`ctx.logger.*` / `ExecuteResponse.logs`) are also written to the process log with the
   trace context, besides being returned to the host.
