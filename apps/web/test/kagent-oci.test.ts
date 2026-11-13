@@ -11,6 +11,15 @@ import { gunzipSync } from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { KagentPlugin } from '@/lib/shared/agents';
 
+// Its own data directory, set before the imports below run: the test deletes `oci/` under it, and in the shared one
+// (vitest.config.ts) kagent.test.ts packs images into the same folder at the same time (ENOTEMPTY under load).
+await vi.hoisted(async () => {
+  const { mkdtempSync: makeDir } = await import('node:fs');
+  const { tmpdir: tmp } = await import('node:os');
+  const { join: joinPath } = await import('node:path');
+  process.env.LANDFLOW_DATA_DIR = makeDir(joinPath(tmp(), 'landflow-kagent-oci-'));
+});
+
 const { packPlugin, repositoryOf, imageRef, tarOf, MANIFEST_TYPE, builtinPin, builtinFiles, BUILTIN_URL } = await import('@/lib/server/kagent/oci');
 const { agentStore } = await import('@/lib/server/agents/store');
 const { dataDir } = await import('@/lib/server/db');
