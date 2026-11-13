@@ -81,7 +81,7 @@ What the new look draws so far:
 | Expression result | Result preview under the field | Each expression shows its resolved value for the first input item (green) or the error (red), updated as you type | ✅ |
 | Expression editor | Inline editor with highlighting and autocomplete | `{{ }}` highlighted in the field; autocomplete for `$json` fields from the input, `$('Node').item.json`, `$input`, `$now`, `$today`, `$workflow`, `$execution`, `$itemIndex`, `$vars` and methods for the value's type; `{{` closes itself | ✅ |
 | Pin data | Pin output; edit output | Pin, Unpin, "Set test data" on triggers, "Edit output" with a JSON editor (⌘↵ saves) | ✅ |
-| Run node | "Execute step" | Run node, Run from here, Breakpoint | ➕ |
+| Run step | "Execute step" | Run step, Run from here, Breakpoint | ➕ |
 | Dependent parameters | Switching Resource resets Operation to its default; collection options follow displayOptions | Same: the default comes from the property shown for the current values, dependent values reset, nested displayOptions use n8n's sibling / `/root` scoping | ✅ |
 | Fixed / Expression on pickers | Every field can switch to an expression | Live-loaded pickers (channels, spreadsheets) switch to a text field for an id or `{{ expression }}` with the resolved preview; static pickers take expressions only when one is already set | ◐ |
 | Credential on the node | Credential picker at the top of the parameters, "Create new credential", edit | Same: one picker per credential the node declares (only the ones its auth method needs), create and edit inline, the only matching credential is picked automatically, warning when a selected credential was deleted | ✅ |
@@ -135,6 +135,22 @@ The same thing has the same name everywhere. When adding a button or a state, us
 | How a run ended | *Succeeded* / *Failed* / *Running* / *Paused* / *Waiting* / *Queued* / *Canceled*, from `RUN_STATE[state].label` (`components/run/run-status.tsx`); with a time, *Succeeded in 9 ms*, *Failed in 18 ms*. Never the raw `success` / `error`. Running and Paused are amber everywhere, Succeeded green (the Insights chart too) |
 | Making something | **New** *thing* with a + (**New workflow**, **New credential**, **New runbook**); **Add marketplace** stays, it connects a source that exists. An empty page's button has the same words as the header's, drawn `outline` |
 | A moment | `stamp()` in `lib/client/format.ts`: *Nov 13, 09:52:09* (24-hour) in runs and histories; `dayTime()`: *Nov 13, 2026, 09:52* where the year matters (settings, the audit log) |
+| A box on the canvas | *step* wherever a person builds or runs a flow (**Run step**, *Paused before this step*, *6 steps* in the Workflows list); *node* only where plugins are the subject (Plugins, Marketplace and template node counts, **Build a plugin**, *node type*) |
+| What ships with Landflow | *Built-in* (a badge, a filter, a section of the node creator) |
+| The page of a run | *Run trace* (sentence case, also mid-sentence: *in the Run trace*) |
+| A count beside a title or in a list | *N things* with `plural()` from `lib/client/format.ts`: *1 plugin online · 1 language*, *56 workflows*, *0 runbooks*; never a bare number |
+| Labels | Sentence case, written out (*No evaluation trigger*, *Execution ID*); a tab's label is a real word in the code, not a lowercase key capitalised by CSS |
+
+## Type
+
+- **Sizes** come from one scale: 11, 12, 13 and 15 px. No half steps (`text-[12.5px]`) outside the chat surfaces
+  (`components/ui/chat.tsx` keeps 13.5 and 10.5 on purpose); the composite panel and dialog, the team node panel, a
+  run's artifacts and the Brain workbench are on the scale.
+- **Headings** have three steps: 15 px for a page's title and a section's title (Settings and Developers `h2`s
+  included), 18 px for a detail hero (an execution's date, Evaluations), 22 px for an entity
+  hero (an agent's name). A document the Brain renders keeps its own 24 px title.
+- A status bar is quiet: `border-t border-hair bg-sf2 text-t2` (the Brain workbench), never the accent fill.
+- Text on a coloured fill (green, red, amber, violet) is `text-bg`, never `text-white`: in dark those fills are light.
 
 ## Page layout
 

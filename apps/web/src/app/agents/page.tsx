@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Bot, Copy, Download, ExternalLink, MoreHorizontal, Network, Plus, Sparkles, Upload, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
-import { timeAgo } from '@/lib/client/format';
+import { plural, timeAgo } from '@/lib/client/format';
 import { cn } from '@/lib/utils';
 import type { Agent, AgentSummary, AgentTemplate } from '@/lib/shared/agents';
 import { AgentAvatar } from '@/components/agents/avatar';
@@ -16,7 +16,8 @@ import { NewAgentDialog } from '@/components/agents/new-agent-dialog';
 import { SaveTemplateDialog } from '@/components/agents/save-template-dialog';
 import { configOf, downloadJson, parseAgentFile, slug } from '@/components/agents/util';
 import { useAgentData } from '@/components/agents/use-agent-data';
-import { PageBody, PageHeader } from '@/components/shell/page-header';
+import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
+import { EmptyState } from '@/components/ui/empty-state';
 import { PhoneFilters } from '@/components/ui/phone-filters';
 import { Badge, Chip } from '@/components/ui/badge';
 import { SearchInput } from '@/components/ui/inputs';
@@ -123,9 +124,9 @@ export default function AgentsPage() {
   const openArchitect = () => setDialog({ mode: 'architect' });
   const strip = templates && templates.length > 0 && (
     <section aria-label="Start from a persona" className="mb-6">
-      <div className="mb-2 flex items-center justify-between">
-        <h2 className="text-[12px] font-semibold uppercase tracking-[0.06em] text-t3">Start from a persona</h2>
-        <div className="flex items-center gap-4">
+      <div className="mb-2 flex items-center justify-between max-md:flex-wrap max-md:gap-y-1">
+        <h2 className="whitespace-nowrap text-[12px] font-semibold uppercase tracking-[0.06em] text-t3">Start from a persona</h2>
+        <div className="flex items-center gap-4 whitespace-nowrap max-md:w-full max-md:justify-start">
           <button type="button" onClick={openArchitect} className="flex items-center gap-1 rounded text-[12px] font-semibold text-ac hover:underline focus-visible:outline-2 focus-visible:outline-ac">
             <Sparkles className="size-3" /> Ask the Agent architect
           </button>
@@ -192,7 +193,7 @@ export default function AgentsPage() {
         meta={
           <>
             <span className="hidden rounded-full border border-acbd bg-acdim px-1.5 text-[10px] font-semibold leading-4 text-ac sm:inline">Preview</span>
-            {list && list.length > 0 && <span className="hidden sm:inline">{list.length}</span>}
+            {list && list.length > 0 && <span className="hidden sm:inline">{plural(list.length, 'agent')}</span>}
           </>
         }
         actions={view === 'agents' ? actions : <NewTeamButton />}
@@ -211,24 +212,23 @@ export default function AgentsPage() {
         {view === 'agents' && list && list.length === 0 && (
           <>
             {strip}
-            <div className="mx-auto mt-6 flex max-w-[460px] animate-fade-up flex-col items-center text-center">
-              <span className="grid size-16 place-items-center rounded-[22px] border border-acbd bg-acdim text-ac">
-                <Bot className="size-8" strokeWidth={1.5} />
-              </span>
-              <h2 className="mt-5 text-[20px] font-semibold tracking-[-0.01em] text-t1">Create your first agent</h2>
-              <p className="mt-1.5 text-[13px] leading-relaxed text-t2">Agents automate tasks and answer questions using your connected tools and data.</p>
-              <div className="mt-5 flex flex-wrap justify-center gap-2">
-                <Button variant="primary" onClick={() => openNew()}>
-                  <Plus className="size-3.5" strokeWidth={2} /> New agent
-                </Button>
-                <Button onClick={openArchitect}>
-                  <Sparkles className="size-3.5" /> Ask the Agent architect
-                </Button>
-                <Button onClick={() => fileInput.current?.click()}>
-                  <Upload className="size-3.5" /> Import JSON
-                </Button>
-              </div>
-            </div>
+            <Card className="py-6">
+              <EmptyState
+                icon={<Bot />}
+                title="No agents yet"
+                hint="Agents automate tasks and answer questions using your connected tools and data."
+                action={
+                  <div className="flex flex-wrap justify-center gap-2">
+                    <Button onClick={() => openNew()}>
+                      <Plus className="size-3.5" strokeWidth={2} /> New agent
+                    </Button>
+                    <Button variant="ghost" onClick={openArchitect}>
+                      <Sparkles className="size-3.5" /> Ask the Agent architect
+                    </Button>
+                  </div>
+                }
+              />
+            </Card>
           </>
         )}
         {view === 'agents' && list && list.length > 0 && visible && (

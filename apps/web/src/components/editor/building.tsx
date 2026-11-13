@@ -121,7 +121,7 @@ export function BuildProgressBar() {
 function Mark({ step }: { step: BuildStep }) {
   if (step.state === 'done')
     return (
-      <span className={cn('mt-px grid size-4 shrink-0 animate-pop place-items-center rounded-full text-white', step.failed ? 'bg-rd' : 'bg-gn')}>
+      <span className={cn('mt-px grid size-4 shrink-0 animate-pop place-items-center rounded-full text-bg', step.failed ? 'bg-rd' : 'bg-gn')}>
         {step.failed ? <TriangleAlert className="size-2.5" strokeWidth={3} /> : <Check className="size-2.5" strokeWidth={3.5} />}
       </span>
     );

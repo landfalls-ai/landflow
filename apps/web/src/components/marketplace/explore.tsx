@@ -11,7 +11,6 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { ArrowRight, Boxes, Check, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { cn } from '@/lib/utils';
 import { PhoneFilters } from '../ui/phone-filters';
 import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
@@ -19,10 +18,10 @@ import type { ExploreFlow, ExplorePlugin, MarketplaceSummary } from '@/lib/share
 import type { CompositeTypeInfo } from '@/lib/shared/composites';
 import type { NodeTypeInfo, PluginSummary } from '@/lib/shared/types';
 import { TEMPLATE_CATEGORIES, type TemplateSummary } from '@/lib/shared/templates';
-import { TemplateNodeIcons } from '@/components/templates/template-card';
+import { TemplateCard, TemplateNodeIcons } from '@/components/templates/template-card';
 import { useNodeTypeMap, useTemplateList } from '@/components/templates/use-templates';
 import { Card } from '@/components/shell/page-header';
-import { Badge, Chip, FilterChip, StatusDot } from '@/components/ui/badge';
+import { Badge, Chip, FilterChip, LanguageBadge, StatusDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { AppIcon } from '@/components/ui/icon';
@@ -140,13 +139,13 @@ function NodePluginTile({ plugin, onOpen }: { plugin: ExplorePlugin; onOpen: () 
 function LocalPluginTile({ plugin }: { plugin: PluginSummary }) {
   return (
     <Link href={`/plugins?plugin=${encodeURIComponent(plugin.id)}`} className={tileClass}>
-      <TileHead icon={<AppIcon icon={plugin.info.icon} color={plugin.info.color} size={28} />} title={plugin.info.name} sub={`This instance · v${plugin.info.version}`} badge={plugin.source === 'builtin' && <Badge tone="muted">Built in</Badge>} />
+      <TileHead icon={<AppIcon icon={plugin.info.icon} color={plugin.info.color} size={28} />} title={plugin.info.name} sub={`This instance · v${plugin.info.version}`} badge={plugin.source === 'builtin' && <Badge tone="muted">Built-in</Badge>} />
       <p className="line-clamp-2 text-[12px] leading-snug text-t2">{plugin.info.description || 'No description.'}</p>
       <div className="mt-auto flex flex-wrap items-center gap-1.5 text-[11px] text-t3">
         <span className="inline-flex items-center gap-1.5">
           <StatusDot status={plugin.status} /> {plugin.status} · {plugin.nodes.length} nodes
         </span>
-        <Badge tone="muted">{plugin.info.language}</Badge>
+        <LanguageBadge language={plugin.info.language} />
       </div>
     </Link>
   );
@@ -172,23 +171,6 @@ function FlowTile({ flow, types }: { flow: ExploreFlow; types: Record<string, No
           </Badge>
         )}
         <span>{flow.nodeCount} nodes</span>
-      </div>
-    </Link>
-  );
-}
-
-function TemplateTile({ template, types }: { template: TemplateSummary; types: Record<string, NodeTypeInfo> }) {
-  return (
-    <Link href={`/templates/${encodeURIComponent(template.id)}`} className={cn(tileClass, !template.usable && 'bg-sf2')}>
-      <TemplateNodeIcons nodeTypes={template.nodeTypes} types={types} />
-      <div className="min-w-0">
-        <div className="truncate text-[13px] font-semibold text-t1">{template.name}</div>
-        <div className="truncate text-[11px] text-t3">{template.source === 'builtin' ? 'Built-in template' : template.projectName ? `Saved in ${template.projectName}` : 'Saved on this instance'}</div>
-      </div>
-      <p className="line-clamp-2 text-[12px] leading-snug text-t2">{template.description || 'No description.'}</p>
-      <div className="mt-auto flex flex-wrap items-center gap-1.5 text-[11px] text-t3">
-        {!template.usable && <Badge tone="warning">Needs a plugin</Badge>}
-        <span>{template.nodeCount} nodes</span>
       </div>
     </Link>
   );
@@ -339,7 +321,7 @@ export function Explore({ marketplaces, version, onAdd, onOpen, onChanged }: { m
 
   const tile = (item: Item) => {
     if (item.kind === 'nodes') return 'local' in item ? <LocalPluginTile key={item.key} plugin={item.local} /> : <NodePluginTile key={item.key} plugin={item.plugin} onOpen={() => onOpen(item.plugin.marketplace.id, item.plugin.name)} />;
-    if (item.kind === 'flows') return 'template' in item ? <TemplateTile key={item.key} template={item.template} types={types} /> : <FlowTile key={item.key} flow={item.flow} types={types} />;
+    if (item.kind === 'flows') return 'template' in item ? <TemplateCard key={item.key} template={item.template} types={types} index={0} href={`/templates/${encodeURIComponent(item.template.id)}`} /> : <FlowTile key={item.key} flow={item.flow} types={types} />;
     if (item.kind === 'composites') return <CompositeTile key={item.key} composite={item.composite} onDeleted={() => setCompositesVersion((v) => v + 1)} />;
     return <ClaudePluginTile key={item.key} plugin={item.plugin} onOpen={() => onOpen(item.plugin.marketplace.id, item.plugin.name)} />;
   };
@@ -384,7 +366,7 @@ export function Explore({ marketplaces, version, onAdd, onOpen, onChanged }: { m
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
                 <span className="text-[13px] font-semibold text-t1">{current.name}</span>
-                {!current.removable && <Badge tone="accent">Built in</Badge>}
+                {!current.removable && <Badge tone="accent">Built-in</Badge>}
                 {current.owner && <span className="text-[12px] text-t3">by {current.owner}</span>}
               </div>
               <p className="truncate text-[12px] text-t3">

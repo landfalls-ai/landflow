@@ -6,14 +6,14 @@
 import { describe, expect, it } from 'vitest';
 import { completeBubbles, idleBubbles, liveMentions, mentionAt, type SpotlightContext, type SpotlightNode, type SpotlightType } from '@/lib/shared/spotlight';
 
-const type = (t: string, displayName: string, plugin = 'Built in', extra: Partial<SpotlightType> = {}): SpotlightType => ({ type: t, displayName, plugin, trigger: false, keywords: [], ...extra });
+const type = (t: string, displayName: string, plugin = 'Built-in', extra: Partial<SpotlightType> = {}): SpotlightType => ({ type: t, displayName, plugin, trigger: false, keywords: [], ...extra });
 const TYPES: SpotlightType[] = [
-  type('core.webhook', 'Webhook', 'Built in', { trigger: true }),
-  type('core.schedule', 'Schedule Trigger', 'Built in', { trigger: true }),
-  type('core.chatTrigger', 'Chat Trigger', 'Built in', { trigger: true }),
+  type('core.webhook', 'Webhook', 'Built-in', { trigger: true }),
+  type('core.schedule', 'Schedule Trigger', 'Built-in', { trigger: true }),
+  type('core.chatTrigger', 'Chat Trigger', 'Built-in', { trigger: true }),
   type('core.aiAgent', 'AI Agent'),
-  type('core.httpRequest', 'HTTP Request', 'Built in', { keywords: ['api', 'rest'] }),
-  type('core.removeDuplicates', 'Remove Duplicates', 'Built in', { keywords: ['dedupe', 'unique'] }),
+  type('core.httpRequest', 'HTTP Request', 'Built-in', { keywords: ['api', 'rest'] }),
+  type('core.removeDuplicates', 'Remove Duplicates', 'Built-in', { keywords: ['dedupe', 'unique'] }),
   type('messaging.slack', 'Slack', 'Messaging'),
   type('messaging.telegram', 'Telegram', 'Messaging'),
 ];

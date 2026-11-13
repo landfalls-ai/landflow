@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ChevronRight, Plus, Table2 } from 'lucide-react';
 import { api } from '@/lib/client/api';
-import { timeAgo } from '@/lib/client/format';
+import { plural, timeAgo } from '@/lib/client/format';
 import type { DataTableSummary } from '@/lib/shared/data-tables';
 import { CreateTableDialog } from '@/components/data-tables/create-table-dialog';
 import { TypeIcon } from '@/components/data-tables/column-type';
@@ -35,7 +35,7 @@ export default function DataTablesPage() {
     <>
       <PageHeader
         title="Data tables"
-        meta={tables && <span>{tables.length} {tables.length === 1 ? 'table' : 'tables'} · {rows.toLocaleString()} rows</span>}
+        meta={tables && <span>{plural(tables.length, 'table')} · {plural(rows, 'row')}</span>}
         actions={
           <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
             <Plus className="size-3.5" /> New table

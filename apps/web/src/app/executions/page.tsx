@@ -11,7 +11,7 @@ import { Bug, ExternalLink, ListRestart, Loader2, MoreHorizontal, OctagonX, Rota
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
-import { duration, timeAgo } from '@/lib/client/format';
+import { duration, plural, timeAgo } from '@/lib/client/format';
 import { useLiveEvents } from '@/lib/client/live';
 import type { ExecutionRecord, ExecutionSummary } from '@/lib/shared/types';
 import { ExecutionMarks, RERUN_LABEL, canRetry, deleteExecution, retryTitle, startRerun, startRetry, stopAllExecutions, stopAllSummary, type RetryBody } from '@/components/executions/meta';
@@ -410,7 +410,7 @@ function ExecutionsInner() {
     <div className="flex min-h-screen flex-col">
       <PageHeader
         title="Executions"
-        meta={executions && <span>{list.length} recent runs</span>}
+        meta={executions && <span>{plural(list.length, 'recent run')}</span>}
         actions={
           <>
             <label className="flex cursor-pointer items-center gap-2 text-[13px] text-t2">
@@ -473,7 +473,7 @@ function ExecutionsInner() {
             <span role="columnheader">Status</span>
             <span role="columnheader">Started</span>
             <span role="columnheader">Run time</span>
-            <span role="columnheader">Exec. ID</span>
+            <span role="columnheader">Execution ID</span>
             <span role="columnheader" className="text-center">
               Mode
             </span>

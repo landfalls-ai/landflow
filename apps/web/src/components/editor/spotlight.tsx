@@ -872,7 +872,7 @@ function useSpotlightContext(): SpotlightContext {
       }),
       types: Object.values(nodeTypes)
         .filter((t) => t.available && !t.blocked)
-        .map((t) => ({ type: t.type, displayName: t.descriptor.displayName, plugin: t.pluginId === 'core' ? 'Built in' : t.pluginName, trigger: t.descriptor.kind === 'trigger', keywords: t.descriptor.keywords ?? [] })),
+        .map((t) => ({ type: t.type, displayName: t.descriptor.displayName, plugin: t.pluginId === 'core' ? 'Built-in' : t.pluginName, trigger: t.descriptor.kind === 'trigger', keywords: t.descriptor.keywords ?? [] })),
       selectedId,
       ...(outcome && { outcome }),
     }),

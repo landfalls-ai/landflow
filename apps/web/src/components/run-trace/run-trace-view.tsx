@@ -117,7 +117,7 @@ function Head({ model, report, now, replay }: { model: RunModel; report?: RunRep
         </>
       )}
       {model.run?.attrs?.rebuilt === true && (
-        <Badge tone="muted" title="This run was recorded before Run Trace: its trace was rebuilt from the run data. Progress notes, artifacts, checks and decisions were not kept.">
+        <Badge tone="muted" title="This run was recorded before the Run trace: its trace was rebuilt from the run data. Progress notes, artifacts, checks and decisions were not kept.">
           Rebuilt from the run data
         </Badge>
       )}
@@ -496,7 +496,7 @@ function TraceBody({
     return (
       <EmptyState
         title="No trace for this run"
-        hint="Runs from before Run Trace, runs past the retention period and runs started with trace content off have no journal."
+        hint="Runs from before the Run trace, runs past the retention period and runs started with trace content off have no journal."
         className={className}
       />
     );

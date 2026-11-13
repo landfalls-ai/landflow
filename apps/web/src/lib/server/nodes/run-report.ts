@@ -25,7 +25,7 @@ const properties: PropertyDescriptor[] = [
     noDataExpression: true,
     description: 'The claims, role rules and words the checks use',
     options: [
-      { name: 'From Workflow Settings', value: 'flow', description: 'Settings → Run Trace → Profile (Generic when unset)' },
+      { name: 'From Workflow Settings', value: 'flow', description: 'Settings → Run trace → Profile (Generic when unset)' },
       { name: 'Generic', value: 'generic', description: 'Any flow: the checks that need no domain knowledge' },
       { name: 'Software Delivery', value: 'software', description: 'Tests and typecheck against what agents say, read-only reviewers, every change pushed' },
       { name: 'Customer Support', value: 'support', description: 'Promised emails, refunds and ticket changes against what was done' },

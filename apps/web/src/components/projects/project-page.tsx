@@ -13,7 +13,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { useWorkflowsReadOnly } from '@/lib/client/environment';
-import { timeAgo } from '@/lib/client/format';
+import { plural, timeAgo } from '@/lib/client/format';
 import type { UserView } from '@/lib/shared/auth';
 import { PROJECT_ROLES, projectRoleCan, resourceCan, type ProjectDetail, type ProjectRole, type ResourceKind, type ResourceOwnership } from '@/lib/shared/projects';
 import type { ProjectMcpView } from '@/lib/shared/mcp';
@@ -115,7 +115,7 @@ export function ProjectPage({ projectId }: { projectId: string }) {
             <>
               <Badge tone={project.type === 'personal' ? 'muted' : 'accent'}>{project.type === 'personal' ? 'Personal' : 'Team'}</Badge>
               {role && <span>Your role: {role}</span>}
-              <span>· {project.memberCount} {project.memberCount === 1 ? 'member' : 'members'}</span>
+              <span>· {plural(project.memberCount, 'member')}</span>
             </>
           )
         }

@@ -24,10 +24,11 @@ import { SearchInput, Select } from '@/components/ui/inputs';
 import { TemplateCard } from './template-card';
 import { useNodeTypeMap, useTemplateList } from './use-templates';
 import { Segmented } from '../ui/segmented';
+import { plural } from '@/lib/client/format';
 
 const SOURCES: Array<{ id?: TemplateSource; label: string }> = [
   { label: 'All' },
-  { id: 'builtin', label: 'Built in' },
+  { id: 'builtin', label: 'Built-in' },
   { id: 'local', label: 'Saved here' },
   { id: 'remote', label: 'Remote' },
 ];
@@ -93,7 +94,7 @@ export function TemplateLibrary() {
     <>
       <PageHeader
         title="Templates"
-        meta={listing && <span>{templates.length}</span>}
+        meta={listing && <span>{plural(templates.length, 'template')}</span>}
         actions={
           <>
             <Button size="sm" variant="ghost" onClick={importer.open} loading={importer.importing} title="Add a template file exported from Landflow">

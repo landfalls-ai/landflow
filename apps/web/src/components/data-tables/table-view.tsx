@@ -11,7 +11,7 @@ import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Columns3, Download, Elli
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api, ApiError } from '@/lib/client/api';
-import { timeAgo } from '@/lib/client/format';
+import { plural, timeAgo } from '@/lib/client/format';
 import { COLUMN_TYPES, type ColumnType, type CsvImportResult, type DataTable, type DataTableColumn, type DataTableRow, type RowPage } from '@/lib/shared/data-tables';
 import { PageHeader } from '../shell/page-header';
 import { Button } from '../ui/button';
@@ -26,7 +26,6 @@ type Sort = { column: string; direction: 'asc' | 'desc' } | undefined;
 type Confirm = { kind: 'rows' } | { kind: 'table' } | { kind: 'column'; name: string };
 
 const PAGE_SIZES = [25, 50, 100, 250];
-const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
 
 /** Text input for one cell. `onCommit(undefined)` = unchanged. */
 function CellEditor({ column, value, onCommit, onCancel }: { column: DataTableColumn; value: unknown; onCommit: (value: unknown, move?: 1 | -1) => void; onCancel: () => void }) {

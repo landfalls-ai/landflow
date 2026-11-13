@@ -63,7 +63,7 @@ export function UserMenu() {
         <span className="grid size-7 shrink-0 place-items-center rounded-full border border-acbd bg-acdim text-[11px] font-bold text-ac">{initials(viewer.name)}</span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[13px] font-semibold text-t1">{viewer.name}</span>
-          <span className="block truncate text-[11px] text-t3">{ROLE_LABELS[viewer.role]}</span>
+          <span className="block truncate text-[11px] text-t3">{viewer.email}</span>
         </span>
         <ChevronsUpDown className="size-3.5 shrink-0 text-t3" />
       </button>

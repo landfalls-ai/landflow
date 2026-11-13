@@ -17,7 +17,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api, ApiError } from '@/lib/client/api';
 import { useWorkflowsReadOnly } from '@/lib/client/environment';
-import { timeAgo } from '@/lib/client/format';
+import { plural, timeAgo } from '@/lib/client/format';
 import { nodeColor, tint } from '@/lib/client/node-style';
 import { resourceCan, type ResourceOwnership } from '@/lib/shared/projects';
 import type { Folder, ImportReport, NodeTypeInfo, Workflow, WorkflowSummary as Summary } from '@/lib/shared/types';
@@ -326,7 +326,7 @@ function WorkflowRow({
           {workflow.ownership?.shared && <Badge tone="muted" title={`Shared from ${workflow.ownership.projectName}`}>{workflow.ownership.access.role === 'viewer' ? 'Shared · view' : 'Shared'}</Badge>}
           {workflow.active && <Badge tone="success">Published</Badge>}
           <span className="hidden w-16 text-right text-[12px] text-t3 sm:inline">
-            {workflow.nodeCount} {workflow.nodeCount === 1 ? 'node' : 'nodes'}
+            {plural(workflow.nodeCount, 'step')}
           </span>
           <span className="w-16 text-right text-[12px] tabular-nums text-t2" title={`Updated ${new Date(workflow.updatedAt).toLocaleString()}`}>
             {timeAgo(workflow.updatedAt)}
@@ -594,7 +594,7 @@ export function WorkflowsList() {
         title="Workflows"
         meta={
           <>
-            {count !== undefined && <span>{searching ? `${count} found` : count}</span>}
+            {count !== undefined && <span>{searching ? `${count} found` : plural(count, 'workflow')}</span>}
             {readOnly && (
               <span title={readOnly} className="flex items-center gap-1 text-warn" data-testid="workflows-read-only">
                 <Lock className="size-3" /> Read-only

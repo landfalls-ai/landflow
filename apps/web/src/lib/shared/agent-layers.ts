@@ -74,7 +74,7 @@ export function agentLayers(config: AgentConfig, facts: LayerFacts): Layer[] {
       fix: { tab: 'abilities', section: 'section-cache' },
     },
     { id: 'evals', label: 'Evals', state: facts.evalCases > 0 ? 'done' : 'todo', detail: facts.evalCases > 0 ? `${facts.evalCases} test case${facts.evalCases === 1 ? '' : 's'} guard each publish.` : 'Add test questions so a bad edit is caught before it goes live.', fix: { tab: 'evaluations' } },
-    { id: 'traces', label: 'Traces', state: 'done', detail: 'Every run is traced in Run Trace and exported over OTLP.', fix: { tab: 'evaluations' } },
+    { id: 'traces', label: 'Traces', state: 'done', detail: 'Every run is traced in the Run trace and exported over OTLP.', fix: { tab: 'evaluations' } },
   ];
 }
 

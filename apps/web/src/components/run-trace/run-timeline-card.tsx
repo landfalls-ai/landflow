@@ -45,13 +45,13 @@ function Mark({ step }: { step: TimelineStep }) {
   const color = actorColor(step.actor);
   if (step.state === 'done')
     return (
-      <span className="grid size-7 place-items-center rounded-full bg-gn text-white shadow-[0_0_0_3px_var(--sf)] animate-pop">
+      <span className="grid size-7 place-items-center rounded-full bg-gn text-bg shadow-[0_0_0_3px_var(--sf)] animate-pop">
         <Check className="size-4" strokeWidth={3} />
       </span>
     );
   if (step.state === 'failed')
     return (
-      <span className="grid size-7 place-items-center rounded-full bg-rd text-white shadow-[0_0_0_3px_var(--sf)] animate-shake">
+      <span className="grid size-7 place-items-center rounded-full bg-rd text-bg shadow-[0_0_0_3px_var(--sf)] animate-shake">
         <X className="size-4" strokeWidth={3} />
       </span>
     );
@@ -176,7 +176,7 @@ export function RunTimelineCard({ model, onStory }: { model: RunModel; onStory?:
         {timeline.status === 'needs-you' && (
           <button
             type="button"
-            className="inline-flex h-7 items-center gap-1 rounded-full bg-warn px-3 text-[12px] font-semibold text-white"
+            className="inline-flex h-7 items-center gap-1 rounded-full bg-warn px-3 text-[12px] font-semibold text-bg"
             onClick={() => document.querySelector('[aria-label="Needs you"]')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
           >
             Answer below

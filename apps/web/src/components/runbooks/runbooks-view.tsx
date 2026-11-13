@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { BookOpenCheck, ChevronRight, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import { api } from '@/lib/client/api';
-import { timeAgo } from '@/lib/client/format';
+import { plural, timeAgo } from '@/lib/client/format';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -68,7 +68,7 @@ export function RunbooksView() {
 
   return (
     <>
-      <PageHeader title="Runbooks" meta={runbooks && <span>{runbooks.length}</span>} actions={
+      <PageHeader title="Runbooks" meta={runbooks && <span>{plural(runbooks.length, 'runbook')}</span>} actions={
           <Button variant="primary" size="sm" onClick={() => setMaking(true)}>
             <Plus className="size-3.5" /> New runbook
           </Button>

@@ -3,7 +3,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { ArrowRightLeft, MoreHorizontal, Plus, Share2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { timeAgo } from '@/lib/client/format';
+import { plural, timeAgo } from '@/lib/client/format';
 import { resourceCan, type ResourceOwnership } from '@/lib/shared/projects';
 import type { CredentialSummary } from '@/lib/shared/types';
 import { MoveToProjectDialog, ShareDialog } from '@/components/projects/share-dialog';
@@ -30,7 +30,7 @@ export default function CredentialsPage() {
     <>
       <PageHeader
         title="Credentials"
-        meta={credentials && <span>{credentials.length} saved · {types?.length ?? 0} types from plugins</span>}
+        meta={credentials && <span>{credentials.length} saved · {plural(types?.length ?? 0, 'type')} from plugins</span>}
         actions={
           <Button variant="primary" size="sm" onClick={() => setDialog({})}>
             <Plus className="size-3.5" /> New credential

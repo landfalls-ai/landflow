@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowRight } from 'lucide-react';
 import { api } from '@/lib/client/api';
-import { duration, timeAgo } from '@/lib/client/format';
+import { duration, plural, timeAgo } from '@/lib/client/format';
 import { useLiveEvents } from '@/lib/client/live';
 import type { ExecutionSummary, PluginSummary } from '@/lib/shared/types';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
@@ -83,16 +83,11 @@ export default function Overview() {
     <>
       <PageHeader
         title="Home"
-        meta={plugins && <span>{online} plugins online · {languages} languages · {nodeTypes} node types</span>}
+        meta={plugins && <span>{plural(online, 'plugin')} online · {plural(languages, 'language')} · {plural(nodeTypes, 'node type')}</span>}
         actions={
-          <>
-            <Button size="sm" onClick={() => router.push('/developers')}>
-              Build a plugin
-            </Button>
-            <Button size="sm" variant="primary" onClick={() => router.push('/workflows/wf_polyglot_pipeline')}>
-              Open polyglot demo <ArrowRight className="size-3.5" strokeWidth={1.7} />
-            </Button>
-          </>
+          <Button size="sm" variant="primary" onClick={() => router.push('/workflows/wf_polyglot_pipeline')}>
+            Open polyglot demo <ArrowRight className="size-3.5" strokeWidth={1.7} />
+          </Button>
         }
       />
       <PageBody className="flex flex-col gap-5">

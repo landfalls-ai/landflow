@@ -570,7 +570,7 @@ function RunTraceSettings({ value, onChange }: { value: WorkflowSettings; onChan
   const choice = custom ? 'custom' : (setting ?? 'generic');
   return (
     <div className="space-y-2">
-      <div className="text-[12px] font-semibold text-t2">Run Trace</div>
+      <div className="text-[12px] font-semibold text-t2">Run trace</div>
       <div className="grid grid-cols-2 gap-3">
         <Field id="wf-run-profile" label="Profile" hint={custom ? 'A custom profile, as JSON.' : RUN_PROFILES[choice as keyof typeof RUN_PROFILES]?.description}>
           <Select

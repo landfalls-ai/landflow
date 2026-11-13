@@ -19,6 +19,7 @@ import { Button, buttonClass } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Input, SearchInput, SectionLabel } from '@/components/ui/inputs';
 import { Segmented, SegmentedCount } from '../ui/segmented';
+import { plural } from '@/lib/client/format';
 
 interface FeedItem {
   id: number;
@@ -137,7 +138,7 @@ export function PluginRegistry() {
         meta={
           plugins && (
             <span>
-              {online}/{plugins.length} online · {nodeCount} node types · {beatCount} heartbeats
+              {online}/{plugins.length} online · {plural(nodeCount, 'node type')} · {plural(beatCount, 'heartbeat')}
             </span>
           )
         }

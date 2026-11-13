@@ -245,11 +245,11 @@ function NodeToolDialog({
             aria-selected={tab === key}
             onClick={() => setTab(key)}
             className={cn(
-              '-mb-px border-b-2 py-2.5 text-[13px] capitalize transition-colors',
+              '-mb-px border-b-2 py-2.5 text-[13px] transition-colors',
               tab === key ? 'border-ac font-semibold text-t1' : 'border-transparent text-t2 hover:text-t1',
             )}
           >
-            {key}
+            {key === 'parameters' ? 'Parameters' : 'Settings'}
           </button>
         ))}
       </div>

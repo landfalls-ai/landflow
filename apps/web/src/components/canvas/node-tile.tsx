@@ -237,7 +237,7 @@ export function NodeTile(props: NodeTileProps) {
   const pinMark = pinned && (
     <span
       title="Output is pinned: the node returns this data instead of running"
-      className="absolute -right-1.5 -top-1.5 z-20 grid size-[18px] place-items-center rounded-full border-2 border-sf bg-viz-7 text-white"
+      className="absolute -right-1.5 -top-1.5 z-20 grid size-[18px] place-items-center rounded-full border-2 border-sf bg-viz-7 text-bg"
     >
       <Pin className="size-2.5" strokeWidth={2.5} />
     </span>
