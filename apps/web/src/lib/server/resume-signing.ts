@@ -17,16 +17,21 @@ export function resumeSignatureMode(): ResumeSignatureMode {
   return isProduction() ? 'required' : 'optional';
 }
 
+const signWith = (key: Buffer, id: string) => createHmac('sha256', key).update(id).digest('base64url').slice(0, 32);
+
 /** base64url(HMAC-SHA256(deriveKey('resume-url'), id)), 32 characters. */
 export function resumeSignature(id: string): string {
-  return createHmac('sha256', credentials.deriveKey('resume-url')).update(id).digest('base64url').slice(0, 32);
+  return signWith(credentials.deriveKey('resume-url'), id);
 }
 
 export function verifyResumeSignature(id: string, sig: string | null | undefined): boolean {
   if (!sig) return false;
-  const expected = Buffer.from(resumeSignature(id));
   const given = Buffer.from(sig);
-  return given.length === expected.length && timingSafeEqual(given, expected);
+  // Any key of the ring, and the pre-HKDF one: URLs already handed out outlive a rotation and the upgrade.
+  return credentials.deriveKeys('resume-url').some((key) => {
+    const expected = Buffer.from(signWith(key, id));
+    return given.length === expected.length && timingSafeEqual(given, expected);
+  });
 }
 
 /**

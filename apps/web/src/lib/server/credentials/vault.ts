@@ -1,7 +1,8 @@
 /**
- * Saved credentials, encrypted at rest with AES-256-GCM. The key comes from
- * LANDFLOW_ENCRYPTION_KEY (64 hex chars, or any passphrase, which is hashed) or
- * is generated once into <data dir>/encryption.key. Workflows only reference a
+ * Saved credentials, encrypted at rest with AES-256-GCM. Keys form a ring (./key-ring): LANDFLOW_ENCRYPTION_KEYS
+ * (`kid:key,…`, the first seals) and the legacy key, LANDFLOW_ENCRYPTION_KEY (64 hex chars, or a passphrase) or one
+ * generated once into <data dir>/encryption.key, as kid `k0`. Every blob names its key and is bound to its credential
+ * id; `rotateCredentials` re-seals them with the primary key. Workflows only reference a
  * credential by id; decrypted values leave this module on their way to a node
  * (ExecuteRequest.credentials) or a TestCredentials call, never through the API.
  *
@@ -13,7 +14,7 @@
  * sent the refresh token. `refreshOAuth2` renews a token that is about to expire and saves it, and ./oauth2-runtime
  * calls it before a node runs (and once more when the node's API answered 401).
  */
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { existsSync, linkSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { nanoid } from 'nanoid';
@@ -31,6 +32,7 @@ import { singleton } from '../singleton';
 import { store } from '../store';
 import { SECRET_KEY } from '../telemetry/config';
 import { logger } from '../telemetry/logger';
+import { buildKeyRing, hkdfKey, kidOf, LEGACY_KID, LEGACY_SHA_KID, openWith, sealWith, type KeyRing, type SealedValue } from './key-ring';
 import {
   ACCOUNT_FIELD,
   clientCredentialsToken,
@@ -53,11 +55,14 @@ import {
 /** Credential values shorter than this are not remembered: `postgres` or `changeme` would otherwise rewrite every node output that says so. */
 const CREDENTIAL_MIN_LENGTH = 12;
 
-export interface Sealed {
-  iv: string;
-  tag: string;
-  value: string;
-}
+/** A sealed credential blob: v2 names its key and is bound to the credential id (./key-ring); v1 has neither. */
+export type Sealed = SealedValue;
+
+/** AAD of a credential's data: a blob copied to another row no longer opens. */
+const credentialAad = (id: string) => `landflow:credential:${id}`;
+/** AAD of a sealed string (`sealSecret`) that names no purpose. */
+const DEFAULT_PURPOSE = 'secret';
+const secretAad = (purpose: string) => `landflow:${purpose}`;
 
 export interface StoredCredential {
   id: string;
@@ -81,6 +86,14 @@ export function cleanRateLimit(value: unknown): CredentialRateLimitSetting | und
   return { limit: Math.min(limit, 100_000), intervalSeconds: Math.min(intervalSeconds, 86_400) };
 }
 
+/** `v2.<kid>.<iv>.<tag>.<ciphertext>` or the older `v1.<iv>.<tag>.<ciphertext>` as a sealed value; undefined for anything else. */
+export function parseSealedString(text: string): SealedValue | undefined {
+  const parts = text.split('.');
+  if (parts[0] === 'v1' && parts.length === 4 && parts[1] && parts[2]) return { iv: parts[1], tag: parts[2], value: parts[3]! };
+  if (parts[0] === 'v2' && parts.length === 5 && parts[1] && parts[2] && parts[3]) return { v: 2, kid: parts[1], iv: parts[2], tag: parts[3], value: parts[4]! };
+  return undefined;
+}
+
 export class CredentialError extends Error {
   constructor(
     message: string,
@@ -90,12 +103,16 @@ export class CredentialError extends Error {
   }
 }
 
-function loadKey(dir: string): Buffer {
+/** The legacy key text (kid `k0`): the environment, else the key file. Generated only when no ring is configured. */
+function loadLegacyKey(dir: string, ringConfigured: boolean): string | undefined {
   const configured = process.env.LANDFLOW_ENCRYPTION_KEY?.trim();
-  if (configured) return /^[0-9a-f]{64}$/i.test(configured) ? Buffer.from(configured, 'hex') : createHash('sha256').update(configured).digest();
+  if (configured) return configured;
   const path = join(dir, 'encryption.key');
-  if (!existsSync(path)) writeKeyOnce(path);
-  return Buffer.from(readFileSync(path, 'utf8').trim(), 'hex');
+  if (!existsSync(path)) {
+    if (ringConfigured) return undefined;
+    writeKeyOnce(path);
+  }
+  return readFileSync(path, 'utf8').trim();
 }
 
 /**
@@ -253,7 +270,7 @@ export interface CredentialVaultOptions {
 }
 
 export class CredentialVault {
-  private readonly key: Buffer;
+  private readonly ring: KeyRing;
   private readonly backend: CredentialBackend;
   /** Loaded on first use: in Postgres mode the database opens after this module is imported. */
   private loaded?: Map<string, StoredCredential>;
@@ -262,7 +279,8 @@ export class CredentialVault {
 
   constructor(options: CredentialVaultOptions = {}) {
     const dir = options.dir ?? store.dir;
-    this.key = loadKey(dir);
+    const listed = process.env.LANDFLOW_ENCRYPTION_KEYS;
+    this.ring = buildKeyRing(listed, loadLegacyKey(dir, Boolean(listed?.trim())));
     const file = join(dir, 'credentials.json');
     this.backend = options.backend ?? (configStoreKind() === 'database' ? new CredentialTable(file) : new CredentialFile(file));
   }
@@ -294,48 +312,88 @@ export class CredentialVault {
     }
   }
 
-  private seal(data: JsonObject): Sealed {
-    return this.sealText(JSON.stringify(data));
+  private seal(data: JsonObject, id: string): Sealed {
+    return sealWith(this.ring, JSON.stringify(data), credentialAad(id));
   }
 
-  private sealText(text: string): Sealed {
-    const iv = randomBytes(12);
-    const cipher = createCipheriv('aes-256-gcm', this.key, iv);
-    const value = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
-    return { iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), value: value.toString('base64') };
+  /** The key id new values are sealed with. */
+  get primaryKid(): string {
+    return this.ring.primary;
   }
 
-  private openText(sealed: Sealed): string {
-    const decipher = createDecipheriv('aes-256-gcm', this.key, Buffer.from(sealed.iv, 'base64'));
-    decipher.setAuthTag(Buffer.from(sealed.tag, 'base64'));
-    return Buffer.concat([decipher.update(Buffer.from(sealed.value, 'base64')), decipher.final()]).toString('utf8');
+  /** Whether a LANDFLOW_ENCRYPTION_KEYS ring is configured (rotation needs one). */
+  get ringConfigured(): boolean {
+    return Boolean(process.env.LANDFLOW_ENCRYPTION_KEYS?.trim());
   }
 
-  /** A key for another purpose (signing OAuth2 state, deriving PKCE verifiers), derived from the encryption key. */
+  /** A key for another purpose (resume URLs, OAuth2 state), HKDF-SHA256 from the primary key: one per label. */
   deriveKey(label: string): Buffer {
-    return createHmac('sha256', this.key).update(`landflow:${label}`).digest();
+    return hkdfKey(this.ring, label);
   }
 
-  /** Encrypt one secret for storage elsewhere (alert channel secrets): `v1.<iv>.<tag>.<ciphertext>`. */
-  sealSecret(value: string): string {
-    const { iv, tag, value: ciphertext } = this.sealText(value);
-    return `v1.${iv}.${tag}.${ciphertext}`;
+  /**
+   * Every key a derived value may have been signed with, newest first: the primary key's, the other ring keys' (so a
+   * rotation doesn't void links in flight) and the old HMAC derivation of the legacy key (values signed before HKDF).
+   */
+  deriveKeys(label: string): Buffer[] {
+    const legacy = this.ring.keys.get(LEGACY_SHA_KID) ?? this.ring.keys.get(LEGACY_KID);
+    const ring = [this.ring.primary, ...[...this.ring.keys.keys()].filter((kid) => kid !== this.ring.primary)].map((kid) => hkdfKey({ ...this.ring, primary: kid }, label));
+    // TODO(2027-02): remove this HMAC fallback once links signed before HKDF (2026-11) have expired.
+    return legacy ? [...ring, createHmac('sha256', legacy).update(`landflow:${label}`).digest()] : ring;
   }
 
-  /** The secret `sealSecret` returned; throws a CredentialError when it can't be decrypted (another key). */
-  openSecret(sealed: string): string {
-    const [version, iv, tag, value] = sealed.split('.');
-    if (version !== 'v1' || !iv || !tag || value === undefined) throw new CredentialError('Not a sealed secret', 500);
+  /**
+   * Encrypt one secret for storage elsewhere (alert channel secrets): `v2.<kid>.<iv>.<tag>.<ciphertext>`, bound to
+   * `purpose` (open it with the same one).
+   */
+  sealSecret(value: string, purpose = DEFAULT_PURPOSE): string {
+    const { kid, iv, tag, value: ciphertext } = sealWith(this.ring, value, secretAad(purpose));
+    return `v2.${kid}.${iv}.${tag}.${ciphertext}`;
+  }
+
+  /** The secret `sealSecret` returned (or a v1 string from before key ids); throws a CredentialError when it can't be decrypted (another key). */
+  openSecret(sealed: string, purpose = DEFAULT_PURPOSE): string {
+    const parsed = parseSealedString(sealed);
+    if (!parsed) throw new CredentialError('Not a sealed secret', 500);
     try {
-      return this.openText({ iv, tag, value });
+      return openWith(this.ring, parsed, secretAad(purpose));
     } catch {
       throw new CredentialError('A stored secret can’t be decrypted — was LANDFLOW_ENCRYPTION_KEY changed?', 500);
     }
   }
 
+  /** The same secret sealed with the primary key, or undefined when it is on it already (rotation). Throws a CredentialError when it can't be opened. */
+  resealSecret(sealed: string, purpose = DEFAULT_PURPOSE): string | undefined {
+    const parsed = parseSealedString(sealed);
+    if (parsed && parsed.v === 2 && parsed.kid === this.ring.primary) return undefined;
+    return this.sealSecret(this.openSecret(sealed, purpose), purpose);
+  }
+
+  /**
+   * Re-seal every credential that is not v2 under the primary key, writing each one on its own (so an interruption
+   * leaves every credential readable). Returns how many were re-sealed, were already current, and could not be opened.
+   */
+  rotateCredentials(): { resealed: number; current: number; failed: string[] } {
+    const result = { resealed: 0, current: 0, failed: [] as string[] };
+    for (const credential of [...this.credentials.values()]) {
+      if (credential.data.v === 2 && kidOf(credential.data) === this.ring.primary) {
+        result.current += 1;
+        continue;
+      }
+      try {
+        credential.data = this.seal(this.open(credential), credential.id);
+        this.persist({ saved: credential });
+        result.resealed += 1;
+      } catch {
+        result.failed.push(credential.id);
+      }
+    }
+    return result;
+  }
+
   private open(credential: StoredCredential): JsonObject {
     try {
-      return JSON.parse(this.openText(credential.data)) as JsonObject;
+      return JSON.parse(openWith(this.ring, credential.data, credentialAad(credential.id))) as JsonObject;
     } catch {
       throw new CredentialError(`Credential "${credential.name}" can't be decrypted — was LANDFLOW_ENCRYPTION_KEY changed?`, 500);
     }
@@ -430,12 +488,13 @@ export class CredentialVault {
     const data = withoutReserved(Object.fromEntries(Object.entries(input.data).filter(([, value]) => value !== null && value !== undefined)) as JsonObject);
     if (!options.partial) this.validate(info.descriptor, data);
     const now = new Date().toISOString();
+    const id = options.id ?? `cred_${nanoid(12)}`;
     const credential: StoredCredential = {
-      id: options.id ?? `cred_${nanoid(12)}`,
+      id,
       name: input.name.trim() || info.descriptor.displayName,
       type: input.type,
       secretFields: secretNames(info.descriptor),
-      data: this.seal(data),
+      data: this.seal(data, id),
       ...(cleanRateLimit(input.rateLimit) && { rateLimit: cleanRateLimit(input.rateLimit) }),
       createdAt: now,
       updatedAt: now,
@@ -479,7 +538,7 @@ export class CredentialVault {
     if (input.data) {
       const merged = this.merge(credential, input.data);
       if (descriptor) this.validate(descriptor, merged);
-      credential.data = this.seal(merged);
+      credential.data = this.seal(merged, credential.id);
       credential.secretFields = [...new Set([...credential.secretFields, ...secretNames(descriptor)])];
     }
     if (input.name?.trim()) credential.name = input.name.trim();
@@ -642,7 +701,7 @@ export class CredentialVault {
   private writeOAuth2(credential: StoredCredential, change: (data: JsonObject) => void) {
     const data = this.open(credential);
     change(data);
-    credential.data = this.seal(data);
+    credential.data = this.seal(data, credential.id);
     credential.updatedAt = new Date().toISOString();
     this.persist({ saved: credential });
   }

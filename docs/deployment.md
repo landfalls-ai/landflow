@@ -142,6 +142,13 @@ The compose stacks and the Kubernetes base set `LANDFLOW_PROFILE=development` be
 `deploy/.env.example` while their image says `NODE_ENV=production`. A real deployment leaves it unset (or `production`) and
 sets its own secrets and public URL.
 
+### Encryption key rotation
+
+`LANDFLOW_ENCRYPTION_KEYS` (`kid:key,…`, the first key seals) lets the vault's key change without downtime: put the new key first
+on **every** process (in queue mode: every main and worker, before anything else), then run `POST /api/settings/encryption/rotate`
+as the owner (or `pnpm --filter @landflow/web rotate-key` on a stopped host), and remove an old key only after it answers
+`done: true`. The steps are in [secrets and environments](features/secrets-and-environments.md#encryption-keys-and-rotation).
+
 ## Behind a reverse proxy or ingress
 
 Set `LANDFLOW_TRUSTED_PROXIES` to the number of proxies between the client and the host (an ingress controller behind a
@@ -430,7 +437,7 @@ docker build -f deploy/docker/go-plugin.Dockerfile --build-arg PLUGIN=databases 
   --build-arg HTTP_PORT=7107 --build-arg GRPC_PORT=7207 -t landflow/plugin-databases:dev .
 ```
 
-**Host.** `apps/web/next.config.ts` switches to `output: 'standalone'` when `LANDFLOW_NEXT_OUTPUT=standalone`, which only the image build sets. Workflows, executions, agents and the credentials vault live in the `landflow_landflow-data` volume (`LANDFLOW_DATA_DIR=/data`). `LANDFLOW_ENCRYPTION_KEY` (64 hex characters or a passphrase) comes from the environment; left empty, the vault generates `/data/encryption.key` on first use. Changing the key later makes saved credentials unreadable. `LANDFLOW_PUBLIC_URL` is `http://localhost:53000` so links the host hands out point at the published port. `OLLAMA_URL` points at Ollama on the Mac (`host.docker.internal:11434`).
+**Host.** `apps/web/next.config.ts` switches to `output: 'standalone'` when `LANDFLOW_NEXT_OUTPUT=standalone`, which only the image build sets. Workflows, executions, agents and the credentials vault live in the `landflow_landflow-data` volume (`LANDFLOW_DATA_DIR=/data`). `LANDFLOW_ENCRYPTION_KEY` (64 hex characters or a passphrase) comes from the environment; left empty, the vault generates `/data/encryption.key` on first use. Changing the key later makes saved credentials unreadable; to rotate it, add a new key first in `LANDFLOW_ENCRYPTION_KEYS` instead ([rotation](features/secrets-and-environments.md#encryption-keys-and-rotation)). `LANDFLOW_PUBLIC_URL` is `http://localhost:53000` so links the host hands out point at the published port. `OLLAMA_URL` points at Ollama on the Mac (`host.docker.internal:11434`).
 
 **Plugins.** Each container sets `LANDFLOW_REGISTRY_URL=http://web:3000` and `LANDFLOW_ADVERTISE_HOST=<service name>`, so it announces `http://<service>:<port>` and `grpc://<service>:<port>` and heartbeats every 10 s. With `LANDFLOW_REGISTRY_SECRET` set on the host, add the same value to `x-plugin-env` so they may register. Stopping a container withdraws it at once; restarting the host is picked up on the next heartbeat. The host's scan (`LANDFLOW_SCAN_HOSTS`, `LANDFLOW_SCAN_PORTS`) probes the plugin services too, so the Plugins page's "Scan network" works in Docker.
 

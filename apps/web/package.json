@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "worker": "tsx --tsconfig tsconfig.json src/lib/server/cluster/worker-main.ts",
+    "rotate-key": "tsx --tsconfig tsconfig.json scripts/rotate-encryption-key.ts",
     "gen:config-docs": "tsx --tsconfig tsconfig.json scripts/gen-config-docs.ts"
   },
   "dependencies": {
