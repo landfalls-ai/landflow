@@ -116,6 +116,8 @@ describe('proof for announced endpoints', () => {
     process.env.LANDFLOW_REGISTRY_OPEN = 'true';
     expect(registryRefusesAddress('http://169.254.169.254/latest')).toBe(true);
     expect(registryRefusesAddress('http://[fd00:ec2::254]:80')).toBe(true);
+    expect(registryRefusesAddress('http://[::ffff:169.254.169.254]')).toBe(true);
+    expect(registryRefusesAddress('http://[febf::1]')).toBe(true);
     expect(registryRefusesAddress('http://10.0.0.5:8080')).toBe(false);
     const response = await announceRoute.POST(post(announce('http://169.254.169.254:80', 'reg-meta')));
     expect(response.status).toBe(422);
@@ -131,6 +133,14 @@ describe('joining an existing plugin', () => {
     expect(registryJoinAllowed('http://10.1.2.4:9002', ['http://10.1.2.3:9001'])).toBe(false);
     process.env.LANDFLOW_REGISTRY_ALLOW_JOIN = 'true';
     expect(registryJoinAllowed('http://10.1.2.4:9002', ['http://10.1.2.3:9001'])).toBe(true);
+  });
+
+  it('brokered endpoints have no host: a plugin with only brokered endpoints, or a brokered announce, lets the join through', () => {
+    expect(registryJoinAllowed('http://text-toolkit:7101', ['nats://nats-main/text-toolkit'])).toBe(true);
+    expect(registryJoinAllowed('nats://nats-main/text-toolkit', ['http://10.1.2.3:9001'])).toBe(true);
+    // Brokered endpoints are ignored when direct ones exist.
+    expect(registryJoinAllowed('http://10.1.2.4:9002', ['nats://nats-main/x', 'http://10.1.2.3:9001'])).toBe(false);
+    expect(registryJoinAllowed('http://10.1.2.3:9002', ['nats://nats-main/x', 'http://10.1.2.3:9001'])).toBe(true);
   });
 
   it.skipIf(!lanAddress)('without a secret a join from another host is 409 and audited when allowed; with the secret it is proven and audited', async () => {

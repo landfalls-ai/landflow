@@ -221,7 +221,7 @@ export class PluginRegistry implements NodeTypeResolver, AutoSource {
     if (joining && options?.guardJoin && !registryJoinAllowed(endpoint, [...existing!.endpoints.keys()])) {
       client.close();
       this.emit({ type: 'plugin.error', pluginId: id, endpoint, message: `Refused ${endpoint} joining ${id}: another host (LANDFLOW_REGISTRY_ALLOW_JOIN=true allows it)` });
-      throw new RegistryRefused(`${endpoint} may not join plugin "${id}" from another host: set LANDFLOW_REGISTRY_SECRET, or LANDFLOW_REGISTRY_ALLOW_JOIN=true`, 409);
+      throw new RegistryRefused('This endpoint may not join an existing plugin from another host: set LANDFLOW_REGISTRY_SECRET, or LANDFLOW_REGISTRY_ALLOW_JOIN=true', 409);
     }
 
     // A re-pull (Refresh, a version change) keeps the announcing process until an announce names another one.
