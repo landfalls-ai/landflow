@@ -132,9 +132,14 @@ describe('routes wait on readiness', () => {
       boots++;
       markBooted();
     });
-    expect((await route(request())).status).toBe(200);
-    expect((await route(request())).status).toBe(200);
-    expect(boots).toBe(1);
+    try {
+      expect((await route(request())).status).toBe(200);
+      expect((await route(request())).status).toBe(200);
+      expect(boots).toBe(1);
+    } finally {
+      forgetSingleton('lifecycle');
+      setBootstrapper(() => import('@/lib/server/bootstrap').then((m) => m.ensureBootstrapped()));
+    }
   });
 });
 

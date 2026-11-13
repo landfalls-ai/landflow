@@ -93,6 +93,7 @@ export const SERVICES: ServiceSpec[] = [
   // SQLite opens lazily on first use; Postgres mode loads its mirror here, before anything reads the store.
   { name: 'database', roles: BOTH, required: true, start: openDatabase },
   // Queue mode: Valkey, the relay and the leader election (refuses SQLite without LANDFLOW_QUEUE_ALLOW_SQLITE).
+  // `{ role: 'main' }` is explicit: a process that booted as a main is a main here, whatever LANDFLOW_ROLE says.
   { name: 'cluster', roles: MAIN, required: true, start: () => startCluster({ role: 'main' }) },
   // LANDFLOW_OWNER_EMAIL / LANDFLOW_OWNER_PASSWORD: the owner, created at boot while there is no user (Docker, CI).
   { name: 'owner from environment', roles: MAIN, start: bootstrapOwnerFromEnv },
@@ -252,7 +253,9 @@ const cleanups = new WeakSet<Promise<void>>();
 
 /** Start the services of `role`, once per process (a failed boot is forgotten so a later call retries). */
 export function startRuntime({ role }: { role: Role }): Promise<void> {
-  const key = `runtime:${role}`;
+  // The main keeps the key bootstrap.ts always used ('bootstrap'), so tests and tooling that reset the boot by that
+  // name keep working; the worker has its own.
+  const key = role === 'main' ? 'bootstrap' : 'runtime:worker';
   const booting = singleton(key, () => bootSteps(role).catch(failBoot));
   // Forget the cached promise only once it is stored (a synchronous failure rejects before `singleton` stores it).
   if (!cleanups.has(booting)) {

@@ -80,8 +80,8 @@ export interface ScimContext {
 }
 
 /**
- * Wrap a /scim/v2 route: wait until the host booted, authenticate the SCIM token, then run `fn` as its user. ScimError, and the
- * user and project errors the stores throw, come back as SCIM errors.
+ * Wrap a /scim/v2 route: wait until the host booted, authenticate the SCIM token, then run `fn` as its user.
+ * ScimError, and the user and project errors the stores throw, come back as SCIM errors.
  */
 export function scimRoute<P extends Record<string, string> = Record<string, string>>(fn: (ctx: ScimContext, params: P) => Promise<Response>) {
   return async (request: Request, context?: { params?: Promise<P> }): Promise<Response> => {
