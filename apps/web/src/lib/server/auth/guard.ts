@@ -20,6 +20,7 @@ import { protectedWriteRefusal } from '../environments/protection';
 import { checkResourceRule } from '../projects/access';
 import { editLocks } from './edit-locks';
 import { AuthError } from './errors';
+import { registryOpen } from '../plugins/registry-policy';
 import { sameSecret } from './passwords';
 import { resourceRule, routePolicy } from './policy';
 import { sessionUser } from './sessions';
@@ -90,7 +91,8 @@ const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 /** LANDFLOW_REGISTRY_SECRET: plugins must send it to announce (header `X-Landflow-Registry-Secret` or Bearer). */
 export function registrySecretOk(request: Request): boolean {
   const secret = process.env.LANDFLOW_REGISTRY_SECRET;
-  if (!secret) return true;
+  // No secret: announces are open only in development or with LANDFLOW_REGISTRY_OPEN=true (registryOpen).
+  if (!secret) return registryOpen();
   return sameSecret(request.headers.get('x-landflow-registry-secret') ?? bearerToken(request), secret);
 }
 

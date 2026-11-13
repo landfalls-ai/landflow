@@ -111,3 +111,4 @@ items still open (its "Wave 6" section); this page is the short list to check be
   and the like have no execution or workflow to derive an owner from, so any signed-in caller who knows the id (random,
   unguessable) can read them. Files of executions and of evaluation datasets are checked against the workflow's project.
 - **AI usage rows with no workflow or agent** (a model call outside both) are visible to owners and admins only.
+- **Plugin registration** ([plugins.md](plugins.md#registration-rules)): the production profile needs `LANDFLOW_REGISTRY_SECRET` on the host and every announcing plugin (or `LANDFLOW_REGISTRY_OPEN=true`). Without a secret the development registry accepts any endpoint it can reach; the full outbound address policy (beyond refusing link-local and metadata addresses) comes later.

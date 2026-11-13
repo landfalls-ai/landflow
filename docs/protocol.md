@@ -602,6 +602,10 @@ where `pluginId` is the manifest's `plugin.id` and the challenge is 32 random by
 ignore challenges over 256). Test vector: secret `registry-s3cret`, plugin `test-plugin`, challenge `challenge-123` →
 `d6d47aef6c9f0cdd2357464b9db5c8d2a049d3768756e10af5ec4e37ad47655e`.
 
+- An announce is held to the same proof: with the secret set, the host challenges the announced endpoint on its
+  GetManifest, so the secret header alone no longer registers an endpoint (a plugin that cannot answer, such as one
+  without the secret, gets a 422). Without a secret the registry is open only in the development profile, or with
+  `LANDFLOW_REGISTRY_OPEN=true` ([plugins.md](plugins.md#registration-rules)).
 - The three SDKs answer by themselves when `LANDFLOW_REGISTRY_SECRET` is set in the plugin's environment
   (`registryProof` / `answerRegistryChallenge` in TypeScript, `RegistryProof` in Go, `registry_proof` in Python, with
   `verify…` counterparts). Without the variable, or without a challenge, they send no proof.
