@@ -1445,6 +1445,36 @@ workbench in place of a page of cards, keeping Spotlight.
   dependency of the engine, `NODE_OPTIONS=--no-node-snapshot` in the image, refused at boot in production when it cannot load. Open: hash-table growth still aborts the process and the cap does not bound
   resident memory, so it is no defence against a memory bomb ([limitations.md](limitations.md), [engine.md](features/engine.md#the-isolate-backend-optional)).
 
+- **Wave 5 carryover** (applied in wave 6): `Database.atomic()` has a test of its own (savepoint rollback, dropped queued
+  ops, nested calls); the audit fail-closed test covers API key revoke, credential update and delete, the audit settings
+  PATCH and SCIM groups; the audit outbox gauges are registered at boot even with `LANDFLOW_AUDIT_OUTBOX=off`, and the
+  four `landflow.audit.*` instruments are in the observability table; a test pins `landflow.auth.sign_in_failures` to one
+  count per failed sign-in; `recordDbQuery` costs about 0.15 µs a call with the metrics SDK on (measured, documented);
+  the `rotate-key` script has a Postgres test (`LANDFLOW_INTEGRATION=queue`); an anchoring save after a rotation keeps
+  the new seal; the reset page refuses a link before its form under `LANDFLOW_LOCAL_SIGN_IN`, Forgot password is tested
+  under the mode, the login page drops its welcome line when nobody can sign in and its test renders the form; the unused
+  sync `executionsMentioning` is gone and a source scan keeps the sync journal readers to runs in flight; and docs (how to
+  clear a value no key opens, why the local sign-in refusal follows the password, why readiness leaves out the outbox,
+  which literals `statementName` keeps). Deferred:
+  - the rotation route re-seals synchronously inside the request: fine at today's sizes, but with many credentials and
+    passphrase keys it blocks the event loop for the duration; a background job with progress wants its own design
+    ([limitations.md](limitations.md#encryption-key-ring-backend-hardening-2026-11));
+  - Settings → Users still offers a reset link for a user `LANDFLOW_LOCAL_SIGN_IN` refuses (the link is then refused):
+    hiding or explaining it is a UI change of its own;
+  - a CSP probe that loads a page with an inline script lacking the nonce (the CDP-injected probe runs under
+    `'strict-dynamic'` and can't tell a gap from the injection);
+  - live checks no automated test covers: fail-closed audit with a failing insert on a scratch host in the UI, and
+    `auditedTransaction` rolling back in Postgres mode; the P22 signals on `/api/metrics` under `pnpm dev` and a
+    production build (runtime, database, SSE, sign-in and limiter series), a slow GET as a whole trace with `db.query`
+    children in the local collector and none for fast GETs, `db.query` spans for `sqlite`, `postgres-mirror` and
+    `direct()`; key rotation on a scratch copy of a data directory (credentials, alert channels, MCP tokens; the owner
+    route and an admin's 403; queue mode with workers on the new ring; an OAuth2 Connect, an approval email link and a
+    resume URL made before the rotation); `/login` under `LANDFLOW_LOCAL_SIGN_IN=off` and `owner` at desktop and 390 px,
+    the OIDC and SAML suites (Keycloak) with local sign-in off, the 72 h idle sign-out and a cross-site POST without
+    Origin on a production-profile host; and a finished run's Run Trace, run search, compare, measures, Needs you,
+    approval links, delete and rerun, and the MCP execution tools, in SQLite and Postgres mode (now that P26 serves
+    old runs from Postgres).
+
 ## Planned next
 
 1. **Declare event kinds in the UI**: kinds are declared over the API or by Record Event's *Declare Kind If New* only.

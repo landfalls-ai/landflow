@@ -135,6 +135,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - Going back to an older build is one-way blocked: once this code saves a credential or refreshes an OAuth2 token (which re-seals it), the value is `v2`, and a host on an older build (or another branch) pointed at the same data directory can no longer open it.
 - A rolling upgrade to the key ring in queue mode is not seamless: processes before it can't open `v2` values or verify HKDF-signed resume URLs, so upgrade every process together (or stop the workers first).
 - Rotation has no page in Settings (the route and the script only) and in queue mode needs the new ring on every process first.
+- The rotation route re-seals everything synchronously inside the request, so with many credentials and passphrase (scrypt) keys it blocks the host's event loop until it ends; on a large instance prefer the script with the host stopped.
 - Files outside the data directory's `agents/` and `audit-anchoring.json` that hold a value sealed with `sealSecret` are not
   re-sealed (the stores are listed in `credentials/rotate.ts`).
 
@@ -158,5 +159,5 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 ## Sessions and sign-in (backend hardening, 2026-11)
 
-- Local accounts have no second factor (no TOTP or passkeys); `LANDFLOW_LOCAL_SIGN_IN=off` makes an instance SSO-only so the identity provider's MFA applies. Passwords have a fixed minimum of 8 characters and no breached-password check (local-only, no external calls). Password reset is refused for users the mode excludes; first-run setup and invite acceptance still sign in once with the password they set.
+- Local accounts have no second factor (no TOTP or passkeys); `LANDFLOW_LOCAL_SIGN_IN=off` makes an instance SSO-only so the identity provider's MFA applies. Passwords have a fixed minimum of 8 characters and no breached-password check (local-only, no external calls). Password reset is refused for users the mode excludes (Settings → Users still offers to make a link for them; the link is then refused); first-run setup and invite acceptance still sign in once with the password they set.
 - The idle limit (`LANDFLOW_SESSION_IDLE_HOURS`) tells background requests from use only by the `X-Landflow-Background` header the browser's own timers send (and `GET /api/events` by its path). A client timer added without `background: true` keeps an open tab's session alive, a plugin's or extension's own polling with the session cookie counts as use, and use is recorded at most once a minute, so the limit is accurate to about a minute.
