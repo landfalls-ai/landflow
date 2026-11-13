@@ -25,6 +25,8 @@ const { listVersions } = await import('@/lib/server/versions');
 const workflowsRoute = await import('@/app/api/workflows/route');
 const workflowRoute = await import('@/app/api/workflows/[id]/route');
 const versions = await import('@/lib/server/versions');
+const publications = await import('@/lib/server/publications');
+const projectStore = await import('@/lib/server/projects/store');
 
 registry.registerBuiltin(corePlugin);
 
@@ -122,5 +124,33 @@ describe('DELETE /api/workflows/[id]', () => {
     expect(database().get<{ id: string }>('SELECT id FROM workflows WHERE id = ?', workflow.id)).toBeDefined();
     expect(listVersions(workflow.id)).toHaveLength(before);
     expect(listeners).not.toHaveBeenCalled();
+  });
+
+  it('is atomic when the last write throws: the publication stays and its listeners hear nothing', async () => {
+    const workflow = await create('Published');
+    const [version] = listVersions(workflow.id);
+    publications.setPublication(workflow.id, version!.id);
+    const heard = vi.fn();
+    const off = publications.onPublicationChanged(heard);
+    // The project rows go last, after the versions and the publication.
+    const spy = vi.spyOn(projectStore, 'forgetResource').mockImplementation(() => {
+      throw new Error('disk full');
+    });
+    try {
+      const response = await workflowRoute.DELETE(req('DELETE', `/api/workflows/${workflow.id}`), params(workflow.id));
+      expect(response.status).toBe(500);
+      expect(spy).toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+    expect(store.getWorkflow(workflow.id)).toBeDefined();
+    expect(publications.publishedVersionId(workflow.id)).toBe(version!.id);
+    expect(heard).not.toHaveBeenCalled();
+
+    // Deleted for real, the listeners hear of it once, after the commit.
+    expect((await workflowRoute.DELETE(req('DELETE', `/api/workflows/${workflow.id}`), params(workflow.id))).status).toBe(200);
+    expect(publications.publishedVersionId(workflow.id)).toBeUndefined();
+    expect(heard).toHaveBeenCalledWith(workflow.id);
+    off();
   });
 });

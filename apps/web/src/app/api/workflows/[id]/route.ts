@@ -75,13 +75,16 @@ export const PUT = handler(async (request: Request, { params }: Ctx) => {
 export const DELETE = handler(async (_request: Request, { params }: Ctx) => {
   const { id } = await params;
   const existing = store.getWorkflow(id);
-  // The row, its versions, publications, project rows and policy go in one transaction: all or nothing.
+  // The row, its versions, publications, project rows and policy go in one transaction: all or nothing. Publication
+  // listeners hear of it only after the commit.
+  let publicationGone = () => {};
   const deleted = store.deleteWorkflow(id, () => {
     deleteVersions(id);
-    deletePublications(id);
+    publicationGone = deletePublications(id);
     forgetDeleted('workflow', id);
   });
   if (!deleted) return error('Workflow not found', 404);
+  publicationGone();
   recordAudit({ action: 'workflow.delete', target: { type: 'workflow', id, ...(existing?.name && { name: existing.name }) } });
   // Its publication went with it; app webhook triggers remove their hooks in the background.
   void forgetWorkflow(id);

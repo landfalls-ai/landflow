@@ -193,7 +193,7 @@ export async function unpublishWorkflow(workflowId: string, by?: string, note?: 
 
 /** After a workflow was deleted: forget its publication and remove its app webhooks from their services. */
 export async function forgetWorkflow(workflowId: string): Promise<void> {
-  deletePublications(workflowId);
+  deletePublications(workflowId)();
   await reconcileTriggers(workflowId);
 }
 
