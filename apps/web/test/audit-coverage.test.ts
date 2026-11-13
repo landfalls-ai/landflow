@@ -24,7 +24,7 @@ const { database } = await import('@/lib/server/db');
 const { createUser } = await import('@/lib/server/auth/users');
 const { enableTestAuth, TEST_OWNER } = await import('@/lib/server/auth/test-bypass');
 const { queryEvents, countEvents } = await import('@/lib/server/audit/store');
-const { deniedReadDue } = await import('@/lib/server/audit/http');
+const { deniedReadDue, deniedReadUnderCap } = await import('@/lib/server/audit/http');
 const { store } = await import('@/lib/server/store');
 const { agentStore } = await import('@/lib/server/agents/store');
 const { newSession } = await import('@/lib/server/agents/runtime');
@@ -272,6 +272,15 @@ describe('failed sign-ins, denied reads', () => {
     // The oldest keys were forgotten rather than the map growing without bound; a recent one is still held.
     expect(deniedReadDue('ip:10049', '/flood', t0 + 120_001)).toBe(false);
     expect(deniedReadDue('ip:0', '/flood', t0 + 120_002)).toBe(true);
+  });
+
+  it('records at most 60 denied reads a minute in all', () => {
+    // An hour ahead, past the window the requests above opened.
+    const t0 = Date.now() + 3_600_000;
+    const first = Array.from({ length: 61 }, (_, i) => deniedReadUnderCap(t0 + i));
+    expect(first.filter(Boolean)).toHaveLength(60);
+    expect(first[60]).toBe(false);
+    expect(deniedReadUnderCap(t0 + 60_000)).toBe(true);
   });
 });
 

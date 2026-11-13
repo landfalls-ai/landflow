@@ -4,7 +4,8 @@
  * and, for a change (POST, PUT, PATCH, DELETE) that recorded no domain event of its own, records an `api.request`
  * event with the method, route pattern, status and outcome (2xx/3xx success, 401/403 denied, otherwise failure).
  * A read (GET, HEAD) refused with 401 or 403 records `api.denied`, at most once a minute per (user or client address,
- * route pattern), so probing shows up in the log without a polling tab flooding it.
+ * route pattern) and at most 60 a minute in all, so probing shows up in the log without a polling tab, or a caller
+ * rotating addresses, flooding it.
  * Nothing reads the request body, and only the route pattern is kept (no query string, no parameter values beyond
  * the target id). Paths that change nothing anyone audits, or that fire constantly (edit-lock heartbeats, plugin
  * announcements, public webhooks and form resumes, Slack callbacks, MCP JSON-RPC, remote agents' trace batches, editor
@@ -50,6 +51,18 @@ export function deniedReadDue(who: string, route: string, now = Date.now()): boo
   }
   seen.set(key, now);
   return true;
+}
+
+/** Denied-read events per minute across every caller, so a caller rotating addresses can't flood the log (as SCIM's). */
+const DENIED_PER_WINDOW = 60;
+const deniedWindow = () => singleton('audit-denied-window', () => ({ start: 0, count: 0 }));
+
+/** True while this minute's denied-read events are under the ceiling (and counts this one). */
+export function deniedReadUnderCap(now = Date.now()): boolean {
+  const window = deniedWindow();
+  // (A clock that moved back opens a new window too.)
+  if (now - window.start >= DENIED_WINDOW_MS || now < window.start) Object.assign(window, { start: now, count: 0 });
+  return ++window.count <= DENIED_PER_WINDOW;
 }
 
 const REQUEST_ID = /^[\w.:-]{1,128}$/;
@@ -189,7 +202,7 @@ export async function auditRequest(args: unknown[], run: () => Promise<Response>
     if (principal) ctx.principal = principal;
     const target = targetOf(ctx.route, params);
     if (!MUTATING.has(method)) {
-      if (!deniedReadDue(principal ? `user:${principal.user.id}` : `ip:${ctx.ip ?? 'unknown'}`, ctx.route)) return response;
+      if (!deniedReadDue(principal ? `user:${principal.user.id}` : `ip:${ctx.ip ?? 'unknown'}`, ctx.route) || !deniedReadUnderCap()) return response;
       withAuditRequest(ctx, () =>
         recordAudit({ action: 'api.denied', outcome: 'denied', status: response.status, ...(target && { target }), summary: `${method} ${ctx.route} → ${response.status}` }),
       );
