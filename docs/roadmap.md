@@ -1360,8 +1360,11 @@ workbench in place of a page of cards, keeping Spotlight.
   - `db/replication.ts` keeps its own statement map (bounded in practice: one SQL text per table and column set) and
     `withOwnership` reads `resource_shares` twice per list (constant per list); both are left for P26, which owns those
     files;
-  - live checks no automated test covers: hosted-chat POST with a malformed body and SCIM 401/404 documents on a live
-    host; the OIDC and SAML Keycloak suites (`LANDFLOW_INTEGRATION=oidc` / `saml`); a bad SSO assertion in the Audit
+  - live checks no automated test covers: editor saves after a Spotlight apply, after publishing and unpublishing,
+    after restoring a version and from a read-only tab that took the edit lock (the two-tab conflict was checked at
+    desktop and phone in wave 3); `{{ Promise.reject(1) }}` and `{{ (async()=>{throw 1})() }}` under `next dev` and
+    `next start` ending as expression errors, not a process exit; hosted-chat POST with a malformed body and SCIM
+    401/404 documents on a live host; the OIDC and SAML Keycloak suites (`LANDFLOW_INTEGRATION=oidc` / `saml`); a bad SSO assertion in the Audit
     log, member role, share and transfer events, and one `api.denied` a minute, in a dev host; a production-like
     deployment with in-cluster gateways and remote MCP, OIDC/SAML, alert and SIEM endpoints; a streaming MCP transport
     and a multipart or streamed HTTP Request body through the undici path with blocking on; the expression bench on a
