@@ -132,6 +132,44 @@ The compose stacks and the Kubernetes base set `LANDFLOW_PROFILE=development` be
 `deploy/.env.example` while their image says `NODE_ENV=production`. A real deployment leaves it unset (or `production`) and
 sets its own secrets and public URL.
 
+## Behind a reverse proxy or ingress
+
+Set `LANDFLOW_TRUSTED_PROXIES` to the number of proxies between the client and the host (an ingress controller behind a
+cloud load balancer is 2). The host then takes the client address from `X-Forwarded-For` that many entries from the end
+and builds its own origin from `X-Forwarded-Host`/`-Proto`. With the default 0 it takes the last entry: behind one proxy
+that appends to `X-Forwarded-For` that is still the real client (0 and 1 give the same address), but behind two or more
+proxies, or one that sets no header, every request seems to come from a proxy (one shared sign-in limit). What 0 loses is
+`X-Real-IP` and the origin: the host does not build its own origin from `X-Forwarded-Host`/`-Proto`. (HSTS, the cookies'
+`Secure` flag, the OAuth2 callback, the hosted chat page and the same-origin check still read `X-Forwarded-Proto` or `-Host` whatever the hop
+count.) Also set `LANDFLOW_PUBLIC_URL`: invite and reset links are refused in the production profile without it. Resume URLs are signed in production
+(`LANDFLOW_RESUME_SIGNATURES`, see [engine](features/engine.md)).
+
+## Security headers and Content Security Policy
+
+`apps/web/src/proxy.ts` sets these on every response it produces (pages, API routes, 401s and redirects;
+`X-Frame-Options` except on the embeddable paths below): `X-Content-Type-Options: nosniff`, `Referrer-Policy:
+strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), geolocation=(), microphone=(self)` (Spotlight
+dictation uses the microphone) and `X-Frame-Options: DENY`. `Strict-Transport-Security: max-age=31536000;
+includeSubDomains` is added when the request is https (the URL, or `X-Forwarded-Proto`) unless `LANDFLOW_HSTS=off`.
+`x-powered-by` is not sent.
+
+Pages (not API routes) also get a Content Security Policy with a fresh nonce per request: `script-src 'self' 'nonce-…'
+'strict-dynamic'` (plus `'unsafe-eval'` under `next dev`), inline styles, `img-src 'self' data: blob: https:` (notes,
+chat and plugin icons show remote images; plain `http:` images do not load under `enforce`), `connect-src 'self'`, `frame-src 'self' blob: data: https:`, `worker-src
+'self' blob:`, `object-src 'self' data: https:` (the Run Trace shows a PDF artifact in an `<object>`, which Chrome also
+checks against `frame-src`), `base-uri 'self'`, `form-action 'self'` and `frame-ancestors 'none'`. `LANDFLOW_CSP` picks
+the mode: `enforce` (default in the production profile), `report` (`Content-Security-Policy-Report-Only`, default in
+development) or `off`. If a page breaks in production, set `LANDFLOW_CSP=report` and read the console for the blocked
+source.
+
+The embeddable or self-policed paths (`/chat`, `/form`, `/form-test`, `/api/binary`, `/api/mcp/files`, `/mcp`,
+`/mcp-test`, `/api/webhook`, `/api/webhook-test`) keep their own policy and get no frame headers or CSP from the
+proxy, only the three fixed headers above. A reverse proxy that serves the host over https should forward
+`X-Forwarded-Proto`.
+
+Any inline `<script>` in a page must carry the nonce: the root layout reads it from the `x-nonce` request header the
+proxy sets and passes `nonce={nonce}` to its theme and look scripts. Without it the browser blocks the script.
+
 ## Ports, credentials and URLs
 
 All credentials are **for local development and tests only**.
@@ -1046,38 +1084,3 @@ If you joined the networks with `compose.infra-link.yml`, pass it to `down` as w
 - **LocalStack** (profile `aws`) stands in for AWS Secrets Manager: Settings → External secrets → AWS Secrets Manager with the endpoint `http://localhost:54566` (or `http://localstack:4566` from the app stack) and dummy access keys. `LANDFLOW_INTEGRATION=aws npx vitest run test/secrets-aws.integration.test.ts` (in `apps/web`) runs the provider against it with the shared AWS config and credentials files turned off. Secrets are gone after a restart.
 - **GreenMail** is there because Mailpit has no IMAP: it is the mailbox the Email Trigger (IMAP) reads. Mail sent to its SMTP port lands in its own mailboxes, not in Mailpit.
 - Keycloak's realm is imported only when the realm doesn't exist yet. After editing `infra/keycloak/landflow-realm.json`, run `down -v` on the infra stack (or delete the realm in the admin console) and start it again.
-
-## Behind a reverse proxy or ingress
-
-Set `LANDFLOW_TRUSTED_PROXIES` to the number of proxies between the client and the host (an ingress controller behind a
-cloud load balancer is 2). The host then takes the client address from `X-Forwarded-For` that many entries from the end
-and builds its own origin from `X-Forwarded-Host`/`-Proto`; with the default 0 it sees every request as coming from the
-proxy's address (one shared sign-in limit) and ignores those headers. Also set `LANDFLOW_PUBLIC_URL`: invite and reset
-emails refuse to go out in the production profile without it. Resume URLs are signed in production
-(`LANDFLOW_RESUME_SIGNATURES`, see [engine](features/engine.md)).
-
-## Security headers and Content Security Policy
-
-`apps/web/src/proxy.ts` sets these on every response it produces (pages, API routes, 401s and redirects;
-`X-Frame-Options` except on the embeddable paths below): `X-Content-Type-Options: nosniff`, `Referrer-Policy:
-strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), geolocation=(), microphone=(self)` (Spotlight
-dictation uses the microphone) and `X-Frame-Options: DENY`. `Strict-Transport-Security: max-age=31536000;
-includeSubDomains` is added when the request is https (the URL, or `X-Forwarded-Proto`) unless `LANDFLOW_HSTS=off`.
-`x-powered-by` is not sent.
-
-Pages (not API routes) also get a Content Security Policy with a fresh nonce per request: `script-src 'self' 'nonce-…'
-'strict-dynamic'` (plus `'unsafe-eval'` under `next dev`), inline styles, `img-src 'self' data: blob: https:` (notes,
-chat and plugin icons show remote images), `connect-src 'self'`, `frame-src 'self' blob: data: https:`, `worker-src
-'self' blob:`, `object-src 'self' data: https:` (the Run Trace shows a PDF artifact in an `<object>`, which Chrome also
-checks against `frame-src`), `base-uri 'self'`, `form-action 'self'` and `frame-ancestors 'none'`. `LANDFLOW_CSP` picks
-the mode: `enforce` (default in the production profile), `report` (`Content-Security-Policy-Report-Only`, default in
-development) or `off`. If a page breaks in production, set `LANDFLOW_CSP=report` and read the console for the blocked
-source.
-
-The embeddable or self-policed paths (`/chat`, `/form`, `/form-test`, `/api/binary`, `/api/mcp/files`, `/mcp`,
-`/mcp-test`, `/api/webhook`, `/api/webhook-test`) keep their own policy and get no frame headers or CSP from the
-proxy, only the three fixed headers above. A reverse proxy that serves the host over https should forward
-`X-Forwarded-Proto`.
-
-Any inline `<script>` in a page must carry the nonce: the root layout reads it from the `x-nonce` request header the
-proxy sets and passes `nonce={nonce}` to its theme and look scripts. Without it the browser blocks the script.
