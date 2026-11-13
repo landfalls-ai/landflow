@@ -4,8 +4,7 @@ import { withAuth } from './auth/context';
 import { AuthError, guardRequest } from './auth/guard';
 import { noteAuditPrincipal } from './audit/context';
 import { auditRequest } from './audit/http';
-import { ensureBootstrapped } from './bootstrap';
-import { isDraining, trackRequest } from './lifecycle';
+import { isDraining, trackRequest, whenReady } from './lifecycle';
 import { logger } from './telemetry';
 
 export function json<T>(data: T, init?: number | ResponseInit) {
@@ -17,8 +16,9 @@ export function error(message: string, status = 400, extra: Record<string, unkno
 }
 
 /**
- * Wrap a route handler: bootstrap first, then the auth guard (lib/server/auth/guard.ts: a session or API key unless
- * the path is on the public allow-list, plus the route's scope and role), then the handler as that user; thrown
+ * Wrap a route handler: wait until the host booted (lifecycle.ts `whenReady`, which boots it through the registered
+ * bootstrapper), then the auth guard (lib/server/auth/guard.ts: a session or API key unless the path is on the
+ * public allow-list, plus the route's scope and role), then the handler as that user; thrown
  * errors become JSON. Every request runs in an audit context, and a change that recorded no audit event of its own
  * gets a generic one (lib/server/audit/http.ts). While the host drains for shutdown, new requests get 503 with
  * Retry-After (health checks excepted); requests in flight are counted so the shutdown can wait for them.
@@ -36,7 +36,7 @@ function run<A extends unknown[]>(fn: (...args: A) => Promise<Response>, args: A
   return (
     auditRequest(args, async () => {
       try {
-        await ensureBootstrapped();
+        await whenReady();
         const gate = guardRequest(args[0] instanceof Request ? args[0] : undefined);
         if (!gate.ok) return gate.response;
         noteAuditPrincipal(gate.auth.principal);

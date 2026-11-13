@@ -7,12 +7,20 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 async function fresh() {
   const { forgetSingleton } = await import('../src/lib/server/singleton');
   forgetSingleton('lifecycle');
-  return import('../src/lib/server/lifecycle');
+  return rearm();
+}
+
+// Forgetting 'lifecycle' also drops the bootstrapper test/setup.ts registered, so register it again.
+async function rearm() {
+  const lc = await import('../src/lib/server/lifecycle');
+  lc.setBootstrapper(() => import('../src/lib/server/bootstrap').then((m) => m.ensureBootstrapped()));
+  return lc;
 }
 
 afterEach(async () => {
   const { forgetSingleton } = await import('../src/lib/server/singleton');
   forgetSingleton('lifecycle');
+  await rearm();
 });
 
 describe('shutdown registry', () => {

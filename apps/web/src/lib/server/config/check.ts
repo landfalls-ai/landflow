@@ -120,3 +120,11 @@ export function checkConfig(env: NodeJS.ProcessEnv = process.env): ConfigCheck {
   }
   return { errors, warnings, effective };
 }
+
+/** The production check found errors: the message lists every one. The host refuses to boot (lib/server/runtime.ts). */
+export class ConfigError extends Error {
+  constructor(readonly problems: string[]) {
+    super(`Configuration refused in the production profile:\n- ${problems.join('\n- ')}`);
+    this.name = 'ConfigError';
+  }
+}
