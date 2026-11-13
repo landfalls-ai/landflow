@@ -1,10 +1,12 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { Bot, Check, ChevronRight, FileText, Loader2, Paperclip, RotateCcw, SendHorizontal, ShieldAlert, User, Wrench, X } from 'lucide-react';
+import { Ban, Bot, Check, ChevronRight, FileText, Loader2, Paperclip, ShieldAlert, SquarePen, Wrench, X } from 'lucide-react';
 import { nanoid } from 'nanoid';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { ExecutionEvent } from '@/lib/shared/types';
+import { Button } from '../ui/button';
+import { AssistantRow, CHAT_ICON_BUTTON, ChatComposer, ChatEmpty, ChatError, ChatMarkdown, UserBubble, Working } from '../ui/chat';
 import { NodeIcon } from '../ui/icon';
 import { useEditor } from './store';
 
@@ -122,8 +124,11 @@ export function ChatPanel({
   const runStart = useRef(0);
   const reply = useRef(EMPTY_REPLY as { text: string; calls: ChatTool[]; error?: string });
 
+  // Follow the reply only when you are at the end (reading further up stays put), or just sent something.
+  const atEnd = useRef(true);
   useEffect(() => {
-    scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' });
+    const el = scroller.current;
+    if (el && (atEnd.current || messages.at(-1)?.role === 'user')) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   }, [messages, log.length, live]);
 
   // Live tool activity of the current run (sub-node calls on the canvas), when the agent streams nothing itself.
@@ -188,6 +193,15 @@ export function ChatPanel({
     await converse(() => onSend(text, sessionId, attached, onChunk));
   };
 
+  /** Try again: the message before an error, sent again in the same session. */
+  const retry = (errorId: string) => {
+    const at = messages.findIndex((m) => m.id === errorId);
+    const asked = messages.slice(0, at).findLast((m) => m.role === 'user');
+    if (!asked || pending) return;
+    setMessages((m) => m.filter((msg) => msg.id !== errorId));
+    void converse(() => onSend(asked.text, sessionId, [], onChunk));
+  };
+
   const decide = async (messageId: string, executionId: string, callId: string, approved: boolean) => {
     if (!onDecide || pending) return;
     const mark = (value: boolean | 'busy' | undefined) =>
@@ -237,49 +251,59 @@ export function ChatPanel({
 
   if (!open) return null;
   return (
-    <aside className="z-30 flex w-[380px] shrink-0 animate-panel flex-col border-l border-hair bg-sf max-md:h-[52dvh] max-md:w-full max-md:border-l-0 max-md:border-t">
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-hair px-3">
-        <span className="text-[13px] font-semibold text-t1">Chat</span>
-        <span className="font-mono text-[11px] text-t3">{sessionId}</span>
+    <aside className="z-30 flex w-[380px] shrink-0 animate-panel flex-col border-l border-hair bg-sf max-md:h-[52dvh] max-md:w-full max-md:rounded-t-2xl max-md:border-l-0 max-md:border-t">
+      <div className="relative flex h-11 shrink-0 items-center gap-1.5 border-b border-hair pl-3 pr-1.5">
+        <span className="absolute left-1/2 top-1 block h-1 w-8 -translate-x-1/2 rounded-full bg-hair md:hidden" aria-hidden />
+        <Bot className="size-3.5 shrink-0 text-viz-7" />
+        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-t1">Chat</span>
         <button
-          title="New session"
-          aria-label="New session"
+          title={`New conversation (this one is ${sessionId})`}
+          aria-label="New conversation"
           onClick={() => {
             setMessages([]);
             setSessionId(`chat_${nanoid(6)}`);
           }}
-          className="ml-auto grid size-7 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1"
+          className={CHAT_ICON_BUTTON}
         >
-          <RotateCcw className="size-3.5" />
+          <SquarePen className="size-3.5" />
         </button>
-        <button onClick={onClose} aria-label="Close chat" className="grid size-7 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1">
+        <button onClick={onClose} aria-label="Close chat" title="Close chat" className={CHAT_ICON_BUTTON}>
           <X className="size-4" />
         </button>
       </div>
 
-      <div ref={scroller} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
+      <div
+        ref={scroller}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+        }}
+        className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3"
+      >
         {messages.length === 0 && (
-          <div className="mt-8 text-center">
-            <div className="mx-auto mb-3 grid size-10 place-items-center rounded-full border border-acbd bg-acdim">
-              <Bot className="size-5 text-ac" strokeWidth={1.6} />
-            </div>
-            <div className="text-[15px] font-semibold text-t1">Talk to your workflow</div>
-            <div className="mx-auto mt-1 max-w-[260px] text-[13px] text-t2">Messages enter through the Chat Message trigger. Replies stream in as the agent writes them; tool calls show up live.</div>
-            <div className="mt-5 space-y-1.5">
-              {['Hash the word "landflow" with sha256', 'What is the sentiment of "I love polyglot plugins"?', 'Slugify "Hello Plugin World" and compute 42 * 17'].map((s) => (
-                <button key={s} onClick={() => setDraft(s)} className="block w-full rounded-[10px] border border-hair bg-wl px-3 py-2 text-left text-[12px] text-t2 transition-colors hover:border-acbd hover:text-t1">
-                  {s}
-                </button>
-              ))}
-            </div>
-          </div>
+          <ChatEmpty
+            className="mt-8"
+            mark={
+              <span className="grid size-10 place-items-center rounded-full border border-hair bg-wl text-viz-7">
+                <Bot className="size-4" />
+              </span>
+            }
+            title="Talk to your workflow"
+            help="Messages enter through the Chat Message trigger. Replies stream in as the agent writes them; tool calls show up live."
+          />
         )}
-        {messages.map((m) => (
-          <div key={m.id} className={cn('flex animate-in gap-2.5', m.role === 'user' && 'flex-row-reverse')}>
-            <div className={cn('grid size-[26px] shrink-0 place-items-center rounded-full border', m.role === 'user' ? 'border-hair bg-wl text-t2' : m.role === 'error' ? 'border-rdbd bg-rddim text-rd' : 'border-acbd bg-acdim text-ac')}>
-              {m.role === 'user' ? <User className="size-3.5" /> : <Bot className="size-3.5" />}
+        {messages.map((m) =>
+          m.role === 'user' ? (
+            <div key={m.id} className="space-y-1.5">
+              {m.files && m.files.length > 0 && <FileChips files={m.files} />}
+              <UserBubble>{m.text}</UserBubble>
             </div>
-            <div className={cn('max-w-[290px] min-w-0 space-y-1.5', m.role === 'user' && 'flex flex-col items-end')}>
+          ) : m.role === 'error' ? (
+            <div key={m.id} className="pl-7">
+              <ChatError message={m.text} onRetry={pending ? undefined : () => retry(m.id)} />
+            </div>
+          ) : (
+            <AssistantRow key={m.id} mark={<Bot className="size-3.5" />}>
               {m.tools && m.tools.length > 0 && (
                 <div className="flex flex-wrap gap-1">
                   {m.tools.map((t, i) => (
@@ -290,99 +314,76 @@ export function ChatPanel({
                 </div>
               )}
               {m.calls && m.calls.length > 0 && <ToolCalls calls={m.calls} />}
-              {m.files && m.files.length > 0 && <FileChips files={m.files} />}
-              {(m.text || !m.approval) && (
-                <div className={cn('whitespace-pre-wrap [overflow-wrap:anywhere] rounded-xl px-3 py-2 text-[13px] leading-relaxed', m.role === 'user' ? 'bg-ac2 text-on-ac' : m.role === 'error' ? 'border border-rdbd bg-rddim text-rd' : 'border border-hair bg-wl text-t1')}>
-                  {m.text}
-                </div>
-              )}
+              {m.text ? <ChatMarkdown text={m.text} /> : null}
               {m.approval && <ApprovalCard approval={m.approval} disabled={pending || !onDecide} onDecide={(callId, approved) => void decide(m.id, m.approval!.executionId, callId, approved)} />}
-            </div>
-          </div>
-        ))}
+            </AssistantRow>
+          ),
+        )}
         {pending && (
-          <div className="flex gap-2.5">
-            <div className="grid size-[26px] shrink-0 place-items-center rounded-full border border-acbd bg-acdim text-ac">
-              <Loader2 className="size-3.5 animate-spin" />
-            </div>
-            <div className="min-w-0 max-w-[290px] space-y-1.5">
-              {live.calls.length > 0 && <ToolCalls calls={live.calls} />}
-              {live.text ? (
-                <div className="whitespace-pre-wrap [overflow-wrap:anywhere] rounded-xl border border-hair bg-wl px-3 py-2 text-[13px] leading-relaxed text-t1">
-                  {live.text}
-                  <span className="ml-0.5 inline-block h-3 w-1.5 animate-pulse-soft bg-ac align-middle" />
-                </div>
-              ) : (
-                <div className="animate-pulse-soft text-[13px] text-t2">{thinking ? 'Thinking…' : liveTools.length || live.calls.length ? 'Using tools…' : 'Working…'}</div>
-              )}
-              {!live.calls.length && (
-                <div className="flex flex-wrap gap-1">
-                  {liveTools.map((t) => (
-                    <span key={t.id} className="flex animate-in items-center gap-1 rounded-full border border-hair px-2 py-px text-[11px] text-t2">
-                      <Wrench className="size-2.5" /> {t.nodeName}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
+          <AssistantRow mark={<Bot className="size-3.5" />}>
+            {live.calls.length > 0 && <ToolCalls calls={live.calls} />}
+            {live.text ? <ChatMarkdown text={live.text} /> : <Working label={thinking || !(liveTools.length || live.calls.length) ? 'Thinking…' : 'Using tools…'} />}
+            {!live.calls.length && liveTools.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {liveTools.map((t) => (
+                  <span key={t.id} className="flex animate-in items-center gap-1 rounded-full border border-hair px-2 py-px text-[11px] text-t2">
+                    <Wrench className="size-2.5" /> {t.nodeName}
+                  </span>
+                ))}
+              </div>
+            )}
+          </AssistantRow>
         )}
       </div>
 
-      <div className="border-t border-hair p-3">
-        {files.length > 0 && (
-          <div className="mb-2 flex flex-wrap gap-1">
-            {files.map((f, i) => (
-              <span key={`${f.fileName}-${i}`} className="flex max-w-[170px] items-center gap-1 rounded-full border border-hair bg-wl py-px pl-2 pr-1 text-[11px] text-t2">
-                <FileText className="size-3 shrink-0" />
-                <span className="truncate">{f.fileName}</span>
-                <span className="shrink-0 text-t3">{size(f.size)}</span>
-                <button aria-label={`Remove ${f.fileName}`} onClick={() => setFiles((list) => list.filter((_, j) => j !== i))} className="grid size-4 shrink-0 place-items-center rounded-full text-t3 hover:text-t1">
-                  <X className="size-3" />
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-        <div className="flex items-end gap-2 rounded-[10px] border border-hair bg-wl p-1.5 focus-within:border-ac">
-          <input ref={fileInput} type="file" multiple hidden onChange={(e) => void attach(e.target.files)} />
-          <button
-            onClick={() => fileInput.current?.click()}
-            disabled={pending || files.length >= MAX_FILES}
-            title="Attach files (images, PDFs, text — the AI Agent sends them with “Include Binary as Input”)"
-            aria-label="Attach files"
-            className="grid size-8 place-items-center rounded-full text-t3 transition-colors hover:bg-acdim hover:text-t1 disabled:opacity-40"
-          >
-            <Paperclip className="size-3.5" />
-          </button>
-          <textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-            rows={1}
-            placeholder="Message the agent…"
-            aria-label="Message"
-            className="max-h-32 min-h-[32px] flex-1 resize-none bg-transparent px-2 py-1.5 text-[13px] text-t1 outline-none placeholder:text-t3"
-          />
-          <button onClick={() => void send()} disabled={!draft.trim() || pending} aria-label="Send" className="grid size-8 place-items-center rounded-full bg-ac2 text-on-ac transition-colors hover:bg-ac2-hover disabled:opacity-40">
-            <SendHorizontal className="size-3.5" />
-          </button>
-        </div>
+      <div className="shrink-0 border-t border-hair p-2.5 max-md:pb-[max(10px,env(safe-area-inset-bottom))]">
+        <input ref={fileInput} type="file" multiple hidden onChange={(e) => void attach(e.target.files)} />
+        <ChatComposer
+          value={draft}
+          onChange={setDraft}
+          onSend={() => void send()}
+          busy={pending}
+          placeholder="Message the agent"
+          label="Message the agent"
+          top={
+            files.length > 0 && (
+              <div className="mb-1 flex flex-wrap gap-1">
+                {files.map((f, i) => (
+                  <span key={`${f.fileName}-${i}`} className="flex max-w-[170px] items-center gap-1 rounded-full border border-hair bg-sf py-px pl-2 pr-1 text-[11px] text-t2">
+                    <FileText className="size-3 shrink-0" />
+                    <span className="truncate">{f.fileName}</span>
+                    <span className="shrink-0 text-t3">{size(f.size)}</span>
+                    <button aria-label={`Remove ${f.fileName}`} onClick={() => setFiles((list) => list.filter((_, j) => j !== i))} className="grid size-4 shrink-0 place-items-center rounded-full text-t3 hover:text-t1 max-md:size-9">
+                      <X className="size-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )
+          }
+          before={
+            <button
+              type="button"
+              onClick={() => fileInput.current?.click()}
+              disabled={pending || files.length >= MAX_FILES}
+              title="Attach files (images, PDFs, text — the AI Agent sends them with “Include Binary as Input”)"
+              aria-label="Attach files"
+              className="mb-[2px] grid size-8 shrink-0 place-items-center rounded-full text-t3 transition-colors hover:bg-acdim hover:text-t1 disabled:opacity-40 max-md:size-11"
+            >
+              <Paperclip className="size-3.5" />
+            </button>
+          }
+        />
       </div>
     </aside>
   );
 }
 
 const STATUS: Record<ChatTool['status'], { label: string; tone: string }> = {
-  started: { label: 'running', tone: 'text-t3' },
-  finished: { label: 'done', tone: 'text-gn' },
-  failed: { label: 'failed', tone: 'text-rd' },
-  approval: { label: 'needs approval', tone: 'text-warn' },
+  started: { label: 'Running', tone: 'text-t3' },
+  finished: { label: 'Done', tone: 'text-gn' },
+  failed: { label: 'Failed', tone: 'text-rd' },
+  approval: { label: 'Needs you', tone: 'text-warn' },
 };
 
 /** Streamed tool calls: name and status, input and output on demand. */
@@ -438,7 +439,7 @@ function ApprovalCard({ approval, disabled, onDecide }: { approval: NonNullable<
     <div className="space-y-1.5 rounded-xl border border-warnbd bg-warndim px-3 py-2 text-[12px] text-t1">
       <div className="flex items-center gap-1.5 font-medium">
         <ShieldAlert className="size-3.5 text-warn" />
-        {approval.confirm ? `Waiting for a person: ${approval.confirm.title}` : `${approval.nodeName} wants to run ${approval.calls.length === 1 ? 'a tool' : `${approval.calls.length} tools`}`}
+        {approval.confirm ? `Needs you · ${approval.confirm.title}` : `${approval.nodeName} wants to run ${approval.calls.length === 1 ? 'a tool' : `${approval.calls.length} tools`}`}
       </div>
       {approval.channel === 'slack' && <div className="text-t2">Waiting for an approval in Slack — the run continues once someone decides there.</div>}
       {approval.calls.map((call) => {
@@ -448,19 +449,19 @@ function ApprovalCard({ approval, disabled, onDecide }: { approval: NonNullable<
             <div className="flex items-center gap-1.5">
               <Wrench className="size-3 text-t3" />
               <span className="font-medium">{approval.confirm ? approval.nodeName : call.tool}</span>
-              {decided === true && <span className="ml-auto flex items-center gap-0.5 text-gn"><Check className="size-3" /> approved</span>}
-              {decided === false && <span className="ml-auto flex items-center gap-0.5 text-rd"><X className="size-3" /> rejected</span>}
+              {decided === true && <span className="ml-auto flex items-center gap-0.5 text-gn"><Check className="size-3" /> Approved</span>}
+              {decided === false && <span className="ml-auto flex items-center gap-0.5 text-rd"><X className="size-3" /> {approval.confirm ? 'Rejected' : 'Denied'}</span>}
               {decided === 'busy' && <Loader2 className="ml-auto size-3 animate-spin text-t3" />}
             </div>
             {call.input !== undefined && <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-[11px] text-t2">{approval.confirm ? approval.confirm.text : pretty(call.input)}</pre>}
             {approval.channel === 'chat' && decided === undefined && (
               <div className="mt-1.5 flex gap-1.5">
-                <button disabled={disabled} onClick={() => onDecide(call.id, true)} className="flex items-center gap-1 rounded-full bg-ac2 px-2.5 py-0.5 text-[11px] font-medium text-on-ac hover:bg-ac2-hover disabled:opacity-40">
-                  <Check className="size-3" /> Approve
-                </button>
-                <button disabled={disabled} onClick={() => onDecide(call.id, false)} className="flex items-center gap-1 rounded-full border border-rdbd px-2.5 py-0.5 text-[11px] font-medium text-rd hover:bg-rddim disabled:opacity-40">
-                  <X className="size-3" /> Reject
-                </button>
+                <Button size="sm" variant="primary" className="max-md:min-h-11" disabled={disabled} onClick={() => onDecide(call.id, true)}>
+                  <Check className="size-3.5" /> Approve
+                </Button>
+                <Button size="sm" variant="outline" className="max-md:min-h-11" disabled={disabled} onClick={() => onDecide(call.id, false)}>
+                  {approval.confirm ? <X className="size-3.5" /> : <Ban className="size-3.5" />} {approval.confirm ? 'Reject' : 'Deny'}
+                </Button>
               </div>
             )}
           </div>

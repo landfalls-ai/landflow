@@ -6,9 +6,12 @@
  * page open, the question is about that page (`about`, the chip in the bar) until the chip is removed. ⌘I focuses it.
  */
 import { useEffect, useRef, useState } from 'react';
-import { ArrowUp, ChevronDown, ChevronRight, Minimize2, Sparkles, SquarePen, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Sparkles, SquarePen, X } from 'lucide-react';
 import { nanoid } from 'nanoid';
 import { api } from '@/lib/client/api';
+import { usePhone } from '@/lib/client/use-phone';
+import { cn } from '@/lib/utils';
+import { CHAT_ICON_BUTTON, ChatComposer, ChatError, UserBubble, Working } from '../../ui/chat';
 import type { WikiAnswer } from '@/lib/shared/brain-wiki';
 import { PageLink, WikiText, WorkList, WrittenBy } from './parts';
 
@@ -21,6 +24,8 @@ interface Turn {
   about?: { ref: string; name: string };
   answer?: WikiAnswer;
   error?: string;
+  /** Stopped by the person, not failed. */
+  stopped?: boolean;
 }
 
 /** The open file, as Spotlight knows it: a page (asked about), or index/log (asked about everything). */
@@ -46,6 +51,8 @@ export function BrainSpotlight({ file, request }: { file?: SpotlightFile; reques
   const [aboutOff, setAboutOff] = useState(false);
   const [focused, setFocused] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
+  const reading = useRef<AbortController | undefined>(undefined);
+  const phone = usePhone();
 
   // A new file brings its chip back.
   useEffect(() => setAboutOff(false), [file?.ref]);
@@ -67,14 +74,23 @@ export function BrainSpotlight({ file, request }: { file?: SpotlightFile; reques
     setInput('');
     setOpen(true);
     setBusy(true);
+    const controller = new AbortController();
+    reading.current = controller;
     try {
-      const answer = await api<WikiAnswer>('/api/brain/ask', { method: 'POST', json: { question, ...(about && { about: about.ref }) } });
+      const answer = await api<WikiAnswer>('/api/brain/ask', { method: 'POST', json: { question, ...(about && { about: about.ref }) }, signal: controller.signal });
       setTurns((all) => all.map((t) => (t.id === turn.id ? { ...t, answer } : t)));
     } catch (e) {
-      setTurns((all) => all.map((t) => (t.id === turn.id ? { ...t, error: (e as Error).message } : t)));
+      const stopped = controller.signal.aborted;
+      setTurns((all) => all.map((t) => (t.id === turn.id ? { ...t, error: stopped ? 'Stopped.' : (e as Error).message, stopped } : t)));
     } finally {
+      reading.current = undefined;
       setBusy(false);
     }
+  };
+  /** Try again: the question of a turn that failed, asked again in its place. */
+  const retry = (turn: Turn) => {
+    setTurns((all) => all.filter((t) => t.id !== turn.id));
+    void ask(turn.question);
   };
 
   const asker = useRef(ask);
@@ -94,29 +110,25 @@ export function BrainSpotlight({ file, request }: { file?: SpotlightFile; reques
             <Sparkles className="size-3.5 text-viz-7" aria-hidden />
             <span className="font-medium text-t1">Spotlight</span>
             <span className="text-t3">· asks the brain</span>
-            <button type="button" onClick={() => setTurns([])} className="ml-auto grid size-6 place-items-center rounded-md text-t3 hover:bg-acdim hover:text-t1" title="New conversation" aria-label="New conversation">
+            <button type="button" onClick={() => setTurns([])} className={cn(CHAT_ICON_BUTTON, 'ml-auto')} title="New conversation" aria-label="New conversation">
               <SquarePen className="size-3.5" />
             </button>
-            <button type="button" onClick={() => setOpen(false)} className="grid size-6 place-items-center rounded-md text-t3 hover:bg-acdim hover:text-t1" title="Fold away" aria-label="Fold away">
-              <Minimize2 className="size-3.5" />
+            <button type="button" onClick={() => setOpen(false)} className={CHAT_ICON_BUTTON} title="Hide the conversation" aria-label="Hide the conversation">
+              <ChevronDown className="size-4" />
             </button>
           </div>
           <div ref={scroller} className="relative min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3">
             {turns.map((t) => (
-              <TurnView key={t.id} turn={t} />
+              <TurnView key={t.id} turn={t} onRetry={busy ? undefined : () => retry(t)} />
             ))}
-            {busy && (
-              <div className="flex items-center gap-2 text-[12px] text-t3">
-                <Sparkles className="size-3.5 animate-pulse text-viz-7" aria-hidden />
-                Reading the pages, facts and work…
-              </div>
-            )}
+            {busy && <Working label="Reading the pages, facts and work…" />}
           </div>
         </div>
       )}
 
       {showBubbles && (
-        <div className="pointer-events-auto flex max-w-[720px] flex-wrap justify-center gap-1.5">
+        // On a phone the bubbles sit on a card: floating, they would cross the page's text.
+        <div className="pointer-events-auto flex max-w-[720px] flex-wrap justify-center gap-1.5 max-md:rounded-2xl max-md:border max-md:border-hair max-md:bg-sf max-md:p-2 max-md:shadow-pop">
           {bubblesFor(file).map((b) => (
             <button
               key={b}
@@ -124,7 +136,7 @@ export function BrainSpotlight({ file, request }: { file?: SpotlightFile; reques
               // Before the input's blur hides the bubbles.
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => void ask(b)}
-              className="rounded-full border border-hair bg-sf px-3 py-1 text-[12px] text-t2 shadow-pop hover:border-ac hover:text-t1"
+              className="rounded-full border border-hair bg-sf px-3 py-1 text-[12px] text-t2 shadow-pop hover:border-ac hover:text-t1 max-md:min-h-11 max-md:shadow-none"
             >
               {b}
             </button>
@@ -132,53 +144,54 @@ export function BrainSpotlight({ file, request }: { file?: SpotlightFile; reques
         </div>
       )}
 
-      <form
-        className="pointer-events-auto flex w-full max-w-[720px] items-center gap-2 rounded-2xl border border-bd bg-sf px-2.5 py-1.5 shadow-pop focus-within:border-ac"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void ask(input);
+      <ChatComposer
+        id={SPOTLIGHT_INPUT}
+        className="pointer-events-auto w-full max-w-[720px] border-bd bg-sf shadow-pop"
+        value={input}
+        onChange={setInput}
+        onSend={(text) => void ask(text)}
+        onStop={() => reading.current?.abort()}
+        busy={busy}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            setOpen(false);
+            e.currentTarget.blur();
+          }
         }}
-      >
-        <Sparkles className="size-4 shrink-0 text-viz-7" aria-hidden />
-        {about && (
-          <span className="inline-flex max-w-[40%] shrink-0 items-center gap-1 rounded-md bg-acdim px-1.5 py-0.5 text-[11.5px] text-ac">
-            <span className="truncate">@{about.name}</span>
-            <button type="button" onClick={() => setAboutOff(true)} aria-label="Ask about everything" title="Ask about everything, not this page" className="hover:text-t1">
-              <X className="size-3" />
-            </button>
-          </span>
-        )}
-        <input
-          id={SPOTLIGHT_INPUT}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') {
-              setOpen(false);
-              (e.target as HTMLInputElement).blur();
-            }
-          }}
-          placeholder={about ? `Ask about ${about.name}` : 'Ask the brain: who is working on…, what changed…, is anyone else…'}
-          aria-label="Ask the brain"
-          className="h-8 min-w-0 flex-1 bg-transparent text-[13.5px] text-t1 outline-none placeholder:text-t3"
-        />
-        {!open && turns.length > 0 && (
-          <button type="button" onClick={() => setOpen(true)} className="shrink-0 rounded-md px-1.5 py-0.5 text-[11.5px] text-t3 hover:bg-acdim hover:text-t1">
-            {turns.length} answer{turns.length === 1 ? '' : 's'}
-          </button>
-        )}
-        <kbd className="hidden shrink-0 rounded border border-hair px-1 text-[10.5px] text-t3 sm:inline">⌘I</kbd>
-        <button type="submit" disabled={!input.trim() || busy} className="grid size-7 shrink-0 place-items-center rounded-lg bg-ac text-on-ac disabled:opacity-40" aria-label="Ask">
-          <ArrowUp className="size-4" />
-        </button>
-      </form>
+        placeholder={about ? `Ask about ${about.name}` : phone ? 'Ask the brain' : 'Ask the brain: who is working on…, what changed…, is anyone else…'}
+        label="Ask the brain"
+        before={
+          <>
+            <Sparkles className="mb-[9px] size-4 shrink-0 text-viz-7" aria-hidden />
+            {about && (
+              <span className="mb-[5px] inline-flex max-w-[40%] shrink-0 items-center gap-1 rounded-md bg-acdim px-1.5 py-0.5 text-[11.5px] text-ac">
+                <span className="truncate">@{about.name}</span>
+                <button type="button" onClick={() => setAboutOff(true)} aria-label="Ask about everything" title="Ask about everything, not this page" className="grid place-items-center hover:text-t1 max-md:size-9">
+                  <X className="size-3" />
+                </button>
+              </span>
+            )}
+          </>
+        }
+        after={
+          <>
+            {!open && turns.length > 0 && (
+              <button type="button" onClick={() => setOpen(true)} className="mb-[2px] min-h-8 shrink-0 rounded-full px-2 text-[11.5px] text-t3 hover:bg-acdim hover:text-t1 max-md:min-h-11">
+                {turns.length} answer{turns.length === 1 ? '' : 's'}
+              </button>
+            )}
+            <kbd className="mb-[9px] hidden shrink-0 rounded border border-hair px-1 font-mono text-[10.5px] text-t3 sm:inline">⌘I</kbd>
+          </>
+        }
+      />
     </div>
   );
 }
 
-function TurnView({ turn }: { turn: Turn }) {
+function TurnView({ turn, onRetry }: { turn: Turn; onRetry?: () => void }) {
   const [cited, setCited] = useState<number>();
   const [sources, setSources] = useState(false);
   const { answer } = turn;
@@ -186,13 +199,11 @@ function TurnView({ turn }: { turn: Turn }) {
   const prefix = `ans-${turn.id}`;
   return (
     <div id={`turn-${turn.id}`} className="space-y-2.5">
-      <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-acdim px-3 py-1.5 text-[13px] text-t1">
-          {turn.about && <span className="mr-1 text-[11.5px] text-ac">@{turn.about.name}</span>}
-          {turn.question}
-        </div>
-      </div>
-      {turn.error && <p className="text-[12px] text-rd">{turn.error}</p>}
+      <UserBubble>
+        {turn.about && <span className="mr-1 text-[11.5px] text-ac">@{turn.about.name}</span>}
+        {turn.question}
+      </UserBubble>
+      {turn.error && (turn.stopped ? <p className="text-[12px] text-t3">Stopped.</p> : <ChatError message={turn.error} onRetry={onRetry} />)}
       {answer && (
         <div className="space-y-2.5">
           {answer.answer ? (

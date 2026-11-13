@@ -537,6 +537,7 @@ export function AgentBuilder({ agentId, initialTab = 'persona', initialSession }
                 disabled={!testable}
                 onClick={() => setTesting(!testing)}
                 aria-pressed={testing}
+                aria-label="Test agent"
                 className={cn(testing && 'border-ac text-ac')}
               >
                 <FlaskConical className="size-3.5" />

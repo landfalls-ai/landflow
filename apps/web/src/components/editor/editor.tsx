@@ -1076,7 +1076,7 @@ function ExecuteBar(props: {
         )}
         {hasChat && (
           <Button variant={chatOpen ? 'outline' : 'ghost'} onClick={onChat}>
-            <MessageCircle className="size-3.5 text-viz-7" /> {chatOpen ? 'Hide chat' : 'Open chat'}
+            <MessageCircle className="size-3.5 text-viz-7" /> <span className="max-md:sr-only">{chatOpen ? 'Hide chat' : 'Open chat'}</span>
           </Button>
         )}
     </div>

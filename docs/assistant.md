@@ -179,6 +179,31 @@ On by default, Spotlight doesn't wait for clicks (`components/editor/autonomous.
 
 Each fix in the session is applied the same way, as before. An agent Spotlight creates is designed by the Agent architect and **published**, so the flow can run it while it's tested ([Agents and teams](#agents-and-teams)); unpublishing it is one click on its page. **Publish to production** still waits for a person. The **Autonomous** switch in the conversation's header turns it off (kept in the browser, `localStorage` `landflow-spotlight-autonomous`); off, every proposal waits for Apply and a drafted flow for Test and fix. Test runs execute the workflow as Execute workflow does, with the pinned test data, so a step that sends a message or writes to an app would do so for real: before the first such test of a workflow, Spotlight asks (**Run it for real** or **Not now**, [Test and fix](#test-and-fix)). A change that only renames nodes isn't tested; any other is tested against the workflow's description plus your message. Tests: `test/spotlight-autonomous.test.ts`.
 
+## Chat surfaces
+
+Every conversation with an AI in Landflow has one look, from the chat kit in `components/ui/chat.tsx`: Spotlight, the
+editor's **Chat** (a workflow with a Chat Message trigger), an agent's **Test agent** chat and its Sessions tab, the
+Agent architect and the brain's Spotlight on `/brain`.
+
+- **Your message** is a bubble on the right (`UserBubble`); a **reply** is text beside a small mark (Spotlight's
+  sparkle, the agent's icon or avatar; `AssistantRow`), written in Markdown: bold, lists (a model's "•" bullets too),
+  inline code, code blocks, links and tables, each line break kept (`ChatMarkdown`). The brain's answers keep their page
+  links and numbered sources and read lists, bold and code the same way.
+- **Under a finished reply**: what answered and how (model · time · steps or tokens) and **Copy** (`ReplyMeta`). An
+  agent's reply keeps its 👍 / 👎 there.
+- **The box** (`ChatComposer`): it grows with the text; Enter sends, Shift+Enter adds a line, nothing sends while an
+  input method is composing; ↑ sends and, while a reply comes, Stop takes its place (the brain's Stop cancels the
+  question). Attach (editor Chat) and the page chip (brain) sit at its left.
+- **Working** is one line with a spinner: *Thinking…*, or what it is doing (*Using tools…*, *Reading the pages, facts and
+  work…*).
+- **An error** (`ChatError`) says what went wrong in words; a provider's raw error (*Ollama error 500: {…}*) reads *The
+  model returned an error*, with the raw text under **Details**, and **Try again** sends the same message again.
+- **Empty**: a mark, one line, one line of help and up to three starters that fill the box (`ChatEmpty`).
+- **The header**: **New conversation** (✎) and close or fold (*Hide the conversation*); a session's id is in the New
+  conversation button's tooltip, not the header. On a phone every button is 44 px, the Test agent chat fills the screen
+  above the home bar, the editor's Chat is a sheet with a handle, the Agent architect shows **Chat | Draft** one at a time
+  (Draft when one arrives), and the brain's suggestions sit on a card.
+
 ## Edit operations
 
 Proposals use `lib/shared/assistant-ops.ts`. A node reference is a node **name**, an id, or the `ref` of a node added earlier in the same list.

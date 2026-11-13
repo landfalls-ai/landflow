@@ -25,6 +25,7 @@ import { useEditor } from './store';
 import { isPhone, usePhone } from '@/lib/client/use-phone';
 import { dictationSupported, useDictation } from './use-dictation';
 import { LeftOut, OpsDiff, Warnings } from './suggestions-card';
+import { AssistantRow, ChatError, ChatMarkdown, ReplyMeta, UserBubble } from '../ui/chat';
 import { MAX_FIXES, productionNote, publishToProduction, sendsAllowed, testUntilItRuns } from './test-session';
 import { agentStep, firstSentence, foldLine, lastOutcomeOf, lastRunOf, openNeedOf, runRow, sessionFold, stepsOf, stoppedAtOf, titleOf } from './timeline';
 
@@ -391,9 +392,10 @@ function ReplyText({ text, short }: { text: string; short: boolean }) {
   const [more, setMore] = useState(false);
   const first = firstSentence(text);
   const cut = short && !more && first.length < text.trim().length;
+  if (!cut) return <ChatMarkdown text={text} />;
   return (
     <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-t1 [overflow-wrap:anywhere]">
-      {cut ? first : text}
+      {first.replace(/\*\*|`/g, '')}
       {cut && (
         <button type="button" onClick={() => setMore(true)} className="ml-1 text-[12px] font-semibold text-ac hover:underline max-md:min-h-11 max-md:px-1">
           Show more
@@ -401,6 +403,16 @@ function ReplyText({ text, short }: { text: string; short: boolean }) {
       )}
     </div>
   );
+}
+
+/** Try again after a failed reply: the same message, sent again in its place. */
+function retryReply(replyId: string) {
+  const { items, pending } = useAssistant.getState();
+  const at = items.findIndex((i) => i.id === replyId);
+  const asked = items[at - 1];
+  if (pending || at < 1 || asked?.role !== 'user') return;
+  useAssistant.setState({ items: items.filter((_, i) => i !== at && i !== at - 1) });
+  void useAssistant.getState().send(asked.text, useAutonomous.getState().on ? { session: 'auto' } : {});
 }
 
 /** A reply: its text, its changes, its runs and buttons. While it streams, its steps (new look) or one line of what it is doing. */
@@ -414,7 +426,7 @@ function ReplyView({ item, live, status }: { item: Reply; live: boolean; status?
     if (!applyChanges(pending.map((p) => ({ ops: p.ops, kind: 'proposal' as const })), `Applied ${pending.length} changes`)) return;
     for (const p of pending) useAssistant.getState().setProposalState(item.id, p.id, 'applied');
   };
-  const meta = item.done && `${item.done.model} · ${(item.done.durationMs / 1000).toFixed(1)} s · ${item.done.steps} step${item.done.steps === 1 ? '' : 's'}`;
+  const isLast = useAssistant((s) => s.items.at(-1)?.id === item.id);
   const steps = building?.replyId === item.id ? building : undefined;
   // A test run shows its own progress; a change being built shows its steps.
   const working = live && !steps && !item.parts.some((p) => p.kind === 'run' || p.kind === 'action');
@@ -430,9 +442,7 @@ function ReplyView({ item, live, status }: { item: Reply; live: boolean; status?
   const firstText = item.parts.findIndex((p) => p.kind === 'text');
   const firstProposal = item.parts.findIndex((p) => p.kind === 'proposal');
   return (
-    <div className="flex animate-in gap-2" title={meta || undefined}>
-      <span className="mt-0.5 grid size-5 shrink-0 place-items-center text-viz-7">{working ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}</span>
-      <div className="min-w-0 flex-1 space-y-2">
+    <AssistantRow mark={working ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}>
         {item.parts.map((part, i) =>
           part.kind === 'text' ? (
             quietText ? null : session ? (
@@ -461,14 +471,20 @@ function ReplyView({ item, live, status }: { item: Reply; live: boolean; status?
         )}
         {steps && firstProposal < 0 && <LiveSteps live={steps} />}
         {working && <div className="animate-pulse-soft truncate text-[12px] text-t3">{status ?? (lastTool?.kind === 'tool' ? `${lastTool.tool.label}…` : 'Thinking…')}</div>}
-        {item.error && <div className="rounded-[10px] border border-rdbd bg-rddim px-2.5 py-2 text-[12px] text-rd [overflow-wrap:anywhere]">{item.error}</div>}
+        {item.error && <ChatError message={item.error} onRetry={isLast && !item.testId && !live && !spotlightBusy ? () => retryReply(item.id) : undefined} />}
         {!live && !asRows && pending.length > 1 && (
           <Button size="sm" variant="outline" onClick={applyAll}>
             <Check className="size-3.5" /> Apply all ({pending.length})
           </Button>
         )}
-      </div>
-    </div>
+        {/* What answered and how long it took; a session's fixes are rows, which say what they did. */}
+        {item.done && !live && !item.testId && (
+          <ReplyMeta
+            parts={[item.done.model, `${(item.done.durationMs / 1000).toFixed(1)} s`, `${item.done.steps} step${item.done.steps === 1 ? '' : 's'}`]}
+            copy={item.parts.flatMap((p) => (p.kind === 'text' ? [p.text] : [])).join('\n\n') || undefined}
+          />
+        )}
+    </AssistantRow>
   );
 }
 
@@ -531,7 +547,7 @@ function Timeline({ live, status }: { live: boolean; status?: string }) {
             </button>
           )}
           {folded(item) ? null : item.role === 'user' && item.auto ? null : item.role === 'user' ? (
-            <div className="ml-auto w-fit max-w-[90%] animate-in whitespace-pre-wrap rounded-xl bg-ac2 px-3 py-1.5 text-[13px] leading-relaxed text-on-ac [overflow-wrap:anywhere]">{item.text}</div>
+            <UserBubble>{item.text}</UserBubble>
           ) : (
             <ReplyView item={item} live={live && item.id === lastId} status={status} />
           )}
