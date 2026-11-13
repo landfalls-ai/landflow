@@ -1,14 +1,15 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { BookOpenCheck, ChevronRight, ShieldCheck, Trash2 } from 'lucide-react';
+import { BookOpenCheck, ChevronRight, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Dialog } from '@/components/ui/dialog';
 import { EmptyState } from '@/components/ui/empty-state';
-import { FieldLabel, Input, Switch, Textarea } from '@/components/ui/inputs';
+import { FieldLabel, Input, SearchInput, Switch, Textarea } from '@/components/ui/inputs';
 
 interface Runbook {
   id: string;
@@ -43,7 +44,7 @@ interface Draft {
 
 const EXAMPLE = '{\n  "incident": { "displayId": "ACME-12", "title": "Checkout 5xx" },\n  "events": [],\n  "outcome": { "cause": "", "fix": "", "lessons": "" }\n}';
 
-/** /runbooks: the runbooks by alert kind, and "Make a runbook" from a closed Landfall room. One column, cards. */
+/** /runbooks: the runbooks by alert kind, and "New runbook" (a dialog) from a closed Landfall room. One column, cards. */
 export function RunbooksView() {
   const [kind, setKind] = useState('');
   const [runbooks, setRunbooks] = useState<Runbook[]>();
@@ -67,14 +68,19 @@ export function RunbooksView() {
 
   return (
     <>
-      <PageHeader title="Runbooks" meta={runbooks && <span>{runbooks.length}</span>} actions={<Button variant="primary" size="sm" onClick={() => setMaking((v) => !v)}>Make a runbook</Button>} />
+      <PageHeader title="Runbooks" meta={runbooks && <span>{runbooks.length}</span>} actions={
+          <Button variant="primary" size="sm" onClick={() => setMaking(true)}>
+            <Plus className="size-3.5" /> New runbook
+          </Button>
+        }
+      />
       <PageBody width="narrow" className="space-y-3">
         {error && <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>}
-        {making && <MakeRunbook onSaved={() => { setMaking(false); load(); }} />}
-        <Input value={kind} onChange={(e) => setKind(e.target.value)} placeholder="Filter by alert kind, e.g. high-error-rate" className="h-9" />
+        {making && <MakeRunbook onClose={() => setMaking(false)} onSaved={() => { setMaking(false); load(); }} />}
+        <SearchInput value={kind} onChange={setKind} placeholder="Filter by alert kind, e.g. high-error-rate" label="Filter by alert kind" className="w-full max-w-[420px]" />
         {runbooks && runbooks.length === 0 && (
           <Card>
-            <EmptyState title={kind.trim() ? 'No runbook for this kind of alert' : 'No runbooks yet'} hint="After a Landfall war room closes, paste the room (the Landfall node’s Get Room output) under Make a runbook. The steps the responders took become a draft workflow you review." />
+            <EmptyState title={kind.trim() ? 'No runbook for this kind of alert' : 'No runbooks yet'} hint="After a Landfall war room closes, paste the room (the Landfall node’s Get Room output) under New runbook. The steps the responders took become a draft workflow you review." />
           </Card>
         )}
         {runbooks?.map((r) => (
@@ -102,7 +108,7 @@ export function RunbooksView() {
 }
 
 /** Paste a room, review the folded steps (drop one, flip its approval), save them as a draft workflow. */
-function MakeRunbook({ onSaved }: { onSaved: () => void }) {
+function MakeRunbook({ onSaved, onClose }: { onSaved: () => void; onClose: () => void }) {
   const [source, setSource] = useState('');
   const [alertKind, setAlertKind] = useState('');
   const [draft, setDraft] = useState<Draft>();
@@ -147,7 +153,34 @@ function MakeRunbook({ onSaved }: { onSaved: () => void }) {
   const change = (index: number, patch: Partial<Step>) => setDraft((d) => d && { ...d, steps: d.steps.map((s, i) => (i === index ? { ...s, ...patch } : s)) });
 
   return (
-    <Card className="space-y-3">
+    <Dialog
+      title="New runbook"
+      subtitle="From a closed war room: the steps its responders took become a draft workflow you review."
+      onClose={onClose}
+      width={640}
+      bodyClassName="space-y-3"
+      footer={
+        !draft ? (
+          <>
+            <Button variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={fold} loading={busy} disabled={!source.trim()}>
+              Fold into steps
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button variant="ghost" onClick={() => setDraft(undefined)} disabled={busy}>
+              Back
+            </Button>
+            <Button variant="primary" onClick={save} loading={busy} disabled={!draft.steps.length || !draft.name.trim() || !draft.alertKind.trim()}>
+              Save as draft
+            </Button>
+          </>
+        )
+      }
+    >
       {error && <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2 text-[13px] text-rd">{error}</div>}
       {!draft ? (
         <>
@@ -160,7 +193,6 @@ function MakeRunbook({ onSaved }: { onSaved: () => void }) {
             <FieldLabel>Alert kind (optional)</FieldLabel>
             <Input value={alertKind} onChange={(e) => setAlertKind(e.target.value)} placeholder="Defaults to the room’s title" />
           </div>
-          <Button variant="primary" onClick={fold} disabled={busy || !source.trim()}>Fold into steps</Button>
         </>
       ) : (
         <>
@@ -192,13 +224,9 @@ function MakeRunbook({ onSaved }: { onSaved: () => void }) {
             ))}
           </div>
           {draft.skipped.length > 0 && <p className="text-[12px] text-t3">Left out: {draft.skipped.join('; ')}</p>}
-          <div className="flex gap-2">
-            <Button variant="primary" onClick={save} disabled={busy || !draft.steps.length || !draft.name.trim() || !draft.alertKind.trim()}>Save as draft</Button>
-            <Button onClick={() => setDraft(undefined)} disabled={busy}>Back</Button>
-          </div>
           <p className="text-[12px] text-t3">Saved as a draft workflow. Nothing runs until you publish it.</p>
         </>
       )}
-    </Card>
+    </Dialog>
   );
 }

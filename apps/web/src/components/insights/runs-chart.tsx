@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { InsightsBucket, InsightsPeriod } from '@/lib/shared/platform';
 
-export const SUCCEEDED_COLOR = 'var(--viz-1)';
+export const SUCCEEDED_COLOR = 'var(--gn)';
 export const FAILED_COLOR = 'color-mix(in oklab, var(--rd) 85%, var(--bg))';
 
 const HEIGHT = 232;

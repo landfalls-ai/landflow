@@ -14,6 +14,7 @@ import type { RunMeasure } from '@/lib/shared/run-compare';
 import type { RunSearchHit, RunSearchResult } from '@/lib/server/journal/runs-query';
 import { cn } from '@/lib/utils';
 import { Badge, executionTone } from '../ui/badge';
+import { RUN_STATE, type RunState } from '../run/run-status';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
 import { FieldLabel, Input, Select } from '../ui/inputs';
@@ -64,7 +65,7 @@ function HitCard({ hit, picked, onPick }: { hit: RunSearchHit; picked: boolean; 
       </button>
       <Link href={`/runs/${hit.executionId}`} className="min-w-0 flex-1 py-3 pr-4 hover:bg-acdim/50">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <Badge tone={executionTone(hit.status as never)}>{hit.status}</Badge>
+          <Badge tone={executionTone(hit.status as RunState)}>{RUN_STATE[hit.status as RunState]?.label ?? hit.status}</Badge>
           <span className="truncate text-[14px] font-semibold text-t1">{hit.workflowName}</span>
         </div>
         <p className="mt-0.5 text-[12px] text-t3">

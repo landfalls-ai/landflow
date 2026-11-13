@@ -31,7 +31,7 @@ const STATUS: Record<SessionStatus, { label: string; tone: Tone }> = {
   idle: { label: 'Idle', tone: 'muted' },
   running: { label: 'Running', tone: 'accent' },
   awaiting_approval: { label: 'Needs approval', tone: 'warning' },
-  error: { label: 'Error', tone: 'danger' },
+  error: { label: 'Failed', tone: 'danger' },
 };
 
 export function SourceBadge({ source }: { source: SessionSource }) {

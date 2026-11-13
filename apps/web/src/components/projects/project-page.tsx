@@ -5,7 +5,7 @@
  * roles, the nodes its workflows may use, who approves its publish requests, delete). Each item's menu has Share and
  * "Move to project" when the viewer may (lib/shared/projects.ts `resourceCan`). Its folders are on /workflows?project=<id>.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ArrowRightLeft, Bot, FolderOpen, KeyRound, LayoutTemplate, MoreHorizontal, Network, Plus, Share2, Table2, Trash2, UserPlus, Workflow as WorkflowIcon } from 'lucide-react';
@@ -89,6 +89,11 @@ export function ProjectPage({ projectId }: { projectId: string }) {
 
   const setTab = (next: Tab) => router.replace(`/projects/${encodeURIComponent(projectId)}${next === 'workflows' ? '' : `?tab=${next}`}`);
   const role = project?.role;
+  // The tab's "New …" sits in the header, like every page's primary; the list below makes the thing.
+  const kind = TABS.find((t) => t.id === tab)?.kind;
+  const [ask, setAsk] = useState<{ kind?: ResourceKind; n: number }>({ n: 0 });
+  const [creating, setCreating] = useState(false);
+  const readOnly = useWorkflowsReadOnly();
 
   if (error) {
     return (
@@ -114,6 +119,17 @@ export function ProjectPage({ projectId }: { projectId: string }) {
             </>
           )
         }
+        actions={
+          project &&
+          kind &&
+          projectRoleCan.create(project.role) && (
+            <ProtectedGate reason={kind === 'workflow' ? readOnly : undefined}>
+              <Button variant="primary" size="sm" onClick={() => setAsk((a) => ({ kind, n: a.n + 1 }))} loading={creating} disabled={kind === 'workflow' && Boolean(readOnly)}>
+                {!creating && <Plus className="size-3.5" />} New {NOUN[kind]}
+              </Button>
+            </ProtectedGate>
+          )
+        }
       />
       <PageBody width="narrow">
         {project?.description && <p className="mb-4 text-[13px] text-t2">{project.description}</p>}
@@ -129,7 +145,7 @@ export function ProjectPage({ projectId }: { projectId: string }) {
         />
         {project && tab === 'audit' && projectRoleCan.manage(role) && <AuditLog projectId={project.id} />}
         {project && tab === 'variables' && <VariablesSettings projectId={project.id} />}
-        {project && TABS.find((t) => t.id === tab)?.kind && <ResourceList key={tab} project={project} kind={TABS.find((t) => t.id === tab)!.kind!} onChanged={() => void loadProject()} />}
+        {project && TABS.find((t) => t.id === tab)?.kind && <ResourceList key={tab} project={project} kind={TABS.find((t) => t.id === tab)!.kind!} ask={ask} onCreating={setCreating} onChanged={() => void loadProject()} />}
         {project && tab === 'settings' && <ProjectSettings project={project} onChanged={(next) => (next ? setProject(next) : void loadProject())} />}
       </PageBody>
     </>
@@ -139,6 +155,7 @@ export function ProjectPage({ projectId }: { projectId: string }) {
 const LIST_KEY: Record<ResourceKind, string> = { workflow: 'workflows', credential: 'credentials', dataTable: 'tables', agent: 'agents', agentTeam: 'teams' };
 const HREF: Partial<Record<ResourceKind, (id: string) => string>> = { workflow: (id) => `/workflows/${id}`, dataTable: (id) => `/data-tables/${id}`, agent: (id) => `/agents/${id}`, agentTeam: (id) => `/agents/teams/${id}` };
 const ICON: Record<ResourceKind, typeof WorkflowIcon> = { workflow: WorkflowIcon, credential: KeyRound, dataTable: Table2, agent: Bot, agentTeam: Network };
+const NOUN: Record<ResourceKind, string> = { workflow: 'workflow', credential: 'credential', dataTable: 'data table', agent: 'agent', agentTeam: 'agent team' };
 const EMPTY: Record<ResourceKind, string> = {
   workflow: 'No workflows in this project yet.',
   credential: 'No credentials in this project yet. Credentials shared with the project show here too; its workflows can use them.',
@@ -147,15 +164,26 @@ const EMPTY: Record<ResourceKind, string> = {
   agentTeam: 'No agent teams in this project yet.',
 };
 
-function ResourceList({ project, kind, onChanged }: { project: ProjectDetail; kind: ResourceKind; onChanged: () => void }) {
+function ResourceList({
+  project,
+  kind,
+  ask,
+  onCreating,
+  onChanged,
+}: {
+  project: ProjectDetail;
+  kind: ResourceKind;
+  /** The header's New …: each new `n` for this kind makes one. */
+  ask: { kind?: ResourceKind; n: number };
+  onCreating: (creating: boolean) => void;
+  onChanged: () => void;
+}) {
   const router = useRouter();
   const { types } = useCredentials();
   const [items, setItems] = useState<Item[]>();
   const [dialog, setDialog] = useState<{ kind: 'share' | 'move'; item: Item } | { kind: 'credential'; id?: string } | { kind: 'table' }>();
-  const [creating, setCreating] = useState(false);
-  const canCreate = projectRoleCan.create(project.role);
-  // A protected environment: no new workflows here (the API refuses them).
-  const readOnly = useWorkflowsReadOnly();
+  const setCreating = onCreating;
+  const seen = useRef(ask.n);
 
   const load = useCallback(
     () =>
@@ -191,9 +219,15 @@ function ResourceList({ project, kind, onChanged }: { project: ProjectDetail; ki
       setCreating(false);
     }
   };
+  useEffect(() => {
+    if (ask.n === seen.current) return;
+    seen.current = ask.n;
+    if (ask.kind === kind) void create();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once per click of the header's New …
+  }, [ask]);
   const sorted = useMemo(() => [...(items ?? [])].sort((a, b) => Number(Boolean(a.ownership?.shared)) - Number(Boolean(b.ownership?.shared)) || a.name.localeCompare(b.name)), [items]);
   const Icon = ICON[kind];
-  const noun = { workflow: 'workflow', credential: 'credential', dataTable: 'data table', agent: 'agent', agentTeam: 'agent team' }[kind];
+  const noun = NOUN[kind];
 
   return (
     <>
@@ -208,15 +242,6 @@ function ResourceList({ project, kind, onChanged }: { project: ProjectDetail; ki
               <LayoutTemplate className="size-3.5" /> Templates
             </Link>
           </>
-        )}
-        {canCreate && (
-          <span className="ml-auto">
-            <ProtectedGate reason={kind === 'workflow' ? readOnly : undefined}>
-              <Button variant="primary" size="sm" onClick={() => void create()} loading={creating} disabled={kind === 'workflow' && Boolean(readOnly)}>
-                <Plus className="size-3.5" /> New {noun}
-              </Button>
-            </ProtectedGate>
-          </span>
         )}
       </div>
       {items && items.length === 0 ? (

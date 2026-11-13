@@ -12,9 +12,9 @@ No model is used. The folding is a fixed set of rules, so the same room always g
 
 ## Making one
 
-**Runbooks** in the sidebar (`/runbooks`) → **Make a runbook**: paste the room (JSON), optionally give the alert kind,
-then **Fold into steps**. The page is one column of cards. Each step card has its title (editable), an **Approval first**
-switch and the notes; remove a step with the bin. **Save as draft** makes the workflow and opens it.
+**Runbooks** in the sidebar (`/runbooks`) → **New runbook** opens a dialog: paste the room (JSON), optionally give the
+alert kind, then **Fold into steps**. Each step card has its title (editable), an **Approval first** switch and the
+notes; remove a step with the bin. **Back** returns to the room; **Save as draft** makes the workflow and opens it.
 
 The room is `{ incident, events, outcome? }`:
 

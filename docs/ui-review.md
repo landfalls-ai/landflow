@@ -132,6 +132,9 @@ The same thing has the same name everywhere. When adding a button or a state, us
 | Sending, stopping a reply | **Send** (↑), **Stop** (■) |
 | Leaving an edit | **Cancel** |
 | How risky, how sure | *Low risk* / *Medium risk* / *High risk*, *60% sure* |
+| How a run ended | *Succeeded* / *Failed* / *Running* / *Paused* / *Waiting* / *Queued* / *Canceled*, from `RUN_STATE[state].label` (`components/run/run-status.tsx`); with a time, *Succeeded in 9 ms*, *Failed in 18 ms*. Never the raw `success` / `error`. Running and Paused are amber everywhere, Succeeded green (the Insights chart too) |
+| Making something | **New** *thing* with a + (**New workflow**, **New credential**, **New runbook**); **Add marketplace** stays, it connects a source that exists. An empty page's button has the same words as the header's, drawn `outline` |
+| A moment | `stamp()` in `lib/client/format.ts`: *Nov 13, 09:52:09* (24-hour) in runs and histories; `dayTime()`: *Nov 13, 2026, 09:52* where the year matters (settings, the audit log) |
 
 ## Page layout
 
@@ -150,6 +153,22 @@ Every page is drawn the same way, from `components/shell/page-header.tsx`:
 - The sidebar marks the section a page belongs to: a run's own page (`/runs/<id>`) is under **Executions**, Search runs
   and Compare under **Search runs**.
 
+## Dialogs
+
+One dialog, `components/ui/dialog.tsx` (`Dialog`, `Field`): the title (an icon before it when given, a subtitle under it
+on up to two lines) and Close; the body; a footer of **Cancel** (ghost) then the action (primary, no icon). Escape and a
+click outside close it, the topmost first; on a phone it rises as a bottom sheet that keeps the focus in. The agent
+builder, projects, templates, the editor's dialogs, data tables and Runbooks' **New runbook** use it; the credential
+dialog and **Add marketplace** keep their own frame with the same look (and now the same footer). Sheets dim the page with
+the same `bg-overlay`.
+
+## Empty states
+
+`EmptyState` (`components/ui/empty-state.tsx`): an optional icon in a round tile, one line, one line of help, at most one
+action. On a page it sits in a `Card`; its button is `outline` with the same words as the header's primary (the header's
+stays the one primary). The Teams tab uses it with its icon; the Teams tab's **New team** is in the header, where
+**New agent** is on the Agents tab.
+
 ## Controls
 
 The same control looks and works the same on every page. Use these from `components/ui` rather than drawing a new one:
@@ -160,6 +179,7 @@ The same control looks and works the same on every page. Use these from `compone
 | Search field | Above a list: a pill with the magnifier and × to clear; Escape clears (and only then lets Escape close a dialog). 32 px, 44 px on a phone, full width there | `inputs.tsx` (`SearchInput`) |
 | Filter chip | A category or a source you turn on and off, in a row of them; `size="sm"` for a long row. 40 px on a phone, where they sit in the Filters sheet | `badge.tsx` (`FilterChip`) |
 | Switch | A setting that takes effect at once (Auto refresh) | `inputs.tsx` (`Switch`) |
+| Stat card | A number that sums something up (Home's and Insights' KPIs): the label, an icon tile, the number at 28 px, one line under it that wraps rather than cuts | `stat-card.tsx` (`StatCard`) |
 | Checkbox | Choosing items or narrowing a list (*Changed only*); every checkbox and radio takes the accent colour from `globals.css` | `inputs.tsx` (`Checkbox`) |
 | Focus ring | Every button, link, tab, menu item and switch shows the same 2 px accent ring when reached with Tab, none when clicked (`globals.css`) | — |
 

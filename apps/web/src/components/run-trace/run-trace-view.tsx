@@ -22,9 +22,9 @@ import { lineCommentsNote } from '@/lib/shared/line-comments';
 import { buildRunReport, checksLine, type RunReport } from '@/lib/shared/run-report';
 import { cut, fmtMs, foldJournal, preview, quietMs, type NeedsYouItem, type RunCheckItem, type RunModel } from '@/lib/shared/run-trace-model';
 import { turnEntryKey } from '@/lib/shared/run-headlines';
-import { useNow } from '../run/run-status';
+import { RUN_STATE, useNow, type RunState } from '../run/run-status';
 import { useNewLook } from '../shell/look-toggle';
-import { Badge } from '../ui/badge';
+import { Badge, executionTone } from '../ui/badge';
 import { ApprovalCard, NeedFaces } from './approval-card';
 import { ConfirmCard, isConfirm } from './confirm-card';
 import { Button } from '../ui/button';
@@ -86,8 +86,8 @@ function Head({ model, report, now, replay }: { model: RunModel; report?: RunRep
           <Hourglass className="size-3" /> Waiting · {fmtMs(model.t1 - model.t0)}
         </Badge>
       ) : (
-        <Badge tone={model.status === 'success' ? 'success' : model.status === 'error' ? 'danger' : 'muted'}>
-          {model.status === 'success' ? 'Finished' : model.status === 'error' ? 'Failed' : model.status} · {fmtMs(model.t1 - model.t0)}
+        <Badge tone={executionTone(model.status as RunState)}>
+          {RUN_STATE[model.status as RunState]?.label ?? model.status} · {fmtMs(model.t1 - model.t0)}
         </Badge>
       )}
       {quiet >= QUIET_MS && model.live && (

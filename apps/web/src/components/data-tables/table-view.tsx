@@ -601,7 +601,7 @@ export function DataTableView({ tableId }: { tableId: string }) {
               }
               action={
                 !query && columns.length ? (
-                  <Button size="sm" variant="primary" onClick={addRow}>
+                  <Button size="sm" onClick={addRow}>
                     <Plus className="size-3.5" /> Add row
                   </Button>
                 ) : undefined

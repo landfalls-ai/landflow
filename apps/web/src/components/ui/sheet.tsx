@@ -34,7 +34,7 @@ export function Sheet({
   if (!open || typeof document === 'undefined') return null;
   return createPortal(
     <div className="fixed inset-0 z-[60] flex items-end justify-center md:items-center">
-      <div className="absolute inset-0 bg-black/40 animate-in" onClick={onClose} aria-hidden />
+      <div className="absolute inset-0 bg-overlay animate-in" onClick={onClose} aria-hidden />
       <div
         ref={panel}
         role="dialog"
