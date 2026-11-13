@@ -10,7 +10,24 @@
  */
 import type { NodeItem } from '@landflow/protocol';
 import type { SecretValues } from './secrets';
+import { createIsolateRealm } from './sandbox/isolate';
+
+export { DEFAULT_MEMORY_MB as DEFAULT_ISOLATE_MEMORY_MB, isolateUnavailable } from './sandbox/isolate';
 import { createExpressionRealm, type ExpressionRealm } from './sandbox/realm';
+
+/** Which sandbox expressions run in: the sealed realm (default) or the isolated-vm isolate with a memory cap. */
+export interface ExpressionSandboxOptions {
+  backend?: 'realm' | 'isolate';
+  /** Heap cap of the isolate, in MB (isolate backend only). */
+  memoryMb?: number;
+}
+
+let sandboxOptions: ExpressionSandboxOptions = {};
+
+/** Set once at start-up by the host (packages read no environment); a resolver made afterwards uses it. */
+export function configureExpressionSandbox(options: ExpressionSandboxOptions): void {
+  sandboxOptions = { ...options };
+}
 
 const EXPRESSION = /\{\{([\s\S]+?)\}\}/g;
 
@@ -90,11 +107,18 @@ export class ExpressionResolver {
   /** Made on the first evaluation: most resolvers never evaluate anything. */
   private realm?: ExpressionRealm;
 
-  constructor(private readonly data: ExpressionData) {}
+  private readonly sandbox: ExpressionSandboxOptions;
+
+  constructor(
+    private readonly data: ExpressionData,
+    sandbox?: ExpressionSandboxOptions,
+  ) {
+    this.sandbox = sandbox ?? sandboxOptions;
+  }
 
   evaluate(code: string, itemIndex: number): unknown {
     try {
-      this.realm ??= createExpressionRealm(this.data);
+      this.realm ??= this.sandbox.backend === 'isolate' ? createIsolateRealm(this.data, this.sandbox) : createExpressionRealm(this.data);
       return this.realm.run(code.trim(), itemIndex);
     } catch (error) {
       const message = (error as Error).message;

@@ -9,6 +9,7 @@ onlyBuiltDependencies:
   - protobufjs
   - '@confluentinc/kafka-javascript'
   - pulsar-client
+  - isolated-vm
 
 patchedDependencies:
   pulsar-client@1.18.0: patches/pulsar-client@1.18.0.patch
