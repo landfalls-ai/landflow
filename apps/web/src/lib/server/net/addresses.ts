@@ -1,8 +1,10 @@
 /**
  * Classifying IP addresses for the outbound guard (./safe-fetch): which ones a server-side request must not reach
  * (loopback, private, link-local, CGNAT, metadata, ...) and CIDR matching for the allow list.
- * IPv4-mapped (`::ffff:a.b.c.d`, also in its hex form) and NAT64 (`64:ff9b::/96`) addresses are judged by the IPv4
- * address they carry, so `::ffff:127.0.0.1` is loopback like `127.0.0.1`.
+ * IPv4-mapped (`::ffff:a.b.c.d`, also in its hex form), NAT64 (`64:ff9b::/96`), IPv4-compatible (`::a.b.c.d`) and 6to4
+ * (`2002:aabb:ccdd::/48`) addresses are judged by the IPv4 address they carry, so `::ffff:127.0.0.1` is loopback like
+ * `127.0.0.1`. The local-use NAT64 prefix `64:ff9b:1::/48` (where the IPv4 part sits depends on the operator's prefix
+ * length) is reserved.
  */
 import { isIP } from 'node:net';
 
@@ -31,13 +33,17 @@ function ipv6Bits(ip: string): bigint | undefined {
 /** `[::1]` as a URL host gives `::1`: brackets and a zone id removed. */
 export const stripBrackets = (host: string): string => host.replace(/^\[|\]$/g, '').replace(/%.*$/, '');
 
-/** The IPv4 address (as dotted text) an IPv6 address carries (mapped or NAT64), when it carries one. */
+const dotted = (value: bigint): string => {
+  const n = Number(value & 0xffffffffn);
+  return [n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.');
+};
+
+/** The IPv4 address (as dotted text) an IPv6 address carries (mapped, NAT64, IPv4-compatible or 6to4), when it carries one. */
 function embeddedV4(bits: bigint): string | undefined {
   const high96 = bits >> 32n;
-  if (high96 === 0xffffn || high96 === 0x0064ff9b0000000000000000n) {
-    const low = Number(bits & 0xffffffffn);
-    return [low >>> 24, (low >>> 16) & 255, (low >>> 8) & 255, low & 255].join('.');
-  }
+  // `::` and `::1` are IPv6's own unspecified and loopback addresses, not IPv4-compatible ones.
+  if (high96 === 0xffffn || high96 === 0x0064ff9b0000000000000000n || (high96 === 0n && bits > 1n)) return dotted(bits);
+  if (bits >> 112n === 0x2002n) return dotted(bits >> 80n); // 6to4: the IPv4 address follows the 2002::/16 prefix
   return undefined;
 }
 
@@ -70,6 +76,7 @@ export function classifyAddress(ip: string): AddressKind {
   if (bits === 0n) return 'unspecified';
   if (bits === 1n) return 'loopback';
   if (bits === ipv6Bits('fd00:ec2::254')) return 'metadata';
+  if (bits >> 80n === 0x64ff9b0001n) return 'reserved'; // 64:ff9b:1::/48, local-use NAT64
   if (bits >> 121n === 0x7en) return 'private'; // fc00::/7
   if (bits >> 118n === 0x3fan) return 'link-local'; // fe80::/10
   if (bits >> 120n === 0xffn) return 'multicast';
