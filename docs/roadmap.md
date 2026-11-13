@@ -1369,6 +1369,7 @@ workbench in place of a page of cards, keeping Spotlight.
     deployment with in-cluster gateways and remote MCP, OIDC/SAML, alert and SIEM endpoints; a streaming MCP transport
     and a multipart or streamed HTTP Request body through the undici path with blocking on; the expression bench on a
     quiet machine (`LANDFLOW_BENCH=1`) and a large real workflow's expression cost.
+- **P24** (S14): a password change ends the user's other sessions; sessions expire when idle (`LANDFLOW_SESSION_IDLE_HOURS`); a request without Origin but with a cross-site `Sec-Fetch-Site` is refused; `LANDFLOW_LOCAL_SIGN_IN` (`all`, `owner`, `off`) makes an instance SSO-only. Next: TOTP and passkeys for local accounts.
 
 ## Planned next
 

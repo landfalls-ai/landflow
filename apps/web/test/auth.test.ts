@@ -213,6 +213,9 @@ describe('sign-in, sessions and sign-out', () => {
     expect((await call(loginRoute.POST, '/api/auth/login', { body: { email: OWNER.email, password: OWNER.password } })).status).toBe(401);
     await signIn(OWNER.email, 'new-owner-password');
     await call(meRoute.PATCH, '/api/auth/me', { method: 'PATCH', session: token, body: { name: 'Olive Owner', currentPassword: 'new-owner-password', newPassword: OWNER.password } });
+    // A password change ends the user's other sessions (session-hardening.test.ts), so the shared owner session needs a new one.
+    expect((await call(meRoute.GET, '/api/auth/me', { session: ownerSession })).status).toBe(401);
+    ownerSession = await signIn(OWNER.email, OWNER.password);
   });
 });
 
