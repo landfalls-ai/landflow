@@ -4,13 +4,18 @@
  * guard (lib/shared/auth-paths.ts); `scimRoute` authenticates the bearer token itself (./auth) and runs the handler
  * as the token's user, so "who changed this" works as it does for API keys.
  */
-import { withAuth } from '../auth/context';
+import { randomUUID } from 'node:crypto';
+import { withAuditRequest, noteAuditPrincipal, type AuditRequestContext } from '../audit/context';
+import { routePattern } from '../audit/http';
+import { withAuth, type Principal } from '../auth/context';
+import { clientIp } from '../auth/rate-limit';
 import { publicOrigin } from '../auth/cookies';
 import { UserError } from '../auth/users';
 import { ensureBootstrapped } from '../bootstrap';
 import { ProjectError } from '../projects/store';
 import { logger } from '../telemetry';
 import { authenticateScim, type ScimCaller } from './auth';
+import { recordScimAuthFailure } from './audit';
 
 export const SCIM_CONTENT_TYPE = 'application/scim+json';
 
@@ -80,23 +85,45 @@ export interface ScimContext {
  */
 export function scimRoute<P extends Record<string, string> = Record<string, string>>(fn: (ctx: ScimContext, params: P) => Promise<Response>) {
   return async (request: Request, context?: { params?: Promise<P> }): Promise<Response> => {
-    try {
-      await ensureBootstrapped();
-      const checked = authenticateScim(request);
-      if (!checked.ok) return scimError(checked.status, checked.message, undefined, checked.status === 401 ? { 'www-authenticate': 'Bearer realm="landflow-scim"' } : {});
-      const params = ((await context?.params) ?? {}) as P;
-      const { caller } = checked;
-      return await withAuth({ principal: { user: caller.user, via: 'api-key', apiKey: { id: caller.keyId, scopes: caller.scopes } } }, () =>
-        fn({ request, caller, base: scimBaseUrl(request) }, params),
-      );
-    } catch (caught) {
-      if (caught instanceof ScimError) return scimError(caught.status, caught.message, caught.scimType);
-      if (caught instanceof UserError || caught instanceof ProjectError) {
-        return scimError(caught.status, caught.message, caught.status === 409 ? 'uniqueness' : caught.status === 400 ? 'invalidValue' : undefined);
+    const params = ((await context?.params) ?? {}) as P;
+    const audit = auditContextOf(request, params);
+    return withAuditRequest(audit, async () => {
+      try {
+        await ensureBootstrapped();
+        const checked = authenticateScim(request);
+        if (!checked.ok) {
+          recordScimAuthFailure(audit.ip, checked.status, checked.message);
+          return scimError(checked.status, checked.message, undefined, checked.status === 401 ? { 'www-authenticate': 'Bearer realm="landflow-scim"' } : {});
+        }
+        const { caller } = checked;
+        const principal: Principal = { user: caller.user, via: 'api-key', apiKey: { id: caller.keyId, scopes: caller.scopes } };
+        noteAuditPrincipal(principal);
+        return await withAuth({ principal }, () => fn({ request, caller, base: scimBaseUrl(request) }, params));
+      } catch (caught) {
+        if (caught instanceof ScimError) return scimError(caught.status, caught.message, caught.scimType);
+        if (caught instanceof UserError || caught instanceof ProjectError) {
+          return scimError(caught.status, caught.message, caught.status === 409 ? 'uniqueness' : caught.status === 400 ? 'invalidValue' : undefined);
+        }
+        logger.error('SCIM request failed', { error: caught, 'url.path': safePath(request) });
+        return scimError(500, (caught as Error).message ?? 'Internal error');
       }
-      logger.error('SCIM request failed', { error: caught, 'url.path': safePath(request) });
-      return scimError(500, (caught as Error).message ?? 'Internal error');
-    }
+    });
+  };
+}
+
+/** The audit context of a SCIM request (what `auditRequest` builds for /api): domain events carry its id, address, agent and route. */
+function auditContextOf(request: Request, params: Record<string, string>): AuditRequestContext {
+  const path = safePath(request) ?? '/scim/v2';
+  const agent = request.headers.get('user-agent');
+  return {
+    requestId: randomUUID(),
+    ip: clientIp(request),
+    ...(agent && { userAgent: agent.slice(0, 300) }),
+    method: request.method.toUpperCase(),
+    path,
+    route: routePattern(path, params),
+    params,
+    recorded: 0,
   };
 }
 

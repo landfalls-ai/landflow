@@ -207,7 +207,16 @@ export class AiUsageMeter implements UsageMeter {
   }
 
   /** Totals, per model and per day, for one execution, workflow or agent (or everything) since `from` (a day key). */
-  report(filter: { executionId?: string; workflowId?: string; agentId?: string; from?: string; to?: string; group?: 'workflow' | 'agent' }): AiUsageReport {
+  report(filter: {
+    executionId?: string;
+    workflowId?: string;
+    agentId?: string;
+    from?: string;
+    to?: string;
+    group?: 'workflow' | 'agent';
+    /** Only usage of these workflows or agents (a member's view: the rows of neither are left out). */
+    within?: { workflows: ReadonlySet<string>; agents: ReadonlySet<string> };
+  }): AiUsageReport {
     const clauses: string[] = [];
     const params: SqlValue[] = [];
     const add = (sql: string, value: SqlValue | undefined) => {
@@ -220,6 +229,15 @@ export class AiUsageMeter implements UsageMeter {
     add('agent_id = ?', filter.agentId);
     add('day >= ?', filter.from);
     add('day <= ?', filter.to);
+    if (filter.within) {
+      const ors: string[] = [];
+      for (const [column, ids] of [['workflow_id', filter.within.workflows], ['agent_id', filter.within.agents]] as const) {
+        if (!ids.size) continue;
+        ors.push(`${column} IN (${[...ids].map(() => '?').join(', ')})`);
+        params.push(...ids);
+      }
+      clauses.push(ors.length ? `(${ors.join(' OR ')})` : '1 = 0');
+    }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     const db = this.db();
     const totals = totalsOf(db.get<SumRow>(`SELECT ${SUMS} FROM ai_usage ${where}`, ...params));

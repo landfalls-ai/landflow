@@ -250,9 +250,12 @@ describe('every resource route checks project access', () => {
   });
 
   it('routes that aren’t one resource are left to their handlers', () => {
-    for (const path of ['/api/workflows/import', '/api/credentials/test', '/api/agents/import', '/api/agents/models', '/api/agents/workflow-tools', '/api/executions/stop-all']) {
+    for (const path of ['/api/workflows/import', '/api/credentials/test', '/api/agents/import', '/api/agents/models', '/api/agents/workflow-tools']) {
       expect(guard(path === '/api/agents/models' || path === '/api/agents/workflow-tools' ? 'GET' : 'POST', path, dave), path).toBe('ok');
     }
+    // Stopping every project's runs is instance-wide: admins only (policy.ts).
+    expect(guard('POST', '/api/executions/stop-all', dave)).toBe(403);
+    expect(guard('POST', '/api/executions/stop-all', admin)).toBe('ok');
   });
 
   it('unknown ids answer 404 to members (nothing leaks) and reach the handler for owners and admins', () => {

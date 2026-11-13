@@ -104,3 +104,10 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 - **`next dev`** keeps Next.js's own signal handling: the host's phased shutdown (flush, lease release) runs only where `NEXT_MANUAL_SIG_HANDLE=true` (`pnpm start`, the Docker image). Without it only the error handlers are ours.
 - **Streams**: in manual mode in-flight requests are awaited, but SSE streams are not; they end when the process exits.
+
+## Access scope of AI usage and files (2026-11)
+
+- **Files with no execution** aren't project-scoped: an editor upload that no run has used yet, an agent's knowledge file
+  and the like have no execution or workflow to derive an owner from, so any signed-in caller who knows the id (random,
+  unguessable) can read them. Files of executions and of evaluation datasets are checked against the workflow's project.
+- **AI usage rows with no workflow or agent** (a model call outside both) are visible to owners and admins only.
