@@ -48,9 +48,10 @@ Read `docs/constitution.md` (its Security baseline is your checklist), `CLAUDE.m
   the governance host allow-list (`lib/server/governance/policy.ts`) is off by default. Flag a new bare `fetch` to a
   user-influenced URL; the callers still outside `safeFetch` are listed in `docs/limitations.md`.
 - **Known open findings** (don't re-report them as new unless the diff makes them worse; do flag code that copies
-  them), each with the package that closes it: S9 audit fails open (P21), S11 no body cap or API rate limit (P16), S13
-  key handling (P23), S14 sessions (P24); an isolate backend for expressions (P30). Drop an entry once its package is
-  on `origin/main` (S3, S6 and S10 closed with P08, P09 and P10; S1, S5, S7, S8 and S12 with P11 to P14).
+  them), each with the package that closes it: S9 audit fails open (P21), S13 key handling (P23), S14 sessions (P24);
+  an isolate backend for expressions (P30). Drop an entry once its package is on `origin/main` (S3, S6 and S10 closed
+  with P08, P09 and P10; S1, S5, S7, S8 and S12 with P11 to P14; S11 with P16: `parseBody`'s 413 over
+  `LANDFLOW_MAX_BODY_BYTES` and the API and public-trigger rate limits in `lib/server/rate-limit/api-limiter.ts`).
 
 ## Checklist for every changed route and library function
 
@@ -64,7 +65,8 @@ Read `docs/constitution.md` (its Security baseline is your checklist), `CLAUDE.m
 5. Any new outbound request: can a user, webhook payload, expression or model output choose the URL? Redirects?
    Loopback, `169.254.169.254`, private ranges?
 6. Any value passed into a vm, the code runner or a shell/`child_process` call? Host objects in a sandbox?
-7. Input: zod on every body and query; sizes, counts and string lengths capped; no `Number()` straight into SQL `LIMIT`.
+7. Input: zod on every body (`parseBody`) and query (`parseQuery`); sizes, counts and string lengths capped; no
+   `Number()` straight into SQL `LIMIT`; a costly public route counted by the rate limiter.
 8. Tokens: random enough, stored hashed, constant-time compare, expiry, single use where it should be; signed URLs bound
    to their purpose.
 9. Client address and public origin taken only from trusted settings; emailed links from the configured public URL.

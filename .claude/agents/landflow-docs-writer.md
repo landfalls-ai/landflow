@@ -33,7 +33,7 @@ what changed.
 |---|---|
 | A feature's behaviour | its page from the feature map (`docs/features/*.md`, `docs/assistant.md`, `docs/agents.md`…) |
 | A route | `docs/reference/api.md` (method, path, who may call it, body, answer) and `lib/server/openapi.ts` for public API routes |
-| An environment variable | `docs/reference/configuration.md` (name, default, what it does); generated from `config/catalog.ts` once P18 lands (`pnpm --filter @landflow/web gen:config-docs`) |
+| An environment variable | an entry in `apps/web/src/lib/server/config/catalog.ts` (name, default, description, group); `docs/reference/configuration.md` is generated from it with `pnpm --filter @landflow/web gen:config-docs`, never edited by hand (`config-catalog.test.ts` fails a stale page) |
 | A limit added or lifted | `docs/limitations.md` |
 | An item closed or opened | `docs/roadmap.md` (the wave's section; `## Planned next` for what is next) |
 | Every commit | one row in `docs/history.md`: `\| (this change) \| <what changed, in plain words> \| [page](link) \|` |

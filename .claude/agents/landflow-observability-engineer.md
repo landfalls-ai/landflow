@@ -41,8 +41,10 @@ names, attributes, metric names, log fields) and `docs/features/observability.md
 
 - `logger`, never `console.*`, in server code; a short fixed message, values in fields, OTel attribute names
   (`url.path`, `http.route`, `error`, `landflow.workflow.id`).
-- Request id and actor on every log line and request span (target, P17, from the audit request context); return
-  `traceparent` on API responses once P17 lands.
+- Request id and actor on every log line and request span: the logger stamps `requestLogFields()`
+  (`lib/server/audit/context.ts`: `request_id`, `http.route`, `user.id`, `landflow.api_key.id`) and the audit layer
+  stamps the span; `/api` responses return `X-Request-Id` and `traceparent`. Keep new request paths inside
+  `handler()` so they get both.
 - Metric labels are bounded: status, kind, transport, plugin id, node type are fine; workflow, execution, user,
   credential ids are not (put them on spans or exemplars). Histograms never take an id label.
 - Names follow `landflow.<area>.<thing>` with a unit; counters end in a noun (`landflow.audit.write_failures`).

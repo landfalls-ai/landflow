@@ -46,12 +46,14 @@ Read `docs/constitution.md` ("Data" and "Testing"), `CLAUDE.md`, `docs/architect
 ## Rules you enforce
 
 - Every list read has a capped limit; page by keyset (`(started_at, id)` for executions) with an opaque cursor, the
-  way `app/api/executions/[id]/events` does; push visibility filters into SQL.
+  way `GET /api/executions` does (`lib/server/executions-query.ts`, `lib/server/pagination.ts`; the query through
+  `parseQuery` and `pageSchema`); push visibility filters into SQL.
 - No work proportional to history on a hot path (saving a run, a request): prune with
   `DELETE … WHERE … AND started_at < ?` on a timer or every N saves.
 - Batch `IN (…)` lookups and access checks instead of one query per item: lists check access once per kind with
   `visibleIds`, `filterVisible` or `withOwnership` (`projects/access.ts`, over `allShares(kind)` in `projects/store.ts`).
-- Keep the store from importing features; emit an event instead (target, P20).
+- Keep the store from importing features; emit an event instead (`onExecutionFinished` in `lib/server/store.ts`,
+  subscribed in `lib/server/execution-reactions.ts`), and hold process-wide state only through `singleton()`.
 - Large JSON in `data` columns: never `LIKE '%…%'` over it on a hot path.
 - Writes in Postgres mode must stay replayable and ordered; never bypass the `Database` write methods with a raw
   `INSERT`, `UPDATE` or `DELETE`.
