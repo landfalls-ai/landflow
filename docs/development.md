@@ -58,13 +58,14 @@ filesystem access causes tracing of the whole project".
 
 ## Conventions
 
-- **Migrations** live in `apps/web/src/lib/server/db/schema.ts`, in order; the highest so far is 2065. A new one goes at the end with a version above the current highest: migrations
-  are applied sorted by version, so a lower number merged later would never run on databases already past it
-  (`apps/web/test/migrations-order.test.ts` fails on one; only 1200 and 1300, which shipped out of order, are
-  grandfathered). One SQL text runs
-  on SQLite and Postgres (TEXT, BIGINT, DOUBLE PRECISION, JSON in TEXT, `ON CONFLICT` upserts); set `postgres` only when
-  the dialects must differ. Never edit a shipped migration: add one. A column that a shipped `CREATE TABLE` gained
-  later goes in `addColumns`. A new table also goes in `TABLES` (its primary key) in the same file.
+- **Migrations** live in `apps/web/src/lib/server/db/schema.ts`, in order; the highest so far is 2065. A new one
+  goes at the end with a version above the current highest. A migration numbered below one a database already has
+  still runs there, but after the higher ones, while a fresh database runs it before them, so the order differs
+  between databases and their schemas can diverge (`apps/web/test/migrations-order.test.ts` fails on one; only 1200
+  and 1300, which shipped out of order, are grandfathered). One SQL text runs on SQLite and Postgres (TEXT, BIGINT,
+  DOUBLE PRECISION, JSON in TEXT, `ON CONFLICT` upserts); set `postgres` only when the dialects must differ. Never
+  edit a shipped migration: add one. A column that a shipped `CREATE TABLE` gained later goes in `addColumns`. A new
+  table also goes in `TABLES` (its primary key) in the same file.
 - **The database** caches prepared statements by SQL text in a bounded LRU: `LANDFLOW_DB_STATEMENT_CACHE` (default 500)
   caps it, because `IN (?, ?, …)` lists of every length are different texts. List paths read access with one query per
   kind (`allShares(kind)`, the memberships) and not one per item; keep the single-item functions for single resources.

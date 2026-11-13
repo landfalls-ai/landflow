@@ -1,6 +1,7 @@
 /**
- * Migrations are applied sorted by version, so a number lower than one a database already has would silently be
- * skipped there only if it were new: every new migration goes at the end with a version above the current highest.
+ * A migration numbered below one a database already has still runs there, but after the higher ones, while a fresh
+ * database runs it before them, so the order differs between databases and their schemas can diverge. Every new
+ * migration therefore goes at the end with a version above the current highest.
  * This test enforces that; the out-of-order versions that already shipped are grandfathered below.
  */
 import { describe, expect, it } from 'vitest';
