@@ -1,5 +1,5 @@
 /**
- * Shared pieces of the routes that deal with projects: the request's user, a handler that answers ProjectError with
+ * Shared pieces of the routes that deal with projects: the request's user, a handler (HttpError answers itself)
  * its status, the `?projectId=` of list and create routes, and the share and transfer routes every shareable kind
  * uses (`/api/workflows/<id>/shares`, `/api/credentials/<id>/transfer`, …). The access checks themselves run in the
  * route guard (lib/server/auth/policy.ts `resourceRule`) before these handlers.
@@ -11,7 +11,6 @@ import { currentPrincipal } from '../auth/guard';
 import { getUser, type UserRecord } from '../auth/users';
 import { folders } from '../folders';
 import { forgetWorkflowPolicy } from '../governance/scopes';
-import { HttpError } from '../errors';
 import { error, handler, json, parseBody } from '../http';
 import { creationProject, isInstanceAdmin, ownershipOf, projectRole } from './access';
 import { ensurePersonalProject, forgetResource, getProject, ProjectError, replaceShares, setHomeProject, shares, type ProjectRecord } from './store';
@@ -24,9 +23,9 @@ export function routeActor(): UserRecord {
   return principal.user;
 }
 
-/** `handler` plus ProjectError → `{ error }` with its status (projects/store.ts keeps its own class, mapped here). */
+/** `handler`: ProjectError is an HttpError, so `handler` answers it itself; the name stays for the routes that import it. */
 export function projectRoute<A extends unknown[]>(fn: (...args: A) => Promise<Response>) {
-  return handler(fn, { mapError: (caught) => (caught instanceof ProjectError ? new HttpError(caught.message, caught.status, { code: 'project_error' }) : undefined) });
+  return handler(fn);
 }
 
 /**

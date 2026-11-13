@@ -31,6 +31,7 @@ import { store } from '../store';
 import { readSyncDir, writeSyncDir } from './files';
 import { MANIFEST_FILE, WORKFLOWS_DIR, WORKFLOW_SUFFIX, entityKey, isManagedPath, isSafePath, renderState } from './format';
 import { applySync, currentState, exportState, restoreWorkflow, workflowKeys, type PlanOptions } from './index';
+import { HttpError } from '../errors';
 
 const SETTINGS_KEY = 'source_control';
 const GIT_TIMEOUT_MS = Number(process.env.LANDFLOW_GIT_TIMEOUT_MS) || 120_000;
@@ -40,12 +41,12 @@ const TOKEN_FIELDS = ['token', 'accessToken', 'password', 'apiKey', 'value', 'ke
 const SSH_KEY_FIELDS = ['privateKey', 'sshPrivateKey', 'sshKey', 'key'];
 const PEM_PRIVATE_KEY = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/;
 
-export class SourceControlError extends Error {
+export class SourceControlError extends HttpError {
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
     this.name = 'SourceControlError';
   }
 }

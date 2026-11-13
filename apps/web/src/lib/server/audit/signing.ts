@@ -14,13 +14,14 @@ import { AUDIT_HEAD_FORMAT, type AuditHeadPayload, type AuditHeadRecord, type Au
 import { credentials } from '../credentials/vault';
 import { parse } from '../db/rows';
 import { auditDb, verifyChain } from './chain';
+import { HttpError } from '../errors';
 
-export class AuditSigningError extends Error {
+export class AuditSigningError extends HttpError {
   constructor(
     message: string,
-    readonly status = 409,
+    status = 409,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

@@ -16,13 +16,14 @@ import { certificateInfo, keyPairProblem, pemCertificates } from '../auth/x509';
 import { credentials } from '../credentials/vault';
 import { database } from '../db';
 import { parse } from '../db/rows';
+import { HttpError } from '../errors';
 
-export class AuditDestinationError extends Error {
+export class AuditDestinationError extends HttpError {
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

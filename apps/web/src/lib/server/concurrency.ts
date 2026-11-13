@@ -12,6 +12,7 @@
  */
 import type { ExecutionMode } from '@landflow/protocol';
 import type { WorkflowSettings } from '@landflow/engine';
+import { HttpError } from './errors';
 
 export const DEFAULT_QUEUE_SIZE = 100;
 
@@ -49,7 +50,7 @@ export const LIMITED_MODES = new Set<ExecutionMode>(['webhook', 'trigger', 'poll
 export type SkipReason = 'limit' | 'singleton' | 'queue-full' | 'debounced' | 'batched';
 
 /** A trigger run that was not started: the workflow had no free slot and does not queue (or its queue is full). */
-export class RunSkippedError extends Error {
+export class RunSkippedError extends HttpError {
   constructor(
     readonly workflowId: string,
     readonly reason: SkipReason,
@@ -60,6 +61,8 @@ export class RunSkippedError extends Error {
         : reason === 'queue-full'
           ? 'Skipped: the workflow is at its concurrency limit and its queue is full'
           : 'Skipped: the workflow is at its concurrency limit',
+      429,
+      { details: { workflowId, reason } },
     );
     this.name = 'RunSkippedError';
   }

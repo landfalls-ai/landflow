@@ -26,14 +26,15 @@ import { registry } from '../plugins/registry';
 import { getProject, membershipsOf } from '../projects/store';
 import { getGroup, groupsOf } from '../scim/groups';
 import { singleton } from '../singleton';
+import { HttpError } from '../errors';
 
 /** A grant fails with a status the routes pass on. */
-export class McpGrantError extends Error {
+export class McpGrantError extends HttpError {
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

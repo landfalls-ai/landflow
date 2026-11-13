@@ -17,6 +17,7 @@ import { liveExecution, resumeExecution } from './runner';
 import { confirmDecidedBlocks, decidedBlocks, slackCredentialFor, slackRefOf, updateMessage } from './slack';
 import { store } from './store';
 import { logger } from './telemetry';
+import { HttpError } from './errors';
 
 export interface ApprovalCall {
   id: string;
@@ -69,12 +70,12 @@ export interface PendingApproval {
   confirm?: ConfirmRequest;
 }
 
-export class ApprovalError extends Error {
+export class ApprovalError extends HttpError {
   constructor(
     message: string,
-    readonly status: number,
+    status: number,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

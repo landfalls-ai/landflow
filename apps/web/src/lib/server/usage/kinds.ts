@@ -9,6 +9,7 @@
  */
 import { ATTR_NAME, customKindProblem, type CustomUsageKind, type UsageAttr, type UsageFieldType, type UsageKindDef, type UsageKindField } from '../../shared/brain';
 import { database, type Database } from '../db';
+import { HttpError } from '../errors';
 
 export const MAX_FIELDS = 20;
 /** Attribute names the ledger writes itself; a declared field can't use them. */
@@ -62,9 +63,9 @@ export function fieldsProblem(fields: UsageKindField[]): string | undefined {
   return undefined;
 }
 
-export class KindError extends Error {
-  constructor(message: string, readonly status = 400) {
-    super(message);
+export class KindError extends HttpError {
+  constructor(message: string, status = 400) {
+    super(message, status, { expose: true });
   }
 }
 

@@ -17,28 +17,29 @@ import { folderRow } from './db/rows';
 import { projectsDb } from './projects/db';
 import { defaultProjectId } from './projects/store';
 import { singleton } from './singleton';
+import { HttpError } from './errors';
 
 const MAX_NAME = 120;
 
 /** Thrown by FolderStore.delete when the folder still holds folders or workflows. */
-export class FolderNotEmptyError extends Error {
+export class FolderNotEmptyError extends HttpError {
   constructor(
     readonly folders: number,
     readonly workflows: number,
   ) {
     const parts = [folders && `${folders} folder${folders === 1 ? '' : 's'}`, workflows && `${workflows} workflow${workflows === 1 ? '' : 's'}`].filter(Boolean);
-    super(`The folder isn't empty: it holds ${parts.join(' and ')}`);
+    super(`The folder isn't empty: it holds ${parts.join(' and ')}`, 409, { details: { folders, workflows } });
     this.name = 'FolderNotEmptyError';
   }
 }
 
 /** A bad name, a missing parent or a move that would make a cycle. */
-export class FolderError extends Error {
+export class FolderError extends HttpError {
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
     this.name = 'FolderError';
   }
 }

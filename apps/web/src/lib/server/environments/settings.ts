@@ -18,18 +18,19 @@ import type { CredentialMapping, CredentialSecretMapping, EnvironmentSettings, P
 import { database } from '../db';
 import { parse } from '../db/rows';
 import { flag } from '../config';
+import { HttpError } from '../errors';
 
 const SETTINGS_KEY = 'environments';
 /** A name for LANDFLOW_ENVIRONMENT and the environments list. */
 export const ENVIRONMENT_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,39}$/;
 export const DEFAULT_ENVIRONMENTS = ['development', 'staging', 'production'];
 
-export class EnvironmentError extends Error {
+export class EnvironmentError extends HttpError {
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
     this.name = 'EnvironmentError';
   }
 }

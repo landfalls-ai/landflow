@@ -12,16 +12,17 @@ import { agentTeamStore, issuesOf } from '../agent-teams/store';
 import { agentStore, configOf } from '../agents/store';
 import { credentials as vault } from '../credentials/vault';
 import { registry } from '../plugins/registry';
+import { HttpError } from '../errors';
 
 /** Agents one template may hold: the team's members and whoever they delegate to. */
 export const MAX_BUNDLE_AGENTS = 30;
 
-export class BundleError extends Error {
+export class BundleError extends HttpError {
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

@@ -5,6 +5,7 @@
 import type { JournalEvent, RunCheck } from '../../shared/run-trace';
 import { journalOf, liveJournal, releaseJournal } from './writer';
 import { read } from './store';
+import { HttpError } from '../errors';
 
 export interface CheckDecision {
   spanId: string;
@@ -15,12 +16,12 @@ export interface CheckDecision {
   note?: string;
 }
 
-export class CheckError extends Error {
+export class CheckError extends HttpError {
   constructor(
     message: string,
-    readonly status: number,
+    status: number,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

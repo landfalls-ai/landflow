@@ -10,16 +10,17 @@ import { agentStore } from '../agents/store';
 import { database } from '../db';
 import { noteStore } from '../notebook/store';
 import { homeProjectId } from '../projects/store';
+import { HttpError } from '../errors';
 
 /** What stops a draft from running, members whose agent was deleted included. */
 export const issuesOf = (config: AgentTeamConfig): string[] => teamIssues(config, { agentExists: (id) => Boolean(agentStore.get(id)) });
 
-export class AgentTeamError extends Error {
+export class AgentTeamError extends HttpError {
   constructor(
     message: string,
     readonly issues: string[] = [],
   ) {
-    super(message);
+    super(message, 400, { details: { issues } });
   }
 }
 

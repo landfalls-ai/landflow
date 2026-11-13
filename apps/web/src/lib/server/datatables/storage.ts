@@ -7,6 +7,7 @@
  * semantics such a backend has to match.
  */
 import type { CellValue, ColumnType, DataTable, DataTableColumn, DataTableRow, DataTableSummary, RowFilter, RowPage, RowQuery } from '../../shared/data-tables';
+import { HttpError } from '../errors';
 
 /** Values of user columns, already coerced to the column types. */
 export type RowValues = Record<string, CellValue>;
@@ -36,12 +37,12 @@ export interface DataTableStorage {
   transaction<T>(tableId: string, fn: () => T): T;
 }
 
-export class DataTableError extends Error {
+export class DataTableError extends HttpError {
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

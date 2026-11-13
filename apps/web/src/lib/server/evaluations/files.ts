@@ -13,13 +13,16 @@ import { binaryStore } from '../binary/access';
 import { parseCsv, rowsToItems } from '../binary/formats';
 import { readAll } from '../binary/store';
 import { getSettings, saveSettings } from './store';
+import { HttpError } from '../errors';
 
 /** The largest dataset file. */
 export const MAX_DATASET_BYTES = 10 * 1024 * 1024;
 const ARRAY_KEYS = ['rows', 'cases', 'data', 'items', 'dataset', 'examples', 'records'];
 
-export class DatasetFileError extends Error {
-  readonly status = 400;
+export class DatasetFileError extends HttpError {
+  constructor(message: string) {
+    super(message, 400);
+  }
 }
 
 export interface ParsedDataset {
