@@ -155,6 +155,9 @@ describe('outbox gauges', () => {
     const meter = {
       createObservableGauge: (name: string) => ({ addCallback: (callback: never) => gauges.set(name, [...(gauges.get(name) ?? []), callback]) }),
       createCounter: (name: string) => (counters.push(name), { add: () => {} }),
+      // Every database call records its duration (P22), so the host instruments are built on this meter too.
+      createHistogram: () => ({ record: () => {} }),
+      createUpDownCounter: () => ({ add: () => {} }),
     };
     const spy = vi.spyOn(metrics, 'getMeterProvider').mockReturnValue({ getMeter: () => meter } as never);
     try {
