@@ -9,7 +9,8 @@
     "start": "NEXT_MANUAL_SIG_HANDLE=true next start --port 3000",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "worker": "tsx --tsconfig tsconfig.json src/lib/server/cluster/worker-main.ts"
+    "worker": "tsx --tsconfig tsconfig.json src/lib/server/cluster/worker-main.ts",
+    "gen:config-docs": "tsx --tsconfig tsconfig.json scripts/gen-config-docs.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.3.0",

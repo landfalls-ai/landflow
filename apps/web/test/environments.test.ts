@@ -150,6 +150,20 @@ describe('protected environment', () => {
     expect((await workflowsRoute.POST(request('/api/workflows', 'POST', { name: 'Allowed', nodes: [], connections: [] }))).status).toBe(201);
   });
 
+  it('LANDFLOW_ENVIRONMENT_PROTECTED takes on/off, and an unparseable value falls through to the setting', () => {
+    process.env.LANDFLOW_ENVIRONMENT = 'production';
+    environments.writeEnvironmentSettings({ protected: false });
+    process.env.LANDFLOW_ENVIRONMENT_PROTECTED = 'on';
+    expect(environments.protection()).toEqual({ protected: true, source: 'env' });
+    environments.writeEnvironmentSettings({ protected: true });
+    process.env.LANDFLOW_ENVIRONMENT_PROTECTED = 'off';
+    expect(environments.protection()).toEqual({ protected: false, source: 'env' });
+    process.env.LANDFLOW_ENVIRONMENT_PROTECTED = 'garbage';
+    expect(environments.protection()).toEqual({ protected: true, source: 'settings' });
+    environments.writeEnvironmentSettings({});
+    expect(environments.protection()).toEqual({ protected: false, source: 'none' });
+  });
+
   it('applies a pull anyway (sync writes the store directly)', async () => {
     process.env.LANDFLOW_ENVIRONMENT = 'production';
     process.env.LANDFLOW_ENVIRONMENT_PROTECTED = 'true';

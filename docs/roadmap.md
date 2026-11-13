@@ -1317,6 +1317,17 @@ workbench in place of a page of cards, keeping Spotlight.
   attributes, and `/api` responses return `traceparent`. Redaction covers more key names (private keys, passphrases,
   signatures, connection strings, DSNs, session tokens), secret-shaped values in every logged string (Bearer tokens,
   `lf_` keys, URL userinfo, PEM blocks), and the credential values handed to a node, like `$secrets` values.
+- **P18, configuration catalog, generated reference and a ratchet on environment reads** (C5, C7; wave 4):
+  `lib/server/config/catalog.ts` lists every variable the host reads (and the few plugins read) with its default,
+  description, group, secret flag, production-profile requirement and deprecated aliases; `checkConfig` takes its
+  redaction and production requirements from it. `docs/reference/configuration.md` is generated from it
+  (`pnpm --filter @landflow/web gen:config-docs`), one table per group and plugin-side variables in their own table. The
+  per-signal `OTEL_EXPORTER_OTLP_*` variables, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_TRACES_SAMPLER_ARG`,
+  `OTEL_LOGS_EXPORTER`, `OTEL_BLRP_SCHEDULE_DELAY` and `LANDFLOW_VALKEY_URL=memory` are documented, and the retention
+  variables are catalogued as `LANDFLOW_AI_USAGE_RETENTION_DAYS` / `LANDFLOW_USAGE_RETENTION_DAYS` with the old names
+  as aliases. `config-catalog.test.ts` fails on an environment name the source reads that is not catalogued, on more
+  than 88 files reading `process.env` outside `lib/server/config`, and on a stale generated page. SAML, mail, S3,
+  marketplace and environment-protection flags now go through `envFlag`; the values they accept changed (`LANDFLOW_S3_FORCE_PATH_STYLE=0` is now off, `LANDFLOW_SMTP_SECURE=1` true, `LANDFLOW_MARKETPLACE_ALLOW_LOCAL=true` on, `LANDFLOW_ENVIRONMENT_PROTECTED=on`/`off` decides, an unparseable SAML flag takes its default; see history.md).
 
 ## Planned next
 

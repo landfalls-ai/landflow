@@ -10,6 +10,7 @@ import { connect as netConnect, type Socket } from 'node:net';
 import { connect as tlsConnect, type TLSSocket } from 'node:tls';
 import { singleton } from '../singleton';
 import { logger } from '../telemetry';
+import { envFlag } from '../config';
 
 export interface MailMessage {
   to: string;
@@ -40,10 +41,10 @@ export function smtpConfig(): SmtpConfig | undefined {
   return {
     host,
     port,
-    secure: process.env.LANDFLOW_SMTP_SECURE ? process.env.LANDFLOW_SMTP_SECURE === 'true' : port === 465,
+    secure: envFlag('LANDFLOW_SMTP_SECURE', port === 465),
     ...(process.env.LANDFLOW_SMTP_USER && { user: process.env.LANDFLOW_SMTP_USER, pass: process.env.LANDFLOW_SMTP_PASS ?? '' }),
     from: process.env.LANDFLOW_SMTP_FROM?.trim() || `Landflow <landflow@${host === '127.0.0.1' || host === 'localhost' ? 'localhost' : host}>`,
-    ignoreTls: process.env.LANDFLOW_SMTP_IGNORE_TLS === 'true',
+    ignoreTls: envFlag('LANDFLOW_SMTP_IGNORE_TLS', false),
   };
 }
 
