@@ -1250,6 +1250,9 @@ workbench in place of a page of cards, keeping Spotlight.
 - **P07, liveness and readiness probes** (C3, O2): `GET /api/health/live` (no I/O; Next holds requests until boot ends, so a startupProbe covers a slow boot) and `GET /api/health/ready` (boot, draining, database, write queue lag, schema version, Valkey in queue mode; 503 otherwise) replace `/api/health` as the Kubernetes, Docker and smoke-script probes; `/api/health` shows plugin and run counts only to callers with credentials.
 - **P08, plugin registration closed outside development** (S3; wave 2): `registryOpen()` refuses announces without `LANDFLOW_REGISTRY_SECRET` in the production profile (HTTP and gRPC); with the secret every announced endpoint proves it holds it; joining an existing plugin from a new host needs the secret or `LANDFLOW_REGISTRY_ALLOW_JOIN`; `plugin.endpoint_added` and `plugin.updated` are audited; the announce route's 422 is generic and metadata addresses are refused in production.
 - **P09, trusted proxies, public URL for emailed links, signed resume URLs** (S6, S12 part): `clientAddress()` trusts `X-Forwarded-For` only up to `LANDFLOW_TRUSTED_PROXIES` hops (sign-in limits, audit and webhook allow-lists use it); invite and reset links never come from request headers in production; resume URLs carry an HMAC `sig` that production requires (`LANDFLOW_RESUME_SIGNATURES`), old waits keep working.
+- **P10, security headers and a nonce CSP** (S10): the proxy sets nosniff, referrer and permissions policies, frame denial, HSTS
+  over https and a per-request nonce Content Security Policy on pages (`LANDFLOW_CSP`: enforce in production, report in
+  development; `LANDFLOW_HSTS`); embeddable paths keep their own policy; `x-powered-by` is off.
 
 ## Planned next
 

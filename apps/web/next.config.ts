@@ -35,6 +35,8 @@ const nextConfig: NextConfig = {
     '@aws-sdk/client-sqs',
     '@google-cloud/pubsub',
   ],
+  // No `x-powered-by: Next.js` fingerprint.
+  poweredByHeader: false,
   devIndicators: false,
   // No persistent Turbopack cache for `next dev`: a stale one in .next/dev/cache made the browser reload in a loop.
   experimental: { turbopackFileSystemCacheForDev: false },

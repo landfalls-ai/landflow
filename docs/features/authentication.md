@@ -33,3 +33,7 @@ the production profile an unset `LANDFLOW_TRUSTED_PROXIES` logs one warning that
 `X-Forwarded-Host` and `-Proto` build the host's own origin (redirects, SCIM URLs) only with `LANDFLOW_TRUSTED_PROXIES` >= 1.
 Invite and password-reset links use `LANDFLOW_PUBLIC_URL`; in the production profile without it, sending one fails with a 500
 ("Set LANDFLOW_PUBLIC_URL to send links") instead of building the link from a request header.
+
+## Security headers and Content Security Policy
+
+The proxy sets security headers on every response and a nonce-based Content Security Policy on pages; see [Security headers and Content Security Policy](../deployment.md#security-headers-and-content-security-policy).

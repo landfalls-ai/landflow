@@ -9,6 +9,8 @@ Flags accept `1,true,yes,on` and `0,false,no,off` (any case). A number that does
 | Variable | Default | |
 |---|---|---|
 | `LANDFLOW_PROFILE` | `production` when `NODE_ENV=production`, else `development` | `development` or `production`: whether the host refuses development secrets and a missing `LANDFLOW_PUBLIC_URL` ("Production profile" in [deployment.md](../deployment.md)). The in-repo compose and Kubernetes stacks set `development` |
+| `LANDFLOW_CSP` | `enforce` in the production profile, else `report` | `enforce`, `report` (Report-Only, visible in the browser console) or `off`: the nonce-based Content Security Policy on pages ([deployment.md](../deployment.md#security-headers-and-content-security-policy)) |
+| `LANDFLOW_HSTS` | on over https | `off` drops the `Strict-Transport-Security` header |
 | `LANDFLOW_REGISTRY_OPEN` | – | `true`: accept plugin registrations without `LANDFLOW_REGISTRY_SECRET` in the production profile (the development profile accepts them anyway; see [plugins.md](../plugins.md#registration-rules)) |
 | `LANDFLOW_REGISTRY_ALLOW_JOIN` | – | `true`: without `LANDFLOW_REGISTRY_SECRET`, let an announced endpoint on a new host join a plugin that already exists (loopback addresses count as one host) |
 | `LANDFLOW_DATA_DIR` | `apps/web/.data` | data directory: the SQLite database (`landflow.db`), credentials, binary files, the Claude Code plugin images packed for kagent (`oci/`) and the other host files |

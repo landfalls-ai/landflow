@@ -253,6 +253,7 @@ LANDFLOW_OWNER_EMAIL=<from deploy/.env.example> LANDFLOW_OWNER_PASSWORD=<from de
   ([triage.md](triage.md#install)). Outside services are fakes: `pnpm fake-landfall` ([triage.md](triage.md#trying-it-locally)),
   and the messaging plugin's fakes ([plugins/messaging](../plugins/messaging/README.md)). Nothing reaches a real
   service.
+- **Under the production CSP**, build (`npx next build`, then restore `next-env.d.ts`) and start with `next start`, `LANDFLOW_PROFILE=production` and `LANDFLOW_CSP=enforce` on a free port. Sign in, load the pages with a `securitypolicyviolation` listener installed before load, and check that the page source has no script without a nonce. The console is not enough: Chrome reports blocked sources as violations the console tool may not capture.
 - **In the browser**, open `http://localhost:3100`, not `127.0.0.1`. `next dev` blocks its dev resources (`/_next/hmr`)
   for any origin other than `localhost` unless `allowedDevOrigins` lists it, so hot reload doesn't connect. Use a tab of
   your own and keep the console open: a check passes with no errors there.
