@@ -61,6 +61,8 @@ export const BOOTSTRAP_SOURCE = String.raw`(function () {
   delete g.WeakRef;
   delete Array.fromAsync;
   delete Atomics.waitAsync;
+  // Node 24+: AsyncDisposableStack.prototype.disposeAsync() returns a promise that rejects when a disposer throws.
+  delete g.AsyncDisposableStack;
 
   const regs = new Float64Array(2); // [item index, now in ms]
 

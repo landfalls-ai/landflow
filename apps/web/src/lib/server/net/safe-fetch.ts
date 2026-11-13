@@ -47,7 +47,10 @@ export interface OutboundPolicy {
 }
 
 /** Variables whose endpoint (host and port) the host itself is configured to call, so they stay reachable without being listed. */
-const IMPLICIT_URLS = ['OLLAMA_URL', 'LANDFLOW_CODE_RUNNER_URL', 'OPENAI_BASE_URL', 'LANDFLOW_MCP_GATEWAY_PUBLIC_URL'];
+const IMPLICIT_URLS = ['OLLAMA_URL', 'LANDFLOW_CODE_RUNNER_URL', 'OPENAI_BASE_URL', 'LANDFLOW_MCP_GATEWAY_PUBLIC_URL', 'LANDFLOW_GITHUB_MCP_URL', 'LANDFLOW_OIDC_DISCOVERY_URL'];
+
+/** The bundled GitHub MCP server's in-cluster address when LANDFLOW_GITHUB_MCP_URL is unset (as mcp/github.ts githubMcpUrl()). */
+const GITHUB_MCP_DEFAULT = 'http://landflow-github-mcp:8082/';
 
 /** The `host:port` (a default port filled in) of a URL, lower case, for an exact match. */
 function hostPort(url: URL): string {
@@ -57,7 +60,7 @@ function hostPort(url: URL): string {
 
 /** The endpoints (host and port) the host is configured to call; only these exact endpoints are exempt, not the whole host. */
 export function implicitEndpoints(): Set<string> {
-  const urls = [...IMPLICIT_URLS.map((name) => envUrl(name)), ollamaUrl()];
+  const urls = [...IMPLICIT_URLS.map((name) => envUrl(name)), ollamaUrl(), envUrl('LANDFLOW_GITHUB_MCP_URL') ? undefined : GITHUB_MCP_DEFAULT];
   return new Set(urls.filter((value): value is string => Boolean(value)).map((value) => hostPort(new URL(value))));
 }
 

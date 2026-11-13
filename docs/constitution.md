@@ -141,7 +141,9 @@ session; people read it before they start a feature too.
   (`packages/engine/src/sandbox/realm.ts`: a `node:vm` context with code generation off, only JSON text crossing in
   and out; `async`, `await` and `import(` are refused). In the production profile Code nodes run in the code runner
   (`services/code-runner`, `lib/server/code-runner.ts`) unless `LANDFLOW_CODE_IN_PROCESS=true`. Never pass a host
-  object, function or Buffer into a vm context. A stricter isolate backend is (target, P30).
+  object, function or Buffer into the expression realm. The in-process Code node (development, or
+  `LANDFLOW_CODE_IN_PROCESS=true`) is the known exception: its context still holds host helpers
+  ([limitations.md](limitations.md)), which is why production runs Code nodes in the runner. A stricter isolate backend is (target, P30).
 - **Bounded input.** Bodies validated with zod and capped in size (cap: target, P16); rate limits per principal and
   per client address on public and costly routes (target, P16; sign-in limits in `lib/server/auth/rate-limit.ts`).
 - **Client address** comes from `clientAddress()` (`lib/server/net/client-address.ts`, `LANDFLOW_TRUSTED_PROXIES`),

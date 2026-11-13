@@ -94,6 +94,9 @@ describe('sealed realm', () => {
         "(()=>{ for (const x of []) /'/; (async()=>{throw 'B12'})(); return '1' })()",
         "new (class { async #x(){ throw 'B4' } y(){ this.#x(); return 1 } })().y()",
         "(()=>{ {} /'/; import('fs'); return '1' })()",
+        // Node 24+ globals (no-ops on Node 22, where they don't exist): they must not reopen the hole after an upgrade.
+        "(()=>{ const s = new AsyncDisposableStack(); s.defer(() => { throw 'ADS' }); s.disposeAsync(); return 1 })()",
+        "(()=>{ const s = new AsyncDisposableStack(); s.use({ [Symbol.asyncDispose]() { return { get then() { throw 'x' } } } }); s.disposeAsync(); return 1 })()",
       ]) {
         attempt(code);
       }
@@ -102,6 +105,24 @@ describe('sealed realm', () => {
       process.off('unhandledRejection', onRejection);
     }
     expect(rejections).toEqual([]);
+  });
+
+  it('leaves no global, static or prototype member whose name says it makes a Promise (guards a Node upgrade)', () => {
+    const found = resolver().evaluate(`(() => {
+      const names = [];
+      for (const name of Object.getOwnPropertyNames(globalThis)) {
+        if (/async|promise|await/i.test(name)) names.push(name);
+        const value = Object.getOwnPropertyDescriptor(globalThis, name).value; // getters ($json, $secrets, …) are the expression API
+        if ((typeof value !== 'function' && typeof value !== 'object') || value === null) continue;
+        for (const [owner, label] of [[value, name], [value.prototype, name + '.prototype']]) {
+          if (!owner) continue;
+          for (const key of Object.getOwnPropertyNames(owner)) if (/async|promise|await/i.test(key)) names.push(label + '.' + key);
+        }
+      }
+      return names;
+    })()`, 0);
+    // The two well-known symbols are names only: nothing in the realm awaits them.
+    expect(found).toEqual(['Symbol.asyncIterator', 'Symbol.asyncDispose'].filter((n) => (found as string[]).includes(n)));
   });
 
   it('refuses async and import( with a clear message but allows them as property names', () => {

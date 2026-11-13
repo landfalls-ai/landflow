@@ -276,7 +276,9 @@ LANDFLOW_OWNER_EMAIL=<from deploy/.env.example> LANDFLOW_OWNER_PASSWORD=<from de
   and the messaging plugin's fakes ([plugins/messaging](../plugins/messaging/README.md)). Nothing reaches a real
   service.
 - **Under the production CSP**, build (`npx next build`, then restore `next-env.d.ts`) and start with `next start`,
-  `LANDFLOW_PROFILE=production` and `LANDFLOW_CSP=enforce` on a free port. Sign in, load the pages with a
+  `LANDFLOW_PROFILE=production` and `LANDFLOW_CSP=enforce` on a free port. Production refuses calls to local fakes
+  and runs Code nodes only in a runner: add `LANDFLOW_OUTBOUND_BLOCK_PRIVATE=false` (or list the fakes in
+  `LANDFLOW_OUTBOUND_ALLOW`) and `LANDFLOW_CODE_RUNNER_URL` (or `LANDFLOW_CODE_IN_PROCESS=true`) when the check needs them. Sign in, load the pages with a
   `securitypolicyviolation` listener installed before load, and check that the page source has no script without a
   nonce. The console is not enough: Chrome reports blocked sources as violations the console tool may not capture. Use
   a separate headed Chrome (`playwright-core` with `channel: 'chrome'`), not the Claude in Chrome extension: the

@@ -67,8 +67,10 @@ strings and WebAssembly off, a null-prototype global and a 250 ms timeout per ev
   `Date` an in-process node left in an item reads as an ISO string, and a BigInt or circular value fails the expression.
 - **What is not**: `process`, `require`, `globalThis.process`, the host's `Function` (`$json.constructor.constructor(...)` finds
   the realm's own, which cannot compile), `eval`, `new Function`, `WebAssembly`, `FinalizationRegistry`, `WeakRef` (their callbacks would run on the host's loop outside the timeout), `import()`, and any Promise: `async`,
-  `await` and `import(` are refused in an expression's source, and the realm's promises are inert, because a rejected
-  promise in any context is an unhandled rejection that ends the host process. `Error.prepareStackTrace` and
+  `await` and `import(` are refused in an expression's source, the realm's promises are inert, and the builtins that
+  return one are removed (`Promise`, `Array.fromAsync`, `Atomics.waitAsync`, and on Node 24+ `AsyncDisposableStack`),
+  because a rejected promise in any context is an unhandled rejection that ends the host process. A test walks the
+  realm's globals for any other such name, so a Node upgrade that adds one fails the suite. `Error.prepareStackTrace` and
   `stackTraceLimit` are locked so a stack trace cannot expose host frames.
 - **Results** come back as tagged JSON the host parses, so what an expression returns is made of host-realm objects and
   arrays (`Array.isArray`, `instanceof Object`) and no getter or Proxy it built can run outside the timeout. Dates come back as

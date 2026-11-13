@@ -91,7 +91,7 @@ describe('profile', () => {
 });
 
 describe('checkConfig', () => {
-  const good = { LANDFLOW_PROFILE: 'production', LANDFLOW_PUBLIC_URL: 'https://flow.example.com', LANDFLOW_REGISTRY_SECRET: 'x'.repeat(24), LANDFLOW_ENCRYPTION_KEY: 'k'.repeat(32), LANDFLOW_BINARY_SECRET: 'b'.repeat(32) };
+  const good = { LANDFLOW_PROFILE: 'production', LANDFLOW_PUBLIC_URL: 'https://flow.example.com', LANDFLOW_REGISTRY_SECRET: 'x'.repeat(24), LANDFLOW_ENCRYPTION_KEY: 'k'.repeat(32), LANDFLOW_BINARY_SECRET: 'b'.repeat(32), LANDFLOW_CODE_RUNNER_URL: 'http://code-runner:8090' };
 
   it('passes a clean production environment', () => {
     const r = checkConfig(good);
@@ -119,6 +119,11 @@ describe('checkConfig', () => {
     expect(r.errors).toEqual([]);
     expect(r.warnings.join()).toContain('LANDFLOW_ENCRYPTION_KEY');
     expect(r.warnings.join()).toContain('LANDFLOW_BINARY_SECRET');
+  });
+  it('warns when Code nodes have nowhere to run (no runner, in-process left to the production default)', () => {
+    const { LANDFLOW_CODE_RUNNER_URL: _, ...env } = good;
+    expect(checkConfig(env).warnings.join()).toContain('LANDFLOW_CODE_RUNNER_URL');
+    expect(checkConfig({ ...env, LANDFLOW_CODE_IN_PROCESS: 'true' }).warnings).toEqual([]);
   });
   it('says nothing about development values in development', () => {
     const r = checkConfig({ LANDFLOW_PROFILE: 'development', LANDFLOW_BINARY_SECRET: 'landflow-queue-dev-only-binary-secret', LANDFLOW_OWNER_PASSWORD: 'landflow-dev-only' });

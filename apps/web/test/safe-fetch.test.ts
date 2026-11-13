@@ -191,6 +191,23 @@ describe('safeFetch', () => {
     expect((await safeFetch(`http://127.0.0.1:${port}/`)).status).toBe(200);
   });
 
+  it('exempts the GitHub MCP server (its in-cluster default too) and the OIDC discovery URL', async () => {
+    const { implicitEndpoints } = await import('@/lib/server/net/safe-fetch');
+    delete process.env.LANDFLOW_GITHUB_MCP_URL;
+    expect(implicitEndpoints().has('landflow-github-mcp:8082')).toBe(true);
+    process.env.LANDFLOW_GITHUB_MCP_URL = 'http://10.0.0.7:9000/';
+    process.env.LANDFLOW_OIDC_DISCOVERY_URL = 'http://keycloak.idp:8080/realms/x/.well-known/openid-configuration';
+    try {
+      const endpoints = implicitEndpoints();
+      expect(endpoints.has('10.0.0.7:9000')).toBe(true);
+      expect(endpoints.has('landflow-github-mcp:8082')).toBe(false);
+      expect(endpoints.has('keycloak.idp:8080')).toBe(true);
+    } finally {
+      delete process.env.LANDFLOW_GITHUB_MCP_URL;
+      delete process.env.LANDFLOW_OIDC_DISCOVERY_URL;
+    }
+  });
+
   it('scopes the configured endpoints to their port: another port on the same host stays blocked', async () => {
     blockOn();
     process.env.OLLAMA_URL = `http://127.0.0.1:${port}`;
@@ -202,11 +219,15 @@ describe('safeFetch', () => {
     const { openAiConnection, openAiEmbeddings } = await import('@/lib/server/nodes/models');
     const connection = openAiConnection({ baseUrl: `http://127.0.0.1:${port}` });
     blockOn();
-    await expect(openAiEmbeddings(connection, 'm', ['x'])).rejects.toThrow(/127\.0\.0\.1|blocked|private|Cannot reach/i);
+    const blocked = (await openAiEmbeddings(connection, 'm', ['x']).catch((e: unknown) => e)) as Error & { description?: string };
+    expect(blocked.message).toBe(`Cannot reach 127.0.0.1:${port} at http://127.0.0.1:${port}`);
+    expect(blocked.description).toMatch(/Blocked: 127\.0\.0\.1 resolves to a private address/);
+    expect(seen).toEqual([]); // the request never left the host
     process.env.LANDFLOW_OUTBOUND_ALLOW = '127.0.0.1';
-    // allowed now: the failure is the fake server's reply, no longer the address policy
-    const error = await openAiEmbeddings(connection, 'm', ['x']).catch((e: Error) => e);
-    expect(String((error as Error).message ?? '')).not.toMatch(/blocked|not allowed/i);
+    // Allowed now: the request goes out, and the failure is the fake server's reply.
+    const answered = (await openAiEmbeddings(connection, 'm', ['x']).catch((e: unknown) => e)) as Error;
+    expect(posts).toHaveLength(1);
+    expect(answered.message).toMatch(/returned 0 embedding\(s\)/);
   });
 
   it('sends a FormData body as multipart and a JSON body as it is, with blocking on', async () => {

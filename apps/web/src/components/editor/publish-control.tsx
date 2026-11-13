@@ -55,10 +55,9 @@ export const usePublication = create<PublicationStore>((set, get) => ({
     set({ workflowId, status: result });
     // The server turned the workflow (in)active: keep the editor in step without marking it dirty.
     useEditor.setState({ active: Boolean(result.published) });
-    // That turn is a server-side save of the workflow (its `updatedAt` moved): the next save must not read it as someone else's edit (412).
-    api<{ workflow: { updatedAt?: string } }>(`/api/workflows/${workflowId}`)
-      .then(({ workflow }) => useEditor.getState().workflowId === workflowId && useEditor.setState({ baseUpdatedAt: workflow.updatedAt }))
-      .catch(() => {});
+    // That turn also moves the stored workflow's `updatedAt`. The tab's base version stays as it was: the next save gets a 412,
+    // and the editor's retry takes the new version only when the stored content is still what this tab saved. Taking it
+    // here would hide an edit someone else saved before the publish.
     for (const failure of result.triggerErrors ?? []) toast.warning(`${failure.nodeName}: ${failure.message}`, { description: 'The trigger is retried every minute.' });
   },
 }));
