@@ -8,7 +8,6 @@ import { planRerun, RerunError, startInBackground } from '@/lib/server/runner';
 import { askMemberAgain } from '@/lib/server/agent-teams/ask-again';
 import { store } from '@/lib/server/store';
 import { traceparentHeader } from '@/lib/server/telemetry';
-import { promoteExecution } from '@/lib/server/db/reads';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
@@ -32,7 +31,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
     const source = askMember ? await store.loadExecution(id) : undefined;
     if (askMember && !source) return error(`Execution ${id} not found`, 404);
     const workflow = askMember && source ? askMemberAgain(request.version === 'original' && source.workflow ? source.workflow : (store.getWorkflow(source.workflowId) ?? source.workflow), request.nodeId!, askMember) : undefined;
-    await promoteExecution(id);
+    await store.promoteExecution(id);
     const executionId = await startInBackground(planRerun(id, request, workflow));
     return json({ executionId }, { status: 202, headers: traceparentHeader() });
   } catch (caught) {

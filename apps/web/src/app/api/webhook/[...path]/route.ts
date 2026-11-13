@@ -27,7 +27,6 @@ import { recordWebhookRequest, startTrigger } from '@/lib/server/telemetry';
 import { runStream, streamFormatOf } from '@/lib/server/streaming';
 import { checkWebhookAuth } from '@/lib/server/webhook-auth';
 import { answerWebhook, deferred, replayedResponse, requestItem, type RespondMode } from '@/lib/server/webhooks';
-import { promoteExecution } from '@/lib/server/db/reads';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ path: string[] }> };
@@ -58,7 +57,7 @@ async function handle(request: Request, { params }: Ctx) {
   const earlier = idempotencyKey ? findIdempotent(workflow.id, idempotencyKey) : undefined;
   if (earlier) {
     recordWebhookRequest(200, workflow.id);
-    await promoteExecution(earlier);
+    await store.promoteExecution(earlier);
     return replay(earlier);
   }
   // Uploaded files are stored under the run's id before it starts; they go if it never does.
@@ -118,7 +117,7 @@ async function handle(request: Request, { params }: Ctx) {
     // Turned down before it started? (onStart comes synchronously, or a moment later in queue mode.)
     const caught = await turnedDown(run, begun.promise);
     if (caught instanceof DuplicateRunError) {
-      await promoteExecution(caught.executionId);
+      await store.promoteExecution(caught.executionId);
       return respond(replay(caught.executionId));
     }
     // Held by the trigger's debounce or batching: accepted, a later run takes it.

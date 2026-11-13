@@ -15,7 +15,7 @@ import type { CheckpointState, NodeRun, Workflow } from '@landflow/engine';
 import type { ExecutionRecord, ExecutionState, ExecutionSummary, WorkflowSummary } from '../shared/types';
 import { currentActorId } from './auth/context';
 import { database, dataDir, type Database } from './db';
-import { readExecutionData, readRows } from './db/reads';
+import { promoteExecution, readExecutionData, readRows } from './db/reads';
 import { executionRow, parse, pollRow, summarize, trimRunData, workflowRow } from './db/rows';
 import { backtestScope } from './brain/backtest-scope';
 import { singleton } from './singleton';
@@ -230,6 +230,14 @@ class Store {
   async loadExecution(id: string): Promise<ExecutionRecord | undefined> {
     if (!/^[\w-]+$/.test(id)) return undefined;
     return parse<ExecutionRecord>(await readExecutionData(id));
+  }
+
+  /**
+   * Make a run writable before re-running, retrying or answering it (db/reads.ts `promoteExecution`): in Postgres mode a
+   * cold run's data and journal are loaded back into the in-memory copy. Nothing to do for a hot run or on SQLite.
+   */
+  async promoteExecution(id: string): Promise<void> {
+    await promoteExecution(id);
   }
 
   /** The newest finished or waiting executions whose saved record contains `text` (a team id in a flow's snapshot), newest first. */

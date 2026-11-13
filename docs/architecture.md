@@ -266,7 +266,8 @@ pool connection) for a cold run, and a scan (`readRows`) first waits up to two s
 (`Database.barrier`) and then runs the same SQL on Postgres, because the copy would miss cold runs; if the queue does not
 drain or Postgres fails it scans the copy and logs a warning. A writer that must append to a finished run's journal (a
 person's decision on a failed check, `journal/checks.ts`) first awaits `promoteExecution(id)`, which loads the run's data
-and events back into the copy and keeps them for the hot window; `journalStore.append` refuses a cold run, and
+and events back into the copy and keeps them for the hot window (the re-run, retry, run and webhook routes call it as
+`store.promoteExecution`, since routes never import `lib/server/db`); `journalStore.append` refuses a cold run, and
 `lastSeq` says 1 for one. The audit log, the usage ledger, insights rows and AI usage still live in the copy whole
 ([limitations](limitations.md)).
 

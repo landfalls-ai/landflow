@@ -161,7 +161,9 @@ describe('routes wait on readiness', () => {
     // P18's config/catalog.ts (through config/check.ts) come in, P20's insights.ts goes out; the budget follows (76 * 1.1 rounds up to 84).
     // Wave 5 merge, re-measured: 86. P21's audit/metrics.ts and config/audit.ts (audit/index.ts and audit/http.ts) and P25's
     // db/reads.ts (store.ts) come in, three small leaf modules; the budget follows (79 * 1.1 rounds up to 87).
-    expect(closure.size).toBeLessThan(Math.ceil(79 * 1.1));
+    // Wave 6 merge, re-measured: 89. P26's db/hot-mirror.ts and db/replication-metrics.ts (db/database.ts) and P29's
+    // telemetry/fingerprint.ts (the logger) come in, three small leaf modules; the budget follows (81 * 1.1 rounds up to 90).
+    expect(closure.size).toBeLessThan(Math.ceil(81 * 1.1));
   });
 
   it('handler() boots through the registered bootstrapper, and rejects rather than hangs without one', async () => {
