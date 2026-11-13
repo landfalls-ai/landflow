@@ -111,3 +111,4 @@ items still open (its "Wave 6" section); this page is the short list to check be
   and the like have no execution or workflow to derive an owner from, so any signed-in caller who knows the id (random,
   unguessable) can read them. Files of executions and of evaluation datasets are checked against the workflow's project.
 - **AI usage rows with no workflow or agent** (a model call outside both) are visible to owners and admins only.
+- **Readiness in Postgres mode**: the `database` check runs on the in-process copy, so it cannot see Postgres go away; loss shows as `writeQueue` lag after `LANDFLOW_READY_MAX_WRITE_LAG_SECONDS` once a write is queued, a host with no pending write stays ready, and the LISTEN connection is not checked. No probe answers before boot ends, because Next holds requests until instrumentation finishes.

@@ -5,6 +5,10 @@
  * so a host that lost Postgres or Valkey, or was draining, kept its traffic, and a slow database restarted a healthy
  * process. Each check here is bounded by one second and answers only ok and milliseconds: the public body carries no
  * counts, ids or error texts (those go to the log).
+ *
+ * In Postgres mode `database` runs on the in-process copy, so it does not see Postgres go away; that shows as
+ * `writeQueue` lag once a write has been queued for LANDFLOW_READY_MAX_WRITE_LAG_SECONDS. The LISTEN connection is not
+ * checked (docs/limitations.md).
  */
 import { envInt } from './config';
 import { database, LATEST_VERSION } from './db';
@@ -24,6 +28,19 @@ export interface Readiness {
 
 const CHECK_TIMEOUT_MS = 1000;
 
+/** Checks that failed on the last probe: a failure is logged when it starts, not on every probe while it lasts. */
+const failing = new Set<string>();
+function noteResult(name: string, ok: boolean, detail?: string) {
+  if (ok) {
+    failing.delete(name);
+    return;
+  }
+  // `boot` is false for the whole start and the whole drain, which is expected, not a fault.
+  if (name === 'boot' || failing.has(name)) return;
+  failing.add(name);
+  logger.warn('readiness check failed', { check: name, ...(detail ? { error: detail } : {}) });
+}
+
 /** Run one check, bounded; a throw, a timeout or `false` is not ok (the reason is logged, never returned). */
 async function check(name: string, fn: () => unknown): Promise<[string, CheckResult]> {
   const started = Date.now();
@@ -35,10 +52,10 @@ async function check(name: string, fn: () => unknown): Promise<[string, CheckRes
     });
     const outcome = await Promise.race([Promise.resolve().then(fn), timeout]);
     const ok = outcome !== false;
-    if (!ok) logger.warn('readiness check failed', { check: name });
+    noteResult(name, ok);
     return [name, { ok, ms: Date.now() - started }];
   } catch (error) {
-    logger.warn('readiness check failed', { check: name, error: error instanceof Error ? error.message : String(error) });
+    noteResult(name, false, error instanceof Error ? error.message : String(error));
     return [name, { ok: false, ms: Date.now() - started }];
   } finally {
     clearTimeout(timer);

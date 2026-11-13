@@ -69,17 +69,18 @@ python3 deploy/scripts/queue-e2e.py
 
 | Route | Checks | Used by |
 |---|---|---|
-| `GET /api/health/live` | nothing: the process answers `{ status: 'ok', uptimeSeconds }`, even while it boots or a dependency is down | Kubernetes `livenessProbe` |
-| `GET /api/health/ready` | boot finished and not draining; database answers `SELECT 1`; Postgres write queue not blocked and its oldest batch younger than `LANDFLOW_READY_MAX_WRITE_LAG_SECONDS` (30); schema at the latest migration; in queue mode Valkey answers. Each check has a 1 s limit. 200 `ready` or 503 `not_ready` with `{ ok, ms }` per check | Kubernetes `readinessProbe`, the Docker `HEALTHCHECK` (so compose `service_healthy` means ready), the smoke script |
+| `GET /api/health/live` | nothing: the process answers `{ status: 'ok', uptimeSeconds }` even while a dependency is down. Next holds every request until instrumentation (which awaits boot) finishes, so it does not answer before boot ends | Kubernetes `startupProbe` (up to 5 min for boot) and `livenessProbe` |
+| `GET /api/health/ready` | boot finished and not draining (before boot ends Next holds the request, so a `503` with `boot` not ok is seen only while draining); database answers `SELECT 1` (in Postgres mode on the in-process copy, so it does not see Postgres go away); Postgres write queue not blocked and its oldest batch younger than `LANDFLOW_READY_MAX_WRITE_LAG_SECONDS` (30); schema at the latest migration; in queue mode Valkey answers. Each check has a 1 s limit. 200 `ready` or 503 `not_ready` with `{ ok, ms }` per check | Kubernetes `readinessProbe`, the Docker `HEALTHCHECK` (so compose `service_healthy` means ready), the smoke script |
 | `GET /api/health` | `{ status: 'ok' }`; the plugin and run counts only with a session or API key | the CLI and scripts |
 
-A long Postgres backlog keeps a pod unready until the queue drains; that is deliberate, the host should not take traffic
+In Postgres mode, losing Postgres shows as `writeQueue` lag, only after a write has been queued for `LANDFLOW_READY_MAX_WRITE_LAG_SECONDS`; a host with no pending write stays ready, and the LISTEN connection is not checked ([limitations](limitations.md)). A long Postgres backlog keeps a pod unready until the queue drains; that is deliberate, the host should not take traffic
 while it cannot persist it. The leader state is not a check: a non-leader main is ready.
 
 ## Stopping the host
 
 On SIGTERM or SIGINT a main stops in phases, logging `shutdown: <phase>/<step>` for each and `shutdown complete` with
-the duration: new requests get `503` with `Retry-After: 5` (`/api/health/live` and `/ready` still answer; `/ready` says 503 from the first moment, so the load balancer stops sending traffic) and requests in flight are
+the duration: new requests get `503` with `Retry-After: 5` (`/api/health/live` and `/ready` still answer;
+`/ready` says 503 from the first moment, so the load balancer stops sending traffic) and requests in flight are
 awaited; then the leader services (scheduler, timers, alerts), the MCP gateway sync; then local runs get the time that is
 left to finish (what is still running continues from its last checkpoint at the next boot); then the broker connections,
 the cluster runtime (queue mode: the leader lease is released and the instance forgotten), the database (Postgres

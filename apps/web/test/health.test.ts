@@ -19,6 +19,7 @@ const { forgetSingleton } = await import('@/lib/server/singleton');
 const { database } = await import('@/lib/server/db');
 const { ensureBootstrapped } = await import('@/lib/server/bootstrap');
 const lifecycle = await import('@/lib/server/lifecycle');
+const { clusterState } = await import('@/lib/server/cluster/state');
 const liveRoute = await import('@/app/api/health/live/route');
 const readyRoute = await import('@/app/api/health/ready/route');
 const healthRoute = await import('@/app/api/health/route');
@@ -97,6 +98,49 @@ describe('after boot', () => {
     const ready = await readyRoute.GET();
     expect(ready.status).toBe(503);
     expect((await ready.json()).checks.boot.ok).toBe(false);
+  });
+});
+
+describe('valkey check in queue mode', () => {
+  beforeAll(async () => {
+    forgetSingleton('lifecycle'); // the drain test above left it draining
+    await ensureBootstrapped();
+    lifecycle.markBooted();
+  });
+  afterEach(() => {
+    const state = clusterState();
+    state.config.mode = 'regular' as never;
+    state.coordinator = undefined;
+  });
+
+  const withCoordinator = (get: (() => Promise<unknown>) | undefined) => {
+    const state = clusterState();
+    state.config.mode = 'queue' as never;
+    state.coordinator = get ? ({ get } as never) : undefined;
+  };
+
+  it('is ok when Valkey answers', async () => {
+    withCoordinator(async () => null);
+    const body = await (await readyRoute.GET()).json();
+    expect(body.checks.valkey.ok).toBe(true);
+  });
+
+  it('is not ok when Valkey rejects or there is no coordinator', async () => {
+    withCoordinator(async () => {
+      throw new Error('down');
+    });
+    expect((await readyRoute.GET()).status).toBe(503);
+    withCoordinator(undefined);
+    expect((await readyRoute.GET()).status).toBe(503);
+  });
+
+  it('is not ok after 1 s when Valkey never answers', async () => {
+    withCoordinator(() => new Promise(() => {}));
+    const started = Date.now();
+    const ready = await readyRoute.GET();
+    expect(ready.status).toBe(503);
+    expect((await ready.json()).checks.valkey.ok).toBe(false);
+    expect(Date.now() - started).toBeLessThan(3000);
   });
 });
 
