@@ -19,7 +19,7 @@ import { executionRow, parse, pollRow, summarize, trimRunData, workflowRow } fro
 import { recordExecutionInsights } from './insights';
 import { backtestScope } from './brain/backtest-scope';
 import { recordExecutionUsage } from './usage/ledger';
-import { pruneExecutions } from './settings';
+import { retentionTick } from './settings';
 import { singleton } from './singleton';
 import { syncPublication } from './publications';
 import { recordVersion, versionFor } from './versions';
@@ -164,8 +164,8 @@ class Store {
     recordExecutionInsights(summary);
     // The usage ledger too (docs/second-brain.md): what ran, failed and was slow, without the items.
     recordExecutionUsage(record, record.workflow ?? this.getWorkflow(record.workflowId));
-    // Retention (Settings → General): count and age; running and waiting executions are never pruned.
-    pruneExecutions();
+    // Retention (Settings → General): count and age, every LANDFLOW_RETENTION_EVERY finished runs; running and waiting executions are never pruned.
+    retentionTick();
   }
 
   /** Change fields of a saved execution (links between retries, a scheduled retry) without counting it again. */

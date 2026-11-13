@@ -1244,6 +1244,7 @@ workbench in place of a page of cards, keeping Spotlight.
   read in one place, six NaN-prone numbers fall back with a warning, and the in-repo stacks say `LANDFLOW_PROFILE=development`.
   Booting through `checkConfig()` follows in a later package.
 - **P03** (C16 step 1, O4): Postgres mode never drops a write batch. A batch Postgres rejects five times blocks the store (writes refused with `StoreUnavailableError`, retried, `LANDFLOW_PG_SKIP_BATCH` to set it aside), the spool is one fsynced descriptor, and `writeHealth()` plus five metrics report the queue ([postgres-write-queue.md](features/postgres-write-queue.md)).
+- **P04, execution retention in SQL off the save path (C17).** `pruneExecutions` selects ids by column in chunks and a finished run triggers it only every `LANDFLOW_RETENTION_EVERY` runs.
 
 ## Planned next
 
