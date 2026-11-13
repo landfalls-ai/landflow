@@ -677,6 +677,11 @@ describe('Instance MCP server', () => {
     const executions = (await call('list_executions', { workflowId: created.id })).data;
     expect(executions.executions.map((e: { id: string }) => e.id)).toContain(ran.id);
     expect(executions.executions.every((e: { mode: string }) => e.mode === 'mcp')).toBe(true);
+    // A status filter is SQL over pages of saved runs: the successful run is found, and no run of another status.
+    const succeeded = (await call('list_executions', { workflowId: created.id, status: 'success', limit: 1 })).data;
+    expect(succeeded.executions).toHaveLength(1);
+    expect(succeeded.executions[0].status).toBe('success');
+    expect((await call('list_executions', { workflowId: created.id, status: 'error' })).data.executions).toEqual([]);
 
     const one = (await call('get_execution', { id: ran.id, includeData: true })).data;
     expect(one).toMatchObject({ id: ran.id, status: 'success', output: { total: 2 } });
