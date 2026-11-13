@@ -45,7 +45,7 @@ Variables read through `lib/server/config` (most of them; the telemetry flags in
 | `LANDFLOW_RESUME_SIGNATURES` | `required` in production, `optional` in development | `required`: resume URLs carry `?sig=` and a wait saved as signed needs it (403 otherwise); `optional`: URLs are unsigned and unsigned calls work, a wrong `sig` is refused ([engine](../features/engine.md)) |
 | `LANDFLOW_OAUTH2_REDIRECT_URL` | `<public URL>/api/oauth2/callback` | the redirect URL OAuth2 Connect sends to providers (register it there); without either variable, the request's origin |
 | `GENERIC_TIMEZONE` | the host's zone | the instance's default time zone until one is chosen in Settings → General |
-| `LANDFLOW_ENCRYPTION_KEY` | generated into `.data/encryption.key` | key for the credentials vault: 64 hex characters, or a passphrase (hashed with SHA-256) |
+| `LANDFLOW_ENCRYPTION_KEY` | generated into `.data/encryption.key` (once, atomically: processes starting together share it) | key for the credentials vault: 64 hex characters, or a passphrase (hashed with SHA-256) |
 | `LANDFLOW_REGISTRY_GRPC_PORT` | `7070` | gRPC RegistryService (`off` to disable) |
 | `LANDFLOW_PLUGINS` | – | static plugin endpoints |
 | `LANDFLOW_SCAN_HOSTS` / `LANDFLOW_SCAN_PORTS` | `127.0.0.1` / `7100-7299` | pull discovery (the compose file sets the ports to `7101-7107,7111-7114,7116-7118,7201-7207,7211-7214,7216-7218`) |
