@@ -32,6 +32,7 @@ import { withBinaryData } from '../binary/access';
 import { withExtends } from '../credentials/extends';
 import { freshCredentials, withFreshTokens } from '../credentials/oauth2-runtime';
 import { withExternalSecrets } from '../secrets/runtime';
+import { safeFetch } from '../net/safe-fetch';
 import { withGovernance } from '../governance/policy';
 import { withAiUsage } from '../ai-usage/plugin';
 import { bus } from '../bus';
@@ -121,6 +122,9 @@ interface PluginEntry {
 }
 
 const HEALTH_INTERVAL_MS = 15_000;
+
+/** The guarded client for in-process nodes' load-options and credential-test contexts (execution has its own, in governance/policy.ts). */
+const guardedFetch = ((input, init) => safeFetch(input as Request, init, { span: false })) as typeof fetch;
 
 export class PluginRegistry implements NodeTypeResolver, AutoSource {
   private readonly plugins = new Map<string, PluginEntry>();
@@ -877,7 +881,7 @@ export class PluginRegistry implements NodeTypeResolver, AutoSource {
     if (entry.inProcess) {
       const node = entry.inProcess.nodes.find((n) => n.description.name === nodeName);
       if (!node) throw new Error(`Unknown node "${type}"`);
-      return runLoadOptions(node, method, parameters, credentials);
+      return runLoadOptions(node, method, parameters, credentials, { fetch: guardedFetch });
     }
     const context: CallContext = { method: 'LoadOptions', mode: 'manual', idempotent: true };
     const selection = this.choose(entry, context);
@@ -927,7 +931,7 @@ export class PluginRegistry implements NodeTypeResolver, AutoSource {
     const descriptor = entry?.manifest.credentialTypes?.find((c) => c.name === credentialType);
     if (!entry || !descriptor) return { ok: false, message: `Unknown credential type "${type}"` };
     if (!descriptor.testable) return { ok: false, message: `${descriptor.displayName} can't be tested — save it and run a node` };
-    if (entry.inProcess) return runTestCredentials(entry.inProcess, { credentialType, data });
+    if (entry.inProcess) return runTestCredentials(entry.inProcess, { credentialType, data }, { fetch: guardedFetch });
     const context: CallContext = { method: 'TestCredentials', mode: 'manual', idempotent: true };
     const selection = this.choose(entry, context);
     const state = isChoice(selection) ? entry.endpoints.get(selection.endpoint) : undefined;

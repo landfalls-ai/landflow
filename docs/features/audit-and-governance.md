@@ -44,8 +44,8 @@ Redirects are followed by `safeFetch` itself (at most 10) and every hop gets the
 for the HTTP Request node, so an allowed host cannot send a request on to a blocked one.
 
 A refusal reads "Blocked: <host> resolves to a private address (LANDFLOW_OUTBOUND_ALLOW lists exceptions)". Exceptions:
-`LANDFLOW_OUTBOUND_ALLOW` (host names, `*.suffix` globs, IPs and CIDR ranges); the hosts of `OLLAMA_URL`,
-`LANDFLOW_CODE_RUNNER_URL`, `OPENAI_BASE_URL` and the MCP gateway URLs are allowed without listing. Covered: the HTTP
+`LANDFLOW_OUTBOUND_ALLOW` (host names, `*.suffix` globs, IPs and CIDR ranges); the exact endpoints (host and port) of `OLLAMA_URL` (or its default),
+`LANDFLOW_CODE_RUNNER_URL`, `OPENAI_BASE_URL` and `LANDFLOW_MCP_GATEWAY_PUBLIC_URL` are allowed without listing (another port on the same host is not). Covered: the HTTP
 Request node and other in-process nodes (their `ctx.http`), alert channels, HTTP SIEM destinations (not syslog), remote MCP
 servers, RAG embeddings and rerank, OIDC and SAML metadata. Every call has a client span (`HTTP <method>`, URL without its
 query). Not covered, by decision, and listed in [limitations.md](../limitations.md): plugin processes, databases, brokers,

@@ -35,6 +35,7 @@ let port = 0;
 let otherPort = 0;
 let redirectTo = '';
 const seen: string[] = [];
+const posts: Array<{ type: string | undefined; body: string }> = [];
 
 const listen = async (server: Server) => {
   await new Promise<void>((resolve) => server.listen(0, resolve)); // dual-stack: 127.0.0.1, ::1 and localhost all reach it
@@ -45,6 +46,15 @@ beforeAll(async () => {
   other = createServer((_req, res) => res.end('other'));
   target = createServer((req, res) => {
     seen.push(`${req.method} ${req.url}`);
+    if (req.method === 'POST') {
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      return req.on('end', () => {
+        posts.push({ type: req.headers['content-type'], body: Buffer.concat(chunks).toString() });
+        res.setHeader('content-type', 'application/json');
+        res.end('{"ok":true}');
+      });
+    }
     if (req.url?.startsWith('/redirect')) {
       res.statusCode = 302;
       res.setHeader('location', redirectTo);
@@ -69,6 +79,7 @@ afterAll(async () => {
 afterEach(() => {
   clearSettings();
   seen.length = 0;
+  posts.length = 0;
 });
 
 const blockOn = () => {
@@ -178,6 +189,36 @@ describe('safeFetch', () => {
     await refused(safeFetch(`http://127.0.0.1:${port}/`), '127.0.0.1');
     process.env.LANDFLOW_CODE_RUNNER_URL = `http://127.0.0.1:${port}`;
     expect((await safeFetch(`http://127.0.0.1:${port}/`)).status).toBe(200);
+  });
+
+  it('scopes the configured endpoints to their port: another port on the same host stays blocked', async () => {
+    blockOn();
+    process.env.OLLAMA_URL = `http://127.0.0.1:${port}`;
+    expect((await safeFetch(`http://127.0.0.1:${port}/`)).status).toBe(200);
+    await refused(safeFetch(`http://127.0.0.1:${otherPort}/`), '127.0.0.1');
+  });
+
+  it('sends a FormData body as multipart and a JSON body as it is, with blocking on', async () => {
+    blockOn();
+    process.env.LANDFLOW_OUTBOUND_ALLOW = '127.0.0.1';
+    const form = new FormData();
+    form.append('name', 'landflow');
+    form.append('file', new Blob(['hello']), 'a.txt');
+    expect((await safeFetch(`http://127.0.0.1:${port}/up`, { method: 'POST', body: form })).status).toBe(200);
+    expect(posts[0].type).toMatch(/^multipart\/form-data; boundary=/);
+    expect(posts[0].body).toContain('name="name"');
+    expect(posts[0].body).toContain('landflow');
+    expect(posts[0].body).toContain('filename="a.txt"');
+    await safeFetch(`http://127.0.0.1:${port}/json`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"a":1}' });
+    expect(posts[1]).toEqual({ type: 'application/json', body: '{"a":1}' });
+  });
+
+  it('refuses an in-process credential test against loopback with blocking on', async () => {
+    blockOn();
+    const result = await registry.testCredentials('core.cohereApi', { baseUrl: `http://127.0.0.1:${port}` });
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('Blocked: 127.0.0.1');
+    expect(seen).toEqual([]);
   });
 
   it('checks every redirect hop: an allowed host cannot send the request on to a blocked one', async () => {
