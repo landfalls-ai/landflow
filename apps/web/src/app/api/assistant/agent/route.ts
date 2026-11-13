@@ -11,7 +11,8 @@ import { runArchitect } from '@/lib/server/assistant/architect';
 import { errorText } from '@/lib/server/assistant/model';
 import { allowedTypes } from '@/lib/server/assistant/scope';
 import { currentPrincipal } from '@/lib/server/auth/guard';
-import { handler, parseBody, sseHeaders } from '@/lib/server/http';
+import { handler, parseBody } from '@/lib/server/http';
+import { sseResponse } from '@/lib/server/sse';
 import { routeActor } from '@/lib/server/projects/http';
 import { traceparentHeader } from '@/lib/server/telemetry';
 import { recordUsage } from '@/lib/server/usage/ledger';
@@ -20,7 +21,12 @@ export const dynamic = 'force-dynamic';
 
 const Body = z.object({
   messages: z
-    .array(z.object({ role: z.enum(['user', 'assistant']), content: z.string().max(20_000) }))
+    .array(
+      z.object({
+        role: z.enum(['user', 'assistant']),
+        content: z.string().max(20_000),
+      }),
+    )
     .min(1)
     .max(60)
     .refine((messages) => messages.at(-1)?.role === 'user', 'The last message must be from the user'),
@@ -37,34 +43,42 @@ export const POST = handler(async (request: Request) => {
   const types = allowedTypes(undefined, actor);
   // The models and knowledge bases the draft can use: a local model by default (docs/agents.md#agent-architect).
   const resources = await agentResources(actor);
-  const encoder = new TextEncoder();
   const abort = new AbortController();
   request.signal.addEventListener('abort', () => abort.abort());
   const actorId = currentPrincipal()?.user?.id;
   let drafts = 0;
 
-  const stream = new ReadableStream({
-    async start(controller) {
+  return sseResponse(
+    request,
+    async (write, close) => {
       const send = (event: ArchitectEvent) => {
         if (event.type === 'draft') drafts++;
-        try {
-          controller.enqueue(encoder.encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));
-        } catch {
-          // client went away
-        }
+        write(event, { event: event.type });
       };
       try {
-        await runArchitect({ messages, ...(draft && { draft }), ...(model && { model }), types, actor, resources, signal: abort.signal, onEvent: send });
+        await runArchitect({
+          messages,
+          ...(draft && { draft }),
+          ...(model && { model }),
+          types,
+          actor,
+          resources,
+          signal: abort.signal,
+          onEvent: send,
+        });
       } catch (caught) {
         if (!abort.signal.aborted) send({ type: 'error', message: errorText(caught) });
       } finally {
         // What people ask agents for, and whether a draft came of it (`proposals`, as Spotlight's: the brain's "unmet demand").
-        recordUsage({ kind: 'spotlight.asked', actorId, message: messages.at(-1)?.content, attrs: { architect: true, proposals: drafts, turn: messages.length } });
-        try {
-          controller.close();
-        } catch {}
+        recordUsage({
+          kind: 'spotlight.asked',
+          actorId,
+          message: messages.at(-1)?.content,
+          attrs: { architect: true, proposals: drafts, turn: messages.length },
+        });
+        close();
       }
     },
-  });
-  return new Response(stream, { headers: { ...sseHeaders, ...traceparentHeader() } });
+    { headers: traceparentHeader() },
+  );
 });

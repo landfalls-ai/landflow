@@ -11,7 +11,8 @@ import { errorText } from '@/lib/server/assistant/model';
 import { roster } from '@/lib/server/assistant/roster';
 import { allowedTypes } from '@/lib/server/assistant/scope';
 import { currentPrincipal } from '@/lib/server/auth/guard';
-import { handler, parseBody, sseHeaders } from '@/lib/server/http';
+import { handler, parseBody } from '@/lib/server/http';
+import { sseResponse } from '@/lib/server/sse';
 import { runDigestSchema, workflowSchema } from '@/lib/server/schemas';
 import { withOwnership } from '@/lib/server/projects';
 import { routeActor } from '@/lib/server/projects/http';
@@ -22,7 +23,12 @@ export const dynamic = 'force-dynamic';
 
 const Body = z.object({
   messages: z
-    .array(z.object({ role: z.enum(['user', 'assistant']), content: z.string().max(20_000) }))
+    .array(
+      z.object({
+        role: z.enum(['user', 'assistant']),
+        content: z.string().max(20_000),
+      }),
+    )
     .min(1)
     .max(60)
     .refine((messages) => messages.at(-1)?.role === 'user', 'The last message must be from the user'),
@@ -33,10 +39,21 @@ const Body = z.object({
   /** The saved workflow being edited: proposals then use only the node types its project and its own lists allow. */
   workflowId: z.string().max(200).optional(),
   /** What the user tagged in the message: node ids on the canvas, node type ids. */
-  mentions: z.object({ nodes: z.array(z.string().max(200)).max(20), types: z.array(z.string().max(200)).max(20) }).partial().optional(),
+  mentions: z
+    .object({
+      nodes: z.array(z.string().max(200)).max(20),
+      types: z.array(z.string().max(200)).max(20),
+    })
+    .partial()
+    .optional(),
   /** Proposals from earlier replies still waiting for Apply: part of the workflow the model reads, never proposed again. */
   pending: z
-    .array(z.object({ summary: z.string().max(300), ops: z.array(z.record(z.string(), z.unknown())).max(80) }))
+    .array(
+      z.object({
+        summary: z.string().max(300),
+        ops: z.array(z.record(z.string(), z.unknown())).max(80),
+      }),
+    )
     .max(20)
     .optional(),
   /** From Spotlight's test-and-fix session: a request for a fix to a failed run, or whether a run did what was asked. */
@@ -50,36 +67,44 @@ export const POST = handler(async (request: Request) => {
   const types = allowedTypes(workflowId);
   // The published agents and teams the caller can see: Spotlight runs one that fits a step, or proposes a new agent.
   const { agents, teams } = roster();
-  const encoder = new TextEncoder();
   const abort = new AbortController();
   request.signal.addEventListener('abort', () => abort.abort());
   const actorId = currentPrincipal()?.user?.id;
   let proposals = 0;
 
-  const stream = new ReadableStream({
-    async start(controller) {
+  return sseResponse(
+    request,
+    async (write, close) => {
       const send = (event: ChatEvent) => {
         if (event.type === 'proposal') proposals++;
-        try {
-          controller.enqueue(encoder.encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));
-        } catch {
-          // client went away
-        }
+        write(event, { event: event.type });
       };
       try {
-        await runChat({ ...rest, types, teams, agents, workflow: { id: workflowId ?? 'draft', ...workflow } as Workflow, signal: abort.signal, onEvent: send });
+        await runChat({
+          ...rest,
+          types,
+          teams,
+          agents,
+          workflow: { id: workflowId ?? 'draft', ...workflow } as Workflow,
+          signal: abort.signal,
+          onEvent: send,
+        });
       } catch (caught) {
         if (!abort.signal.aborted) send({ type: 'error', message: errorText(caught) });
       } finally {
         // What people ask for, and whether a change came of it (the brain's "unmet demand", docs/second-brain.md).
         if (!rest.session || rest.session === 'auto') {
-          recordUsage({ kind: 'spotlight.asked', workflowId, actorId, message: rest.messages.at(-1)?.content, attrs: { proposals, turn: rest.messages.length } });
+          recordUsage({
+            kind: 'spotlight.asked',
+            workflowId,
+            actorId,
+            message: rest.messages.at(-1)?.content,
+            attrs: { proposals, turn: rest.messages.length },
+          });
         }
-        try {
-          controller.close();
-        } catch {}
+        close();
       }
     },
-  });
-  return new Response(stream, { headers: { ...sseHeaders, ...traceparentHeader() } });
+    { headers: traceparentHeader() },
+  );
 });

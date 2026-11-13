@@ -1305,6 +1305,7 @@ workbench in place of a page of cards, keeping Spotlight.
     the gRPC registry's UNAUTHENTICATED / UNAVAILABLE answers; a production resume by curl with and without `sig`; a
     multi-page form in a browser; client addresses behind a real ingress; a signed-in pass under the enforced CSP
     (editor, Run Trace, Brain at desktop and 390 px), which needs a person to sign in.
+- **P19, one SSE helper** (C14; wave 4): `lib/server/sse.ts` (`sseResponse`) bounds each client's unread bytes (1 MiB, then a closing comment and the stream ends), writes `id:` / `event:` lines, heartbeats and cleans up; the bus keeps a ring of the last 500 events with `seq` and no longer raises the EventEmitter limit. `/api/events` (`lib/server/events-stream.ts`) numbers events `<boot>.<seq>`, replays after `Last-Event-ID` or sends `event: reset`, and re-checks the viewer's access every 30 s (closing when the session or user is gone). The assistant chat, agent architect, run and approvals routes use the helper.
 
 ## Planned next
 
