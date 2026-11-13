@@ -32,6 +32,7 @@ import { withBinaryData } from '../binary/access';
 import { withExtends } from '../credentials/extends';
 import { freshCredentials, withFreshTokens } from '../credentials/oauth2-runtime';
 import { withExternalSecrets } from '../secrets/runtime';
+import { safeFetch } from '../net/safe-fetch';
 import { withGovernance } from '../governance/policy';
 import { withAiUsage } from '../ai-usage/plugin';
 import { bus } from '../bus';
@@ -122,6 +123,9 @@ interface PluginEntry {
 
 const HEALTH_INTERVAL_MS = 15_000;
 
+/** The guarded client for in-process nodes' load-options and credential-test contexts (execution has its own, in governance/policy.ts). */
+const guardedFetch = ((input, init) => safeFetch(input as Request, init, { span: false })) as typeof fetch;
+
 export class PluginRegistry implements NodeTypeResolver, AutoSource {
   private readonly plugins = new Map<string, PluginEntry>();
   private readonly pending = new Map<string, Promise<PluginEntry>>();
@@ -211,6 +215,9 @@ export class PluginRegistry implements NodeTypeResolver, AutoSource {
       throw error;
     }
     const latencyMs = Date.now() - started;
+    // `guardJoin` is a decision about this announce, not a property of the endpoint: it is not kept in the endpoint's state.
+    const { guardJoin, ...kept } = options ?? {};
+    const keptOptions = Object.keys(kept).length > 0 ? kept : undefined;
     const id = manifest.plugin.id;
     const existing = this.plugins.get(id);
     if (existing?.source === 'builtin') {
@@ -218,7 +225,7 @@ export class PluginRegistry implements NodeTypeResolver, AutoSource {
       throw new Error(`Plugin id "${id}" is reserved by a built-in plugin`);
     }
     const joining = Boolean(existing) && !existing!.endpoints.has(endpoint);
-    if (joining && options?.guardJoin && !registryJoinAllowed(endpoint, [...existing!.endpoints.keys()])) {
+    if (joining && guardJoin && !registryJoinAllowed(endpoint, [...existing!.endpoints.keys()])) {
       client.close();
       this.emit({ type: 'plugin.error', pluginId: id, endpoint, message: `Refused ${endpoint} joining ${id}: another host (LANDFLOW_REGISTRY_ALLOW_JOIN=true allows it)` });
       throw new RegistryRefused('This endpoint may not join an existing plugin from another host: set LANDFLOW_REGISTRY_SECRET, or LANDFLOW_REGISTRY_ALLOW_JOIN=true', 409);
@@ -243,7 +250,7 @@ export class PluginRegistry implements NodeTypeResolver, AutoSource {
       lastSeen: Date.now(),
       latencyMs,
       ...(ttlSeconds && { leaseExpiresAt: Date.now() + ttlSeconds * 1000 }),
-      ...(options && { options }),
+      ...(keptOptions && { options: keptOptions }),
       ...(instanceId && { instanceId }),
       ...(previous?.maxConcurrency && { maxConcurrency: previous.maxConcurrency }),
       manifestHash: manifestHash(manifest),
@@ -877,7 +884,7 @@ export class PluginRegistry implements NodeTypeResolver, AutoSource {
     if (entry.inProcess) {
       const node = entry.inProcess.nodes.find((n) => n.description.name === nodeName);
       if (!node) throw new Error(`Unknown node "${type}"`);
-      return runLoadOptions(node, method, parameters, credentials);
+      return runLoadOptions(node, method, parameters, credentials, { fetch: guardedFetch });
     }
     const context: CallContext = { method: 'LoadOptions', mode: 'manual', idempotent: true };
     const selection = this.choose(entry, context);
@@ -927,7 +934,7 @@ export class PluginRegistry implements NodeTypeResolver, AutoSource {
     const descriptor = entry?.manifest.credentialTypes?.find((c) => c.name === credentialType);
     if (!entry || !descriptor) return { ok: false, message: `Unknown credential type "${type}"` };
     if (!descriptor.testable) return { ok: false, message: `${descriptor.displayName} can't be tested — save it and run a node` };
-    if (entry.inProcess) return runTestCredentials(entry.inProcess, { credentialType, data });
+    if (entry.inProcess) return runTestCredentials(entry.inProcess, { credentialType, data }, { fetch: guardedFetch });
     const context: CallContext = { method: 'TestCredentials', mode: 'manual', idempotent: true };
     const selection = this.choose(entry, context);
     const state = isChoice(selection) ? entry.endpoints.get(selection.endpoint) : undefined;

@@ -1253,6 +1253,7 @@ workbench in place of a page of cards, keeping Spotlight.
 - **P10, security headers and a nonce CSP** (S10): the proxy sets nosniff, referrer and permissions policies, frame denial, HSTS
   over https and a per-request nonce Content Security Policy on pages (`LANDFLOW_CSP`: enforce in production, report in
   development; `LANDFLOW_HSTS`); embeddable paths keep their own policy; `x-powered-by` is off.
+- **P11, `HttpError`, a generic 500 and one request pipeline** (C15, S12, contributes to C12; wave 3): `lib/server/errors.ts` holds `HttpError`; `handler()` answers it (status, code, details), a ZodError (400) and anything else as a generic 500 with the request id, never the message. `projectRoute`, `dataTableRoute`, the marketplace wrapper (its message regex is gone: `MarketplaceError` and `FetchError` extend `HttpError`) and `scimRoute` (now over `handler()` with `formatError`; gains the readiness wait, drain and request id) no longer map errors by hand; the approval email route runs through `handler()`; seven raw `request.json()` calls use `parseBody`. `PUT /api/workflows/:id` accepts `If-Match` / `baseUpdatedAt` (412 `workflow_conflict`, the editor sends it), deleting a workflow is one transaction, and `routePolicy()` marks its default with `fallback` so `test/policy-coverage.test.ts` fails a mutating route with no access rule. P27 converts the remaining domain error classes and the hand-written `catch` blocks.
 - **Wave 1 carryover** (applied in wave 2): retention counts and the `LANDFLOW_RETENTION_EVERY` floor, the blocked
   Postgres store's 503 and sink fixes, an earlier shutdown registration and capped intake wait, the compose grace
   periods, a load balancer that skips a main that is not ready, AI usage groups and Stop all's key scope, capped SCIM
@@ -1267,6 +1268,43 @@ workbench in place of a page of cards, keeping Spotlight.
     runs themselves read `ollamaUrl()` at call time);
   - tests still missing from wave 1: SCIM `PUT /Users` and `PUT /Groups` events, the 10,000-address eviction, and
     access-scope cases for evaluation-dataset files, a live run's file and an agent the member can open.
+- **P12, audit coverage** (S7, S8; wave 3): permission and secret changes are domain events (`project.*`, `project.member_change`, `resource.share` / `unshare` / `transfer`, `variable.*`, `secret_provider.*`, `auth.password_change`) with `from` / `to`; failed SAML and OIDC sign-ins are `auth.sign_in_failed`; refused reads are `api.denied`, once a minute per caller and route; exports (`sync.export`, `datatable.export`), credential tests and agent tool approvals are recorded. See [audit and governance](features/audit-and-governance.md).
+- **P13, safeFetch: one guarded client for outbound calls** (S5, O5; wave 3): `lib/server/net/safe-fetch.ts` refuses
+  loopback, private, link-local, CGNAT and metadata addresses in the production profile unless
+  `LANDFLOW_OUTBOUND_ALLOW` lists them: literal IPs before connecting, names in the socket's DNS lookup (so the address
+  checked is the address connected to), and every redirect hop again (with the governance host list by name). The HTTP
+  Request node (through `ContextExtras.fetch`, which `ctx.http` wraps in its span), alert channels, HTTP SIEM
+  destinations, remote MCP servers, RAG embeddings and rerank, OpenAI-compatible model calls and OIDC and SAML metadata go through it; each call has
+  a client span. Not covered, with the reasons in [limitations.md](limitations.md): remote plugins, configured
+  infrastructure, the marketplace's git, the OAuth2 flow and anchoring webhooks.
+- **P14, expressions in a sealed realm and Code nodes out of the host in production** (S1): expressions run in a fresh
+  `node:vm` context with code generation off, no host object inside and only JSON text crossing the boundary
+  (`packages/engine/src/sandbox/`), so `$json.constructor.constructor('return process')()` finds nothing; `async`, `await`
+  and `import(` are refused because an unhandled rejection from any context would end the host process. The production
+  profile runs Code nodes only in the code runner unless `LANDFLOW_CODE_IN_PROCESS=true`; the in-process context also loses
+  `eval` and `new Function`. An isolate backend remains for a later package.
+- **P15, database conventions** (C18; wave 3): prepared statements are cached in an LRU capped by `LANDFLOW_DB_STATEMENT_CACHE` (default 500); a test fails a new migration whose version is not above every earlier one; `withOwnership` reads shares and memberships once per list instead of per item.
+- **Wave 2 carryover** (applied in wave 3): `pnpm worker` exits 1 when Valkey is unreachable and handles signals
+  during its boot, the registry is required on a worker, emails are masked in the
+  effective configuration, health state lives in `singleton()`, the registry normalises `grpc://` hosts and keeps
+  `guardJoin` per announce, links without `LANDFLOW_PUBLIC_URL` answer 503 before any lookup, the form-wait bypass needs
+  workflow access, zod is jitless before the Run Trace cards' schemas, the proxy drops client CSP request headers, an
+  app icon, and the marketplace test's real cause (a shared data directory and a real network fetch). Deferred:
+  - readiness in Postgres mode does not ping Postgres or check the LISTEN connection: that needs a connect timeout on
+    the pool in `db/postgres.ts` first ([limitations.md](limitations.md));
+  - a plugin endpoint whose DNS name resolves to a metadata address is not refused (plugins are outside `safeFetch`;
+    the literal forms are);
+  - `plugin.endpoint_added` is audited for every source and in every queue-mode process, so each plugin's second
+    transport writes a row per boot; audit only the process that accepted an announce if the log gets noisy;
+  - a refused join raises a `plugin.error` toast naming the real plugin, so in development anyone can raise toasts by
+    announcing repeatedly (low impact, development only);
+  - HSTS, the cookies' `Secure` flag, the OAuth2 callback, the hosted chat page and the same-origin check read
+    `X-Forwarded-Proto` / `-Host` whatever `LANDFLOW_TRUSTED_PROXIES` says; gating them on the hop count belongs with
+    P24 (sessions) and P27;
+  - live checks no automated test covers: Go and Python SDK announces with the registry secret over HTTP and gRPC and
+    the gRPC registry's UNAUTHENTICATED / UNAVAILABLE answers; a production resume by curl with and without `sig`; a
+    multi-page form in a browser; client addresses behind a real ingress; a signed-in pass under the enforced CSP
+    (editor, Run Trace, Brain at desktop and 390 px), which needs a person to sign in.
 
 ## Planned next
 

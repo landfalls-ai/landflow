@@ -51,7 +51,10 @@ package's report (deviations, risks, live checks).
    plus the wave's own regression commands from the plan (integration flags such as
    `LANDFLOW_INTEGRATION=postgres`, `queue`, one Postgres file at a time, against
    `docker compose -f deploy/compose.infra.yml up -d --wait postgres valkey`; Go and Python suites for touched
-   modules). `apps/web/test/marketplace.test.ts` may time out under load: rerun it alone and report both.
+   modules). A wave that touches the boot, `instrumentation.ts`, the proxy or anything the worker imports also runs
+   `next build` (`cd apps/web && rm -rf .next && npx next build`, then `git checkout apps/web/next-env.d.ts`) and the
+   queue stack (`compose.queue.yml` built locally with `COMPOSE_BAKE=false`, then `python3 deploy/scripts/queue-e2e.py`).
+   If `apps/web/test/marketplace.test.ts` fails, rerun it alone and report both.
 6. **Compare** counts per suite with the baseline (the last green run on `main`). Fix integration breakage yourself
    only when it is mechanical (an import moved, a type renamed by another package); otherwise report it.
 7. **Scan** the merged diff before reporting:

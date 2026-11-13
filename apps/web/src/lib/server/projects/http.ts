@@ -11,6 +11,7 @@ import { currentPrincipal } from '../auth/guard';
 import { getUser, type UserRecord } from '../auth/users';
 import { folders } from '../folders';
 import { forgetWorkflowPolicy } from '../governance/scopes';
+import { HttpError } from '../errors';
 import { error, handler, json, parseBody } from '../http';
 import { creationProject, isInstanceAdmin, ownershipOf, projectRole } from './access';
 import { ensurePersonalProject, forgetResource, getProject, ProjectError, replaceShares, setHomeProject, shares, type ProjectRecord } from './store';
@@ -23,16 +24,9 @@ export function routeActor(): UserRecord {
   return principal.user;
 }
 
-/** `handler` plus ProjectError → `{ error }` with its status. */
+/** `handler` plus ProjectError → `{ error }` with its status (projects/store.ts keeps its own class, mapped here). */
 export function projectRoute<A extends unknown[]>(fn: (...args: A) => Promise<Response>) {
-  return handler(async (...args: A) => {
-    try {
-      return await fn(...args);
-    } catch (caught) {
-      if (caught instanceof ProjectError) return error(caught.message, caught.status);
-      throw caught;
-    }
-  });
+  return handler(fn, { mapError: (caught) => (caught instanceof ProjectError ? new HttpError(caught.message, caught.status, { code: 'project_error' }) : undefined) });
 }
 
 /**

@@ -15,7 +15,7 @@ import { variableRow } from './db/rows';
 import { environmentValues } from './environments/variables';
 import { projectVariables } from './projects/variables';
 import { homeProjectId } from './projects/store';
-import { VariableStore, type StoredVariable, type VariableChange } from './variable-store';
+import { auditVariable, VariableStore, type StoredVariable, type VariableChange } from './variable-store';
 
 export { MAX_KEY_LENGTH, MAX_VALUE_LENGTH, MAX_VARIABLES, VARIABLE_KEY, VariableError, VariableFile, VariableStore, type Variable } from './variable-store';
 
@@ -66,15 +66,24 @@ export const variables = {
     return variables.forProject(project);
   },
   get: (key: string) => variables.file().get(key),
-  create: (input: { key: string; value: unknown }) => variables.file().create(input),
+  create: (input: { key: string; value: unknown }) => {
+    const created = variables.file().create(input);
+    auditVariable('create', created.key, {});
+    return created;
+  },
   update: (key: string, patch: { key?: string; value?: unknown }) => {
+    const before = variables.file().get(key);
     const updated = variables.file().update(key, patch);
     if (updated.key !== key) environmentValues.rename(key, updated.key);
+    auditVariable('update', updated.key, {}, { ...(updated.key !== key && { renamedFrom: key }), valueChanged: before?.value !== updated.value });
     return updated;
   },
   delete: (key: string) => {
     const deleted = variables.file().delete(key);
-    if (deleted) environmentValues.remove(key);
+    if (deleted) {
+      environmentValues.remove(key);
+      auditVariable('delete', key, {});
+    }
     return deleted;
   },
 };

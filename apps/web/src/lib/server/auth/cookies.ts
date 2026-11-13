@@ -61,8 +61,14 @@ export function publicOrigin(request?: Request): string {
   return publicUrl();
 }
 
+/** Why links can't be made (production without LANDFLOW_PUBLIC_URL), or undefined when they can. */
+export function linkOriginMissing(): string | undefined {
+  return isProduction() && !publicUrlConfigured() ? 'Set LANDFLOW_PUBLIC_URL to send links' : undefined;
+}
+
 /** The origin for links sent by email (invites, resets): in production never taken from a request header. */
 export function emailedOrigin(request?: Request): string {
-  if (isProduction() && !publicUrlConfigured()) throw new Error('Set LANDFLOW_PUBLIC_URL to send links');
+  const missing = linkOriginMissing();
+  if (missing) throw new Error(missing);
   return publicOrigin(request);
 }

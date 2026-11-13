@@ -35,18 +35,22 @@ Read `docs/constitution.md` (its Security baseline is your checklist), `CLAUDE.m
   for limits, audit and allow-lists; `publicOrigin()` / `emailedOrigin()` (`lib/server/auth/cookies.ts`) for links.
 - **Audit**: `recordAudit()` (`lib/server/audit/index.ts`) in the library, with actor, target, project, `from`/`to`;
   `auditRequest()` (`audit/http.ts`) adds a generic event for mutating `/api` calls that recorded none and skips paths
-  in its `SKIP` list. Writes fail open today (S9).
+  in its `SKIP` list, and records a read refused with 401/403 as `api.denied` (once a minute per caller and route).
+  Permission and secret changes, failed SSO sign-ins and exports are domain events. Writes fail open today (S9).
 - **Secrets**: AES-256-GCM vault (`lib/server/credentials/vault.ts`); key-name redaction (`SECRET_KEY` in
   `lib/server/telemetry/config.ts`, `redact()` in `telemetry/logger.ts`); `$secrets` value scrubbing
   (`lib/server/secrets/redact.ts`); hashed bearer tokens compared with `sameSecret()`.
-- **Untrusted code**: expressions in `node:vm` (`packages/engine/src/expression.ts`, not a boundary until the sealed
-  realm, P14); Code nodes in process (`lib/server/code-runner.ts`, `nodes/code.ts`) or in `services/code-runner`.
-- **Outbound**: the governance host allow-list (`lib/server/governance/policy.ts`) is off by default; `safeFetch`
-  (P13) is the target for every user-influenced URL.
+- **Untrusted code**: expressions in a sealed realm (`packages/engine/src/sandbox/realm.ts`: code generation off, only
+  JSON text crosses, `async`/`await`/`import(` refused); Code nodes in the code runner (`services/code-runner`) in the
+  production profile unless `LANDFLOW_CODE_IN_PROCESS=true` (`lib/server/code-runner.ts`, `nodes/code.ts`).
+- **Outbound**: `safeFetch` (`lib/server/net/safe-fetch.ts`) refuses loopback, private, link-local, CGNAT and metadata
+  addresses in the production profile unless `LANDFLOW_OUTBOUND_ALLOW` lists them, at DNS lookup and on every redirect;
+  the governance host allow-list (`lib/server/governance/policy.ts`) is off by default. Flag a new bare `fetch` to a
+  user-influenced URL; the callers still outside `safeFetch` are listed in `docs/limitations.md`.
 - **Known open findings** (don't re-report them as new unless the diff makes them worse; do flag code that copies
-  them), each with the package that closes it: S1 expressions (P14), S5 no address checks (P13), S9 audit fails open
-  (P21), S11 no body cap or API rate limit (P16), S13 key handling (P23), S14 sessions (P24). Drop an entry once its
-  package is on `origin/main` (S3, S6 and S10 closed with P08, P09 and P10).
+  them), each with the package that closes it: S9 audit fails open (P21), S11 no body cap or API rate limit (P16), S13
+  key handling (P23), S14 sessions (P24); an isolate backend for expressions (P30). Drop an entry once its package is
+  on `origin/main` (S3, S6 and S10 closed with P08, P09 and P10; S1, S5, S7, S8 and S12 with P11 to P14).
 
 ## Checklist for every changed route and library function
 

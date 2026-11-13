@@ -13,6 +13,8 @@ import { setupRequired, viewerOf, type UserRecord } from './users';
 
 /** The signed-in user of this page request, if any (no redirects). */
 export async function currentPageUser(): Promise<UserRecord | undefined> {
+  // Not `whenReady()` as routes do: `next build` prerenders pages (/_not-found) in workers where instrumentation
+  // registered no bootstrapper, so the page boots through bootstrap.ts itself.
   await ensureBootstrapped();
   return sessionUser((await cookies()).get(SESSION_COOKIE)?.value)?.user;
 }

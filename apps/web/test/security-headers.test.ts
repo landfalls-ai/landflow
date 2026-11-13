@@ -80,4 +80,31 @@ describe('security headers', () => {
     expect(a.headers.get('x-middleware-request-x-nonce')).toBe(nonce(a));
     expect(a.headers.get('x-middleware-request-content-security-policy')).toBe(a.headers.get(CSP));
   });
+
+  it('drop a CSP request header the client sent on pages, so Next reads only the proxy nonce', () => {
+    const res = run('/workflows', { ...signedIn, [CSP]: "script-src 'nonce-forged'" });
+    expect(res.headers.get(ONLY)).toBeTruthy();
+    expect(res.headers.get('x-middleware-request-content-security-policy')).toBeNull();
+    expect(res.headers.get('x-middleware-request-content-security-policy-report-only')).toBe(res.headers.get(ONLY));
+  });
+});
+
+describe('inline scripts in pages', () => {
+  it('carry the nonce: every <script> in a .tsx file under src/app and src/components passes nonce=', async () => {
+    const { readdirSync, readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const files = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? files(join(dir, entry.name)) : entry.name.endsWith('.tsx') ? [join(dir, entry.name)] : []));
+    const root = join(__dirname, '..', 'src');
+    const missing: string[] = [];
+    let seen = 0;
+    for (const file of [...files(join(root, 'app')), ...files(join(root, 'components'))]) {
+      for (const match of readFileSync(file, 'utf8').matchAll(/<script\b[^>]*>/g)) {
+        seen++;
+        if (!/\bnonce=/.test(match[0])) missing.push(`${file}: ${match[0]}`);
+      }
+    }
+    expect(seen).toBeGreaterThan(0); // the root layout's theme and look scripts
+    expect(missing).toEqual([]);
+  });
 });

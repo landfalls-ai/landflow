@@ -9,6 +9,8 @@ import { clientIp, createSession, setSessionCookie } from '@/lib/server/auth';
 import { publicOrigin, readCookie, secureRequest } from '@/lib/server/auth/cookies';
 import { completeLogin, rememberSession, SAML_STATE_COOKIE, SamlError, samlConfig } from '@/lib/server/auth/saml';
 import { UserError } from '@/lib/server/auth/users';
+import { auditRequestContext, recordAudit } from '@/lib/server/audit';
+import { deniedReadDue } from '@/lib/server/audit/http';
 import { handler } from '@/lib/server/http';
 import { logger } from '@/lib/server/telemetry';
 
@@ -21,14 +23,19 @@ export const POST = handler(async (request: Request) => {
     response.cookies.set(SAML_STATE_COOKIE, '', { httpOnly: true, sameSite: secure ? 'none' : 'lax', secure, path: '/api/auth/saml', maxAge: 0 });
     return response;
   };
-  const fail = (message: string) => clearState(NextResponse.redirect(`${origin}/login?error=${encodeURIComponent(message)}`, 303));
+  // A refused sign-in is an audit event too (the reason is a category: no assertion contents, no names).
+  const fail = (message: string, reason: string) => {
+    // At most one a minute per client address and method: these routes are public, so a loop can't flood the log.
+    if (deniedReadDue(`ip:${auditRequestContext()?.ip ?? 'unknown'}`, '/auth/saml-sign-in')) recordAudit({ action: 'auth.sign_in_failed', outcome: 'failure', actor: 'anonymous', summary: `Failed SAML sign-in (${reason})`, details: { method: 'saml', reason } });
+    return clearState(NextResponse.redirect(`${origin}/login?error=${encodeURIComponent(message)}`, 303));
+  };
   const config = samlConfig();
-  if (!config) return fail('SAML sign-in is not configured');
+  if (!config) return fail('SAML sign-in is not configured', 'not_configured');
   let form: URLSearchParams;
   try {
     form = new URLSearchParams(await request.text());
   } catch {
-    return fail('The identity provider sent an unreadable form');
+    return fail('The identity provider sent an unreadable form', 'bad_request');
   }
   try {
     const { user, next, identity } = await completeLogin(config, origin, {
@@ -45,9 +52,9 @@ export const POST = handler(async (request: Request) => {
   } catch (caught) {
     if (caught instanceof SamlError || caught instanceof UserError) {
       logger.info('SAML sign-in refused', { 'landflow.auth.reason': caught.message });
-      return fail(caught.message);
+      return fail(caught.message, 'refused');
     }
     logger.warn('SAML sign-in failed', { error: caught });
-    return fail(`SAML sign-in failed: ${(caught as Error).message}`);
+    return fail(`SAML sign-in failed: ${(caught as Error).message}`, 'error');
   }
 });

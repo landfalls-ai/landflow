@@ -24,7 +24,9 @@ engine, protocol, SDK, transports and CLI are in `packages/`, the Go and Python 
 - Migrations: append to `MIGRATIONS` in `apps/web/src/lib/server/db/schema.ts` (one SQL for SQLite and Postgres;
   never edit a shipped one; new tables also go in `TABLES`).
 - Routes: `handler()`, `json()`, `error()` and `parseBody()` from `apps/web/src/lib/server/http.ts`; access rules in
-  `apps/web/src/lib/server/auth/policy.ts`; public routes in `apps/web/src/lib/server/openapi.ts`.
+  `apps/web/src/lib/server/auth/policy.ts`; public routes in `apps/web/src/lib/server/openapi.ts`. Refuse with an
+  `HttpError` (`lib/server/errors.ts`), and call any URL a user or a model can influence through `safeFetch`
+  (`lib/server/net/safe-fetch.ts`); `docs/constitution.md` has the rest.
 - Tests sit next to their package; route tests call handlers directly as a synthetic owner (`apps/web/test/setup.ts`).
   Tests against real services skip unless `LANDFLOW_INTEGRATION` names them.
 - Every change updates its docs: the feature page, `docs/reference/` for routes and variables, `docs/limitations.md`

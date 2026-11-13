@@ -12,6 +12,7 @@ import { Client, ProtocolError, SdkHttpError, SSEClientTransport, StreamableHTTP
 import type { JsonObject } from '@landflow/protocol';
 import { toToolName, type AgentTool } from '@landflow/engine';
 import { mcpUrlBlocked } from '../governance/policy';
+import { safeFetch } from '../net/safe-fetch';
 import { singleton } from '../singleton';
 
 export type McpTransport = 'httpStreamable' | 'sse';
@@ -142,10 +143,12 @@ function describe(error: unknown, endpoint: McpEndpoint): McpClientError {
 async function connect(endpoint: McpEndpoint): Promise<Client> {
   const url = new URL(endpoint.url);
   const requestInit: RequestInit = { headers: endpoint.headers ?? {} };
+  // Remote MCP servers go through the outbound policy (net/safe-fetch.ts); tests inject their own fetch.
+  const guarded = endpoint.fetch ?? (((input, init) => safeFetch(input as string | URL | Request, init)) as typeof fetch);
   const transport =
     endpoint.transport === 'sse'
-      ? new SSEClientTransport(url, { requestInit, ...(endpoint.fetch && { fetch: endpoint.fetch }) })
-      : new StreamableHTTPClientTransport(url, { requestInit, ...(endpoint.fetch && { fetch: endpoint.fetch }) });
+      ? new SSEClientTransport(url, { requestInit, fetch: guarded })
+      : new StreamableHTTPClientTransport(url, { requestInit, fetch: guarded });
   // `auto`: probe with `server/discover` (2026-07-28) and fall back to the `initialize` handshake of older servers.
   const client = new Client(CLIENT_INFO, { versionNegotiation: { mode: 'auto' } });
   try {

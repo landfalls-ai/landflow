@@ -7,12 +7,13 @@
  * database, then (main) the cluster runtime before anything that elects a leader; a worker starts its cluster runtime
  * last, once it can reach plugins, because that is when it begins taking jobs.
  *
- * Failure policy (lib/server/lifecycle.ts): the configuration check, the database and the cluster runtime are required;
- * a failure there marks the boot failed, forgets the cached promise (a later call retries) and, under Next.js, exits
- * so the orchestrator restarts the pod instead of keeping a process that answers 500 to everything. Every other step
- * is optional: logged, counted (`landflow.process.errors{kind="service_start"}`), and the process keeps going.
- * `leader` entries go through `leaderService()` (cluster/index.ts): started where the leader is, moved with leadership.
- * Shutdown steps are registered at the end of a successful boot, in their phases.
+ * Failure policy (lib/server/lifecycle.ts): the configuration check, the database and the cluster runtime are required
+ * (and, on a worker, the registry); a failure there marks the boot failed and forgets the cached promise (a later call
+ * retries). Under `next start` and the image (NODE_ENV=production) the process then exits so the orchestrator restarts
+ * the pod instead of keeping a process that answers 500 to everything; `next dev` keeps running. `pnpm worker` exits
+ * non-zero. Every other step is optional: logged, counted (`landflow.process.errors{kind="service_start"}`), and the
+ * process keeps going. `leader` entries go through `leaderService()` (cluster/index.ts): started where the leader is,
+ * moved with leadership. Shutdown steps are registered, in their phases, right after the database step opens.
  */
 import { agentTriggers } from './agents/triggers';
 import { alerts } from './alerts/service';
@@ -38,6 +39,7 @@ import { startDataMaintenance } from './maintenance';
 import { corePlugin } from './nodes';
 import { registry } from './plugins/registry';
 import { startRegistryGrpcServer } from './plugins/registry-grpc';
+import { noteRegistryOpen } from './plugins/registry-policy';
 import { adoptUnassignedResources } from './projects/boot';
 import { ensurePublications } from './publish';
 import { publishSchedules } from './publish-schedule';
@@ -60,8 +62,8 @@ export interface ServiceSpec {
   roles: Role[];
   /** Run through `leaderService()`: on the elected leader in queue mode, right here otherwise. */
   leader?: boolean;
-  /** A failure refuses the boot (see the header); the default is optional. */
-  required?: boolean;
+  /** A failure refuses the boot (see the header), in every role or only in the roles listed; the default is optional. */
+  required?: boolean | Role[];
   /** Start after this many ms (still skipped once the process is draining). */
   delayMs?: number;
   /** Skip the entry when this says no, evaluated when the entry's turn comes (after the cluster runtime started). */
@@ -87,6 +89,7 @@ function configCheck(): void {
   // `next build` runs with NODE_ENV=production but without the deployment's environment: it only warns there.
   const building = process.env.NEXT_PHASE === 'phase-production-build';
   if (profile() === 'production' && !building && check.errors.length > 0) throw new ConfigError(check.errors);
+  // Reached with errors only under `next build` (errors come from the production profile alone).
   for (const problem of check.errors) logger.warn(problem);
 }
 
@@ -102,6 +105,8 @@ export const SERVICES: ServiceSpec[] = [
   {
     name: 'registry',
     roles: BOTH,
+    // A worker without its registry would take jobs only to fail them; a main still serves the UI and the API.
+    required: WORKER,
     start: () => {
       registry.registerBuiltin(corePlugin);
       registry.start();
@@ -160,7 +165,14 @@ export const SERVICES: ServiceSpec[] = [
   { name: 'usage listeners', roles: MAIN, start: startUsageListeners },
   { name: 'usage trigger', roles: MAIN, start: startUsageTrigger },
   { name: 'second brain', roles: MAIN, leader: true, start: () => brain.start(), stop: () => brain.stop() },
-  { name: 'registry gRPC server', roles: MAIN, start: startRegistryGrpcServer },
+  {
+    name: 'registry gRPC server',
+    roles: MAIN,
+    start: () => {
+      noteRegistryOpen((message) => logger.info(message));
+      return startRegistryGrpcServer();
+    },
+  },
   // Static plugin seeds (LANDFLOW_PLUGINS) next to the other sources.
   { name: 'static plugin seeds', roles: BOTH, start: () => Promise.allSettled(staticSeeds().map((endpoint) => registry.addEndpoint(endpoint, 'static'))) },
   // LANDFLOW_PLUGIN_DISCOVERY=kubernetes: plugins behind labelled Services (plugins/kubernetes.ts). Not awaited.
@@ -184,6 +196,9 @@ export const SERVICES: ServiceSpec[] = [
 
 /** The entries a role runs, in boot order. */
 export const servicesFor = (role: Role): ServiceSpec[] => SERVICES.filter((spec) => spec.roles.includes(role));
+
+/** Whether a failure of `spec` refuses the boot of `role`. */
+export const requiredFor = (spec: ServiceSpec, role: Role): boolean => (Array.isArray(spec.required) ? spec.required.includes(role) : Boolean(spec.required));
 
 /** Run an optional boot step: a throw or a rejection is logged and counted, and the boot goes on. */
 async function optional(name: string, fn: () => unknown): Promise<void> {
@@ -238,7 +253,7 @@ async function bootSteps(role: Role): Promise<void> {
   for (const spec of specs) {
     if (spec.when && !spec.when()) continue;
     if (spec.delayMs !== undefined) startLater(spec);
-    else if (spec.required) await spec.start();
+    else if (requiredFor(spec, role)) await spec.start();
     else if (spec.leader) startOne(spec);
     else await optional(spec.name, spec.start);
     // Shutdown steps go in as soon as the database is open, not at the end: a SIGTERM while a later step waits (plugin

@@ -5,6 +5,7 @@
  * say what it is in every environment and each instance picks its own after a pull or promotion.
  */
 import { database } from '../db';
+import { auditVariableEnvironments } from '../variable-store';
 import { currentEnvironment, ENVIRONMENT_NAME, EnvironmentError } from './settings';
 
 const MAX_VALUE_LENGTH = 10_000;
@@ -34,6 +35,14 @@ export const environmentValues = {
 
   /** Set (a string) or remove (`null`) values; other environments stay. */
   set(key: string, values: Record<string, string | null>): Record<string, string> {
+    const before = this.of(key);
+    const after = this.put(key, values);
+    auditVariableEnvironments(key, {}, before, values);
+    return after;
+  },
+
+  /** `set` without the audit event (a rename moves the values; the variable's own `variable.update` covers it). */
+  put(key: string, values: Record<string, string | null>): Record<string, string> {
     const db = database();
     const now = new Date().toISOString();
     for (const [environment, value] of Object.entries(values)) {
@@ -61,7 +70,7 @@ export const environmentValues = {
     const values = this.of(from);
     if (!Object.keys(values).length) return;
     this.remove(from);
-    this.set(to, values);
+    this.put(to, values);
   },
 
   remove(key: string): void {

@@ -42,8 +42,11 @@ Work only inside `<worktree>`. Never touch another worktree, the person's checko
   that buffers registers a shutdown step with `onShutdown()` (`lib/server/lifecycle.ts`).
 - **Migrations**: append to `MIGRATIONS` in `lib/server/db/schema.ts` with a version above the current maximum (grep
   `version:`), one SQL for SQLite and Postgres, new tables in `TABLES`.
-- **Errors**: domain errors carry a status; throw `HttpError` when `lib/server/errors.ts` exists; never return an
-  internal message to the client.
+- **Errors**: throw `HttpError` (`lib/server/errors.ts`: message, status, `{ code, details }`) or a domain error that
+  extends it; `handler()` answers it, a ZodError as 400 and anything else as a generic 500. Never return an internal
+  message to the client.
+- **Outbound**: a URL a user, webhook or model can influence goes through `safeFetch` (`lib/server/net/safe-fetch.ts`),
+  never a bare `fetch`.
 - **Logs**: `logger` from `lib/server/telemetry`, a fixed message and structured fields; no secrets, no `console`.
 - **Comments** say why: a header on every new file, a line above anything surprising; match the surrounding density.
 - **TypeScript** strict; no `any`, no `@ts-ignore`.

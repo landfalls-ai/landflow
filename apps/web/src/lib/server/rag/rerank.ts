@@ -5,6 +5,7 @@
  */
 import type { AiDocument, LanguageModel, Reranker } from '@landflow/engine';
 import { NodeOperationError } from '@landflow/sdk';
+import { safeFetch } from '../net/safe-fetch';
 import { generateStructured, type JsonSchema } from '../nodes/structured';
 import { traceRerank } from '../telemetry';
 
@@ -95,7 +96,7 @@ export const COHERE_BASE_URL = 'https://api.cohere.com';
 export function cohereReranker(options: CohereRerankerOptions = {}): Reranker {
   const base = (options.baseUrl?.trim() || COHERE_BASE_URL).replace(/\/+$/, '');
   const model = options.model?.trim() || 'rerank-v3.5';
-  const send = options.fetch ?? fetch;
+  const send = options.fetch ?? (safeFetch as typeof fetch);
   return {
     async rerank(query, documents, rerankOptions) {
       const keep = Math.max(1, rerankOptions?.topK ?? options.topK ?? documents.length);

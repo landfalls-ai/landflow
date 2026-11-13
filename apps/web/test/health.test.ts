@@ -145,6 +145,7 @@ describe('valkey check in queue mode', () => {
 });
 
 describe('/api/health', () => {
+  const anOwner = async () => auth.listUsers()[0] ?? (await auth.createOwner({ email: 'owner@example.com', name: 'Owner', password: 'owner-password-1' }));
   beforeAll(async () => {
     forgetSingleton('lifecycle'); // the Valkey block's state; this also forgets the bootstrapper setup.ts registered
     await ensureBootstrapped();
@@ -157,9 +158,26 @@ describe('/api/health', () => {
     const anonymous = await get(healthRoute.GET);
     expect(anonymous.status).toBe(200);
     expect(await anonymous.json()).toEqual({ status: 'ok' });
-    const owner = await auth.createOwner({ email: 'owner@example.com', name: 'Owner', password: 'owner-password-1' });
-    const { token } = auth.createApiKey(owner, { label: 'health', scopes: ['workflows:read'] });
+    const { token } = auth.createApiKey(await anOwner(), { label: 'health', scopes: ['workflows:read'] });
     const keyed = await (await get(healthRoute.GET, token)).json();
     expect(keyed).toMatchObject({ status: 'ok', plugins: expect.any(Number), nodeTypes: expect.any(Number) });
+  });
+
+  it('an unknown or expired API key gets the status only', async () => {
+    expect(await (await get(healthRoute.GET, 'lf_not-a-real-key')).json()).toEqual({ status: 'ok' });
+    const { token } = auth.createApiKey(await anOwner(), { label: 'expired', scopes: ['workflows:read'], expiresAt: new Date(Date.now() - 60_000).toISOString() });
+    const expired = await get(healthRoute.GET, token);
+    expect(expired.status).toBe(200);
+    expect(await expired.json()).toEqual({ status: 'ok' });
+  });
+
+  it('still answers the status when resolving the caller throws (the store is down)', async () => {
+    const { token } = auth.createApiKey(await anOwner(), { label: 'store down', scopes: ['workflows:read'] });
+    vi.spyOn(database(), 'get').mockImplementation(() => {
+      throw new Error('store unavailable');
+    });
+    const response = await get(healthRoute.GET, token);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ status: 'ok' });
   });
 });

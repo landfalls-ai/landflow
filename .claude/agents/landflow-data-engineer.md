@@ -27,7 +27,10 @@ Read `docs/constitution.md` ("Data" and "Testing"), `CLAUDE.md`, `docs/architect
   Postgres mode), `addColumns` (columns a shipped `CREATE TABLE` gained later). Versions are **not** in file order:
   grep `version:` for the maximum and go above it. One SQL text for both databases: `TEXT`, `BIGINT`,
   `DOUBLE PRECISION`, JSON stored in `TEXT`, `ON CONFLICT … DO UPDATE` upserts; set `postgres` only when the dialects
-  must differ. Never edit a shipped migration. No foreign keys: cascades are written by hand, inside one transaction.
+  must differ. Never edit a shipped migration (`test/migrations-order.test.ts` fails a version not above every earlier
+  one). No foreign keys: cascades are written by hand, inside one transaction.
+- `db/database.ts`: prepared statements are cached per SQL text in an LRU capped by `LANDFLOW_DB_STATEMENT_CACHE`
+  (default 500): parameters go in `?`, never into the SQL text.
 - `db/postgres.ts`: Postgres mode keeps the whole database in an in-memory SQLite copy, appends each committed write to
   a spool file and replays it on Postgres through an ordered queue; `flush()` waits for it. `db/replication.ts`
   follows other processes through `LISTEN/NOTIFY` in queue mode. `direct()` is the escape hatch for cross-process
@@ -46,7 +49,8 @@ Read `docs/constitution.md` ("Data" and "Testing"), `CLAUDE.md`, `docs/architect
   way `app/api/executions/[id]/events` does; push visibility filters into SQL.
 - No work proportional to history on a hot path (saving a run, a request): prune with
   `DELETE … WHERE … AND started_at < ?` on a timer or every N saves.
-- Batch `IN (…)` lookups and access checks instead of one query per item (`allShares(kind)` in `projects/store.ts`).
+- Batch `IN (…)` lookups and access checks instead of one query per item: lists check access once per kind with
+  `visibleIds`, `filterVisible` or `withOwnership` (`projects/access.ts`, over `allShares(kind)` in `projects/store.ts`).
 - Keep the store from importing features; emit an event instead (target, P20).
 - Large JSON in `data` columns: never `LIKE '%…%'` over it on a hot path.
 - Writes in Postgres mode must stay replayable and ordered; never bypass the `Database` write methods with a raw

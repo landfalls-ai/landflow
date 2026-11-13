@@ -91,7 +91,7 @@ describe('profile', () => {
 });
 
 describe('checkConfig', () => {
-  const good = { LANDFLOW_PROFILE: 'production', LANDFLOW_PUBLIC_URL: 'https://flow.example.com', LANDFLOW_REGISTRY_SECRET: 'x'.repeat(24), LANDFLOW_ENCRYPTION_KEY: 'k'.repeat(32), LANDFLOW_BINARY_SECRET: 'b'.repeat(32) };
+  const good = { LANDFLOW_PROFILE: 'production', LANDFLOW_PUBLIC_URL: 'https://flow.example.com', LANDFLOW_REGISTRY_SECRET: 'x'.repeat(24), LANDFLOW_ENCRYPTION_KEY: 'k'.repeat(32), LANDFLOW_BINARY_SECRET: 'b'.repeat(32), LANDFLOW_CODE_RUNNER_URL: 'http://code-runner:8090' };
 
   it('passes a clean production environment', () => {
     const r = checkConfig(good);
@@ -119,6 +119,11 @@ describe('checkConfig', () => {
     expect(r.errors).toEqual([]);
     expect(r.warnings.join()).toContain('LANDFLOW_ENCRYPTION_KEY');
     expect(r.warnings.join()).toContain('LANDFLOW_BINARY_SECRET');
+  });
+  it('warns when Code nodes have nowhere to run (no runner, in-process left to the production default)', () => {
+    const { LANDFLOW_CODE_RUNNER_URL: _, ...env } = good;
+    expect(checkConfig(env).warnings.join()).toContain('LANDFLOW_CODE_RUNNER_URL');
+    expect(checkConfig({ ...env, LANDFLOW_CODE_IN_PROCESS: 'true' }).warnings).toEqual([]);
   });
   it('says nothing about development values in development', () => {
     const r = checkConfig({ LANDFLOW_PROFILE: 'development', LANDFLOW_BINARY_SECRET: 'landflow-queue-dev-only-binary-secret', LANDFLOW_OWNER_PASSWORD: 'landflow-dev-only' });
@@ -152,6 +157,11 @@ describe('checkConfig', () => {
     for (const leaked of ['abc123', 'urlpw9', 'gitpw8', 'smtp-pw-1', 'credjson', 'ghp_tok', 'qpw']) expect(text).not.toContain(leaked);
     expect(r.effective.OTEL_EXPORTER_OTLP_HEADERS).toBe('[set]');
     expect(r.effective.LANDFLOW_S3_ACCESS_KEY_ID).toBe('AKIAEXAMPLE');
+  });
+  it('masks email addresses in email variables', () => {
+    const r = checkConfig({ ...good, LANDFLOW_OWNER_EMAIL: 'owner.person@example.com' });
+    expect(r.effective.LANDFLOW_OWNER_EMAIL).toBe('o***@example.com');
+    expect(JSON.stringify(r.effective)).not.toContain('owner.person');
   });
   it('redacts credentials in each entry of a comma-separated list of URLs', () => {
     const r = checkConfig({ ...good, LANDFLOW_PLUGINS: 'http://u:listpw7@a:1,http://b:2' });

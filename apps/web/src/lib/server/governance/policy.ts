@@ -25,6 +25,7 @@ import { z } from 'zod';
 import { DEFAULT_GOVERNANCE_POLICY, type GovernancePolicy, type PolicyViolation } from '../../shared/governance';
 import { database } from '../db';
 import { parse } from '../db/rows';
+import { safeFetch } from '../net/safe-fetch';
 import { singleton } from '../singleton';
 import { policyScope, scopeActive, type PolicyScope, type ScopeTarget } from './scopes';
 
@@ -393,6 +394,15 @@ function requestUrls(request: { parameters?: Record<string, unknown>; itemParame
 }
 
 /**
+ * The fetch behind `ctx.http` for in-process nodes: safeFetch (the outbound address policy, net/safe-fetch.ts), plus
+ * the host list on every redirect hop for the HTTP Request node. ctx.http adds the span, so safeFetch adds none.
+ */
+function guardedFetch(httpNode: boolean): typeof fetch {
+  const hostCheck = httpNode ? (url: URL) => httpUrlBlocked(url.href) : undefined;
+  return ((input, init) => safeFetch(input as Request, init, { span: false, ...(hostCheck && { hostCheck }) })) as typeof fetch;
+}
+
+/**
  * The registry's run-time gate (plugins/registry.ts `resolve`): a node type the policy blocks fails every call with
  * a clear error on the node (and its app webhooks don't register); the HTTP Request node checks each call's URLs.
  * The request's workflow brings its project's and its own allow-lists (`agent:<id>`: the agent's project).
@@ -415,13 +425,13 @@ export function withGovernance(resolved: ResolvedNodeType): ResolvedNodeType {
           if (message) return refusal(message);
         }
       }
-      return resolved.execute(request, extras);
+      return resolved.execute(request, { ...extras, fetch: guardedFetch(http) });
     },
     ...(resolved.supplyData && {
       supplyData: async (request, extras) => {
         const blocked = blockedNow((request as { workflowId?: string }).workflowId);
         if (blocked) throw new PolicyError(`Blocked by policy: ${blocked.message}`);
-        return resolved.supplyData!(request, extras);
+        return resolved.supplyData!(request, { ...extras, fetch: guardedFetch(http) });
       },
     }),
     ...(resolved.webhookMethod && {

@@ -9,11 +9,14 @@ Variables read through `lib/server/config` (most of them; the telemetry flags in
 | Variable | Default | |
 |---|---|---|
 | `LANDFLOW_PROFILE` | `production` when `NODE_ENV=production`, else `development` | `development` or `production`: whether the host refuses development secrets and a missing `LANDFLOW_PUBLIC_URL` ("Production profile" in [deployment.md](../deployment.md)). The in-repo compose and Kubernetes stacks set `development` |
+| `LANDFLOW_OUTBOUND_BLOCK_PRIVATE` | `true` in the production profile, `false` in development | whether `safeFetch` refuses loopback, private (10/8, 172.16/12, 192.168/16, fc00::/7), link-local, CGNAT (100.64/10), multicast and metadata addresses for the HTTP Request node, alert channels, HTTP SIEM destinations, remote MCP servers, RAG embeddings, OpenAI-compatible model calls and rerank to a credential's Base URL, and OIDC/SAML metadata, including through redirects and DNS names ([audit-and-governance.md](../features/audit-and-governance.md#outbound-requests)) |
+| `LANDFLOW_OUTBOUND_ALLOW` | – | comma-separated host names (`*.corp.example` works), IP addresses and CIDR ranges that stay reachable with blocking on. The exact endpoints (host and port) of `OLLAMA_URL` (or its default), `LANDFLOW_CODE_RUNNER_URL`, `OPENAI_BASE_URL`, `LANDFLOW_MCP_GATEWAY_PUBLIC_URL`, `LANDFLOW_GITHUB_MCP_URL` (or its in-cluster default) and `LANDFLOW_OIDC_DISCOVERY_URL` are always allowed; an in-cluster identity provider's other endpoints (token, JWKS) need an entry here |
 | `LANDFLOW_CSP` | `enforce` in the production profile, else `report` | `enforce`, `report` (Report-Only, visible in the browser console) or `off`: the nonce-based Content Security Policy on pages ([deployment.md](../deployment.md#security-headers-and-content-security-policy)) |
 | `LANDFLOW_HSTS` | on over https | `off` drops the `Strict-Transport-Security` header |
 | `LANDFLOW_REGISTRY_OPEN` | – | `true`: accept plugin registrations without `LANDFLOW_REGISTRY_SECRET` in the production profile (the development profile accepts them anyway; see [plugins.md](../plugins.md#registration-rules)) |
 | `LANDFLOW_REGISTRY_ALLOW_JOIN` | – | `true`: without `LANDFLOW_REGISTRY_SECRET`, let an announced endpoint on a new host join a plugin that already exists (loopback addresses count as one host) |
 | `LANDFLOW_DATA_DIR` | `apps/web/.data` | data directory: the SQLite database (`landflow.db`), credentials, binary files, the Claude Code plugin images packed for kagent (`oci/`) and the other host files |
+| `LANDFLOW_DB_STATEMENT_CACHE` | `500` | most prepared SQL statements one database connection keeps (least recently used go first) |
 | `LANDFLOW_CLAUDE_PLUGINS_DIR` | `<cwd>/claude-plugins` (`apps/web/claude-plugins`) | where Landflow's own Claude Code plugins are (the landflow-harness mod), packed into images for kagent's Claude Code agents ([a2a.md](../a2a.md#the-landflow-harness-mod)) |
 | `LANDFLOW_DB` | `sqlite` | `postgres` keeps the store in Postgres (`DATABASE_URL`); one host per database |
 | `DATABASE_URL` | – | Postgres connection string for `LANDFLOW_DB=postgres`, e.g. the infra stack's `postgres://landflow:landflow-dev-only@127.0.0.1:55432/landflow` |
@@ -54,7 +57,7 @@ Variables read through `lib/server/config` (most of them; the telemetry flags in
 | `LANDFLOW_EXECUTE_TIMEOUT_MS` | `120000` | per remote Execute call (and per call to the code runner); minimum 1000 for plugin calls |
 | `LANDFLOW_CODE_RUNNER_URL` | – | the Code node's sandbox, e.g. `http://127.0.0.1:7300` (pnpm) or `http://127.0.0.1:53300` (Docker); set: the sandbox is the default and Python works |
 | `LANDFLOW_CODE_RUNNER_SECRET` | – | shared secret, the runner's `CODE_RUNNER_SECRET` |
-| `LANDFLOW_CODE_IN_PROCESS` | `true` | `false`: no in-process (`node:vm`) JavaScript; every Code node needs the runner |
+| `LANDFLOW_CODE_IN_PROCESS` | `true` in development, `false` in production | `true` / `false`: in-process (`node:vm`, not isolated) JavaScript for Code nodes. Unset follows the profile (`LANDFLOW_PROFILE`): the production profile runs Code nodes in the code runner and fails without one, unless this is `true` |
 | `LANDFLOW_CODE_BINARY_MAX_BYTES` | `6291456` | files a Code node reads (all together) and creates, in the sandbox and in-process |
 | `ANTHROPIC_API_KEY` | – | for the Anthropic Chat Model |
 | `LANDFLOW_GITHUB_MCP_URL` | `http://landflow-github-mcp:8082/` | the GitHub MCP server an agent's GitHub MCP tool uses when it names no URL ([a2a.md](../a2a.md#githubs-mcp-tools-for-agents)); the token is the tool's credential, never a variable |

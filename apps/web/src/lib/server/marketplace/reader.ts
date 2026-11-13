@@ -7,6 +7,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import type { ResolvedSource } from '../../shared/marketplace';
+import { HttpError } from '../errors';
 import { localAllowed } from './sources';
 
 const TIMEOUT_MS = 20_000;
@@ -29,12 +30,13 @@ export interface RepoReader {
   text(path: string, maxBytes?: number): Promise<string>;
 }
 
-export class FetchError extends Error {
+/** Reading a marketplace or plugin failed (GitHub, a URL, a local path): answered 502; `upstreamStatus` is what the source said. */
+export class FetchError extends HttpError {
   constructor(
     message: string,
-    readonly status?: number,
+    readonly upstreamStatus?: number,
   ) {
-    super(message);
+    super(message, 502, { code: 'marketplace_fetch_failed', expose: true });
   }
 }
 

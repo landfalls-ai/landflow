@@ -133,6 +133,8 @@ export type RunCommand = { kind: 'run'; by?: 'spotlight' } | { kind: 'debug' } |
 
 interface EditorState {
   workflowId: string;
+  /** The `updatedAt` of the stored workflow this tab last loaded or saved: sent as `If-Match`, so a save over a newer one is refused (412). */
+  baseUpdatedAt?: string;
   name: string;
   description?: string;
   active: boolean;
@@ -254,7 +256,12 @@ interface EditorState {
   commitName(): void;
   openNode(id?: string): void;
   openPalette(request?: PaletteRequest): void;
-  markSaved(): void;
+  /** The draft is saved: `updatedAt` is the stored workflow's new version. */
+  markSaved(updatedAt?: string, stored?: Workflow): void;
+  /** True when `stored` has the content this tab last loaded or saved: only `active`, `updatedAt` or the folder moved. */
+  storedMatchesSaved(stored: Workflow): boolean;
+  /** Take `updatedAt` as the baseline for the next save, with no change to the draft. */
+  rebase(updatedAt: string): void;
   toggleBreakpoint(id: string): void;
   startRun(debug?: boolean): void;
   applyEvent(event: ExecutionEvent): void;
@@ -363,9 +370,24 @@ interface Snapshot {
 }
 const HISTORY_LIMIT = 100;
 /** `saved`: savedContent() of the last save (or load), so undo / redo back to it is not "Unsaved". */
-const history = { past: [] as Snapshot[], future: [] as Snapshot[], last: undefined as { key: string; at: number } | undefined, batch: 0, dragging: false, resizing: false, saved: '' };
+const history = { past: [] as Snapshot[], future: [] as Snapshot[], last: undefined as { key: string; at: number } | undefined, batch: 0, dragging: false, resizing: false, saved: '', stored: '' };
 
 const snapshotOf = (s: Snapshot): Snapshot => ({ nodes: s.nodes, edges: s.edges, stickies: s.stickies, groups: s.groups, pinData: s.pinData, name: s.name, description: s.description, tags: s.tags, settings: s.settings });
+
+/** `history.saved`'s form for a stored workflow, so two stored versions compare in the server's own key order and shape. */
+const storedContent = (w: Workflow) => {
+  const flow = toFlow(w);
+  return savedContent({
+    ...flow,
+    stickies: toStickies(w.stickyNotes),
+    groups: toFrames(normalizeGroups(w.groups, w.nodes.map((n) => n.id))),
+    pinData: w.pinData ?? {},
+    name: w.name,
+    description: w.description,
+    tags: w.tags ?? [],
+    settings: w.settings ?? {},
+  });
+};
 
 /** What saving a snapshot writes, without selection and measurements. */
 const savedContent = (s: Snapshot) =>
@@ -543,9 +565,10 @@ export const useEditor = create<EditorState>((set, get) => {
   ...emptyRun,
 
   load(workflow, nodeTypes) {
-    Object.assign(history, { past: [], future: [], last: undefined, batch: 0, dragging: false, resizing: false, saved: '' });
+    Object.assign(history, { past: [], future: [], last: undefined, batch: 0, dragging: false, resizing: false, saved: '', stored: '' });
     set({
       workflowId: workflow.id,
+      baseUpdatedAt: workflow.updatedAt,
       name: workflow.name,
       description: workflow.description,
       active: Boolean(workflow.active),
@@ -565,6 +588,7 @@ export const useEditor = create<EditorState>((set, get) => {
       ...emptyRun,
     });
     history.saved = savedContent(get());
+    history.stored = storedContent(workflow);
   },
 
   setNodeTypes(nodeTypes) {
@@ -1162,9 +1186,18 @@ export const useEditor = create<EditorState>((set, get) => {
     set({ palette: request });
   },
 
-  markSaved() {
+  storedMatchesSaved(stored) {
+    return storedContent(stored) === history.stored;
+  },
+
+  rebase(updatedAt) {
+    set({ baseUpdatedAt: updatedAt });
+  },
+
+  markSaved(updatedAt, stored) {
     history.saved = savedContent(get());
-    set({ dirty: false });
+    history.stored = stored ? storedContent(stored) : history.saved;
+    set({ dirty: false, ...(updatedAt && { baseUpdatedAt: updatedAt }) });
   },
 
   toggleBreakpoint(id) {

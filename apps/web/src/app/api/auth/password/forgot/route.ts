@@ -3,7 +3,7 @@
  * or not the email has an account. Without SMTP it says so: an admin can make a reset link in Settings → Users.
  */
 import { z } from 'zod';
-import { clientIp, createResetToken, deliverLink, findUserByEmail, formLimit } from '@/lib/server/auth';
+import { clientIp, createResetToken, deliverLink, findUserByEmail, formLimit, linkOriginMissing } from '@/lib/server/auth';
 import { mailConfigured } from '@/lib/server/auth/mail';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { logger } from '@/lib/server/telemetry';
@@ -22,6 +22,8 @@ export const POST = handler(async (request: Request) => {
   const body = await parseBody(request, schema);
   if (!body.ok) return body.response;
   if (!mailConfigured()) return error('This Landflow can’t send email. Ask an admin for a password reset link (Settings → Users).', 503);
+  // Before the lookup: failing only for an existing account would tell who has one.
+  if (linkOriginMissing()) return error('This Landflow can’t send links yet (LANDFLOW_PUBLIC_URL is not set). Ask an admin.', 503);
   const user = findUserByEmail(body.data.email);
   if (user) {
     const { token } = createResetToken(user);

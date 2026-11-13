@@ -14,6 +14,7 @@ import { envInt } from './config';
 import { database, LATEST_VERSION } from './db';
 import { clusterState } from './cluster/state';
 import { bootState, isDraining } from './lifecycle';
+import { singleton } from './singleton';
 import { logger } from './telemetry/logger';
 
 export interface CheckResult {
@@ -29,8 +30,8 @@ export interface Readiness {
 const CHECK_TIMEOUT_MS = 1000;
 
 /** Checks that failed on the last probe: a failure is logged when it starts, not on every probe while it lasts. */
-const failing = new Set<string>();
 function noteResult(name: string, ok: boolean, detail?: string) {
+  const failing = singleton('readiness-failing', () => new Set<string>());
   if (ok) {
     failing.delete(name);
     return;

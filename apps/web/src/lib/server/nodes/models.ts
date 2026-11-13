@@ -14,6 +14,7 @@ import { NodeOperationError, type JsonObject } from '@landflow/sdk';
 import type { AgentMessage, LanguageModel, ModelAttachment, ModelTurn, ToolCall, ToolResult, ToolSpec } from '@landflow/engine';
 import type { Attributes } from '@opentelemetry/api';
 import { credentialIdOf } from '../ai-usage/credential-id';
+import { safeFetch } from '../net/safe-fetch';
 import { traceChat, traceEmbeddings } from '../telemetry';
 import { attachmentText, audioFormat, pdfAttachmentText } from './attachments';
 
@@ -545,6 +546,9 @@ function openAiError(connection: OpenAiConnection, status: number, body: string)
 
 type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
 
+/** The default client for the credential's Base URL: the outbound address policy applies (the caller already traces). */
+const guardedFetch: Fetcher = (input, init) => safeFetch(input, init, { span: false });
+
 /** One JSON request. HTTP and network failures become NodeOperationErrors that name the server. */
 export async function openAiRequest<T>(
   connection: OpenAiConnection,
@@ -554,7 +558,7 @@ export async function openAiRequest<T>(
   const timeout = AbortSignal.timeout(init.timeoutMs ?? 300_000);
   let response: Response;
   try {
-    response = await (init.fetcher ?? fetch)(`${connection.base}${path}`, {
+    response = await (init.fetcher ?? guardedFetch)(`${connection.base}${path}`, {
       method: init.body === undefined ? 'GET' : 'POST',
       headers: connection.headers,
       ...(init.body !== undefined && { body: JSON.stringify(init.body) }),
@@ -727,7 +731,7 @@ interface CompletionChunk {
  * content deltas go to `onToken` as they arrive, tool call fragments are joined by index, and the usage
  * comes from the last chunk (`stream_options.include_usage`; a server that rejects the option is asked again without it).
  */
-async function openAiStream(connection: OpenAiConnection, body: Record<string, unknown>, onToken: (delta: string) => void, signal?: AbortSignal, fetcher: Fetcher = fetch): Promise<ChatCompletion> {
+async function openAiStream(connection: OpenAiConnection, body: Record<string, unknown>, onToken: (delta: string) => void, signal?: AbortSignal, fetcher: Fetcher = guardedFetch): Promise<ChatCompletion> {
   const timeout = AbortSignal.timeout(300_000);
   const send = async (withUsage: boolean): Promise<Response> => {
     let response: Response;

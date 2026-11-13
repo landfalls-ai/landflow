@@ -39,7 +39,8 @@ function, its callers (`grep -rn`).
   routes; no SQL or `db` in routes; logic and audit in the library.
 - No server → UI, shared → server or `packages/` → `apps/web` imports; no new import cycle (check with `grep` on the
   new imports).
-- Errors: no internal message sent to the client; `HttpError` once it exists.
+- Errors: throw `HttpError` (`lib/server/errors.ts`) or a domain error that extends it, and let `handler()` map it; no
+  internal message sent to the client (anything else is a generic 500 with the request id).
 - Logs through `logger` with fields; metric labels bounded.
 - Targets of the backend refactor: used when they exist on the base, not re-implemented in parallel.
 - UI: shared components, the words in `docs/ui-review.md`, phone changes behind `max-md:` / `usePhone()`, desktop

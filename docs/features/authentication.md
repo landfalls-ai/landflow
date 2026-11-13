@@ -31,8 +31,14 @@ ignored, and `X-Real-IP` is read only when the header is absent. Ports, IPv6 bra
 the production profile an unset `LANDFLOW_TRUSTED_PROXIES` logs one warning that addresses are unverified.
 
 `X-Forwarded-Host` and `-Proto` build the host's own origin (redirects, SCIM URLs) only with `LANDFLOW_TRUSTED_PROXIES` >= 1.
-Invite and password-reset links use `LANDFLOW_PUBLIC_URL`; in the production profile without it, sending one fails with a 500
-("Set LANDFLOW_PUBLIC_URL to send links") instead of building the link from a request header.
+Without them and without `LANDFLOW_PUBLIC_URL` the origin is the address Next.js is bound to (`http://localhost:3000`),
+not the name the browser used: set `LANDFLOW_PUBLIC_URL` when the host is reached by another name (`127.0.0.1`, a LAN
+address, a phone), or OIDC and SAML redirects, single logout, the OpenAPI server URL, SCIM locations and invite links
+point at `localhost`.
+
+Invite and password-reset links use `LANDFLOW_PUBLIC_URL`. In the production profile without it, Forgot password, an
+invite and an admin's reset link answer 503 ("Set LANDFLOW_PUBLIC_URL to send links") before any account is looked up or
+any token made, so the answer is the same whether or not an email has an account.
 
 ## Security headers and Content Security Policy
 

@@ -5,9 +5,16 @@ unless [Authentication](../features/authentication.md) lists them as public; wha
 scope, an admin role) is set in `apps/web/src/lib/server/auth/policy.ts`. The public API is also published as OpenAPI
 3.1 at `GET /api/openapi.json` (Settings → API). Part of the [Landflow docs](../README.md).
 
+**Errors.** A failed request answers `{ error, code, …details }` with the HTTP status: `error` is the text a person reads,
+`code` a stable snake_case name (the thrown class's, or `invalid_request` for a body that failed validation, which also
+carries `issues`), and any extra fields the error names (`current` of a workflow conflict, `missing` of a marketplace
+lookup). An unexpected error answers 500 `{ error: 'Internal error', code: 'internal_error', requestId }`: never its
+message, which goes to the log with the same request id (also the `X-Request-Id` response header). A write refused
+while the Postgres store is blocked answers 503 with `Retry-After`. SCIM routes answer the SCIM error document instead.
+
 | Route | |
 |---|---|
-| `GET/POST /api/workflows`, `GET/PUT/DELETE /api/workflows/:id` | CRUD; saves are drafts (`active: true` on an active workflow publishes the saved version, as older clients expect) |
+| `GET/POST /api/workflows`, `GET/PUT/DELETE /api/workflows/:id` | CRUD; saves are drafts (`active: true` on an active workflow publishes the saved version, as older clients expect). `PUT` takes `If-Match: "<updatedAt>"` (the `updatedAt` you loaded; a body field `baseUpdatedAt` does the same) and answers 412 `{ error: 'This workflow changed since you opened it', code: 'workflow_conflict', current: { updatedAt, updatedBy? } }` when the stored workflow moved on; without either, the last write wins, as the CLI and MCP tools do. `DELETE` removes the workflow, its versions, publications, project rows and policy in one transaction |
 | `POST /api/workflows/:id/run` | run (optionally with unsaved `workflow`, `chat`, `items`, and an `idempotencyKey` or `Idempotency-Key` header) and stream SSE events; the run goes on if the request closes (stop it with `POST /api/executions/:id/stop`), except a `debug` run, which stops with it |
 | `POST /api/workflows/:id/listen` | listen for a test event `{ nodeId, workflow? }` on a Webhook, Form or MCP Server trigger's test URL for 120 s; SSE: `listening`, then the test run's `execution` events and `result`, or `timeout`, or `stopped` when it listens again elsewhere (closing it stops listening); an MCP listener streams each tool call's run and `listening` again with the pushed-on deadline; 409 while another workflow listens on that URL |
 | `POST /api/workflows/import` | `{ data, name?, folderId?, create? }` → `{ workflow, report }`: converts Landflow, n8n or Flowise (chatflow / agentflow) workflow JSON (placeholders for unknown nodes); `create: false` converts without saving |
@@ -131,12 +138,12 @@ scope, an admin role) is set in `apps/web/src/lib/server/auth/policy.ts`. The pu
 | `GET/PATCH/POST /api/settings/mcp` | Settings → MCP: state; `PATCH { enabled }`; `POST` replaces the token. A response that created a token carries it as `token`, once |
 | `GET /api/auth/status`, `POST /api/auth/setup`, `POST /api/auth/login`, `POST /api/auth/logout` | sign-in: whether setup is needed (and SSO, email); create the owner `{ name, email, password }`; sign in `{ email, password }` (sets the session cookie; 429 with `retryAfter` when rate limited); sign out |
 | `GET/PATCH /api/auth/me` | the signed-in user (and `via: session \| api-key`); `PATCH { name?, currentPassword?, newPassword? }` |
-| `GET/POST /api/auth/invites/:token`, `POST /api/auth/password/forgot`, `GET/POST /api/auth/password/reset` | accept an invite `{ name, password }`; email a reset link `{ email }` (503 without SMTP); choose a new password `{ token, password }` |
+| `GET/POST /api/auth/invites/:token`, `POST /api/auth/password/forgot`, `GET/POST /api/auth/password/reset` | accept an invite `{ name, password }`; email a reset link `{ email }` (503 without SMTP, and in the production profile without `LANDFLOW_PUBLIC_URL`); choose a new password `{ token, password }` |
 | `GET /api/auth/oidc/login?next=`, `GET /api/auth/oidc/callback` | single sign-on: redirect to the provider; the provider's redirect back |
 | `GET /api/auth/saml/login?next=`, `POST /api/auth/saml/acs` | SAML sign-in: the AuthnRequest redirect to the IdP; the assertion consumer service its SAMLResponse is posted to |
 | `GET /api/auth/saml/metadata`, `GET\|POST /api/auth/saml/logout` | the SP metadata to give the IdP; single logout (the IdP's LogoutRequest or its LogoutResponse; without a SAML message it signs out and redirects to the IdP) |
 | `GET/POST/PATCH/DELETE /api/settings/security/saml/encryption` | the SAML decryption key (owners and admins): its certificate (never the key); POST `{ action: generate }` or `{ action: upload, cert, key, passphrase? }`; PATCH `{ required }` (refuse unencrypted assertions); DELETE removes it. Audited |
-| `GET /api/users`, `POST /api/users/invites`, `DELETE /api/users/invites/:id` | users (and pending invites, for owners and admins); invite `{ email, role }` → `{ invite, link, emailed }`; revoke |
+| `GET /api/users`, `POST /api/users/invites`, `DELETE /api/users/invites/:id` | users (and pending invites, for owners and admins); invite `{ email, role }` → `{ invite, link, emailed }` (503 in the production profile without `LANDFLOW_PUBLIC_URL`); revoke |
 | `PATCH/DELETE /api/users/:id`, `POST /api/users/:id/password-reset` | change a role `{ role }`, remove a user; make a reset link → `{ link, emailed }` |
 | `GET /api/users/:id/resources`, `DELETE /api/users/:id { transferTo: { userId } \| { projectId } }` | what a user's personal project owns, by kind; removing someone who owns anything needs a transfer target (or `?transferToUser=` / `?transferToProject=`), else 409 |
 | `GET/POST /api/projects`, `GET/PATCH/DELETE /api/projects/:id`, `PUT /api/projects/:id/members` | the projects you see (with your role and counts; `?targets=1` names every project and person to share with), create a team project `{ name, description?, members? }` (owners and admins); one project with its members, rename, delete `?transferTo=<projectId>`; replace members `{ members: [{ userId, role }] }`. The workflow, credential, data table and agent lists take `?projectId=` and give each item its `ownership` (project and your access); `POST` to them takes `?projectId=` too |

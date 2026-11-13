@@ -45,7 +45,9 @@ Who may register a plugin or add an endpoint to one depends on the profile ([con
 A production host and every plugin therefore need the same secret. The route answers a failed announce with one generic
 422 (`Could not register the plugin: its endpoint did not answer with a valid manifest`); the URL tried and the
 connection error go to the host's log. In the production profile endpoints on link-local or metadata addresses
-(`169.254.0.0/16`, `fd00:ec2::254`) are refused before the host connects. An offline endpoint still counts as the plugin's host, so in development a plugin that returns on another advertise host (a changed LAN address) gets 409 until the host restarts or `LANDFLOW_REGISTRY_ALLOW_JOIN=true`. Joins (`plugin.endpoint_added`) and version
+(`169.254.0.0/16`, `fd00:ec2::254`, also written as a number or in hex in a `grpc://` URL) are refused before the host
+connects; a DNS name that resolves to one is not caught here (plugins are outside `safeFetch`, see
+[limitations](limitations.md)). A main logs `plugin registration is open` at boot when announces need no secret. An offline endpoint still counts as the plugin's host, so in development a plugin that returns on another advertise host (a changed LAN address) gets 409 until the host restarts or `LANDFLOW_REGISTRY_ALLOW_JOIN=true`. Joins (`plugin.endpoint_added`) and version
 changes (`plugin.updated`) are in the [audit log](features/audit-and-governance.md).
 
 ## Autodiscovery

@@ -146,6 +146,10 @@ describe('boot failure policy', () => {
     const saved = { ...process.env };
     const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     try {
+      // An earlier boot in this file left the scheduler's poller ticking (a process-wide singleton): a tick while the
+      // data directory points at the broken file would open it in a timer and throw outside the test.
+      const { scheduler } = await import('../src/lib/server/scheduler');
+      scheduler.stop();
       const dir = mkdtempSync(join(tmpdir(), 'landflow-lifecycle-'));
       writeFileSync(join(dir, 'landflow.db'), 'this is not a database'.repeat(200));
       process.env.LANDFLOW_DATA_DIR = dir;

@@ -92,14 +92,16 @@ cluster, database and telemetry steps, so a long run never stops the flush; requ
 the rest, so a request that lasts as long as its run still leaves time to stop the scheduler and the runs. A step that
 fails or times out is logged and the next one runs. A second signal exits at once with code 1; a clean stop exits 0.
 The shutdown steps are registered as soon as the database is open, so a signal during the rest of the boot (plugin
-seeds that don't answer) still flushes and releases the lease.
+seeds that don't answer) still flushes and releases the lease. This holds for the main and for `pnpm worker`, which
+installs its signal handlers before it boots.
 
 This needs `NEXT_MANUAL_SIG_HANDLE` set to any non-empty value (`true`), which `pnpm start` (the `start` script) and
 the Docker image set. Without it Next.js's own handler closes its server and exits 143 first, and only the error
 handlers (below) are ours. `next dev` keeps Next.js's own handling: manual handling is not available there.
 
-A required boot step (the configuration check in the production profile, the database, the queue-mode cluster runtime)
-that fails logs `boot failed`; under `next start` and the image (`NODE_ENV=production`) the process then exits with
+A required boot step (the configuration check in the production profile, the database, the queue-mode cluster runtime
+and, on a worker, the plugin registry) that fails logs `boot failed`. `pnpm worker` then exits with code 1 (an unreachable
+Valkey fails after the 5 s ping instead of exiting 0 silently); under `next start` and the image (`NODE_ENV=production`) the process then exits with
 code 1, so the orchestrator restarts the container. Elsewhere `register()` in `instrumentation.ts` catches the failed
 boot (a rejected instrumentation hook would stop `next dev`), so `pnpm dev` keeps running: routes answer 500 and
 `/api/health/ready` 503 with `boot` not ok until a later request boots it again. Every other service that fails to start is logged as `service failed to start`, counted
@@ -119,16 +121,60 @@ reports an error for an unset `LANDFLOW_PUBLIC_URL`, for any secret variable (`L
 `LANDFLOW_BINARY_SECRET`, `LANDFLOW_TRANSPORT_SECRET`, `LANDFLOW_REGISTRY_SECRET`, `LANDFLOW_CODE_RUNNER_SECRET`,
 `LANDFLOW_MCP_GATEWAY_SECRET`, `LANDFLOW_OWNER_PASSWORD`, the S3 keys, …) holding a development value (anything with
 `dev-only`, or a known default), and for an unset `LANDFLOW_REGISTRY_SECRET` unless `LANDFLOW_REGISTRY_OPEN=true`; an unset
-`LANDFLOW_ENCRYPTION_KEY` or `LANDFLOW_BINARY_SECRET` is a warning. Messages name the variable, never the value. The check is
+`LANDFLOW_ENCRYPTION_KEY` or `LANDFLOW_BINARY_SECRET` is a warning, and so is a missing `LANDFLOW_CODE_RUNNER_URL` when
+`LANDFLOW_CODE_IN_PROCESS` is unset (Code nodes would have nowhere to run). Messages name the variable, never the value. The check is
 a pure function; the host calls it at boot (`lib/server/runtime.ts`, the first required step, for the main and the worker).
 In the production profile any error stops the boot with a `ConfigError` that lists every problem (the process exits non-zero
 and the pod restarts); in development the problems are logged as warnings. `next build` (`NEXT_PHASE=phase-production-build`)
 does not boot the host and only warns, since the image build has none of the deployment's variables. Either way the host logs one `effective configuration`
-line at info with every `LANDFLOW_*`, `OTEL_*` and `DATABASE_URL` variable that is set (secrets shown as `[set]` by the check or `[redacted]` by the logger, URL passwords redacted).
+line at info with every `LANDFLOW_*`, `OTEL_*` and `DATABASE_URL` variable that is set (secrets shown as `[set]` by the check or `[redacted]` by the logger, URL passwords redacted, and email variables such as `LANDFLOW_OWNER_EMAIL` masked to `o***@example.com`).
+
+Two runtime defaults also change with the profile. Outbound requests to loopback, private, link-local and metadata
+addresses are refused (`LANDFLOW_OUTBOUND_BLOCK_PRIVATE`; list exceptions in `LANDFLOW_OUTBOUND_ALLOW`, see
+[audit and governance](features/audit-and-governance.md#outbound-requests)), and Code nodes run only in the code runner,
+not inside the host (`LANDFLOW_CODE_IN_PROCESS`, see [the code runner](reference/configuration.md)).
 
 The compose stacks and the Kubernetes base set `LANDFLOW_PROFILE=development` because they run the development secrets in
 `deploy/.env.example` while their image says `NODE_ENV=production`. A real deployment leaves it unset (or `production`) and
 sets its own secrets and public URL.
+
+## Behind a reverse proxy or ingress
+
+Set `LANDFLOW_TRUSTED_PROXIES` to the number of proxies between the client and the host (an ingress controller behind a
+cloud load balancer is 2). The host then takes the client address from `X-Forwarded-For` that many entries from the end
+and builds its own origin from `X-Forwarded-Host`/`-Proto`. With the default 0 it takes the last entry: behind one proxy
+that appends to `X-Forwarded-For` that is still the real client (0 and 1 give the same address), but behind two or more
+proxies, or one that sets no header, every request seems to come from a proxy (one shared sign-in limit). What 0 loses is
+`X-Real-IP` and the origin: the host does not build its own origin from `X-Forwarded-Host`/`-Proto`. (HSTS, the cookies'
+`Secure` flag, the OAuth2 callback, the hosted chat page and the same-origin check still read `X-Forwarded-Proto` or `-Host` whatever the hop
+count.) Also set `LANDFLOW_PUBLIC_URL`: invite and reset links are refused in the production profile without it. Resume URLs are signed in production
+(`LANDFLOW_RESUME_SIGNATURES`, see [engine](features/engine.md)).
+
+## Security headers and Content Security Policy
+
+`apps/web/src/proxy.ts` sets these on every response it produces (pages, API routes, 401s and redirects;
+`X-Frame-Options` except on the embeddable paths below): `X-Content-Type-Options: nosniff`, `Referrer-Policy:
+strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), geolocation=(), microphone=(self)` (Spotlight
+dictation uses the microphone) and `X-Frame-Options: DENY`. `Strict-Transport-Security: max-age=31536000;
+includeSubDomains` is added when the request is https (the URL, or `X-Forwarded-Proto`) unless `LANDFLOW_HSTS=off`.
+`x-powered-by` is not sent.
+
+Pages (not API routes) also get a Content Security Policy with a fresh nonce per request: `script-src 'self' 'nonce-…'
+'strict-dynamic'` (plus `'unsafe-eval'` under `next dev`), inline styles, `img-src 'self' data: blob: https:` (notes,
+chat and plugin icons show remote images; plain `http:` images do not load under `enforce`), `connect-src 'self'`, `frame-src 'self' blob: data: https:`, `worker-src
+'self' blob:`, `object-src 'self' data: https:` (the Run Trace shows a PDF artifact in an `<object>`, which Chrome also
+checks against `frame-src`), `base-uri 'self'`, `form-action 'self'` and `frame-ancestors 'none'`. `LANDFLOW_CSP` picks
+the mode: `enforce` (default in the production profile), `report` (`Content-Security-Policy-Report-Only`, default in
+development) or `off`. If a page breaks in production, set `LANDFLOW_CSP=report` and read the console for the blocked
+source.
+
+The embeddable or self-policed paths (`/chat`, `/form`, `/form-test`, `/api/binary`, `/api/mcp/files`, `/mcp`,
+`/mcp-test`, `/api/webhook`, `/api/webhook-test`) keep their own policy and get no frame headers or CSP from the
+proxy, only the three fixed headers above. A reverse proxy that serves the host over https should forward
+`X-Forwarded-Proto`.
+
+Any inline `<script>` in a page must carry the nonce: the root layout reads it from the `x-nonce` request header the
+proxy sets and passes `nonce={nonce}` to its theme and look scripts. Without it the browser blocks the script.
 
 ## Ports, credentials and URLs
 
@@ -465,7 +511,7 @@ The Code node runs JavaScript in-process (`node:vm` inside the host: quick, but 
 |---|---|
 | `LANDFLOW_CODE_RUNNER_URL` | `http://code-runner:7300` in compose (set already), `http://127.0.0.1:53300` for the Docker runner from the dev server, `http://127.0.0.1:7300` for one started with pnpm |
 | `LANDFLOW_CODE_RUNNER_SECRET` | the runner's `CODE_RUNNER_SECRET` (compose: `LANDFLOW_CODE_RUNNER_SECRET`, default `landflow-code-runner-dev-only`) |
-| `LANDFLOW_CODE_IN_PROCESS` | `false`: no in-process JavaScript on this host, so every Code node needs the runner. The dockerised host sets it |
+| `LANDFLOW_CODE_IN_PROCESS` | `false`: no in-process JavaScript on this host, so every Code node needs the runner (the dockerised host sets it). Unset: allowed in the development profile, off in the production profile, where Code nodes run in the code runner or fail with a message that names this variable; `true` there is a knowing choice to run trusted code in the host |
 | `LANDFLOW_CODE_BINARY_MAX_BYTES` | files a Code node reads and creates (`this.helpers.getBinaryDataBuffer` / `prepareBinaryData`), each way, 6 MiB by default |
 
 With a runner configured, Code nodes on **Run In: Default** use it; **Sandbox** and **In-process** (JavaScript only) pin one. Python always runs in the runner and fails with "Python code needs the code runner, and this host has none" without one. The host reads these on every run, but environment variables only change on a restart.
@@ -1044,38 +1090,3 @@ If you joined the networks with `compose.infra-link.yml`, pass it to `down` as w
 - **LocalStack** (profile `aws`) stands in for AWS Secrets Manager: Settings → External secrets → AWS Secrets Manager with the endpoint `http://localhost:54566` (or `http://localstack:4566` from the app stack) and dummy access keys. `LANDFLOW_INTEGRATION=aws npx vitest run test/secrets-aws.integration.test.ts` (in `apps/web`) runs the provider against it with the shared AWS config and credentials files turned off. Secrets are gone after a restart.
 - **GreenMail** is there because Mailpit has no IMAP: it is the mailbox the Email Trigger (IMAP) reads. Mail sent to its SMTP port lands in its own mailboxes, not in Mailpit.
 - Keycloak's realm is imported only when the realm doesn't exist yet. After editing `infra/keycloak/landflow-realm.json`, run `down -v` on the infra stack (or delete the realm in the admin console) and start it again.
-
-## Behind a reverse proxy or ingress
-
-Set `LANDFLOW_TRUSTED_PROXIES` to the number of proxies between the client and the host (an ingress controller behind a
-cloud load balancer is 2). The host then takes the client address from `X-Forwarded-For` that many entries from the end
-and builds its own origin from `X-Forwarded-Host`/`-Proto`; with the default 0 it sees every request as coming from the
-proxy's address (one shared sign-in limit) and ignores those headers. Also set `LANDFLOW_PUBLIC_URL`: invite and reset
-emails refuse to go out in the production profile without it. Resume URLs are signed in production
-(`LANDFLOW_RESUME_SIGNATURES`, see [engine](features/engine.md)).
-
-## Security headers and Content Security Policy
-
-`apps/web/src/proxy.ts` sets these on every response it produces (pages, API routes, 401s and redirects;
-`X-Frame-Options` except on the embeddable paths below): `X-Content-Type-Options: nosniff`, `Referrer-Policy:
-strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), geolocation=(), microphone=(self)` (Spotlight
-dictation uses the microphone) and `X-Frame-Options: DENY`. `Strict-Transport-Security: max-age=31536000;
-includeSubDomains` is added when the request is https (the URL, or `X-Forwarded-Proto`) unless `LANDFLOW_HSTS=off`.
-`x-powered-by` is not sent.
-
-Pages (not API routes) also get a Content Security Policy with a fresh nonce per request: `script-src 'self' 'nonce-…'
-'strict-dynamic'` (plus `'unsafe-eval'` under `next dev`), inline styles, `img-src 'self' data: blob: https:` (notes,
-chat and plugin icons show remote images), `connect-src 'self'`, `frame-src 'self' blob: data: https:`, `worker-src
-'self' blob:`, `object-src 'self' data: https:` (the Run Trace shows a PDF artifact in an `<object>`, which Chrome also
-checks against `frame-src`), `base-uri 'self'`, `form-action 'self'` and `frame-ancestors 'none'`. `LANDFLOW_CSP` picks
-the mode: `enforce` (default in the production profile), `report` (`Content-Security-Policy-Report-Only`, default in
-development) or `off`. If a page breaks in production, set `LANDFLOW_CSP=report` and read the console for the blocked
-source.
-
-The embeddable or self-policed paths (`/chat`, `/form`, `/form-test`, `/api/binary`, `/api/mcp/files`, `/mcp`,
-`/mcp-test`, `/api/webhook`, `/api/webhook-test`) keep their own policy and get no frame headers or CSP from the
-proxy, only the three fixed headers above. A reverse proxy that serves the host over https should forward
-`X-Forwarded-Proto`.
-
-Any inline `<script>` in a page must carry the nonce: the root layout reads it from the `x-nonce` request header the
-proxy sets and passes `nonce={nonce}` to its theme and look scripts. Without it the browser blocks the script.

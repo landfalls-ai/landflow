@@ -6,7 +6,8 @@
  * Moving keeps things working where that is safe: a moved credential stays usable by its old project (a `user`
  * share) unless told otherwise, and moving a workflow can share the credentials it uses with the new project.
  */
-import { personalProjectId, type ResourceKind, type TransferTarget } from '../../shared/projects';
+import { recordAudit } from '../audit';
+import { personalProjectId, type ResourceKind, type ShareRole, type TransferTarget } from '../../shared/projects';
 import { authDb } from '../auth/db';
 import { deleteUser, getUser } from '../auth/users';
 import { dataTables } from '../datatables';
@@ -16,7 +17,8 @@ import { agentTemplateRows } from '../agents/template-rows';
 import { localTemplates } from '../templates/store';
 import { projectVariables } from './variables';
 import {
-  addShare,
+  auditShare,
+  putShare,
   defaultProjectId,
   ensurePersonalProject,
   getProject,
@@ -43,16 +45,35 @@ export function moveResource(kind: ResourceKind, id: string, projectId: string, 
   const target = getProject(projectId);
   if (!target) throw new ProjectError('Project not found', 404);
   const db = authDb();
-  return db.transaction(() => {
+  const kept: Array<[ResourceKind, string, string, ShareRole | undefined]> = [];
+  const result = db.transaction(() => {
     const from = homeProjectId(kind, id);
-    if (from === target.id && storedHomeProject(kind, id)) return { from, to: target };
+    if (from === target.id && storedHomeProject(kind, id)) return { from, to: target, moved: false };
     setHomeProject(kind, id, target.id);
-    if (kind === 'credential' && from && from !== target.id && options.keepAccess !== false) addShare('credential', id, from, 'user', options.actorId);
-    for (const credentialId of options.shareCredentials ?? []) {
-      if (homeProjectId('credential', credentialId) !== target.id) addShare('credential', credentialId, target.id, 'user', options.actorId);
+    if (kind === 'credential' && from && from !== target.id && options.keepAccess !== false) {
+      const before = putShare('credential', id, from, 'user', options.actorId);
+      if (before !== 'user') kept.push(['credential', id, from, before]);
     }
-    return { from, to: target };
+    for (const credentialId of options.shareCredentials ?? []) {
+      if (homeProjectId('credential', credentialId) !== target.id) {
+        const before = putShare('credential', credentialId, target.id, 'user', options.actorId);
+        if (before !== 'user') kept.push(['credential', credentialId, target.id, before]);
+      }
+    }
+    return { from, to: target, moved: true };
   });
+  // Recorded once the transaction has committed.
+  if (result.moved) {
+    const fromName = result.from ? (getProject(result.from)?.name ?? result.from) : undefined;
+    recordAudit({
+      action: 'resource.transfer',
+      target: { type: kind, id },
+      summary: `Moved ${kind} ${id} from ${fromName ?? 'the default project'} to ${target.name}`,
+      details: { kind, resourceId: id, from: result.from ?? null, to: target.id, toName: target.name, keepAccess: kind === 'credential' ? options.keepAccess !== false : null, sharedCredentials: options.shareCredentials?.length ?? 0 },
+    });
+    for (const [shareKind, shareId, withProject, was] of kept) auditShare(shareKind, shareId, withProject, was, 'user');
+  }
+  return { from: result.from, to: result.to };
 }
 
 /** Data table names are unique per project: a table moving in with a name the project already has becomes `name 2`, `name 3`… */
@@ -90,7 +111,7 @@ function moveAll(fromProjectId: string, toProjectId: string, options: { includeU
   for (const share of sharesTo(fromProjectId)) {
     // A share to the new owner is pointless (it owns or already has it), so it goes with the old project.
     if (homeProjectId(share.kind, share.resourceId) === toProjectId) continue;
-    if (!sharesTo(toProjectId, share.kind).some((s) => s.resourceId === share.resourceId)) addShare(share.kind, share.resourceId, toProjectId, share.role, options.actorId ?? share.createdBy);
+    if (!sharesTo(toProjectId, share.kind).some((s) => s.resourceId === share.resourceId)) putShare(share.kind, share.resourceId, toProjectId, share.role, options.actorId ?? share.createdBy);
   }
   return moved;
 }
@@ -163,7 +184,7 @@ export function deleteProjectWithTransfer(projectId: string, transferTo?: string
   if (!project) throw new ProjectError('Project not found', 404);
   if (project.type === 'personal') throw new ProjectError('A personal project goes when its user is removed', 400);
   const db = authDb();
-  return db.transaction(() => {
+  const result = db.transaction(() => {
     let moved: Partial<Record<ResourceKind, number>> = {};
     const owned = resourcesIn(projectId);
     if (transferTo) {
@@ -178,6 +199,14 @@ export function deleteProjectWithTransfer(projectId: string, transferTo?: string
     removeProjectRows(projectId);
     return { moved };
   });
+  recordAudit({
+    action: 'project.delete',
+    target: { type: 'project', id: projectId, name: project.name },
+    project: projectId,
+    summary: `Deleted the project ${project.name}${transferTo ? ` (its items went to ${getProject(transferTo)?.name ?? transferTo})` : ''}`,
+    details: { name: project.name, transferredTo: transferTo ?? null, moved: Object.entries(result.moved).map(([k, n]) => `${k}:${n}`) },
+  });
+  return result;
 }
 
 /**

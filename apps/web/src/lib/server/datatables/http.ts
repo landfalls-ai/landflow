@@ -5,19 +5,13 @@
  */
 import { z } from 'zod';
 import { CONDITION_OPERATORS, type ConditionOperator, type RowQuery } from '../../shared/data-tables';
-import { error, handler } from '../http';
+import { HttpError } from '../errors';
+import { handler } from '../http';
 import { DataTableError } from './storage';
 
 /** `handler` plus DataTableError → `{ error }` with the error's status. */
 export function dataTableRoute<A extends unknown[]>(fn: (...args: A) => Promise<Response>) {
-  return handler(async (...args: A) => {
-    try {
-      return await fn(...args);
-    } catch (caught) {
-      if (caught instanceof DataTableError) return error(caught.message, caught.status);
-      throw caught;
-    }
-  });
+  return handler(fn, { mapError: (caught) => (caught instanceof DataTableError ? new HttpError(caught.message, caught.status, { code: 'data_table_error' }) : undefined) });
 }
 
 const operators = CONDITION_OPERATORS.map((o) => o.value) as [ConditionOperator, ...ConditionOperator[]];

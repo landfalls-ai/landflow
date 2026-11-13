@@ -134,7 +134,13 @@ export interface StartClusterOptions {
 /** Start queue mode in this process. Returns false in regular mode. Throws ClusterConfigError for setups it refuses. */
 export async function startCluster(options: StartClusterOptions = {}): Promise<boolean> {
   const state = clusterState();
-  if (options.role && options.role !== state.config.role) state.config = { ...state.config, role: options.role, instanceId: options.role === 'worker' && !state.config.stableId ? state.config.instanceId.replace(/^main-/, 'worker-') : state.config.instanceId };
+  if (options.role && options.role !== state.config.role) {
+    // The Next host passes `main`: LANDFLOW_ROLE=worker there is a misconfiguration (workers start with `pnpm worker`).
+    if (options.role === 'main') logger.warn('LANDFLOW_ROLE=worker is ignored by the Next.js host: it runs as a main (start workers with `pnpm worker`)');
+    const from = `${state.config.role}-`;
+    const instanceId = state.config.stableId || !state.config.instanceId.startsWith(from) ? state.config.instanceId : `${options.role}-${state.config.instanceId.slice(from.length)}`;
+    state.config = { ...state.config, role: options.role, instanceId };
+  }
   const { config } = state;
   for (const warning of checkClusterConfig(config)) logger.warn(warning);
   if (config.mode !== 'queue') return false;

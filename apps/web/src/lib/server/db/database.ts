@@ -10,6 +10,7 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { DatabaseSync, SQLInputValue, StatementSync } from 'node:sqlite';
+import { envInt } from '../config';
 import { singleton } from '../singleton';
 import { addColumnSql, MIGRATIONS, pendingMigrations, SCHEMA_VERSION_TABLE, TABLES, type Migration, type TableName } from './schema';
 
@@ -87,7 +88,9 @@ export function upsertSql(table: TableName, columns: string[], mode: 'upsert' | 
 }
 
 export class Database {
+  /** Prepared statements by SQL text, least recently used first: `IN (?, ?, …)` lists of every length would otherwise grow it for ever. */
   private readonly statements = new Map<string, StatementSync>();
+  private readonly statementCap = envInt('LANDFLOW_DB_STATEMENT_CACHE', { fallback: 500, min: 1 });
   private depth = 0;
   private pending: WriteOp[] = [];
   /** Told of every committed write (queue mode on SQLite: other processes drop their caches). */
@@ -103,11 +106,20 @@ export class Database {
 
   private statement(sql: string): StatementSync {
     let statement = this.statements.get(sql);
-    if (!statement) {
+    if (statement) {
+      // A hit moves to the end; Map keeps insertion order, so the first key is the stalest.
+      this.statements.delete(sql);
+    } else {
       statement = this.sqlite.prepare(sql);
-      this.statements.set(sql, statement);
+      if (this.statements.size >= this.statementCap) this.statements.delete(this.statements.keys().next().value as string);
     }
+    this.statements.set(sql, statement);
     return statement;
+  }
+
+  /** Statements held now (for tests). */
+  get statementCount(): number {
+    return this.statements.size;
   }
 
   all<T>(sql: string, ...params: SqlValue[]): T[] {

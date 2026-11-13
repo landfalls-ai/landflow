@@ -342,6 +342,27 @@ describe('password resets', () => {
     expect((await call(resetRoute.POST, '/api/auth/password/reset', { body: { token, password: 'third-password' } })).status).toBe(404);
   });
 
+  it('production without LANDFLOW_PUBLIC_URL: the same 503 for known and unknown emails, and no token or invite made', async () => {
+    setMailTransport({ send: async (message) => void sent.push(message) });
+    const sentBefore = sent.length;
+    const invitesBefore = auth.listInvites().length;
+    process.env.LANDFLOW_PROFILE = 'production';
+    try {
+      const known = await call(forgotRoute.POST, '/api/auth/password/forgot', { body: { email: 'mia@example.com' } });
+      const unknown = await call(forgotRoute.POST, '/api/auth/password/forgot', { body: { email: 'ghost@example.com' } });
+      expect(known.status).toBe(503);
+      expect(unknown.status).toBe(503);
+      expect(known.body).toEqual(unknown.body);
+      const invited = await call(invitesRoute.POST, '/api/users/invites', { body: { email: 'nobody-yet@example.com' }, session: ownerSession });
+      expect(invited.status).toBe(503);
+      expect(invited.body.error).toContain('LANDFLOW_PUBLIC_URL');
+    } finally {
+      delete process.env.LANDFLOW_PROFILE;
+    }
+    expect(sent).toHaveLength(sentBefore);
+    expect(auth.listInvites()).toHaveLength(invitesBefore);
+  });
+
   it('admins make reset links for others (a link to copy without SMTP)', async () => {
     const mia = auth.findUserByEmail('mia@example.com')!;
     const made = await call(userResetRoute.POST, `/api/users/${mia.id}/password-reset`, { method: 'POST', session: ownerSession }, { id: mia.id });

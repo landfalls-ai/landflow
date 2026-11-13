@@ -6,6 +6,7 @@
  * still forge it, which is why per-IP limits are only as good as the hop count).
  */
 import { envInt, isProduction } from '../config';
+import { singleton } from '../singleton';
 import { logger } from '../telemetry/logger';
 
 /** How many reverse proxies sit in front of the host (LANDFLOW_TRUSTED_PROXIES, default 0). */
@@ -20,13 +21,14 @@ export function normalizeAddress(raw: string): string {
   return /^::ffff:\d+\.\d+\.\d+\.\d+$/i.test(ip) ? ip.slice(7) : ip;
 }
 
-let warned = false;
+/** Whether the unset-LANDFLOW_TRUSTED_PROXIES warning was logged: process-wide, so Next's separate bundles warn once. */
+const warning = () => singleton('client-address-warning', () => ({ warned: false }));
 
 /** The client's address, or `local` when no header names one. */
 export function clientAddress(request: Request): string {
   const hops = trustedProxies();
-  if (hops === 0 && isProduction() && !process.env.LANDFLOW_TRUSTED_PROXIES?.trim() && !warned) {
-    warned = true;
+  if (hops === 0 && isProduction() && !process.env.LANDFLOW_TRUSTED_PROXIES?.trim() && !warning().warned) {
+    warning().warned = true;
     logger.warn('LANDFLOW_TRUSTED_PROXIES is not set: client addresses (rate limits, audit, webhook allow-lists) are unverified. Set it to the number of reverse proxies in front of the host (0 when clients connect directly).');
   }
   const entries = (request.headers.get('x-forwarded-for') ?? '').split(',').map(normalizeAddress).filter(Boolean);
@@ -38,5 +40,5 @@ export function clientAddress(request: Request): string {
 
 /** Test hook: the once-only warning fires again. */
 export const resetClientAddressWarning = () => {
-  warned = false;
+  warning().warned = false;
 };

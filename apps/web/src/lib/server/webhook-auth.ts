@@ -4,8 +4,8 @@
  * `jwtAuth` (a JWT Auth credential: an HS256/384/512 secret, a PEM public key or a JWKS URL, with optional issuer and
  * audience); `options.ipWhitelist` limits callers to a list of addresses and CIDR ranges.
  *
- * The client address is the first `X-Forwarded-For` entry, else `X-Real-IP` (set them at your reverse proxy, which
- * must overwrite what clients send); a request with neither counts as 127.0.0.1. Secrets are compared in constant time.
+ * The client address comes from `clientAddress()` (net/client-address.ts): `X-Forwarded-For` trusted up to
+ * LANDFLOW_TRUSTED_PROXIES hops; a request with no address counts as 127.0.0.1. Secrets are compared in constant time.
  * Failures answer 401 (with `WWW-Authenticate`) or 403 before the body is read, and start no run.
  *
  * The credential must be one the workflow's project may use (owned by it or shared with it, as for node credentials in

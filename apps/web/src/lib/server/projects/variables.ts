@@ -11,7 +11,7 @@
 import type { Variable } from '../../shared/platform';
 import type { Database } from '../db';
 import { currentEnvironment, ENVIRONMENT_NAME, EnvironmentError } from '../environments/settings';
-import { VariableStore } from '../variable-store';
+import { auditVariable, auditVariableEnvironments, VariableStore } from '../variable-store';
 import { projectsDb } from './db';
 
 const MAX_VALUE_LENGTH = 10_000;
@@ -76,6 +76,14 @@ const environmentValues = {
 
   /** Set (a string) or remove (`null`) values; other environments stay. */
   set(projectId: string, key: string, values: Record<string, string | null>): Record<string, string> {
+    const before = this.of(projectId, key);
+    const after = this.put(projectId, key, values);
+    auditVariableEnvironments(key, { projectId }, before, values);
+    return after;
+  },
+
+  /** `set` without the audit event (a rename moves the values; the variable's own `variable.update` covers it). */
+  put(projectId: string, key: string, values: Record<string, string | null>): Record<string, string> {
     for (const [environment, value] of Object.entries(values)) {
       if (!ENVIRONMENT_NAME.test(environment)) throw new EnvironmentError(`“${environment}” is not an environment name`);
       if (value !== null && (typeof value !== 'string' || value.length > MAX_VALUE_LENGTH)) throw new EnvironmentError(`The ${environment} value of ${key} must be a string of at most ${MAX_VALUE_LENGTH} characters`);
@@ -99,7 +107,7 @@ const environmentValues = {
     const values = this.of(projectId, from);
     if (!Object.keys(values).length) return;
     this.remove(projectId, from);
-    this.set(projectId, to, values);
+    this.put(projectId, to, values);
   },
 };
 
@@ -107,15 +115,24 @@ export const projectVariables = {
   store: (projectId: string): VariableStore => new ProjectVariableTable(projectId),
   list: (projectId: string) => projectVariables.store(projectId).list(),
   get: (projectId: string, key: string) => projectVariables.store(projectId).get(key),
-  create: (projectId: string, input: { key: string; value: unknown }) => projectVariables.store(projectId).create(input),
+  create(projectId: string, input: { key: string; value: unknown }): Variable {
+    const created = projectVariables.store(projectId).create(input);
+    auditVariable('create', created.key, { projectId });
+    return created;
+  },
   update(projectId: string, key: string, patch: { key?: string; value?: unknown }): Variable {
+    const before = projectVariables.get(projectId, key);
     const updated = projectVariables.store(projectId).update(key, patch);
     if (updated.key !== key) environmentValues.rename(projectId, key, updated.key);
+    auditVariable('update', updated.key, { projectId }, { ...(updated.key !== key && { renamedFrom: key }), valueChanged: before?.value !== updated.value });
     return updated;
   },
   delete(projectId: string, key: string): boolean {
     const deleted = projectVariables.store(projectId).delete(key);
-    if (deleted) environmentValues.remove(projectId, key);
+    if (deleted) {
+      environmentValues.remove(projectId, key);
+      auditVariable('delete', key, { projectId });
+    }
     return deleted;
   },
   environments: environmentValues,
