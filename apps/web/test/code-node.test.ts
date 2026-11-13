@@ -199,6 +199,35 @@ describe('where the Code node runs', () => {
     expect(codeRunnerSettings({})).toEqual({ inProcess: true, timeoutMs: 120_000, binaryMaxBytes: 6 * 1024 * 1024 });
     expect(codeRunnerSettings({ LANDFLOW_CODE_BINARY_MAX_BYTES: '1000' }).binaryMaxBytes).toBe(1000);
   });
+
+  it('allows in-process code by default in development and not in production, unless LANDFLOW_CODE_IN_PROCESS says so', () => {
+    const url = { LANDFLOW_CODE_RUNNER_URL: 'http://runner:7300' };
+    const cases: [Record<string, string>, boolean][] = [
+      [{}, true],
+      [{ NODE_ENV: 'production' }, false],
+      [{ LANDFLOW_PROFILE: 'development', NODE_ENV: 'production' }, true],
+      [{ LANDFLOW_PROFILE: 'production' }, false],
+      [{ LANDFLOW_PROFILE: 'production', LANDFLOW_CODE_IN_PROCESS: 'true' }, true],
+      [{ LANDFLOW_PROFILE: 'production', LANDFLOW_CODE_IN_PROCESS: 'false' }, false],
+      [{ LANDFLOW_PROFILE: 'development', LANDFLOW_CODE_IN_PROCESS: 'false' }, false],
+      [{ LANDFLOW_PROFILE: 'development', LANDFLOW_CODE_IN_PROCESS: 'off' }, false],
+      [{ LANDFLOW_PROFILE: 'production', LANDFLOW_CODE_IN_PROCESS: 'garbage' }, false],
+    ];
+    for (const [env, expected] of cases) {
+      expect(codeRunnerSettings(env).inProcess, JSON.stringify(env)).toBe(expected);
+      expect(codeRunnerSettings({ ...env, ...url }).inProcess, JSON.stringify(env)).toBe(expected);
+    }
+  });
+
+  it('says what to do when production refuses in-process code', () => {
+    const production = codeRunnerSettings({ LANDFLOW_PROFILE: 'production' });
+    expect(() => placeCode('javascript', 'auto', production)).toThrow('In-process code is off in the production profile: configure the code runner, or set LANDFLOW_CODE_IN_PROCESS=true knowingly');
+    expect(() => placeCode('javascript', 'inProcess', { ...production, url: 'http://runner:7300' })).toThrow(/production profile/);
+    // With a runner, Default is the sandbox; an explicit false keeps its own message.
+    expect(placeCode('javascript', 'auto', { ...production, url: 'http://runner:7300' })).toBe('sandbox');
+    expect(() => placeCode('javascript', 'auto', codeRunnerSettings({ LANDFLOW_PROFILE: 'production', LANDFLOW_CODE_IN_PROCESS: 'false' }))).toThrow('(LANDFLOW_CODE_IN_PROCESS=false)');
+    expect(placeCode('javascript', 'auto', codeRunnerSettings({ LANDFLOW_PROFILE: 'production', LANDFLOW_CODE_IN_PROCESS: 'true' }))).toBe('inProcess');
+  });
 });
 
 describe('nodesReferenced', () => {

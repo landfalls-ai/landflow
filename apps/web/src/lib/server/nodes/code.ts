@@ -5,8 +5,9 @@
  * - **Sandbox**: the code runner service (services/code-runner, `LANDFLOW_CODE_RUNNER_URL`), a fresh locked-down
  *   process per run. JavaScript on Node with n8n's globals (`$input`, `$json`, `$('Node')`, `$vars`, `$execution`,
  *   `$now`/`DateTime`), Python on CPython with `_input`, `_json`, `_('Node')`, … Python always runs here.
- * - **In-process**: `node:vm` inside the host, the original behaviour, with the same globals (no Luxon) and `this.helpers`. Not a security boundary; off with
- *   `LANDFLOW_CODE_IN_PROCESS=false`.
+ * - **In-process**: `node:vm` inside the host, the original behaviour, with the same globals (no Luxon) and `this.helpers`. Not a security boundary
+ *   (trusted workflows only): on by default in development, off in production unless `LANDFLOW_CODE_IN_PROCESS=true`,
+ *   and `false` turns it off anywhere.
  * - **Default**: the sandbox when a runner is configured, else in-process.
  *
  * Files: `$input.item.binary` is the items' file metadata; `this.helpers.getBinaryDataBuffer(itemIndex, name)` reads one
@@ -232,7 +233,8 @@ async function runInProcess(ctx: IExecuteContext, mode: Mode, settings: CodeRunn
   };
   // The wrapper is async so `await this.helpers…` works; the 2 s timeout covers the synchronous part of the run.
   const run = async (source: string, scope: Record<string, unknown>) => {
-    const context = vm.createContext({ ...shared, ...scope });
+    // No eval or new Function from strings: cheap defence in depth (the context still holds host helpers, so it stays trusted-only).
+    const context = vm.createContext({ ...shared, ...scope }, { codeGeneration: { strings: false, wasm: false } });
     try {
       const snippet = new vm.Script(`(async function () {\n${source}\n})`, { filename: 'code-node.js' }).runInContext(context, { timeout: 2_000 }) as () => Promise<unknown>;
       return await snippet.call(self);

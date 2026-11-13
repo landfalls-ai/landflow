@@ -1268,6 +1268,13 @@ workbench in place of a page of cards, keeping Spotlight.
   - tests still missing from wave 1: SCIM `PUT /Users` and `PUT /Groups` events, the 10,000-address eviction, and
     access-scope cases for evaluation-dataset files, a live run's file and an agent the member can open.
 
+- **P14, expressions in a sealed realm and Code nodes out of the host in production** (S1): expressions run in a fresh
+  `node:vm` context with code generation off, no host object inside and only JSON text crossing the boundary
+  (`packages/engine/src/sandbox/`), so `$json.constructor.constructor('return process')()` finds nothing; `async`, `await`
+  and `import(` are refused because an unhandled rejection from any context would end the host process. The production
+  profile runs Code nodes only in the code runner unless `LANDFLOW_CODE_IN_PROCESS=true`; the in-process context also loses
+  `eval` and `new Function`. An isolate backend remains for a later package.
+
 ## Planned next
 
 1. **Declare event kinds in the UI**: kinds are declared over the API or by Record Event's *Declare Kind If New* only.
