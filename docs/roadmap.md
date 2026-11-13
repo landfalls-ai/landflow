@@ -1424,6 +1424,9 @@ workbench in place of a page of cards, keeping Spotlight.
     updates at desktop and 390 px, Spotlight and Agent architect streams, an approvals stream, a revoked member's stream
     and a reconnect to another main; `pnpm dev` with a `pnpm worker` recording insights and usage and pruning, a dev
     edit of a singleton-held class, and no concurrent marketplace sync across two graphs.
+- **P29, shipped alert rules, a dashboard and exception fingerprints** (finding O7): `exception.fingerprint` on error log
+  lines and exception span events; `deploy/observability/prometheus-rules.yml` (13 alerts, each with a runbook link) and
+  `landflow-dashboard.json`, both loaded by the `orbstack-observability` overlay ([observability.md](observability.md#alerts-and-dashboard)).
 
 ## Planned next
 

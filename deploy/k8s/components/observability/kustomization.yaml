@@ -13,10 +13,16 @@ configMapGenerator:
     files: [otelcol-config.yaml]
   - name: landflow-grafana-dashboards
     options: { disableNameSuffixHash: true, labels: { app.kubernetes.io/part-of: landflow-observability } }
-    files: [agent-runs.json]
+    files: [agent-runs.json, landflow-dashboard.json]
   - name: landflow-grafana-dashboard-provider
     options: { disableNameSuffixHash: true, labels: { app.kubernetes.io/part-of: landflow-observability } }
     files: [landflow.yaml=dashboard-provider.yaml]
+  - name: landflow-prometheus-rules
+    options: { disableNameSuffixHash: true, labels: { app.kubernetes.io/part-of: landflow-observability } }
+    files: [prometheus-rules.yml]
+  - name: landflow-prometheus-config
+    options: { disableNameSuffixHash: true, labels: { app.kubernetes.io/part-of: landflow-observability } }
+    files: [prometheus.yaml]
 patches:
   # Every Landflow process exports OTLP/HTTP to the backend (the host and the TypeScript SDK send JSON, the Go and Python
   # SDKs protobuf: the Collector takes both on 4318).

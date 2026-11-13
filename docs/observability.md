@@ -117,6 +117,13 @@ With `LANDFLOW_LOG_SPANS=true` (the default) every finished span is also written
   request wherever they appear (messages, URLs, errors).
 - Node logs (`ctx.logger.*` / `ExecuteResponse.logs`) are also written to the process log with the
   trace context, besides being returned to the host.
+- **Exception fingerprint.** Every error line made from an `Error` carries `exception.fingerprint`: 12 hex characters of
+  a hash of the exception type and the top three in-repo frames (function and file, with line and column numbers and the
+  checkout path stripped; `node:` and `node_modules` frames skipped). The same bug groups across releases and machines,
+  two call sites don't. Failed spans carry the same attribute on their `exception` event (`exception.type`,
+  `exception.message`, `exception.stacktrace`, `exception.fingerprint`), so a Loki query such as
+  `{service_name="landflow-host"} | json | exception_fingerprint="3f2a9c0d41be"` and a Tempo search find the same group.
+  A thrown non-`Error` gets a fingerprint from its type alone, which groups all of them.
 - **Over OTLP** (host): with `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`) set and
   `LANDFLOW_LOG_OTLP` on (the default), every line is also an OTel log record (scope `landflow-host.log`, the message as
   the body, the fields as attributes, the active trace and span ids), so a backend such as Loki links each line to its
@@ -419,9 +426,39 @@ Every process writes JSON logs with `trace_id`. To browse traces, run any OTLP b
   `http://localhost:9464/metrics`.
 - Prometheus scraping `http://localhost:3000/api/metrics` and each plugin's `http://host:port/metrics`.
 - On the OrbStack cluster, the `orbstack-observability` overlay runs Grafana with Tempo, Prometheus and Loki in
-  `landflow-dev`, points every Landflow process at it and ships the "Landflow · agent runs" dashboard
+  `landflow-dev`, points every Landflow process at it and ships the "Landflow · agent runs" and "Landflow · overview" dashboards and the alert rules ([below](#alerts-and-dashboard))
   ([deployment.md](deployment.md#telemetry-on-kubernetes)). kagent in the kind cluster exports there too
   ([a2a.md](a2a.md#kagent-next-to-landflow)).
+
+<a id="alerts-and-dashboard"></a>
+
+### Alert rules and the dashboard
+
+[`deploy/observability/prometheus-rules.yml`](../deploy/observability/prometheus-rules.yml) holds 13 Prometheus alerts
+over the metrics above; each has a `severity` label and a `runbook` annotation pointing here. Thresholds are starting
+points. `deploy/observability/landflow-dashboard.json` is the matching Grafana dashboard ("Landflow · overview": requests,
+runs, queue and workers, plugins, database, audit, runtime). The `orbstack-observability` overlay loads both
+(`deploy/k8s/components/observability/` keeps copies, because kustomize can't read outside the component; a test checks
+they match, and that every metric the files name exists in the code); elsewhere, add the file to `rule_files:` and import
+the JSON. The local backend has no Alertmanager: alerts show under Prometheus -> Alerts and as the `ALERTS` series.
+
+| Alert | Fires when | First look |
+|---|---|---|
+| `LandflowHttp5xxRatioHigh` | over 5% of requests answer 5xx for 10 min | error lines grouped by `exception.fingerprint`; the traces of the failing route |
+| `LandflowRequestP95Slow` | p95 request duration over 2.5 s for 10 min | event-loop delay, database query p95, the slow traces |
+| `LandflowRateLimitRefusals` | over 1 refusal/s for 10 min | `landflow.ratelimit.refused{bucket}`; a client loop, or limits set too low (`LANDFLOW_RATE_LIMIT_API`/`_PUBLIC`) |
+| `LandflowScheduleLag` | schedule lag p95 over 30 s for 10 min | event-loop delay, concurrency limits, a stalled leader |
+| `LandflowQueueBacklog` | queue depth over 50 for 15 min | workers and their heartbeats (Settings -> Workers) |
+| `LandflowNoWorkers` | jobs queued and no worker heartbeat for 5 min | worker pods and their logs |
+| `LandflowPluginOffline` | a plugin language group has none online for 10 min | the plugin's logs; Plugins page |
+| `LandflowPostgresWritesBlocked` | `landflow.db.write_blocked` is 1 for 2 min | [postgres-write-queue.md](features/postgres-write-queue.md): Postgres reachable, batch rejected |
+| `LandflowPostgresWriteQueueOld` | oldest write batch over 60 s for 5 min | Postgres latency and connectivity |
+| `LandflowAuditWriteFailures` | any audit event could not be stored | [audit-and-governance.md](features/audit-and-governance.md#reliability-and-fail-closed-mode) |
+| `LandflowAuditOutboxOld` | oldest undelivered SIEM event over 15 min | the destination, Settings -> Audit log -> SIEM streaming |
+| `LandflowEventLoopDelay` | event-loop delay p99 over 200 ms for 10 min | a CPU-heavy node or a blocking call; GC panel |
+| `LandflowProcessErrors` | any unhandled rejection, uncaught exception or service start failure | the error line (`kind`) and its fingerprint |
+
+There is no metric for the age of the oldest queued job, so the queue alert watches depth; add one before alerting on age.
 
 <a id="token-and-cost-tracking"></a>
 

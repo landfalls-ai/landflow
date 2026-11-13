@@ -1,6 +1,7 @@
 /** Span helpers for host code. All of them are no-ops when telemetry is disabled. */
 import { context, propagation, SpanKind, SpanStatusCode, trace, type Attributes, type Context, type Link, type Span } from '@opentelemetry/api';
 import { telemetryConfig } from './config';
+import { exceptionFingerprint } from './fingerprint';
 
 export { SpanKind, SpanStatusCode, type Attributes, type Span };
 
@@ -27,7 +28,13 @@ export function startSpan(name: string, options: SpanOptions = {}): { span: Span
 /** Mark a span failed: error status plus an `exception` event. */
 export function failSpan(span: Span, error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
-  span.recordException(error instanceof Error ? error : message);
+  // Not recordException(): that takes no attributes, and the event needs the fingerprint that groups the same bug.
+  span.addEvent('exception', {
+    'exception.type': error instanceof Error ? error.name : 'string',
+    'exception.message': message,
+    ...(error instanceof Error && error.stack && { 'exception.stacktrace': error.stack }),
+    'exception.fingerprint': exceptionFingerprint(error),
+  });
   span.setStatus({ code: SpanStatusCode.ERROR, message });
 }
 
