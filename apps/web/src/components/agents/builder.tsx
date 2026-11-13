@@ -8,7 +8,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  ArrowLeft,
   Check,
   ChevronDown,
   Circle,
@@ -62,6 +61,7 @@ import { AgentLastRuns } from '../run-trace/run-line';
 import type { ToolEntry } from './timeline';
 import { TriggersCard } from './triggers-card';
 import { useAgentData, useAgentList } from './use-agent-data';
+import { BackLink } from '../shell/page-header';
 import { ExportPluginDialog } from './export-plugin-dialog';
 import { canTest, configOf, downloadJson, parseAgentFile, sameConfig, setupSteps, slug, type UpdateConfig } from './util';
 
@@ -471,16 +471,8 @@ export function AgentBuilder({ agentId, initialTab = 'persona', initialSession }
   return (
     <div className="flex h-screen min-h-0">
       <div className="min-w-0 flex-1 overflow-y-auto">
-        <header className="sticky top-0 z-20 flex h-[52px] shrink-0 items-center gap-2 border-b border-hair bg-bg px-3 sm:px-6">
-          <Link
-            href="/agents"
-            className="flex shrink-0 items-center gap-1 rounded-full px-1.5 py-1 text-[13px] text-t2 transition-colors hover:bg-acdim hover:text-t1"
-            aria-label="Back to agents"
-          >
-            <ArrowLeft className="size-4" />
-            <span className="hidden sm:inline">Agents</span>
-          </Link>
-          <span className="hidden text-t3 sm:inline">/</span>
+        <header className="sticky top-0 z-20 flex h-[52px] shrink-0 items-center gap-2 border-b border-hair bg-bg px-6 max-md:px-4">
+          <BackLink href="/agents" label="Agents" />
           <input
             aria-label="Agent name"
             value={draft.name}

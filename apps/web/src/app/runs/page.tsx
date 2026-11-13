@@ -7,7 +7,7 @@ export default async function RunsPage({ searchParams }: { searchParams: Promise
   const { workflowId } = await searchParams;
   return (
     <>
-      <PageHeader title="Search runs" className="px-4 md:px-6" />
+      <PageHeader title="Search runs" />
       <Suspense>
         <RunSearch initialWorkflowId={workflowId ?? ''} />
       </Suspense>

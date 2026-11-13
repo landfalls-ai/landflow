@@ -32,12 +32,12 @@ export default function CredentialsPage() {
         title="Credentials"
         meta={credentials && <span>{credentials.length} saved · {types?.length ?? 0} types from plugins</span>}
         actions={
-          <Button variant="primary" onClick={() => setDialog({})}>
+          <Button variant="primary" size="sm" onClick={() => setDialog({})}>
             <Plus className="size-3.5" /> Add credential
           </Button>
         }
       />
-      <PageBody className="max-w-[980px]">
+      <PageBody width="narrow">
         {error && <div className="mb-4 rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>}
         {credentials && credentials.length === 0 ? (
           <Card className="py-6">

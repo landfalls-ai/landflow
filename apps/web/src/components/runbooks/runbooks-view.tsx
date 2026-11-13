@@ -67,8 +67,8 @@ export function RunbooksView() {
 
   return (
     <>
-      <PageHeader title="Runbooks" meta={runbooks && <span>{runbooks.length}</span>} actions={<Button variant="primary" onClick={() => setMaking((v) => !v)}>Make a runbook</Button>} />
-      <PageBody className="mx-auto max-w-[640px] space-y-3">
+      <PageHeader title="Runbooks" meta={runbooks && <span>{runbooks.length}</span>} actions={<Button variant="primary" size="sm" onClick={() => setMaking((v) => !v)}>Make a runbook</Button>} />
+      <PageBody width="narrow" className="space-y-3">
         {error && <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>}
         {making && <MakeRunbook onSaved={() => { setMaking(false); load(); }} />}
         <Input value={kind} onChange={(e) => setKind(e.target.value)} placeholder="Filter by alert kind, e.g. high-error-rate" className="h-9" />

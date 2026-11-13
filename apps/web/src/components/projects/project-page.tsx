@@ -92,7 +92,7 @@ export function ProjectPage({ projectId }: { projectId: string }) {
 
   if (error) {
     return (
-      <PageBody className="max-w-[980px]">
+      <PageBody width="narrow">
         <Card>
           <EmptyState title="Project not available" hint={error} action={<Link href="/projects" className="text-[13px] text-ac hover:underline">All projects</Link>} />
         </Card>
@@ -103,6 +103,7 @@ export function ProjectPage({ projectId }: { projectId: string }) {
   return (
     <>
       <PageHeader
+        back={{ href: '/projects', label: 'Projects' }}
         title={project ? projectLabel(project, viewer?.id) : 'Project'}
         meta={
           project && (
@@ -114,7 +115,7 @@ export function ProjectPage({ projectId }: { projectId: string }) {
           )
         }
       />
-      <PageBody className="max-w-[980px]">
+      <PageBody width="narrow">
         {project?.description && <p className="mb-4 text-[13px] text-t2">{project.description}</p>}
         <Segmented
           label="Project"

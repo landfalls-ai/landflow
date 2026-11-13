@@ -15,7 +15,7 @@ import { useLiveEvents } from '@/lib/client/live';
 import type { PluginSummary, RegistryEvent } from '@/lib/shared/types';
 import { PluginCard } from '@/components/plugins/plugin-card';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
-import { Button } from '@/components/ui/button';
+import { Button, buttonClass } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Input, SearchInput, SectionLabel } from '@/components/ui/inputs';
 import { Segmented, SegmentedCount } from '../ui/segmented';
@@ -143,7 +143,7 @@ export function PluginRegistry() {
         }
         actions={
           <>
-            <Link href="/marketplace" className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-medium text-t2 transition-colors duration-[120ms] hover:bg-wl hover:text-t1">
+            <Link href="/marketplace" className={buttonClass('ghost', 'sm')}>
               <Store className="size-3.5" strokeWidth={1.7} /> Marketplace
             </Link>
             <Button variant="primary" size="sm" onClick={() => void scan()} loading={scanning}>

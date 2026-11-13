@@ -17,7 +17,7 @@ import type { ExecutionRecord, ExecutionSummary } from '@/lib/shared/types';
 import { ExecutionMarks, RERUN_LABEL, canRetry, deleteExecution, retryTitle, startRerun, startRetry, stopAllExecutions, stopAllSummary, type RetryBody } from '@/components/executions/meta';
 import { RUN_STATE, RunStateIcon, formatStamp, runStateOf, useNow } from '@/components/run/run-status';
 import { LiveRuns, NeedsYouList } from '@/components/run-trace/run-lists';
-import { PageHeader } from '@/components/shell/page-header';
+import { PageBody, PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Select, Switch } from '@/components/ui/inputs';
@@ -186,8 +186,10 @@ function Row({ execution, now, index, isNew, onChanged }: { execution: Execution
       role="row"
       className={cn(
         'group relative grid items-center gap-3 border-b border-hair px-4 py-2.5 text-[13px] transition-colors duration-150 last:border-b-0',
+        // A phone: each run its own rounded card, like Workflows and Search runs.
+        'max-md:overflow-hidden max-md:rounded-2xl max-md:border max-md:last:border-b',
         COLS,
-        failed ? 'bg-rddim hover:bg-[color-mix(in_oklab,var(--rd)_12%,var(--sf))]' : 'hover:bg-sf2',
+        failed ? 'bg-rddim hover:bg-[color-mix(in_oklab,var(--rd)_12%,var(--sf))]' : 'hover:bg-sf2 max-md:bg-sf',
         !isNew && 'animate-fade-up',
       )}
       style={isNew ? NEW_ROW : { animationDelay: `${Math.min(index, 20) * 20}ms` }}
@@ -420,7 +422,7 @@ function ExecutionsInner() {
           </>
         }
       />
-      <div className="flex flex-col gap-4 px-6 py-5">
+      <PageBody className="flex flex-col gap-4">
         <NeedsYouList />
         <LiveRuns executions={list} />
         <div className="flex flex-wrap items-center gap-3">
@@ -465,7 +467,7 @@ function ExecutionsInner() {
           )}
         </div>
 
-        <div role="table" aria-label="Executions" className="overflow-hidden rounded-2xl border border-hair bg-sf">
+        <div role="table" aria-label="Executions" className="overflow-hidden rounded-2xl border border-hair bg-sf max-md:flex max-md:flex-col max-md:gap-2 max-md:overflow-visible max-md:rounded-none max-md:border-0 max-md:bg-transparent">
           <div role="row" className={cn('grid items-center gap-3 border-b border-hair px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3 max-md:sr-only', COLS)}>
             <span role="columnheader">Workflow</span>
             <span role="columnheader">Status</span>
@@ -496,7 +498,7 @@ function ExecutionsInner() {
           )}
         </div>
         {list.length >= LIMIT && <p className="text-center text-[12px] text-t3">Showing the latest {LIMIT} runs</p>}
-      </div>
+      </PageBody>
     </div>
   );
 }
