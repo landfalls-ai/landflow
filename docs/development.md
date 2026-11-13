@@ -306,7 +306,10 @@ LANDFLOW_OWNER_EMAIL=<from deploy/.env.example> LANDFLOW_OWNER_PASSWORD=<from de
   fresh one call `resetSingleton(key)` (the old `forgetSingleton` is the same function); keys used by more than one
   file are in `singletonKeys`, and nothing else touches `globalThis.__landflow` (`test/singletons.test.ts` checks).
   Tests that assert on insights, usage or retention after `store.saveExecution` call `ensureExecutionReactions()`
-  first, because the store only emits the event.
+  first, because the store only emits the event. The same goes for those reactions under `pnpm dev`: the listeners
+  `execution-reactions.ts` registered at boot keep the insights, usage ledger and settings code of the graph that
+  booted, so an edit to `insights.ts`, `usage/ledger.ts` or `retentionTick` takes effect on the save path only after
+  a restart.
 - **Through the API**, a script that signs in with the development owner (`POST /api/auth/login`, then the session
   cookie) can add the marketplace and install plugins. A node plugin's install answers `409` with what it will run until
   it is sent again with `{ "confirm": true }`. The script can then post alerts to a workflow's webhook and read

@@ -164,6 +164,7 @@ describe('execution reactions', () => {
       vi.resetModules();
       const { resetSingleton } = await import('@/lib/server/singleton');
       resetSingleton('execution-reactions');
+      resetSingleton('store-execution-finished');
       resetSingleton('lifecycle');
       resetSingleton('bootstrap');
       resetSingleton('runtime:worker');
@@ -175,6 +176,7 @@ describe('execution reactions', () => {
       singleton('execution-reactions', () => ((registered = false), true));
       expect(registered, `the ${role} boot registers the reactions`).toBe(true);
       resetSingleton('execution-reactions');
+      resetSingleton('store-execution-finished');
     }
   });
 });

@@ -75,7 +75,10 @@ list order: the configuration check, the database, the cluster runtime, the regi
 scheduler and pollers (on the leader), the gateway sync and the shutdown steps. Route modules do not import it: `handler()` and
 `scimRoute()` await `whenReady()` (`lifecycle.ts`), which boots through the bootstrapper `instrumentation.ts` (or the test setup)
 registered. `bus.ts` is the in-process event bus that
-carries live run events to SSE streams; in queue mode the same events travel over Valkey pub/sub.
+carries live run events to SSE streams; in queue mode the same events travel over Valkey pub/sub. The bus numbers each
+event and keeps the last 500 in a ring, which `/api/events` (`events-stream.ts`) replays after a reconnect's
+`Last-Event-ID`; every stream goes through `sse.ts` (`sseResponse`), which bounds a client's unread bytes and writes the
+heartbeats.
 
 ## A run, end to end
 
