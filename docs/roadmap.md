@@ -1285,7 +1285,7 @@ workbench in place of a page of cards, keeping Spotlight.
   `eval` and `new Function`. An isolate backend remains for a later package.
 - **P15, database conventions** (C18; wave 3): prepared statements are cached in an LRU capped by `LANDFLOW_DB_STATEMENT_CACHE` (default 500); a test fails a new migration whose version is not above every earlier one; `withOwnership` reads shares and memberships once per list instead of per item.
 - **Wave 2 carryover** (applied in wave 3): `pnpm worker` exits 1 when Valkey is unreachable and handles signals
-  during its boot, the registry is required on a worker, pages wait through `whenReady()`, emails are masked in the
+  during its boot, the registry is required on a worker, emails are masked in the
   effective configuration, health state lives in `singleton()`, the registry normalises `grpc://` hosts and keeps
   `guardJoin` per announce, links without `LANDFLOW_PUBLIC_URL` answer 503 before any lookup, the form-wait bypass needs
   workflow access, zod is jitless before the Run Trace cards' schemas, the proxy drops client CSP request headers, an
