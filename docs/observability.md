@@ -257,6 +257,10 @@ histograms in **milliseconds** with buckets `1, 5, 10, 25, 50, 100, 250, 500, 10
 | `landflow.auth.sign_in_failures` | counter | none: wrong password or unknown user |
 | `landflow.auth.limited` | counter | `landflow.limiter` (`email`, `ip`, `form`): attempts a sign-in or form rate limiter refused |
 | `landflow.sse.connections` | up-down counter | `http.route` (the route template, such as `/api/workflows/:id/run`; never a request path, so no ids; `other` for a stream that names no route): open Server-Sent Events streams |
+| `landflow.audit.write_failures` | counter | `action` (the event's, `api.request` for the generic request layer): audit events that could not be stored ([fail-closed mode](features/audit-and-governance.md#reliability-and-fail-closed-mode)) |
+| `landflow.audit.outbox.delivery_failures` | counter | `destination`: failed deliveries to a SIEM destination |
+| `landflow.audit.outbox.depth` | gauge | audit events queued for SIEM destinations and not yet delivered (the shared outbox; every host reports it, also with `LANDFLOW_AUDIT_OUTBOX=off`) |
+| `landflow.audit.outbox.oldest_age` | gauge (s) | age of the oldest undelivered outbox row |
 
 **Breaking change for dashboards:** `landflow.workflow.id` is no longer a label on `landflow.schedule.lag` (a
 histogram), `landflow.trigger.fires`, `landflow.webhook.requests` and `landflow.runtime.events`: one series per
