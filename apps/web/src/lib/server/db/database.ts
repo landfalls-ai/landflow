@@ -29,6 +29,25 @@ export interface DirectClient {
   query<R = Record<string, unknown>>(text: string, values?: unknown[]): Promise<{ rows: R[]; rowCount: number | null }>;
 }
 
+/** How the write queue to Postgres is doing (SQLite: always ok, all zeros). */
+export interface WriteHealth {
+  state: 'ok' | 'retrying' | 'blocked';
+  queuedBatches: number;
+  queuedOps: number;
+  oldestAgeMs: number;
+  lastError?: string;
+  blockedSeq?: number;
+}
+
+/** Thrown by a write while Postgres rejects a batch: the in-memory copy must not run ahead of it. */
+export class StoreUnavailableError extends Error {
+  readonly status = 503;
+  constructor(seq?: number) {
+    super(`The database is refusing writes; see the host log (postgres store blocked at batch ${seq})`);
+    this.name = 'StoreUnavailableError';
+  }
+}
+
 /** Receives the writes of each committed transaction (Postgres mode). */
 export interface WriteSink {
   enqueue(ops: WriteOp[]): void;
@@ -36,6 +55,7 @@ export interface WriteSink {
   close(): Promise<void>;
   /** Run `fn` on a Postgres connection of its own (Postgres mode). */
   direct?<T>(fn: (client: DirectClient) => Promise<T>): Promise<T>;
+  health?(): WriteHealth;
 }
 
 const COLUMN = /^[a-z_][a-z0-9_]*$/;
@@ -121,7 +141,15 @@ export class Database {
     return this.write({ op: 'deleteBefore', table, column, value });
   }
 
+  /** The state of the write queue (Postgres mode); SQLite is always ok. */
+  writeHealth(): WriteHealth {
+    return this.sink?.health?.() ?? { state: 'ok', queuedBatches: 0, queuedOps: 0, oldestAgeMs: 0 };
+  }
+
   private write(op: WriteOp): number {
+    // Before the in-memory copy changes (a transaction fails at its first write and rolls back).
+    const health = this.sink?.health?.();
+    if (health?.state === 'blocked') throw new StoreUnavailableError(health.blockedSeq);
     let changes: number;
     if (op.op === 'delete') {
       const columns = Object.keys(op.where);

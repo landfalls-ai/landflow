@@ -1232,6 +1232,10 @@ workbench in place of a page of cards, keeping Spotlight.
   the Source, filing a good answer back as a fact, and a detector that turns shared work into a suggestion addressed to
   both teams.
 
+## Backend hardening (2026-11)
+
+- **P03** (C16 step 1, O4): Postgres mode never drops a write batch. A batch Postgres rejects five times blocks the store (writes refused with a 503, retried, `LANDFLOW_PG_SKIP_BATCH` to set it aside), the spool is one fsynced descriptor, and `writeHealth()` plus five metrics report the queue ([postgres-write-queue.md](features/postgres-write-queue.md)).
+
 ## Planned next
 
 1. **Declare event kinds in the UI**: kinds are declared over the API or by Record Event's *Declare Kind If New* only.
