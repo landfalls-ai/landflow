@@ -67,7 +67,7 @@ export default function Overview() {
   const load = () => {
     void api<{ stats: Stats }>('/api/workflows').then((r) => setStats(r.stats));
     void api<{ plugins: PluginSummary[] }>('/api/plugins').then((r) => setPlugins(r.plugins));
-    void api<{ executions: ExecutionSummary[] }>('/api/executions?limit=8').then((r) => setExecutions(r.executions));
+    void api<{ executions: ExecutionSummary[] }>('/api/executions?limit=8').then((r) => setExecutions(r.executions.slice(0, 8))); // live runs come first and may add to the 8
     void api<{ nodeTypes: unknown[] }>('/api/node-types').then((r) => setNodeTypes(r.nodeTypes.length));
   };
   useEffect(load, []);

@@ -39,12 +39,24 @@ describe('secret key names', () => {
   it.each(['sessionId', 'session', 'signatureAlgorithm', 'tokenUrl', 'tokenType', 'credentialsId', 'credentialCount', 'hostname', 'publicKey', 'dsnHost', 'landflow.api_key.id', 'apiKeyId', 'enduser.id', 'landflow.request_id'])('keeps %s', (key) =>
     expect(SECRET_KEY.test(key)).toBe(false),
   );
+  it('keeps a count under a secret-looking key in audit details, drops a string there', async () => {
+    const { cleanDetails } = await import('@/lib/server/audit');
+    expect(cleanDetails({ credentials: 3, users: 2, allUsers: false })).toEqual({ credentials: 3, users: 2, allUsers: false });
+    expect(cleanDetails({ credentials: 'x', password: 'hunter2', note: 'ok' })).toEqual({ note: 'ok' });
+  });
   it('redacts values by key in nested records and keeps plain session ids', () => {
     expect(redact({ privateKey: 'abc', nested: { dsn: 'https://k@o.ingest.sentry.io/1' }, sessionId: 'sess_1' })).toEqual({ privateKey: '[redacted]', nested: { dsn: '[redacted]' }, sessionId: 'sess_1' });
   });
 });
 
 describe('secret-shaped values', () => {
+  it('scrubs provider keys an upstream error quotes (sk-, GitHub, Slack) and keeps look-alikes', () => {
+    const fake = (prefix: string) => `${prefix}${'Ab1'.repeat(10)}`; // built at run time: no key-shaped literal in the repo
+    for (const prefix of ['sk-', 'sk-proj-', 'sk-ant-api03-', 'ghp_', 'github_pat_11', 'xoxb-12-']) {
+      expect(redactPatterns(`upstream said: invalid key ${fake(prefix)} (401)`)).toBe('upstream said: invalid key [redacted] (401)');
+    }
+    for (const text of ['task-123', 'the risk-assessment doc', 'sk-short', 'xoxo hugs']) expect(redactPatterns(text)).toBe(text);
+  });
   it('scrubs Bearer tokens, lf_ keys, URL userinfo and PEM blocks', () => {
     expect(redactPatterns('401 from upstream: Authorization: Bearer abc.def-ghi_123456')).toBe('401 from upstream: Authorization: Bearer [redacted]');
     expect(redactPatterns('key lf_0123456789abcdefABCD used')).toBe('key [redacted] used');

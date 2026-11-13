@@ -96,7 +96,8 @@ With `LANDFLOW_LOG_SPANS=true` (the default) every finished span is also written
   debug a conversation)
   when the value is a string (numbers and booleans such as `gen_ai.usage.input_tokens` are kept), in
   log fields and span attributes alike. The host also scrubs secret-shaped *values* from every string it logs, error
-  messages and stacks included, wherever they appear: `Bearer <token>`, Landflow API keys (`lf_…`), URL userinfo
+  messages and stacks included, wherever they appear: `Bearer <token>`, Landflow API keys (`lf_…`), provider keys
+  (`sk-…` including `sk-ant-…`, GitHub `ghp_`/`github_pat_`, Slack `xox…-`), URL userinfo
   (`scheme://user:password@host` becomes `scheme://[redacted]@host`) and PEM private key blocks. Credential values
   a node was handed (password-typed fields, secret fields, fields whose name says secret) are remembered for the process
   and replaced like `$secrets` values in logs, results and stored runs (the most recent 5000, least recently used out). Credential values shorter than 12 characters are not remembered (a weak password such as `postgres` would rewrite unrelated

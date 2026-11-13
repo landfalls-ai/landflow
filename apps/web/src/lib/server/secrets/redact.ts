@@ -148,6 +148,10 @@ const PATTERNS: { marker: string[]; pattern: RegExp; replace: string }[] = [
   { marker: ['Bearer'], pattern: /\b(Bearer\s+)(?=[A-Za-z0-9._~+/=-]*[0-9._~+/=-]|[A-Za-z]{24,})[A-Za-z0-9._~+/=-]{8,}/g, replace: `$1${REDACTED}` },
   // Landflow API keys (lf_…) and MCP / debug tokens (lf_mcp_…, lf_dbg_…).
   { marker: ['lf_'], pattern: /\blf_[A-Za-z0-9_-]{12,}/g, replace: REDACTED },
+  // Provider keys an upstream error may quote: OpenAI-style and Anthropic (sk-…, sk-proj-…, sk-ant-…), GitHub, Slack.
+  { marker: ['sk-'], pattern: /\bsk-[A-Za-z0-9_-]{20,}/g, replace: REDACTED },
+  { marker: ['ghp_', 'github_pat_', 'gho_', 'ghs_'], pattern: /\b(?:ghp|gho|ghs)_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}/g, replace: REDACTED },
+  { marker: ['xox'], pattern: /\bxox[abposr]-[A-Za-z0-9-]{10,}/g, replace: REDACTED },
   // `scheme://user:password@host`: the userinfo goes, the host stays.
   { marker: ['@'], pattern: /(\/\/)[^\s/@:?#'"]*:[^\s/?#'"]+@/g, replace: `$1${REDACTED}@` },
   { marker: ['-----BEGIN'], pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, replace: REDACTED },

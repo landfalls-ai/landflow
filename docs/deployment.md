@@ -129,7 +129,11 @@ and the pod restarts); in development the problems are logged as warnings. `next
 does not boot the host and only warns, since the image build has none of the deployment's variables. Either way the host logs one `effective configuration`
 line at info with every `LANDFLOW_*`, `OTEL_*` and `DATABASE_URL` variable that is set (secrets shown as `[set]` by the check or `[redacted]` by the logger, URL passwords redacted, and email variables such as `LANDFLOW_OWNER_EMAIL` masked to `o***@example.com`).
 
-Two runtime defaults also change with the profile. Outbound requests to loopback, private, link-local and metadata
+Three runtime defaults also change with the profile. Requests are rate-limited: 600 a minute per signed-in user or
+API key (`LANDFLOW_RATE_LIMIT_API`, shared by all of that user's tabs and automation) and 120 a minute per client
+address on the public trigger paths (`LANDFLOW_RATE_LIMIT_PUBLIC`); over it the answer is 429 with `Retry-After`. Set
+`LANDFLOW_TRUSTED_PROXIES` behind a proxy, or every client shares one address. JSON bodies are capped at 16 MiB in every
+profile (`LANDFLOW_MAX_BODY_BYTES`). Outbound requests to loopback, private, link-local and metadata
 addresses are refused (`LANDFLOW_OUTBOUND_BLOCK_PRIVATE`; list exceptions in `LANDFLOW_OUTBOUND_ALLOW`, see
 [audit and governance](features/audit-and-governance.md#outbound-requests)), and Code nodes run only in the code runner,
 not inside the host (`LANDFLOW_CODE_IN_PROCESS`, see [the code runner](reference/configuration.md)).

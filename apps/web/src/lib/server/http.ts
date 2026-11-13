@@ -89,7 +89,8 @@ function answer(caught: unknown, request: unknown, options: HandlerOptions): Res
     http = new HttpError('Invalid request', 400, { code: 'invalid_request', details: { issues: caught.issues.slice(0, 10) } });
   } else {
     const requestId = auditRequestContext()?.requestId;
-    logger.error('route error', { error: known ?? caught, 'url.path': routePath(request), ...(requestId && { requestId }) });
+    // The logger stamps request_id from the request context already.
+    logger.error('route error', { error: known ?? caught, 'url.path': routePath(request) });
     http = new HttpError('Internal error', known?.status ?? 500, { code: known?.code ?? 'internal_error', expose: true, ...(requestId && { details: { requestId } }) });
   }
   return options.formatError ? options.formatError(http, asked) : error(http.message, http.status, { code: http.code, ...http.details });

@@ -21,7 +21,7 @@ export type SseSend = (data: unknown, options?: SseSendOptions) => boolean;
 export type SseStart = (send: SseSend, close: () => void) => void | (() => void) | Promise<void | (() => void)>;
 
 export interface SseOptions {
-  /** Unread bytes a client may hold before the stream is closed. Default 1 MiB. */
+  /** Unread bytes a client may hold before the stream is closed. Default 16 MiB (see DEFAULT_MAX_BUFFERED_BYTES). */
   maxBufferedBytes?: number;
   /** Heartbeat comment interval, 0 for none. Default 15 s. */
   heartbeatMs?: number;
@@ -33,7 +33,12 @@ export interface SseOptions {
   headers?: Record<string, string>;
 }
 
-export const DEFAULT_MAX_BUFFERED_BYTES = 1024 * 1024;
+/**
+ * 16 MiB, the request body cap. A run's events carry node outputs, and a healthy reader that is rescheduled late can
+ * hold a few megabytes for a moment; at 1 MiB such a reader was cut mid-run. The run and assistant streams are fetch
+ * readers that cannot resume, so the limit is there for a client that stopped reading, not for a slow one.
+ */
+export const DEFAULT_MAX_BUFFERED_BYTES = 16 * 1024 * 1024;
 /** Queued bytes that still count as "nothing queued": the retry hint, greeting and a few heartbeats. */
 const CONTROL_SLACK_BYTES = 256;
 
