@@ -13,6 +13,7 @@ import { api } from '@/lib/client/api';
 import { detectorLabel, ENTITY_LABELS, parseEntityRef, type DismissReason, type Proposal, type ProposalAction } from '@/lib/shared/brain';
 import { Badge, Chip, type Tone } from '../ui/badge';
 import { Button } from '../ui/button';
+import { confirmAction } from '../ui/confirm';
 import { MenuItem, Popover } from '../ui/popover';
 import { OpsDiff, Warnings } from '../editor/suggestions-card';
 
@@ -78,8 +79,8 @@ export function useProposalActions({ onDone, onForbidden, localApply }: { onDone
   return {
     busy,
     dismiss: (p, reason) => void run(p, async () => void (await patch(p, { action: 'dismiss', reason }))),
-    act: (p, action) => {
-      if (action.confirm && !window.confirm(action.confirm)) return;
+    act: async (p, action) => {
+      if (action.confirm && !(await confirmAction(action.confirm, { action: action.label }))) return;
       void run(p, async () => {
         const result = await api<{ warnings: string[]; started?: Array<{ id: string; name: string }> }>(`/api/proposals/${encodeURIComponent(p.id)}/act`, { method: 'POST', json: { action: action.id } });
         for (const warning of result.warnings) toast.warning(warning);

@@ -111,12 +111,18 @@ On a phone, what floats on a desktop rises from the bottom or takes the screen:
   tap on the backdrop.
 - **Dialogs** (the shell in `components/agents/dialog.tsx` that Share, Move, Import, Save as template, folders and the
   agent dialogs use; credentials; data tables) are bottom sheets, full width, up to 92% of the screen, with a 44 px Close.
-- **Full screen:** the node picker (**What happens next?**), version history (the list above the preview) and the node
-  editor.
+- **Full screen:** the node picker (**What happens next?**), version history (the list above the preview), the node
+  editor and a marketplace plugin's drawer. **Add marketplace** is a bottom sheet.
+- **"Are you sure?"** Before a step that can't be taken back (deleting a transport connection or a secrets provider,
+  replacing the MCP access token, letting node parameters read `$secrets`, a suggestion's action that asks first),
+  `confirmAction` (`components/ui/confirm.tsx`) asks in a sheet with the question, **Cancel** and the action, both 44 px;
+  on a desktop it is the browser's own confirm, as before.
 - **Focus.** Each of these is a dialog to a screen reader (`role="dialog"`, `aria-modal`), and `useDialogFocus`
   (`components/ui/use-dialog-focus.ts`) moves the focus in, keeps Tab inside, and gives it back to what opened it; only
   the topmost dialog takes the keys, so a credential opened from an agent's dialog closes first. The More drawer is one
-  too, and Escape closes it. On a desktop menus and dialogs keep their place and their focus behaviour.
+  too, and Escape closes it. The Run Trace's sheets (a step, an artifact, a check, a person) and its **Debug access**
+  dialog keep Tab inside them on every screen. On a desktop the other menus and dialogs keep their place and their focus
+  behaviour.
 
 ## Accessibility
 

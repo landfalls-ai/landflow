@@ -13,6 +13,7 @@ import type { SecretProviderCheck, SecretProviderField, SecretProviderKind, Secr
 import { Card } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { confirmAction } from '@/components/ui/confirm';
 import { CopyButton } from '@/components/ui/copy-button';
 import { FieldLabel, Input, SectionLabel, Select, Switch, Textarea } from '@/components/ui/inputs';
 
@@ -211,12 +212,13 @@ function ProviderRow({ provider, kinds, onEdit, onChanged, onDeleted }: { provid
       else toast.error(view.lastCheck?.message ?? 'Refresh failed');
     });
   const toggle = (enabled: boolean) => act('toggle', async () => onChanged(await api<SecretProviderView>(`/api/external-secrets/${encodeURIComponent(provider.name)}`, { method: 'PATCH', json: { enabled } })));
-  const remove = () =>
-    act('delete', async () => {
-      if (!window.confirm(`Delete ${provider.name}? Credentials that use $secrets.${provider.name} stop working until a provider of that name is back.`)) return;
+  const remove = async () => {
+    if (!(await confirmAction(`Delete ${provider.name}? Credentials that use $secrets.${provider.name} stop working until a provider of that name is back.`, { action: 'Delete', danger: true }))) return;
+    await act('delete', async () => {
       await api(`/api/external-secrets/${encodeURIComponent(provider.name)}`, { method: 'DELETE' });
       onDeleted();
     });
+  };
 
   return (
     <li className="py-2.5">
@@ -271,7 +273,7 @@ function ProviderRow({ provider, kinds, onEdit, onChanged, onDeleted }: { provid
 function WhereCard({ allowed, onChange }: { allowed: boolean; onChange: (allowed: boolean) => void }) {
   const [busy, setBusy] = useState(false);
   const toggle = async (next: boolean) => {
-    if (next && !window.confirm('Allow $secrets in node parameters? Anyone who can edit a workflow can then use every secret of these providers (and could send it anywhere). Values stay out of executions and logs.')) return;
+    if (next && !(await confirmAction('Allow $secrets in node parameters? Anyone who can edit a workflow can then use every secret of these providers (and could send it anywhere). Values stay out of executions and logs.', { action: 'Allow' }))) return;
     setBusy(true);
     try {
       const saved = await api<{ allowInParameters: boolean }>('/api/external-secrets', { method: 'PATCH', json: { allowInParameters: next } });

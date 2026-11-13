@@ -4,9 +4,11 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, Store, X } from 'lucide-react';
 import { api } from '@/lib/client/api';
+import { usePhone } from '@/lib/client/use-phone';
 import type { MarketplaceSummary } from '@/lib/shared/marketplace';
 import { Button } from '../ui/button';
 import { FieldLabel, Input } from '../ui/inputs';
+import { useDialogFocus } from '../ui/use-dialog-focus';
 import type { Preset } from './use-marketplace';
 
 export function AddMarketplaceDialog({ presets, onClose, onAdded }: { presets: Preset[]; onClose: () => void; onAdded: (marketplace: MarketplaceSummary) => void }) {
@@ -14,6 +16,10 @@ export function AddMarketplaceDialog({ presets, onClose, onAdded }: { presets: P
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const field = useRef<HTMLInputElement>(null);
+  // A bottom sheet on a phone, with the focus kept in it (docs/mobile.md#sheets-and-dialogs). Before the field takes the
+  // focus, so the hook remembers the button that opened the dialog.
+  const panel = useRef<HTMLDivElement>(null);
+  useDialogFocus(panel, usePhone());
   useEffect(() => field.current?.focus(), []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -36,8 +42,15 @@ export function AddMarketplaceDialog({ presets, onClose, onAdded }: { presets: P
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-6 animate-in" onMouseDown={onClose}>
-      <div role="dialog" aria-modal="true" aria-labelledby="add-marketplace-title" onMouseDown={(e) => e.stopPropagation()} className="flex w-[520px] max-w-full flex-col overflow-hidden rounded-2xl border border-hair bg-sf shadow-pop animate-panel">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-6 animate-in max-md:items-end max-md:p-0" onMouseDown={onClose}>
+      <div
+        ref={panel}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="add-marketplace-title"
+        onMouseDown={(e) => e.stopPropagation()}
+        className="flex w-[520px] max-w-full flex-col overflow-hidden rounded-2xl border border-hair bg-sf shadow-pop animate-panel max-md:max-h-[92dvh] max-md:w-full max-md:rounded-b-none max-md:pb-[env(safe-area-inset-bottom)]"
+      >
         <header className="flex items-center gap-3 border-b border-hair px-5 py-3.5">
           <span className="grid size-8 place-items-center rounded-[28%] border border-hair bg-acdim text-ac">
             <Store className="size-4" />
@@ -48,11 +61,11 @@ export function AddMarketplaceDialog({ presets, onClose, onAdded }: { presets: P
             </h2>
             <p className="text-[12px] text-t3">Claude Code plugin marketplaces: their agents and skills install into Landflow.</p>
           </div>
-          <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close">
+          <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close" className="max-md:size-11">
             <X className="size-4" />
           </Button>
         </header>
-        <div className="flex flex-col gap-4 px-5 py-4">
+        <div className="flex flex-col gap-4 px-5 py-4 max-md:min-h-0 max-md:overflow-y-auto">
           <div>
             <FieldLabel>Popular</FieldLabel>
             <div className="flex flex-wrap gap-2">
@@ -65,7 +78,7 @@ export function AddMarketplaceDialog({ presets, onClose, onAdded }: { presets: P
                     void add(preset.input);
                   }}
                   title={preset.added ? 'Already added' : preset.description}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-hair bg-wl px-3 py-1 text-[12px] text-t1 transition-colors hover:border-ac hover:text-ac disabled:cursor-default disabled:opacity-60 disabled:hover:border-hair disabled:hover:text-t1"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-hair bg-wl px-3 py-1 text-[12px] max-md:min-h-11 max-md:max-w-full max-md:flex-wrap text-t1 transition-colors hover:border-ac hover:text-ac disabled:cursor-default disabled:opacity-60 disabled:hover:border-hair disabled:hover:text-t1"
                 >
                   {preset.added && <Check className="size-3.5 text-gn" />}
                   {preset.label}
