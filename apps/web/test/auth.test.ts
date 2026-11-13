@@ -26,6 +26,7 @@ const { guardRequest } = await import('@/lib/server/auth/guard');
 const { isPublicPath, safeNext } = await import('@/lib/shared/auth-paths');
 const { can, canManageUser, hasScope } = await import('@/lib/shared/auth');
 const { proxy } = await import('@/proxy');
+const { queryEvents } = await import('@/lib/server/audit/store');
 
 const statusRoute = await import('@/app/api/auth/status/route');
 const setupRoute = await import('@/app/api/auth/setup/route');
@@ -332,8 +333,12 @@ describe('password resets', () => {
 
     const old = await signIn('mia@example.com', 'mia-password');
     expect((await call(resetRoute.GET, `/api/auth/password/reset?token=${token}`)).body).toMatchObject({ email: 'mia@example.com', name: 'Mia' });
-    const reset = await call(resetRoute.POST, '/api/auth/password/reset', { body: { token, password: 'mia-new-password' } });
+    // Opened in a browser that is still signed in: a reset, not also a password change.
+    const changes = queryEvents({ action: ['auth.password_change'] }).events.length;
+    const reset = await call(resetRoute.POST, '/api/auth/password/reset', { body: { token, password: 'mia-new-password' }, session: old });
     expect(reset.status).toBe(200);
+    expect(queryEvents({ action: ['auth.password_change'] }).events).toHaveLength(changes);
+    expect(queryEvents({ action: ['auth.password_reset'] }, { limit: 1 }).events[0]).toMatchObject({ target: { type: 'user', name: 'mia@example.com' } });
     expect(sessionCookie(reset.response)?.token).toBeTruthy();
     // Other sessions end; the old password stops working; the link works once.
     expect((await call(meRoute.GET, '/api/auth/me', { session: old })).status).toBe(401);
