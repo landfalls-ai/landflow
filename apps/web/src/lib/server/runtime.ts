@@ -249,7 +249,8 @@ async function bootSteps(role: Role): Promise<void> {
 
 /**
  * A required step failed: record it and let a later call retry. Under `next start` and the image (NODE_ENV=production)
- * the process also exits so the orchestrator restarts it; `next dev` keeps running and retries on the next request.
+ * the process also exits so the orchestrator restarts it. Elsewhere instrumentation.ts catches the rejection, so `next dev`
+ * keeps running and a later request (`handler()` → `whenReady()`) boots it again.
  */
 function failBoot(error: unknown): never {
   markBootFailed(error);

@@ -100,8 +100,9 @@ handlers (below) are ours. `next dev` keeps Next.js's own handling: manual handl
 
 A required boot step (the configuration check in the production profile, the database, the queue-mode cluster runtime)
 that fails logs `boot failed`; under `next start` and the image (`NODE_ENV=production`) the process then exits with
-code 1, so the orchestrator restarts the container. `pnpm dev` keeps running and answers 500 until a later request
-boots it again. Every other service that fails to start is logged as `service failed to start`, counted
+code 1, so the orchestrator restarts the container. Elsewhere `register()` in `instrumentation.ts` catches the failed
+boot (a rejected instrumentation hook would stop `next dev`), so `pnpm dev` keeps running: routes answer 500 and
+`/api/health/ready` 503 with `boot` not ok until a later request boots it again. Every other service that fails to start is logged as `service failed to start`, counted
 (`landflow.process.errors{kind="service_start"}`) and the host keeps serving.
 
 An unhandled rejection is logged and counted. An uncaught exception is logged and counted; where `NODE_ENV=production`
