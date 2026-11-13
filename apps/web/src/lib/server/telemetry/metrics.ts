@@ -8,9 +8,9 @@ import { telemetryConfig } from './config';
 
 export const HOST_SCOPE = 'landflow-host';
 const advice = { explicitBucketBoundaries: DURATION_BUCKETS_MS };
-/** Semantic-convention buckets for http.server.request.duration (seconds). */
-/** Database calls are mostly well under a millisecond: finer low buckets than the duration default. */
+/** Finer low buckets than the duration default: database calls and GC pauses are mostly well under a millisecond or a few. */
 const DB_BUCKETS_MS = [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 25, 50, 100, 250, 1000];
+/** Semantic-convention buckets for http.server.request.duration (seconds). */
 const HTTP_BUCKETS_S = [0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10];
 
 /**
@@ -82,7 +82,7 @@ export function outcomeOf(error: unknown): Outcome {
 // Small recorders used across the host
 // ---------------------------------------------------------------------------
 
-export function recordScheduleLag(_workflowId: string, lagMs: number) {
+export function recordScheduleLag(lagMs: number) {
   hostMetrics().scheduleLag.record(Math.max(0, lagMs));
 }
 

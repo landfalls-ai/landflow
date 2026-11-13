@@ -8,6 +8,9 @@ import type { Meter } from '@opentelemetry/api';
 import { singleton } from '../singleton';
 import { hostMetrics } from './metrics';
 
+/** Sampling interval of the event-loop histogram: it records the time between timer fires, so every sample includes this much. */
+const RESOLUTION_MS = 20;
+
 const GC_KINDS: Record<number, string> = {
   [constants.NODE_PERFORMANCE_GC_MAJOR]: 'major',
   [constants.NODE_PERFORMANCE_GC_MINOR]: 'minor',
@@ -17,7 +20,7 @@ const GC_KINDS: Record<number, string> = {
 
 /** Register the instruments on `meter`; returns what stops the sampling. `recordGc` receives each pause (ms) and its kind. */
 export function observeRuntime(meter: Meter, recordGc: (ms: number, kind: string) => void): () => void {
-  const loop: IntervalHistogram = monitorEventLoopDelay({ resolution: 20 });
+  const loop: IntervalHistogram = monitorEventLoopDelay({ resolution: RESOLUTION_MS });
   loop.enable();
   let window = { p50: 0, p99: 0, max: 0 };
   let readAt = 0;
@@ -28,7 +31,11 @@ export function observeRuntime(meter: Meter, recordGc: (ms: number, kind: string
     if (now - readAt < 1000) return;
     readAt = now;
     // The histogram is empty when nothing ran since the last reset; keep the last window then.
-    if (loop.count > 0) window = { p50: loop.percentile(50) / 1e6, p99: loop.percentile(99) / 1e6, max: loop.max / 1e6 };
+    if (loop.count > 0) {
+      // An idle loop reads one resolution per sample; the delay is what is over that.
+      const over = (ns: number) => Math.max(0, ns / 1e6 - RESOLUTION_MS);
+      window = { p50: over(loop.percentile(50)), p99: over(loop.percentile(99)), max: over(loop.max) };
+    }
     loop.reset();
     const current = performance.eventLoopUtilization();
     utilization = performance.eventLoopUtilization(current, previous).utilization;

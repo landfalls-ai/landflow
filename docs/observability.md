@@ -69,7 +69,9 @@ starts its own `registry.register` trace.
 end: the trace is kept, whole, when the request took at least `LANDFLOW_TRACE_SLOW_READ_MS`
 (default 1000) or ended in a 5xx, and dropped otherwise. The host holds a read's finished spans
 (at most 500, for at most five minutes) until its server span ends, so a slow read still shows its
-database and plugin spans. Before this, no read was ever traced, so a slow `GET` was invisible.
+database and plugin spans. Only the spans that descend from the read's server span are held; other spans of a
+trace the read joined through a `traceparent` (a plugin fetching a binary during a run) export as usual. A kept
+server span carries `landflow.trace.deferred_read`. Before this, no read was ever traced, so a slow `GET` was invisible.
 
 ## 3. Logs
 

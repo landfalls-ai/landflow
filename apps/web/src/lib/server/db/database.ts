@@ -10,8 +10,8 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { DatabaseSync, SQLInputValue, StatementSync } from 'node:sqlite';
-import { envInt } from '../config';
 import { context, SpanStatusCode, trace } from '@opentelemetry/api';
+import { envInt } from '../config';
 import { singleton } from '../singleton';
 import { telemetryConfig } from '../telemetry/config';
 import { recordDbQuery, type DbOperation } from '../telemetry/metrics';
@@ -67,10 +67,9 @@ const COLUMN = /^[a-z_][a-z0-9_]*$/;
 /**
  * Timing (docs/observability.md §5): every call is measured with performance.now (about 50 ns) into the
  * `landflow.db.query.duration` histogram, labelled by operation only. A `db.query` span is opened after the fact, and
- * only for calls at or over LANDFLOW_DB_SLOW_MS (default 50), named by the statement with its literals stripped.
+ * only for calls at or over LANDFLOW_DB_SLOW_MS (default 50), named by the statement with its literals stripped:
+ * the first 60 characters of the SQL with string and number literals stripped and whitespace collapsed.
  */
-
-/** The first 60 characters of the SQL with string and number literals stripped and whitespace collapsed. */
 export function statementName(sql: string): string {
   return sql
     .replace(/'(?:[^']|'')*'/g, '?')
@@ -275,6 +274,7 @@ export class Database {
         return result;
       },
       (error) => {
+        recordDbQuery('direct', performance.now() - started);
         span.recordException(error as Error);
         span.setStatus({ code: SpanStatusCode.ERROR, message: (error as Error).message });
         span.end();

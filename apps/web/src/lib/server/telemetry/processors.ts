@@ -104,17 +104,30 @@ export class LandflowSampler implements Sampler {
 const KIND = ['internal', 'server', 'client', 'producer', 'consumer'];
 const isSampled = (span: ReadableSpan) => (span.spanContext().traceFlags & 1) === 1;
 
-/** Spans of a read trace that has not ended yet are held at most this long (a request that never ends must not leak). */
+/** A read's spans are held, and the verdict on it remembered for late descendants, at most this long (a request that never ends must not leak). */
 const DEFERRED_TTL_MS = 5 * 60_000;
 const DEFERRED_MAX_SPANS = 500;
+/** Descendant ids tracked across all reads at once; past this, new descendants are released unheld. */
+const DEFERRED_MAX_TRACKED = 50_000;
+
+/** One deferred read: its server span and every span that descends from it. `verdict` is unset until the server span ends. */
+interface ReadGroup {
+  since: number;
+  spans: ReadableSpan[];
+  ids: Set<string>;
+  verdict?: 'keep' | 'drop';
+}
 
 /**
- * `downstream` are the processors that export (the OTLP batch processor): they hear only of spans that were kept. A read
- * trace's spans are held until its server span ends, then released together when the request was slow or failed, else
- * dropped (metrics and tidying run for every span either way).
+ * `downstream` are the processors that export (the OTLP batch processor): they hear only of spans that were kept. The spans
+ * that descend from a read's server span are held until it ends, then released together when the request was slow or
+ * failed, else dropped (metrics and tidying run for every span either way). Held by descent, not by trace id: a GET that
+ * arrives with a `traceparent` shares its trace with the run that caused it, and that run's other spans are not the read's.
+ * A descendant that ends after the verdict follows it.
  */
 export class LandflowSpanProcessor implements SpanProcessor {
-  private readonly held = new Map<string, { since: number; spans: ReadableSpan[] }>();
+  private readonly groups = new Set<ReadGroup>();
+  private readonly bySpan = new Map<string, ReadGroup>();
   private lastSweep = 0;
 
   constructor(
@@ -123,9 +136,19 @@ export class LandflowSpanProcessor implements SpanProcessor {
   ) {}
 
   onStart(span: Span, parent: Context): void {
+    const spanId = span.spanContext().spanId;
     if (span.attributes[DEFERRED_READ]) {
       this.sweep();
-      this.held.set(span.spanContext().traceId, { since: Date.now(), spans: [] });
+      const group: ReadGroup = { since: Date.now(), spans: [], ids: new Set([spanId]) };
+      this.groups.add(group);
+      this.bySpan.set(spanId, group);
+    } else {
+      const parentId = span.parentSpanContext?.spanId;
+      const group = parentId ? this.bySpan.get(parentId) : undefined;
+      if (group && this.bySpan.size < DEFERRED_MAX_TRACKED) {
+        group.ids.add(spanId);
+        this.bySpan.set(spanId, group);
+      }
     }
     for (const processor of this.downstream) processor.onStart(span, parent);
   }
@@ -134,22 +157,30 @@ export class LandflowSpanProcessor implements SpanProcessor {
     const now = Date.now();
     if (now - this.lastSweep < 60_000) return;
     this.lastSweep = now;
-    for (const [traceId, entry] of this.held) if (now - entry.since > DEFERRED_TTL_MS) this.held.delete(traceId);
+    for (const group of this.groups) {
+      if (now - group.since <= DEFERRED_TTL_MS) continue;
+      this.groups.delete(group);
+      for (const id of group.ids) this.bySpan.delete(id);
+    }
   }
 
-  /** Release a span to the exporters and the log, or hold it until its read trace is decided. */
+  /** Release a span to the exporters and the log, or hold it until its read is decided. */
   private route(span: ReadableSpan) {
-    const traceId = span.spanContext().traceId;
-    const entry = this.held.get(traceId);
-    if (!entry) return this.release(span);
+    const group = this.bySpan.get(span.spanContext().spanId);
+    if (!group) return this.release(span);
+    if (group.verdict === 'keep') return this.release(span);
+    if (group.verdict === 'drop') return;
     if (span.attributes[DEFERRED_READ]) {
-      this.held.delete(traceId);
       const status = Number(span.attributes['http.response.status_code'] ?? 0);
-      if (hrTimeToMilliseconds(span.duration) >= this.slowMs || status >= 500 || span.status.code === SpanStatusCode.ERROR) {
-        for (const held of entry.spans) this.release(held);
+      const keep = hrTimeToMilliseconds(span.duration) >= this.slowMs || status >= 500 || span.status.code === SpanStatusCode.ERROR;
+      group.verdict = keep ? 'keep' : 'drop';
+      const held = group.spans;
+      group.spans = [];
+      if (keep) {
+        for (const child of held) this.release(child);
         this.release(span);
       }
-    } else if (entry.spans.length < DEFERRED_MAX_SPANS) entry.spans.push(span);
+    } else if (group.spans.length < DEFERRED_MAX_SPANS) group.spans.push(span);
   }
 
   private release(span: ReadableSpan) {

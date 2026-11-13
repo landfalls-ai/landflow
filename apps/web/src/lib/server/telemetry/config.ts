@@ -9,6 +9,8 @@ const level = (value: string | undefined): LogLevel =>
 
 const milliseconds = (value: string | undefined, fallback: number) => (value?.trim() && Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : fallback);
 
+let dbSlow: { raw: string | undefined; value: number } | undefined;
+
 export const telemetryConfig = {
   serviceName: process.env.OTEL_SERVICE_NAME || 'landflow-host',
   serviceVersion: packageJson.version,
@@ -33,7 +35,10 @@ export const telemetryConfig = {
   },
   /** Database calls at least this slow (ms) get a `db.query` span. */
   get dbSlowMs() {
-    return milliseconds(process.env.LANDFLOW_DB_SLOW_MS, 50);
+    // Read on every database call: parse again only when the variable changes.
+    const raw = process.env.LANDFLOW_DB_SLOW_MS;
+    if (!dbSlow || dbSlow.raw !== raw) dbSlow = { raw, value: milliseconds(raw, 50) };
+    return dbSlow.value;
   },
   /** Read-only requests at least this slow (ms) keep their trace; faster ones are dropped. */
   get slowReadMs() {

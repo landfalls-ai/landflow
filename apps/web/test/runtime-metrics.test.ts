@@ -50,6 +50,23 @@ describe('runtime metrics', () => {
     expect(memory.every((point) => Number(point.value) > 0)).toBe(true);
   });
 
+  it('reports an idle loop near zero and a blocked loop as roughly the blocked time', async () => {
+    const quantile = async (name: string) => Number((await points('landflow.runtime.event_loop.delay')).find((point) => point.attributes['landflow.quantile'] === name)!.value);
+    // Let the window roll over, then sit idle: the sampling interval itself must not show as delay.
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await points('landflow.runtime.event_loop.delay');
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    expect(await quantile('p50')).toBeLessThan(8);
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const end = Date.now() + 300;
+    while (Date.now() < end);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const max = await quantile('max');
+    expect(max).toBeGreaterThan(200);
+    expect(max).toBeLessThan(500);
+  });
+
   it('records garbage collection pauses by kind', async () => {
     const gc = (globalThis as { gc?: () => void }).gc;
     // Allocate until the engine collects (a scavenge) instead of needing --expose-gc.
@@ -68,7 +85,7 @@ describe('runtime metrics', () => {
 
 describe('workflow label', () => {
   it('is off the instruments by default and on the counters only with the switch', async () => {
-    recordScheduleLag('wf_1', 12);
+    recordScheduleLag(12);
     recordWebhookRequest(200, 'wf_1');
     recordRuntimeEvent('queued', 'wf_1');
     const labelled = async (name: string) => (await points(name)).some((point) => 'landflow.workflow.id' in point.attributes);
@@ -81,7 +98,7 @@ describe('workflow label', () => {
     try {
       recordWebhookRequest(200, 'wf_2');
       recordRuntimeEvent('queued', 'wf_2');
-      recordScheduleLag('wf_2', 5);
+      recordScheduleLag(5);
       expect((await points('landflow.webhook.requests')).some((point) => point.attributes['landflow.workflow.id'] === 'wf_2')).toBe(true);
       expect((await points('landflow.runtime.events')).some((point) => point.attributes['landflow.workflow.id'] === 'wf_2')).toBe(true);
       // The histogram never carries it.
