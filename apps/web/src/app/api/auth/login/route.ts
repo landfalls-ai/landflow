@@ -43,8 +43,8 @@ export const POST = handler(async (request: Request) => {
     return error(DEACTIVATED_MESSAGE, 403);
   }
   // LANDFLOW_LOCAL_SIGN_IN: checked after the password so a refusal does not tell a stranger which emails exist.
-  const mode = localSignInMode();
   if (!localSignInAllowed(user)) {
+    const mode = localSignInMode();
     recordAudit({ action: 'auth.sign_in_failed', outcome: 'denied', actor: 'anonymous', target: { type: 'user', id: user.id, name: email }, summary: `Password sign-in for ${email} refused: local sign-in is ${mode}`, details: { email, reason: 'local-sign-in-disabled', method: 'password' } });
     return error('Password sign-in is turned off on this instance. Use single sign-on.', 403);
   }

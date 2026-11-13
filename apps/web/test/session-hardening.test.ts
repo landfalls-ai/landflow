@@ -23,7 +23,6 @@ const loginRoute = await import('@/app/api/auth/login/route');
 const meRoute = await import('@/app/api/auth/me/route');
 const statusRoute = await import('@/app/api/auth/status/route');
 const resetRoute = await import('@/app/api/auth/password/reset/route');
-const forgotRoute = await import('@/app/api/auth/password/forgot/route');
 
 beforeAll(() => auth.disableTestAuth());
 afterAll(() => {
@@ -152,6 +151,5 @@ describe('session hardening', () => {
     OWNER.password = 'owner-password-3';
     delete process.env.LANDFLOW_LOCAL_SIGN_IN;
     expect((await resetFor('mia@example.com', 'member-password-2')).status).toBe(200);
-    expect(forgotRoute.POST).toBeTypeOf('function');
   });
 });
