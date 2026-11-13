@@ -146,8 +146,9 @@ describe('valkey check in queue mode', () => {
 
 describe('/api/health', () => {
   beforeAll(async () => {
-    forgetSingleton('lifecycle');
+    forgetSingleton('lifecycle'); // the Valkey block's state; this also forgets the bootstrapper setup.ts registered
     await ensureBootstrapped();
+    lifecycle.markBooted(); // handler() waits on whenReady(), which reads the lifecycle state
     auth.disableTestAuth();
   });
   afterAll(() => auth.enableTestAuth());

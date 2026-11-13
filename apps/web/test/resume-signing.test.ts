@@ -6,7 +6,9 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 import type { Workflow } from '@landflow/engine';
 
 const dataDir = mkdtempSync(join(tmpdir(), 'landflow-resume-'));
-const ENV = { LANDFLOW_DATA_DIR: dataDir, LANDFLOW_REGISTRY_GRPC_PORT: 'off', LANDFLOW_SCAN_ON_START: 'false', LANDFLOW_PLUGINS: '', LANDFLOW_PUBLIC_URL: 'http://flow.test' };
+// The host boots lazily on the first route call, in the production profile here, so the environment passes the boot's
+// configuration check (runtime.ts): a public URL and a registry secret.
+const ENV = { LANDFLOW_DATA_DIR: dataDir, LANDFLOW_REGISTRY_GRPC_PORT: 'off', LANDFLOW_SCAN_ON_START: 'false', LANDFLOW_PLUGINS: '', LANDFLOW_PUBLIC_URL: 'http://flow.test', LANDFLOW_REGISTRY_SECRET: 'r'.repeat(24) };
 const previousEnv = { ...process.env };
 Object.assign(process.env, ENV);
 
