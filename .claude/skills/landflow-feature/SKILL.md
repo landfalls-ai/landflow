@@ -68,7 +68,8 @@ pnpm test        # runs the host suite again (apps/web has a test script); `pnpm
 A change to the boot, `instrumentation.ts`, the proxy or anything the worker imports also needs `next build`
 (`cd apps/web && rm -rf .next && npx next build`, then `git checkout apps/web/next-env.d.ts`) and the queue stack
 (`COMPOSE_BAKE=false docker --context orbstack compose -f deploy/compose.queue.yml up -d --build --wait`, then
-`python3 deploy/scripts/queue-e2e.py`). A test file that writes shared state sets its own `LANDFLOW_DATA_DIR`. If
+`python3 deploy/scripts/queue-e2e.py`). A test file that writes or deletes shared state (folders under the data
+directory included) sets its own `LANDFLOW_DATA_DIR` (as `marketplace.test.ts` does). If
 `apps/web/test/marketplace.test.ts` fails, rerun it alone and report both results.
 Compare every count with the last green run on `main`; a new failure stops the wave.
 
