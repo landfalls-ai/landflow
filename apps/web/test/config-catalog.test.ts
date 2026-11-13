@@ -70,6 +70,13 @@ describe('configuration catalog', () => {
     expect(r.errors.join()).toContain('LANDFLOW_PUBLIC_URL');
   });
 
+  it('shows catalogued variables it does not mark secret even when the name looks secret; unknown names stay hidden', () => {
+    const r = checkConfig({ LANDFLOW_SECRETS_CACHE_TTL: '60', LANDFLOW_SECRETS_TIMEOUT_MS: '5000', LANDFLOW_UNKNOWN_TOKEN: 'abc' });
+    expect(r.effective.LANDFLOW_SECRETS_CACHE_TTL).toBe('60');
+    expect(r.effective.LANDFLOW_SECRETS_TIMEOUT_MS).toBe('5000');
+    expect(r.effective.LANDFLOW_UNKNOWN_TOKEN).toBe('[set]');
+  });
+
   it('refuses development values for every secret the host reads, the claim store keys included', () => {
     for (const name of ['LANDFLOW_CLAIM_SECRET_ACCESS_KEY', 'LANDFLOW_S3_SECRET_ACCESS_KEY', 'LANDFLOW_REGISTRY_SECRET', 'LANDFLOW_CODE_RUNNER_SECRET']) {
       expect(SECRET_VARIABLES, name).toContain(name);
