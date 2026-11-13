@@ -6,8 +6,8 @@
  */
 import type { LanguageModel } from '@landflow/engine';
 import { anthropicModel, ollamaModel, openAiConnection, openAiModel } from '../nodes/models';
+import { ollamaUrl } from '../config';
 
-const OLLAMA_URL = process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434';
 export const DEFAULT_ASSISTANT_MODEL = process.env.LANDFLOW_BUILDER_MODEL ?? 'qwen3-coder:30b';
 
 export function assistantModel(override?: string | LanguageModel): LanguageModel {
@@ -20,7 +20,7 @@ export function assistantModel(override?: string | LanguageModel): LanguageModel
     // Server-side settings only: OPENAI_API_KEY and OPENAI_BASE_URL (any OpenAI-compatible API).
     return openAiModel(openAiConnection({ apiKey: process.env.OPENAI_API_KEY ?? '', baseUrl: process.env.OPENAI_BASE_URL ?? '' }), { model, temperature: 0.2 });
   }
-  return ollamaModel({ baseUrl: OLLAMA_URL, model: name, temperature: 0.2 });
+  return ollamaModel({ baseUrl: ollamaUrl(), model: name, temperature: 0.2 });
 }
 
 /** `provider/model`, for responses and span attributes. */

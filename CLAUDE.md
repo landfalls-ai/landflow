@@ -7,6 +7,9 @@ engine, protocol, SDK, transports and CLI are in `packages/`, the Go and Python 
 
 ## Read first
 
+- `docs/constitution.md`: the rules every research and implementation starts from (non-negotiables, architecture,
+  security, observability, UI, tests, docs, definition of done, the feature workflow). Loaded into every session:
+  @docs/constitution.md
 - `docs/README.md`: the docs index, with a feature map that names the page for each feature.
 - `docs/architecture.md`: the processes, a run end to end, every subsystem and a code map.
 - `docs/development.md`: setup, where each area's code starts, conventions, every test command and the
@@ -27,6 +30,15 @@ engine, protocol, SDK, transports and CLI are in `packages/`, the Go and Python 
 - Every change updates its docs: the feature page, `docs/reference/` for routes and variables, `docs/limitations.md`
   and `docs/roadmap.md` when it adds, closes or lifts something, and each commit gets a row in `docs/history.md`. New
   pages go in `docs/README.md`.
+
+## Agents and the feature skill
+
+- `.claude/agents/`: Claude Code subagents specialised for this repository: `landflow-researcher`, `landflow-planner`,
+  `landflow-implementer`, the reviewers (`landflow-security-reviewer`, `landflow-code-reviewer`), `landflow-integrator`,
+  and specialists for data, UI, AI, plugins, observability, tests, docs and local operations.
+- `.claude/skills/landflow-feature/`: the pipeline a new feature follows (research → plan → implement in worktrees →
+  review → integrate and gate → live check → secret scan → PR when asked). Use it for any feature or multi-step change.
+- `docs/development.md` ("Working with Claude Code") explains how they fit together.
 
 ## Checking a change
 

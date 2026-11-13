@@ -35,6 +35,12 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - **Local telemetry stack** ([deployment.md](deployment.md#telemetry-on-kubernetes)): `landflow-lgtm` keeps everything in an `emptyDir`, so a restart loses it. The dashboard's totals use `increase()`, which can't see the first increment of a new series: after a host restart the first run, approval or call of each kind isn't counted in the stat panels (traces and logs have every one).
 - **By design**: a Respond to Webhook reply built from a secret is not redacted: redaction covers what is kept, and the reply is sent, not kept ([External secrets](features/secrets-and-environments.md)).
 
+## Production profile (2026-11)
+
+- **The production check does not run yet**: `checkConfig()` reports development secrets and a missing public URL in the
+  production profile, but nothing calls it at boot until a later backend-hardening package. Auth cookie and guard code still
+  read `LANDFLOW_PUBLIC_URL` themselves.
+
 ## Browser plugin and retry backoff (built 2026-11-07)
 
 - **Browser** ([plugins/browser](../plugins/browser/README.md)) needs the `agent-browser` CLI and its Chrome on the machine that runs the plugin; it is not in `dev:all`, the compose files or the cluster images. It reads pages and runs listed steps, with no free-form scripting, uploads or downloads, and no signed-in browsing (the CLI refuses saved profiles with an allow-list). The allow-list stops the browser reaching other sites; it can't stop a page from carrying instructions to a model, so page text is fenced and cut but should still be treated as untrusted. A screenshot over 64 KiB needs a host that serves the binary store. It was checked against the real CLI on `example.com` for reading, and on a locally served form, not against a login flow, a slow page or a long run.
@@ -92,3 +98,16 @@ items still open (its "Wave 6" section); this page is the short list to check be
   compose) starts a second copy under the same plugin id and lists its template twice (built-in and installed); install
   from the marketplace only where the plugin isn't bundled.
 - **Checked against fakes only**: Slack, Google, Notion, Linear, Attio and Fathom activity were tested against local fakes of their APIs, not a real workspace.
+- **Postgres mode and a rejected write** ([features/postgres-write-queue.md](features/postgres-write-queue.md)): a batch Postgres keeps rejecting (not a connection failure) blocks the store: it refuses every write (a `StoreUnavailableError` with status 503; route responses are 500/400 with its message until `handler()` maps the status) until the batch applies on a retry or the host restarts with `LANDFLOW_PG_SKIP_BATCH`. Reads keep working. The spool is fsynced at most every 100 ms by default, so a power cut can lose the last 100 ms of writes not yet in Postgres.
+
+## Graceful shutdown (backend hardening, 2026-11)
+
+- **`next dev`** keeps Next.js's own signal handling: the host's phased shutdown (flush, lease release) runs only where `NEXT_MANUAL_SIG_HANDLE=true` (`pnpm start`, the Docker image). Without it only the error handlers are ours.
+- **Streams**: in manual mode in-flight requests are awaited, but SSE streams are not; they end when the process exits.
+
+## Access scope of AI usage and files (2026-11)
+
+- **Files with no execution** aren't project-scoped: an editor upload that no run has used yet, an agent's knowledge file
+  and the like have no execution or workflow to derive an owner from, so any signed-in caller who knows the id (random,
+  unguessable) can read them. Files of executions and of evaluation datasets are checked against the workflow's project.
+- **AI usage rows with no workflow or agent** (a model call outside both) are visible to owners and admins only.

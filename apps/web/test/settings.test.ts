@@ -122,7 +122,13 @@ describe('staleExecutionIds', () => {
 });
 
 describe('retention in the store', () => {
+  const previousEvery = process.env.LANDFLOW_RETENTION_EVERY;
+  afterAll(() => {
+    if (previousEvery === undefined) delete process.env.LANDFLOW_RETENTION_EVERY;
+    else process.env.LANDFLOW_RETENTION_EVERY = previousEvery;
+  });
   beforeEach(() => {
+    process.env.LANDFLOW_RETENTION_EVERY = '1';
     clearExecutions();
     updateSettings({ executions: { maxCount: 300, maxAgeDays: 0 } });
   });

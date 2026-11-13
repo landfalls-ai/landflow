@@ -15,8 +15,9 @@ import { logger } from '../telemetry';
 import { isDue } from './cron';
 import { newSession, runAgent } from './runtime';
 import { agentStore } from './store';
+import { envNumber } from '../config';
 
-const CHANNEL_POLL_MS = Math.max(2, Number(process.env.LANDFLOW_AGENT_CHANNEL_POLL_SECONDS ?? 5)) * 1_000;
+const CHANNEL_POLL_MS = envNumber('LANDFLOW_AGENT_CHANNEL_POLL_SECONDS', { fallback: 5, min: 2 }) * 1_000;
 const TELEGRAM_TRIGGER = 'messaging.telegramTrigger';
 const TELEGRAM = 'messaging.telegram';
 const TELEGRAM_CREDENTIAL = 'messaging.telegramApi';

@@ -18,9 +18,10 @@ import { cohereReranker, llmReranker } from '../rag/rerank';
 import { CODE_SEPARATORS, recursiveCharacterSplit, tokenSplit } from '../rag/splitters';
 import { connectedModel, FALLBACK_PORT, FALLBACK_PROPERTY } from './fallback';
 import { openAiConnection, openAiModels } from './models';
+import { ollamaUrl } from '../config';
 
 /** Default Ollama address (OLLAMA_URL, e.g. host.docker.internal in a container). */
-const DEFAULT_OLLAMA_URL = (process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434').replace(/\/+$/, '');
+const defaultOllamaUrl = () => ollamaUrl();
 const RAG_COLOR = '#0ea5e9';
 const subnode = { version: 1, kind: 'subnode' as const };
 
@@ -53,7 +54,7 @@ export const embeddingsOllamaNode = defineNode({
     inputs: [],
     outputs: embeddingOutput,
     properties: [
-      { name: 'baseUrl', displayName: 'Base URL', type: 'string', default: DEFAULT_OLLAMA_URL },
+      { name: 'baseUrl', displayName: 'Base URL', type: 'string', default: defaultOllamaUrl() },
       {
         name: 'model',
         displayName: 'Model',
@@ -88,7 +89,7 @@ export const embeddingsOllamaNode = defineNode({
   supplyData(ctx): Embeddings {
     const options = ctx.getNodeParameter<{ dimensions?: number; documentPrefix?: string; queryPrefix?: string; batchSize?: number }>('options') ?? {};
     return ollamaEmbeddings({
-      baseUrl: String(ctx.getNodeParameter('baseUrl') || DEFAULT_OLLAMA_URL),
+      baseUrl: String(ctx.getNodeParameter('baseUrl') || defaultOllamaUrl()),
       model: String(ctx.getNodeParameter('model') || 'nomic-embed-text'),
       ...(Number(options.dimensions) > 0 && { dimensions: Number(options.dimensions) }),
       ...(options.documentPrefix && { documentPrefix: options.documentPrefix }),
@@ -99,7 +100,7 @@ export const embeddingsOllamaNode = defineNode({
   methods: {
     loadOptions: {
       async models(ctx) {
-        const base = String(ctx.getCurrentParameters().baseUrl || DEFAULT_OLLAMA_URL).replace(/\/+$/, '');
+        const base = String(ctx.getCurrentParameters().baseUrl || defaultOllamaUrl()).replace(/\/+$/, '');
         const response = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(3_000) });
         const data = (await response.json()) as { models: Array<{ name: string; details?: { parameter_size?: string; family?: string }; capabilities?: string[] }> };
         // Embedding models report the `embedding` capability; older servers don't report capabilities at all.

@@ -6,8 +6,8 @@ import type { LanguageModel } from '@landflow/engine';
 import type { AgentModel, ModelOption, ModelProvider } from '../../shared/agents';
 import { credentials } from '../credentials/vault';
 import { anthropicModel, ollamaModel, openAiConnection, openAiModel, openAiModels } from '../nodes/models';
+import { ollamaUrl } from '../config';
 
-export const OLLAMA_URL = (process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434').replace(/\/+$/, '');
 
 const ANTHROPIC_MODELS: ModelOption[] = [
   { provider: 'anthropic', model: 'claude-opus-5-5', label: 'Claude Opus 5.5', description: 'Best for agentic work' },
@@ -33,7 +33,7 @@ export async function agentModel(config: AgentModel | undefined): Promise<Langua
       return openAiModel(openAiConnection(await credentials.dataWithSecrets(config.credential, 'core.openAiApi'), config.credential.id), { model: config.model, ...(temperature !== undefined && { temperature }) });
     }
     case 'ollama':
-      return ollamaModel({ baseUrl: config.baseUrl?.trim() || OLLAMA_URL, model: config.model, ...(temperature !== undefined && { temperature }) });
+      return ollamaModel({ baseUrl: config.baseUrl?.trim() || ollamaUrl(), model: config.model, ...(temperature !== undefined && { temperature }) });
     default:
       throw new Error(`Unknown model provider "${(config as { provider: string }).provider}"`);
   }
@@ -51,7 +51,7 @@ export async function modelOptions(provider: ModelProvider, options: { credentia
       .sort((a, b) => a.id.localeCompare(b.id))
       .map((m) => ({ provider, model: m.id, label: m.id, description: `${connection.label}${m.owned_by ? ` · ${m.owned_by}` : ''}` }));
   }
-  const base = (options.baseUrl?.trim() || OLLAMA_URL).replace(/\/+$/, '');
+  const base = (options.baseUrl?.trim() || ollamaUrl()).replace(/\/+$/, '');
   const response = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(3_000) });
   if (!response.ok) throw new Error(`Ollama at ${base} answered ${response.status}`);
   const data = (await response.json()) as { models: Array<{ name: string; details?: { parameter_size?: string }; capabilities?: string[] }> };

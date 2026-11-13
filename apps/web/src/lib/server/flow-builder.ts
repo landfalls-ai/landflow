@@ -12,6 +12,7 @@ import { collectionShape } from '@/lib/shared/assistant-ops';
 import { outputFields } from './assistant/research';
 import { assistantModel } from './assistant/model';
 import { anthropicModel } from './nodes/models';
+import { ollamaUrl } from './config';
 
 export interface DraftNode {
   key: string;
@@ -32,7 +33,6 @@ export interface FlowDraft {
   dropped: string[];
 }
 
-const OLLAMA_URL = (process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434').replace(/\/+$/, '');
 const DEFAULT_MODEL = process.env.LANDFLOW_BUILDER_MODEL ?? 'qwen3-coder:30b';
 
 /**
@@ -187,7 +187,7 @@ export function sampleItems(trigger: Pick<DraftNode, 'key' | 'type'> | undefined
 
 /** The draft as text from Ollama's chat API, held to SCHEMA by its `format`. */
 async function draftWithOllama(model: string, request: string, timeoutMs: number): Promise<string> {
-  const response = await fetch(`${OLLAMA_URL}/api/chat`, {
+  const response = await fetch(`${ollamaUrl()}/api/chat`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     signal: AbortSignal.timeout(timeoutMs),
@@ -204,9 +204,9 @@ async function draftWithOllama(model: string, request: string, timeoutMs: number
   }).catch((e: Error) => {
     // A timeout means Ollama answered too slowly, not that it is down: say so, and what to change.
     if (e.name === 'TimeoutError') {
-      throw new Error(`${model} on Ollama at ${OLLAMA_URL} did not finish the draft within ${timeoutMs / 1000} s. The model may be slow or still loading: raise LANDFLOW_BUILDER_TIMEOUT_SECONDS, or set a faster LANDFLOW_BUILDER_MODEL`);
+      throw new Error(`${model} on Ollama at ${ollamaUrl()} did not finish the draft within ${timeoutMs / 1000} s. The model may be slow or still loading: raise LANDFLOW_BUILDER_TIMEOUT_SECONDS, or set a faster LANDFLOW_BUILDER_MODEL`);
     }
-    throw new Error(`Could not reach Ollama at ${OLLAMA_URL}: ${e.message}`);
+    throw new Error(`Could not reach Ollama at ${ollamaUrl()}: ${e.message}`);
   });
   if (!response.ok) throw new Error(`Ollama returned ${response.status}: ${(await response.text()).slice(0, 200)}`);
   const body = (await response.json()) as { message?: { content?: string } };

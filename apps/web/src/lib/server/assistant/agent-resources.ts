@@ -5,7 +5,8 @@
  */
 import type { AgentModel, KnowledgeBaseToolConfig } from '@/lib/shared/agents';
 import { agentStore } from '../agents/store';
-import { modelOptions, OLLAMA_URL } from '../agents/models';
+import { modelOptions } from '../agents/models';
+import { ollamaUrl } from '../config';
 import { canResource, type Actor } from '../projects';
 import { DEFAULT_ASSISTANT_MODEL } from './model';
 
@@ -28,7 +29,7 @@ const EMBEDDINGS: Array<{ match: RegExp; queryPrefix?: string }> = [{ match: /^n
 
 async function ollamaTags(): Promise<string[]> {
   try {
-    const response = await fetch(`${OLLAMA_URL}/api/tags`, { signal: AbortSignal.timeout(3_000) });
+    const response = await fetch(`${ollamaUrl()}/api/tags`, { signal: AbortSignal.timeout(3_000) });
     if (!response.ok) return [];
     return ((await response.json()) as { models: Array<{ name: string }> }).models.map((m) => m.name);
   } catch {

@@ -20,6 +20,7 @@ import { singleton } from '../singleton';
 import { logger } from '../telemetry';
 import { recordPluginRestart, traceMarketplace } from '../telemetry/marketplace';
 import type { RepoFile, RepoReader } from './reader';
+import { marketplaceRegistryUrl } from '../config';
 
 const MAX_FILES = 500;
 const MAX_TOTAL_BYTES = 25 * 1024 * 1024;
@@ -205,7 +206,7 @@ export function installCommand(manifest: NodePluginManifest, needsNpm: boolean):
 }
 
 export function registryUrl(): string {
-  return process.env.LANDFLOW_MARKETPLACE_REGISTRY_URL ?? process.env.LANDFLOW_PUBLIC_URL ?? `http://127.0.0.1:${process.env.PORT ?? 3000}`;
+  return marketplaceRegistryUrl();
 }
 
 /** Only what a plugin needs: no API keys, encryption key or tokens from the host. `announce: false`: the host registers it itself. */

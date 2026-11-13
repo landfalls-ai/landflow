@@ -59,6 +59,7 @@ LABEL org.opencontainers.image.title="landflow-host" \
       org.opencontainers.image.description="Landflow host: UI, API, engine and plugin registry (Next.js standalone)"
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
+    NEXT_MANUAL_SIG_HANDLE=true \
     HOSTNAME=0.0.0.0 \
     PORT=3000 \
     LANDFLOW_DATA_DIR=/data

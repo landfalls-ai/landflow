@@ -20,6 +20,7 @@ import { credentials } from './credentials/vault';
 import { database } from './db';
 import { store } from './store';
 import { logger } from './telemetry';
+import { publicUrl } from './config';
 
 export type EmailApprovalTarget = { t: 'wf'; e: string; c: string } | { t: 'agent'; a: string; s: string; c: string };
 
@@ -36,7 +37,7 @@ export interface LinkPayload {
 
 export const DEFAULT_TTL_HOURS = 24;
 const ttlMs = () => Math.max(1, Number(process.env.LANDFLOW_APPROVAL_EMAIL_TTL_HOURS) || DEFAULT_TTL_HOURS) * 3_600_000;
-const publicUrl = () => (process.env.LANDFLOW_PUBLIC_URL ?? `http://localhost:${process.env.PORT ?? 3000}`).replace(/\/+$/, '');
+
 const key = () => credentials.deriveKey('approval.email');
 const b64url = (buffer: Buffer) => buffer.toString('base64url');
 

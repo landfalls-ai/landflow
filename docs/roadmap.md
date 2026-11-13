@@ -1232,6 +1232,21 @@ workbench in place of a page of cards, keeping Spotlight.
   the Source, filing a good answer back as a fact, and a detector that turns shared work into a suggestion addressed to
   both teams.
 
+## Backend hardening (2026-11)
+
+- **P01** (C1, C2, O1): `lib/server/lifecycle.ts` is the one place for the process lifecycle. A main now stops on SIGTERM
+  / SIGINT in phases (requests, services, runs, cluster, storage, telemetry): it flushes the Postgres queue, releases
+  the leader lease and flushes telemetry. A failed required boot step (database, cluster) exits the process instead of
+  serving 500s for ever; an optional one is logged and counted. The host logs and counts unhandled rejections and
+  uncaught exceptions.
+- **P02, typed configuration and the production profile** (C5, C6, C7, S15; wave 1): `lib/server/config/` (parsers that
+  never give NaN, `profile()`, `publicUrl()`, `ollamaUrl()`, `checkConfig()`); the public URL and Ollama address are
+  read in one place, six NaN-prone numbers fall back with a warning, and the in-repo stacks say `LANDFLOW_PROFILE=development`.
+  Booting through `checkConfig()` follows in a later package.
+- **P03** (C16 step 1, O4): Postgres mode never drops a write batch. A batch Postgres rejects five times blocks the store (writes refused with `StoreUnavailableError`, retried, `LANDFLOW_PG_SKIP_BATCH` to set it aside), the spool is one fsynced descriptor, and `writeHealth()` plus five metrics report the queue ([postgres-write-queue.md](features/postgres-write-queue.md)).
+- **P04, execution retention in SQL off the save path (C17).** `pruneExecutions` selects ids by column in chunks and a finished run triggers it only every `LANDFLOW_RETENTION_EVERY` runs.
+- **P05, SCIM audit, Stop all for admins, project scoping for AI usage and files** (S2, S4, S12 part): SCIM changes and rejected tokens are audit events; stop-all is admin-only; members' AI usage and file reads stop at their projects.
+
 ## Planned next
 
 1. **Declare event kinds in the UI**: kinds are declared over the API or by Record Event's *Declare Kind If New* only.

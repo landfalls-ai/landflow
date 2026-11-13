@@ -49,8 +49,9 @@ import {
 import type { Transport } from '@landflow/engine';
 import { REGISTRY_CHALLENGE_HEADER, REGISTRY_PROOF_HEADER } from '@landflow/sdk';
 import { tracePluginRpc, type RpcMethod } from '../telemetry';
+import { envInt } from '../config';
 
-export const EXECUTE_TIMEOUT_MS = Number(process.env.LANDFLOW_EXECUTE_TIMEOUT_MS ?? 120_000);
+export const EXECUTE_TIMEOUT_MS = envInt('LANDFLOW_EXECUTE_TIMEOUT_MS', { fallback: 120_000, min: 1_000 });
 
 export interface PluginClient {
   readonly endpoint: string;

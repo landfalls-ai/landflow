@@ -65,6 +65,44 @@ COMPOSE_BAKE=false docker compose -f deploy/compose.queue.yml up -d --build --wa
 python3 deploy/scripts/queue-e2e.py
 ```
 
+## Stopping the host
+
+On SIGTERM or SIGINT a main stops in phases, logging `shutdown: <phase>/<step>` for each and `shutdown complete` with
+the duration: new requests get `503` with `Retry-After: 5` (`/api/health` still answers) and requests in flight are
+awaited; then the leader services (scheduler, timers, alerts), the MCP gateway sync; then local runs get the time that is
+left to finish (what is still running continues from its last checkpoint at the next boot); then the broker connections,
+the cluster runtime (queue mode: the leader lease is released and the instance forgotten), the database (Postgres
+flushes its write queue) and telemetry. Requests, services and runs may use the budget only up to the last 5 s (a fifth
+of a budget under 25 s), which the cluster, database and telemetry steps keep for themselves, so a long run never stops
+the flush. Each step is bounded by the time left of `LANDFLOW_SHUTDOWN_SECONDS` (default
+25, inside Kubernetes' 30 s grace period); a step that fails or times out is logged and the next one runs. A second
+signal exits at once with code 1; a clean stop exits 0.
+
+This needs `NEXT_MANUAL_SIG_HANDLE` set to any non-empty value (`true`), which `pnpm start` (the `start` script) and the Docker image set. Without it
+Next.js's own handler closes its server and exits 143 first, and only the error handlers (below) are ours. `next dev`
+keeps Next.js's own handling: manual handling is not available there.
+
+A required boot step (the database, the queue-mode cluster runtime) that fails logs `boot failed` and exits with code 1
+under Next.js, so the orchestrator restarts the container. Every other service that fails to start is logged as
+`service failed to start`, counted (`landflow.process.errors{kind="service_start"}`) and the host keeps serving. An
+unhandled rejection is logged and counted; an uncaught exception is logged, counted, the host shuts down (5 s) and exits 1 (in production; `pnpm dev` only logs and
+counts, as Next.js does; the worker always exits).
+
+## Production profile
+
+`LANDFLOW_PROFILE` is `development` or `production`; unset, it is `production` when `NODE_ENV=production` (the host image sets
+it) and `development` otherwise. In the production profile `checkConfig()` (`apps/web/src/lib/server/config/check.ts`)
+reports an error for an unset `LANDFLOW_PUBLIC_URL`, for any secret variable (`LANDFLOW_ENCRYPTION_KEY`,
+`LANDFLOW_BINARY_SECRET`, `LANDFLOW_TRANSPORT_SECRET`, `LANDFLOW_REGISTRY_SECRET`, `LANDFLOW_CODE_RUNNER_SECRET`,
+`LANDFLOW_MCP_GATEWAY_SECRET`, `LANDFLOW_OWNER_PASSWORD`, the S3 keys, …) holding a development value (anything with
+`dev-only`, or a known default), and for an unset `LANDFLOW_REGISTRY_SECRET` unless `LANDFLOW_REGISTRY_OPEN=true`; an unset
+`LANDFLOW_ENCRYPTION_KEY` or `LANDFLOW_BINARY_SECRET` is a warning. Messages name the variable, never the value. The check is
+a pure function for now; a later change calls it at boot.
+
+The compose stacks and the Kubernetes base set `LANDFLOW_PROFILE=development` because they run the development secrets in
+`deploy/.env.example` while their image says `NODE_ENV=production`. A real deployment leaves it unset (or `production`) and
+sets its own secrets and public URL.
+
 ## Ports, credentials and URLs
 
 All credentials are **for local development and tests only**.

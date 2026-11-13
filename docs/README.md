@@ -11,6 +11,8 @@ how to run it and how to change it. The [project README](../README.md) has the q
 3. **[development.md](development.md)**: setup, where to start reading the code, conventions, and every test command.
 4. **[limitations.md](limitations.md)** and **[roadmap.md](roadmap.md)**: what is not there yet, and what each wave
    built. [history.md](history.md) lists every change in order.
+5. **[constitution.md](constitution.md)** before you change anything: the rules every research and implementation
+   starts from, and the order a feature goes through.
 
 ## Feature map
 
@@ -22,6 +24,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | Second brain: the usage ledger, detectors and the Suggestions inbox, facts, the Platform analyst, your own conclusions, flow detectors (Detector Trigger), custom event kinds (Record Event), entities, flow buttons (On Suggestion Decided), audiences and Slack DMs, Find Similar and `check_overlap`, declared metrics, backtests | [second-brain.md](second-brain.md) | [observability.md](observability.md) |
 | The Brain page: the second brain as Markdown files in an editor's workbench (Explorer, tabs, Preview and Source, quick open, Problems), a file per person, customer and initiative with a summary the model writes, Spotlight to ask it, and work shared across teams | [second-brain.md](second-brain.md#the-brain-page) | [research/brain-ui-research.md](research/brain-ui-research.md) |
 | Composite nodes: groups typed by a contract (slots, rules, ports), checked in the editor, run as one step | [composites.md](composites.md) | [protocol.md](protocol.md) §3 |
+| Postgres mode's write queue: the spool, the blocked state, recovery and metrics | [features/postgres-write-queue.md](features/postgres-write-queue.md) | [features/engine.md](features/engine.md) |
 | Engine: data model, durable runtime, queue mode and HA, triggers and flow nodes (Ask a Person), debounce and rate limits, Code node | [features/engine.md](features/engine.md) | [architecture.md](architecture.md) |
 | Plugins: the node interface in each SDK, autodiscovery, branding | [plugins.md](plugins.md) | [protocol.md](protocol.md) |
 | Transports: HTTP, gRPC, ten brokers, Auto, the claim check, MCP faces | [transports.md](transports.md) | [protocol.md](protocol.md) §14–15 |
@@ -83,7 +86,11 @@ how to run it and how to change it. The [project README](../README.md) has the q
 
 - [deployment.md](deployment.md): Compose stacks, ports and credentials, queue mode, the code runner, Kubernetes on
   OrbStack, telemetry on Kubernetes, kagent beside it, stop and reset.
-- [development.md](development.md): setup, code tour, conventions, the full verification list, integration flags.
+- [constitution.md](constitution.md): the rules every research and implementation starts from (Claude Code reads it in
+  every session).
+- [development.md](development.md): setup, code tour, conventions, the full verification list, integration flags, and
+  [working with Claude Code](development.md#working-with-claude-code-constitution-agents-feature-skill): the
+  repository's own agents (`.claude/agents/`) and the feature skill (`.claude/skills/landflow-feature/`).
 - [limitations.md](limitations.md): what Landflow does not do yet.
 - [roadmap.md](roadmap.md): the waves, what each built, and what remains.
 - [history.md](history.md): every change in order, the decisions along the way, and where each is documented.
@@ -130,6 +137,6 @@ how to run it and how to change it. The [project README](../README.md) has the q
 
 ## Keeping the docs current
 
-A change updates the page for its feature, [reference/](reference/api.md) for new routes or variables,
-[limitations.md](limitations.md) when it adds or lifts a limit, and [roadmap.md](roadmap.md) when it closes or opens
-an item. Each commit gets a row in [history.md](history.md). New pages go in this index. [development.md](development.md#conventions) has the rest of the conventions.
+[constitution.md](constitution.md) has every rule in one place. A change updates the page for its feature,
+[reference/](reference/api.md) for new routes or variables, [limitations.md](limitations.md) when it adds or lifts a
+limit, and [roadmap.md](roadmap.md) when it closes or opens an item. Each commit gets a row in [history.md](history.md). New pages go in this index. [development.md](development.md#conventions) has the rest of the conventions.

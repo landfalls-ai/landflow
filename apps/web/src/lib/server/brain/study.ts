@@ -28,6 +28,7 @@ import { EXECUTE_WORKFLOW } from './detectors';
 import { entityKey, entityProject, listEntities, MANUAL_FACT } from './entities';
 import { getProfile, listFacts, saveProfile, staleFactsBefore, upsertFact } from './facts';
 import { brainModel } from './writer';
+import { ollamaUrl } from '../config';
 
 const DAY_MS = 86_400_000;
 const PRODUCTION = "COALESCE(json_extract(attrs, '$.mode'), '') <> 'manual'";
@@ -386,7 +387,7 @@ function studyInstance(db: Database, now: number) {
 export async function embedFacts(db: Database = database()): Promise<number> {
   const model = process.env.LANDFLOW_BRAIN_EMBEDDINGS?.trim();
   if (model?.toLowerCase() === 'off') return 0;
-  const embeddings = ollamaEmbeddings({ baseUrl: (process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434').replace(/\/+$/, ''), model: model || 'nomic-embed-text', documentPrefix: 'search_document: ', queryPrefix: 'search_query: ' });
+  const embeddings = ollamaEmbeddings({ baseUrl: ollamaUrl(), model: model || 'nomic-embed-text', documentPrefix: 'search_document: ', queryPrefix: 'search_query: ' });
   const facts = listFacts({ limit: 5_000 }, db);
   const groups = new Map<string, BrainFact[]>();
   for (const fact of facts) groups.set(collectionFor(fact.projectId), [...(groups.get(collectionFor(fact.projectId)) ?? []), fact]);
@@ -426,7 +427,7 @@ export async function vectorFactScores(query: string, projects: Set<string> | un
     const names = (await vectors.collections()).map((c) => c.name).filter((n) => n === BRAIN_COLLECTION || n.startsWith(`${BRAIN_COLLECTION}-`));
     const readable = names.filter((n) => !projects || (n !== BRAIN_COLLECTION && projects.has(n.slice(BRAIN_COLLECTION.length + 1))));
     if (!readable.length) return [];
-    const embeddings = ollamaEmbeddings({ baseUrl: (process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434').replace(/\/+$/, ''), model: model || 'nomic-embed-text', documentPrefix: 'search_document: ', queryPrefix: 'search_query: ' });
+    const embeddings = ollamaEmbeddings({ baseUrl: ollamaUrl(), model: model || 'nomic-embed-text', documentPrefix: 'search_document: ', queryPrefix: 'search_query: ' });
     const vector = await embeddings.embedQuery(query, AbortSignal.timeout(10_000));
     const hits = (await Promise.all(readable.map((n) => vectors.similaritySearch(n, vector, limit)))).flat();
     return hits

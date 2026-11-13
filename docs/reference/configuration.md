@@ -4,12 +4,19 @@ The host's environment variables, with their defaults. The compose stacks set th
 ([deployment.md](../deployment.md)); plugins read their own (`LANDFLOW_REGISTRY_URL`, ports, transports), listed in each
 SDK's README. Part of the [Landflow docs](../README.md).
 
+Flags accept `1,true,yes,on` and `0,false,no,off` (any case). A number that does not parse, or a flag that is neither, falls back to its default with one warning in the log (`config.invalid`, naming the variable) instead of breaking a timer; numbers are clamped to a sensible minimum. Read at call time, so a changed value is seen without an import-time snapshot.
+
 | Variable | Default | |
 |---|---|---|
+| `LANDFLOW_PROFILE` | `production` when `NODE_ENV=production`, else `development` | `development` or `production`: whether the host refuses development secrets and a missing `LANDFLOW_PUBLIC_URL` ("Production profile" in [deployment.md](../deployment.md)). The in-repo compose and Kubernetes stacks set `development` |
+| `LANDFLOW_REGISTRY_OPEN` | – | `true`: accept plugin registrations without `LANDFLOW_REGISTRY_SECRET` in the production profile |
 | `LANDFLOW_DATA_DIR` | `apps/web/.data` | data directory: the SQLite database (`landflow.db`), credentials, binary files, the Claude Code plugin images packed for kagent (`oci/`) and the other host files |
 | `LANDFLOW_CLAUDE_PLUGINS_DIR` | `<cwd>/claude-plugins` (`apps/web/claude-plugins`) | where Landflow's own Claude Code plugins are (the landflow-harness mod), packed into images for kagent's Claude Code agents ([a2a.md](../a2a.md#the-landflow-harness-mod)) |
 | `LANDFLOW_DB` | `sqlite` | `postgres` keeps the store in Postgres (`DATABASE_URL`); one host per database |
 | `DATABASE_URL` | – | Postgres connection string for `LANDFLOW_DB=postgres`, e.g. the infra stack's `postgres://landflow:landflow-dev-only@127.0.0.1:55432/landflow` |
+| `LANDFLOW_PG_BLOCKED_RETRY_SECONDS` | `60` | Postgres mode: seconds between retries of a write batch Postgres rejects while the store is blocked ([postgres-write-queue.md](../features/postgres-write-queue.md)) |
+| `LANDFLOW_PG_SKIP_BATCH` | – | Postgres mode: a batch sequence number to set aside at boot (written to `<data dir>/postgres-rejected-<seq>.jsonl`) instead of replaying it |
+| `LANDFLOW_PG_SPOOL_FSYNC` | `interval` | Postgres mode, spool durability: `interval` (fdatasync at most every 100 ms), `always` (after each append) or `off` |
 | `LANDFLOW_EXECUTIONS_MODE` | `regular` | `queue`: mains enqueue production runs on Valkey for workers (`pnpm worker`) and elect a leader ("Queue mode, workers and high availability") |
 | `LANDFLOW_VALKEY_URL` | `redis://127.0.0.1:6379` | queue mode's Valkey (`rediss://` for TLS, `redis://user:password@host:port/db`) |
 | `LANDFLOW_VALKEY_SENTINELS` / `LANDFLOW_VALKEY_MASTER_NAME` | – / `mymaster` | find the primary through Valkey Sentinel (`host:port,…`) and follow failovers; `LANDFLOW_VALKEY_SENTINEL_USERNAME` / `LANDFLOW_VALKEY_SENTINEL_PASSWORD` when the sentinels require AUTH, `LANDFLOW_VALKEY_SENTINEL_TLS=true` when they speak TLS (all `–` / `false` by default) |
@@ -22,6 +29,8 @@ SDK's README. Part of the [Landflow docs](../README.md).
 | `LANDFLOW_OFFLOAD_MANUAL_EXECUTIONS` | `false` | queue mode: editor runs go to the workers too |
 | `LANDFLOW_QUEUE_ALLOW_SQLITE` | `false` | allow queue mode on SQLite, every process on one host sharing the file |
 | `LANDFLOW_LEADER_TTL_SECONDS` / `LANDFLOW_STALLED_SECONDS` | `10` / `30` | leader lease (failover in TTL + TTL/3) / how long a silent worker keeps its jobs |
+| `LANDFLOW_SHUTDOWN_SECONDS` | `25` | a main's whole shutdown budget on SIGTERM / SIGINT, shared by its phases ([Stopping the host](../deployment.md#stopping-the-host)) |
+| `NEXT_MANUAL_SIG_HANDLE` | set by `pnpm start` and the Docker image | `true` leaves SIGTERM / SIGINT to Landflow's graceful shutdown instead of Next.js's own exit; not available in `next dev` |
 | `LANDFLOW_WORKER_PORT` / `LANDFLOW_WORKER_SHUTDOWN_SECONDS` | `5690` / `30` | a worker's `/healthz` and `/metrics` (`0` = off) / how long SIGTERM lets runs finish before re-queuing them |
 | `LANDFLOW_IDEMPOTENCY_TTL_HOURS` | `24` | how long trigger idempotency keys are remembered |
 | `LANDFLOW_APP_WEBHOOK_RETRY_MS` | `60000` | how often app webhook registrations that failed at publish are retried |
@@ -133,4 +142,5 @@ SDK's README. Part of the [Landflow docs](../README.md).
 | `LANDFLOW_SEARCH_DENY_DOMAINS` | – | read by the Web Search plugin (also a compose variable): comma-separated domains (subdomains included) the node refuses as `site` and drops from results |
 | `LANDFLOW_JSON_RENDER` | off | `1` is the default for the json-render spec cards in Run Trace (`NEXT_PUBLIC_LANDFLOW_JSON_RENDER=1` does the same). The owner's switch in Settings → General (`jsonRender`, `PATCH /api/settings`) wins once saved and needs no rebuild; `null` goes back to this default. Dev page: `/runs/json-render-gallery`, shown only while it is on ([json-render verdict](../research/json-render-verdict.md)) |
 | `LANDFLOW_TOOL_IMAGES_KEPT` | 2 | newest tool images sent to the model each turn for every agent run other than the AI Agent node's own option: chat, schedules, team members (the node option `toolImagesKept`, 0 to 10, on Run an Agent and Run a Team overrides it; an agent's own `toolImagesKept` setting, Settings tab, "Tool images", is used by runs that set none: chat, schedules, team members. Order: the node's option, else the agent's setting, else this variable, else 2) ([features/ai.md](../features/ai.md)) |
+| `LANDFLOW_RETENTION_EVERY` | 50 | finished runs between retention passes (minimum 1); the hourly timer and Prune now run regardless, so the count may exceed its cap by up to N-1 between passes ([features/settings-and-data.md](../features/settings-and-data.md)) |
 | plugin side, Agent Shell and AI SDK | – | no variable of their own: `plugins/agent-shell` (HTTP 7114, gRPC 7214; limits in `src/shell.ts`: command 8,000 characters, seeds 200 files and 2 MB, output 64 KB default and 512 KB ceiling per stream, filesystem 4 MB default and 32 MB ceiling, time 10 s default and 60 s ceiling, 64 kept runs, 30 minutes idle) and `plugins/ai-sdk` (HTTP 7115, gRPC 7215) use the usual plugin variables above and `OTEL_*`. Credential types of the AI SDK plugin: `aiSdkOllamaApi`, `aiSdkOpenAiCompatibleApi`, `aiSdkAnthropicApi`, `aiSdkGoogleApi`. AI Agent options `toolImagesKept` (Tool Images to Keep, default 2) and `toolImages` (`auto`, `send`, `text`) are node options, not variables ([features/ai.md](../features/ai.md)) |

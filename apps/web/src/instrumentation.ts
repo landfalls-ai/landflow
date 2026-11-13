@@ -6,6 +6,10 @@ export async function register() {
     // and instruments created before the meter provider would stay no-ops.
     const { startTelemetry } = await import('./lib/server/telemetry/sdk');
     startTelemetry();
+    // Error handlers always; signal handlers only where Next.js leaves signals to us (the `start` script and the Docker
+    // image set NEXT_MANUAL_SIG_HANDLE; `next dev` keeps Next's own handling).
+    const { installProcessHandlers } = await import('./lib/server/lifecycle');
+    installProcessHandlers({ role: 'main', signals: !!process.env.NEXT_MANUAL_SIG_HANDLE, exitOnUncaught: process.env.NODE_ENV === 'production' });
     const { ensureBootstrapped } = await import('./lib/server/bootstrap');
     await ensureBootstrapped();
   }
