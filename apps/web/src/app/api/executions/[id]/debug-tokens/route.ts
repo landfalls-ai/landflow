@@ -9,7 +9,7 @@
 import { z } from 'zod';
 import { can } from '@/lib/shared/auth';
 import { requireUser } from '@/lib/server/auth';
-import { DEBUG_TOKEN_SCOPES, DebugTokenError, listDebugTokens, mintDebugToken } from '@/lib/server/auth/debug-tokens';
+import { DEBUG_TOKEN_SCOPES, listDebugTokens, mintDebugToken } from '@/lib/server/auth/debug-tokens';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { mcpAccess } from '@/lib/server/mcp/instance';
 import { liveExecution } from '@/lib/server/runner';
@@ -39,19 +39,14 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   if (!record) return error('Execution not found', 404);
   const body = await parseBody(request, schema);
   if (!body.ok) return body.response;
-  try {
-    const minted = mintDebugToken(me, { executionId: id, workflowId: record.workflowId, ...body.data });
-    const t = minted.record;
-    recordAudit({
-      action: 'mcp.token.issue',
-      target: { type: 'debug_token', id: t.id, name: t.label },
-      summary: `Issued a debug token for execution ${id} (${t.scopes.join(', ')}, expires ${t.expiresAt})`,
-      details: { kind: 'debug', executionId: id, workflowId: record.workflowId, scopes: t.scopes, expiresAt: t.expiresAt },
-    });
-    const { enabled, path } = mcpAccess();
-    return json({ ...minted, mcp: { enabled, path } }, 201);
-  } catch (caught) {
-    if (caught instanceof DebugTokenError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  const minted = mintDebugToken(me, { executionId: id, workflowId: record.workflowId, ...body.data });
+  const t = minted.record;
+  recordAudit({
+    action: 'mcp.token.issue',
+    target: { type: 'debug_token', id: t.id, name: t.label },
+    summary: `Issued a debug token for execution ${id} (${t.scopes.join(', ')}, expires ${t.expiresAt})`,
+    details: { kind: 'debug', executionId: id, workflowId: record.workflowId, scopes: t.scopes, expiresAt: t.expiresAt },
+  });
+  const { enabled, path } = mcpAccess();
+  return json({ ...minted, mcp: { enabled, path } }, 201);
 });

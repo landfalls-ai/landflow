@@ -5,7 +5,7 @@
  * its parent's project.
  */
 import { z } from 'zod';
-import { FolderError, folders } from '@/lib/server/folders';
+import { folders } from '@/lib/server/folders';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { creationProject, projectRole, visibleProjectIds } from '@/lib/server/projects';
 import { folderViews, requireFolder } from '@/lib/server/projects/folders';
@@ -31,12 +31,7 @@ export const POST = handler(async (request: Request) => {
   if (!body.ok) return body.response;
   const actor = routeActor();
   const { projectId: requested, ...input } = body.data;
-  try {
-    // A subfolder goes to its parent's project (the caller must be an editor there).
-    const projectId = input.parentId ? requireFolder(actor, input.parentId, 'edit').projectId : creationProject(actor, projectParam(request) ?? requested);
-    return json({ folder: folderViews([folders.create({ ...input, ...(projectId && { projectId }) })])[0] }, 201);
-  } catch (caught) {
-    if (caught instanceof FolderError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  // A subfolder goes to its parent's project (the caller must be an editor there).
+  const projectId = input.parentId ? requireFolder(actor, input.parentId, 'edit').projectId : creationProject(actor, projectParam(request) ?? requested);
+  return json({ folder: folderViews([folders.create({ ...input, ...(projectId && { projectId }) })])[0] }, 201);
 });

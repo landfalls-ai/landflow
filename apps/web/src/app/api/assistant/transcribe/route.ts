@@ -3,7 +3,7 @@
  * into the input box for the person to edit; it is not sent to the assistant from here.
  */
 import { error, handler, json } from '@/lib/server/http';
-import { MAX_AUDIO_BYTES, transcribe, TranscribeError } from '@/lib/server/assistant/transcribe';
+import { MAX_AUDIO_BYTES, transcribe } from '@/lib/server/assistant/transcribe';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,11 +29,6 @@ export const POST = handler(async (request: Request) => {
   if (!size) return error('The recording is empty');
   const bytes = new Blob(chunks as BlobPart[]);
   const language = new URL(request.url).searchParams.get('language') ?? undefined;
-  try {
-    const text = await transcribe(new Blob([bytes], { type }), { ...(language && /^[a-z]{2,3}$/i.test(language) && { language }), signal: request.signal });
-    return json({ text });
-  } catch (caught) {
-    if (caught instanceof TranscribeError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  const text = await transcribe(new Blob([bytes], { type }), { ...(language && /^[a-z]{2,3}$/i.test(language) && { language }), signal: request.signal });
+  return json({ text });
 });

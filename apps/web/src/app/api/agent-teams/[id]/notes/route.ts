@@ -11,7 +11,7 @@ import { agentTeamStore } from '@/lib/server/agent-teams/store';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { personOf } from '@/lib/server/notebook/http';
 import { searchNotes } from '@/lib/server/notebook/search';
-import { NoteError, personAdd, projectOf } from '@/lib/server/notebook/service';
+import { personAdd, projectOf } from '@/lib/server/notebook/service';
 import { noteStore } from '@/lib/server/notebook/store';
 import { NOTE_KINDS, NOTE_SCOPES, NOTE_STATUSES, type NoteKind, type NoteScope, type NoteStatus, type TeamNote } from '@/lib/shared/notebook';
 
@@ -62,10 +62,5 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   if (!agentTeamStore.get(id)) return error('Agent team not found', 404);
   const body = await parseBody(request, addSchema);
   if (!body.ok) return body.response;
-  try {
-    return json({ note: await personAdd(id, personOf(), body.data) }, 201);
-  } catch (caught) {
-    if (caught instanceof NoteError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  return json({ note: await personAdd(id, personOf(), body.data) }, 201);
 });

@@ -3,7 +3,7 @@
  * secret fields keep their saved value; `scope` `{ projectIds, instance }` limits it to those projects' events, `null` sends everything again). DELETE removes it and drops what is still queued for it. Owners and admins.
  */
 import { recordAudit } from '@/lib/server/audit';
-import { AuditDestinationError, auditDestinations, destinationPatchSchema } from '@/lib/server/audit/destinations';
+import { auditDestinations, destinationPatchSchema } from '@/lib/server/audit/destinations';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 
 export const dynamic = 'force-dynamic';
@@ -13,14 +13,9 @@ export const PATCH = handler(async (request: Request, { params }: Ctx) => {
   const { id } = await params;
   const body = await parseBody(request, destinationPatchSchema);
   if (!body.ok) return body.response;
-  try {
-    const destination = auditDestinations.update(id, body.data);
-    recordAudit({ action: 'settings.update', target: { type: 'audit_destination', id, name: destination.name }, summary: `Changed the audit destination “${destination.name}”`, details: { kind: destination.kind, enabled: destination.enabled, scoped: Boolean(destination.scope), fields: Object.keys(body.data.config ?? {}).join(',') || undefined } });
-    return json({ destination });
-  } catch (caught) {
-    if (caught instanceof AuditDestinationError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  const destination = auditDestinations.update(id, body.data);
+  recordAudit({ action: 'settings.update', target: { type: 'audit_destination', id, name: destination.name }, summary: `Changed the audit destination “${destination.name}”`, details: { kind: destination.kind, enabled: destination.enabled, scoped: Boolean(destination.scope), fields: Object.keys(body.data.config ?? {}).join(',') || undefined } });
+  return json({ destination });
 });
 
 export const DELETE = handler(async (_request: Request, { params }: Ctx) => {

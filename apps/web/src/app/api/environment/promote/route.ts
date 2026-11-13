@@ -9,10 +9,9 @@
  */
 import { z } from 'zod';
 import { currentPrincipal } from '@/lib/server/auth';
-import { EnvironmentError, promoteEnvironment } from '@/lib/server/environments';
+import { promoteEnvironment } from '@/lib/server/environments';
 import { promotionApprovalRequired, promotionNeedsApproval, requestPromotion } from '@/lib/server/environments/approvals';
 import { error, handler, json, parseBody } from '@/lib/server/http';
-import { SourceControlError } from '@/lib/server/sync/git';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,22 +31,17 @@ export const POST = handler(async (request: Request) => {
   const body = await parseBody(request, bodySchema);
   if (!body.ok) return body.response;
   const user = currentPrincipal()?.user;
-  try {
-    let result;
-    // Four-eyes: the instance asks for it, or a workflow being changed does (its own policy, or its project's).
-    if (!body.data.dryRun && user && (promotionApprovalRequired() || promotionNeedsApproval(await promoteEnvironment({ ...body.data, dryRun: true })))) {
-      const outcome = await requestPromotion(body.data, user);
-      if ('request' in outcome) return json({ approvalRequired: true, request: outcome.request }, 202);
-      result = outcome.result;
-    } else {
-      result = await promoteEnvironment({ ...body.data, by: user?.name });
-    }
-    if (result.conflicts && !result.promoted && !result.dryRun) {
-      return error(`${result.conflicts} workflow${result.conflicts === 1 ? '' : 's'} changed on ${result.to.branch} since the last promotion from ${result.from.environment}: review the diff, then promote with force`, 409, { ...result });
-    }
-    return json(result);
-  } catch (caught) {
-    if (caught instanceof EnvironmentError || caught instanceof SourceControlError) return error(caught.message, caught.status);
-    throw caught;
+  let result;
+  // Four-eyes: the instance asks for it, or a workflow being changed does (its own policy, or its project's).
+  if (!body.data.dryRun && user && (promotionApprovalRequired() || promotionNeedsApproval(await promoteEnvironment({ ...body.data, dryRun: true })))) {
+    const outcome = await requestPromotion(body.data, user);
+    if ('request' in outcome) return json({ approvalRequired: true, request: outcome.request }, 202);
+    result = outcome.result;
+  } else {
+    result = await promoteEnvironment({ ...body.data, by: user?.name });
   }
+  if (result.conflicts && !result.promoted && !result.dryRun) {
+    return error(`${result.conflicts} workflow${result.conflicts === 1 ? '' : 's'} changed on ${result.to.branch} since the last promotion from ${result.from.environment}: review the diff, then promote with force`, 409, { ...result });
+  }
+  return json(result);
 });

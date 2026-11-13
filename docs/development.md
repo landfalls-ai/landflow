@@ -78,8 +78,13 @@ filesystem access causes tracing of the whole project".
   `{ error, code, …details }`. Give a domain error its own class (`class OutOfStockError extends HttpError`, same
   `(message, status)` order as the older classes) instead of a `try`/`catch` per route. Anything that is not an
   `HttpError` or a `ZodError` becomes a generic 500 with the request id, so write user-facing failures as `HttpError`s
-  with a 4xx, 502 or 503 status (`expose: true` for a 5xx whose text may reach the client). A wrapper for an older error
-  class passes `handler(fn, { mapError, formatError })` (`projectRoute`, `dataTableRoute`, `scimRoute`).
+  with a 4xx, 502 or 503 status (`expose: true` for a 5xx whose text may reach the client). Every domain error with a
+  status (`VariableError`, `PublishError`, `ProjectError`, `CredentialError`, `SourceControlError`, `TemplateError`, …)
+  now extends `HttpError`, so do not `catch` one in a route only to answer `error(caught.message, caught.status)`: let it
+  propagate, and carry extra response fields in `details` (`FolderNotEmptyError`, `TemplateError`, `CompositeError`,
+  `RunSkippedError`). Keep a `catch` only when it does something else (an audit row, cleanup, a different status or a
+  page instead of JSON). A class with no status (an internal error) stays a plain `Error`: it becomes the generic 500.
+  `test/error-mapping.test.ts` checks both. `mapError` and `formatError` remain for `scimRoute`.
 - **Access rules**: `test/policy-coverage.test.ts` walks every `route.ts` and fails for a mutating route that is not
   public, not named by `routePolicy()` (the table marks its default with `fallback: true`) or a resource rule, and has
   no check of its own in the handler (`requireUser`, `routeActor`, `can(`, `projectRoute`, …). Add the policy line; an

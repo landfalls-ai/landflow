@@ -5,7 +5,7 @@
  * GET → { file?, preview } (the metadata and the first rows); PUT — upload it (multipart with a `file` field, or the raw
  * CSV/JSON as the body with `?fileName=`); DELETE — remove it. Up to 10 MB.
  */
-import { DatasetFileError, readDatasetFile, removeDatasetFile, saveDatasetFile } from '@/lib/server/evaluations';
+import { readDatasetFile, removeDatasetFile, saveDatasetFile } from '@/lib/server/evaluations';
 import { MAX_DATASET_BYTES } from '@/lib/server/evaluations/files';
 import { error, handler, json } from '@/lib/server/http';
 import { store } from '@/lib/server/store';
@@ -18,13 +18,8 @@ const PREVIEW_ROWS = 5;
 export const GET = handler(async (_request: Request, { params }: Ctx) => {
   const { id } = await params;
   if (!store.getWorkflow(id)) return error('Workflow not found', 404);
-  try {
-    const dataset = await readDatasetFile(id);
-    return json(dataset ? { file: dataset.file, preview: dataset.rows.slice(0, PREVIEW_ROWS) } : { preview: [] });
-  } catch (caught) {
-    if (caught instanceof DatasetFileError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  const dataset = await readDatasetFile(id);
+  return json(dataset ? { file: dataset.file, preview: dataset.rows.slice(0, PREVIEW_ROWS) } : { preview: [] });
 });
 
 export const PUT = handler(async (request: Request, { params }: Ctx) => {
@@ -43,12 +38,7 @@ export const PUT = handler(async (request: Request, { params }: Ctx) => {
     bytes = new Uint8Array(await request.arrayBuffer());
   }
   if (!bytes.length) return error('The file is empty', 400);
-  try {
-    return json({ file: await saveDatasetFile(id, bytes, fileName) }, 201);
-  } catch (caught) {
-    if (caught instanceof DatasetFileError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  return json({ file: await saveDatasetFile(id, bytes, fileName) }, 201);
 });
 
 export const DELETE = handler(async (_request: Request, { params }: Ctx) => {

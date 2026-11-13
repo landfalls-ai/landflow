@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { recordAudit } from '@/lib/server/audit';
-import { CredentialError, credentials } from '@/lib/server/credentials/vault';
+import { credentials } from '@/lib/server/credentials/vault';
 import { registry } from '@/lib/server/plugins/registry';
-import { error, handler, json, parseBody } from '@/lib/server/http';
+import { handler, json, parseBody } from '@/lib/server/http';
 import { redactValue, resolveCredentialData, SecretsError } from '@/lib/server/secrets';
 import { requireResource } from '@/lib/server/projects';
 import { routeActor } from '@/lib/server/projects/http';
@@ -34,7 +34,6 @@ export const POST = handler(async (request: Request) => {
     audit(result.ok !== false);
     return json({ ...result, durationMs: Date.now() - started });
   } catch (caught) {
-    if (caught instanceof CredentialError) return error(caught.message, caught.status);
     if (caught instanceof SecretsError) return json({ ok: false, message: caught.message });
     throw caught;
   }

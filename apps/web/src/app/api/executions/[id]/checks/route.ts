@@ -6,7 +6,7 @@
 import { z } from 'zod';
 import { currentPrincipal } from '@/lib/server/auth/guard';
 import { error, handler, json, parseBody } from '@/lib/server/http';
-import { CheckError, resolveCheck } from '@/lib/server/journal/checks';
+import { resolveCheck } from '@/lib/server/journal/checks';
 import { liveExecution } from '@/lib/server/runner';
 import { store } from '@/lib/server/store';
 
@@ -28,11 +28,6 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const body = await parseBody(request, bodySchema);
   if (!body.ok) return body.response;
   const user = currentPrincipal()?.user;
-  try {
-    const check = resolveCheck(id, record.workflowId, body.data, user?.name || user?.email || user?.id || 'a person');
-    return json({ check });
-  } catch (caught) {
-    if (caught instanceof CheckError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  const check = resolveCheck(id, record.workflowId, body.data, user?.name || user?.email || user?.id || 'a person');
+  return json({ check });
 });

@@ -4,7 +4,6 @@
  * environments alone. On an instance whose LANDFLOW_ENVIRONMENT has a value, `$vars.KEY` reads it instead.
  */
 import { z } from 'zod';
-import { EnvironmentError } from '@/lib/server/environments';
 import { error, json, parseBody } from '@/lib/server/http';
 import { projectRoute, requireProject, routeActor } from '@/lib/server/projects/http';
 import { projectVariables } from '@/lib/server/projects/variables';
@@ -24,10 +23,5 @@ export const PUT = projectRoute(async (request: Request, { params }: Ctx) => {
   const body = await parseBody(request, z.strictObject({ values: z.record(z.string(), z.string().nullable()) }));
   if (!body.ok) return body.response;
   if (!projectVariables.get(project.id, key)) return error('Variable not found', 404);
-  try {
-    return json({ key, values: projectVariables.environments.set(project.id, key, body.data.values) });
-  } catch (caught) {
-    if (caught instanceof EnvironmentError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  return json({ key, values: projectVariables.environments.set(project.id, key, body.data.values) });
 });

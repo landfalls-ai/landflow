@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { CredentialError, credentials } from '@/lib/server/credentials/vault';
+import { credentials } from '@/lib/server/credentials/vault';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { credentialRateLimitSchema } from '@/lib/server/schemas';
 import { ownershipOf } from '@/lib/server/projects';
@@ -22,20 +22,15 @@ export const GET = handler(async (_request: Request, { params }: Ctx) => {
 export const PATCH = handler(async (request: Request, { params }: Ctx) => {
   const body = await parseBody(request, z.object({ name: z.string().max(120).optional(), data: z.record(z.string(), z.unknown()).optional(), rateLimit: credentialRateLimitSchema.nullable().optional() }));
   if (!body.ok) return body.response;
-  try {
-    const id = (await params).id;
-    const before = credentials.get(id);
-    // Which fields changed, never their values. Fail-closed audit records it first (the credentials file is no transaction).
-    if (!before) return error('Credential not found', 404);
-    const credential = auditedChange(
-      (done) => ({ action: 'credential.update', target: { type: 'credential', id, ...((done?.name ?? before.name) && { name: (done?.name ?? before.name)! }) }, details: { credentialType: done?.type ?? before.type, renamed: body.data.name !== undefined, rateLimit: body.data.rateLimit === undefined ? undefined : body.data.rateLimit ?? null, fields: Object.keys(body.data.data ?? {}) } }),
-      () => credentials.update(id, body.data),
-    );
-    return json({ credential });
-  } catch (caught) {
-    if (caught instanceof CredentialError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  const id = (await params).id;
+  const before = credentials.get(id);
+  // Which fields changed, never their values. Fail-closed audit records it first (the credentials file is no transaction).
+  if (!before) return error('Credential not found', 404);
+  const credential = auditedChange(
+    (done) => ({ action: 'credential.update', target: { type: 'credential', id, ...((done?.name ?? before.name) && { name: (done?.name ?? before.name)! }) }, details: { credentialType: done?.type ?? before.type, renamed: body.data.name !== undefined, rateLimit: body.data.rateLimit === undefined ? undefined : body.data.rateLimit ?? null, fields: Object.keys(body.data.data ?? {}) } }),
+    () => credentials.update(id, body.data),
+  );
+  return json({ credential });
 });
 
 export const DELETE = handler(async (_request: Request, { params }: Ctx) => {

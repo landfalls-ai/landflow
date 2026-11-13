@@ -5,7 +5,7 @@
  */
 import { z } from 'zod';
 import type { Workflow } from '@landflow/engine';
-import { EvaluationError, evaluationsOverview, startEvaluationRun } from '@/lib/server/evaluations';
+import { evaluationsOverview, startEvaluationRun } from '@/lib/server/evaluations';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { workflowSchema } from '@/lib/server/schemas';
 import { store } from '@/lib/server/store';
@@ -32,10 +32,5 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const body = request.headers.get('content-length') === '0' ? { ok: true as const, data: {} } : await parseBody(request, startSchema);
   if (!body.ok) return body.response;
   const workflow = (body.data.workflow ? { ...saved, ...body.data.workflow, id } : saved) as Workflow;
-  try {
-    return json({ run: await startEvaluationRun(id, { workflow, ...(body.data.maxRows && { maxRows: body.data.maxRows }) }) }, 201);
-  } catch (caught) {
-    if (caught instanceof EvaluationError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  return json({ run: await startEvaluationRun(id, { workflow, ...(body.data.maxRows && { maxRows: body.data.maxRows }) }) }, 201);
 });
