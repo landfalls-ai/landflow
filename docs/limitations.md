@@ -46,7 +46,6 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - API responses carry no CSP; page styles allow `'unsafe-inline'` (Tailwind, React style props).
 - There is no `report-uri` or `report-to`: report mode is visible only in the browser console.
 - `img-src` allows any https image (markdown images, plugin icons), so image loads are not restricted by origin.
-- The live browser pass over the pages under the enforced policy has not been run in this wave.
 
 ## Browser plugin and retry backoff (built 2026-11-07)
 

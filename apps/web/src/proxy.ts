@@ -16,8 +16,21 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { isProduction } from './lib/server/config/profile';
 import { API_KEY_HEADER, isPublicPath, PATH_HEADER, SESSION_COOKIE } from './lib/shared/auth-paths';
 
-/** Paths meant to be framed or that set their own policy (chat route, stored files, MCP file links). */
-const EMBEDDABLE = ['/chat', '/form', '/form-test', '/api/binary', '/api/mcp/files', '/mcp', '/mcp-test', '/api/webhook', '/api/webhook-test'];
+/**
+ * Paths meant to be framed or that set their own policy: the hosted chat and forms, stored files, MCP file links, and
+ * the MCP and webhook endpoints. `/form-test`, `/mcp-test` and `/api/webhook-test` are the editor's test URLs of the same.
+ */
+const EMBEDDABLE = [
+  '/chat',
+  '/form',
+  '/form-test',
+  '/api/binary',
+  '/api/mcp/files',
+  '/mcp',
+  '/mcp-test',
+  '/api/webhook',
+  '/api/webhook-test',
+];
 const underPrefix = (pathname: string, prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
 export const isEmbeddable = (pathname: string) => EMBEDDABLE.some((p) => underPrefix(pathname, p));
 
@@ -55,12 +68,12 @@ export function proxy(request: NextRequest) {
   const headers = new Headers(request.headers);
   const embeddable = isEmbeddable(pathname);
   const mode = cspMode();
-  const nonce = newNonce();
-  const csp = !embeddable && !pathname.startsWith('/api/') && mode !== 'off' ? pagePolicy(nonce) : null;
+  const nonce = !embeddable && !pathname.startsWith('/api/') && mode !== 'off' ? newNonce() : null;
+  const csp = nonce ? pagePolicy(nonce) : null;
   if (csp && mode === 'enforce') headers.set('content-security-policy', csp);
   // Report-only still needs the nonce visible to Next: it reads it from either header on the request.
   else if (csp) headers.set('content-security-policy-report-only', csp);
-  if (csp) headers.set('x-nonce', nonce);
+  if (nonce) headers.set('x-nonce', nonce);
   const forwarded = request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim();
   const https = request.nextUrl.protocol === 'https:' || forwarded === 'https';
   const secure = <T extends Response>(res: T): T => {
