@@ -1277,13 +1277,13 @@ workbench in place of a page of cards, keeping Spotlight.
   destinations, remote MCP servers, RAG embeddings and rerank, OpenAI-compatible model calls and OIDC and SAML metadata go through it; each call has
   a client span. Not covered, with the reasons in [limitations.md](limitations.md): remote plugins, configured
   infrastructure, the marketplace's git, the OAuth2 flow and anchoring webhooks.
-
 - **P14, expressions in a sealed realm and Code nodes out of the host in production** (S1): expressions run in a fresh
   `node:vm` context with code generation off, no host object inside and only JSON text crossing the boundary
   (`packages/engine/src/sandbox/`), so `$json.constructor.constructor('return process')()` finds nothing; `async`, `await`
   and `import(` are refused because an unhandled rejection from any context would end the host process. The production
   profile runs Code nodes only in the code runner unless `LANDFLOW_CODE_IN_PROCESS=true`; the in-process context also loses
   `eval` and `new Function`. An isolate backend remains for a later package.
+- **P15, database conventions** (C18; wave 3): prepared statements are cached in an LRU capped by `LANDFLOW_DB_STATEMENT_CACHE` (default 500); a test fails a new migration whose version is not above every earlier one; `withOwnership` reads shares and memberships once per list instead of per item.
 
 ## Planned next
 

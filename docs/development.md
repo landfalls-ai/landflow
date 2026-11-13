@@ -58,10 +58,14 @@ filesystem access causes tracing of the whole project".
 
 ## Conventions
 
-- **Migrations** live in `apps/web/src/lib/server/db/schema.ts`, in order; the highest so far is 1882. One SQL text runs
-  on SQLite and Postgres (TEXT, BIGINT, DOUBLE PRECISION, JSON in TEXT, `ON CONFLICT` upserts); set `postgres` only when
-  the dialects must differ. Never edit a shipped migration: add one. A column that a shipped `CREATE TABLE` gained
-  later goes in `addColumns`. A new table also goes in `TABLES` (its primary key) in the same file.
+- **Migrations** live in `apps/web/src/lib/server/db/schema.ts`, in order; the highest so far is 2065. A new one
+  goes at the end with a version above the current highest. A migration numbered below one a database already has
+  still runs there, but after the higher ones, while a fresh database runs it before them, so the order differs
+  between databases and their schemas can diverge (`apps/web/test/migrations-order.test.ts` fails on one; only 1200
+  and 1300, which shipped out of order, are grandfathered). One SQL text runs on SQLite and Postgres (TEXT, BIGINT,
+  DOUBLE PRECISION, JSON in TEXT, `ON CONFLICT` upserts); set `postgres` only when the dialects must differ. Never
+  edit a shipped migration: add one. A column that a shipped `CREATE TABLE` gained later goes in `addColumns`. A new
+  table also goes in `TABLES` (its primary key) in the same file.
 - **Errors**: a route (or the store below it) throws an `HttpError` (`lib/server/errors.ts`: `(message, status = 400,
   { code?, details?, cause?, expose? })`) and does not catch it to build a response: `handler()` answers it as
   `{ error, code, …details }`. Give a domain error its own class (`class OutOfStockError extends HttpError`, same
@@ -73,6 +77,9 @@ filesystem access causes tracing of the whole project".
   public, not named by `routePolicy()` (the table marks its default with `fallback: true`) or a resource rule, and has
   no check of its own in the handler (`requireUser`, `routeActor`, `can(`, `projectRoute`, …). Add the policy line; an
   `ALLOWED` entry in that test needs a one-line reason.
+- **The database** caches prepared statements by SQL text in a bounded LRU: `LANDFLOW_DB_STATEMENT_CACHE` (default 500)
+  caps it, because `IN (?, ?, …)` lists of every length are different texts. List paths read access with one query per
+  kind (`allShares(kind)`, the memberships) and not one per item; keep the single-item functions for single resources.
 - **Routes** wrap their body in `handler()` and answer with `json()` or `error()` from `lib/server/http.ts`, and
   validate bodies with `parseBody()` and a zod schema (shared ones are in `lib/server/schemas.ts`). Who may call a route
   is decided once in `lib/server/auth/policy.ts`, before the handler runs: add a line there for anything that isn't a
