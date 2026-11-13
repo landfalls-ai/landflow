@@ -22,19 +22,4 @@ Public without credentials: `/api/health`; the sign-in pages (`/login`, `/setup`
 
 ## Security headers and Content Security Policy
 
-`apps/web/src/proxy.ts` sets these on every response it produces (pages, API routes, 401s and redirects): `X-Content-Type-Options:
-nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), geolocation=(), microphone=(self)`
-(Spotlight dictation uses the microphone) and `X-Frame-Options: DENY`. `Strict-Transport-Security: max-age=31536000;
-includeSubDomains` is added when the request is https (the URL, or `X-Forwarded-Proto`) unless `LANDFLOW_HSTS=off`. `x-powered-by`
-is not sent.
-
-Pages (not API routes) also get a Content Security Policy with a fresh nonce per request: `script-src 'self' 'nonce-…'
-'strict-dynamic'` (plus `'unsafe-eval'` under `next dev`), inline styles, `img-src 'self' data: blob:`, `connect-src 'self'`,
-`frame-src 'self' blob:`, `worker-src 'self' blob:`, `object-src 'none'`, `base-uri 'self'`, `form-action 'self'` and
-`frame-ancestors 'none'`. `LANDFLOW_CSP` picks the mode: `enforce` (default in the production profile), `report`
-(`Content-Security-Policy-Report-Only`, default in development) or `off`. If a page breaks in production, set
-`LANDFLOW_CSP=report` and read the console for the blocked source.
-
-The embeddable or self-policed paths (`/chat`, `/form`, `/form-test`, `/api/binary`, `/api/mcp/files`, `/mcp`, `/api/webhook`) keep their
-own policy and get no frame headers or CSP from the proxy, only the three fixed headers above. A reverse proxy that serves the host over
-https should forward `X-Forwarded-Proto`.
+The proxy sets security headers on every response and a nonce-based Content Security Policy on pages; see [Security headers and Content Security Policy](../deployment.md#security-headers-and-content-security-policy).

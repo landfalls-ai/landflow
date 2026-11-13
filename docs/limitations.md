@@ -41,6 +41,13 @@ items still open (its "Wave 6" section); this page is the short list to check be
   production profile, but nothing calls it at boot until a later backend-hardening package. Auth cookie and guard code still
   read `LANDFLOW_PUBLIC_URL` themselves.
 
+## Security headers (2026-11)
+
+- API responses carry no CSP; page styles allow `'unsafe-inline'` (Tailwind, React style props).
+- There is no `report-uri` or `report-to`: report mode is visible only in the browser console.
+- `img-src` allows any https image (markdown images, plugin icons), so image loads are not restricted by origin.
+- The live browser pass over the pages under the enforced policy has not been run in this wave.
+
 ## Browser plugin and retry backoff (built 2026-11-07)
 
 - **Browser** ([plugins/browser](../plugins/browser/README.md)) needs the `agent-browser` CLI and its Chrome on the machine that runs the plugin; it is not in `dev:all`, the compose files or the cluster images. It reads pages and runs listed steps, with no free-form scripting, uploads or downloads, and no signed-in browsing (the CLI refuses saved profiles with an allow-list). The allow-list stops the browser reaching other sites; it can't stop a page from carrying instructions to a model, so page text is fenced and cut but should still be treated as untrusted. A screenshot over 64 KiB needs a host that serves the binary store. It was checked against the real CLI on `example.com` for reading, and on a locally served form, not against a login flow, a slow page or a long run.

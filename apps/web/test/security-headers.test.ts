@@ -28,7 +28,7 @@ describe('security headers', () => {
   });
 
   it('leave embeddable and self-policed paths without frame headers or a CSP', () => {
-    for (const path of ['/chat/x', '/form/x', '/form-test/x', '/api/binary/x', '/api/mcp/files/x', '/mcp/x', '/api/webhook/x']) {
+    for (const path of ['/chat/x', '/form/x', '/form-test/x', '/api/binary/x', '/api/mcp/files/x', '/mcp/x', '/api/webhook/x', '/mcp-test/x', '/api/webhook-test/x']) {
       const res = run(path);
       expect(res.headers.get('x-frame-options'), path).toBeNull();
       expect(res.headers.get(CSP), path).toBeNull();

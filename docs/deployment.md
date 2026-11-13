@@ -1020,19 +1020,21 @@ If you joined the networks with `compose.infra-link.yml`, pass it to `down` as w
 
 ## Security headers and Content Security Policy
 
-`apps/web/src/proxy.ts` sets these on every response it produces (pages, API routes, 401s and redirects): `X-Content-Type-Options:
+`apps/web/src/proxy.ts` sets these on every response it produces (pages, API routes, 401s and redirects; `X-Frame-Options` except on the embeddable paths below): `X-Content-Type-Options:
 nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), geolocation=(), microphone=(self)`
 (Spotlight dictation uses the microphone) and `X-Frame-Options: DENY`. `Strict-Transport-Security: max-age=31536000;
 includeSubDomains` is added when the request is https (the URL, or `X-Forwarded-Proto`) unless `LANDFLOW_HSTS=off`. `x-powered-by`
 is not sent.
 
 Pages (not API routes) also get a Content Security Policy with a fresh nonce per request: `script-src 'self' 'nonce-…'
-'strict-dynamic'` (plus `'unsafe-eval'` under `next dev`), inline styles, `img-src 'self' data: blob:`, `connect-src 'self'`,
+'strict-dynamic'` (plus `'unsafe-eval'` under `next dev`), inline styles, `img-src 'self' data: blob: https:` (notes, chat and plugin icons show remote images), `connect-src 'self'`,
 `frame-src 'self' blob:`, `worker-src 'self' blob:`, `object-src 'none'`, `base-uri 'self'`, `form-action 'self'` and
 `frame-ancestors 'none'`. `LANDFLOW_CSP` picks the mode: `enforce` (default in the production profile), `report`
 (`Content-Security-Policy-Report-Only`, default in development) or `off`. If a page breaks in production, set
 `LANDFLOW_CSP=report` and read the console for the blocked source.
 
-The embeddable or self-policed paths (`/chat`, `/form`, `/form-test`, `/api/binary`, `/api/mcp/files`, `/mcp`, `/api/webhook`) keep their
+The embeddable or self-policed paths (`/chat`, `/form`, `/form-test`, `/api/binary`, `/api/mcp/files`, `/mcp`, `/mcp-test`, `/api/webhook`, `/api/webhook-test`) keep their
 own policy and get no frame headers or CSP from the proxy, only the three fixed headers above. A reverse proxy that serves the host over
 https should forward `X-Forwarded-Proto`.
+
+Any inline `<script>` in a page must carry the nonce: the root layout reads it from the `x-nonce` request header the proxy sets and passes `nonce={nonce}` to its theme and look scripts. Without it the browser blocks the script.

@@ -17,7 +17,7 @@ import { isProduction } from './lib/server/config/profile';
 import { API_KEY_HEADER, isPublicPath, PATH_HEADER, SESSION_COOKIE } from './lib/shared/auth-paths';
 
 /** Paths meant to be framed or that set their own policy (chat route, stored files, MCP file links). */
-const EMBEDDABLE = ['/chat', '/form', '/form-test', '/api/binary', '/api/mcp/files', '/mcp', '/api/webhook'];
+const EMBEDDABLE = ['/chat', '/form', '/form-test', '/api/binary', '/api/mcp/files', '/mcp', '/mcp-test', '/api/webhook', '/api/webhook-test'];
 const underPrefix = (pathname: string, prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
 export const isEmbeddable = (pathname: string) => EMBEDDABLE.some((p) => underPrefix(pathname, p));
 
@@ -35,7 +35,7 @@ export function pagePolicy(nonce: string): string {
     "default-src 'self'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${dev ? " 'unsafe-eval'" : ''}`,
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
+    "img-src 'self' data: blob: https:",
     "font-src 'self' data:",
     "media-src 'self' blob: data:",
     "connect-src 'self'",
@@ -61,12 +61,14 @@ export function proxy(request: NextRequest) {
   // Report-only still needs the nonce visible to Next: it reads it from either header on the request.
   else if (csp) headers.set('content-security-policy-report-only', csp);
   if (csp) headers.set('x-nonce', nonce);
-  const https = request.nextUrl.protocol === 'https:' || request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim() === 'https';
+  const forwarded = request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim();
+  const https = request.nextUrl.protocol === 'https:' || forwarded === 'https';
   const secure = <T extends Response>(res: T): T => {
     res.headers.set('x-content-type-options', 'nosniff');
     res.headers.set('referrer-policy', 'strict-origin-when-cross-origin');
     res.headers.set('permissions-policy', 'camera=(), geolocation=(), microphone=(self)');
-    if (https && process.env.LANDFLOW_HSTS?.trim().toLowerCase() !== 'off') res.headers.set('strict-transport-security', 'max-age=31536000; includeSubDomains');
+    const hsts = process.env.LANDFLOW_HSTS?.trim().toLowerCase() !== 'off';
+    if (https && hsts) res.headers.set('strict-transport-security', 'max-age=31536000; includeSubDomains');
     if (!embeddable) res.headers.set('x-frame-options', 'DENY');
     if (csp) res.headers.set(mode === 'enforce' ? 'content-security-policy' : 'content-security-policy-report-only', csp);
     return res;
