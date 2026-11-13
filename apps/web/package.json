@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "next dev --port 3000",
     "build": "next build",
-    "start": "next start --port 3000",
+    "start": "NEXT_MANUAL_SIG_HANDLE=true next start --port 3000",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "worker": "tsx --tsconfig tsconfig.json src/lib/server/cluster/worker-main.ts"

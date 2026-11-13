@@ -5,6 +5,7 @@ import { AuthError, guardRequest } from './auth/guard';
 import { noteAuditPrincipal } from './audit/context';
 import { auditRequest } from './audit/http';
 import { ensureBootstrapped } from './bootstrap';
+import { isDraining, trackRequest } from './lifecycle';
 import { logger } from './telemetry';
 
 export function json<T>(data: T, init?: number | ResponseInit) {
@@ -19,10 +20,20 @@ export function error(message: string, status = 400, extra: Record<string, unkno
  * Wrap a route handler: bootstrap first, then the auth guard (lib/server/auth/guard.ts: a session or API key unless
  * the path is on the public allow-list, plus the route's scope and role), then the handler as that user; thrown
  * errors become JSON. Every request runs in an audit context, and a change that recorded no audit event of its own
- * gets a generic one (lib/server/audit/http.ts).
+ * gets a generic one (lib/server/audit/http.ts). While the host drains for shutdown, new requests get 503 with
+ * Retry-After (health checks excepted); requests in flight are counted so the shutdown can wait for them.
  */
 export function handler<A extends unknown[]>(fn: (...args: A) => Promise<Response>) {
-  return async (...args: A): Promise<Response> =>
+  return async (...args: A): Promise<Response> => {
+    if (isDraining() && !routePath(args[0])?.startsWith('/api/health')) {
+      return NextResponse.json({ error: 'The server is shutting down' }, { status: 503, headers: { 'Retry-After': '5' } });
+    }
+    return trackRequest(() => run(fn, args));
+  };
+}
+
+function run<A extends unknown[]>(fn: (...args: A) => Promise<Response>, args: A): Promise<Response> {
+  return (
     auditRequest(args, async () => {
       try {
         await ensureBootstrapped();
@@ -35,7 +46,8 @@ export function handler<A extends unknown[]>(fn: (...args: A) => Promise<Respons
         logger.error('route error', { error: caught, 'url.path': routePath(args[0]) });
         return error((caught as Error).message ?? 'Internal error', 500);
       }
-    });
+    })
+  );
 }
 
 function routePath(request: unknown): string | undefined {

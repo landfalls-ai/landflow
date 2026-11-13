@@ -22,6 +22,8 @@ SDK's README. Part of the [Landflow docs](../README.md).
 | `LANDFLOW_OFFLOAD_MANUAL_EXECUTIONS` | `false` | queue mode: editor runs go to the workers too |
 | `LANDFLOW_QUEUE_ALLOW_SQLITE` | `false` | allow queue mode on SQLite, every process on one host sharing the file |
 | `LANDFLOW_LEADER_TTL_SECONDS` / `LANDFLOW_STALLED_SECONDS` | `10` / `30` | leader lease (failover in TTL + TTL/3) / how long a silent worker keeps its jobs |
+| `LANDFLOW_SHUTDOWN_SECONDS` | `25` | a main's whole shutdown budget on SIGTERM / SIGINT, shared by its phases ([Stopping the host](../deployment.md#stopping-the-host)) |
+| `NEXT_MANUAL_SIG_HANDLE` | set by `pnpm start` and the Docker image | `true` leaves SIGTERM / SIGINT to Landflow's graceful shutdown instead of Next.js's own exit; not available in `next dev` |
 | `LANDFLOW_WORKER_PORT` / `LANDFLOW_WORKER_SHUTDOWN_SECONDS` | `5690` / `30` | a worker's `/healthz` and `/metrics` (`0` = off) / how long SIGTERM lets runs finish before re-queuing them |
 | `LANDFLOW_IDEMPOTENCY_TTL_HOURS` | `24` | how long trigger idempotency keys are remembered |
 | `LANDFLOW_APP_WEBHOOK_RETRY_MS` | `60000` | how often app webhook registrations that failed at publish are retried |

@@ -1232,6 +1232,14 @@ workbench in place of a page of cards, keeping Spotlight.
   the Source, filing a good answer back as a fact, and a detector that turns shared work into a suggestion addressed to
   both teams.
 
+## Backend hardening (2026-11)
+
+- **P01** (C1, C2, O1): `lib/server/lifecycle.ts` is the one place for the process lifecycle. A main now stops on SIGTERM
+  / SIGINT in phases (requests, services, runs, cluster, storage, telemetry): it flushes the Postgres queue, releases
+  the leader lease and flushes telemetry. A failed required boot step (database, cluster) exits the process instead of
+  serving 500s for ever; an optional one is logged and counted. The host logs and counts unhandled rejections and
+  uncaught exceptions.
+
 ## Planned next
 
 1. **Declare event kinds in the UI**: kinds are declared over the API or by Record Event's *Declare Kind If New* only.

@@ -207,6 +207,7 @@ histograms in **milliseconds** with buckets `1, 5, 10, 25, 50, 100, 250, 500, 10
 |---|---|---|
 | `landflow.plugin.rpc.duration` | histogram (ms) | `landflow.plugin.id`, `rpc.system`, `rpc.method`, `landflow.outcome` (`ok`/`error`/`timeout`) |
 | `landflow.plugins.online` | gauge | `landflow.plugin.language` |
+| `landflow.process.errors` | counter | `kind` (`unhandled_rejection`, `uncaught_exception`, `service_start`) |
 | `landflow.plugin.heartbeats` | counter | `landflow.plugin.id` |
 | `landflow.ai.requests` | counter | `gen_ai.system`, `gen_ai.request.model`, `landflow.outcome` |
 | `landflow.ai.duration` | histogram (ms) | `gen_ai.system`, `gen_ai.request.model` |

@@ -92,3 +92,8 @@ items still open (its "Wave 6" section); this page is the short list to check be
   compose) starts a second copy under the same plugin id and lists its template twice (built-in and installed); install
   from the marketplace only where the plugin isn't bundled.
 - **Checked against fakes only**: Slack, Google, Notion, Linear, Attio and Fathom activity were tested against local fakes of their APIs, not a real workspace.
+
+## Graceful shutdown (backend hardening, 2026-11)
+
+- **`next dev`** keeps Next.js's own signal handling: the host's phased shutdown (flush, lease release) runs only where `NEXT_MANUAL_SIG_HANDLE=true` (`pnpm start`, the Docker image). Without it only the error handlers are ours.
+- **Streams**: in manual mode in-flight requests are awaited, but SSE streams are not; they end when the process exits.
