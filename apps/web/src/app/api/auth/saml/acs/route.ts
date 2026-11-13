@@ -9,7 +9,8 @@ import { clientIp, createSession, setSessionCookie } from '@/lib/server/auth';
 import { publicOrigin, readCookie, secureRequest } from '@/lib/server/auth/cookies';
 import { completeLogin, rememberSession, SAML_STATE_COOKIE, SamlError, samlConfig } from '@/lib/server/auth/saml';
 import { UserError } from '@/lib/server/auth/users';
-import { recordAudit } from '@/lib/server/audit';
+import { auditRequestContext, recordAudit } from '@/lib/server/audit';
+import { deniedReadDue } from '@/lib/server/audit/http';
 import { handler } from '@/lib/server/http';
 import { logger } from '@/lib/server/telemetry';
 
@@ -24,7 +25,8 @@ export const POST = handler(async (request: Request) => {
   };
   // A refused sign-in is an audit event too (the reason is a category: no assertion contents, no names).
   const fail = (message: string, reason: string) => {
-    recordAudit({ action: 'auth.sign_in_failed', outcome: 'failure', actor: 'anonymous', summary: `Failed SAML sign-in (${reason})`, details: { method: 'saml', reason } });
+    // At most one a minute per client address and method: these routes are public, so a loop can't flood the log.
+    if (deniedReadDue(`ip:${auditRequestContext()?.ip ?? 'unknown'}`, '/auth/saml-sign-in')) recordAudit({ action: 'auth.sign_in_failed', outcome: 'failure', actor: 'anonymous', summary: `Failed SAML sign-in (${reason})`, details: { method: 'saml', reason } });
     return clearState(NextResponse.redirect(`${origin}/login?error=${encodeURIComponent(message)}`, 303));
   };
   const config = samlConfig();

@@ -146,9 +146,11 @@ export async function auditRequest(args: unknown[], run: () => Promise<Response>
   } catch {
     // Immutable headers (a redirect): no id on this one.
   }
-  if (!path.startsWith('/api/') || auditSkipped(path) || ctx.recorded > 0) return response;
+  if (!path.startsWith('/api/') || ctx.recorded > 0) return response;
   const denied = response.status === 401 || response.status === 403;
   if (!MUTATING.has(method) && !(denied && (method === 'GET' || method === 'HEAD'))) return response;
+  // The skip list is about the volume of changes: a refused read is rate-limited below and recorded anyway.
+  if (MUTATING.has(method) && auditSkipped(path)) return response;
   try {
     const outcome = outcomeOf(response.status);
     // Refused by the guard: find out who it was (the guard doesn't hand the principal over when it refuses).

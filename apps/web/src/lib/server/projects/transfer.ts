@@ -7,7 +7,7 @@
  * share) unless told otherwise, and moving a workflow can share the credentials it uses with the new project.
  */
 import { recordAudit } from '../audit';
-import { personalProjectId, type ResourceKind, type TransferTarget } from '../../shared/projects';
+import { personalProjectId, type ResourceKind, type ShareRole, type TransferTarget } from '../../shared/projects';
 import { authDb } from '../auth/db';
 import { deleteUser, getUser } from '../auth/users';
 import { dataTables } from '../datatables';
@@ -45,19 +45,19 @@ export function moveResource(kind: ResourceKind, id: string, projectId: string, 
   const target = getProject(projectId);
   if (!target) throw new ProjectError('Project not found', 404);
   const db = authDb();
-  const kept: Array<[ResourceKind, string, string]> = [];
+  const kept: Array<[ResourceKind, string, string, ShareRole | undefined]> = [];
   const result = db.transaction(() => {
     const from = homeProjectId(kind, id);
     if (from === target.id && storedHomeProject(kind, id)) return { from, to: target, moved: false };
     setHomeProject(kind, id, target.id);
     if (kind === 'credential' && from && from !== target.id && options.keepAccess !== false) {
-      putShare('credential', id, from, 'user', options.actorId);
-      kept.push(['credential', id, from]);
+      const before = putShare('credential', id, from, 'user', options.actorId);
+      if (before !== 'user') kept.push(['credential', id, from, before]);
     }
     for (const credentialId of options.shareCredentials ?? []) {
       if (homeProjectId('credential', credentialId) !== target.id) {
         const before = putShare('credential', credentialId, target.id, 'user', options.actorId);
-        if (before !== 'user') kept.push(['credential', credentialId, target.id]);
+        if (before !== 'user') kept.push(['credential', credentialId, target.id, before]);
       }
     }
     return { from, to: target, moved: true };
@@ -71,7 +71,7 @@ export function moveResource(kind: ResourceKind, id: string, projectId: string, 
       summary: `Moved ${kind} ${id} from ${fromName ?? 'the default project'} to ${target.name}`,
       details: { kind, resourceId: id, from: result.from ?? null, to: target.id, toName: target.name, keepAccess: kind === 'credential' ? options.keepAccess !== false : null, sharedCredentials: options.shareCredentials?.length ?? 0 },
     });
-    for (const [shareKind, shareId, withProject] of kept) auditShare(shareKind, shareId, withProject, undefined, 'user');
+    for (const [shareKind, shareId, withProject, was] of kept) auditShare(shareKind, shareId, withProject, was, 'user');
   }
   return { from: result.from, to: result.to };
 }

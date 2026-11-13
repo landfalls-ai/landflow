@@ -254,7 +254,7 @@ export async function setPassword(id: string, password: string, reason?: 'self' 
   const updated = updateUser(id, { passwordHash: await hashPassword(password) });
   const actor = requestAuth()?.principal ?? auditRequestContext()?.principal;
   const why = reason ?? (actor ? (actor.user.id === id ? 'self' : 'admin') : 'reset');
-  if (why !== 'reset') recordAudit({ action: 'auth.password_change', target: { type: 'user', id, name: updated.email }, summary: `${why === 'self' ? `${updated.email} changed their password` : `Changed ${updated.email}’s password`}`, details: { reason: why } });
+  if (why !== 'reset') recordAudit({ action: 'auth.password_change', target: { type: 'user', id, name: updated.email }, summary: why === 'self' ? `${updated.email} changed their password` : `Changed ${updated.email}’s password`, details: { reason: why } });
   return updated;
 }
 

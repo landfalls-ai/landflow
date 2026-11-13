@@ -41,6 +41,9 @@ const credentialTransferRoute = await import('@/app/api/credentials/[id]/transfe
 const credentialsRoute = await import('@/app/api/credentials/route');
 const credentialTestRoute = await import('@/app/api/credentials/test/route');
 const variablesRoute = await import('@/app/api/variables/route');
+const variableEnvironmentsRoute = await import('@/app/api/variables/[key]/environments/route');
+const projectVariableEnvironmentsRoute = await import('@/app/api/projects/[id]/variables/[key]/environments/route');
+const syncApplyRoute = await import('@/app/api/sync/apply/route');
 const variableRoute = await import('@/app/api/variables/[key]/route');
 const providersRoute = await import('@/app/api/external-secrets/route');
 const providerRoute = await import('@/app/api/external-secrets/[name]/route');
@@ -94,7 +97,7 @@ describe('permission changes', () => {
 
     const renamed = await projectRoute.PATCH(req('PATCH', `/api/projects/${projectId}`, { name: 'Coverage 2' }), params({ id: projectId }));
     expect(renamed.status).toBe(200);
-    expect(latest('project.update')).toMatchObject({ projectId, details: { name_from: 'Coverage', name_to: 'Coverage 2' } });
+    expect(latest('project.update')).toMatchObject({ projectId, details: { nameFrom: 'Coverage', nameTo: 'Coverage 2' } });
 
     const put = await membersRoute.PUT(req('PUT', `/api/projects/${projectId}/members`, { members: [{ userId: member.id, role: 'admin' }, { userId: other.id, role: 'viewer' }] }), params({ id: projectId }));
     expect(put.status).toBe(200);
@@ -182,6 +185,39 @@ describe('variables and secret providers', () => {
     expect(latest('variable.delete')).toMatchObject({ projectId: id, details: { scope: 'project', key: 'PROJ_VAR' } });
     // One event each: the generic layer did not add a line.
     expect(queryEvents({ action: ['api.request'], q: '/variables' }).events).toHaveLength(0);
+  });
+
+  it('records per-environment values once, by environment name, never the value', async () => {
+    await variablesRoute.POST(req('POST', '/api/variables', { key: 'ENV_VAR', value: 'x' }));
+    const before = queryEvents({ action: ['variable.update'] }).events.length;
+    const put = await variableEnvironmentsRoute.PUT(req('PUT', '/api/variables/ENV_VAR/environments', { values: { production: SECRET, staging: 's' } }), params({ key: 'ENV_VAR' }));
+    expect(put.status).toBe(200);
+    expect(queryEvents({ action: ['variable.update'] }).events).toHaveLength(before + 1);
+    expect(latest('variable.update')).toMatchObject({ details: { scope: 'instance', key: 'ENV_VAR', environments: ['production', 'staging'], cleared: [] } });
+    await variableEnvironmentsRoute.PUT(req('PUT', '/api/variables/ENV_VAR/environments', { values: { staging: null } }), params({ key: 'ENV_VAR' }));
+    expect(latest('variable.update')).toMatchObject({ details: { environments: [], cleared: ['staging'] } });
+    // Nothing changed: no domain event (only the generic line).
+    await variableEnvironmentsRoute.PUT(req('PUT', '/api/variables/ENV_VAR/environments', { values: { production: SECRET } }), params({ key: 'ENV_VAR' }));
+    expect(queryEvents({ action: ['variable.update'] }).events).toHaveLength(before + 2);
+
+    const made = await projectsRoute.POST(req('POST', '/api/projects', { name: 'EnvVars' }));
+    const id = (await json<{ project: { id: string } }>(made)).project.id;
+    await projectVariablesRoute.POST(req('POST', `/api/projects/${id}/variables`, { key: 'PROJ_ENV', value: 'x' }), params({ id }));
+    const put2 = await projectVariableEnvironmentsRoute.PUT(req('PUT', `/api/projects/${id}/variables/PROJ_ENV/environments`, { values: { production: SECRET } }), params({ id, key: 'PROJ_ENV' }));
+    expect(put2.status).toBe(200);
+    expect(latest('variable.update')).toMatchObject({ projectId: id, details: { scope: 'project', projectId: id, key: 'PROJ_ENV', environments: ['production'], cleared: [] } });
+    // Only the no-op PUT above left the generic line; the two that changed something did not.
+    expect(queryEvents({ action: ['api.request'], q: '/environments' }).events.map((e) => [e.route, e.status])).toEqual([['/api/variables/[key]/environments', 200]]);
+    expect(allText()).not.toContain(SECRET);
+  });
+
+  it('records variables a Git sync apply writes (the second path) by name and environment, never the value', async () => {
+    const files = [{ path: 'landflow-sync.json', content: JSON.stringify({ format: 'landflow-sync/v1' }) }, { path: 'variables.json', content: JSON.stringify({ variables: [{ key: 'SYNC_VAR', value: SECRET, environments: { production: `${SECRET}-p` } }] }) }];
+    const response = await syncApplyRoute.POST(new Request('http://sync.test/api/sync/apply', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ files }) }));
+    expect(response.status).toBe(200);
+    expect(latest('variable.create')).toMatchObject({ target: { id: 'SYNC_VAR' }, details: { scope: 'instance', key: 'SYNC_VAR' } });
+    expect(latest('variable.update')).toMatchObject({ details: { key: 'SYNC_VAR', environments: ['production'], cleared: [] } });
+    expect(allText()).not.toContain(SECRET);
   });
 
   it('records an external secrets provider added, changed and removed, never a secret setting', async () => {

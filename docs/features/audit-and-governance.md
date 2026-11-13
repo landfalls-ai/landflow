@@ -37,15 +37,15 @@ To try it locally, `docker compose -f deploy/compose.infra.yml --profile siem up
 
 | Action | Recorded when | Details |
 |---|---|---|
-| `project.create`, `project.update`, `project.delete` | a team project is made (also by SSO/SCIM group mapping), renamed or re-described, deleted | `name`; `name_from`/`name_to` (also `description_`, `icon_`) for what changed; `transferredTo` and `moved` (`kind:count`) on delete |
+| `project.create`, `project.update`, `project.delete` | a team project is made (also by SSO/SCIM group mapping), renamed or re-described, deleted | `name`; `nameFrom`/`nameTo` (also `description…`, `icon…`) for what changed; `transferredTo` and `moved` (`kind:count`) on delete |
 | `project.member_change` | a member is added, removed or has their role changed (the members page, project creation, group mapping) | `change` (`added`, `removed`, `changed`), `userId`, `email`, `from`, `to` (roles; null when absent), `source` (`saml`, `scim`) |
 | `resource.share`, `resource.unshare` | a workflow or credential is shared with a project or user (new, or its role changed), or a share is removed | `kind`, `resourceId`, `withProjectId`, `withProject`, `from`, `to` (share roles) |
 | `resource.transfer` | "Move to project" for a workflow, credential, data table or agent | `kind`, `resourceId`, `from`, `to` (project ids), `toName`, `keepAccess`, `sharedCredentials`; the access a move keeps or the credentials it shares are `resource.share` events of their own |
-| `variable.create`, `.update`, `.delete` | an instance variable or a project's | `scope` (`instance`/`project`), `projectId`, `key`, `from`/`to` on a rename, `valueChanged` (never the value) |
+| `variable.create`, `.update`, `.delete` | an instance variable or a project's | `scope` (`instance`/`project`), `projectId`, `key`, `from`/`to` on a rename, `valueChanged` (never the value); a change to per-environment values is a `variable.update` with `environments` (names that got a value) and `cleared` (names that lost theirs), recorded only when something differs |
 | `secret_provider.create`, `.update`, `.delete` | an external secrets provider | `provider`, `kind`, `enabledFrom`/`enabledTo`, `fieldsChanged` (setting names only) |
 | `auth.password_change` | someone changes a password (Settings, profile; an admin); a reset link has `auth.password_reset` | `reason` (`self`, `admin`) |
-| `auth.sign_in_failed` | a SAML or OIDC sign-in is refused or fails | `method` (`saml`, `oidc`), `reason` (`not_configured`, `provider_error`, `refused`, `bad_request`, `error`; no assertion or claim contents) |
-| `api.denied` | a GET or HEAD is refused with 401/403 | one per minute per (user, or client address when nobody is signed in) and route pattern, from an in-memory map of up to 10,000 keys; a refused change is still `api.request` with outcome `denied` |
+| `auth.sign_in_failed` | a SAML or OIDC sign-in is refused or fails | `method` (`saml`, `oidc`), `reason` (`not_configured`, `provider_error`, `refused`, `bad_request`, `error`; no assertion or claim contents); at most one a minute per client address |
+| `api.denied` | a GET or HEAD is refused with 401/403, also on paths the change log skips (binary files, agent sessions, MCP, assistant) | one per minute per (user, or client address when nobody is signed in) and route pattern, from an in-memory map of up to 10,000 keys; a refused change is still `api.request` with outcome `denied` |
 | `sync.export`, `datatable.export` | `GET /api/sync/export`; a data table's CSV | files and the summary counts (workflows, variables, tables, credentials), `values`; rows, columns, bytes |
 | `credential.test` | `POST /api/credentials/test` (it decrypts and sends the credential) | `type`, `credentialId`, `ok` |
 | `agent.tool_approval` | a person approves or denies a paused tool call (`POST /api/agents/:id/sessions/:sid/approvals`) | `decision`, `tool`, `sessionId`, `callId` |

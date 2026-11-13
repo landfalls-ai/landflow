@@ -8,7 +8,8 @@ import { clientIp, createSession, setSessionCookie } from '@/lib/server/auth';
 import { publicOrigin, readCookie, secureRequest } from '@/lib/server/auth/cookies';
 import { completeLogin, OIDC_STATE_COOKIE, OidcError, oidcConfig } from '@/lib/server/auth/oidc';
 import { UserError } from '@/lib/server/auth/users';
-import { recordAudit } from '@/lib/server/audit';
+import { auditRequestContext, recordAudit } from '@/lib/server/audit';
+import { deniedReadDue } from '@/lib/server/audit/http';
 import { handler } from '@/lib/server/http';
 import { logger } from '@/lib/server/telemetry';
 
@@ -19,7 +20,8 @@ export const GET = handler(async (request: Request) => {
   const url = new URL(request.url);
   // A refused sign-in is an audit event too (the reason is a category: no provider text, no claims).
   const fail = (message: string, reason: string) => {
-    recordAudit({ action: 'auth.sign_in_failed', outcome: 'failure', actor: 'anonymous', summary: `Failed single sign-on (${reason})`, details: { method: 'oidc', reason } });
+    // At most one a minute per client address and method: these routes are public, so a loop can't flood the log.
+    if (deniedReadDue(`ip:${auditRequestContext()?.ip ?? 'unknown'}`, '/auth/oidc-sign-in')) recordAudit({ action: 'auth.sign_in_failed', outcome: 'failure', actor: 'anonymous', summary: `Failed single sign-on (${reason})`, details: { method: 'oidc', reason } });
     const response = NextResponse.redirect(`${origin}/login?error=${encodeURIComponent(message)}`);
     response.cookies.set(OIDC_STATE_COOKIE, '', { httpOnly: true, sameSite: 'lax', secure: secureRequest(request), path: '/api/auth/oidc', maxAge: 0 });
     return response;

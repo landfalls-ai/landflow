@@ -41,6 +41,7 @@ const auditRoute = await import('@/app/api/audit/route');
 const exportRoute = await import('@/app/api/audit/export/route');
 const auditSettingsRoute = await import('@/app/api/settings/audit/route');
 const foldersRoute = await import('@/app/api/folders/route');
+const folderRoute = await import('@/app/api/folders/[id]/route');
 const variablesRoute = await import('@/app/api/variables/route');
 const settingsRoute = await import('@/app/api/settings/route');
 const lockRoute = await import('@/app/api/workflows/[id]/lock/route');
@@ -112,6 +113,13 @@ describe('generic layer', () => {
     expect(event.actor).toMatchObject({ type: 'user', id: TEST_OWNER.id });
     expect(event.status).toBe(response.status);
 
+    const folder = (await response.json() as { folder: { id: string } }).folder?.id;
+    if (folder) {
+      const renamed = await folderRoute.PATCH(req('PATCH', `/api/folders/${folder}`, { name: 'Renamed' }), params({ id: folder }));
+      // (Whatever the outcome, the generic layer derives the target from the `[id]` segment.)
+      expect(renamed.status).toBeGreaterThan(0);
+      expect(latest('api.request')).toMatchObject({ method: 'PATCH', route: '/api/folders/[id]', target: { type: 'folder', id: folder } });
+    }
     expect(allText()).not.toContain(SECRET);
   });
 

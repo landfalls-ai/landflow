@@ -198,7 +198,12 @@ export const externalSecrets = {
     providerStore.save(stored);
     dropInstance(name);
     // Which settings changed (names only), and a secret field is only ever named as “changed”.
-    const changed = Object.keys(input.settings ?? {}).filter((key) => input.settings![key] !== undefined && (input.settings![key] !== null ? String(input.settings![key]) !== '' : true));
+    const changed = Object.keys(input.settings ?? {}).filter((key) => {
+      const sent = input.settings![key];
+      if (sent === undefined) return false;
+      if (key in settings) return String(settings[key] ?? '') !== String(previous.settings[key] ?? '');
+      return sent !== null ? String(sent) !== '' : true;
+    });
     auditProvider('update', stored, { enabledFrom: previous.enabled, enabledTo: stored.enabled, fieldsChanged: changed });
     return viewOf(stored);
   },

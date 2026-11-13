@@ -12,7 +12,7 @@ export const GET = dataTableRoute(async (_request: Request, { params }: Ctx) => 
   const table = service.getTable(id);
   const file = `${table.name.replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || 'data-table'}.csv`;
   const csv = service.exportCsv(id);
-  recordAudit({ action: 'datatable.export', target: { type: 'data_table', id, name: table.name }, summary: `Exported the data table ${table.name} as CSV`, details: { rows: service.storage.countRows(id), columns: table.columns.length, bytes: csv.length } });
+  recordAudit({ action: 'datatable.export', target: { type: 'data_table', id, name: table.name }, summary: `Exported the data table ${table.name} as CSV`, details: { rows: service.storage.countRows(id), columns: table.columns.length, bytes: Buffer.byteLength(csv) } });
   return new Response(csv, {
     headers: { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': `attachment; filename="${file}"`, 'cache-control': 'no-store' },
   });

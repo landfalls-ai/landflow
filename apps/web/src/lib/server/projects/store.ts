@@ -219,11 +219,11 @@ export function updateProject(id: string, patch: { name?: string; description?: 
   const details: Record<string, string | null> = {};
   for (const field of ['name', 'description', 'icon'] as const) {
     if (project[field] !== next[field]) {
-      details[`${field}_from`] = project[field] ?? null;
-      details[`${field}_to`] = next[field] ?? null;
+      details[`${field}From`] = project[field] ?? null;
+      details[`${field}To`] = next[field] ?? null;
     }
   }
-  if (Object.keys(details).length) recordAudit({ action: 'project.update', target: { type: 'project', id: id, name: next.name }, project: id, summary: `Changed the project ${next.name} (${Object.keys(details).filter((k) => k.endsWith('_from')).map((k) => k.replace('_from', '')).join(', ')})`, details });
+  if (Object.keys(details).length) recordAudit({ action: 'project.update', target: { type: 'project', id: id, name: next.name }, project: id, summary: `Changed the project ${next.name} (${Object.keys(details).filter((k) => k.endsWith('From')).map((k) => k.replace('From', '')).join(', ')})`, details });
   return next;
 }
 
@@ -303,10 +303,10 @@ export function setMember(projectId: string, userId: string, role: ProjectRole, 
   if (before !== role) auditMember(projectId, userId, before, role, source);
 }
 
-export function removeMember(projectId: string, userId: string): boolean {
+export function removeMember(projectId: string, userId: string, source?: string): boolean {
   const before = memberRole(projectId, userId);
   const removed = db().delete('project_members', { project_id: projectId, user_id: userId }) > 0;
-  if (removed) auditMember(projectId, userId, before, undefined);
+  if (removed) auditMember(projectId, userId, before, undefined, source);
   return removed;
 }
 
