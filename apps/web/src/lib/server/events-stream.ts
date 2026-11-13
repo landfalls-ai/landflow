@@ -17,7 +17,7 @@ export const REVALIDATE_MS = 30_000;
 
 type Filter = (event: SeqEvent) => boolean;
 
-export interface EventStreamOptions extends Pick<SseOptions, 'heartbeatMs' | 'maxBufferedBytes'> {
+export interface EventStreamOptions extends Pick<SseOptions, 'heartbeatMs' | 'maxBufferedBytes' | 'stallMs'> {
   revalidateMs?: number;
   /** A fresh filter for the same user, or undefined when the session or user is no longer valid. Tests replace it. */
   authorize?: () => Filter | undefined;
@@ -73,6 +73,7 @@ export function eventStream(request: Request, options: EventStreamOptions = {}):
       retryMs: 3000,
       heartbeatMs: options.heartbeatMs,
       maxBufferedBytes: options.maxBufferedBytes,
+      stallMs: options.stallMs,
     },
   );
 }

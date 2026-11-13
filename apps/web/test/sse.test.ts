@@ -56,7 +56,7 @@ describe('sseResponse', () => {
         for (let i = 0; i < 100 && last; i++, sent++) last = send('x'.repeat(100));
         return cleanup;
       },
-      { maxBufferedBytes: 1024, heartbeatMs: 0 },
+      { maxBufferedBytes: 1024, heartbeatMs: 0, stallMs: 0 },
     );
     await new Promise((r) => setTimeout(r, 20));
     expect(last).toBe(false);
@@ -64,6 +64,37 @@ describe('sseResponse', () => {
     expect(cleanup).toHaveBeenCalledTimes(1);
     const text = await readUntil(response, () => false, 100);
     expect(text).toContain('buffer limit reached');
+  });
+
+  it('lets a reading client catch up after a burst over the limit, and cuts it once it stops reading', async () => {
+    const abort = new AbortController();
+    let sendRef: ((data: unknown) => boolean) | undefined;
+    const response = sseResponse(reqWith(abort), (send) => void (sendRef = send), { maxBufferedBytes: 1024, heartbeatMs: 0, stallMs: 200 });
+    await new Promise((r) => setTimeout(r, 5));
+    // A burst of 8 KiB in one tick, 8 times the limit and under the 8x hard limit: nothing is cut while the client reads.
+    let ok = true;
+    for (let i = 0; i < 7; i++) ok = sendRef!('b'.repeat(1000)) && ok;
+    expect(ok).toBe(true);
+    const text = await readUntil(response, (t) => (t.match(/data: b+/g) ?? []).length === 7, 500);
+    expect((text.match(/data: b+/g) ?? []).length).toBe(7);
+    // Now nobody reads: over the limit is fine until the stall time has passed, then the stream is cut.
+    for (let i = 0; i < 3; i++) sendRef!('c'.repeat(1000));
+    await new Promise((r) => setTimeout(r, 250));
+    expect(sendRef!('d'.repeat(1000))).toBe(false);
+    abort.abort();
+  });
+
+  it('cuts any client past the hard limit, reading or not', async () => {
+    const abort = new AbortController();
+    let last = true;
+    let sent = 0;
+    sseResponse(reqWith(abort), (send) => {
+      for (let i = 0; i < 50 && last; i++, sent++) last = send('h'.repeat(1000));
+    }, { maxBufferedBytes: 1024, heartbeatMs: 0, hardLimitBytes: 4096 });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(last).toBe(false);
+    expect(sent).toBeLessThan(6);
+    abort.abort();
   });
 
   it('cleans up on abort and on cancel, and sends heartbeats', async () => {
@@ -101,13 +132,13 @@ describe('oversize events', () => {
     bus.publish(registry(2));
     stop();
     const abort = new AbortController();
-    const response = eventStream(reqWith(abort, { 'last-event-id': `${bus.bootId}.${first - 1}` }), { authorize: () => () => true, heartbeatMs: 0, maxBufferedBytes: 1024 });
+    const response = eventStream(reqWith(abort, { 'last-event-id': `${bus.bootId}.${first - 1}` }), { authorize: () => () => true, heartbeatMs: 0, maxBufferedBytes: 1024, stallMs: 0 });
     const text = await readUntil(response, (t) => t.includes(`id: ${bus.bootId}.${first}\n`), 300);
     abort.abort();
     expect(text).toContain(`id: ${bus.bootId}.${first}\n`);
     // The next reconnect starts after it and gets the small one.
     const again = new AbortController();
-    const next = eventStream(reqWith(again, { 'last-event-id': `${bus.bootId}.${first}` }), { authorize: () => () => true, heartbeatMs: 0, maxBufferedBytes: 1024 });
+    const next = eventStream(reqWith(again, { 'last-event-id': `${bus.bootId}.${first}` }), { authorize: () => () => true, heartbeatMs: 0, maxBufferedBytes: 1024, stallMs: 0 });
     const more = await readUntil(next, (t) => t.includes('"n":2'), 300);
     again.abort();
     expect(more).toContain('"n":2');
@@ -122,7 +153,7 @@ describe('oversize events', () => {
     const seen = new Set<number>();
     for (let attempt = 0; attempt < 6 && seen.size < 4; attempt++) {
       const abort = new AbortController();
-      const response = eventStream(reqWith(abort, { 'last-event-id': `${bus.bootId}.${last}` }), { authorize: () => () => true, heartbeatMs: 0, maxBufferedBytes: 1024 });
+      const response = eventStream(reqWith(abort, { 'last-event-id': `${bus.bootId}.${last}` }), { authorize: () => () => true, heartbeatMs: 0, maxBufferedBytes: 1024, stallMs: 0 });
       const text = await readUntil(response, () => false, 150);
       abort.abort();
       const ids = [...text.matchAll(new RegExp(`id: ${bus.bootId}\\.(\\d+)`, 'g'))].map((m) => Number(m[1]));

@@ -1,8 +1,10 @@
 /**
  * The one way a route streams Server-Sent Events. Every streaming route used to build its own ReadableStream and
  * enqueue without looking at how much a slow client had left unread, so one stalled tab could grow the process's
- * memory without bound. `sseResponse` counts the queued bytes and, past `maxBufferedBytes`, writes a closing comment
- * and ends the stream (EventSource reconnects and resumes from its last id; a fetch reader sees the stream end).
+ * memory without bound. `sseResponse` counts the queued bytes. Past `maxBufferedBytes` it ends the stream with a
+ * closing comment when the client has stopped reading (nothing read for `stallMs`), or whatever the client does past
+ * `hardLimitBytes` (EventSource reconnects and resumes from its last id; a fetch reader sees the stream end). A client
+ * that is reading but behind a burst (a run whose nodes emit megabytes in a few milliseconds) is let catch up.
  * It also writes `id:` / `event:` lines, sends heartbeat comments, and cleans up on abort, cancel and close.
  */
 import { sseHeaders } from './http';
@@ -21,8 +23,12 @@ export type SseSend = (data: unknown, options?: SseSendOptions) => boolean;
 export type SseStart = (send: SseSend, close: () => void) => void | (() => void) | Promise<void | (() => void)>;
 
 export interface SseOptions {
-  /** Unread bytes a client may hold before the stream is closed. Default 16 MiB (see DEFAULT_MAX_BUFFERED_BYTES). */
+  /** Unread bytes past which a client that stopped reading is cut. Default 16 MiB (see DEFAULT_MAX_BUFFERED_BYTES). */
   maxBufferedBytes?: number;
+  /** How long a client may read nothing while over `maxBufferedBytes` before it counts as stalled. Default 10 s; 0 cuts at once. */
+  stallMs?: number;
+  /** Unread bytes past which any client is cut, reading or not. Default 8 × `maxBufferedBytes`. */
+  hardLimitBytes?: number;
   /** Heartbeat comment interval, 0 for none. Default 15 s. */
   heartbeatMs?: number;
   /** `retry:` hint to EventSource, in ms. */
@@ -34,16 +40,23 @@ export interface SseOptions {
 }
 
 /**
- * 16 MiB, the request body cap. A run's events carry node outputs, and a healthy reader that is rescheduled late can
- * hold a few megabytes for a moment; at 1 MiB such a reader was cut mid-run. The run and assistant streams are fetch
- * readers that cannot resume, so the limit is there for a client that stopped reading, not for a slow one.
+ * 16 MiB, the request body cap. A run's events carry node inputs and outputs, so three nodes of 3 MB each queue 16 MB
+ * in under a second while the client reads as fast as it can; the run and assistant streams are fetch readers that
+ * cannot resume, so a byte limit alone cut healthy editor runs. Hence the stall rule and the larger hard limit.
  */
 export const DEFAULT_MAX_BUFFERED_BYTES = 16 * 1024 * 1024;
+export const DEFAULT_STALL_MS = 10_000;
 /** Queued bytes that still count as "nothing queued": the retry hint, greeting and a few heartbeats. */
 const CONTROL_SLACK_BYTES = 256;
 
 export function sseResponse(request: Request, start: SseStart, options: SseOptions = {}): Response {
   const { maxBufferedBytes = DEFAULT_MAX_BUFFERED_BYTES, heartbeatMs = 15_000, retryMs, greeting = false } = options;
+  const stallMs = options.stallMs ?? DEFAULT_STALL_MS;
+  const hardLimitBytes = Math.max(options.hardLimitBytes ?? maxBufferedBytes * 8, maxBufferedBytes);
+  // Progress: bytes the client has taken off the queue (enqueued minus still queued), and when that last grew.
+  let enqueued = 0;
+  let consumed = 0;
+  let progressAt = Date.now();
   const encoder = new TextEncoder();
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   let closed = false;
@@ -75,7 +88,13 @@ export function sseResponse(request: Request, start: SseStart, options: SseOptio
     // An event bigger than the whole limit is still sent when only control frames (retry, greeting, ping) are queued,
     // or it could never be delivered and a resume would loop on it.
     const queued = room === null ? 0 : maxBufferedBytes - room;
-    if (room !== null && room < bytes.byteLength && queued > CONTROL_SLACK_BYTES) {
+    if (enqueued - queued > consumed) {
+      consumed = enqueued - queued;
+      progressAt = Date.now();
+    }
+    const over = room !== null && room < bytes.byteLength && queued > CONTROL_SLACK_BYTES;
+    const stalled = Date.now() - progressAt >= stallMs;
+    if (over && (stalled || queued + bytes.byteLength > hardLimitBytes)) {
       try {
         controller.enqueue(encoder.encode(': buffer limit reached, reconnect\n\n'));
       } catch {}
@@ -84,6 +103,7 @@ export function sseResponse(request: Request, start: SseStart, options: SseOptio
     }
     try {
       controller.enqueue(bytes);
+      enqueued += bytes.byteLength;
       return true;
     } catch {
       close();

@@ -117,7 +117,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
 ## Live streams (backend hardening, 2026-11)
 
 - **Replay is per process**: `/api/events` keeps the last 500 events in memory; a reconnect after a restart, a longer gap, or to another main (queue mode) gets `event: reset` and has to refetch. The editor's shared EventSource (`lib/client/live.ts`) does not yet listen for `reset`, so after such a gap a tab may miss updates until its next fetch.
-- A client that leaves 16 MiB unread on any SSE route is disconnected. A run started from the editor keeps running; the editor picks it up again.
+- An SSE client that stops reading for 10 s with more than 16 MiB unread is disconnected, and so is any client with more than 128 MiB unread (a run that emits more than that in a burst). A run started from the editor keeps running; the editor picks it up again.
 
 ## Execution retention (backend hardening, 2026-11)
 
