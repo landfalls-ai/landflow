@@ -17,6 +17,7 @@ const { corePlugin } = await import('@/lib/server/nodes');
 const { store } = await import('@/lib/server/store');
 const { runWorkflow } = await import('@/lib/server/runner');
 const { resumeSignature, verifyResumeSignature } = await import('@/lib/server/resume-signing');
+const auth = await import('@/lib/server/auth');
 const waitingRoute = await import('@/app/api/waiting/[id]/route');
 const formWaitingRoute = await import('@/app/form/waiting/[id]/route');
 
@@ -115,5 +116,18 @@ describe('resume signatures', () => {
     const sent = await formWaitingRoute.POST(formPost(`/form/waiting/${id}?sig=${sig}`, 'a@b.co'), params(id));
     expect(sent.status).toBe(200);
     await vi.waitFor(() => expect(store.getExecution(id)?.status).toBe('success'));
+  });
+
+  it('a signed-in caller skips the signature only on a workflow it may open', async () => {
+    mode('production');
+    const waiting = await waitFlow('wf_sig_member', 'form');
+    const id = waiting.executionId;
+    const owner = auth.listUsers().find((u) => u.role === 'owner') ?? (await auth.createOwner({ email: 'owner@flow.test', name: 'Owner', password: 'owner-password-1' }));
+    const member = await auth.createUser({ email: 'member@flow.test', name: 'Member', role: 'member', password: 'member-password-1' });
+    const keyOf = (user: typeof owner) => auth.createApiKey(user, { label: 'form', scopes: ['workflows:read'] }).token;
+    const as = (token: string) => request(`/form/waiting/${id}`, { headers: { 'x-landflow-api-key': token } });
+    // The member has no access to the workflow: the key doesn't stand in for the signature.
+    expect((await formWaitingRoute.GET(as(keyOf(member)), params(id))).status).toBe(403);
+    expect((await formWaitingRoute.GET(as(keyOf(owner)), params(id))).status).toBe(200);
   });
 });

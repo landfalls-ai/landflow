@@ -22,6 +22,7 @@ import {
   waitingPage,
 } from '@/lib/server/forms';
 import { resolvePrincipal } from '@/lib/server/auth';
+import { canResource } from '@/lib/server/projects/access';
 import { handler } from '@/lib/server/http';
 import { liveExecution, resumeExecution, ResumeError, type RunReply } from '@/lib/server/runner';
 import { checkResume } from '@/lib/server/resume-signing';
@@ -42,11 +43,12 @@ const actionFor = (id: string, request: Request) => {
   const sig = new URL(request.url).searchParams.get('sig');
   return `/form/waiting/${id}${sig ? `?sig=${encodeURIComponent(sig)}` : ''}`;
 };
-const signatureRefused = (id: string, request: Request, record: ExecutionRecord) => {
+const signatureRefused = (id: string, request: Request, record: ExecutionRecord, action: 'read' | 'run') => {
   if (record.status !== 'waiting' || !record.wait) return false;
-  // Signed-in people reach the page from the editor and the Run Trace, which don't hold the signature.
+  // Signed-in people reach the page from the editor and the Run Trace, which don't hold the signature: they skip it
+  // for a workflow they may read (the page) or run (the submit). Anyone else needs the signed link.
   const resolved = resolvePrincipal(request);
-  if (resolved.ok && resolved.principal) return false;
+  if (resolved.ok && resolved.principal && canResource(resolved.principal.user, 'workflow', record.workflowId, action)) return false;
   const result = checkResume(id, new URL(request.url).searchParams.get('sig'), record.wait);
   if (result.ok && result.legacy) logger.info('form resume accepted without a signature: the wait was saved before resume URLs were signed', { 'landflow.execution.id': id });
   return !result.ok;
@@ -66,7 +68,7 @@ export const GET = handler(async (request: Request, { params }: Ctx) => {
   if (liveExecution(id)) return processing();
   const record = store.getExecution(id);
   if (!record) return notFound();
-  if (signatureRefused(id, request, record)) return invalid();
+  if (signatureRefused(id, request, record, 'read')) return invalid();
   const page = waitingPage(record);
   if (page) return formPage(page, { action: actionFor(id, request) });
   if (record.status === 'waiting') return messagePage({ title: 'Not a form', message: 'This execution isn’t waiting for a form submission.', status: 409 });
@@ -78,7 +80,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   if (liveExecution(id)) return processing();
   const record = store.getExecution(id);
   if (!record) return notFound();
-  if (signatureRefused(id, request, record)) return invalid();
+  if (signatureRefused(id, request, record, 'run')) return invalid();
   const page = waitingPage(record);
   if (!page) return record.status === 'waiting' ? messagePage({ title: 'Not a form', message: 'This execution isn’t waiting for a form submission.', status: 409 }) : finishedResponse(record, fallbackFor(record));
   const { maxBytes } = binaryLimits();
