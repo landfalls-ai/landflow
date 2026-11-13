@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./grpc": "./src/grpc.ts",
+    "./sync-format": "./src/sync-format.ts",
     "./proto/plugin.proto": "./proto/landflow/plugin/v1/plugin.proto",
     "./conformance": "./conformance/index.ts"
   },

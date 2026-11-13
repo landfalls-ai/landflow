@@ -24,23 +24,24 @@
 import { createHash } from 'node:crypto';
 import type { Workflow, WorkflowNode } from '@landflow/engine';
 import type { Folder } from '../../shared/types';
+import {
+  CREDENTIALS_FILE,
+  DATA_TABLES_DIR,
+  FOLDER_FILE,
+  isManagedPath,
+  isSafePath,
+  MANIFEST_FILE,
+  ROWS_SUFFIX,
+  SYNC_FORMAT,
+  TABLE_SUFFIX,
+  VARIABLES_FILE,
+  WORKFLOW_SUFFIX,
+  WORKFLOWS_DIR,
+  type SyncFile,
+} from '@landflow/protocol';
 
-export const SYNC_FORMAT = 'landflow-sync/v1';
-export const MANIFEST_FILE = 'landflow-sync.json';
-export const VARIABLES_FILE = 'variables.json';
-export const CREDENTIALS_FILE = 'credentials.json';
-export const DATA_TABLES_DIR = 'data-tables';
-export const WORKFLOWS_DIR = 'workflows';
-export const FOLDER_FILE = '.folder.json';
-export const WORKFLOW_SUFFIX = '.workflow.json';
-export const TABLE_SUFFIX = '.schema.json';
-export const ROWS_SUFFIX = '.rows.json';
-
-/** One file of a sync directory: a `/`-separated path relative to the directory, and its text. */
-export interface SyncFile {
-  path: string;
-  content: string;
-}
+// The layout's names and path rules live in @landflow/protocol (sync-format.ts), shared with the CLI.
+export { CREDENTIALS_FILE, DATA_TABLES_DIR, FOLDER_FILE, isManagedPath, isSafePath, MANIFEST_FILE, ROWS_SUFFIX, SYNC_FORMAT, TABLE_SUFFIX, VARIABLES_FILE, WORKFLOW_SUFFIX, WORKFLOWS_DIR, type SyncFile };
 
 export interface SyncCredential {
   id: string;
@@ -69,20 +70,6 @@ export type EntityKind = 'workflow' | 'folder' | 'variable' | 'dataTable' | 'cre
 export const entityKey = (kind: EntityKind, id: string) => `${kind}:${id}`;
 
 export const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
-
-/** True for the paths the format owns: pull writes and removes them, push reads them; anything else is left alone. */
-export function isManagedPath(path: string): boolean {
-  if (path === MANIFEST_FILE || path === VARIABLES_FILE || path === CREDENTIALS_FILE) return true;
-  const parts = path.split('/');
-  if (parts[0] === DATA_TABLES_DIR) return parts.length === 2 && (path.endsWith(TABLE_SUFFIX) || path.endsWith(ROWS_SUFFIX));
-  if (parts[0] === WORKFLOWS_DIR) return parts.length >= 2 && (path.endsWith(WORKFLOW_SUFFIX) || parts.at(-1) === FOLDER_FILE);
-  return false;
-}
-
-/** A relative path without `..`, empty segments, backslashes or a leading slash. */
-export function isSafePath(path: string): boolean {
-  return Boolean(path) && !path.startsWith('/') && !path.includes('\\') && !path.includes('\0') && path.split('/').every((p) => p && p !== '.' && p !== '..');
-}
 
 /** A file or directory name: lowercase ASCII letters, digits and dashes, at most 80 characters ('' when nothing is left). */
 export function slugify(name: string): string {
