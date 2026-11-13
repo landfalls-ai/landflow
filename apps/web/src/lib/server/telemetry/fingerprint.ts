@@ -1,6 +1,6 @@
 /**
  * Exception fingerprint: a short hash of the exception type and the top in-repo frames of its stack, with line and column
- * numbers and the checkout path stripped, so the same bug groups across releases and machines while two call sites don't (in a minified production bundle: by chunk).
+ * numbers and the checkout path stripped, so the same bug groups across releases and machines while two call sites don't (in a minified production bundle: by chunk name words).
  * Put on error log lines (`exception.fingerprint`, logger.ts) and on exception span events (spans.ts). See docs/observability.md §3.
  */
 import { createHash } from 'node:crypto';
@@ -17,11 +17,12 @@ function frameKey(line: string): string | undefined {
     .replace(/^(webpack-internal:\/\/\/\([^)]*\)\/|webpack:\/\/[^/]*\/|file:\/\/)/, '')
     .replace(/[?#].*$/, '');
   // A production bundle (Next standalone): the chunk name carries a content hash and the function names are minified,
-  // so the key is the chunk's source-path words alone. Grouping is coarser than in dev: by chunk, not by call site.
+  // so the key is the chunk's source-path words alone. Grouping is coarser than in dev: by exception type and chunk name words (many chunks share a name), not by call site.
   const bundled = /(?:^|[\\/])\.next[\\/]/.exec(cleaned);
   if (bundled) {
     const chunk = (cleaned.split(/[\\/]/).pop() ?? '').replace(/\.(?:c|m)?js$/, '');
-    const words = chunk.replace(/_[0-9a-z]+_[0-9a-z-]+\._$/, '').replace(/\._$/, '');
+    // The content hash is 13 characters of [0-9a-z_-] (underscores and hyphens anywhere), after `._` is removed.
+    const words = chunk.replace(/\._$/, '').replace(/(?:^|_)[0-9a-z_-]{13}$/, '');
     return `chunk ${/^\d+$/.test(words) || /^[0-9a-f]{8,}$/.test(words) ? 'webpack' : words}`;
   }
   // A checkout path: anchor on the repo layout so a parent directory named `src` doesn't leak into the key.

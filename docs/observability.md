@@ -122,7 +122,7 @@ With `LANDFLOW_LOG_SPANS=true` (the default) every finished span is also written
   checkout path stripped; `node:` and `node_modules` frames skipped). The same bug groups across releases and machines,
   two call sites don't, in development and from source. In the shipped host image (Next standalone, minified chunks
   with a content hash in the name, no source maps) the frames are minified, so the key is the chunk's source-path
-  words with the hash stripped: the group survives a rebuild but is coarser, by exception type and chunk. Exact
+  words with the hash stripped: the group survives a rebuild but is coarser: by exception type and chunk name words, which many chunks share (about 100 chunks are named `apps_web_src_lib_server`). Exact
   call-site grouping there needs server source maps with `--enable-source-maps` (a follow-up: `next.config.ts` and
   the host Dockerfile are outside this change). Spans failed through the host's `failSpan` (plugin RPC, triggers,
   A2A, MCP, `withSpan`) carry the same attribute on their `exception` event (`exception.type`,
@@ -437,10 +437,6 @@ Every process writes JSON logs with `trace_id`. To browse traces, run any OTLP b
   ([a2a.md](a2a.md#kagent-next-to-landflow)).
 
 <a id="alerts-and-dashboard"></a>
-<!-- The paging counters are created on their first error, so a series is born at 1 and `increase()` over it is 0; the
-rules and the dashboard panels add `m unless m offset 10m` to catch it. Check with
-`docker run --rm -v "$PWD/deploy/observability:/r" --entrypoint /otel-lgtm/prometheus/promtool grafana/otel-lgtm:0.39.0 test rules /r/tests/prometheus-rules.test.yml` -->
-
 ### Alert rules and the dashboard
 
 [`deploy/observability/prometheus-rules.yml`](../deploy/observability/prometheus-rules.yml) holds 13 Prometheus alerts
@@ -450,6 +446,12 @@ runs, queue and workers, plugins, database, audit, runtime). The `orbstack-obser
 (`deploy/k8s/components/observability/` keeps copies, because kustomize can't read outside the component; a test checks
 they match, and that every metric the files name exists in the code); elsewhere, add the file to `rule_files:` and import
 the JSON. The local backend has no Alertmanager: alerts show under Prometheus -> Alerts and as the `ALERTS` series.
+
+The paging counters are created on their first error, so a series is born at 1 and `increase()` over it is 0; the
+rules and the dashboard panels add `m unless m offset 10m` to catch it. The same expression also fires once, for up to
+10 minutes, when an existing error series reappears after a gap of 5 minutes or more in ingestion (the LGTM pod or the
+collector was down). Check the rules with
+`docker run --rm -v "$PWD/deploy/observability:/r" --entrypoint /otel-lgtm/prometheus/promtool grafana/otel-lgtm:0.39.0 test rules /r/tests/prometheus-rules.test.yml`.
 
 | Alert | Fires when | First look |
 |---|---|---|

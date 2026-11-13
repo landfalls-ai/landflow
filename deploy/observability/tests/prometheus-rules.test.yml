@@ -1,4 +1,4 @@
-# Run: docker run --rm -v "$PWD/deploy/observability:/r" --entrypoint promtool grafana/otel-lgtm:0.39.0 test rules /r/tests/prometheus-rules.test.yml
+# Run: docker run --rm -v "$PWD/deploy/observability:/r" --entrypoint /otel-lgtm/prometheus/promtool grafana/otel-lgtm:0.39.0 test rules /r/tests/prometheus-rules.test.yml
 # A counter is created on its first error, so the series is born at 1: the paging rules must fire on that first error.
 rule_files:
   - ../prometheus-rules.yml

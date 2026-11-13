@@ -42,6 +42,22 @@ describe('exception fingerprint', () => {
     expect(a).not.toBe(other);
   });
 
+  it('strips real content-hash shapes from chunk names', () => {
+    const fp = (chunk: string) => exceptionFingerprint(withStack('Error', `    at e (/app/apps/web/.next/server/chunks/${chunk}:1:1)`));
+    const server = [
+      'apps_web_src_lib_server_0eyl_rv0-2y1j._.js',
+      'apps_web_src_lib_server_0kbysca9f8930._.js',
+      'apps_web_src_lib_server_0b-abxsins0a6._.js',
+      'apps_web_src_lib_server_1nibjejsppv3_._.js',
+    ].map(fp);
+    expect(new Set(server).size).toBe(1);
+    expect(server[0]).not.toBe(fp('apps_web_src_lib_0kbysca9f8930._.js'));
+    expect(fp('apps_web__next-internal_server_app_api_agents_route_actions_1dxs5gcdi9nq0.js')).toBe(
+      fp('apps_web__next-internal_server_app_api_agents_route_actions_0abcdefghij12.js'),
+    );
+    expect(fp('[externals]_@aws-sdk_client-sqs_0-0pm8245-ytv._.js')).toBe(fp('[externals]_@aws-sdk_client-sqs_1xyzabc_def12._.js'));
+  });
+
   it('anchors on the repo layout, not a parent directory named src', () => {
     const f = (root: string) => exceptionFingerprint(withStack('Error', `    at save (${root}/apps/web/src/lib/a.ts:1:1)`));
     expect(f('/home/me/src/landflow')).toBe(f('/srv/app'));
