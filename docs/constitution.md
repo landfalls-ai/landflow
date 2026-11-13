@@ -59,14 +59,18 @@ session; people read it before they start a feature too.
   (`apps/web/src/lib/server/http.ts`, shared schemas in `lib/server/schemas.ts`). Never call `request.json()` directly.
 - Validate query strings with `parseQuery()` and the shared page schema (target, P16); until then parse and clamp
   every number by hand, never `Number(param)` straight into a query.
-- Decide who may call a route in `lib/server/auth/policy.ts`. A route with no entry is open to every signed-in member,
-  so every route has a policy entry or an in-handler check (`requireResource`, `filterVisible` in
-  `lib/server/projects/access.ts`).
+- Decide who may call a route in `lib/server/auth/policy.ts`. A route with no entry falls to a default (`fallback: true`)
+  that is open to every signed-in member, so every route has a policy entry or an in-handler check (`requireResource`,
+  `filterVisible` in `lib/server/projects/access.ts`); `test/policy-coverage.test.ts` fails a mutating route with
+  neither.
 - Public paths are listed in `lib/shared/auth-paths.ts` and authenticate their own way (signed token, webhook auth).
   Public API routes are described in `lib/server/openapi.ts` (`test/openapi.test.ts` checks it).
-- Throw `HttpError` (status, code, details) and let `handler()` map it, with a generic 500 that carries the request id
-  (target, P11, `lib/server/errors.ts`). Until then: catch domain errors and `error(message, status)`, and never send an
-  unexpected error's text (SQL, paths, stacks) to the client.
+- Throw `HttpError` (`lib/server/errors.ts`: message, status, `{ code, details, expose }`) and let `handler()` map it to
+  `{ error, code, ...details }`; a ZodError answers 400 and anything else a generic 500 (`Internal error` with the
+  request id; the message goes to the log only). A domain error extends `HttpError` with its own default status; a
+  route family uses a thin wrapper over `handler()` (`projectRoute`, `dataTableRoute`, `marketplaceRoute`). Never send
+  an unexpected error's text (SQL, paths, stacks) to the client. Some routes still map errors by hand; P27 removes them
+  (target, P27).
 
 **Configuration and process state**
 
@@ -95,8 +99,11 @@ session; people read it before they start a feature too.
 **Data**
 
 - Migrations: append to `MIGRATIONS` in `lib/server/db/schema.ts`, with a version above the current maximum (grep
-  it; versions are not in file order). One SQL text for SQLite and Postgres; never edit a shipped migration; a new
-  table also goes in `TABLES`; a column a shipped table gained goes in `addColumns`.
+  it; versions are not in file order; `test/migrations-order.test.ts` fails one that isn't). One SQL text for SQLite
+  and Postgres; never edit a shipped migration; a new table also goes in `TABLES`; a column a shipped table gained goes
+  in `addColumns`.
+- Prepared statements are cached per SQL text in a bounded LRU (`LANDFLOW_DB_STATEMENT_CACHE`, `db/database.ts`):
+  write SQL with `?` parameters, never values pasted into the text, or every call is a new cache entry.
 - Writes go through the `Database` write methods (`upsert`, `insertNew`, `delete`, `deleteBefore`) so Postgres
   mode can replay them (`lib/server/db/database.ts`, `db/postgres.ts`). A change of several rows runs in one
   `transaction()`.
@@ -104,7 +111,9 @@ session; people read it before they start a feature too.
   `executions/[id]/events`). Filter by visibility in SQL, not after a fetch.
 - Nothing on a hot path (saving a run, a request) does work proportional to history: prune and aggregate in SQL on a
   timer or every N events (executions: `pruneExecutions` and `retentionTick` in `lib/server/settings.ts`).
-- `IN (…)` lists and access checks inside loops are N+1 once reads move to Postgres: batch them.
+- `IN (…)` lists and access checks inside loops are N+1 once reads move to Postgres: batch them. For lists, check
+  access once per kind with `visibleIds`, `filterVisible` or `withOwnership` (`lib/server/projects/access.ts`), not
+  `canResource` per item.
 
 ## Security baseline
 
@@ -114,19 +123,25 @@ session; people read it before they start a feature too.
 - **Audit in the library.** Every security-relevant change (members, roles, shares, transfers, secrets, keys,
   settings, provisioning) records a domain event with `recordAudit()` (`lib/server/audit/index.ts`) in the library
   function, not the route, with actor, target, project and `from` / `to` values. Denied and failed access is recorded
-  too (target, P12). The generic `api.request` event is a fallback, not coverage.
+  too: failed SSO sign-ins in their routes, and a read refused with 401/403 as `api.denied` (`lib/server/audit/http.ts`,
+  at most once a minute per caller and route). Exports (Git sync, data tables) are events. The generic `api.request`
+  event is a fallback, not coverage.
 - **Secrets stay secret.** Never put a credential value, token or key in a log line, error message, span attribute,
   audit detail or run data. Logs redact by key name (`SECRET_KEY` in `lib/server/telemetry/config.ts`), `$secrets`
   values are scrubbed (`lib/server/secrets/redact.ts`); widen these when you add a new kind of secret (P17 widens
   them). The API returns a credential's status, never its value. Bearer secrets are stored hashed and shown once;
   compare them with `sameSecret()` (`lib/server/auth/passwords.ts`).
-- **Outbound calls.** Every request to a URL a user, a webhook or a model can influence goes through `safeFetch`:
-  loopback, private, link-local and metadata addresses refused unless allow-listed, redirects re-checked (target,
-  P13, `lib/server/net/safe-fetch.ts`). Until then use the governance host allow-list (`lib/server/governance/policy.ts`)
-  and don't add a new fetch to a user URL without an address check.
-- **Untrusted code.** Expressions and Code nodes never see host objects. Expressions run in a sealed realm (target,
-  P14; today `packages/engine/src/expression.ts` is `node:vm` and not a boundary); production Code nodes run in the
-  code runner (`services/code-runner`). Never pass a host object, function or Buffer into a vm context.
+- **Outbound calls.** Every request to a URL a user, a webhook or a model can influence goes through `safeFetch`
+  (`lib/server/net/safe-fetch.ts`): in the production profile loopback, private, link-local, CGNAT and metadata
+  addresses are refused unless `LANDFLOW_OUTBOUND_ALLOW` lists them, names are checked at DNS lookup and every redirect
+  hop is checked again (with the governance host list, `lib/server/governance/policy.ts`). In-process nodes get it as
+  `ctx.http` / `ContextExtras.fetch`. Never add a bare `fetch` to a user-supplied URL; the callers still outside it are
+  listed in [limitations.md](limitations.md).
+- **Untrusted code.** Expressions and Code nodes never see host objects. Expressions run in a sealed realm
+  (`packages/engine/src/sandbox/realm.ts`: a `node:vm` context with code generation off, only JSON text crossing in
+  and out; `async`, `await` and `import(` are refused). In the production profile Code nodes run in the code runner
+  (`services/code-runner`, `lib/server/code-runner.ts`) unless `LANDFLOW_CODE_IN_PROCESS=true`. Never pass a host
+  object, function or Buffer into a vm context. A stricter isolate backend is (target, P30).
 - **Bounded input.** Bodies validated with zod and capped in size (cap: target, P16); rate limits per principal and
   per client address on public and costly routes (target, P16; sign-in limits in `lib/server/auth/rate-limit.ts`).
 - **Client address** comes from `clientAddress()` (`lib/server/net/client-address.ts`, `LANDFLOW_TRUSTED_PROXIES`),
@@ -191,8 +206,14 @@ session; people read it before they start a feature too.
 - Before a PR: `(cd apps/web && npx vitest run) && pnpm typecheck` and `pnpm test`, plus the Go and Python suites for
   what you touched ([development.md](development.md#verification)). Compare the counts with the last green run on
   `main`; never accept a new failure.
-- Known flaky: `apps/web/test/marketplace.test.ts` times out under the full parallel load; rerun it alone and report
-  both results.
+- A test file that writes shared state (marketplaces, agents, settings) sets its own `LANDFLOW_DATA_DIR` before its
+  imports, and no test reaches the network: the suite's default data directory is shared by every file that doesn't.
+  (`marketplace.test.ts` was flaky for that reason, not load; if it fails again, rerun it alone and report both.)
+- A change to the boot (`lib/server/runtime.ts`, `bootstrap.ts`, `lifecycle.ts`), `instrumentation.ts`, the proxy
+  (`proxy.ts`) or anything the worker imports (`lib/server/cluster/worker-main.ts` and what it reaches) must also pass
+  `next build` (`cd apps/web && rm -rf .next && npx next build`, then restore `next-env.d.ts`) and the queue stack
+  (`compose.queue.yml` built locally, then `python3 deploy/scripts/queue-e2e.py`) before it merges: wave 2 broke both
+  while the unit gate stayed green.
 - When several agents share the machine, run typecheck and the targeted files, and leave the full host suite to the
   integrator.
 

@@ -52,7 +52,7 @@ the transport core. **Python**: `sdks/python/tests`, plugin `tests/`, run with t
 pnpm typecheck
 (cd apps/web && npx vitest run)                     # full host suite: only when you are the only agent running tests
 pnpm -r --if-present --filter '!@landflow/web' test             # the TypeScript packages (plain `pnpm test` runs the host suite again)
-(cd apps/web && npx vitest run test/marketplace.test.ts)   # known flaky under load: rerun alone if it is the only failure
+(cd apps/web && npx vitest run test/marketplace.test.ts)   # was flaky (shared data directory); rerun alone if it fails
 ```
 
 When other agents share the machine, run `pnpm typecheck` and the targeted files only. Record passed / failed /
