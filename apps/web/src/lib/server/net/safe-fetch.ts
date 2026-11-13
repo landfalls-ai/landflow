@@ -46,7 +46,7 @@ export interface OutboundPolicy {
   allow: string[];
 }
 
-/** Variables whose host the host itself is configured to call, so they stay reachable without being listed. */
+/** Variables whose endpoint (host and port) the host itself is configured to call, so they stay reachable without being listed. */
 const IMPLICIT_URLS = ['OLLAMA_URL', 'LANDFLOW_CODE_RUNNER_URL', 'OPENAI_BASE_URL', 'LANDFLOW_MCP_GATEWAY_PUBLIC_URL'];
 
 /** The `host:port` (a default port filled in) of a URL, lower case, for an exact match. */

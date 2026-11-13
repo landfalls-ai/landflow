@@ -181,7 +181,7 @@ describe('safeFetch', () => {
     expect((await safeFetch(`http://app.localhost:${port}/`)).status).toBe(200);
   });
 
-  it('lets the hosts of OLLAMA_URL and LANDFLOW_CODE_RUNNER_URL through without listing them', async () => {
+  it('lets the endpoints of OLLAMA_URL and LANDFLOW_CODE_RUNNER_URL through without listing them', async () => {
     blockOn();
     process.env.OLLAMA_URL = `http://127.0.0.1:${port}`;
     expect((await safeFetch(`http://127.0.0.1:${port}/api/tags`)).status).toBe(200);
@@ -196,6 +196,17 @@ describe('safeFetch', () => {
     process.env.OLLAMA_URL = `http://127.0.0.1:${port}`;
     expect((await safeFetch(`http://127.0.0.1:${port}/`)).status).toBe(200);
     await refused(safeFetch(`http://127.0.0.1:${otherPort}/`), '127.0.0.1');
+  });
+
+  it('guards the OpenAI-compatible calls to a credential Base URL', async () => {
+    const { openAiConnection, openAiEmbeddings } = await import('@/lib/server/nodes/models');
+    const connection = openAiConnection({ baseUrl: `http://127.0.0.1:${port}` });
+    blockOn();
+    await expect(openAiEmbeddings(connection, 'm', ['x'])).rejects.toThrow(/127\.0\.0\.1|blocked|private|Cannot reach/i);
+    process.env.LANDFLOW_OUTBOUND_ALLOW = '127.0.0.1';
+    // allowed now: the failure is the fake server's reply, no longer the address policy
+    const error = await openAiEmbeddings(connection, 'm', ['x']).catch((e: Error) => e);
+    expect(String((error as Error).message ?? '')).not.toMatch(/blocked|not allowed/i);
   });
 
   it('sends a FormData body as multipart and a JSON body as it is, with blocking on', async () => {

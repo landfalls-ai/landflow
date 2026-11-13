@@ -1272,7 +1272,7 @@ workbench in place of a page of cards, keeping Spotlight.
   `LANDFLOW_OUTBOUND_ALLOW` lists them: literal IPs before connecting, names in the socket's DNS lookup (so the address
   checked is the address connected to), and every redirect hop again (with the governance host list by name). The HTTP
   Request node (through `ContextExtras.fetch`, which `ctx.http` wraps in its span), alert channels, HTTP SIEM
-  destinations, remote MCP servers, RAG embeddings and rerank, and OIDC and SAML metadata go through it; each call has
+  destinations, remote MCP servers, RAG embeddings and rerank, OpenAI-compatible model calls and OIDC and SAML metadata go through it; each call has
   a client span. Not covered, with the reasons in [limitations.md](limitations.md): remote plugins, configured
   infrastructure, the marketplace's git, the OAuth2 flow and anchoring webhooks.
 
