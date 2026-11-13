@@ -9,7 +9,7 @@ scope, an admin role) is set in `apps/web/src/lib/server/auth/policy.ts`. The pu
 `code` a stable snake_case name (the thrown class's, or `invalid_request` for a body that failed validation, which also
 carries `issues`), and any extra fields the error names (`current` of a workflow conflict, `missing` of a marketplace
 lookup). An unexpected error answers 500 `{ error: 'Internal error', code: 'internal_error', requestId }`: never its
-message, which goes to the log with the same request id (also the `X-Request-Id` response header). A write refused
+message, which goes to the log with the same request id (also the `X-Request-Id` response header, with a W3C `traceparent` beside it on `/api` while a span is active). A write refused
 while the Postgres store is blocked answers 503 with `Retry-After`. SCIM routes answer the SCIM error document instead.
 
 | Route | |

@@ -75,7 +75,7 @@ Variables read through `lib/server/config` (most of them; the telemetry flags in
 | `LANDFLOW_BRAIN_WEEKLY_CAP` | `3` | suggestions per workflow per week |
 | `LANDFLOW_AUDIT_OUTBOX` | `on` | `off` stops this process from delivering the audit outbox to SIEM destinations (events still queue; another host or a restart delivers them) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | – | OTLP/HTTP endpoint for traces and metrics, e.g. `http://localhost:4318`; unset: nothing is exported |
-| `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_TRACES_SAMPLER[_ARG]`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_SDK_DISABLED` | standard | see docs/observability.md |
+| `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_TRACES_SAMPLER[_ARG]`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_SDK_DISABLED` | standard | see docs/observability.md; a flag with an unrecognised value falls back to its default instead of reading as true |
 | `LANDFLOW_LOG_LEVEL` / `LANDFLOW_LOG_FORMAT` / `LANDFLOW_LOG_SPANS` | `info` / `json` / `true` | log level, `json` or `pretty`, one log line per finished span |
 | `LANDFLOW_LOG_OTLP` | `true` | with an OTLP endpoint, also export every log line (but `span.end`) as an OTel log record ([observability.md §3](../observability.md#3-logs)) |
 | `LANDFLOW_METRICS_PROMETHEUS` | `true` | serve `GET /api/metrics` |

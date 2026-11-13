@@ -505,7 +505,8 @@ describe('types that extend oAuth2Api', () => {
     let record = await run(workflow);
     expect(record.status).toBe('success');
     const received = record.runData.Who[0].outputs[0][0].json.received as JsonObject;
-    expect(received).toMatchObject({ accessToken: token(credential.id).access_token, region: 'eu', clientId: 'client-1', scope: 'acme.read' });
+    // The node was handed the token, so the host scrubs it from what the node returns (secrets/redact).
+    expect(received).toMatchObject({ accessToken: '[redacted]', region: 'eu', clientId: 'client-1', scope: 'acme.read' });
     expect(received).not.toHaveProperty('oauthAccount');
     expect(JSON.stringify(received)).not.toContain(oauth2.tokenField(token(credential.id), 'refresh_token'));
     // A plugin node's 401 is retried after a refresh too.

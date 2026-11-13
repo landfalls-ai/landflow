@@ -10,9 +10,12 @@
  * announcements, public webhooks and form resumes, Slack callbacks, MCP JSON-RPC, remote agents' trace batches, editor
  * helpers like load-options and expression previews, assistant chats, binary uploads), are skipped.
  *
- * The response carries the request id as `X-Request-Id` (taken from the request's own header when it is sane).
+ * The response carries the request id as `X-Request-Id` (taken from the request's own header when it is sane) and, when a
+ * trace span is active, `traceparent` (W3C) so a caller can quote the trace; the span gets the request id, route, user and
+ * API key id as attributes, and the logger stamps the same ids on every line (./context `requestLogFields`).
  */
 import { randomUUID } from 'node:crypto';
+import { trace } from '@opentelemetry/api';
 import type { AuditOutcome } from '../../shared/audit';
 import type { Principal } from '../auth/context';
 import { resolvePrincipal } from '../auth/guard';
@@ -115,6 +118,25 @@ async function paramsOf(ctx: unknown): Promise<Record<string, string> | undefine
   }
 }
 
+/** The request's identifiers on the active span (a no-op without one); called again after the handler, once the principal is known. */
+function stampSpan(ctx: AuditRequestContext) {
+  const span = trace.getActiveSpan();
+  if (!span) return;
+  span.setAttribute('landflow.request_id', ctx.requestId);
+  if (ctx.route) span.setAttribute('http.route', ctx.route);
+  if (ctx.principal) {
+    span.setAttribute('enduser.id', ctx.principal.user.id);
+    if (ctx.principal.apiKey) span.setAttribute('landflow.api_key.id', ctx.principal.apiKey.id);
+  }
+}
+
+/** `00-<trace id>-<span id>-<flags>` for the active span, undefined without a valid one. */
+function traceparent(): string | undefined {
+  const span = trace.getActiveSpan()?.spanContext();
+  if (!span || !trace.isSpanContextValid(span)) return undefined;
+  return `00-${span.traceId}-${span.spanId}-${(span.traceFlags & 0xff).toString(16).padStart(2, '0')}`;
+}
+
 /** Run a route handler with an audit context, and record the generic event afterwards (see the module comment). */
 export async function auditRequest(args: unknown[], run: () => Promise<Response>): Promise<Response> {
   const request = args[0] instanceof Request ? args[0] : undefined;
@@ -140,9 +162,13 @@ export async function auditRequest(args: unknown[], run: () => Promise<Response>
   const named = MUTATING.has(method) && path.startsWith('/api/') ? targetOf(ctx.route, params) : undefined;
   if (named?.id && projectTarget(named)) ctx.target = { type: named.type, id: named.id, projectId: targetProject(named) };
 
+  stampSpan(ctx);
   const response = await withAuditRequest(ctx, run);
+  stampSpan(ctx);
   try {
     response.headers.set('x-request-id', ctx.requestId);
+    const parent = path.startsWith('/api/') ? traceparent() : undefined;
+    if (parent && !response.headers.has('traceparent')) response.headers.set('traceparent', parent);
   } catch {
     // Immutable headers (a redirect): no id on this one.
   }

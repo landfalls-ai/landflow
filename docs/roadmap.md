@@ -1312,6 +1312,11 @@ workbench in place of a page of cards, keeping Spotlight.
   whole. The production profile rate-limits the API per principal and the public triggers per address and group, shared
   through Valkey in queue mode (429 with Retry-After). New counters: `landflow.http.denied{reason}` and
   `landflow.ratelimit.refused{bucket}`.
+- **P17, logs and spans you can join; wider redaction** (O3, O6, contributes to C5; wave 4): every log line written in an
+  API request carries `request_id`, `http.route`, `user.id` and the API key id, the active span gets the same
+  attributes, and `/api` responses return `traceparent`. Redaction covers more key names (private keys, passphrases,
+  signatures, connection strings, DSNs, session tokens), secret-shaped values in every logged string (Bearer tokens,
+  `lf_` keys, URL userinfo, PEM blocks), and the credential values handed to a node, like `$secrets` values.
 
 ## Planned next
 

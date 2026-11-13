@@ -213,7 +213,8 @@ describe('the plugins’ OAuth2 credential types', () => {
       const fresh = credentials.oauth2(credential.id).token!;
       expect(fresh.access_token).not.toBe(token.access_token);
       const received = record.runData.Use[0].outputs[0][0].json.received as JsonObject;
-      expect(received.accessToken).toBe(oauth2.tokenField(fresh, 'access_token'));
+      // The node was handed the token, so the host scrubs it from what the node returns (secrets/redact).
+      expect(received.accessToken).toBe('[redacted]');
       expect(JSON.stringify(received)).not.toContain(oauth2.tokenField(fresh, 'refresh_token'));
 
       // Renew after a 401: the provider forgot the token, the node fails with a 401, the host refreshes and runs it again.
