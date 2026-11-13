@@ -294,7 +294,7 @@ export default function DevelopersPage() {
   return (
     <>
       <PageHeader title="Build a plugin" meta={<span>SDKs for TypeScript, Python and Go</span>} />
-      <PageBody className="flex max-w-[960px] flex-col gap-8">
+      <PageBody width="narrow" className="flex flex-col gap-8">
         <p className="max-w-[72ch] text-[13px] leading-relaxed text-t2">
           Implement one interface, serve it, and you&apos;re done. Landflow discovers your plugin, renders its parameters, runs it in workflows and lets AI agents use it as a tool.
         </p>

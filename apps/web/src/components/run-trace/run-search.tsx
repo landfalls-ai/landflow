@@ -49,7 +49,7 @@ function query(f: Filters, offset: number) {
 
 function Check({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
   return (
-    <label className="flex min-h-11 cursor-pointer items-center gap-2.5 text-[13px] text-t1">
+    <label className="flex min-h-8 cursor-pointer items-center gap-2.5 text-[13px] text-t1 max-md:min-h-11">
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="size-4" />
       {label}
     </label>
@@ -133,7 +133,7 @@ export function RunSearch({ initialWorkflowId = '' }: { initialWorkflowId?: stri
   const toggle = (id: string) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p.slice(-1), id]));
 
   return (
-    <div className="mx-auto w-full max-w-[760px] px-4 py-4 pb-28">
+    <div className="w-full max-w-[980px] px-6 py-5 pb-28 max-md:px-4">
       <form
         className="space-y-3 rounded-2xl border border-hair bg-sf p-4"
         onSubmit={(e) => {
@@ -144,7 +144,7 @@ export function RunSearch({ initialWorkflowId = '' }: { initialWorkflowId?: stri
       >
         <div>
           <FieldLabel>Words</FieldLabel>
-          <Input value={filters.text} onChange={(e) => set('text', e.target.value)} placeholder="A name, a message, an output…" className="h-11" />
+          <Input value={filters.text} onChange={(e) => set('text', e.target.value)} placeholder="A name, a message, an output…" className="max-md:h-11" />
         </div>
         {/* A phone: the rest in a Filters sheet, so the results start on the first screen (desktop: in place). */}
         <PhoneFilters
@@ -159,7 +159,7 @@ export function RunSearch({ initialWorkflowId = '' }: { initialWorkflowId?: stri
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <FieldLabel>Workflow</FieldLabel>
-              <Select value={filters.workflowId} onChange={(e) => set('workflowId', e.target.value)} className="h-11">
+              <Select value={filters.workflowId} onChange={(e) => set('workflowId', e.target.value)} className="max-md:h-11">
                 <option value="">Any workflow</option>
                 {workflows.map((w) => (
                   <option key={w.id} value={w.id}>
@@ -170,7 +170,7 @@ export function RunSearch({ initialWorkflowId = '' }: { initialWorkflowId?: stri
             </div>
             <div>
               <FieldLabel>Status</FieldLabel>
-              <Select value={filters.status} onChange={(e) => set('status', e.target.value)} className="h-11">
+              <Select value={filters.status} onChange={(e) => set('status', e.target.value)} className="max-md:h-11">
                 <option value="">Any status</option>
                 {STATUSES.map((s) => (
                   <option key={s} value={s}>
@@ -181,34 +181,34 @@ export function RunSearch({ initialWorkflowId = '' }: { initialWorkflowId?: stri
             </div>
             <div>
               <FieldLabel>Agent or actor</FieldLabel>
-              <Input value={filters.actor} onChange={(e) => set('actor', e.target.value)} placeholder="Developer" className="h-11" />
+              <Input value={filters.actor} onChange={(e) => set('actor', e.target.value)} placeholder="Developer" className="max-md:h-11" />
             </div>
             <div>
               <FieldLabel>Tool</FieldLabel>
-              <Input value={filters.tool} onChange={(e) => set('tool', e.target.value)} placeholder="Bash" className="h-11" />
+              <Input value={filters.tool} onChange={(e) => set('tool', e.target.value)} placeholder="Bash" className="max-md:h-11" />
             </div>
             <div>
               <FieldLabel>From</FieldLabel>
-              <Input type="date" value={filters.from} onChange={(e) => set('from', e.target.value)} className="h-11" />
+              <Input type="date" value={filters.from} onChange={(e) => set('from', e.target.value)} className="max-md:h-11" />
             </div>
             <div>
               <FieldLabel>To</FieldLabel>
-              <Input type="date" value={filters.to} onChange={(e) => set('to', e.target.value)} className="h-11" />
+              <Input type="date" value={filters.to} onChange={(e) => set('to', e.target.value)} className="max-md:h-11" />
             </div>
           </div>
           <div className="flex flex-wrap gap-x-6">
             <Check label="Has failed steps" checked={filters.failedSteps} onChange={(v) => set('failedSteps', v)} />
             <Check label="A check failed" checked={filters.failedCheck} onChange={(v) => set('failedCheck', v)} />
           </div>
-          {filters.failedCheck && <Input value={filters.checkName} onChange={(e) => set('checkName', e.target.value)} placeholder="Which check (leave empty for any)" className="h-11" />}
+          {filters.failedCheck && <Input value={filters.checkName} onChange={(e) => set('checkName', e.target.value)} placeholder="Which check (leave empty for any)" className="max-md:h-11" />}
         </PhoneFilters>
         <div className="flex gap-2">
-          <Button type="submit" variant="primary" loading={busy} className="h-11 flex-1">
+          <Button type="submit" variant="primary" loading={busy} className="max-md:h-11 max-md:flex-1">
             <Search className="size-4" /> Search
           </Button>
           <Button
             type="button"
-            className="h-11"
+            className="max-md:h-11"
             onClick={() => {
               setFilters(EMPTY);
               setPicked([]);
@@ -238,7 +238,7 @@ export function RunSearch({ initialWorkflowId = '' }: { initialWorkflowId?: stri
         </ul>
         {result?.truncated && <p className="mt-2 text-[12px] text-t3">The search stopped after the most runs it reads at once. Narrow it by workflow or date.</p>}
         {result?.more && (
-          <Button className="mt-3 h-11 w-full" loading={busy} onClick={() => void run(filters, result.items.length)}>
+          <Button className="mt-3 w-full max-md:h-11" loading={busy} onClick={() => void run(filters, result.items.length)}>
             Show more
           </Button>
         )}
@@ -248,7 +248,7 @@ export function RunSearch({ initialWorkflowId = '' }: { initialWorkflowId?: stri
         <div className="fixed inset-x-0 bottom-0 z-30 border-t border-hair bg-bg/95 px-4 py-3 backdrop-blur" style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
           <div className="mx-auto flex max-w-[760px] items-center gap-3">
             <p className="min-w-0 flex-1 text-[13px] text-t2">{picked.length === 1 ? 'Pick one more run to compare' : '2 runs picked'}</p>
-            <Button variant="primary" className="h-11" disabled={picked.length < 2} onClick={() => router.push(`/runs/compare?a=${encodeURIComponent(picked[0])}&b=${encodeURIComponent(picked[1])}`)}>
+            <Button variant="primary" className="max-md:h-11" disabled={picked.length < 2} onClick={() => router.push(`/runs/compare?a=${encodeURIComponent(picked[0])}&b=${encodeURIComponent(picked[1])}`)}>
               <GitCompareArrows className="size-4" /> Compare
             </Button>
           </div>

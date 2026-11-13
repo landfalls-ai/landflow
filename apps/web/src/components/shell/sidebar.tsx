@@ -54,6 +54,18 @@ const RAIL_KEY = 'landflow-rail-collapsed';
  * More opens the rail as a drawer with everything else. Full-screen pages (the editor, a run's trace) have neither: their
  * own header has a back arrow.
  */
+/**
+ * Whether a sidebar item is the current page. A run's own page (/runs/<id>) belongs to Executions, where runs are listed;
+ * Search runs is /runs and comparing two (/runs/compare).
+ */
+export function navActive(href: string, pathname: string): boolean {
+  if (href === '/') return pathname === '/';
+  const runPage = /^\/runs\/(?!compare(?:\/|$))[^/]+/.test(pathname);
+  if (href === '/runs') return pathname.startsWith('/runs') && !runPage;
+  if (href === '/executions') return pathname.startsWith('/executions') || runPage;
+  return pathname.startsWith(href);
+}
+
 export function Sidebar() {
   const pathname = usePathname();
   const viewer = useViewer();
@@ -195,7 +207,7 @@ function Rail({ pathname, open, onClose }: { pathname: string; open: boolean; on
             <div className={cn('px-2.5 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3', label)}>{group.label}</div>
             {folded && <div className="mx-2 my-2 hidden border-t border-hair md:block" aria-hidden />}
             {group.items.map((item) => {
-              const active = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
+              const active = navActive(item.href, pathname);
               const Icon = item.icon;
               return (
                 <Link

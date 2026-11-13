@@ -27,13 +27,13 @@ export function ProjectsOverview() {
         meta={projects && <span>{projects.length} {projects.length === 1 ? 'project' : 'projects'}</span>}
         actions={
           mayCreate && (
-            <Button variant="primary" onClick={() => setCreating(true)}>
+            <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
               <Plus className="size-3.5" /> New project
             </Button>
           )
         }
       />
-      <PageBody className="max-w-[980px]">
+      <PageBody width="narrow">
         {error && <div className="mb-4 rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>}
         <p className="mb-4 text-[12px] text-t3">
           Every workflow, credential, data table and agent belongs to one project. Your personal project holds what you create; team projects share their items with their members as admin, editor or viewer.

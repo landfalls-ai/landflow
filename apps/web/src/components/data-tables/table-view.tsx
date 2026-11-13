@@ -6,7 +6,6 @@
  * select and delete rows, and import or export CSV.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Columns3, Download, Ellipsis, Loader2, Pencil, Plus, Search, Trash2, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -381,12 +380,9 @@ export function DataTableView({ tableId }: { tableId: string }) {
   return (
     <div className="flex min-h-screen flex-col">
       <PageHeader
+        back={{ href: '/data-tables', label: 'Data tables' }}
         title={
-          <span className="flex min-w-0 items-center gap-1.5">
-            <Link href="/data-tables" className="text-t3 transition-colors hover:text-t1">
-              Data tables
-            </Link>
-            <span className="text-t3">/</span>
+          <span className="flex min-w-0 items-center">
             {renamingTable && table ? (
               <InlineRename value={table.name} onSave={renameTable} onCancel={() => setRenamingTable(false)} className="h-7 w-64 text-[15px] font-semibold" />
             ) : (

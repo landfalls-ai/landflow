@@ -10,7 +10,7 @@ import { api } from '@/lib/client/api';
 import { cn } from '@/lib/utils';
 import { claudeAddCommand, curlCheck, DEBUG_TTL_CHOICES, mcpConfigJson, relativeTime, tokenPrefix, tokenState } from '@/lib/shared/debug-token-snippets';
 import { Badge, type Tone } from '../ui/badge';
-import { Button } from '../ui/button';
+import { Button, buttonClass } from '../ui/button';
 import { useDialogFocus } from '../ui/use-dialog-focus';
 import { CopyButton } from '../ui/copy-button';
 import { FieldLabel, Input, Select } from '../ui/inputs';
@@ -48,9 +48,9 @@ export function DebugAccessButton({ executionId }: { executionId: string }) {
         ref={button}
         type="button"
         onClick={() => setOpen(true)}
-        className="ml-auto inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-hair px-3 text-[13px] font-semibold text-t2 hover:border-ac hover:text-ac"
+        className={buttonClass('outline', 'sm')}
       >
-        <KeyRound className="size-4" /> <span>Debug access</span>
+        <KeyRound className="size-3.5" /> <span>Debug access</span>
       </button>
       {open && (
         <DebugAccessDialog

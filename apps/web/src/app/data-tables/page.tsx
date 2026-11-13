@@ -37,12 +37,12 @@ export default function DataTablesPage() {
         title="Data tables"
         meta={tables && <span>{tables.length} {tables.length === 1 ? 'table' : 'tables'} · {rows.toLocaleString()} rows</span>}
         actions={
-          <Button variant="primary" onClick={() => setCreating(true)}>
+          <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
             <Plus className="size-3.5" /> New table
           </Button>
         }
       />
-      <PageBody className="max-w-[980px]">
+      <PageBody width="narrow">
         {error && <div className="mb-4 rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>}
         {tables && tables.length > 5 && (
           <SearchInput value={query} onChange={setQuery} placeholder="Search tables and columns" className="mb-3 w-64" />

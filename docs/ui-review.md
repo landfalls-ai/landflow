@@ -133,6 +133,23 @@ The same thing has the same name everywhere. When adding a button or a state, us
 | Leaving an edit | **Cancel** |
 | How risky, how sure | *Low risk* / *Medium risk* / *High risk*, *60% sure* |
 
+## Page layout
+
+Every page is drawn the same way, from `components/shell/page-header.tsx`:
+
+- **Header** (`PageHeader`): the title on the left, the page's actions on the right, 52 px, 24 px in from the sides (16 px
+  on a phone). Header buttons are `size="sm"` (28 px; a link that looks like one uses `buttonClass`). On a phone the
+  header becomes rows: the title and the main action (the last one) first, the others under them, every button and link
+  44 px tall; a hidden file input among the actions doesn't count as the last one.
+- **The way back** (`back` on `PageHeader`, `BackLink` on a page with its own header): ← and the parent's name, a `/`,
+  then the page's own title. A phone shows the arrow alone, 44 px. Templates, a marketplace flow, a data table, an agent,
+  a project, a run (back to **Executions**) and Compare runs (back to **Search runs**) use it.
+- **Body** (`PageBody`): 24 px in (16 px on a phone). `width="narrow"` stops at 980 px, left-aligned, for lists of
+  records, settings and forms (Credentials, Data tables, Projects, a project, Runbooks, Developers, Search runs); the
+  default fills the width for grids, tables and canvases.
+- The sidebar marks the section a page belongs to: a run's own page (`/runs/<id>`) is under **Executions**, Search runs
+  and Compare under **Search runs**.
+
 ## Controls
 
 The same control looks and works the same on every page. Use these from `components/ui` rather than drawing a new one:

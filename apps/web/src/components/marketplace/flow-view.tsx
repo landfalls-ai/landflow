@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { Ban, ChevronLeft, Eye, LayoutTemplate, Package, PackageX, Plus, Store, Workflow } from 'lucide-react';
+import { Ban, Eye, LayoutTemplate, Package, PackageX, Plus, Store, Workflow } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api, ApiError } from '@/lib/client/api';
@@ -31,11 +31,7 @@ import { PluginDrawer } from './plugin-drawer';
 
 const NO_RUN_DATA = {};
 
-const back = (
-  <Link href="/marketplace" className="inline-flex items-center gap-1 text-t3 hover:text-t1">
-    <ChevronLeft className="size-4" /> Marketplace
-  </Link>
-);
+const back = { href: '/marketplace', label: 'Marketplace' };
 
 /** The marketplace isn't added here: say which, and let owners and admins add it from the link's `source`. */
 function NotAdded({ marketplace, source, onAdded }: { marketplace: string; source?: string; onAdded: () => void }) {
@@ -105,7 +101,7 @@ export function FlowView({ marketplace, plugin, path }: { marketplace: string; p
   if (error)
     return (
       <>
-        <PageHeader title={back} />
+        <PageHeader back={back} title="Flow" />
         <PageBody>
           {error.missing === 'marketplace' ? (
             <NotAdded marketplace={marketplace} source={source} onAdded={reload} />
@@ -121,7 +117,7 @@ export function FlowView({ marketplace, plugin, path }: { marketplace: string; p
   if (!view)
     return (
       <>
-        <PageHeader title={back} />
+        <PageHeader back={back} title="Flow" />
         <PageBody className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
           <div className="h-[480px] animate-pulse-soft rounded-2xl bg-wl" />
           <div className="h-[480px] animate-pulse-soft rounded-2xl bg-wl" />
@@ -138,10 +134,9 @@ export function FlowView({ marketplace, plugin, path }: { marketplace: string; p
   return (
     <>
       <PageHeader
+        back={back}
         title={
-          <span className="flex min-w-0 items-center gap-2">
-            {back}
-            <span className="text-t3">/</span>
+          <span className="flex min-w-0 items-center gap-1.5">
             <button onClick={() => setDrawer(true)} className="truncate text-t3 hover:text-t1">
               {view.plugin.displayName ?? view.plugin.name}
             </button>

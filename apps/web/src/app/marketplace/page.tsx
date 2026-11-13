@@ -50,7 +50,7 @@ export default function MarketplacePage() {
           )
         }
         actions={
-          <Button variant="primary" onClick={() => setAdding(true)}>
+          <Button variant="primary" size="sm" onClick={() => setAdding(true)}>
             <Plus className="size-3.5" /> Add marketplace
           </Button>
         }
