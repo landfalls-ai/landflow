@@ -74,7 +74,7 @@ export const GET = handler(async (_request: Request, { params }: Ctx) => {
     });
   }
 
-  for (const record of store.executionsMentioning(`"teamId":"${id}"`, 10)) {
+  for (const record of await store.executionsMentioningAsync(`"teamId":"${id}"`, 10)) {
     const node = record.workflow?.nodes.find((n) => n.type === 'core.runTeam' && n.parameters.teamId === id && record.runData[n.id]?.length);
     if (!node) continue;
     const runs = record.runData[node.id];

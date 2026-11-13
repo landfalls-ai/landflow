@@ -13,7 +13,7 @@ import type { JournalEvent, RunActor, SpanKind, SpanStatus } from '../../shared/
 import { logger } from '../telemetry';
 import { otlpAttributes, parseOtlpHeaders } from '../telemetry/logs';
 import { store } from '../store';
-import { readAll } from './store';
+import { readAllAsync } from './store';
 
 const BATCH = 200;
 const VALUE_CHARS = 4_000;
@@ -187,8 +187,8 @@ async function post(url: string, headers: Record<string, string>, body: unknown,
 export async function exportRunTraces(executionId: string, options: ExportOptions = {}): Promise<{ spans: number; requests: number } | undefined> {
   const url = options.url ?? tracesUrl();
   if (!url) return undefined;
-  const record = store.getExecution(executionId);
-  const converted = journalToOtlp(executionId, readAll(executionId), { workflowId: record?.workflowId, workflowName: record?.workflowName });
+  const record = await store.loadExecution(executionId);
+  const converted = journalToOtlp(executionId, await readAllAsync(executionId), { workflowId: record?.workflowId, workflowName: record?.workflowName });
   if (!converted) return undefined;
   const headers = parseOtlpHeaders(process.env.OTEL_EXPORTER_OTLP_TRACES_HEADERS ?? process.env.OTEL_EXPORTER_OTLP_HEADERS);
   const body = converted.body as { resourceSpans: Array<{ resource: unknown; scopeSpans: Array<{ scope: unknown; spans: unknown[] }> }> };

@@ -19,15 +19,24 @@ export function usageBackfilled(db: Database = database()): boolean {
   return Boolean(db.get('SELECT value FROM meta WHERE key = ?', DONE_KEY));
 }
 
-/** Fill the ledger from what is on disk. Returns how many events were added (0 when it already ran). */
-export function backfillUsage(db: Database = database(), force = false): number {
+/** Fill the ledger from what is on disk. Returns how many events were added (0 when it already ran or failed). Never rejects: any failure is logged and gives 0. */
+export async function backfillUsage(db: Database = database(), force = false): Promise<number> {
+  try {
+    return await fillUsage(db, force);
+  } catch (error) {
+    logger.warn('the usage backfill failed', { error });
+    return 0;
+  }
+}
+
+async function fillUsage(db: Database, force: boolean): Promise<number> {
   if (!brainEnabled() || (!force && usageBackfilled(db))) return 0;
   const before = Number(db.get<{ n: number }>('SELECT COUNT(*) AS n FROM usage_events')?.n ?? 0);
   const since = new Date(Date.now() - rawRetentionDays() * DAY_MS).toISOString();
   try {
     for (const summary of store.listExecutions({ limit: MAX_EXECUTIONS })) {
       if (summary.startedAt < since) continue;
-      const record = store.getExecution(summary.id);
+      const record = await store.loadExecution(summary.id);
       if (record) recordExecutionUsage(record, record.workflow ?? store.getWorkflow(record.workflowId));
     }
     const calls = db.all<{ id: string; at: string; workflow_id: string | null; agent_id: string | null; execution_id: string | null; user_id: string | null; provider: string; model: string; operation: string; input_tokens: number; output_tokens: number; cost: number }>(

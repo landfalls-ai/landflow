@@ -108,7 +108,7 @@ describe('Ask a Person', () => {
     const approval = pendingApproval(store.getExecution(waiting.executionId));
     expect(approval).toMatchObject({ channel: 'chat', title: 'Send the summary?', calls: [{ id: 'confirm', input: { text: 'Daily summary: all quiet.' } }], confirm: { title: 'Send the summary?', text: 'Daily summary: all quiet.', allowEdit: true } });
     // The Needs you list says who is waited for and what.
-    expect(needsYou(undefined).find((i) => i.executionId === waiting.executionId)).toMatchObject({ kind: 'approval', title: 'Waiting for a person: Send the summary?' });
+    expect((await needsYou(undefined)).find((i) => i.executionId === waiting.executionId)).toMatchObject({ kind: 'approval', title: 'Waiting for a person: Send the summary?' });
 
     const { response, events } = await answer(waiting.executionId, { approved: true, comment: 'Looks right' });
     expect(response.status).toBe(200);
@@ -194,7 +194,7 @@ describe('Ask a Person', () => {
     const { useLink, confirmationPage } = await import('@/lib/server/approval-email');
     const links = approvalLinks({ t: 'wf', e: waiting.executionId, c: 'confirm' }, 'ana@example.com');
     const token = new URL(links.approve).pathname.split('/').pop()!;
-    const page = await confirmationPage(token).text();
+    const page = await (await confirmationPage(token)).text();
     expect(page).toContain('Send the summary?');
     expect(page).toContain('Daily summary: all quiet.');
     await useLink(token);

@@ -247,6 +247,16 @@ ordered queue spooled to disk, so the store API stays synchronous; other process
 `LISTEN/NOTIFY`. Migrations are versioned (`db/schema.ts`, recorded in `schema_version`), each written for both
 databases; a migration can add columns only where they are missing.
 
+**The read seam for run data.** `db/reads.ts` holds the reads of `executions.data` and `execution_events` that code serving
+finished runs uses, all async: `readExecutionData`, `readExecutionEvents` and `readRows` for scans (the EXISTS search in
+`journal/runs-query.ts`, `executionsMentioningAsync`). Today each is the synchronous read in a resolved promise, so
+behaviour is unchanged; serving them from Postgres on demand instead of loading them into the in-memory copy at boot
+changes only that file. The store API follows one rule: `store.getExecution` is synchronous and is for **runs in flight**
+(running, waiting, queued) and the runner, cluster, waits, approvals and resume routes that handle them; anything that may
+read a finished run uses `await store.loadExecution(id)` and the async journal readers (`journalStore.readEventsAsync`,
+`readAllAsync`, `checksSinceAsync`, `spanStartAsync`, `spanEventsAsync`). `test/execution-reads.test.ts` scans the source and
+fails when a file outside its allow-list calls `store.getExecution(`.
+
 ## Queue mode and high availability
 
 ```

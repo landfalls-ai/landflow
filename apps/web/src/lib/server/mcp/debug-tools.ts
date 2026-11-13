@@ -135,8 +135,8 @@ function whatToCheck(message: string, ctx: { nodeName: string; pluginNode: boole
 export function registerDebugTools(server: McpServer, ctx: DebugContext) {
   const { json, failure } = ctx;
 
-  const visible = (id: string): { record: ExecutionRecord } | { refusal: CallToolResult } => {
-    const record = liveExecution(id) ?? store.getExecution(id);
+  const visible = async (id: string): Promise<{ record: ExecutionRecord } | { refusal: CallToolResult }> => {
+    const record = liveExecution(id) ?? (await store.loadExecution(id));
     if (!record || !ctx.inScope(record.workflowId) || ctx.denied(record.workflowId, 'read')) return { refusal: failure(`Execution ${id} not found`) };
     return { record };
   };
@@ -151,7 +151,7 @@ export function registerDebugTools(server: McpServer, ctx: DebugContext) {
       annotations: READ_ONLY,
     },
     async ({ id, runIndex }) => {
-      const found = visible(id);
+      const found = await visible(id);
       if ('refusal' in found) return found.refusal;
       const { record } = found;
       const workflow: Workflow | undefined = record.workflow ?? store.getWorkflow(record.workflowId);
@@ -254,14 +254,14 @@ export function registerDebugTools(server: McpServer, ctx: DebugContext) {
       annotations: READ_ONLY,
     },
     async ({ id, after, limit }) => {
-      const found = visible(id);
+      const found = await visible(id);
       if ('refusal' in found) return found.refusal;
       const { record } = found;
-      const stored = liveExecution(id) ? undefined : store.getExecution(id);
+      const stored = liveExecution(id) ? undefined : await store.loadExecution(id);
       const workflow = record.workflow ?? store.getWorkflow(record.workflowId);
       if (stored && !after) rebuildJournal(stored, workflow);
       const max = limit ?? 200;
-      const rows = journalStore.read(id, after ?? 0, max + 1);
+      const rows = await journalStore.readEventsAsync(id, after ?? 0, max + 1);
       const events = rows.slice(0, max);
       return json(redactorFor(workflow)({ executionId: id, status: record.status, events, last: events.at(-1)?.seq ?? after ?? 0, more: rows.length > max }));
     },
@@ -300,7 +300,7 @@ export function registerDebugTools(server: McpServer, ctx: DebugContext) {
   const settle = async (executionId: string, seconds: number): Promise<ExecutionRecord | undefined> => {
     const deadline = Date.now() + seconds * 1000;
     while (liveExecution(executionId) && Date.now() < deadline) await sleep(200);
-    return liveExecution(executionId) ?? store.getExecution(executionId);
+    return liveExecution(executionId) ?? (await store.loadExecution(executionId));
   };
 
   server.registerTool(
@@ -319,7 +319,7 @@ export function registerDebugTools(server: McpServer, ctx: DebugContext) {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
     async ({ id, from, version, wait, timeoutSeconds }) => {
-      const found = visible(id);
+      const found = await visible(id);
       if ('refusal' in found) return found.refusal;
       const refused = ctx.denied(found.record.workflowId, 'run');
       if (refused) return refused;
@@ -367,7 +367,7 @@ export function registerDebugTools(server: McpServer, ctx: DebugContext) {
       const node = workflow.nodes.find((n) => n.id === ref || n.name === ref);
       if (!node) return failure(`No node "${ref}" in “${workflow.name}”`);
       if (fromExecution) {
-        const source = visible(fromExecution);
+        const source = await visible(fromExecution);
         if ('refusal' in source) return source.refusal;
         if (source.record.workflowId !== workflowId) return failure(`Execution ${fromExecution} is of another workflow`);
         if (!source.record.runData[node.id]) return failure(`Execution ${fromExecution} never ran “${node.name}”`);

@@ -15,6 +15,7 @@ import type { CheckpointState, NodeRun, Workflow } from '@landflow/engine';
 import type { ExecutionRecord, ExecutionState, ExecutionSummary, WorkflowSummary } from '../shared/types';
 import { currentActorId } from './auth/context';
 import { database, dataDir, type Database } from './db';
+import { readExecutionData, readRows } from './db/reads';
 import { executionRow, parse, pollRow, summarize, trimRunData, workflowRow } from './db/rows';
 import { backtestScope } from './brain/backtest-scope';
 import { singleton } from './singleton';
@@ -214,9 +215,20 @@ class Store {
     return this.db.all<{ summary: string }>(sql, ...params).flatMap((row) => parse<ExecutionSummary>(row.summary) ?? []);
   }
 
+  /**
+   * A saved execution, synchronously. For runs in flight only (running, waiting, queued) and for the runner's own
+   * bookkeeping: once Postgres serves run data on demand (db/reads.ts) a finished run is not here to be read
+   * synchronously. Use `loadExecution` for anything that may have finished.
+   */
   getExecution(id: string): ExecutionRecord | undefined {
     if (!/^[\w-]+$/.test(id)) return undefined;
     return parse<ExecutionRecord>(this.db.get<{ data: string }>('SELECT data FROM executions WHERE id = ?', id)?.data);
+  }
+
+  /** A saved execution through the async read seam (db/reads.ts): the reader for any run that may have finished. */
+  async loadExecution(id: string): Promise<ExecutionRecord | undefined> {
+    if (!/^[\w-]+$/.test(id)) return undefined;
+    return parse<ExecutionRecord>(await readExecutionData(id));
   }
 
   /** The newest finished or waiting executions whose saved record contains `text` (a team id in a flow's snapshot), newest first. */
@@ -225,6 +237,13 @@ class Store {
     return this.db
       .all<{ data: string }>("SELECT data FROM executions WHERE status <> 'running' AND data LIKE ? ESCAPE '\\' ORDER BY started_at DESC, id DESC LIMIT ?", pattern, Math.max(1, Math.floor(limit)))
       .flatMap((row) => parse<ExecutionRecord>(row.data) ?? []);
+  }
+
+  /** `executionsMentioning` through the async read seam. */
+  async executionsMentioningAsync(text: string, limit = 5): Promise<ExecutionRecord[]> {
+    const pattern = `%${text.replace(/[%_\\]/g, '\\$&')}%`;
+    const rows = await readRows<{ data: string }>("SELECT data FROM executions WHERE status <> 'running' AND data LIKE ? ESCAPE '\\' ORDER BY started_at DESC, id DESC LIMIT ?", pattern, Math.max(1, Math.floor(limit)));
+    return rows.flatMap((row) => parse<ExecutionRecord>(row.data) ?? []);
   }
 
   /** Saved executions in one state, oldest first. */

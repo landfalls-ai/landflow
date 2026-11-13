@@ -10,7 +10,7 @@ type Ctx = { params: Promise<{ id: string }> };
 
 export const GET = handler(async (_request: Request, { params }: Ctx) => {
   const { id } = await params;
-  const found = liveExecution(id) ?? store.getExecution(id);
+  const found = liveExecution(id) ?? await store.loadExecution(id);
   if (!found) return error('Execution not found', 404);
   // The engine state of a waiting run stays on the server.
   const { resumeState: _state, ...execution } = found;
@@ -26,7 +26,7 @@ export const GET = handler(async (_request: Request, { params }: Ctx) => {
 /** DELETE cancels a running, waiting or queued execution, or removes a finished one from history. */
 export const DELETE = handler(async (_request: Request, { params }: Ctx) => {
   const { id } = await params;
-  const record = liveExecution(id) ?? store.getExecution(id);
+  const record = liveExecution(id) ?? await store.loadExecution(id);
   const target = { type: 'execution', id, ...(record?.workflowName && { name: record.workflowName }) };
   const details = { workflowId: record?.workflowId, status: record?.status };
   if (liveExecution(id)) {
@@ -34,7 +34,7 @@ export const DELETE = handler(async (_request: Request, { params }: Ctx) => {
     recordAudit({ action: 'execution.stop', target, details });
     return json({ canceled });
   }
-  const status = store.getExecution(id)?.status;
+  const status = (await store.loadExecution(id))?.status;
   if (status === 'waiting' || status === 'queued') {
     const canceled = status === 'waiting' ? cancelWaitingExecution(id) : cancelQueuedExecution(id);
     recordAudit({ action: 'execution.stop', target, details });

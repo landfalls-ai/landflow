@@ -9,7 +9,7 @@ import { openAsks } from '../a2a/agent-asks';
 import { liveExecution } from '../runner';
 import { store } from '../store';
 import { openWaitSpan } from './decisions';
-import { checksSince, spanStart } from './store';
+import { checksSinceAsync, spanStartAsync } from './store';
 
 /** `gate`: a Run report waits for a person to accept its failed checks or send the work back. */
 export type NeedsYouKind = 'approval' | 'form' | 'question' | 'gate' | 'check';
@@ -72,16 +72,16 @@ function waitItem(record: ExecutionRecord): NeedsYouItem | undefined {
 type CheckEvent = Extract<JournalEvent, { type: 'check' }>;
 
 /** Failed checks whose latest word is the failure: not passed since, not accepted or sent back. */
-function failedChecks(now: number): CheckEvent[] {
+async function failedChecks(now: number): Promise<CheckEvent[]> {
   const latest = new Map<string, CheckEvent>();
-  for (const event of checksSince(new Date(now - CHECK_DAYS * DAY_MS).toISOString())) {
+  for (const event of await checksSinceAsync(new Date(now - CHECK_DAYS * DAY_MS).toISOString())) {
     if (event.type === 'check') latest.set(`${event.executionId}\u0000${event.spanId}\u0000${event.check.name}\u0000${event.check.subject ?? ''}`, event);
   }
   return [...latest.values()].filter((event) => event.check.status === 'fail' && !event.check.resolution);
 }
 
 /** The items for the executions `visible` allows (undefined: all), newest first. */
-export function needsYou(visible: Set<string> | undefined, now = Date.now()): NeedsYouItem[] {
+export async function needsYou(visible: Set<string> | undefined, now = Date.now()): Promise<NeedsYouItem[]> {
   const items: NeedsYouItem[] = [];
   // A run whose Run report waits on its failed checks shows them once, as that wait.
   const gated = new Set<string>();
@@ -92,17 +92,17 @@ export function needsYou(visible: Set<string> | undefined, now = Date.now()): Ne
     if (item?.kind === 'gate') gated.add(record.executionId);
   }
   const names = new Map<string, { workflowId: string; workflowName: string }>();
-  const nameOf = (executionId: string) => {
+  const nameOf = async (executionId: string) => {
     let execution = names.get(executionId);
     if (!execution) {
-      const record = liveExecution(executionId) ?? store.getExecution(executionId);
+      const record = liveExecution(executionId) ?? (await store.loadExecution(executionId));
       if (record) names.set(executionId, (execution = { workflowId: record.workflowId, workflowName: record.workflowName }));
     }
     return execution;
   };
   // A command a Claude Code member asks about (a push to main): the run goes on, a person's word lets it through.
   for (const ask of openAsks()) {
-    const execution = nameOf(ask.executionId);
+    const execution = await nameOf(ask.executionId);
     if (!execution || (visible && !visible.has(execution.workflowId))) continue;
     items.push({
       executionId: ask.executionId,
@@ -116,12 +116,12 @@ export function needsYou(visible: Set<string> | undefined, now = Date.now()): Ne
       since: ask.createdAt,
     });
   }
-  for (const event of failedChecks(now)) {
+  for (const event of await failedChecks(now)) {
     if (gated.has(event.executionId)) continue;
-    const execution = nameOf(event.executionId);
+    const execution = await nameOf(event.executionId);
     if (!execution) continue;
     if (visible && !visible.has(execution.workflowId)) continue;
-    const actor = spanStart(event.executionId, event.spanId)?.actor;
+    const actor = (await spanStartAsync(event.executionId, event.spanId))?.actor;
     const check: RunCheck = event.check;
     items.push({
       executionId: event.executionId,

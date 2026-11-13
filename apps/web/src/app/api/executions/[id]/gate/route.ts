@@ -23,7 +23,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const body = await parseBody(request, bodySchema);
   if (!body.ok) return body.response;
   if (liveExecution(id)) return error('This execution is running, not waiting on a Run report', 409);
-  const record = store.getExecution(id);
+  const record = await store.loadExecution(id);
   if (!record) return error('Execution not found', 404);
   const gate = record.status === 'waiting' ? (record.wait?.data?.runReport as { gate?: boolean; failed?: Array<{ name: string; spanId?: string }> } | undefined) : undefined;
   if (!gate?.gate) return error(`This execution is ${record.status}, not waiting on a Run report`, 409);
