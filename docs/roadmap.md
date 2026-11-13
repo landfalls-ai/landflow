@@ -1253,6 +1253,20 @@ workbench in place of a page of cards, keeping Spotlight.
 - **P10, security headers and a nonce CSP** (S10): the proxy sets nosniff, referrer and permissions policies, frame denial, HSTS
   over https and a per-request nonce Content Security Policy on pages (`LANDFLOW_CSP`: enforce in production, report in
   development; `LANDFLOW_HSTS`); embeddable paths keep their own policy; `x-powered-by` is off.
+- **Wave 1 carryover** (applied in wave 2): retention counts and the `LANDFLOW_RETENTION_EVERY` floor, the blocked
+  Postgres store's 503 and sink fixes, an earlier shutdown registration and capped intake wait, the compose grace
+  periods, a load balancer that skips a main that is not ready, AI usage groups and Stop all's key scope, capped SCIM
+  failure events, URL-list redaction, an atomically created encryption key. Deferred, each for a later package:
+  - a `(status, started_at, id)` index on `executions`, so the retention count pass stays cheap at a very large cap
+    (a migration; nothing slow at the default 300);
+  - `LANDFLOW_PG_SKIP_BATCH=<instance>:<seq>`, so in queue mode the variable can't set aside another process's batch
+    with the same number (documented: set it on the blocked process only);
+  - `leaderService()` in regular mode keeps its entries until shutdown, so they accumulate across a test file (tests
+    only; a by-name replacement needs care for hot reload in queue mode);
+  - the AI and RAG nodes' default Base URL is computed when the node list is built at import, not per request (the
+    runs themselves read `ollamaUrl()` at call time);
+  - tests still missing from wave 1: SCIM `PUT /Users` and `PUT /Groups` events, the 10,000-address eviction, and
+    access-scope cases for evaluation-dataset files, a live run's file and an agent the member can open.
 
 ## Planned next
 
