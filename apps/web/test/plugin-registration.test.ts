@@ -119,6 +119,11 @@ describe('proof for announced endpoints', () => {
     expect(registryRefusesAddress('http://[::ffff:169.254.169.254]')).toBe(true);
     expect(registryRefusesAddress('http://[febf::1]')).toBe(true);
     expect(registryRefusesAddress('http://10.0.0.5:8080')).toBe(false);
+    // gRPC URLs are not normalised by the URL parser: numeric and hex IPv4 forms are caught all the same.
+    expect(registryRefusesAddress('grpc://2852039166:443')).toBe(true);
+    expect(registryRefusesAddress('grpc://0xa9fea9fe:443')).toBe(true);
+    expect(registryRefusesAddress('grpc://169.254.169.254:443')).toBe(true);
+    expect(registryRefusesAddress('grpc://plugin.internal:443')).toBe(false);
     const response = await announceRoute.POST(post(announce('http://169.254.169.254:80', 'reg-meta')));
     expect(response.status).toBe(422);
     delete process.env.LANDFLOW_PROFILE;
@@ -141,6 +146,33 @@ describe('joining an existing plugin', () => {
     // Brokered endpoints are ignored when direct ones exist.
     expect(registryJoinAllowed('http://10.1.2.4:9002', ['nats://nats-main/x', 'http://10.1.2.3:9001'])).toBe(false);
     expect(registryJoinAllowed('http://10.1.2.3:9002', ['nats://nats-main/x', 'http://10.1.2.3:9001'])).toBe(true);
+  });
+
+  it('offline, at the registry: a direct endpoint on another host is refused (409); a brokered-first plugin lets it join', async () => {
+    const { transportProviders } = await import('@/lib/server/transports/provider');
+    const { grpcProvider, httpProvider } = await import('@/lib/server/transports');
+    const local = await plugin(pluginWith('reg-offline'));
+    // Fake gRPC and NATS providers that reach the local HTTP plugin: a "remote host" or a broker needs no network.
+    const reachLocal = () => httpProvider.createClient(local.url);
+    transportProviders.register({ ...grpcProvider, createClient: reachLocal });
+    const undoNats = transportProviders.register({ ...grpcProvider, kind: 'nats', direct: false, createClient: reachLocal });
+    try {
+      await registry.announce(announce(local.url, 'reg-offline'));
+      await expect(registry.announce(announce('grpc://10.9.9.9:50051', 'reg-offline'))).rejects.toMatchObject({ status: 409 });
+      expect(registry.list().find((p) => p.id === 'reg-offline')?.endpoints).toHaveLength(1);
+      // The refusal is per announce: it is not kept on the endpoint that did join.
+      expect(registry['endpointState'](local.url)?.options?.guardJoin).toBeUndefined();
+      registry.remove('reg-offline');
+
+      // Brokered first (registry.ts: brokered endpoints have no host to compare), then a direct announce joins.
+      await registry.addEndpoint('nats://conn-1/reg-offline', 'broker');
+      await registry.announce(announce('grpc://10.9.9.9:50051', 'reg-offline'));
+      expect(registry.list().find((p) => p.id === 'reg-offline')?.endpoints).toHaveLength(2);
+    } finally {
+      transportProviders.register(grpcProvider);
+      undoNats();
+      registry.remove('reg-offline');
+    }
   });
 
   it.skipIf(!lanAddress)('without a secret a join from another host is 409 and audited when allowed; with the secret it is proven and audited', async () => {

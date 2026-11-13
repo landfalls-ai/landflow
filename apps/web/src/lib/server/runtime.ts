@@ -39,6 +39,7 @@ import { startDataMaintenance } from './maintenance';
 import { corePlugin } from './nodes';
 import { registry } from './plugins/registry';
 import { startRegistryGrpcServer } from './plugins/registry-grpc';
+import { noteRegistryOpen } from './plugins/registry-policy';
 import { adoptUnassignedResources } from './projects/boot';
 import { ensurePublications } from './publish';
 import { publishSchedules } from './publish-schedule';
@@ -164,7 +165,14 @@ export const SERVICES: ServiceSpec[] = [
   { name: 'usage listeners', roles: MAIN, start: startUsageListeners },
   { name: 'usage trigger', roles: MAIN, start: startUsageTrigger },
   { name: 'second brain', roles: MAIN, leader: true, start: () => brain.start(), stop: () => brain.stop() },
-  { name: 'registry gRPC server', roles: MAIN, start: startRegistryGrpcServer },
+  {
+    name: 'registry gRPC server',
+    roles: MAIN,
+    start: () => {
+      noteRegistryOpen((message) => logger.info(message));
+      return startRegistryGrpcServer();
+    },
+  },
   // Static plugin seeds (LANDFLOW_PLUGINS) next to the other sources.
   { name: 'static plugin seeds', roles: BOTH, start: () => Promise.allSettled(staticSeeds().map((endpoint) => registry.addEndpoint(endpoint, 'static'))) },
   // LANDFLOW_PLUGIN_DISCOVERY=kubernetes: plugins behind labelled Services (plugins/kubernetes.ts). Not awaited.

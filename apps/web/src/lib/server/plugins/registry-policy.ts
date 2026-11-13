@@ -21,9 +21,18 @@ export function registryOpen(): boolean {
   return !isProduction() || envFlag('LANDFLOW_REGISTRY_OPEN', false);
 }
 
+/**
+ * The endpoint's host, normalised as an http URL's would be: `grpc://` and broker URLs are not special schemes, so the
+ * URL parser leaves `2852039166` or `0xa9fea9fe` as written; parsing the host again as http turns them into dotted IPv4.
+ */
+/** Logged once at boot by a main (runtime.ts), whether or not the gRPC registry listens: the HTTP route is open too. */
+export function noteRegistryOpen(log: (message: string) => void): void {
+  if (!process.env.LANDFLOW_REGISTRY_SECRET && registryOpen()) log('plugin registration is open: LANDFLOW_REGISTRY_SECRET is not set, so any reachable endpoint can register (development profile, or LANDFLOW_REGISTRY_OPEN=true)');
+}
+
 const hostname = (endpoint: string): string | undefined => {
   try {
-    return new URL(endpoint).hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    return new URL(`http://${new URL(endpoint).hostname}`).hostname.replace(/^\[|\]$/g, '').toLowerCase();
   } catch {
     return undefined;
   }

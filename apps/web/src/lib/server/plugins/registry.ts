@@ -215,6 +215,9 @@ export class PluginRegistry implements NodeTypeResolver, AutoSource {
       throw error;
     }
     const latencyMs = Date.now() - started;
+    // `guardJoin` is a decision about this announce, not a property of the endpoint: it is not kept in the endpoint's state.
+    const { guardJoin, ...kept } = options ?? {};
+    const keptOptions = Object.keys(kept).length > 0 ? kept : undefined;
     const id = manifest.plugin.id;
     const existing = this.plugins.get(id);
     if (existing?.source === 'builtin') {
@@ -222,7 +225,7 @@ export class PluginRegistry implements NodeTypeResolver, AutoSource {
       throw new Error(`Plugin id "${id}" is reserved by a built-in plugin`);
     }
     const joining = Boolean(existing) && !existing!.endpoints.has(endpoint);
-    if (joining && options?.guardJoin && !registryJoinAllowed(endpoint, [...existing!.endpoints.keys()])) {
+    if (joining && guardJoin && !registryJoinAllowed(endpoint, [...existing!.endpoints.keys()])) {
       client.close();
       this.emit({ type: 'plugin.error', pluginId: id, endpoint, message: `Refused ${endpoint} joining ${id}: another host (LANDFLOW_REGISTRY_ALLOW_JOIN=true allows it)` });
       throw new RegistryRefused('This endpoint may not join an existing plugin from another host: set LANDFLOW_REGISTRY_SECRET, or LANDFLOW_REGISTRY_ALLOW_JOIN=true', 409);
@@ -247,7 +250,7 @@ export class PluginRegistry implements NodeTypeResolver, AutoSource {
       lastSeen: Date.now(),
       latencyMs,
       ...(ttlSeconds && { leaseExpiresAt: Date.now() + ttlSeconds * 1000 }),
-      ...(options && { options }),
+      ...(keptOptions && { options: keptOptions }),
       ...(instanceId && { instanceId }),
       ...(previous?.maxConcurrency && { maxConcurrency: previous.maxConcurrency }),
       manifestHash: manifestHash(manifest),

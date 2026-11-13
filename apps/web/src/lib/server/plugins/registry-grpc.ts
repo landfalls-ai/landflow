@@ -34,7 +34,6 @@ const UNAUTHENTICATED = { code: grpc.status.UNAUTHENTICATED, message: 'Send the 
 export async function startRegistryGrpcServer(): Promise<grpc.Server | undefined> {
   const setting = process.env.LANDFLOW_REGISTRY_GRPC_PORT ?? '7070';
   if (setting === 'off') return undefined;
-  if (!process.env.LANDFLOW_REGISTRY_SECRET && registryOpen()) logger.info('plugin registration is open: LANDFLOW_REGISTRY_SECRET is not set, so any reachable endpoint can register (development profile, or LANDFLOW_REGISTRY_OPEN=true)');
   const proto = loadLandflowProto();
   const server = new grpc.Server();
   server.addService(proto.RegistryService.service, {
