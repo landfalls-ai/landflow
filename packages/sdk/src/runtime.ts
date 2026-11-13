@@ -56,6 +56,8 @@ export interface ContextExtras {
   /** Extra log sink (the host streams logs live). */
   onLog?: (entry: LogEntry) => void;
   signal?: AbortSignal;
+  /** In-process only: the fetch behind `ctx.http` (the host passes one that enforces its outbound policy); spans still wrap it. */
+  fetch?: typeof fetch;
   /** Epoch ms by which the call must finish (the dispatcher sets it from the binding's deadline); exposed as `ctx.deadline`. */
   deadline?: number;
   /** Telemetry for spans, metrics and the process log (default: getTelemetry()). */
@@ -158,7 +160,7 @@ function buildContext(node: INodeType, request: ExecuteRequest, logs: LogEntry[]
     ...(request.workflowId && { 'landflow.workflow.id': request.workflowId }),
   });
   const logger = nodeLogger(logs, processLog, extras.onLog);
-  const http = createTracedFetch(telemetry, { base, signal: extras.signal });
+  const http = createTracedFetch(telemetry, { base, signal: extras.signal, ...(extras.fetch && { fetch: extras.fetch }) });
   const poll: PollStateBox = { set: false };
   const report = (record: NodeRecord) => {
     const stamped = scrubRecord({ ...record, at: new Date().toISOString() });
@@ -334,7 +336,7 @@ export function toErrorPayload(error: unknown): NonNullable<ExecuteResponse['err
   return { message: scrub(String(error)) };
 }
 
-export type LoadOptionsExtras = Pick<ContextExtras, 'telemetry' | 'signal' | 'deadline' | 'credentialTypes' | 'pluginId'>;
+export type LoadOptionsExtras = Pick<ContextExtras, 'telemetry' | 'signal' | 'deadline' | 'credentialTypes' | 'pluginId' | 'fetch'>;
 
 export async function runLoadOptions(
   node: INodeType,
@@ -347,7 +349,7 @@ export async function runLoadOptions(
   if (!loader) throw new NodeOperationError(`Node "${node.description.name}" has no loadOptions method "${method}"`);
   const telemetry = extras.telemetry ?? getTelemetry();
   const base = otelContext.active();
-  const http = createTracedFetch(telemetry, { base, signal: extras.signal });
+  const http = createTracedFetch(telemetry, { base, signal: extras.signal, ...(extras.fetch && { fetch: extras.fetch }) });
   const processLog = telemetry.logger.child({
     'landflow.node.type': qualifiedType(node.description.name, extras.pluginId),
     'landflow.load_options.method': method,
@@ -385,7 +387,7 @@ export interface TestCredentialsResult {
 export async function executeTestCredentials(
   plugin: IPlugin,
   request: TestCredentialsRequest,
-  extras: Pick<ContextExtras, 'telemetry' | 'signal'> = {},
+  extras: Pick<ContextExtras, 'telemetry' | 'signal' | 'fetch'> = {},
 ): Promise<TestCredentialsResult> {
   const name = localCredentialName(request.credentialType);
   const type = plugin.credentialTypes?.find((t) => t.name === name);
@@ -393,7 +395,7 @@ export async function executeTestCredentials(
   if (!type.test) return { response: { ok: false, message: `Credential type "${name}" has no connection test` } };
   const telemetry = extras.telemetry ?? getTelemetry();
   const base = otelContext.active();
-  const http = createTracedFetch(telemetry, { base, signal: extras.signal });
+  const http = createTracedFetch(telemetry, { base, signal: extras.signal, ...(extras.fetch && { fetch: extras.fetch }) });
   const release = registerSecrets(secretValues(request.data, type.properties));
   try {
     const context: ICredentialTestContext = {
@@ -421,7 +423,7 @@ export async function executeTestCredentials(
 export async function runTestCredentials(
   plugin: IPlugin,
   request: TestCredentialsRequest,
-  extras: Pick<ContextExtras, 'telemetry' | 'signal'> = {},
+  extras: Pick<ContextExtras, 'telemetry' | 'signal' | 'fetch'> = {},
 ): Promise<TestCredentialsResponse> {
   return (await executeTestCredentials(plugin, request, extras)).response;
 }

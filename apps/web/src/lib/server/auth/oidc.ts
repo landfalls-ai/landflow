@@ -18,6 +18,7 @@
 import { createHash, createHmac, createPublicKey, timingSafeEqual, verify as verifySignature, constants, type JsonWebKey, type KeyObject } from 'node:crypto';
 import { ASSIGNABLE_ROLES, type AssignableRole } from '../../shared/auth';
 import { clusterActive, coordinator } from '../cluster/state';
+import { safeFetch } from '../net/safe-fetch';
 import { singleton } from '../singleton';
 import { randomToken } from './passwords';
 import { createUser, findUserByEmail, findUserByOidc, setupRequired, updateUser, type UserRecord } from './users';
@@ -134,7 +135,7 @@ async function takePending(state: string): Promise<PendingSignIn | undefined> {
 }
 
 async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, { ...init, signal: AbortSignal.timeout(10_000), headers: { accept: 'application/json', ...init?.headers } });
+  const response = await safeFetch(url, { ...init, signal: AbortSignal.timeout(10_000), headers: { accept: 'application/json', ...init?.headers } });
   const text = await response.text();
   let body: unknown;
   try {

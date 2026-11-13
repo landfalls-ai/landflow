@@ -14,7 +14,9 @@
  * HTTP goes through node:http(s) so a destination can trust a private CA or (Splunk's self-signed default) skip
  * verification. Syslog over TLS and HTTPS destinations can also present a client certificate (mTLS) when the receiver
  * asks for one: `clientCert` and `clientKey` (PEM, the key sealed at rest, ./destinations) with an optional passphrase.
- * Destinations are configured by admins, so their addresses are not restricted.
+ * Destinations are configured by admins, but HTTP ones still go through the outbound policy (../net/safe-fetch: the
+ * socket's lookup refuses loopback, private and metadata addresses in the production profile unless
+ * LANDFLOW_OUTBOUND_ALLOW lists them). Syslog is a raw socket to a configured host and is not covered.
  */
 import { createHmac } from 'node:crypto';
 import { createSocket } from 'node:dgram';
@@ -24,6 +26,7 @@ import { connect as netConnect, isIP, type Socket } from 'node:net';
 import { hostname } from 'node:os';
 import { connect as tlsConnect, type ConnectionOptions, type TLSSocket } from 'node:tls';
 import type { AuditDestinationConfig, AuditEvent } from '../../shared/audit';
+import { assertUrlAllowed, guardedLookup } from '../net/safe-fetch';
 import { telemetryConfig } from '../telemetry/config';
 import type { SendableDestination } from './destinations';
 import { auditEventName } from './otel';
@@ -190,6 +193,11 @@ export interface HttpReply {
 /** POST `body` to `url` (node:http(s), so TLS options apply); the reply with up to 64 KB of its body. */
 export function post(url: string, body: string, headers: Record<string, string>, tls: TlsConfig = {}): Promise<HttpReply> {
   const target = new URL(url);
+  try {
+    assertUrlAllowed(target); // a literal IP never reaches the guarded lookup
+  } catch (error) {
+    return Promise.reject(error);
+  }
   const send = target.protocol === 'https:' ? httpsRequest : httpRequest;
   return new Promise<HttpReply>((resolve, reject) => {
     const req = send(
@@ -198,6 +206,7 @@ export function post(url: string, body: string, headers: Record<string, string>,
         method: 'POST',
         headers: { 'content-length': String(Buffer.byteLength(body)), 'user-agent': `landflow/${telemetryConfig.serviceVersion}`, ...headers },
         timeout: TIMEOUT_MS,
+        lookup: guardedLookup,
         ...(target.protocol === 'https:' && tlsOptions(tls)),
       },
       (res) => {
