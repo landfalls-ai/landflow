@@ -39,6 +39,7 @@ import { commandLine, contentHash, downloadPlugin, freePort, nodePlugins, portFr
 import { importTemplate, previewTemplate } from '../templates';
 import { localTemplates } from '../templates/store';
 import { loadFlows, loadPlugin, pool, readFlow, type MarketplaceEntry } from './plugin';
+import { HttpError } from '../errors';
 import { clearTreeCache, FetchError, fetchJson, fetchLimited, readerFor } from './reader';
 import { locationLabel, parseMarketplaceInput, resolveSource, sourceLabel } from './sources';
 import { marketplaceStore, PRESETS, type StoredMarketplace } from './store';
@@ -48,13 +49,20 @@ const DETAIL_TTL_MS = 10 * 60_000;
 /** Explore reads every plugin's files in a marketplace this small (and only the Landflow ones in a larger one). */
 const EXPLORE_READ_ALL = 25;
 
-export class MarketplaceError extends Error {
-  constructor(
-    message: string,
-    readonly status = 400,
-    readonly body?: Record<string, unknown>,
-  ) {
-    super(message);
+/** A marketplace request the caller can fix or retry; `body` (extra response fields such as `missing`) travels as the error's details. */
+export class MarketplaceError extends HttpError {
+  constructor(message: string, status = 400, readonly body?: Record<string, unknown>) {
+    super(message, status, { code: 'marketplace_error', ...(body && { details: body }) });
+  }
+}
+
+/** sources.ts and plugin.ts throw plain Errors for input they refuse (a bad address, a path with `..`): the caller's fault, so a 4xx. */
+function refusing<T>(status: number, fn: () => T): T {
+  try {
+    return fn();
+  } catch (caught) {
+    if (caught instanceof HttpError || !(caught instanceof Error)) throw caught;
+    throw new MarketplaceError(caught.message, status, undefined);
   }
 }
 
@@ -166,7 +174,7 @@ export const marketplace = {
   },
 
   async add(input: string): Promise<MarketplaceSummary> {
-    const location = parseMarketplaceInput(input);
+    const location = refusing(400, () => parseMarketplaceInput(input));
     const existing = marketplaceStore.marketplaces().find((m) => sameLocation(m.location, location));
     if (existing) throw new MarketplaceError(`Already added as “${summarize(existing).name}”`, 409, { marketplace: summarize(existing) });
     const preset = PRESETS.find((p) => sameLocation(p.location, location));
@@ -209,7 +217,7 @@ export const marketplace = {
     }
     const installed = new Set(marketplaceStore.installed().map((p) => p.id));
     const plugins: CatalogPlugin[] = (m.entries ?? []).map((entry) => {
-      const source = resolveSource(entry.source, m.location, m.pluginRoot);
+      const source = refusing(422, () => resolveSource(entry.source, m.location, m.pluginRoot));
       const author = entry.author as { name?: unknown } | string | undefined;
       const keywords = [...(Array.isArray(entry.keywords) ? entry.keywords : []), ...(Array.isArray(entry.tags) ? entry.tags : [])].filter((k): k is string => typeof k === 'string');
       return {
@@ -317,10 +325,10 @@ export const marketplace = {
     const m = getMarketplace(id);
     const entry = m.entries?.find((e) => e.name === name);
     if (!plugin || !entry) throw new MarketplaceError(`No plugin “${name}” in this marketplace`, 404);
-    const source = resolveSource(entry.source, m.location, m.pluginRoot);
+    const source = refusing(422, () => resolveSource(entry.source, m.location, m.pluginRoot));
     if (source.kind === 'unsupported') throw new MarketplaceError(`Can’t install “${name}”: ${source.reason}`, 422);
     const fromRoot = typeof entry.source === 'string' && (entry.source === '.' || entry.source === './');
-    const loaded = await traceMarketplace('detail', { 'landflow.marketplace.id': id, 'landflow.marketplace.plugin': name }, () => loadPlugin(readerFor(source), entry, fromRoot));
+    const loaded = await traceMarketplace('detail', { 'landflow.marketplace.id': id, 'landflow.marketplace.plugin': name }, () => loadPlugin(readerFor(source), entry, fromRoot).catch((caught) => refusing(422, () => { throw caught; })));
     const flows = loaded.flows.map((flow) => ({ ...flow, needs: [], link: flowLink(marketplaceName(m), name, flow.path, shareSource(m.location)) }));
     const detail: PluginDetail = { marketplaceId: id, plugin, source, ...loaded, flows };
     details.set(key, { at: Date.now(), detail });
@@ -679,7 +687,7 @@ async function startHere(installed: InstalledPlugin) {
       const hash = contentHash(dir);
       if (record.contentHash && hash !== record.contentHash) {
         rmSync(dir, { recursive: true, force: true });
-        throw new Error(`its source changed since it was installed (${hash.slice(0, 19)}… instead of ${record.contentHash.slice(0, 19)}…): reinstall it`);
+        throw new MarketplaceError(`its source changed since it was installed (${hash.slice(0, 19)}… instead of ${record.contentHash.slice(0, 19)}…): reinstall it`, 409);
       }
       await nodePlugins.prepare({ key: installed.id, pluginId: record.pluginId, dir, manifest: record.manifest }, logFile);
       writeInstallMarker(dir, { key: installed.id, revision, contentHash: hash });
