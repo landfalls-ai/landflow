@@ -15,7 +15,7 @@ import { viewerOf, type UserRecord } from './users';
 
 export { createApiKey, deleteApiKey, getApiKey, listApiKeys, verifyApiKey, apiKeyView } from './api-keys';
 export { currentActorId, requestAuth, withAuth, type Principal } from './context';
-export { clearSessionCookie, publicOrigin, readCookie, setSessionCookie } from './cookies';
+export { clearSessionCookie, linkOriginMissing, publicOrigin, readCookie, setSessionCookie } from './cookies';
 export { AuthError, currentPrincipal, guardRequest, requireUser, resolvePrincipal } from './guard';
 export { disableTestAuth, enableTestAuth, TEST_OWNER } from './test-bypass';
 export { createSession, deleteSession, deleteUserSessions, sessionTtlHours, sessionUser } from './sessions';
