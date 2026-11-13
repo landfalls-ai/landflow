@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { describeCounts, NewProjectDialog } from './project-dialogs';
 import { projectLabel, useProjects } from './use-projects';
+import { plural } from '@/lib/client/format';
 
 export function ProjectsOverview() {
   const router = useRouter();
@@ -24,7 +25,7 @@ export function ProjectsOverview() {
     <>
       <PageHeader
         title="Projects"
-        meta={projects && <span>{projects.length} {projects.length === 1 ? 'project' : 'projects'}</span>}
+        meta={projects && <span>{plural(projects.length, 'project')}</span>}
         actions={
           mayCreate && (
             <Button variant="primary" size="sm" onClick={() => setCreating(true)}>

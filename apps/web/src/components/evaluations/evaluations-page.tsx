@@ -123,7 +123,7 @@ function TriggerCard({ overview, workflowId }: { overview?: EvaluationsOverview;
     return (
       <div className="rounded-[10px] border border-warnbd bg-warndim px-3 py-2 text-[12px] text-t2">
         <div className="flex items-center gap-1.5 font-semibold text-warn">
-          <TriangleAlert className="size-3.5" /> No Evaluation Trigger
+          <TriangleAlert className="size-3.5" /> No evaluation trigger
         </div>
         <p className="mt-0.5 leading-snug">
           Add one in the <Link href={`/workflows/${workflowId}`} className="text-ac hover:underline">editor</Link> and point it at a Data Table (or an uploaded CSV or JSON file) of test cases.

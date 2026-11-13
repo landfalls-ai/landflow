@@ -115,7 +115,7 @@ export function CompositeDialog({ groupId, onClose }: { groupId: string; onClose
 
         {tab === 'use' && (
           <div className="flex flex-col gap-2">
-            <p className="text-[12.5px] text-t2">The group keeps its nodes; each joins the slot it obviously fills, and the frame is checked against the type’s contract from then on.</p>
+            <p className="text-[12px] text-t2">The group keeps its nodes; each joins the slot it obviously fills, and the frame is checked against the type’s contract from then on.</p>
             {composites.map((info) => (
               <button key={info.type} onClick={() => use(info)} className="flex items-start gap-3 rounded-[12px] border border-hair px-3 py-2.5 text-left transition-colors hover:border-ac">
                 <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-[9px] border border-hair" style={info.descriptor.color ? { color: info.descriptor.color } : undefined}>
@@ -124,16 +124,16 @@ export function CompositeDialog({ groupId, onClose }: { groupId: string; onClose
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-2">
                     <span className="truncate text-[13px] font-semibold text-t1">{info.descriptor.displayName}</span>
-                    <span className="font-mono text-[10.5px] text-t3">
+                    <span className="font-mono text-[11px] text-t3">
                       {info.type} v{info.descriptor.version}
                     </span>
                   </span>
                   <span className="mt-0.5 line-clamp-2 block text-[12px] text-t2">{info.descriptor.description}</span>
-                  <span className="mt-1 block text-[11.5px] text-t3">Slots: {info.descriptor.slots.map((s) => s.displayName).join(', ')}</span>
+                  <span className="mt-1 block text-[11px] text-t3">Slots: {info.descriptor.slots.map((s) => s.displayName).join(', ')}</span>
                 </span>
               </button>
             ))}
-            {!composites.length && <p className="text-[12.5px] text-t3">No composite types yet. Make one from this group.</p>}
+            {!composites.length && <p className="text-[12px] text-t3">No composite types yet. Make one from this group.</p>}
           </div>
         )}
 
@@ -152,17 +152,17 @@ export function CompositeDialog({ groupId, onClose }: { groupId: string; onClose
             </label>
             <div className="flex flex-col gap-1.5">
               <FieldLabel>Slots</FieldLabel>
-              <p className="text-[11.5px] text-t3">One per node type in the group, taking exactly that type (a model or tool slot takes any). Make the steps a frame can do without optional; lock the ones it can’t lose.</p>
+              <p className="text-[11px] text-t3">One per node type in the group, taking exactly that type (a model or tool slot takes any). Make the steps a frame can do without optional; lock the ones it can’t lose.</p>
               {draft.slots.map((slot) => (
                 <div key={slot.name} className="flex items-center gap-3 rounded-[10px] border border-hair px-2.5 py-2">
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[12.5px] font-medium text-t1">{slot.displayName}</span>
-                    <span className="block truncate text-[11.5px] text-t3">Takes {describeMatcher(slot.accepts, lookup)}</span>
+                    <span className="block truncate text-[12px] font-medium text-t1">{slot.displayName}</span>
+                    <span className="block truncate text-[11px] text-t3">Takes {describeMatcher(slot.accepts, lookup)}</span>
                   </span>
-                  <span className="flex items-center gap-1.5 text-[11.5px] text-t2">
+                  <span className="flex items-center gap-1.5 text-[11px] text-t2">
                     Optional <Switch checked={slot.min === 0} onChange={(v) => patchSlot(slot.name, { min: v ? 0 : Math.max(1, (proposed?.slots[slot.name] ?? []).length) })} />
                   </span>
-                  <span className="flex items-center gap-1.5 text-[11.5px] text-t2">
+                  <span className="flex items-center gap-1.5 text-[11px] text-t2">
                     Locked <Switch checked={Boolean(slot.locked)} onChange={(v) => patchSlot(slot.name, { locked: v })} />
                   </span>
                 </div>
@@ -173,12 +173,12 @@ export function CompositeDialog({ groupId, onClose }: { groupId: string; onClose
                 Outputs: {draft.outputs!.map((p) => p.displayName ?? p.name).join(', ')}. Rules: {draft.rules?.length ? draft.rules.map((r) => r.rule).join(', ') : 'none'}.
               </p>
             )}
-            <label className="flex items-center gap-2 text-[12.5px] text-t2">
+            <label className="flex items-center gap-2 text-[12px] text-t2">
               <Switch checked={Boolean(draft.closed)} onChange={(v) => setDraft({ ...draft, closed: v || undefined })} /> Closed: nodes outside its slots are errors
             </label>
           </div>
         )}
-        {tab === 'new' && !draft && <p className="text-[12.5px] text-t3">This group has no nodes to make a type from.</p>}
+        {tab === 'new' && !draft && <p className="text-[12px] text-t3">This group has no nodes to make a type from.</p>}
       </div>
     </Dialog>
   );

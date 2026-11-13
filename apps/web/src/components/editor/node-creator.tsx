@@ -387,7 +387,7 @@ export function NodeCreator() {
       out.title = `Add to ${slot.displayName}`;
       out.subtitle = `Takes ${describeMatcher(slot.accepts)}`;
       const core = shown.filter((t) => t.pluginId === 'core');
-      if (core.length) out.sections.push({ label: 'Built in', rows: core.map((t) => nodeRow(t)) });
+      if (core.length) out.sections.push({ label: 'Built-in', rows: core.map((t) => nodeRow(t)) });
       for (const seg of segments) {
         const rows = shown.filter((t) => t.pluginId === seg.pluginId).map((t) => nodeRow(t));
         if (rows.length) out.sections.push({ label: seg.name, rows });
@@ -471,7 +471,7 @@ export function NodeCreator() {
       out.title = SUBNODE_TITLES[mode];
       out.subtitle = mode === 'ai_tool' ? 'Any node marked as a tool works, in any language: the agent calls it through its plugin' : undefined;
       const core = pool.filter((t) => t.pluginId === 'core');
-      if (core.length) out.sections.push({ label: 'Built in', rows: core.map((t) => nodeRow(t)) });
+      if (core.length) out.sections.push({ label: 'Built-in', rows: core.map((t) => nodeRow(t)) });
       for (const seg of segments) {
         const rows = pool.filter((t) => t.pluginId === seg.pluginId).map((t) => nodeRow(t));
         if (rows.length) out.sections.push({ label: seg.name, rows });

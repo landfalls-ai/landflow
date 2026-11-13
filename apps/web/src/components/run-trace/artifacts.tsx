@@ -129,7 +129,7 @@ function FileDiff({ file, branch, open, repo, git }: { file: FileChanges; branch
               role="tab"
               aria-selected={source === id}
               onClick={() => setSource(id)}
-              className={cn('h-8 rounded-full text-[12.5px] text-t2 hover:text-t1', source === id && 'bg-sf font-semibold text-t1 shadow-[0_0_0_1px_var(--hair)]')}
+              className={cn('h-8 rounded-full text-[12px] text-t2 hover:text-t1', source === id && 'bg-sf font-semibold text-t1 shadow-[0_0_0_1px_var(--hair)]')}
             >
               {label}
             </button>
@@ -139,18 +139,18 @@ function FileDiff({ file, branch, open, repo, git }: { file: FileChanges; branch
       {source === 'branch' && branch ? (
         onBranch ? (
           <div className="flex min-w-0 flex-col gap-1.5">
-            <p className="text-[12.5px] text-t2">
+            <p className="text-[12px] text-t2">
               GitHub shows this file as <b>{onBranch.status}</b>, <span className="text-gn">+{onBranch.additions}</span> <span className="text-rd">−{onBranch.deletions}</span>, between{' '}
               <span className="font-mono">{branch.data.base}</span> and <span className="font-mono">{branch.data.head}</span>.
             </p>
             {onBranch.patch ? (
               <DiffView hunks={parsePatchHunks(onBranch.patch)} path={file.path} label={`${file.path} on the branch`} />
             ) : (
-              <p className="rounded-xl border border-hair bg-sf2 px-3 py-2 text-[12.5px] text-t3">GitHub left out the patch for this file (it is large or binary).</p>
+              <p className="rounded-xl border border-hair bg-sf2 px-3 py-2 text-[12px] text-t3">GitHub left out the patch for this file (it is large or binary).</p>
             )}
           </div>
         ) : (
-          <p className="rounded-xl border border-warnbd bg-warndim px-3 py-2 text-[12.5px] text-t1">
+          <p className="rounded-xl border border-warnbd bg-warndim px-3 py-2 text-[12px] text-t1">
             This file is not on the branch: GitHub shows no change to it between <span className="font-mono">{branch.data.base}</span> and <span className="font-mono">{branch.data.head}</span>.
           </p>
         )
@@ -164,7 +164,7 @@ function FileDiff({ file, branch, open, repo, git }: { file: FileChanges; branch
                   type="button"
                   aria-pressed={focus === c.id}
                   onClick={() => setFocus(c.id)}
-                  className={cn('h-8 max-w-full truncate rounded-full border px-3 text-[12.5px]', focus === c.id ? 'border-acbd bg-acdim font-semibold text-ac' : 'border-hair text-t2 hover:text-t1')}
+                  className={cn('h-8 max-w-full truncate rounded-full border px-3 text-[12px]', focus === c.id ? 'border-acbd bg-acdim font-semibold text-ac' : 'border-hair text-t2 hover:text-t1')}
                 >
                   {c.label}
                 </button>
@@ -225,7 +225,7 @@ function FileCard({
           <span className="min-w-0 flex-1 break-all font-mono text-[13px] font-medium leading-snug text-t1">{file.path}</span>
           <Counts file={file} />
         </span>
-        <span className="mt-2 flex flex-col gap-1 pl-[22px] text-[12.5px] text-t2">
+        <span className="mt-2 flex flex-col gap-1 pl-[22px] text-[12px] text-t2">
           {file.actors.map((a) => (
             <span key={a.actor.id} className="flex items-start gap-1.5">
               <span className={cn('mt-[7px] size-[7px] shrink-0 rounded-full', git ? DOT[toneOf(a)] : 'bg-bd')} aria-hidden />
@@ -268,7 +268,7 @@ function BranchFileCard({ file, data }: { file: BranchFile; data: BranchChanges 
           <span className="min-w-0 flex-1 break-all font-mono text-[13px] font-medium leading-snug text-t1">{file.path}</span>
           <Counts file={{ ...file, created: file.status === 'added', partial: false }} />
         </span>
-        <span className="mt-2 flex items-start gap-1.5 pl-[22px] text-[12.5px] text-t2">
+        <span className="mt-2 flex items-start gap-1.5 pl-[22px] text-[12px] text-t2">
           <span className="mt-[7px] size-[7px] shrink-0 rounded-full bg-bd" aria-hidden />
           <span>
             On the branch, {file.status} · not in the run’s record
@@ -281,7 +281,7 @@ function BranchFileCard({ file, data }: { file: BranchFile; data: BranchChanges 
             {file.patch ? (
               <DiffView hunks={parsePatchHunks(file.patch)} path={file.path} label={`${file.path} on the branch`} />
             ) : (
-              <p className="rounded-xl border border-hair bg-sf2 px-3 py-2 text-[12.5px] text-t3">
+              <p className="rounded-xl border border-hair bg-sf2 px-3 py-2 text-[12px] text-t3">
                 GitHub left out the patch for this file (it is large or binary). It changed between <span className="font-mono">{data.base}</span> and <span className="font-mono">{data.head}</span>.
               </p>
             )}
@@ -314,11 +314,11 @@ function CommentsSummary() {
         <button
           type="button"
           onClick={() => navigator.clipboard.writeText(lineCommentsNote(comments)).then(() => toast.success('Copied'), () => toast.error('Could not copy to the clipboard'))}
-          className="min-h-8 text-[12.5px] text-ac underline underline-offset-2"
+          className="min-h-8 text-[12px] text-ac underline underline-offset-2"
         >
           Copy them
         </button>
-        <button type="button" onClick={store.clear} className="min-h-8 text-[12.5px] text-t2 underline underline-offset-2 hover:text-rd">
+        <button type="button" onClick={store.clear} className="min-h-8 text-[12px] text-t2 underline underline-offset-2 hover:text-rd">
           Clear all
         </button>
       </div>
@@ -345,7 +345,7 @@ function CodeChanges({
     <>
       <SectionTitle>Code changes · {changes.files.length + others.length}</SectionTitle>
       {reply && against && (
-        <p className="mb-2 px-0.5 text-[12.5px] text-t2">
+        <p className="mb-2 px-0.5 text-[12px] text-t2">
           <a href={reply.branch.url ?? `${reply.repository.url}/tree/${reply.branch.head}`} target="_blank" rel="noopener noreferrer" className="font-mono text-ac underline underline-offset-2">
             {reply.branch.head}
           </a>{' '}
@@ -390,12 +390,12 @@ function Document({ item, open }: { item: DocumentItem; open: (o: Open) => void 
         <span className="flex items-start gap-2">
           <FileText className="mt-[2px] size-4 shrink-0 text-t3" aria-hidden />
           <span className="min-w-0 flex-1">
-            <b className="block break-all text-[13.5px] font-semibold text-t1">{item.name}</b>
+            <b className="block break-all text-[13px] font-semibold text-t1">{item.name}</b>
             <span className="block text-[12px] text-t3">
               {item.by ? `${item.by} · ` : ''}
               {clock(item.at)}
             </span>
-            {!shown && <span className="mt-1 line-clamp-2 block text-[12.5px] text-t2">{cut(item.text.replace(/[#*`>|_-]+/g, ' '), 160)}</span>}
+            {!shown && <span className="mt-1 line-clamp-2 block text-[12px] text-t2">{cut(item.text.replace(/[#*`>|_-]+/g, ' '), 160)}</span>}
           </span>
           <ChevronRight className={cn('mt-[3px] size-3.5 shrink-0 text-t3 transition-transform', shown && 'rotate-90')} aria-hidden />
         </span>
@@ -404,7 +404,7 @@ function Document({ item, open }: { item: DocumentItem; open: (o: Open) => void 
         <div className="min-w-0 border-t border-hair px-3.5 py-3">
           <Doc text={item.text} />
           {item.open && (
-            <button type="button" onClick={() => open(item.open!)} className="mt-2 min-h-8 text-[12.5px] text-ac underline underline-offset-2">
+            <button type="button" onClick={() => open(item.open!)} className="mt-2 min-h-8 text-[12px] text-ac underline underline-offset-2">
               Details
             </button>
           )}
@@ -437,7 +437,7 @@ function PreviewCard({ item, open }: { item: PreviewItem; open: (o: Open) => voi
         <span className="flex items-start gap-2">
           <Icon className="mt-[2px] size-4 shrink-0 text-t3" aria-hidden />
           <span className="min-w-0 flex-1">
-            <b className="block break-all text-[13.5px] font-semibold text-t1">{item.name}</b>
+            <b className="block break-all text-[13px] font-semibold text-t1">{item.name}</b>
             <span className="block text-[12px] text-t3">
               {item.by ? `${item.by} · ` : ''}
               {clock(item.at)}
@@ -450,7 +450,7 @@ function PreviewCard({ item, open }: { item: PreviewItem; open: (o: Open) => voi
         <div className="min-w-0 border-t border-hair px-3.5 py-3">
           <ArtifactPreview shape={item.shape} name={item.name} url={item.url} text={item.text} />
           {item.open && (
-            <button type="button" onClick={() => open(item.open!)} className="mt-1 min-h-8 text-[12.5px] text-ac underline underline-offset-2">
+            <button type="button" onClick={() => open(item.open!)} className="mt-1 min-h-8 text-[12px] text-ac underline underline-offset-2">
               Details
             </button>
           )}
@@ -475,7 +475,7 @@ function LinkCard({ item }: { item: RunArtifactItem }) {
     <Card className="min-w-0 !p-0">
       <a href={url} target="_blank" rel="noopener noreferrer" className="flex items-start gap-2 rounded-2xl px-3.5 py-3 hover:bg-acdim/40">
         <span className="min-w-0 flex-1">
-          <b className="block break-words text-[13.5px] font-semibold text-t1">{a.name}</b>
+          <b className="block break-words text-[13px] font-semibold text-t1">{a.name}</b>
           <span className="block break-all text-[12px] text-t3">
             {a.kind ? `${a.kind.replace(/_/g, ' ')} · ` : ''}
             {url.replace(/^https?:\/\//, '')}
@@ -495,7 +495,7 @@ function DataCard({ item }: { item: RunArtifactItem }) {
         <span className="flex items-start gap-2">
           <ChevronRight className={cn('mt-[3px] size-3.5 shrink-0 text-t3 transition-transform', shown && 'rotate-90')} aria-hidden />
           <span className="min-w-0 flex-1">
-            <b className="block break-words text-[13.5px] font-semibold text-t1">{item.artifact.name}</b>
+            <b className="block break-words text-[13px] font-semibold text-t1">{item.artifact.name}</b>
             <span className="block text-[12px] text-t3">
               {item.artifact.kind ?? 'data'} · {clock(item.at)}
             </span>

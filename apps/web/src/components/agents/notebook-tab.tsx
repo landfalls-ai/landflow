@@ -397,7 +397,7 @@ function NoteCard({ note, face, busy, fresh, fading, side, onAction, onPromote, 
           <span key={part.kind} className="inline-flex items-center gap-x-2">
             <span>·</span>
             {part.href && part.kind === 'run' ? (
-              <Link href={part.href} className="inline-flex items-center gap-1 font-semibold text-ac hover:underline" title="Open the step that wrote it in the Run Trace">
+              <Link href={part.href} className="inline-flex items-center gap-1 font-semibold text-ac hover:underline" title="Open the step that wrote it in the Run trace">
                 <Link2 className="size-3" /> {part.label}
               </Link>
             ) : part.href ? (

@@ -21,6 +21,7 @@ import { Card } from '@/components/shell/page-header';
 import { Badge, type Tone } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { FieldLabel, Input, SectionLabel, Select, Switch } from '@/components/ui/inputs';
+import { plural } from '@/lib/client/format';
 
 const PUBLISH_LABELS: Record<PullPublishMode, string> = {
   file: 'Follow each file (publish workflows that are active in the branch)',
@@ -30,7 +31,6 @@ const PUBLISH_LABELS: Record<PullPublishMode, string> = {
 const STATUS_TONES: Record<PromotionEntry['status'], Tone> = { added: 'success', modified: 'accent', unchanged: 'muted', deleted: 'warning' };
 const FILE_TONES: Record<'A' | 'M' | 'D', Tone> = { A: 'success', M: 'accent', D: 'warning' };
 const FILE_LABELS: Record<'A' | 'M' | 'D', string> = { A: 'added', M: 'modified', D: 'deleted' };
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /** A unified diff, colored by line. */
 export function DiffView({ diff }: { diff: string }) {

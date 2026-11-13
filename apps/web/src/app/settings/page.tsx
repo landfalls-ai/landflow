@@ -101,7 +101,7 @@ export default function SettingsPage() {
   return (
     <>
       <PageHeader title="Settings" meta={<span>Instance-wide</span>} />
-      <PageBody className="grid max-w-[1080px] grid-cols-1 gap-6 md:grid-cols-[200px_minmax(0,1fr)]">
+      <PageBody className="grid max-w-[1080px] grid-cols-1 gap-6 md:grid-cols-[240px_minmax(0,1fr)]">
         <nav aria-label="Settings sections" className={cn('flex gap-1 overflow-x-auto md:flex-col max-md:flex-col max-md:gap-0 max-md:overflow-visible max-md:rounded-2xl max-md:border max-md:border-hair max-md:bg-sf', opened && 'max-md:hidden')}>
           {sections.map((item) => {
             const Icon = item.icon;
@@ -119,7 +119,7 @@ export default function SettingsPage() {
                 <Icon className={cn('mt-0.5 size-4 shrink-0', active ? 'text-t1' : 'text-t3')} strokeWidth={1.8} />
                 <span className="min-w-0 max-md:flex-1">
                   <span className={cn('block text-[13px] max-md:text-[15px] max-md:font-semibold max-md:text-t1', active ? 'font-semibold text-t1' : 'text-t2')}>{item.label}</span>
-                  <span className="block truncate text-[11px] text-t3 max-md:text-[12.5px]">{item.hint}</span>
+                  <span className="block truncate text-[11px] text-t3 max-md:text-[12.5px] md:whitespace-normal">{item.hint}</span>
                 </span>
                 <ChevronRight className="size-4 shrink-0 text-t3 md:hidden" aria-hidden />
               </button>

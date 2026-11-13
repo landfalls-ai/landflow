@@ -67,7 +67,7 @@ export const confirmDraftNode = defineNode({
         default: 'chat',
         noDataExpression: true,
         options: [
-          { name: 'Chat / Execution View', value: 'chat', description: 'The waiting execution and the Run Trace show the draft with Approve, Edit and Reject' },
+          { name: 'Chat / Execution View', value: 'chat', description: 'The waiting execution and the Run trace show the draft with Approve, Edit and Reject' },
           { name: 'Slack', value: 'slack', description: 'A message with Approve, Edit and Reject (needs the app’s Interactivity URL)' },
           { name: 'Email', value: 'email', description: 'An email with signed, single-use Approve and Reject links (the host’s SMTP, LANDFLOW_SMTP_HOST); editing is done in the execution view' },
         ],

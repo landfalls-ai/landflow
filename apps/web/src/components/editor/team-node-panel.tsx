@@ -98,7 +98,7 @@ function TeamChoices({ teams, roster, current, onPick, onCancel }: { teams?: Tea
   if (!teams) return <div className="h-[64px] animate-pulse-soft rounded-2xl border border-hair bg-sf" />;
   return (
     <div className="flex flex-col gap-1.5" data-testid="team-choices">
-      {!teams.length && <p className="text-[12.5px] text-t3">No teams yet. Make one on the Agents page, then pick it here.</p>}
+      {!teams.length && <p className="text-[12px] text-t3">No teams yet. Make one on the Agents page, then pick it here.</p>}
       {teams.map((team) => {
         const faces = summaryFaces(team, roster);
         return (
@@ -118,11 +118,11 @@ function TeamChoices({ teams, roster, current, onPick, onCancel }: { teams?: Tea
         );
       })}
       <div className="flex items-center gap-3">
-        <Link href="/agents?view=teams" target="_blank" className="flex flex-1 items-center justify-center gap-1.5 rounded-2xl border border-dashed border-bd p-2.5 text-[12.5px] font-semibold text-t2 hover:border-ac hover:text-ac">
+        <Link href="/agents?view=teams" target="_blank" className="flex flex-1 items-center justify-center gap-1.5 rounded-2xl border border-dashed border-bd p-2.5 text-[12px] font-semibold text-t2 hover:border-ac hover:text-ac">
           <Plus className="size-3.5" /> New team <ArrowUpRight className="size-3" />
         </Link>
         {onCancel && (
-          <button type="button" onClick={onCancel} className="px-2 text-[12.5px] font-medium text-t3 hover:text-t1">
+          <button type="button" onClick={onCancel} className="px-2 text-[12px] font-medium text-t3 hover:text-t1">
             Keep this team
           </button>
         )}
@@ -137,7 +137,7 @@ function TeamCard({ team, teamId, version, faces, onChange }: { team: AgentTeam 
     <div className="flex items-center gap-3 rounded-2xl border border-hair bg-sf p-2.5" data-testid="team-card">
       {faces.length ? <FaceStack faces={faces} /> : <span className="size-[34px] shrink-0 animate-pulse-soft rounded-full bg-acdim" />}
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[14.5px] font-semibold text-t1">{config?.name ?? (team === null ? 'This team is gone' : '…')}</span>
+        <span className="block truncate text-[15px] font-semibold text-t1">{config?.name ?? (team === null ? 'This team is gone' : '…')}</span>
         <span className={cn('block truncate text-[12px]', team && !team.published && version !== 'draft' ? 'text-warn' : 'text-t3')}>
           {team && config ? teamCardLine({ members: config.members.length, published: team.published }, version) : team === null ? 'Pick another team' : ' '}
         </span>
@@ -160,7 +160,7 @@ function MemberRows({ team, version, roster, teamId }: { team: AgentTeam; versio
   const run = useLastTeamRun(teamId);
   const config = teamVersion(team, version) ?? team.draft;
   const members = chartOrder(config);
-  if (!members.length) return <p className="text-[12.5px] text-t3">No members yet: add them on the team's page.</p>;
+  if (!members.length) return <p className="text-[12px] text-t3">No members yet: add them on the team's page.</p>;
   return (
     <ul className="overflow-hidden rounded-2xl border border-hair bg-sf" data-testid="team-member-rows">
       {members.map((member, i) => {
@@ -173,7 +173,7 @@ function MemberRows({ team, version, roster, teamId }: { team: AgentTeam; versio
             <AgentAvatar agent={memberFace(member, roster)} size={30} round />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5">
-                <span className="truncate text-[13.5px] font-semibold text-t1">{member.title || 'Untitled'}</span>
+                <span className="truncate text-[13px] font-semibold text-t1">{member.title || 'Untitled'}</span>
                 {i === 0 && <span className="rounded-full bg-acdim px-1.5 py-px text-[10px] font-bold text-t2">Lead</span>}
               </div>
               {line && <p className="mt-0.5 line-clamp-2 text-[12px] leading-snug text-t2">{line}</p>}
@@ -208,7 +208,7 @@ function ApprovalChoices({ property, value, onPick }: { property: PropertyDescri
               role="radio"
               aria-checked={on}
               onClick={() => onPick(option.value)}
-              className={cn('h-8 rounded-full border px-3 text-[12.5px] font-medium transition-colors', on ? 'border-ac2 bg-ac2 text-on-ac' : 'border-hair text-t2 hover:border-bd hover:text-t1')}
+              className={cn('h-8 rounded-full border px-3 text-[12px] font-medium transition-colors', on ? 'border-ac2 bg-ac2 text-on-ac' : 'border-hair text-t2 hover:border-bd hover:text-t1')}
             >
               {approvalChoiceLabel(option)}
             </button>
@@ -261,7 +261,7 @@ function LastRun({ teamId }: { teamId: string }) {
       {line ? (
         <RunLineRow line={line} onOpen={open} startedAt={run.startedAt} />
       ) : (
-        <button type="button" onClick={open} className="w-full rounded-2xl border border-hair bg-sf px-3 py-2.5 text-left text-[12.5px] text-t2 hover:border-bd">
+        <button type="button" onClick={open} className="w-full rounded-2xl border border-hair bg-sf px-3 py-2.5 text-left text-[12px] text-t2 hover:border-bd">
           {lastRunWords(run)}
         </button>
       )}
@@ -289,8 +289,8 @@ export function TeamNodePanel({ properties, values, onChange, form }: { properti
       <Section label={teamId ? 'Team' : 'Team · choose one'}>
         {teamId && !choosing ? (
           expression ? (
-            <p className="rounded-2xl border border-hair bg-sf px-3 py-2.5 text-[12.5px] text-t2">
-              The team comes from an expression: <code className="font-mono text-[11.5px]">{teamId}</code>
+            <p className="rounded-2xl border border-hair bg-sf px-3 py-2.5 text-[12px] text-t2">
+              The team comes from an expression: <code className="font-mono text-[11px]">{teamId}</code>
             </p>
           ) : (
             <TeamCard team={team} teamId={teamId} version={values.version} faces={faces} onChange={() => setChoosing(true)} />

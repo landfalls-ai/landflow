@@ -228,18 +228,18 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
           <button type="button" onClick={() => setDrawer(true)} className="grid size-7 place-items-center rounded-md text-t2 hover:bg-acdim md:hidden" aria-label="Files">
             <Files className="size-4" />
           </button>
-          <span className="hidden items-center gap-1.5 text-[12.5px] font-medium text-t2 md:flex">
+          <span className="hidden items-center gap-1.5 text-[12px] font-medium text-t2 md:flex">
             <Brain className="size-3.5 text-viz-7" aria-hidden />
             brain
           </span>
           <button
             type="button"
             onClick={() => setQuick(true)}
-            className="mx-auto flex h-7 w-full max-w-[520px] items-center gap-2 rounded-md border border-bd bg-bg px-2.5 text-[12.5px] text-t3 hover:border-ac hover:text-t2"
+            className="mx-auto flex h-7 w-full max-w-[520px] items-center gap-2 rounded-md border border-bd bg-bg px-2.5 text-[12px] text-t3 hover:border-ac hover:text-t2"
           >
             <Search className="size-3.5 shrink-0" aria-hidden />
             <span className="truncate">Go to a page, run a command, or ask</span>
-            <kbd className="ml-auto hidden rounded border border-hair px-1 text-[10.5px] sm:inline">⌘P</kbd>
+            <kbd className="ml-auto hidden rounded border border-hair px-1 text-[11px] sm:inline">⌘P</kbd>
           </button>
           <div className="hidden items-center gap-0.5 md:flex">
             <ToolbarButton title="Toggle side bar (⌘B)" onClick={() => setSidebar((v) => !v)} active={sidebar}>
@@ -314,7 +314,7 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
                   onKeyDown={(e) => e.key === 'Enter' && setActive(t.ref)}
                   title={tree?.paths.get(t.ref)?.join('/') ?? nameOf(t.ref)}
                   className={cn(
-                    'group flex shrink-0 cursor-pointer items-center gap-1.5 border-r border-hair pl-3 pr-1.5 text-[12.5px]',
+                    'group flex shrink-0 cursor-pointer items-center gap-1.5 border-r border-hair pl-3 pr-1.5 text-[12px]',
                     t.ref === active ? 'bg-bg text-t1 shadow-[inset_0_2px_0_var(--color-ac)]' : 'text-t3 hover:text-t2',
                   )}
                 >
@@ -397,7 +397,7 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
         </div>
 
         {/* Status bar. */}
-        <div className="flex h-6 shrink-0 items-center gap-3 bg-ac px-2.5 text-[11.5px] text-on-ac">
+        <div className="flex h-6 shrink-0 items-center gap-3 border-t border-hair bg-sf2 px-2.5 text-[11px] text-t2">
           <span className="flex items-center gap-1">
             <Brain className="size-3" aria-hidden />
             brain
@@ -500,7 +500,7 @@ function Welcome() {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 pb-28 text-t3">
       <Brain className="size-16 text-hair" aria-hidden />
-      <dl className="grid grid-cols-[auto_auto] gap-x-6 gap-y-1.5 text-[12.5px]">
+      <dl className="grid grid-cols-[auto_auto] gap-x-6 gap-y-1.5 text-[12px]">
         {rows.map(([label, keys]) => (
           <div key={label} className="contents">
             <dt className="text-right">{label}</dt>
@@ -585,7 +585,7 @@ function Panel({
         {tabs.map((t) => (
           <button key={t.id} type="button" onClick={() => onPanel(t.id)} className={cn('flex h-full items-center gap-1.5 border-b text-[11px] font-semibold uppercase tracking-wide', panel === t.id ? 'border-ac text-t1' : 'border-transparent text-t3 hover:text-t2')}>
             {t.label}
-            <span className="rounded-full bg-acdim px-1.5 text-[10.5px] tabular-nums">{t.count}</span>
+            <span className="rounded-full bg-acdim px-1.5 text-[11px] tabular-nums">{t.count}</span>
           </button>
         ))}
         <button type="button" onClick={() => onPanel(undefined)} className="ml-auto grid size-6 place-items-center rounded text-t3 hover:bg-acdim hover:text-t1" aria-label="Close the panel">
@@ -597,7 +597,7 @@ function Panel({
           (problems.length ? (
             problems.flatMap((p) =>
               p.problems.map((problem) => (
-                <button key={`${p.ref}:${problem}`} type="button" onClick={() => onOpen(p.ref)} className="flex w-full items-center gap-2 px-3 py-1 text-left text-[12.5px] hover:bg-acdim/60">
+                <button key={`${p.ref}:${problem}`} type="button" onClick={() => onOpen(p.ref)} className="flex w-full items-center gap-2 px-3 py-1 text-left text-[12px] hover:bg-acdim/60">
                   <AlertTriangle className="size-3.5 shrink-0 text-warn" aria-hidden />
                   <span className="text-t1">{problem.charAt(0).toUpperCase() + problem.slice(1)}</span>
                   <FileIcon file={p.file} />
@@ -665,7 +665,7 @@ function QuickOpen({ tree, onClose, onOpen, onAsk, commands }: { tree?: BrainTre
           }}
           placeholder="Go to a page · > for commands · or type a question"
           aria-label="Go to a page or command"
-          className="h-10 w-full border-b border-hair bg-transparent px-3.5 text-[13.5px] text-t1 outline-none placeholder:text-t3"
+          className="h-10 w-full border-b border-hair bg-transparent px-3.5 text-[13px] text-t1 outline-none placeholder:text-t3"
         />
         <ul className="max-h-[50vh] overflow-y-auto py-1" role="listbox">
           {items.map((item, i) => (
@@ -673,11 +673,11 @@ function QuickOpen({ tree, onClose, onOpen, onAsk, commands }: { tree?: BrainTre
               <button type="button" onMouseEnter={() => setAt(i)} onClick={() => choose(item)} className={cn('flex w-full items-center gap-2 px-3.5 py-1.5 text-left text-[13px]', i === at ? 'bg-acdim text-t1' : 'text-t2')}>
                 {item.icon}
                 <span className="truncate">{item.label}</span>
-                {item.detail && <span className="ml-auto truncate pl-3 text-[11.5px] text-t3">{item.detail}</span>}
+                {item.detail && <span className="ml-auto truncate pl-3 text-[11px] text-t3">{item.detail}</span>}
               </button>
             </li>
           ))}
-          {!items.length && <li className="px-3.5 py-2 text-[12.5px] text-t3">{commandMode ? 'No command matches.' : 'No page matches.'}</li>}
+          {!items.length && <li className="px-3.5 py-2 text-[12px] text-t3">{commandMode ? 'No command matches.' : 'No page matches.'}</li>}
         </ul>
       </div>
     </div>

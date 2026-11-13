@@ -290,12 +290,12 @@ export function NodePanel() {
                   size="sm"
                   onClick={() => runNode('from')}
                   disabled={running}
-                  title="Re-run this node and everything after it, reusing the data before it"
+                  title="Re-run this step and everything after it, reusing the data before it"
                 >
                   <SkipForward className="size-3.5" /> Run from here
                 </Button>
-                <Button variant="primary" size="sm" onClick={() => runNode('only')} disabled={running} title="Run just this node with its last input">
-                  <Play className="size-3.5" fill="currentColor" /> Run node
+                <Button variant="primary" size="sm" onClick={() => runNode('only')} disabled={running} title="Run just this step with its last input">
+                  <Play className="size-3.5" fill="currentColor" /> Run step
                 </Button>
               </>
             )}
@@ -347,7 +347,7 @@ export function NodePanel() {
               {paused && (
                 <div className="mx-3 mt-3 flex items-center gap-2 rounded-[10px] border border-warnbd bg-warndim px-3 py-2 text-[12px] text-warn">
                   <Pause className="size-3.5" fill="currentColor" strokeWidth={0} />
-                  Paused before this node. This is the input it will receive.
+                  Paused before this step. This is the input it will receive.
                 </div>
               )}
               <div className="flex min-h-0 flex-1 flex-col pt-1">
@@ -358,7 +358,7 @@ export function NodePanel() {
                     <>
                       No input yet.
                       <br />
-                      Run the workflow to see what flows into this node{phone ? ', then tap {} beside a parameter to use a field.' : ', then drag fields into parameters.'}
+                      Run the workflow to see what flows into this step{phone ? ', then tap {} beside a parameter to use a field.' : ', then drag fields into parameters.'}
                     </>
                   }
                 />
@@ -374,11 +374,11 @@ export function NodePanel() {
                   key={t}
                   onClick={() => setTab(t)}
                   className={cn(
-                    'h-9 px-3 text-[13px] capitalize text-t2 transition-colors hover:text-t1',
+                    'h-9 px-3 text-[13px] text-t2 transition-colors hover:text-t1',
                     tab === t && 'font-semibold text-t1 shadow-[inset_0_-2px_0_var(--ac)]',
                   )}
                 >
-                  {t}
+                  {t === 'parameters' ? 'Parameters' : 'Settings'}
                 </button>
               ))}
             </div>
@@ -458,7 +458,7 @@ export function NodePanel() {
                       <option value="continue">Continue</option>
                     </Select>
                   </SettingRow>
-                  <SettingRow label="Retry on fail" hint="Run the node again when it errors">
+                  <SettingRow label="Retry on fail" hint="Run the step again when it errors">
                     <Switch checked={Boolean(wf.retryOnFail)} onChange={(v) => update({ retryOnFail: v })} />
                   </SettingRow>
                   {wf.retryOnFail && (
@@ -545,7 +545,7 @@ export function NodePanel() {
               )}
               {singleOutput && pinDraft === null && (
                 <>
-                  <Button size="sm" variant="ghost" onClick={startPinEdit} title="Type the items this node should output: test data for the rest of the flow">
+                  <Button size="sm" variant="ghost" onClick={startPinEdit} title="Type the items this step should output: test data for the rest of the flow">
                     <PencilLine className="size-3.5" /> {pinned ? 'Edit' : isTrigger ? 'Set test data' : 'Edit output'}
                   </Button>
                   {pinned ? (
@@ -553,7 +553,7 @@ export function NodePanel() {
                       size="sm"
                       variant="ghost"
                       onClick={() => useEditor.getState().setPinData(openNodeId, undefined)}
-                      title="Run the node again instead of using pinned data"
+                      title="Run the step again instead of using pinned data"
                     >
                       <PinOff className="size-3.5" /> Unpin
                     </Button>
@@ -564,7 +564,7 @@ export function NodePanel() {
                         size="sm"
                         variant="ghost"
                         onClick={() => useEditor.getState().setPinData(openNodeId, run.outputs[0] ?? [])}
-                        title="Keep this output: later runs reuse it instead of running the node"
+                        title="Keep this output: later runs reuse it instead of running the step"
                       >
                         <Pin className="size-3.5" /> Pin
                       </Button>
@@ -637,7 +637,7 @@ export function NodePanel() {
                   <Pin className="size-3.5 text-viz-7" />
                   {isTrigger
                     ? 'Test data: the trigger outputs these items when you execute the workflow.'
-                    : 'Pinned output: the node returns these items instead of running.'}
+                    : 'Pinned output: the step returns these items instead of running.'}
                 </div>
                 <textarea
                   autoFocus
@@ -671,12 +671,12 @@ export function NodePanel() {
                     <div>No output yet.</div>
                     {info && info.pluginId !== 'core' && (
                       <div className="max-w-xs text-[12px]">
-                        This node runs in a {languageMeta(info.language).label} process and is called over {info.transport.toUpperCase()}.
+                        This step runs in a {languageMeta(info.language).label} process and is called over {info.transport.toUpperCase()}.
                       </div>
                     )}
                     {!isSubnode && (
                       <Button size="sm" onClick={() => runNode('only')} disabled={running}>
-                        <Play className="size-3.5" /> Run node
+                        <Play className="size-3.5" /> Run step
                       </Button>
                     )}
                   </div>
@@ -873,9 +873,9 @@ function NodeNameInput({ nodeId, name }: { nodeId: string; name: string }) {
           setDraft(name);
         }
       }}
-      aria-label="Node name"
+      aria-label="Step name"
       aria-invalid={taken || undefined}
-      title={taken ? 'Another node already has this name' : undefined}
+      title={taken ? 'Another step already has this name' : undefined}
       className={cn('w-[320px] bg-transparent max-md:w-full text-[15px] font-semibold text-t1 outline-none', taken && 'text-rd')}
     />
   );

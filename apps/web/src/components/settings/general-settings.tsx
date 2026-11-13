@@ -11,6 +11,7 @@ import type { InstanceSettings } from '@/lib/shared/platform';
 import { Card } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { FieldLabel, Input, SectionLabel, Select } from '@/components/ui/inputs';
+import { plural } from '@/lib/client/format';
 
 interface SettingsView {
   settings: InstanceSettings;
@@ -39,7 +40,6 @@ function offsetOf(zone: string): string {
   }
 }
 
-const plural = (n: number, word: string) => `${n.toLocaleString('en-US')} ${word}${n === 1 ? '' : 's'}`;
 
 export function GeneralSettings() {
   const [view, setView] = useState<SettingsView>();
@@ -196,7 +196,7 @@ export function GeneralSettings() {
           <span>
             json-render spec cards
             <span className="mt-1 block text-[12px] leading-relaxed text-t3">
-              A prototype for model-written cards in Run Trace; nothing produces specs yet. On: the dev page at /runs/json-render-gallery appears, without a rebuild. Only the owner can switch it.
+              A prototype for model-written cards in the Run trace; nothing produces specs yet. On: the dev page at /runs/json-render-gallery appears, without a rebuild. Only the owner can switch it.
               {view.settings.jsonRender === undefined ? ' Following the LANDFLOW_JSON_RENDER default.' : ''}
             </span>
           </span>

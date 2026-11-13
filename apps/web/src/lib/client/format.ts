@@ -10,6 +10,11 @@ export function timeAgo(iso?: string): string {
   return `${Math.round(hours / 24)}d ago`;
 }
 
+/** A count with its noun: "1 plugin", "2 plugins", "1,204 rows"; pass `many` for an irregular plural. */
+export function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
+}
+
 export function duration(ms?: number): string {
   if (ms === undefined) return '—';
   if (ms < 1000) return `${ms} ms`;

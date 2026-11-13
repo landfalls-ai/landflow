@@ -15,6 +15,7 @@ import { useMarketplaces, useSkillLibrary } from '@/components/marketplace/use-m
 import { PageBody, PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { Segmented, SegmentedCount } from '@/components/ui/segmented';
+import { plural } from '@/lib/client/format';
 
 type Tab = 'explore' | 'installed' | 'skills';
 
@@ -45,7 +46,7 @@ export default function MarketplacePage() {
         meta={
           marketplaces && (
             <span>
-              {marketplaces.length} marketplace{marketplaces.length === 1 ? '' : 's'} · {installed?.length ?? 0} installed
+              {plural(marketplaces.length, 'marketplace')} · {installed?.length ?? 0} installed
             </span>
           )
         }

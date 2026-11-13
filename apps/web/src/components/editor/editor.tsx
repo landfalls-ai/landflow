@@ -25,7 +25,7 @@ import {
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api, streamEvents } from '@/lib/client/api';
-import { duration, timeAgo } from '@/lib/client/format';
+import { duration, plural, timeAgo } from '@/lib/client/format';
 import { useLiveEvents } from '@/lib/client/live';
 import { isPhone, usePhone } from '@/lib/client/use-phone';
 import { tint } from '@/lib/client/node-style';
@@ -81,7 +81,6 @@ function replyOf(result: RunResult): string | undefined {
   return reply === undefined ? (json ? JSON.stringify(json, null, 2) : undefined) : String(reply);
 }
 
-const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
 
 function describeClip(data: Pick<ClipboardData, 'nodes' | 'stickyNotes' | 'groups'>) {
   const groups = data.groups?.length ?? 0;

@@ -67,6 +67,7 @@ import { canTest, configOf, downloadJson, parseAgentFile, sameConfig, setupSteps
 
 export const BUILDER_TABS = ['persona', 'abilities', 'deploy', 'safety', 'sessions', 'evaluations'] as const;
 export type BuilderTab = (typeof BUILDER_TABS)[number];
+const TAB_LABEL: Record<BuilderTab, string> = { persona: 'Persona', abilities: 'Abilities', deploy: 'Deploy', safety: 'Safety', sessions: 'Sessions', evaluations: 'Evaluations' };
 type SaveState = 'saved' | 'pending' | 'saving' | 'error';
 
 /** Where each "Finish setup" step is done: the tab, the section to scroll to and the field to focus. */
@@ -719,11 +720,11 @@ export function AgentBuilder({ agentId, initialTab = 'persona', initialSession }
                 aria-selected={tab === key}
                 onClick={() => go(key)}
                 className={cn(
-                  '-mb-px shrink-0 border-b-2 pb-2 text-[13px] capitalize transition-colors',
+                  '-mb-px shrink-0 border-b-2 pb-2 text-[13px] transition-colors',
                   tab === key ? 'border-ac font-semibold text-t1' : 'border-transparent text-t2 hover:text-t1',
                 )}
               >
-                {key}
+                {TAB_LABEL[key]}
               </button>
             ))}
           </div>

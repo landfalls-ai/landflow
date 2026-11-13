@@ -502,7 +502,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
         {live && <div className="lf-shimmer absolute inset-x-0 top-0 h-[2px]" />}
         <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
           <div className="min-w-0 animate-fade-up">
-            <h1 className="text-[20px] font-semibold leading-tight tabular-nums text-t1">{formatStamp(record.startedAt)}</h1>
+            <h1 className="text-[18px] font-semibold leading-tight tabular-nums text-t1">{formatStamp(record.startedAt)}</h1>
             <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[13px]">
               <span className={cn('flex items-center gap-1.5 font-semibold tabular-nums', RUN_STATE[state].text)}>
                 <RunStateIcon state={state} />
