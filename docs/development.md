@@ -296,7 +296,11 @@ LANDFLOW_OWNER_EMAIL=<from deploy/.env.example> LANDFLOW_OWNER_PASSWORD=<from de
 - **Restart after changing a singleton.** Server objects made with `singleton()` (`lib/server/singleton.ts`: the
   registry, broker connections and others) live on `globalThis` so that hot reload doesn't duplicate them. A reload
   therefore keeps the old instance, and a method you add to its class isn't on it ("registry.compositeTypes is not a
-  function"). Stop the dev server and start it again; installed node plugins start again with it.
+  function"). Stop the dev server and start it again; installed node plugins start again with it. Tests that need a
+  fresh one call `resetSingleton(key)` (the old `forgetSingleton` is the same function); keys used by more than one
+  file are in `singletonKeys`, and nothing else touches `globalThis.__landflow` (`test/singletons.test.ts` checks).
+  Tests that assert on insights, usage or retention after `store.saveExecution` call `ensureExecutionReactions()`
+  first, because the store only emits the event.
 - **Through the API**, a script that signs in with the development owner (`POST /api/auth/login`, then the session
   cookie) can add the marketplace and install plugins. A node plugin's install answers `409` with what it will run until
   it is sent again with `{ "confirm": true }`. The script can then post alerts to a workflow's webhook and read

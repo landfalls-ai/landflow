@@ -31,6 +31,9 @@ Object.assign(process.env, ENV);
 const { registry } = await import('@/lib/server/plugins/registry');
 const { corePlugin } = await import('@/lib/server/nodes');
 const { store } = await import('@/lib/server/store');
+// The store only emits finished executions; the usage ledger subscribes through the reactions.
+const { ensureExecutionReactions } = await import('@/lib/server/execution-reactions');
+ensureExecutionReactions();
 const { database } = await import('@/lib/server/db');
 const { createUser } = await import('@/lib/server/auth/users');
 const { agentStore } = await import('@/lib/server/agents/store');

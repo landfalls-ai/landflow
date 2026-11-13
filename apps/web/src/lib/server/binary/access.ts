@@ -12,7 +12,7 @@ import { BINARY_ID, binaryRefsOf, binaryScopeOf, completeBinaryRef, DEFAULT_MIME
 import { NodeOperationError, type BinaryDataClient } from '@landflow/sdk';
 import type { ResolvedNodeType } from '@landflow/engine';
 import { database } from '../db';
-import { singleton } from '../singleton';
+import { resetSingleton, singleton, singletonKeys } from '../singleton';
 import { onExecutionDeleted, store } from '../store';
 import { logger } from '../telemetry';
 import { FilesystemBinaryStore, readAll, type BinarySource, type BinaryStore } from './store';
@@ -36,7 +36,7 @@ export function binaryLimits() {
 
 /** The configured store: `<data dir>/binary` (LANDFLOW_BINARY_DIR), or S3 with LANDFLOW_BINARY_STORE=s3. */
 export function binaryStore(): Promise<BinaryStore> {
-  return singleton('binary-store', async (): Promise<BinaryStore> => {
+  return singleton(singletonKeys.binaryStore, async (): Promise<BinaryStore> => {
     if ((process.env.LANDFLOW_BINARY_STORE ?? 'filesystem').toLowerCase() === 's3') {
       const { S3BinaryStore, s3OptionsFromEnv } = await import('./s3');
       return new S3BinaryStore(s3OptionsFromEnv());
@@ -47,9 +47,8 @@ export function binaryStore(): Promise<BinaryStore> {
 
 /** Use another store (tests). */
 export function setBinaryStore(replacement: BinaryStore) {
-  const registry = (globalThis as unknown as { __landflow?: Map<string, unknown> }).__landflow ?? new Map();
-  (globalThis as unknown as { __landflow: Map<string, unknown> }).__landflow = registry;
-  registry.set('binary-store', Promise.resolve(replacement));
+  resetSingleton(singletonKeys.binaryStore);
+  singleton(singletonKeys.binaryStore, () => Promise.resolve(replacement));
 }
 
 // ---------------------------------------------------------------------------
@@ -128,7 +127,7 @@ export interface BinaryTokenClaims {
 }
 
 /** LANDFLOW_BINARY_SECRET, else a random key per process (tokens only live for one plugin call). */
-const secret = () => singleton('binary-token-secret', () => (process.env.LANDFLOW_BINARY_SECRET ? Buffer.from(process.env.LANDFLOW_BINARY_SECRET) : randomBytes(32)));
+const secret = () => singleton(singletonKeys.binaryTokenSecret, () => (process.env.LANDFLOW_BINARY_SECRET ? Buffer.from(process.env.LANDFLOW_BINARY_SECRET) : randomBytes(32)));
 
 const sign = (payload: string) => createHmac('sha256', secret()).update(payload).digest('base64url');
 

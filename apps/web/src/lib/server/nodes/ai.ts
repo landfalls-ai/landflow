@@ -2,6 +2,7 @@ import vm from 'node:vm';
 import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type NodeItem } from '@landflow/sdk';
 import { splitToolOutput, toToolName, type AgentMemory, type AgentMessage, type AgentTool, type ToolCall, type ToolResult } from '@landflow/engine';
 import { credentialIdOf } from '../ai-usage/credential-id';
+import { singleton } from '../singleton';
 import { parseAddresses, sendApprovalEmails } from '../approval-email';
 import { mailConfigured } from '../auth/mail';
 import { approvalBlocks, postMessage, SLACK_CREDENTIAL, SLACK_OAUTH2_CREDENTIAL, slackCredential } from '../slack';
@@ -625,7 +626,7 @@ export const ollamaChatModelNode = defineNode({
 // Memory & tools (sub-nodes)
 // ---------------------------------------------------------------------------
 
-const memoryStore = ((globalThis as { __landflowMemory?: Map<string, AgentMessage[]> }).__landflowMemory ??= new Map());
+const memoryStore = singleton('agent-memory', () => new Map<string, AgentMessage[]>());
 
 export const simpleMemoryNode = defineNode({
   description: {

@@ -4,8 +4,8 @@
  * tokens), separated by a domain so a signature made for one use can't serve another.
  */
 import { createHmac, randomBytes } from 'node:crypto';
-import { singleton } from '../singleton';
+import { singleton, singletonKeys } from '../singleton';
 
-const secret = () => singleton('binary-token-secret', () => (process.env.LANDFLOW_BINARY_SECRET ? Buffer.from(process.env.LANDFLOW_BINARY_SECRET) : randomBytes(32)));
+const secret = () => singleton(singletonKeys.binaryTokenSecret, () => (process.env.LANDFLOW_BINARY_SECRET ? Buffer.from(process.env.LANDFLOW_BINARY_SECRET) : randomBytes(32)));
 
 export const signPayload = (domain: string, payload: string) => createHmac('sha256', secret()).update(`${domain}\n${payload}`).digest('base64url');

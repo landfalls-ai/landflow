@@ -35,7 +35,7 @@ import { publicationChangedElsewhere } from '../publications';
 import { retries } from '../retries';
 import { abortLocalExecution, abortLocalExecutions, debugExecution, drainQueues, failExecution, localExecutions } from '../runner';
 import { scheduler } from '../scheduler';
-import { singleton } from '../singleton';
+import { resetSingleton, singleton, singletonKeys } from '../singleton';
 import { store } from '../store';
 import { prometheusText } from '../telemetry';
 import { logger } from '../telemetry/logger';
@@ -145,7 +145,7 @@ export async function startCluster(options: StartClusterOptions = {}): Promise<b
   for (const warning of checkClusterConfig(config)) logger.warn(warning);
   if (config.mode !== 'queue') return false;
   if (state.started) return true;
-  return singleton('cluster-start', () => start(config, options));
+  return singleton(singletonKeys.clusterStart, () => start(config, options));
 }
 
 async function start(config: ClusterConfig, options: StartClusterOptions): Promise<boolean> {
@@ -274,11 +274,7 @@ export async function stopCluster(): Promise<void> {
   state.elector = undefined;
   state.forward = undefined;
   state.draining = false;
-  singletonReset('cluster-start');
-}
-
-function singletonReset(key: string) {
-  (globalThis as unknown as { __landflow?: Map<string, unknown> }).__landflow?.delete(key);
+  resetSingleton(singletonKeys.clusterStart);
 }
 
 // ---------------------------------------------------------------------------
@@ -318,7 +314,7 @@ async function onControl(message: ControlMessage) {
 // Caches
 // ---------------------------------------------------------------------------
 
-const dataTableCache = () => singleton('data-tables-sql-cache', () => new Map<string, unknown>());
+const dataTableCache = () => singleton(singletonKeys.dataTablesSqlCache, () => new Map<string, unknown>());
 
 /** Another process changed these tables: drop what this process keeps of them. */
 export function invalidateCaches(change: TablesChanged) {

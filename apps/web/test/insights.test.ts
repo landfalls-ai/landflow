@@ -208,7 +208,8 @@ describe('rollup', () => {
 describe('with the store', () => {
   // Retention runs on every finished save here, so the cap below applies at once.
   const previousEvery = process.env.LANDFLOW_RETENTION_EVERY;
-  beforeAll(() => {
+  beforeAll(async () => {
+    (await import('@/lib/server/execution-reactions')).ensureExecutionReactions();
     process.env.LANDFLOW_RETENTION_EVERY = '1';
   });
   afterAll(() => {

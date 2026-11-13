@@ -14,6 +14,9 @@ const previousDir = process.env.LANDFLOW_DATA_DIR;
 process.env.LANDFLOW_DATA_DIR = dataDir;
 
 const { store } = await import('@/lib/server/store');
+// The store only emits finished executions; retention subscribes through the reactions.
+const { ensureExecutionReactions } = await import('@/lib/server/execution-reactions');
+ensureExecutionReactions();
 const settings = await import('@/lib/server/settings');
 const { DEFAULT_MAX_EXECUTIONS, SettingsFile, SettingsTable, getSettings, hostTimeZone, pruneExecutions, settingsPatchSchema, staleExecutionIds, updateSettings } = settings;
 

@@ -11,13 +11,15 @@
  */
 import { ATTR_NAME, isUsageKind, type UsageEvent, type UsageFilter, type UsageGroup, type UsageGroupRow, type UsageKind, type UsageReport } from '../../shared/brain';
 import { database, type Database, type SqlValue } from '../db';
+import { singleton } from '../singleton';
 import { dayOf, fromRow, type UsageRow } from './ledger';
 
 const DAY_MS = 86_400_000;
 const ROLLUP_DAYS = 400;
 
 export const rawRetentionDays = () => {
-  const n = Number(process.env.USAGE_RETENTION_DAYS);
+  // LANDFLOW_USAGE_RETENTION_DAYS; the old name still works.
+  const n = Number(process.env.LANDFLOW_USAGE_RETENTION_DAYS ?? process.env.USAGE_RETENTION_DAYS);
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 90;
 };
 
@@ -235,7 +237,8 @@ export function percentile(where: string, params: SqlValue[], p = 0.95, db: Data
 // Rollups and retention
 // ---------------------------------------------------------------------------
 
-let lastRollup = 0;
+/** When rollups last ran (throttle), shared by every module graph. */
+const rollupClock = () => singleton('usage-last-rollup', () => ({ at: 0 }));
 
 /** Recompute `usage_daily` for `days` from the raw events. */
 export function rollupDays(days: string[], db: Database = database()) {
@@ -287,8 +290,9 @@ export function rollupDays(days: string[], db: Database = database()) {
 
 /** Today's and yesterday's rollups, at most once a minute. */
 export function rollupRecent(db: Database = database(), now = Date.now()) {
-  if (now - lastRollup < 60_000) return;
-  lastRollup = now;
+  const clock = rollupClock();
+  if (now - clock.at < 60_000) return;
+  clock.at = now;
   rollupDays([dayOf(now - DAY_MS), dayOf(now)], db);
 }
 
