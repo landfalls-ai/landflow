@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ChevronRight, Plus, Search, Table2 } from 'lucide-react';
+import { ChevronRight, Plus, Table2 } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
 import type { DataTableSummary } from '@/lib/shared/data-tables';
@@ -10,7 +10,7 @@ import { TypeIcon } from '@/components/data-tables/column-type';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Input } from '@/components/ui/inputs';
+import { SearchInput } from '@/components/ui/inputs';
 
 /** /data-tables: every built-in table, and "New table". */
 export default function DataTablesPage() {
@@ -45,10 +45,7 @@ export default function DataTablesPage() {
       <PageBody className="max-w-[980px]">
         {error && <div className="mb-4 rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>}
         {tables && tables.length > 5 && (
-          <div className="relative mb-3 w-64">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-t3" />
-            <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search tables and columns" className="h-8 pl-8" />
-          </div>
+          <SearchInput value={query} onChange={setQuery} placeholder="Search tables and columns" className="mb-3 w-64" />
         )}
         {tables && tables.length === 0 ? (
           <Card className="py-6">

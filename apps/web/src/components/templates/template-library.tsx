@@ -8,21 +8,22 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { FileUp, Search } from 'lucide-react';
+import { FileUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { TEMPLATE_CATEGORIES, type TemplateDetail, type TemplateSource } from '@/lib/shared/templates';
-import { cn } from '@/lib/utils';
 import { PhoneFilters } from '../ui/phone-filters';
 import { useViewer } from '@/components/auth/viewer';
 import { rememberedProject, rememberProject } from '@/components/projects/current-project';
 import { projectLabel, useProjects } from '@/components/projects/use-projects';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
+import { FilterChip } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Input, Select } from '@/components/ui/inputs';
+import { SearchInput, Select } from '@/components/ui/inputs';
 import { TemplateCard } from './template-card';
 import { useNodeTypeMap, useTemplateList } from './use-templates';
+import { Segmented } from '../ui/segmented';
 
 const SOURCES: Array<{ id?: TemplateSource; label: string }> = [
   { label: 'All' },
@@ -104,10 +105,7 @@ export function TemplateLibrary() {
       />
       <PageBody className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="relative w-full max-w-[360px]">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-t3" />
-            <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search templates, apps, nodes…" className="pl-9" aria-label="Search templates" />
-          </div>
+          <SearchInput value={query} onChange={setQuery} placeholder="Search templates, apps, nodes…" label="Search templates" className="w-full max-w-[360px] max-md:max-w-none" />
           {(projects?.length ?? 0) > 0 && (
             <div className="w-[200px]">
               <Select value={known ?? ''} onChange={(e) => pick(e.target.value)} aria-label="Project" className="h-9">
@@ -120,32 +118,15 @@ export function TemplateLibrary() {
               </Select>
             </div>
           )}
-          <div role="tablist" aria-label="Source" className="flex w-fit items-center gap-0.5 rounded-full border border-hair bg-sf2 p-0.5">
-            {sources.map((s) => (
-              <button
-                key={s.label}
-                role="tab"
-                aria-selected={source === s.id}
-                onClick={() => setSource(s.id)}
-                className={cn('h-7 rounded-full px-3 text-[12px] text-t2 transition-all duration-200 hover:text-t1', source === s.id && 'bg-sf font-semibold text-t1 shadow-[0_1px_3px_rgba(0,0,0,0.08),0_0_0_1px_var(--hair)]')}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
+          <Segmented label="Source" value={source ?? 'all'} onChange={(v) => setSource(v === 'all' ? undefined : (v as TemplateSource))} options={sources.map((s) => ({ value: s.id ?? 'all', label: s.label }))} />
         </div>
         {/* A phone: the categories in a Filters sheet (desktop: in place). */}
-        <PhoneFilters active={category ? 1 : 0} onClear={() => setCategory(undefined)} className="self-start">
+        <PhoneFilters active={category ? 1 : 0} onClear={() => setCategory(undefined)}>
           <div className="flex flex-wrap gap-1.5" role="group" aria-label="Categories">
             {[undefined, ...TEMPLATE_CATEGORIES].map((c) => (
-              <button
-                key={c?.id ?? 'all'}
-                onClick={() => setCategory(c?.id)}
-                aria-pressed={category === c?.id}
-                className={cn('rounded-full border px-2.5 py-0.5 text-[12px] transition-colors', category === c?.id ? 'border-ac bg-acdim text-ac' : 'border-hair text-t2 hover:border-ac')}
-              >
+              <FilterChip key={c?.id ?? 'all'} size="sm" active={category === c?.id} onClick={() => setCategory(c?.id)}>
                 {c?.name ?? 'All categories'}
-              </button>
+              </FilterChip>
             ))}
           </div>
         </PhoneFilters>

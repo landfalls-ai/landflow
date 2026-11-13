@@ -476,7 +476,7 @@ export function DataTableView({ tableId }: { tableId: string }) {
             <thead className="sticky top-0 z-10">
               <tr>
                 <th scope="col" className="w-10 border-b border-r border-hair bg-sf2 px-2.5">
-                  <input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Select all rows on this page" className="size-3.5 accent-[var(--ac2)]" />
+                  <input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Select all rows on this page" className="size-3.5" />
                 </th>
                 {header('id', 'id', 'number', 'w-[72px]')}
                 {columns.map((column) =>
@@ -549,7 +549,7 @@ export function DataTableView({ tableId }: { tableId: string }) {
               {rows.map((row) => (
                 <tr key={row.id} className={cn('group/row', selected.has(row.id) ? 'bg-acdim' : 'hover:bg-sf2')}>
                   <td className="border-b border-r border-hair px-2.5">
-                    <input type="checkbox" checked={selected.has(row.id)} onChange={() => toggleRow(row.id)} aria-label={`Select row ${row.id}`} className="size-3.5 accent-[var(--ac2)]" />
+                    <input type="checkbox" checked={selected.has(row.id)} onChange={() => toggleRow(row.id)} aria-label={`Select row ${row.id}`} className="size-3.5" />
                   </td>
                   <td className="border-b border-r border-hair px-2.5 font-mono text-[12px] text-t3">{row.id}</td>
                   {columns.map((column) => {
@@ -567,7 +567,7 @@ export function DataTableView({ tableId }: { tableId: string }) {
                             onChange={() => void saveCell(row, column, value !== true)}
                             aria-label={`${column.name} of row ${row.id}`}
                             title={value === null || value === undefined ? 'Empty — click to set' : String(value)}
-                            className="size-3.5 accent-[var(--ac2)]"
+                            className="size-3.5"
                           />
                         </td>
                       );

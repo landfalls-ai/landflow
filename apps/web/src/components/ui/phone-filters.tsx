@@ -33,7 +33,7 @@ export function PhoneFilters({
         type="button"
         onClick={() => setOpen(true)}
         aria-haspopup="dialog"
-        className={cn('inline-flex h-10 items-center gap-2 rounded-full border px-4 text-[14px]', active ? 'border-ac bg-acdim font-semibold text-ac' : 'border-hair bg-sf text-t1', className)}
+        className={cn('inline-flex h-10 items-center gap-2 self-start rounded-full border px-4 text-[14px]', active ? 'border-ac bg-acdim font-semibold text-ac' : 'border-hair bg-sf text-t1', className)}
       >
         <SlidersHorizontal className="size-4" /> Filters
         {active > 0 && <span className="rounded-full bg-ac2 px-1.5 text-[11px] font-semibold leading-[18px] text-on-ac">{active}</span>}

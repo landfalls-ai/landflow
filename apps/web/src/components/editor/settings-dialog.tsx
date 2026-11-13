@@ -359,7 +359,6 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
                       else next.delete(w.id);
                       patch({ callerIds: [...next] });
                     }}
-                    className="accent-[var(--ac)]"
                   />
                   <span className="truncate">{w.name}</span>
                 </label>

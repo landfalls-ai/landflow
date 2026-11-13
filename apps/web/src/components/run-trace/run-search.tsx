@@ -50,7 +50,7 @@ function query(f: Filters, offset: number) {
 function Check({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
   return (
     <label className="flex min-h-11 cursor-pointer items-center gap-2.5 text-[13px] text-t1">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="size-4 accent-[var(--ac)]" />
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="size-4" />
       {label}
     </label>
   );

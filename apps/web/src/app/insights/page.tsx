@@ -21,6 +21,7 @@ import { FAILED_COLOR, RunsChart, SUCCEEDED_COLOR } from '@/components/insights/
 import Link from 'next/link';
 import { WorkflowTable } from '@/components/insights/workflow-table';
 import { AgentLayersCard } from '@/components/insights/agent-layers-card';
+import { Segmented } from '@/components/ui/segmented';
 
 const PERIODS: { value: InsightsPeriod; label: string; previous: string; days: number }[] = [
   { value: '24h', label: '24 hours', previous: 'previous 24 hours', days: 1 },
@@ -150,22 +151,7 @@ export default function InsightsPage() {
               <Switch checked={includeManual} onChange={setIncludeManual} label="Include manual runs" />
               Include manual runs
             </label>
-            <div role="tablist" aria-label="Period" className="flex items-center gap-0.5 rounded-full border border-hair bg-sf2 p-0.5">
-              {PERIODS.map((p) => (
-                <button
-                  key={p.value}
-                  role="tab"
-                  aria-selected={period === p.value}
-                  onClick={() => setPeriod(p.value)}
-                  className={cn(
-                    'flex h-7 items-center rounded-full px-3.5 text-[13px] text-t2 transition-all duration-200 hover:text-t1',
-                    period === p.value && 'bg-sf font-semibold text-t1 shadow-[0_1px_3px_rgba(0,0,0,0.08),0_0_0_1px_var(--hair)]',
-                  )}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
+            <Segmented label="Period" options={PERIODS.map((p) => ({ value: p.value, label: p.label }))} value={period} onChange={setPeriod} />
           </>
         }
       />

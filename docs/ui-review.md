@@ -133,6 +133,21 @@ The same thing has the same name everywhere. When adding a button or a state, us
 | Leaving an edit | **Cancel** |
 | How risky, how sure | *Low risk* / *Medium risk* / *High risk*, *60% sure* |
 
+## Controls
+
+The same control looks and works the same on every page. Use these from `components/ui` rather than drawing a new one:
+
+| Control | Use | Where it lives |
+|---|---|---|
+| Pill switch | One of a few views or filters (a period, a status, Editor / Executions / Evaluations). A tab list to a screen reader; ← → move between options; scrolls sideways on a phone. `size="sm"` in a dense panel (the logs, a data view); `SegmentedCount` for a count beside a label | `segmented.tsx` (`Segmented`) |
+| Search field | Above a list: a pill with the magnifier and × to clear; Escape clears (and only then lets Escape close a dialog). 32 px, 44 px on a phone, full width there | `inputs.tsx` (`SearchInput`) |
+| Filter chip | A category or a source you turn on and off, in a row of them; `size="sm"` for a long row. 40 px on a phone, where they sit in the Filters sheet | `badge.tsx` (`FilterChip`) |
+| Switch | A setting that takes effect at once (Auto refresh) | `inputs.tsx` (`Switch`) |
+| Checkbox | Choosing items or narrowing a list (*Changed only*); every checkbox and radio takes the accent colour from `globals.css` | `inputs.tsx` (`Checkbox`) |
+| Focus ring | Every button, link, tab, menu item and switch shows the same 2 px accent ring when reached with Tab, none when clicked (`globals.css`) | — |
+
+Underline tabs (a detail page's sections) and the Run Trace's stretched grid of views stay as they are.
+
 ## Remaining gaps, most useful first
 
 1. **Webhook app triggers.** Plugins can publish polling triggers; triggers that register a webhook with the service (n8n's Telegram/GitHub/Slack event triggers) still need a lifecycle in the protocol.

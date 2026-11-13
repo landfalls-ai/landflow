@@ -18,6 +18,7 @@ import { RemoteSteps } from '../agents/timeline';
 import { NodeIcon } from '../ui/icon';
 import { DataView } from './data-view';
 import { RUN_STATE, RunStateIcon, statusText, useNow, type RunState } from './run-status';
+import { Segmented as SharedSegmented } from '../ui/segmented';
 
 export interface LogsSelection {
   nodeId: string;
@@ -155,26 +156,6 @@ function NodeBadge({ info, size = 22 }: { info?: NodeTypeInfo; size?: number }) 
 
 const LOG_LEVEL: Record<LogEntry['level'], string> = { debug: 'text-t3', info: 'text-t2', warn: 'text-warn', error: 'text-rd' };
 
-function Segmented<T extends string>({ value, options, onChange }: { value: T; options: Array<{ value: T; label: ReactNode }>; onChange: (v: T) => void }) {
-  return (
-    <div role="tablist" className="flex items-center gap-0.5 rounded-full border border-hair bg-sf2 p-0.5">
-      {options.map((o) => (
-        <button
-          key={o.value}
-          role="tab"
-          aria-selected={value === o.value}
-          onClick={() => onChange(o.value)}
-          className={cn(
-            'flex h-6 items-center gap-1 rounded-full px-2.5 text-[12px] text-t2 transition-all duration-200 hover:text-t1',
-            value === o.value && 'bg-sf font-semibold text-t1 shadow-[0_1px_3px_rgba(0,0,0,0.08),0_0_0_1px_var(--hair)]',
-          )}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 function RunDetail({ row, nodes, nodeTypes, actions }: { row: Row; nodes: Record<string, LogsNode>; nodeTypes: Record<string, NodeTypeInfo>; actions?: (entry: RunEntry) => ReactNode }) {
   const { run, nodeId, runIndex } = row;
@@ -530,4 +511,9 @@ export function LogsPanel(props: LogsPanelProps) {
       )}
     </section>
   );
+}
+
+/** The logs panel's switches: the shared pill switch, at its small size. */
+function Segmented<T extends string>({ value, options, onChange, label = 'View' }: { value: T; options: Array<{ value: T; label: ReactNode }>; onChange: (v: T) => void; label?: string }) {
+  return <SharedSegmented size="sm" label={label} value={value} options={options} onChange={onChange} />;
 }

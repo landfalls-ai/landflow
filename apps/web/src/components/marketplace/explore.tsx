@@ -9,7 +9,7 @@
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { ArrowRight, Boxes, Check, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { ArrowRight, Boxes, Check, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { PhoneFilters } from '../ui/phone-filters';
@@ -22,12 +22,13 @@ import { TEMPLATE_CATEGORIES, type TemplateSummary } from '@/lib/shared/template
 import { TemplateNodeIcons } from '@/components/templates/template-card';
 import { useNodeTypeMap, useTemplateList } from '@/components/templates/use-templates';
 import { Card } from '@/components/shell/page-header';
-import { Badge, Chip, StatusDot } from '@/components/ui/badge';
+import { Badge, Chip, FilterChip, StatusDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { AppIcon } from '@/components/ui/icon';
-import { Input } from '@/components/ui/inputs';
+import { SearchInput } from '@/components/ui/inputs';
 import { useExplore } from './use-marketplace';
+import { Segmented, SegmentedCount } from '../ui/segmented';
 
 type Kind = 'all' | 'nodes' | 'flows' | 'composites' | 'claude';
 /** A marketplace id, or this instance (registry plugins and the Templates library). */
@@ -343,28 +344,12 @@ export function Explore({ marketplaces, version, onAdd, onOpen, onChanged }: { m
     return <ClaudePluginTile key={item.key} plugin={item.plugin} onOpen={() => onOpen(item.plugin.marketplace.id, item.plugin.name)} />;
   };
   const grid = (list: Item[]) => <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-2.5">{list.map(tile)}</div>;
-  const chip = (active: boolean) => cn('inline-flex h-8 items-center gap-2 rounded-full border px-3.5 text-[13px] transition-colors', active ? 'border-ac bg-acdim font-semibold text-ac' : 'border-hair bg-sf text-t1 hover:border-ac');
 
   return (
     <>
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative w-full max-w-[360px]">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-t3" />
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search plugins, workflows, agents…" className="pl-9" aria-label="Search the marketplace" />
-        </div>
-        <div role="tablist" aria-label="Kind" className="flex w-fit items-center gap-0.5 rounded-full border border-hair bg-sf2 p-0.5">
-          {KINDS.map((k) => (
-            <button
-              key={k.id}
-              role="tab"
-              aria-selected={kind === k.id}
-              onClick={() => setKind(k.id)}
-              className={cn('h-7 rounded-full px-3 text-[12px] text-t2 transition-all duration-200 hover:text-t1', kind === k.id && 'bg-sf font-semibold text-t1 shadow-[0_1px_3px_rgba(0,0,0,0.08),0_0_0_1px_var(--hair)]')}
-            >
-              {k.label} <span className="font-mono text-[11px] font-normal tabular-nums text-t3">{counts[k.id]}</span>
-            </button>
-          ))}
-        </div>
+        <SearchInput value={query} onChange={setQuery} placeholder="Search plugins, workflows, agents…" label="Search the marketplace" className="w-full max-w-[360px] max-md:max-w-none" />
+        <Segmented label="Kind" value={kind} onChange={setKind} options={KINDS.map((k) => ({ value: k.id, label: <>{k.label} <SegmentedCount>{counts[k.id]}</SegmentedCount></> }))} />
       </div>
 
       {/* A phone: source, its marketplace and the categories in a Filters sheet (desktop: in place, as they were). */}
@@ -376,20 +361,20 @@ export function Explore({ marketplaces, version, onAdd, onOpen, onChanged }: { m
         }}
       >
         <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Source">
-          <button onClick={() => setSource(undefined)} aria-pressed={!source} className={chip(!source)}>
+          <FilterChip active={!source} onClick={() => setSource(undefined)}>
             All sources
-          </button>
+          </FilterChip>
           {marketplaces.map((m) => (
-            <button key={m.id} onClick={() => setSource(m.id)} aria-pressed={source === m.id} className={chip(source === m.id)}>
+            <FilterChip key={m.id} active={source === m.id} onClick={() => setSource(m.id)}>
               {m.name}
-              <span className="font-mono text-[11px] font-normal text-t3">{sourceCounts.get(m.id) ?? m.plugins}</span>
-            </button>
+              <SegmentedCount>{sourceCounts.get(m.id) ?? m.plugins}</SegmentedCount>
+            </FilterChip>
           ))}
-          <button onClick={() => setSource(LOCAL)} aria-pressed={source === LOCAL} className={chip(source === LOCAL)} title="The registry's own plugins and the Templates library">
+          <FilterChip active={source === LOCAL} onClick={() => setSource(LOCAL)} title="The registry's own plugins and the Templates library">
             This instance
-            <span className="font-mono text-[11px] font-normal text-t3">{sourceCounts.get(LOCAL) ?? 0}</span>
-          </button>
-          <button onClick={onAdd} className="inline-flex h-8 items-center gap-1.5 rounded-full border border-dashed border-bd px-3 text-[12px] text-t2 hover:border-ac hover:text-ac">
+            <SegmentedCount>{sourceCounts.get(LOCAL) ?? 0}</SegmentedCount>
+          </FilterChip>
+          <button onClick={onAdd} className="inline-flex h-8 items-center gap-1.5 rounded-full border border-dashed border-bd px-3 text-[13px] text-t2 hover:border-ac hover:text-ac max-md:h-10 max-md:text-[14px]">
             <Plus className="size-3.5" /> Add
           </button>
         </div>
@@ -422,14 +407,9 @@ export function Explore({ marketplaces, version, onAdd, onOpen, onChanged }: { m
         {categories.length > 0 && (
           <div className="flex flex-wrap gap-1.5" role="group" aria-label="Categories">
             {[undefined, ...categories].map((c) => (
-              <button
-                key={c ?? 'all'}
-                onClick={() => setCategory(c)}
-                aria-pressed={category === c}
-                className={cn('rounded-full border px-2.5 py-0.5 text-[12px] transition-colors', category === c ? 'border-ac bg-acdim text-ac' : 'border-hair text-t2 hover:border-ac')}
-              >
+              <FilterChip key={c ?? 'all'} size="sm" active={category === c} onClick={() => setCategory(c)}>
                 {c ?? 'All categories'}
-              </button>
+              </FilterChip>
             ))}
           </div>
         )}

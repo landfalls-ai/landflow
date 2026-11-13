@@ -6,7 +6,6 @@
 import { useState } from 'react';
 import { Plus } from 'lucide-react';
 import { toast } from 'sonner';
-import { cn } from '@/lib/utils';
 import { AddMarketplaceDialog } from '@/components/marketplace/add-marketplace-dialog';
 import { Explore } from '@/components/marketplace/explore';
 import { InstalledList } from '@/components/marketplace/installed-list';
@@ -15,6 +14,7 @@ import { SkillLibrary } from '@/components/marketplace/skill-library';
 import { useMarketplaces, useSkillLibrary } from '@/components/marketplace/use-marketplace';
 import { PageBody, PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
+import { Segmented, SegmentedCount } from '@/components/ui/segmented';
 
 type Tab = 'explore' | 'installed' | 'skills';
 
@@ -58,20 +58,12 @@ export default function MarketplacePage() {
       <PageBody className="flex flex-col gap-4">
         {error && <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>}
 
-        <div role="tablist" className="flex w-fit items-center gap-0.5 rounded-full border border-hair bg-sf2 p-0.5">
-          {tabs.map((t) => (
-            <button
-              key={t.id}
-              role="tab"
-              aria-selected={tab === t.id}
-              onClick={() => setTab(t.id)}
-              className={cn('h-7 rounded-full px-3.5 text-[13px] text-t2 transition-all duration-200 hover:text-t1', tab === t.id && 'bg-sf font-semibold text-t1 shadow-[0_1px_3px_rgba(0,0,0,0.08),0_0_0_1px_var(--hair)]')}
-            >
-              {t.label}
-              {t.count !== undefined && t.count > 0 && <span className="ml-1.5 font-mono text-[11px] font-normal text-t3">{t.count}</span>}
-            </button>
-          ))}
-        </div>
+        <Segmented
+          label="Marketplace"
+          value={tab}
+          onChange={setTab}
+          options={tabs.map((t) => ({ value: t.id, label: <>{t.label}{t.count !== undefined && t.count > 0 && <SegmentedCount>{t.count}</SegmentedCount>}</> }))}
+        />
 
         {tab === 'explore' && marketplaces && <Explore marketplaces={marketplaces} version={version} onAdd={() => setAdding(true)} onOpen={(marketplaceId, name) => setOpen({ marketplaceId, name })} onChanged={changed} />}
 

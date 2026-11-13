@@ -29,7 +29,7 @@ import { WorkflowTabs } from '../shell/workflow-tabs';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
-import { Select } from '../ui/inputs';
+import { Checkbox, Select } from '../ui/inputs';
 import { RUN_STATE, RunStateIcon, formatStamp, useNow, type RunState } from '../run/run-status';
 import { FileDataset, ScheduleCard } from './dataset-schedule';
 import { OnlineEvalPanel, type OnlineEvalPatch } from './online-eval-panel';
@@ -487,10 +487,7 @@ function CompareView({ comparison, workflowId, onSwap, onClose }: { comparison: 
       <div className="mb-2 mt-5 flex items-center gap-2">
         <h2 className="text-[14px] font-semibold text-t1">Cases</h2>
         <span className="text-[12px] text-t3">matched by Data Table row</span>
-        <label className="ml-auto flex cursor-pointer select-none items-center gap-1.5 text-[12px] text-t2">
-          <input type="checkbox" checked={changedOnly} onChange={(e) => setChangedOnly(e.target.checked)} className="size-3.5 cursor-pointer accent-ac2" />
-          Changed only
-        </label>
+        <Checkbox checked={changedOnly} onChange={setChangedOnly} label="Changed only" className="ml-auto text-[12px]" />
       </div>
       <div className="overflow-x-auto rounded-[12px] border border-hair bg-sf">
         <table className="w-full min-w-[720px] border-collapse text-[12px]">

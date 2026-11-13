@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Bot, Copy, Download, ExternalLink, MoreHorizontal, Network, Plus, Search, Sparkles, Upload, Users } from 'lucide-react';
+import { Bot, Copy, Download, ExternalLink, MoreHorizontal, Network, Plus, Sparkles, Upload, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
@@ -19,6 +19,7 @@ import { useAgentData } from '@/components/agents/use-agent-data';
 import { PageBody, PageHeader } from '@/components/shell/page-header';
 import { PhoneFilters } from '@/components/ui/phone-filters';
 import { Badge, Chip } from '@/components/ui/badge';
+import { SearchInput } from '@/components/ui/inputs';
 import { Button } from '@/components/ui/button';
 import { MenuItem, Popover } from '@/components/ui/popover';
 
@@ -154,17 +155,7 @@ export default function AgentsPage() {
 
   const actions = (
     <>
-      <div className="relative">
-        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-t3" />
-        <input
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          aria-label="Search agents"
-          placeholder="Search agents"
-          className="h-7 w-[104px] rounded-full border border-hair bg-wl pl-8 pr-3 text-[12px] text-t1 outline-none placeholder:text-t3 focus:border-ac sm:w-[200px]"
-        />
-      </div>
+      <SearchInput value={query} onChange={setQuery} placeholder="Search agents" className="w-[200px]" />
       <Button size="sm" onClick={() => fileInput.current?.click()}>
         <Upload className="size-3.5" /> <span className="hidden sm:inline">Import JSON</span>
       </Button>

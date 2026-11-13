@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ScanSearch, Search, Store } from 'lucide-react';
+import { ScanSearch, Store } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
@@ -17,7 +17,8 @@ import { PluginCard } from '@/components/plugins/plugin-card';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Input, SectionLabel } from '@/components/ui/inputs';
+import { Input, SearchInput, SectionLabel } from '@/components/ui/inputs';
+import { Segmented, SegmentedCount } from '../ui/segmented';
 
 interface FeedItem {
   id: number;
@@ -156,23 +157,13 @@ export function PluginRegistry() {
         <div className="flex min-w-0 flex-col gap-3">
           {(plugins?.length ?? 0) > 0 && (
             <div className="flex flex-wrap items-center gap-2">
-              <div className="relative w-full max-w-[320px]">
-                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-t3" />
-                <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search plugins and nodes…" className="pl-9" aria-label="Search plugins" />
-              </div>
-              <div role="tablist" aria-label="Status" className="flex w-fit items-center gap-0.5 rounded-full border border-hair bg-sf2 p-0.5">
-                {(['all', 'online', 'offline'] as const).map((s) => (
-                  <button
-                    key={s}
-                    role="tab"
-                    aria-selected={status === s}
-                    onClick={() => setStatus(s)}
-                    className={cn('h-7 rounded-full px-3 text-[12px] capitalize text-t2 transition-all duration-200 hover:text-t1', status === s && 'bg-sf font-semibold text-t1 shadow-[0_1px_3px_rgba(0,0,0,0.08),0_0_0_1px_var(--hair)]')}
-                  >
-                    {s} <span className="font-mono text-[11px] font-normal tabular-nums text-t3">{counts[s]}</span>
-                  </button>
-                ))}
-              </div>
+              <SearchInput value={query} onChange={setQuery} placeholder="Search plugins and nodes…" label="Search plugins" className="w-full max-w-[320px] max-md:max-w-none" />
+              <Segmented
+                label="Status"
+                value={status}
+                onChange={setStatus}
+                options={(['all', 'online', 'offline'] as const).map((s) => ({ value: s, label: <>{s === 'all' ? 'All' : s === 'online' ? 'Online' : 'Offline'} <SegmentedCount>{counts[s]}</SegmentedCount></> }))}
+              />
             </div>
           )}
           {shown && shown.length > 0 && (

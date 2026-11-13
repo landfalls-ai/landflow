@@ -1,4 +1,5 @@
 'use client';
+import { Segmented } from '@/components/ui/segmented';
 import { Fragment, useState } from 'react';
 import { Check, Copy, FileCode2, Radio, Server, Workflow } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -317,22 +318,7 @@ export default function DevelopersPage() {
 
         <Section title="Implement a node">
           <div className="mb-2.5 flex flex-wrap items-center gap-3">
-            <div role="tablist" aria-label="SDK language" className="inline-flex rounded-lg border border-hair bg-wl p-0.5">
-              {(Object.keys(SAMPLES) as Lang[]).map((key) => {
-                const active = lang === key;
-                return (
-                  <button
-                    key={key}
-                    role="tab"
-                    aria-selected={active}
-                    onClick={() => setLang(key)}
-                    className={cn('rounded-md border px-3 py-1 text-[13px] transition-colors duration-[120ms]', active ? 'border-bd bg-sf font-semibold text-t1' : 'border-transparent text-t2 hover:text-t1')}
-                  >
-                    {languageMeta(key).label}
-                  </button>
-                );
-              })}
-            </div>
+            <Segmented label="SDK language" value={lang} onChange={setLang} options={(Object.keys(SAMPLES) as Lang[]).map((key) => ({ value: key, label: languageMeta(key).label }))} />
             <span className="truncate font-mono text-[12px] text-t3">{sample.file}</span>
             <Button
               variant="ghost"

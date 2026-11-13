@@ -36,6 +36,7 @@ import { DeleteProjectDialog, describeCounts } from './project-dialogs';
 import { MoveToProjectDialog, RESOURCE_PATH, ShareDialog } from './share-dialog';
 import { rememberProject } from './current-project';
 import { projectLabel, useProjectStore } from './use-projects';
+import { Segmented, SegmentedCount } from '../ui/segmented';
 
 type Tab = 'workflows' | 'credentials' | 'dataTables' | 'agents' | 'variables' | 'audit' | 'settings';
 const TABS: Array<{ id: Tab; label: string; kind?: ResourceKind }> = [
@@ -115,20 +116,16 @@ export function ProjectPage({ projectId }: { projectId: string }) {
       />
       <PageBody className="max-w-[980px]">
         {project?.description && <p className="mb-4 text-[13px] text-t2">{project.description}</p>}
-        <div role="tablist" className="mb-4 flex w-fit items-center gap-0.5 rounded-full border border-hair bg-sf2 p-0.5">
-          {TABS.filter((t) => t.id !== 'audit' || projectRoleCan.manage(role)).map((t) => (
-            <button
-              key={t.id}
-              role="tab"
-              aria-selected={t.id === tab}
-              onClick={() => setTab(t.id)}
-              className={cn('h-7 rounded-full px-3.5 text-[13px] text-t2 transition-all duration-200 hover:text-t1', t.id === tab && 'bg-sf font-semibold text-t1 shadow-[0_1px_3px_rgba(0,0,0,0.08),0_0_0_1px_var(--hair)]')}
-            >
-              {t.label}
-              {t.kind && project?.counts?.[t.kind] ? <span className="ml-1.5 font-mono text-[11px] font-normal text-t3">{project.counts[t.kind]}</span> : null}
-            </button>
-          ))}
-        </div>
+        <Segmented
+          label="Project"
+          className="mb-4"
+          value={tab}
+          onChange={setTab}
+          options={TABS.filter((t) => t.id !== 'audit' || projectRoleCan.manage(role)).map((t) => ({
+            value: t.id,
+            label: <>{t.label}{t.kind && project?.counts?.[t.kind] ? <SegmentedCount>{project.counts[t.kind]}</SegmentedCount> : null}</>,
+          }))}
+        />
         {project && tab === 'audit' && projectRoleCan.manage(role) && <AuditLog projectId={project.id} />}
         {project && tab === 'variables' && <VariablesSettings projectId={project.id} />}
         {project && TABS.find((t) => t.id === tab)?.kind && <ResourceList key={tab} project={project} kind={TABS.find((t) => t.id === tab)!.kind!} onChanged={() => void loadProject()} />}
