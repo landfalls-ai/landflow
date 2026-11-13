@@ -48,6 +48,7 @@ import { samlDecryption, samlDecryptionKeys, samlEncryptionCerts, samlEncryption
 import { clearSamlState, dropUserStates, putState, readState, recordReplayIds, takeState } from './saml-state';
 import { DEACTIVATED_MESSAGE, deleteUserSessions } from './sessions';
 import { createUser, findUserByEmail, findUserBySaml, setupRequired, updateUser, type UserPatch, type UserRecord } from './users';
+import { envFlag } from '../config';
 
 export const SAML_STATE_COOKIE = 'landflow_saml_state';
 const STATE_TTL_MS = 10 * 60_000;
@@ -97,10 +98,7 @@ export interface SamlConfig {
 }
 
 const env = (name: string) => process.env[name]?.trim() || undefined;
-const flag = (name: string, fallback: boolean) => {
-  const value = env(name)?.toLowerCase();
-  return value === undefined ? fallback : ['1', 'true', 'yes', 'on'].includes(value);
-};
+const flag = envFlag;
 
 /** Certificates from one env value: PEM blocks, or base64 bodies separated by commas or `|`. */
 export function parseCerts(text: string | undefined): string[] {
