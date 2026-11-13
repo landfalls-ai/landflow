@@ -40,8 +40,8 @@ const { auditAttributes } = await import('@/lib/server/audit/otel');
 const auditRoute = await import('@/app/api/audit/route');
 const exportRoute = await import('@/app/api/audit/export/route');
 const auditSettingsRoute = await import('@/app/api/settings/audit/route');
+const foldersRoute = await import('@/app/api/folders/route');
 const variablesRoute = await import('@/app/api/variables/route');
-const variableRoute = await import('@/app/api/variables/[key]/route');
 const settingsRoute = await import('@/app/api/settings/route');
 const lockRoute = await import('@/app/api/workflows/[id]/lock/route');
 const workflowsRoute = await import('@/app/api/workflows/route');
@@ -103,17 +103,15 @@ describe('generic layer', () => {
   });
 
   it('records a change without a domain event: method, route pattern, status, client and request id, never the body', async () => {
-    const response = await variablesRoute.POST(req('POST', '/api/variables', { key: 'AUDIT_VAR', value: SECRET }, { 'x-request-id': 'req-audit-1' }));
+    // (Variables record domain events of their own now: folders still go through the generic layer.)
+    const response = await foldersRoute.POST(req('POST', '/api/folders', { name: `Audit ${SECRET}` }, { 'x-request-id': 'req-audit-1' }));
     expect(response.status).toBeLessThan(300);
     expect(response.headers.get('x-request-id')).toBe('req-audit-1');
     const event = latest('api.request')!;
-    expect(event).toMatchObject({ method: 'POST', route: '/api/variables', outcome: 'success', ip: '203.0.113.7', userAgent: 'audit-test/1', requestId: 'req-audit-1' });
+    expect(event).toMatchObject({ method: 'POST', route: '/api/folders', outcome: 'success', ip: '203.0.113.7', userAgent: 'audit-test/1', requestId: 'req-audit-1' });
     expect(event.actor).toMatchObject({ type: 'user', id: TEST_OWNER.id });
     expect(event.status).toBe(response.status);
 
-    const put = await variableRoute.PATCH(req('PATCH', '/api/variables/AUDIT_VAR', { value: `${SECRET}-2` }), params({ key: 'AUDIT_VAR' }));
-    expect(put.status).toBe(200);
-    expect(latest('api.request')).toMatchObject({ method: 'PATCH', route: '/api/variables/[key]', target: { type: 'variable', id: 'AUDIT_VAR' } });
     expect(allText()).not.toContain(SECRET);
   });
 

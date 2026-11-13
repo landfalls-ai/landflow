@@ -1,3 +1,4 @@
+import { recordAudit } from '@/lib/server/audit';
 import { dataTables } from '@/lib/server/datatables';
 import { dataTableRoute } from '@/lib/server/datatables/http';
 
@@ -10,7 +11,9 @@ export const GET = dataTableRoute(async (_request: Request, { params }: Ctx) => 
   const service = dataTables();
   const table = service.getTable(id);
   const file = `${table.name.replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || 'data-table'}.csv`;
-  return new Response(service.exportCsv(id), {
+  const csv = service.exportCsv(id);
+  recordAudit({ action: 'datatable.export', target: { type: 'data_table', id, name: table.name }, summary: `Exported the data table ${table.name} as CSV`, details: { rows: service.storage.countRows(id), columns: table.columns.length, bytes: csv.length } });
+  return new Response(csv, {
     headers: { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': `attachment; filename="${file}"`, 'cache-control': 'no-store' },
   });
 });

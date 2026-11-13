@@ -9,6 +9,9 @@
  */
 import { nanoid } from 'nanoid';
 import type { Role, UserView, Viewer } from '../../shared/auth';
+import { recordAudit } from '../audit';
+import { auditRequestContext } from '../audit/context';
+import { requestAuth } from './context';
 import { authDb } from './db';
 import { hashPassword } from './passwords';
 
@@ -241,8 +244,18 @@ export function updateUser(id: string, patch: UserPatch): UserRecord {
   return updated;
 }
 
-export async function setPassword(id: string, password: string): Promise<UserRecord> {
-  return updateUser(id, { passwordHash: await hashPassword(password) });
+/**
+ * Set a user's password and record `auth.password_change` with who did it: `self` (the user, signed in), `admin` (another
+ * user) or `reset` (a reset link, which has its own `auth.password_reset` event, so none is recorded here). Without a
+ * reason it is taken from the request: the signed-in user changing their own, or someone else changing it; no signed-in
+ * user (a reset link) records nothing.
+ */
+export async function setPassword(id: string, password: string, reason?: 'self' | 'admin' | 'reset'): Promise<UserRecord> {
+  const updated = updateUser(id, { passwordHash: await hashPassword(password) });
+  const actor = requestAuth()?.principal ?? auditRequestContext()?.principal;
+  const why = reason ?? (actor ? (actor.user.id === id ? 'self' : 'admin') : 'reset');
+  if (why !== 'reset') recordAudit({ action: 'auth.password_change', target: { type: 'user', id, name: updated.email }, summary: `${why === 'self' ? `${updated.email} changed their password` : `Changed ${updated.email}’s password`}`, details: { reason: why } });
+  return updated;
 }
 
 /** Remove a user with their sessions and API keys (what they built stays). */

@@ -11,6 +11,7 @@
  */
 import { nanoid } from 'nanoid';
 import { personalProjectId, PROJECT_ROLES, type ProjectRole, type ProjectType, type ResourceKind, type ShareRole } from '../../shared/projects';
+import { recordAudit } from '../audit';
 import { authDb } from '../auth/db';
 
 export interface ProjectRecord {
@@ -192,6 +193,7 @@ export function createTeamProject(input: { name: string; description?: string; i
     ...(input.createdBy && { createdBy: input.createdBy }),
   };
   db().insertNew('projects', projectRow(project));
+  recordAudit({ action: 'project.create', target: { type: 'project', id: project.id, name: project.name }, project: project.id, summary: `Created the project ${project.name}`, details: { name: project.name } });
   return project;
 }
 
@@ -214,6 +216,14 @@ export function updateProject(id: string, patch: { name?: string; description?: 
     else delete next.icon;
   }
   db().upsert('projects', projectRow(next));
+  const details: Record<string, string | null> = {};
+  for (const field of ['name', 'description', 'icon'] as const) {
+    if (project[field] !== next[field]) {
+      details[`${field}_from`] = project[field] ?? null;
+      details[`${field}_to`] = next[field] ?? null;
+    }
+  }
+  if (Object.keys(details).length) recordAudit({ action: 'project.update', target: { type: 'project', id: id, name: next.name }, project: id, summary: `Changed the project ${next.name} (${Object.keys(details).filter((k) => k.endsWith('_from')).map((k) => k.replace('_from', '')).join(', ')})`, details });
   return next;
 }
 
@@ -260,34 +270,66 @@ export function membershipsOf(userId: string): MemberRecord[] {
     .map(memberFrom);
 }
 
-export function setMember(projectId: string, userId: string, role: ProjectRole, source?: string) {
+/** The member's email for an audit line (the id when the user is gone). */
+const memberLabel = (userId: string) => db().get<{ email: string }>('SELECT email FROM users WHERE id = ?', userId)?.email ?? userId;
+
+/** One `project.member_change` event: who was added, removed or moved from one role to another, and by which route in (`source`). */
+function auditMember(projectId: string, userId: string, from: ProjectRole | undefined, to: ProjectRole | undefined, source?: string | null) {
+  const change = !from ? 'added' : !to ? 'removed' : 'changed';
+  const email = memberLabel(userId);
+  const name = getProject(projectId)?.name ?? projectId;
+  recordAudit({
+    action: 'project.member_change',
+    target: { type: 'project', id: projectId, name },
+    project: projectId,
+    summary: `${change === 'added' ? `Added ${email} to ${name} as ${to}` : change === 'removed' ? `Removed ${email} from ${name}` : `Changed ${email}’s role in ${name} from ${from} to ${to}`}`,
+    details: { change, userId, email, from: from ?? null, to: to ?? null, ...(source && { source }) },
+  });
+}
+
+/** Write a member row without auditing it (callers that batch changes audit them after their transaction). */
+function putMember(projectId: string, userId: string, role: ProjectRole, source?: string): ProjectRole | undefined {
   const project = getProject(projectId);
   if (!project) throw new ProjectError('Project not found', 404);
   if (project.type === 'personal') throw new ProjectError('Personal projects have one member: share with them instead', 400);
   if (!db().get('SELECT id FROM users WHERE id = ?', userId)) throw new ProjectError('User not found', 404);
   const existing = db().get<MemberRow>('SELECT * FROM project_members WHERE project_id = ? AND user_id = ?', projectId, userId);
   db().upsert('project_members', { project_id: projectId, user_id: userId, role, created_at: existing?.created_at ?? new Date().toISOString(), source: source ?? null });
+  return existing && isRole(existing.role) ? existing.role : undefined;
+}
+
+export function setMember(projectId: string, userId: string, role: ProjectRole, source?: string) {
+  const before = putMember(projectId, userId, role, source);
+  if (before !== role) auditMember(projectId, userId, before, role, source);
 }
 
 export function removeMember(projectId: string, userId: string): boolean {
-  return db().delete('project_members', { project_id: projectId, user_id: userId }) > 0;
+  const before = memberRole(projectId, userId);
+  const removed = db().delete('project_members', { project_id: projectId, user_id: userId }) > 0;
+  if (removed) auditMember(projectId, userId, before, undefined);
+  return removed;
 }
 
-/** Replace a team project's members with `list` (one transaction). */
+/** Replace a team project's members with `list` (one transaction; the changes are audited once it commits). */
 export function replaceMembers(projectId: string, list: Array<{ userId: string; role: ProjectRole }>) {
   const database = db();
+  const changes: Array<[string, ProjectRole | undefined, ProjectRole | undefined]> = [];
   database.transaction(() => {
     const wanted = new Map(list.map((m) => [m.userId, m.role]));
     for (const member of members(projectId)) {
-      if (!wanted.has(member.userId)) removeMember(projectId, member.userId);
+      if (!wanted.has(member.userId)) {
+        database.delete('project_members', { project_id: projectId, user_id: member.userId });
+        changes.push([member.userId, member.role, undefined]);
+      }
     }
     for (const [userId, role] of wanted) {
       const current = database.get<MemberRow>('SELECT * FROM project_members WHERE project_id = ? AND user_id = ?', projectId, userId);
       // An unchanged row keeps who manages it (single sign-on or provisioning).
       if (current?.role === role) continue;
-      setMember(projectId, userId, role);
+      changes.push([userId, putMember(projectId, userId, role), role]);
     }
   });
+  for (const [userId, from, to] of changes) auditMember(projectId, userId, from, to);
 }
 
 // ---- home projects ----------------------------------------------------------------------------------------
@@ -378,21 +420,51 @@ export function sharesTo(projectId: string, kind?: ResourceKind): ShareRecord[] 
   return rows.map(shareFrom);
 }
 
-export function addShare(kind: ResourceKind, id: string, projectId: string, role: ShareRole, createdBy?: string) {
+/** Write a share without auditing it (a move keeps access, a project's shares follow its resources: those are part of their own event). */
+export function putShare(kind: ResourceKind, id: string, projectId: string, role: ShareRole, createdBy?: string): ShareRole | undefined {
   const existing = db().get<ShareRow>('SELECT * FROM resource_shares WHERE kind = ? AND resource_id = ? AND project_id = ?', kind, id, projectId);
   db().upsert('resource_shares', { kind, resource_id: id, project_id: projectId, role, created_at: existing?.created_at ?? new Date().toISOString(), created_by: existing?.created_by ?? createdBy ?? null });
+  return existing && shareFrom(existing).role;
+}
+
+/** `resource.share` (new, or its role moved) and `resource.unshare`: the kind, the resource, with whom and the role from → to. */
+export function auditShare(kind: ResourceKind, id: string, projectId: string, from: ShareRole | undefined, to: ShareRole | undefined) {
+  const withName = getProject(projectId)?.name ?? projectId;
+  recordAudit({
+    action: to ? 'resource.share' : 'resource.unshare',
+    target: { type: kind, id },
+    summary: to ? `Shared ${kind} ${id} with ${withName} as ${to}${from ? ` (was ${from})` : ''}` : `Stopped sharing ${kind} ${id} with ${withName}`,
+    details: { kind, resourceId: id, withProjectId: projectId, withProject: withName, from: from ?? null, to: to ?? null },
+  });
+}
+
+export function addShare(kind: ResourceKind, id: string, projectId: string, role: ShareRole, createdBy?: string) {
+  const before = putShare(kind, id, projectId, role, createdBy);
+  if (before !== role) auditShare(kind, id, projectId, before, role);
 }
 
 export function removeShare(kind: ResourceKind, id: string, projectId: string): boolean {
-  return db().delete('resource_shares', { kind, resource_id: id, project_id: projectId }) > 0;
+  const before = shares(kind, id).find((s) => s.projectId === projectId)?.role;
+  const removed = db().delete('resource_shares', { kind, resource_id: id, project_id: projectId }) > 0;
+  if (removed) auditShare(kind, id, projectId, before, undefined);
+  return removed;
 }
 
-/** Replace a resource's shares with `list` (one transaction). */
+/** Replace a resource's shares with `list` (one transaction; the changes are audited once it commits). */
 export function replaceShares(kind: ResourceKind, id: string, list: Array<{ projectId: string; role: ShareRole }>, createdBy?: string) {
   const database = db();
+  const changes: Array<[string, ShareRole | undefined, ShareRole | undefined]> = [];
   database.transaction(() => {
     const wanted = new Map(list.map((s) => [s.projectId, s.role]));
-    for (const share of shares(kind, id)) if (!wanted.has(share.projectId)) removeShare(kind, id, share.projectId);
-    for (const [projectId, role] of wanted) addShare(kind, id, projectId, role, createdBy);
+    for (const share of shares(kind, id)) {
+      if (wanted.has(share.projectId)) continue;
+      database.delete('resource_shares', { kind, resource_id: id, project_id: share.projectId });
+      changes.push([share.projectId, share.role, undefined]);
+    }
+    for (const [projectId, role] of wanted) {
+      const before = putShare(kind, id, projectId, role, createdBy);
+      if (before !== role) changes.push([projectId, before, role]);
+    }
   });
+  for (const [projectId, from, to] of changes) auditShare(kind, id, projectId, from, to);
 }

@@ -3,6 +3,7 @@
  * content, hash }], hashes, summary }`. `?values=true` writes variable values; `?workflow=<id>` (repeatable) limits
  * the workflow files to those workflows and their folders. The CLI's `sync pull` and `export` use it.
  */
+import { recordAudit } from '@/lib/server/audit';
 import { error, handler, json } from '@/lib/server/http';
 import { visibleIds } from '@/lib/server/projects';
 import { routeActor } from '@/lib/server/projects/http';
@@ -20,5 +21,8 @@ export const GET = handler(async (request: Request) => {
   if (missing) return error(`Workflow ${missing} not found`, 404);
   if (visible && !workflowIds.length) workflowIds = [...visible];
   const values = ['1', 'true', 'yes'].includes((params.get('values') ?? '').toLowerCase());
-  return json(exportState({ values, ...(workflowIds.length && { workflowIds }) }));
+  const exported = exportState({ values, ...(workflowIds.length && { workflowIds }) });
+  // What left and how much, never the files' content (`values` says whether variable values went with it).
+  recordAudit({ action: 'sync.export', summary: `Exported ${exported.files.length} Git sync files${values ? ' with variable values' : ''}`, details: { files: exported.files.length, values, ...exported.summary, ...(workflowIds.length && { limitedToWorkflows: workflowIds.length }) } });
+  return json(exported);
 });
