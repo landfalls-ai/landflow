@@ -4,7 +4,7 @@
  */
 import { canEntity, getEntity } from '@/lib/server/brain/entities';
 import { scopeForActor } from '@/lib/server/brain/scope';
-import { WikiError, writeSummary } from '@/lib/server/brain/wiki';
+import { writeSummary } from '@/lib/server/brain/wiki';
 import { error, handler, json } from '@/lib/server/http';
 import { routeActor } from '@/lib/server/projects/http';
 
@@ -17,10 +17,5 @@ export const POST = handler(async (request: Request, ctx: Ctx) => {
   const actor = routeActor();
   const entity = getEntity(type, id);
   if (!entity || !canEntity(actor, entity, 'read')) return error('Page not found', 404);
-  try {
-    return json({ summary: await writeSummary(entity, scopeForActor(actor), actor, { signal: request.signal }) });
-  } catch (caught) {
-    if (caught instanceof WikiError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  return json({ summary: await writeSummary(entity, scopeForActor(actor), actor, { signal: request.signal }) });
 });

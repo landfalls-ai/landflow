@@ -14,6 +14,7 @@ import { auditRequestContext } from '../audit/context';
 import { requestAuth } from './context';
 import { authDb } from './db';
 import { hashPassword } from './passwords';
+import { HttpError } from '../errors';
 
 export interface UserRecord {
   id: string;
@@ -54,12 +55,12 @@ interface UserRow {
   last_login_at: string | null;
 }
 
-export class UserError extends Error {
+export class UserError extends HttpError {
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

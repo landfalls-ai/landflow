@@ -12,6 +12,7 @@
 import type { RunActor } from '../../shared/run-trace';
 import { singleton } from '../singleton';
 import { liveJournal } from '../journal/writer';
+import { HttpError } from '../errors';
 
 export type PauseState = 'working' | 'pausing' | 'paused';
 
@@ -148,12 +149,12 @@ export function holdMember(executionId: string, member: string, kind: 'agent' | 
   };
 }
 
-export class PauseError extends Error {
+export class PauseError extends HttpError {
   constructor(
     message: string,
-    readonly status = 409,
+    status = 409,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

@@ -9,7 +9,6 @@
  */
 import type { NodeItem } from '@landflow/protocol';
 import { deleteExecutionBinary } from '@/lib/server/binary/access';
-import { BinaryTooLargeError } from '@/lib/server/binary/store';
 import { error, handler } from '@/lib/server/http';
 import type { RunReply } from '@/lib/server/runner';
 import { runStream, streamFormatOf } from '@/lib/server/streaming';
@@ -43,7 +42,6 @@ async function handle(request: Request, { params }: Ctx) {
   } catch (caught) {
     void deleteExecutionBinary(executionId);
     failTestEvent(listener, `The test call to ${TEST_PREFIX.webhook}${path} failed: ${(caught as Error).message}`);
-    if (caught instanceof BinaryTooLargeError) return error(caught.message, 413);
     throw caught;
   }
 

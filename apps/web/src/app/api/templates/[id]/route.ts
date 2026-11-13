@@ -12,31 +12,22 @@ import { currentPrincipal } from '@/lib/server/auth/guard';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { canResource, projectRole } from '@/lib/server/projects';
 import { store } from '@/lib/server/store';
-import { deleteTemplate, getTemplate, TemplateError, templateAccess, templateFile, updateTemplate, updateTemplateSchema } from '@/lib/server/templates';
+import { deleteTemplate, getTemplate, templateAccess, templateFile, updateTemplate, updateTemplateSchema } from '@/lib/server/templates';
 
 export const dynamic = 'force-dynamic';
 
 type Ctx = { params: Promise<{ id: string }> };
 
-const fail = (caught: unknown) => {
-  if (caught instanceof TemplateError) return error(caught.message, caught.status, caught.details);
-  throw caught;
-};
-
 export const GET = handler(async (request: Request, ctx: Ctx) => {
   const { id } = await ctx.params;
   const viewer = currentPrincipal()?.user;
-  try {
-    // Another project's node rules stay its own: `projectId` only counts for its members.
-    const scope = new URL(request.url).searchParams.get('projectId') || undefined;
-    const template = await getTemplate(id, viewer, scope && (!viewer || projectRole(viewer, scope)) ? scope : undefined);
-    if (!template || (viewer && !templateAccess(viewer, template).read)) return error('Template not found', 404);
-    if (new URL(request.url).searchParams.get('format') !== 'file') return json({ template });
-    const name = template.name.replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'template';
-    return json(templateFile(template), { headers: { 'content-disposition': `attachment; filename="${name}.template.json"` } });
-  } catch (caught) {
-    return fail(caught);
-  }
+  // Another project's node rules stay its own: `projectId` only counts for its members.
+  const scope = new URL(request.url).searchParams.get('projectId') || undefined;
+  const template = await getTemplate(id, viewer, scope && (!viewer || projectRole(viewer, scope)) ? scope : undefined);
+  if (!template || (viewer && !templateAccess(viewer, template).read)) return error('Template not found', 404);
+  if (new URL(request.url).searchParams.get('format') !== 'file') return json({ template });
+  const name = template.name.replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'template';
+  return json(templateFile(template), { headers: { 'content-disposition': `attachment; filename="${name}.template.json"` } });
 });
 
 export const PATCH = handler(async (request: Request, ctx: Ctx) => {
@@ -44,29 +35,21 @@ export const PATCH = handler(async (request: Request, ctx: Ctx) => {
   const body = await parseBody(request, updateTemplateSchema);
   if (!body.ok) return body.response;
   const viewer = currentPrincipal()?.user;
-  try {
-    const current = await getTemplate(id, viewer);
-    if (!current || (viewer && !templateAccess(viewer, current).read)) return error('Template not found', 404);
-    let source: Workflow | undefined;
-    if (body.data.workflowId) {
-      source = store.getWorkflow(body.data.workflowId) as Workflow | undefined;
-      if (!source || (viewer && !canResource(viewer, 'workflow', source.id, 'read'))) return error('Workflow not found', 404);
-    }
-    return json({ template: updateTemplate(id, body.data, viewer, source) });
-  } catch (caught) {
-    return fail(caught);
+  const current = await getTemplate(id, viewer);
+  if (!current || (viewer && !templateAccess(viewer, current).read)) return error('Template not found', 404);
+  let source: Workflow | undefined;
+  if (body.data.workflowId) {
+    source = store.getWorkflow(body.data.workflowId) as Workflow | undefined;
+    if (!source || (viewer && !canResource(viewer, 'workflow', source.id, 'read'))) return error('Workflow not found', 404);
   }
+  return json({ template: updateTemplate(id, body.data, viewer, source) });
 });
 
 export const DELETE = handler(async (_request: Request, ctx: Ctx) => {
   const { id } = await ctx.params;
   const viewer = currentPrincipal()?.user;
-  try {
-    const current = await getTemplate(id, viewer);
-    if (!current || (viewer && !templateAccess(viewer, current).read)) return error('Template not found', 404);
-    deleteTemplate(id, viewer);
-    return json({ ok: true });
-  } catch (caught) {
-    return fail(caught);
-  }
+  const current = await getTemplate(id, viewer);
+  if (!current || (viewer && !templateAccess(viewer, current).read)) return error('Template not found', 404);
+  deleteTemplate(id, viewer);
+  return json({ ok: true });
 });

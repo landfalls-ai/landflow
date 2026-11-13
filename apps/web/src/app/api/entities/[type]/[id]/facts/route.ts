@@ -5,7 +5,7 @@
  */
 import { z } from 'zod';
 import { FACT_KINDS } from '@/lib/shared/brain';
-import { addEntityFact, canEntity, EntityError, getEntity } from '@/lib/server/brain/entities';
+import { addEntityFact, canEntity, getEntity } from '@/lib/server/brain/entities';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { routeActor } from '@/lib/server/projects/http';
 
@@ -21,10 +21,5 @@ export const POST = handler(async (request: Request, ctx: { params: Promise<{ ty
   const entity = getEntity(type, id);
   if (!entity || !canEntity(actor, entity, 'read')) return error('Entity not found', 404);
   if (!canEntity(actor, entity, 'update')) return error('You can’t change this entity', 403);
-  try {
-    return json({ fact: addEntityFact(entity, parsed.data) }, 201);
-  } catch (caught) {
-    if (caught instanceof EntityError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  return json({ fact: addEntityFact(entity, parsed.data) }, 201);
 });

@@ -4,8 +4,8 @@
  * whose driver hasn't landed answers `ok: false` with "No driver for <kind> yet".
  */
 import { z } from 'zod';
-import { error, handler, json, parseBody } from '@/lib/server/http';
-import { transportConnections, TransportError } from '@/lib/server/transports/connections';
+import { handler, json, parseBody } from '@/lib/server/http';
+import { transportConnections } from '@/lib/server/transports/connections';
 import { connectionTestSchema } from '@/lib/server/transports/schema';
 
 export const dynamic = 'force-dynamic';
@@ -20,10 +20,5 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
     if (!body.ok) return body.response;
     input = body.data;
   }
-  try {
-    return json(await transportConnections.test(id, input));
-  } catch (caught) {
-    if (caught instanceof TransportError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  return json(await transportConnections.test(id, input));
 });

@@ -8,13 +8,14 @@ import { nanoid } from 'nanoid';
 import { ALERT_SECRET_FIELDS, DEFAULT_COST_THRESHOLD_PERCENT, DEFAULT_FAILURE_RATE, DEFAULT_PLUGIN_GRACE_SECONDS, RULE_KIND_EVENTS, type AlertChannel, type AlertChannelConfig, type AlertChannelKind, type AlertDelivery, type AlertRule } from '../../shared/alerts';
 import { credentials } from '../credentials/vault';
 import { database } from '../db';
+import { HttpError } from '../errors';
 
-export class AlertError extends Error {
+export class AlertError extends HttpError {
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
     this.name = 'AlertError';
   }
 }

@@ -35,13 +35,14 @@ import { notifyApprovers, notifyRequester } from './notify';
 import { getGovernancePolicy, publishBlockedReason } from './policy';
 import { ensureProjectApprovers, projectApproverLabel } from './project-approvers';
 import { workflowRequiresFourEyes } from './scopes';
+import { HttpError } from '../errors';
 
-export class ApprovalError extends Error {
+export class ApprovalError extends HttpError {
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

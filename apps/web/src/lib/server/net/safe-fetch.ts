@@ -30,12 +30,12 @@ import { ollamaUrl } from '../config/urls';
 import { singleton } from '../singleton';
 import { SpanKind, withSpan } from '../telemetry/spans';
 import { addressInRange, isBlockedAddress, stripBrackets } from './addresses';
+import { HttpError } from '../errors';
 
 /** A request refused by the outbound policy (a node shows its message; HTTP semantics: 403). */
-export class OutboundBlockedError extends Error {
-  readonly status = 403;
+export class OutboundBlockedError extends HttpError {
   constructor(message: string) {
-    super(message);
+    super(message, 403);
     this.name = 'OutboundBlockedError';
   }
 }

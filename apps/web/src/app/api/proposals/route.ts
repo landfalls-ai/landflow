@@ -12,7 +12,7 @@
 import { z } from 'zod';
 import { ENTITY_TYPES, entityRef, isDetectorId, type ProposalStatus } from '@/lib/shared/brain';
 import { canSee } from '@/lib/server/brain/audience';
-import { listProposals, proposeFrom, ProposalError } from '@/lib/server/brain/proposals';
+import { listProposals, proposeFrom } from '@/lib/server/brain/proposals';
 import { getEntity } from '@/lib/server/brain/entities';
 import { canProposal, scopeForActor } from '@/lib/server/brain/scope';
 import { error, handler, json, parseBody } from '@/lib/server/http';
@@ -70,11 +70,6 @@ export const POST = handler(async (request: Request) => {
         : { type: 'instance' as const, exists: true };
   if (!target.exists) return error(`No ${target.type} ${'id' in target ? target.id : ''}`, 404);
   if (!canProposal(actor, { target }, 'update')) return error('You can’t make suggestions about this', 403);
-  try {
-    const proposal = proposeFrom(input, 'analyst');
-    return proposal ? json({ proposal }, 201) : json({ proposal: null, reason: 'held back: the same advice is already open for this node, it was dismissed or applied recently, or the weekly cap is full' });
-  } catch (caught) {
-    if (caught instanceof ProposalError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  const proposal = proposeFrom(input, 'analyst');
+  return proposal ? json({ proposal }, 201) : json({ proposal: null, reason: 'held back: the same advice is already open for this node, it was dismissed or applied recently, or the weekly cap is full' });
 });

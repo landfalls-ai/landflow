@@ -19,16 +19,17 @@ import { PROVIDERS, SecretProviderError, type ProviderConfig, type SecretsProvid
 import { redactText } from './redact';
 import { recordAudit } from '../audit';
 import { configOf, providerStore, viewOf, type StoredProvider } from './store';
+import { HttpError } from '../errors';
 
 /** `$secrets.<name>`: an identifier, so `$secrets.vault.x` reads without brackets. */
 export const PROVIDER_NAME = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 
-export class SecretsError extends Error {
+export class SecretsError extends HttpError {
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
     this.name = 'SecretsError';
   }
 }

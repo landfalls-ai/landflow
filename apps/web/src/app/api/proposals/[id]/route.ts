@@ -6,7 +6,7 @@
 import { z } from 'zod';
 import { DISMISS_REASONS } from '@/lib/shared/brain';
 import { canDecide, canSee } from '@/lib/server/brain/audience';
-import { dismissProposal, getProposal, ProposalError, snoozeProposal } from '@/lib/server/brain/proposals';
+import { dismissProposal, getProposal, snoozeProposal } from '@/lib/server/brain/proposals';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { routeActor } from '@/lib/server/projects/http';
 
@@ -34,12 +34,7 @@ export const PATCH = handler(async (request: Request, ctx: Ctx) => {
   const proposal = getProposal(id);
   if (!proposal || !canSee(actor, proposal)) return error('Suggestion not found', 404);
   if (!canDecide(actor, proposal, 'other')) return error('You can’t decide this suggestion', 403);
-  try {
-    const body = parsed.data;
-    const next = body.action === 'dismiss' ? dismissProposal(id, body.reason, { note: body.note, actorId: actor.id }) : snoozeProposal(id, body.days, undefined, { actorId: actor.id });
-    return json({ proposal: next });
-  } catch (caught) {
-    if (caught instanceof ProposalError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  const body = parsed.data;
+  const next = body.action === 'dismiss' ? dismissProposal(id, body.reason, { note: body.note, actorId: actor.id }) : snoozeProposal(id, body.days, undefined, { actorId: actor.id });
+  return json({ proposal: next });
 });

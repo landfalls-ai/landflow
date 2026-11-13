@@ -9,8 +9,8 @@ import type { SecretProvidersResponse } from '@/lib/shared/secrets';
 import { SECRET_PROVIDER_KINDS } from '@/lib/shared/secrets';
 import { recordAudit } from '@/lib/server/audit';
 import { currentEnvironment } from '@/lib/server/environments/settings';
-import { error, handler, json, parseBody } from '@/lib/server/http';
-import { cacheTtlSeconds, externalSecrets, providerKinds, readSecretsSettings, SecretsError, writeSecretsSettings } from '@/lib/server/secrets';
+import { handler, json, parseBody } from '@/lib/server/http';
+import { cacheTtlSeconds, externalSecrets, providerKinds, readSecretsSettings, writeSecretsSettings } from '@/lib/server/secrets';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,10 +39,5 @@ export const PATCH = handler(async (request: Request) => {
 export const POST = handler(async (request: Request) => {
   const body = await parseBody(request, z.strictObject({ name: z.string().max(64), kind: z.enum(SECRET_PROVIDER_KINDS), enabled: z.boolean().optional(), settings: providerSettingsSchema.default({}) }));
   if (!body.ok) return body.response;
-  try {
-    return json(externalSecrets.create(body.data), 201);
-  } catch (caught) {
-    if (caught instanceof SecretsError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  return json(externalSecrets.create(body.data), 201);
 });

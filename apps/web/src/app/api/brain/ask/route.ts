@@ -7,8 +7,8 @@
 import { z } from 'zod';
 import { projectsOf, scopeForActor } from '@/lib/server/brain/scope';
 import { vectorFactHits } from '@/lib/server/brain/study';
-import { askBrain, WikiError } from '@/lib/server/brain/wiki';
-import { error, handler, json, parseBody } from '@/lib/server/http';
+import { askBrain } from '@/lib/server/brain/wiki';
+import { handler, json, parseBody } from '@/lib/server/http';
 import { routeActor } from '@/lib/server/projects/http';
 
 export const dynamic = 'force-dynamic';
@@ -20,11 +20,6 @@ export const POST = handler(async (request: Request) => {
   if (!parsed.ok) return parsed.response;
   const actor = routeActor();
   const scope = scopeForActor(actor);
-  try {
-    const vectorHits = await vectorFactHits(parsed.data.question, projectsOf(scope));
-    return json(await askBrain(parsed.data.question, scope, actor, { vectorHits, ...(parsed.data.about && { about: parsed.data.about }), signal: request.signal }));
-  } catch (caught) {
-    if (caught instanceof WikiError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  const vectorHits = await vectorFactHits(parsed.data.question, projectsOf(scope));
+  return json(await askBrain(parsed.data.question, scope, actor, { vectorHits, ...(parsed.data.about && { about: parsed.data.about }), signal: request.signal }));
 });

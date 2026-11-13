@@ -4,9 +4,9 @@
  * `GET …/:commit?path=` is one commit's diff; `POST …/:commit/restore` brings that version back as a draft.
  */
 import { z } from 'zod';
-import { error, handler, json, parseQuery } from '@/lib/server/http';
+import { handler, json, parseQuery } from '@/lib/server/http';
 import { limitParam } from '@/lib/server/pagination';
-import { SourceControlError, workflowGitHistory } from '@/lib/server/sync/git';
+import { workflowGitHistory } from '@/lib/server/sync/git';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
@@ -15,10 +15,5 @@ export const GET = handler(async (request: Request, { params }: Ctx) => {
   const query = parseQuery(request, z.object({ limit: limitParam(200, 50) }));
   if (!query.ok) return query.response;
   const { limit } = query.data;
-  try {
-    return json(await workflowGitHistory((await params).id, { limit }));
-  } catch (caught) {
-    if (caught instanceof SourceControlError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  return json(await workflowGitHistory((await params).id, { limit }));
 });

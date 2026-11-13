@@ -25,6 +25,7 @@ import { store } from '../store';
 import { DETECTOR_RUNS, detectContext, type Finding } from './detectors';
 import { backtestFlowAt } from './flow-detectors';
 import { quietOf } from './proposals';
+import { HttpError } from '../errors';
 
 const DAY_MS = 86_400_000;
 export const MAX_BACKTEST_DAYS = 90;
@@ -33,12 +34,12 @@ export const MAX_BACKTEST_POINTS = { builtin: 200, flow: 40 } as const;
 export const BACKTEST_BUDGET_MS = 5 * 60_000;
 const KEEP_PER_DETECTOR = 30;
 
-export class BacktestError extends Error {
+export class BacktestError extends HttpError {
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

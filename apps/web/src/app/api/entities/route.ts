@@ -7,7 +7,7 @@
  */
 import { z } from 'zod';
 import { ENTITY_TYPES } from '@/lib/shared/brain';
-import { canEntity, EntityError, getEntity, listEntities, upsertEntity } from '@/lib/server/brain/entities';
+import { canEntity, getEntity, listEntities, upsertEntity } from '@/lib/server/brain/entities';
 import { scopeForActor } from '@/lib/server/brain/scope';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { creationProject } from '@/lib/server/projects/access';
@@ -39,19 +39,14 @@ export const POST = handler(async (request: Request) => {
   if (!parsed.ok) return parsed.response;
   const actor = routeActor();
   const { projectId, ...input } = parsed.data;
-  try {
-    const existing = input.id ? getEntity(input.type, input.id) : undefined;
-    if (existing) {
-      if (!canEntity(actor, existing, 'read')) return error('Entity not found', 404);
-      if (!canEntity(actor, existing, 'update')) return error('You can’t change this entity', 403);
-      return json({ entity: upsertEntity({ ...input, ...(projectId && { projectId: creationProject(actor, projectId) }), source: 'api' }).entity }, 200);
-    }
-    if (!input.name) return error('An entity needs a name', 400);
-    const project = creationProject(actor, projectId);
-    const { entity } = upsertEntity({ ...input, ...(project && { projectId: project }), source: 'api' });
-    return json({ entity }, 201);
-  } catch (caught) {
-    if (caught instanceof EntityError) return error(caught.message, caught.status);
-    throw caught;
+  const existing = input.id ? getEntity(input.type, input.id) : undefined;
+  if (existing) {
+    if (!canEntity(actor, existing, 'read')) return error('Entity not found', 404);
+    if (!canEntity(actor, existing, 'update')) return error('You can’t change this entity', 403);
+    return json({ entity: upsertEntity({ ...input, ...(projectId && { projectId: creationProject(actor, projectId) }), source: 'api' }).entity }, 200);
   }
+  if (!input.name) return error('An entity needs a name', 400);
+  const project = creationProject(actor, projectId);
+  const { entity } = upsertEntity({ ...input, ...(project && { projectId: project }), source: 'api' });
+  return json({ entity }, 201);
 });

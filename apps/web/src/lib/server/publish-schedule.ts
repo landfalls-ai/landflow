@@ -25,17 +25,18 @@ import { singleton } from './singleton';
 import { store } from './store';
 import { logger } from './telemetry/logger';
 import { getVersion, recordVersion, versionFor } from './versions';
+import { HttpError } from './errors';
 
 const TICK_MS = 5_000;
 /** A schedule can be set at most this far ahead (a year). */
 const MAX_AHEAD_MS = 366 * 24 * 3600_000;
 
-export class ScheduleError extends Error {
+export class ScheduleError extends HttpError {
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

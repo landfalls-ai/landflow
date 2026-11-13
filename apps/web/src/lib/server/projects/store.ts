@@ -13,6 +13,7 @@ import { nanoid } from 'nanoid';
 import { personalProjectId, PROJECT_ROLES, type ProjectRole, type ProjectType, type ResourceKind, type ShareRole } from '../../shared/projects';
 import { recordAudit } from '../audit';
 import { authDb } from '../auth/db';
+import { HttpError } from '../errors';
 
 export interface ProjectRecord {
   id: string;
@@ -73,12 +74,12 @@ interface ShareRow {
   created_by: string | null;
 }
 
-export class ProjectError extends Error {
+export class ProjectError extends HttpError {
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

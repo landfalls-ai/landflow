@@ -6,7 +6,7 @@
  */
 import { z } from 'zod';
 import { canDecide, canSee } from '@/lib/server/brain/audience';
-import { actOnProposal, getProposal, ProposalError } from '@/lib/server/brain/proposals';
+import { actOnProposal, getProposal } from '@/lib/server/brain/proposals';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { routeActor } from '@/lib/server/projects/http';
 
@@ -24,10 +24,5 @@ export const POST = handler(async (request: Request, ctx: Ctx) => {
   const proposal = getProposal(id);
   if (!proposal || !canSee(actor, proposal)) return error('Suggestion not found', 404);
   if (!canDecide(actor, proposal, 'other')) return error('You can’t decide this suggestion', 403);
-  try {
-    return json(actOnProposal(id, parsed.data.action, { note: parsed.data.note, actorId: actor.id }));
-  } catch (caught) {
-    if (caught instanceof ProposalError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  return json(actOnProposal(id, parsed.data.action, { note: parsed.data.note, actorId: actor.id }));
 });

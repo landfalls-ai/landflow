@@ -25,16 +25,17 @@ import { logger } from '../telemetry';
 import { datasetSourceOf, EVALUATION_NODE, expectedColumnIn, evaluationTriggerOf, loadDataset, loadFileDataset, rowItem, splitRow, type Dataset, type DatasetRow } from './dataset';
 import { alertOnEvaluation } from './alerts';
 import * as db from './store';
+import { HttpError } from '../errors';
 
 /** Rows one run may evaluate. */
 export const MAX_CASES = 1_000;
 
-export class EvaluationError extends Error {
+export class EvaluationError extends HttpError {
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

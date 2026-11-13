@@ -38,6 +38,7 @@ import type { MemberPause } from '../agent-teams/pause';
 import { buildToolset, binaryScopeFor, dedupe, type BuiltTool, type ToolContext } from './tools';
 import { hostBinaryClient, storeBinary } from '../binary/access';
 import { DEFAULT_KEPT_TOOL_IMAGES, hydrateToolImages, imageSizeLabel, storeToolImages, type ToolImageMode } from '../nodes/tool-images';
+import { HttpError } from '../errors';
 
 const MAX_RESULT_CHARS = 16_000;
 const MAX_USER_TURNS_IN_CONTEXT = 30;
@@ -684,11 +685,11 @@ export async function decide(
   return { status: 'resumed', ...result };
 }
 
-export class DecisionError extends Error {
+export class DecisionError extends HttpError {
   constructor(
     message: string,
-    readonly status: number,
+    status: number,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }

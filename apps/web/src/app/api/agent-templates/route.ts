@@ -8,7 +8,7 @@
  */
 import { z } from 'zod';
 import { agentStore } from '@/lib/server/agents/store';
-import { agentTemplates, AgentTemplateError } from '@/lib/server/agents/templates';
+import { agentTemplates } from '@/lib/server/agents/templates';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { projectRole, resourceDenial } from '@/lib/server/projects/access';
 import { homeProjectId } from '@/lib/server/projects/store';
@@ -37,14 +37,9 @@ export const POST = handler(async (request: Request) => {
   if (denied) return error(denied.message, denied.status);
   const agent = agentStore.get(body.data.agentId);
   if (!agent) return error('Agent not found', 404);
-  try {
-    const { agentId: _id, ...input } = body.data;
-    // Not given: shared where the agent lives, when the caller may add templates there.
-    const home = homeProjectId('agent', agent.id);
-    const projectId = input.projectId !== undefined ? input.projectId : home && projectRoleCan.create(projectRole(actor, home)) ? home : undefined;
-    return json({ template: agentTemplates.saveFromAgent(agent, { ...input, projectId }, actor, actor.name || actor.email) }, 201);
-  } catch (caught) {
-    if (caught instanceof AgentTemplateError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  const { agentId: _id, ...input } = body.data;
+  // Not given: shared where the agent lives, when the caller may add templates there.
+  const home = homeProjectId('agent', agent.id);
+  const projectId = input.projectId !== undefined ? input.projectId : home && projectRoleCan.create(projectRole(actor, home)) ? home : undefined;
+  return json({ template: agentTemplates.saveFromAgent(agent, { ...input, projectId }, actor, actor.name || actor.email) }, 201);
 });

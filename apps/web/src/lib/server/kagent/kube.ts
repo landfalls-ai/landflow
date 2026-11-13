@@ -6,6 +6,7 @@
  */
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
+import { HttpError } from '../errors';
 
 export interface KubeConnection {
   server: string;
@@ -23,12 +24,12 @@ export interface KubeObject {
   [key: string]: unknown;
 }
 
-export class KubeError extends Error {
+export class KubeError extends HttpError {
   constructor(
     message: string,
-    readonly status: number,
+    status: number,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

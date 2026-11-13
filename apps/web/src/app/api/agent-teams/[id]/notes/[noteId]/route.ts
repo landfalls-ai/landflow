@@ -12,7 +12,7 @@ import { z } from 'zod';
 import { agentTeamStore } from '@/lib/server/agent-teams/store';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { personOf } from '@/lib/server/notebook/http';
-import { answer, NoteError, personDispute, promote, remove, reopen, resolveDispute, verify } from '@/lib/server/notebook/service';
+import { answer, personDispute, promote, remove, reopen, resolveDispute, verify } from '@/lib/server/notebook/service';
 import { noteStore } from '@/lib/server/notebook/store';
 
 export const dynamic = 'force-dynamic';
@@ -34,44 +34,34 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const body = await parseBody(request, actionSchema);
   if (!body.ok) return body.response;
   const by = personOf();
-  try {
-    const a = body.data;
-    switch (a.action) {
-      case 'verify':
-        return json({ note: verify(id, noteId, by) });
-      case 'answer':
-        return json({ note: answer(id, noteId, a.text) });
-      case 'reopen':
-        return json({ note: reopen(id, noteId) });
-      case 'dispute':
-        return json(await personDispute(id, noteId, by, a.text), 201);
-      case 'resolve':
-        return json(resolveDispute(id, noteId, a.keep, by));
-      case 'promote': {
-        const note = noteStore.get(noteId);
-        if (!note || note.teamId !== id) return error('Note not found', 404);
-        return json(promote(note, a.to ?? (note.scope === 'run' ? 'team' : 'project'), by));
-      }
-      case 'edit': {
-        const note = noteStore.get(noteId);
-        if (!note || note.teamId !== id) return error('Note not found', 404);
-        return json({ note: noteStore.patch(noteId, { text: a.text.replace(/\s+/g, ' ').trim().slice(0, 600), embedding: null, embedding_model: null }) });
-      }
+  const a = body.data;
+  switch (a.action) {
+    case 'verify':
+      return json({ note: verify(id, noteId, by) });
+    case 'answer':
+      return json({ note: answer(id, noteId, a.text) });
+    case 'reopen':
+      return json({ note: reopen(id, noteId) });
+    case 'dispute':
+      return json(await personDispute(id, noteId, by, a.text), 201);
+    case 'resolve':
+      return json(resolveDispute(id, noteId, a.keep, by));
+    case 'promote': {
+      const note = noteStore.get(noteId);
+      if (!note || note.teamId !== id) return error('Note not found', 404);
+      return json(promote(note, a.to ?? (note.scope === 'run' ? 'team' : 'project'), by));
     }
-  } catch (caught) {
-    if (caught instanceof NoteError) return error(caught.message, caught.status);
-    throw caught;
+    case 'edit': {
+      const note = noteStore.get(noteId);
+      if (!note || note.teamId !== id) return error('Note not found', 404);
+      return json({ note: noteStore.patch(noteId, { text: a.text.replace(/\s+/g, ' ').trim().slice(0, 600), embedding: null, embedding_model: null }) });
+    }
   }
 });
 
 export const DELETE = handler(async (_request: Request, { params }: Ctx) => {
   const { id, noteId } = await params;
   if (!agentTeamStore.get(id)) return error('Agent team not found', 404);
-  try {
-    remove(id, noteId);
-    return json({ ok: true });
-  } catch (caught) {
-    if (caught instanceof NoteError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  remove(id, noteId);
+  return json({ ok: true });
 });

@@ -18,13 +18,14 @@ import { projectRole, visibleProjectIds, type Actor } from '../projects/access';
 import { defaultProjectId } from '../projects/store';
 import type { UsageScope } from '../usage/query';
 import { getProfile, listFacts, upsertFact } from './facts';
+import { HttpError } from '../errors';
 
-export class EntityError extends Error {
+export class EntityError extends HttpError {
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 
