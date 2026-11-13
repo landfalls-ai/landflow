@@ -33,6 +33,21 @@ A plugin can also ship **composite types**, contracts for canvas frames built fr
 
 Descriptor fields mirror n8n's `INodeTypeDescription` / `INodeProperties`: 13 property types, `displayOptions`, `typeOptions.loadOptionsMethod`, typed ports with `required`/`maxConnections`. The editor renders every plugin's UI from its descriptor, so plugins need no frontend code. Full spec: **[docs/protocol.md](protocol.md)**.
 
+## Registration rules
+
+Who may register a plugin or add an endpoint to one depends on the profile ([configuration](reference/configuration.md)):
+
+| | `LANDFLOW_REGISTRY_SECRET` set | not set, development profile | not set, production profile |
+|---|---|---|---|
+| Announce (HTTP and gRPC) | needs the secret, **and** the announced endpoint must prove it (`GetManifest` challenge, [protocol §13](protocol.md#registry-proofs)) | open (as before) | refused with 401, unless `LANDFLOW_REGISTRY_OPEN=true` |
+| Another endpoint joins a plugin that exists | allowed once proven | refused with 409 from a host the plugin does not already use, unless `LANDFLOW_REGISTRY_ALLOW_JOIN=true` (loopback counts as one host; brokered endpoints have no host, so a plugin that has only those, or a brokered announce, joins freely) | same as development, when opened |
+
+A production host and every plugin therefore need the same secret. The route answers a failed announce with one generic
+422 (`Could not register the plugin: its endpoint did not answer with a valid manifest`); the URL tried and the
+connection error go to the host's log. In the production profile endpoints on link-local or metadata addresses
+(`169.254.0.0/16`, `fd00:ec2::254`) are refused before the host connects. An offline endpoint still counts as the plugin's host, so in development a plugin that returns on another advertise host (a changed LAN address) gets 409 until the host restarts or `LANDFLOW_REGISTRY_ALLOW_JOIN=true`. Joins (`plugin.endpoint_added`) and version
+changes (`plugin.updated`) are in the [audit log](features/audit-and-governance.md).
+
 ## Autodiscovery
 
 | Source | How |

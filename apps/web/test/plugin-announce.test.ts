@@ -168,12 +168,13 @@ describe('announce with an instanceId', () => {
   it('re-pulls with the registry proof an endpoint needs (§13), and refuses the restart without one', async () => {
     process.env.LANDFLOW_REGISTRY_SECRET = 'announce-s3cret';
 
-    // Announced endpoints are trusted by the announce's secret header: the re-pull is a plain GetManifest.
+    // Announced endpoints prove the secret too (the announce's header alone is not enough): every pull carries a challenge.
     const announced = await pluginProcess(pluginWith('ann-secret', ['one']));
     await registry.announce(announce(announced.url, 'ann-secret', 'process-a'));
     announced.restart(pluginWith('ann-secret', ['one', 'two']));
     await registry.announce(announce(announced.url, 'ann-secret', 'process-b'));
-    expect(announced.pulls).toEqual([null, null]);
+    expect(announced.pulls).toHaveLength(2);
+    expect(announced.pulls.every((challenge) => typeof challenge === 'string' && challenge.length === 43)).toBe(true);
     expect(nodeNames('ann-secret')).toEqual(['one', 'two']);
 
     // A discovered endpoint must prove the secret on every GetManifest, the re-pull after a restart included.
