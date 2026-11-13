@@ -4,7 +4,7 @@
  * derived keys differ per label, rotation re-seals everything and is idempotent, and the route is the owner's.
  */
 import { createCipheriv, createHash, scryptSync } from 'node:crypto';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -181,7 +181,7 @@ describe('rotation writes through the stores that cache', () => {
     expect(credentials.openSecret(token)).toBe('kagent-token');
   });
 
-  it('a settings row and a config file change their stamp, so another process re-reads them', () => {
+  it('re-seals a settings row (read fresh each time) and gives a config file row a new stamp, so another process re-reads it', () => {
     const db = database();
     const old = underN0('signing');
     db.upsert('settings', { key: 'saml-test', value: JSON.stringify({ privateKey: old }) });
@@ -192,6 +192,21 @@ describe('rotation writes through the stores that cache', () => {
     const row = db.get<{ data: string; updated_at: string }>('SELECT data, updated_at FROM config_files WHERE name = ?', 'audit-anchoring.json')!;
     expect(row.updated_at).not.toBe('2026-01-01T00:00:00.000Z');
     expect(parseSealedString(JSON.parse(row.data).s3.secretAccessKey)).toMatchObject({ kid: 'n1' });
+  });
+
+  it('the audit anchoring file is re-sealed, and a later save without a new secret keeps the new seal', async () => {
+    const { anchoringView, updateAnchoring } = await import('@/lib/server/audit/anchoring');
+    const path = join(dataDir, 'audit-anchoring.json');
+    writeFileSync(path, JSON.stringify({ enabled: false, intervalMinutes: 60, webhook: { url: 'https://anchor.test/heads', secret: underN0('anchor-secret') } }));
+    utimesSync(path, new Date('2026-01-01'), new Date('2026-01-01'));
+    // The settings' cached copy now holds the n0 seal.
+    expect(anchoringView().secretsSet).toEqual(['webhook.secret']);
+    expect(rotateEncryption().stores.files).toBe(1);
+    updateAnchoring({ intervalMinutes: 30 });
+    const saved = JSON.parse(readFileSync(path, 'utf8')) as { intervalMinutes: number; webhook: { secret: string } };
+    expect(saved.intervalMinutes).toBe(30);
+    expect(parseSealedString(saved.webhook.secret)).toMatchObject({ v: 2, kid: 'n1' });
+    expect(credentials.openSecret(saved.webhook.secret)).toBe('anchor-secret');
   });
 
   it('a malformed key list names the entry by position, not by its first characters', () => {
