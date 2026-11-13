@@ -56,7 +56,7 @@ Variables read through `lib/server/config` (most of them; the telemetry flags in
 | `LANDFLOW_EXECUTE_TIMEOUT_MS` | `120000` | per remote Execute call (and per call to the code runner); minimum 1000 for plugin calls |
 | `LANDFLOW_CODE_RUNNER_URL` | – | the Code node's sandbox, e.g. `http://127.0.0.1:7300` (pnpm) or `http://127.0.0.1:53300` (Docker); set: the sandbox is the default and Python works |
 | `LANDFLOW_CODE_RUNNER_SECRET` | – | shared secret, the runner's `CODE_RUNNER_SECRET` |
-| `LANDFLOW_CODE_IN_PROCESS` | `true` | `false`: no in-process (`node:vm`) JavaScript; every Code node needs the runner |
+| `LANDFLOW_CODE_IN_PROCESS` | `true` in development, `false` in production | `true` / `false`: in-process (`node:vm`, not isolated) JavaScript for Code nodes. Unset follows the profile (`LANDFLOW_PROFILE`): the production profile runs Code nodes in the code runner and fails without one, unless this is `true` |
 | `LANDFLOW_CODE_BINARY_MAX_BYTES` | `6291456` | files a Code node reads (all together) and creates, in the sandbox and in-process |
 | `ANTHROPIC_API_KEY` | – | for the Anthropic Chat Model |
 | `LANDFLOW_GITHUB_MCP_URL` | `http://landflow-github-mcp:8082/` | the GitHub MCP server an agent's GitHub MCP tool uses when it names no URL ([a2a.md](../a2a.md#githubs-mcp-tools-for-agents)); the token is the tool's credential, never a variable |

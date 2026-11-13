@@ -5,16 +5,14 @@
  *   "{{ $json.items.length }}"    → a single expression keeps its raw type (number here)
  *   "={{ ... }}"                  → n8n's leading "=" is accepted and stripped
  *
- * Expressions run in a node:vm context with a short timeout. That is isolation
- * from accidents, not a security boundary — run untrusted workflows in a
- * separate worker/sandbox (see docs/architecture.md).
+ * Expressions run in a sealed realm (./sandbox/realm.ts): a node:vm context with code generation off and no host
+ * object reachable, a 250 ms timeout, and only text crossing the boundary. See docs/features/engine.md.
  */
-import vm from 'node:vm';
 import type { NodeItem } from '@landflow/protocol';
-import { secretsSandbox, type SecretValues } from './secrets';
+import type { SecretValues } from './secrets';
+import { createExpressionRealm, type ExpressionRealm } from './sandbox/realm';
 
 const EXPRESSION = /\{\{([\s\S]+?)\}\}/g;
-const scriptCache = new Map<string, vm.Script>();
 
 export interface ExpressionData {
   /** Items of main input 0 of the node being resolved. */
@@ -48,16 +46,6 @@ export class ExpressionError extends Error {
 
 export function hasExpression(value: unknown): boolean {
   return typeof value === 'string' && value.includes('{{') && value.includes('}}');
-}
-
-function compile(code: string): vm.Script {
-  let script = scriptCache.get(code);
-  if (!script) {
-    script = new vm.Script(`(${code})`);
-    if (scriptCache.size > 2000) scriptCache.clear();
-    scriptCache.set(code, script);
-  }
-  return script;
 }
 
 /**
@@ -99,45 +87,15 @@ export function legacyNodeData(items: NodeItem[] | undefined) {
 }
 
 export class ExpressionResolver {
-  private readonly context: vm.Context;
-  private readonly sandbox: Record<string, unknown>;
+  /** Made on the first evaluation: most resolvers never evaluate anything. */
+  private realm?: ExpressionRealm;
 
-  constructor(private readonly data: ExpressionData) {
-    const nodeProxy = new Proxy(
-      {},
-      {
-        get: (_target, name: string) => {
-          return legacyNodeData(data.nodeOutputs[name]);
-        },
-      },
-    );
-    this.sandbox = {
-      $node: nodeProxy,
-      $workflow: data.workflow,
-      $execution: data.execution,
-      $parameter: data.parameters,
-      $vars: Object.freeze({ ...data.variables }),
-      $composite: Object.freeze({ ...data.composite, params: Object.freeze({ ...data.composite?.params }) }),
-      $secrets: secretsSandbox(data.secrets),
-      $fromAI: (key: string, _description?: string, _type?: string, fallback?: unknown) => data.toolArgs?.[key] ?? fallback ?? '',
-      $: (name: string) => nodeAccessor(name, data.nodeOutputs[name], () => this.sandbox.$itemIndex as number),
-    };
-    this.context = vm.createContext(this.sandbox);
-  }
-
-  private bindItem(itemIndex: number) {
-    const item = this.data.items[itemIndex];
-    this.sandbox.$itemIndex = itemIndex;
-    this.sandbox.$json = item?.json ?? {};
-    this.sandbox.$input = nodeAccessor(undefined, this.data.items, () => itemIndex);
-    this.sandbox.$now = new Date();
-    this.sandbox.$today = new Date(new Date().toDateString());
-  }
+  constructor(private readonly data: ExpressionData) {}
 
   evaluate(code: string, itemIndex: number): unknown {
-    this.bindItem(itemIndex);
     try {
-      return compile(code.trim()).runInContext(this.context, { timeout: 250 });
+      this.realm ??= createExpressionRealm(this.data);
+      return this.realm.run(code.trim(), itemIndex);
     } catch (error) {
       const message = (error as Error).message;
       // The Code node's `items` isn't here: say what an expression has instead.

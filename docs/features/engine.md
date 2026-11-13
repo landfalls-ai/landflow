@@ -51,6 +51,34 @@ LANDFLOW_INSTANCE_ID=worker-1 pnpm worker   # a worker: runs executions; /health
 - **Kubernetes**: `deploy/k8s/overlays/orbstack-queue` runs two mains and two workers with Postgres, Valkey and MinIO, with PodDisruptionBudgets; `deploy/k8s/examples/keda` autoscales workers on the stream's backlog ([deployment.md](../deployment.md#queue-mode-on-kubernetes)).
 - **Limits**: a leader that crashes may fire a schedule second twice (its state is saved every 2 s). With `LANDFLOW_CONFIG_STORE=files`, credentials, settings files and agent files in the shared data directory are last-writer-wins between processes.
 
+## Expressions run in a sealed realm
+
+`{{ ... }}` expressions are evaluated synchronously (the executor and nine host modules call the resolver synchronously, and
+V8 semantics including `Intl` such as `toLocaleString` stay as they were) in a **sealed realm**
+([`packages/engine/src/sandbox/`](../../packages/engine/src/sandbox)): a fresh `node:vm` context with code generation from
+strings and WebAssembly off, a null-prototype global and a 250 ms timeout per evaluation.
+
+- **What is reachable**: only what the bootstrap defines inside the realm (`$json`, `$input`, `$('Node')`, `$node`,
+  `$itemIndex`, `$now`, `$today`, `$workflow`, `$execution`, `$parameter`, `$vars`, `$composite`, `$secrets`, `$fromAI`) and
+  the language's own builtins. Data arrives lazily through one host function that takes and returns JSON text (the current
+  item, all input items, one node's output, tool arguments, a secret the host fetched); the realm caches what it parsed
+  for the life of the resolver, so an item is copied once however many parameters read it. Nothing the expression changes
+  (`$json.x = 1`, `Object.prototype.polluted = 1`) reaches the host's data or prototypes. Items cross as JSON, so a host
+  `Date` an in-process node left in an item reads as an ISO string, and a BigInt or circular value fails the expression.
+- **What is not**: `process`, `require`, `globalThis.process`, the host's `Function` (`$json.constructor.constructor(...)` finds
+  the realm's own, which cannot compile), `eval`, `new Function`, `WebAssembly`, `FinalizationRegistry`, `WeakRef` (their callbacks would run on the host's loop outside the timeout), `import()`, and any Promise: `async`,
+  `await` and `import(` are refused in an expression's source, and the realm's promises are inert, because a rejected
+  promise in any context is an unhandled rejection that ends the host process. `Error.prepareStackTrace` and
+  `stackTraceLimit` are locked so a stack trace cannot expose host frames.
+- **Results** come back as tagged JSON the host parses, so what an expression returns is made of host-realm objects and
+  arrays (`Array.isArray`, `instanceof Object`) and no getter or Proxy it built can run outside the timeout. Dates come back as
+  Dates, `undefined` (also inside arrays and objects), `NaN`, `Infinity` and `-0` as themselves, a BigInt as a string and a
+  function as `undefined`. An error thrown by an expression is read inside the realm; one that escapes it (the timeout, a
+  stack overflow) is reported without reading the thrown value.
+- **Remaining risks**: a V8 or `vm` bug (the realm is a context in the host process, not a process boundary), and memory
+  exhaustion inside the 250 ms window. A stricter isolate backend is planned; until then, an instance that lets
+  untrusted people write expressions should also keep the production profile's other limits in place.
+
 ## Triggers and flow nodes
 
 - **Webhook** (`/api/webhook/<path>`): **Respond** immediately (202 with the execution id), when the last node finishes (its output as JSON), or using a **Respond to Webhook** node (first item, all items, JSON, text, no data or a redirect, with status code and headers; sent when that node runs while the run goes on). A run that starts waiting before it answers returns `{ status: "waiting", executionId }`. An `Idempotency-Key` header makes retried calls safe (see [Durable runtime](#durable-runtime)); a workflow at its concurrency limit queues the call's run (`status: "queued"`) or answers 429.
@@ -81,8 +109,8 @@ LANDFLOW_INSTANCE_ID=worker-1 pnpm worker   # a worker: runs executions; /health
 JavaScript or Python, run once for all items or once for each item, as in n8n. Code can run in two places:
 
 - **Sandbox**: the code runner ([services/code-runner](../../services/code-runner)), a fresh locked-down process per run, normally in its own container with no network. JavaScript gets n8n's globals: `$input.all()`, `.first()`, `.last()`, `.item`, `$json`, `$('Node').all()/.first()/.item`, `$vars`, `$execution`, `$workflow`, `$now`/`$today` and Luxon's `DateTime`, plus `await`. Python (CPython, standard library only) gets `_input`, `_json`, `_('Node')`, `_vars`, `_execution`, `_now` and so on. `console.log`/`print` go to the node's logs, and errors carry the line (`TypeError: … [line 3, for item 0]`). Python always runs here. The node helpers behave the same in both places (the expression engine's rules): `$('Node').item` follows the current item by position (the first item when the other node has fewer), `.itemMatching(i)` is its item `i` (an error when there is none), `.first()`, `.last()`, `.all()`, `.isExecuted` (false for a node that has not run; reading anything else from it fails with "has not run yet"), `.json` and `.binary`, and the legacy `$node['Name'].json` / `$node.Name.items`; in Python `_('Node').item_matching(i)` and `.is_executed`.
-- **In-process**: JavaScript in a `node:vm` context of the host with the same globals as the sandbox (`items`, `$json`, `$input`, `$('Node')`, `$node`, `$vars`, `$execution`, `$workflow`, `$now`; no Luxon), as before, and `await` works. It isn't isolated.
+- **In-process**: JavaScript in a `node:vm` context of the host with the same globals as the sandbox (`items`, `$json`, `$input`, `$('Node')`, `$node`, `$vars`, `$execution`, `$workflow`, `$now`; no Luxon), as before, and `await` works. It isn't isolated (its context holds the host's Buffers and async helpers, so it is for trusted workflows; `eval` and `new Function` from strings are off as defence in depth). It is on by default in the development profile and off in production unless `LANDFLOW_CODE_IN_PROCESS=true`.
 
 **Files.** `$input.item.binary` (Python `_input.item.binary`) is the item's file metadata (`{ fileName, mimeType, fileSize, fileExtension, id }`, no bytes). `await this.helpers.getBinaryDataBuffer(itemIndex, 'data')` reads a file as a `Buffer` (Python `_helpers.get_binary_data_buffer(item_index, 'data')`, `bytes`), and `await this.helpers.prepareBinaryData(buffer, 'report.csv', 'text/csv')` makes one to put on an output item (`{ json, binary: { data } }`; Python `_helpers.prepare_binary_data(data, file_name, mime_type)`); `assertBinaryData` checks that an item has a file. The file lands in the host's binary store (filesystem or S3) like any node's output and the type is taken from the name when you leave it out. The sandbox has no network, so the host sends the bytes of the input files with the request (only when the code mentions the read helper) and the snippet returns created files as base64 for the host to store. Everything the code reads (all files together) and everything it creates is capped by `LANDFLOW_CODE_BINARY_MAX_BYTES` (6 MiB; the runner has its own `CODE_RUNNER_MAX_BINARY_BYTES`, and the request and output caps apply too); a file over the cap fails with a message that names it, and the binary store's own limit (`LANDFLOW_BINARY_MAX_BYTES`) still applies. See "Files and binary data" below.
 
-With `LANDFLOW_CODE_RUNNER_URL` and `LANDFLOW_CODE_RUNNER_SECRET` set, **Run In: Default** means the sandbox; `LANDFLOW_CODE_IN_PROCESS=false` turns in-process code off altogether, as the Docker stack does. Start a runner with `CODE_RUNNER_SECRET=dev pnpm --filter code-runner dev` (port 7300) or the Docker one (`127.0.0.1:53300`). How it is locked down, and how to check that, is in [deployment.md, "Code runner"](../deployment.md#code-runner).
+With `LANDFLOW_CODE_RUNNER_URL` and `LANDFLOW_CODE_RUNNER_SECRET` set, **Run In: Default** means the sandbox; `LANDFLOW_CODE_IN_PROCESS=false` turns in-process code off altogether, as the Docker stack does, and the production profile does the same when the variable is unset (a Code node then fails, saying to configure the runner or set `LANDFLOW_CODE_IN_PROCESS=true` knowingly). Start a runner with `CODE_RUNNER_SECRET=dev pnpm --filter code-runner dev` (port 7300) or the Docker one (`127.0.0.1:53300`). How it is locked down, and how to check that, is in [deployment.md, "Code runner"](../deployment.md#code-runner).

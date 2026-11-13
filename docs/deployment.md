@@ -465,7 +465,7 @@ The Code node runs JavaScript in-process (`node:vm` inside the host: quick, but 
 |---|---|
 | `LANDFLOW_CODE_RUNNER_URL` | `http://code-runner:7300` in compose (set already), `http://127.0.0.1:53300` for the Docker runner from the dev server, `http://127.0.0.1:7300` for one started with pnpm |
 | `LANDFLOW_CODE_RUNNER_SECRET` | the runner's `CODE_RUNNER_SECRET` (compose: `LANDFLOW_CODE_RUNNER_SECRET`, default `landflow-code-runner-dev-only`) |
-| `LANDFLOW_CODE_IN_PROCESS` | `false`: no in-process JavaScript on this host, so every Code node needs the runner. The dockerised host sets it |
+| `LANDFLOW_CODE_IN_PROCESS` | `false`: no in-process JavaScript on this host, so every Code node needs the runner (the dockerised host sets it). Unset: allowed in the development profile, off in the production profile, where Code nodes run in the code runner or fail with a message that names this variable; `true` there is a knowing choice to run trusted code in the host |
 | `LANDFLOW_CODE_BINARY_MAX_BYTES` | files a Code node reads and creates (`this.helpers.getBinaryDataBuffer` / `prepareBinaryData`), each way, 6 MiB by default |
 
 With a runner configured, Code nodes on **Run In: Default** use it; **Sandbox** and **In-process** (JavaScript only) pin one. Python always runs in the runner and fails with "Python code needs the code runner, and this host has none" without one. The host reads these on every run, but environment variables only change on a restart.

@@ -314,10 +314,11 @@ See [agents.md](agents.md) and [assistant.md](assistant.md).
 
 ## The code runner
 
-The Code node runs JavaScript or Python either in process (a `node:vm` context of the host, not isolated) or in the code
+The Code node runs JavaScript or Python either in process (a `node:vm` context of the host, not isolated; off by default in the production profile, which
+runs Code nodes in the runner unless `LANDFLOW_CODE_IN_PROCESS=true`) or in the code
 runner: a separate service that starts a fresh process per run, with n8n's globals, no network, a read-only root, resource
 limits and a shared secret for its callers ([deployment.md, "Code runner"](deployment.md#code-runner)).
-Both paths give the code the same `$('Node')` helpers (the expression engine's accessors, `packages/engine/src/expression.ts`) and the same file helpers (`this.helpers.getBinaryDataBuffer` / `prepareBinaryData`): in process they use the context's binary client, and the runner, having no network, receives input file bytes in the request and returns created files as base64 for the host to store.
+Both paths give the code the same `$('Node')` helpers (the expression engine's accessors, `packages/engine/src/expression.ts`; expressions themselves run in a sealed realm, `packages/engine/src/sandbox/`, which `nodeAccessor` mirrors) and the same file helpers (`this.helpers.getBinaryDataBuffer` / `prepareBinaryData`): in process they use the context's binary client, and the runner, having no network, receives input file bytes in the request and returns created files as base64 for the host to store.
 
 ## Observability
 
