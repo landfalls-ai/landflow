@@ -1,9 +1,12 @@
 /**
  * Structured logger: one JSON object per line on stdout (or `pretty` lines),
  * stamped with the active span's trace and span ids. String values under
- * secret-looking keys are redacted. See docs/observability.md §3.
+ * secret-looking keys are redacted and secret-shaped values (Bearer tokens, API keys, URL userinfo, private keys) are
+ * scrubbed from every string. Inside an API request each line also carries the request id, user, API key id and route. See docs/observability.md §3.
  */
 import { context, logs, SeverityNumber, trace } from '@opentelemetry/api';
+import { requestLogFields } from '../audit/context';
+import { redactPatterns } from '../secrets/redact';
 import { singleton } from '../singleton';
 import { SECRET_KEY, telemetryConfig, type LogLevel } from './config';
 
@@ -26,8 +29,12 @@ export function isEnabled(level: LogLevel) {
   return SEVERITY[level] >= SEVERITY[telemetryConfig.logLevel];
 }
 
-/** Redact string values under secret-looking keys, recursively (numbers such as token counts are kept). */
+/**
+ * Redact string values under secret-looking keys, recursively (numbers such as token counts are kept), and replace
+ * secret-shaped values in every other string (secrets/redact `redactPatterns`; one pass, so a line is walked once).
+ */
 export function redact(value: unknown, depth = 0): unknown {
+  if (typeof value === 'string') return redactPatterns(value);
   if (depth > 6 || value === null || typeof value !== 'object') return value;
   if (Array.isArray(value)) return value.map((entry) => redact(entry, depth + 1));
   const out: Record<string, unknown> = {};
@@ -51,8 +58,10 @@ export function writeRecord(level: LogLevel, message: string, fields: LogAttribu
     ts: at.toISOString(),
     level,
     service: telemetryConfig.serviceName,
-    msg: message,
+    msg: redactPatterns(message),
     ...(ids && trace.isSpanContextValid(ids) && { trace_id: ids.traceId, span_id: ids.spanId }),
+    // Added here, not through redact(): `landflow.api_key.id` is an id that the key-name rule would take for the key.
+    ...requestLogFields(),
     ...(redact(fields) as LogAttributes),
   };
   const scrubbed = scrub(record);

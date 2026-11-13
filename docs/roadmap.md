@@ -1305,6 +1305,11 @@ workbench in place of a page of cards, keeping Spotlight.
     the gRPC registry's UNAUTHENTICATED / UNAVAILABLE answers; a production resume by curl with and without `sig`; a
     multi-page form in a browser; client addresses behind a real ingress; a signed-in pass under the enforced CSP
     (editor, Run Trace, Brain at desktop and 390 px), which needs a person to sign in.
+- **P17, logs and spans you can join; wider redaction** (O3, O6, contributes to C5; wave 4): every log line written in an
+  API request carries `request_id`, `http.route`, `user.id` and the API key id, the active span gets the same
+  attributes, and `/api` responses return `traceparent`. Redaction covers more key names (private keys, passphrases,
+  signatures, connection strings, DSNs, session tokens), secret-shaped values in every logged string (Bearer tokens,
+  `lf_` keys, URL userinfo, PEM blocks), and the credential values handed to a node, like `$secrets` values.
 
 ## Planned next
 

@@ -24,10 +24,12 @@ import type { CredentialDetail, CredentialRateLimitSetting, CredentialSummary } 
 import { configStoreKind, importOnce, onConfigChanged, writeJsonFile } from '../config-store';
 import { database, type Database } from '../db';
 import { registry } from '../plugins/registry';
-import { redactText } from '../secrets/redact';
+import { installRedaction } from '../secrets/install';
+import { redactText, rememberSecretValues } from '../secrets/redact';
 import { resolveSecretFields, resolveSecretsIn } from '../secrets/resolve';
 import { singleton } from '../singleton';
 import { store } from '../store';
+import { SECRET_KEY } from '../telemetry/config';
 import { logger } from '../telemetry/logger';
 import {
   ACCOUNT_FIELD,
@@ -372,10 +374,26 @@ export class CredentialVault {
   /** What nodes get: the type's defaults and the saved values; for OAuth2, the access token instead of the stored token. */
   private nodeData(credential: StoredCredential, descriptor: CredentialTypeDescriptor | undefined): JsonObject {
     const data = withDefaults(descriptor, this.open(credential));
-    if (!this.isOAuth2(credential, data)) return data;
+    if (!this.isOAuth2(credential, data)) return this.remember(credential, descriptor, data);
     const result = { ...withoutReserved(data), ...nodeTokenFields(storedToken(data[TOKEN_FIELD])) };
     oauthOrigins.set(result, credential.id);
-    return result;
+    return this.remember(credential, descriptor, result);
+  }
+
+  /**
+   * Handing secrets to a node: their values are remembered so redaction (secrets/redact) scrubs them from logs, run
+   * results and stored runs, the way `$secrets` values are. Password-typed fields, the credential's own secret fields
+   * and fields whose name says secret; a `$secrets` reference holds nothing. The remembered set is bounded and
+   * evicts the least recently resolved value (secrets/redact MAX_VALUES).
+   */
+  private remember(credential: StoredCredential, descriptor: CredentialTypeDescriptor | undefined, data: JsonObject): JsonObject {
+    installRedaction();
+    const names = new Set([...credential.secretFields, ...secretNames(descriptor)]);
+    for (const [key, value] of Object.entries(data)) {
+      if (typeof value !== 'string' || isSecretReference(value)) continue;
+      if (names.has(key) || SECRET_KEY.test(key)) rememberSecretValues(value);
+    }
+    return data;
   }
 
   list(): CredentialSummary[] {

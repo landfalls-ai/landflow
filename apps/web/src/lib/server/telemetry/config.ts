@@ -1,9 +1,9 @@
 /** Telemetry settings from the environment (docs/observability.md §1). Read once per module graph. */
 import packageJson from '../../../../package.json';
+import { flag } from '../config/parse';
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
-const flag = (value: string | undefined, fallback: boolean) => (value === undefined || value === '' ? fallback : !/^(false|0|no|off)$/i.test(value.trim()));
 const level = (value: string | undefined): LogLevel =>
   ['debug', 'info', 'warn', 'error'].includes(value?.toLowerCase() ?? '') ? (value!.toLowerCase() as LogLevel) : 'info';
 
@@ -37,6 +37,11 @@ export function traceUrl(traceId: string | undefined): string | undefined {
   return template.replaceAll('{traceId}', encodeURIComponent(traceId)).replaceAll('{trace_id}', encodeURIComponent(traceId));
 }
 
-/** Attribute and field names whose (string) values are never logged or exported. */
-/** Same rule as the SDKs: names of addresses and kinds (`tokenUrl`, `tokenType`) are not secrets. */
-export const SECRET_KEY = /^(?!.*(?:url|uri|endpoint|host|type)$).*(?:token|secret|password|authorization|api[-_]?key|cookie)/i;
+/**
+ * Attribute and field names whose (string or object) values are never logged or exported.
+ * Same rule as the SDKs: names of addresses, kinds and algorithms (`tokenUrl`, `tokenType`, `signatureAlgorithm`) are not secrets.
+ * `credentials` counts only as a whole key name. Plain `session` and `sessionId` stay: agent session ids are needed to
+ * debug a conversation, and only `sessionToken`, `sessionSecret` and `sessionCookie` are credentials.
+ */
+export const SECRET_KEY =
+  /^(?!.*(?:url|uri|endpoint|host|type|algorithm)$)(?:.*(?:token|secret|password|authorization|api[-_]?key|cookie|private[-_]?key|passphrase|signature|connection[-_]?string|session[-_]?(?:token|secret|cookie))|.*dsn$|credentials$)/i;

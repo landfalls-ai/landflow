@@ -136,3 +136,27 @@ export function containsSecretValue(text: string): boolean {
   if (!state.values.size) return false;
   return sorted().some((value) => text.includes(value) || text.includes(escaped(value)));
 }
+
+// ---------------------------------------------------------------------------
+// Value patterns: secrets recognised by their shape, for text that was never a `$secrets` value (an upstream error
+// that quotes a header, a URL with credentials). The logger applies them to every string it writes. Each pattern is
+// anchored on a literal marker and guarded by an `includes`, so a line without the marker costs one scan.
+// ---------------------------------------------------------------------------
+
+const PATTERNS: { marker: string[]; pattern: RegExp; replace: string }[] = [
+  { marker: ['earer', 'EARER'], pattern: /\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi, replace: `$1${REDACTED}` },
+  // Landflow API keys (lf_…) and MCP / debug tokens (lf_mcp_…, lf_dbg_…).
+  { marker: ['lf_'], pattern: /\blf_[A-Za-z0-9_-]{12,}/g, replace: REDACTED },
+  // `scheme://user:password@host`: the userinfo goes, the host stays.
+  { marker: ['@'], pattern: /(\/\/)[^\s/@:'"]*:[^\s/@'"]+@/g, replace: `$1${REDACTED}@` },
+  { marker: ['-----BEGIN'], pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, replace: REDACTED },
+];
+
+/** A text with the secret-shaped values replaced (the same string when there are none). */
+export function redactPatterns(text: string): string {
+  let out = text;
+  for (const { marker, pattern, replace } of PATTERNS) {
+    if (marker.some((m) => out.includes(m))) out = out.replace(pattern, replace);
+  }
+  return out;
+}
