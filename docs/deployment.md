@@ -92,14 +92,16 @@ cluster, database and telemetry steps, so a long run never stops the flush; requ
 the rest, so a request that lasts as long as its run still leaves time to stop the scheduler and the runs. A step that
 fails or times out is logged and the next one runs. A second signal exits at once with code 1; a clean stop exits 0.
 The shutdown steps are registered as soon as the database is open, so a signal during the rest of the boot (plugin
-seeds that don't answer) still flushes and releases the lease.
+seeds that don't answer) still flushes and releases the lease. This holds for the main and for `pnpm worker`, which
+installs its signal handlers before it boots.
 
 This needs `NEXT_MANUAL_SIG_HANDLE` set to any non-empty value (`true`), which `pnpm start` (the `start` script) and
 the Docker image set. Without it Next.js's own handler closes its server and exits 143 first, and only the error
 handlers (below) are ours. `next dev` keeps Next.js's own handling: manual handling is not available there.
 
-A required boot step (the configuration check in the production profile, the database, the queue-mode cluster runtime)
-that fails logs `boot failed`; under `next start` and the image (`NODE_ENV=production`) the process then exits with
+A required boot step (the configuration check in the production profile, the database, the queue-mode cluster runtime
+and, on a worker, the plugin registry) that fails logs `boot failed`. `pnpm worker` then exits with code 1 (an unreachable
+Valkey fails after the 5 s ping instead of exiting 0 silently); under `next start` and the image (`NODE_ENV=production`) the process then exits with
 code 1, so the orchestrator restarts the container. Elsewhere `register()` in `instrumentation.ts` catches the failed
 boot (a rejected instrumentation hook would stop `next dev`), so `pnpm dev` keeps running: routes answer 500 and
 `/api/health/ready` 503 with `boot` not ok until a later request boots it again. Every other service that fails to start is logged as `service failed to start`, counted

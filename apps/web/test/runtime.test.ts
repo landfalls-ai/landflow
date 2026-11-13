@@ -55,9 +55,10 @@ describe('service table', () => {
     expect(servicesFor('main').map((spec) => spec.name)).toEqual(OLD_MAIN);
   });
 
-  it('marks the config check, database and cluster runtime required', async () => {
-    const { SERVICES } = await import('@/lib/server/runtime');
-    expect(SERVICES.filter((spec) => spec.required).map((spec) => spec.name)).toEqual(['config check', 'database', 'cluster', 'worker cluster']);
+  it('marks the config check, database and cluster runtime required, and the registry on a worker', async () => {
+    const { requiredFor, servicesFor } = await import('@/lib/server/runtime');
+    expect(servicesFor('main').filter((spec) => requiredFor(spec, 'main')).map((spec) => spec.name)).toEqual(['config check', 'database', 'cluster']);
+    expect(servicesFor('worker').filter((spec) => requiredFor(spec, 'worker')).map((spec) => spec.name)).toEqual(['config check', 'database', 'registry', 'worker cluster']);
   });
 });
 

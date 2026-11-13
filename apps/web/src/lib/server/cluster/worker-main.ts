@@ -31,21 +31,28 @@ async function main() {
     throw error;
   }
 
+  // Signal handlers before the boot, as on the main: a SIGTERM while a later step waits still runs the shutdown steps
+  // registered once the database opened (flush, release the lease) instead of the default kill.
+  const { installProcessHandlers } = await import('../lifecycle');
+  installProcessHandlers({ role: 'worker', deadlineMs: config.shutdownMs + 10_000 });
+
   // The one service table (lib/server/runtime.ts): config check, database, registry, brokers, seeds, discovery, binary
   // maintenance, online evaluations and, last, the cluster runtime that starts taking jobs.
   const { startRuntime } = await import('../runtime');
+  // Hold the event loop while booting: the Valkey client's reconnect and command timers are unref'd, so with Valkey
+  // unreachable nothing else keeps the process alive and it would exit 0 silently before the ping times out.
+  const hold = setInterval(() => {}, 60_000);
   try {
     await startRuntime({ role: 'worker' });
   } catch (error) {
-    logger.error((error as Error).message);
+    logger.error('worker failed to start', { error: (error as Error).message });
     const { closeDatabase } = await import('../db');
     await closeDatabase().catch(() => {});
     process.exit(1);
+  } finally {
+    clearInterval(hold);
   }
   logger.info('worker ready', { 'landflow.cluster.instance': config.instanceId, 'landflow.worker.concurrency': config.workerConcurrency, 'landflow.worker.port': config.workerPort });
-
-  const { installProcessHandlers } = await import('../lifecycle');
-  installProcessHandlers({ role: 'worker', deadlineMs: config.shutdownMs + 10_000 });
 }
 
 main().catch((error) => {
