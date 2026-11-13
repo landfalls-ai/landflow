@@ -11,7 +11,10 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { DatabaseSync, SQLInputValue, StatementSync } from 'node:sqlite';
 import { envInt } from '../config';
+import { context, SpanStatusCode, trace } from '@opentelemetry/api';
 import { singleton } from '../singleton';
+import { telemetryConfig } from '../telemetry/config';
+import { recordDbQuery, type DbOperation } from '../telemetry/metrics';
 import { addColumnSql, MIGRATIONS, pendingMigrations, SCHEMA_VERSION_TABLE, TABLES, type Migration, type TableName } from './schema';
 
 export type DbKind = 'sqlite' | 'postgres';
@@ -60,6 +63,29 @@ export interface WriteSink {
 }
 
 const COLUMN = /^[a-z_][a-z0-9_]*$/;
+
+/**
+ * Timing (docs/observability.md §5): every call is measured with performance.now (about 50 ns) into the
+ * `landflow.db.query.duration` histogram, labelled by operation only. A `db.query` span is opened after the fact, and
+ * only for calls at or over LANDFLOW_DB_SLOW_MS (default 50), named by the statement with its literals stripped.
+ */
+
+/** The first 60 characters of the SQL with string and number literals stripped and whitespace collapsed. */
+export function statementName(sql: string): string {
+  return sql
+    .replace(/'(?:[^']|'')*'/g, '?')
+    .replace(/\b\d+(?:\.\d+)?\b/g, '?')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 60);
+}
+
+/** A finished slow call as a `db.query` span under the active one. */
+function slowSpan(system: string, operation: string, sql: string, ms: number) {
+  const end = Date.now();
+  const span = trace.getTracer('landflow-host').startSpan('db.query', { startTime: end - ms, attributes: { 'db.system': system, 'db.operation': operation, 'db.query.summary': statementName(sql) } }, context.active());
+  span.end(end);
+}
 
 /** Rows pass through this before an upsert or insert, when set (lib/server/secrets/install.ts redacts run data with it). */
 export type RowFilter = (table: TableName, row: Row) => Row;
@@ -122,12 +148,24 @@ export class Database {
     return this.statements.size;
   }
 
+  /** Run one call, record its duration and trace it when slow; `sql` is only read then. */
+  private timed<T>(operation: DbOperation, sql: string, run: () => T): T {
+    const started = performance.now();
+    try {
+      return run();
+    } finally {
+      const ms = performance.now() - started;
+      recordDbQuery(operation, ms);
+      if (ms >= telemetryConfig.dbSlowMs) slowSpan(this.kind === 'postgres' ? 'postgres-mirror' : 'sqlite', operation, sql, ms);
+    }
+  }
+
   all<T>(sql: string, ...params: SqlValue[]): T[] {
-    return this.statement(sql).all(...(params as SQLInputValue[])) as T[];
+    return this.timed('select', sql, () => this.statement(sql).all(...(params as SQLInputValue[])) as T[]);
   }
 
   get<T>(sql: string, ...params: SqlValue[]): T | undefined {
-    return this.statement(sql).get(...(params as SQLInputValue[])) as T | undefined;
+    return this.timed('select', sql, () => this.statement(sql).get(...(params as SQLInputValue[])) as T | undefined);
   }
 
   /** Insert a row or replace the columns it names (by primary key). */
@@ -165,12 +203,15 @@ export class Database {
     let changes: number;
     if (op.op === 'delete') {
       const columns = Object.keys(op.where);
-      changes = Number(this.statement(`DELETE FROM ${op.table} WHERE ${columns.map((c) => `${c} = ?`).join(' AND ')}`).run(...columns.map((c) => op.where[c] as SQLInputValue)).changes);
+      const sql = `DELETE FROM ${op.table} WHERE ${columns.map((c) => `${c} = ?`).join(' AND ')}`;
+      changes = this.timed('delete', sql, () => Number(this.statement(sql).run(...columns.map((c) => op.where[c] as SQLInputValue)).changes));
     } else if (op.op === 'deleteBefore') {
-      changes = Number(this.statement(`DELETE FROM ${op.table} WHERE ${op.column} < ?`).run(op.value as SQLInputValue).changes);
+      const sql = `DELETE FROM ${op.table} WHERE ${op.column} < ?`;
+      changes = this.timed('delete', sql, () => Number(this.statement(sql).run(op.value as SQLInputValue).changes));
     } else {
       const columns = Object.keys(op.row);
-      changes = Number(this.statement(upsertSql(op.table, columns, op.op, () => '?')).run(...columns.map((c) => op.row[c] as SQLInputValue)).changes);
+      const sql = upsertSql(op.table, columns, op.op, () => '?');
+      changes = this.timed(op.op === 'insert' ? 'insert' : 'upsert', sql, () => Number(this.statement(sql).run(...columns.map((c) => op.row[c] as SQLInputValue)).changes));
     }
     // Only changes that happened are replayed (an insert that hit an existing key, a delete of nothing: no op).
     if ((this.sink || this.observers.size) && (changes > 0 || op.op === 'upsert')) {
@@ -222,7 +263,24 @@ export class Database {
    * SQLite, where the file itself is shared and `transaction` (BEGIN IMMEDIATE) already serializes writers.
    */
   direct<T>(fn: (client: DirectClient) => Promise<T>): Promise<T> | undefined {
-    return this.sink?.direct?.(fn);
+    const call = this.sink?.direct;
+    if (!call) return undefined;
+    // Always a span: these are the calls that cross the network and decide something (locks, one-use claims).
+    const span = trace.getTracer('landflow-host').startSpan('db.query', { attributes: { 'db.system': 'postgresql', 'db.operation': 'direct' } }, context.active());
+    const started = performance.now();
+    return (call.call(this.sink, fn) as Promise<T>).then(
+      (result) => {
+        recordDbQuery('direct', performance.now() - started);
+        span.end();
+        return result;
+      },
+      (error) => {
+        span.recordException(error as Error);
+        span.setStatus({ code: SpanStatusCode.ERROR, message: (error as Error).message });
+        span.end();
+        throw error;
+      },
+    );
   }
 
   async close() {

@@ -1369,6 +1369,10 @@ workbench in place of a page of cards, keeping Spotlight.
     deployment with in-cluster gateways and remote MCP, OIDC/SAML, alert and SIEM endpoints; a streaming MCP transport
     and a multipart or streamed HTTP Request body through the undici path with blocking on; the expression bench on a
     quiet machine (`LANDFLOW_BENCH=1`) and a large real workflow's expression cost.
+- **P22, saturation metrics, database timing, sampled reads and slow-query spans** (O4, O5): the host reports event-loop
+  delay and utilisation, memory, GC pauses, every database call's duration, SSE connections, failed sign-ins and
+  limiter refusals; slow database calls and slow or failed `GET`s are traced and fast reads are dropped; `landflow.workflow.id`
+  is off the histogram and (unless `LANDFLOW_METRICS_WORKFLOW_LABEL=true`) off the counters. [observability.md](observability.md#5-metrics)
 
 ## Planned next
 
