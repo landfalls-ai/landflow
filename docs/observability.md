@@ -28,6 +28,9 @@ host and for plugins.
 | `LANDFLOW_LOG_SPANS` | `true` | write one log line per finished span (see §3) |
 | `LANDFLOW_LOG_OTLP` | `true` | host: with an OTLP endpoint, also export every log line (but the `span.end` lines) as an OTel log record (see §3) |
 | `LANDFLOW_METRICS_PROMETHEUS` | `true` | serve Prometheus text: host `GET /api/metrics`, plugins `GET /metrics` on their HTTP port |
+| `LANDFLOW_TRACE_SLOW_READ_MS` | `1000` | host: a read-only API request (`GET`) keeps its trace only when it takes at least this long or ends in a 5xx; the rest are dropped with their child spans (§2). `0` keeps every read |
+| `LANDFLOW_DB_SLOW_MS` | `50` | host: a database call at least this slow gets a `db.query` span (§4); every call is timed in `landflow.db.query.duration` whatever this says |
+| `LANDFLOW_METRICS_WORKFLOW_LABEL` | `false` | host: `true` puts `landflow.workflow.id` back on three counters (§5); one series per workflow, so off by default |
 | `LANDFLOW_TRACE_URL` | – | host UI only: link template for a trace, e.g. `http://localhost:16686/trace/{traceId}` (Jaeger) or a Grafana Tempo URL |
 | `NEXT_OTEL_FETCH_DISABLED` | host: `1` | Next.js' own `fetch` spans stay off: the host already opens `plugin.rpc` and `gen_ai.chat` client spans for its outbound calls. Set `0` to get them back |
 
@@ -57,11 +60,18 @@ that link.
 **No spans** for health checks, heartbeats, manifest polling or the SSE event stream: they would
 drown the useful traces. They are counted in metrics instead. On the host, a request is traced
 when it is an API request that changes something (`POST`, `PUT`, `PATCH`, `DELETE`) or any
-webhook request. Read-only API requests (`GET`/`HEAD`/`OPTIONS`, which the UI polls), pages and
-assets, `/api/events`, `/api/health*`, `/api/metrics` and `/api/plugins/announce` get no trace.
-Their server spans are still recorded but not sampled, so they still count in
-`http.server.request.duration`. An announce that (re-)registers a plugin starts its own
-`registry.register` trace.
+webhook request. Pages and assets, `/api/events`, `/api/health*`, `/api/metrics` and
+`/api/plugins/announce` get no trace; their server spans are still recorded but not sampled, so
+they still count in `http.server.request.duration`. An announce that (re-)registers a plugin
+starts its own `registry.register` trace.
+
+**Read-only API requests** (`GET`/`HEAD`/`OPTIONS`, which the UI polls) are sampled when they
+end: the trace is kept, whole, when the request took at least `LANDFLOW_TRACE_SLOW_READ_MS`
+(default 1000) or ended in a 5xx, and dropped otherwise. The host holds a read's finished spans
+(at most 500, for at most five minutes) until its server span ends, so a slow read still shows its
+database and plugin spans. Only the spans that descend from the read's server span are held; other spans of a
+trace the read joined through a `traceparent` (a plugin fetching a binary during a run) export as usual. A kept
+server span carries `landflow.trace.deferred_read`. Before this, no read was ever traced, so a slow `GET` was invisible.
 
 ## 3. Logs
 
@@ -127,6 +137,7 @@ conventions.
 | `plugin.rpc {Method}` (`Execute`, `LoadOptions`, `TestCredentials`, `GetManifest`) | client | `rpc.system` (`grpc`/`http`), `rpc.service=landflow.plugin.v1.PluginService`, `rpc.method`, `server.address`, `server.port`, `landflow.plugin.id` |
 | `gen_ai.chat {model}` | client | OTel GenAI conventions: `gen_ai.system` (`anthropic`/`ollama`/`openai`), `gen_ai.operation.name=chat`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.response.finish_reasons`, `landflow.ai.cost_usd` (estimated, when the call ran in an execution or agent run; [§8](#token-and-cost-tracking)) |
 | `gen_ai.embeddings {model}` | client | same conventions with `gen_ai.operation.name=embeddings`: `gen_ai.system`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.usage.input_tokens`, `gen_ai.embeddings.dimension.count`. Counts in the `landflow.ai.*` metrics like chat (input tokens only) |
+| `db.query` | internal | Only for a slow call (`LANDFLOW_DB_SLOW_MS`, default 50 ms) or a Postgres `direct()` call (always): `db.system` (`sqlite`, `postgres-mirror` for the in-memory copy Postgres mode reads from, or `postgresql` for `direct()`), `db.operation` (`select`/`insert`/`upsert`/`delete`/`direct`), `db.query.summary` (the first 60 characters of the SQL with string and number literals stripped; `direct()` has none). Child of the active span, backdated to when the call started |
 | `vector_store.insert {store}`, `vector_store.query {store}` | client (child of the vector store's `node.execute`, or of `execute_tool` for an agent knowledge base) | RAG ([Retrieval](features/ai.md#retrieval-rag)): `landflow.vector_store` (`memory`/`sqlite`/`pgvector`), `db.system.name` (`landflow.memory`/`sqlite`/`postgresql`), `db.collection.name` (the collection), `db.operation.name` (`insert`/`query`), `landflow.retrieval.documents` (written or returned); query: `landflow.retrieval.mode` (`vector`/`hybrid`), `landflow.retrieval.top_k`, `landflow.retrieval.filtered`. The query is embedded just before, by the embeddings sub-node (`node.execute`, `landflow.node.source=ai_embedding`, with its `gen_ai.embeddings` child; a knowledge base embeds directly). Document text never reaches span attributes |
 | `retrieval.rerank` | internal | `landflow.rerank.method` (`llm`), `gen_ai.request.model`, `landflow.rerank.documents` (candidates), `landflow.retrieval.top_k`; the judge's call is a `gen_ai.chat` child |
 | `guardrails.check` | internal (child of the Guardrails node's `node.execute`, one per item) | `landflow.guardrails.mode` (`check`/`sanitize`), `landflow.guardrails.checks` (the checks that ran), `landflow.guardrails.passed`, `landflow.guardrails.violations` (count), `landflow.guardrails.failed` (the checks that found something); model checks are `gen_ai.chat` children. Matched values never reach spans |
@@ -212,12 +223,30 @@ histograms in **milliseconds** with buckets `1, 5, 10, 25, 50, 100, 250, 500, 10
 | `landflow.node.runs` | counter | `landflow.node.type`, `landflow.plugin.id`, `landflow.transport`, `landflow.node.status` (`success`/`error`), `landflow.node.source` |
 | `landflow.node.duration` | histogram (ms) | same |
 | `landflow.node.items` | counter | `landflow.node.type`, `landflow.plugin.id`, `landflow.direction` (`in`/`out`) |
-| `landflow.trigger.fires` | counter | `landflow.workflow.id`, `landflow.trigger.source` |
+| `landflow.trigger.fires` | counter | `landflow.trigger.source`, `landflow.workflow.id` only with `LANDFLOW_METRICS_WORKFLOW_LABEL=true` |
 | `landflow.poll.runs` | counter | `landflow.node.type`, `landflow.poll.result` (`items`/`empty`/`error`) |
 | `landflow.poll.duration` | histogram (ms) | `landflow.node.type` |
-| `landflow.schedule.lag` | histogram (ms) | `landflow.workflow.id`: how late a scheduled run started |
-| `landflow.webhook.requests` | counter | `landflow.workflow.id`, `http.response.status_code` |
-| `landflow.runtime.events` | counter | `landflow.runtime.event`: `deduplicated` (a trigger call repeated an idempotency key), `skipped` (no free concurrency slot, or a full queue), `queued`, `recovered` (continued after a restart), `recovery_failed`, `retry_scheduled`, `retried` (a retry started), `stopped` (by Stop all); `landflow.workflow.id` (not on `stopped`) |
+| `landflow.schedule.lag` | histogram (ms) | none: how late a scheduled run started (the workflow id is on the `trigger.fire` span) |
+| `landflow.webhook.requests` | counter | `http.response.status_code`, `landflow.workflow.id` only with `LANDFLOW_METRICS_WORKFLOW_LABEL=true` |
+| `landflow.runtime.events` | counter | `landflow.runtime.event`: `deduplicated` (a trigger call repeated an idempotency key), `skipped` (no free concurrency slot, or a full queue), `queued`, `recovered` (continued after a restart), `recovery_failed`, `retry_scheduled`, `retried` (a retry started), `stopped` (by Stop all); `landflow.workflow.id` only with `LANDFLOW_METRICS_WORKFLOW_LABEL=true` |
+
+### Saturation, database and security (host)
+
+| Metric | Type | Attributes |
+|---|---|---|
+| `landflow.runtime.event_loop.delay` | gauge (ms) | `landflow.quantile` (`p50`, `p99`, `max`): event-loop delay since the last collection (a 20 ms `monitorEventLoopDelay` sampler, read and reset at most once a second) |
+| `landflow.runtime.event_loop.utilization` | gauge (0 to 1) | share of time the loop was busy since the last collection |
+| `landflow.runtime.memory` | gauge (bytes) | `landflow.memory.type` (`heap_used`, `heap_total`, `rss`) |
+| `landflow.runtime.gc.duration` | histogram (ms) | `landflow.gc.kind` (`minor`, `major`, `incremental`, `weakcb`) |
+| `landflow.db.query.duration` | histogram (ms) | `db.operation` (`select`/`insert`/`upsert`/`delete`/`direct`); SQL text is never a label. Buckets from 0.1 ms. Every `all`/`get`/write of the store (SQLite, and Postgres mode's in-memory copy) and every Postgres `direct()` call. Slow ones also get a `db.query` span (§4). The Databases plugin has a metric of the same name with its own attributes; they differ by `service.name` |
+| `landflow.auth.sign_in_failures` | counter | none: wrong password or unknown user |
+| `landflow.auth.limited` | counter | `landflow.limiter` (`email`, `ip`, `form`): attempts a sign-in or form rate limiter refused |
+| `landflow.sse.connections` | up-down counter | `http.route` (ids in the path become `:id`): open Server-Sent Events streams |
+
+**Breaking change for dashboards:** `landflow.workflow.id` is no longer a label on `landflow.schedule.lag` (a
+histogram), `landflow.trigger.fires`, `landflow.webhook.requests` and `landflow.runtime.events`: one series per
+workflow (times every bucket on a histogram) grows with the workflows. Group by workflow from traces, or set
+`LANDFLOW_METRICS_WORKFLOW_LABEL=true` to get it back on the three counters (never on the histogram).
 
 ### Postgres write queue (host, `LANDFLOW_DB=postgres`)
 

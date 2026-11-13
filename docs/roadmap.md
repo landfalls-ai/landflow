@@ -1374,6 +1374,10 @@ workbench in place of a page of cards, keeping Spotlight.
   API keys, credentials, audit settings and SCIM provisioning fail with 503 when their event cannot be stored, with the
   change and its event in one transaction where both are database writes
   ([audit-and-governance.md](features/audit-and-governance.md#reliability-and-fail-closed-mode)).
+- **P22, saturation metrics, database timing, sampled reads and slow-query spans** (O4, O5): the host reports event-loop
+  delay and utilisation, memory, GC pauses, every database call's duration, SSE connections, failed sign-ins and
+  limiter refusals; slow database calls and slow or failed `GET`s are traced and fast reads are dropped; `landflow.workflow.id`
+  is off the histogram and (unless `LANDFLOW_METRICS_WORKFLOW_LABEL=true`) off the counters. [observability.md](observability.md#5-metrics)
 
 ## Planned next
 

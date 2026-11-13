@@ -7,6 +7,10 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 const level = (value: string | undefined): LogLevel =>
   ['debug', 'info', 'warn', 'error'].includes(value?.toLowerCase() ?? '') ? (value!.toLowerCase() as LogLevel) : 'info';
 
+const milliseconds = (value: string | undefined, fallback: number) => (value?.trim() && Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : fallback);
+
+let dbSlow: { raw: string | undefined; value: number } | undefined;
+
 export const telemetryConfig = {
   serviceName: process.env.OTEL_SERVICE_NAME || 'landflow-host',
   serviceVersion: packageJson.version,
@@ -25,6 +29,21 @@ export const telemetryConfig = {
     Boolean(process.env.OTEL_EXPORTER_OTLP_ENDPOINT || process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT) && process.env.OTEL_LOGS_EXPORTER !== 'none',
   /** With exportLogs: every log line (but `span.end`) is also an OTel log record, with its trace and span ids. */
   logOtlp: flag(process.env.LANDFLOW_LOG_OTLP, true, 'LANDFLOW_LOG_OTLP'),
+  /** The three below are read at each use, so a switch takes effect without reloading the module graph. */
+  get workflowLabel() {
+    return flag(process.env.LANDFLOW_METRICS_WORKFLOW_LABEL, false, 'LANDFLOW_METRICS_WORKFLOW_LABEL');
+  },
+  /** Database calls at least this slow (ms) get a `db.query` span. */
+  get dbSlowMs() {
+    // Read on every database call: parse again only when the variable changes.
+    const raw = process.env.LANDFLOW_DB_SLOW_MS;
+    if (!dbSlow || dbSlow.raw !== raw) dbSlow = { raw, value: milliseconds(raw, 50) };
+    return dbSlow.value;
+  },
+  /** Read-only requests at least this slow (ms) keep their trace; faster ones are dropped. */
+  get slowReadMs() {
+    return milliseconds(process.env.LANDFLOW_TRACE_SLOW_READ_MS, 1000);
+  },
 };
 
 /**
