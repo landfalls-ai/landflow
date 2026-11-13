@@ -1305,6 +1305,17 @@ workbench in place of a page of cards, keeping Spotlight.
     the gRPC registry's UNAUTHENTICATED / UNAVAILABLE answers; a production resume by curl with and without `sig`; a
     multi-page form in a browser; client addresses behind a real ingress; a signed-in pass under the enforced CSP
     (editor, Run Trace, Brain at desktop and 390 px), which needs a person to sign in.
+- **P18, configuration catalog, generated reference and a ratchet on environment reads** (C5, C7; wave 4):
+  `lib/server/config/catalog.ts` lists every variable the host reads (and the few plugins read) with its default,
+  description, group, secret flag, production-profile requirement and deprecated aliases; `checkConfig` takes its
+  redaction and production requirements from it. `docs/reference/configuration.md` is generated from it
+  (`pnpm --filter @landflow/web gen:config-docs`), one table per group and plugin-side variables in their own table. The
+  per-signal `OTEL_EXPORTER_OTLP_*` variables, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_TRACES_SAMPLER_ARG`,
+  `OTEL_LOGS_EXPORTER`, `OTEL_BLRP_SCHEDULE_DELAY` and `LANDFLOW_VALKEY_URL=memory` are documented, and the retention
+  variables are catalogued as `LANDFLOW_AI_USAGE_RETENTION_DAYS` / `LANDFLOW_USAGE_RETENTION_DAYS` with the old names
+  as aliases. `config-catalog.test.ts` fails on an environment name the source reads that is not catalogued, on more
+  than 88 files reading `process.env` outside `lib/server/config`, and on a stale generated page. SAML, mail, S3,
+  marketplace and environment-protection flags now go through `envFlag`.
 
 ## Planned next
 
