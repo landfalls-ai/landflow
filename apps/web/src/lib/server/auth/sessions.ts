@@ -1,7 +1,8 @@
 /**
  * Sign-in sessions: a random token in the session cookie, kept as its SHA-256 in `sessions` with an expiry
- * (LANDFLOW_SESSION_TTL_HOURS, default 14 days) and an idle limit (LANDFLOW_SESSION_IDLE_HOURS). Signing out deletes the row; removing a user or resetting their
- * password deletes all of theirs. Expired rows are swept when sessions are created. A deactivated user (SCIM) gets
+ * (LANDFLOW_SESSION_TTL_HOURS, default 14 days) and an idle limit (LANDFLOW_SESSION_IDLE_HOURS). Signing out deletes
+ * the row; removing a user or resetting their password deletes all of theirs, and changing a password deletes the
+ * others. Expired rows are swept when sessions are created. A deactivated user (SCIM) gets
  * no session, and the sessions they had stop working.
  */
 import { recordAudit } from '../audit';

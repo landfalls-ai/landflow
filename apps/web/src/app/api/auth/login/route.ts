@@ -6,7 +6,7 @@
 import { z } from 'zod';
 import { clientIp, findUserByEmail, loginLimits, normalizeEmail, signedInResponse, verifyPassword } from '@/lib/server/auth';
 import { dummyHash } from '@/lib/server/auth/passwords';
-import { localSignInMode } from '@/lib/server/auth/local-sign-in';
+import { localSignInAllowed, localSignInMode } from '@/lib/server/auth/local-sign-in';
 import { DEACTIVATED_MESSAGE } from '@/lib/server/auth/sessions';
 import { error, handler, parseBody } from '@/lib/server/http';
 import { logger } from '@/lib/server/telemetry';
@@ -44,7 +44,7 @@ export const POST = handler(async (request: Request) => {
   }
   // LANDFLOW_LOCAL_SIGN_IN: checked after the password so a refusal does not tell a stranger which emails exist.
   const mode = localSignInMode();
-  if (mode === 'off' || (mode === 'owner' && user.role !== 'owner')) {
+  if (!localSignInAllowed(user)) {
     recordAudit({ action: 'auth.sign_in_failed', outcome: 'denied', actor: 'anonymous', target: { type: 'user', id: user.id, name: email }, summary: `Password sign-in for ${email} refused: local sign-in is ${mode}`, details: { email, reason: 'local-sign-in-disabled', method: 'password' } });
     return error('Password sign-in is turned off on this instance. Use single sign-on.', 403);
   }

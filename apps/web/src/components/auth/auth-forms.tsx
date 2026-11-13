@@ -118,21 +118,21 @@ export function LoginForm({ next, oidcLabel, samlLabel, initialError, smtp, loca
         </>
       ) : (
         <>
-      <Field label="Email">
-        <Input type="email" name="email" autoComplete="username" required autoFocus value={email} onChange={(e) => setEmail(e.target.value)} />
-      </Field>
-      <Field label="Password">
-        <Input type="password" name="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
-      </Field>
-      <ErrorBox message={error ?? initialError} />
-      <Button type="submit" variant="primary" loading={busy} className="w-full">
-        Sign in <ArrowRight className="size-3.5" />
-      </Button>
-      <div className="text-center text-[12px]">
-        <Link href="/forgot-password" className="text-t3 hover:text-ac">
-          {smtp ? 'Forgot your password?' : 'Can’t sign in?'}
-        </Link>
-      </div>
+        <Field label="Email">
+          <Input type="email" name="email" autoComplete="username" required autoFocus value={email} onChange={(e) => setEmail(e.target.value)} />
+        </Field>
+        <Field label="Password">
+          <Input type="password" name="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+        </Field>
+        <ErrorBox message={error ?? initialError} />
+        <Button type="submit" variant="primary" loading={busy} className="w-full">
+          Sign in <ArrowRight className="size-3.5" />
+        </Button>
+        <div className="text-center text-[12px]">
+          <Link href="/forgot-password" className="text-t3 hover:text-ac">
+            {smtp ? 'Forgot your password?' : 'Can’t sign in?'}
+          </Link>
+        </div>
         </>
       )}
     </form>

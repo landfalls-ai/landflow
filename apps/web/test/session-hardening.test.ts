@@ -22,6 +22,8 @@ const setupRoute = await import('@/app/api/auth/setup/route');
 const loginRoute = await import('@/app/api/auth/login/route');
 const meRoute = await import('@/app/api/auth/me/route');
 const statusRoute = await import('@/app/api/auth/status/route');
+const resetRoute = await import('@/app/api/auth/password/reset/route');
+const forgotRoute = await import('@/app/api/auth/password/forgot/route');
 
 beforeAll(() => auth.disableTestAuth());
 afterAll(() => {
@@ -83,6 +85,25 @@ describe('session hardening', () => {
     delete process.env.LANDFLOW_SESSION_IDLE_HOURS;
   });
 
+  it('idle sessions expire by default in production (72 h) when the variable is unset', async () => {
+    const previous = process.env.LANDFLOW_PROFILE;
+    process.env.LANDFLOW_PROFILE = 'production';
+    try {
+      const token = tokenOf(await signIn(OWNER.email, OWNER.password));
+      const back = (hours: number) => {
+        const row = authDb().get<Record<string, string>>('SELECT * FROM sessions WHERE id = ?', tokenHash(token))!;
+        authDb().upsert('sessions', { ...row, last_seen_at: new Date(Date.now() - hours * 3_600_000).toISOString() });
+      };
+      back(60);
+      expect(auth.sessionUser(token)).toBeDefined();
+      back(80);
+      expect(auth.sessionUser(token)).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.LANDFLOW_PROFILE;
+      else process.env.LANDFLOW_PROFILE = previous;
+    }
+  });
+
   it('refuses a cookie-authenticated change with no Origin and a cross-site Sec-Fetch-Site', () => {
     const attempt = (headers: Record<string, string>) => guardRequest(new Request(`${BASE}/api/workflows`, { method: 'POST', headers: { cookie: `landflow_session=${ownerSession}`, ...headers } }));
     const refused = attempt({ 'sec-fetch-site': 'cross-site' });
@@ -90,6 +111,8 @@ describe('session hardening', () => {
     if (!refused.ok) expect(refused.response.status).toBe(403);
     for (const site of ['same-origin', 'same-site', 'none']) expect(attempt({ 'sec-fetch-site': site }).ok, site).toBe(true);
     expect(attempt({}).ok).toBe(true);
+    const nullOrigin = guardRequest(new Request(`${BASE}/api/workflows`, { method: 'POST', headers: { cookie: `landflow_session=${ownerSession}`, origin: 'null' } }));
+    expect(nullOrigin.ok).toBe(false);
   });
 
   it('LANDFLOW_LOCAL_SIGN_IN=owner lets only the owner use a password; off lets no one', async () => {
@@ -107,5 +130,28 @@ describe('session hardening', () => {
     expect((await signIn(OWNER.email, 'wrong-password')).status).toBe(401);
     delete process.env.LANDFLOW_LOCAL_SIGN_IN;
     expect((await signIn('mia@example.com', 'member-password-1')).status).toBe(200);
+  });
+
+  it('password reset follows LANDFLOW_LOCAL_SIGN_IN: no session where the mode refuses the password', async () => {
+    const resetFor = (email: string, password: string) => {
+      const user = auth.findUserByEmail(email)!;
+      const { token } = auth.createResetToken(user);
+      return resetRoute.POST(post('/api/auth/password/reset', { token, password }));
+    };
+    process.env.LANDFLOW_LOCAL_SIGN_IN = 'off';
+    const off = await resetFor(OWNER.email, 'owner-password-3');
+    expect(off.status).toBe(403);
+    expect(off.headers.getSetCookie()).toHaveLength(0);
+    process.env.LANDFLOW_LOCAL_SIGN_IN = 'owner';
+    const member = await resetFor('mia@example.com', 'member-password-2');
+    expect(member.status).toBe(403);
+    expect(member.headers.getSetCookie()).toHaveLength(0);
+    const owner = await resetFor(OWNER.email, 'owner-password-3');
+    expect(owner.status).toBe(200);
+    expect(owner.headers.getSetCookie().some((c) => c.startsWith('landflow_session='))).toBe(true);
+    OWNER.password = 'owner-password-3';
+    delete process.env.LANDFLOW_LOCAL_SIGN_IN;
+    expect((await resetFor('mia@example.com', 'member-password-2')).status).toBe(200);
+    expect(forgotRoute.POST).toBeTypeOf('function');
   });
 });

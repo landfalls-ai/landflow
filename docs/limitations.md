@@ -139,4 +139,4 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 ## Sessions and sign-in (backend hardening, 2026-11)
 
-- Local accounts have no second factor (no TOTP or passkeys); `LANDFLOW_LOCAL_SIGN_IN=off` makes an instance SSO-only so the identity provider's MFA applies. Passwords have a fixed minimum of 8 characters and no breached-password check (local-only, no external calls). A password reset link still signs in when local sign-in is off.
+- Local accounts have no second factor (no TOTP or passkeys); `LANDFLOW_LOCAL_SIGN_IN=off` makes an instance SSO-only so the identity provider's MFA applies. Passwords have a fixed minimum of 8 characters and no breached-password check (local-only, no external calls). Password reset is refused for users the mode excludes; first-run setup and invite acceptance still sign in once with the password they set.

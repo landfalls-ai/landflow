@@ -1,12 +1,13 @@
 /**
  * The reset-password page's API (public): GET ?token= names the account a reset link is for (404 when invalid,
  * used or expired); POST { token, password } sets the new password, signs the user out everywhere else and signs
- * this browser in.
+ * this browser in. Refused (403) when LANDFLOW_LOCAL_SIGN_IN does not allow this user a password.
  */
 import { z } from 'zod';
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from '@/lib/shared/auth';
 import { clientIp, deleteUserSessions, findToken, formLimit, getUser, markTokenUsed, setPassword, signedInResponse } from '@/lib/server/auth';
 import { error, handler, json, parseBody } from '@/lib/server/http';
+import { localSignInAllowed } from '@/lib/server/auth/local-sign-in';
 import { recordAudit } from '@/lib/server/audit';
 
 export const dynamic = 'force-dynamic';
@@ -36,6 +37,8 @@ export const POST = handler(async (request: Request) => {
   const reset = findToken('reset', body.data.token);
   const existing = reset?.userId ? getUser(reset.userId) : undefined;
   if (!reset || !existing) return error(GONE, 404);
+  // LANDFLOW_LOCAL_SIGN_IN: a reset link must not be a way round it (it would mint a session with no identity-provider MFA).
+  if (!localSignInAllowed(existing)) return error('Password sign-in is turned off on this instance. Use single sign-on.', 403);
   // Always a reset, even from a browser that is signed in (as this user or another): auth.password_reset, below, is the event.
   const user = await setPassword(existing.id, body.data.password, 'reset');
   markTokenUsed(reset.id);
