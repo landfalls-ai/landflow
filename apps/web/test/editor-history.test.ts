@@ -17,6 +17,7 @@ const dataDir = mkdtempSync(join(tmpdir(), 'landflow-editor-history-'));
 Object.assign(process.env, { LANDFLOW_DATA_DIR: dataDir, LANDFLOW_REGISTRY_GRPC_PORT: 'off', LANDFLOW_SCAN_ON_START: 'false', LANDFLOW_PLUGINS: '' });
 
 const { useEditor } = await import('@/components/editor/store');
+const { workflowSchema } = await import('@/lib/server/schemas');
 
 const node = (id: string, name: string, x: number) => ({ id, name, type: 'core.set', typeVersion: 1, position: [x, 0] as [number, number], parameters: { value: 1 } });
 const workflow = (): Workflow => ({
@@ -198,5 +199,16 @@ describe('undo / redo of the name, tags and settings', () => {
     editor().rebase('v2');
     expect(editor().baseUpdatedAt).toBe('v2');
     expect(editor().storedMatchesSaved({ ...workflow(), name: 'Renamed elsewhere', updatedAt: 'v3' })).toBe(false);
+  });
+
+  it('matches the server\u2019s form of a draft saved in this tab (schema key order, stripped keys)', () => {
+    editor().updateNode('a', { notes: 'hello' });
+    editor().updateNode('a', { disabled: true });
+    editor().setSettings({ timeoutSeconds: 30, timezone: 'UTC' });
+    const draft = editor().toWorkflow();
+    const stored = workflowSchema.parse(JSON.parse(JSON.stringify(draft))) as Workflow;
+    editor().markSaved('v1', stored);
+    expect(editor().storedMatchesSaved({ ...stored, active: true, updatedAt: 'v2' })).toBe(true);
+    expect(editor().storedMatchesSaved({ ...stored, name: 'Changed elsewhere' })).toBe(false);
   });
 });

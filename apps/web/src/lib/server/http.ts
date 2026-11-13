@@ -69,6 +69,7 @@ function answer(caught: unknown, request: unknown, options: HandlerOptions): Res
     return NextResponse.json({ error: caught.message }, { status: 503, headers: { 'Retry-After': '30' } });
   }
   let http: HttpError;
+  // Only a 5xx is hidden: a 4xx HttpError is shown even with `expose: false`.
   if (known && (known.expose || known.status < 500)) {
     http = known;
   } else if (!known && caught instanceof ZodError) {

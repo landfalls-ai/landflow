@@ -741,7 +741,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
         saved = await put(stored.updatedAt);
       }
       const { workflow, policyWarnings, triggerAuthWarnings } = saved;
-      useEditor.getState().markSaved(workflow.updatedAt);
+      useEditor.getState().markSaved(workflow.updatedAt, workflow);
       toast.success(`Saved “${workflow.name}”`);
       // Nodes the governance policy doesn't allow: the save stands, publishing is refused and they fail when run.
       if (policyWarnings?.length) toast.warning(`${policyWarnings.length === 1 ? '1 node is' : `${policyWarnings.length} nodes are`} blocked by policy`, { description: policyWarnings.map((w) => `${w.nodeName}: ${w.message}`).join('\n') });
