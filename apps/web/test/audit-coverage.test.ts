@@ -26,6 +26,7 @@ const { enableTestAuth, TEST_OWNER } = await import('@/lib/server/auth/test-bypa
 const { queryEvents, countEvents } = await import('@/lib/server/audit/store');
 const { deniedReadDue, deniedReadUnderCap } = await import('@/lib/server/audit/http');
 const { store } = await import('@/lib/server/store');
+const { registry } = await import('@/lib/server/plugins/registry');
 const { agentStore } = await import('@/lib/server/agents/store');
 const { newSession } = await import('@/lib/server/agents/runtime');
 const { dataTables } = await import('@/lib/server/datatables');
@@ -304,6 +305,17 @@ describe('exports and tests', () => {
     const response = await credentialTestRoute.POST(req('POST', '/api/credentials/test', { type: 'core.httpBearerAuth', data: { token: SECRET } }));
     expect(response.status).toBe(200);
     expect(latest('credential.test')).toMatchObject({ target: { type: 'credential' }, details: { type: 'core.httpBearerAuth' } });
+    expect(allText()).not.toContain(SECRET);
+
+    // A plugin that throws once it has the secrets is recorded as a failure, without its message.
+    const spy = vi.spyOn(registry, 'testCredentials').mockRejectedValue(new TypeError(`boom ${SECRET}`));
+    try {
+      const thrown = await credentialTestRoute.POST(req('POST', '/api/credentials/test', { type: 'core.httpBearerAuth', data: { token: SECRET } }));
+      expect(thrown.status).toBe(500);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(latest('credential.test')).toMatchObject({ outcome: 'failure', details: { type: 'core.httpBearerAuth', ok: false, error: 'TypeError' } });
     expect(allText()).not.toContain(SECRET);
   });
 
