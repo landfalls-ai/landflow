@@ -598,12 +598,16 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Executions',
     id: 'listExecutions',
     summary: 'List executions',
-    description: 'Running executions first, then saved ones, newest first.',
+    description: 'Running executions first (on the first page only), then saved ones, newest first. Page with `cursor`: pass the previous page’s `nextCursor` until it is absent.',
     query: [
       { name: 'workflowId', description: 'Only this workflow’s', schema: { type: 'string' } },
-      { name: 'limit', description: 'At most this many (default 100)', schema: { type: 'integer', minimum: 1, default: 100 } },
+      { name: 'limit', description: 'At most this many saved executions per page (default 100, at most 500)', schema: { type: 'integer', minimum: 1, maximum: 500, default: 100 } },
+      { name: 'cursor', description: 'Opaque; the previous page’s nextCursor', schema: { type: 'string' } },
     ],
-    responses: { 200: reply('The executions', object({ executions: array(ref('ExecutionSummary')) }, ['executions'])) },
+    responses: {
+      200: reply('The executions', object({ executions: array(ref('ExecutionSummary')), nextCursor: { type: 'string' } }, ['executions'])),
+      400: invalid,
+    },
   });
   add('get', '/api/executions/{id}', {
     tag: 'Executions',
@@ -1852,7 +1856,7 @@ function paths(): Record<string, Record<string, Json>> {
     text('agentId', 'One agent'),
     text('nodeType', 'One node type'),
     text('signature', 'One failure signature'),
-    text('limit', 'At most this many rows'),
+    text('limit', 'At most this many rows (/api/usage: at most 1000; /api/usage/events: at most 5000)'),
   ];
   const proposal = { type: 'object', description: 'A Proposal (lib/shared/brain.ts): target, title, why, evidence, effect, actions (buttons a flow added), decision (the latest), ops or a draft or persona rules, risk, confidence, score, status' };
   add('get', '/api/usage', {

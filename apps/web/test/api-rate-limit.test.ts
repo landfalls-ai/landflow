@@ -55,4 +55,28 @@ describe('API rate limits', () => {
       }
     }
   });
+
+  it('are applied by handler(): 429 for a principal and for a public trigger, never for health', async () => {
+    const executions = await import('@/app/api/executions/route');
+    const webhook = await import('@/app/api/webhook/[...path]/route');
+    const health = await import('@/app/api/health/route');
+    const ctx = { params: Promise.resolve({ path: ['nothing-here'] }) };
+    process.env.LANDFLOW_RATE_LIMIT_API = '2';
+    const list = () => executions.GET(new Request('http://localhost/api/executions?limit=1'));
+    expect((await list()).status).toBe(200);
+    expect((await list()).status).toBe(200);
+    const refused = await list();
+    expect(refused.status).toBe(429);
+    expect(refused.headers.get('retry-after')).toBeTruthy();
+
+    process.env.LANDFLOW_RATE_LIMIT_PUBLIC = '1';
+    const hook = () => webhook.POST(new Request('http://localhost/api/webhook/nothing-here', { method: 'POST', headers: { 'x-forwarded-for': '10.9.9.9' } }), ctx);
+    expect((await hook()).status).not.toBe(429);
+    const limited = await hook();
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get('retry-after')).toBeTruthy();
+
+    process.env.LANDFLOW_RATE_LIMIT_API = '1';
+    for (let i = 0; i < 4; i += 1) expect((await health.GET(new Request('http://localhost/api/health'))).status).toBe(200);
+  });
 });

@@ -1,5 +1,5 @@
 /**
- * Rate limits for the API itself (sign-in forms have their own in auth/rate-limit.ts): a token bucket per signed-in
+ * Rate limits for the API itself (sign-in forms have their own in auth/rate-limit.ts): a counter per signed-in
  * principal for authenticated calls (LANDFLOW_RATE_LIMIT_API a minute) and one per client address and route group
  * for the public triggers (/api/webhook, /form, /chat, /mcp, /api/waiting: LANDFLOW_RATE_LIMIT_PUBLIC a minute), so
  * a public endpoint that starts model calls can't be driven for cost. Defaults: 600 and 120 in the production profile,
@@ -43,13 +43,18 @@ interface Window {
   count: number;
 }
 
-const local = () => singleton('api-rate-limit-windows', () => ({ windows: new Map<string, Window>() }));
+const local = () => singleton('api-rate-limit-windows', () => ({ windows: new Map<string, Window>(), swept: 0, warned: 0 }));
 
 /** Count one hit on `key` in the current window; the count after it. */
 async function hit(key: string, now: number): Promise<number> {
   const windowStart = now - (now % WINDOW_MS);
-  const { windows } = local();
-  if (windows.size > 10_000) for (const [k, w] of windows) if (w.start < windowStart) windows.delete(k);
+  const state = local();
+  const { windows } = state;
+  // Sweep stale windows at most once per window, so a flood of distinct keys can't make every hit scan the map.
+  if (windows.size > 10_000 && state.swept !== windowStart) {
+    state.swept = windowStart;
+    for (const [k, w] of windows) if (w.start < windowStart) windows.delete(k);
+  }
   const current = windows.get(key);
   const mine = current && current.start === windowStart ? current : { start: windowStart, count: 0 };
   mine.count += 1;
@@ -58,7 +63,10 @@ async function hit(key: string, now: number): Promise<number> {
   try {
     return await coordinator().incr(`rl:${key}:${windowStart}`, WINDOW_MS * 2);
   } catch (error) {
-    logger.warn('shared API rate limit unavailable, counting in this process', { error: (error as Error).message });
+    if (state.warned !== windowStart) {
+      state.warned = windowStart;
+      logger.warn('shared API rate limit unavailable, counting in this process', { error: (error as Error).message });
+    }
     return mine.count;
   }
 }
