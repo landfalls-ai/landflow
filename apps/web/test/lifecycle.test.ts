@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -93,7 +93,48 @@ describe('draining', () => {
   });
 });
 
+describe('shutdown reserve', () => {
+  it('a hanging runs step still lets a slow storage and telemetry step finish', async () => {
+    const lc = await fresh();
+    const done: string[] = [];
+    lc.onShutdown('runs', () => new Promise(() => {}), 'runs');
+    lc.onShutdown('db', async () => { await new Promise((r) => setTimeout(r, 50)); done.push('db'); }, 'storage');
+    lc.onShutdown('tel', async () => { await new Promise((r) => setTimeout(r, 50)); done.push('tel'); }, 'telemetry');
+    await lc.shutdown('test', { deadlineMs: 1000 });
+    expect(done).toEqual(['db', 'tel']);
+  });
+});
+
 describe('boot failure policy', () => {
+  it('a synchronous SQLite failure clears the cached promise too', async () => {
+    const saved = { ...process.env };
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    try {
+      const dir = mkdtempSync(join(tmpdir(), 'landflow-lifecycle-'));
+      writeFileSync(join(dir, 'landflow.db'), 'this is not a database'.repeat(200));
+      process.env.LANDFLOW_DATA_DIR = dir;
+      delete process.env.LANDFLOW_DB;
+      vi.resetModules();
+      const { forgetSingleton } = await import('../src/lib/server/singleton');
+      forgetSingleton('bootstrap');
+      forgetSingleton('database');
+      const { ensureBootstrapped } = await import('../src/lib/server/bootstrap');
+      const first = ensureBootstrapped();
+      await expect(first).rejects.toThrow();
+      await new Promise((r) => setTimeout(r, 5));
+      expect(ensureBootstrapped()).not.toBe(first);
+    } finally {
+      for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+      Object.assign(process.env, saved);
+      const { forgetSingleton } = await import('../src/lib/server/singleton');
+      forgetSingleton('bootstrap');
+      forgetSingleton('database');
+      forgetSingleton('lifecycle');
+      exit.mockRestore();
+      vi.resetModules();
+    }
+  });
+
   it('a required failure clears the cached promise so a later call retries', async () => {
     const saved = { ...process.env };
     const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);

@@ -245,13 +245,13 @@ async function start(config: ClusterConfig, options: StartClusterOptions): Promi
 
 const redact = (url: string) => url.replace(/\/\/([^@/]*)@/, '//***@');
 
-/** Stop queue mode in this process (tests, and a worker's shutdown after its jobs are handed back). */
 /** Stop every leader service (queue mode: the ones running; regular mode: all that were started), newest first. */
 export async function stopLeaderServices(): Promise<void> {
   for (const entry of [...services].reverse()) await stopService(entry);
   services.length = 0;
 }
 
+/** Stop queue mode in this process (tests, and a worker's shutdown after its jobs are handed back). */
 export async function stopCluster(): Promise<void> {
   const state = clusterState();
   if (!state.started) return;

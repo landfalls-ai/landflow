@@ -80,18 +80,23 @@ export function shutdown(reason: string, options: { deadlineMs?: number } = {}):
   if (s.shutdownPromise) return s.shutdownPromise;
   s.draining = true;
   const started = Date.now();
-  const deadline = started + (options.deadlineMs ?? shutdownDeadlineMs());
+  const total = options.deadlineMs ?? shutdownDeadlineMs();
+  const deadline = started + total;
+  // Reserve for the flush: intake, services and runs may use the budget only up to `softDeadline`; cluster, storage and
+  // telemetry always keep the last `reserve` (5 s, or a fifth of a short budget) so Postgres and telemetry still flush.
+  const softDeadline = deadline - Math.min(5_000, total * 0.2);
   logger.info('shutdown: starting', { reason, 'landflow.shutdown.deadline_ms': deadline - started });
   s.shutdownPromise = (async () => {
     for (const phase of SHUTDOWN_PHASES) {
       if (phase === 'intake') {
         // Next.js no longer closes its HTTP server in manual signal mode: in-flight requests are awaited here.
         logger.info('shutdown: intake/requests', { 'landflow.requests.in_flight': s.inFlight });
-        await waitForRequests(deadline - Date.now());
+        await waitForRequests(softDeadline - Date.now());
       }
       const steps = [...s.steps.values()].filter((step) => step.phase === phase);
+      const limit = phase === 'intake' || phase === 'services' || phase === 'runs' ? softDeadline : deadline;
       for (const step of steps) {
-        const left = deadline - Date.now();
+        const left = limit - Date.now();
         logger.info(`shutdown: ${phase}/${step.name}`);
         try {
           const outcome = await bounded(step.fn, Math.min(step.timeoutMs ?? left, left));
@@ -205,6 +210,8 @@ export interface ProcessHandlerOptions {
   signals?: boolean;
   /** Deadline of the signal-triggered shutdown (default LANDFLOW_SHUTDOWN_SECONDS). */
   deadlineMs?: number;
+  /** Shut down and exit 1 on an uncaught exception (default true; the dev host only logs and counts, as Next.js does). */
+  exitOnUncaught?: boolean;
 }
 
 /** Install the handlers once per process; never under vitest. */
@@ -217,6 +224,7 @@ export function installProcessHandlers(options: ProcessHandlerOptions): void {
   process.on('uncaughtException', (error) => {
     logger.error('uncaught exception', { error });
     processErrors('uncaught_exception');
+    if (options.exitOnUncaught === false) return;
     void shutdown('uncaughtException', { deadlineMs: 5_000 }).then(() => exit(1));
   });
   if (options.signals === false) return;

@@ -48,7 +48,7 @@ import { scheduler } from './scheduler';
 import { seedWorkflows } from './seed';
 import { forgetSingleton, singleton } from './singleton';
 import { waits } from './waits';
-import { countProcessError, markBootFailed, markBooted, onShutdown, setBootstrapper } from './lifecycle';
+import { countProcessError, isDraining, markBootFailed, markBooted, onShutdown, setBootstrapper } from './lifecycle';
 import { logger, observePluginsOnline } from './telemetry';
 
 /** Run an optional boot step: a throw or a rejection is logged and counted, and the boot goes on. */
@@ -64,7 +64,6 @@ async function optional(name: string, fn: () => unknown): Promise<void> {
 /** A required step failed: record it, let a later call retry, and under Next.js stop so the orchestrator restarts us. */
 function failBoot(error: unknown): never {
   markBootFailed(error);
-  forgetSingleton('bootstrap');
   logger.error('boot failed', { error });
   if (process.env.NEXT_RUNTIME === 'nodejs' && !process.env.VITEST) setImmediate(() => process.exit(1));
   throw error;
@@ -91,18 +90,32 @@ function registerShutdown() {
 
 export function ensureBootstrapped(): Promise<void> {
   setBootstrapper(ensureBootstrapped);
-  return singleton('bootstrap', () => boot());
+  const booting = singleton('bootstrap', () => boot());
+  // Forget the cached promise only once it is stored (a synchronous failure rejects before `singleton` stores it).
+  if (!cleanups.has(booting)) {
+    cleanups.add(booting);
+    booting.catch(() => {
+      if (singleton('bootstrap', () => booting) === booting) forgetSingleton('bootstrap');
+    });
+  }
+  return booting;
 }
+
+const cleanups = new WeakSet<Promise<void>>();
 
 async function boot(): Promise<void> {
   try {
-    // SQLite opens lazily on first use; Postgres mode loads its mirror here, before anything reads the store.
-    await openDatabase();
-    // Queue mode: Valkey, the relay and the leader election (refuses SQLite without LANDFLOW_QUEUE_ALLOW_SQLITE).
-    await startCluster();
+    await bootSteps();
   } catch (error) {
     failBoot(error);
   }
+}
+
+async function bootSteps(): Promise<void> {
+  // SQLite opens lazily on first use; Postgres mode loads its mirror here, before anything reads the store.
+  await openDatabase();
+  // Queue mode: Valkey, the relay and the leader election (refuses SQLite without LANDFLOW_QUEUE_ALLOW_SQLITE).
+  await startCluster();
   // LANDFLOW_OWNER_EMAIL / LANDFLOW_OWNER_PASSWORD: the owner, created at boot while there is no user (Docker, CI).
   await optional('owner from environment', bootstrapOwnerFromEnv);
   await optional('registry', () => {
@@ -170,9 +183,9 @@ async function boot(): Promise<void> {
   // Node plugins installed from a marketplace run as child processes of the host.
   await optional('node plugins', () => marketplace.startNodePlugins());
   // App webhook triggers: check the hooks of published workflows once plugins had a moment to announce; retry failures.
-  setTimeout(() => leaderService('app webhooks', () => appWebhooks.start(), () => appWebhooks.stop()), 3_000).unref?.();
+  setTimeout(() => { if (!isDraining()) leaderService('app webhooks', () => appWebhooks.start(), () => appWebhooks.stop()); }, 3_000).unref?.();
   // Email Trigger (IMAP) with Listen: IDLE keeps a connection per published trigger and polls on new mail.
-  setTimeout(() => leaderService('IMAP IDLE', () => imapIdle.start(), () => imapIdle.stop()), 3_000).unref?.();
+  setTimeout(() => { if (!isDraining()) leaderService('IMAP IDLE', () => imapIdle.start(), () => imapIdle.stop()); }, 3_000).unref?.();
   registerShutdown();
   markBooted();
   logger.info('host ready: registry, scheduler and discovery running');
