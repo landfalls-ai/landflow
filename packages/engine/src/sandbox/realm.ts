@@ -22,10 +22,11 @@ const bootstrap = new vm.Script(BOOTSTRAP_SOURCE, { filename: 'expression-bootst
  * (which exits on it). V8 decides what is a keyword use, not a hand-written lexer: with every whole-word `async` swapped
  * for a plain identifier of the same length (and `import` for `export`) a keyword use is a syntax error, while the word
  * in a string, template, comment, regex, property name or variable name still parses. Only a source that parses as
- * written and stops parsing after the swap is refused.
+ * written and stops parsing after the swap is refused. The swap for `async` has a Cyrillic letter (`a\u0455ync`), so
+ * it cannot collide with a variable an expression declares beside one named `async`.
  */
 function refuseAsync(code: string): void {
-  for (const [word, swap] of [['async', 'asynk'], ['import', 'export']] as const) {
+  for (const [word, swap] of [['async', 'a\u0455ync'], ['import', 'export']] as const) {
     const pattern = new RegExp(`(?<![\\p{ID_Continue}$\\\\\\u200c\\u200d])${word}(?![\\p{ID_Continue}$\\u200c\\u200d])`, 'gu');
     if (!pattern.test(code)) continue;
     try {

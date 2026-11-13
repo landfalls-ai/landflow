@@ -58,8 +58,8 @@ filesystem access causes tracing of the whole project".
 
 ## Conventions
 
-- **Migrations** live in `apps/web/src/lib/server/db/schema.ts`, in order; the highest so far is 2065. A new one
-  goes at the end with a version above the current highest. A migration numbered below one a database already has
+- **Migrations** live in `apps/web/src/lib/server/db/schema.ts`, in order. A new one goes at the end with a version
+  above the current highest (the last entry of `MIGRATIONS`). A migration numbered below one a database already has
   still runs there, but after the higher ones, while a fresh database runs it before them, so the order differs
   between databases and their schemas can diverge (`apps/web/test/migrations-order.test.ts` fails on one; only 1200
   and 1300, which shipped out of order, are grandfathered). One SQL text runs on SQLite and Postgres (TEXT, BIGINT,
@@ -168,8 +168,14 @@ deploy/scripts/smoke.sh code                       # the dockerised code runner:
 The host's suite runs its files in parallel, so `apps/web/vitest.config.ts` gives each test 20 s and each hook 30 s:
 the marketplace, cluster runtime and MCP file-approval tests timed out at the defaults under that load.
 
+The engine's suite runs on the machine's Node (22). `packages/engine/test/expression-sandbox.test.ts` walks the
+expression realm's globals for anything that returns a promise, so after a Node upgrade, or before relying on a newer
+Node than the `engines` field's minimum, run the engine's suite on that version too, for example
+`(cd packages/engine && npx -y node@26 node_modules/vitest/vitest.mjs run)`: a new global of that kind fails it there first.
+
 Route tests boot the way the host does: `apps/web/test/setup.ts` registers the bootstrapper, and the first `handler()`
-call boots through `whenReady()`. Once the boot is `ready`, `handler()` no longer reaches the `bootstrap` singleton, so a
+call boots through `whenReady()`, outside that request's audit and log context (what the boot records is not the
+request's). Once the boot is `ready`, `handler()` no longer reaches the `bootstrap` singleton, so a
 test that forgets that singleton to boot again must call `ensureBootstrapped()` itself; the next request won't reboot.
 
 `pnpm test` runs the TypeScript packages' suites in one go. After editing `packages/protocol/proto/landflow/plugin/v1/plugin.proto`, run
