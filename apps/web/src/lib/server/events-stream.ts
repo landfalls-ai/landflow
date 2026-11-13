@@ -76,6 +76,7 @@ export function eventStream(request: Request, options: EventStreamOptions = {}):
       };
     },
     {
+      route: '/api/events',
       greeting: true,
       retryMs: 3000,
       heartbeatMs: options.heartbeatMs,

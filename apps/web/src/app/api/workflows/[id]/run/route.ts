@@ -156,6 +156,6 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
         close();
       }
     },
-    { headers: traceparentHeader(runContext) },
+    { route: '/api/workflows/:id/run', headers: traceparentHeader(runContext) },
   );
 });

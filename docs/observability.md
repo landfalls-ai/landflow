@@ -241,7 +241,7 @@ histograms in **milliseconds** with buckets `1, 5, 10, 25, 50, 100, 250, 500, 10
 | `landflow.db.query.duration` | histogram (ms) | `db.operation` (`select`/`insert`/`upsert`/`delete`/`direct`); SQL text is never a label. Buckets from 0.1 ms. Every `all`/`get`/write of the store (SQLite, and Postgres mode's in-memory copy) and every Postgres `direct()` call. Slow ones also get a `db.query` span (§4). The Databases plugin has a metric of the same name with its own attributes; they differ by `service.name` |
 | `landflow.auth.sign_in_failures` | counter | none: wrong password or unknown user |
 | `landflow.auth.limited` | counter | `landflow.limiter` (`email`, `ip`, `form`): attempts a sign-in or form rate limiter refused |
-| `landflow.sse.connections` | up-down counter | `http.route` (ids in the path become `:id`): open Server-Sent Events streams |
+| `landflow.sse.connections` | up-down counter | `http.route` (the route template, such as `/api/workflows/:id/run`; never a request path, so no ids; `other` for a stream that names no route): open Server-Sent Events streams |
 
 **Breaking change for dashboards:** `landflow.workflow.id` is no longer a label on `landflow.schedule.lag` (a
 histogram), `landflow.trigger.fires`, `landflow.webhook.requests` and `landflow.runtime.events`: one series per

@@ -60,6 +60,6 @@ export const POST = handler(async (request: Request) => {
         close();
       }
     },
-    { headers: traceparentHeader() },
+    { route: '/api/assistant/agent', headers: traceparentHeader() },
   );
 });

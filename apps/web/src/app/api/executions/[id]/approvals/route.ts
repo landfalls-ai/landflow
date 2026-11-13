@@ -83,5 +83,5 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
     } finally {
       close();
     }
-  });
+  }, { route: '/api/executions/:id/approvals' });
 });

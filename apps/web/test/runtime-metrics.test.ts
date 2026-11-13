@@ -126,7 +126,7 @@ describe('security and saturation counters', () => {
 
   it('counts open SSE streams per route and drops them when a stream closes', async () => {
     const controller = new AbortController();
-    const response = sseResponse(new Request('http://x.test/api/executions/ex_123/stream', { signal: controller.signal }), () => {}, { heartbeatMs: 0 });
+    const response = sseResponse(new Request('http://x.test/api/executions/ex_123/stream', { signal: controller.signal }), () => {}, { heartbeatMs: 0, route: '/api/executions/:id/stream' });
     const open = await points('landflow.sse.connections');
     expect(open.find((point) => point.attributes['http.route'] === '/api/executions/:id/stream')?.value).toBe(1);
     controller.abort();

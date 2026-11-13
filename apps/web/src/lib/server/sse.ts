@@ -36,7 +36,7 @@ export interface SseOptions {
   retryMs?: number;
   /** A first comment so proxies flush the headers at once. */
   greeting?: boolean;
-  /** The `http.route` label of landflow.sse.connections; default: the request path with ids replaced by `:id`. */
+  /** The `http.route` label of landflow.sse.connections: the route template, such as `/api/workflows/:id/run`; default `other`. */
   route?: string;
   /** Extra response headers (the traceparent). */
   headers?: Record<string, string>;
@@ -52,14 +52,12 @@ export const DEFAULT_STALL_MS = 10_000;
 /** Queued bytes that still count as "nothing queued": the retry hint, greeting and a few heartbeats. */
 const CONTROL_SLACK_BYTES = 256;
 
-/** A request path as a metric label: segments that look like ids (ids, uuids, anything with a digit) become `:id`. */
-export function routeLabel(request: Request): string {
-  try {
-    return new URL(request.url).pathname.split('/').map((part) => (/\d/.test(part) || part.length > 24 ? ':id' : part)).join('/').slice(0, 80);
-  } catch {
-    return 'unknown';
-  }
-}
+/**
+ * The `http.route` label when a caller passes none. A fixed word, never the request path: ids such as `wf_AbCdEfGhIjKl`
+ * have no digit in about one in six, and no path heuristic tells them from a route word, so each would add a series
+ * that lives as long as the process. Every streaming route passes its route template instead.
+ */
+export const UNNAMED_ROUTE = 'other';
 
 export function sseResponse(request: Request, start: SseStart, options: SseOptions = {}): Response {
   const { maxBufferedBytes = DEFAULT_MAX_BUFFERED_BYTES, heartbeatMs = 15_000, retryMs, greeting = false } = options;
@@ -74,7 +72,7 @@ export function sseResponse(request: Request, start: SseStart, options: SseOptio
   let closed = false;
   let heartbeat: NodeJS.Timeout | undefined;
   let cleanup: (() => void) | undefined;
-  const route = options.route ?? routeLabel(request);
+  const route = options.route ?? UNNAMED_ROUTE;
   let counted = false;
 
   const finish = () => {
