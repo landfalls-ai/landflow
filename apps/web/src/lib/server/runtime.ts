@@ -30,7 +30,7 @@ import { closeDatabase, openDatabase } from './db';
 import { startOnlineEvaluations } from './evaluations/online';
 import { evaluationSchedules } from './evaluations/schedule';
 import { imapIdle } from './imap-idle';
-import { countProcessError, isDraining, markBootFailed, markBooted, onShutdown, type ShutdownPhase } from './lifecycle';
+import { countProcessError, isDraining, markBootFailed, markBooted, onShutdown, shutdownDeadlineMs, type ShutdownPhase } from './lifecycle';
 import { marketplace } from './marketplace/service';
 import { mcpGatewaySync } from './mcp/gateway-sync';
 import { triggerSubscriptionSweeper } from './mcp/triggers';
@@ -205,9 +205,13 @@ function startOne(spec: ServiceSpec): void {
   else void optional(spec.name, spec.start);
 }
 
-/** Remaining waits for local runs at shutdown: runs still in flight are recovered from their checkpoints at the next boot. */
+/**
+ * Remaining waits for local runs at shutdown: runs still in flight are recovered from their checkpoints at the next
+ * boot. The poll ends at the shutdown deadline and never keeps the process alive, so an abandoned step stops polling.
+ */
 async function waitForLocalRuns(): Promise<void> {
-  while (localExecutions().length > 0) await new Promise((resolve) => setTimeout(resolve, 200));
+  const until = Date.now() + shutdownDeadlineMs();
+  while (localExecutions().length > 0 && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 200).unref?.());
 }
 
 function registerShutdown(role: Role, specs: ServiceSpec[]): void {
@@ -235,17 +239,22 @@ async function bootSteps(role: Role): Promise<void> {
     else if (spec.required) await spec.start();
     else if (spec.leader) startOne(spec);
     else await optional(spec.name, spec.start);
+    // Shutdown steps go in as soon as the database is open, not at the end: a SIGTERM while a later step waits (plugin
+    // seeds that don't answer) still flushes Postgres and releases the lease. Every step is safe before its service started.
+    if (spec.name === 'database') registerShutdown(role, specs);
   }
-  registerShutdown(role, specs);
   markBooted();
   logger.info(role === 'main' ? 'host ready: registry, scheduler and discovery running' : 'runtime ready', { role });
 }
 
-/** A required step failed: record it, let a later call retry, and under Next.js stop so the orchestrator restarts us. */
+/**
+ * A required step failed: record it and let a later call retry. Under `next start` and the image (NODE_ENV=production)
+ * the process also exits so the orchestrator restarts it; `next dev` keeps running and retries on the next request.
+ */
 function failBoot(error: unknown): never {
   markBootFailed(error);
   logger.error('boot failed', { error });
-  if (process.env.NEXT_RUNTIME === 'nodejs' && !process.env.VITEST) setImmediate(() => process.exit(1));
+  if (process.env.NEXT_RUNTIME === 'nodejs' && process.env.NODE_ENV === 'production' && !process.env.VITEST) setImmediate(() => process.exit(1));
   throw error;
 }
 

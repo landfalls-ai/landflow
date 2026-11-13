@@ -71,6 +71,18 @@ describe('shutdown registry', () => {
     expect(b).toHaveBeenCalledTimes(1);
   });
 
+  it('waits for requests in flight at most 60% of the soft budget, leaving the rest to the services', async () => {
+    const lc = await fresh();
+    lc.trackRequest(() => new Promise<void>(() => {}));
+    let servicesAt = 0;
+    lc.onShutdown('svc', () => void (servicesAt = Date.now()), 'services');
+    const started = Date.now();
+    // 1 s budget: the reserve is 200 ms, the soft budget 800 ms, the intake wait at most 480 ms.
+    await lc.shutdown('test', { deadlineMs: 1000 });
+    expect(servicesAt - started).toBeGreaterThanOrEqual(400);
+    expect(servicesAt - started).toBeLessThan(700);
+  });
+
   it('waits for requests in flight in the intake phase', async () => {
     const lc = await fresh();
     let release!: () => void;
@@ -209,6 +221,31 @@ describe('process handlers', () => {
     const spy = vi.spyOn(logger, 'error').mockImplementation(() => {});
     expect(() => lc.onUnhandledRejection(new Error('nope'))).not.toThrow();
     expect(spy).toHaveBeenCalledWith('unhandled rejection', expect.objectContaining({ error: expect.any(Error) }));
+    spy.mockRestore();
+  });
+
+  it('an uncaught exception only logs and counts when exitOnUncaught is false', async () => {
+    const lc = await fresh();
+    const { logger } = await import('../src/lib/server/telemetry/logger');
+    const spy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+    const exit = vi.fn();
+    await lc.onUncaughtException(new Error('boom'), { exitOnUncaught: false, exit });
+    expect(spy).toHaveBeenCalledWith('uncaught exception', expect.objectContaining({ error: expect.any(Error) }));
+    expect(exit).not.toHaveBeenCalled();
+    expect(lc.isDraining()).toBe(false);
+    spy.mockRestore();
+  });
+
+  it('an uncaught exception shuts down and exits 1 by default', async () => {
+    const lc = await fresh();
+    const { logger } = await import('../src/lib/server/telemetry/logger');
+    const spy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+    const stopped: string[] = [];
+    lc.onShutdown('db', () => void stopped.push('db'), 'storage');
+    const exit = vi.fn();
+    await lc.onUncaughtException(new Error('boom'), { exit });
+    expect(stopped).toEqual(['db']);
+    expect(exit).toHaveBeenCalledWith(1);
     spy.mockRestore();
   });
 

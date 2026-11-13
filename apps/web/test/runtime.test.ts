@@ -98,6 +98,38 @@ describe('boot check', () => {
     const { bootState } = await import('@/lib/server/lifecycle');
     expect(bootState()).toBe('ready');
   });
+
+  it('registers the shutdown steps as soon as the database is open, before the later services start', async () => {
+    Object.assign(process.env, {
+      LANDFLOW_PROFILE: 'development',
+      LANDFLOW_DATA_DIR: mkdtempSync(join(tmpdir(), 'landflow-runtime-')),
+      LANDFLOW_REGISTRY_GRPC_PORT: 'off',
+      LANDFLOW_SCAN_ON_START: 'false',
+      LANDFLOW_PLUGINS: '',
+    });
+    vi.resetModules();
+    // The previous test's boot is cached process-wide: forget it (and the lifecycle's steps) so this one boots again.
+    const { forgetSingleton } = await import('@/lib/server/singleton');
+    forgetSingleton('bootstrap');
+    forgetSingleton('lifecycle');
+    const { SERVICES, startRuntime } = await import('@/lib/server/runtime');
+    const { setBootstrapper, shutdownSteps } = await import('@/lib/server/lifecycle');
+    setBootstrapper(() => startRuntime({ role: 'main' }));
+    // A SIGTERM while the registry starts (or plugin seeds hang) must still flush the database and leave the cluster.
+    const registry = SERVICES.find((spec) => spec.name === 'registry')!;
+    const start = registry.start;
+    let seen: string[] = [];
+    registry.start = () => {
+      seen = shutdownSteps();
+      return start();
+    };
+    try {
+      await startRuntime({ role: 'main' });
+    } finally {
+      registry.start = start;
+    }
+    expect(seen).toEqual(expect.arrayContaining(['database', 'cluster', 'telemetry', 'local runs']));
+  });
 });
 
 describe('routes wait on readiness', () => {

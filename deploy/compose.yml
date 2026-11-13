@@ -47,6 +47,8 @@ services:
       dockerfile: deploy/docker/host.Dockerfile
     restart: unless-stopped
     init: true
+    # Longer than LANDFLOW_SHUTDOWN_SECONDS (25): Docker's default 10 s would kill the host before it flushes.
+    stop_grace_period: 30s
     ports:
       - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_HOST_PORT:-53000}:3000"
       # The MCP gateway sidecar below shares this container's network namespace, so its /mcp listener is published here.

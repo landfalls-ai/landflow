@@ -44,7 +44,7 @@ lastError?, blockedSeq? }` (SQLite: always ok), and the metrics `landflow.db.wri
    that is blocked and remove it after that boot.
 
 A background writer that lets the error escape from a timer or event callback *synchronously* is an uncaught
-exception, and in production that stops the process (see [Stopping the host](../deployment.md#stopping-the-host)). On
+exception, and where `NODE_ENV=production` that stops the process (see [Stopping the host](../deployment.md#stopping-the-host)). On
 restart the replay meets the same batch and the boot fails until it applies or `LANDFLOW_PG_SKIP_BATCH` is set, so a
 blocked store can turn into a restart loop. The timers checked so far are safe (maintenance uses `attempt()`; the
 scheduler, waits, retries, audit and cluster timers call async functions, whose rejection is logged and counted, not

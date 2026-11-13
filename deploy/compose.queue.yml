@@ -104,6 +104,8 @@ x-worker-health: &worker-health
 services:
   main-1:
     <<: *host
+    # Longer than LANDFLOW_SHUTDOWN_SECONDS (25): Docker's default 10 s would kill the main before it flushes.
+    stop_grace_period: 30s
     build:
       context: ..
       dockerfile: deploy/docker/host.Dockerfile
@@ -119,6 +121,8 @@ services:
 
   main-2:
     <<: *host
+    # Longer than LANDFLOW_SHUTDOWN_SECONDS (25): Docker's default 10 s would kill the main before it flushes.
+    stop_grace_period: 30s
     ports:
       - "127.0.0.1:${LANDFLOW_QUEUE_MAIN2_PORT:-53082}:3000"
     environment:
@@ -172,7 +176,8 @@ services:
       LANDFLOW_WORKER_CONCURRENCY: ${LANDFLOW_WORKER_CONCURRENCY:-10}
       OTEL_SERVICE_NAME: landflow-worker
     healthcheck: *worker-health
-    stop_grace_period: 40s
+    # Past the worker's own deadline (LANDFLOW_WORKER_SHUTDOWN_SECONDS + 10 s = 40 s), so SIGKILL never lands mid-close.
+    stop_grace_period: 45s
     depends_on:
       main-1:
         condition: service_healthy
@@ -188,7 +193,8 @@ services:
       LANDFLOW_WORKER_CONCURRENCY: ${LANDFLOW_WORKER_CONCURRENCY:-10}
       OTEL_SERVICE_NAME: landflow-worker
     healthcheck: *worker-health
-    stop_grace_period: 40s
+    # Past the worker's own deadline (LANDFLOW_WORKER_SHUTDOWN_SECONDS + 10 s = 40 s), so SIGKILL never lands mid-close.
+    stop_grace_period: 45s
     depends_on:
       main-1:
         condition: service_healthy
