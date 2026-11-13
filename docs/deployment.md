@@ -97,7 +97,10 @@ reports an error for an unset `LANDFLOW_PUBLIC_URL`, for any secret variable (`L
 `LANDFLOW_MCP_GATEWAY_SECRET`, `LANDFLOW_OWNER_PASSWORD`, the S3 keys, …) holding a development value (anything with
 `dev-only`, or a known default), and for an unset `LANDFLOW_REGISTRY_SECRET` unless `LANDFLOW_REGISTRY_OPEN=true`; an unset
 `LANDFLOW_ENCRYPTION_KEY` or `LANDFLOW_BINARY_SECRET` is a warning. Messages name the variable, never the value. The check is
-a pure function for now; a later change calls it at boot.
+a pure function; the host calls it at boot (`lib/server/runtime.ts`, the first required step, for the main and the worker).
+In the production profile any error stops the boot with a `ConfigError` that lists every problem (the process exits non-zero
+and the pod restarts); in development the problems are logged as warnings. Either way the host logs one `effective configuration`
+line at info with every `LANDFLOW_*`, `OTEL_*` and `DATABASE_URL` variable that is set (secrets as `[set]`, URL passwords redacted).
 
 The compose stacks and the Kubernetes base set `LANDFLOW_PROFILE=development` because they run the development secrets in
 `deploy/.env.example` while their image says `NODE_ENV=production`. A real deployment leaves it unset (or `production`) and

@@ -1246,6 +1246,7 @@ workbench in place of a page of cards, keeping Spotlight.
 - **P03** (C16 step 1, O4): Postgres mode never drops a write batch. A batch Postgres rejects five times blocks the store (writes refused with `StoreUnavailableError`, retried, `LANDFLOW_PG_SKIP_BATCH` to set it aside), the spool is one fsynced descriptor, and `writeHealth()` plus five metrics report the queue ([postgres-write-queue.md](features/postgres-write-queue.md)).
 - **P04, execution retention in SQL off the save path (C17).** `pruneExecutions` selects ids by column in chunks and a finished run triggers it only every `LANDFLOW_RETENTION_EVERY` runs.
 - **P05, SCIM audit, Stop all for admins, project scoping for AI usage and files** (S2, S4, S12 part): SCIM changes and rejected tokens are audit events; stop-all is admin-only; members' AI usage and file reads stop at their projects.
+- **P06, one runtime for main and worker; routes wait on readiness; configuration checked at boot** (C9, C8, C6, S15; contributes to C5): `lib/server/runtime.ts` holds one service table for both roles, `bootstrap.ts` is a thin compatibility module, the production check runs first at boot, and `handler()` / `scimRoute()` no longer import the composition root (static closure of `http.ts`: 401 files before, 72 after).
 
 ## Planned next
 
