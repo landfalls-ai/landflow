@@ -1369,6 +1369,11 @@ workbench in place of a page of cards, keeping Spotlight.
     deployment with in-cluster gateways and remote MCP, OIDC/SAML, alert and SIEM endpoints; a streaming MCP transport
     and a multipart or streamed HTTP Request body through the undici path with blocking on; the expression bench on a
     quiet machine (`LANDFLOW_BENCH=1`) and a large real workflow's expression cost.
+- **P25, an async read seam for run data** (C16 steps 2-3, first half; wave 5): `db/reads.ts` (`readExecutionData`,
+  `readExecutionEvents`, `readRows`), `store.loadExecution` / `executionsMentioningAsync` and async journal readers, with
+  every caller that may read a finished run moved onto them (execution routes, run search, lines, compare, measures,
+  needs-you, OTLP export, MCP tools, Slack, approval links, the brain, the binary sweep). `store.getExecution` stays for
+  runs in flight, and a source scan guards it. No behaviour change; P26 serves the seam from Postgres.
 
 ## Planned next
 
