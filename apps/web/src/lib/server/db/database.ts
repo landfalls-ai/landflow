@@ -78,6 +78,10 @@ const COLUMN = /^[a-z_][a-z0-9_]*$/;
  * `landflow.db.query.duration` histogram, labelled by operation only. A `db.query` span is opened after the fact, and
  * only for calls at or over LANDFLOW_DB_SLOW_MS (default 50), named by the statement with its literals stripped:
  * the first 60 characters of the SQL with string and number literals stripped and whitespace collapsed.
+ *
+ * Only single-quoted strings (blob literals `x'…'` too, as `x?`) and decimal numbers are stripped: double-quoted text (an
+ * identifier in SQL, or a string where a dialect allows it) and hex numbers such as `0x1f` pass through whole. That is
+ * enough for the store, whose SQL takes its values as parameters; do not rely on it to hide a value written into the SQL.
  */
 export function statementName(sql: string): string {
   return sql
