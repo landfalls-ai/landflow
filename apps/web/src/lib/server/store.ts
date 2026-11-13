@@ -59,7 +59,6 @@ export interface StoredCheckpoint {
   baseOutputs?: Record<string, NodeItem[][]>;
 }
 
-/** Statuses that were never shown in the history before they finished: left out of stats(). */
 /** What a finished execution tells its listeners (the record as saved, its summary, and its workflow if known). */
 export interface FinishedExecution {
   record: ExecutionRecord;
@@ -84,6 +83,7 @@ export function onExecutionFinished(listener: FinishedListener): () => void {
   };
 }
 
+/** Statuses that were never shown in the history before they finished: left out of stats(). */
 const IN_FLIGHT = new Set<ExecutionState>(['running', 'queued']);
 
 class Store {
@@ -192,7 +192,8 @@ class Store {
     const summary = summarize(record);
     // The store does not call up into features: insights, the usage ledger and retention subscribe at boot
     // (execution-reactions.ts), in registration order.
-    for (const listener of [...finishedListeners()]) listener({ record, summary, workflow: record.workflow ?? this.getWorkflow(record.workflowId) });
+    const finished: FinishedExecution = { record, summary, workflow: record.workflow ?? this.getWorkflow(record.workflowId) };
+    for (const listener of [...finishedListeners()]) listener(finished);
   }
 
   /** Change fields of a saved execution (links between retries, a scheduled retry) without counting it again. */

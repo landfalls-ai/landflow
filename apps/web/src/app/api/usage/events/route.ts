@@ -1,6 +1,6 @@
 /** GET /api/usage/events — the ledger's events, newest first, with the same filters as /api/usage and `limit` (max 5,000). */
-import { scopeForActor } from '@/lib/server/brain/scope';
 import { z } from 'zod';
+import { scopeForActor } from '@/lib/server/brain/scope';
 import { handler, json, parseQuery } from '@/lib/server/http';
 import { limitParam } from '@/lib/server/pagination';
 import { routeActor } from '@/lib/server/projects/http';

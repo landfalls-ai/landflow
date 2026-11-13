@@ -6,7 +6,7 @@
  * file (the format older versions used; tests use it too).
  *
  * Retention: execution-reactions.ts prunes (retentionTick) every LANDFLOW_RETENTION_EVERY
- * finished saves (retentionTick), the leader prunes at boot and hourly, and
+ * finished saves, the leader prunes at boot and hourly, and
  * Settings has "Prune now". Only finished executions (success, error,
  * canceled) are ever removed; running and waiting ones stay.
  */

@@ -24,6 +24,8 @@ function sources(dir: string): string[] {
   });
 }
 
+// Only apps/web/src is scanned: a host-side read inside packages/* (packages/transports/src/claim.ts reads the claim
+// store's variables) is not caught here, so catalogue such a variable by hand when you add one (readBy: 'both').
 const files = sources(SRC).map((path) => ({ path, rel: relative(SRC, path).split(sep).join('/'), text: readFileSync(path, 'utf8') }));
 
 /** `process.env.NAME`, `process.env['NAME']`, `env.NAME` (a readers' `env` parameter) and a bare quoted LANDFLOW_/OTEL_ name. */
@@ -68,9 +70,6 @@ describe('configuration catalog', () => {
     expect(r.errors.join()).toContain('LANDFLOW_PUBLIC_URL');
   });
 
-  // The count is a ratchet: new reads go through lib/server/config (envFlag, envNumber, envString, ...), so a variable is
-  // parsed one way and its default lives in one place. If this fails after you added a read, use a helper from
-  // lib/server/config instead; if it fails because you removed one, lower MAX_FILES_READING_PROCESS_ENV.
   it('refuses development values for every secret the host reads, the claim store keys included', () => {
     for (const name of ['LANDFLOW_CLAIM_SECRET_ACCESS_KEY', 'LANDFLOW_S3_SECRET_ACCESS_KEY', 'LANDFLOW_REGISTRY_SECRET', 'LANDFLOW_CODE_RUNNER_SECRET']) {
       expect(SECRET_VARIABLES, name).toContain(name);
@@ -79,6 +78,9 @@ describe('configuration catalog', () => {
     expect(r.errors.join()).toContain('LANDFLOW_CLAIM_SECRET_ACCESS_KEY');
   });
 
+  // The count is a ratchet: new reads go through lib/server/config (envFlag, envNumber, envString, ...), so a variable is
+  // parsed one way and its default lives in one place. If this fails after you added a read, use a helper from
+  // lib/server/config instead; if it fails because you removed one, lower MAX_FILES_READING_PROCESS_ENV.
   it('does not let more files read process.env outside lib/server/config', () => {
     const readers = files.filter((f) => !f.path.startsWith(CONFIG_DIR + sep) && /\bprocess\.env\b/.test(f.text)).map((f) => f.rel);
     expect(readers.length, `files reading process.env directly:\n${readers.join('\n')}`).toBeLessThanOrEqual(MAX_FILES_READING_PROCESS_ENV);
