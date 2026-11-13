@@ -17,107 +17,22 @@ const EVAL_TIMEOUT_MS = 250;
 const scriptCache = new Map<string, vm.Script>();
 const bootstrap = new vm.Script(BOOTSTRAP_SOURCE, { filename: 'expression-bootstrap.js' });
 
-/** Words after which a `/` starts a regex literal, not a division. */
-const REGEX_AFTER = new Set(['return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw', 'case', 'do', 'else', 'yield', 'await']);
-const ID_CHAR = /[\p{ID_Continue}$\u200c\u200d]/u;
-
-type Token = { id: boolean; value: string };
-
-/** The identifiers and punctuation of an expression, with strings, template text, comments and regex literals skipped. */
-function tokens(code: string): Token[] {
-  const out: Token[] = [];
-  const braces: ('b' | 't')[] = []; // '{' of a block or object, or the '${' of a template
-  let i = 0;
-  const template = () => {
-    // inside template text, from just after a backtick or a closing `}` of a `${ }`
-    while (i < code.length) {
-      const c = code[i];
-      if (c === '\\') i += 2;
-      else if (c === '`') {
-        i++;
-        out.push({ id: false, value: '`' });
-        return;
-      } else if (c === '$' && code[i + 1] === '{') {
-        i += 2;
-        braces.push('t');
-        return;
-      } else i++;
-    }
-  };
-  while (i < code.length) {
-    const c = code[i];
-    if (/\s/.test(c)) i++;
-    else if (c === '/' && code[i + 1] === '/') {
-      while (i < code.length && code[i] !== '\n' && code[i] !== '\r' && code[i] !== '\u2028' && code[i] !== '\u2029') i++;
-    } else if (c === '/' && code[i + 1] === '*') {
-      const end = code.indexOf('*/', i + 2);
-      i = end < 0 ? code.length : end + 2;
-    } else if (c === '"' || c === "'") {
-      i++;
-      while (i < code.length && code[i] !== c) i += code[i] === '\\' ? 2 : 1;
-      i++;
-      out.push({ id: false, value: 'str' });
-    } else if (c === '`') {
-      i++;
-      template();
-    } else if (c === '/') {
-      const prev = out[out.length - 1];
-      const isRegex = !prev || (prev.id ? REGEX_AFTER.has(prev.value) : !(prev.value === ')' || prev.value === ']' || prev.value === '}' || prev.value === '`' || prev.value === 'str'));
-      if (isRegex) {
-        i++;
-        let inClass = false;
-        while (i < code.length && (inClass || code[i] !== '/') && code[i] !== '\n') {
-          if (code[i] === '\\') i++;
-          else if (code[i] === '[') inClass = true;
-          else if (code[i] === ']') inClass = false;
-          i++;
-        }
-        i++;
-        while (i < code.length && ID_CHAR.test(code[i])) i++; // flags
-        out.push({ id: false, value: 're' });
-      } else {
-        i++;
-        out.push({ id: false, value: '/' });
-      }
-    } else if (ID_CHAR.test(c)) {
-      const start = i;
-      while (i < code.length && ID_CHAR.test(code[i])) i++;
-      out.push({ id: true, value: code.slice(start, i) });
-    } else if (c === '.' && code.startsWith('...', i)) {
-      i += 3;
-      out.push({ id: false, value: '...' });
-    } else {
-      i++;
-      if (c === '{') braces.push('b');
-      else if (c === '}') {
-        if (braces.pop() === 't') {
-          template();
-          continue;
-        }
-      }
-      out.push({ id: false, value: c });
-    }
-  }
-  return out;
-}
-
 /**
  * `async` and `import(` need a Promise, and a rejected one in any context is an unhandled rejection of the host process
- * (which exits on it). Only real keyword uses are refused: the words inside strings, templates, comments, regexes, as
- * object keys (`{ async: 1 }`) and after a member `.` (`$json.async`) are ordinary text and pass. The spread
- * `...async () => {}` is not a member access.
+ * (which exits on it). V8 decides what is a keyword use, not a hand-written lexer: with every whole-word `async` swapped
+ * for a plain identifier of the same length (and `import` for `export`) a keyword use is a syntax error, while the word
+ * in a string, template, comment, regex, property name or variable name still parses. Only a source that parses as
+ * written and stops parsing after the swap is refused.
  */
 function refuseAsync(code: string): void {
-  const list = tokens(code);
-  for (let i = 0; i < list.length; i++) {
-    const token = list[i];
-    if (!token.id || (token.value !== 'async' && token.value !== 'import')) continue;
-    const prev = list[i - 1];
-    if (prev && !prev.id && prev.value === '.') continue;
-    const next = list[i + 1];
-    const keyword =
-      token.value === 'import' ? next?.value === '(' : !!next && (next.id || next.value === '(' || next.value === '[' || next.value === '*' || next.value === 'str');
-    if (keyword) throw new Error(`"${token.value}" is not available in expressions (async functions, await and import() are not supported)`);
+  for (const [word, swap] of [['async', 'asynk'], ['import', 'export']] as const) {
+    const pattern = new RegExp(`(?<![\\p{ID_Continue}$\\\\\\u200c\\u200d])${word}(?![\\p{ID_Continue}$\\u200c\\u200d])`, 'gu');
+    if (!pattern.test(code)) continue;
+    try {
+      new vm.Script(`(\n${code.replace(pattern, swap)}\n)`);
+    } catch {
+      throw new Error(`"${word}" is not available in expressions (async functions, await and import() are not supported)`);
+    }
   }
 }
 
@@ -125,8 +40,8 @@ function refuseAsync(code: string): void {
 function compile(code: string): vm.Script {
   let script = scriptCache.get(code);
   if (!script) {
-    refuseAsync(code);
     new vm.Script(`(\n${code}\n)`); // a syntax error here is the user's; this script is never run
+    refuseAsync(code);
     script = new vm.Script(`__eval(() => { return (\n${code}\n); })`, { filename: 'expression.js' });
     if (scriptCache.size > 2000) scriptCache.clear();
     scriptCache.set(code, script);

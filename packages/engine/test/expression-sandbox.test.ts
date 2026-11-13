@@ -86,6 +86,14 @@ describe('sealed realm', () => {
         "Array.fromAsync([1])",
         "Atomics.waitAsync(new Int32Array(new SharedArrayBuffer(8)), 0, 0, 1).value.then(() => { throw 1 })",
         "Object.getPrototypeOf(Atomics).constructor",
+        "(a => a++ /(async()=>{throw 'B1'})()/ 1)(1)",
+        "(()=>{ var a = 1; a-- /(async()=>{throw 'B8'})()/ 1; return 1})()",
+        "1. /(async()=>{throw 'B2'})()/ 1",
+        "(()=>{ {} /'/; (async()=>{throw 'B3'})(); return '1' })()",
+        "(()=>{ if (1) /'/.test(1); (async()=>{throw 'B5'})(); return '1' })()",
+        "(()=>{ for (const x of []) /'/; (async()=>{throw 'B12'})(); return '1' })()",
+        "new (class { async #x(){ throw 'B4' } y(){ this.#x(); return 1 } })().y()",
+        "(()=>{ {} /'/; import('fs'); return '1' })()",
       ]) {
         attempt(code);
       }
@@ -115,6 +123,10 @@ describe('sealed realm', () => {
     expect(r.evaluate('({ import: 2 }).import', 0)).toBe(2);
     expect(() => r.evaluate('`${import("fs")}`', 0)).toThrow(/"import" is not available/);
     expect(() => r.evaluate('"a" + async function () {}', 0)).toThrow(/"async" is not available/);
+    expect(r.evaluate('({import(){return 1}}).import()', 0)).toBe(1);
+    expect(r.evaluate('({async(){return 1}}).async()', 0)).toBe(1);
+    expect(r.evaluate('(()=>{ const async = 2; return async * 2 })()', 0)).toBe(4);
+    expect(() => r.evaluate("(()=>{ {} /'/; (async()=>{})(); return 1 })()", 0)).toThrow(/"async" is not available/);
   });
 
   it('has no FinalizationRegistry or WeakRef (their callbacks would run outside the timeout)', () => {
