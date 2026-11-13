@@ -412,7 +412,7 @@ python3 deploy/scripts/queue-e2e.py      # load spread, a killed worker, a kille
 
 | Service | On the Mac | |
 |---|---|---|
-| `lb` | http://localhost:53080 | round robin over the mains, skipping one that is down for 5 s; a browser sticks to one main (cookie `landflow_main`; the `x-landflow-main` header says which one answered). A stand-in for your load balancer: [`queue/lb.mjs`](../deploy/queue/lb.mjs) |
+| `lb` | http://localhost:53080 | round robin over the mains, skipping for 5 s one that is unreachable or whose `/api/health/ready` (asked every 2 s) is not 200, such as a main draining for shutdown; a browser sticks to one main (cookie `landflow_main`; the `x-landflow-main` header says which one answered). A stand-in for your load balancer: [`queue/lb.mjs`](../deploy/queue/lb.mjs) |
 | `main-1`, `main-2` | http://localhost:53081, http://localhost:53082 | UI, API, webhooks. `main-1` creates the owner (`owner@landflow.test` / `landflow-dev-only`); `main-2` and the workers start once it is healthy |
 | `worker-1`, `worker-2` | http://localhost:55691/healthz, http://localhost:55692/healthz (`/metrics` too) | 10 runs at once each (`LANDFLOW_WORKER_CONCURRENCY`); jobs are taken high, normal, low from three streams (`jobs:high`, `jobs`, `jobs:low`) by the workflow's Priority, with one low job after every eight others |
 | `text-toolkit` | not published | registers through the load balancer; the mains keep its address in Postgres and the workers call it directly |
