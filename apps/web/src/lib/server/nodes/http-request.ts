@@ -9,6 +9,7 @@
  */
 import { baseMimeType, extensionFromMimeType, type DisplayOptions, type JsonObject, type NodeCredentialRequirement, type NodeItem, type PropertyDescriptor } from '@landflow/protocol';
 import { NodeOperationError, type IExecuteContext } from '@landflow/sdk';
+import { OutboundBlockedError } from '../net/safe-fetch';
 import { dispositionFileName, isTextual, safeFileName } from '../binary/http';
 
 export const BODY_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE'];
@@ -159,13 +160,19 @@ export async function executeHttpRequest(ctx: IExecuteContext): Promise<NodeItem
     const headers = pairs('headers', 'header');
     authenticate(ctx, i, headers);
     const body = BODY_METHODS.includes(method) ? await requestBody(ctx, i, headers) : undefined;
-    const response = await ctx.http(url, {
-      method,
-      headers,
-      body,
-      signal: AbortSignal.timeout(options.timeoutMs ?? 30_000),
-      ...(body instanceof ReadableStream && { duplex: 'half' }),
-    } as RequestInit);
+    const response = await ctx
+      .http(url, {
+        method,
+        headers,
+        body,
+        signal: AbortSignal.timeout(options.timeoutMs ?? 30_000),
+        ...(body instanceof ReadableStream && { duplex: 'half' }),
+      } as RequestInit)
+      .catch((error) => {
+        // The outbound policy (net/safe-fetch.ts) refused the address or a redirect hop: say so on the node.
+        if (error instanceof OutboundBlockedError) throw new NodeOperationError(error.message, { itemIndex: i });
+        throw error;
+      });
     const responseHeaders: Record<string, string> = {};
     response.headers.forEach((value, key) => (responseHeaders[key] = value));
     if (response.status >= 400) throw new NodeOperationError(`HTTP ${response.status}`, { itemIndex: i, description: (await response.text()).slice(0, 500) });

@@ -5,6 +5,7 @@
  */
 import { NodeOperationError } from '@landflow/sdk';
 import type { Embeddings } from '@landflow/engine';
+import { safeFetch } from '../net/safe-fetch';
 import { openAiEmbeddings, type OpenAiConnection } from '../nodes/models';
 import { traceEmbeddings } from '../telemetry';
 
@@ -40,7 +41,7 @@ export function ollamaEmbeddings(options: OllamaEmbeddingsOptions): Embeddings {
       async () => {
         let response: Response;
         try {
-          response = await fetch(`${base}/api/embed`, {
+          response = await safeFetch(`${base}/api/embed`, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ model: options.model, input, truncate: true, ...(options.dimensions && { dimensions: options.dimensions }) }),

@@ -13,6 +13,7 @@ import { createHmac } from 'node:crypto';
 import type { AlertChannel, AlertChannelConfig } from '../../shared/alerts';
 import { mailConfigured, sendMail } from '../auth/mail';
 import { credentials } from '../credentials/vault';
+import { safeFetch } from '../net/safe-fetch';
 import { redactText } from '../secrets/redact';
 import { resolveSecretFields } from '../secrets/resolve';
 import { emailAddresses } from './store';
@@ -37,7 +38,7 @@ async function refusal(response: Response, what: string): Promise<Error> {
 
 async function post(url: string, body: string, headers: Record<string, string>, what: string): Promise<Response> {
   try {
-    return await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'user-agent': 'Landflow-Alerts/1', ...headers }, body, signal: AbortSignal.timeout(TIMEOUT_MS), redirect: 'manual' });
+    return await safeFetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'user-agent': 'Landflow-Alerts/1', ...headers }, body, signal: AbortSignal.timeout(TIMEOUT_MS), redirect: 'manual' });
   } catch (error) {
     const reason = (error as Error).name === 'TimeoutError' ? `no answer within ${TIMEOUT_MS / 1000} s` : ((error as Error & { cause?: Error }).cause?.message ?? (error as Error).message);
     throw new Error(`${what} could not be reached: ${reason}`);
