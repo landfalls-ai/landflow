@@ -598,7 +598,7 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Executions',
     id: 'listExecutions',
     summary: 'List executions',
-    description: 'Running executions first (on the first page only), then saved ones, newest first. Page with `cursor`: pass the previous page’s `nextCursor` until it is absent.',
+    description: 'Running executions first (on the first page only), then saved ones, newest first; a running execution’s saved row is left out of every page. Page with `cursor`: pass the previous page’s `nextCursor` until it is absent.',
     query: [
       { name: 'workflowId', description: 'Only this workflow’s', schema: { type: 'string' } },
       { name: 'limit', description: 'At most this many saved executions per page (default 100, at most 500)', schema: { type: 'integer', minimum: 1, maximum: 500, default: 100 } },
