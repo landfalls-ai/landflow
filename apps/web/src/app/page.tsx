@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowRight } from 'lucide-react';
-import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { duration, timeAgo } from '@/lib/client/format';
 import { useLiveEvents } from '@/lib/client/live';
@@ -19,6 +18,7 @@ import { SuggestionsInbox } from '@/components/brain/suggestions-inbox';
 import { LiveRuns } from '@/components/run-trace/run-lists';
 import { RunLines } from '@/components/run-trace/run-line';
 import { useNewLook } from '@/components/shell/look-toggle';
+import { StatCard } from '@/components/ui/stat-card';
 
 interface Stats {
   workflows: number;
@@ -30,17 +30,15 @@ interface Stats {
 
 function Kpi({ label, value, sub, danger, color, icon, index }: { label: string; value?: number; sub?: string; danger?: boolean; color: string; icon: string; index: number }) {
   return (
-    <Card className="relative animate-fade-up overflow-hidden" style={{ animationDelay: `${index * 70}ms` }}>
-      <span className="absolute inset-x-0 top-0 h-[3px]" style={{ background: color }} />
-      <div className="flex items-center justify-between">
-        <SectionLabel>{label}</SectionLabel>
-        <span className="grid size-7 place-items-center rounded-lg" style={{ background: `color-mix(in oklab, ${color} 13%, var(--sf))` }}>
-          <NodeIcon icon={icon} size={14} style={{ color }} strokeWidth={2} />
-        </span>
-      </div>
-      <div className={cn('mt-1 text-[28px] font-semibold leading-none tabular-nums', danger ? 'text-rd' : 'text-t1')}>{value === undefined ? '—' : <CountUp value={value} />}</div>
-      {sub && <div className="mt-2 truncate text-[12px] text-t3">{sub}</div>}
-    </Card>
+    <StatCard
+      index={index}
+      label={label}
+      color={color}
+      danger={danger}
+      icon={<NodeIcon icon={icon} size={14} style={{ color }} strokeWidth={2} />}
+      value={value === undefined ? '—' : <CountUp value={value} />}
+      sub={sub && <span className="truncate">{sub}</span>}
+    />
   );
 }
 

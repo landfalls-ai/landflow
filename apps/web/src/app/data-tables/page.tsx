@@ -53,8 +53,8 @@ export default function DataTablesPage() {
               title="No data tables yet"
               hint="Built-in tables for the data your workflows keep: leads, processed ids, settings, results. Read and write them with the Data Table node, here, or as an AI agent tool."
               action={
-                <Button variant="primary" onClick={() => setCreating(true)}>
-                  <Table2 className="size-3.5" /> Create your first table
+                <Button onClick={() => setCreating(true)}>
+                  <Plus className="size-3.5" /> New table
                 </Button>
               }
             />

@@ -10,7 +10,7 @@ import { timeAgo } from '@/lib/client/format';
 import { cn } from '@/lib/utils';
 import type { Agent, AgentSummary, AgentTemplate } from '@/lib/shared/agents';
 import { AgentAvatar } from '@/components/agents/avatar';
-import { TeamsView } from '@/components/agents/teams-view';
+import { TeamsView, NewTeamButton } from '@/components/agents/teams-view';
 import type { TeamSummary } from '@/lib/shared/agent-teams';
 import { NewAgentDialog } from '@/components/agents/new-agent-dialog';
 import { SaveTemplateDialog } from '@/components/agents/save-template-dialog';
@@ -195,7 +195,7 @@ export default function AgentsPage() {
             {list && list.length > 0 && <span className="hidden sm:inline">{list.length}</span>}
           </>
         }
-        actions={view === 'agents' ? actions : undefined}
+        actions={view === 'agents' ? actions : <NewTeamButton />}
       />
       <input ref={fileInput} type="file" accept=".json,application/json" className="hidden" onChange={(e) => void importFile(e.target.files?.[0])} />
       <PageBody>

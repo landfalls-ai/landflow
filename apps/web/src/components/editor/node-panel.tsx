@@ -5,7 +5,8 @@ import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import { cn } from '@/lib/utils';
 import { duration, languageMeta } from '@/lib/client/format';
 import type { NodeItem, NodeRun } from '@/lib/shared/types';
-import { Badge, LanguageBadge, TransportBadge } from '../ui/badge';
+import { Badge, LanguageBadge, TransportBadge, executionTone } from '../ui/badge';
+import { RUN_STATE, type RunState } from '../run/run-status';
 import { Button } from '../ui/button';
 import { NodeIcon } from '../ui/icon';
 import { FieldLabel, Input, SectionLabel, Select, Switch, Textarea } from '../ui/inputs';
@@ -588,7 +589,7 @@ export function NodePanel() {
             </PaneHeader>
             {run && (
               <div className="flex flex-wrap items-center gap-2 px-3 pt-3 text-[12px]">
-                <Badge tone={run.status === 'success' ? 'success' : 'danger'}>{run.status}</Badge>
+                <Badge tone={executionTone(run.status as RunState)}>{RUN_STATE[run.status as RunState]?.label ?? run.status}</Badge>
                 <span className="font-mono text-t3">{duration(run.durationMs)}</span>
                 {run.source !== 'main' && <Badge tone="muted">{run.source} call</Badge>}
                 {run.reused && (

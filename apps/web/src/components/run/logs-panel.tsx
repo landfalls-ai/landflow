@@ -378,7 +378,7 @@ export function LogsPanel(props: LogsPanelProps) {
       {status ? (
         <span className={cn('flex items-center gap-1.5 text-[13px] font-semibold tabular-nums', RUN_STATE[status].text)}>
           <RunStateIcon state={status} />
-          {status === 'success' ? `Success in ${duration(elapsed)}` : statusText(status, elapsed)}
+          {statusText(status, elapsed)}
         </span>
       ) : (
         <span className="text-[13px] text-t3">No run yet</span>

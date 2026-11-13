@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import Link from 'next/link';
-import { ArrowRightLeft, KeyRound, MoreHorizontal, Plus, Share2 } from 'lucide-react';
+import { ArrowRightLeft, MoreHorizontal, Plus, Share2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { timeAgo } from '@/lib/client/format';
 import { resourceCan, type ResourceOwnership } from '@/lib/shared/projects';
@@ -33,7 +33,7 @@ export default function CredentialsPage() {
         meta={credentials && <span>{credentials.length} saved · {types?.length ?? 0} types from plugins</span>}
         actions={
           <Button variant="primary" size="sm" onClick={() => setDialog({})}>
-            <Plus className="size-3.5" /> Add credential
+            <Plus className="size-3.5" /> New credential
           </Button>
         }
       />
@@ -45,8 +45,8 @@ export default function CredentialsPage() {
               title="No credentials yet"
               hint="API keys, tokens and connection strings for the services your nodes talk to. They are encrypted on the host and sent only to the plugin node that uses them."
               action={
-                <Button variant="primary" onClick={() => setDialog({})}>
-                  <KeyRound className="size-3.5" /> Add your first credential
+                <Button onClick={() => setDialog({})}>
+                  <Plus className="size-3.5" /> New credential
                 </Button>
               }
             />

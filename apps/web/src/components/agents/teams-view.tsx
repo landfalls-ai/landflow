@@ -11,15 +11,16 @@ import type { AgentSummary } from '@/lib/shared/agents';
 import type { TeamSummary } from '@/lib/shared/agent-teams';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
+import { EmptyState } from '../ui/empty-state';
+import { Card } from '../shell/page-header';
 import { AgentAvatar } from './avatar';
 
 const FACES = 5;
 
-export function TeamsView({ teams, agents }: { teams?: TeamSummary[]; agents: AgentSummary[] }) {
+/** New team: makes an untitled team and opens it. The Agents page's header shows it on the Teams tab. */
+export function useNewTeam() {
   const router = useRouter();
   const [creating, setCreating] = useState(false);
-  const byId = new Map(agents.map((a) => [a.id, a]));
-
   const create = async () => {
     setCreating(true);
     try {
@@ -30,29 +31,41 @@ export function TeamsView({ teams, agents }: { teams?: TeamSummary[]; agents: Ag
       setCreating(false);
     }
   };
+  return { create, creating };
+}
+
+export function NewTeamButton({ className }: { className?: string }) {
+  const { create, creating } = useNewTeam();
+  return (
+    <Button variant="primary" size="sm" loading={creating} onClick={() => void create()} className={className}>
+      {!creating && <Plus className="size-3.5" strokeWidth={2} />} New team
+    </Button>
+  );
+}
+
+export function TeamsView({ teams, agents }: { teams?: TeamSummary[]; agents: AgentSummary[] }) {
+  const { create, creating } = useNewTeam();
+  const byId = new Map(agents.map((a) => [a.id, a]));
 
   if (!teams) return <div className="h-[150px] animate-pulse-soft rounded-2xl border border-hair bg-sf" />;
   if (!teams.length) {
     return (
-      <div className="mx-auto mt-6 flex max-w-[460px] flex-col items-center text-center">
-        <span className="grid size-16 place-items-center rounded-[22px] border border-acbd bg-acdim text-ac">
-          <Network className="size-8" strokeWidth={1.5} />
-        </span>
-        <h2 className="mt-5 text-[20px] font-semibold tracking-[-0.01em] text-t1">Put agents together as a team</h2>
-        <p className="mt-1.5 text-[13px] leading-relaxed text-t2">A team has a lead, members who report to it and reviewers who sign off the work. A flow runs the whole team on one request.</p>
-        <Button variant="primary" className="mt-5" loading={creating} onClick={() => void create()}>
-          <Plus className="size-3.5" strokeWidth={2} /> New team
-        </Button>
-      </div>
+      <Card className="py-6">
+        <EmptyState
+          icon={<Network />}
+          title="Put agents together as a team"
+          hint="A team has a lead, members who report to it and reviewers who sign off the work. A flow runs the whole team on one request."
+          action={
+            <Button loading={creating} onClick={() => void create()}>
+              {!creating && <Plus className="size-3.5" strokeWidth={2} />} New team
+            </Button>
+          }
+        />
+      </Card>
     );
   }
   return (
     <>
-      <div className="mb-4 flex justify-end">
-        <Button variant="primary" size="sm" loading={creating} onClick={() => void create()}>
-          <Plus className="size-3.5" strokeWidth={2} /> New team
-        </Button>
-      </div>
       <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3">
         {teams.map((team) => {
           const members = (team.agentIds ?? []).map((id) => byId.get(id)).filter((a): a is AgentSummary => Boolean(a));

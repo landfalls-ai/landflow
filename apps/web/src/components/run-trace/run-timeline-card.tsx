@@ -25,7 +25,7 @@ const STATUS: Record<TimelineStatus, { label: string; className: string; dot?: b
   'needs-you': { label: 'Needs you', className: 'border-warnbd bg-warndim text-warn', dot: true },
   'over-budget': { label: 'Over budget', className: 'border-warnbd bg-warndim text-warn' },
   failed: { label: 'Failed', className: 'border-rdbd bg-rddim text-rd' },
-  done: { label: 'Done', className: 'border-gnbd bg-gndim text-gn' },
+  done: { label: 'Succeeded', className: 'border-gnbd bg-gndim text-gn' },
 };
 
 const tokensText = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k tokens` : n ? `${n} tokens` : '');

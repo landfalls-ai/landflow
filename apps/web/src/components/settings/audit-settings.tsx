@@ -14,7 +14,7 @@ import { Check, Download, Pencil, Plus, RotateCw, Search, Send, ShieldCheck, Tra
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
-import { timeAgo } from '@/lib/client/format';
+import { timeAgo, dayTime } from '@/lib/client/format';
 import { can } from '@/lib/shared/auth';
 import {
   AUDIT_ACTIONS,
@@ -85,7 +85,7 @@ function EventRow({ event, onFilter, projectName }: { event: AuditEvent; onFilte
   return (
     <>
       <tr className="cursor-pointer border-b border-hair align-top hover:bg-acdim" onClick={() => setOpen((o) => !o)}>
-        <td className="whitespace-nowrap px-3 py-2 text-[12px] text-t3" title={new Date(event.at).toLocaleString()}>
+        <td className="whitespace-nowrap px-3 py-2 text-[12px] text-t3" title={dayTime(event.at)}>
           {timeAgo(event.at)}
         </td>
         <td className="max-w-[160px] truncate px-3 py-2 text-[12px] text-t1" title={event.actor.email}>
@@ -105,7 +105,7 @@ function EventRow({ event, onFilter, projectName }: { event: AuditEvent; onFilte
           <td colSpan={4} className="px-3 py-2.5">
             <dl className="grid grid-cols-[120px_minmax(0,1fr)] gap-x-3 gap-y-1 text-[12px]">
               <dt className="text-t3">When</dt>
-              <dd className="text-t1">{new Date(event.at).toLocaleString()}</dd>
+              <dd className="text-t1">{dayTime(event.at)}</dd>
               <dt className="text-t3">Actor</dt>
               <dd className="text-t1">
                 <button type="button" className="hover:text-ac" onClick={() => event.actor.id && onFilter({ actor: event.actor.id })}>

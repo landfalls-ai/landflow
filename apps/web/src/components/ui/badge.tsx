@@ -90,7 +90,7 @@ export function LanguageBadge({ language, className }: { language: string; class
 const STATUS_TONE: Record<string, string> = {
   online: 'bg-gn',
   success: 'bg-gn',
-  running: 'bg-ac',
+  running: 'bg-warn',
   paused: 'bg-warn',
   offline: 'bg-t3',
   error: 'bg-rd',
@@ -102,5 +102,5 @@ export function StatusDot({ status, pulse, className }: { status: PluginStatus |
 }
 
 export function executionTone(status: ExecutionState | 'paused'): Tone {
-  return status === 'success' ? 'success' : status === 'error' ? 'danger' : status === 'paused' ? 'warning' : status === 'running' ? 'accent' : 'muted';
+  return status === 'success' ? 'success' : status === 'error' ? 'danger' : status === 'paused' || status === 'running' ? 'warning' : 'muted';
 }

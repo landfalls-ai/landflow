@@ -14,6 +14,7 @@ import { api } from '@/lib/client/api';
 import type { InsightsPeriod, InsightsReport, InsightsTotals } from '@/lib/shared/platform';
 import { EMPTY_USAGE, formatCache, formatCost, formatTokens, type AiUsageReport, type AiUsageTotals } from '@/lib/shared/ai-usage';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
+import { StatCard } from '@/components/ui/stat-card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { SectionLabel, Switch } from '@/components/ui/inputs';
 import { change, formatMinutes, formatRate, formatRunTime } from '@/components/insights/format';
@@ -80,17 +81,20 @@ function Kpi({ label, value, metric, report, index, previousLabel }: { label: st
   const Icon = delta.direction > 0 ? ArrowUp : delta.direction < 0 ? ArrowDown : Minus;
   const before = KPIS.find((k) => k.metric === metric)!.format(report.previous);
   return (
-    <Card className="animate-fade-up" style={{ animationDelay: `${index * 50}ms` }}>
-      <SectionLabel>{label}</SectionLabel>
-      <div className="mt-1.5 text-[26px] font-semibold leading-none tabular-nums text-t1">{value}</div>
-      <div className="mt-2 flex items-center gap-1 text-[12px]" title={`${previousLabel}: ${before}`}>
-        <span className={cn('inline-flex items-center gap-0.5 font-medium', delta.trend === 'good' ? 'text-gn' : delta.trend === 'bad' ? 'text-rd' : 'text-t2')}>
-          <Icon className="size-3" strokeWidth={2.4} />
-          {delta.text}
-        </span>
-        <span className="truncate text-t3">vs {previousLabel}</span>
-      </div>
-    </Card>
+    <StatCard
+      index={index}
+      label={label}
+      value={value}
+      sub={
+        <>
+          <span title={`${previousLabel}: ${before}`} className={cn('inline-flex items-center gap-0.5 whitespace-nowrap font-medium', delta.trend === 'good' ? 'text-gn' : delta.trend === 'bad' ? 'text-rd' : 'text-t2')}>
+            <Icon className="size-3" strokeWidth={2.4} />
+            {delta.text}
+          </span>
+          <span>vs {previousLabel}</span>
+        </>
+      }
+    />
   );
 }
 

@@ -8,7 +8,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, BookOpen, Check, KeyRound, PlugZap, Search, Trash2, X } from 'lucide-react';
+import { ArrowLeft, BookOpen, Check, PlugZap, Search, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
@@ -347,8 +347,11 @@ export function CredentialDialog({
                     <PlugZap className="size-3.5" /> Test connection
                   </Button>
                 )}
+                <Button variant="ghost" onClick={onClose}>
+                  Cancel
+                </Button>
                 <Button variant="primary" onClick={save} loading={saving} disabled={!info}>
-                  <KeyRound className="size-3.5" /> {existing ? 'Save' : 'Create'}
+                  {existing ? 'Save' : 'Create'}
                 </Button>
               </div>
             </footer>

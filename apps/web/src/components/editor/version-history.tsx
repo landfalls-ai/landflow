@@ -13,7 +13,7 @@ import { CalendarClock, History, Loader2, Rocket, RotateCcw, X } from 'lucide-re
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
-import { timeAgo } from '@/lib/client/format';
+import { timeAgo, dayTime, stamp } from '@/lib/client/format';
 import type { VersionDiff, Workflow, WorkflowVersion, WorkflowVersionSummary } from '@/lib/shared/types';
 import { ExecutionCanvas } from '../executions/execution-canvas';
 import { Badge } from '../ui/badge';
@@ -29,10 +29,6 @@ import { useDialogFocus } from '../ui/use-dialog-focus';
 export const useVersionHistory = create<{ open: boolean; setOpen: (open: boolean) => void }>((set) => ({ open: false, setOpen: (open) => set({ open }) }));
 
 const NO_RUN_DATA = {};
-
-function stamp(iso: string) {
-  return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
-}
 
 function DiffDetail({ diff }: { diff: VersionDiff }) {
   const rows: Array<[string, string[], string]> = [
@@ -217,7 +213,7 @@ export function VersionHistory({ onSave }: { onSave: () => Promise<boolean> }) {
                       published
                     </Badge>
                   )}
-                  <span className="ml-auto shrink-0 text-[11px] text-t3" title={new Date(v.createdAt).toLocaleString()}>
+                  <span className="ml-auto shrink-0 text-[11px] text-t3" title={dayTime(v.createdAt)}>
                     {timeAgo(v.createdAt)}
                   </span>
                 </div>

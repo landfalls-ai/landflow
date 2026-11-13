@@ -17,6 +17,7 @@ import { Card } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { FieldLabel, Input, SectionLabel, Select, Switch, Textarea } from '@/components/ui/inputs';
+import { dayTime } from '@/lib/client/format';
 
 interface Draft {
   repository: string;
@@ -44,7 +45,7 @@ const draftOf = (view?: SourceControlView): Draft => ({
   includeVariableValues: view?.config?.includeVariableValues ?? false,
 });
 
-const when = (iso?: string) => (iso ? new Date(iso).toLocaleString() : 'never');
+const when = (iso?: string) => (iso ? dayTime(iso) : 'never');
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 function Changes({ changes }: { changes: SyncChange[] }) {

@@ -48,3 +48,24 @@ export const TRANSPORT_META: Record<string, { label: string }> = {
 export function transportLabel(transport: string): string {
   return TRANSPORT_META[transport]?.label ?? transport;
 }
+
+const STAMP = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+const DAY_TIME = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+
+const valid = (iso?: string) => {
+  if (!iso) return undefined;
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+};
+
+/** A moment in a run or a history (docs/ui-review.md#words): "Nov 13, 09:52:09", 24-hour. "—" when unknown. */
+export function stamp(iso?: string): string {
+  const date = valid(iso);
+  return date ? STAMP.format(date) : '—';
+}
+
+/** A day and time with the year, for settings and logs that outlive the week: "Nov 13, 2026, 09:52". */
+export function dayTime(iso?: string): string {
+  const date = valid(iso);
+  return date ? DAY_TIME.format(date) : '—';
+}
