@@ -57,7 +57,7 @@ export class MarketplaceError extends HttpError {
   }
 }
 
-/** sources.ts and plugin.ts throw plain Errors for input they refuse (a bad address, a path with `..`): the caller's fault, so a 4xx. */
+/** sources.ts throws plain Errors for input it refuses (a bad address, a path with `..`): the caller's fault, so a 4xx. */
 function refusing<T>(status: number, fn: () => T): T {
   try {
     return fn();
@@ -65,6 +65,17 @@ function refusing<T>(status: number, fn: () => T): T {
     if (caught instanceof HttpError || !(caught instanceof Error)) throw caught;
     throw new MarketplaceError(caught.message, status, undefined);
   }
+}
+
+/**
+ * What loadPlugin threw, as the route answers it. Bad input is a FetchError already (an HttpError: path escapes, sizes,
+ * upstream answers) or a warning in the result; a local plugin whose directory or file is gone is the marketplace's
+ * fault, a 422 that does not show the host path; anything else (a TypeError, another filesystem error) stays a plain
+ * Error, so handler() answers the generic 500 and logs it.
+ */
+function pluginReadError(caught: unknown): unknown {
+  if (caught instanceof Error && (caught as NodeJS.ErrnoException).code === 'ENOENT') return new MarketplaceError('A file this plugin lists is missing from its marketplace', 422);
+  return caught;
 }
 
 const sameLocation = (a: MarketplaceLocation, b: MarketplaceLocation) =>
@@ -329,7 +340,7 @@ export const marketplace = {
     const source = refusing(422, () => resolveSource(entry.source, m.location, m.pluginRoot));
     if (source.kind === 'unsupported') throw new MarketplaceError(`Can’t install “${name}”: ${source.reason}`, 422);
     const fromRoot = typeof entry.source === 'string' && (entry.source === '.' || entry.source === './');
-    const loaded = await traceMarketplace('detail', { 'landflow.marketplace.id': id, 'landflow.marketplace.plugin': name }, () => loadPlugin(readerFor(source), entry, fromRoot).catch((caught) => refusing(422, () => { throw caught; })));
+    const loaded = await traceMarketplace('detail', { 'landflow.marketplace.id': id, 'landflow.marketplace.plugin': name }, () => loadPlugin(readerFor(source), entry, fromRoot).catch((caught) => Promise.reject(pluginReadError(caught))));
     const flows = loaded.flows.map((flow) => ({ ...flow, needs: [], link: flowLink(marketplaceName(m), name, flow.path, shareSource(m.location)) }));
     const detail: PluginDetail = { marketplaceId: id, plugin, source, ...loaded, flows };
     details.set(key, { at: Date.now(), detail });
@@ -348,6 +359,9 @@ export const marketplace = {
       file = await readFlow(readerFor(detail.source), path);
     } catch (error) {
       if (error instanceof FetchError) throw error;
+      const missing = pluginReadError(error);
+      if (missing !== error) throw missing;
+      // Not JSON, or not a template file: the flow's fault.
       throw new MarketplaceError(`${path}: ${(error as Error).message}`, 422);
     }
     const pluginKey = installedId(name, m);
