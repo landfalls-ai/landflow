@@ -136,6 +136,31 @@ describe('checkConfig', () => {
     expect(text).not.toContain('pw123');
     expect(r.effective.DATABASE_URL).toContain('db:5432');
   });
+  it('redacts OTEL headers, API keys and passwords in any URL variable', () => {
+    const r = checkConfig({
+      ...good,
+      OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer abc123',
+      OTEL_EXPORTER_OTLP_ENDPOINT: 'https://u:urlpw9@otel.example/v1',
+      LANDFLOW_GIT_PASSWORD: 'gitpw8',
+      LANDFLOW_S3_ACCESS_KEY_ID: 'AKIAEXAMPLE',
+    });
+    const text = JSON.stringify(r.effective);
+    for (const leaked of ['abc123', 'urlpw9', 'gitpw8']) expect(text).not.toContain(leaked);
+    expect(r.effective.OTEL_EXPORTER_OTLP_HEADERS).toBe('[set]');
+    expect(r.effective.LANDFLOW_S3_ACCESS_KEY_ID).toBe('AKIAEXAMPLE');
+  });
+  it('flags a development password inside DATABASE_URL in production, and accepts flag spellings', () => {
+    const r = checkConfig({ ...good, DATABASE_URL: 'postgres://landflow:landflow-dev-only@postgres/x' });
+    expect(r.errors.join()).toContain('DATABASE_URL');
+    expect(checkConfig({ LANDFLOW_PROFILE: 'production', LANDFLOW_PUBLIC_URL: 'https://x', LANDFLOW_REGISTRY_OPEN: 'yes' }).errors.join()).not.toContain('REGISTRY_SECRET');
+  });
+});
+
+describe('number minimums', () => {
+  it('keeps 0 as 0 when min is 0 (the Kubernetes resync off switch)', () => {
+    expect(number('0', { fallback: 300, min: 0 })).toBe(0);
+    expect(number('x', { fallback: 300, min: 0 })).toBe(300);
+  });
 });
 
 describe('clusterConfig keeps its truth table', () => {

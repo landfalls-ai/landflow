@@ -590,7 +590,7 @@ export function startKubernetesDiscovery(): Promise<KubernetesDiscovery | undefi
       const namespaces = parseNamespaces(process.env.LANDFLOW_K8S_NAMESPACES, namespace);
       const address = process.env.LANDFLOW_K8S_ADDRESS === 'cluster-ip' ? 'cluster-ip' : 'dns';
       const spread = process.env.LANDFLOW_K8S_SPREAD?.trim().toLowerCase() === 'service' ? 'service' : 'pods';
-      const resyncSeconds = envNumber('LANDFLOW_K8S_RESYNC_SECONDS', { fallback: 300, min: 1 });
+      const resyncSeconds = envNumber('LANDFLOW_K8S_RESYNC_SECONDS', { fallback: 300, min: 0 });
       const discovery = new KubernetesDiscovery({
         api,
         namespaces,

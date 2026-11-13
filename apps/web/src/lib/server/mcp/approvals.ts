@@ -86,7 +86,10 @@ interface ApprovalRow {
   used_at: string | null;
 }
 
-const ttlMs = () => 1000 * envNumber('LANDFLOW_MCP_APPROVAL_TTL_SECONDS', { fallback: DEFAULT_TTL_SECONDS, min: 1 });
+const ttlMs = () => {
+  const seconds = envNumber('LANDFLOW_MCP_APPROVAL_TTL_SECONDS', { fallback: DEFAULT_TTL_SECONDS });
+  return 1000 * (seconds > 0 ? seconds : DEFAULT_TTL_SECONDS);
+};
 const waitMs = () => 1000 * envNumber('LANDFLOW_MCP_APPROVAL_WAIT_SECONDS', { fallback: DEFAULT_WAIT_SECONDS, min: 0 });
 
 export class McpApprovalError extends Error {
