@@ -254,7 +254,7 @@ describe('channels', () => {
     expect(created.channel.config.webhookUrl).toBeUndefined();
     const raw = database().get<{ data: string }>('SELECT data FROM alert_channels WHERE id = ?', created.channel.id)!.data;
     expect(raw).not.toContain('/slack');
-    expect(raw).toMatch(/"webhookUrl":"v1\./);
+    expect(raw).toMatch(/"webhookUrl":"v[12]\./);
     const listed = JSON.stringify(await (await alertsRoute.GET(request(undefined, 'GET'))).json());
     expect(listed).not.toContain(fakeUrl);
 

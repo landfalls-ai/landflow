@@ -1369,6 +1369,7 @@ workbench in place of a page of cards, keeping Spotlight.
     deployment with in-cluster gateways and remote MCP, OIDC/SAML, alert and SIEM endpoints; a streaming MCP transport
     and a multipart or streamed HTTP Request body through the undici path with blocking on; the expression bench on a
     quiet machine (`LANDFLOW_BENCH=1`) and a large real workflow's expression cost.
+- **P23, an encryption key ring, rotation, scrypt and bound credential ids** (S13; wave 5): `LANDFLOW_ENCRYPTION_KEYS` (`kid:key,…`, first seals) next to the legacy key (kid `k0`); sealed values name their key (`v2`) and credential blobs are bound to the credential id; passphrases are stretched with scrypt (the old SHA-256 form still opens data); derived keys use HKDF; `POST /api/settings/encryption/rotate` (owner) and `pnpm --filter @landflow/web rotate-key` re-seal everything. See [secrets and environments](features/secrets-and-environments.md#encryption-keys-and-rotation).
 
 ## Planned next
 

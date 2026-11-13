@@ -125,6 +125,16 @@ items still open (its "Wave 6" section); this page is the short list to check be
   50), so up to that many minus one finished executions above the saved maximum can be stored until the next pass (the
   hourly timer and **Prune now** prune regardless).
 
+## Encryption key ring (backend hardening, 2026-11)
+
+- Keys live in the environment or `encryption.key`; KMS-wrapped data keys are not built (a decision of the review). A value
+  sealed with a key that is no longer in the ring can't be opened: remove an old key only after rotate reports no failures.
+- Sealed strings outside credentials (alert channel, SIEM, kagent, signing keys…) are bound to a shared `secret` purpose, not
+  to their row: the key id and rotation apply, a copy between two such rows is not refused. Credential blobs are bound to their id.
+- Rotation has no page in Settings (the route and the script only) and in queue mode needs the new ring on every process first.
+- Files outside the data directory's `agents/` and `audit-anchoring.json` that hold a value sealed with `sealSecret` are not
+  re-sealed (the stores are listed in `credentials/rotate.ts`).
+
 ## Access scope of AI usage and files (2026-11)
 
 - **Files with no execution** aren't project-scoped: an editor upload that no run has used yet, an agent's knowledge file,

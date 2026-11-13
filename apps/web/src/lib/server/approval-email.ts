@@ -60,9 +60,13 @@ export function signLink(payload: LinkPayload): string {
 export function verifyLink(token: string, now = Date.now()): LinkPayload {
   const [body, signature, extra] = token.split('.');
   if (!body || !signature || extra !== undefined) throw new LinkError('This approval link is not valid', 400);
-  const expected = createHmac('sha256', key()).update(body).digest();
   const given = Buffer.from(signature, 'base64url');
-  if (given.length !== expected.length || !timingSafeEqual(given, expected)) throw new LinkError('This approval link is not valid', 400);
+  // Any key of the ring, and the pre-HKDF one: a link in flight survives a rotation and the upgrade.
+  const valid = credentials.deriveKeys('approval.email').some((candidate) => {
+    const expected = createHmac('sha256', candidate).update(body).digest();
+    return given.length === expected.length && timingSafeEqual(given, expected);
+  });
+  if (!valid) throw new LinkError('This approval link is not valid', 400);
   let payload: LinkPayload;
   try {
     payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as LinkPayload;

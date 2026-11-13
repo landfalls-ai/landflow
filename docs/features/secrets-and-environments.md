@@ -29,3 +29,30 @@ Part of the [Landflow docs](../README.md); the [feature map](../README.md#featur
 - **Credential definitions** (on by default; `credentials: false`, `landflow env promote --no-credentials` leave them out): when an instance promotes its own environment, the credentials the promoted workflows use travel in `credentials.json` as definitions: name, type, non-secret fields and `secretFields`, the names of the secret fields. A secret value never leaves the instance: a secret field is left out, or holds the `$secrets` reference a **secret mapping** (Settings → Environments: credential, field, `{{ $secrets… }}` value, optionally for one target environment) gives it, so the target reads its own secret store. The target's pull creates the credentials it lacks (same name and type, or mapped) with those fields and warns which secret fields to fill in; it leaves credentials it has alone unless the pull asks to **update existing credentials** (Settings → Environments → Pull, `landflow env pull --update-credentials`, `updateCredentials: true` on `/api/environment/pull` and `/api/source-control/pull`): then the non-secret fields of a credential of the same name and type take the file's values (the preview lists the fields), a secret field changes only to a `$secrets` reference, and a secret value is never touched; a literal value in a secret field of a file is dropped with a warning either way.
 - **Data table rows**: tables opted in (Settings → Environments **Promote rows of**, `rowTables`; `landflow env promote --rows <table>` for one promotion, `--no-rows` for none) travel as `data-tables/<slug>.rows.json` next to their schema, for lookup and reference data. The target's pull replaces the table's rows with the file's (in one transaction, when they differ); cells of columns the table lacks are dropped with a warning. Rows come from the promoting instance, never from another environment's branch. **Merging rows**: with *Merge by* key columns set for a table (Settings → Environments, `rowMerge`: `{ "Countries": { "keys": ["code"], "deleteMissing": false } }`, key columns must exist), the file carries `merge` and the target's pull merges instead of replacing: it inserts rows whose key is new, updates rows whose key matches and whose values differ, leaves the target's other rows alone, and with *Delete missing* removes rows the file lacks; a duplicate or empty key in the file or the table refuses the merge with an error, and the preview reads `merge by code · +2 new · ~1 changed`.
 - **Approval**: with four-eyes on (Settings → Governance), a promotion is a request (202 `{ approvalRequired, request }`; the CLI exits 8) that another owner or admin approves or rejects in Settings → Environments → Promotion requests, with the rules of publish approvals (not the requester; the approver passes the approver checks of each changed workflow). **Per project**: a project can ask for four-eyes itself (the project page → Governance → *Require four-eyes on publishing*, `fourEyes` in the project's settings), and a promotion that changes a workflow of such a project becomes a request even when the instance's setting is off (the dry-run preview decides; the project's approver rules apply to approving it). Approving promotes exactly what was previewed: if a branch, a promoted credential, table rows or a setting changed since, the request is stale (409) and has to be asked again. A newer request for the same target replaces a pending one; the requester can withdraw it. Approvers are emailed and the governance channels notified; requests are kept in `promotion_requests` (migration 1650) and audited (`promotion_request.*`).
+
+## Encryption keys and rotation
+
+Credentials and every other value the host seals (alert channel and SIEM secrets, kagent tokens, signing keys, SAML keys,
+external secrets providers, transport connections) use AES-256-GCM with a key ring (`lib/server/credentials/key-ring.ts`).
+
+- **The ring.** `LANDFLOW_ENCRYPTION_KEYS=kid:key,kid:key`: the first key seals everything new, the others only open older
+  data. `LANDFLOW_ENCRYPTION_KEY` (or the generated `encryption.key`) stays and is kid `k0`. A key of 64 hex characters is used as
+  is; any other text is a passphrase, stretched with scrypt (N=2^15, r=8, p=1, salt `landflow:kdf:v2:<kid>`). A passphrase in
+  `LANDFLOW_ENCRYPTION_KEY` was one unsalted SHA-256 before: that form stays in the ring as `k0-legacy`, so old data opens. With
+  no ring set, `k0` seals (and v1 values are upgraded by a rotation).
+- **Sealed format.** Version 2 names its key (`{ v: 2, kid, iv, tag, value }`; strings are `v2.<kid>.<iv>.<tag>.<ciphertext>`).
+  A credential's blob is bound to its id as associated data (`landflow:credential:<id>`), so a blob copied to another row does
+  not open. Version 1 values (no kid, no AAD) open with `k0`, then `k0-legacy`.
+- **Derived keys.** `deriveKey(label)` is HKDF-SHA256 from the primary key, one per label (resume URLs, approval email links,
+  OAuth2 state and PKCE). A link or state made earlier still verifies: the check tries every ring key and, for one release,
+  the old HMAC derivation.
+- **Rotating, without downtime.**
+  1. Generate a key (`openssl rand -hex 32`) and put it first: `LANDFLOW_ENCRYPTION_KEYS=2026b:<new>,2026a:<old key>` (keep the
+     old key, and `LANDFLOW_ENCRYPTION_KEY` as it is).
+  2. Queue mode: roll **every** main and worker onto the new ring before the next step, or a process without it can't open values
+     the others seal. The route refuses (409) while no ring is configured.
+  3. As the owner, `POST /api/settings/encryption/rotate` (session only; audit event `encryption.rotate`), or stop the host and run
+     `pnpm --filter @landflow/web rotate-key` with the same environment. It re-seals credentials and the stores listed in
+     `credentials/rotate.ts` one value at a time, skips what is on the primary key, and can be run again after an interruption.
+  4. The answer has `resealed`, `current`, `failed` (what no key opened) and `done`. **Never remove a key before rotate reports
+     `done: true`.** Then drop it from the ring and restart.

@@ -155,7 +155,7 @@ describe('OIDC sign-in across mains', () => {
     expect(authorize.searchParams.get('state')).toBe(state);
     const key = `oidc:state:${createHash('sha256').update(state).digest('hex')}`;
     const sealed = hub.key(key);
-    expect(sealed).toMatch(/^v1\./);
+    expect(sealed).toMatch(/^v[12]\./);
     // Sealed: neither the PKCE verifier's challenge input nor where to go next is readable.
     expect(sealed).not.toContain('/workflows');
     expect(sealed).not.toContain(authorize.searchParams.get('nonce')!);

@@ -69,6 +69,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (under('/api/settings/audit')) return { scope: 'admin', action: read ? 'audit:read' : 'settings:manage' };
   // Four-eyes publish requests: builders list, ask and decide (who may approve is checked by lib/server/governance).
   if (under('/api/publish-requests')) return { scope: read ? 'workflows:read' : 'workflows:write' };
+  // Re-sealing every secret is the owner's (the route checks the role); an API key can't start it.
+  if (under('/api/settings/encryption')) return { scope: 'admin', action: 'settings:manage', sessionOnly: true };
   if (under('/api/settings/security')) return { scope: 'admin', action: 'settings:manage' };
   if (under('/api/settings')) return read ? { scope: 'workflows:read' } : { scope: 'admin', action: 'settings:manage' };
   if (under('/api/variables')) return read ? { scope: 'workflows:read' } : { scope: 'admin', action: 'variables:manage' };

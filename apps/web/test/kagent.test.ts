@@ -228,7 +228,7 @@ describe('deploying to kagent', () => {
     // The token is sealed in Landflow and in clear only in kagent's Secret.
     const saved = agentStore.get(agent.id)!;
     expect(saved.kagent).toMatchObject({ credential: { id: cluster.id }, name: 'text-formatter', version: 1 });
-    expect(saved.kagent!.token).toMatch(/^v1\./);
+    expect(saved.kagent!.token).toMatch(/^v[12]\./);
     const token = credentials.openSecret(saved.kagent!.token!);
     expect(held('secrets', 'text-formatter-landflow')!.stringData).toEqual({ authorization: `Bearer ${token}` });
     // Deploying again keeps the token.
