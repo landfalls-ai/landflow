@@ -14,14 +14,16 @@ export interface ScimCaller {
   scopes: ApiKeyScope[];
 }
 
-export type ScimAuth = { ok: true; caller: ScimCaller } | { ok: false; status: 401 | 403; message: string };
+/** A 403 names the key and its user: the token was valid, only not enough. */
+export type ScimAuth = { ok: true; caller: ScimCaller } | { ok: false; status: 401 | 403; message: string; keyId?: string; userId?: string };
 
 export function authenticateScim(request: Request): ScimAuth {
   const token = /^Bearer\s+(\S+)$/i.exec(request.headers.get('authorization')?.trim() ?? '')?.[1];
   if (!token || !token.startsWith(API_KEY_PREFIX)) return { ok: false, status: 401, message: 'Send a SCIM token as Authorization: Bearer lf_… (Settings → Security → SCIM)' };
   const checked = verifyApiKey(token);
   if (!checked.ok) return { ok: false, status: 401, message: checked.reason === 'expired' ? 'This SCIM token has expired' : 'Invalid SCIM token' };
-  if (!checked.key.scopes.includes('scim')) return { ok: false, status: 403, message: 'This API key lacks the “scim” scope: create a SCIM token in Settings → Security' };
-  if (!can(checked.user, 'scim:manage')) return { ok: false, status: 403, message: 'SCIM tokens must belong to an owner or admin' };
+  const known = { keyId: checked.key.id, userId: checked.user.id };
+  if (!checked.key.scopes.includes('scim')) return { ok: false, status: 403, message: 'This API key lacks the “scim” scope: create a SCIM token in Settings → Security', ...known };
+  if (!can(checked.user, 'scim:manage')) return { ok: false, status: 403, message: 'SCIM tokens must belong to an owner or admin', ...known };
   return { ok: true, caller: { user: checked.user, keyId: checked.key.id, scopes: checked.key.scopes } };
 }

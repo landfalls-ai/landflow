@@ -4,7 +4,8 @@
  * `group.update`, `group.members_change`, `group.remove`, each with the values before and after (flat, as recordAudit
  * wants them), recorded as the SCIM token's user and key (`scimRoute` sets the request context). A rejected token is
  * `scim.auth_failed` (denied), at most once per client address per minute so a misconfigured identity provider
- * retrying in a loop can't flood the log.
+ * retrying in a loop can't flood the log, and at most 60 a minute in all, so a caller rotating its address can't
+ * either. A 403 (a valid key without the scope, or not an owner or admin) names the key and its user.
  */
 import { recordAudit } from '../audit';
 import { singleton } from '../singleton';
@@ -13,11 +14,23 @@ import type { ScimGroup } from './groups';
 
 const FAILED_WINDOW_MS = 60_000;
 const MAX_TRACKED = 10_000;
+/** Events per minute across every address. */
+const MAX_PER_WINDOW = 60;
 
 const lastFailure = () => singleton('scim-auth-failures', () => new Map<string, number>());
+const failureWindow = () => singleton('scim-auth-failure-window', () => ({ start: 0, count: 0 }));
 
-/** Record a rejected SCIM token, unless this client address already has one in the last minute. */
-export function recordScimAuthFailure(ip: string | undefined, status: number, reason: string, now = Date.now()) {
+/** Who presented a token that was valid but not enough (403): the key and its user. */
+export interface ScimAuthFailureCaller {
+  keyId: string;
+  userId: string;
+}
+
+/**
+ * Record a rejected SCIM token, unless this client address already has one in the last minute or the minute's
+ * ceiling is reached.
+ */
+export function recordScimAuthFailure(ip: string | undefined, status: number, reason: string, caller?: ScimAuthFailureCaller, now = Date.now()) {
   const seen = lastFailure();
   const key = ip ?? 'unknown';
   const last = seen.get(key);
@@ -29,7 +42,16 @@ export function recordScimAuthFailure(ip: string | undefined, status: number, re
   }
   seen.delete(key);
   seen.set(key, now);
-  recordAudit({ action: 'scim.auth_failed', outcome: 'denied', actor: 'anonymous', summary: `Rejected SCIM token (${reason})`, details: { status, reason } });
+  const window = failureWindow();
+  if (now - window.start >= FAILED_WINDOW_MS) Object.assign(window, { start: now, count: 0 });
+  if (++window.count > MAX_PER_WINDOW) return;
+  recordAudit({
+    action: 'scim.auth_failed',
+    outcome: 'denied',
+    actor: 'anonymous',
+    summary: `Rejected SCIM token (${reason})`,
+    details: { status, reason, ...(caller && { keyId: caller.keyId, userId: caller.userId }) },
+  });
 }
 
 const userTarget = (user: Pick<UserRecord, 'id' | 'email'>) => ({ type: 'user', id: user.id, name: user.email });

@@ -32,7 +32,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (path === '/api/openapi.json') return { scope: 'any' };
 
   // Stopping every run of every project is instance-wide: admins, like the other instance-wide controls (/api/settings).
-  if (path === '/api/executions/stop-all') return { scope: 'admin', action: 'settings:manage' };
+  // The key keeps the executions:write scope it always needed (the CLI's `executions stop --all`); the role decides.
+  if (path === '/api/executions/stop-all') return { scope: 'executions:write', action: 'settings:manage' };
 
   // Starting runs.
   // Listening for a test event runs the editor's workflow too (lib/server/test-webhooks.ts).

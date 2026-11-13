@@ -138,4 +138,37 @@ describe('SCIM audit events', () => {
     await scim(usersRoute.GET, 'GET', '/scim/v2/Users', undefined, undefined, { ...bad, 'x-forwarded-for': '10.9.0.2' });
     expect(events('scim.auth_failed')).toHaveLength(2);
   });
+
+  it('names the key and its user when a valid key is refused (403)', async () => {
+    const plain = createApiKey((await auth.getUser(ownerId))!, { label: 'Not SCIM', scopes: ['workflows:read'] });
+    const refused = await scim(usersRoute.GET, 'GET', '/scim/v2/Users', undefined, undefined, { authorization: `Bearer ${plain.token}`, 'x-forwarded-for': '10.9.0.3' });
+    expect(refused.status).toBe(403);
+    const found = events('scim.auth_failed').find((event: { ip?: string }) => event.ip === '10.9.0.3');
+    expect(found).toMatchObject({ details: { status: 403, keyId: plain.key.id, userId: ownerId } });
+  });
+
+  it('records at most 60 rejected tokens a minute across every address', async () => {
+    const { recordScimAuthFailure } = await import('@/lib/server/scim/audit');
+    const before = events('scim.auth_failed').length;
+    // A new minute far from the requests above, so the window starts clean.
+    const at = Date.now() + 10 * 60_000;
+    for (let i = 0; i < 100; i++) recordScimAuthFailure(`10.10.${Math.floor(i / 250)}.${i % 250}`, 401, 'Invalid SCIM token', undefined, at);
+    expect(queryEvents({ action: ['scim.auth_failed'] }, { limit: 500 }).events.length - before).toBe(60);
+  });
+
+  it('records the role change a mapped group causes as one user.update', async () => {
+    process.env.LANDFLOW_SCIM_GROUP_MAP = 'Admins=role:admin';
+    try {
+      const headers = { authorization: `Bearer ${token}` };
+      const made = await scim(usersRoute.POST, 'POST', '/scim/v2/Users', { userName: 'cy@example.com', displayName: 'Cy', externalId: 'ext-cy' }, undefined, headers);
+      const cyId = made.body.id;
+      const updatesBefore = events('user.update').length;
+      expect((await scim(groupsRoute.POST, 'POST', '/scim/v2/Groups', { displayName: 'Admins', members: [{ value: cyId }] }, undefined, headers)).status).toBe(201);
+      const updates = events('user.update');
+      expect(updates.length - updatesBefore).toBe(1);
+      expect(updates[0]).toMatchObject({ target: { id: cyId }, apiKeyId: keyId, details: { roleFrom: 'member', roleTo: 'admin' } });
+    } finally {
+      delete process.env.LANDFLOW_SCIM_GROUP_MAP;
+    }
+  });
 });

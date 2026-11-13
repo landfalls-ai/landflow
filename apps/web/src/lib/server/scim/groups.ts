@@ -229,7 +229,8 @@ export function changeGroup(id: string, change: GroupChange): ScimGroup {
     recomputeGrants(affected);
     return [group, next, added, removed];
   });
-  // After the commit, so a rolled-back change leaves no event.
+  // The group events go after the commit, so a rolled-back change leaves none. A role change recomputeGrants made is
+  // recorded inside the transaction, which is safe: the audit insert uses the same database and rolls back with it.
   auditGroupChange(before, next, added, removed);
   return next;
 }

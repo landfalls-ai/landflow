@@ -12,6 +12,7 @@ import { scopeForActor } from '@/lib/server/brain/scope';
 import { error, handler, json } from '@/lib/server/http';
 import { canResource, executionWorkflowId } from '@/lib/server/projects';
 import { routeActor } from '@/lib/server/projects/http';
+import { liveExecution } from '@/lib/server/runner';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,7 +28,8 @@ export const GET = handler(async (request: Request) => {
   const actor = routeActor();
   const scope = scopeForActor(actor);
   if (scope) {
-    const execution = executionId && executionWorkflowId(executionId);
+    // A run that is still going has no saved row yet: its workflow comes from the runner, as the file route does.
+    const execution = executionId && (executionWorkflowId(executionId) ?? liveExecution(executionId)?.workflowId);
     if (
       (executionId && (!execution || !canResource(actor, 'workflow', execution, 'read'))) ||
       (workflowId && !canResource(actor, 'workflow', workflowId, 'read')) ||

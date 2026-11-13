@@ -92,7 +92,7 @@ export function scimRoute<P extends Record<string, string> = Record<string, stri
         await whenReady();
         const checked = authenticateScim(request);
         if (!checked.ok) {
-          recordScimAuthFailure(audit.ip, checked.status, checked.message);
+          recordScimAuthFailure(audit.ip, checked.status, checked.message, checked.keyId && checked.userId ? { keyId: checked.keyId, userId: checked.userId } : undefined);
           return scimError(checked.status, checked.message, undefined, checked.status === 401 ? { 'www-authenticate': 'Bearer realm="landflow-scim"' } : {});
         }
         const { caller } = checked;

@@ -24,6 +24,8 @@ const { binaryStore } = await import('@/lib/server/binary/access');
 const stopAllRoute = await import('@/app/api/executions/stop-all/route');
 const usageRoute = await import('@/app/api/insights/ai-usage/route');
 const fileRoute = await import('@/app/api/binary/[id]/route');
+const { aiUsageMeter } = await import('@/lib/server/ai-usage');
+const { routePolicy } = await import('@/lib/server/auth/policy');
 
 type User = Awaited<ReturnType<typeof createUser>>;
 let member: User;
@@ -115,6 +117,10 @@ describe('stop-all', () => {
     expect((await as(admin, post)).status).toBe(200);
     expect((await as(undefined, post)).status).toBe(200);
   });
+
+  it('keeps the executions:write key scope (the CLI) and leaves the decision to the role', () => {
+    expect(routePolicy('POST', '/api/executions/stop-all')).toEqual({ scope: 'executions:write', action: 'settings:manage' });
+  });
 });
 
 describe('AI usage report', () => {
@@ -125,6 +131,26 @@ describe('AI usage report', () => {
     expect(own.status).toBe(200);
     expect(own.body.workflows.map((w: { workflowId: string }) => w.workflowId)).toEqual([mineWf]);
     expect(own.body.totals.cost).toBeCloseTo(0.25);
+  });
+
+  it('groups a row that has both ids only under the ids the member can see', () => {
+    // An agent the member can open ran inside another project's workflow: its cost counts for the agent, but the
+    // other workflow gets no group of its own in the member's report.
+    const now = new Date();
+    database().insertNew('ai_usage', {
+      id: 'au_scope_both', at: now.toISOString(), day: now.toISOString().slice(0, 10), execution_id: 'ex_scope_both', workflow_id: theirsWf, agent_id: 'agent_scope_seen',
+      provider: 'openai', model: 'gpt-test', operation: 'chat', input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_write_tokens: 0, cost: 0.125,
+    });
+    try {
+      const within = { workflows: new Set([mineWf]), agents: new Set(['agent_scope_seen']) };
+      const byWorkflow = aiUsageMeter().report({ group: 'workflow', within });
+      expect(byWorkflow.workflows?.map((w) => w.workflowId)).toEqual([mineWf]);
+      expect(byWorkflow.totals.cost).toBeCloseTo(0.375);
+      const byAgent = aiUsageMeter().report({ group: 'agent', within: { workflows: new Set([theirsWf]), agents: new Set<string>() } });
+      expect(byAgent.agents).toEqual([]);
+    } finally {
+      database().delete('ai_usage', { id: 'au_scope_both' });
+    }
   });
 
   it('answers 404 for another project’s workflow, agent or execution, and 200 for their own', async () => {
