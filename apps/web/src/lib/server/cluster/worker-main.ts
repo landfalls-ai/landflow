@@ -3,7 +3,7 @@
  * to the plugins they registered, and takes jobs from the Valkey stream (cluster/worker.ts). No UI, API or webhooks:
  * just a health and metrics endpoint (LANDFLOW_WORKER_PORT, default 5690: `/healthz`, `/metrics`).
  *
- * SIGTERM / SIGINT: stop taking jobs, let runs finish for LANDFLOW_WORKER_SHUTDOWN_SECONDS, put the rest back in the
+ * SIGTERM / SIGINT (lib/server/lifecycle.ts): stop taking jobs, let runs finish for LANDFLOW_WORKER_SHUTDOWN_SECONDS, put the rest back in the
  * queue (another worker continues them from their last checkpoint), flush the database and exit. A second signal
  * exits at once.
  *
@@ -65,29 +65,18 @@ async function main() {
   }
   logger.info('worker ready', { 'landflow.cluster.instance': config.instanceId, 'landflow.worker.concurrency': config.workerConcurrency, 'landflow.worker.port': config.workerPort });
 
-  let stopping = false;
-  const shutdown = async (signal: string) => {
-    if (stopping) {
-      logger.warn('worker: second signal, exiting now', { signal });
-      process.exit(1);
-    }
-    stopping = true;
-    logger.info('worker: stopping', { signal, 'landflow.jobs.active': clusterState().activeJobs.size });
-    try {
-      await clusterState().worker?.stop(config.shutdownMs);
-      await brokerConnections.stop();
-      await stopCluster();
-      await closeDatabase();
-      const { startTelemetry: telemetry } = await import('../telemetry/sdk');
-      await telemetry().shutdown?.();
-    } catch (error) {
-      logger.warn('worker: shutdown error', { error: (error as Error).message });
-    }
-    process.exit(0);
-  };
-  process.on('SIGTERM', () => void shutdown('SIGTERM'));
-  process.on('SIGINT', () => void shutdown('SIGINT'));
-  process.on('unhandledRejection', (reason) => logger.warn('worker: unhandled rejection', { error: reason instanceof Error ? reason.message : String(reason) }));
+  // The same lifecycle registry the main uses (../lifecycle.ts): stop taking jobs, let runs finish, put the rest back.
+  const { onShutdown, installProcessHandlers } = await import('../lifecycle');
+  onShutdown('worker jobs', () => clusterState().worker?.stop(config.shutdownMs), 'runs', { timeoutMs: config.shutdownMs + 5_000 });
+  // After the runs: a run in flight may still be talking over a broker.
+  onShutdown('broker connections', () => brokerConnections.stop(), 'cluster');
+  onShutdown('cluster', stopCluster, 'cluster');
+  onShutdown('database', closeDatabase, 'storage');
+  onShutdown('telemetry', async () => {
+    const { startTelemetry: telemetry } = await import('../telemetry/sdk');
+    await telemetry().shutdown?.();
+  }, 'telemetry');
+  installProcessHandlers({ role: 'worker', deadlineMs: config.shutdownMs + 10_000 });
 }
 
 main().catch((error) => {

@@ -83,7 +83,14 @@ export function leaderService(name: string, start: () => unknown, stop?: () => u
   const { config } = clusterState();
   // Regular mode: exactly as before (started here and now).
   if (config.mode !== 'queue' || config.role !== 'main') {
-    start();
+    // Recorded too, so stopLeaderServices() can stop it at shutdown. A failing start never stops the boot.
+    const entry: LeaderServiceEntry = { name, start, ...(stop && { stop }), running: true };
+    services.push(entry);
+    try {
+      Promise.resolve(start()).catch((error: Error) => logger.warn(`${name} failed to start`, { error: error.message }));
+    } catch (error) {
+      logger.warn(`${name} failed to start`, { error: (error as Error).message });
+    }
     return;
   }
   const entry: LeaderServiceEntry = { name, start, ...(stop && { stop }), running: false };
@@ -238,11 +245,17 @@ async function start(config: ClusterConfig, options: StartClusterOptions): Promi
 
 const redact = (url: string) => url.replace(/\/\/([^@/]*)@/, '//***@');
 
+/** Stop every leader service (queue mode: the ones running; regular mode: all that were started), newest first. */
+export async function stopLeaderServices(): Promise<void> {
+  for (const entry of [...services].reverse()) await stopService(entry);
+  services.length = 0;
+}
+
 /** Stop queue mode in this process (tests, and a worker's shutdown after its jobs are handed back). */
 export async function stopCluster(): Promise<void> {
   const state = clusterState();
   if (!state.started) return;
-  for (const entry of [...services].reverse()) await stopService(entry);
+  await stopLeaderServices();
   await state.elector?.stop().catch(() => {});
   for (const stop of state.stoppers.splice(0).reverse()) await Promise.resolve().then(stop).catch(() => {});
   await state.coordinator?.forget(state.config.instanceId).catch(() => {});

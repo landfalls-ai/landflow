@@ -10,3 +10,8 @@ export function singleton<T>(key: string, create: () => T): T {
   if (!store.__landflow.has(key)) store.__landflow.set(key, create());
   return store.__landflow.get(key) as T;
 }
+
+/** Drop a singleton so the next `singleton(key, …)` creates it again (a failed boot retries). */
+export function forgetSingleton(key: string): void {
+  store.__landflow?.delete(key);
+}
