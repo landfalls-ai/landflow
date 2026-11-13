@@ -3,18 +3,16 @@ import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import { agentConfigSchema, asConfig } from '@/lib/server/agents/http';
 import { agentStore } from '@/lib/server/agents/store';
-import { error, handler, json } from '@/lib/server/http';
+import { error, handler, json, parseBody } from '@/lib/server/http';
 import { createInProject } from '@/lib/server/projects/http';
 
 export const dynamic = 'force-dynamic';
 
 export const POST = handler(async (request: Request) => {
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return error('Request body must be JSON');
-  }
+  // Any JSON: the file is validated as an agent configuration below (an export wraps it as `{ config }`, a bare one doesn't).
+  const parsedBody = await parseBody(request, z.unknown());
+  if (!parsedBody.ok) return parsedBody.response;
+  const body = parsedBody.data;
   const raw = z.object({ config: z.unknown() }).safeParse(body).success ? (body as { config: unknown }).config : body;
   const parsed = agentConfigSchema.safeParse(raw);
   if (!parsed.success) return error('That isn’t an exported agent', 400, { issues: parsed.error.issues.slice(0, 10) });
