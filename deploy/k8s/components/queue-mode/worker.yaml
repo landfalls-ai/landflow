@@ -45,6 +45,7 @@ spec:
           ports:
             - { name: health, containerPort: 5690 }
           env:
+            - { name: LANDFLOW_PROFILE, value: development }
             - { name: LANDFLOW_ROLE, value: worker }
             - { name: LANDFLOW_EXECUTIONS_MODE, value: queue }
             - name: LANDFLOW_INSTANCE_ID

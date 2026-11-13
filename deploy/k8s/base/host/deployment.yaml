@@ -30,6 +30,8 @@ spec:
             - { name: http, containerPort: 3000 }
             - { name: registry, containerPort: 7070 }
           env:
+            # The in-repo cluster runs development secrets; a real deployment sets production (docs/deployment.md).
+            - { name: LANDFLOW_PROFILE, value: development }
             - { name: LANDFLOW_DATA_DIR, value: /data }
             - { name: LANDFLOW_PLUGIN_DISCOVERY, value: kubernetes }
             # Empty: the host's own namespace. A comma-separated list watches more (each needs the Role, see rbac.yaml).

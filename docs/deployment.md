@@ -65,6 +65,21 @@ COMPOSE_BAKE=false docker compose -f deploy/compose.queue.yml up -d --build --wa
 python3 deploy/scripts/queue-e2e.py
 ```
 
+## Production profile
+
+`LANDFLOW_PROFILE` is `development` or `production`; unset, it is `production` when `NODE_ENV=production` (the host image sets
+it) and `development` otherwise. In the production profile `checkConfig()` (`apps/web/src/lib/server/config/check.ts`)
+reports an error for an unset `LANDFLOW_PUBLIC_URL`, for any secret variable (`LANDFLOW_ENCRYPTION_KEY`,
+`LANDFLOW_BINARY_SECRET`, `LANDFLOW_TRANSPORT_SECRET`, `LANDFLOW_REGISTRY_SECRET`, `LANDFLOW_CODE_RUNNER_SECRET`,
+`LANDFLOW_MCP_GATEWAY_SECRET`, `LANDFLOW_OWNER_PASSWORD`, the S3 keys, …) holding a development value (anything with
+`dev-only`, or a known default), and for an unset `LANDFLOW_REGISTRY_SECRET` unless `LANDFLOW_REGISTRY_OPEN=true`; an unset
+`LANDFLOW_ENCRYPTION_KEY` or `LANDFLOW_BINARY_SECRET` is a warning. Messages name the variable, never the value. The check is
+a pure function for now; a later change calls it at boot.
+
+The compose stacks and the Kubernetes base set `LANDFLOW_PROFILE=development` because they run the development secrets in
+`deploy/.env.example` while their image says `NODE_ENV=production`. A real deployment leaves it unset (or `production`) and
+sets its own secrets and public URL.
+
 ## Ports, credentials and URLs
 
 All credentials are **for local development and tests only**.
