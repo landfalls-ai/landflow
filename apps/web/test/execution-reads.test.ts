@@ -71,6 +71,7 @@ describe('the sync getExecution guard', () => {
   const ALLOWED = [
     'lib/server/store.ts',
     'lib/server/runner.ts',
+    'lib/server/runner/',
     'lib/server/cluster/',
     'lib/server/sub-executions.ts',
     'lib/server/waits.ts',

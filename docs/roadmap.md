@@ -1424,8 +1424,6 @@ workbench in place of a page of cards, keeping Spotlight.
     updates at desktop and 390 px, Spotlight and Agent architect streams, an approvals stream, a revoked member's stream
     and a reconnect to another main; `pnpm dev` with a `pnpm worker` recording insights and usage and pruning, a dev
     edit of a singleton-held class, and no concurrent marketplace sync across two graphs.
-- **P27, `HttpError` everywhere** (C12; wave 6): the 53 domain error classes that carry a status extend `HttpError` (`expose: true`, so their messages keep reaching clients), with their extra fields in `details`. 84 route `catch` blocks that only answered `error(caught.message, caught.status)` are gone, `projectRoute` and `dataTableRoute` no longer map anything, and a domain error thrown where no route caught it answers its status instead of a 500. Responses gain a `code` field (the class name in snake_case). `RerunError`, `ResumeError` and the other `runner.ts` classes follow P28's split; classes with an optional upstream status (`McpClientError`, `OAuth2Error`, `SecretProviderError`, `GatewayAdapterError`, `SystemOneApiError`) stay plain errors.
-
 - **P26, Postgres mode keeps only hot run data in memory** (C16 steps 2-3, O4; wave 6): the in-memory copy holds the data
   and journal of hot runs only (in flight, finished in the last `LANDFLOW_PG_HOT_MINUTES`, with a retry waiting, children
   of a waiting run); `db/reads.ts` serves cold runs and scans from Postgres (a barrier on the write queue first), eviction
@@ -1433,6 +1431,10 @@ workbench in place of a page of cards, keeping Spotlight.
   `promoteExecution` loads a cold run back before its journal is written, queue-mode followers keep cold rows empty, and
   `landflow.db.replication.lag` reports the follower's lag. At 50,000 finished runs boot went from 10.1 s and 14.1 GB to
   0.7 s and 164 MB ([deployment.md](deployment.md#postgres-memory-sizing)); `scripts/seed-executions.ts` measures it.
+
+- **P27, `HttpError` everywhere** (C12; wave 6): the 53 domain error classes that carry a status extend `HttpError` (`expose: true`, so their messages keep reaching clients), with their extra fields in `details`. 84 route `catch` blocks that only answered `error(caught.message, caught.status)` are gone, `projectRoute` and `dataTableRoute` no longer map anything, and a domain error thrown where no route caught it answers its status instead of a 500. Responses gain a `code` field (the class name in snake_case). `RerunError`, `ResumeError` and the other `runner.ts` classes follow P28's split; classes with an optional upstream status (`McpClientError`, `OAuth2Error`, `SecretProviderError`, `GatewayAdapterError`, `SystemOneApiError`) stay plain errors.
+
+- **P28, boundaries as checks** (C11; wave 6): `lib/server/runner.ts` is a barrel over `lib/server/runner/` (types, state, limits, persist, run, resume, rerun, queue, recovery, links, live, stop, jobs; each a few hundred lines at most) and its error classes extend `HttpError`. `pnpm check:deps` (dependency-cruiser, `.dependency-cruiser.cjs`) enforces the layering (server never imports components, shared never imports server values, client components import no server values, routes never import `lib/server/db`, packages never import apps, no new cycles) and `pnpm check` is the local gate (typecheck, `pnpm test`, check:deps; no CI by decision). The `landflow-sync/v1` layout's names and path rules are in `packages/protocol/src/sync-format.ts`, imported by the host and the CLI.
 
 ## Planned next
 
