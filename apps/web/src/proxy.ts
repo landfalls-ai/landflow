@@ -73,6 +73,8 @@ export function proxy(request: NextRequest) {
   const mode = cspMode();
   const nonce = !embeddable && !pathname.startsWith('/api/') && mode !== 'off' ? newNonce() : null;
   const csp = nonce ? pagePolicy(nonce) : null;
+  // Next picks the nonce from a CSP request header, preferring the enforced one: drop what the client sent on pages.
+  if (csp) for (const name of ['content-security-policy', 'content-security-policy-report-only']) headers.delete(name);
   if (csp && mode === 'enforce') headers.set('content-security-policy', csp);
   // Report-only still needs the nonce visible to Next: it reads it from either header on the request.
   else if (csp) headers.set('content-security-policy-report-only', csp);
