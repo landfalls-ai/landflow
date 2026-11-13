@@ -1315,7 +1315,7 @@ workbench in place of a page of cards, keeping Spotlight.
   variables are catalogued as `LANDFLOW_AI_USAGE_RETENTION_DAYS` / `LANDFLOW_USAGE_RETENTION_DAYS` with the old names
   as aliases. `config-catalog.test.ts` fails on an environment name the source reads that is not catalogued, on more
   than 88 files reading `process.env` outside `lib/server/config`, and on a stale generated page. SAML, mail, S3,
-  marketplace and environment-protection flags now go through `envFlag`.
+  marketplace and environment-protection flags now go through `envFlag`; the values they accept changed (`LANDFLOW_S3_FORCE_PATH_STYLE=0` is now off, `LANDFLOW_SMTP_SECURE=1` true, `LANDFLOW_MARKETPLACE_ALLOW_LOCAL=true` on, `LANDFLOW_ENVIRONMENT_PROTECTED=on`/`off` decides, an unparseable SAML flag takes its default; see history.md).
 
 ## Planned next
 

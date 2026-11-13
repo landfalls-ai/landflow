@@ -6,7 +6,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { CONFIG_CATALOG, NOT_CONFIGURATION, catalogEntry, catalogNames, checkConfig } from '../src/lib/server/config';
+import { CONFIG_CATALOG, NOT_CONFIGURATION, SECRET_VARIABLES, catalogEntry, catalogNames, checkConfig } from '../src/lib/server/config';
 import { renderConfigDocs } from '../src/lib/server/config/render-docs';
 
 const SRC = join(__dirname, '..', 'src');
@@ -71,6 +71,14 @@ describe('configuration catalog', () => {
   // The count is a ratchet: new reads go through lib/server/config (envFlag, envNumber, envString, ...), so a variable is
   // parsed one way and its default lives in one place. If this fails after you added a read, use a helper from
   // lib/server/config instead; if it fails because you removed one, lower MAX_FILES_READING_PROCESS_ENV.
+  it('refuses development values for every secret the host reads, the claim store keys included', () => {
+    for (const name of ['LANDFLOW_CLAIM_SECRET_ACCESS_KEY', 'LANDFLOW_S3_SECRET_ACCESS_KEY', 'LANDFLOW_REGISTRY_SECRET', 'LANDFLOW_CODE_RUNNER_SECRET']) {
+      expect(SECRET_VARIABLES, name).toContain(name);
+    }
+    const r = checkConfig({ LANDFLOW_PROFILE: 'production', LANDFLOW_PUBLIC_URL: 'https://x', LANDFLOW_REGISTRY_SECRET: 'abc123real', LANDFLOW_CLAIM_SECRET_ACCESS_KEY: 'landflow-dev-only' });
+    expect(r.errors.join()).toContain('LANDFLOW_CLAIM_SECRET_ACCESS_KEY');
+  });
+
   it('does not let more files read process.env outside lib/server/config', () => {
     const readers = files.filter((f) => !f.path.startsWith(CONFIG_DIR + sep) && /\bprocess\.env\b/.test(f.text)).map((f) => f.rel);
     expect(readers.length, `files reading process.env directly:\n${readers.join('\n')}`).toBeLessThanOrEqual(MAX_FILES_READING_PROCESS_ENV);

@@ -110,6 +110,8 @@ still works.
 | `LANDFLOW_TEMPLATES_URL` | – | an n8n-compatible templates API to search in the templates library, e.g. `https://api.n8n.io/api` (answers cached 10 minutes) |
 | `LANDFLOW_TRANSPORT_<KIND>_URL` | – | a read-only broker connection per kind (`LANDFLOW_TRANSPORT_KAFKA_URL`, `LANDFLOW_TRANSPORT_NATS_URL=nats://user:pass@nats:4222`, likewise rabbitmq and the rest; the URL's user info becomes the secrets), listed in Settings → Transports. `http` and `grpc` are not brokers and are skipped |
 | `LANDFLOW_CLAIM_STORE` | – | where a broker body over the broker's limit goes by reference: `s3://<bucket>/<prefix>?endpoint=<url>&region=<region>&forcePathStyle=true` (`memory://` for tests); unset, such a call fails `too_large`. See [deployment.md](../deployment.md) and [transports.md](../transports.md#delivery-rules-all-brokers) |
+| `LANDFLOW_CLAIM_ACCESS_KEY_ID` | AWS chain | the claim store bucket's access key (else `AWS_ACCESS_KEY_ID`); without static keys, see the credential chain in [deployment.md](../deployment.md#the-claim-check-oversized-broker-bodies) Also read by plugins. |
+| `LANDFLOW_CLAIM_SECRET_ACCESS_KEY` *(secret)* | AWS chain | the claim store bucket's secret key (else `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN`) Also read by plugins. |
 | `LANDFLOW_K8S_NAMESPACES` | the host's own namespace | namespaces watched for plugin Services (`*`: every namespace, with one cluster-wide list and watch per kind) |
 | `LANDFLOW_K8S_SPREAD` | `pods` | `pods`: calls spread over the ready pods of a Service; `service`: one client on the Service address |
 | `LANDFLOW_K8S_CONTEXT` | – | kubeconfig context to use, even inside a pod (unset: in-cluster inside a pod, else the current context) |
