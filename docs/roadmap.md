@@ -1305,6 +1305,13 @@ workbench in place of a page of cards, keeping Spotlight.
     the gRPC registry's UNAUTHENTICATED / UNAVAILABLE answers; a production resume by curl with and without `sig`; a
     multi-page form in a browser; client addresses behind a real ingress; a signed-in pass under the enforced CSP
     (editor, Run Trace, Brain at desktop and 390 px), which needs a person to sign in.
+- **P16** (C13, S11, O4): list requests are bounded. `GET /api/executions` takes `limit` (1-500, default 100) and an
+  opaque `cursor` and answers `{ executions, nextCursor? }` by keyset paging with the member filter in SQL, so pages are
+  full; `?limit=Infinity` and `?limit=abc` are 400. The other limit-taking routes validate their query the same way
+  (`parseQuery`). `parseBody` refuses bodies over `LANDFLOW_MAX_BODY_BYTES` (16 MiB) with 413 without reading them
+  whole. The production profile rate-limits the API per principal and the public triggers per address and group, shared
+  through Valkey in queue mode (429 with Retry-After). New counters: `landflow.http.denied{reason}` and
+  `landflow.ratelimit.refused{bucket}`.
 
 ## Planned next
 

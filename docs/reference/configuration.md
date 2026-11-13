@@ -102,6 +102,9 @@ Variables read through `lib/server/config` (most of them; the telemetry flags in
 | `LANDFLOW_SESSION_TTL_HOURS` | `336` (14 days) | how long a sign-in lasts |
 | `LANDFLOW_SECURE_COOKIES` | auto | `true` / `false` forces the session cookie's Secure flag (default: Secure over https or with `X-Forwarded-Proto: https`) |
 | `LANDFLOW_LOGIN_MAX_ATTEMPTS` | `10` | failed sign-ins per email in 15 minutes (3× that per IP address) |
+| `LANDFLOW_MAX_BODY_BYTES` | `16777216` (16 MiB) | the largest JSON request body `parseBody` reads; a bigger one is refused with 413 (raise it for very large imports) |
+| `LANDFLOW_RATE_LIMIT_API` | `600` in production, `0` in development | authenticated API requests a minute per signed-in principal; over it: 429 with `Retry-After`. `0` turns it off. Shared through Valkey in queue mode |
+| `LANDFLOW_RATE_LIMIT_PUBLIC` | `120` in production, `0` in development | requests a minute per client address and public trigger group (`/api/webhook`, `/form`, `/chat`, `/mcp`, `/api/waiting`); `0` turns it off. Health checks, `/api/plugins/announce` and `/api/metrics` are never counted |
 | `LANDFLOW_SMTP_HOST`, `LANDFLOW_SMTP_PORT`, `LANDFLOW_SMTP_USER`, `LANDFLOW_SMTP_PASS`, `LANDFLOW_SMTP_FROM` | – / `587` / – / – / `Landflow <landflow@host>` | email for invites, password resets and failure alerts (unset: Settings shows links to copy; email alert channels fail). `LANDFLOW_SMTP_SECURE=true` for implicit TLS (default on port 465; otherwise STARTTLS when offered), `LANDFLOW_SMTP_IGNORE_TLS=true` to skip STARTTLS. The same SMTP sends approval emails (links valid `LANDFLOW_APPROVAL_EMAIL_TTL_HOURS`, default 24) |
 | `LANDFLOW_OIDC_ISSUER`, `LANDFLOW_OIDC_CLIENT_ID`, `LANDFLOW_OIDC_CLIENT_SECRET` | – | single sign-on (OIDC); all three turn on the SSO button |
 | `LANDFLOW_MCP_GATEWAY` | `bundled` | the MCP gateway: `bundled` (agentgateway next to each main), `file` (a gateway of its own reading the targets file) or `off` |
