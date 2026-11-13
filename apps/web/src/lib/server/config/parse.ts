@@ -14,8 +14,13 @@ export interface ConfigIssue {
   value?: string;
 }
 
-/** Variables whose values must never be echoed (see check.ts SECRET_VARIABLES; matched by name shape too). */
-const SECRET_NAME = /(SECRET|PASSWORD|TOKEN|KEY|URL)$/i;
+/**
+ * Names that hold secrets, by shape: never echoed here, shown as `[set]` by checkConfig (check.ts, which also has an
+ * explicit list). One pattern for both, so they can't drift.
+ */
+export const SECRET_NAME = /(SECRET|PASSWORD|_PASS$|TOKEN|HEADERS|CREDENTIALS|API_KEY|_KEY$)/i;
+/** URLs may carry credentials in their userinfo: an invalid one is not echoed either. */
+const URL_NAME = /URL$/i;
 
 const issues = new Map<string, ConfigIssue>();
 
@@ -30,7 +35,7 @@ export function resetConfigIssues(): void {
 
 function record(name: string | undefined, message: string, value: string | undefined) {
   if (!name || issues.has(name)) return;
-  const issue: ConfigIssue = { name, message, ...(value !== undefined && !SECRET_NAME.test(name) && { value }) };
+  const issue: ConfigIssue = { name, message, ...(value !== undefined && !SECRET_NAME.test(name) && !URL_NAME.test(name) && { value }) };
   issues.set(name, issue);
   // The logger sits in telemetry, which may import config: load it lazily and never let logging break parsing.
   void import('../telemetry/logger')

@@ -4,7 +4,7 @@ The host's environment variables, with their defaults. The compose stacks set th
 ([deployment.md](../deployment.md)); plugins read their own (`LANDFLOW_REGISTRY_URL`, ports, transports), listed in each
 SDK's README. Part of the [Landflow docs](../README.md).
 
-Flags accept `1,true,yes,on` and `0,false,no,off` (any case). A number that does not parse, or a flag that is neither, falls back to its default with one warning in the log (`config.invalid`, naming the variable) instead of breaking a timer; numbers are clamped to a sensible minimum. Read at call time, so a changed value is seen without an import-time snapshot.
+Variables read through `lib/server/config` (most of them; the telemetry flags in `telemetry/config.ts` and the SAML ones in `auth/saml.ts` keep their own parsing until the configuration catalog) accept `1,true,yes,on` and `0,false,no,off` (any case) as flags. A number that does not parse, or a flag that is neither, falls back to its default with one warning in the log (`config.invalid`, naming the variable) instead of breaking a timer; numbers are clamped to a sensible minimum. Read at call time, so a changed value is seen without an import-time snapshot.
 
 | Variable | Default | |
 |---|---|---|
@@ -37,7 +37,7 @@ Flags accept `1,true,yes,on` and `0,false,no,off` (any case). A number that does
 | `NEXT_MANUAL_SIG_HANDLE` | set by `pnpm start` and the Docker image | `true` leaves SIGTERM / SIGINT to Landflow's graceful shutdown instead of Next.js's own exit; not available in `next dev` |
 | `LANDFLOW_WORKER_PORT` / `LANDFLOW_WORKER_SHUTDOWN_SECONDS` | `5690` / `30` | a worker's `/healthz` and `/metrics` (`0` = off) / how long SIGTERM lets runs finish before re-queuing them |
 | `LANDFLOW_IDEMPOTENCY_TTL_HOURS` | `24` | how long trigger idempotency keys are remembered |
-| `LANDFLOW_APP_WEBHOOK_RETRY_MS` | `60000` | how often app webhook registrations that failed at publish are retried |
+| `LANDFLOW_APP_WEBHOOK_RETRY_MS` | `60000` | how often app webhook registrations that failed at publish are retried (minimum 1000) |
 | `LANDFLOW_APP_WEBHOOK_MAX_BYTES` | `26214400` (25 MiB) | largest body an app webhook trigger accepts (larger ones are refused) |
 | `LANDFLOW_AGENT_CHANNEL_POLL_SECONDS` | `5` | how often an agent's Telegram channel is polled for new messages (at least `2`) |
 | `LANDFLOW_PUBLIC_URL` | `http://localhost:$PORT` | public base URL in the links the host hands out: resume URLs (`$execution.resumeUrl`, `resumeFormUrl`), error workflow and failure alert execution links, the OAuth2 redirect URL, and the URL app webhook triggers register (`<public URL>/api/webhook/app/…`, so it must be reachable by the service) |
@@ -51,7 +51,7 @@ Flags accept `1,true,yes,on` and `0,false,no,off` (any case). A number that does
 | `LANDFLOW_SCAN_HOSTS` / `LANDFLOW_SCAN_PORTS` | `127.0.0.1` / `7100-7299` | pull discovery (the compose file sets the ports to `7101-7107,7111-7114,7116-7118,7201-7207,7211-7214,7216-7218`) |
 | `LANDFLOW_SCAN_ON_START` | `true` | scan at boot |
 | `LANDFLOW_PLUGIN_DISCOVERY` | – | `kubernetes`: discover plugins from labelled Services; `LANDFLOW_K8S_NAMESPACES` (`*`: every namespace), `LANDFLOW_K8S_SPREAD` (`pods`: calls spread over the ready pods, or `service`), `LANDFLOW_K8S_CONTEXT`, `LANDFLOW_K8S_ADDRESS`, `LANDFLOW_K8S_CLUSTER_DOMAIN`, `LANDFLOW_K8S_LABEL_SELECTOR`, `LANDFLOW_K8S_RESYNC_SECONDS` in [deployment.md, "Kubernetes"](../deployment.md#kubernetes) |
-| `LANDFLOW_EXECUTE_TIMEOUT_MS` | `120000` | per remote Execute call (and per call to the code runner) |
+| `LANDFLOW_EXECUTE_TIMEOUT_MS` | `120000` | per remote Execute call (and per call to the code runner); minimum 1000 for plugin calls |
 | `LANDFLOW_CODE_RUNNER_URL` | – | the Code node's sandbox, e.g. `http://127.0.0.1:7300` (pnpm) or `http://127.0.0.1:53300` (Docker); set: the sandbox is the default and Python works |
 | `LANDFLOW_CODE_RUNNER_SECRET` | – | shared secret, the runner's `CODE_RUNNER_SECRET` |
 | `LANDFLOW_CODE_IN_PROCESS` | `true` | `false`: no in-process (`node:vm`) JavaScript; every Code node needs the runner |

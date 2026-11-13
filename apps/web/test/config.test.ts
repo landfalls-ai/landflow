@@ -153,6 +153,12 @@ describe('checkConfig', () => {
     expect(r.effective.OTEL_EXPORTER_OTLP_HEADERS).toBe('[set]');
     expect(r.effective.LANDFLOW_S3_ACCESS_KEY_ID).toBe('AKIAEXAMPLE');
   });
+  it('redacts credentials in each entry of a comma-separated list of URLs', () => {
+    const r = checkConfig({ ...good, LANDFLOW_PLUGINS: 'http://u:listpw7@a:1,http://b:2' });
+    expect(r.effective.LANDFLOW_PLUGINS).not.toContain('listpw7');
+    expect(r.effective.LANDFLOW_PLUGINS).toContain('a:1');
+    expect(r.effective.LANDFLOW_PLUGINS).toContain('http://b:2');
+  });
   it('flags a development password inside DATABASE_URL in production, and accepts flag spellings', () => {
     const r = checkConfig({ ...good, DATABASE_URL: 'postgres://landflow:landflow-dev-only@postgres/x' });
     expect(r.errors.join()).toContain('DATABASE_URL');
