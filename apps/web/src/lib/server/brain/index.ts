@@ -160,11 +160,8 @@ export const brain = singleton('brain', () => {
   return {
     start() {
       if (!brainEnabled() || timer) return;
-      try {
-        backfillUsage();
-      } catch (error) {
-        logger.warn('the usage backfill failed', { error });
-      }
+      // Never rejects: it logs its own failure.
+      void backfillUsage();
       first = setTimeout(() => void tick(), 30_000);
       first.unref?.();
       timer = setInterval(() => void tick(), intervalMinutes() * 60_000);
