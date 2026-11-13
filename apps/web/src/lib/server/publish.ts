@@ -26,6 +26,7 @@ import { applyVersion, getVersion, listVersions, recordVersion, versionFor } fro
 import { HttpError } from './errors';
 
 export class PublishError extends HttpError {
+  static readonly errorName: string = 'PublishError';
   constructor(
     message: string,
     status = 400,

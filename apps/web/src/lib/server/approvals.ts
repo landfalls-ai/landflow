@@ -71,6 +71,7 @@ export interface PendingApproval {
 }
 
 export class ApprovalError extends HttpError {
+  static readonly errorName: string = 'ApprovalError';
   constructor(
     message: string,
     status: number,

@@ -22,6 +22,7 @@ export interface StoredVariable extends Variable {
 }
 
 export class VariableError extends HttpError {
+  static readonly errorName: string = 'VariableError';
   constructor(
     message: string,
     status = 400,

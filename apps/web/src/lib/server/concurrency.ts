@@ -51,6 +51,7 @@ export type SkipReason = 'limit' | 'singleton' | 'queue-full' | 'debounced' | 'b
 
 /** A trigger run that was not started: the workflow had no free slot and does not queue (or its queue is full). */
 export class RunSkippedError extends HttpError {
+  static readonly errorName: string = 'RunSkippedError';
   constructor(
     readonly workflowId: string,
     readonly reason: SkipReason,
@@ -64,7 +65,6 @@ export class RunSkippedError extends HttpError {
       429,
       { details: { workflowId, reason } },
     );
-    this.name = 'RunSkippedError';
   }
 }
 

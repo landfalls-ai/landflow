@@ -26,12 +26,12 @@ export const ENVIRONMENT_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,39}$/;
 export const DEFAULT_ENVIRONMENTS = ['development', 'staging', 'production'];
 
 export class EnvironmentError extends HttpError {
+  static readonly errorName: string = 'EnvironmentError';
   constructor(
     message: string,
     status = 400,
   ) {
     super(message, status, { expose: true });
-    this.name = 'EnvironmentError';
   }
 }
 

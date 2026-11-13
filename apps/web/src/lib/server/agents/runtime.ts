@@ -686,6 +686,7 @@ export async function decide(
 }
 
 export class DecisionError extends HttpError {
+  static readonly errorName: string = 'DecisionError';
   constructor(
     message: string,
     status: number,

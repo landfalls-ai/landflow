@@ -40,7 +40,8 @@ function, its callers (`grep -rn`).
 - No server → UI, shared → server, client component → server value, route → `lib/server/db` or `packages/` →
   `apps/web` imports, and no new import cycle: `pnpm check:deps` checks them (run it on the branch).
 - Errors: throw `HttpError` (`lib/server/errors.ts`) or a domain error that extends it, and let `handler()` map it; no
-  internal message sent to the client (anything else is a generic 500 with the request id).
+  internal message sent to the client; a new subclass starts with `static readonly errorName: string = 'ItsName';`
+  (minified builds rename classes, so `code` comes from it) (anything else is a generic 500 with the request id).
 - Logs through `logger` with fields; metric labels bounded.
 - The backend refactor's conventions (the constitution) used, not re-implemented in parallel; no route `catch` that only
   maps a domain error to its status (`handler()` does).

@@ -94,6 +94,7 @@ const ttlMs = () => {
 const waitMs = () => 1000 * envNumber('LANDFLOW_MCP_APPROVAL_WAIT_SECONDS', { fallback: DEFAULT_WAIT_SECONDS, min: 0 });
 
 export class McpApprovalError extends HttpError {
+  static readonly errorName: string = 'McpApprovalError';
   constructor(
     message: string,
     status = 400,

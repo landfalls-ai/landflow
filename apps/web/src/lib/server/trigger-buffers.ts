@@ -31,6 +31,7 @@ export const BUFFERED_MODES = new Set<ExecutionMode>(['webhook', 'trigger', 'pol
 export const MAX_BUFFERED_ITEMS = 1_000;
 
 export class RunBufferedError extends RunSkippedError {
+  static readonly errorName: string = 'RunBufferedError';
   constructor(
     workflowId: string,
     readonly kind: 'debounce' | 'batch',
@@ -41,7 +42,6 @@ export class RunBufferedError extends RunSkippedError {
     readonly startedNow = false,
   ) {
     super(workflowId, kind === 'debounce' ? 'debounced' : 'batched');
-    this.name = 'RunBufferedError';
     this.message =
       kind === 'debounce'
         ? `Debounced: the run starts at ${dueAt} unless more events come in`

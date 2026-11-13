@@ -25,6 +25,7 @@ export interface KubeObject {
 }
 
 export class KubeError extends HttpError {
+  static readonly errorName: string = 'KubeError';
   constructor(
     message: string,
     status: number,

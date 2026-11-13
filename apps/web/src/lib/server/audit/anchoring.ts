@@ -45,6 +45,7 @@ export const anchoringPatchSchema = anchoringSchema.partial();
 const file = singleton('audit-anchoring-file', () => new ConfigFile<Partial<AuditAnchoringSettings>>('audit-anchoring.json'));
 
 export class AnchoringError extends HttpError {
+  static readonly errorName: string = 'AnchoringError';
   constructor(
     message: string,
     status = 400,

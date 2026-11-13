@@ -43,6 +43,7 @@ export const weeklyCap = () => {
 };
 
 export class ProposalError extends HttpError {
+  static readonly errorName: string = 'ProposalError';
   constructor(
     message: string,
     status = 400,

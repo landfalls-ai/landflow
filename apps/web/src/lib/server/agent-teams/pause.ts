@@ -150,6 +150,7 @@ export function holdMember(executionId: string, member: string, kind: 'agent' | 
 }
 
 export class PauseError extends HttpError {
+  static readonly errorName: string = 'PauseError';
   constructor(
     message: string,
     status = 409,

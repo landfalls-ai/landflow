@@ -96,12 +96,14 @@ export interface Segment {
 }
 
 export class ResumeError extends HttpError {
+  static readonly errorName: string = 'ResumeError';
   constructor(message: string, status = 409) {
     super(message, status);
   }
 }
 
 export class RerunError extends HttpError {
+  static readonly errorName: string = 'RerunError';
   constructor(message: string, status = 400) {
     super(message, status);
   }

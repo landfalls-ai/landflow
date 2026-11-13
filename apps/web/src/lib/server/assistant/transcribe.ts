@@ -7,6 +7,7 @@ import { HttpError } from '../errors';
 export const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 
 export class TranscribeError extends HttpError {
+  static readonly errorName: string = 'TranscribeError';
   constructor(
     message: string,
     status = 502,

@@ -64,6 +64,7 @@ export function fieldsProblem(fields: UsageKindField[]): string | undefined {
 }
 
 export class KindError extends HttpError {
+  static readonly errorName: string = 'KindError';
   constructor(message: string, status = 400) {
     super(message, status, { expose: true });
   }

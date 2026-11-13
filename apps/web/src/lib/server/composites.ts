@@ -15,6 +15,7 @@ import { HttpError } from './errors';
 export const LOCAL_PREFIX = 'local.';
 
 export class CompositeError extends HttpError {
+  static readonly errorName: string = 'CompositeError';
   constructor(message: string, status = 400, issues?: unknown) {
     super(message, status, { expose: true, ...(issues ? { details: { details: issues } } : {}) });
   }

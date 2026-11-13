@@ -6,6 +6,7 @@ import { HttpError } from '../errors';
  * guard can throw it without importing the guard.
  */
 export class AuthError extends HttpError {
+  static readonly errorName: string = 'AuthError';
   declare readonly status: 401 | 403 | 404 | 423;
 
   constructor(message: string, status: 401 | 403 | 404 | 423 = 401) {

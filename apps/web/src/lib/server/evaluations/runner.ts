@@ -31,6 +31,7 @@ import { HttpError } from '../errors';
 export const MAX_CASES = 1_000;
 
 export class EvaluationError extends HttpError {
+  static readonly errorName: string = 'EvaluationError';
   constructor(
     message: string,
     status = 400,

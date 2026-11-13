@@ -18,6 +18,7 @@ export interface CheckDecision {
 }
 
 export class CheckError extends HttpError {
+  static readonly errorName: string = 'CheckError';
   constructor(
     message: string,
     status: number,

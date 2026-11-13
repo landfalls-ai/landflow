@@ -64,13 +64,13 @@ export { saveTeamTemplateSchema, saveTemplateSchema, updateTemplateSchema } from
 
 /** A template request that can't be served: `status` is the HTTP status. */
 export class TemplateError extends HttpError {
+  static readonly errorName: string = 'TemplateError';
   constructor(
     message: string,
     status = 400,
     details?: Record<string, unknown>,
   ) {
     super(message, status, { expose: true, ...(details && { details }) });
-    this.name = 'TemplateError';
   }
 }
 

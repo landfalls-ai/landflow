@@ -38,6 +38,7 @@ import { workflowRequiresFourEyes } from './scopes';
 import { HttpError } from '../errors';
 
 export class ApprovalError extends HttpError {
+  static readonly errorName: string = 'ApprovalError';
   constructor(
     message: string,
     status = 400,

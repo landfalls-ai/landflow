@@ -56,6 +56,7 @@ interface UserRow {
 }
 
 export class UserError extends HttpError {
+  static readonly errorName: string = 'UserError';
   constructor(
     message: string,
     status = 400,

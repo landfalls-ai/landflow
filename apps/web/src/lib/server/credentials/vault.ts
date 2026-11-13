@@ -96,6 +96,7 @@ export function parseSealedString(text: string): SealedValue | undefined {
 }
 
 export class CredentialError extends HttpError {
+  static readonly errorName: string = 'CredentialError';
   constructor(
     message: string,
     status = 400,

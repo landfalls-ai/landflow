@@ -355,6 +355,7 @@ function mentions(entity: BrainEntity, index: PageIndex, db: Database): Array<{ 
 // ---------------------------------------------------------------------------
 
 export class WikiError extends HttpError {
+  static readonly errorName: string = 'WikiError';
   constructor(
     message: string,
     status = 400,

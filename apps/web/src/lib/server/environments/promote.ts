@@ -84,9 +84,9 @@ export interface PromoteInput {
 
 /** What an approved promotion would write changed since the request (the branches moved, a credential or rows changed). */
 export class StalePromotionError extends EnvironmentError {
+  static readonly errorName: string = 'StalePromotionError';
   constructor(message = 'What this promotion writes changed since it was previewed') {
     super(message, 409);
-    this.name = 'StalePromotionError';
   }
 }
 

@@ -46,6 +46,7 @@ export interface McpCaller {
 }
 
 export class McpAuthError extends HttpError {
+  static readonly errorName: string = 'McpAuthError';
   declare readonly status: 401 | 403;
   readonly wwwAuthenticate?: string;
   constructor(message: string, status: 401 | 403 = 401, wwwAuthenticate?: string) {

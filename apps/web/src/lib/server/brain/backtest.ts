@@ -35,6 +35,7 @@ export const BACKTEST_BUDGET_MS = 5 * 60_000;
 const KEEP_PER_DETECTOR = 30;
 
 export class BacktestError extends HttpError {
+  static readonly errorName: string = 'BacktestError';
   constructor(
     message: string,
     status = 400,

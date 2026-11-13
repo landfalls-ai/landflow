@@ -42,12 +42,12 @@ const SSH_KEY_FIELDS = ['privateKey', 'sshPrivateKey', 'sshKey', 'key'];
 const PEM_PRIVATE_KEY = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/;
 
 export class SourceControlError extends HttpError {
+  static readonly errorName: string = 'SourceControlError';
   constructor(
     message: string,
     status = 400,
   ) {
     super(message, status, { expose: true });
-    this.name = 'SourceControlError';
   }
 }
 

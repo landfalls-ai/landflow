@@ -17,6 +17,7 @@ import { auditDb, verifyChain } from './chain';
 import { HttpError } from '../errors';
 
 export class AuditSigningError extends HttpError {
+  static readonly errorName: string = 'AuditSigningError';
   constructor(
     message: string,
     status = 409,

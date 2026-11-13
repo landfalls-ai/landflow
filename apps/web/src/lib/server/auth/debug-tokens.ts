@@ -31,6 +31,7 @@ export const DEBUG_TOKEN_MAX_USES = 1000;
 export const DEBUG_TOKEN_MAX_LIVE_PER_EXECUTION = 20;
 
 export class DebugTokenError extends HttpError {
+  static readonly errorName: string = 'DebugTokenError';
   constructor(
     message: string,
     status = 400,

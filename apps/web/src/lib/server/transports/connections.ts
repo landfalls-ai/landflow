@@ -22,12 +22,12 @@ import { transportProviders, type TransportConnectionConfig, type TransportProvi
 import { HttpError } from '../errors';
 
 export class TransportError extends HttpError {
+  static readonly errorName: string = 'TransportError';
   constructor(
     message: string,
     status = 400,
   ) {
     super(message, status, { expose: true });
-    this.name = 'TransportError';
   }
 }
 

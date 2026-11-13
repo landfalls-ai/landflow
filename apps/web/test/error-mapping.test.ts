@@ -116,4 +116,36 @@ describe('the HttpError tree', () => {
     // Upstream status codes (a Kubernetes or MCP answer) and runner.ts's classes (converted with its split) are not mapped.
     expect(stray.filter((entry) => !/errors\.ts|runner\.ts|db\/|McpClientError|GatewayAdapterError|SecretProviderError|OAuth2Error|SystemOneApiError|journal\/store/.test(entry))).toEqual([]);
   });
+
+  it('gives every HttpError subclass a literal errorName (the production bundle minifies class names)', () => {
+    // Without one, `code` and `name` come from `new.target.name`, which `next build` turns into a letter such as "v".
+    const sources = [...files(root), ...files(join(__dirname, '..', 'src', 'app'))].map((path) => ({ path, text: readFileSync(path, 'utf8') }));
+    const declarations = sources.flatMap(({ path, text }) =>
+      [...text.matchAll(/class (\w+) extends (\w+)\s*\{\n?([^\n]*)/g)].map(([, name, base, firstLine]) => ({ path, name, base, firstLine })),
+    );
+    const tree = new Set(['HttpError']);
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const { name, base } of declarations) {
+        if (tree.has(base) && !tree.has(name)) {
+          tree.add(name);
+          grew = true;
+        }
+      }
+    }
+    const subclasses = declarations.filter(({ name, base }) => name !== 'HttpError' && tree.has(base));
+    expect(subclasses.length).toBeGreaterThan(50);
+    const unnamed = subclasses.filter(({ name, firstLine }) => firstLine.trim() !== `static readonly errorName: string = '${name}';`);
+    expect(unnamed.map(({ path, name }) => `${path}: ${name}`)).toEqual([]);
+  });
+
+  it('takes name and code from errorName, not the (minifiable) class name', () => {
+    class v extends HttpError {
+      static readonly errorName: string = 'CheckError';
+    }
+    const error = new v('No such check in that span', 404);
+    expect(error.name).toBe('CheckError');
+    expect(error.code).toBe('check_error');
+    expect(new RunSkippedError('wf-1', 'singleton')).toMatchObject({ name: 'RunSkippedError', code: 'run_skipped_error' });
+  });
 });

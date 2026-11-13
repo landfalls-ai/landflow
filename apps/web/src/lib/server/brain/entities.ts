@@ -21,6 +21,7 @@ import { getProfile, listFacts, upsertFact } from './facts';
 import { HttpError } from '../errors';
 
 export class EntityError extends HttpError {
+  static readonly errorName: string = 'EntityError';
   constructor(
     message: string,
     status = 400,

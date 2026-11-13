@@ -29,6 +29,7 @@ import { AGENT_ID_LABEL, approvalServerName, kagentManifests, kagentName, landfl
 import { HttpError } from '../errors';
 
 export class KagentError extends HttpError {
+  static readonly errorName: string = 'KagentError';
   constructor(
     message: string,
     status = 400,

@@ -76,7 +76,10 @@ filesystem access causes tracing of the whole project".
 - **Errors**: a route (or the store below it) throws an `HttpError` (`lib/server/errors.ts`: `(message, status = 400,
   { code?, details?, cause?, expose? })`) and does not catch it to build a response: `handler()` answers it as
   `{ error, code, …details }`. Give a domain error its own class (`class OutOfStockError extends HttpError`, same
-  `(message, status)` order as the older classes) instead of a `try`/`catch` per route. Anything that is not an
+  `(message, status)` order as the older classes) instead of a `try`/`catch` per route, and name it with a literal on
+  the first line of its body: `static readonly errorName: string = 'OutOfStockError';`. `code` (`out_of_stock_error`)
+  and `name` come from it, because `next build` minifies class names (from `new.target.name` the image would answer
+  `code: "v"`); `test/error-mapping.test.ts` fails a subclass without one. Anything that is not an
   `HttpError` or a `ZodError` becomes a generic 500 with the request id, so write user-facing failures as `HttpError`s
   with a 4xx, 502 or 503 status (`expose: true` for a 5xx whose text may reach the client). Every domain error with a
   status (`VariableError`, `PublishError`, `ProjectError`, `CredentialError`, `SourceControlError`, `TemplateError`, …)

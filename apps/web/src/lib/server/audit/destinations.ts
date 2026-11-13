@@ -19,6 +19,7 @@ import { parse } from '../db/rows';
 import { HttpError } from '../errors';
 
 export class AuditDestinationError extends HttpError {
+  static readonly errorName: string = 'AuditDestinationError';
   constructor(
     message: string,
     status = 400,

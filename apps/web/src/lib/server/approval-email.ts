@@ -85,6 +85,7 @@ export function verifyLink(token: string, now = Date.now()): LinkPayload {
 }
 
 export class LinkError extends HttpError {
+  static readonly errorName: string = 'LinkError';
   constructor(
     message: string,
     status: number,

@@ -20,12 +20,12 @@ export const MAX_KEY_LENGTH = 255;
 
 /** A trigger call that repeats an earlier one: `executionId` is the execution the key started. */
 export class DuplicateRunError extends HttpError {
+  static readonly errorName: string = 'DuplicateRunError';
   constructor(
     readonly executionId: string,
     readonly key: string,
   ) {
     super(`A run with idempotency key "${key}" already exists (execution ${executionId})`, 409, { details: { executionId } });
-    this.name = 'DuplicateRunError';
   }
 }
 

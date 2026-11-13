@@ -70,7 +70,9 @@ session; people read it before they start a feature too.
   request id; the message goes to the log only). A domain error extends `HttpError` with its own default status; a
   route family may name a thin wrapper (`projectRoute`, `dataTableRoute`, `marketplaceRoute`), which maps nothing.
   Don't catch a domain error in a route to answer it: `handler()` does, with a `code` (the class name in snake_case)
-  and the class's `details`; `test/error-mapping.test.ts` fails a class that carries a status outside the `HttpError`
+  and the class's `details`. Every subclass names itself with a literal, `static readonly errorName: string = 'ItsName';`
+  on the first line of its body (`code` and `name` come from it: the production bundle minifies class names), and
+  `test/error-mapping.test.ts` fails one without it; `test/error-mapping.test.ts` fails a class that carries a status outside the `HttpError`
   tree (only errors with an optional upstream status, such as `McpClientError` and `OAuth2Error`, stay plain). Never
   send an unexpected error's text (SQL, paths, stacks) to the client.
 

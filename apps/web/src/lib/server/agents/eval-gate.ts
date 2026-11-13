@@ -29,6 +29,7 @@ const MAX_RUNS_PER_AGENT = 30;
 const clip = (text: string, limit = 4_000) => (text.length > limit ? `${text.slice(0, limit)}…` : text);
 
 export class EvalGateError extends HttpError {
+  static readonly errorName: string = 'EvalGateError';
   constructor(
     message: string,
     status = 400,

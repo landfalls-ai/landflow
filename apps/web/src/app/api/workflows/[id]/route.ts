@@ -25,6 +25,7 @@ export const GET = handler(async (_request: Request, { params }: Ctx) => {
 
 /** 412: the client based its save on a version that is no longer the stored one. */
 class WorkflowConflictError extends HttpError {
+  static readonly errorName: string = 'WorkflowConflictError';
   constructor(current: Workflow) {
     super('This workflow changed since you opened it', 412, { code: 'workflow_conflict', details: { current: { updatedAt: current.updatedAt, ...(current.updatedBy && { updatedBy: current.updatedBy }) } } });
   }

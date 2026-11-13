@@ -20,6 +20,7 @@ export const MAX_DATASET_BYTES = 10 * 1024 * 1024;
 const ARRAY_KEYS = ['rows', 'cases', 'data', 'items', 'dataset', 'examples', 'records'];
 
 export class DatasetFileError extends HttpError {
+  static readonly errorName: string = 'DatasetFileError';
   constructor(message: string) {
     super(message, 400);
   }

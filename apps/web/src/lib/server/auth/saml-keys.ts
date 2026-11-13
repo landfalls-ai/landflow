@@ -27,6 +27,7 @@ const SETTINGS_KEY = 'saml_encryption';
 
 /** A bad or env-managed key: the caller's to fix (400). */
 export class SamlKeyError extends HttpError {
+  static readonly errorName: string = 'SamlKeyError';
   constructor(message: string) {
     super(message, 400, { expose: true });
   }

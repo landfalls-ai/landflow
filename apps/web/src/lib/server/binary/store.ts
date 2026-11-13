@@ -49,6 +49,7 @@ export interface BinaryStore {
 }
 
 export class BinaryTooLargeError extends HttpError {
+  static readonly errorName: string = 'BinaryTooLargeError';
   constructor(readonly maxBytes: number) {
     super(`The file is larger than the ${maxBytes} byte limit (LANDFLOW_BINARY_MAX_BYTES)`, 413);
   }

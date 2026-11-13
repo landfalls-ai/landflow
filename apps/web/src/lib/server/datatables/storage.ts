@@ -38,6 +38,7 @@ export interface DataTableStorage {
 }
 
 export class DataTableError extends HttpError {
+  static readonly errorName: string = 'DataTableError';
   constructor(
     message: string,
     status = 400,

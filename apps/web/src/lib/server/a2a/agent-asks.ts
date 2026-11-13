@@ -64,6 +64,7 @@ export interface AskRecord {
 }
 
 export class AskError extends HttpError {
+  static readonly errorName: string = 'AskError';
   constructor(
     message: string,
     status: number,

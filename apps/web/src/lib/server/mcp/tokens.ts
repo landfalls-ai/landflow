@@ -34,6 +34,7 @@ export const MCP_TOKEN_DEFAULT_DAYS = 30;
 const TOUCH_EVERY_MS = 60_000;
 
 export class McpTokenError extends HttpError {
+  static readonly errorName: string = 'McpTokenError';
   constructor(
     message: string,
     status = 400,

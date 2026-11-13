@@ -10,7 +10,7 @@ heartbeat send it) does not mark its session as used, so it does not hold off `L
 `GET /api/events` never does. Any other value, or none, counts as use.
 
 **Errors.** A failed request answers `{ error, code, …details }` with the HTTP status: `error` is the text a person reads,
-`code` a stable snake_case name (the thrown class's, or `invalid_request` for a body that failed validation, which also
+`code` a stable snake_case name (the thrown class's `errorName`, so the same in a production build, or `invalid_request` for a body that failed validation, which also
 carries `issues`), and any extra fields the error names (`current` of a workflow conflict, `missing` of a marketplace
 lookup). An unexpected error answers 500 `{ error: 'Internal error', code: 'internal_error', requestId }`: never its
 message, which goes to the log with the same request id (also the `X-Request-Id` response header, with a W3C `traceparent` beside it on `/api` while a span is active). A write refused

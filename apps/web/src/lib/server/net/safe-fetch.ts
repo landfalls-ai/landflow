@@ -34,9 +34,9 @@ import { HttpError } from '../errors';
 
 /** A request refused by the outbound policy (a node shows its message; HTTP semantics: 403). */
 export class OutboundBlockedError extends HttpError {
+  static readonly errorName: string = 'OutboundBlockedError';
   constructor(message: string) {
     super(message, 403);
-    this.name = 'OutboundBlockedError';
   }
 }
 

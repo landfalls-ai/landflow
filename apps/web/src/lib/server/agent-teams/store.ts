@@ -16,6 +16,7 @@ import { HttpError } from '../errors';
 export const issuesOf = (config: AgentTeamConfig): string[] => teamIssues(config, { agentExists: (id) => Boolean(agentStore.get(id)) });
 
 export class AgentTeamError extends HttpError {
+  static readonly errorName: string = 'AgentTeamError';
   constructor(
     message: string,
     readonly issues: string[] = [],

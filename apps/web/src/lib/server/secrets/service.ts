@@ -25,12 +25,12 @@ import { HttpError } from '../errors';
 export const PROVIDER_NAME = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 
 export class SecretsError extends HttpError {
+  static readonly errorName: string = 'SecretsError';
   constructor(
     message: string,
     status = 400,
   ) {
     super(message, status, { expose: true });
-    this.name = 'SecretsError';
   }
 }
 

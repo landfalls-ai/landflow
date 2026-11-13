@@ -18,6 +18,7 @@ import { HttpError } from '../errors';
 export const MAX_BUNDLE_AGENTS = 30;
 
 export class BundleError extends HttpError {
+  static readonly errorName: string = 'BundleError';
   constructor(
     message: string,
     status = 400,

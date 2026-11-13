@@ -32,6 +32,7 @@ const TICK_MS = 5_000;
 const MAX_AHEAD_MS = 366 * 24 * 3600_000;
 
 export class ScheduleError extends HttpError {
+  static readonly errorName: string = 'ScheduleError';
   constructor(
     message: string,
     status = 400,

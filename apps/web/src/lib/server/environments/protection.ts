@@ -35,9 +35,9 @@ export function protectedWriteRefusal(method: string, path: string): string | un
 }
 
 export class ProtectedEnvironmentError extends HttpError {
+  static readonly errorName: string = 'ProtectedEnvironmentError';
   constructor() {
     super(protectedMessage(), 403);
-    this.name = 'ProtectedEnvironmentError';
   }
 }
 

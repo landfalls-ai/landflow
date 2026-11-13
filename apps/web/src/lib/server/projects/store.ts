@@ -75,6 +75,7 @@ interface ShareRow {
 }
 
 export class ProjectError extends HttpError {
+  static readonly errorName: string = 'ProjectError';
   constructor(
     message: string,
     status = 400,

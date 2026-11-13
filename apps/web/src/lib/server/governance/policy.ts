@@ -38,6 +38,7 @@ export const HTTP_REQUEST_TYPE = 'core.httpRequest';
 export const MCP_NODE_TYPES = new Set(['core.mcpClient', 'core.mcpClientTool']);
 
 export class PolicyError extends HttpError {
+  static readonly errorName: string = 'PolicyError';
   constructor(
     message: string,
     readonly violations: PolicyViolation[] = [],

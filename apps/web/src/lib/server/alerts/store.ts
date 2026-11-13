@@ -11,12 +11,12 @@ import { database } from '../db';
 import { HttpError } from '../errors';
 
 export class AlertError extends HttpError {
+  static readonly errorName: string = 'AlertError';
   constructor(
     message: string,
     status = 400,
   ) {
     super(message, status, { expose: true });
-    this.name = 'AlertError';
   }
 }
 

@@ -6,6 +6,7 @@ import { noteStore } from './store';
 import { HttpError } from '../errors';
 
 export class NoteError extends HttpError {
+  static readonly errorName: string = 'NoteError';
   constructor(
     message: string,
     status = 400,

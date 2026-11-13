@@ -122,7 +122,8 @@ With `LANDFLOW_LOG_SPANS=true` (the default) every finished span is also written
   checkout path stripped; `node:` and `node_modules` frames skipped). The same bug groups across releases and machines,
   two call sites don't, in development and from source. In the shipped host image (Next standalone, minified chunks
   with a content hash in the name, no source maps) the frames are minified, so the key is the chunk's source-path
-  words with the hash stripped: the group survives a rebuild but is coarser: by exception type and chunk name words, which many chunks share (about 100 chunks are named `apps_web_src_lib_server`). Exact
+  words with the hash stripped: the group survives a rebuild (the exception type is a literal per class there too: every `HttpError` subclass's
+  `errorName` and the transport errors' `name`, never a minified class name) but is coarser: by exception type and chunk name words, which many chunks share (about 100 chunks are named `apps_web_src_lib_server`). Exact
   call-site grouping there needs server source maps with `--enable-source-maps` (a follow-up: `next.config.ts` and
   the host Dockerfile are outside this change). Spans failed through the host's `failSpan` (plugin RPC, triggers,
   A2A, MCP, `withSpan`) carry the same attribute on their `exception` event (`exception.type`,

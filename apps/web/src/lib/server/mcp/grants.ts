@@ -30,6 +30,7 @@ import { HttpError } from '../errors';
 
 /** A grant fails with a status the routes pass on. */
 export class McpGrantError extends HttpError {
+  static readonly errorName: string = 'McpGrantError';
   constructor(
     message: string,
     status = 400,
