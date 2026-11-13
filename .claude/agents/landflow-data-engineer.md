@@ -31,9 +31,13 @@ Read `docs/constitution.md` ("Data" and "Testing"), `CLAUDE.md`, `docs/architect
   one). No foreign keys: cascades are written by hand, inside one transaction.
 - `db/database.ts`: prepared statements are cached per SQL text in an LRU capped by `LANDFLOW_DB_STATEMENT_CACHE`
   (default 500): parameters go in `?`, never into the SQL text.
-- `db/postgres.ts`: Postgres mode keeps the whole database in an in-memory SQLite copy, appends each committed write to
-  a spool file and replays it on Postgres through an ordered queue; `flush()` waits for it. `db/replication.ts`
-  follows other processes through `LISTEN/NOTIFY` in queue mode. `direct()` is the escape hatch for cross-process
+- `db/postgres.ts`: Postgres mode keeps the database in an in-memory SQLite copy, appends each committed write to
+  a spool file and replays it on Postgres through an ordered queue; `flush()` waits for it. Run data is kept only for
+  hot runs (`db/hot-mirror.ts`: in flight, finished within `LANDFLOW_PG_HOT_MINUTES`, a retry waiting, a child of a run
+  in flight): a cold run keeps its row with `data` '' and no `execution_events` in the copy, a timer evicts what cooled
+  (`Database.evictLocal`, copy only, never a row with a pending write), and deletes on those partly mirrored tables are
+  always replayed. Audit events, the usage ledger, insights and AI usage stay whole in the copy. `db/replication.ts`
+  follows other processes through `LISTEN/NOTIFY` in queue mode (cold rows stay empty; `landflow.db.replication.lag`). `direct()` is the escape hatch for cross-process
   agreement (`auth/saml-state.ts`, `mcp/approvals.ts`, `audit/chain.ts`). A batch Postgres keeps rejecting is never
   dropped: the sink blocks, every write throws `StoreUnavailableError` (503 from `handler()`) until it applies or
   `LANDFLOW_PG_SKIP_BATCH` sets it aside, and `database().writeHealth()` reports the queue
@@ -42,8 +46,10 @@ Read `docs/constitution.md` ("Data" and "Testing"), `CLAUDE.md`, `docs/architect
 - `db/reads.ts`: the async read seam for run data (`readExecutionData`, `readExecutionEvents`, `readRows`). Code that
   may read a finished run uses `store.loadExecution`, `store.executionsMentioningAsync` or the journal's `*Async`
   readers (`journal/store.ts`); `store.getExecution` is for runs in flight, and `test/execution-reads.test.ts`
-  allow-lists its callers. Still to come: P26 (Postgres serves the seam; only hot run data in memory); check whether it
-  has landed on your base.
+  allow-lists its callers and the journal's sync readers. In Postgres mode the seam reads a cold run from Postgres
+  (`direct()`), and `readRows` waits on the write queue (`Database.barrier`) before it scans Postgres. A writer that may touch
+  a cold run (a rerun, retry, replay, a check appended to its journal) awaits `store.promoteExecution(id)` first:
+  `journal/store.ts` `append` refuses a cold run, and the sync `getExecution` and `lastSeq` see it as empty.
 - Stores: `lib/server/store.ts` (workflows cached in memory, executions on demand), `journal/` (Run Trace events),
   `audit/`, `usage/`, `ai-usage/`, `insights.ts`, `datatables/`, `projects/store.ts`, `config-store.ts` (credentials
   and settings documents in files or the database, `LANDFLOW_CONFIG_STORE`).

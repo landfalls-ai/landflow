@@ -6,7 +6,6 @@ import { z } from 'zod';
 import { error, json, parseBody } from '@/lib/server/http';
 import { projectRoute, requireProject, routeActor } from '@/lib/server/projects/http';
 import { projectVariables } from '@/lib/server/projects/variables';
-import { VariableError } from '@/lib/server/variables';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string; key: string }> };
@@ -23,12 +22,7 @@ export const PATCH = projectRoute(async (request: Request, { params }: Ctx) => {
   const project = requireProject(routeActor(), id, 'edit');
   const body = await parseBody(request, z.object({ key: z.string().optional(), value: z.string().optional() }));
   if (!body.ok) return body.response;
-  try {
-    return json(projectVariables.update(project.id, key, body.data));
-  } catch (caught) {
-    if (caught instanceof VariableError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  return json(projectVariables.update(project.id, key, body.data));
 });
 
 export const DELETE = projectRoute(async (_request: Request, { params }: Ctx) => {

@@ -34,6 +34,7 @@ import { closeDatabase, openDatabase } from './db';
 import { startOnlineEvaluations } from './evaluations/online';
 import { ensureExecutionReactions } from './execution-reactions';
 import { evaluationSchedules } from './evaluations/schedule';
+import { configureExpressionSandboxFromEnv } from './expression-sandbox';
 import { imapIdle } from './imap-idle';
 import { countProcessError, isDraining, markBootFailed, markBooted, onShutdown, shutdownDeadlineMs, type ShutdownPhase } from './lifecycle';
 import { marketplace } from './marketplace/service';
@@ -256,6 +257,8 @@ async function bootSteps(role: Role): Promise<void> {
   const specs = servicesFor(role);
   // Insights, the usage ledger and retention react to finished executions (store.ts only emits them): both roles save runs.
   ensureExecutionReactions();
+  // Before the first service: a refused sandbox choice (production, isolated-vm missing) stops the boot like a configuration error.
+  configureExpressionSandboxFromEnv();
   for (const spec of specs) {
     if (spec.when && !spec.when()) continue;
     if (spec.delayMs !== undefined) startLater(spec);

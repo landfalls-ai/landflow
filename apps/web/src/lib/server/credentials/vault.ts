@@ -51,6 +51,7 @@ import {
   type OAuth2Config,
   type StoredToken,
 } from './oauth2';
+import { HttpError } from '../errors';
 
 /** Credential values shorter than this are not remembered: `postgres` or `changeme` would otherwise rewrite every node output that says so. */
 const CREDENTIAL_MIN_LENGTH = 12;
@@ -94,12 +95,13 @@ export function parseSealedString(text: string): SealedValue | undefined {
   return undefined;
 }
 
-export class CredentialError extends Error {
+export class CredentialError extends HttpError {
+  static readonly errorName: string = 'CredentialError';
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

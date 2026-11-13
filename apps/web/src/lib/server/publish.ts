@@ -23,13 +23,15 @@ import { singleton } from './singleton';
 import { store } from './store';
 import { logger } from './telemetry/logger';
 import { applyVersion, getVersion, listVersions, recordVersion, versionFor } from './versions';
+import { HttpError } from './errors';
 
-export class PublishError extends Error {
+export class PublishError extends HttpError {
+  static readonly errorName: string = 'PublishError';
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

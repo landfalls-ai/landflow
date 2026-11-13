@@ -1,8 +1,8 @@
 /** POST /api/publish-requests/:id/approve `{ comment? }` — approve and publish (or unpublish) it: someone other than the requester, allowed by Settings → Governance. Answers the request and the publication status (`result`); 409 when it is out of date or decided. */
 import { z } from 'zod';
 import { requireUser } from '@/lib/server/auth/guard';
-import { ApprovalError, approveRequest } from '@/lib/server/governance/approvals';
-import { error, handler, json, parseBody } from '@/lib/server/http';
+import { approveRequest } from '@/lib/server/governance/approvals';
+import { handler, json, parseBody } from '@/lib/server/http';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
@@ -15,10 +15,5 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const body = hasBody ? await parseBody(request, bodySchema) : { ok: true as const, data: {} as z.infer<typeof bodySchema> };
   if (!body.ok) return body.response;
   const user = await requireUser();
-  try {
-    return json(await approveRequest(id, user, body.data.comment));
-  } catch (caught) {
-    if (caught instanceof ApprovalError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  return json(await approveRequest(id, user, body.data.comment));
 });

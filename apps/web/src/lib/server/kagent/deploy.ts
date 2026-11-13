@@ -26,13 +26,15 @@ import { a2aUrlOf, clusterFrom, KAGENT_API, KAGENT_CREDENTIAL, type KagentCluste
 import { applyObject, deleteObject, getObject, listObjects, type KubeObject } from './kube';
 import { BUILTIN_URL, builtinPin, imageRef, packPlugin } from './oci';
 import { AGENT_ID_LABEL, approvalServerName, kagentManifests, kagentName, landflowEgressName, secretName, validKagentName, type ExposedTool, type ModelSettings } from './manifests';
+import { HttpError } from '../errors';
 
-export class KagentError extends Error {
+export class KagentError extends HttpError {
+  static readonly errorName: string = 'KagentError';
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

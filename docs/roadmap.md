@@ -1267,7 +1267,7 @@ workbench in place of a page of cards, keeping Spotlight.
     runs themselves read `ollamaUrl()` at call time);
   - tests still missing from wave 1: SCIM `PUT /Users` and `PUT /Groups` events, the 10,000-address eviction, and
     access-scope cases for evaluation-dataset files, a live run's file and an agent the member can open.
-- **P11, `HttpError`, a generic 500 and one request pipeline** (C15, S12, contributes to C12; wave 3): `lib/server/errors.ts` holds `HttpError`; `handler()` answers it (status, code, details), a ZodError (400) and anything else as a generic 500 with the request id, never the message. `projectRoute`, `dataTableRoute`, the marketplace wrapper (its message regex is gone: `MarketplaceError` and `FetchError` extend `HttpError`) and `scimRoute` (now over `handler()` with `formatError`; gains the readiness wait, drain and request id) no longer map errors by hand; the approval email route runs through `handler()`; seven raw `request.json()` calls use `parseBody`. `PUT /api/workflows/:id` accepts `If-Match` / `baseUpdatedAt` (412 `workflow_conflict`, the editor sends it), deleting a workflow is one transaction, and `routePolicy()` marks its default with `fallback` so `test/policy-coverage.test.ts` fails a mutating route with no access rule. P27 converts the remaining domain error classes and the hand-written `catch` blocks.
+- **P11, `HttpError`, a generic 500 and one request pipeline** (C15, S12, contributes to C12; wave 3): `lib/server/errors.ts` holds `HttpError`; `handler()` answers it (status, code, details), a ZodError (400) and anything else as a generic 500 with the request id, never the message. `projectRoute`, `dataTableRoute`, the marketplace wrapper (its message regex is gone: `MarketplaceError` and `FetchError` extend `HttpError`) and `scimRoute` (now over `handler()` with `formatError`; gains the readiness wait, drain and request id) no longer map errors by hand; the approval email route runs through `handler()`; seven raw `request.json()` calls use `parseBody`. `PUT /api/workflows/:id` accepts `If-Match` / `baseUpdatedAt` (412 `workflow_conflict`, the editor sends it), deleting a workflow is one transaction, and `routePolicy()` marks its default with `fallback` so `test/policy-coverage.test.ts` fails a mutating route with no access rule. P27 converts the remaining domain error classes and the hand-written `catch` blocks (done, see below).
 - **P12, audit coverage** (S7, S8; wave 3): permission and secret changes are domain events (`project.*`, `project.member_change`, `resource.share` / `unshare` / `transfer`, `variable.*`, `secret_provider.*`, `auth.password_change`) with `from` / `to`; failed SAML and OIDC sign-ins are `auth.sign_in_failed`; refused reads are `api.denied`, once a minute per caller and route; exports (`sync.export`, `datatable.export`), credential tests and agent tool approvals are recorded. See [audit and governance](features/audit-and-governance.md).
 - **P13, safeFetch: one guarded client for outbound calls** (S5, O5; wave 3): `lib/server/net/safe-fetch.ts` refuses
   loopback, private, link-local, CGNAT and metadata addresses in the production profile unless
@@ -1424,6 +1424,67 @@ workbench in place of a page of cards, keeping Spotlight.
     updates at desktop and 390 px, Spotlight and Agent architect streams, an approvals stream, a revoked member's stream
     and a reconnect to another main; `pnpm dev` with a `pnpm worker` recording insights and usage and pruning, a dev
     edit of a singleton-held class, and no concurrent marketplace sync across two graphs.
+- **P26, Postgres mode keeps only hot run data in memory** (C16 steps 2-3, O4; wave 6): the in-memory copy holds the data
+  and journal of hot runs only (in flight, finished in the last `LANDFLOW_PG_HOT_MINUTES`, with a retry waiting, children
+  of a waiting run); `db/reads.ts` serves cold runs and scans from Postgres (a barrier on the write queue first), eviction
+  is a copy-only write (`Database.evictLocal`), deletes on the partly mirrored tables are always replayed,
+  `promoteExecution` loads a cold run back before its journal is written, queue-mode followers keep cold rows empty, and
+  `landflow.db.replication.lag` reports the follower's lag. At 50,000 finished runs boot went from about 10 s and 14 GB to
+  under 1 s and about 160 MB ([deployment.md](deployment.md#postgres-memory-sizing)); `scripts/seed-executions.ts` measures it.
+
+- **P27, `HttpError` everywhere** (C12; wave 6): the 53 domain error classes that carry a status extend `HttpError` (`expose: true`, so their messages keep reaching clients), with their extra fields in `details`. 84 route `catch` blocks that only answered `error(caught.message, caught.status)` are gone, `projectRoute` and `dataTableRoute` no longer map anything, and a domain error thrown where no route caught it answers its status instead of a 500. Responses gain a `code` field (the class name in snake_case). Each subclass names itself with a literal `static readonly errorName` that `code` and `name` come from: the production bundle minifies class names, so `new.target.name` answered `code: "v"` in the built image (found in the wave 6 integration review; `test/error-mapping.test.ts` fails a subclass without one). `RerunError`, `ResumeError` and the other `runner.ts` classes follow P28's split; classes with an optional upstream status (`McpClientError`, `OAuth2Error`, `SecretProviderError`, `GatewayAdapterError`, `SystemOneApiError`) stay plain errors.
+
+- **P28, boundaries as checks** (C11; wave 6): `lib/server/runner.ts` is a barrel over `lib/server/runner/` (types, state, limits, persist, run, resume, rerun, queue, recovery, links, live, stop, jobs; each a few hundred lines at most) and its error classes extend `HttpError`. `pnpm check:deps` (dependency-cruiser, `.dependency-cruiser.cjs`) enforces the layering (server never imports components, shared never imports server values, client components import no server values, routes never import `lib/server/db`, packages never import apps, no new cycles) and `pnpm check` is the local gate (typecheck, `pnpm test`, check:deps; no CI by decision). The `landflow-sync/v1` layout's names and path rules are in `packages/protocol/src/sync-format.ts`, imported by the host and the CLI.
+
+- **P29, shipped alert rules, a dashboard and exception fingerprints** (finding O7): `exception.fingerprint` on error log
+  lines and exception span events; `deploy/observability/prometheus-rules.yml` (13 alerts, each with a runbook link) and
+  `landflow-dashboard.json`, both loaded by the `orbstack-observability` overlay ([observability.md](observability.md#alerts-and-dashboard)).
+
+- **P30** (S1, strict mode): `LANDFLOW_EXPRESSION_SANDBOX=isolate` runs expressions in an isolated-vm isolate with a memory
+  cap (`LANDFLOW_EXPRESSION_MEMORY_MB`), sharing the realm's bootstrap and bridge; `realm` stays the default. Optional
+  dependency of the engine, `NODE_OPTIONS=--no-node-snapshot` in the image, refused at boot in production when it cannot load. Open: hash-table growth still aborts the process and the cap does not bound
+  resident memory, so it is no defence against a memory bomb ([limitations.md](limitations.md), [engine.md](features/engine.md#the-isolate-backend-optional)).
+
+- **Wave 5 carryover** (applied in wave 6): `Database.atomic()` has a test of its own (savepoint rollback, dropped queued
+  ops, nested calls); the audit fail-closed test covers API key revoke, credential update and delete, the audit settings
+  PATCH and SCIM groups; the audit outbox gauges are registered at boot even with `LANDFLOW_AUDIT_OUTBOX=off`, and the
+  four `landflow.audit.*` instruments are in the observability table; a test pins `landflow.auth.sign_in_failures` to one
+  count per failed sign-in; `recordDbQuery` costs about 0.15 µs a call with the metrics SDK on (measured, documented);
+  the `rotate-key` script has a Postgres test (`LANDFLOW_INTEGRATION=queue`); an anchoring save after a rotation keeps
+  the new seal; the reset page refuses a link before its form under `LANDFLOW_LOCAL_SIGN_IN`, Forgot password is tested
+  under the mode, the login page drops its welcome line when nobody can sign in and its test renders the form; the unused
+  sync `executionsMentioning` is gone and a source scan keeps the sync journal readers to runs in flight; and docs (how to
+  clear a value no key opens, why the local sign-in refusal follows the password, why readiness leaves out the outbox,
+  which literals `statementName` keeps). Deferred:
+  - the rotation route re-seals synchronously inside the request: fine at today's sizes, but with many credentials and
+    passphrase keys it blocks the event loop for the duration; a background job with progress wants its own design
+    ([limitations.md](limitations.md#encryption-key-ring-backend-hardening-2026-11));
+  - Settings → Users still offers a reset link for a user `LANDFLOW_LOCAL_SIGN_IN` refuses (the link is then refused):
+    hiding or explaining it is a UI change of its own;
+  - a CSP probe that loads a page with an inline script lacking the nonce (the CDP-injected probe runs under
+    `'strict-dynamic'` and can't tell a gap from the injection);
+  - live checks no automated test covers: fail-closed audit with a failing insert on a scratch host in the UI, and
+    `auditedTransaction` rolling back in Postgres mode; the P22 signals on `/api/metrics` under `pnpm dev` and a
+    production build (runtime, database, SSE, sign-in and limiter series), a slow GET as a whole trace with `db.query`
+    children in the local collector and none for fast GETs, `db.query` spans for `sqlite`, `postgres-mirror` and
+    `direct()`; key rotation on a scratch copy of a data directory (credentials, alert channels, MCP tokens; the owner
+    route and an admin's 403; queue mode with workers on the new ring; an OAuth2 Connect, an approval email link and a
+    resume URL made before the rotation); `/login` under `LANDFLOW_LOCAL_SIGN_IN=off` and `owner` at desktop and 390 px,
+    the OIDC and SAML suites (Keycloak) with local sign-in off, the 72 h idle sign-out and a cross-site POST without
+    Origin on a production-profile host; and a finished run's Run Trace, run search, compare, measures, Needs you,
+    approval links, delete and rerun, and the MCP execution tools, in SQLite and Postgres mode (now that P26 serves
+    old runs from Postgres).
+
+- **Wave 6 follow-ups** (open after the last wave): routes that answer with `error('…', 404)` directly (for example
+  `/api/projects/[id]`) send no `code`, only `HttpError`s do; the 5xx domain errors that wrap an upstream message
+  (`PauseError`, `WikiError`, `TemplateError`, `KagentError`, `SourceControlError` with git's stderr tail) are shown to
+  the client from any `handler()` route, not only the route that used to catch them, and could drop `expose`; the
+  `db.query` span records its exception without a fingerprint (`database.ts` calls `recordException`); the two
+  `routes-not-db` entries in the dependency baseline (`form-test/[...path]` → `db/replication`, `proposals/[id]/applied`
+  → `db`); `no-circular` leaves out every cycle that touches `lib/server/runner/`, so a direct two-module cycle between an
+  outside module and a runner module is not reported; a decision on an agent's command ask writes no journal event when
+  its run went cold first (only with `LANDFLOW_PG_HOT_MINUTES` below the ask's 10-minute TTL); and the isolate backend
+  still aborts the process on hash-table growth, so a memory bomb needs a separate evaluation process to be contained.
 
 ## Planned next
 

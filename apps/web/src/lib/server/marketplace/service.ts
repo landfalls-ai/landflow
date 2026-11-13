@@ -52,6 +52,7 @@ const EXPLORE_READ_ALL = 25;
 
 /** A marketplace request the caller can fix or retry; `body` (extra response fields such as `missing`) travels as the error's details. */
 export class MarketplaceError extends HttpError {
+  static readonly errorName: string = 'MarketplaceError';
   constructor(message: string, status = 400, readonly body?: Record<string, unknown>) {
     super(message, status, { code: 'marketplace_error', ...(body && { details: body }) });
   }

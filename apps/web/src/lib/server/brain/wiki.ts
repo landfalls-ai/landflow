@@ -29,6 +29,7 @@ import { listFacts, searchFacts } from './facts';
 import { brainStatus } from './index';
 import { listProposals } from './proposals';
 import { brainModel, brainModelName } from './writer';
+import { HttpError } from '../errors';
 
 const DAY = 86_400_000;
 /** How far back the home's shared-work and team views look. */
@@ -353,12 +354,13 @@ function mentions(entity: BrainEntity, index: PageIndex, db: Database): Array<{ 
 // The model's parts
 // ---------------------------------------------------------------------------
 
-export class WikiError extends Error {
+export class WikiError extends HttpError {
+  static readonly errorName: string = 'WikiError';
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

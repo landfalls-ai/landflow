@@ -40,7 +40,7 @@ inside a larger transaction: a swallowed failure leaves no partial rows and no f
 - **Metrics** (lib/server/audit/metrics.ts): `landflow.audit.write_failures{action}` counts events that could not be
   stored (the generic `api.request` layer counts under that action too); `landflow.audit.outbox.delivery_failures{destination}`
   counts failed SIEM deliveries; the gauges `landflow.audit.outbox.depth` and `landflow.audit.outbox.oldest_age` (seconds)
-  are registered as soon as the first event is recorded or the outbox starts, and read the outbox when metrics are collected, so a stuck destination shows as a growing age.
+  are registered at boot (also where `LANDFLOW_AUDIT_OUTBOX=off`), and read the outbox when metrics are collected, so a stuck destination shows as a growing age.
 - **`LANDFLOW_AUDIT_FAIL_CLOSED=true`** (default `false`; recommended for regulated deployments): for role changes, API
   key create and revoke, credential create, update and delete, audit settings changes (`PATCH /api/settings/audit` only: retention and credential-use; SIEM destinations, anchoring and key rotation stay fail-open) and SCIM provisioning (users and
   groups), an event that cannot be stored refuses the change with `503` (`AuditUnavailableError`) and nothing changes.

@@ -15,7 +15,7 @@ import type { CheckpointState, NodeRun, Workflow } from '@landflow/engine';
 import type { ExecutionRecord, ExecutionState, ExecutionSummary, WorkflowSummary } from '../shared/types';
 import { currentActorId } from './auth/context';
 import { database, dataDir, type Database } from './db';
-import { readExecutionData, readRows } from './db/reads';
+import { promoteExecution, readExecutionData, readRows } from './db/reads';
 import { executionRow, parse, pollRow, summarize, trimRunData, workflowRow } from './db/rows';
 import { backtestScope } from './brain/backtest-scope';
 import { singleton } from './singleton';
@@ -232,15 +232,18 @@ class Store {
     return parse<ExecutionRecord>(await readExecutionData(id));
   }
 
-  /** The newest finished or waiting executions whose saved record contains `text` (a team id in a flow's snapshot), newest first. */
-  executionsMentioning(text: string, limit = 5): ExecutionRecord[] {
-    const pattern = `%${text.replace(/[%_\\]/g, '\\$&')}%`;
-    return this.db
-      .all<{ data: string }>("SELECT data FROM executions WHERE status <> 'running' AND data LIKE ? ESCAPE '\\' ORDER BY started_at DESC, id DESC LIMIT ?", pattern, Math.max(1, Math.floor(limit)))
-      .flatMap((row) => parse<ExecutionRecord>(row.data) ?? []);
+  /**
+   * Make a run writable before re-running, retrying or answering it (db/reads.ts `promoteExecution`): in Postgres mode a
+   * cold run's data and journal are loaded back into the in-memory copy. Nothing to do for a hot run or on SQLite.
+   */
+  async promoteExecution(id: string): Promise<void> {
+    await promoteExecution(id);
   }
 
-  /** `executionsMentioning` through the async read seam. */
+  /**
+   * The newest finished or waiting executions whose saved record contains `text` (a team id in a flow's snapshot), newest
+   * first, through the async read seam (in Postgres mode a scan of the whole history there).
+   */
   async executionsMentioningAsync(text: string, limit = 5): Promise<ExecutionRecord[]> {
     const pattern = `%${text.replace(/[%_\\]/g, '\\$&')}%`;
     const rows = await readRows<{ data: string }>("SELECT data FROM executions WHERE status <> 'running' AND data LIKE ? ESCAPE '\\' ORDER BY started_at DESC, id DESC LIMIT ?", pattern, Math.max(1, Math.floor(limit)));

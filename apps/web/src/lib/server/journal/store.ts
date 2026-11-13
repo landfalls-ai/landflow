@@ -4,6 +4,7 @@
  */
 import type { JournalEvent } from '../../shared/run-trace';
 import { database } from '../db';
+import { isCold } from '../db/hot-mirror';
 import { readExecutionEvents, readRows } from '../db/reads';
 import { parse } from '../db/rows';
 
@@ -14,14 +15,20 @@ export class SeqClash extends Error {
   }
 }
 
-/** The highest seq stored for an execution (0 = none). */
+/**
+ * The highest seq stored for an execution (0 = none). Postgres mode: the journal of a cold run is in Postgres, not in the
+ * copy, so this says 1 ("has events") for it, and `append` refuses it; a writer calls `promoteExecution` first (./checks).
+ */
 export function lastSeq(executionId: string): number {
+  if (isCold(database(), executionId)) return 1;
   return Number(database().get<{ seq: number | null }>('SELECT MAX(seq) AS seq FROM execution_events WHERE execution_id = ?', executionId)?.seq ?? 0);
 }
 
 /** Store a batch in one transaction. Throws SeqClash (and stores nothing) when one of the numbers is taken. */
 export function append(executionId: string, events: JournalEvent[]) {
   const db = database();
+  // The copy has none of a cold run's events, so it would number these from 1 over what Postgres holds.
+  if (isCold(db, executionId)) throw new Error('the journal of a cold run is in Postgres: load it with promoteExecution before appending');
   db.transaction(() => {
     for (const event of events) {
       const inserted = db.insertNew('execution_events', {

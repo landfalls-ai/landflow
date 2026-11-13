@@ -47,7 +47,8 @@ Work only inside `<worktree>`. Never touch another worktree, the person's checko
 - **Migrations**: append to `MIGRATIONS` in `lib/server/db/schema.ts` with a version above the current maximum (grep
   `version:`), one SQL for SQLite and Postgres, new tables in `TABLES`.
 - **Errors**: throw `HttpError` (`lib/server/errors.ts`: message, status, `{ code, details }`) or a domain error that
-  extends it; `handler()` answers it, a ZodError as 400 and anything else as a generic 500. Never return an internal
+  extends it (its body starts with `static readonly errorName: string = 'ItsName';`, the stable source of `code` and
+  `name` in a minified build); `handler()` answers it, a ZodError as 400 and anything else as a generic 500. Never return an internal
   message to the client.
 - **Outbound**: a URL a user, webhook or model can influence goes through `safeFetch` (`lib/server/net/safe-fetch.ts`),
   never a bare `fetch`.

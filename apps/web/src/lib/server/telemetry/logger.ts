@@ -9,6 +9,7 @@ import { requestLogFields } from '../audit/context';
 import { redactPatterns } from '../secrets/redact';
 import { singleton } from '../singleton';
 import { SECRET_KEY, telemetryConfig, type LogLevel } from './config';
+import { exceptionFingerprint } from './fingerprint';
 
 export type LogAttributes = Record<string, unknown>;
 
@@ -16,7 +17,7 @@ export interface Logger {
   debug(message: string, attributes?: LogAttributes): void;
   info(message: string, attributes?: LogAttributes): void;
   warn(message: string, attributes?: LogAttributes): void;
-  /** `attributes.error` may be an Error: its message, type and stack are logged. */
+  /** `attributes.error` may be an Error: its message, type, fingerprint and stack are logged. */
   error(message: string, attributes?: LogAttributes): void;
   /** A logger that adds these attributes to every line. */
   child(attributes: LogAttributes): Logger;
@@ -46,9 +47,9 @@ export function redact(value: unknown, depth = 0): unknown {
 
 function errorFields(error: unknown): LogAttributes {
   if (error instanceof Error) {
-    return { error: error.message, 'exception.type': error.name, ...(error.stack && { 'exception.stacktrace': error.stack }) };
+    return { error: error.message, 'exception.type': error.name, 'exception.fingerprint': exceptionFingerprint(error), ...(error.stack && { 'exception.stacktrace': error.stack }) };
   }
-  return { error: String(error) };
+  return { error: String(error), 'exception.fingerprint': exceptionFingerprint(error) };
 }
 
 /** Write one record. `fields` are written after ts/level/service/msg/trace ids, in order. */

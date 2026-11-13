@@ -56,6 +56,10 @@ external secrets providers, transport connections) use AES-256-GCM with a key ri
      `credentials/rotate.ts` one value at a time, skips what is on the primary key, and can be run again after an interruption.
   4. The answer has `resealed`, `current`, `failed` (what no key opened) and `done`. **Never remove a key before rotate reports
      `done: true`.** Then drop it from the ring and restart.
+     A value sealed under a key that is no longer anywhere (a lost key, or data copied from another instance) stays in
+     `failed` on every run, so `done` never turns true. Each entry is `<store>:<id>`: put the key back in the ring if you have
+     it; otherwise enter the secret again where it is set (the credential, the alert channel, the SIEM destination, the
+     agent's kagent connection, the anchoring settings), or delete that credential or row, and run rotate again.
      Dropping an old key also voids what was signed under it: resume URLs and approval email links still in flight (waits can
      live for days with `LANDFLOW_RESUME_SIGNATURES=required`), so wait for those to finish or expire first.
      A key or passphrase can't contain a comma, and a kid is letters, digits, `_` or `-` (up to 32).

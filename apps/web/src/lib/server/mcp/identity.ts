@@ -29,6 +29,7 @@ import { singleton } from '../singleton';
 import { logger } from '../telemetry';
 import { effectiveTool, effectiveTools, effectiveTrigger, effectiveTriggers, pluginTools, type EffectiveTool, type EffectiveTrigger } from './grants';
 import { gatewayPublicUrl, instanceUrl, looksLikeLandflowMcpToken, mcpResourceRoot, parseTokenScopes, resolveTokenSubject, unverifiedClaims, verifyMcpToken } from './tokens';
+import { HttpError } from '../errors';
 
 export interface McpCaller {
   kind: 'gateway' | 'token' | 'idp' | 'apiKey' | 'session' | 'anonymous';
@@ -44,12 +45,12 @@ export interface McpCaller {
   viaGateway: boolean;
 }
 
-export class McpAuthError extends Error {
-  readonly status: 401 | 403;
+export class McpAuthError extends HttpError {
+  static readonly errorName: string = 'McpAuthError';
+  declare readonly status: 401 | 403;
   readonly wwwAuthenticate?: string;
   constructor(message: string, status: 401 | 403 = 401, wwwAuthenticate?: string) {
-    super(message);
-    this.status = status;
+    super(message, status);
     this.wwwAuthenticate = wwwAuthenticate;
   }
 }

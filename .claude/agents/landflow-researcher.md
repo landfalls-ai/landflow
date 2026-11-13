@@ -25,8 +25,8 @@ Read `docs/constitution.md` and `CLAUDE.md`. Then, for the area you were asked a
 |---|---|
 | Routes | `apps/web/src/app/api/**/route.ts` (header comment says who may call it); `lib/server/http.ts` (`handler`, `json`, `error`, `parseBody`) |
 | Access | `lib/server/auth/policy.ts` (one table by path), `auth/guard.ts`, `auth/sessions.ts` (idle and absolute limits), `lib/shared/auth-paths.ts` (public paths), `lib/server/projects/access.ts` (`requireResource`, `filterVisible`) |
-| Runs | `lib/server/runner.ts`, `packages/engine/src/executor.ts`, `waits.ts`, `retries.ts`, `trigger-buffers.ts` |
-| Storage | `lib/server/store.ts` (`loadExecution` for finished runs), `db/reads.ts` (async read seam), `db/schema.ts` (`MIGRATIONS`, `TABLES`), `db/database.ts`, `db/postgres.ts`, `db/replication.ts`, `config-store.ts` |
+| Runs | `lib/server/runner.ts` (a barrel over `lib/server/runner/`: `run`, `resume`, `rerun`, `queue`, `recovery`, `stop`, …), `packages/engine/src/executor.ts`, `waits.ts`, `retries.ts`, `trigger-buffers.ts` |
+| Storage | `lib/server/store.ts` (`loadExecution` for finished runs, `promoteExecution` before writing to one), `db/reads.ts` (async read seam), `db/hot-mirror.ts` (Postgres mode's hot runs), `db/schema.ts` (`MIGRATIONS`, `TABLES`), `db/database.ts`, `db/postgres.ts`, `db/replication.ts`, `config-store.ts` |
 | Plugins | `lib/server/plugins/` (registry, clients, discovery), `transports/`, `packages/protocol`, `packages/sdk`, `sdks/go`, `sdks/python` |
 | Queue mode | `lib/server/cluster/` (`index.ts` `leaderService`, `config.ts`, `worker-main.ts`) |
 | Audit and governance | `lib/server/audit/` (`recordAudit`, `auditedTransaction`, `http.ts`, `chain.ts`, `outbox.ts`, `metrics.ts`), `governance/`, `scim/`, `secrets/`, `credentials/vault.ts`, `key-ring.ts`, `rotate.ts` |
@@ -48,8 +48,9 @@ Process-wide objects are `singleton(key, …)` (`lib/server/singleton.ts`); boot
 4. Find the existing patterns a change should reuse (a sibling route, helper, component or test) and anything that
    already half-does the job.
 5. Note pitfalls: hot files, singletons that need a dev-server restart, import cycles, code that must stay in step
-   (`packages/cli/src/sync/files.ts` mirrors `apps/web/src/lib/server/sync/files.ts`), migrations out of file order,
-   targets of the backend refactor that have not landed.
+   (`packages/cli/src/sync/files.ts` and `apps/web/src/lib/server/sync/files.ts` share the layout in
+   `packages/protocol/src/sync-format.ts`), migrations out of file order, imports `pnpm check:deps` refuses
+   (`.dependency-cruiser.cjs`).
 
 ## Output
 

@@ -13,6 +13,7 @@ import { database } from '../db';
 import type { Row } from '../db';
 import { journalOf, liveJournal, releaseJournal, type Journal } from '../journal/writer';
 import { logger } from '../telemetry';
+import { HttpError } from '../errors';
 
 /** How long an ask waits for a person, ms: the mod gives up at the same time (hooks/register.ts ASK_MS). */
 export const ASK_TTL_MS = 10 * 60_000;
@@ -62,12 +63,13 @@ export interface AskRecord {
   createdAt: string;
 }
 
-export class AskError extends Error {
+export class AskError extends HttpError {
+  static readonly errorName: string = 'AskError';
   constructor(
     message: string,
-    readonly status: number,
+    status: number,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

@@ -23,10 +23,13 @@ const loginRoute = await import('@/app/api/auth/login/route');
 const meRoute = await import('@/app/api/auth/me/route');
 const statusRoute = await import('@/app/api/auth/status/route');
 const resetRoute = await import('@/app/api/auth/password/reset/route');
+const forgotRoute = await import('@/app/api/auth/password/forgot/route');
+const { setMailTransport } = await import('@/lib/server/auth/mail');
 
 beforeAll(() => auth.disableTestAuth());
 afterAll(() => {
   auth.enableTestAuth();
+  setMailTransport(undefined);
   for (const key of ['LANDFLOW_DATA_DIR', 'LANDFLOW_REGISTRY_GRPC_PORT', 'LANDFLOW_SCAN_ON_START', 'LANDFLOW_PLUGINS', 'LANDFLOW_SESSION_IDLE_HOURS', 'LANDFLOW_LOCAL_SIGN_IN']) {
     if (previousEnv[key] === undefined) delete process.env[key];
     else process.env[key] = previousEnv[key];
@@ -172,5 +175,51 @@ describe('session hardening', () => {
     OWNER.password = 'owner-password-3';
     delete process.env.LANDFLOW_LOCAL_SIGN_IN;
     expect((await resetFor('mia@example.com', 'member-password-2')).status).toBe(200);
+  });
+
+  it('the reset page refuses a link before its form where the mode refuses the password', async () => {
+    const pageFor = (email: string) => {
+      const { token } = auth.createResetToken(auth.findUserByEmail(email)!);
+      return resetRoute.GET(new Request(`${BASE}/api/auth/password/reset?token=${token}`));
+    };
+    try {
+      process.env.LANDFLOW_LOCAL_SIGN_IN = 'off';
+      const off = await pageFor(OWNER.email);
+      expect(off.status).toBe(403);
+      expect(await off.json()).not.toHaveProperty('email');
+      process.env.LANDFLOW_LOCAL_SIGN_IN = 'owner';
+      expect((await pageFor('mia@example.com')).status).toBe(403);
+      expect(await (await pageFor(OWNER.email)).json()).toMatchObject({ email: OWNER.email });
+    } finally {
+      delete process.env.LANDFLOW_LOCAL_SIGN_IN;
+    }
+  });
+
+  it('forgot password makes and mails no link for a user the mode refuses, and answers the same', async () => {
+    const sent: Array<{ to: string }> = [];
+    setMailTransport({ send: async (message) => void sent.push(message) });
+    // The ids, not a count: a new link replaces the user's pending one.
+    const tokens = () => authDb().all<{ id: string }>("SELECT id FROM auth_tokens WHERE kind = 'reset' ORDER BY id").map((row) => row.id);
+    const forgot = async (email: string) => (await forgotRoute.POST(post('/api/auth/password/forgot', { email }))).json();
+    try {
+      process.env.LANDFLOW_LOCAL_SIGN_IN = 'off';
+      const before = tokens();
+      const refused = await forgot(OWNER.email);
+      const unknown = await forgot('ghost@example.com');
+      expect(refused).toEqual(unknown);
+      expect(tokens()).toEqual(before);
+      expect(sent).toHaveLength(0);
+      process.env.LANDFLOW_LOCAL_SIGN_IN = 'owner';
+      expect(await forgot('mia@example.com')).toEqual(unknown);
+      expect(tokens()).toEqual(before);
+      expect(sent).toHaveLength(0);
+      // The owner may still use a password, so the owner gets a link (it replaces the owner's earlier ones).
+      await forgot(OWNER.email);
+      expect(tokens()).not.toEqual(before);
+      expect(sent.map((message) => message.to)).toEqual([OWNER.email]);
+    } finally {
+      delete process.env.LANDFLOW_LOCAL_SIGN_IN;
+      setMailTransport(undefined);
+    }
   });
 });

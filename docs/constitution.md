@@ -9,11 +9,10 @@ session; people read it before they start a feature too.
 - Read it before you research or build anything, then follow the [feature workflow](#the-feature-workflow).
 - Each rule points at the doc or code that shows the pattern. Paths that start with `lib/`, `components/` or `app/`
   are under `apps/web/src/`. Open the pointer before you invent a new way.
-- A rule marked **(target, Pxx)** is a convention the backend refactor is introducing (package Pxx; see the
-  "Backend hardening" section of [roadmap.md](roadmap.md) once it lands). Until that package is on `origin/main`, the
-  code wins: follow the current pattern named beside it and don't build a competing one. When the package lands,
-  remove the mark here.
-- Every other rule wins over the code: if the code breaks it, don't copy the break; fix it or say why not.
+- The backend refactor (the "Backend hardening" section of [roadmap.md](roadmap.md), packages P01-P30) has landed:
+  every rule here describes code that exists. A new convention that is not built yet is not written here as a rule;
+  it goes in the roadmap until it lands.
+- Every rule wins over the code: if the code breaks it, don't copy the break; fix it or say why not.
 - When a convention changes, change this page in the same commit.
 
 ## Non-negotiables
@@ -69,9 +68,17 @@ session; people read it before they start a feature too.
 - Throw `HttpError` (`lib/server/errors.ts`: message, status, `{ code, details, expose }`) and let `handler()` map it to
   `{ error, code, ...details }`; a ZodError answers 400 and anything else a generic 500 (`Internal error` with the
   request id; the message goes to the log only). A domain error extends `HttpError` with its own default status; a
-  route family uses a thin wrapper over `handler()` (`projectRoute`, `dataTableRoute`, `marketplaceRoute`). Never send
-  an unexpected error's text (SQL, paths, stacks) to the client. Some routes still map errors by hand; P27 removes them
-  (target, P27).
+  route family may name a thin wrapper (`projectRoute`, `dataTableRoute`, `marketplaceRoute`), which maps nothing.
+  Don't catch a domain error in a route to answer it: `handler()` does, with a `code` (the class name in snake_case)
+  and the class's `details`. Every subclass names itself with a literal, `static readonly errorName: string = 'ItsName';`
+  on the first line of its body (`code` and `name` come from it: the production bundle minifies class names, and
+  `instanceof` matches an error from another copy of the module by it, see below), and
+  `test/error-mapping.test.ts` fails one without it; `test/error-mapping.test.ts` fails a class that carries a status outside the `HttpError`
+  tree (only errors with an optional upstream status, such as `McpClientError` and `OAuth2Error`, stay plain). The
+  production server bundles a module once per layer, and a `singleton()` store throws the classes of the layer that
+  made it, so `HttpError` overrides `instanceof`: an error branded by any copy matches `HttpError`, and a subclass by
+  its `errorName` (give each class a name of its own). Never send an unexpected error's text (SQL, paths, stacks) to
+  the client.
 
 **Configuration and process state**
 
@@ -96,9 +103,14 @@ session; people read it before they start a feature too.
 
 - The store does not call up into features: emit an event and let the feature subscribe at boot (`onExecutionFinished` in
   `lib/server/store.ts`, subscribed in `lib/server/execution-reactions.ts`; the bus is `lib/server/bus.ts`).
-- No server → UI imports, no `lib/shared` → server imports, no client component importing server values, no routes
-  touching `db` or holding SQL. `packages/` never import `apps/web`; `engine` and `protocol` read no environment.
-  These are checked by `pnpm check:deps` (target, P28).
+- No server → UI imports, no `lib/shared` → server value imports, no client component importing server values, no
+  routes touching `lib/server/db` (go through the store or a domain module, as `store.promoteExecution` does), no new
+  import cycles, and `packages/` never import `apps/`: `pnpm check:deps` (dependency-cruiser, `.dependency-cruiser.cjs`)
+  fails each; the known violations it tolerates are listed in `.dependency-cruiser-known-violations.json` and may only
+  shrink. Routes also hold no SQL, and `engine` and `protocol` read no environment (by review). `pnpm check` is the
+  local gate (typecheck, `pnpm test`, check:deps); there is no hosted CI by decision.
+- The `landflow-sync/v1` file layout (names and path rules) lives in `packages/protocol/src/sync-format.ts`, shared by
+  the host (`lib/server/sync/files.ts`) and the CLI (`packages/cli/src/sync/files.ts`); change it there, not in one side.
 - Split a file that grows past about 800 lines along its own section comments rather than adding to it.
 
 **Data**
@@ -118,8 +130,12 @@ session; people read it before they start a feature too.
 - Code that may read a finished run reads it through the async seam: `store.loadExecution`,
   `store.executionsMentioningAsync` and the journal's `*Async` readers (`lib/server/journal/store.ts`), all over
   `lib/server/db/reads.ts` (`readExecutionData`, `readExecutionEvents`, `readRows`). `store.getExecution` is for runs in
-  flight and the runner's own bookkeeping; `test/execution-reads.test.ts` fails a new caller outside its allow-list.
-  Postgres mode serving the seam on demand instead of from the in-memory mirror is (target, P26).
+  flight and the runner's own bookkeeping; `test/execution-reads.test.ts` fails a new caller outside its allow-list,
+  and does the same for the journal's synchronous readers. In Postgres mode the in-memory copy holds only hot runs
+  (in flight, finished within `LANDFLOW_PG_HOT_MINUTES`, with a retry waiting, or a child of a run in flight;
+  `lib/server/db/hot-mirror.ts`): a cold run's `data` is '' and its journal is in Postgres only, so the sync readers
+  see it as empty. Code that writes to a run that may be cold (a rerun, retry, replay, a check on its journal) awaits
+  `store.promoteExecution(id)` first.
 - Nothing on a hot path (saving a run, a request) does work proportional to history: prune and aggregate in SQL on a
   timer or every N events (executions: `pruneExecutions` and `retentionTick` in `lib/server/settings.ts`).
 - `IN (…)` lists and access checks inside loops are N+1 once reads move to Postgres: batch them. For lists, check
@@ -175,7 +191,11 @@ session; people read it before they start a feature too.
   (`services/code-runner`, `lib/server/code-runner.ts`) unless `LANDFLOW_CODE_IN_PROCESS=true`. Never pass a host
   object, function or Buffer into the expression realm. The in-process Code node (development, or
   `LANDFLOW_CODE_IN_PROCESS=true`) is the known exception: its context still holds host helpers
-  ([limitations.md](limitations.md)), which is why production runs Code nodes in the runner. A stricter isolate backend is (target, P30).
+  ([limitations.md](limitations.md)), which is why production runs Code nodes in the runner. `LANDFLOW_EXPRESSION_SANDBOX=isolate`
+  runs expressions on the optional isolated-vm backend (`packages/engine/src/sandbox/isolate.ts`, the same bootstrap
+  and bridge, a heap cap `LANDFLOW_EXPRESSION_MEMORY_MB`); `realm` is the default. A change to what an expression may
+  do changes both backends, and `packages/engine/test/expression-isolate.test.ts` runs the shared contract on the
+  isolate (`LANDFLOW_INTEGRATION=isolate`).
 - **Bounded input.** Bodies validated with zod and capped in size (`parseBody` refuses more than
   `LANDFLOW_MAX_BODY_BYTES` with 413 while streaming); the API is rate-limited per principal and the public triggers
   per client address and route group (`lib/server/rate-limit/api-limiter.ts`, `LANDFLOW_RATE_LIMIT_API` /
@@ -206,6 +226,11 @@ session; people read it before they start a feature too.
   `Database` methods, which time each one (`landflow.db.query.duration` by operation, a `db.query` span only over
   `LANDFLOW_DB_SLOW_MS`); read requests are traced only when slow (`LANDFLOW_TRACE_SLOW_READ_MS`) or failed
   (`telemetry/processors.ts`); process saturation comes from `telemetry/runtime-metrics.ts`.
+- Errors: log a caught error as `{ error }` (the `Error` itself) so the logger adds `exception.type`, the stack and
+  `exception.fingerprint` (`telemetry/fingerprint.ts`); fail a span with `failSpan()` (`telemetry/spans.ts`), which
+  records the same. A new metric worth paging on ships with its alert rule and dashboard panel
+  (`deploy/observability/prometheus-rules.yml`, `landflow-dashboard.json`, copied into
+  `deploy/k8s/components/observability/`; a test checks the copies match and that every metric they name exists).
 - Health: `/api/health/live` (no I/O) and `/api/health/ready` (boot and draining, database, write queue, schema
   version, Valkey in queue mode; `readiness()` in `lib/server/health.ts`, each check bounded and answering only ok and
   milliseconds); a new dependency that must be up to serve traffic joins readiness.

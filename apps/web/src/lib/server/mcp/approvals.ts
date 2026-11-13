@@ -33,6 +33,7 @@ import { publicUrl } from '../runner';
 import { mcpDb } from './db';
 import { sameSecret, textResult } from './server';
 import { envNumber } from '../config';
+import { HttpError } from '../errors';
 
 const DEFAULT_WAIT_SECONDS = 20;
 const DEFAULT_TTL_SECONDS = 600;
@@ -92,12 +93,13 @@ const ttlMs = () => {
 };
 const waitMs = () => 1000 * envNumber('LANDFLOW_MCP_APPROVAL_WAIT_SECONDS', { fallback: DEFAULT_WAIT_SECONDS, min: 0 });
 
-export class McpApprovalError extends Error {
+export class McpApprovalError extends HttpError {
+  static readonly errorName: string = 'McpApprovalError';
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

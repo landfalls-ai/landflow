@@ -5,8 +5,8 @@
  */
 import { z } from 'zod';
 import { currentActorId } from '@/lib/server/auth/context';
-import { error, handler, json, parseBody } from '@/lib/server/http';
-import { listSchedules, ScheduleError, schedulePublish } from '@/lib/server/publish-schedule';
+import { handler, json, parseBody } from '@/lib/server/http';
+import { listSchedules, schedulePublish } from '@/lib/server/publish-schedule';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
@@ -24,10 +24,5 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const { id } = await params;
   const body = await parseBody(request, bodySchema);
   if (!body.ok) return body.response;
-  try {
-    return json({ scheduled: schedulePublish({ workflowId: id, ...body.data, by: currentActorId() }) }, 201);
-  } catch (caught) {
-    if (caught instanceof ScheduleError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  return json({ scheduled: schedulePublish({ workflowId: id, ...body.data, by: currentActorId() }) }, 201);
 });

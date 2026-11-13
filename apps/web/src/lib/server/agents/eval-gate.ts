@@ -22,17 +22,19 @@ import { getOnlineConfig } from '../evaluations/store';
 import { agentModel } from './models';
 import { runAgent, newSession } from './runtime';
 import { agentStore } from './store';
+import { HttpError } from '../errors';
 
 const db = () => database();
 const MAX_RUNS_PER_AGENT = 30;
 const clip = (text: string, limit = 4_000) => (text.length > limit ? `${text.slice(0, limit)}…` : text);
 
-export class EvalGateError extends Error {
+export class EvalGateError extends HttpError {
+  static readonly errorName: string = 'EvalGateError';
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

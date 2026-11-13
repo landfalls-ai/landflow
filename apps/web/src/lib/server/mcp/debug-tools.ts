@@ -25,6 +25,7 @@ import { variables } from '../variables';
 import { isInstanceAdmin, type Actor } from '../projects/access';
 import type { McpScope } from './project-servers';
 import { checkExpressionFields, describeIssue, fieldsOfItems, outputSchemaOf, schemaFields, type CheckNode, type KnownFields } from './expression-fields';
+import { promoteExecution } from '../db/reads';
 
 const REDACTED = '[redacted]';
 const MAX_TEXT = 3000;
@@ -325,6 +326,7 @@ export function registerDebugTools(server: McpServer, ctx: DebugContext) {
       if (refused) return refused;
       const trigger = startTrigger({ source: 'mcp', workflowId: found.record.workflowId, nodeName: 'retry' });
       try {
+        await promoteExecution(id);
         const newId = await context.with(trigger.context, () => startRetry(id, { from, version }));
         trigger.end();
         const url = `${ctx.workflowUrl(found.record.workflowId)}/executions/${newId}`;
@@ -383,6 +385,7 @@ export function registerDebugTools(server: McpServer, ctx: DebugContext) {
       };
       const trigger = startTrigger({ source: 'mcp', workflowId, nodeName: node.name });
       try {
+        if (fromExecution) await promoteExecution(fromExecution);
         const started = await context.with(trigger.context, () => runWorkflow({ ...options, bypassConcurrency: true }));
         trigger.end();
         const record = started.status === 'running' ? ((await settle(started.executionId, timeoutSeconds ?? 60)) ?? started) : started;

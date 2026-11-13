@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { AskError, decideAsk } from '@/lib/server/a2a/agent-asks';
+import { decideAsk } from '@/lib/server/a2a/agent-asks';
 import { currentPrincipal } from '@/lib/server/auth/guard';
-import { error, handler, json, parseBody } from '@/lib/server/http';
+import { handler, json, parseBody } from '@/lib/server/http';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,10 +19,5 @@ export const POST = handler(async (request: Request, { params }: { params: Promi
   const body = await parseBody(request, decisionSchema);
   if (!body.ok) return body.response;
   const user = currentPrincipal()?.user;
-  try {
-    return json({ ask: decideAsk(id, askId, body.data.approved, user?.email || user?.name, body.data.command) });
-  } catch (caught) {
-    if (caught instanceof AskError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  return json({ ask: decideAsk(id, askId, body.data.approved, user?.email || user?.name, body.data.command) });
 });

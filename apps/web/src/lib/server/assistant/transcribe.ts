@@ -3,14 +3,16 @@
  * endpoint (a local whisper.cpp or faster-whisper server, or any hosted one the operator points it at). Server-side
  * settings only: LANDFLOW_STT_URL, LANDFLOW_STT_MODEL, LANDFLOW_STT_API_KEY.
  */
+import { HttpError } from '../errors';
 export const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 
-export class TranscribeError extends Error {
+export class TranscribeError extends HttpError {
+  static readonly errorName: string = 'TranscribeError';
   constructor(
     message: string,
-    readonly status = 502,
+    status = 502,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

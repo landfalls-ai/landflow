@@ -76,10 +76,18 @@ filesystem access causes tracing of the whole project".
 - **Errors**: a route (or the store below it) throws an `HttpError` (`lib/server/errors.ts`: `(message, status = 400,
   { code?, details?, cause?, expose? })`) and does not catch it to build a response: `handler()` answers it as
   `{ error, code, …details }`. Give a domain error its own class (`class OutOfStockError extends HttpError`, same
-  `(message, status)` order as the older classes) instead of a `try`/`catch` per route. Anything that is not an
+  `(message, status)` order as the older classes) instead of a `try`/`catch` per route, and name it with a literal on
+  the first line of its body: `static readonly errorName: string = 'OutOfStockError';`. `code` (`out_of_stock_error`)
+  and `name` come from it, because `next build` minifies class names (from `new.target.name` the image would answer
+  `code: "v"`); `test/error-mapping.test.ts` fails a subclass without one. Anything that is not an
   `HttpError` or a `ZodError` becomes a generic 500 with the request id, so write user-facing failures as `HttpError`s
-  with a 4xx, 502 or 503 status (`expose: true` for a 5xx whose text may reach the client). A wrapper for an older error
-  class passes `handler(fn, { mapError, formatError })` (`projectRoute`, `dataTableRoute`, `scimRoute`).
+  with a 4xx, 502 or 503 status (`expose: true` for a 5xx whose text may reach the client). Every domain error with a
+  status (`VariableError`, `PublishError`, `ProjectError`, `CredentialError`, `SourceControlError`, `TemplateError`, …)
+  now extends `HttpError`, so do not `catch` one in a route only to answer `error(caught.message, caught.status)`: let it
+  propagate, and carry extra response fields in `details` (`FolderNotEmptyError`, `TemplateError`, `CompositeError`,
+  `RunSkippedError`). Keep a `catch` only when it does something else (an audit row, cleanup, a different status or a
+  page instead of JSON). A class with no status (an internal error) stays a plain `Error`: it becomes the generic 500.
+  `test/error-mapping.test.ts` checks both. `mapError` and `formatError` remain for `scimRoute`.
 - **Access rules**: `test/policy-coverage.test.ts` walks every `route.ts` and fails for a mutating route that is not
   public, not named by `routePolicy()` (the table marks its default with `fallback: true`) or a resource rule, and has
   no check of its own in the handler (`requireUser`, `routeActor`, `can(`, `projectRoute`, …). Add the policy line; an
@@ -114,8 +122,8 @@ filesystem access causes tracing of the whole project".
 Claude Code works on this repository with three things checked in beside the code:
 
 - **The constitution**, [constitution.md](constitution.md): the rules every research and implementation starts from.
-  `CLAUDE.md` imports it (`@docs/constitution.md`), so every session reads it. Rules marked *target* belong to the
-  backend refactor and become current as their package lands on `main`; change the page when a convention changes.
+  `CLAUDE.md` imports it (`@docs/constitution.md`), so every session reads it. Every rule describes code that exists
+  (the backend refactor's conventions have all landed); change the page when a convention changes.
 - **Agents** in `.claude/agents/`: subagents that know this repository: its paths, helpers, pitfalls and the order of
   work. Claude Code picks one by its description, or you name it ("use landflow-security-reviewer on this branch").
   Reviewers and the researcher are read-only. None of them starts sub-agents of its own.
@@ -178,8 +186,30 @@ call boots through `whenReady()`, outside that request's audit and log context (
 request's). Once the boot is `ready`, `handler()` no longer reaches the `bootstrap` singleton, so a
 test that forgets that singleton to boot again must call `ensureBootstrapped()` itself; the next request won't reboot.
 
-`pnpm test` runs the TypeScript packages' suites in one go. After editing `packages/protocol/proto/landflow/plugin/v1/plugin.proto`, run
+`pnpm test` runs every workspace package's `test` script in one go, the host's included (`pnpm check` adds typecheck and the boundary check). After editing `packages/protocol/proto/landflow/plugin/v1/plugin.proto`, run
 `pnpm gen:proto` (re-embeds the proto and regenerates the JSON Schema).
+
+### Checking the boundaries
+
+`pnpm check` is the local gate before a change is done: `pnpm typecheck`, `pnpm test` (every package's suite, the host's
+included) and `pnpm check:deps`. There is no CI workflow (decision: this project runs and checks everything on this
+machine), so nothing else runs these for you.
+
+`pnpm check:deps` runs dependency-cruiser with `.dependency-cruiser.cjs` over `apps/web/src` and `packages/*/src`. The rules:
+
+| Rule | Forbids |
+|---|---|
+| `server-not-components` | `apps/web/src/lib/server` importing `components/` |
+| `shared-not-server` | `lib/shared` importing `lib/server` (type-only imports are fine) |
+| `client-not-server-values` | a file starting with `'use client'` importing a value from `lib/server` (types are fine) |
+| `routes-not-db` | a route file (`app/**/route.ts`) importing `lib/server/db` |
+| `packages-not-apps` | anything in `packages/` importing `apps/` |
+| `no-circular` | a new value import cycle (cycles inside `lib/server/runner/`, whose modules call each other only at run time, are allowed; type-only imports are not counted, as they are erased at build time). One new edge inside an existing cycle group can re-report neighbouring known edges, because a known cycle is matched by its exact set of modules |
+
+The violations that existed when the rules were added (the cycles, and two routes that import `lib/server/db`: `form-test`
+and `proposals/[id]/applied`) are recorded in `.dependency-cruiser-known-violations.json` and ignored, so only new ones
+fail. `client-not-server-values` checks direct imports only: a module without the directive that a client component imports could still pull in a server value. Fixing one makes its entry stale and does no harm; to shrink the record after fixing some, or to accept a new cycle
+on purpose, run `pnpm check:deps:baseline` and commit the file with the reason.
 
 ### Recorded plugin manifests
 
@@ -238,8 +268,8 @@ Start the matching infra services first ([deployment.md](deployment.md)), then r
 
 | Flag | Needs | Test files |
 |---|---|---|
-| `postgres` | the infra Postgres, database `landflow_test` (or `LANDFLOW_PG_URL`, `LANDFLOW_TEST_DATABASE_URL`) | `pgvector.test.ts`, `postgres.test.ts` (the store, schema `landflow_runtime_test`), `projects-migration.test.ts`, `project-folders-variables.test.ts` |
-| `queue` | the infra Valkey (`LANDFLOW_TEST_VALKEY_URL`, under a throwaway key prefix) and Postgres | `cluster-coordinator.test.ts` (coordinator, leader election, stalled-job takeover, relay), `cluster-postgres.test.ts` (processes following each other's writes, schema `landflow_queue_test`), `config-store-postgres.test.ts` (credentials and settings shared by two processes, in a database it creates and drops), `audit-chain.postgres.test.ts` (the hash chain sealed by two processes at once, SAML state shared by mains), `transports.postgres.test.ts` |
+| `postgres` | the infra Postgres, database `landflow_test` (or `LANDFLOW_PG_URL`, `LANDFLOW_TEST_DATABASE_URL`) | `pgvector.test.ts`, `postgres.test.ts` (the store, schema `landflow_runtime_test`), `postgres-hot-mirror.test.ts` (the hot mirror: eviction, cold reads through the async seam, promotion, schema `landflow_hot_test`; run it in its own vitest call, as the two share `landflow_test`), `projects-migration.test.ts`, `project-folders-variables.test.ts` |
+| `queue` | the infra Valkey (`LANDFLOW_TEST_VALKEY_URL`, under a throwaway key prefix) and Postgres | `cluster-coordinator.test.ts` (coordinator, leader election, stalled-job takeover, relay), `cluster-postgres.test.ts` (processes following each other's writes, schema `landflow_queue_test`), `config-store-postgres.test.ts` (credentials and settings shared by two processes, in a database it creates and drops), `rotate-key-postgres.test.ts` (the `rotate-key` script re-sealing a credential and a settings row in Postgres, in a database it creates and drops), `audit-chain.postgres.test.ts` (the hash chain sealed by two processes at once, SAML state shared by mains), `transports.postgres.test.ts` |
 | `sentinel` | `deploy/compose.sentinel.yml` | `valkey-sentinel.integration.test.ts` (the primary is killed; a run in flight and new runs finish on the promoted replica) |
 | `valkey-cluster` | the infra `valkey-cluster` profile | `valkey-cluster.integration.test.ts` |
 | `oidc` | Keycloak (`auth` profile) | `oidc.integration.test.ts` (fills in its login form as alice and bob) |
@@ -253,6 +283,7 @@ Start the matching infra services first ([deployment.md](deployment.md)), then r
 | `aws` | LocalStack (`aws` profile) at `http://127.0.0.1:54566` (`LANDFLOW_LOCALSTACK_PORT`, `LANDFLOW_LOCALSTACK_URL`) | `secrets-aws.integration.test.ts` (access keys and environment auth, a `{environment}` prefix, JSON and plain secrets, redaction; the endpoint must be loopback, the keys are dummies and `~/.aws` is never read) |
 | `audit-anchor` | MinIO; must be the only flag | `audit-integrity.test.ts` (signed heads in a real bucket) |
 | `k8s` | the OrbStack cluster, namespace `landflow-dev`, the plugin image built locally | `kubernetes.integration.test.ts` (discovery, scale to 0 and back, calls spread over two pods) |
+| `isolate` | the optional `isolated-vm` addon, and `NODE_OPTIONS=--no-node-snapshot` | `packages/engine/test/expression-isolate.test.ts` (the realm suite on the isolate, memory bombs each in a child process, churn, benchmark), `apps/web/test/expression-preview-isolate.test.ts` (a route uses the isolate) |
 | `ollama` | Ollama at `OLLAMA_URL` with nomic-embed-text and qwen3-coder:30b | `rag-live.test.ts`, `evaluations-live.test.ts` (qwen3-coder as the judge), `ollama-streaming-live.test.ts` |
 
 `cluster-runtime.test.ts` always runs: a main and workers through the runner on the in-process coordinator.

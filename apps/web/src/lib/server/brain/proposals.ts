@@ -31,6 +31,7 @@ import { baselineFor, checkEffectAsync, settleBaseline, unsettled } from './effe
 import { getEntity, entityKey, entityProject } from './entities';
 import { upsertFact } from './facts';
 import { listFlowDetectors } from './flow-detectors';
+import { HttpError } from '../errors';
 
 const DAY_MS = 86_400_000;
 export const STALE_DAYS = 14;
@@ -41,12 +42,13 @@ export const weeklyCap = () => {
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 3;
 };
 
-export class ProposalError extends Error {
+export class ProposalError extends HttpError {
+  static readonly errorName: string = 'ProposalError';
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

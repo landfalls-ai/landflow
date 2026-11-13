@@ -21,6 +21,7 @@ import { database } from './db';
 import { store } from './store';
 import { logger } from './telemetry';
 import { publicUrl } from './config';
+import { HttpError } from './errors';
 
 export type EmailApprovalTarget = { t: 'wf'; e: string; c: string } | { t: 'agent'; a: string; s: string; c: string };
 
@@ -83,12 +84,13 @@ export function verifyLink(token: string, now = Date.now()): LinkPayload {
   return payload;
 }
 
-export class LinkError extends Error {
+export class LinkError extends HttpError {
+  static readonly errorName: string = 'LinkError';
   constructor(
     message: string,
-    readonly status: number,
+    status: number,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

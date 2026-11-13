@@ -15,6 +15,7 @@
  * either key. "Switch over" makes the next pair the current one and keeps the old key as `previous`: it only decrypts
  * (the metadata no longer offers its certificate) until it is discarded, so assertions already in flight still work.
  */
+import { HttpError } from '../errors';
 import { createPrivateKey } from 'node:crypto';
 import type { SamlEncryptionView, SamlKeyInfo } from '../../shared/auth';
 import { credentials } from '../credentials/vault';
@@ -24,7 +25,13 @@ import { certificateInfo, createCertificate, keyPairProblem, pemCertificates } f
 
 const SETTINGS_KEY = 'saml_encryption';
 
-export class SamlKeyError extends Error {}
+/** A bad or env-managed key: the caller's to fix (400). */
+export class SamlKeyError extends HttpError {
+  static readonly errorName: string = 'SamlKeyError';
+  constructor(message: string) {
+    super(message, 400, { expose: true });
+  }
+}
 
 /** A key pair kept beside the current one. */
 interface Slot {

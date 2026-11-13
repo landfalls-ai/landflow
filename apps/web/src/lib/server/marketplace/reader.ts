@@ -32,6 +32,7 @@ export interface RepoReader {
 
 /** Reading a marketplace or plugin failed (GitHub, a URL, a local path): answered 502; `upstreamStatus` is what the source said. */
 export class FetchError extends HttpError {
+  static readonly errorName: string = 'FetchError';
   constructor(
     message: string,
     readonly upstreamStatus?: number,

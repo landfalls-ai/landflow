@@ -13,10 +13,9 @@
  */
 import { z } from 'zod';
 import { currentActorId } from '@/lib/server/auth/context';
-import { ApprovalError, publishOrRequest } from '@/lib/server/governance/approvals';
-import { error, handler, json, parseBody } from '@/lib/server/http';
-import { PublishError } from '@/lib/server/publish';
-import { ScheduleError, schedulePublish } from '@/lib/server/publish-schedule';
+import { publishOrRequest } from '@/lib/server/governance/approvals';
+import { handler, json, parseBody } from '@/lib/server/http';
+import { schedulePublish } from '@/lib/server/publish-schedule';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
@@ -28,14 +27,9 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const hasBody = Number(request.headers.get('content-length') ?? 0) > 0 || request.headers.get('content-type')?.includes('json');
   const body = hasBody ? await parseBody(request, bodySchema) : { ok: true as const, data: {} as z.infer<typeof bodySchema> };
   if (!body.ok) return body.response;
-  try {
-    const { versionId, note, at } = body.data;
-    // `at`: not now, but at that time (ISO 8601): 202 `{ scheduled }`, or with four-eyes on, with the request that approves it.
-    if (at) return json({ scheduled: schedulePublish({ workflowId: id, action: 'publish', versionId, at, note, by: currentActorId() }) }, 202);
-    const outcome = await publishOrRequest({ workflowId: id, action: 'publish', versionId, note, by: currentActorId() });
-    return json(outcome, outcome.approvalRequired ? 202 : 200);
-  } catch (caught) {
-    if (caught instanceof PublishError || caught instanceof ApprovalError || caught instanceof ScheduleError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  const { versionId, note, at } = body.data;
+  // `at`: not now, but at that time (ISO 8601): 202 `{ scheduled }`, or with four-eyes on, with the request that approves it.
+  if (at) return json({ scheduled: schedulePublish({ workflowId: id, action: 'publish', versionId, at, note, by: currentActorId() }) }, 202);
+  const outcome = await publishOrRequest({ workflowId: id, action: 'publish', versionId, note, by: currentActorId() });
+  return json(outcome, outcome.approvalRequired ? 202 : 200);
 });

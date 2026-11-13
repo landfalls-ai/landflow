@@ -23,6 +23,7 @@ import { credentials } from '../credentials/vault';
 import { parse } from '../db/rows';
 import { singleton } from '../singleton';
 import { publicUrl } from '../config';
+import { HttpError } from '../errors';
 
 const SETTINGS_KEY = 'mcp_signing_keys';
 export const MCP_TOKEN_ALG = 'ES256';
@@ -32,12 +33,13 @@ export const MCP_TOKEN_DEFAULT_DAYS = 30;
 /** last_used_at is written at most this often per token. */
 const TOUCH_EVERY_MS = 60_000;
 
-export class McpTokenError extends Error {
+export class McpTokenError extends HttpError {
+  static readonly errorName: string = 'McpTokenError';
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

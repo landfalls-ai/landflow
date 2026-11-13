@@ -66,6 +66,7 @@ export interface AuditInput {
 
 /** The audit log could not store a required event (fail-closed mode): the change was refused. */
 export class AuditUnavailableError extends HttpError {
+  static readonly errorName: string = 'AuditUnavailableError';
   constructor(options: { cause?: unknown } = {}) {
     super('The audit log is unavailable, so this change was not made', 503, { cause: options.cause });
   }

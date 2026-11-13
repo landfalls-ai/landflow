@@ -17,6 +17,7 @@ import { singleton } from '../singleton';
 import { logger } from '../telemetry/logger';
 import { latestHead, markAnchored, signHead, signingKeys, unanchoredHeads } from './signing';
 import { publicUrl, publicUrlConfigured } from '../config';
+import { HttpError } from '../errors';
 
 const SECRETS = [
   ['s3', 'secretAccessKey'],
@@ -43,12 +44,13 @@ export const anchoringPatchSchema = anchoringSchema.partial();
 
 const file = singleton('audit-anchoring-file', () => new ConfigFile<Partial<AuditAnchoringSettings>>('audit-anchoring.json'));
 
-export class AnchoringError extends Error {
+export class AnchoringError extends HttpError {
+  static readonly errorName: string = 'AnchoringError';
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

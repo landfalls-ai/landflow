@@ -3,7 +3,7 @@ import { error, handler, json, parseBody } from '@/lib/server/http';
 import { canResource, homeProjectId, projectRole } from '@/lib/server/projects';
 import { routeActor } from '@/lib/server/projects/http';
 import { projectVariables } from '@/lib/server/projects/variables';
-import { VariableError, variables } from '@/lib/server/variables';
+import { variables } from '@/lib/server/variables';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,10 +32,5 @@ export const GET = handler(async (request: Request) => {
 export const POST = handler(async (request: Request) => {
   const body = await parseBody(request, z.object({ key: z.string(), value: z.string() }));
   if (!body.ok) return body.response;
-  try {
-    return json(variables.create(body.data), 201);
-  } catch (caught) {
-    if (caught instanceof VariableError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  return json(variables.create(body.data), 201);
 });

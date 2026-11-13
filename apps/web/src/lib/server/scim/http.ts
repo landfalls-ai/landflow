@@ -33,6 +33,7 @@ export const SCHEMAS = {
 export type ScimType = 'invalidFilter' | 'tooMany' | 'uniqueness' | 'mutability' | 'invalidSyntax' | 'invalidPath' | 'noTarget' | 'invalidValue' | 'invalidVers' | 'sensitive';
 
 export class ScimError extends HttpError {
+  static readonly errorName: string = 'ScimError';
   constructor(
     status: number,
     message: string,

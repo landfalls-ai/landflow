@@ -9,13 +9,14 @@ import type { RemoteErrorCode } from './envelope';
 export type DeliveryKnowledge = 'not-delivered' | 'maybe-delivered' | 'delivered';
 
 export abstract class MessagingError extends Error {
+  /** A literal per class, not `new.target.name`: the host's production bundle minifies class names (logs, fingerprints). */
+  abstract override readonly name: string;
   abstract readonly knowledge: DeliveryKnowledge;
   constructor(
     message: string,
     readonly code: string,
   ) {
     super(message);
-    this.name = new.target.name;
   }
 }
 
@@ -35,6 +36,7 @@ export type UndeliverableReason =
 
 /** Provably not delivered: safe to send over another transport. */
 export class UndeliverableError extends MessagingError {
+  override readonly name: string = 'UndeliverableError';
   readonly knowledge = 'not-delivered' as const;
   constructor(
     message: string,
@@ -46,6 +48,7 @@ export class UndeliverableError extends MessagingError {
 
 /** The deadline passed without a reply. The plugin may have run the call ("the plugin went away; the call may have run"). */
 export class TimeoutError extends MessagingError {
+  override readonly name: string = 'TimeoutError';
   readonly knowledge = 'maybe-delivered' as const;
   constructor(
     message: string,
@@ -57,6 +60,7 @@ export class TimeoutError extends MessagingError {
 
 /** The caller aborted after the request was published; a cancel event went out, but the plugin may have finished first. */
 export class CancelledError extends MessagingError {
+  override readonly name: string = 'CancelledError';
   readonly knowledge = 'maybe-delivered' as const;
   constructor(message = 'the call was cancelled') {
     super(message, 'cancelled');
@@ -65,6 +69,7 @@ export class CancelledError extends MessagingError {
 
 /** The connection (and with it the reply inbox) was lost while the call was in flight. */
 export class ConnectionLostError extends MessagingError {
+  override readonly name: string = 'ConnectionLostError';
   readonly knowledge = 'maybe-delivered' as const;
   constructor(message = 'connection lost; the call may have run') {
     super(message, 'connection_lost');
@@ -73,6 +78,7 @@ export class ConnectionLostError extends MessagingError {
 
 /** The plugin answered with an error code in `lferror` (the body is `{ error, … }`). Delivered, so never retried blindly. */
 export class RemoteError extends MessagingError {
+  override readonly name: string = 'RemoteError';
   readonly knowledge = 'delivered' as const;
   constructor(
     message: string,
@@ -89,6 +95,7 @@ export class RemoteError extends MessagingError {
  * use another transport); in the response direction the plugin has already run it (`delivered`).
  */
 export class ClaimUnavailableError extends MessagingError {
+  override readonly name: string = 'ClaimUnavailableError';
   readonly knowledge: DeliveryKnowledge;
   constructor(
     message: string,
@@ -101,6 +108,7 @@ export class ClaimUnavailableError extends MessagingError {
 
 /** The plugin's manifest differs from the one the host knows: pull the manifest again, then retry. */
 export class ManifestMismatchError extends RemoteError {
+  override readonly name: string = 'ManifestMismatchError';
   constructor(
     readonly expected: string | undefined,
     readonly actual: string | undefined,
@@ -111,6 +119,7 @@ export class ManifestMismatchError extends RemoteError {
 
 /** The caller's own mistake (bad arguments, client not started). Nothing was sent. */
 export class UsageError extends MessagingError {
+  override readonly name: string = 'UsageError';
   readonly knowledge = 'not-delivered' as const;
   constructor(message: string) {
     super(message, 'usage');

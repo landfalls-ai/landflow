@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { BINARY_ID, completeBinaryRef, DEFAULT_MIME_TYPE, type BinaryRef } from '@landflow/protocol';
+import { HttpError } from '../errors';
 
 /** Bytes to store: a buffer, a Node or web stream, or any async iterable of chunks. */
 export type BinarySource = Uint8Array | Readable | ReadableStream<Uint8Array> | AsyncIterable<Uint8Array>;
@@ -47,10 +48,10 @@ export interface BinaryStore {
   scopes(): Promise<Array<{ scope: string; modifiedAt: number }>>;
 }
 
-export class BinaryTooLargeError extends Error {
-  readonly status = 413;
+export class BinaryTooLargeError extends HttpError {
+  static readonly errorName: string = 'BinaryTooLargeError';
   constructor(readonly maxBytes: number) {
-    super(`The file is larger than the ${maxBytes} byte limit (LANDFLOW_BINARY_MAX_BYTES)`);
+    super(`The file is larger than the ${maxBytes} byte limit (LANDFLOW_BINARY_MAX_BYTES)`, 413);
   }
 }
 

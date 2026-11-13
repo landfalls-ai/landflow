@@ -1,7 +1,7 @@
 /**
  * The async read seam for run data (lib/server/db/reads.ts): loadExecution and the async journal readers return what the
- * synchronous ones do, and a source scan keeps `store.getExecution(` (runs in flight only) out of code that may read a
- * finished run.
+ * synchronous ones do, and source scans keep `store.getExecution(` and the synchronous journal readers (runs in flight
+ * only) out of code that may read a finished run.
  */
 import { mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -36,10 +36,13 @@ describe('loadExecution', () => {
     expect((await store.loadExecution('rd_done'))?.status).toBe('success');
   });
 
-  it('executionsMentioningAsync equals executionsMentioning', async () => {
+  it('executionsMentioningAsync finds the finished runs whose record holds the text, and escapes LIKE wildcards', async () => {
     store.saveExecution({ ...record('rd_team', 'success'), runData: { n: [{ status: 'success', source: 'main', startedAt: '', durationMs: 1, inputs: [], outputs: [], note: '"teamId":"tm_x"' } as never] } });
-    expect((await store.executionsMentioningAsync('rd_team')).map((r) => r.executionId)).toEqual(store.executionsMentioning('rd_team').map((r) => r.executionId));
-    expect(await store.executionsMentioningAsync('tm_x', 3)).toEqual(store.executionsMentioning('tm_x', 3));
+    store.saveExecution({ ...record('rd_team_live', 'running'), runData: { n: [{ status: 'success', source: 'main', startedAt: '', durationMs: 1, inputs: [], outputs: [], note: '"teamId":"tm_x"' } as never] } });
+    expect((await store.executionsMentioningAsync('rd_team')).map((r) => r.executionId)).toEqual(['rd_team']);
+    expect((await store.executionsMentioningAsync('tm_x', 3)).map((r) => r.executionId)).toEqual(['rd_team']);
+    expect(await store.executionsMentioningAsync('tm%x')).toEqual([]);
+    expect(await store.executionsMentioningAsync('tm_x', 3)).toEqual([await store.loadExecution('rd_team')]);
   });
 });
 
@@ -71,19 +74,14 @@ describe('the sync getExecution guard', () => {
   const ALLOWED = [
     'lib/server/store.ts',
     'lib/server/runner.ts',
+    'lib/server/runner/',
     'lib/server/cluster/',
     'lib/server/sub-executions.ts',
     'lib/server/waits.ts',
-    'lib/server/approvals.ts',
-    // Resume routes: a waiting run is answered or started, not read as history.
-    'app/form/waiting/',
+    // Resume routes (the form-test redirect, the waiting-run lookup, the webhook replay): a waiting run is answered or started.
     'app/form-test/',
-    'app/chat/',
     'app/api/waiting/',
     'app/api/webhook/',
-    'app/api/workflows/[id]/execute/',
-    'app/api/workflows/[id]/run/',
-    'app/api/executions/[id]/stop/',
     // validateWorkflow is synchronous for its callers; see the comment at lastRunFields.
     'lib/server/mcp/workflows.ts',
   ];
@@ -95,6 +93,22 @@ describe('the sync getExecution guard', () => {
       .map((file) => relative(root, file).split(sep).join('/'))
       .filter((file) => !ALLOWED.some((allowed) => file === allowed || (allowed.endsWith('/') && file.startsWith(allowed))))
       .filter((file) => readFileSync(join(root, file), 'utf8').includes('store.getExecution('));
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe('the sync journal reader guard', () => {
+  /** The journal module itself (its writer, backfill and decisions work on runs in flight) and the run's own Report node. */
+  const ALLOWED = ['lib/server/journal/', 'lib/server/nodes/run-report.ts'];
+  const SYNC = /journalStore\.(?:read|readAll|lastSeq|spanEvents|spanStart|checksSince)\(|from '[./@\w/-]*journal\/store'/;
+  const root = join(__dirname, '..', 'src');
+  const walk = (dir: string): string[] => readdirSync(dir).flatMap((name) => (statSync(join(dir, name)).isDirectory() ? walk(join(dir, name)) : /\.tsx?$/.test(name) ? [join(dir, name)] : []));
+
+  it('the synchronous journal readers are used only where the run is in flight; everything else uses the async ones', () => {
+    const offenders = walk(root)
+      .map((file) => relative(root, file).split(sep).join('/'))
+      .filter((file) => !ALLOWED.some((allowed) => file === allowed || (allowed.endsWith('/') && file.startsWith(allowed))))
+      .filter((file) => SYNC.test(readFileSync(join(root, file), 'utf8')));
     expect(offenders).toEqual([]);
   });
 });

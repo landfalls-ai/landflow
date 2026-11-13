@@ -60,6 +60,15 @@ export interface WriteSink {
   /** Run `fn` on a Postgres connection of its own (Postgres mode). */
   direct?<T>(fn: (client: DirectClient) => Promise<T>): Promise<T>;
   health?(): WriteHealth;
+  /**
+   * Tables the in-memory copy holds only in part (Postgres mode: the data and events of cold runs, ./hot-mirror). A delete
+   * on them is replayed even when the copy had nothing to delete: Postgres may still have the rows.
+   */
+  readonly partial?: ReadonlySet<TableName>;
+  /** Executions with writes (their row or their events) not yet in Postgres: the copy must not evict them. */
+  pendingExecutions?(): { has(id: string): boolean };
+  /** Resolve once every batch queued so far is in Postgres (true), or after `timeoutMs` (false). */
+  barrier?(timeoutMs: number): Promise<boolean>;
 }
 
 const COLUMN = /^[a-z_][a-z0-9_]*$/;
@@ -69,6 +78,10 @@ const COLUMN = /^[a-z_][a-z0-9_]*$/;
  * `landflow.db.query.duration` histogram, labelled by operation only. A `db.query` span is opened after the fact, and
  * only for calls at or over LANDFLOW_DB_SLOW_MS (default 50), named by the statement with its literals stripped:
  * the first 60 characters of the SQL with string and number literals stripped and whitespace collapsed.
+ *
+ * Only single-quoted strings (blob literals `x'…'` too, as `x?`) and decimal numbers are stripped: double-quoted text (an
+ * identifier in SQL, or a string where a dialect allows it) and hex numbers such as `0x1f` pass through whole. That is
+ * enough for the store, whose SQL takes its values as parameters; do not rely on it to hide a value written into the SQL.
  */
 export function statementName(sql: string): string {
   return sql
@@ -213,7 +226,9 @@ export class Database {
       changes = this.timed(op.op === 'insert' ? 'insert' : 'upsert', sql, () => Number(this.statement(sql).run(...columns.map((c) => op.row[c] as SQLInputValue)).changes));
     }
     // Only changes that happened are replayed (an insert that hit an existing key, a delete of nothing: no op).
-    if ((this.sink || this.observers.size) && (changes > 0 || op.op === 'upsert')) {
+    // A delete on a table the copy holds in part is replayed regardless: the rows it names may be only in Postgres.
+    const partial = op.op !== 'upsert' && op.op !== 'insert' && this.sink?.partial?.has(op.table);
+    if ((this.sink || this.observers.size) && (changes > 0 || op.op === 'upsert' || partial)) {
       if (this.depth > 0) this.pending.push(op);
       else this.committed([op]);
     }
@@ -272,6 +287,57 @@ export class Database {
       this.pending.length = mark;
       throw error;
     }
+  }
+
+  /**
+   * Postgres hot mirror: take these executions' `data` and journal out of the copy only (nothing is sent to Postgres, no
+   * observer hears of it). Executions with writes not yet in Postgres stay. Returns the ids evicted.
+   */
+  evictLocal(ids: string[]): string[] {
+    if (this.depth > 0 || !ids.length) return [];
+    const pending = this.sink?.pendingExecutions?.();
+    const gone = ids.filter((id) => !pending?.has(id));
+    if (!gone.length) return gone;
+    this.sqlite.exec('BEGIN');
+    try {
+      for (const id of gone) {
+        this.statement("UPDATE executions SET data = '' WHERE id = ?").run(id);
+        this.statement('DELETE FROM execution_events WHERE execution_id = ?').run(id);
+      }
+      this.sqlite.exec('COMMIT');
+    } catch (error) {
+      if (this.sqlite.isTransaction) this.sqlite.exec('ROLLBACK');
+      throw error;
+    }
+    return gone;
+  }
+
+  /**
+   * The opposite, copy only: give a cold execution back its `data` and journal as read from Postgres. A row that has data
+   * by now (written since the read started) is left as it is.
+   */
+  hydrateLocal(executionId: string, data: string, events: Array<Record<string, SqlValue>>): boolean {
+    if (this.depth > 0) return false;
+    this.sqlite.exec('BEGIN');
+    try {
+      const changed = Number(this.statement("UPDATE executions SET data = ? WHERE id = ? AND data = ''").run(data, executionId).changes);
+      if (changed) {
+        for (const row of events) {
+          const columns = Object.keys(row);
+          this.statement(upsertSql('execution_events', columns, 'insert', () => '?')).run(...columns.map((c) => row[c] as SQLInputValue));
+        }
+      }
+      this.sqlite.exec('COMMIT');
+      return changed > 0;
+    } catch (error) {
+      if (this.sqlite.isTransaction) this.sqlite.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  /** Postgres mode: resolve once what was committed so far is in Postgres (false after `timeoutMs`). SQLite: true at once. */
+  barrier(timeoutMs: number): Promise<boolean> {
+    return this.sink?.barrier?.(timeoutMs) ?? Promise.resolve(true);
   }
 
   /** Postgres mode: wait until every committed write reached Postgres. SQLite: nothing to do. */

@@ -28,6 +28,7 @@ import { parse } from '../db/rows';
 import { safeFetch } from '../net/safe-fetch';
 import { singleton } from '../singleton';
 import { policyScope, scopeActive, type PolicyScope, type ScopeTarget } from './scopes';
+import { HttpError } from '../errors';
 
 export const GOVERNANCE_SETTINGS_KEY = 'governance';
 
@@ -36,13 +37,14 @@ export const CODE_NODE_NAMES = new Set(['code', 'function', 'functionItem', 'exe
 export const HTTP_REQUEST_TYPE = 'core.httpRequest';
 export const MCP_NODE_TYPES = new Set(['core.mcpClient', 'core.mcpClientTool']);
 
-export class PolicyError extends Error {
+export class PolicyError extends HttpError {
+  static readonly errorName: string = 'PolicyError';
   constructor(
     message: string,
     readonly violations: PolicyViolation[] = [],
-    readonly status = 422,
+    status = 422,
   ) {
-    super(message);
+    super(message, status, { expose: true, ...(violations.length && { details: { violations } }) });
   }
 }
 

@@ -48,6 +48,7 @@ still works.
 | `DATABASE_URL` | – | Postgres connection string for `LANDFLOW_DB=postgres`, e.g. the infra stack's `postgres://landflow:landflow-dev-only@127.0.0.1:55432/landflow` |
 | `LANDFLOW_PG_BLOCKED_RETRY_SECONDS` | `60` | Postgres mode: seconds between retries of a write batch Postgres rejects while the store is blocked (minimum 1) ([postgres-write-queue.md](../features/postgres-write-queue.md)) |
 | `LANDFLOW_PG_SKIP_BATCH` | – | Postgres mode: a batch sequence number to set aside at boot (written to `<data dir>/postgres-rejected-<seq>.jsonl`, or `postgres-rejected-<instance>-<seq>.jsonl` in queue mode) instead of replaying it |
+| `LANDFLOW_PG_HOT_MINUTES` | `15` | Postgres mode: minutes a finished run keeps its data and journal in the in-memory copy (minimum 1); older runs are read from Postgres on demand, and runs in flight, with a retry waiting or a child of a waiting run stay in it ([architecture.md](../architecture.md#storage)) |
 | `LANDFLOW_PG_SPOOL_FSYNC` | `interval` | Postgres mode, spool durability: `interval` (fdatasync at most every 100 ms), `always` (after each append) or `off` |
 | `LANDFLOW_CONFIG_STORE` | `database` in queue mode, else `files` | where credentials and the settings files (mcp.json, marketplaces.json, skill-library.json, agent-channels.json) live: the database (imported once from the files) or the data directory |
 
@@ -81,6 +82,8 @@ still works.
 | `LANDFLOW_VALKEY_SENTINEL_USERNAME` | – | user for the sentinels themselves, when they require AUTH |
 | `LANDFLOW_VALKEY_SENTINEL_PASSWORD` *(secret)* | – | password for the sentinels themselves, when they require AUTH |
 | `LANDFLOW_VALKEY_SENTINEL_TLS` | `false` | `true` when the sentinels speak TLS |
+| `LANDFLOW_EXPRESSION_SANDBOX` | `realm` | `realm`: `{{ }}` expressions run in a sealed `node:vm` context; `isolate`: in an isolated-vm isolate with its own heap and a memory cap (not a defence against memory bombs: some abort the process where the realm survives, see `LANDFLOW_EXPRESSION_MEMORY_MB`). `isolate` needs the optional `isolated-vm` package and `NODE_OPTIONS=--no-node-snapshot` in every process that evaluates expressions (the host, the worker, the image sets it); where it cannot load, or the value is neither `realm` nor `isolate`, the production profile refuses to start and development falls back to `realm` with a warning ([engine](../features/engine.md#expressions-run-in-a-sealed-realm)) |
+| `LANDFLOW_EXPRESSION_MEMORY_MB` | `64` | the heap cap of the `isolate` expression backend in MB (8 to 4096), shared by all expressions of the process; an expression that exceeds it fails and the isolate is rebuilt. It is not a hard bound: one builtin call can allocate far past it (measured 0.5 to 2 GB resident at 64), and Set/Map/sparse-object growth aborts the process at the default ([engine.md](../features/engine.md#the-isolate-backend-optional)) |
 
 ## Addresses and time
 

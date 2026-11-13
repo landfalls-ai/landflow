@@ -13,7 +13,7 @@ Part of the [Landflow docs](../README.md); the [feature map](../README.md#featur
 
 ## Durable runtime
 
-- **Store**: workflows, executions, poll state, versions, folders, settings, variables, waits, checkpoints, idempotency keys, retries and Data Tables live in SQLite at `<data dir>/landflow.db` (WAL mode, versioned migrations recorded in `schema_version`, `lib/server/db/`). `LANDFLOW_DB=postgres` with `DATABASE_URL` uses Postgres instead: the host loads the whole database into an in-memory copy at boot, serves reads from it and writes to Postgres in order through a queue that is spooled to `<data dir>/postgres-queue.jsonl` first (replayed at the next boot), so the store API stays synchronous; a batch Postgres keeps rejecting blocks writes instead of being dropped ([Postgres write queue](postgres-write-queue.md)). An advisory lock allows one host per database in regular mode; queue mode shares it between mains and workers (below). Credentials, the encryption key, insights and the agent files stay files. The first boot on a data directory with the JSON files of older versions imports them once and renames each to `<name>.imported-<date>` (nothing is deleted; the import is idempotent).
+- **Store**: workflows, executions, poll state, versions, folders, settings, variables, waits, checkpoints, idempotency keys, retries and Data Tables live in SQLite at `<data dir>/landflow.db` (WAL mode, versioned migrations recorded in `schema_version`, `lib/server/db/`). `LANDFLOW_DB=postgres` with `DATABASE_URL` uses Postgres instead: the host keeps an in-memory copy of the database, without the data and journal of runs that finished more than `LANDFLOW_PG_HOT_MINUTES` ago (those are read from Postgres on demand, [architecture.md](../architecture.md#storage)), serves reads from it and writes to Postgres in order through a queue that is spooled to `<data dir>/postgres-queue.jsonl` first (replayed at the next boot), so the store API stays synchronous; a batch Postgres keeps rejecting blocks writes instead of being dropped ([Postgres write queue](postgres-write-queue.md)). An advisory lock allows one host per database in regular mode; queue mode shares it between mains and workers (below). Credentials, the encryption key, insights and the agent files stay files. The first boot on a data directory with the JSON files of older versions imports them once and renames each to `<name>.imported-<date>` (nothing is deleted; the import is idempotent).
 - **Saved as it runs**: an execution is saved when it starts, with the workflow version it runs (`versionId`; an unsaved editor draft keeps its graph instead), then every node run and a checkpoint after each main-flow node under a stable step id (`<nodeId>#<runIndex>`). At boot, executions left `running` by a crash or restart continue from their last checkpoint on the same version (tagged **Resumed after restart**; nodes before the checkpoint don't run again). Those that can't (their version is gone, a debug session, no checkpoint yet) are saved as failed with the reason.
 - **Idempotency**: an `Idempotency-Key` header on a webhook or form call (or `idempotencyKey` on `POST /api/workflows/:id/run`) starts at most one run per workflow and key within `LANDFLOW_IDEMPOTENCY_TTL_HOURS` (default 24); a repeat gets the first run's answer with `Idempotent-Replayed: true`. Every Execute request also carries a per-step `idempotencyKey` (`<executionId>:<nodeId>:<runIndex>`, the same for retries of that step and after a restart) that plugins can pass to the APIs they call ([docs/protocol.md](../protocol.md)).
 - **Concurrency**: `concurrencyLimit` caps a workflow's production runs (webhook, form, schedule, poll, error-workflow and agent-tool runs) at once, and `singleton` allows one, waiting runs included. A trigger run with no free slot waits in the workflow's FIFO queue (status **Queued**, at most `concurrencyQueueSize`, default 100; it survives a restart) or, with `concurrencyOverflow: 'skip'`, is skipped (webhooks and forms answer 429). Manual and chat runs from the editor, debug runs, sub-executions, re-runs and retries are never held back.
@@ -78,9 +78,61 @@ strings and WebAssembly off, a null-prototype global and a 250 ms timeout per ev
   Dates, `undefined` (also inside arrays and objects), `NaN`, `Infinity` and `-0` as themselves, a BigInt as a string and a
   function as `undefined`. An error thrown by an expression is read inside the realm; one that escapes it (the timeout, a
   stack overflow) is reported without reading the thrown value.
-- **Remaining risks**: a V8 or `vm` bug (the realm is a context in the host process, not a process boundary), and memory
-  exhaustion inside the 250 ms window. A stricter isolate backend is planned; until then, an instance that lets
-  untrusted people write expressions should also keep the production profile's other limits in place.
+- **Remaining risks** (realm): a V8 or `vm` bug (the realm is a context in the host process, not a process boundary), and
+  memory exhaustion inside the 250 ms window. The isolate backend below moves a V8 bug out of the host's heap, but it is
+  not a defence against memory exhaustion: some memory bombs that time out in the realm end the process there (see its
+  known holes).
+
+### The isolate backend (optional)
+
+`LANDFLOW_EXPRESSION_SANDBOX=isolate` runs the same bootstrap and bridge in an [isolated-vm](https://github.com/laverdet/isolated-vm)
+isolate ([`sandbox/isolate.ts`](../../packages/engine/src/sandbox/isolate.ts)) instead of a `node:vm` context. The default
+stays `realm`.
+
+- **What changes**: one isolate per process with its own V8 heap capped at `LANDFLOW_EXPRESSION_MEMORY_MB` (default 64), and a
+  context per resolver. A V8 bug inside an expression now reaches an isolate, not the host's heap, and an expression that
+  exhausts memory fails with "The expression used more than N MB of memory": the isolate is disposed and rebuilt
+  (the resolvers that shared it get a fresh context on their next evaluation), and the process keeps running for the
+  memory bombs the tests try, except the holes listed below. Semantics (V8, `Intl`), the 250 ms timeout, the tagged-JSON results and the
+  `async`/`import(` refusal are the realm's, and the whole realm test suite runs against it (its test checks that it does).
+  Evaluating through the isolate is faster than the realm for a resolver that evaluates many times, and about 1.3 times
+  slower for a fresh resolver per evaluation, which is what the executor makes per node execution
+  (`test/expression-isolate.test.ts` measures both).
+- **Contexts are released by the engine, not the garbage collector**: the host cannot see the isolate's heap, so the 32
+  most recently used contexts stay and older ones are released at once (their resolver builds a new one on its next
+  evaluation); the bootstrap and each expression are compiled once per isolate (a few hundred expressions are kept, fewer
+  with a smaller cap). An isolate disposed through no fault of the expression being evaluated is rebuilt and the
+  expression tried once more. A churn test runs thousands of short-lived resolvers with no failure.
+- **Guards on top, and what they cannot promise**: V8 aborts the whole process when one allocation is larger than the heap
+  limit, before isolated-vm can end the isolate. The builtins that make a big block from a length the caller gives are
+  guarded: in an isolate, `Array.from` on an array-like longer than 32,768 times the cap in MB elements,
+  `Array.prototype.fill` and `join` on an array longer than that, and `String.prototype.repeat`, `padStart` and `padEnd`
+  past 262,144 times the cap in characters throw a `RangeError`. The guards also refuse sizes the realm allows
+  (`new Array(3e6).fill(0)` fails at 64 MB), and the list cannot be shown to be complete.
+- **Known holes (the isolate can abort the process where the realm does not)**: growth of a hash table also ends in a V8
+  heap abort (exit 134, `is_heap_oom = 1`), because V8 allocates the larger table in one step. Measured, each in a process
+  of its own at the default 64 MB: a loop of `Set.add`, `Map.set` or `WeakMap.set` with keys that are kept (unretained keys time out instead), a loop assigning sparse
+  keys to an object or array (`o[i * 1000] = i`), `Object.groupBy` / `Map.groupBy` over two million items, and
+  `new Set(<two million items>)`. No guard list can cover the sparse-object case (it uses no builtin). A larger cap helps
+  only when the 250 ms timeout comes first (at 256 MB a `Set` loop and sparse keys time out, a `Map` loop still aborts),
+  so no cap is a proof. A test pins the abort (`test/expression-isolate.test.ts`) so this text is corrected when it is
+  closed. If an expression that cannot take a worker down is a requirement, `isolate` does not provide it yet; the way
+  to close it is to evaluate in a separate process, which is not built.
+- **The cap does not bound the process's memory**: the heap limit is checked after a builtin returns, and one call can
+  allocate far more than the cap first. Measured with `/usr/bin/time -l` (an idle child is 98 MB) at 64 MB:
+  `[].concat(...Array(60).fill(Array(2000000).fill(0))).length` succeeds at 1.07 GB peak; `JSON.stringify` of eight 16 MB
+  strings succeeds at 498 MB; joining thirty 16 MB strings and then `JSON.stringify` fails with the memory message only
+  after 2.07 GB; a loop keeping 40 concatenated arrays fails after 1.7 GB. In a container with a memory limit the
+  kernel can kill the host first, so set the container limit with that headroom.
+- **When to choose it**: people you do not trust write expressions and you want a V8 bug in one to reach an isolate
+  rather than the host's heap, and you accept the two limits above. Keep `realm` otherwise, and do not choose `isolate`
+  for the sole purpose of surviving a memory bomb: on ordinary `Set`/`Map`/object growth it aborts where the realm
+  survives (the realm's 250 ms timeout ends the loop).
+- **Requirements**: `isolated-vm` is an optional dependency of `@landflow/engine` (a native addon: an install without a
+  prebuilt binary or a compiler skips it and the realm keeps working) and needs `NODE_OPTIONS=--no-node-snapshot` on
+  Node 20+ in every process that evaluates expressions: `next start`, `pnpm worker`, the Docker image (set there). Where it
+  cannot load, the production profile refuses to start and development logs a warning and uses the realm
+  ([deployment.md](../deployment.md#expression-sandbox)). The cap is for the process, not per expression.
 
 ## Triggers and flow nodes
 

@@ -5,11 +5,14 @@
  */
 import { isProduction, envFlag } from '../config';
 import { brokeredEndpoint } from '../transports/provider';
+import { HttpError } from '../errors';
 
 /** A refusal the announce route and the gRPC server turn into a status of their own (409 join, 422 address). */
-export class RegistryRefused extends Error {
-  constructor(message: string, readonly status: 409 | 422) {
-    super(message);
+export class RegistryRefused extends HttpError {
+  static readonly errorName: string = 'RegistryRefused';
+  declare readonly status: 409 | 422;
+  constructor(message: string, status: 409 | 422) {
+    super(message, status);
   }
 }
 

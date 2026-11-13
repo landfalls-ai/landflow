@@ -44,6 +44,7 @@ package's report (deviations, risks, live checks).
    pnpm typecheck
    (cd apps/web && npx vitest run)
    pnpm test        # also runs the host suite again (apps/web has a test script)
+   pnpm check:deps  # dependency rules (.dependency-cruiser.cjs); `pnpm check` runs typecheck, test and this
    ```
 
    `pnpm -r --if-present --filter '!@landflow/web' test` runs only the packages when the host suite already ran.

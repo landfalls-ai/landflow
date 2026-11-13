@@ -461,6 +461,26 @@ LANDFLOW_REGISTRY_URL=http://localhost:53000 LANDFLOW_ADVERTISE_HOST=host.docker
   LANDFLOW_HTTP_PORT=7151 LANDFLOW_GRPC_PORT=7251 pnpm plugin:ts
 ```
 
+## Postgres memory sizing
+
+In Postgres mode ([Storage](architecture.md#storage)) each host process keeps an in-memory copy of the database, but only the
+hot part of the run history: executions in flight, those finished within `LANDFLOW_PG_HOT_MINUTES` (default 15), those with a
+retry waiting, and children of a waiting run. Older runs keep their summary row in the copy and have their record and Run
+Trace journal read from Postgres on demand, so a page of an old run waits for one query. Memory and boot time no longer grow
+with finished runs' data and journal; they grow with the other tables, which stay whole: the audit log, the usage ledger,
+insights rows, AI usage, workflows, versions and the rest.
+
+Measured with `apps/web/scripts/seed-executions.ts` (50,000 finished runs of about 10 KB each, with 20 journal events of
+1 KB each, plus 5 running; 1.8 GB in Postgres): boot 0.5–0.7 s and 153–164 MB resident, against 9.3–10.1 s and 14.1–14.5 GB
+when everything is hot (`LANDFLOW_PG_HOT_MINUTES=100000`, which is what every earlier version did; at Node's default heap
+that boot runs out of memory). The figures are the range of four runs; tables bloated by repeated seeding without a
+vacuum boot slower (up to about 3 s). Size a process for its workflows, the other
+tables and the runs of the last hot window: the memory of a run in the hot window is its record and journal, so a host that
+finishes 10,000 runs of 100 KB in a quarter of an hour needs about 1 GB for them. Raise `LANDFLOW_PG_HOT_MINUTES` only if
+people open just-finished runs so often that the query per old page matters; lower it to keep the copy smaller. A host that
+has been busy does not give the memory of evicted runs back to the system at once (SQLite reuses the freed pages), so its
+resident size follows the busiest hot window it has had.
+
 ## Queue mode (two mains, two workers)
 
 [`compose.queue.yml`](../deploy/compose.queue.yml) (project `landflow-queue`) runs Landflow in queue mode with high availability ([Queue mode, workers and high availability](features/engine.md#queue-mode-workers-and-high-availability)) on the infra stack's Postgres, Valkey and MinIO. One image runs everything: the mains run `node server.js`, the workers `node worker.mjs`. Workers run the same production check as the mains, so in the production profile they need the same variables (including `LANDFLOW_PUBLIC_URL` and `LANDFLOW_REGISTRY_SECRET`, or `LANDFLOW_REGISTRY_OPEN=true`) even though they serve no registry; the bundled manifests use the development profile.
@@ -516,6 +536,20 @@ LANDFLOW_QUEUE_VALKEY_CLUSTER=valkey-cluster-1:6379,valkey-cluster-2:6379 docker
 **Marketplace node plugins** install on either main and run in every main and worker (each its own child process). The containers have no `/app/packages`, so a plugin needing `@landflow/sdk` links can't be prepared there; plain JavaScript, Python and Go plugins can. A local marketplace path needs `LANDFLOW_QUEUE_MARKETPLACE_ALLOW_LOCAL=1` at `up` time.
 
 Day to day: **Settings → Workers** on either main shows the leader, the queue and every process; `docker compose -f deploy/compose.queue.yml stop worker-1` sends SIGTERM (runs get 30 s, the worker gives itself 40 s in all, `stop_grace_period` is 45 s, and what doesn't finish continues on the other worker); `stop main-1` on the leader hands the leadership over within about 3 s. To add a worker, copy `worker-2` with its own `LANDFLOW_INSTANCE_ID` and port. Valkey keys: `docker compose -f deploy/compose.infra.yml exec valkey valkey-cli --scan --pattern 'landflow-queue:*'`.
+
+## Expression sandbox
+
+`{{ }}` expressions run in a sealed `node:vm` realm by default. `LANDFLOW_EXPRESSION_SANDBOX=isolate` runs them in an
+isolated-vm isolate with a memory cap (`LANDFLOW_EXPRESSION_MEMORY_MB`, default 64; [engine.md](features/engine.md#the-isolate-backend-optional)).
+The host, the worker and `next start` need `NODE_OPTIONS=--no-node-snapshot` for it (the image sets it in `host.Dockerfile`;
+set it yourself for `pnpm start` and `pnpm worker`, and in any Kubernetes or compose environment that does not use the
+image). `host.Dockerfile` also links `isolated-vm` and its addon into the image when the install built it; where it could
+not, the image runs the realm only and a production start with `isolate` refuses to boot. The in-repo compose and Kubernetes
+stacks leave the default. `NODE_OPTIONS` is inherited by the child processes the host starts (plugin processes, the code
+runner's children when started by pnpm): harmless, but it shows in their environment. The base image is Alpine (musl);
+`isolated-vm` 6.2.0 loads there from its musl prebuild (a container started with `LANDFLOW_EXPRESSION_SANDBOX=isolate`
+logged no fallback warning). The isolate backend can abort the process on `Set`/`Map` growth and its cap does not bound
+resident memory, so give the container headroom ([engine.md](features/engine.md#the-isolate-backend-optional)).
 
 ## Code runner
 

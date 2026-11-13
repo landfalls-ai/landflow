@@ -6,6 +6,7 @@
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import type { Variable } from '../shared/platform';
 import { recordAudit } from './audit';
+import { HttpError } from './errors';
 
 export type { Variable };
 
@@ -20,12 +21,13 @@ export interface StoredVariable extends Variable {
   updatedAt: string;
 }
 
-export class VariableError extends Error {
+export class VariableError extends HttpError {
+  static readonly errorName: string = 'VariableError';
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

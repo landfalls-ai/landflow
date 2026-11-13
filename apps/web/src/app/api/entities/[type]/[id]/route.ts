@@ -6,7 +6,7 @@
  * DELETE — remove it with its facts and profile; its open suggestions expire. Editors of its project.
  */
 import { z } from 'zod';
-import { canEntity, deleteEntity, EntityError, entityKnowledge, getEntity, upsertEntity } from '@/lib/server/brain/entities';
+import { canEntity, deleteEntity, entityKnowledge, getEntity, upsertEntity } from '@/lib/server/brain/entities';
 import { listProposals } from '@/lib/server/brain/proposals';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { creationProject } from '@/lib/server/projects/access';
@@ -44,14 +44,9 @@ export const PATCH = handler(async (request: Request, ctx: Ctx) => {
   if (!parsed.ok) return parsed.response;
   const found = await find(ctx, 'update');
   if (!found.entity) return found.response;
-  try {
-    const { projectId, ...patch } = parsed.data;
-    const moved = projectId ? creationProject(found.actor, projectId) : undefined;
-    return json({ entity: upsertEntity({ ...patch, type: found.entity.type, id: found.entity.id, ...(moved && { projectId: moved }) }).entity });
-  } catch (caught) {
-    if (caught instanceof EntityError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  const { projectId, ...patch } = parsed.data;
+  const moved = projectId ? creationProject(found.actor, projectId) : undefined;
+  return json({ entity: upsertEntity({ ...patch, type: found.entity.type, id: found.entity.id, ...(moved && { projectId: moved }) }).entity });
 });
 
 export const DELETE = handler(async (_request: Request, ctx: Ctx) => {

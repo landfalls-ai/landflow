@@ -24,7 +24,8 @@ and broker bridge in `services/`, compose and Kubernetes in `deploy/`). You writ
   section or rows per package. Name an integrator step for them.
 - **Hot files** need care: `apps/web/src/lib/server/auth/policy.ts`, `lib/server/openapi.ts`,
   `lib/server/db/schema.ts` (migrations: give each package its own migration version above the current maximum),
-  `lib/server/http.ts`, `lib/server/runtime.ts` (the service table), `lib/server/runner.ts`, `lib/server/store.ts`,
+  `lib/server/http.ts`, `lib/server/runtime.ts` (the service table), `lib/server/runner/` (one module per concern behind
+  the `runner.ts` barrel), `lib/server/store.ts`,
   `components/editor/spotlight.tsx`, `apps/web/package.json` and `pnpm-lock.yaml`. Give each to one package per wave,
   or sequence the packages.
 - **Waves** of at most five packages; later waves depend only on earlier ones. Say what each wave creates that the
@@ -36,8 +37,9 @@ and broker bridge in `services/`, compose and Kubernetes in `deploy/`). You writ
   package-specific commands.
 - **Compatibility**: `pnpm dev`, `deploy/.env.example` setups, the scratch host in `docs/development.md` and the
   offline test suite keep working. Anything stricter applies only in the production profile.
-- **Targets from the backend refactor** (marked "target" in the constitution): build on them when they have landed
-  on `origin/main`; otherwise plan against today's pattern and say so.
+- **The backend refactor's conventions** (the constitution; all landed): build on them (`HttpError` subclasses, the
+  config catalog, `singleton()`, the service table, the async read seam and `promoteExecution`, the runner modules
+  under `lib/server/runner/`) and keep `pnpm check:deps` clean; never a second way of doing one of those things.
 - **Decisions**: list what you deliberately leave out and why (local-only, no cloud services, no hosted CI, no real
   tokens), so nobody re-plans it.
 - **Verification per wave**: the regression commands, the integration flags (`LANDFLOW_INTEGRATION=postgres`,

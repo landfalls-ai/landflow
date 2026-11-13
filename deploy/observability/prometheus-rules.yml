@@ -1,0 +1,109 @@
+# Alert rules for the metrics the Landflow host exports (docs/observability.md §5; names are the Prometheus spelling:
+# `.` -> `_`, unit suffix, `_total` on counters). Load with `rule_files:` in Prometheus; the Kubernetes observability
+# component mounts it into the LGTM pod, where the alerts show under Prometheus -> Alerts and as the ALERTS series
+# (no Alertmanager there). Thresholds are starting points: tune them to your load. apps/web/test/exception-fingerprint.test.ts
+# checks that every metric named here exists in the code.
+groups:
+  - name: landflow-http
+    rules:
+      - alert: LandflowHttp5xxRatioHigh
+        expr: |
+          sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[5m]))
+            / clamp_min(sum(rate(http_server_request_duration_seconds_count[5m])), 1e-9) > 0.05
+        for: 10m
+        labels: { severity: page }
+        annotations:
+          summary: More than 5% of API requests answer 5xx
+          runbook: docs/observability.md#alerts-and-dashboard
+      - alert: LandflowRequestP95Slow
+        expr: histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket[5m]))) > 2.5
+        for: 10m
+        labels: { severity: warn }
+        annotations:
+          summary: p95 request duration is above 2.5 s
+          runbook: docs/observability.md#alerts-and-dashboard
+      - alert: LandflowRateLimitRefusals
+        expr: sum(rate(landflow_ratelimit_refused_total[5m])) > 1
+        for: 10m
+        labels: { severity: warn }
+        annotations:
+          summary: The API rate limiter is refusing more than one request a second
+          runbook: docs/observability.md#alerts-and-dashboard
+  - name: landflow-runs
+    rules:
+      - alert: LandflowScheduleLag
+        expr: histogram_quantile(0.95, sum by (le) (rate(landflow_schedule_lag_milliseconds_bucket[10m]))) > 30000
+        for: 10m
+        labels: { severity: warn }
+        annotations:
+          summary: Scheduled runs start more than 30 s late (p95)
+          runbook: docs/observability.md#alerts-and-dashboard
+      - alert: LandflowQueueBacklog
+        expr: max(landflow_queue_depth) > 50
+        for: 15m
+        labels: { severity: warn }
+        annotations:
+          summary: Queued jobs have waited for a worker for 15 minutes (depth above 50)
+          runbook: docs/observability.md#alerts-and-dashboard
+      - alert: LandflowNoWorkers
+        expr: max(landflow_queue_depth) > 0 and max(landflow_cluster_workers) == 0
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: Jobs are queued and no worker has a current heartbeat
+          runbook: docs/observability.md#alerts-and-dashboard
+      - alert: LandflowPluginOffline
+        expr: min(landflow_plugins_online) < 1
+        for: 10m
+        labels: { severity: warn }
+        annotations:
+          summary: A plugin language group has no plugin online
+          runbook: docs/observability.md#alerts-and-dashboard
+  - name: landflow-database
+    rules:
+      - alert: LandflowPostgresWritesBlocked
+        expr: max(landflow_db_write_blocked) == 1
+        for: 2m
+        labels: { severity: page }
+        annotations:
+          summary: Postgres rejects write batches and the store refuses writes
+          runbook: docs/observability.md#alerts-and-dashboard
+      - alert: LandflowPostgresWriteQueueOld
+        expr: max(landflow_db_write_queue_oldest_age_seconds) > 60
+        for: 5m
+        labels: { severity: warn }
+        annotations:
+          summary: The oldest write batch not yet in Postgres is over a minute old
+          runbook: docs/observability.md#alerts-and-dashboard
+  - name: landflow-audit
+    rules:
+      - alert: LandflowAuditWriteFailures
+        expr: sum ((increase(landflow_audit_write_failures_total[10m]) > 0) or ((landflow_audit_write_failures_total unless landflow_audit_write_failures_total offset 10m) unless ignoring(__name__) (increase(landflow_audit_write_failures_total[10m]) > 0))) > 0
+        for: 0m
+        labels: { severity: page }
+        annotations:
+          summary: Audit events could not be stored
+          runbook: docs/observability.md#alerts-and-dashboard
+      - alert: LandflowAuditOutboxOld
+        expr: max(landflow_audit_outbox_oldest_age_seconds) > 900
+        for: 10m
+        labels: { severity: warn }
+        annotations:
+          summary: An audit event has waited over 15 minutes for delivery to a SIEM destination
+          runbook: docs/observability.md#alerts-and-dashboard
+  - name: landflow-runtime
+    rules:
+      - alert: LandflowEventLoopDelay
+        expr: max(landflow_runtime_event_loop_delay_milliseconds{landflow_quantile="p99"}) > 200
+        for: 10m
+        labels: { severity: warn }
+        annotations:
+          summary: Event-loop delay p99 is above 200 ms
+          runbook: docs/observability.md#alerts-and-dashboard
+      - alert: LandflowProcessErrors
+        expr: sum by (kind) ((increase(landflow_process_errors_total[10m]) > 0) or ((landflow_process_errors_total unless landflow_process_errors_total offset 10m) unless ignoring(__name__) (increase(landflow_process_errors_total[10m]) > 0))) > 0
+        for: 0m
+        labels: { severity: page }
+        annotations:
+          summary: "A process error was counted ({{ $labels.kind }}): an unhandled rejection, an uncaught exception or a service that failed to start"
+          runbook: docs/observability.md#alerts-and-dashboard

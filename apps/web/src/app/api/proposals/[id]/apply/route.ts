@@ -6,7 +6,7 @@
  */
 import type { Workflow } from '@/lib/shared/types';
 import { canDecide, canSee } from '@/lib/server/brain/audience';
-import { applyProposal, getProposal, ProposalError } from '@/lib/server/brain/proposals';
+import { applyProposal, getProposal } from '@/lib/server/brain/proposals';
 import { error, handler, json } from '@/lib/server/http';
 import { createIn, routeActor, targetProject } from '@/lib/server/projects/http';
 
@@ -22,14 +22,9 @@ export const POST = handler(async (request: Request, ctx: Ctx) => {
   // A draft creates a workflow, which any builder may; changing a workflow or agent needs edit access to it (advice, which changes nothing, is also the audience's to mark done).
   if (!proposal.draft && !canDecide(actor, proposal, 'apply')) return error('You can’t change what this suggestion is about', 403);
   const projectId = proposal.draft ? targetProject(request) : undefined;
-  try {
-    const result = applyProposal(id, {
-      actorId: actor.id,
-      createWorkflow: (save, workflowId) => createIn(projectId, 'workflow', save, (w: Workflow) => w.id, workflowId),
-    });
-    return json(result);
-  } catch (caught) {
-    if (caught instanceof ProposalError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  const result = applyProposal(id, {
+    actorId: actor.id,
+    createWorkflow: (save, workflowId) => createIn(projectId, 'workflow', save, (w: Workflow) => w.id, workflowId),
+  });
+  return json(result);
 });

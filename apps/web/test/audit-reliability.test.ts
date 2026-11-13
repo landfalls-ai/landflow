@@ -1,7 +1,8 @@
 /**
  * Audit reliability (lib/server/audit/metrics.ts, `LANDFLOW_AUDIT_FAIL_CLOSED`): a failed audit insert is counted
  * (`landflow.audit.write_failures`); the change still happens by default; in fail-closed mode a role change, an API key,
- * a credential and a SCIM user are refused with 503 and nothing changes. The outbox gauges reflect a stuck destination.
+ * a credential (create, update, delete), an API key (create, revoke), the audit settings and a SCIM user or group are
+ * refused with 503 and nothing changes. The outbox gauges reflect a stuck destination.
  */
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -17,7 +18,7 @@ for (const key of UNSET) delete process.env[key];
 
 const auth = await import('@/lib/server/auth');
 const { database } = await import('@/lib/server/db');
-const { createApiKey, listApiKeys } = await import('@/lib/server/auth/api-keys');
+const { createApiKey, getApiKey, listApiKeys } = await import('@/lib/server/auth/api-keys');
 const { queryEvents } = await import('@/lib/server/audit/store');
 const { verifyChain } = await import('@/lib/server/audit/chain');
 const { metrics } = await import('@opentelemetry/api');
@@ -29,6 +30,12 @@ const apiKeysRoute = await import('@/app/api/api-keys/route');
 const userRoute = await import('@/app/api/users/[id]/route');
 const credentialsRoute = await import('@/app/api/credentials/route');
 const scimUsers = await import('@/app/scim/v2/Users/route');
+const scimGroups = await import('@/app/scim/v2/Groups/route');
+const apiKeyRoute = await import('@/app/api/api-keys/[id]/route');
+const credentialRoute = await import('@/app/api/credentials/[id]/route');
+const auditSettingsRoute = await import('@/app/api/settings/audit/route');
+const { getAuditSettings } = await import('@/lib/server/audit/settings');
+const { listGroups } = await import('@/lib/server/scim/groups');
 
 registry.registerBuiltin(corePlugin);
 
@@ -128,6 +135,55 @@ describe('audit write failures', () => {
     delete process.env.LANDFLOW_AUDIT_FAIL_CLOSED;
     expect((await post()).status).toBe(201);
     expect(auth.findUserByEmail('ann@example.com')).toBeDefined();
+    auth.enableTestAuth();
+  });
+
+  it('refuses an API key revoke, a credential update and delete and an audit settings change with 503, and changes nothing', async () => {
+    const member = await auth.createUser({ email: 'm4@reliability.test', name: 'M4', role: 'member', password: 'member-password-1' });
+    const { key } = createApiKey(member, { label: 'Kept', scopes: ['workflows:read'] });
+    const created = (await (await credentialsRoute.POST(req('POST', '/api/credentials', { name: 'Kept', type: 'core.httpBearerAuth', data: { token: 'abc' } }))).json()) as { credential: { id: string } };
+    const id = created.credential.id;
+    const read = async () => ((await (await credentialRoute.GET(req('GET', `/api/credentials/${id}`), params({ id }))).json()) as { credential: { name: string } }).credential;
+    const settingsBefore = getAuditSettings();
+    breakAuditWrites();
+    process.env.LANDFLOW_AUDIT_FAIL_CLOSED = 'true';
+
+    expect((await apiKeyRoute.DELETE(req('DELETE', `/api/api-keys/${key.id}`), params({ id: key.id }))).status).toBe(503);
+    expect(getApiKey(key.id)).toBeDefined();
+
+    expect((await credentialRoute.PATCH(req('PATCH', `/api/credentials/${id}`, { name: 'Renamed' }), params({ id }))).status).toBe(503);
+    expect((await read()).name).toBe('Kept');
+    expect((await credentialRoute.DELETE(req('DELETE', `/api/credentials/${id}`), params({ id }))).status).toBe(503);
+    expect((await read()).name).toBe('Kept');
+
+    const settings = await auditSettingsRoute.PATCH(req('PATCH', '/api/settings/audit', { retentionDays: settingsBefore.retentionDays + 7, credentialUse: !settingsBefore.credentialUse }));
+    expect(settings.status).toBe(503);
+    expect(getAuditSettings()).toEqual(settingsBefore);
+
+    expect(auditFailureTally().writes['api_key.revoke']).toBeGreaterThan(0);
+    expect(auditFailureTally().writes['credential.update']).toBeGreaterThan(0);
+    expect(auditFailureTally().writes['credential.delete']).toBeGreaterThan(0);
+  });
+
+  it('refuses a SCIM group with 503 in fail-closed mode and leaves no group behind', async () => {
+    auth.disableTestAuth();
+    // The SCIM user test above made the instance's one owner.
+    const owner = auth.findUserByEmail('olive@reliability.test')!;
+    const { token } = createApiKey(owner, { label: 'Okta groups', scopes: ['scim'] });
+    const post = () =>
+      scimGroups.POST(
+        new Request('http://localhost:3000/scim/v2/Groups', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ displayName: 'Refused group' }) }),
+        { params: Promise.resolve({}) } as never,
+      );
+    const named = () => listGroups().filter((group) => group.displayName === 'Refused group');
+    breakAuditWrites();
+    process.env.LANDFLOW_AUDIT_FAIL_CLOSED = 'true';
+    expect((await post()).status).toBe(503);
+    expect(named()).toHaveLength(0);
+
+    delete process.env.LANDFLOW_AUDIT_FAIL_CLOSED;
+    expect((await post()).status).toBe(201);
+    expect(named()).toHaveLength(1);
     auth.enableTestAuth();
   });
 
