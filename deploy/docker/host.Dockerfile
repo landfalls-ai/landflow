@@ -48,11 +48,13 @@ RUN pnpm --filter @landflow/web build \
 # the same image runs mains (`node server.js`) and workers (`node worker.mjs`). The broker clients with native addons or
 # file-based protos stay external (next.config.ts serverExternalPackages): the standalone output ships them, and the
 # worker resolves them from apps/web/node_modules like the mains do.
+# The banner gives the ESM bundle CommonJS's require, __filename and __dirname: bundled CommonJS dependencies read them
+# (next/server's compiled ua-parser reads __dirname when it loads).
 RUN ESBUILD="$(ls -d /app/node_modules/.pnpm/esbuild@*/node_modules/esbuild/bin/esbuild | sort -V | tail -1)" \
  && cd apps/web && "$ESBUILD" src/lib/server/cluster/worker-main.ts --bundle --platform=node --format=esm --target=node22 \
     --tsconfig=tsconfig.json --outfile=dist/worker.mjs --log-level=warning \
     --external:@confluentinc/kafka-javascript --external:pulsar-client --external:@aws-sdk/client-sqs --external:@google-cloud/pubsub \
-    --banner:js="import { createRequire as __lfCreateRequire } from 'node:module'; const require = __lfCreateRequire(import.meta.url);"
+    --banner:js="import { createRequire as __lfCreateRequire } from 'node:module'; import { fileURLToPath as __lfPath } from 'node:url'; const require = __lfCreateRequire(import.meta.url); const __filename = __lfPath(import.meta.url); const __dirname = __lfPath(new URL('.', import.meta.url));"
 
 FROM ${NODE_IMAGE} AS runtime
 LABEL org.opencontainers.image.title="landflow-host" \
@@ -90,6 +92,6 @@ VOLUME ["/data"]
 # 5690: a worker's /healthz and /metrics (`node worker.mjs`, queue mode).
 EXPOSE 3000 7070 5690
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=6 \
-  CMD wget -q -O /dev/null "http://127.0.0.1:${PORT}/api/health" || exit 1
+  CMD wget -q -O /dev/null "http://127.0.0.1:${PORT}/api/health/ready" || exit 1
 WORKDIR /app/apps/web
 CMD ["node", "server.js"]

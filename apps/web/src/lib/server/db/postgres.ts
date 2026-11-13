@@ -10,8 +10,8 @@
  * crashed are not lost; the file is emptied whenever the queue drains. The file is fsynced by LANDFLOW_PG_SPOOL_FSYNC.
  *
  * A batch Postgres rejects (not a connection failure) five times is never dropped: the sink is `blocked`, the batch
- * stays at the head, nothing after it is applied, `Database.write` refuses with a 503 so the in-memory copy can't run
- * ahead, and the batch is retried every LANDFLOW_PG_BLOCKED_RETRY_SECONDS. LANDFLOW_PG_SKIP_BATCH=<seq> skips it at the
+ * stays at the head, nothing after it is applied, `Database.write` throws StoreUnavailableError (`handler()` answers 503)
+ * so the in-memory copy can't run ahead, and the batch is retried every LANDFLOW_PG_BLOCKED_RETRY_SECONDS. LANDFLOW_PG_SKIP_BATCH=<seq> skips it at the
  * next boot, writing it to `postgres-rejected-<seq>.jsonl` (`-<instance>-<seq>` in queue mode).
  *
  * Limits: one host per database (an advisory lock refuses a second one) in regular mode, and the
@@ -25,6 +25,7 @@
 import { closeSync, existsSync, fdatasyncSync, ftruncateSync, openSync, readFileSync, writeFileSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Pool, PoolClient } from 'pg';
+import { envNumber, envString } from '../config';
 import { logger } from '../telemetry/logger';
 import { Database, openSqliteConnection, upsertSql, type DirectClient, type SqlValue, type WriteHealth, type WriteOp, type WriteSink } from './database';
 import { CHANGES_CHANNEL, noticesFor, Replica, rowIdOf } from './replication';
@@ -98,12 +99,6 @@ export async function migratePostgres(pool: Pool): Promise<number[]> {
   }
 }
 
-/** A finite number from an environment variable, else `fallback`. */
-function numberEnv(name: string, fallback: number): number {
-  const value = Number(process.env[name]);
-  return process.env[name]?.trim() && Number.isFinite(value) && value >= 0 ? value : fallback;
-}
-
 export type SpoolFsync = 'interval' | 'always' | 'off';
 export interface SinkOptions {
   /** Seconds between retries of a blocked batch (LANDFLOW_PG_BLOCKED_RETRY_SECONDS, default 60). */
@@ -152,9 +147,10 @@ export class PostgresSink implements WriteSink {
     private readonly shared?: Shared,
     options: SinkOptions = {},
   ) {
-    const mode = options.spoolFsync ?? process.env.LANDFLOW_PG_SPOOL_FSYNC?.trim().toLowerCase();
+    const mode = options.spoolFsync ?? envString('LANDFLOW_PG_SPOOL_FSYNC')?.toLowerCase();
     this.fsync = mode === 'always' || mode === 'off' ? mode : 'interval';
-    this.blockedRetryMs = (options.blockedRetrySeconds ?? numberEnv('LANDFLOW_PG_BLOCKED_RETRY_SECONDS', 60)) * 1000;
+    // At least a second from the environment, so a blocked sink can't retry in a tight loop; tests pass 0 as an option.
+    this.blockedRetryMs = (options.blockedRetrySeconds ?? envNumber('LANDFLOW_PG_BLOCKED_RETRY_SECONDS', { fallback: 60, min: 1 })) * 1000;
     this.backoffMs = options.backoffMs ?? 250;
     this.closeFlushMs = options.closeFlushMs ?? 10_000;
     this.fd = openSync(spool, 'a');
@@ -248,6 +244,8 @@ export class PostgresSink implements WriteSink {
 
   private async run() {
     while (this.queue.length) {
+      // close() may have run while this loop slept (a blocked sink waits up to a minute): the pool is gone.
+      if (this.closed) return;
       // Several small batches go in one transaction; a big one goes alone (and so does each, after a rejection).
       const take: Batch[] = [];
       let ops = 0;
@@ -313,6 +311,20 @@ export class PostgresSink implements WriteSink {
       await Promise.race([this.draining, new Promise((resolve) => setTimeout(resolve, Math.max(0, deadline - Date.now())).unref?.())]);
     }
     if (this.queue.length) throw new Error(`${this.queue.length} write batch(es) not yet in Postgres (kept in ${this.spool})`);
+  }
+
+  /** Boot failed after the sink was made: release the spool and the metrics source without flushing (the caller ends the pool). */
+  discard() {
+    this.closed = true;
+    this.unregister?.();
+    clearTimeout(this.fsyncTimer);
+    const fd = this.fd;
+    this.fd = -1;
+    try {
+      closeSync(fd);
+    } catch {
+      // Already closed.
+    }
   }
 
   async close() {
@@ -384,7 +396,7 @@ export async function replaySpool(pool: Pool, spool: string, shared?: Shared): P
       // A line cut short by a crash mid-write: that batch never committed locally either.
     }
   }
-  const skip = Number(process.env.LANDFLOW_PG_SKIP_BATCH?.trim() || NaN);
+  const skip = Number(envString('LANDFLOW_PG_SKIP_BATCH') ?? NaN);
   const skipped = Number.isFinite(skip) ? batches.filter((batch) => batch.seq === skip) : [];
   const todo = batches.filter((batch) => !skipped.includes(batch));
   for (const batch of skipped) {
@@ -450,6 +462,7 @@ export async function openPostgres(url: string, dataDir: string, options: { inst
   pool.on('error', (error) => logger.warn('postgres store: idle connection error', { error }));
   let lock: PoolClient | undefined;
   let replica: Replica | undefined;
+  let sink: PostgresSink | undefined;
   try {
     lock = await pool.connect();
     const { rows } = await lock.query(`SELECT ${shared ? 'pg_try_advisory_lock_shared' : 'pg_try_advisory_lock'}($1) AS locked`, [INSTANCE_LOCK]);
@@ -463,21 +476,24 @@ export async function openPostgres(url: string, dataDir: string, options: { inst
     await migratePostgres(pool);
     const spool = join(dataDir, shared ? `postgres-queue-${shared.origin}.jsonl` : 'postgres-queue.jsonl');
     const seq = await replaySpool(pool, spool, shared);
-    const sink = new PostgresSink(pool, lock, spool, seq, shared);
-    const db = new Database(openSqliteConnection(':memory:'), 'postgres', ':memory:', sink);
+    const opened = new PostgresSink(pool, lock, spool, seq, shared);
+    sink = opened;
+    const db = new Database(openSqliteConnection(':memory:'), 'postgres', ':memory:', opened);
     if (shared) {
       // LISTEN before loading: what commits while the copy loads is applied after it, in order.
-      replica = new Replica(db, pool, url, shared.origin, () => sink.pendingRows(), () => sink.pendingOps());
+      replica = new Replica(db, pool, url, shared.origin, () => opened.pendingRows(), () => opened.pendingOps());
       await replica.listen();
-      sink.replica = replica;
+      opened.replica = replica;
     }
     const counts = await loadMirror(pool, db);
     replica?.ready();
     logger.info('postgres store loaded', { 'landflow.db.workflows': counts.workflows ?? 0, 'landflow.db.executions': counts.executions ?? 0 });
     // Best effort; anything left is in the spool for the next boot.
-    process.once('beforeExit', () => void sink.flush(5_000).catch(() => {}));
+    process.once('beforeExit', () => void opened.flush(5_000).catch(() => {}));
     return db;
   } catch (error) {
+    // A test (or a retried boot) that opens again must not inherit this attempt's spool descriptor or metrics source.
+    sink?.discard();
     await replica?.close();
     lock?.release();
     await pool.end().catch(() => {});

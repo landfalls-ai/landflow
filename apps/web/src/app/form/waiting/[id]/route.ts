@@ -21,9 +21,12 @@ import {
   submissionItem,
   waitingPage,
 } from '@/lib/server/forms';
+import { resolvePrincipal } from '@/lib/server/auth';
 import { handler } from '@/lib/server/http';
 import { liveExecution, resumeExecution, ResumeError, type RunReply } from '@/lib/server/runner';
+import { checkResume } from '@/lib/server/resume-signing';
 import { store } from '@/lib/server/store';
+import { logger } from '@/lib/server/telemetry';
 import { deferred } from '@/lib/server/webhooks';
 import type { ExecutionRecord } from '@/lib/shared/types';
 
@@ -33,6 +36,21 @@ type Ctx = { params: Promise<{ id: string }> };
 const notFound = () => messagePage({ title: 'Form not found', message: 'This form doesn’t exist or has expired.', status: 404 });
 const tooLarge = (limit: number) =>
   messagePage({ title: 'File too large', message: `Uploads can be up to ${Math.floor(limit / (1024 * 1024))} MiB.`, status: 413 });
+const invalid = () => messagePage({ title: 'Form not found', message: 'This link is not valid.', status: 403 });
+/** The form's own address keeps `?sig=`, so a submit carries it too. */
+const actionFor = (id: string, request: Request) => {
+  const sig = new URL(request.url).searchParams.get('sig');
+  return `/form/waiting/${id}${sig ? `?sig=${encodeURIComponent(sig)}` : ''}`;
+};
+const signatureRefused = (id: string, request: Request, record: ExecutionRecord) => {
+  if (record.status !== 'waiting' || !record.wait) return false;
+  // Signed-in people reach the page from the editor and the Run Trace, which don't hold the signature.
+  const resolved = resolvePrincipal(request);
+  if (resolved.ok && resolved.principal) return false;
+  const result = checkResume(id, new URL(request.url).searchParams.get('sig'), record.wait);
+  if (result.ok && result.legacy) logger.info('form resume accepted without a signature: the wait was saved before resume URLs were signed', { 'landflow.execution.id': id });
+  return !result.ok;
+};
 const processing = () => messagePage({ title: 'Just a moment…', message: 'Your response is being processed.', refresh: 2 });
 
 /** The end screen's texts when no Form node sets one: the Form Trigger's "Form Submitted Text". */
@@ -43,13 +61,14 @@ function fallbackFor(record: ExecutionRecord): { title: string; message: string 
   return { title: String(trigger?.parameters.formTitle ?? '') || 'Form', message: options.formSubmittedText || DEFAULT_SUBMITTED_TEXT };
 }
 
-export const GET = handler(async (_request: Request, { params }: Ctx) => {
+export const GET = handler(async (request: Request, { params }: Ctx) => {
   const { id } = await params;
   if (liveExecution(id)) return processing();
   const record = store.getExecution(id);
   if (!record) return notFound();
+  if (signatureRefused(id, request, record)) return invalid();
   const page = waitingPage(record);
-  if (page) return formPage(page, { action: `/form/waiting/${id}` });
+  if (page) return formPage(page, { action: actionFor(id, request) });
   if (record.status === 'waiting') return messagePage({ title: 'Not a form', message: 'This execution isn’t waiting for a form submission.', status: 409 });
   return finishedResponse(record, fallbackFor(record));
 });
@@ -59,6 +78,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   if (liveExecution(id)) return processing();
   const record = store.getExecution(id);
   if (!record) return notFound();
+  if (signatureRefused(id, request, record)) return invalid();
   const page = waitingPage(record);
   if (!page) return record.status === 'waiting' ? messagePage({ title: 'Not a form', message: 'This execution isn’t waiting for a form submission.', status: 409 }) : finishedResponse(record, fallbackFor(record));
   const { maxBytes } = binaryLimits();
@@ -71,7 +91,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   }
   const formMode = record.wait?.data?.formMode === 'test' ? 'test' : 'production';
   const submission = parseSubmission(page, data, formMode);
-  if (Object.keys(submission.errors).length) return formPage(page, { action: `/form/waiting/${id}`, values: submission.values, errors: submission.errors, status: 400 });
+  if (Object.keys(submission.errors).length) return formPage(page, { action: actionFor(id, request), values: submission.values, errors: submission.errors, status: 400 });
 
   // Files go into the execution's scope, so they're deleted with it.
   let binary: Record<string, BinaryRef> | undefined;

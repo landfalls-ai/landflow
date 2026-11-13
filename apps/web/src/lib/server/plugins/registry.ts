@@ -47,6 +47,8 @@ import { isChoice, runModeOf, select, type CallContext, type Candidate, type Sel
 import { workflowTransportOverride } from '../transports/workflow-scope';
 import { HttpPluginClient, GrpcPluginClient, normalizeEndpoint, PooledPluginClient, transportOf, type PluginClient } from './clients';
 import { provenManifest } from './registry-proof';
+import { registryAudit } from './registry-audit';
+import { RegistryRefused, registryJoinAllowed, registryRefusesAddress } from './registry-policy';
 import { mcpExposure } from '../mcp/exposure';
 
 /** How many MCP tools a manifest maps to (docs/protocol.md §15.1), memoised per manifest object. */
@@ -66,6 +68,8 @@ export interface EndpointOptions {
   origin?: EndpointOrigin;
   /** Prove LANDFLOW_REGISTRY_SECRET on GetManifest (registry-proof.ts): the endpoint never announced with it. */
   requireProof?: boolean;
+  /** An announce without the registry secret: an endpoint on a new host may not join a plugin that exists (registry-policy.ts). */
+  guardJoin?: boolean;
   /**
    * A process-local endpoint (a marketplace node plugin this process runs on 127.0.0.1): queue mode never shares it
    * through `plugin_registrations`, since every process runs its own copy (lib/server/cluster/plugins.ts).
@@ -194,6 +198,7 @@ export class PluginRegistry implements NodeTypeResolver, AutoSource {
 
   private async connectEndpoint(endpoint: string, source: DiscoverySource, ttlSeconds?: number, options?: EndpointOptions): Promise<PluginEntry> {
     // The endpoint's kind picks the provider (lib/server/transports): direct HTTP/gRPC today, broker drivers as they land.
+    if (source === 'announce' && registryRefusesAddress(endpoint)) throw new RegistryRefused(`${endpoint} is a link-local or metadata address`, 422);
     const client = transportProviders.createClient(endpoint);
     const started = Date.now();
     let manifest: PluginManifest;
@@ -211,6 +216,12 @@ export class PluginRegistry implements NodeTypeResolver, AutoSource {
     if (existing?.source === 'builtin') {
       client.close();
       throw new Error(`Plugin id "${id}" is reserved by a built-in plugin`);
+    }
+    const joining = Boolean(existing) && !existing!.endpoints.has(endpoint);
+    if (joining && options?.guardJoin && !registryJoinAllowed(endpoint, [...existing!.endpoints.keys()])) {
+      client.close();
+      this.emit({ type: 'plugin.error', pluginId: id, endpoint, message: `Refused ${endpoint} joining ${id}: another host (LANDFLOW_REGISTRY_ALLOW_JOIN=true allows it)` });
+      throw new RegistryRefused('This endpoint may not join an existing plugin from another host: set LANDFLOW_REGISTRY_SECRET, or LANDFLOW_REGISTRY_ALLOW_JOIN=true', 409);
     }
 
     // A re-pull (Refresh, a version change) keeps the announcing process until an announce names another one.
@@ -241,7 +252,8 @@ export class PluginRegistry implements NodeTypeResolver, AutoSource {
     if (existing) {
       if (previous && previous.client !== stateClient) previous.client.close();
       existing.endpoints.set(endpoint, state);
-      const versionChanged = existing.manifest.plugin.version !== manifest.plugin.version;
+      const previousVersion = existing.manifest.plugin.version;
+      const versionChanged = previousVersion !== manifest.plugin.version;
       existing.manifest = manifest;
       existing.updatedAt = Date.now();
       existing.lastError = undefined;
@@ -253,6 +265,8 @@ export class PluginRegistry implements NodeTypeResolver, AutoSource {
           ? `${manifest.plugin.name} upgraded to ${manifest.plugin.version}`
           : `${manifest.plugin.name} reachable via ${state.transport.toUpperCase()} ${endpoint}`,
       });
+      if (joining) registryAudit.emit({ type: 'plugin.endpoint_added', pluginId: id, endpoint, source, transport: state.transport });
+      if (versionChanged) registryAudit.emit({ type: 'plugin.updated', pluginId: id, endpoint, from: previousVersion, to: manifest.plugin.version });
       return existing;
     }
 
@@ -295,7 +309,10 @@ export class PluginRegistry implements NodeTypeResolver, AutoSource {
       if (state.source !== 'announce' && state.source !== 'builtin') state.source = 'announce';
       this.emit({ type: 'plugin.heartbeat', pluginId: entry.id, endpoint, message: `heartbeat from ${endpoint}` });
     } else {
-      const added = (await this.addEndpoint(endpoint, 'announce', ttl)).endpoints.get(endpoint);
+      // With the registry secret the endpoint must prove it holds it (as a discovered one does); without it (development,
+      // or LANDFLOW_REGISTRY_OPEN) an endpoint on a new host may not join an existing plugin.
+      const proven = Boolean(process.env.LANDFLOW_REGISTRY_SECRET);
+      const added = (await this.addEndpoint(endpoint, 'announce', ttl, { ...state?.options, ...(proven ? { requireProof: true } : { guardJoin: true }) })).endpoints.get(endpoint);
       if (added && request.instanceId) added.instanceId = request.instanceId;
       if (added && request.maxConcurrency) added.maxConcurrency = request.maxConcurrency;
     }

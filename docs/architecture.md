@@ -69,8 +69,12 @@ errors into JSON. The server code under `src/lib/server` is organised by domain:
 | Cluster | `cluster/` (queue, workers, leader, control channel, shared debug sessions) |
 | Telemetry | `telemetry/` (OpenTelemetry setup, metrics, logs) |
 
-`bootstrap.ts` starts everything once per process: migrations, the registry, discovery, broker connections, the
-scheduler and pollers (on the leader), the gateway sync and the telemetry. `bus.ts` is the in-process event bus that
+`runtime.ts` is the composition root: one service table (`SERVICES`) that both the main (`startRuntime({ role: 'main' })`,
+via `instrumentation.ts` and `bootstrap.ts`) and the worker (`cluster/worker-main.ts`) run, each the entries of its role in
+list order: the configuration check, the database, the cluster runtime, the registry, discovery, broker connections, the
+scheduler and pollers (on the leader), the gateway sync and the shutdown steps. Route modules do not import it: `handler()` and
+`scimRoute()` await `whenReady()` (`lifecycle.ts`), which boots through the bootstrapper `instrumentation.ts` (or the test setup)
+registered. `bus.ts` is the in-process event bus that
 carries live run events to SSE streams; in queue mode the same events travel over Valkey pub/sub.
 
 ## A run, end to end

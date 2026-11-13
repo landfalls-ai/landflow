@@ -77,6 +77,7 @@ import { pausedElsewhere } from './cluster/debug';
 import { refreshRows } from './db/replication';
 import { withWorkflowTransports } from './transports/workflow-scope';
 import { publicUrl as configPublicUrl } from './config';
+import { resumeSignature, resumeSignatureMode } from './resume-signing';
 
 /** How deep Execute Workflow may nest executions. */
 export const MAX_WORKFLOW_DEPTH = 10;
@@ -243,7 +244,9 @@ export function publicUrl(): string {
 
 /** Where a webhook or form wait of an execution is resumed (`$execution.resumeUrl` / `resumeFormUrl`). */
 export function resumeUrls(executionId: string) {
-  return { webhook: `${publicUrl()}/api/waiting/${executionId}`, form: `${publicUrl()}/form/waiting/${executionId}` };
+  // Signed when signatures are required; in development (optional) the URLs stay short and unsigned calls work.
+  const sig = resumeSignatureMode() === 'required' ? `?sig=${resumeSignature(executionId)}` : '';
+  return { webhook: `${publicUrl()}/api/waiting/${executionId}${sig}`, form: `${publicUrl()}/form/waiting/${executionId}${sig}` };
 }
 
 function summaryOf(record: ExecutionRecord, paused?: PausedState): ExecutionSummary {
@@ -661,6 +664,9 @@ async function runSegment(segment: Segment): Promise<ExecutionRecord> {
     if (result.status !== 'waiting') {
       delete finished.wait;
       delete finished.resumeState;
+    } else if (finished.wait && (finished.wait.resume === 'webhook' || finished.wait.resume === 'form') && resumeSignatureMode() === 'required') {
+      // The URLs this wait handed out carry a signature, so resuming it needs one (see resume-signing.ts).
+      finished.wait = { ...finished.wait, signed: true };
     }
     // An automatic retry pending: say when on the failed execution (and keep it, whatever the save settings).
     const retryDue = retryDueFor(finished, workflow);

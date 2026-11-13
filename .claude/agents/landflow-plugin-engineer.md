@@ -10,6 +10,9 @@ commits, no push). You don't start sub-agents.
 
 ## First
 
+Read `.claude/agents/landflow-implementer.md` and follow its Set up, Verify, Docs and commits, and Report sections
+(you don't see its prompt otherwise). Then:
+
 Read `docs/constitution.md`, `CLAUDE.md`, `docs/plugins.md` (the node interface in each SDK, discovery, branding),
 `docs/protocol.md` (the contract; the section you touch), `docs/transports.md` for broker work, and the README of the
 SDK and the plugin you change.
@@ -45,7 +48,9 @@ SDK and the plugin you change.
 - Calls to vendors are tested against local fakes; never a real vendor token. AWS-compatible clients point at LocalStack
   `http://127.0.0.1:54566` with dummy keys and the two AWS file variables set to `/dev/null`.
 - Plugin endpoints are trusted only through the registry secret and proof; don't widen what an announced endpoint may
-  do.
+  do. Outside development an announce without `LANDFLOW_REGISTRY_SECRET` is refused (`registryOpen()`), a new host
+  joining an existing plugin needs the secret or `LANDFLOW_REGISTRY_ALLOW_JOIN`, and metadata addresses are refused
+  (`lib/server/plugins/registry-policy.ts`, `docs/plugins.md#registration-rules`).
 - Keep the manifest stable: a node change re-records the fixtures (`node packages/protocol/scripts/record-manifests.mjs`
   with the plugins running, then `(cd packages/protocol && npx vitest run -u test/mcp-tools.test.ts)`), and
   `apps/web/test/plugin-flows.test.ts` must still pass for every shipped flow.

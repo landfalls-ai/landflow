@@ -14,7 +14,7 @@
  * calls it before a node runs (and once more when the node's API answered 401).
  */
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { nanoid } from 'nanoid';
 import { isPropertyVisible, splitType, withPropertyDefaults, type CredentialTypeDescriptor, type JsonObject, type NodeDescriptor } from '@landflow/protocol';
@@ -89,8 +89,26 @@ function loadKey(dir: string): Buffer {
   const configured = process.env.LANDFLOW_ENCRYPTION_KEY?.trim();
   if (configured) return /^[0-9a-f]{64}$/i.test(configured) ? Buffer.from(configured, 'hex') : createHash('sha256').update(configured).digest();
   const path = join(dir, 'encryption.key');
-  if (!existsSync(path)) writeFileSync(path, randomBytes(32).toString('hex'), { mode: 0o600 });
+  if (!existsSync(path)) writeKeyOnce(path);
   return Buffer.from(readFileSync(path, 'utf8').trim(), 'hex');
+}
+
+/**
+ * Create the key file atomically: write a temporary file, then hard-link it into place. The link fails when the key
+ * already exists, so processes that start together (or test files sharing a data directory) agree on the first key,
+ * and a reader never sees an empty or half-written file. A filesystem without hard links falls back to a rename.
+ */
+function writeKeyOnce(path: string): void {
+  const temp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+  writeFileSync(temp, randomBytes(32).toString('hex'), { mode: 0o600 });
+  try {
+    linkSync(temp, path);
+  } catch (error) {
+    // EEXIST: another process won, keep its key. Anything else (no hard links here): rename, unless a key appeared.
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST' && !existsSync(path)) renameSync(temp, path);
+  } finally {
+    rmSync(temp, { force: true });
+  }
 }
 
 /** A value that is exactly one `{{ … }}` expression reading `$secrets` (lib/server/secrets resolves it when the credential is used). */

@@ -11,7 +11,7 @@ import { withAuth, type Principal } from '../auth/context';
 import { clientIp } from '../auth/rate-limit';
 import { publicOrigin } from '../auth/cookies';
 import { UserError } from '../auth/users';
-import { ensureBootstrapped } from '../bootstrap';
+import { whenReady } from '../lifecycle';
 import { ProjectError } from '../projects/store';
 import { logger } from '../telemetry';
 import { authenticateScim, type ScimCaller } from './auth';
@@ -80,8 +80,8 @@ export interface ScimContext {
 }
 
 /**
- * Wrap a /scim/v2 route: bootstrap, authenticate the SCIM token, then run `fn` as its user. ScimError, and the
- * user and project errors the stores throw, come back as SCIM errors.
+ * Wrap a /scim/v2 route: wait until the host booted, authenticate the SCIM token, then run `fn` as its user.
+ * ScimError, and the user and project errors the stores throw, come back as SCIM errors.
  */
 export function scimRoute<P extends Record<string, string> = Record<string, string>>(fn: (ctx: ScimContext, params: P) => Promise<Response>) {
   return async (request: Request, context?: { params?: Promise<P> }): Promise<Response> => {
@@ -89,10 +89,10 @@ export function scimRoute<P extends Record<string, string> = Record<string, stri
     const audit = auditContextOf(request, params);
     return withAuditRequest(audit, async () => {
       try {
-        await ensureBootstrapped();
+        await whenReady();
         const checked = authenticateScim(request);
         if (!checked.ok) {
-          recordScimAuthFailure(audit.ip, checked.status, checked.message);
+          recordScimAuthFailure(audit.ip, checked.status, checked.message, checked.keyId && checked.userId ? { keyId: checked.keyId, userId: checked.userId } : undefined);
           return scimError(checked.status, checked.message, undefined, checked.status === 401 ? { 'www-authenticate': 'Bearer realm="landflow-scim"' } : {});
         }
         const { caller } = checked;

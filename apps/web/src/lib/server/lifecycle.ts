@@ -8,6 +8,7 @@
  * separate module graphs.
  */
 import { metrics } from '@opentelemetry/api';
+import { envNumber } from './config/parse';
 import { singleton } from './singleton';
 import { logger } from './telemetry/logger';
 
@@ -42,8 +43,8 @@ const state = () =>
 
 /** The deadline for the whole shutdown: LANDFLOW_SHUTDOWN_SECONDS (default 25, inside Kubernetes' 30 s grace period). */
 export function shutdownDeadlineMs(): number {
-  const seconds = Number(process.env.LANDFLOW_SHUTDOWN_SECONDS);
-  return (Number.isFinite(seconds) && seconds > 0 ? seconds : 25) * 1000;
+  const seconds = envNumber('LANDFLOW_SHUTDOWN_SECONDS', { fallback: 25 });
+  return (seconds > 0 ? seconds : 25) * 1000;
 }
 
 // ---------------------------------------------------------------------------
@@ -58,6 +59,11 @@ export function onShutdown(name: string, fn: () => unknown, phase: ShutdownPhase
     const steps = state().steps;
     if (steps.get(name) === step) steps.delete(name);
   };
+}
+
+/** The registered shutdown steps' names, in registration order (tests and diagnostics). */
+export function shutdownSteps(): string[] {
+  return [...state().steps.keys()];
 }
 
 /** Run `fn` bounded by `ms`; resolves 'timeout' rather than waiting longer. The timer never keeps the process alive. */
@@ -85,13 +91,16 @@ export function shutdown(reason: string, options: { deadlineMs?: number } = {}):
   // Reserve for the flush: intake, services and runs may use the budget only up to `softDeadline`; cluster, storage and
   // telemetry always keep the last `reserve` (5 s, or a fifth of a short budget) so Postgres and telemetry still flush.
   const softDeadline = deadline - Math.min(5_000, total * 0.2);
+  // Requests in flight wait at most 60% of the soft budget: a request that lasts as long as its run (a webhook that
+  // answers when the run finishes) would otherwise leave nothing for stopping the scheduler and the runs.
+  const intakeDeadline = started + (softDeadline - started) * 0.6;
   logger.info('shutdown: starting', { reason, 'landflow.shutdown.deadline_ms': deadline - started });
   s.shutdownPromise = (async () => {
     for (const phase of SHUTDOWN_PHASES) {
       if (phase === 'intake') {
         // Next.js no longer closes its HTTP server in manual signal mode: in-flight requests are awaited here.
         logger.info('shutdown: intake/requests', { 'landflow.requests.in_flight': s.inFlight });
-        await waitForRequests(softDeadline - Date.now());
+        await waitForRequests(intakeDeadline - Date.now());
       }
       const steps = [...s.steps.values()].filter((step) => step.phase === phase);
       const limit = phase === 'intake' || phase === 'services' || phase === 'runs' ? softDeadline : deadline;
@@ -203,6 +212,17 @@ export function onUnhandledRejection(reason: unknown): void {
   processErrors('unhandled_rejection');
 }
 
+/**
+ * An uncaught exception is logged and counted; unless `exitOnUncaught` is false, the process shuts down (5 s budget)
+ * and exits 1, since its state may be broken. Exported so the two branches can be tested without installing handlers.
+ */
+export function onUncaughtException(error: unknown, { exitOnUncaught, exit }: { exitOnUncaught?: boolean; exit: (code: number) => unknown }): Promise<void> {
+  logger.error('uncaught exception', { error });
+  processErrors('uncaught_exception');
+  if (exitOnUncaught === false) return Promise.resolve();
+  return shutdown('uncaughtException', { deadlineMs: 5_000 }).then(() => void exit(1));
+}
+
 export interface ProcessHandlerOptions {
   role: 'main' | 'worker';
   exit?: (code: number) => unknown;
@@ -221,12 +241,7 @@ export function installProcessHandlers(options: ProcessHandlerOptions): void {
   s.handlersInstalled = true;
   const exit = options.exit ?? ((code: number) => process.exit(code));
   process.on('unhandledRejection', onUnhandledRejection);
-  process.on('uncaughtException', (error) => {
-    logger.error('uncaught exception', { error });
-    processErrors('uncaught_exception');
-    if (options.exitOnUncaught === false) return;
-    void shutdown('uncaughtException', { deadlineMs: 5_000 }).then(() => exit(1));
-  });
+  process.on('uncaughtException', (error) => onUncaughtException(error, { exitOnUncaught: options.exitOnUncaught, exit }));
   if (options.signals === false) return;
   let signalled = false;
   const onSignal = (signal: string) => {

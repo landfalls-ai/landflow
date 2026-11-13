@@ -57,14 +57,22 @@ spec:
               valueFrom: { secretKeyRef: { name: landflow-host, key: owner-email, optional: true } }
             - name: LANDFLOW_OWNER_PASSWORD
               valueFrom: { secretKeyRef: { name: landflow-host, key: owner-password, optional: true } }
-          readinessProbe:
-            httpGet: { path: /api/health, port: http }
+          # Next holds requests until boot (instrumentation) finishes, so no probe answers before then: the startup
+          # probe gives boot up to 5 min (60 x 5 s) before liveness and readiness begin.
+          startupProbe:
+            httpGet: { path: /api/health/live, port: http }
             periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /api/health/ready, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 3 # above the 1 s per-check limit, so a slow check is a 503 with its name
             failureThreshold: 3
           livenessProbe:
-            httpGet: { path: /api/health, port: http }
-            initialDelaySeconds: 30
+            httpGet: { path: /api/health/live, port: http }
             periodSeconds: 20
+            timeoutSeconds: 3
             failureThreshold: 6
           resources:
             requests: { cpu: 100m, memory: 384Mi }

@@ -47,7 +47,7 @@ app() {
   local base="http://127.0.0.1:${LANDFLOW_HOST_PORT:-53000}"
   local jar; jar=$(mktemp)
   echo "app (project landflow, $base)"
-  check "host: /api/health" bash -c "curl -fsS $base/api/health | json 'print(\"online\", d[\"online\"], \"of\", d[\"plugins\"], \"plugins,\", d[\"nodeTypes\"], \"node types\")'"
+  check "host: /api/health/ready" bash -c "curl -fsS $base/api/health/ready | json 'print(d[\"status\"] + \":\", \", \".join(d[\"checks\"]))'"
   # The owner from LANDFLOW_OWNER_EMAIL / LANDFLOW_OWNER_PASSWORD (compose.yml); the session cookie goes in $jar.
   check "host: owner signs in" bash -c "curl -fsS -c $jar -H 'content-type: application/json' -d '{\"email\":\"${LANDFLOW_OWNER_EMAIL:-owner@landflow.test}\",\"password\":\"${LANDFLOW_OWNER_PASSWORD:-landflow-dev-only}\"}' $base/api/auth/login | json 'print(d[\"user\"][\"email\"], d[\"user\"][\"role\"])'"
   check "host: all 8 plugins online" bash -c "curl -fsS -b $jar $base/api/plugins | json '

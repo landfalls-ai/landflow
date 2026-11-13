@@ -5,7 +5,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 - **Isolation**: expressions and in-process Code nodes run in `node:vm` with timeouts. That is not a security boundary. Code you don't trust belongs in the code runner's container (see [deployment.md](deployment.md#code-runner)); started with pnpm, the runner only has OS limits.
 - **Scaling out**: [queue mode](features/engine.md#queue-mode-workers-and-high-availability) runs several mains and workers, but every process keeps the whole database in memory (Postgres mode), Valkey Sentinel and Valkey Cluster give failover but not scale-out (every queue key shares one hash tag, so the queue lives on one node), and with `LANDFLOW_CONFIG_STORE=files` the files in the shared data directory are last-writer-wins. Checkpoints add a write per node run (Postgres mode also appends it to the spool). The SQL Data Tables storage still caches a table's rows in memory when it is used (50,000 rows per table).
-- **Sign-in**: without queue mode, sign-in rate limits and edit locks live in the host's memory (a restart clears them; in queue mode the limits are shared through Valkey and every main keeps the locks in step). The per-IP limits trust `X-Forwarded-For`, so a public install belongs behind a proxy that sets it. The instance MCP server is scoped to a project only through a project URL or a project token (the unscoped one sees what its user sees).
+- **Sign-in**: without queue mode, sign-in rate limits and edit locks live in the host's memory (a restart clears them; in queue mode the limits are shared through Valkey and every main keeps the locks in step). Per-IP limits, audit addresses and webhook IP allow-lists use the address `LANDFLOW_TRUSTED_PROXIES` says to trust (default 0: the last `X-Forwarded-For` entry, which a client that reaches the host directly can still forge); behind a proxy, set the hop count. The instance MCP server is scoped to a project only through a project URL or a project token (the unscoped one sees what its user sees).
 - **Integrations are tested against fakes**: every plugin's tests use local fakes of the service. The databases plugin is the exception: its integration tests run the Postgres, Postgres Trigger, Redis and MySQL nodes against the infra stack's real servers ([deployment.md](deployment.md#integration-tests-databases-plugin)). Switch and Text Classifier have a fixed set of outputs (4 plus a fallback): ports can be shown or hidden by parameters, but not repeated per rule. Stripe, Slack, GitHub and Microsoft Teams were checked against local fakes only, and Slack's Events URL is pasted into the Slack app by hand.
 - **Not yet built**: webhook-based triggers for apps other than GitHub, Stripe and Slack (the others poll; the protocol and SDK signature helpers are ready, [protocol.md §12](protocol.md#12-app-webhook-triggers)), remote model/memory providers over the protocol (tools already work remotely), mDNS discovery, n8n v3-style engine-driven agent steps, file uploads in a standalone agent's test chat, and MCP subscriptions (they need a 2026-07-28 client). Telegram, WhatsApp Cloud, Twilio, SMTP and the databases have no OAuth2, so their credentials take tokens or passwords.
 - **Alert triage and Landfall** ([triage.md](triage.md)): the Landfall node and trigger were built from Landfall's API and checked against a local fake (`pnpm fake-landfall`), not a live Landfall; the same goes for the seven threat intel services, tested against `httptest` fakes. The Landfall Trigger polls. Triage's quality depends on the model and the rules; that is why it starts in Shadow mode. Runbooks from closed rooms ([runbooks.md](runbooks.md#not-built)) are folded by fixed rules from a room you paste or pass in, into form-wait steps for people, not generated action nodes; nothing makes one by itself when a room ends, and the folding was checked against fixtures, not a live Landfall. Flow share pages need a signed-in member of the instance; they aren't public links.
@@ -40,6 +40,12 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - **The production check does not run yet**: `checkConfig()` reports development secrets and a missing public URL in the
   production profile, but nothing calls it at boot until a later backend-hardening package. Auth cookie and guard code still
   read `LANDFLOW_PUBLIC_URL` themselves.
+
+## Security headers (2026-11)
+
+- API responses carry no CSP; page styles allow `'unsafe-inline'` (Tailwind, React style props).
+- There is no `report-uri` or `report-to`: report mode is visible only in the browser console.
+- `img-src` allows any https image (markdown images, plugin icons), so image loads are not restricted by origin.
 
 ## Browser plugin and retry backoff (built 2026-11-07)
 
@@ -105,9 +111,18 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - **`next dev`** keeps Next.js's own signal handling: the host's phased shutdown (flush, lease release) runs only where `NEXT_MANUAL_SIG_HANDLE=true` (`pnpm start`, the Docker image). Without it only the error handlers are ours.
 - **Streams**: in manual mode in-flight requests are awaited, but SSE streams are not; they end when the process exits.
 
+## Execution retention (backend hardening, 2026-11)
+
+- **The cap can be exceeded between passes**: a finished run prunes only every `LANDFLOW_RETENTION_EVERY` runs (default
+  50), so up to that many minus one finished executions above the saved maximum can be stored until the next pass (the
+  hourly timer and **Prune now** prune regardless).
+
 ## Access scope of AI usage and files (2026-11)
 
-- **Files with no execution** aren't project-scoped: an editor upload that no run has used yet, an agent's knowledge file
-  and the like have no execution or workflow to derive an owner from, so any signed-in caller who knows the id (random,
+- **Files with no execution** aren't project-scoped: an editor upload that no run has used yet, an agent's knowledge file,
+  a chat upload, a file scoped to an agent run and the like have no saved or running execution or workflow to derive an
+  owner from, so any signed-in caller who knows the id (random,
   unguessable) can read them. Files of executions and of evaluation datasets are checked against the workflow's project.
 - **AI usage rows with no workflow or agent** (a model call outside both) are visible to owners and admins only.
+- **Readiness in Postgres mode**: the `database` check runs on the in-process copy, so it cannot see Postgres go away; loss shows as `writeQueue` lag after `LANDFLOW_READY_MAX_WRITE_LAG_SECONDS` once a write is queued, a host with no pending write stays ready, and the LISTEN connection is not checked. No probe answers before boot ends, because Next holds requests until instrumentation finishes.
+- **Plugin registration** ([plugins.md](plugins.md#registration-rules)): the production profile needs `LANDFLOW_REGISTRY_SECRET` on the host and every announcing plugin (or `LANDFLOW_REGISTRY_OPEN=true`). Without a secret the development registry accepts any endpoint it can reach; the full outbound address policy (beyond refusing link-local and metadata addresses) comes later.

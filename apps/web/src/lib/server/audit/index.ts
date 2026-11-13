@@ -23,6 +23,7 @@ import { requestAuth } from '../auth/context';
 import { getUser } from '../auth/users';
 import { bus } from '../bus';
 import { database } from '../db';
+import { registryAudit } from '../plugins/registry-audit';
 import { onPublicationChanged, publishLog } from '../publications';
 import { singleton } from '../singleton';
 import { SECRET_KEY } from '../telemetry/config';
@@ -254,6 +255,13 @@ export function ensureListeners() {
   if (state.started) return;
   state.started = true;
   onPublicationChanged((workflowId) => auditPublication(workflowId));
+  registryAudit.subscribe((event) => {
+    if (event.type === 'plugin.endpoint_added') {
+      recordAudit({ action: 'plugin.endpoint_added', target: { type: 'plugin', id: event.pluginId }, summary: `${AUDIT_ACTIONS['plugin.endpoint_added']}: ${event.pluginId} at ${event.endpoint}`, details: { endpoint: event.endpoint, source: event.source, transport: event.transport } });
+    } else {
+      recordAudit({ action: 'plugin.updated', target: { type: 'plugin', id: event.pluginId }, summary: `${AUDIT_ACTIONS['plugin.updated']}: ${event.pluginId} ${event.from} to ${event.to}`, details: { endpoint: event.endpoint, from: event.from, to: event.to } });
+    }
+  });
   bus.subscribe((event) => {
     if (event.channel !== 'registry') return;
     const registry = event.event;

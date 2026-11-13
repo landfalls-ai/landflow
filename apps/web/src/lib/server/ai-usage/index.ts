@@ -250,12 +250,15 @@ export class AiUsageMeter implements UsageMeter {
       const grouped = clauses.length ? `${where} AND workflow_id IS NOT NULL` : 'WHERE workflow_id IS NOT NULL';
       report.workflows = db
         .all<SumRow & { workflow_id: string }>(`SELECT workflow_id, ${SUMS} FROM ai_usage ${grouped} GROUP BY workflow_id ORDER BY cost DESC`, ...params)
+        // A row counts for a visible agent may carry a workflow the member can't open (the agent ran in it): no group for that one.
+        .filter((row) => !filter.within || filter.within.workflows.has(row.workflow_id))
         .map((row) => ({ workflowId: row.workflow_id, ...totalsOf(row) }));
     }
     if (filter.group === 'agent') {
       const grouped = clauses.length ? `${where} AND agent_id IS NOT NULL` : 'WHERE agent_id IS NOT NULL';
       report.agents = db
         .all<SumRow & { agent_id: string }>(`SELECT agent_id, ${SUMS} FROM ai_usage ${grouped} GROUP BY agent_id ORDER BY cost DESC`, ...params)
+        .filter((row) => !filter.within || filter.within.agents.has(row.agent_id))
         .map((row) => ({ agentId: row.agent_id, ...totalsOf(row) }));
     }
     if (filter.workflowId) report.today = this.workflowDay(filter.workflowId);

@@ -190,8 +190,10 @@ export interface QueuedStart {
   worker?: boolean;
 }
 
-export interface ExecutionRecord extends Omit<ExecutionResult, 'status'> {
+export interface ExecutionRecord extends Omit<ExecutionResult, 'status' | 'wait'> {
   status: ExecutionState;
+  /** Status `waiting`: what the run waits for; `signed`: its resume URLs carry a signature that resuming must present. */
+  wait?: ExecutionResult['wait'] & { signed?: boolean };
   workflowName: string;
   /** node id → display name at the time of the run. */
   nodeNames?: Record<string, string>;

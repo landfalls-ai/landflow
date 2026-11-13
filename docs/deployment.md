@@ -65,28 +65,51 @@ COMPOSE_BAKE=false docker compose -f deploy/compose.queue.yml up -d --build --wa
 python3 deploy/scripts/queue-e2e.py
 ```
 
+## Probes
+
+| Route | Checks | Used by |
+|---|---|---|
+| `GET /api/health/live` | nothing: the process answers `{ status: 'ok', uptimeSeconds }` even while a dependency is down. Next holds every request until instrumentation (which awaits boot) finishes, so it does not answer before boot ends | Kubernetes `startupProbe` (up to 5 min for boot) and `livenessProbe` |
+| `GET /api/health/ready` | boot finished and not draining (before boot ends Next holds the request, so a `503` with `boot` not ok is seen only while draining); database answers `SELECT 1` (in Postgres mode on the in-process copy, so it does not see Postgres go away); Postgres write queue not blocked and its oldest batch younger than `LANDFLOW_READY_MAX_WRITE_LAG_SECONDS` (30); schema at the latest migration; in queue mode Valkey answers. Each check has a 1 s limit. 200 `ready` or 503 `not_ready` with `{ ok, ms }` per check | Kubernetes `readinessProbe`, the Docker `HEALTHCHECK` (so compose `service_healthy` means ready), the smoke script |
+| `GET /api/health` | `{ status: 'ok' }`; the plugin and run counts only with a session or API key | the CLI and scripts |
+
+In Postgres mode, losing Postgres shows as `writeQueue` lag, only after a write has been queued for `LANDFLOW_READY_MAX_WRITE_LAG_SECONDS`; a host with no pending write stays ready, and the LISTEN connection is not checked ([limitations](limitations.md)). A long Postgres backlog keeps a pod unready until the queue drains; that is deliberate, the host should not take traffic
+while it cannot persist it. The leader state is not a check: a non-leader main is ready.
+
 ## Stopping the host
 
 On SIGTERM or SIGINT a main stops in phases, logging `shutdown: <phase>/<step>` for each and `shutdown complete` with
-the duration: new requests get `503` with `Retry-After: 5` (`/api/health` still answers) and requests in flight are
-awaited; then the leader services (scheduler, timers, alerts), the MCP gateway sync; then local runs get the time that is
-left to finish (what is still running continues from its last checkpoint at the next boot); then the broker connections,
-the cluster runtime (queue mode: the leader lease is released and the instance forgotten), the database (Postgres
-flushes its write queue) and telemetry. Requests, services and runs may use the budget only up to the last 5 s (a fifth
-of a budget under 25 s), which the cluster, database and telemetry steps keep for themselves, so a long run never stops
-the flush. Each step is bounded by the time left of `LANDFLOW_SHUTDOWN_SECONDS` (default
-25, inside Kubernetes' 30 s grace period); a step that fails or times out is logged and the next one runs. A second
-signal exits at once with code 1; a clean stop exits 0.
+the duration. New requests get `503` with `Retry-After: 5` (`/api/health/live` and `/ready` still answer; `/ready`
+says 503 from the first moment, so the load balancer stops sending traffic) and requests in flight are awaited; then
+the leader services (scheduler, timers, alerts) and the MCP gateway sync stop; then local runs get time to finish (what
+is still running continues from its last checkpoint at the next boot); then the broker connections, the cluster runtime
+(queue mode: the leader lease is released and the instance forgotten), the database (Postgres flushes its write queue)
+and telemetry.
 
-This needs `NEXT_MANUAL_SIG_HANDLE` set to any non-empty value (`true`), which `pnpm start` (the `start` script) and the Docker image set. Without it
-Next.js's own handler closes its server and exits 143 first, and only the error handlers (below) are ours. `next dev`
-keeps Next.js's own handling: manual handling is not available there.
+The whole stop is bounded by `LANDFLOW_SHUTDOWN_SECONDS` (default 25, inside Kubernetes' 30 s grace period; the compose
+stacks give the mains `stop_grace_period: 30s`). The last 5 s (a fifth of a budget under 25 s) are reserved for the
+cluster, database and telemetry steps, so a long run never stops the flush; requests in flight may wait at most 60% of
+the rest, so a request that lasts as long as its run still leaves time to stop the scheduler and the runs. A step that
+fails or times out is logged and the next one runs. A second signal exits at once with code 1; a clean stop exits 0.
+The shutdown steps are registered as soon as the database is open, so a signal during the rest of the boot (plugin
+seeds that don't answer) still flushes and releases the lease.
 
-A required boot step (the database, the queue-mode cluster runtime) that fails logs `boot failed` and exits with code 1
-under Next.js, so the orchestrator restarts the container. Every other service that fails to start is logged as
-`service failed to start`, counted (`landflow.process.errors{kind="service_start"}`) and the host keeps serving. An
-unhandled rejection is logged and counted; an uncaught exception is logged, counted, the host shuts down (5 s) and exits 1 (in production; `pnpm dev` only logs and
-counts, as Next.js does; the worker always exits).
+This needs `NEXT_MANUAL_SIG_HANDLE` set to any non-empty value (`true`), which `pnpm start` (the `start` script) and
+the Docker image set. Without it Next.js's own handler closes its server and exits 143 first, and only the error
+handlers (below) are ours. `next dev` keeps Next.js's own handling: manual handling is not available there.
+
+A required boot step (the configuration check in the production profile, the database, the queue-mode cluster runtime)
+that fails logs `boot failed`; under `next start` and the image (`NODE_ENV=production`) the process then exits with
+code 1, so the orchestrator restarts the container. Elsewhere `register()` in `instrumentation.ts` catches the failed
+boot (a rejected instrumentation hook would stop `next dev`), so `pnpm dev` keeps running: routes answer 500 and
+`/api/health/ready` 503 with `boot` not ok until a later request boots it again. Every other service that fails to start is logged as `service failed to start`, counted
+(`landflow.process.errors{kind="service_start"}`) and the host keeps serving.
+
+An unhandled rejection is logged and counted. An uncaught exception is logged and counted; where `NODE_ENV=production`
+(`next start` and the image, including the in-repo stacks that run the development profile) the host also shuts down
+(5 s budget) and exits 1, since its state may be broken and a supervisor restarts it; `pnpm dev` only logs and counts,
+as Next.js does. The worker always exits. This follows `NODE_ENV` (whether a supervisor runs the process), not
+`LANDFLOW_PROFILE`.
 
 ## Production profile
 
@@ -97,7 +120,11 @@ reports an error for an unset `LANDFLOW_PUBLIC_URL`, for any secret variable (`L
 `LANDFLOW_MCP_GATEWAY_SECRET`, `LANDFLOW_OWNER_PASSWORD`, the S3 keys, …) holding a development value (anything with
 `dev-only`, or a known default), and for an unset `LANDFLOW_REGISTRY_SECRET` unless `LANDFLOW_REGISTRY_OPEN=true`; an unset
 `LANDFLOW_ENCRYPTION_KEY` or `LANDFLOW_BINARY_SECRET` is a warning. Messages name the variable, never the value. The check is
-a pure function for now; a later change calls it at boot.
+a pure function; the host calls it at boot (`lib/server/runtime.ts`, the first required step, for the main and the worker).
+In the production profile any error stops the boot with a `ConfigError` that lists every problem (the process exits non-zero
+and the pod restarts); in development the problems are logged as warnings. `next build` (`NEXT_PHASE=phase-production-build`)
+does not boot the host and only warns, since the image build has none of the deployment's variables. Either way the host logs one `effective configuration`
+line at info with every `LANDFLOW_*`, `OTEL_*` and `DATABASE_URL` variable that is set (secrets shown as `[set]` by the check or `[redacted]` by the logger, URL passwords redacted).
 
 The compose stacks and the Kubernetes base set `LANDFLOW_PROFILE=development` because they run the development secrets in
 `deploy/.env.example` while their image says `NODE_ENV=production`. A real deployment leaves it unset (or `production`) and
@@ -346,7 +373,7 @@ Tests: `(cd apps/web && LANDFLOW_INTEGRATION=oidc,smtp npx vitest run test/oidc.
 | `landflow/plugin-browser:dev` (profile `browser`) | [`plugins/browser/Dockerfile`](../plugins/browser/Dockerfile) | `tsx src/main.ts` as `node` on Debian with Chrome and agent-browser, headless: see [Browser plugin](#browser-plugin) |
 | `landflow/code-runner:dev` | [`docker/code-runner.Dockerfile`](../deploy/docker/code-runner.Dockerfile) | `node dist/main.mjs` (esbuild bundle) on Node 26 + CPython 3 (standard library) as uid 10001; `code-runner-port` runs `node dist/forward.mjs` from the same image |
 
-All builds use the repository root as context; [`/.dockerignore`](../.dockerignore) keeps out `node_modules`, `.next`, `.data`, venvs and Go binaries. Every image has a healthcheck: the host's `GET /api/health`, each plugin's `GET /landflow/v1/health`. Build one image on its own with, for example:
+All builds use the repository root as context; [`/.dockerignore`](../.dockerignore) keeps out `node_modules`, `.next`, `.data`, venvs and Go binaries. Every image has a healthcheck: the host's `GET /api/health/ready`, each plugin's `GET /landflow/v1/health`. Build one image on its own with, for example:
 
 ```bash
 docker build -f deploy/docker/go-plugin.Dockerfile --build-arg PLUGIN=databases \
@@ -376,7 +403,7 @@ LANDFLOW_REGISTRY_URL=http://localhost:53000 LANDFLOW_ADVERTISE_HOST=host.docker
 
 ## Queue mode (two mains, two workers)
 
-[`compose.queue.yml`](../deploy/compose.queue.yml) (project `landflow-queue`) runs Landflow in queue mode with high availability ([Queue mode, workers and high availability](features/engine.md#queue-mode-workers-and-high-availability)) on the infra stack's Postgres, Valkey and MinIO. One image runs everything: the mains run `node server.js`, the workers `node worker.mjs`.
+[`compose.queue.yml`](../deploy/compose.queue.yml) (project `landflow-queue`) runs Landflow in queue mode with high availability ([Queue mode, workers and high availability](features/engine.md#queue-mode-workers-and-high-availability)) on the infra stack's Postgres, Valkey and MinIO. One image runs everything: the mains run `node server.js`, the workers `node worker.mjs`. Workers run the same production check as the mains, so in the production profile they need the same variables (including `LANDFLOW_PUBLIC_URL` and `LANDFLOW_REGISTRY_SECRET`, or `LANDFLOW_REGISTRY_OPEN=true`) even though they serve no registry; the bundled manifests use the development profile.
 
 ```bash
 docker compose -f deploy/compose.infra.yml up -d --wait
@@ -387,7 +414,7 @@ python3 deploy/scripts/queue-e2e.py      # load spread, a killed worker, a kille
 
 | Service | On the Mac | |
 |---|---|---|
-| `lb` | http://localhost:53080 | round robin over the mains, skipping one that is down for 5 s; a browser sticks to one main (cookie `landflow_main`; the `x-landflow-main` header says which one answered). A stand-in for your load balancer: [`queue/lb.mjs`](../deploy/queue/lb.mjs) |
+| `lb` | http://localhost:53080 | round robin over the mains, skipping for 5 s one that is unreachable or whose `/api/health/ready` (asked every 2 s) is not 200, such as a main draining for shutdown; a browser sticks to one main (cookie `landflow_main`; the `x-landflow-main` header says which one answered). A stand-in for your load balancer: [`queue/lb.mjs`](../deploy/queue/lb.mjs) |
 | `main-1`, `main-2` | http://localhost:53081, http://localhost:53082 | UI, API, webhooks. `main-1` creates the owner (`owner@landflow.test` / `landflow-dev-only`); `main-2` and the workers start once it is healthy |
 | `worker-1`, `worker-2` | http://localhost:55691/healthz, http://localhost:55692/healthz (`/metrics` too) | 10 runs at once each (`LANDFLOW_WORKER_CONCURRENCY`); jobs are taken high, normal, low from three streams (`jobs:high`, `jobs`, `jobs:low`) by the workflow's Priority, with one low job after every eight others |
 | `text-toolkit` | not published | registers through the load balancer; the mains keep its address in Postgres and the workers call it directly |
@@ -428,7 +455,7 @@ LANDFLOW_QUEUE_VALKEY_CLUSTER=valkey-cluster-1:6379,valkey-cluster-2:6379 docker
 
 **Marketplace node plugins** install on either main and run in every main and worker (each its own child process). The containers have no `/app/packages`, so a plugin needing `@landflow/sdk` links can't be prepared there; plain JavaScript, Python and Go plugins can. A local marketplace path needs `LANDFLOW_QUEUE_MARKETPLACE_ALLOW_LOCAL=1` at `up` time.
 
-Day to day: **Settings → Workers** on either main shows the leader, the queue and every process; `docker compose -f deploy/compose.queue.yml stop worker-1` sends SIGTERM (runs get 30 s, `stop_grace_period` is 40 s, and what doesn't finish continues on the other worker); `stop main-1` on the leader hands the leadership over within about 3 s. To add a worker, copy `worker-2` with its own `LANDFLOW_INSTANCE_ID` and port. Valkey keys: `docker compose -f deploy/compose.infra.yml exec valkey valkey-cli --scan --pattern 'landflow-queue:*'`.
+Day to day: **Settings → Workers** on either main shows the leader, the queue and every process; `docker compose -f deploy/compose.queue.yml stop worker-1` sends SIGTERM (runs get 30 s, the worker gives itself 40 s in all, `stop_grace_period` is 45 s, and what doesn't finish continues on the other worker); `stop main-1` on the leader hands the leadership over within about 3 s. To add a worker, copy `worker-2` with its own `LANDFLOW_INSTANCE_ID` and port. Valkey keys: `docker compose -f deploy/compose.infra.yml exec valkey valkey-cli --scan --pattern 'landflow-queue:*'`.
 
 ## Code runner
 
@@ -712,7 +739,7 @@ helm repo add traefik https://traefik.github.io/charts
 helm --kube-context orbstack upgrade --install traefik traefik/traefik --version 42.0.0 -n landflow-ingress --create-namespace \
   --set ingressClass.name=landflow-traefik --set ingressClass.isDefaultClass=false
 kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-ingress        # namespace landflow-dev; restarts the host pod (new public URLs)
-curl -s http://landflow.localhost/api/health
+curl -s http://landflow.localhost/api/health/ready
 # MCP: a call with no token is anonymous (initialize works, tools/list is empty), same as through a port-forward
 curl -s -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' http://landflow.localhost/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
@@ -1017,3 +1044,38 @@ If you joined the networks with `compose.infra-link.yml`, pass it to `down` as w
 - **LocalStack** (profile `aws`) stands in for AWS Secrets Manager: Settings → External secrets → AWS Secrets Manager with the endpoint `http://localhost:54566` (or `http://localstack:4566` from the app stack) and dummy access keys. `LANDFLOW_INTEGRATION=aws npx vitest run test/secrets-aws.integration.test.ts` (in `apps/web`) runs the provider against it with the shared AWS config and credentials files turned off. Secrets are gone after a restart.
 - **GreenMail** is there because Mailpit has no IMAP: it is the mailbox the Email Trigger (IMAP) reads. Mail sent to its SMTP port lands in its own mailboxes, not in Mailpit.
 - Keycloak's realm is imported only when the realm doesn't exist yet. After editing `infra/keycloak/landflow-realm.json`, run `down -v` on the infra stack (or delete the realm in the admin console) and start it again.
+
+## Behind a reverse proxy or ingress
+
+Set `LANDFLOW_TRUSTED_PROXIES` to the number of proxies between the client and the host (an ingress controller behind a
+cloud load balancer is 2). The host then takes the client address from `X-Forwarded-For` that many entries from the end
+and builds its own origin from `X-Forwarded-Host`/`-Proto`; with the default 0 it sees every request as coming from the
+proxy's address (one shared sign-in limit) and ignores those headers. Also set `LANDFLOW_PUBLIC_URL`: invite and reset
+emails refuse to go out in the production profile without it. Resume URLs are signed in production
+(`LANDFLOW_RESUME_SIGNATURES`, see [engine](features/engine.md)).
+
+## Security headers and Content Security Policy
+
+`apps/web/src/proxy.ts` sets these on every response it produces (pages, API routes, 401s and redirects;
+`X-Frame-Options` except on the embeddable paths below): `X-Content-Type-Options: nosniff`, `Referrer-Policy:
+strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), geolocation=(), microphone=(self)` (Spotlight
+dictation uses the microphone) and `X-Frame-Options: DENY`. `Strict-Transport-Security: max-age=31536000;
+includeSubDomains` is added when the request is https (the URL, or `X-Forwarded-Proto`) unless `LANDFLOW_HSTS=off`.
+`x-powered-by` is not sent.
+
+Pages (not API routes) also get a Content Security Policy with a fresh nonce per request: `script-src 'self' 'nonce-…'
+'strict-dynamic'` (plus `'unsafe-eval'` under `next dev`), inline styles, `img-src 'self' data: blob: https:` (notes,
+chat and plugin icons show remote images), `connect-src 'self'`, `frame-src 'self' blob: data: https:`, `worker-src
+'self' blob:`, `object-src 'self' data: https:` (the Run Trace shows a PDF artifact in an `<object>`, which Chrome also
+checks against `frame-src`), `base-uri 'self'`, `form-action 'self'` and `frame-ancestors 'none'`. `LANDFLOW_CSP` picks
+the mode: `enforce` (default in the production profile), `report` (`Content-Security-Policy-Report-Only`, default in
+development) or `off`. If a page breaks in production, set `LANDFLOW_CSP=report` and read the console for the blocked
+source.
+
+The embeddable or self-policed paths (`/chat`, `/form`, `/form-test`, `/api/binary`, `/api/mcp/files`, `/mcp`,
+`/mcp-test`, `/api/webhook`, `/api/webhook-test`) keep their own policy and get no frame headers or CSP from the
+proxy, only the three fixed headers above. A reverse proxy that serves the host over https should forward
+`X-Forwarded-Proto`.
+
+Any inline `<script>` in a page must carry the nonce: the root layout reads it from the `x-nonce` request header the
+proxy sets and passes `nonce={nonce}` to its theme and look scripts. Without it the browser blocks the script.

@@ -110,10 +110,18 @@ describe('IP allow-list matching', () => {
     expect(parseIpList(' 10.0.0.1, 10.0.0.2\n10.0.0.0/24 ')).toEqual(['10.0.0.1', '10.0.0.2', '10.0.0.0/24']);
   });
 
-  it('reads the caller from X-Forwarded-For, then X-Real-IP, else 127.0.0.1', () => {
+  it('reads the caller from X-Forwarded-For (hops from LANDFLOW_TRUSTED_PROXIES), else 127.0.0.1', () => {
     const request = (headers: Record<string, string>) => new Request('http://auth.test/', { headers });
-    expect(callerIp(request({ 'x-forwarded-for': '198.51.100.4, 10.0.0.1', 'x-real-ip': '10.9.9.9' }))).toBe('198.51.100.4');
-    expect(callerIp(request({ 'x-real-ip': '10.9.9.9' }))).toBe('10.9.9.9');
+    // No trusted proxy: the last entry, and X-Real-IP is ignored.
+    expect(callerIp(request({ 'x-forwarded-for': '198.51.100.4, 10.0.0.1', 'x-real-ip': '10.9.9.9' }))).toBe('10.0.0.1');
+    expect(callerIp(request({ 'x-real-ip': '10.9.9.9' }))).toBe('127.0.0.1');
+    process.env.LANDFLOW_TRUSTED_PROXIES = '1';
+    try {
+      expect(callerIp(request({ 'x-forwarded-for': '198.51.100.4', 'x-real-ip': '10.9.9.9' }))).toBe('198.51.100.4');
+      expect(callerIp(request({ 'x-real-ip': '10.9.9.9' }))).toBe('10.9.9.9');
+    } finally {
+      delete process.env.LANDFLOW_TRUSTED_PROXIES;
+    }
     expect(callerIp(request({ 'x-forwarded-for': '::ffff:10.0.0.5' }))).toBe('10.0.0.5');
     expect(callerIp(request({}))).toBe('127.0.0.1');
   });

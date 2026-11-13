@@ -18,7 +18,8 @@ Read `docs/constitution.md` (its Security baseline is your checklist), `CLAUDE.m
 
 ## The model you check against
 
-- **Request path**: `apps/web/src/proxy.ts` (optimistic cookie or key check) → `handler()` (`lib/server/http.ts`) →
+- **Request path**: `apps/web/src/proxy.ts` (optimistic cookie or key check; security headers and the nonce CSP,
+  `LANDFLOW_CSP`, with an `EMBEDDABLE` list of paths that set their own policy) → `handler()` (`lib/server/http.ts`) →
   `guardRequest()` (`lib/server/auth/guard.ts`: principal from session cookie or `lf_` API key, policy, `Origin` check
   on cookie writes, protected environments, `resourceRule` project access for paths naming a workflow, credential, data
   table, agent, team or execution) → the handler in auth and audit contexts.
@@ -26,8 +27,12 @@ Read `docs/constitution.md` (its Security baseline is your checklist), `CLAUDE.m
   with no entry needs the `admin` scope from an API key and **nothing from a session**: every new route must have an
   entry or an in-handler check (`requireResource`, `canResource`, `filterVisible`, `visibleProjectIds` in
   `lib/server/projects/access.ts`; `routeActor()`).
-- **Public paths** (`lib/shared/auth-paths.ts`) authenticate on their own: signed tokens, webhook auth
-  (`lib/server/webhook-auth.ts`), the registry secret (`LANDFLOW_REGISTRY_SECRET`), SCIM tokens.
+- **Public paths** (`lib/shared/auth-paths.ts`) authenticate on their own: signed tokens (resume URLs:
+  `lib/server/resume-signing.ts`), webhook auth (`lib/server/webhook-auth.ts`), the registry secret
+  (`LANDFLOW_REGISTRY_SECRET`; outside development announces need it, `lib/server/plugins/registry-policy.ts`), SCIM
+  tokens.
+- **Client address and origin**: `clientAddress()` (`lib/server/net/client-address.ts`, `LANDFLOW_TRUSTED_PROXIES`)
+  for limits, audit and allow-lists; `publicOrigin()` / `emailedOrigin()` (`lib/server/auth/cookies.ts`) for links.
 - **Audit**: `recordAudit()` (`lib/server/audit/index.ts`) in the library, with actor, target, project, `from`/`to`;
   `auditRequest()` (`audit/http.ts`) adds a generic event for mutating `/api` calls that recorded none and skips paths
   in its `SKIP` list. Writes fail open today (S9).
@@ -39,8 +44,9 @@ Read `docs/constitution.md` (its Security baseline is your checklist), `CLAUDE.m
 - **Outbound**: the governance host allow-list (`lib/server/governance/policy.ts`) is off by default; `safeFetch`
   (P13) is the target for every user-influenced URL.
 - **Known open findings** (don't re-report them as new unless the diff makes them worse; do flag code that copies
-  them): S1 expressions, S3 open plugin announce, S5 no address checks, S6 `X-Forwarded-For` trusted, S9 audit fails
-  open, S10 no security headers, S11 no body cap or API rate limit, S13 key handling, S14 sessions.
+  them), each with the package that closes it: S1 expressions (P14), S5 no address checks (P13), S9 audit fails open
+  (P21), S11 no body cap or API rate limit (P16), S13 key handling (P23), S14 sessions (P24). Drop an entry once its
+  package is on `origin/main` (S3, S6 and S10 closed with P08, P09 and P10).
 
 ## Checklist for every changed route and library function
 

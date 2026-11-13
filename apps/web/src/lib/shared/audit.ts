@@ -118,6 +118,8 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'sync.apply': 'Applied Git sync files',
   'plugin.register': 'Registered a plugin',
   'plugin.remove': 'Removed a plugin',
+  'plugin.endpoint_added': 'Added an endpoint to a plugin',
+  'plugin.updated': 'Updated a plugin’s version',
   'plugin.transport': 'Changed a plugin’s transport policy',
   'mcp.token.issue': 'Issued an MCP token',
   'mcp.token.revoke': 'Revoked an MCP token',

@@ -22,6 +22,7 @@ import { error } from './http';
 import { registry } from './plugins/registry';
 import { triggerAuthCredential, triggerAuthUsable } from './projects/credentials';
 import { singleton } from './singleton';
+import { clientAddress } from './net/client-address';
 import { logger } from './telemetry/logger';
 import type { WebhookAuthentication } from './nodes/webhook-auth';
 
@@ -35,12 +36,10 @@ const HMAC = ['HS256', 'HS384', 'HS512'];
 // IP allow-list
 // ---------------------------------------------------------------------------
 
-/** The caller's address (see the module doc). */
+/** The caller's address, from the trusted-proxy rules in net/client-address.ts; 127.0.0.1 when no header names one. */
 export function callerIp(request: Request): string {
-  const forwarded = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
-  const ip = (forwarded || request.headers.get('x-real-ip')?.trim() || '127.0.0.1').replace(/^\[|\]$/g, '');
-  // An IPv4 address in IPv6 notation (::ffff:10.0.0.1) is that IPv4 address.
-  return /^::ffff:\d+\.\d+\.\d+\.\d+$/i.test(ip) ? ip.slice(7) : ip;
+  const ip = clientAddress(request);
+  return ip === 'local' ? '127.0.0.1' : ip;
 }
 
 function ipv4Bits(ip: string): bigint {

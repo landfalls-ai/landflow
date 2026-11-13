@@ -7,12 +7,20 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 async function fresh() {
   const { forgetSingleton } = await import('../src/lib/server/singleton');
   forgetSingleton('lifecycle');
-  return import('../src/lib/server/lifecycle');
+  return rearm();
+}
+
+// Forgetting 'lifecycle' also drops the bootstrapper test/setup.ts registered, so register it again.
+async function rearm() {
+  const lc = await import('../src/lib/server/lifecycle');
+  lc.setBootstrapper(() => import('../src/lib/server/bootstrap').then((m) => m.ensureBootstrapped()));
+  return lc;
 }
 
 afterEach(async () => {
   const { forgetSingleton } = await import('../src/lib/server/singleton');
   forgetSingleton('lifecycle');
+  await rearm();
 });
 
 describe('shutdown registry', () => {
@@ -63,6 +71,18 @@ describe('shutdown registry', () => {
     expect(b).toHaveBeenCalledTimes(1);
   });
 
+  it('waits for requests in flight at most 60% of the soft budget, leaving the rest to the services', async () => {
+    const lc = await fresh();
+    lc.trackRequest(() => new Promise<void>(() => {}));
+    let servicesAt = 0;
+    lc.onShutdown('svc', () => void (servicesAt = Date.now()), 'services');
+    const started = Date.now();
+    // 1 s budget: the reserve is 200 ms, the soft budget 800 ms, the intake wait at most 480 ms.
+    await lc.shutdown('test', { deadlineMs: 1000 });
+    expect(servicesAt - started).toBeGreaterThanOrEqual(400);
+    expect(servicesAt - started).toBeLessThan(700);
+  });
+
   it('waits for requests in flight in the intake phase', async () => {
     const lc = await fresh();
     let release!: () => void;
@@ -90,6 +110,22 @@ describe('draining', () => {
     expect(blocked.headers.get('Retry-After')).toBe('5');
     const health = await route(new Request('http://localhost/api/health'));
     expect(health.status).toBe(200);
+  });
+});
+
+describe('handler errors', () => {
+  it('answers a blocked Postgres store (StoreUnavailableError) with 503 and Retry-After, not 500', async () => {
+    const lc = await fresh();
+    lc.markBooted();
+    const { handler } = await import('../src/lib/server/http');
+    const { StoreUnavailableError } = await import('../src/lib/server/db/database');
+    const route = handler(async () => {
+      throw new StoreUnavailableError(7);
+    });
+    const response = await route(new Request('http://localhost/api/workflows'));
+    expect(response.status).toBe(503);
+    expect(response.headers.get('Retry-After')).toBe('30');
+    expect((await response.json()).error).toMatch(/blocked at batch 7/);
   });
 });
 
@@ -185,6 +221,31 @@ describe('process handlers', () => {
     const spy = vi.spyOn(logger, 'error').mockImplementation(() => {});
     expect(() => lc.onUnhandledRejection(new Error('nope'))).not.toThrow();
     expect(spy).toHaveBeenCalledWith('unhandled rejection', expect.objectContaining({ error: expect.any(Error) }));
+    spy.mockRestore();
+  });
+
+  it('an uncaught exception only logs and counts when exitOnUncaught is false', async () => {
+    const lc = await fresh();
+    const { logger } = await import('../src/lib/server/telemetry/logger');
+    const spy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+    const exit = vi.fn();
+    await lc.onUncaughtException(new Error('boom'), { exitOnUncaught: false, exit });
+    expect(spy).toHaveBeenCalledWith('uncaught exception', expect.objectContaining({ error: expect.any(Error) }));
+    expect(exit).not.toHaveBeenCalled();
+    expect(lc.isDraining()).toBe(false);
+    spy.mockRestore();
+  });
+
+  it('an uncaught exception shuts down and exits 1 by default', async () => {
+    const lc = await fresh();
+    const { logger } = await import('../src/lib/server/telemetry/logger');
+    const spy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+    const stopped: string[] = [];
+    lc.onShutdown('db', () => void stopped.push('db'), 'storage');
+    const exit = vi.fn();
+    await lc.onUncaughtException(new Error('boom'), { exit });
+    expect(stopped).toEqual(['db']);
+    expect(exit).toHaveBeenCalledWith(1);
     spy.mockRestore();
   });
 

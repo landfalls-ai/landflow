@@ -164,7 +164,8 @@ class Store {
     recordExecutionInsights(summary);
     // The usage ledger too (docs/second-brain.md): what ran, failed and was slow, without the items.
     recordExecutionUsage(record, record.workflow ?? this.getWorkflow(record.workflowId));
-    // Retention (Settings → General): count and age, every LANDFLOW_RETENTION_EVERY finished runs; running and waiting executions are never pruned.
+    // Retention (Settings → General): count and age, every LANDFLOW_RETENTION_EVERY finished runs;
+    // running and waiting executions are never pruned.
     retentionTick();
   }
 

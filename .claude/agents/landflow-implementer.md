@@ -34,11 +34,12 @@ Work only inside `<worktree>`. Never touch another worktree, the person's checko
   `lib/server/openapi.ts`.
 - **Library code** holds the logic, the audit event (`recordAudit` with `from` / `to`) and the access scoping; routes
   stay thin and hold no SQL.
-- **Configuration**: through `lib/server/config` when it exists on your base (P02), else a pure function of `env` like
-  `lib/server/cluster/config.ts`. Read at call time, never at import. Document every new variable in
-  `docs/reference/configuration.md`.
-- **State**: `singleton('<key>', () => …)`; services that run on one process use `leaderService()`; anything that
-  buffers registers a shutdown step (`onShutdown`, when `lib/server/lifecycle.ts` exists).
+- **Configuration**: through `lib/server/config` (`envInt`, `envNumber`, `envFlag`, `envUrl`, `envString`; `profile()`
+  / `isProduction()` for anything stricter in production). Read at call time, never at import. Document every new
+  variable in `docs/reference/configuration.md`.
+- **State**: `singleton('<key>', () => …)`. A background service is an entry of `SERVICES` in `lib/server/runtime.ts`
+  (roles, `leader: true` for one-process work through `leaderService()`, `stop` and `shutdownPhase`); anything else
+  that buffers registers a shutdown step with `onShutdown()` (`lib/server/lifecycle.ts`).
 - **Migrations**: append to `MIGRATIONS` in `lib/server/db/schema.ts` with a version above the current maximum (grep
   `version:`), one SQL for SQLite and Postgres, new tables in `TABLES`.
 - **Errors**: domain errors carry a status; throw `HttpError` when `lib/server/errors.ts` exists; never return an
@@ -76,7 +77,8 @@ steps on your branch, each message a plain sentence of what changed and why, end
 session gives you. Before the last commit, scan your diff:
 
 ```bash
-git diff origin/main...HEAD | grep -nEi 'BEGIN [A-Z ]*PRIVATE KEY|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-|sk-(ant-)?[A-Za-z0-9_-]{20,}|lf_[A-Za-z0-9_-]{24,}|/Users/[a-z]|@[a-z0-9-]+\.(ai|com|io)\b|claude\.ai/(code|share|artifact)|session_[A-Za-z0-9]{16,}'
+git diff origin/main...HEAD --name-only | grep -E '(^|/)\.data(/|$)|(^|/)(MEMORY\.md|encryption\.key|credentials\.json|[^/]*kubeconfig[^/]*|\.env(\.[^/]*)?)$' | grep -v '\.env\.example$'
+git diff origin/main...HEAD | grep -nEi 'BEGIN [A-Z ]*PRIVATE KEY|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-|sk-(ant-)?[A-Za-z0-9_-]{20,}|lf_[A-Za-z0-9_-]{24,}|/Users/[a-z]|@[a-z0-9-]+\.(ai|com|io|org|net|dev)\b|claude\.ai/(code|share|artifact)|session_[A-Za-z0-9]{16,}'
 ```
 
 ## Report

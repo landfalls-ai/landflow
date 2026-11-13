@@ -1246,6 +1246,27 @@ workbench in place of a page of cards, keeping Spotlight.
 - **P03** (C16 step 1, O4): Postgres mode never drops a write batch. A batch Postgres rejects five times blocks the store (writes refused with `StoreUnavailableError`, retried, `LANDFLOW_PG_SKIP_BATCH` to set it aside), the spool is one fsynced descriptor, and `writeHealth()` plus five metrics report the queue ([postgres-write-queue.md](features/postgres-write-queue.md)).
 - **P04, execution retention in SQL off the save path (C17).** `pruneExecutions` selects ids by column in chunks and a finished run triggers it only every `LANDFLOW_RETENTION_EVERY` runs.
 - **P05, SCIM audit, Stop all for admins, project scoping for AI usage and files** (S2, S4, S12 part): SCIM changes and rejected tokens are audit events; stop-all is admin-only; members' AI usage and file reads stop at their projects.
+- **P06, one runtime for main and worker; routes wait on readiness; configuration checked at boot** (C9, C8, C6, S15; contributes to C5): `lib/server/runtime.ts` holds one service table for both roles, `bootstrap.ts` is a thin compatibility module, the production check runs first at boot, and `handler()` / `scimRoute()` no longer import the composition root (static closure of `http.ts`: 401 files before, 72 after).
+- **P07, liveness and readiness probes** (C3, O2): `GET /api/health/live` (no I/O; Next holds requests until boot ends, so a startupProbe covers a slow boot) and `GET /api/health/ready` (boot, draining, database, write queue lag, schema version, Valkey in queue mode; 503 otherwise) replace `/api/health` as the Kubernetes, Docker and smoke-script probes; `/api/health` shows plugin and run counts only to callers with credentials.
+- **P08, plugin registration closed outside development** (S3; wave 2): `registryOpen()` refuses announces without `LANDFLOW_REGISTRY_SECRET` in the production profile (HTTP and gRPC); with the secret every announced endpoint proves it holds it; joining an existing plugin from a new host needs the secret or `LANDFLOW_REGISTRY_ALLOW_JOIN`; `plugin.endpoint_added` and `plugin.updated` are audited; the announce route's 422 is generic and metadata addresses are refused in production.
+- **P09, trusted proxies, public URL for emailed links, signed resume URLs** (S6, S12 part): `clientAddress()` trusts `X-Forwarded-For` only up to `LANDFLOW_TRUSTED_PROXIES` hops (sign-in limits, audit and webhook allow-lists use it); invite and reset links never come from request headers in production; resume URLs carry an HMAC `sig` that production requires (`LANDFLOW_RESUME_SIGNATURES`), old waits keep working.
+- **P10, security headers and a nonce CSP** (S10): the proxy sets nosniff, referrer and permissions policies, frame denial, HSTS
+  over https and a per-request nonce Content Security Policy on pages (`LANDFLOW_CSP`: enforce in production, report in
+  development; `LANDFLOW_HSTS`); embeddable paths keep their own policy; `x-powered-by` is off.
+- **Wave 1 carryover** (applied in wave 2): retention counts and the `LANDFLOW_RETENTION_EVERY` floor, the blocked
+  Postgres store's 503 and sink fixes, an earlier shutdown registration and capped intake wait, the compose grace
+  periods, a load balancer that skips a main that is not ready, AI usage groups and Stop all's key scope, capped SCIM
+  failure events, URL-list redaction, an atomically created encryption key. Deferred, each for a later package:
+  - a `(status, started_at, id)` index on `executions`, so the retention count pass stays cheap at a very large cap
+    (a migration; nothing slow at the default 300);
+  - `LANDFLOW_PG_SKIP_BATCH=<instance>:<seq>`, so in queue mode the variable can't set aside another process's batch
+    with the same number (documented: set it on the blocked process only);
+  - `leaderService()` in regular mode keeps its entries until shutdown, so they accumulate across a test file (tests
+    only; a by-name replacement needs care for hot reload in queue mode);
+  - the AI and RAG nodes' default Base URL is computed when the node list is built at import, not per request (the
+    runs themselves read `ollamaUrl()` at call time);
+  - tests still missing from wave 1: SCIM `PUT /Users` and `PUT /Groups` events, the 10,000-address eviction, and
+    access-scope cases for evaluation-dataset files, a live run's file and an agent the member can open.
 
 ## Planned next
 

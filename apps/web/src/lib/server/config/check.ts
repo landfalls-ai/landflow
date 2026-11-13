@@ -2,7 +2,7 @@
  * The production check: pure, over an environment object, so it is testable and callable at boot (wave 2 wires it into
  * bootstrap). Development profile reports nothing for development values. Messages name variables, never values.
  */
-import { flag } from './parse';
+import { flag, SECRET_NAME } from './parse';
 import { profile } from './profile';
 
 /** Variables that hold secrets: never shown in `effective`, checked for development defaults in production. */
@@ -74,7 +74,6 @@ function urlPassword(value: string): string | undefined {
   }
 }
 
-const SECRET_NAME = /(SECRET|PASSWORD|_PASS$|TOKEN|HEADERS|CREDENTIALS|API_KEY|_KEY$)/i;
 /** Key ids are not secret: they stay readable. */
 const KEY_IDS = /(ACCESS_KEY_ID)$/i;
 
@@ -116,7 +115,16 @@ export function checkConfig(env: NodeJS.ProcessEnv = process.env): ConfigCheck {
     if (secrets.has(name)) effective[name] = '[set]';
     else if ((URL_SECRETS as readonly string[]).includes(name)) effective[name] = redactUrl(value);
     else if (SECRET_NAME.test(name) && !KEY_IDS.test(name)) effective[name] = '[set]';
-    else effective[name] = hasUrlCredential(value) ? redactUrl(value) : value;
+    // A comma-separated list of URLs (LANDFLOW_PLUGINS) doesn't parse as one URL: check each entry.
+    else effective[name] = value.split(',').map((part) => (hasUrlCredential(part.trim()) ? redactUrl(part.trim()) : part)).join(',');
   }
   return { errors, warnings, effective };
+}
+
+/** The production check found errors: the message lists every one. The host refuses to boot (lib/server/runtime.ts). */
+export class ConfigError extends Error {
+  constructor(readonly problems: string[]) {
+    super(`Configuration refused in the production profile:\n- ${problems.join('\n- ')}`);
+    this.name = 'ConfigError';
+  }
 }

@@ -7,7 +7,7 @@
 import { NextResponse } from 'next/server';
 import type { LinkResponse } from '../../shared/auth';
 import { logger } from '../telemetry';
-import { publicOrigin, setSessionCookie } from './cookies';
+import { emailedOrigin, setSessionCookie } from './cookies';
 import { inviteMessage, mailConfigured, resetMessage, sendMail } from './mail';
 import { clientIp } from './rate-limit';
 import { createSession, type SessionMethod } from './sessions';
@@ -29,7 +29,7 @@ export async function deliverLink(
   kind: 'invite' | 'reset',
   input: { to: string; token: string; request?: Request; invitedBy?: string; role?: string },
 ): Promise<LinkResponse> {
-  const link = `${publicOrigin(input.request)}/${kind === 'invite' ? 'invite' : 'reset-password'}/${input.token}`;
+  const link = `${emailedOrigin(input.request)}/${kind === 'invite' ? 'invite' : 'reset-password'}/${input.token}`;
   if (!mailConfigured()) return { link, emailed: false };
   try {
     await sendMail(kind === 'invite' ? inviteMessage({ to: input.to, link, invitedBy: input.invitedBy, role: input.role ?? 'member' }) : resetMessage({ to: input.to, link }));

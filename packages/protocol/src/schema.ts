@@ -6,6 +6,9 @@
  */
 import { z } from 'zod';
 import type { CompositeTypeDescriptor, CredentialTypeDescriptor, NodeDescriptor, NodeMatcher, PluginManifest, PropertyDescriptor } from './types';
+// In a browser, skip zod's `new Function` probe: under the host's page CSP (no unsafe-eval) it is a reported violation.
+// This must run before the first schema is built below; parsing stays the same, just without code generation.
+if (typeof window !== 'undefined') z.config({ jitless: true });
 
 const primitive = z.union([z.string(), z.number(), z.boolean()]);
 

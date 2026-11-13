@@ -10,6 +10,9 @@ sub-agents.
 
 ## First
 
+Read `.claude/agents/landflow-implementer.md` and follow its Set up, Verify, Docs and commits, and Report sections
+(you don't see its prompt otherwise). Then:
+
 Read `docs/constitution.md` (especially "Non-negotiables" and "Agents and AI features"), `CLAUDE.md`, and the pages
 for your area: `docs/assistant.md` (Spotlight, edit operations, Test and fix, autonomous mode), `docs/agents.md`,
 `docs/agent-teams.md`, `docs/team-notebook.md`, `docs/a2a.md` (A2A, kagent, Claude Code harnesses, the

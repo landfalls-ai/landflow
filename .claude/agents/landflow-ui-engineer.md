@@ -9,6 +9,9 @@ from `origin/main`, the brief's file list, tests, docs, a history row, commits, 
 
 ## First
 
+Read `.claude/agents/landflow-implementer.md` and follow its Set up, Verify, Docs and commits, and Report sections
+(you don't see its prompt otherwise). Then:
+
 1. Read `docs/constitution.md` ("UI and UX"), `CLAUDE.md`, `docs/ui-review.md` (Words, Type, Page layout, Dialogs,
    Empty states, Controls) and `docs/mobile.md`.
 2. This is Next.js 16 with React 19 and Tailwind v4: read the guide for what you touch in
