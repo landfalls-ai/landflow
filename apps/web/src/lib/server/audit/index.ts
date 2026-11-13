@@ -34,7 +34,7 @@ import { logger } from '../telemetry/logger';
 import { auditFailClosed } from '../config/audit';
 import { HttpError } from '../errors';
 import { auditRequestContext } from './context';
-import { recordAuditWriteFailure } from './metrics';
+import { ensureAuditMetrics, recordAuditWriteFailure } from './metrics';
 import { emitAuditLog } from './otel';
 import { targetProject } from './project';
 import { getAuditSettings } from './settings';
@@ -189,6 +189,7 @@ export function setOutboxKick(fn: (() => void) | undefined) {
  */
 export function recordAudit(input: AuditInput, options: AuditOptions = {}): AuditEvent | undefined {
   ensureListeners();
+  ensureAuditMetrics();
   const ctx = auditRequestContext();
   try {
     const at = input.at ?? new Date();

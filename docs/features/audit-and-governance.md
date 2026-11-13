@@ -33,15 +33,16 @@ To try it locally, `docker compose -f deploy/compose.infra.yml --profile siem up
 
 ### Reliability and fail-closed mode
 
-An audit event is written after the change it describes, in its own transaction, so a failing audit insert (disk full,
-a lock, a schema problem) used to leave only a log line. Now it is also counted, and a deployment can refuse the change.
+A failing audit insert (disk full, a lock, a schema problem) used to leave only a log line. Now it is also counted, and a
+deployment can refuse the change. An event's insert (with its hash-chain link and outbox rows) is all or nothing, even
+inside a larger transaction: a swallowed failure leaves no partial rows and no false tamper report.
 
 - **Metrics** (lib/server/audit/metrics.ts): `landflow.audit.write_failures{action}` counts events that could not be
   stored (the generic `api.request` layer counts under that action too); `landflow.audit.outbox.delivery_failures{destination}`
   counts failed SIEM deliveries; the gauges `landflow.audit.outbox.depth` and `landflow.audit.outbox.oldest_age` (seconds)
-  read the outbox when metrics are collected, so a stuck destination shows as a growing age.
+  are registered as soon as the first event is recorded or the outbox starts, and read the outbox when metrics are collected, so a stuck destination shows as a growing age.
 - **`LANDFLOW_AUDIT_FAIL_CLOSED=true`** (default `false`; recommended for regulated deployments): for role changes, API
-  key create and revoke, credential create, update and delete, audit settings changes and SCIM provisioning (users and
+  key create and revoke, credential create, update and delete, audit settings changes (`PATCH /api/settings/audit` only: retention and credential-use; SIEM destinations, anchoring and key rotation stay fail-open) and SCIM provisioning (users and
   groups), an event that cannot be stored refuses the change with `503` (`AuditUnavailableError`) and nothing changes.
   Where the change is a database write, it and its event share one `auditedTransaction()`, so the insert joins it and a
   failure rolls both back. Credentials live in the files config store, which is no transaction: update and delete record

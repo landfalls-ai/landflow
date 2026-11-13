@@ -33,6 +33,15 @@ export function outboxHealth(destinationId?: string, now = Date.now()): { depth:
   }
 }
 
+/** Register the instruments (a healthy process reports the gauges too). Cheap: re-created only when the meter provider changes. */
+export function ensureAuditMetrics() {
+  try {
+    instruments();
+  } catch {
+    // Metrics never break the audit path.
+  }
+}
+
 function instruments(): Instruments {
   const provider = metrics.getMeterProvider();
   if (cached?.provider === provider) return cached.instruments;

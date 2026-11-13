@@ -19,6 +19,8 @@ const auth = await import('@/lib/server/auth');
 const { database } = await import('@/lib/server/db');
 const { createApiKey, listApiKeys } = await import('@/lib/server/auth/api-keys');
 const { queryEvents } = await import('@/lib/server/audit/store');
+const { verifyChain } = await import('@/lib/server/audit/chain');
+const { metrics } = await import('@opentelemetry/api');
 const { auditFailureTally, resetAuditFailureTally, outboxHealth } = await import('@/lib/server/audit/metrics');
 const { recordAudit, AuditUnavailableError } = await import('@/lib/server/audit');
 const { registry } = await import('@/lib/server/plugins/registry');
@@ -70,6 +72,18 @@ describe('audit write failures', () => {
     expect(auth.getUser(member.id)?.role).toBe('admin');
     expect(auditFailureTally().writes['user.role_change']).toBe(1);
     expect(events('user.role_change')).toHaveLength(0);
+  });
+
+  it('leaves the hash chain intact when a swallowed write fails inside a wrapped route', async () => {
+    const member = await auth.createUser({ email: 'm0@reliability.test', name: 'M0', role: 'member', password: 'member-password-1' });
+    recordAudit({ action: 'settings.update', target: { type: 'settings', id: 'before' } });
+    breakAuditWrites();
+    const response = await userRoute.PATCH(req('PATCH', `/api/users/${member.id}`, { role: 'admin' }), params({ id: member.id }));
+    expect(response.status).toBe(200);
+    broken?.mockRestore();
+    broken = undefined;
+    recordAudit({ action: 'settings.update', target: { type: 'settings', id: 'after' } });
+    expect((await verifyChain()).ok).toBe(true);
   });
 
   it('refuses a role change, an API key and a credential with 503 in fail-closed mode, and changes nothing', async () => {
@@ -135,6 +149,33 @@ describe('audit write failures', () => {
 });
 
 describe('outbox gauges', () => {
+  it('are registered before any failure and observe the stuck rows', () => {
+    const gauges = new Map<string, Array<(result: { observe(value: number): void }) => void>>();
+    const counters: string[] = [];
+    const meter = {
+      createObservableGauge: (name: string) => ({ addCallback: (callback: never) => gauges.set(name, [...(gauges.get(name) ?? []), callback]) }),
+      createCounter: (name: string) => (counters.push(name), { add: () => {} }),
+    };
+    const spy = vi.spyOn(metrics, 'getMeterProvider').mockReturnValue({ getMeter: () => meter } as never);
+    try {
+      const old = new Date(Date.now() - 120_000).toISOString();
+      database().insertNew('audit_outbox', { destination_id: 'dest_gauge', event_id: 'aud_g', created_at: old, attempts: 1, next_at: old, lease_until: null, last_error: 'x' });
+      recordAudit({ action: 'settings.update', target: { type: 'settings', id: 'gauge' } });
+      expect([...gauges.keys()].sort()).toEqual(['landflow.audit.outbox.depth', 'landflow.audit.outbox.oldest_age']);
+      expect(auditFailureTally().writes).toEqual({});
+      const observed = (name: string) => {
+        let value = -1;
+        for (const callback of gauges.get(name) ?? []) callback({ observe: (v) => (value = v) });
+        return value;
+      };
+      expect(observed('landflow.audit.outbox.depth')).toBeGreaterThanOrEqual(1);
+      expect(observed('landflow.audit.outbox.oldest_age')).toBeGreaterThanOrEqual(119);
+    } finally {
+      spy.mockRestore();
+      database().delete('audit_outbox', { destination_id: 'dest_gauge', event_id: 'aud_g' });
+    }
+  });
+
   it('report the depth and the age of a stuck destination', () => {
     const db = database();
     const old = new Date(Date.now() - 120_000).toISOString();

@@ -211,6 +211,29 @@ export class Database {
     }
   }
 
+  /**
+   * Like `transaction`, but inside an outer transaction a failure undoes only `fn`'s own writes (a savepoint) before it
+   * rethrows, so a caller that swallows the error leaves nothing half-written in the outer transaction.
+   */
+  atomic<T>(fn: () => T): T {
+    if (this.depth === 0) return this.transaction(fn);
+    const mark = this.pending.length;
+    this.sqlite.exec('SAVEPOINT atomic_write');
+    try {
+      const result = fn();
+      if (result instanceof Promise) throw new Error('Database transactions must be synchronous');
+      this.sqlite.exec('RELEASE atomic_write');
+      return result;
+    } catch (error) {
+      if (this.sqlite.isTransaction) {
+        this.sqlite.exec('ROLLBACK TO atomic_write');
+        this.sqlite.exec('RELEASE atomic_write');
+      }
+      this.pending.length = mark;
+      throw error;
+    }
+  }
+
   /** Postgres mode: wait until every committed write reached Postgres. SQLite: nothing to do. */
   flush(timeoutMs?: number): Promise<void> {
     return this.sink?.flush(timeoutMs) ?? Promise.resolve();

@@ -26,9 +26,9 @@ export const PATCH = handler(async (request: Request, { params }: Ctx) => {
     const id = (await params).id;
     const before = credentials.get(id);
     // Which fields changed, never their values. Fail-closed audit records it first (the credentials file is no transaction).
-    if (!before) return json({ credential: credentials.update(id, body.data) }); // throws the 404
+    if (!before) return error('Credential not found', 404);
     const credential = auditedChange(
-      (done) => ({ action: 'credential.update', target: { type: 'credential', id, ...((done?.name ?? before?.name) && { name: (done?.name ?? before?.name)! }) }, details: { credentialType: done?.type ?? before?.type, renamed: body.data.name !== undefined, rateLimit: body.data.rateLimit === undefined ? undefined : body.data.rateLimit ?? null, fields: Object.keys(body.data.data ?? {}) } }),
+      (done) => ({ action: 'credential.update', target: { type: 'credential', id, ...((done?.name ?? before.name) && { name: (done?.name ?? before.name)! }) }, details: { credentialType: done?.type ?? before.type, renamed: body.data.name !== undefined, rateLimit: body.data.rateLimit === undefined ? undefined : body.data.rateLimit ?? null, fields: Object.keys(body.data.data ?? {}) } }),
       () => credentials.update(id, body.data),
     );
     return json({ credential });

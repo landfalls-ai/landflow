@@ -13,7 +13,7 @@ import { database } from '../db';
 import { singleton } from '../singleton';
 import { logger } from '../telemetry/logger';
 import { auditDestinations } from './destinations';
-import { recordAuditDeliveryFailure } from './metrics';
+import { ensureAuditMetrics, recordAuditDeliveryFailure } from './metrics';
 import { recordAudit, setOutboxKick } from './index';
 import { getAuditSettings } from './settings';
 import { BATCH_SIZE, deliver } from './sinks';
@@ -176,6 +176,7 @@ export function startAuditOutbox() {
   const s = state();
   if (s.running) return;
   s.running = true;
+  ensureAuditMetrics();
   setOutboxKick(kick);
   s.timer = setInterval(() => void drainOutbox(), TICK_MS);
   s.timer.unref?.();
