@@ -78,9 +78,33 @@ strings and WebAssembly off, a null-prototype global and a 250 ms timeout per ev
   Dates, `undefined` (also inside arrays and objects), `NaN`, `Infinity` and `-0` as themselves, a BigInt as a string and a
   function as `undefined`. An error thrown by an expression is read inside the realm; one that escapes it (the timeout, a
   stack overflow) is reported without reading the thrown value.
-- **Remaining risks**: a V8 or `vm` bug (the realm is a context in the host process, not a process boundary), and memory
-  exhaustion inside the 250 ms window. A stricter isolate backend is planned; until then, an instance that lets
-  untrusted people write expressions should also keep the production profile's other limits in place.
+- **Remaining risks** (realm): a V8 or `vm` bug (the realm is a context in the host process, not a process boundary), and
+  memory exhaustion inside the 250 ms window. For an instance that lets untrusted people write expressions, choose the
+  isolate backend below.
+
+### The isolate backend (optional)
+
+`LANDFLOW_EXPRESSION_SANDBOX=isolate` runs the same bootstrap and bridge in an [isolated-vm](https://github.com/laverdet/isolated-vm)
+isolate ([`sandbox/isolate.ts`](../../packages/engine/src/sandbox/isolate.ts)) instead of a `node:vm` context. The default
+stays `realm`.
+
+- **What changes**: one isolate per process with its own V8 heap capped at `LANDFLOW_EXPRESSION_MEMORY_MB` (default 64), and a
+  context per resolver. A V8 bug inside an expression now reaches an isolate, not the host's heap, and an expression that
+  exhausts memory fails with "The expression used more than N MB of memory": the isolate is disposed and rebuilt, the
+  process keeps running (the resolvers that shared it get a fresh context on their next evaluation). Semantics (V8, `Intl`),
+  the 250 ms timeout, the tagged-JSON results and the `async`/`import(` refusal are the realm's, and the whole realm test
+  suite runs against it. It was faster than the realm in the benchmark (`test/expression-isolate.test.ts`).
+- **One guard on top**: V8 aborts the process when a single allocation is larger than the heap limit, before isolated-vm can
+  end the isolate, so in an isolate `Array.prototype.fill` and `join` on an array longer than 32,768 times the cap in MB
+  elements, and `String.prototype.repeat`, `padStart` and `padEnd` past 262,144 times the cap in characters, throw a
+  `RangeError` (as an oversized one does anyway). Everything that grows in steps reaches the cap and ends the isolate.
+- **When to choose it**: people you do not trust write workflows or expressions (shared instances, builders you do not
+  review), or a memory bomb in an expression must not take a worker down. Keep `realm` otherwise.
+- **Requirements**: `isolated-vm` is an optional dependency of `@landflow/engine` (a native addon: an install without a
+  prebuilt binary or a compiler skips it and the realm keeps working) and needs `NODE_OPTIONS=--no-node-snapshot` on
+  Node 20+ in every process that evaluates expressions: `next start`, `pnpm worker`, the Docker image (set there). Where it
+  cannot load, the production profile refuses to start and development logs a warning and uses the realm
+  ([deployment.md](../deployment.md#expression-sandbox)). The cap is for the process, not per expression.
 
 ## Triggers and flow nodes
 

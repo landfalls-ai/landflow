@@ -1424,6 +1424,9 @@ workbench in place of a page of cards, keeping Spotlight.
     updates at desktop and 390 px, Spotlight and Agent architect streams, an approvals stream, a revoked member's stream
     and a reconnect to another main; `pnpm dev` with a `pnpm worker` recording insights and usage and pruning, a dev
     edit of a singleton-held class, and no concurrent marketplace sync across two graphs.
+- **P30** (S1, strict mode): `LANDFLOW_EXPRESSION_SANDBOX=isolate` runs expressions in an isolated-vm isolate with a memory
+  cap (`LANDFLOW_EXPRESSION_MEMORY_MB`), sharing the realm's bootstrap and bridge; `realm` stays the default. Optional
+  dependency of the engine, `NODE_OPTIONS=--no-node-snapshot` in the image, refused at boot in production when it cannot load.
 
 ## Planned next
 
