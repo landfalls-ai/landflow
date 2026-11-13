@@ -29,7 +29,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   if (!body.ok) return body.response;
   const user = currentPrincipal()?.user;
   try {
-    const check = resolveCheck(id, record.workflowId, body.data, user?.name || user?.email || user?.id || 'a person');
+    const check = await resolveCheck(id, record.workflowId, body.data, user?.name || user?.email || user?.id || 'a person');
     return json({ check });
   } catch (caught) {
     if (caught instanceof CheckError) return error(caught.message, caught.status);

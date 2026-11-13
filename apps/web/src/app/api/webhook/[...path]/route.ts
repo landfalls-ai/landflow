@@ -27,6 +27,7 @@ import { recordWebhookRequest, startTrigger } from '@/lib/server/telemetry';
 import { runStream, streamFormatOf } from '@/lib/server/streaming';
 import { checkWebhookAuth } from '@/lib/server/webhook-auth';
 import { answerWebhook, deferred, replayedResponse, requestItem, type RespondMode } from '@/lib/server/webhooks';
+import { promoteExecution } from '@/lib/server/db/reads';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ path: string[] }> };
@@ -57,6 +58,7 @@ async function handle(request: Request, { params }: Ctx) {
   const earlier = idempotencyKey ? findIdempotent(workflow.id, idempotencyKey) : undefined;
   if (earlier) {
     recordWebhookRequest(200, workflow.id);
+    await promoteExecution(earlier);
     return replay(earlier);
   }
   // Uploaded files are stored under the run's id before it starts; they go if it never does.

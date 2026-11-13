@@ -3,8 +3,9 @@
  * with `resolution`, so the run's report and the needs-you list stop counting it.
  */
 import type { JournalEvent, RunCheck } from '../../shared/run-trace';
+import { promoteExecution } from '../db/reads';
 import { journalOf, liveJournal, releaseJournal } from './writer';
-import { read } from './store';
+import { readEventsAsync } from './store';
 
 export interface CheckDecision {
   spanId: string;
@@ -25,10 +26,10 @@ export class CheckError extends Error {
 }
 
 /** The latest check event named `name` in `spanId` (about `subject`, when given), found by reading the execution's journal. */
-function latestCheck(executionId: string, spanId: string, name: string, subject?: string): Extract<JournalEvent, { type: 'check' }> | undefined {
+async function latestCheck(executionId: string, spanId: string, name: string, subject?: string): Promise<Extract<JournalEvent, { type: 'check' }> | undefined> {
   let found: Extract<JournalEvent, { type: 'check' }> | undefined;
   for (let after = 0; ; ) {
-    const page = read(executionId, after, 1000);
+    const page = await readEventsAsync(executionId, after, 1000);
     for (const event of page) {
       if (event.type === 'check' && event.spanId === spanId && event.check.name === name && (subject === undefined || event.check.subject === subject)) found = event;
     }
@@ -37,9 +38,13 @@ function latestCheck(executionId: string, spanId: string, name: string, subject?
   }
 }
 
-/** Write the decision. Returns the stored check. */
-export function resolveCheck(executionId: string, workflowId: string, input: CheckDecision, by: string): RunCheck {
-  const original = latestCheck(executionId, input.spanId, input.name, input.subject);
+/**
+ * Write the decision. Returns the stored check. The run may be an old one (Postgres mode keeps a finished run's journal
+ * out of the in-memory copy): it is loaded back first, so the new event is numbered after the stored ones.
+ */
+export async function resolveCheck(executionId: string, workflowId: string, input: CheckDecision, by: string): Promise<RunCheck> {
+  await promoteExecution(executionId);
+  const original = await latestCheck(executionId, input.spanId, input.name, input.subject);
   if (!original) throw new CheckError('No such check in that span', 404);
   if (original.check.resolution) throw new CheckError('Already settled', 409);
   if (original.check.status !== 'fail') throw new CheckError('Only a failed check needs a decision', 409);

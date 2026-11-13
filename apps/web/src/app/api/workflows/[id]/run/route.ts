@@ -23,6 +23,7 @@ import { DuplicateRunError, findTrigger, liveExecution, newExecutionId, planReru
 import { workflowSchema } from '@/lib/server/schemas';
 import { store } from '@/lib/server/store';
 import { startTrigger, traceparentHeader, type TriggerFire } from '@/lib/server/telemetry';
+import { promoteExecution } from '@/lib/server/db/reads';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
@@ -73,6 +74,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   let trigger: TriggerFire | undefined;
   if (body.data.rerun) {
     try {
+      await promoteExecution(body.data.rerun.executionId);
       plan = planRerun(body.data.rerun.executionId, body.data.rerun, workflow);
     } catch (caught) {
       if (caught instanceof RerunError) return error(caught.message, caught.status);
