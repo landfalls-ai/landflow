@@ -634,7 +634,11 @@ describe('on Claude Code', () => {
     expect(refused.data.error).toMatch(/^Claude Code runs Anthropic models, or Ollama ones/);
 
     const unknown = publishedAgent({ ...CONFIG, plugins: ['ghost@nowhere'] });
+    // Resolving an unknown marketplace first reads the ones never fetched (the built-in Anthropic one): keep that offline,
+    // or the real catalog lands in the data directory other test files share.
+    const offline = vi.spyOn(marketplace, 'catalog').mockRejectedValue(new Error('offline in tests'));
     const unresolved = await call<{ error: string }>(kagentRoute.PUT, unknown.id, 'PUT', { credentialId: cluster.id, name: 'ghost', harness: 'landflow-claude' });
+    offline.mockRestore();
     expect(unresolved).toMatchObject({ status: 400, data: { error: 'The plugin ghost@nowhere is in no added marketplace: add “nowhere” on the Marketplace page' } });
     expect(written()).toEqual([]);
     // kagent's own runtime doesn't use plugins, so it doesn't resolve them.

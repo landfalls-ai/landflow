@@ -23,6 +23,15 @@ import { marketplaceStore } from '@/lib/server/marketplace/store';
 import { localTemplates } from '@/lib/server/templates/store';
 import type { ExploreResult, InstallConfirmation, InstallResult } from '@/lib/shared/marketplace';
 
+// Its own data directory, set before the imports above run: in the shared one (vitest.config.ts) another file's
+// marketplace state (the fetched Anthropic catalog, other marketplaces) made the list and explore tests flaky.
+await vi.hoisted(async () => {
+  const { mkdtempSync: makeDir } = await import('node:fs');
+  const { tmpdir: tmp } = await import('node:os');
+  const { join: joinPath } = await import('node:path');
+  process.env.LANDFLOW_DATA_DIR = makeDir(joinPath(tmp(), 'landflow-marketplace-'));
+});
+
 describe('frontmatter', () => {
   it('reads Claude Code agent files', () => {
     const { data, body } = parseFrontmatter(`---
