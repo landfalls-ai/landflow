@@ -4,8 +4,10 @@
  * documented default instead of NaN reaching a timer. The `env*` readers read `process.env` at call time, never at
  * import, so a test or a late `process.env` change is seen.
  *
- * This module imports nothing from the host except the logger, loaded lazily, so any module can import config.
+ * This module imports nothing from the host except the catalog (plain data) and the logger, loaded lazily, so any module
+ * can import config.
  */
+import { catalogEntry } from './catalog';
 
 export interface ConfigIssue {
   name: string;
@@ -95,6 +97,18 @@ export function url(value: string | undefined, name?: string): string | undefine
 }
 
 export const envString = (name: string): string | undefined => process.env[name]?.trim() || undefined;
+
+/**
+ * A catalogued variable's value, else the first of its deprecated aliases (catalog `aliases`) that is set. An empty or
+ * blank value counts as unset, so `LANDFLOW_X=` from a compose `${VAR:-}` does not hide an old name that is set.
+ */
+export function envWithAliases(name: string): string | undefined {
+  for (const candidate of [name, ...(catalogEntry(name)?.aliases ?? [])]) {
+    const value = envString(candidate);
+    if (value) return value;
+  }
+  return undefined;
+}
 export const envFlag = (name: string, fallback: boolean): boolean => flag(process.env[name], fallback, name);
 export const envNumber = (name: string, options: Omit<NumberOptions, 'name'>): number => number(process.env[name], { ...options, name });
 export const envInt = (name: string, options: Omit<NumberOptions, 'name'>): number => int(process.env[name], { ...options, name });

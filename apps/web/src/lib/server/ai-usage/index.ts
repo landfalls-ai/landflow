@@ -15,12 +15,13 @@
  * model's cache prices (./prices.ts).
  *
  * A call is refused once a cap is reached, and a call that goes over one stops the run with a
- * UsageCapError. Rows are kept for AI_USAGE_RETENTION_DAYS (default 400).
+ * UsageCapError. Rows are kept for LANDFLOW_AI_USAGE_RETENTION_DAYS (default 400).
  */
 import { nanoid } from 'nanoid';
 import type { WorkflowSettings } from '@landflow/engine';
 import type { AgentSettings } from '../../shared/agents';
 import { EMPTY_USAGE, type AiCaps, type AiModelUsage, type AiUsageReport, type AiUsageTotals, type ExecutionAiUsage, type UsageCapSet } from '../../shared/ai-usage';
+import { envWithAliases } from '../config';
 import { database, type Database, type SqlValue } from '../db';
 import { logger } from '../telemetry/logger';
 import { recordUsage } from '../usage/ledger';
@@ -72,6 +73,9 @@ const totalsOf = (row: SumRow | undefined): AiUsageTotals => ({
 const SUMS =
   'COALESCE(SUM(input_tokens), 0) AS input, COALESCE(SUM(output_tokens), 0) AS output, COALESCE(SUM(cache_read_tokens), 0) AS cache_read, COALESCE(SUM(cache_write_tokens), 0) AS cache_write, COALESCE(SUM(cost), 0) AS cost, COUNT(*) AS calls';
 
+/** Days per-call AI usage rows are kept: LANDFLOW_AI_USAGE_RETENTION_DAYS (the old AI_USAGE_RETENTION_DAYS still works), default 400. */
+export const aiUsageRetentionDays = (): number => Number(envWithAliases('LANDFLOW_AI_USAGE_RETENTION_DAYS')) || 400;
+
 /** Prices calls and writes them to `ai_usage`. One per process; tests can make their own over another database. */
 export class AiUsageMeter implements UsageMeter {
   private prices?: { at: number; overrides: ReturnType<typeof priceOverrides> };
@@ -81,7 +85,7 @@ export class AiUsageMeter implements UsageMeter {
   constructor(
     private readonly db: () => Database = database,
     private readonly timezone: () => string = instanceTimezone,
-    private readonly retentionDays = Number(process.env.LANDFLOW_AI_USAGE_RETENTION_DAYS ?? process.env.AI_USAGE_RETENTION_DAYS) || 400,
+    private readonly retentionDays = aiUsageRetentionDays(),
   ) {}
 
   cost(call: { provider: string; model: string; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number }): number {

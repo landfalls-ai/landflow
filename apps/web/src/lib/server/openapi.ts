@@ -1863,7 +1863,7 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Second brain',
     id: 'usageReport',
     summary: 'A grouped report of the usage ledger',
-    description: '`groupBy`: day, kind, workflow, nodeType, signature, agent, model or attr (default kind; attr needs `groupAttr`, and reads the raw events). `kinds` takes custom kinds too (work.ticket_moved). Counts, failures, durations, items, tokens and cost per group; windows past USAGE_RETENTION_DAYS read the daily rollups. Members see the workflows and agents they can open.',
+    description: '`groupBy`: day, kind, workflow, nodeType, signature, agent, model or attr (default kind; attr needs `groupAttr`, and reads the raw events). `kinds` takes custom kinds too (work.ticket_moved). Counts, failures, durations, items, tokens and cost per group; windows past LANDFLOW_USAGE_RETENTION_DAYS read the daily rollups. Members see the workflows and agents they can open.',
     query: [{ name: 'groupBy', description: 'What to group by', schema: { type: 'string', enum: ['day', 'kind', 'workflow', 'nodeType', 'signature', 'agent', 'model', 'attr'] } }, text('groupAttr', 'For groupBy=attr: the attribute to group by, such as team'), text('attr.<name>', 'Only events whose attribute <name> equals the value, such as attr.team=billing'), ...usageQuery],
     responses: { 200: reply('The report', object({ from: { type: 'string' }, to: { type: 'string' }, groupBy: { type: 'string' }, rows: array({ type: 'object' }), totals: { type: 'object' } }, ['rows', 'totals'])) },
   });

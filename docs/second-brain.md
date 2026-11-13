@@ -61,7 +61,7 @@ attributes.
 - **Backfill**: on the first start, the ledger fills once from the executions still on disk (the newest 2,000), the
   `ai_usage` rows and the audit events of the retention window.
 - **Rollups**: `usage_daily` has rollups per day, kind, workflow, node type, signature and agent, and is kept 400 days.
-  Raw events are kept `USAGE_RETENTION_DAYS` (90). A report over a longer window reads the rollups.
+  Raw events are kept `LANDFLOW_USAGE_RETENTION_DAYS` (90). A report over a longer window reads the rollups.
 - **Off switch**: `LANDFLOW_BRAIN=false` stops recording and the brain.
 
 ### 2. Memory: profiles and facts
@@ -351,7 +351,7 @@ shows up in the ledger and can start other flows.
   are about.
 - **Reports** take custom kinds in the `kinds` filter. `groupBy=attr&groupAttr=team` gives "tickets moved per team",
   and `attr.team=billing` keeps matching events. Both read the raw events (the daily rollups keep no attributes), so
-  they reach back `USAGE_RETENTION_DAYS`; the rollups themselves count a custom kind like any other.
+  they reach back `LANDFLOW_USAGE_RETENTION_DAYS`; the rollups themselves count a custom kind like any other.
 - **The `work.*` kinds** the activity integrations suggest (`work.discussion`, `work.doc_edited`, `work.meeting_held`,
   `work.deal_moved`…) are catalogued in `deploy/brain/work-kinds.json` with one shared set of fields (`source`,
   `sourceId`, `url`, `actor`, `title`, `summary`, `team`, `initiative`, `customer`, `occurredAt`). `pnpm brain:work-kinds

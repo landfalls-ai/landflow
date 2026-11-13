@@ -14,7 +14,7 @@ const CONFIG_DIR = join(SRC, 'lib', 'server', 'config');
 const PAGE = join(__dirname, '..', '..', '..', 'docs', 'reference', 'configuration.md');
 
 /** Files that read `process.env` outside lib/server/config today. Lower it when a reader moves into config; never raise it. */
-const MAX_FILES_READING_PROCESS_ENV = 88;
+const MAX_FILES_READING_PROCESS_ENV = 86;
 
 function sources(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {

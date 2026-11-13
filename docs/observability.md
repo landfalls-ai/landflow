@@ -449,7 +449,7 @@ the call may start, then prices and records what it used.
 - **Storage**: one row per call in `ai_usage` (migration 400: time, day in the instance time zone,
   execution, workflow, agent, session, provider, model, operation, tokens, cost; migration 1821 adds
   `cache_read_tokens`, `cache_write_tokens`, `user_id` (who started the run) and `credential_id`), kept
-  `AI_USAGE_RETENTION_DAYS` (default 400). An execution record carries its own totals per model
+  `LANDFLOW_AI_USAGE_RETENTION_DAYS` (default 400; the old `AI_USAGE_RETENTION_DAYS` still works). An execution record carries its own totals per model
   (`aiUsage`), earlier segments included when it resumed after a wait; sub-executions keep their
   own. Calls outside executions and agents (the editor assistant, the AI builder) aren't counted.
 - **Where it shows**: the execution view (tokens, cost and calls per model), Insights (a cost

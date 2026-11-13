@@ -68,11 +68,11 @@ filesystem access causes tracing of the whole project".
   table also goes in `TABLES` (its primary key) in the same file.
 - **Environment variables** go in the catalog first: add an entry to `CONFIG_CATALOG` in
   `apps/web/src/lib/server/config/catalog.ts` (default and description as the page shows them, group, `secret`,
-  `profile`, `readBy`, `aliases`), read it with `envFlag` / `envNumber` / `envInt` / `envString` / `envUrl` from
+  `profile`, `readBy`, `aliases`), read it with `envFlag` / `envNumber` / `envInt` / `envString` / `envUrl` (`envWithAliases` for a renamed one) from
   `lib/server/config`, and run `pnpm --filter @landflow/web gen:config-docs` to regenerate
   [reference/configuration.md](reference/configuration.md). `test/config-catalog.test.ts` fails on a name the source
   reads that is not catalogued, on a stale page, and when more files read `process.env` directly than
-  `MAX_FILES_READING_PROCESS_ENV` allows (88; lower it when a reader moves into config, never raise it).
+  `MAX_FILES_READING_PROCESS_ENV` allows (86; lower it when a reader moves into config, never raise it).
 - **Errors**: a route (or the store below it) throws an `HttpError` (`lib/server/errors.ts`: `(message, status = 400,
   { code?, details?, cause?, expose? })`) and does not catch it to build a response: `handler()` answers it as
   `{ error, code, …details }`. Give a domain error its own class (`class OutOfStockError extends HttpError`, same

@@ -1,6 +1,6 @@
 /**
  * The ledger's first fill, once per database: the executions still on disk (the newest 2,000), the AI usage rows and the
- * audit events of the last USAGE_RETENTION_DAYS. Backfilled events have ids derived from their source, so running it again
+ * audit events of the last LANDFLOW_USAGE_RETENTION_DAYS. Backfilled events have ids derived from their source, so running it again
  * adds nothing; `meta` remembers it ran.
  */
 import type { AuditEvent } from '../../shared/audit';
