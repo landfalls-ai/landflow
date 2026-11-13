@@ -6,7 +6,7 @@
  * no session, and the sessions they had stop working.
  */
 import { recordAudit } from '../audit';
-import { isProduction } from '../config';
+import { envNumber, isProduction } from '../config';
 import { authDb } from './db';
 import { randomToken, tokenHash } from './passwords';
 import { getUser, updateUser, UserError, type UserRecord } from './users';
@@ -45,10 +45,9 @@ export function sessionTtlHours(): number {
 
 /** LANDFLOW_SESSION_IDLE_HOURS: a session unused this long is refused (default 72 in production, off in development; 0 = off). */
 export function sessionIdleHours(): number {
-  const raw = process.env.LANDFLOW_SESSION_IDLE_HOURS;
-  const configured = raw === undefined || raw.trim() === '' ? NaN : Number(raw);
-  if (Number.isFinite(configured) && configured >= 0) return Math.min(configured, 24 * 365);
-  return isProduction() ? 72 : 0;
+  // Unset, invalid (recorded as a config issue) or negative: the profile's default.
+  const configured = envNumber('LANDFLOW_SESSION_IDLE_HOURS', { fallback: NaN, max: 24 * 365 });
+  return Number.isFinite(configured) && configured >= 0 ? configured : isProduction() ? 72 : 0;
 }
 
 /** Start a session for `user`: returns the cookie token (shown nowhere else) and when it expires. */

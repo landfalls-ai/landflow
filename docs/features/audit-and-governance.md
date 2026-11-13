@@ -47,7 +47,10 @@ inside a larger transaction: a swallowed failure leaves no partial rows and no f
   Where the change is a database write, it and its event share one `auditedTransaction()`, so the insert joins it and a
   failure rolls both back. Credentials live in the files config store, which is no transaction: update and delete record
   the event first and refuse the change if that fails; create needs the new id, so it creates, records, and deletes the
-  credential again if the event fails. SCIM user creation does the same (the user is deleted again).
+  credential again if the event fails. SCIM user creation does the same (the user is deleted again). Encryption key
+  rotation (`encryption.rotate`, route and script) and password changes (`auth.password_change`) are recorded fail-open
+  on purpose: rotation is idempotent and reports what it re-sealed, and a person changing their own password must not be
+  locked out by an audit outage.
 - **Off**, behaviour is as before: the failure is logged and counted and the change goes on. Everything else (sign-ins,
   workflow events, credential use in runs) is never required, in either mode.
 

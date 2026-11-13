@@ -18,7 +18,8 @@ interface Instruments {
   deliveryFailures: Counter;
 }
 
-let cached: { provider: MeterProvider; instruments: Instruments } | undefined;
+/** Held in singleton(): a module graph reloaded under `pnpm dev` must not register the outbox gauges again. */
+const cache = () => singleton('audit-metrics', () => ({ current: undefined as { provider: MeterProvider; instruments: Instruments } | undefined }));
 
 /** The oldest queued row's age and the queue's depth, over every destination (or one). */
 export function outboxHealth(destinationId?: string, now = Date.now()): { depth: number; oldestAgeSeconds: number } {
@@ -44,18 +45,19 @@ export function ensureAuditMetrics() {
 
 function instruments(): Instruments {
   const provider = metrics.getMeterProvider();
-  if (cached?.provider === provider) return cached.instruments;
+  const held = cache();
+  if (held.current?.provider === provider) return held.current.instruments;
   const meter = provider.getMeter(SCOPE, telemetryConfig.serviceVersion);
   meter.createObservableGauge('landflow.audit.outbox.depth', { description: 'Audit events queued for SIEM destinations and not yet delivered' }).addCallback((result) => result.observe(outboxHealth().depth));
   meter.createObservableGauge('landflow.audit.outbox.oldest_age', { description: 'Age of the oldest undelivered audit outbox row', unit: 's' }).addCallback((result) => result.observe(outboxHealth().oldestAgeSeconds));
-  cached = {
+  held.current = {
     provider,
     instruments: {
       writeFailures: meter.createCounter('landflow.audit.write_failures', { description: 'Audit events that could not be stored, by action' }),
       deliveryFailures: meter.createCounter('landflow.audit.outbox.delivery_failures', { description: 'Failed deliveries of audit events to SIEM destinations, by destination' }),
     },
   };
-  return cached.instruments;
+  return held.current.instruments;
 }
 
 const tally = () => singleton('audit-failure-tally', () => ({ writes: new Map<string, number>(), deliveries: new Map<string, number>() }));

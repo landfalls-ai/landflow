@@ -90,6 +90,7 @@ export function checkConfig(env: NodeJS.ProcessEnv = process.env): ConfigCheck {
     for (const entry of CONFIG_CATALOG) {
       if (!entry.profile || set(entry.name)) continue;
       if (entry.waivedBy && flag(env[entry.waivedBy], false)) continue;
+      if (entry.satisfiedBy && set(entry.satisfiedBy)) continue;
       const message = `${entry.name} is not set: ${entry.productionNote}`;
       (entry.profile === 'required-in-production' ? errors : warnings).push(message);
     }

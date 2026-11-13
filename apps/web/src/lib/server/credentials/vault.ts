@@ -381,8 +381,15 @@ export class CredentialVault {
         continue;
       }
       try {
-        credential.data = this.seal(this.open(credential), credential.id);
-        this.persist({ saved: credential });
+        // A new object, put back only if the write fails: the copy in memory never runs ahead of what is stored.
+        const resealed: StoredCredential = { ...credential, data: this.seal(this.open(credential), credential.id) };
+        this.credentials.set(credential.id, resealed);
+        try {
+          this.persist({ saved: resealed });
+        } catch (error) {
+          this.credentials.set(credential.id, credential);
+          throw error;
+        }
         result.resealed += 1;
       } catch {
         result.failed.push(credential.id);

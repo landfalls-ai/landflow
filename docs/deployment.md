@@ -148,6 +148,9 @@ sets its own secrets and public URL.
 on **every** process (in queue mode: every main and worker, before anything else), then run `POST /api/settings/encryption/rotate`
 as the owner (or `pnpm --filter @landflow/web rotate-key` on a stopped host), and remove an old key only after it answers
 `done: true`. The steps are in [secrets and environments](features/secrets-and-environments.md#encryption-keys-and-rotation).
+The bundled setups pass the ring through, empty by default: `LANDFLOW_ENCRYPTION_KEYS` in `deploy/compose.yml`,
+`LANDFLOW_QUEUE_ENCRYPTION_KEYS` in `deploy/compose.queue.yml` (every main and worker), and the optional
+`encryption-keys` key of the `landflow-host` secret (or `landflow-queue` in queue mode) in Kubernetes.
 
 ## Behind a reverse proxy or ingress
 

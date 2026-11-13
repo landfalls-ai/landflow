@@ -68,8 +68,10 @@ starts its own `registry.register` trace.
 **Read-only API requests** (`GET`/`HEAD`/`OPTIONS`, which the UI polls) are sampled when they
 end: the trace is kept, whole, when the request took at least `LANDFLOW_TRACE_SLOW_READ_MS`
 (default 1000) or ended in a 5xx, and dropped otherwise. The host holds a read's finished spans
-(at most 500, for at most five minutes) until its server span ends, so a slow read still shows its
-database and plugin spans. Only the spans that descend from the read's server span are held; other spans of a
+(at most 500) until its server span ends, so a slow read still shows its database and plugin spans. A descendant
+still open when the read ends follows the verdict; once the read and its descendants have ended the read is freed, so a
+span started later under its context is exported on its own. A read in flight for over five minutes, or the oldest past
+5,000 in flight, is forgotten and its spans export on their own. Only the spans that descend from the read's server span are held; other spans of a
 trace the read joined through a `traceparent` (a plugin fetching a binary during a run) export as usual. A kept
 server span carries `landflow.trace.deferred_read`. Before this, no read was ever traced, so a slow `GET` was invisible.
 

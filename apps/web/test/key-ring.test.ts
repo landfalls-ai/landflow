@@ -126,6 +126,18 @@ describe('key ring', () => {
     expect(moved).toEqual({ resealed: 1, current: 0, failed: ['cred_b'] });
   });
 
+  it('a credential whose write fails during rotation is reported and keeps its stored seal in memory', () => {
+    const { rows, backend } = memoryBackend([stored('cred_w', { token: 'www' })]);
+    const before = rows.get('cred_w')!.data;
+    const failing = { ...backend, save: () => { throw new Error('disk full'); } };
+    const vault = new CredentialVault({ dir: dataDir, backend: failing });
+    expect(vault.rotateCredentials()).toEqual({ resealed: 0, current: 0, failed: ['cred_w'] });
+    // Still the v1 value the store holds, so the next rotation (once the disk has room) re-seals it.
+    const inner = vault as unknown as { credentials: Map<string, StoredCredential> };
+    expect(inner.credentials.get('cred_w')!.data).toEqual(before);
+    expect(vault.rotateCredentials().failed).toEqual(['cred_w']);
+  });
+
   it('rotation re-seals every other store, skips what is current and reports what it can not open', () => {
     const db = database();
     const v1 = sealV1('smtp-password');

@@ -53,6 +53,8 @@ spec:
               valueFrom: { secretKeyRef: { name: landflow-registry, key: secret, optional: true } }
             - name: LANDFLOW_ENCRYPTION_KEY # unset: generated into /data/encryption.key on first use
               valueFrom: { secretKeyRef: { name: landflow-host, key: encryption-key, optional: true } }
+            - name: LANDFLOW_ENCRYPTION_KEYS # the key ring for rotation (kid:key, the new key first); unset: the key above only
+              valueFrom: { secretKeyRef: { name: landflow-host, key: encryption-keys, optional: true } }
             - name: LANDFLOW_OWNER_EMAIL # the first owner, created at boot while there is no user
               valueFrom: { secretKeyRef: { name: landflow-host, key: owner-email, optional: true } }
             - name: LANDFLOW_OWNER_PASSWORD

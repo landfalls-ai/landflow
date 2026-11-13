@@ -139,7 +139,8 @@ session; people read it before they start a feature too.
   event is a fallback, not coverage. A high-value change (roles, API keys, credentials, audit settings, SCIM
   provisioning) records its event as required: inside `auditedTransaction()` when the change is database writes (the
   event joins the transaction) or through `auditedChange()` when it is not, so `LANDFLOW_AUDIT_FAIL_CLOSED=true`
-  refuses it with 503 (`AuditUnavailableError`) when the event cannot be stored. A failed audit write is counted
+  refuses it with 503 (`AuditUnavailableError`) when the event cannot be stored (key rotation and a person's own
+  password change stay fail-open on purpose; a new high-value action is added to the list deliberately). A failed audit write is counted
   (`landflow.audit.write_failures`, `lib/server/audit/metrics.ts`), never only logged.
 - **Secrets stay secret.** Never put a credential value, token or key in a log line, error message, span attribute,
   audit detail or run data. Logs redact by key name (`SECRET_KEY` in `lib/server/telemetry/config.ts`), `$secrets`

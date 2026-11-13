@@ -1299,8 +1299,8 @@ workbench in place of a page of cards, keeping Spotlight.
   - a refused join raises a `plugin.error` toast naming the real plugin, so in development anyone can raise toasts by
     announcing repeatedly (low impact, development only);
   - HSTS, the cookies' `Secure` flag, the OAuth2 callback, the hosted chat page and the same-origin check read
-    `X-Forwarded-Proto` / `-Host` whatever `LANDFLOW_TRUSTED_PROXIES` says; gating them on the hop count belongs with
-    P24 (sessions) and P27;
+    `X-Forwarded-Proto` / `-Host` whatever `LANDFLOW_TRUSTED_PROXIES` says (P24's same-origin check `crossSite()`
+    included); gating them on the hop count belongs with P27;
   - live checks no automated test covers: Go and Python SDK announces with the registry secret over HTTP and gRPC and
     the gRPC registry's UNAUTHENTICATED / UNAVAILABLE answers; a production resume by curl with and without `sig`; a
     multi-page form in a browser; client addresses behind a real ingress; a signed-in pass under the enforced CSP
