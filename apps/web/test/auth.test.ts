@@ -7,7 +7,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
 const dataDir = mkdtempSync(join(tmpdir(), 'landflow-auth-'));
@@ -27,6 +27,7 @@ const { isPublicPath, safeNext } = await import('@/lib/shared/auth-paths');
 const { can, canManageUser, hasScope } = await import('@/lib/shared/auth');
 const { proxy } = await import('@/proxy');
 const { queryEvents } = await import('@/lib/server/audit/store');
+const { hostMetrics } = await import('@/lib/server/telemetry/metrics');
 
 const statusRoute = await import('@/app/api/auth/status/route');
 const setupRoute = await import('@/app/api/auth/setup/route');
@@ -166,6 +167,24 @@ describe('sign-in, sessions and sign-out', () => {
     const me = await call(meRoute.GET, '/api/auth/me', { session: token });
     expect(me.status).toBe(200);
     expect(me.body).toMatchObject({ user: { id: ownerId, role: 'owner' }, via: 'session' });
+  });
+
+  it('counts each failed sign-in once (landflow.auth.sign_in_failures), and nothing for a good one or the other forms', async () => {
+    // The counter is inferred from hits on the `email` limiter, so only the login route may hit it, once per failure.
+    const counted = vi.spyOn(hostMetrics().signInFailures, 'add');
+    try {
+      expect((await call(loginRoute.POST, '/api/auth/login', { body: { email: 'olive@example.com', password: 'nope-nope-2' } })).status).toBe(401);
+      expect(counted).toHaveBeenCalledTimes(1);
+      expect((await call(loginRoute.POST, '/api/auth/login', { body: { email: 'nobody-2@example.com', password: 'whatever1' } })).status).toBe(401);
+      expect(counted).toHaveBeenCalledTimes(2);
+      await signIn(OWNER.email, OWNER.password);
+      await call(forgotRoute.POST, '/api/auth/password/forgot', { body: { email: OWNER.email } });
+      await call(resetRoute.POST, '/api/auth/password/reset', { body: { token: 'not-a-token', password: 'another-password-1' } });
+      await call(setupRoute.POST, '/api/auth/setup', { body: { ...OWNER, email: 'third@example.com' } });
+      expect(counted).toHaveBeenCalledTimes(2);
+    } finally {
+      counted.mockRestore();
+    }
   });
 
   it('marks the cookie Secure behind https', async () => {
