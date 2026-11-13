@@ -3,11 +3,19 @@
  * being dropped, writes are refused while it is blocked, connection errors never block, the spool is durable and
  * emptied on drain, LANDFLOW_PG_SKIP_BATCH sets a batch aside, and the health report.
  */
+import * as fs from 'node:fs';
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Pool, PoolClient } from 'pg';
+
+const fsSpy = vi.hoisted(() => ({ fdatasync: undefined as undefined | ((fd: number) => void) }));
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  fsSpy.fdatasync = vi.fn(actual.fdatasyncSync);
+  return { ...actual, fdatasyncSync: fsSpy.fdatasync };
+});
 import { Database, openSqliteConnection, StoreUnavailableError } from '@/lib/server/db/database';
 import { PostgresSink, replaySpool } from '@/lib/server/db/postgres';
 
@@ -120,17 +128,78 @@ describe('Postgres write queue', () => {
 
   it('syncs the spool at most every 100 ms in interval mode', async () => {
     const fake = fakePool();
-    vi.useFakeTimers();
+    const spy = fsSpy.fdatasync as unknown as ReturnType<typeof vi.fn>;
+    spy.mockClear();
     try {
       const { sink, db } = open(fake, undefined, { spoolFsync: 'interval' });
       put(db, 'a');
       put(db, 'b');
-      await vi.advanceTimersByTimeAsync(150);
-      vi.useRealTimers();
+      expect(spy).toHaveBeenCalledTimes(0);
+      await until(() => spy.mock.calls.length >= 1);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(spy).toHaveBeenCalledTimes(1);
+      spy.mockClear();
       await sink.close();
     } finally {
-      vi.useRealTimers();
+      spy.mockClear();
     }
+  });
+
+  it('does not touch the spool descriptor once close() has closed it', async () => {
+    const fake = fakePool();
+    // COMMIT is held until released, so the apply is still in flight when close() gives up waiting.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const query = fake.pool.query;
+    const client = await fake.pool.connect();
+    client.query = (async (text: string, values?: unknown[]) => {
+      if (text === 'COMMIT') await gate;
+      return (query as (t: string, v?: unknown[]) => Promise<unknown>)(text, values);
+    }) as typeof client.query;
+    const { sink, db } = open(fake, undefined, { closeFlushMs: 20 });
+    put(db, 'a');
+    await until(() => fake.statements.includes('BEGIN'));
+    await expect(sink.close()).rejects.toThrow(/not yet in Postgres/);
+    // The descriptor number is free again: an unrelated file gets it.
+    const other = join(dir(), 'other.txt');
+    fs.writeFileSync(other, 'keep me');
+    const fd = fs.openSync(other, 'r+');
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(fs.readFileSync(other, 'utf8')).toBe('keep me');
+    fs.closeSync(fd);
+  });
+
+  it('LANDFLOW_PG_SKIP_BATCH on the last batch of the spool records the sequence', async () => {
+    const fake = fakePool();
+    const d = dir();
+    const spool = join(d, 'q.jsonl');
+    fs.writeFileSync(spool, `${JSON.stringify({ seq: 1, ops: [{ op: 'upsert', table: 'meta', row: { key: 'one', value: '1' } }] })}\n${JSON.stringify({ seq: 2, ops: [{ op: 'upsert', table: 'meta', row: { key: 'bad', value: '1' } }] })}\n`);
+    process.env.LANDFLOW_PG_SKIP_BATCH = '2';
+    expect(await replaySpool(fake.pool, spool)).toBe(2);
+    expect(fake.applied).toEqual(['one']);
+    expect(fake.statements.filter((s) => s.startsWith('INSERT INTO meta')).length).toBe(3); // the row, the applied batch's seq, then seq 2
+    expect(existsSync(join(d, 'postgres-rejected-2.jsonl'))).toBe(true);
+  });
+
+  it('a replay whose grouped transaction fails applies the batches one by one', async () => {
+    const fake = fakePool();
+    const spool = join(dir(), 'q.jsonl');
+    const line = (seq: number, key: string) => JSON.stringify({ seq, ops: [{ op: 'upsert', table: 'meta', row: { key, value: '1' } }] });
+    fs.writeFileSync(spool, `${line(1, 'a')}\n${line(2, 'b')}\n`);
+    // Fails once (the grouped transaction), then everything applies.
+    let failed = false;
+    const query = fake.pool.query;
+    const client = await fake.pool.connect();
+    client.query = (async (text: string, values?: unknown[]) => {
+      if (!failed && text.startsWith('INSERT INTO meta') && values?.[0] === 'b') {
+        failed = true;
+        throw Object.assign(new Error('deadlock'), { code: '40P01' });
+      }
+      return (query as (t: string, v?: unknown[]) => Promise<unknown>)(text, values);
+    }) as typeof client.query;
+    expect(await replaySpool(fake.pool, spool)).toBe(2);
+    expect(fake.applied).toContain('b');
   });
 
   it('LANDFLOW_PG_SKIP_BATCH sets a batch aside in a rejected file and replays the rest', async () => {

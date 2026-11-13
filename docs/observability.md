@@ -207,7 +207,7 @@ histograms in **milliseconds** with buckets `1, 5, 10, 25, 50, 100, 250, 500, 10
 |---|---|---|
 | `landflow.db.write_queue.batches` | gauge | write batches not yet applied on Postgres |
 | `landflow.db.write_queue.oldest_age` | gauge (s) | age of the oldest of them |
-| `landflow.db.write_blocked` | gauge | 1 while Postgres rejects a batch and the store refuses writes (503) |
+| `landflow.db.write_blocked` | gauge | 1 while Postgres rejects a batch and the store refuses writes (`StoreUnavailableError`) |
 | `landflow.db.write_rejections` | counter | batches Postgres rejected with a non-connection error |
 | `landflow.db.write_retries` | counter | retries of a blocked batch |
 
