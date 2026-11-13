@@ -56,6 +56,9 @@ export const BOOTSTRAP_SOURCE = String.raw`(function () {
   freeze(promiseProto);
   delete g.Promise;
   delete g.WebAssembly;
+  // Finalizer callbacks run later on the host's event loop, outside any timeout (and a throw in one is an uncaughtException).
+  delete g.FinalizationRegistry;
+  delete g.WeakRef;
   delete Array.fromAsync;
   delete Atomics.waitAsync;
 

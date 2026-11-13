@@ -102,6 +102,26 @@ describe('sealed realm', () => {
     expect(resolver({ items: [{ json: { async: 1, import: 2 } }] }).evaluate('$json.async + $json.import', 0)).toBe(3);
   });
 
+  it('allows the words async and import inside strings, keys, templates, regexes and comments', () => {
+    const r = resolver({ items: [{ json: { mode: 'async', name: 'x', import: 5 } }] });
+    expect(r.evaluate('$json.mode === "async"', 0)).toBe(true);
+    expect(r.evaluate('"Your import finished: " + $json.name', 0)).toBe('Your import finished: x');
+    expect(r.evaluate('$json["import"]', 0)).toBe(5);
+    expect(r.evaluate('({ async: 1 }).async', 0)).toBe(1);
+    expect(r.evaluate('`import ${1} ${`async ${2}`}`', 0)).toBe('import 1 async 2');
+    expect(r.evaluate('/import/.test("x")', 0)).toBe(false);
+    expect(r.evaluate('1 // async note', 0)).toBe(1);
+    expect(r.evaluate('1 /* import( */ + 1', 0)).toBe(2);
+    expect(r.evaluate('({ import: 2 }).import', 0)).toBe(2);
+    expect(() => r.evaluate('`${import("fs")}`', 0)).toThrow(/"import" is not available/);
+    expect(() => r.evaluate('"a" + async function () {}', 0)).toThrow(/"async" is not available/);
+  });
+
+  it('has no FinalizationRegistry or WeakRef (their callbacks would run outside the timeout)', () => {
+    expect(resolver().evaluate('typeof FinalizationRegistry', 0)).toBe('undefined');
+    expect(resolver().evaluate('typeof WeakRef', 0)).toBe('undefined');
+  });
+
   it('times out an endless loop', () => {
     const started = Date.now();
     expect(() => resolver().evaluate('(() => { while (true) {} })()', 0)).toThrow(/timed out/);

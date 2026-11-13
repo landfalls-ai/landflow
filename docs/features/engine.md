@@ -63,9 +63,10 @@ strings and WebAssembly off, a null-prototype global and a 250 ms timeout per ev
   the language's own builtins. Data arrives lazily through one host function that takes and returns JSON text (the current
   item, all input items, one node's output, tool arguments, a secret the host fetched); the realm caches what it parsed
   for the life of the resolver, so an item is copied once however many parameters read it. Nothing the expression changes
-  (`$json.x = 1`, `Object.prototype.polluted = 1`) reaches the host's data or prototypes.
+  (`$json.x = 1`, `Object.prototype.polluted = 1`) reaches the host's data or prototypes. Items cross as JSON, so a host
+  `Date` an in-process node left in an item reads as an ISO string, and a BigInt or circular value fails the expression.
 - **What is not**: `process`, `require`, `globalThis.process`, the host's `Function` (`$json.constructor.constructor(...)` finds
-  the realm's own, which cannot compile), `eval`, `new Function`, `WebAssembly`, `import()`, and any Promise: `async`,
+  the realm's own, which cannot compile), `eval`, `new Function`, `WebAssembly`, `FinalizationRegistry`, `WeakRef` (their callbacks would run on the host's loop outside the timeout), `import()`, and any Promise: `async`,
   `await` and `import(` are refused in an expression's source, and the realm's promises are inert, because a rejected
   promise in any context is an unhandled rejection that ends the host process. `Error.prepareStackTrace` and
   `stackTraceLimit` are locked so a stack trace cannot expose host frames.

@@ -17,16 +17,107 @@ const EVAL_TIMEOUT_MS = 250;
 const scriptCache = new Map<string, vm.Script>();
 const bootstrap = new vm.Script(BOOTSTRAP_SOURCE, { filename: 'expression-bootstrap.js' });
 
+/** Words after which a `/` starts a regex literal, not a division. */
+const REGEX_AFTER = new Set(['return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw', 'case', 'do', 'else', 'yield', 'await']);
+const ID_CHAR = /[\p{ID_Continue}$\u200c\u200d]/u;
+
+type Token = { id: boolean; value: string };
+
+/** The identifiers and punctuation of an expression, with strings, template text, comments and regex literals skipped. */
+function tokens(code: string): Token[] {
+  const out: Token[] = [];
+  const braces: ('b' | 't')[] = []; // '{' of a block or object, or the '${' of a template
+  let i = 0;
+  const template = () => {
+    // inside template text, from just after a backtick or a closing `}` of a `${ }`
+    while (i < code.length) {
+      const c = code[i];
+      if (c === '\\') i += 2;
+      else if (c === '`') {
+        i++;
+        out.push({ id: false, value: '`' });
+        return;
+      } else if (c === '$' && code[i + 1] === '{') {
+        i += 2;
+        braces.push('t');
+        return;
+      } else i++;
+    }
+  };
+  while (i < code.length) {
+    const c = code[i];
+    if (/\s/.test(c)) i++;
+    else if (c === '/' && code[i + 1] === '/') {
+      while (i < code.length && code[i] !== '\n' && code[i] !== '\r' && code[i] !== '\u2028' && code[i] !== '\u2029') i++;
+    } else if (c === '/' && code[i + 1] === '*') {
+      const end = code.indexOf('*/', i + 2);
+      i = end < 0 ? code.length : end + 2;
+    } else if (c === '"' || c === "'") {
+      i++;
+      while (i < code.length && code[i] !== c) i += code[i] === '\\' ? 2 : 1;
+      i++;
+      out.push({ id: false, value: 'str' });
+    } else if (c === '`') {
+      i++;
+      template();
+    } else if (c === '/') {
+      const prev = out[out.length - 1];
+      const isRegex = !prev || (prev.id ? REGEX_AFTER.has(prev.value) : !(prev.value === ')' || prev.value === ']' || prev.value === '}' || prev.value === '`' || prev.value === 'str'));
+      if (isRegex) {
+        i++;
+        let inClass = false;
+        while (i < code.length && (inClass || code[i] !== '/') && code[i] !== '\n') {
+          if (code[i] === '\\') i++;
+          else if (code[i] === '[') inClass = true;
+          else if (code[i] === ']') inClass = false;
+          i++;
+        }
+        i++;
+        while (i < code.length && ID_CHAR.test(code[i])) i++; // flags
+        out.push({ id: false, value: 're' });
+      } else {
+        i++;
+        out.push({ id: false, value: '/' });
+      }
+    } else if (ID_CHAR.test(c)) {
+      const start = i;
+      while (i < code.length && ID_CHAR.test(code[i])) i++;
+      out.push({ id: true, value: code.slice(start, i) });
+    } else if (c === '.' && code.startsWith('...', i)) {
+      i += 3;
+      out.push({ id: false, value: '...' });
+    } else {
+      i++;
+      if (c === '{') braces.push('b');
+      else if (c === '}') {
+        if (braces.pop() === 't') {
+          template();
+          continue;
+        }
+      }
+      out.push({ id: false, value: c });
+    }
+  }
+  return out;
+}
+
 /**
  * `async` and `import(` need a Promise, and a rejected one in any context is an unhandled rejection of the host process
- * (which exits on it). Both are keywords, so they can't be written any other way: a name after a member `.` is fine
- * (`$json.async`), the spread `...async () => {}` is not a member access.
+ * (which exits on it). Only real keyword uses are refused: the words inside strings, templates, comments, regexes, as
+ * object keys (`{ async: 1 }`) and after a member `.` (`$json.async`) are ordinary text and pass. The spread
+ * `...async () => {}` is not a member access.
  */
 function refuseAsync(code: string): void {
-  for (const match of code.matchAll(/(?<![\w$])(async|import)(?![\w$])/g)) {
-    const before = code.slice(0, match.index).trimEnd();
-    if (before.endsWith('.') && !before.endsWith('...')) continue;
-    throw new Error(`"${match[1]}" is not available in expressions (async functions, await and import() are not supported)`);
+  const list = tokens(code);
+  for (let i = 0; i < list.length; i++) {
+    const token = list[i];
+    if (!token.id || (token.value !== 'async' && token.value !== 'import')) continue;
+    const prev = list[i - 1];
+    if (prev && !prev.id && prev.value === '.') continue;
+    const next = list[i + 1];
+    const keyword =
+      token.value === 'import' ? next?.value === '(' : !!next && (next.id || next.value === '(' || next.value === '[' || next.value === '*' || next.value === 'str');
+    if (keyword) throw new Error(`"${token.value}" is not available in expressions (async functions, await and import() are not supported)`);
   }
 }
 
