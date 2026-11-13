@@ -334,7 +334,7 @@ function IssueToken({ onCancel, onIssued }: { onCancel: () => void; onIssued: (t
           <div className="flex flex-wrap gap-3">
             {MCP_TOKEN_SCOPES.map((scope) => (
               <label key={scope} className="flex items-center gap-2 text-[13px] text-t2">
-                <input type="checkbox" checked={scopes.includes(scope)} onChange={() => toggle(scope)} className="accent-ac" />
+                <input type="checkbox" checked={scopes.includes(scope)} onChange={() => toggle(scope)} />
                 <code className="font-mono text-[12px] text-t1">{scope}</code>
                 <span className="text-t3">{MCP_TOKEN_SCOPE_LABELS[scope]}</span>
               </label>

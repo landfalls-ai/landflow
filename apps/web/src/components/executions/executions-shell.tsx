@@ -16,6 +16,7 @@ import { useLiveEvents } from '@/lib/client/live';
 import type { ExecutionSummary, NodeTypeInfo, Workflow } from '@/lib/shared/types';
 import { WorkflowTabs } from '../shell/workflow-tabs';
 import { Badge } from '../ui/badge';
+import { Switch } from '../ui/inputs';
 import { Popover } from '../ui/popover';
 import { RUN_STATE, RunStateIcon, formatStamp, runStateOf, statusText, useNow, type RunState } from '../run/run-status';
 import { ExecutionMarks } from './meta';
@@ -210,8 +211,8 @@ function Sidebar() {
             </Popover>
           </div>
         </div>
-        <label className="mt-2 flex w-fit cursor-pointer select-none items-center gap-2 text-[12px] text-t2">
-          <input type="checkbox" checked={auto} onChange={(e) => toggleAuto(e.target.checked)} className="size-3.5 cursor-pointer accent-ac2" />
+        <label className="mt-2 flex w-fit cursor-pointer select-none items-center gap-2 text-[12px] text-t2 max-md:min-h-11">
+          <Switch checked={auto} onChange={toggleAuto} label="Auto refresh" />
           Auto refresh
           {auto && <span className="size-1.5 rounded-full bg-gn animate-pulse-soft" />}
         </label>

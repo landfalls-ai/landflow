@@ -75,7 +75,7 @@ function CreateKey({ onCreated, onCancel }: { onCreated: (token: string, key: Ap
           <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
             {allowed.map((scope) => (
               <label key={scope} className={cn('flex cursor-pointer items-start gap-2 rounded-lg border px-2.5 py-2', scopes.includes(scope) ? 'border-acbd bg-acdim' : 'border-hair hover:bg-sf2')}>
-                <input type="checkbox" checked={scopes.includes(scope)} onChange={() => toggle(scope)} className="mt-0.5 accent-[var(--ac)]" />
+                <input type="checkbox" checked={scopes.includes(scope)} onChange={() => toggle(scope)} className="mt-0.5" />
                 <span className="min-w-0">
                   <span className="block font-mono text-[12px] text-t1">{scope}</span>
                   <span className="block text-[11px] text-t3">{SCOPE_LABELS[scope]}</span>

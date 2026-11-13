@@ -695,7 +695,7 @@ function MemberDialog({
                       type="checkbox"
                       checked={on}
                       onChange={() => set({ reviews: on ? (value.reviews ?? []).filter((r) => r !== m.id) : [...(value.reviews ?? []), m.id] })}
-                      className="size-4 accent-[var(--ac)]"
+                      className="size-4"
                     />
                     {m.title || 'Untitled'}
                     {on && <Check className="ml-auto size-3.5 text-ac" />}
@@ -718,7 +718,7 @@ function MemberDialog({
                       type="checkbox"
                       checked={on}
                       onChange={() => set({ consults: on ? (value.consults ?? []).filter((r) => r !== m.id) : [...(value.consults ?? []), m.id] })}
-                      className="size-4 accent-[var(--ac)]"
+                      className="size-4"
                     />
                     {m.title || 'Untitled'}
                     {on && <Check className="ml-auto size-3.5 text-ac" />}

@@ -90,7 +90,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 
 **Reviews, plans and research**
 
-- [ui-review.md](ui-review.md): a screen-by-screen comparison of the UI with n8n, and the [words](ui-review.md#words) every screen uses.
+- [ui-review.md](ui-review.md): a screen-by-screen comparison of the UI with n8n, the [words](ui-review.md#words) every screen uses and the [controls](ui-review.md#controls) every screen shares.
 - [spotlight.md](spotlight.md): a new Home, the ⌘K Spotlight assistant and the action layer every AI or MCP change goes
   through (a plan; Spotlight in the editor is built, see [assistant.md](assistant.md#spotlight)).
 - [ux-simplification.md](ux-simplification.md): what each screen asks of the user, and how to make it simpler (a plan,

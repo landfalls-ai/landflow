@@ -21,6 +21,7 @@ import { PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Select, Switch } from '@/components/ui/inputs';
+import { Segmented } from '@/components/ui/segmented';
 import { MenuItem, MenuSeparator, Popover } from '@/components/ui/popover';
 
 type Filter = 'all' | 'error' | 'running';
@@ -423,32 +424,29 @@ function ExecutionsInner() {
         <NeedsYouList />
         <LiveRuns executions={list} />
         <div className="flex flex-wrap items-center gap-3">
-          <div role="tablist" className="flex items-center gap-0.5 rounded-full border border-hair bg-sf2 p-0.5">
-            {FILTERS.map((f) => (
-              <button
-                key={f.value}
-                role="tab"
-                aria-selected={filter === f.value}
-                onClick={() => setFilter(f.value)}
-                className={cn(
-                  'flex h-7 items-center gap-1.5 rounded-full px-3.5 text-[13px] text-t2 transition-all duration-200 hover:text-t1',
-                  filter === f.value && 'bg-sf font-semibold text-t1 shadow-[0_1px_3px_rgba(0,0,0,0.08),0_0_0_1px_var(--hair)]',
-                )}
-              >
-                {f.value === 'error' && <span className="size-1.5 rounded-full bg-rd" />}
-                {f.value === 'running' && <span className={cn('size-1.5 rounded-full bg-warn', counts.running && 'animate-pulse-soft')} />}
-                {f.label}
-                <span
-                  className={cn(
-                    'rounded-full px-1.5 font-mono text-[11px]',
-                    f.value === 'error' && counts.error ? 'bg-rddim text-rd' : f.value === 'running' && counts.running ? 'bg-warndim text-warn' : 'text-t3',
-                  )}
-                >
-                  {counts[f.value]}
-                </span>
-              </button>
-            ))}
-          </div>
+          <Segmented
+            label="Status"
+            value={filter}
+            onChange={setFilter}
+            options={FILTERS.map((f) => ({
+              value: f.value,
+              label: (
+                <>
+                  {f.value === 'error' && <span className="size-1.5 rounded-full bg-rd" />}
+                  {f.value === 'running' && <span className={cn('size-1.5 rounded-full bg-warn', counts.running && 'animate-pulse-soft')} />}
+                  {f.label}
+                  <span
+                    className={cn(
+                      'rounded-full px-1.5 font-mono text-[11px] font-normal',
+                      f.value === 'error' && counts.error ? 'bg-rddim text-rd' : f.value === 'running' && counts.running ? 'bg-warndim text-warn' : 'text-t3',
+                    )}
+                  >
+                    {counts[f.value]}
+                  </span>
+                </>
+              ),
+            }))}
+          />
           <div className="w-[240px]">
             <Select value={workflowId} onChange={(e) => chooseWorkflow(e.target.value)} aria-label="Workflow" className="h-8 rounded-full text-[13px]">
               <option value="">All workflows</option>

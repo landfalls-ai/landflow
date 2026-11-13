@@ -513,6 +513,24 @@ body {
 }
 
 /*
+ * Keyboard focus (docs/ui-review.md#controls): every button, link, tab and menu item shows the same ring when reached by
+ * Tab, and none when clicked. A component's own focus-visible style still wins (:where adds no specificity).
+ */
+:where(button, a, [role='tab'], [role='menuitem'], [role='switch'], summary):focus-visible {
+  outline: 2px solid var(--ac);
+  outline-offset: 2px;
+}
+
+/* Every checkbox and radio in the accent colour (components/ui/inputs.tsx Checkbox for a labelled one). */
+:where(input[type='checkbox'], input[type='radio']) {
+  accent-color: var(--ac2);
+  cursor: pointer;
+}
+:where(input[type='checkbox'], input[type='radio']):disabled {
+  cursor: not-allowed;
+}
+
+/*
  * Phones (below md): text fields at 16px so iOS doesn't zoom into them on focus, and room under the page for the tab bar
  * (sidebar.tsx) where it shows.
  */

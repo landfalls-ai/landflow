@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowRightLeft, ChevronRight, Download, ExternalLink, FileUp, Folder as FolderIcon, FolderInput, FolderPlus, LayoutTemplate, Lock, MoreHorizontal, Pencil, Plus, Search, Share2, Trash2, X } from 'lucide-react';
+import { ArrowRightLeft, ChevronRight, Download, ExternalLink, FileUp, Folder as FolderIcon, FolderInput, FolderPlus, LayoutTemplate, Lock, MoreHorizontal, Pencil, Plus, Share2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api, ApiError } from '@/lib/client/api';
@@ -27,7 +27,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { NodeIcon } from '@/components/ui/icon';
-import { Select } from '@/components/ui/inputs';
+import { SearchInput, Select } from '@/components/ui/inputs';
 import { MenuItem, MenuSeparator, Popover } from '@/components/ui/popover';
 import { ImportReportDialog, showImportReport } from '@/components/editor/import-report';
 import { readJsonFile } from '@/components/editor/import-dialog';
@@ -673,22 +673,7 @@ export function WorkflowsList() {
               </Select>
             </div>
           )}
-          <div className="relative w-[240px]">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-t3" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => e.key === 'Escape' && setQuery('')}
-              placeholder="Search workflows"
-              aria-label="Search workflows"
-              className="h-8 w-full rounded-full border border-hair bg-wl pl-8 pr-7 text-[13px] text-t1 outline-none placeholder:text-t3 focus:border-ac"
-            />
-            {query && (
-              <button onClick={() => setQuery('')} aria-label="Clear search" className="absolute right-2 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded-full text-t3 hover:text-t1">
-                <X className="size-3" />
-              </button>
-            )}
-          </div>
+          <SearchInput value={query} onChange={setQuery} placeholder="Search workflows" />
           <div className="w-[150px]">
             <Select value={tag} onChange={(e) => setTag(e.target.value)} aria-label="Filter by tag" className="h-8 rounded-full text-[12px]">
               <option value="">All tags</option>

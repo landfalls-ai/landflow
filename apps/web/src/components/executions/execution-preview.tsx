@@ -52,6 +52,7 @@ import { ExecutionCanvas } from './execution-canvas';
 import { useExecutions } from './executions-shell';
 import { MODE_META, RERUN_LABEL, canRetry, deleteExecution, startRerun, startRetry, type RerunBody, type RetryBody } from './meta';
 import { AiUsageChip, BufferedChip, FeedbackChip, ParentChip, SubWorkflowWait, waitedChildren } from './run-extras';
+import { Segmented } from '../ui/segmented';
 
 const HEIGHT_KEY = 'landflow-logs-height';
 const COLLAPSED_KEY = 'landflow-logs-collapsed';
@@ -702,27 +703,15 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
 
       {/* ------------------------------------------------- canvas + logs */}
       <div className="flex shrink-0 items-center gap-2 border-b border-hair px-4 py-1.5">
-        <div role="tablist" aria-label="View" className="flex items-center gap-0.5 rounded-full border border-hair bg-sf2 p-0.5">
-          {(
-            [
-              ['canvas', 'Canvas'],
-              ['trace', 'Run trace'],
-            ] as const
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              role="tab"
-              aria-selected={view === id}
-              onClick={() => chooseView(id)}
-              className={cn(
-                'h-7 rounded-full px-3.5 text-[13px] text-t2 transition-all duration-200 hover:text-t1',
-                view === id && 'bg-sf font-semibold text-t1 shadow-[0_1px_3px_rgba(0,0,0,0.08),0_0_0_1px_var(--hair)]',
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <Segmented
+          label="View"
+          value={view}
+          onChange={chooseView}
+          options={[
+            { value: 'canvas', label: 'Canvas' },
+            { value: 'trace', label: 'Run trace' },
+          ]}
+        />
         <Link href={`/runs/${executionId}`} className="ml-auto flex h-7 items-center gap-1 rounded-full px-2.5 text-[12px] text-t2 hover:bg-acdim hover:text-t1">
           Full screen <ExternalLink className="size-3" />
         </Link>

@@ -8,7 +8,6 @@
 import { useMemo, useState } from 'react';
 import { Boxes } from 'lucide-react';
 import { toast } from 'sonner';
-import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { autoBind, compositeIssues, describeMatcher, identifierFrom, proposeComposite, type CompositeTypeDescriptor, type CompositeTypeInfo } from '@/lib/shared/composites';
 import { Dialog } from '../agents/dialog';
@@ -17,6 +16,7 @@ import { NodeIcon } from '../ui/icon';
 import { FieldLabel, Input, Switch, Textarea } from '../ui/inputs';
 import { checkedGraph, editorLookup, loadComposites } from './composites';
 import { useEditor } from './store';
+import { Segmented } from '../ui/segmented';
 
 type Tab = 'use' | 'new';
 
@@ -103,19 +103,15 @@ export function CompositeDialog({ groupId, onClose }: { groupId: string; onClose
       }
     >
       <div className="flex flex-col gap-4">
-        <div role="tablist" className="flex w-fit items-center gap-0.5 rounded-full border border-hair bg-sf2 p-0.5">
-          {(['use', 'new'] as const).map((t) => (
-            <button
-              key={t}
-              role="tab"
-              aria-selected={tab === t}
-              onClick={() => setTab(t)}
-              className={cn('h-7 rounded-full px-3.5 text-[13px] text-t2 transition-all hover:text-t1', tab === t && 'bg-sf font-semibold text-t1 shadow-[0_1px_3px_rgba(0,0,0,0.08),0_0_0_1px_var(--hair)]')}
-            >
-              {t === 'use' ? 'Use a type' : 'New type from this group'}
-            </button>
-          ))}
-        </div>
+        <Segmented
+          label="Composite"
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: 'use', label: 'Use a type' },
+            { value: 'new', label: 'New type from this group' },
+          ]}
+        />
 
         {tab === 'use' && (
           <div className="flex flex-col gap-2">

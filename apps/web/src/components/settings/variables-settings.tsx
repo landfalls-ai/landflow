@@ -5,7 +5,7 @@
  * the instance's. The instance's are changed by owners and admins, a project's by its editors and admins.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Braces, Check, Copy, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { Braces, Check, Copy, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
@@ -16,7 +16,7 @@ import { projectLabel, useProjects } from '@/components/projects/use-projects';
 import { Card } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Input, Select } from '@/components/ui/inputs';
+import { Input, SearchInput, Select } from '@/components/ui/inputs';
 import { VariableEnvironments } from './variable-environments';
 
 /** GET /api/projects/<id>/variables */
@@ -195,10 +195,7 @@ export function VariablesSettings({ projectId }: { projectId?: string }) {
           )}
         </p>
         {(list?.length ?? 0) > 6 && (
-          <div className="relative w-56">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-t3" />
-            <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search variables" className="h-8 pl-8" />
-          </div>
+          <SearchInput value={query} onChange={setQuery} placeholder="Search variables" className="w-56" />
         )}
         {canEdit && (
           <Button variant="primary" size="sm" onClick={() => setEditing('new')} disabled={editing === 'new'}>
