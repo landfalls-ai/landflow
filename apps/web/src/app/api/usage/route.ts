@@ -8,7 +8,9 @@
 import type { UsageGroup } from '@/lib/shared/brain';
 import { agentStore } from '@/lib/server/agents/store';
 import { scopeForActor } from '@/lib/server/brain/scope';
-import { error, handler, json } from '@/lib/server/http';
+import { z } from 'zod';
+import { error, handler, json, parseQuery } from '@/lib/server/http';
+import { limitParam } from '@/lib/server/pagination';
 import { routeActor } from '@/lib/server/projects/http';
 import { store } from '@/lib/server/store';
 import { usageFilter, usageReport } from '@/lib/server/usage/query';
@@ -21,7 +23,9 @@ export const GET = handler(async (request: Request) => {
   const url = new URL(request.url);
   const requested = url.searchParams.get('groupBy') as UsageGroup;
   const groupBy = GROUPS.includes(requested) ? requested : 'kind';
-  const limit = Number(url.searchParams.get('limit') ?? 50) || 50;
+  const query = parseQuery(request, z.object({ limit: limitParam(1000, 50) }));
+  if (!query.ok) return query.response;
+  const { limit } = query.data;
   const labels = (group: UsageGroup, key: string) => (group === 'workflow' ? store.getWorkflow(key)?.name : group === 'agent' ? agentStore.get(key)?.name : undefined);
   const filter = usageFilter(url);
   if (groupBy === 'attr' && !filter.attr) return error('groupBy=attr needs groupAttr, the attribute to group by (for example groupAttr=team)');

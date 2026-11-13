@@ -8,7 +8,8 @@ import { z } from 'zod';
 import { BacktestError, backtestDetector, listBacktests } from '@/lib/server/brain/backtest';
 import { listFlowDetectors } from '@/lib/server/brain/flow-detectors';
 import { clusterActive } from '@/lib/server/cluster/state';
-import { error, handler, json, parseBody } from '@/lib/server/http';
+import { error, handler, json, parseBody, parseQuery } from '@/lib/server/http';
+import { limitParam } from '@/lib/server/pagination';
 import { isBuiltinDetector, isDetectorId, isFlowDetector } from '@/lib/shared/brain';
 
 export const dynamic = 'force-dynamic';
@@ -43,6 +44,8 @@ export const GET = handler(async (request: Request) => {
   const url = new URL(request.url);
   const detector = url.searchParams.get('detector') || undefined;
   if (detector && !isDetectorId(detector)) return error(`Unknown detector ${detector}`);
-  const limit = Number(url.searchParams.get('limit')) || undefined;
+  const query = parseQuery(request, z.object({ limit: limitParam(100, 10) }).passthrough());
+  if (!query.ok) return query.response;
+  const { limit } = query.data;
   return json({ backtests: listBacktests({ detector: detector as never, limit }) });
 });

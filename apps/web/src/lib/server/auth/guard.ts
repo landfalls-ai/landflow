@@ -20,6 +20,7 @@ import { protectedWriteRefusal } from '../environments/protection';
 import { checkResourceRule } from '../projects/access';
 import { editLocks } from './edit-locks';
 import { AuthError } from './errors';
+import { countDenied } from '../rate-limit/counters';
 import { registryOpen } from '../plugins/registry-policy';
 import { sameSecret } from './passwords';
 import { resourceRule, routePolicy } from './policy';
@@ -100,8 +101,11 @@ export const metricsPublic = () => process.env.LANDFLOW_METRICS_PUBLIC === 'true
 
 export type GuardResult = { ok: true; auth: RequestAuth } | { ok: false; response: Response };
 
-const deny = (message: string, status: number, extra: Record<string, unknown> = {}) =>
-  NextResponse.json({ error: message, ...extra }, { status, ...(status === 401 && { headers: { 'www-authenticate': 'Bearer realm="landflow"' } }) });
+/** A refusal: counted as landflow.http.denied{reason} (rate-limit/counters.ts) and answered as JSON. */
+const deny = (reason: string, message: string, status: number, extra: Record<string, unknown> = {}) => {
+  countDenied(reason);
+  return NextResponse.json({ error: message, ...extra }, { status, ...(status === 401 && { headers: { 'www-authenticate': 'Bearer realm="landflow"' } }) });
+};
 
 /** The guard: decide whether `request` may reach its route handler, and as whom. */
 export function guardRequest(request: Request | undefined): GuardResult {
@@ -114,40 +118,40 @@ export function guardRequest(request: Request | undefined): GuardResult {
     method = request.method.toUpperCase();
   }
   if (request && isPublicPath(path, { bearer: bearerToken(request), metricsPublic: metricsPublic() })) {
-    if (path === '/api/plugins/announce' && !registrySecretOk(request)) return { ok: false, response: deny('Send the registry secret (LANDFLOW_REGISTRY_SECRET) as X-Landflow-Registry-Secret', 401) };
+    if (path === '/api/plugins/announce' && !registrySecretOk(request)) return { ok: false, response: deny('registry_secret', 'Send the registry secret (LANDFLOW_REGISTRY_SECRET) as X-Landflow-Registry-Secret', 401) };
     return { ok: true, auth: {} };
   }
 
   const resolved = request ? resolvePrincipal(request) : ({ ok: true } as Resolved);
-  if (!resolved.ok) return { ok: false, response: deny(resolved.message, resolved.status) };
+  if (!resolved.ok) return { ok: false, response: deny('bad_credentials', resolved.message, resolved.status) };
   const principal = resolved.principal ?? testPrincipal();
   if (!principal) {
-    return { ok: false, response: deny('Sign in, or send an API key (Authorization: Bearer lf_…)', 401, setupRequired() ? { setupRequired: true } : {}) };
+    return { ok: false, response: deny('unauthenticated', 'Sign in, or send an API key (Authorization: Bearer lf_…)', 401, setupRequired() ? { setupRequired: true } : {}) };
   }
 
   const policy = routePolicy(method, path);
   if (principal.via === 'api-key') {
-    if (policy.sessionOnly) return { ok: false, response: deny('API keys can’t do this; sign in instead', 403) };
+    if (policy.sessionOnly) return { ok: false, response: deny('session_only', 'API keys can’t do this; sign in instead', 403) };
     if (policy.scope !== 'any' && !hasScope(principal.apiKey?.scopes ?? [], policy.scope)) {
-      return { ok: false, response: deny(`This API key lacks the “${policy.scope}” scope`, 403, { scope: policy.scope }) };
+      return { ok: false, response: deny('scope', `This API key lacks the “${policy.scope}” scope`, 403, { scope: policy.scope }) };
     }
   }
-  if (policy.action && !can(principal.user, policy.action)) return { ok: false, response: deny('Your role can’t do this. Ask an owner or admin.', 403) };
+  if (policy.action && !can(principal.user, policy.action)) return { ok: false, response: deny('role', 'Your role can’t do this. Ask an owner or admin.', 403) };
   // A protected environment: workflows change only by pull or promotion (lib/server/environments/protection.ts).
   const readOnly = protectedWriteRefusal(method, path);
-  if (readOnly) return { ok: false, response: deny(readOnly, 403, { protected: true }) };
-  if (principal.via === 'session' && request && UNSAFE.has(method) && crossSite(request)) return { ok: false, response: deny('Cross-site request refused', 403) };
+  if (readOnly) return { ok: false, response: deny('protected_environment', readOnly, 403, { protected: true }) };
+  if (principal.via === 'session' && request && UNSAFE.has(method) && crossSite(request)) return { ok: false, response: deny('cross_site', 'Cross-site request refused', 403) };
   // Projects and sharing: the workflow, credential, data table, agent or execution the path names (./policy).
   const rule = resourceRule(method, path);
   const denied = rule && checkResourceRule(principal.user, rule);
-  if (denied) return { ok: false, response: deny(denied.message, denied.status) };
+  if (denied) return { ok: false, response: deny('resource', denied.message, denied.status) };
 
   // A save from an editor tab that lost the workflow's edit lock (someone took over).
   const tab = request?.headers.get('x-landflow-editor-tab');
   const saving = /^\/api\/workflows\/([^/]+)$/.exec(path);
   if (tab && saving && method === 'PUT') {
     const lock = editLocks.get(decodeURIComponent(saving[1]));
-    if (lock && lock.tabId !== tab) return { ok: false, response: deny(`${lock.userName} is editing this workflow`, 423, { lock }) };
+    if (lock && lock.tabId !== tab) return { ok: false, response: deny('edit_lock', `${lock.userName} is editing this workflow`, 423, { lock }) };
   }
   return { ok: true, auth: { principal } };
 }
