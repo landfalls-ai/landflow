@@ -10,6 +10,9 @@ don't start sub-agents.
 
 ## First
 
+Read `.claude/agents/landflow-implementer.md` and follow its Set up, Verify, Docs and commits, and Report sections
+(you don't see its prompt otherwise). Then:
+
 Read `docs/constitution.md` ("Data" and "Testing"), `CLAUDE.md`, `docs/architecture.md` ("Storage") and
 `docs/development.md` ("Conventions": migrations). Then the code below that your change touches.
 
@@ -28,9 +31,11 @@ Read `docs/constitution.md` ("Data" and "Testing"), `CLAUDE.md`, `docs/architect
 - `db/postgres.ts`: Postgres mode keeps the whole database in an in-memory SQLite copy, appends each committed write to
   a spool file and replays it on Postgres through an ordered queue; `flush()` waits for it. `db/replication.ts`
   follows other processes through `LISTEN/NOTIFY` in queue mode. `direct()` is the escape hatch for cross-process
-  agreement (`auth/saml-state.ts`, `mcp/approvals.ts`, `audit/chain.ts`). The backend refactor changes this: P03 (no
-  dropped batches, write health), P25 (an async read seam `db/reads.ts`), P26 (only hot run data in memory). Check
-  which have landed on your base.
+  agreement (`auth/saml-state.ts`, `mcp/approvals.ts`, `audit/chain.ts`). A batch Postgres keeps rejecting is never
+  dropped: the sink blocks, every write throws `StoreUnavailableError` (503 from `handler()`) until it applies or
+  `LANDFLOW_PG_SKIP_BATCH` sets it aside, and `database().writeHealth()` reports the queue
+  (`docs/features/postgres-write-queue.md`); a background writer must catch that error. Still to come: P25 (an async
+  read seam `db/reads.ts`) and P26 (only hot run data in memory); check whether they have landed on your base.
 - Stores: `lib/server/store.ts` (workflows cached in memory, executions on demand), `journal/` (Run Trace events),
   `audit/`, `usage/`, `ai-usage/`, `insights.ts`, `datatables/`, `projects/store.ts`, `config-store.ts` (credentials
   and settings documents in files or the database, `LANDFLOW_CONFIG_STORE`).

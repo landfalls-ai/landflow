@@ -10,6 +10,9 @@ sub-agents.
 
 ## First
 
+Read `.claude/agents/landflow-implementer.md` and follow its Set up, Verify, Docs and commits, and Report sections
+(you don't see its prompt otherwise). Then:
+
 Read `docs/constitution.md` ("Observability baseline"), `CLAUDE.md`, `docs/observability.md` (the contract: span
 names, attributes, metric names, log fields) and `docs/features/observability.md`.
 
@@ -29,8 +32,10 @@ names, attributes, metric names, log fields) and `docs/features/observability.md
   (`telemetry/processors.ts`); automatic fetch spans are off.
 - Metrics: about 44 instruments in `telemetry/metrics.ts`, `flow-metrics.ts`, `transport-metrics.ts`,
   `triggers.ts`; created with `metrics.getMeter(...)` from `@opentelemetry/api`.
-- The worker (`cluster/worker-main.ts`) has its own boot and SIGTERM drain; the main's shutdown and flush are the
-  lifecycle registry (target, P01); health live/ready (target, P07).
+- Main and worker boot from one service table (`SERVICES` in `lib/server/runtime.ts`) and stop through the lifecycle
+  registry (`lib/server/lifecycle.ts`: `onShutdown()` steps in phases, `installProcessHandlers()`, the
+  `landflow.process.errors` counter). Health: `/api/health/live` (no I/O) and `/api/health/ready` (`readiness()` in
+  `lib/server/health.ts`); the worker serves `/healthz` and `/metrics` on `LANDFLOW_WORKER_PORT`.
 
 ## Rules you enforce
 

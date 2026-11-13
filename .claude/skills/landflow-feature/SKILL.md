@@ -39,9 +39,10 @@ worktree and branch, "work only inside your worktree", "don't push or merge", "d
 agents share the machine, "run typecheck and your targeted tests, not the full host suite".
 
 ```bash
+# <worktree> is one absolute path, for example /path/to/<repo-name>-<feature>/<package>
 git -C <repo> fetch origin
-git -C <repo> worktree add ../<repo-name>-<feature>/<package> -b <feature>/<package> origin/main
-cd ../<repo-name>-<feature>/<package> && pnpm install --frozen-lockfile --prefer-offline
+git -C <repo> worktree add <worktree> -b <feature>/<package> origin/main
+cd <worktree> && pnpm install --frozen-lockfile --prefer-offline
 ```
 
 ## 4. Review — `landflow-security-reviewer` + `landflow-code-reviewer` (fable)
@@ -59,7 +60,7 @@ lockfile and generated docs, and runs the gate:
 pnpm install
 pnpm typecheck
 (cd apps/web && npx vitest run)
-pnpm test
+pnpm test        # runs the host suite again (apps/web has a test script); `pnpm -r --if-present --filter '!@landflow/web' test` skips it
 # then the wave's own commands: integration flags (LANDFLOW_INTEGRATION=postgres|queue|…, Postgres files one at a time),
 # Go (go test ./...) and Python (.venv/bin/python -m unittest discover -s tests) suites for what changed
 ```
@@ -81,11 +82,12 @@ Compare every count with the last green run on `main`; a new failure stops the w
 Scan the whole diff for secrets and personal data (the repository is public):
 
 ```bash
-git diff origin/main...HEAD | grep -nEi 'BEGIN [A-Z ]*PRIVATE KEY|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-|sk-(ant-)?[A-Za-z0-9_-]{20,}|lf_[A-Za-z0-9_-]{24,}|/Users/[a-z]|@[a-z0-9-]+\.(ai|com|io)\b|claude\.ai/(code|share|artifact)|session_[A-Za-z0-9]{16,}'
-git diff origin/main...HEAD --name-only | grep -E '(^|/)(\.data|MEMORY\.md|.*kubeconfig.*|\.env(\..*)?)$' | grep -v '\.env\.example$'
+git diff origin/main...HEAD | grep -nEi 'BEGIN [A-Z ]*PRIVATE KEY|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-|sk-(ant-)?[A-Za-z0-9_-]{20,}|lf_[A-Za-z0-9_-]{24,}|/Users/[a-z]|@[a-z0-9-]+\.(ai|com|io|org|net|dev)\b|claude\.ai/(code|share|artifact)|session_[A-Za-z0-9]{16,}'
+git diff origin/main...HEAD --name-only | grep -E '(^|/)\.data(/|$)|(^|/)(MEMORY\.md|encryption\.key|credentials\.json|[^/]*kubeconfig[^/]*|\.env(\.[^/]*)?)$' | grep -v '\.env\.example$'
 ```
 
-Every hit is either a known fake (test fixtures, `deploy/.env.example`) or removed before going on. Then, only when the
+Every hit is either a known fake (test fixtures, `deploy/.env.example`) or removed before going on. The scan reads
+file contents; the `Claude-Session:` trailer of commit messages is the accepted exception. Then, only when the
 person asks: push the branch and open the PR. Its body lists what a user sees change, what changes on a desktop, the
 gate results and the live checks. Merge only when the person says so.
 

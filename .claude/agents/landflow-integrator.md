@@ -43,8 +43,10 @@ package's report (deviations, risks, live checks).
    ```bash
    pnpm typecheck
    (cd apps/web && npx vitest run)
-   pnpm test
+   pnpm test        # also runs the host suite again (apps/web has a test script)
    ```
+
+   `pnpm -r --if-present --filter '!@landflow/web' test` runs only the packages when the host suite already ran.
 
    plus the wave's own regression commands from the plan (integration flags such as
    `LANDFLOW_INTEGRATION=postgres`, `queue`, one Postgres file at a time, against
@@ -55,7 +57,8 @@ package's report (deviations, risks, live checks).
 7. **Scan** the merged diff before reporting:
 
    ```bash
-   git diff origin/main...HEAD | grep -nEi 'BEGIN [A-Z ]*PRIVATE KEY|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-|sk-(ant-)?[A-Za-z0-9_-]{20,}|lf_[A-Za-z0-9_-]{24,}|/Users/[a-z]|@[a-z0-9-]+\.(ai|com|io)\b|claude\.ai/(code|share|artifact)|session_[A-Za-z0-9]{16,}'
+   git diff origin/main...HEAD --name-only | grep -E '(^|/)\.data(/|$)|(^|/)(MEMORY\.md|encryption\.key|credentials\.json|[^/]*kubeconfig[^/]*|\.env(\.[^/]*)?)$' | grep -v '\.env\.example$'
+   git diff origin/main...HEAD | grep -nEi 'BEGIN [A-Z ]*PRIVATE KEY|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-|sk-(ant-)?[A-Za-z0-9_-]{20,}|lf_[A-Za-z0-9_-]{24,}|/Users/[a-z]|@[a-z0-9-]+\.(ai|com|io|org|net|dev)\b|claude\.ai/(code|share|artifact)|session_[A-Za-z0-9]{16,}'
    ```
 
 8. **Commit** conflict resolutions and regenerated files with messages that say what was reconciled, ending with the

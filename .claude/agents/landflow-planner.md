@@ -24,7 +24,7 @@ and broker bridge in `services/`, compose and Kubernetes in `deploy/`). You writ
   section or rows per package. Name an integrator step for them.
 - **Hot files** need care: `apps/web/src/lib/server/auth/policy.ts`, `lib/server/openapi.ts`,
   `lib/server/db/schema.ts` (migrations: give each package its own migration version above the current maximum),
-  `lib/server/http.ts`, `lib/server/bootstrap.ts`, `lib/server/runner.ts`, `lib/server/store.ts`,
+  `lib/server/http.ts`, `lib/server/runtime.ts` (the service table), `lib/server/runner.ts`, `lib/server/store.ts`,
   `components/editor/spotlight.tsx`, `apps/web/package.json` and `pnpm-lock.yaml`. Give each to one package per wave,
   or sequence the packages.
 - **Waves** of at most five packages; later waves depend only on earlier ones. Say what each wave creates that the

@@ -36,7 +36,8 @@ Read `docs/constitution.md` and `CLAUDE.md`. Then, for the area you were asked a
 | Shared code | `apps/web/src/lib/shared/` (UI and server both run it; never imports server code) |
 
 Process-wide objects are `singleton(key, …)` (`lib/server/singleton.ts`); boot is `src/instrumentation.ts` →
-`lib/server/bootstrap.ts`. Tests: `apps/web/test/*.test.ts` call route handlers directly.
+`whenReady()` (`lib/server/lifecycle.ts`) → `lib/server/runtime.ts` (`SERVICES`, shared with the worker's
+`cluster/worker-main.ts`); configuration is read through `lib/server/config`. Tests: `apps/web/test/*.test.ts` call route handlers directly.
 
 ## Procedure
 

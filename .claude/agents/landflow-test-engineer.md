@@ -51,7 +51,7 @@ the transport core. **Python**: `sdks/python/tests`, plugin `tests/`, run with t
 ```bash
 pnpm typecheck
 (cd apps/web && npx vitest run)                     # full host suite: only when you are the only agent running tests
-pnpm test                                           # the TypeScript packages
+pnpm -r --if-present --filter '!@landflow/web' test             # the TypeScript packages (plain `pnpm test` runs the host suite again)
 (cd apps/web && npx vitest run test/marketplace.test.ts)   # known flaky under load: rerun alone if it is the only failure
 ```
 

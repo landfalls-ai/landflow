@@ -34,8 +34,9 @@ session; people read it before they start a feature too.
   CLI, and a scratch data directory for checks ([development.md](development.md#checking-a-change-live)).
 - **Public repo.** Everything pushed is public at once. Scan the diff for secrets, personal names, emails, home-folder
   paths, internal links and session ids before every push (the command is in
-  [.claude/skills/landflow-feature](../.claude/skills/landflow-feature/SKILL.md)). Never commit `.data`, kubeconfigs
-  or agent notes (`MEMORY.md`).
+  [.claude/skills/landflow-feature](../.claude/skills/landflow-feature/SKILL.md)). The scan covers file contents; the
+  `Claude-Session:` trailer in commit messages is the accepted exception. Never commit `.data`, kubeconfigs, the
+  encryption key or agent notes (`MEMORY.md`).
 - **Ask first.** Commit, push, open a PR or merge only when the person asks. Work on a branch, never on `main`.
 
 ## Research before building
@@ -69,16 +70,18 @@ session; people read it before they start a feature too.
 
 **Configuration and process state**
 
-- Read configuration only through `lib/server/config` (typed, parsed at call time, never NaN, a production profile;
-  target, P02; the catalog and generated reference are P18). Add no new ad-hoc `process.env` reads; until P02 lands,
-  follow `lib/server/cluster/config.ts` (a pure function of `env`).
+- Read configuration only through `lib/server/config` (`envInt`, `envNumber`, `envFlag`, `envUrl`, `envString`:
+  parsed at call time, never NaN, an invalid value falls back with a `config.invalid` warning; `publicUrl()`,
+  `ollamaUrl()`; `checkConfig()` runs first at boot). Add no new ad-hoc `process.env` reads. The catalog of every
+  variable and the generated reference are (target, P18).
 - Stricter defaults (a required secret, a refused request) apply only in the production profile (`profile()`,
-  target, P02), so `pnpm dev`, the scratch host and the offline tests keep working.
+  `isProduction()` from `lib/server/config`), so `pnpm dev`, the scratch host and the offline tests keep working.
 - Hold process-wide state only through `singleton()` (`lib/server/singleton.ts`), with one exported key per object; no
   `globalThis.__x` and no mutable module-level state (Next.js compiles routes into separate module graphs).
-- Background services register start and stop: leader-only work through `leaderService()`
-  (`lib/server/cluster/index.ts`), shutdown through the lifecycle registry `onShutdown()` (target, P01,
-  `lib/server/lifecycle.ts`). One runtime starts main and worker (target, P06, `lib/server/runtime.ts`).
+- Background services are entries of `SERVICES` in `lib/server/runtime.ts`, the one service table the main and the
+  worker both boot from (`roles`, `required`, `leader`, `stop` with its shutdown phase). Leader-only work runs through
+  `leaderService()` (`lib/server/cluster/index.ts`); shutdown goes through the lifecycle registry `onShutdown()`
+  (`lib/server/lifecycle.ts`). Routes don't import the runtime: `handler()` waits on `whenReady()`.
 
 **Layers**
 
@@ -100,7 +103,7 @@ session; people read it before they start a feature too.
 - No unbounded list reads: every list takes a capped limit and pages with a keyset cursor (target, P16; the model is
   `executions/[id]/events`). Filter by visibility in SQL, not after a fetch.
 - Nothing on a hot path (saving a run, a request) does work proportional to history: prune and aggregate in SQL on a
-  timer (target, P04 for executions).
+  timer or every N events (executions: `pruneExecutions` and `retentionTick` in `lib/server/settings.ts`).
 - `IN (…)` lists and access checks inside loops are N+1 once reads move to Postgres: batch them.
 
 ## Security baseline
@@ -126,9 +129,14 @@ session; people read it before they start a feature too.
   code runner (`services/code-runner`). Never pass a host object, function or Buffer into a vm context.
 - **Bounded input.** Bodies validated with zod and capped in size (cap: target, P16); rate limits per principal and
   per client address on public and costly routes (target, P16; sign-in limits in `lib/server/auth/rate-limit.ts`).
-- **Client address** comes from the trusted-proxy setting, never straight from `X-Forwarded-For` (target, P09,
-  `lib/server/net/client-address.ts`). Emailed links use the configured public URL, not the request's host.
-- **Headers.** Pages and API responses carry the security headers and a nonce CSP from `proxy.ts` (target, P10).
+- **Client address** comes from `clientAddress()` (`lib/server/net/client-address.ts`, `LANDFLOW_TRUSTED_PROXIES`),
+  never straight from `X-Forwarded-For`. Emailed links use `emailedOrigin()` (`lib/server/auth/cookies.ts`: the
+  configured public URL, never a request header in production); resume URLs are signed (`lib/server/resume-signing.ts`).
+- **Headers.** Pages and API responses carry the security headers and a nonce CSP from `apps/web/src/proxy.ts`
+  (`LANDFLOW_CSP`, `LANDFLOW_HSTS`); a new embeddable path goes in its `EMBEDDABLE` list.
+- **Plugin registration** is closed outside development: announces need `LANDFLOW_REGISTRY_SECRET` in the production
+  profile unless `LANDFLOW_REGISTRY_OPEN=true` (`registryOpen()` and the address and join rules in
+  `lib/server/plugins/registry-policy.ts`).
 
 ## Observability baseline
 
@@ -139,10 +147,11 @@ session; people read it before they start a feature too.
   where you have it.
 - Metrics follow [observability.md](observability.md) and `lib/server/telemetry/metrics.ts`; labels have bounded
   cardinality: no workflow, execution, user or other ids as labels (put ids on spans).
-- Health: `/api/health/live` (no I/O) and `/api/health/ready` (database, Valkey, draining) (target, P07); a new
-  dependency that must be up to serve traffic joins readiness.
+- Health: `/api/health/live` (no I/O) and `/api/health/ready` (boot and draining, database, write queue, schema
+  version, Valkey in queue mode; `readiness()` in `lib/server/health.ts`, each check bounded and answering only ok and
+  milliseconds); a new dependency that must be up to serve traffic joins readiness.
 - Flush on shutdown: anything that buffers (telemetry, the Postgres queue, the audit outbox) registers a shutdown step
-  (target, P01).
+  (`onShutdown()` in its phase, or `stop` and `shutdownPhase` on its `SERVICES` entry).
 
 ## UI and UX
 
