@@ -22,6 +22,7 @@ import { authDb } from '../auth/db';
 import { getUser, updateUser } from '../auth/users';
 import { describeProjectMap, grantsFor, parseProjectMap, syncManagedMemberships, type ProjectGrant } from '../projects/mapping';
 import { findProject } from '../projects/store';
+import { auditGroupChange, auditGroupCreated, auditGroupRemoved, auditUserChange } from './audit';
 import { ScimError } from './http';
 
 export interface ScimGroup {
@@ -153,7 +154,7 @@ export function recomputeGrants(userIds: Iterable<string>) {
     const managed = user.externalId || user.provisionedBy === 'scim';
     if (managesRoles && managed && user.role !== 'owner') {
       const desired = role ?? 'member';
-      if (user.role !== desired) updateUser(userId, { role: desired });
+      if (user.role !== desired) auditUserChange(user, updateUser(userId, { role: desired }));
     }
   }
 }
@@ -163,7 +164,7 @@ export function createGroup(input: { displayName: string; externalId?: string; m
   const displayName = input.displayName.trim();
   if (!displayName) throw new ScimError(400, 'displayName is required', 'invalidValue');
   const database = db();
-  return database.transaction(() => {
+  const [group, members] = database.transaction((): [ScimGroup, string[]] => {
     if (nameTaken(displayName)) throw new ScimError(409, `A group named “${displayName}” already exists`, 'uniqueness');
     const now = new Date().toISOString();
     const group: ScimGroup = { id: `grp_${nanoid(12)}`, displayName: displayName.slice(0, 200), ...(input.externalId && { externalId: input.externalId }), createdAt: now, updatedAt: now };
@@ -171,8 +172,10 @@ export function createGroup(input: { displayName: string; externalId?: string; m
     const members = knownUsers(input.members ?? []);
     for (const userId of members) database.insertNew('scim_group_members', { group_id: group.id, user_id: userId });
     recomputeGrants(members);
-    return group;
+    return [group, members];
   });
+  auditGroupCreated(group, members);
+  return group;
 }
 
 export interface GroupChange {
@@ -187,7 +190,7 @@ export interface GroupChange {
 /** Change a group (name, external id, members) and recompute the grants of everyone it affects, in one transaction. */
 export function changeGroup(id: string, change: GroupChange): ScimGroup {
   const database = db();
-  return database.transaction(() => {
+  const [before, next, added, removed] = database.transaction((): [ScimGroup, ScimGroup, string[], string[]] => {
     const group = getGroup(id);
     if (!group) throw new ScimError(404, `Group ${id} not found`);
     const affected = new Set<string>();
@@ -209,30 +212,41 @@ export function changeGroup(id: string, change: GroupChange): ScimGroup {
     if (change.members) wanted = new Set(knownUsers(change.members));
     for (const userId of knownUsers(change.add ?? [])) wanted.add(userId);
     for (const userId of change.remove ?? []) wanted.delete(userId);
+    const removed: string[] = [];
+    const added: string[] = [];
     for (const userId of current) {
       if (wanted.has(userId)) continue;
       database.delete('scim_group_members', { group_id: id, user_id: userId });
       affected.add(userId);
+      removed.push(userId);
     }
     for (const userId of wanted) {
       if (current.has(userId)) continue;
       database.insertNew('scim_group_members', { group_id: id, user_id: userId });
       affected.add(userId);
+      added.push(userId);
     }
     recomputeGrants(affected);
-    return next;
+    return [group, next, added, removed];
   });
+  // After the commit, so a rolled-back change leaves no event.
+  auditGroupChange(before, next, added, removed);
+  return next;
 }
 
 /** Delete a group; its members lose what it granted. */
 export function deleteGroup(id: string): boolean {
   const database = db();
-  return database.transaction(() => {
-    if (!getGroup(id)) return false;
+  const removed = database.transaction(() => {
+    const group = getGroup(id);
+    if (!group) return undefined;
     const members = groupMembers(id);
     for (const userId of members) database.delete('scim_group_members', { group_id: id, user_id: userId });
     database.delete('scim_groups', { id });
     recomputeGrants(members);
-    return true;
+    return { group, members };
   });
+  if (!removed) return false;
+  auditGroupRemoved(removed.group, removed.members);
+  return true;
 }

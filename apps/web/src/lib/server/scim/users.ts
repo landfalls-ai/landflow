@@ -15,6 +15,7 @@ import { instanceOwnerId } from '../projects/store';
 import { deleteUserWithTransfer } from '../projects/transfer';
 import { getKey, parsePatchPath } from './filter';
 import { groupsOf } from './groups';
+import { auditUserChange, auditUserProvisioned, auditUserRemoved } from './audit';
 import { SCHEMAS, ScimError } from './http';
 
 const EMAIL = /^[^\s@]+@[^\s@]+$/;
@@ -148,7 +149,7 @@ export async function createScimUser(body: Record<string, unknown>): Promise<Use
   const email = draftEmail(draft);
   if (findUserByEmail(email)) throw new ScimError(409, `A user with the userName ${email} already exists`, 'uniqueness');
   if (draft.externalId && findUserByExternalId(draft.externalId)) throw new ScimError(409, `A user with the externalId ${draft.externalId} already exists`, 'uniqueness');
-  return createUser({
+  const created = await createUser({
     email,
     name: draftName(draft, email.split('@')[0]),
     role: 'member',
@@ -156,6 +157,8 @@ export async function createScimUser(body: Record<string, unknown>): Promise<Use
     provisionedBy: 'scim',
     disabled: draft.active === false,
   });
+  auditUserProvisioned(created);
+  return created;
 }
 
 function setActive(user: UserRecord, active: boolean | undefined): UserRecord {
@@ -177,7 +180,9 @@ export function replaceScimUser(id: string, body: Record<string, unknown>): User
     name: draftName(draft, user.name),
     ...(draft.externalId !== undefined && draft.externalId !== null && { externalId: draft.externalId }),
   });
-  return setActive(updated, draft.active);
+  const final = setActive(updated, draft.active);
+  auditUserChange(user, final);
+  return final;
 }
 
 /** PATCH /Users/<id> (RFC 7644 §3.5.2). */
@@ -220,7 +225,9 @@ export function patchScimUser(id: string, body: Record<string, unknown>): UserRe
     patch.externalId = draft.externalId ?? undefined;
   }
   const updated = Object.keys(patch).length ? updateUser(id, patch) : user;
-  return setActive(updated, draft.active);
+  const final = setActive(updated, draft.active);
+  auditUserChange(user, final);
+  return final;
 }
 
 /** DELETE /Users/<id>: remove the user; what they own goes to the instance owner's personal project. */
@@ -228,5 +235,6 @@ export function deleteScimUser(id: string, actorId?: string) {
   const user = requireScimUser(id);
   if (user.role === 'owner') throw new ScimError(403, 'The owner can’t be removed through SCIM', 'mutability');
   const owner = instanceOwnerId();
-  deleteUserWithTransfer(id, owner ? { userId: owner } : undefined, actorId);
+  const result = deleteUserWithTransfer(id, owner ? { userId: owner } : undefined, actorId);
+  auditUserRemoved(user, { transferredTo: result.to?.id });
 }
