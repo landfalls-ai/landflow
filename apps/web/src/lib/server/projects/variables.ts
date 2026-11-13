@@ -124,7 +124,9 @@ export const projectVariables = {
     const before = projectVariables.get(projectId, key);
     const updated = projectVariables.store(projectId).update(key, patch);
     if (updated.key !== key) environmentValues.rename(projectId, key, updated.key);
-    auditVariable('update', updated.key, { projectId }, { ...(updated.key !== key && { renamedFrom: key }), valueChanged: before?.value !== updated.value });
+    // A PATCH that renamed nothing and kept the value records nothing (as the per-environment path does).
+    const valueChanged = before?.value !== updated.value;
+    if (updated.key !== key || valueChanged) auditVariable('update', updated.key, { projectId }, { ...(updated.key !== key && { renamedFrom: key }), valueChanged });
     return updated;
   },
   delete(projectId: string, key: string): boolean {

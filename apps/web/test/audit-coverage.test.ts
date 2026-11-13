@@ -174,6 +174,10 @@ describe('variables and secret providers', () => {
     expect(latest('variable.create')).toMatchObject({ target: { id: 'COV_VAR' }, details: { scope: 'instance', key: 'COV_VAR' } });
     await variableRoute.PATCH(req('PATCH', '/api/variables/COV_VAR', { key: 'COV_VAR2', value: `${SECRET}-2` }), params({ key: 'COV_VAR' }));
     expect(latest('variable.update')).toMatchObject({ details: { key: 'COV_VAR2', from: 'COV_VAR', to: 'COV_VAR2', valueChanged: true } });
+    // A PATCH that changes nothing records no variable.update.
+    const updates = queryEvents({ action: ['variable.update'] }).events.length;
+    expect((await variableRoute.PATCH(req('PATCH', '/api/variables/COV_VAR2', { value: `${SECRET}-2` }), params({ key: 'COV_VAR2' }))).status).toBe(200);
+    expect(queryEvents({ action: ['variable.update'] }).events).toHaveLength(updates);
     await variableRoute.DELETE(req('DELETE', '/api/variables/COV_VAR2'), params({ key: 'COV_VAR2' }));
     expect(latest('variable.delete')).toMatchObject({ details: { scope: 'instance', key: 'COV_VAR2' } });
 
@@ -183,8 +187,8 @@ describe('variables and secret providers', () => {
     expect(latest('variable.create')).toMatchObject({ projectId: id, details: { scope: 'project', projectId: id, key: 'PROJ_VAR' } });
     await projectVariableRoute.DELETE(req('DELETE', `/api/projects/${id}/variables/PROJ_VAR`), params({ id, key: 'PROJ_VAR' }));
     expect(latest('variable.delete')).toMatchObject({ projectId: id, details: { scope: 'project', key: 'PROJ_VAR' } });
-    // One event each: the generic layer did not add a line.
-    expect(queryEvents({ action: ['api.request'], q: '/variables' }).events).toHaveLength(0);
+    // One event each: the generic layer added a line only for the PATCH that changed nothing.
+    expect(queryEvents({ action: ['api.request'], q: '/variables' }).events.map((e) => [e.route, e.status])).toEqual([['/api/variables/[key]', 200]]);
   });
 
   it('records per-environment values once, by environment name, never the value', async () => {

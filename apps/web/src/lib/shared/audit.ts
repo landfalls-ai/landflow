@@ -142,7 +142,7 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'project.member_change': 'Changed a project’s members',
   'resource.share': 'Shared a workflow or credential',
   'resource.unshare': 'Stopped sharing a workflow or credential',
-  'resource.transfer': 'Moved a workflow or credential to another project',
+  'resource.transfer': 'Moved a workflow, credential, data table, agent or agent team to another project',
   'variable.create': 'Created a variable',
   'variable.update': 'Changed a variable',
   'variable.delete': 'Deleted a variable',

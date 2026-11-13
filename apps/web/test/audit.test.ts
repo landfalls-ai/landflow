@@ -34,6 +34,7 @@ const { queryEvents, pruneEvents, countEvents } = await import('@/lib/server/aud
 const { csvRow } = await import('@/lib/server/audit/export');
 const { verifyChain } = await import('@/lib/server/audit/chain');
 const { personalProjectId } = await import('@/lib/shared/projects');
+const { createTeamProject } = await import('@/lib/server/projects/store');
 const { routePattern, outcomeOf } = await import('@/lib/server/audit/http');
 const { OtlpJsonLogProvider } = await import('@/lib/server/telemetry/logs');
 const { auditAttributes } = await import('@/lib/server/audit/otel');
@@ -104,8 +105,10 @@ describe('generic layer', () => {
   });
 
   it('records a change without a domain event: method, route pattern, status, client and request id, never the body', async () => {
-    // (Variables record domain events of their own now: folders still go through the generic layer.)
-    const response = await foldersRoute.POST(req('POST', '/api/folders', { name: `Audit ${SECRET}` }, { 'x-request-id': 'req-audit-1' }));
+    // (Variables record domain events of their own now: folders still go through the generic layer.) The folder goes in
+    // a team project: this file has no real owner, so the synthetic one has no personal project to hold it.
+    const team = createTeamProject({ name: 'Audit folders' });
+    const response = await foldersRoute.POST(req('POST', '/api/folders', { name: `Audit ${SECRET}`, projectId: team.id }, { 'x-request-id': 'req-audit-1' }));
     expect(response.status).toBeLessThan(300);
     expect(response.headers.get('x-request-id')).toBe('req-audit-1');
     const event = latest('api.request')!;
@@ -113,13 +116,12 @@ describe('generic layer', () => {
     expect(event.actor).toMatchObject({ type: 'user', id: TEST_OWNER.id });
     expect(event.status).toBe(response.status);
 
-    const folder = (await response.json() as { folder: { id: string } }).folder?.id;
-    if (folder) {
-      const renamed = await folderRoute.PATCH(req('PATCH', `/api/folders/${folder}`, { name: 'Renamed' }), params({ id: folder }));
-      // (Whatever the outcome, the generic layer derives the target from the `[id]` segment.)
-      expect(renamed.status).toBeGreaterThan(0);
-      expect(latest('api.request')).toMatchObject({ method: 'PATCH', route: '/api/folders/[id]', target: { type: 'folder', id: folder } });
-    }
+    const folder = (await response.json() as { folder: { id: string } }).folder.id;
+    expect(folder).toEqual(expect.any(String));
+    const renamed = await folderRoute.PATCH(req('PATCH', `/api/folders/${folder}`, { name: 'Renamed' }), params({ id: folder }));
+     expect(renamed.status).toBe(200);
+    // The generic layer derives the target from the `[id]` segment.
+    expect(latest('api.request')).toMatchObject({ method: 'PATCH', route: '/api/folders/[id]', status: 200, target: { type: 'folder', id: folder } });
     expect(allText()).not.toContain(SECRET);
   });
 

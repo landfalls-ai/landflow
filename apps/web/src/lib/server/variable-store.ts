@@ -56,7 +56,6 @@ export function auditVariable(change: 'create' | 'update' | 'delete', key: strin
   });
 }
 
-/** What changed in a write: the variable saved (under its new key) and the key that went away (a delete or a rename). */
 /**
  * `variable.update` for per-environment values: which environments got a value and which lost theirs, never a value.
  * Nothing is recorded when nothing differs from `before`.
@@ -75,6 +74,7 @@ export function auditVariableEnvironments(key: string, scope: { projectId?: stri
   });
 }
 
+/** What changed in a write: the variable saved (under its new key) and the key that went away (a delete or a rename). */
 export interface VariableChange {
   saved?: StoredVariable;
   removed?: string;

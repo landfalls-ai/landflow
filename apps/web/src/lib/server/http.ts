@@ -45,10 +45,19 @@ export function handler<A extends unknown[]>(fn: (...args: A) => Promise<Respons
 }
 
 function run<A extends unknown[]>(fn: (...args: A) => Promise<Response>, args: A, options: HandlerOptions): Promise<Response> {
+  // Wait for the boot outside the request's audit and log context: when the first request boots the host (development,
+  // tests), what the boot records and logs is not that request's (its request id on boot lines, a boot-time event
+  // standing in for the request's own). A failed boot is still answered inside it, with the request id.
+  return whenReady().then(
+    () => answerRequest(fn, args, options),
+    (caught: unknown) => auditRequest(args, async () => answer(caught, args[0], options)),
+  );
+}
+
+function answerRequest<A extends unknown[]>(fn: (...args: A) => Promise<Response>, args: A, options: HandlerOptions): Promise<Response> {
   return (
     auditRequest(args, async () => {
       try {
-        await whenReady();
         const gate = guardRequest(args[0] instanceof Request ? args[0] : undefined);
         if (!gate.ok) return gate.response;
         noteAuditPrincipal(gate.auth.principal);
