@@ -1232,6 +1232,10 @@ workbench in place of a page of cards, keeping Spotlight.
   the Source, filing a good answer back as a fact, and a detector that turns shared work into a suggestion addressed to
   both teams.
 
+## Backend hardening (2026-11)
+
+- **P04, execution retention in SQL off the save path (C17).** `pruneExecutions` selects ids by column in chunks and a finished run triggers it only every `LANDFLOW_RETENTION_EVERY` runs.
+
 ## Planned next
 
 1. **Declare event kinds in the UI**: kinds are declared over the API or by Record Event's *Declare Kind If New* only.

@@ -8,7 +8,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ExecutionRecord } from '@/lib/shared/types';
 
 const HOUR = 3_600_000;
@@ -206,6 +206,16 @@ describe('rollup', () => {
 });
 
 describe('with the store', () => {
+  // Retention runs on every finished save here, so the cap below applies at once.
+  const previousEvery = process.env.LANDFLOW_RETENTION_EVERY;
+  beforeAll(() => {
+    process.env.LANDFLOW_RETENTION_EVERY = '1';
+  });
+  afterAll(() => {
+    if (previousEvery === undefined) delete process.env.LANDFLOW_RETENTION_EVERY;
+    else process.env.LANDFLOW_RETENTION_EVERY = previousEvery;
+  });
+
   it('counts every saved execution and keeps the figures after retention prunes them', () => {
     updateSettings({ executions: { maxCount: 2 } });
     const before = insightsReport('24h').current;

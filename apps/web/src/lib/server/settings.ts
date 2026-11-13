@@ -5,7 +5,7 @@
  * writes are validated with zod. SettingsFile keeps the same document in a JSON
  * file (the format older versions used; tests use it too).
  *
- * Retention: store.saveExecution prunes after every save, bootstrap prunes at
+ * Retention: store.saveExecution prunes every LANDFLOW_RETENTION_EVERY finished saves (retentionTick), bootstrap prunes at
  * boot and hourly, and Settings has "Prune now". Only finished executions
  * (success, error, canceled) are ever removed; running and waiting ones stay.
  */
@@ -16,6 +16,7 @@ import type { ExecutionSummary } from '../shared/types';
 import { jsonRenderEnabled } from '../shared/ui-spec';
 import { database, type Database } from './db';
 import { INSTANCE_SETTINGS } from './db/rows';
+import { singleton } from './singleton';
 import { atomicWrite, store } from './store';
 
 export type { InstanceSettings, RetentionSettings };
@@ -169,9 +170,46 @@ export function staleExecutionIds(executions: Array<Pick<ExecutionSummary, 'id' 
   return stale;
 }
 
-/** Delete the executions the retention settings (or `policy`) no longer keep. Returns how many were removed. */
+const PRUNE_CHUNK = 1000;
+const FINISHED_LIST = [...FINISHED];
+const FINISHED_SQL = FINISHED_LIST.map(() => '?').join(', ');
+
+/**
+ * Delete the executions the retention settings (or `policy`) no longer keep. Returns how many were removed.
+ * Works in SQL on columns only (never parses a summary), in chunks, so the cost does not grow with the history;
+ * it selects the same ids as staleExecutionIds. Age goes first: those are the oldest, so the count pass then
+ * sees only runs inside the age window, as staleExecutionIds does.
+ */
 export function pruneExecutions(policy: RetentionSettings = getSettings().executions, now = Date.now()): number {
-  const stale = staleExecutionIds(store.listExecutions({ limit: Number.POSITIVE_INFINITY }), policy, now);
-  for (const id of stale) store.deleteExecution(id);
-  return stale.length;
+  const db = database();
+  let removed = 0;
+  const drain = (sql: string, ...params: Array<string | number>) => {
+    for (;;) {
+      const rows = db.all<{ id: string }>(sql, ...params);
+      for (const row of rows) store.deleteExecution(row.id);
+      removed += rows.length;
+      if (rows.length < PRUNE_CHUNK) return;
+    }
+  };
+  if (policy.maxAgeDays > 0) {
+    const cutoff = new Date(now - policy.maxAgeDays * DAY_MS).toISOString();
+    drain(`SELECT id FROM executions WHERE status IN (${FINISHED_SQL}) AND started_at < ? ORDER BY started_at LIMIT ${PRUNE_CHUNK}`, ...FINISHED_LIST, cutoff);
+  }
+  if (policy.maxCount > 0) {
+    drain(`SELECT id FROM executions WHERE status IN (${FINISHED_SQL}) ORDER BY started_at DESC, id DESC LIMIT ${PRUNE_CHUNK} OFFSET ?`, ...FINISHED_LIST, policy.maxCount);
+  }
+  return removed;
+}
+
+const retention = singleton('retention-tick', () => ({ finished: 0 }));
+
+/**
+ * Called by every finished save: runs a prune pass every LANDFLOW_RETENTION_EVERY finished runs (default 50), so
+ * the count may exceed its cap by up to N-1 between passes. The hourly timer and "Prune now" prune regardless.
+ */
+export function retentionTick(): number {
+  const every = Math.max(1, Math.floor(Number(process.env.LANDFLOW_RETENTION_EVERY)) || 50);
+  if (++retention.finished < every) return 0;
+  retention.finished = 0;
+  return pruneExecutions();
 }
