@@ -30,7 +30,11 @@ class WorkflowConflictError extends HttpError {
   }
 }
 
-/** The `updatedAt` the client says it based the save on: `If-Match: "<updatedAt>"` (weak tags and quotes allowed) or body `baseUpdatedAt`. */
+/**
+ * The `updatedAt` the client says it based the save on: `If-Match: "<updatedAt>"` (weak tags and quotes allowed) or body
+ * `baseUpdatedAt`. One entity tag only: a list (`"a", "b"`) is read as one value and never matches, so it is a 412. The
+ * tag is a millisecond timestamp, so two saves in the same millisecond share it and the second does not conflict.
+ */
 function baseOf(request: Request, fromBody: string | undefined): string | undefined {
   const header = request.headers.get('if-match')?.trim();
   if (header && header !== '*') return header.replace(/^W\//, '').replace(/^"|"$/g, '');

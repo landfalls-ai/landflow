@@ -50,6 +50,16 @@ export function scimError(status: number, detail: string, scimType?: ScimType, h
   return scimJson({ schemas: [SCHEMAS.error], status: String(status), ...(scimType && { scimType }), detail }, status, headers);
 }
 
+/**
+ * A normalized route error as a SCIM error document. The generic 500 carries its request id in `detail` too (the
+ * error schema has no field for it; the `X-Request-Id` header has it as well), so a support request can quote it.
+ */
+export function scimErrorFor(http: HttpError): Response {
+  const requestId = typeof http.details?.requestId === 'string' ? http.details.requestId : undefined;
+  const detail = requestId && http.status >= 500 ? `${http.message} (request ${requestId})` : http.message;
+  return scimError(http.status, detail, http instanceof ScimError ? http.scimType : undefined);
+}
+
 /** 204 No Content (DELETE). */
 export const noContent = () => new Response(null, { status: 204 });
 
@@ -103,7 +113,7 @@ export function scimRoute<P extends Record<string, string> = Record<string, stri
         }
         return undefined;
       },
-      formatError: (http) => scimError(http.status, http.message, http instanceof ScimError ? http.scimType : undefined),
+      formatError: scimErrorFor,
     },
   );
 }

@@ -106,6 +106,15 @@ describe('handler', () => {
     expect(other.status).toBe(500);
     expect(await body(other)).toEqual({ detail: 'Internal error' });
   });
+
+  it('puts the request id of a generic 500 in the SCIM error document', async () => {
+    const { scimErrorFor, ScimError, SCHEMAS } = await import('@/lib/server/scim/http');
+    const generic = await handler(async () => Promise.reject(new Error('SQLITE_BUSY at /var/lib')), { formatError: scimErrorFor })(request());
+    expect(generic.status).toBe(500);
+    expect(await body(generic)).toEqual({ schemas: [SCHEMAS.error], status: '500', detail: 'Internal error (request req-123)' });
+    const refused = await handler(async () => Promise.reject(new ScimError(409, 'User exists', 'uniqueness')), { formatError: scimErrorFor })(request());
+    expect(await body(refused)).toEqual({ schemas: [SCHEMAS.error], status: '409', scimType: 'uniqueness', detail: 'User exists' });
+  });
 });
 
 describe('the wrappers', () => {
