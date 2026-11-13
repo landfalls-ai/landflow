@@ -98,3 +98,11 @@ describe('the sync getExecution guard', () => {
     expect(offenders).toEqual([]);
   });
 });
+
+describe('backfillUsage', () => {
+  it('resolves with 0 when a read fails, instead of rejecting', async () => {
+    const { backfillUsage } = await import('@/lib/server/usage/backfill');
+    const broken = { get: () => { throw new Error('read failed'); }, all: () => { throw new Error('read failed'); }, upsert: () => undefined } as never;
+    await expect(backfillUsage(broken, true)).resolves.toBe(0);
+  });
+});

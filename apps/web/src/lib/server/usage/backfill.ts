@@ -19,8 +19,17 @@ export function usageBackfilled(db: Database = database()): boolean {
   return Boolean(db.get('SELECT value FROM meta WHERE key = ?', DONE_KEY));
 }
 
-/** Fill the ledger from what is on disk. Returns how many events were added (0 when it already ran). */
+/** Fill the ledger from what is on disk. Returns how many events were added (0 when it already ran or failed). Never rejects: any failure is logged and gives 0. */
 export async function backfillUsage(db: Database = database(), force = false): Promise<number> {
+  try {
+    return await fillUsage(db, force);
+  } catch (error) {
+    logger.warn('the usage backfill failed', { error });
+    return 0;
+  }
+}
+
+async function fillUsage(db: Database, force: boolean): Promise<number> {
   if (!brainEnabled() || (!force && usageBackfilled(db))) return 0;
   const before = Number(db.get<{ n: number }>('SELECT COUNT(*) AS n FROM usage_events')?.n ?? 0);
   const since = new Date(Date.now() - rawRetentionDays() * DAY_MS).toISOString();
