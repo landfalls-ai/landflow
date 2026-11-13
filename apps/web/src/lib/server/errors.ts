@@ -19,9 +19,30 @@ export interface HttpErrorOptions {
   expose?: boolean;
 }
 
+/** Marks an HttpError from any copy of this module (Symbol.for is one registry per process). */
+const HTTP_ERROR = Symbol.for('landflow.HttpError');
+
 export class HttpError extends Error {
   /** The class's own name, as a literal that survives minification. Every subclass declares its own. */
   static readonly errorName: string = 'HttpError';
+
+  /**
+   * `instanceof` across module copies. The production server bundles a module once per layer (route handlers, pages),
+   * and a `singleton()` store made in one layer throws that layer's classes into another layer's `handler()`, where a
+   * plain `instanceof HttpError` is false and the error would answer a generic 500. So an HttpError from another copy
+   * also matches the class here, and so does a subclass, by its `errorName` along the error's class chain.
+   */
+  static [Symbol.hasInstance](value: unknown): boolean {
+    if (Function.prototype[Symbol.hasInstance].call(this, value)) return true;
+    if (typeof value !== 'object' || value === null || !(HTTP_ERROR in value)) return false;
+    if (!Object.hasOwn(this, 'errorName')) return false;
+    const wanted = (this as unknown as typeof HttpError).errorName;
+    for (let type: unknown = (value as object).constructor; typeof type === 'function' && type !== Error; type = Object.getPrototypeOf(type)) {
+      if (Object.hasOwn(type, 'errorName') && (type as typeof HttpError).errorName === wanted) return true;
+    }
+    return false;
+  }
+
   readonly status: number;
   readonly code: string;
   readonly details?: Record<string, unknown>;
@@ -37,6 +58,8 @@ export class HttpError extends Error {
     this.expose = options.expose ?? status < 500;
   }
 }
+
+Object.defineProperty(HttpError.prototype, HTTP_ERROR, { value: true });
 
 /** `WorkflowConflictError` → `workflow_conflict_error`. */
 function snakeCase(name: string): string {

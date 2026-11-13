@@ -71,10 +71,14 @@ session; people read it before they start a feature too.
   route family may name a thin wrapper (`projectRoute`, `dataTableRoute`, `marketplaceRoute`), which maps nothing.
   Don't catch a domain error in a route to answer it: `handler()` does, with a `code` (the class name in snake_case)
   and the class's `details`. Every subclass names itself with a literal, `static readonly errorName: string = 'ItsName';`
-  on the first line of its body (`code` and `name` come from it: the production bundle minifies class names), and
+  on the first line of its body (`code` and `name` come from it: the production bundle minifies class names, and
+  `instanceof` matches an error from another copy of the module by it, see below), and
   `test/error-mapping.test.ts` fails one without it; `test/error-mapping.test.ts` fails a class that carries a status outside the `HttpError`
-  tree (only errors with an optional upstream status, such as `McpClientError` and `OAuth2Error`, stay plain). Never
-  send an unexpected error's text (SQL, paths, stacks) to the client.
+  tree (only errors with an optional upstream status, such as `McpClientError` and `OAuth2Error`, stay plain). The
+  production server bundles a module once per layer, and a `singleton()` store throws the classes of the layer that
+  made it, so `HttpError` overrides `instanceof`: an error branded by any copy matches `HttpError`, and a subclass by
+  its `errorName` (give each class a name of its own). Never send an unexpected error's text (SQL, paths, stacks) to
+  the client.
 
 **Configuration and process state**
 

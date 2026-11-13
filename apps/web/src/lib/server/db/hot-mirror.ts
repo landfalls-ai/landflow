@@ -42,15 +42,12 @@ export function mirrorSelect(table: string, cutoff: string): { text: string; val
 }
 
 /** Executions whose data is in the copy but who went cold (and aren't promoted): ids, at most one chunk. */
-function coolingIds(db: Database, cutoff: string, promoted: Map<string, number>, now: number): string[] {
-  const rows = db.all<{ id: string }>(`SELECT e.id FROM executions e WHERE e.data <> '' AND NOT ${hotCondition('e', '?')} LIMIT ${EVICT_CHUNK}`, cutoff);
-  return rows.map((row) => row.id).filter((id) => {
-    const until = promoted.get(id);
-    if (until === undefined) return true;
-    if (until > now) return false;
-    promoted.delete(id);
-    return true;
-  });
+function coolingIds(db: Database, cutoff: string, promoted: Map<string, number>, now: number): { ids: string[]; full: boolean } {
+  // Expired promotions were dropped by the caller; the live ones are left out in SQL, so they cannot fill every chunk.
+  const held = [...promoted.keys()].filter((id) => (promoted.get(id) ?? 0) > now).slice(0, 10_000);
+  const notHeld = held.length ? ` AND e.id NOT IN (${held.map(() => '?').join(', ')})` : '';
+  const rows = db.all<{ id: string }>(`SELECT e.id FROM executions e WHERE e.data <> '' AND NOT ${hotCondition('e', '?')}${notHeld} LIMIT ${EVICT_CHUNK}`, cutoff, ...held);
+  return { ids: rows.map((row) => row.id).filter((id) => (promoted.get(id) ?? 0) <= now), full: rows.length === EVICT_CHUNK };
 }
 
 /** Promoted runs stay in the copy this long past the promotion (ms by id; Database.evictLocal and the evictor read it). */
@@ -74,12 +71,12 @@ export function evictCold(db: Database, now = Date.now()): number {
   for (const [id, until] of promoted) if (until <= now) promoted.delete(id);
   let total = 0;
   for (let round = 0; round < 20; round++) {
-    const ids = coolingIds(db, hotCutoff(now), promoted, now);
+    const { ids, full } = coolingIds(db, hotCutoff(now), promoted, now);
     if (!ids.length) break;
     const gone = db.evictLocal(ids);
     total += gone.length;
-    // Everything in the chunk was pending: the next minute's pass tries again.
-    if (gone.length < ids.length || ids.length < EVICT_CHUNK) break;
+    // Nothing left past this chunk, or everything in it was pending: the next minute's pass tries again.
+    if (!full || !gone.length) break;
   }
   return total;
 }

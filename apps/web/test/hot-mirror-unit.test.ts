@@ -31,10 +31,11 @@ interface Fake {
   answers: Array<{ match: RegExp; rows: unknown[] }>;
   pending: Set<string>;
   barrierOk: boolean;
+  barriers: number;
 }
 
 function open(): Fake {
-  const fake = { ops: [], queries: [], answers: [], pending: new Set<string>(), barrierOk: true } as unknown as Fake;
+  const fake = { ops: [], queries: [], answers: [], pending: new Set<string>(), barrierOk: true, barriers: 0 } as unknown as Fake;
   const client: DirectClient = {
     async query(text, values = []) {
       fake.queries.push({ text, values });
@@ -49,7 +50,7 @@ function open(): Fake {
     close: async () => {},
     direct: (fn) => fn(client),
     pendingExecutions: () => fake.pending,
-    barrier: async () => fake.barrierOk,
+    barrier: async () => (fake.barriers++, fake.barrierOk),
   };
   fake.db = new Database(openSqliteConnection(':memory:'), 'postgres', ':memory:', sink);
   holder.db = fake.db;
@@ -114,6 +115,17 @@ describe('eviction', () => {
     expect(evictCold(f.db)).toBe(1);
     expect(dataOf(f.db, 'plain')).toBe('');
     for (const id of ['retrying', 'child', 'promoted', 'parent']) expect(dataOf(f.db, id)).not.toBe('');
+  });
+
+  it('evicts past a full chunk of promoted runs in one pass', () => {
+    const f = open();
+    for (let i = 0; i < 520; i++) {
+      run(f.db, `held_${String(i).padStart(3, '0')}`, 'success', 200);
+      keepHot(f.db, `held_${String(i).padStart(3, '0')}`);
+    }
+    for (let i = 0; i < 30; i++) run(f.db, `plain_${i}`, 'success', 200);
+    expect(evictCold(f.db)).toBe(30);
+    expect(dataOf(f.db, 'held_000')).not.toBe('');
   });
 
   it('does not evict a run with a write not yet in Postgres', () => {
@@ -186,10 +198,23 @@ describe('reads', () => {
     expect(await readRows(sql, '%x%', 5)).toEqual([{ summary: 'from postgres' }]);
     expect(f.queries[0]).toEqual({ text: "SELECT summary FROM executions WHERE data LIKE $1 ESCAPE '\\' AND status <> '?' LIMIT $2", values: ['%x%', 5] });
 
-    f.barrierOk = false;
-    f.queries.length = 0;
-    expect(await readRows('SELECT summary FROM executions WHERE id = ?', 'fresh')).toEqual([{ summary: '{}' }]);
-    expect(f.queries).toEqual([]);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      f.barrierOk = false;
+      f.queries.length = 0;
+      f.barriers = 0;
+      expect(await readRows('SELECT summary FROM executions WHERE id = ?', 'fresh')).toEqual([{ summary: '{}' }]);
+      expect(f.queries).toEqual([]);
+      // The next page of a search does not wait for the stuck queue again for a few seconds.
+      expect(await readRows('SELECT summary FROM executions WHERE id = ?', 'fresh')).toEqual([{ summary: '{}' }]);
+      expect(f.barriers).toBe(1);
+      f.barrierOk = true;
+      vi.advanceTimersByTime(6_000);
+      expect(await readRows(sql, '%x%', 5)).toEqual([{ summary: 'from postgres' }]);
+      expect(f.barriers).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('numbers placeholders outside string literals', () => {

@@ -471,8 +471,10 @@ with finished runs' data and journal; they grow with the other tables, which sta
 insights rows, AI usage, workflows, versions and the rest.
 
 Measured with `apps/web/scripts/seed-executions.ts` (50,000 finished runs of about 10 KB each, with 20 journal events of
-1 KB each, plus 5 running; 1.8 GB in Postgres): boot 0.7 s and 164 MB resident, against 10.1 s and 14.1 GB when everything is
-hot (`LANDFLOW_PG_HOT_MINUTES=100000`, which is what every earlier version did). Size a process for its workflows, the other
+1 KB each, plus 5 running; 1.8 GB in Postgres): boot 0.5–0.7 s and 153–164 MB resident, against 9.3–10.1 s and 14.1–14.5 GB
+when everything is hot (`LANDFLOW_PG_HOT_MINUTES=100000`, which is what every earlier version did; at Node's default heap
+that boot runs out of memory). The figures are the range of four runs; tables bloated by repeated seeding without a
+vacuum boot slower (up to about 3 s). Size a process for its workflows, the other
 tables and the runs of the last hot window: the memory of a run in the hot window is its record and journal, so a host that
 finishes 10,000 runs of 100 KB in a quarter of an hour needs about 1 GB for them. Raise `LANDFLOW_PG_HOT_MINUTES` only if
 people open just-finished runs so often that the query per old page matters; lower it to keep the copy smaller. A host that

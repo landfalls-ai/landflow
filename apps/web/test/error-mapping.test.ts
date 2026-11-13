@@ -7,7 +7,7 @@
 import { mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 
 const dataDir = mkdtempSync(join(tmpdir(), 'landflow-error-mapping-'));
 const ENV = { LANDFLOW_DATA_DIR: dataDir, LANDFLOW_REGISTRY_GRPC_PORT: 'off', LANDFLOW_SCAN_ON_START: 'false', LANDFLOW_PLUGINS: '', LANDFLOW_AUDIT_OUTBOX: 'off' };
@@ -49,6 +49,25 @@ const answer = async (caught: unknown) => {
   })(new Request('http://localhost/api/error-mapping-test'));
   return { status: response.status, body: (await response.json()) as Record<string, unknown> };
 };
+
+describe('an HttpError from another copy of the module', () => {
+  // The production server bundles a module once per layer, and a singleton() store made in one layer throws that
+  // layer's classes into another layer's handler(): a FolderNotEmptyError answered 500 on a production host.
+  it('answers its status and code, and instanceof matches by class name only', async () => {
+    vi.resetModules();
+    const copy = await import('@/lib/server/folders');
+    const other = new copy.FolderNotEmptyError(0, 1);
+    expect(copy.FolderNotEmptyError).not.toBe(FolderNotEmptyError);
+    expect(other).toBeInstanceOf(HttpError);
+    expect(other).toBeInstanceOf(FolderNotEmptyError);
+    expect(other).not.toBeInstanceOf(FolderError);
+    expect(new Error('plain')).not.toBeInstanceOf(HttpError);
+    expect({ status: 409 }).not.toBeInstanceOf(HttpError);
+    const { status, body } = await answer(other);
+    expect(status).toBe(409);
+    expect(body).toMatchObject({ error: "The folder isn't empty: it holds 1 workflow", code: 'folder_not_empty_error', folders: 0, workflows: 1 });
+  });
+});
 
 describe('domain errors answer through handler()', () => {
   const cases: Array<[string, () => Error, number, string]> = [

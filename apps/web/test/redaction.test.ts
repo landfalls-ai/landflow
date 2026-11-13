@@ -7,6 +7,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
+import { exceptionFingerprint } from '../src/lib/server/telemetry/fingerprint';
 
 Object.assign(process.env, {  LANDFLOW_DATA_DIR: mkdtempSync(join(tmpdir(), 'landflow-redact-')), LANDFLOW_REGISTRY_GRPC_PORT: 'off', LANDFLOW_SCAN_ON_START: 'false', LANDFLOW_PLUGINS: '' });
 
@@ -77,6 +78,7 @@ describe('secret-shaped values', () => {
     for (const leaked of ['zzzz1zzzzzzz', 'abcd1efghijkl', 'p4ssw0rd', 'secretpw']) expect(out).not.toContain(leaked);
     expect(out).toContain('[redacted]');
     expect(out).toContain('"exception.type":"Error"');
+    expect(out).toContain(`"exception.fingerprint":"${exceptionFingerprint(error)}"`);
   });
   it('writes 10k ordinary lines quickly (the marker guards keep the scan cheap)', () => {
     const t = performance.now();

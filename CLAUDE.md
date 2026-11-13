@@ -45,8 +45,7 @@ engine, protocol, SDK, transports and CLI are in `packages/`, the Go and Python 
 ## Checking a change
 
 ```bash
-(cd apps/web && npx vitest run) && pnpm typecheck
-pnpm test                                     # the TypeScript packages
+pnpm check                                    # typecheck, every TypeScript package's tests (the host's too), dependency rules
 ```
 
 Run the suites for whatever else you touched: Go modules with `go test ./...`, the Python SDK and plugins with their

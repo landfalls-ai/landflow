@@ -6,6 +6,7 @@
  * journal (an EXISTS on events, a LIKE on data) runs on Postgres after the write queue has drained, because the copy
  * would miss the cold rows. Writers and the runner, which touch runs in flight, keep the synchronous store API.
  */
+import { singleton } from '../singleton';
 import { logger } from '../telemetry/logger';
 import { database } from './index';
 import { isCold, keepHot } from './hot-mirror';
@@ -54,6 +55,9 @@ export function postgresPlaceholders(sql: string): string {
   return out;
 }
 
+const STALLED_MS = 5_000;
+const stalled = singleton('run-scan-stalled', () => ({ until: 0 }));
+
 /**
  * A scan over run data or the journal (an EXISTS on events, a LIKE on data): the rows the SQL selects. In Postgres mode
  * it runs on Postgres once the queued writes are there (so it sees what the copy holds and what it lacks); when they
@@ -61,12 +65,17 @@ export function postgresPlaceholders(sql: string): string {
  */
 export async function readRows<T extends object>(sql: string, ...params: SqlValue[]): Promise<T[]> {
   const db = database();
-  if (remote(db)) {
+  // After a barrier timed out, the next scans for a few seconds go to the copy at once: a paged search makes one call
+  // per page, and each would otherwise wait the full barrier again and log again.
+  if (remote(db) && Date.now() >= stalled.until) {
     try {
       if (await db.barrier(BARRIER_MS)) {
         const result = await db.direct((client) => client.query<T>(postgresPlaceholders(sql), params));
         if (result) return result.rows;
-      } else logger.warn('run scan: the write queue did not drain in time; scanning the in-memory copy (cold runs are missing)');
+      } else {
+        stalled.until = Date.now() + STALLED_MS;
+        logger.warn('run scan: the write queue did not drain in time; scanning the in-memory copy (cold runs are missing)');
+      }
     } catch (error) {
       logger.warn('run scan: Postgres failed; scanning the in-memory copy (cold runs are missing)', { error });
     }

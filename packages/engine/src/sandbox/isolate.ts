@@ -1,13 +1,13 @@
 /**
  * The strict expression backend (LANDFLOW_EXPRESSION_SANDBOX=isolate): the same bootstrap and bridge as the sealed realm
  * (./realm.ts), but inside an isolated-vm Isolate instead of a node:vm context. The isolate has its own V8 heap with a
- * memory cap, so a memory bomb ends the evaluation (and the isolate, which is rebuilt) instead of the host process, and
- * a V8 bug in an expression's code reaches an isolate rather than the host's heap. One isolate per process, one Context
+ * memory cap, so some memory bombs end the evaluation (and the isolate, which is rebuilt) instead of the host process
+ * (not all of them: see below), and a V8 bug in an expression's code reaches an isolate rather than the host's heap. One isolate per process, one Context
  * per resolver (the 32 most recently used stay, the rest are released and rebuilt on demand); only strings cross the
  * boundary, as in the realm. Semantics are the realm's (V8, Intl).
  *
  * The cap is NOT a guarantee that the process survives or stays small: V8 aborts the process on some allocations that
- * no guard can cover (hash-table growth in Set, Map, WeakMap-heavy loops and sparse objects), and one builtin call can
+ * no guard can cover (hash-table growth in Set, Map, a WeakMap whose keys are kept, and sparse objects), and one builtin call can
  * allocate far past the cap before it is checked. docs/features/engine.md and docs/limitations.md give the measurements.
  *
  * isolated-vm is an optional dependency with a native addon, and on Node 20+ every process that loads it needs

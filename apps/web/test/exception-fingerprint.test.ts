@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import { exceptionFingerprint } from '../src/lib/server/telemetry/fingerprint';
+import { failSpan } from '../src/lib/server/telemetry/spans';
 
 function withStack(name: string, stack: string) {
   const error = new Error('boom');
@@ -14,6 +15,16 @@ function withStack(name: string, stack: string) {
 }
 
 describe('exception fingerprint', () => {
+  it('rides on the exception event of a failed span', () => {
+    const events: Array<{ name: string; attributes: Record<string, unknown> }> = [];
+    const statuses: unknown[] = [];
+    const span = { addEvent: (name: string, attributes: Record<string, unknown>) => events.push({ name, attributes }), setStatus: (status: unknown) => statuses.push(status) };
+    const error = new TypeError('boom');
+    failSpan(span as never, error);
+    expect(events).toEqual([{ name: 'exception', attributes: { 'exception.type': 'TypeError', 'exception.message': 'boom', 'exception.stacktrace': error.stack, 'exception.fingerprint': exceptionFingerprint(error) } }]);
+    expect(statuses).toEqual([{ code: 2, message: 'boom' }]);
+  });
+
   const frames = (a: number, b: number, root = '/srv/app') =>
     [`    at save (${root}/apps/web/src/lib/server/store.ts:${a}:11)`, `    at handle (${root}/apps/web/src/lib/server/runner.ts:${b}:5)`, '    at node:internal/process/task_queues:95:5'].join('\n');
 

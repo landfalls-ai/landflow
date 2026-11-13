@@ -1,7 +1,7 @@
 /**
- * Shared pieces of the /api/data-tables routes: a handler that turns
- * DataTableError into JSON errors with its status, and the zod schemas of
- * filters and row queries.
+ * Shared pieces of the /api/data-tables routes: the route handler (DataTableError
+ * is an HttpError, so `handler` answers it with its status) and the zod schemas
+ * of filters and row queries.
  */
 import { z } from 'zod';
 import { CONDITION_OPERATORS, type ConditionOperator, type RowQuery } from '../../shared/data-tables';

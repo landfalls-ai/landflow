@@ -1429,8 +1429,8 @@ workbench in place of a page of cards, keeping Spotlight.
   of a waiting run); `db/reads.ts` serves cold runs and scans from Postgres (a barrier on the write queue first), eviction
   is a copy-only write (`Database.evictLocal`), deletes on the partly mirrored tables are always replayed,
   `promoteExecution` loads a cold run back before its journal is written, queue-mode followers keep cold rows empty, and
-  `landflow.db.replication.lag` reports the follower's lag. At 50,000 finished runs boot went from 10.1 s and 14.1 GB to
-  0.7 s and 164 MB ([deployment.md](deployment.md#postgres-memory-sizing)); `scripts/seed-executions.ts` measures it.
+  `landflow.db.replication.lag` reports the follower's lag. At 50,000 finished runs boot went from about 10 s and 14 GB to
+  under 1 s and about 160 MB ([deployment.md](deployment.md#postgres-memory-sizing)); `scripts/seed-executions.ts` measures it.
 
 - **P27, `HttpError` everywhere** (C12; wave 6): the 53 domain error classes that carry a status extend `HttpError` (`expose: true`, so their messages keep reaching clients), with their extra fields in `details`. 84 route `catch` blocks that only answered `error(caught.message, caught.status)` are gone, `projectRoute` and `dataTableRoute` no longer map anything, and a domain error thrown where no route caught it answers its status instead of a 500. Responses gain a `code` field (the class name in snake_case). Each subclass names itself with a literal `static readonly errorName` that `code` and `name` come from: the production bundle minifies class names, so `new.target.name` answered `code: "v"` in the built image (found in the wave 6 integration review; `test/error-mapping.test.ts` fails a subclass without one). `RerunError`, `ResumeError` and the other `runner.ts` classes follow P28's split; classes with an optional upstream status (`McpClientError`, `OAuth2Error`, `SecretProviderError`, `GatewayAdapterError`, `SystemOneApiError`) stay plain errors.
 
@@ -1474,6 +1474,17 @@ workbench in place of a page of cards, keeping Spotlight.
     Origin on a production-profile host; and a finished run's Run Trace, run search, compare, measures, Needs you,
     approval links, delete and rerun, and the MCP execution tools, in SQLite and Postgres mode (now that P26 serves
     old runs from Postgres).
+
+- **Wave 6 follow-ups** (open after the last wave): routes that answer with `error('…', 404)` directly (for example
+  `/api/projects/[id]`) send no `code`, only `HttpError`s do; the 5xx domain errors that wrap an upstream message
+  (`PauseError`, `WikiError`, `TemplateError`, `KagentError`, `SourceControlError` with git's stderr tail) are shown to
+  the client from any `handler()` route, not only the route that used to catch them, and could drop `expose`; the
+  `db.query` span records its exception without a fingerprint (`database.ts` calls `recordException`); the two
+  `routes-not-db` entries in the dependency baseline (`form-test/[...path]` → `db/replication`, `proposals/[id]/applied`
+  → `db`); `no-circular` leaves out every cycle that touches `lib/server/runner/`, so a direct two-module cycle between an
+  outside module and a runner module is not reported; a decision on an agent's command ask writes no journal event when
+  its run went cold first (only with `LANDFLOW_PG_HOT_MINUTES` below the ask's 10-minute TTL); and the isolate backend
+  still aborts the process on hash-table growth, so a memory bomb needs a separate evaluation process to be contained.
 
 ## Planned next
 

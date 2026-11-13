@@ -97,7 +97,8 @@ describe.skipIf(!on)('isolate backend', () => {
     ];
     for (const code of aborting) {
       const result = inChild(code);
-      expect({ code, aborted: result.status !== 0 || result.signal !== null }).toEqual({ code, aborted: true });
+      // V8's OOM abort, not the 30 s spawn timeout (SIGTERM) or an ordinary failure.
+      expect({ code, aborted: result.signal === 'SIGABRT' || result.status === 134 }).toEqual({ code, aborted: true });
     }
   }, 120_000);
 

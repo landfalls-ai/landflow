@@ -1,6 +1,6 @@
 /**
- * Shared pieces of the routes that deal with projects: the request's user, a handler (HttpError answers itself)
- * its status, the `?projectId=` of list and create routes, and the share and transfer routes every shareable kind
+ * Shared pieces of the routes that deal with projects: the request's user, the route handler (a ProjectError is an
+ * HttpError, so `handler` answers it with its status), the `?projectId=` of list and create routes, and the share and transfer routes every shareable kind
  * uses (`/api/workflows/<id>/shares`, `/api/credentials/<id>/transfer`, …). The access checks themselves run in the
  * route guard (lib/server/auth/policy.ts `resourceRule`) before these handlers.
  */

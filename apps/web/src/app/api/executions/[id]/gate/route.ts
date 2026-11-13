@@ -10,7 +10,7 @@ import { currentPrincipal } from '@/lib/server/auth/guard';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { resolveCheck } from '@/lib/server/journal/checks';
 import { recordDecision } from '@/lib/server/journal/decisions';
-import { liveExecution, resumeExecution, ResumeError } from '@/lib/server/runner';
+import { liveExecution, resumeExecution } from '@/lib/server/runner';
 import { store } from '@/lib/server/store';
 
 export const dynamic = 'force-dynamic';
@@ -39,11 +39,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
       // Settled already (from the strip, one by one): the decision on the run still stands.
     }
   }
-  try {
-    const done = await resumeExecution(id, { kind: 'form', outputs: [[{ json: { decision, ...(note && { note }), by } }]] });
-    return json({ status: done.status });
-  } catch (caught) {
-    if (caught instanceof ResumeError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  // A ResumeError answers itself with its status (handler()).
+  const done = await resumeExecution(id, { kind: 'form', outputs: [[{ json: { decision, ...(note && { note }), by } }]] });
+  return json({ status: done.status });
 });

@@ -19,7 +19,7 @@ import { error, handler, parseBody } from '@/lib/server/http';
 import { sseResponse } from '@/lib/server/sse';
 import { idempotencyKeyOf, MAX_KEY_LENGTH } from '@/lib/server/idempotency';
 import { chatItem, MAX_CHAT_FILE_BYTES, MAX_CHAT_FILES } from '@/lib/server/chat';
-import { DuplicateRunError, findTrigger, liveExecution, newExecutionId, planRerun, RerunError, runWorkflow, type RunOptions } from '@/lib/server/runner';
+import { DuplicateRunError, findTrigger, liveExecution, newExecutionId, planRerun, runWorkflow, type RunOptions } from '@/lib/server/runner';
 import { workflowSchema } from '@/lib/server/schemas';
 import { store } from '@/lib/server/store';
 import { startTrigger, traceparentHeader, type TriggerFire } from '@/lib/server/telemetry';
@@ -72,13 +72,9 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   let plan: Omit<RunOptions, 'signal' | 'onEvent' | 'onStart'>;
   let trigger: TriggerFire | undefined;
   if (body.data.rerun) {
-    try {
-      await store.promoteExecution(body.data.rerun.executionId);
-      plan = planRerun(body.data.rerun.executionId, body.data.rerun, workflow);
-    } catch (caught) {
-      if (caught instanceof RerunError) return error(caught.message, caught.status);
-      throw caught;
-    }
+    // A RerunError is an HttpError: handler() answers it with its status.
+    await store.promoteExecution(body.data.rerun.executionId);
+    plan = planRerun(body.data.rerun.executionId, body.data.rerun, workflow);
   } else {
     let startNodeId = body.data.startNodeId;
     let triggerItems = body.data.items as NodeItem[] | undefined;
