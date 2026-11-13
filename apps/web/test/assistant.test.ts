@@ -421,7 +421,7 @@ describe('builder chat', () => {
     expect(tools.map((e) => [e.label, e.ok])).toEqual([
       ['Searched nodes for “remove duplicates”', true],
       ['Read Remove Duplicates docs', true],
-      ['Proposal incomplete: connect “d” → “Nowhere”: no node “Nowhere”', false],
+      ['Reworked the change', true],
       ['Proposed 1 change', true],
       ['Proposal rejected: remove: no node “Ghost”', false],
     ]);
@@ -614,7 +614,7 @@ describe('builder chat', () => {
     const events: ChatEvent[] = [];
     await runChat({ messages: [{ role: 'user', content: 'Disconnect Code' }], workflow: workflow(), model, types, onEvent: (e) => events.push(e) });
     const tools = events.filter((e) => e.type === 'tool');
-    expect(tools.map((e) => e.ok)).toEqual([false, true]);
+    expect(tools.map((e) => [e.label, e.ok])).toEqual([['Reworked the change', true], [expect.any(String), true]]);
     expect((calls[1].messages.at(-1) as { results: Array<{ content: string }> }).results[0].content).toContain('“Code” no longer receives any input');
     expect(events.find((e) => e.type === 'proposal')).toMatchObject({ warnings: ['“Code” no longer receives any input'] });
   });
@@ -855,5 +855,19 @@ describe('an insert before a node the same change removes', () => {
     };
     const result = applyOps(workflow as never, [{ op: 'addNode', type: 'core.noOp', name: 'Extract', before: 'Post' }, { op: 'removeNode', node: 'Post' }], lookup());
     expect(result.workflow.nodes.map((n) => n.name)).toContain('Extract');
+  });
+});
+
+describe('a change card’s values', () => {
+  it('reads a Set’s fields, lists and objects as a person would, not as JSON', async () => {
+    const { readableValue } = await import('@/lib/shared/assistant-ops');
+    expect(readableValue({ values: [{ name: 'tagged', type: 'boolean', value: true }] })).toBe('tagged = true');
+    expect(readableValue({ values: [{ name: 'a', value: 1 }, { name: 'b', value: 'x' }, { name: 'c', value: null }, { name: 'd', value: 2 }] })).toBe('a = 1, b = x, c = empty +1 more');
+    expect(readableValue(['x', 'y'])).toBe('x, y');
+    expect(readableValue({ method: 'GET', url: 'https://example.test', headers: {}, timeout: 5 })).toBe('method: GET, url: https://example.test, headers: empty +1 more');
+    expect(readableValue('plain')).toBe('plain');
+  });
+  it('shows them that way in the diff', () => {
+    expect(describeOps([{ op: 'setParameters', node: 'Shape', parameters: { fields: { values: [{ name: 'tagged', type: 'boolean', value: true }] } } }])).toEqual([{ sign: '~', text: '“Shape”: tagged = true' }]);
   });
 });

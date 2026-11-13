@@ -33,6 +33,27 @@ export function Warnings({ warnings }: { warnings?: string[] }) {
   );
 }
 
+/** What a change left out, with a "why" that opens the reasons in place (a hover can't be reached by touch or keys). */
+export function LeftOut({ reasons, label }: { reasons: string[]; label?: string }) {
+  const [open, setOpen] = useState(false);
+  if (!reasons.length) return null;
+  return (
+    <div className="text-[11px] leading-snug text-t3">
+      <span>{label ?? `${reasons.length} part${reasons.length === 1 ? '' : 's'} left out`}</span>{' '}
+      <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="font-semibold text-ac hover:underline max-md:min-h-11 max-md:px-1">
+        {open ? 'Hide why' : 'Why?'}
+      </button>
+      {open && (
+        <ul className="mt-1 list-disc space-y-0.5 pl-4 [overflow-wrap:anywhere]">
+          {reasons.map((reason) => (
+            <li key={reason}>{reason}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /** The ops of a change as diff lines: + node, ~ params, → connection, − removed, ✎ renamed. */
 export function OpsDiff({ ops, className }: { ops: Suggestion['ops']; className?: string }) {
   const lines = describeOps(ops, editorLookup());
@@ -65,9 +86,7 @@ function SuggestionRow({ suggestion, state, onApply, onDismiss }: { suggestion: 
       {suggestion.ops.length > 0 && <OpsDiff ops={suggestion.ops} />}
       <Warnings warnings={suggestion.warnings} />
       {!suggestion.ops.length && suggestion.dropped?.length ? (
-        <p className="text-[11px] text-t3" title={suggestion.dropped.join('\n')}>
-          Advice only: the change the model proposed doesn’t fit this workflow.
-        </p>
+        <LeftOut reasons={suggestion.dropped} label="Advice only: the change the model proposed doesn’t fit this workflow." />
       ) : null}
       <div className="flex items-center gap-1.5 pt-0.5">
         {state === 'applied' ? (

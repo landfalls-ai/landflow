@@ -22,6 +22,7 @@ import { edgePath, useLane } from '../canvas/edge-path';
 import { useNewLook } from '../shell/look-toggle';
 import { applyChanges, editorLookup, sendFeedback, useAssistant, useWorking, type Proposal } from './assistant';
 import { useAutonomous } from './autonomous';
+import { LeftOut } from './suggestions-card';
 import { handleId, useEditor } from './store';
 
 /** How long a step takes to tick off once the plan is there. */
@@ -177,9 +178,7 @@ export function LiveSteps({ live }: { live: Live }) {
         </p>
       )}
       {ready && dropped > 0 && (
-        <p className="text-[11px] text-t3" title={live.proposals.flatMap((p) => p.proposal.dropped).join('\n')}>
-          {dropped} part{dropped === 1 ? '' : 's'} left out (hover for why)
-        </p>
+        <LeftOut reasons={live.proposals.flatMap((p) => p.proposal.dropped)} />
       )}
       {ready && all && !autonomous && (
         <div className="flex items-center gap-1.5">

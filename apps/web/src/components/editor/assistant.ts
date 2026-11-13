@@ -4,6 +4,7 @@
  * ops to the canvas with an undo, after-run suggestions cached per run, and
  * Spotlight's conversation, kept while the editor is open.
  */
+import { isPhone } from '@/lib/client/use-phone';
 import { nanoid } from 'nanoid';
 import { toast } from 'sonner';
 import { create } from 'zustand';
@@ -120,7 +121,8 @@ export function applyChanges(
   if (options.quiet) return true;
   const skipped = dropped.length ? `Skipped ${dropped.length}: ${dropped[0]}` : undefined;
   // Long enough to look at the canvas before deciding to undo.
-  toast.success(label, { description: skipped, action: { label: 'Undo', onClick: undo }, duration: 15_000 });
+  // A phone's toast sits over the run bar: shorter there.
+  toast.success(label, { description: skipped, action: { label: 'Undo', onClick: undo }, duration: isPhone() ? 5_000 : 15_000 });
   return true;
 }
 
@@ -301,7 +303,8 @@ export type ReplyPart =
 export type ChatItem =
   /** `auto`: written by a test-and-fix session, not typed. */
   | { id: string; role: 'user'; text: string; auto?: boolean; testId?: string }
-  | { id: string; role: 'assistant'; parts: ReplyPart[]; done?: { model: string; durationMs: number; steps: number }; error?: string; testId?: string };
+  /** `auto`: autonomous mode applied its changes (drawn as rows, whatever the switch says later). */
+  | { id: string; role: 'assistant'; parts: ReplyPart[]; done?: { model: string; durationMs: number; steps: number }; error?: string; testId?: string; auto?: boolean };
 
 type StreamEvent =
   | { type: 'text'; text: string }
