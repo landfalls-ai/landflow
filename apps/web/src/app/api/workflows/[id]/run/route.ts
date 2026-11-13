@@ -145,7 +145,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
         trigger?.end(caught);
         if (caught instanceof DuplicateRunError) {
           // The key ran before: name that execution instead of starting another.
-          const existing = liveExecution(caught.executionId) ?? store.getExecution(caught.executionId);
+          const existing = liveExecution(caught.executionId) ?? await store.loadExecution(caught.executionId);
           send('started', { executionId: caught.executionId, duplicate: true });
           send('result', { executionId: caught.executionId, status: existing?.status ?? 'running', error: existing?.error, lastNodeId: existing?.lastNodeId, duplicate: true });
           return;

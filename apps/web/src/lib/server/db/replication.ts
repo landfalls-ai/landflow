@@ -369,8 +369,8 @@ export class Replica {
     }
   }
 
-  private async reloadTable(table: TableName) {
-    const query = mirrorSelect(table, hotCutoff());
+  private async reloadTable(table: TableName, cutoff = hotCutoff()) {
+    const query = mirrorSelect(table, cutoff);
     const { rows } = await this.pool.query(query.text, query.values);
     this.db.sqlite.exec('BEGIN');
     try {
@@ -385,7 +385,9 @@ export class Replica {
 
   /** Reload every table from Postgres, then re-apply this process's writes not yet there (notices may have been lost). */
   async reload() {
-    for (const table of Object.keys(TABLES) as TableName[]) await this.reloadTable(table);
+    // One cutoff for every table, so a run is hot (data and events) in all of them or in none.
+    const cutoff = hotCutoff();
+    for (const table of Object.keys(TABLES) as TableName[]) await this.reloadTable(table, cutoff);
     for (const op of this.pendingOps()) {
       if (op.op === 'deleteBefore') this.statement(`DELETE FROM ${op.table} WHERE ${op.column} < ?`).run(op.value);
       else if (op.op === 'delete') this.deleteLocal(op.table, op.where);

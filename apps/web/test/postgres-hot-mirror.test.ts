@@ -77,6 +77,29 @@ describe.skipIf(!enabled)('Postgres hot mirror', async () => {
     expect(local("SELECT COUNT(*) AS n FROM executions WHERE id = 'seed_done_7' AND data <> ''")).toBe(0);
   });
 
+  it('lists every column of executions in the mirror select (a later migration cannot load as NULL)', async () => {
+    const { mirrorSelect } = await import('@/lib/server/db/hot-mirror');
+    const columns = (await admin.query("SELECT column_name FROM information_schema.columns WHERE table_schema = $1 AND table_name = 'executions'", [SCHEMA])).rows.map((row) => String(row.column_name));
+    const selected = [...mirrorSelect('executions', new Date().toISOString()).text.matchAll(/\be\.(\w+)/g)].map((m) => m[1]);
+    for (const column of columns) expect(selected, column).toContain(column);
+  });
+
+  it('answers for a finished cold run the way it does for a hot one: stop 409, form finished page, approval 409, duplicate status', async () => {
+    const id = 'seed_done_11';
+    expect(local(`SELECT COUNT(*) AS n FROM executions WHERE id = '${id}' AND data <> ''`)).toBe(0);
+    const { POST: stop } = await import('@/app/api/executions/[id]/stop/route');
+    const stopped = await stop(new Request(`http://localhost/api/executions/${id}/stop`, { method: 'POST' }), { params: Promise.resolve({ id }) });
+    expect(stopped.status).toBe(409);
+    expect(await stopped.json()).toMatchObject({ executionId: id, status: 'success' });
+    const { GET: form } = await import('@/app/form/waiting/[id]/route');
+    const page = await form(new Request(`http://localhost/form/waiting/${id}`), { params: Promise.resolve({ id }) });
+    expect(page.status).not.toBe(404);
+    const { decideApproval } = await import('@/lib/server/approvals');
+    await expect(decideApproval(id, 'call_1', true)).rejects.toMatchObject({ status: 409 });
+    const { store } = await import('@/lib/server/store');
+    expect((await store.loadExecution(id))?.status).toBe('success');
+  });
+
   it('serves the journal of a cold run and scans across cold and hot runs', async () => {
     const journal = await import('@/lib/server/journal/store');
     const events = await journal.readAllAsync('seed_done_8');

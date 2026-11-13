@@ -11,6 +11,7 @@
  */
 import { envNumber } from '../config';
 import { logger } from '../telemetry/logger';
+import { singleton } from '../singleton';
 import type { Database, SqlValue } from './database';
 
 /** Statuses of a run still going (also kept hot while a person acts on it). */
@@ -53,7 +54,8 @@ function coolingIds(db: Database, cutoff: string, promoted: Map<string, number>,
 }
 
 /** Promoted runs stay in the copy this long past the promotion (ms by id; Database.evictLocal and the evictor read it). */
-const promotedUntil = new WeakMap<Database, Map<string, number>>();
+// A singleton: a route's module graph and the evictor started at boot must see the same promotions.
+const promotedUntil = singleton('hot-promotions', () => new WeakMap<Database, Map<string, number>>());
 const promotions = (db: Database) => {
   let map = promotedUntil.get(db);
   if (!map) promotedUntil.set(db, (map = new Map()));

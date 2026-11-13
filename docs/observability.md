@@ -266,7 +266,7 @@ In queue mode each process also reports how far its copy trails the others:
 
 | Metric | Type | Attributes |
 |---|---|---|
-| `landflow.db.replication.lag` | gauge (s) | time between another process sending a change notice (just before its commit) and this process applying it, as of the last notice applied (not updated while none arrives) |
+| `landflow.db.replication.lag` | gauge (s) | time between another process sending a change notice (just before its commit) and this process applying it, as of the last notice applied (not updated while none arrives); it compares the sender's clock with the receiver's, so skew between machines shows as lag (or is clamped to 0) |
 
 ### Services (host)
 

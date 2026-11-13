@@ -12,6 +12,7 @@ import type { Workflow } from '@landflow/engine';
 import type { ExecutionRecord } from '../shared/types';
 import { delegated, forwardToLeader } from './cluster/state';
 import { database } from './db';
+import { promoteExecution } from './db/reads';
 import { refreshRows } from './db/replication';
 import { singleton } from './singleton';
 import { logger } from './telemetry';
@@ -67,6 +68,8 @@ export const retries = singleton('retries', () => {
     const row = database().get<RetryRow>('SELECT execution_id, workflow_id, attempt, due_at FROM retries WHERE execution_id = ?', executionId);
     if (!row) return;
     if (Date.parse(row.due_at) > Date.now() + 50) return arm(executionId, row.due_at);
+    // The retries row is what kept the source hot: load it back and hold it before that row goes, so the link written once the retry starts finds it.
+    await promoteExecution(executionId).catch(() => undefined);
     database().delete('retries', { execution_id: executionId });
     // Loaded lazily: the runner imports this module.
     const { startRetry } = await import('./runner');

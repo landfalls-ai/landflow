@@ -186,7 +186,7 @@ async function postFeedback(request: Request, found: NonNullable<ReturnType<type
   if (!validSessionId(body.sessionId)) return jsonResponse({ error: 'sessionId must be 1–128 letters, digits, dots, dashes, colons or underscores' }, 400, cors);
   if (typeof body.executionId !== 'string' || !/^[\w-]{1,128}$/.test(body.executionId)) return jsonResponse({ error: 'executionId is the id the chat answered with' }, 400, cors);
   if (body.rating !== null && !isRating(body.rating)) return jsonResponse({ error: "rating is 'up', 'down' or null (take it back)" }, 400, cors);
-  const record = liveExecution(body.executionId) ?? store.getExecution(body.executionId);
+  const record = liveExecution(body.executionId) ?? await store.loadExecution(body.executionId);
   if (!record || record.workflowId !== workflow.id) return jsonResponse({ error: 'That answer doesn’t belong to this chat' }, 404, cors);
   // The trigger's item when it ran, else the picked agent's own input (the trigger never ran): both name the visitor's session.
   const asked = answeredSession(record, node.id);

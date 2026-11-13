@@ -74,16 +74,10 @@ describe('the sync getExecution guard', () => {
     'lib/server/cluster/',
     'lib/server/sub-executions.ts',
     'lib/server/waits.ts',
-    'lib/server/approvals.ts',
-    // Resume routes: a waiting run is answered or started, not read as history.
-    'app/form/waiting/',
+    // Resume routes (the form-test redirect, the waiting-run lookup, the webhook replay): a waiting run is answered or started.
     'app/form-test/',
-    'app/chat/',
     'app/api/waiting/',
     'app/api/webhook/',
-    'app/api/workflows/[id]/execute/',
-    'app/api/workflows/[id]/run/',
-    'app/api/executions/[id]/stop/',
     // validateWorkflow is synchronous for its callers; see the comment at lastRunFields.
     'lib/server/mcp/workflows.ts',
   ];

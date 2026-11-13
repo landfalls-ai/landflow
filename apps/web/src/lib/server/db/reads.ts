@@ -81,7 +81,8 @@ export async function readRows<T extends object>(sql: string, ...params: SqlValu
  */
 export async function promoteExecution(id: string): Promise<void> {
   const db = database();
-  if (!isCold(db, id)) return;
+  // Even a run still hot is held for the full window: it may be about to cool, and a caller reads it after an await.
+  if (!isCold(db, id)) return keepHot(db, id);
   const loaded = await db.direct(async (client) => ({
     run: (await client.query<{ data: string }>('SELECT data FROM executions WHERE id = $1', [id])).rows[0],
     events: (await client.query<Record<string, SqlValue>>('SELECT * FROM execution_events WHERE execution_id = $1 ORDER BY seq', [id])).rows,
