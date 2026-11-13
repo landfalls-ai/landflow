@@ -75,7 +75,10 @@ list order: the configuration check, the database, the cluster runtime, the regi
 scheduler and pollers (on the leader), the gateway sync and the shutdown steps. Route modules do not import it: `handler()` and
 `scimRoute()` await `whenReady()` (`lifecycle.ts`), which boots through the bootstrapper `instrumentation.ts` (or the test setup)
 registered. `bus.ts` is the in-process event bus that
-carries live run events to SSE streams; in queue mode the same events travel over Valkey pub/sub.
+carries live run events to SSE streams; in queue mode the same events travel over Valkey pub/sub. The bus numbers each
+event and keeps the last 500 in a ring, which `/api/events` (`events-stream.ts`) replays after a reconnect's
+`Last-Event-ID`; every stream goes through `sse.ts` (`sseResponse`), which bounds a client's unread bytes and writes the
+heartbeats.
 
 ## A run, end to end
 
@@ -246,6 +249,16 @@ On Postgres the host loads the database into an in-memory copy at boot, serves r
 ordered queue spooled to disk, so the store API stays synchronous; other processes' writes arrive through
 `LISTEN/NOTIFY`. Migrations are versioned (`db/schema.ts`, recorded in `schema_version`), each written for both
 databases; a migration can add columns only where they are missing.
+
+**The read seam for run data.** `db/reads.ts` holds the reads of `executions.data` and `execution_events` that code serving
+finished runs uses, all async: `readExecutionData`, `readExecutionEvents` and `readRows` for scans (the EXISTS search in
+`journal/runs-query.ts`, `executionsMentioningAsync`). Today each is the synchronous read in a resolved promise, so
+behaviour is unchanged; serving them from Postgres on demand instead of loading them into the in-memory copy at boot
+changes only that file. The store API follows one rule: `store.getExecution` is synchronous and is for **runs in flight**
+(running, waiting, queued) and the runner, cluster, waits, approvals and resume routes that handle them; anything that may
+read a finished run uses `await store.loadExecution(id)` and the async journal readers (`journalStore.readEventsAsync`,
+`readAllAsync`, `checksSinceAsync`, `spanStartAsync`, `spanEventsAsync`). `test/execution-reads.test.ts` scans the source and
+fails when a file outside its allow-list calls `store.getExecution(`.
 
 ## Queue mode and high availability
 

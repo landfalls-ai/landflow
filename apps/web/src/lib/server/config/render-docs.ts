@@ -37,7 +37,10 @@ function describe(variable: ConfigVariable): string {
   const notes: string[] = [];
   if (variable.aliases?.length) notes.push(`Deprecated alias: ${variable.aliases.map((a) => `\`${a}\``).join(', ')}.`);
   if (variable.readBy === 'both') notes.push('Also read by plugins.');
-  return [variable.description.replace(/\|/g, '\\|'), ...notes].join(' ');
+  const description = variable.description.replace(/\|/g, '\\|');
+  if (!notes.length) return description;
+  // Descriptions are written without a final period: end the sentence before the notes.
+  return [/[.!?]$/.test(description) ? description : `${description}.`, ...notes].join(' ');
 }
 
 /** Consecutive variables of one group with the same description share a row (the ones documented together). */

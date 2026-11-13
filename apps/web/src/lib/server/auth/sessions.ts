@@ -1,10 +1,12 @@
 /**
  * Sign-in sessions: a random token in the session cookie, kept as its SHA-256 in `sessions` with an expiry
- * (LANDFLOW_SESSION_TTL_HOURS, default 14 days). Signing out deletes the row; removing a user or resetting their
- * password deletes all of theirs. Expired rows are swept when sessions are created. A deactivated user (SCIM) gets
+ * (LANDFLOW_SESSION_TTL_HOURS, default 14 days) and an idle limit (LANDFLOW_SESSION_IDLE_HOURS). Signing out deletes
+ * the row; removing a user or resetting their password deletes all of theirs, and changing a password deletes the
+ * others. Expired rows are swept when sessions are created. A deactivated user (SCIM) gets
  * no session, and the sessions they had stop working.
  */
 import { recordAudit } from '../audit';
+import { envNumber, isProduction } from '../config';
 import { authDb } from './db';
 import { randomToken, tokenHash } from './passwords';
 import { getUser, updateUser, UserError, type UserRecord } from './users';
@@ -41,6 +43,13 @@ export function sessionTtlHours(): number {
   return Number.isFinite(configured) && configured > 0 ? Math.min(configured, 24 * 365) : DEFAULT_TTL_HOURS;
 }
 
+/** LANDFLOW_SESSION_IDLE_HOURS: a session unused this long is refused (default 72 in production, off in development; 0 = off). */
+export function sessionIdleHours(): number {
+  // Unset, invalid (recorded as a config issue) or negative: the profile's default.
+  const configured = envNumber('LANDFLOW_SESSION_IDLE_HOURS', { fallback: NaN, max: 24 * 365 });
+  return Number.isFinite(configured) && configured >= 0 ? configured : isProduction() ? 72 : 0;
+}
+
 /** Start a session for `user`: returns the cookie token (shown nowhere else) and when it expires. */
 export function createSession(user: UserRecord, method: SessionMethod, meta: { ip?: string; userAgent?: string } = {}): { token: string; expiresAt: Date } {
   if (user.disabledAt || getUser(user.id)?.disabledAt) throw new UserError(DEACTIVATED_MESSAGE, 403);
@@ -67,8 +76,12 @@ export function createSession(user: UserRecord, method: SessionMethod, meta: { i
   return { token, expiresAt };
 }
 
-/** The user of a valid, unexpired session token, else undefined. */
-export function sessionUser(token: string | undefined, now = Date.now()): { user: UserRecord; session: SessionRecord } | undefined {
+/**
+ * The user of a valid, unexpired session token, else undefined. A lookup marks the session as used (`last_seen_at`, at
+ * most once a minute) unless `touch` is false: a check the person did not make (the live stream's re-check) must not
+ * keep an idle session alive.
+ */
+export function sessionUser(token: string | undefined, now = Date.now(), { touch = true }: { touch?: boolean } = {}): { user: UserRecord; session: SessionRecord } | undefined {
   if (!token || token.length > 200) return undefined;
   const db = authDb();
   const row = db.get<SessionRow>('SELECT * FROM sessions WHERE id = ?', tokenHash(token));
@@ -77,9 +90,15 @@ export function sessionUser(token: string | undefined, now = Date.now()): { user
     db.delete('sessions', { id: row.id });
     return undefined;
   }
+  // Idle: last_seen_at is touched at most once a minute, so this is accurate to about that.
+  const idleMs = sessionIdleHours() * 3_600_000;
+  if (idleMs > 0 && row.last_seen_at && now - Date.parse(row.last_seen_at) > idleMs) {
+    db.delete('sessions', { id: row.id });
+    return undefined;
+  }
   const user = getUser(row.user_id);
   if (!user || user.disabledAt) return undefined;
-  if (!row.last_seen_at || now - Date.parse(row.last_seen_at) > TOUCH_EVERY_MS) db.upsert('sessions', { ...row, last_seen_at: new Date(now).toISOString() });
+  if (touch && (!row.last_seen_at || now - Date.parse(row.last_seen_at) > TOUCH_EVERY_MS)) db.upsert('sessions', { ...row, last_seen_at: new Date(now).toISOString() });
   return { user, session: { id: row.id, userId: row.user_id, createdAt: row.created_at, expiresAt: row.expires_at, method: row.method as SessionMethod } };
 }
 

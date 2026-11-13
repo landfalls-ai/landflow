@@ -39,6 +39,24 @@ const stateKey = () => credentials.deriveKey('oauth2.state');
 const pkceKey = () => credentials.deriveKey('oauth2.pkce');
 
 /**
+ * A state signed by any key the ring derives (a flow started before a rotation or the HKDF upgrade, for one release),
+ * with the PKCE key of the same position. A state no key accepts fails with the first key's message.
+ */
+function verifyAnyState(state: string | null): { payload: ReturnType<typeof verifyState>; pkce: Buffer } {
+  const states = credentials.deriveKeys('oauth2.state');
+  const pkces = credentials.deriveKeys('oauth2.pkce');
+  let first: unknown;
+  for (const [index, key] of states.entries()) {
+    try {
+      return { payload: verifyState(key, state), pkce: pkces[index]! };
+    } catch (error) {
+      first ??= error;
+    }
+  }
+  throw first;
+}
+
+/**
  * The redirect URL to register with providers: LANDFLOW_OAUTH2_REDIRECT_URL, else LANDFLOW_PUBLIC_URL's callback,
  * else the callback on the origin the request came to (the browser's, so the flow's cookie comes back with it).
  */
@@ -97,7 +115,7 @@ export async function completeAuthorization(request: Request, fetchImpl?: typeof
   let credentialId: string | undefined;
   let clearCookie: string | undefined;
   try {
-    const state = verifyState(stateKey(), params.get('state'));
+    const { payload: state, pkce } = verifyAnyState(params.get('state'));
     credentialId = state.c;
     const name = stateCookieName(state.n);
     if (readCookie(request, name) !== '1') {
@@ -113,7 +131,7 @@ export async function completeAuthorization(request: Request, fetchImpl?: typeof
     if (!code) throw new OAuth2Error('The provider sent no authorization code');
     const { config: saved, token: previous } = credentials.oauth2(credentialId);
     const config = await resolveOAuth2Secrets(saved);
-    const codeVerifier = config.grantType === 'pkce' ? pkceVerifier(pkceKey(), state.n) : undefined;
+    const codeVerifier = config.grantType === 'pkce' ? pkceVerifier(pkce, state.n) : undefined;
     const response = await exchangeCode(config, { code, redirectUri: state.r, ...(codeVerifier && { codeVerifier }) }, fetchImpl);
     const token = toStoredToken(response, previous);
     const account = accountOf(token, jwtClaims(token.id_token) ? undefined : await fetchUserInfo(config, token.access_token, fetchImpl));

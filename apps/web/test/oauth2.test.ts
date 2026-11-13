@@ -568,11 +568,11 @@ describe('OAuth2 helpers', () => {
 
   it('seals other secrets with the vault key', () => {
     const sealed = credentials.sealSecret('https://hooks.slack.test/T000/B000/xyz');
-    expect(sealed).toMatch(/^v1\./);
+    expect(sealed).toMatch(/^v2\.k0\./);
     expect(sealed).not.toContain('hooks.slack');
     expect(credentials.openSecret(sealed)).toBe('https://hooks.slack.test/T000/B000/xyz');
-    const [v, iv, tag, value] = sealed.split('.');
+    const [v, kid, iv, tag, value] = sealed.split('.');
     // A changed first character always alters the ciphertext, so GCM's tag check fails.
-    expect(() => credentials.openSecret([v, iv, tag, `${value[0] === 'A' ? 'B' : 'A'}${value.slice(1)}`].join('.'))).toThrow(CredentialError);
+    expect(() => credentials.openSecret([v, kid, iv, tag, `${value[0] === 'A' ? 'B' : 'A'}${value.slice(1)}`].join('.'))).toThrow(CredentialError);
   });
 });

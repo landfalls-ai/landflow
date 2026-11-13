@@ -58,7 +58,7 @@ export function AgentSessionPanel({
     if (!nodeId || !agentId || !expanded) return;
     let stopped = false;
     const load = () =>
-      api<{ sessions: AgentSession[] }>(`/api/agents/${encodeURIComponent(agentId)}/sessions?executionId=${encodeURIComponent(executionId)}&nodeId=${encodeURIComponent(nodeId)}`)
+      api<{ sessions: AgentSession[] }>(`/api/agents/${encodeURIComponent(agentId)}/sessions?executionId=${encodeURIComponent(executionId)}&nodeId=${encodeURIComponent(nodeId)}`, { background: true })
         .then((r) => {
           if (stopped) return;
           setSessions(r.sessions);

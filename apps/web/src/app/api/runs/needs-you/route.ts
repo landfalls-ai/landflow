@@ -15,5 +15,5 @@ export const dynamic = 'force-dynamic';
 export const GET = handler(async () => {
   // Members see the runs of the workflows they see (owners and admins: all).
   const visible = visibleIds(routeActor(), 'workflow', store.listWorkflows().map((w) => w.id));
-  return json({ items: needsYou(visible) });
+  return json({ items: await needsYou(visible) });
 });

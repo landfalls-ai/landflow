@@ -109,6 +109,7 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'credential.use': 'Used a credential in a run',
   'credential.test': 'Tested a credential',
   'settings.update': 'Changed settings',
+  'encryption.rotate': 'Re-sealed stored secrets with the primary key',
   'execution.delete': 'Deleted an execution',
   'execution.stop': 'Stopped an execution',
   'execution.stop_all': 'Stopped all executions',

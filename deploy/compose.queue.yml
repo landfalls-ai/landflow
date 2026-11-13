@@ -41,6 +41,8 @@ x-host-env: &host-env
   LANDFLOW_DATA_DIR: /data
   # Every main and worker decrypts the same credentials and signs file links the same way.
   LANDFLOW_ENCRYPTION_KEY: ${LANDFLOW_QUEUE_ENCRYPTION_KEY:-landflow-queue-dev-only-encryption-key}
+  # The key ring for rotation (kid:key, the new key first), the same on every process. Empty: the key above only.
+  LANDFLOW_ENCRYPTION_KEYS: ${LANDFLOW_QUEUE_ENCRYPTION_KEYS:-}
   LANDFLOW_BINARY_SECRET: ${LANDFLOW_QUEUE_BINARY_SECRET:-landflow-queue-dev-only-binary-secret}
   # Item files in the infra stack's MinIO (explicit endpoint and keys: never the AWS default credential chain).
   LANDFLOW_BINARY_STORE: s3

@@ -72,14 +72,35 @@ describe('the retention variables', () => {
     process.env.USAGE_RETENTION_DAYS = '30';
     const { rawRetentionDays } = await import('@/lib/server/usage/query');
     expect(rawRetentionDays()).toBe(30);
+    process.env.LANDFLOW_USAGE_RETENTION_DAYS = '';
+    expect(rawRetentionDays()).toBe(30);
     process.env.LANDFLOW_USAGE_RETENTION_DAYS = '7';
     expect(rawRetentionDays()).toBe(7);
     for (const [name, value] of [['USAGE_RETENTION_DAYS', keep.a], ['LANDFLOW_USAGE_RETENTION_DAYS', keep.b]] as const) {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
     }
-    const text = readFileSync(join(root, 'ai-usage/index.ts'), 'utf8');
-    expect(text).toMatch(/LANDFLOW_AI_USAGE_RETENTION_DAYS \?\? process\.env\.AI_USAGE_RETENTION_DAYS/);
+  });
+
+  it('AI usage retention reads LANDFLOW_AI_USAGE_RETENTION_DAYS, then the old name, and an empty new name does not hide the old one', async () => {
+    const keep = { a: process.env.AI_USAGE_RETENTION_DAYS, b: process.env.LANDFLOW_AI_USAGE_RETENTION_DAYS };
+    const { aiUsageRetentionDays } = await import('@/lib/server/ai-usage');
+    try {
+      delete process.env.LANDFLOW_AI_USAGE_RETENTION_DAYS;
+      delete process.env.AI_USAGE_RETENTION_DAYS;
+      expect(aiUsageRetentionDays()).toBe(400);
+      process.env.AI_USAGE_RETENTION_DAYS = '30';
+      expect(aiUsageRetentionDays()).toBe(30);
+      process.env.LANDFLOW_AI_USAGE_RETENTION_DAYS = '';
+      expect(aiUsageRetentionDays()).toBe(30);
+      process.env.LANDFLOW_AI_USAGE_RETENTION_DAYS = '7';
+      expect(aiUsageRetentionDays()).toBe(7);
+    } finally {
+      for (const [name, value] of [['AI_USAGE_RETENTION_DAYS', keep.a], ['LANDFLOW_AI_USAGE_RETENTION_DAYS', keep.b]] as const) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
   });
 });
 
@@ -143,6 +164,7 @@ describe('execution reactions', () => {
       vi.resetModules();
       const { resetSingleton } = await import('@/lib/server/singleton');
       resetSingleton('execution-reactions');
+      resetSingleton('store-execution-finished');
       resetSingleton('lifecycle');
       resetSingleton('bootstrap');
       resetSingleton('runtime:worker');
@@ -154,6 +176,7 @@ describe('execution reactions', () => {
       singleton('execution-reactions', () => ((registered = false), true));
       expect(registered, `the ${role} boot registers the reactions`).toBe(true);
       resetSingleton('execution-reactions');
+      resetSingleton('store-execution-finished');
     }
   });
 });

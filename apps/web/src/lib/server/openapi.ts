@@ -598,7 +598,7 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Executions',
     id: 'listExecutions',
     summary: 'List executions',
-    description: 'Running executions first (on the first page only), then saved ones, newest first. Page with `cursor`: pass the previous page’s `nextCursor` until it is absent.',
+    description: 'Running executions first (on the first page only), then saved ones, newest first; a running execution’s saved row is left out of every page. Page with `cursor`: pass the previous page’s `nextCursor` until it is absent.',
     query: [
       { name: 'workflowId', description: 'Only this workflow’s', schema: { type: 'string' } },
       { name: 'limit', description: 'At most this many saved executions per page (default 100, at most 500)', schema: { type: 'integer', minimum: 1, maximum: 500, default: 100 } },
@@ -1863,7 +1863,7 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Second brain',
     id: 'usageReport',
     summary: 'A grouped report of the usage ledger',
-    description: '`groupBy`: day, kind, workflow, nodeType, signature, agent, model or attr (default kind; attr needs `groupAttr`, and reads the raw events). `kinds` takes custom kinds too (work.ticket_moved). Counts, failures, durations, items, tokens and cost per group; windows past USAGE_RETENTION_DAYS read the daily rollups. Members see the workflows and agents they can open.',
+    description: '`groupBy`: day, kind, workflow, nodeType, signature, agent, model or attr (default kind; attr needs `groupAttr`, and reads the raw events). `kinds` takes custom kinds too (work.ticket_moved). Counts, failures, durations, items, tokens and cost per group; windows past LANDFLOW_USAGE_RETENTION_DAYS read the daily rollups. Members see the workflows and agents they can open.',
     query: [{ name: 'groupBy', description: 'What to group by', schema: { type: 'string', enum: ['day', 'kind', 'workflow', 'nodeType', 'signature', 'agent', 'model', 'attr'] } }, text('groupAttr', 'For groupBy=attr: the attribute to group by, such as team'), text('attr.<name>', 'Only events whose attribute <name> equals the value, such as attr.team=billing'), ...usageQuery],
     responses: { 200: reply('The report', object({ from: { type: 'string' }, to: { type: 'string' }, groupBy: { type: 'string' }, rows: array({ type: 'object' }), totals: { type: 'object' } }, ['rows', 'totals'])) },
   });

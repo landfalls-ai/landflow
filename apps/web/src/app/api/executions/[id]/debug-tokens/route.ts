@@ -35,7 +35,7 @@ const schema = z.object({
 export const POST = handler(async (request: Request, { params }: Ctx) => {
   const me = await requireUser();
   const { id } = await params;
-  const record = liveExecution(id) ?? store.getExecution(id);
+  const record = liveExecution(id) ?? await store.loadExecution(id);
   if (!record) return error('Execution not found', 404);
   const body = await parseBody(request, schema);
   if (!body.ok) return body.response;

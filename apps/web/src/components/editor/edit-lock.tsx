@@ -152,8 +152,8 @@ function setReadOnly(on: boolean) {
 }
 
 /** Load the saved workflow again (someone else may have changed it while this tab was read-only). */
-async function reload(workflowId: string) {
-  const { workflow } = await api<{ workflow: Workflow }>(`/api/workflows/${workflowId}`);
+async function reload(workflowId: string, background = false) {
+  const { workflow } = await api<{ workflow: Workflow }>(`/api/workflows/${workflowId}`, { background });
   const nodeTypes = Object.values(useEditor.getState().nodeTypes) as NodeTypeInfo[];
   useEditor.getState().load(workflow, nodeTypes);
   return workflow;
@@ -177,7 +177,8 @@ export function useEditLockSync(workflowId: string, loaded: boolean) {
       }
       let answer: LockResponse;
       try {
-        answer = await api<LockResponse>(`/api/workflows/${workflowId}/lock`, { method: 'POST', json: { tabId, ...(takeover && { takeover: true }) } });
+        // The heartbeat is not use of the session; a takeover is (a person pressed the button).
+        answer = await api<LockResponse>(`/api/workflows/${workflowId}/lock`, { method: 'POST', json: { tabId, ...(takeover && { takeover: true }) }, background: !takeover });
       } catch (caught) {
         // A viewer of the workflow's project (or a view-only share): read-only for good, no lock to hold.
         if (caught instanceof ApiError && caught.status === 403) {
@@ -191,7 +192,7 @@ export function useEditLockSync(workflowId: string, loaded: boolean) {
       if (mine) {
         if (readOnly) {
           // Back to editing: start from what's saved, then allow edits.
-          await reload(workflowId);
+          await reload(workflowId, !takeover);
           setReadOnly(false);
         }
         useEditLock.setState({ holder: undefined });
@@ -218,8 +219,8 @@ export function useEditLockSync(workflowId: string, loaded: boolean) {
         await sync();
         // Read-only tabs follow the editor's saves.
         if (useEditLock.getState().readOnly && !stopped) {
-          const { workflow } = await api<{ workflow: Workflow }>(`/api/workflows/${workflowId}`);
-          if (lastSeen && workflow.updatedAt !== lastSeen) await reload(workflowId);
+          const { workflow } = await api<{ workflow: Workflow }>(`/api/workflows/${workflowId}`, { background: true });
+          if (lastSeen && workflow.updatedAt !== lastSeen) await reload(workflowId, true);
           lastSeen = workflow.updatedAt;
         }
       } catch {

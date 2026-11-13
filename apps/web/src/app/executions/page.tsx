@@ -350,7 +350,7 @@ function ExecutionsInner() {
   }, []);
 
   const load = useCallback(() => {
-    api<{ executions: ExecutionSummary[] }>(`/api/executions?limit=${LIMIT}${workflowId ? `&workflowId=${encodeURIComponent(workflowId)}` : ''}`)
+    api<{ executions: ExecutionSummary[] }>(`/api/executions?limit=${LIMIT}${workflowId ? `&workflowId=${encodeURIComponent(workflowId)}` : ''}`, { background: true })
       .then((r) => setExecutions(r.executions))
       .catch(() => setExecutions((current) => current ?? []));
   }, [workflowId]);

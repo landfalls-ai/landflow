@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { listExecutionsPage } from '@/lib/server/executions-query';
 import { handler, json, parseQuery } from '@/lib/server/http';
 import { pageSchema } from '@/lib/server/pagination';
@@ -5,7 +6,6 @@ import { visibleIds } from '@/lib/server/projects';
 import { routeActor } from '@/lib/server/projects/http';
 import { liveExecutions } from '@/lib/server/runner';
 import { store } from '@/lib/server/store';
-import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,9 +19,10 @@ export const GET = handler(async (request: Request) => {
   // Members see the executions of the workflows they see (owners and admins: all).
   const workflows = visibleIds(routeActor(), 'workflow', store.listWorkflows().map((w) => w.id));
   const page = listExecutionsPage({ workflowId, limit, cursor, visibleWorkflowIds: workflows ? [...workflows] : null });
-  if (cursor) return json(page);
-  // A resumed execution is live and still saved as waiting: list it once.
+  // A resumed execution is live and still saved as waiting: list it once, at the top of the first page, and leave it
+  // out of every page where its saved row falls.
   const running = liveExecutions(workflowId).filter((e) => !workflows || (e.workflowId && workflows.has(e.workflowId)));
   const ids = new Set(running.map((e) => e.id));
-  return json({ ...page, executions: [...running, ...page.executions.filter((e) => !ids.has(e.id))] });
+  const saved = page.executions.filter((e) => !ids.has(e.id));
+  return json({ ...page, executions: cursor ? saved : [...running, ...saved] });
 });

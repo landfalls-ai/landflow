@@ -79,7 +79,7 @@ function DebugAccessDialog({ executionId, onClose }: { executionId: string; onCl
 
   const load = useCallback(
     () =>
-      api<{ tokens: TokenRecord[] }>(base)
+      api<{ tokens: TokenRecord[] }>(base, { background: true })
         .then((r) => setTokens(r.tokens))
         .catch(() => {}),
     [base],

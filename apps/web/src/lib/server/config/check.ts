@@ -59,6 +59,12 @@ function urlPassword(value: string): string | undefined {
 /** Key ids are not secret: they stay readable. */
 const KEY_IDS = /(ACCESS_KEY_ID)$/i;
 
+/**
+ * Catalogued variables the catalog does not mark secret (with their aliases): shown as they are even when the name looks
+ * secret (`LANDFLOW_SECRETS_CACHE_TTL`). The name rule still covers anything the catalog does not know.
+ */
+const CATALOGUED_PLAIN = new Set(CONFIG_CATALOG.filter((v) => !v.secret).flatMap((v) => [v.name, ...(v.aliases ?? [])]));
+
 export interface ConfigCheck {
   errors: string[];
   warnings: string[];
@@ -84,6 +90,7 @@ export function checkConfig(env: NodeJS.ProcessEnv = process.env): ConfigCheck {
     for (const entry of CONFIG_CATALOG) {
       if (!entry.profile || set(entry.name)) continue;
       if (entry.waivedBy && flag(env[entry.waivedBy], false)) continue;
+      if (entry.satisfiedBy && set(entry.satisfiedBy)) continue;
       const message = `${entry.name} is not set: ${entry.productionNote}`;
       (entry.profile === 'required-in-production' ? errors : warnings).push(message);
     }
@@ -97,7 +104,7 @@ export function checkConfig(env: NodeJS.ProcessEnv = process.env): ConfigCheck {
     if (!(name.startsWith('LANDFLOW_') || name.startsWith('OTEL_') || name === 'DATABASE_URL')) continue;
     if (secrets.has(name)) effective[name] = '[set]';
     else if ((URL_SECRETS as readonly string[]).includes(name)) effective[name] = redactUrl(value);
-    else if (SECRET_NAME.test(name) && !KEY_IDS.test(name)) effective[name] = '[set]';
+    else if (SECRET_NAME.test(name) && !KEY_IDS.test(name) && !CATALOGUED_PLAIN.has(name)) effective[name] = '[set]';
     else if (/EMAIL/.test(name)) effective[name] = maskEmails(value);
     // A comma-separated list of URLs (LANDFLOW_PLUGINS) doesn't parse as one URL: check each entry.
     else effective[name] = value.split(',').map((part) => (hasUrlCredential(part.trim()) ? redactUrl(part.trim()) : part)).join(',');

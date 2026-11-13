@@ -322,7 +322,7 @@ export async function handleSlackInteraction(request: Request): Promise<Response
 
 /** The Slack credential of the node an Ask a Person request belongs to, if the click was signed by that app. */
 async function confirmCredential(target: Extract<ApprovalTarget, { t: 'wf' }>, verifiedBy: Set<string>) {
-  const record = store.getExecution(target.e);
+  const record = await store.loadExecution(target.e);
   const approval = pendingApproval(record);
   const node = record?.workflow?.nodes.find((n) => n.id === approval?.nodeId || n.name === approval?.nodeName);
   const ref = slackRefOf(node?.credentials)?.ref;
@@ -365,7 +365,7 @@ async function submitEdit(payload: InteractionPayload, verifiedBy: Set<string>):
 
 async function decideWorkflow(target: Extract<ApprovalTarget, { t: 'wf' }>, approved: boolean, user: string | undefined, verifiedBy: Set<string>) {
   // The credential that verified the click must be the node's (one Slack app can't decide another's approvals).
-  const record = store.getExecution(target.e);
+  const record = await store.loadExecution(target.e);
   const approval = pendingApproval(record) ?? (record?.wait?.data?.approval as { nodeName?: string; nodeId?: string } | undefined);
   const node = record?.workflow?.nodes.find((n) => n.id === approval?.nodeId || n.name === approval?.nodeName);
   const ref = slackRefOf(node?.credentials)?.ref;

@@ -1299,8 +1299,8 @@ workbench in place of a page of cards, keeping Spotlight.
   - a refused join raises a `plugin.error` toast naming the real plugin, so in development anyone can raise toasts by
     announcing repeatedly (low impact, development only);
   - HSTS, the cookies' `Secure` flag, the OAuth2 callback, the hosted chat page and the same-origin check read
-    `X-Forwarded-Proto` / `-Host` whatever `LANDFLOW_TRUSTED_PROXIES` says; gating them on the hop count belongs with
-    P24 (sessions) and P27;
+    `X-Forwarded-Proto` / `-Host` whatever `LANDFLOW_TRUSTED_PROXIES` says (P24's same-origin check `crossSite()`
+    included); gating them on the hop count belongs with P27;
   - live checks no automated test covers: Go and Python SDK announces with the registry secret over HTTP and gRPC and
     the gRPC registry's UNAUTHENTICATED / UNAVAILABLE answers; a production resume by curl with and without `sig`; a
     multi-page form in a browser; client addresses behind a real ingress; a signed-in pass under the enforced CSP
@@ -1369,6 +1369,61 @@ workbench in place of a page of cards, keeping Spotlight.
     deployment with in-cluster gateways and remote MCP, OIDC/SAML, alert and SIEM endpoints; a streaming MCP transport
     and a multipart or streamed HTTP Request body through the undici path with blocking on; the expression bench on a
     quiet machine (`LANDFLOW_BENCH=1`) and a large real workflow's expression cost.
+- **P21, audit reliability** (S9, O4): a failed audit write is counted (`landflow.audit.write_failures{action}`), the
+  outbox has depth, oldest-age and delivery-failure metrics, and `LANDFLOW_AUDIT_FAIL_CLOSED=true` makes role changes,
+  API keys, credentials, audit settings and SCIM provisioning fail with 503 when their event cannot be stored, with the
+  change and its event in one transaction where both are database writes
+  ([audit-and-governance.md](features/audit-and-governance.md#reliability-and-fail-closed-mode)).
+- **P22, saturation metrics, database timing, sampled reads and slow-query spans** (O4, O5): the host reports event-loop
+  delay and utilisation, memory, GC pauses, every database call's duration, SSE connections, failed sign-ins and
+  limiter refusals; slow database calls and slow or failed `GET`s are traced and fast reads are dropped; `landflow.workflow.id`
+  is off the histogram and (unless `LANDFLOW_METRICS_WORKFLOW_LABEL=true`) off the counters. [observability.md](observability.md#5-metrics)
+- **P23, an encryption key ring, rotation, scrypt and bound credential ids** (S13; wave 5): `LANDFLOW_ENCRYPTION_KEYS` (`kid:key,…`, first seals) next to the legacy key (kid `k0`); sealed values name their key (`v2`) and credential blobs are bound to the credential id; passphrases are stretched with scrypt (the old SHA-256 form still opens data); derived keys use HKDF; `POST /api/settings/encryption/rotate` (owner) and `pnpm --filter @landflow/web rotate-key` re-seal everything. See [secrets and environments](features/secrets-and-environments.md#encryption-keys-and-rotation).
+- **P24** (S14): a password change ends the user's other sessions; sessions expire when idle (`LANDFLOW_SESSION_IDLE_HOURS`); a request without Origin but with a cross-site `Sec-Fetch-Site` is refused; `LANDFLOW_LOCAL_SIGN_IN` (`all`, `owner`, `off`) makes an instance SSO-only. Next: TOTP and passkeys for local accounts.
+- **P25, an async read seam for run data** (C16 steps 2-3, first half; wave 5): `db/reads.ts` (`readExecutionData`,
+  `readExecutionEvents`, `readRows`), `store.loadExecution` / `executionsMentioningAsync` and async journal readers, with
+  every caller that may read a finished run moved onto them (execution routes, run search, lines, compare, measures,
+  needs-you, OTLP export, MCP tools, Slack, approval links, the brain, the binary sweep). `store.getExecution` stays for
+  runs in flight, and a source scan guards it. No behaviour change; P26 serves the seam from Postgres.
+- **Wave 4 carryover** (applied in wave 5): the live stream's 30 s re-check no longer marks the session as used, and
+  neither do the editor's edit-lock heartbeat, the pages' polling and their reloads after a live event (they send
+  `X-Landflow-Background: 1`), so an open tab reaches `LANDFLOW_SESSION_IDLE_HOURS` (P24); a throwing re-check closes
+  the stream; a resumed run is left
+  out of later executions pages too; MCP `list_executions` filters a status in SQL over pages; the effective
+  configuration shows catalogued non-secret variables whose name looks secret; the renamed retention variables are read
+  through `envWithAliases` (an empty new name no longer hides the old one); the rate limiter caps its keys and its
+  handler test freezes the clock; and docs and comment fixes (the bus ring, dev reload of the execution reactions, the
+  Bearer pattern's scope, the alias notes on the configuration page). Deferred:
+  - rate limits for unauthenticated paths outside the five public trigger groups (`/api/mcp`, `/api/slack`,
+    `/api/teams`, `/scim/v2`, `/api/agent-trace`, the test URLs): `/api/mcp` and the chat channels can start model
+    calls, so they want a bucket of their own ([limitations.md](limitations.md));
+  - the redactor's remembered values grow with OAuth refreshes (each new access token is added until the 5,000 cap,
+    where a 1,000-item output costs about 230 ms to scrub, and every log line is scrubbed once any credential was
+    used): forget the replaced token on refresh or evict values unresolved for hours; and `remember()` also takes any
+    field whose name looks secret (Twilio's `apiKeySid`), where the brief said password-typed and `secretFields` only.
+    Both change what is scrubbed, so they need a decision, not a tidy-up;
+  - a basic-auth run test that asserts on the stored execution (the OAuth tests already prove the path end to end);
+  - a `reset` listener in `lib/client/live.ts` that tells each view to refetch: every subscriber needs its own refetch,
+    so it is a client change of its own ([limitations.md](limitations.md));
+  - `singletons.test.ts`'s import-closure scan misses side-effect and dynamic imports, tests still reach into
+    `globalThis.__landflow` (environments-promotion, oauth2), and module-level state remains outside `singleton()`
+    (`ensuredTables` in rag/stores.ts, `beating`/`sweeping` in cluster/index.ts, ai-usage/notify.ts, notebook/embed.ts,
+    the marketplace `details` cache): one way to hold state strictly is a sweep of its own;
+  - the log context is an AsyncLocalStorage store, so a timer or lazily created service first started inside a request
+    keeps stamping that request's id and user on later lines; starting each such service outside the request needs a
+    list of them;
+  - `db/schema.ts` still names `USAGE_RETENTION_DAYS` in a comment inside the shipped `second_brain` migration, left
+    because shipped migrations are not edited;
+  - live checks no automated test covers: two mains in queue mode sharing one public limit (429 on the combined count);
+    `LANDFLOW_TRUSTED_PROXIES` behind a real proxy; `landflow runs --status failed` against a host; the denied and
+    refused counters on `/api/metrics`; a trace id from `traceparent` in Tempo or Jaeger with `landflow.request_id` and
+    `enduser.id`; request ids and no key or password in a host's stdout after an API-key call and a credential run, and
+    false positives on odd URLs and `*dsn` fields; the production boot refusals (missing public URL, open registry),
+    SMTP with `SECURE` and `IGNORE_TLS` against Mailpit, the environment-protection values, a SAML login and the
+    generated configuration page rendered; an `/api/events` stream on a scratch host closing after sign-out, live
+    updates at desktop and 390 px, Spotlight and Agent architect streams, an approvals stream, a revoked member's stream
+    and a reconnect to another main; `pnpm dev` with a `pnpm worker` recording insights and usage and pruning, a dev
+    edit of a singleton-held class, and no concurrent marketplace sync across two graphs.
 
 ## Planned next
 

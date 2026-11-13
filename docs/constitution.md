@@ -76,7 +76,8 @@ session; people read it before they start a feature too.
 **Configuration and process state**
 
 - Read configuration only through `lib/server/config` (`envInt`, `envNumber`, `envFlag`, `envUrl`, `envString`:
-  parsed at call time, never NaN, an invalid value falls back with a `config.invalid` warning; `publicUrl()`,
+  parsed at call time, never NaN, an invalid value falls back with a `config.invalid` warning; `envWithAliases()` for a
+  renamed variable, which reads the catalog's deprecated aliases; `publicUrl()`,
   `ollamaUrl()`; `checkConfig()` runs first at boot). Add no new ad-hoc `process.env` reads. Every variable is an
   entry of `lib/server/config/catalog.ts` (default, description, group, secret flag, production requirement, aliases),
   and `docs/reference/configuration.md` is generated from it (`pnpm --filter @landflow/web gen:config-docs`);
@@ -114,6 +115,11 @@ session; people read it before they start a feature too.
 - No unbounded list reads: every list takes a capped limit and pages with a keyset cursor (the model is
   `GET /api/executions`: `lib/server/executions-query.ts` over `pagination.ts`'s `encodeCursor` / `decodeCursor`,
   answering `nextCursor`). Filter by visibility in SQL, not after a fetch.
+- Code that may read a finished run reads it through the async seam: `store.loadExecution`,
+  `store.executionsMentioningAsync` and the journal's `*Async` readers (`lib/server/journal/store.ts`), all over
+  `lib/server/db/reads.ts` (`readExecutionData`, `readExecutionEvents`, `readRows`). `store.getExecution` is for runs in
+  flight and the runner's own bookkeeping; `test/execution-reads.test.ts` fails a new caller outside its allow-list.
+  Postgres mode serving the seam on demand instead of from the in-memory mirror is (target, P26).
 - Nothing on a hot path (saving a run, a request) does work proportional to history: prune and aggregate in SQL on a
   timer or every N events (executions: `pruneExecutions` and `retentionTick` in `lib/server/settings.ts`).
 - `IN (…)` lists and access checks inside loops are N+1 once reads move to Postgres: batch them. For lists, check
@@ -130,13 +136,33 @@ session; people read it before they start a feature too.
   function, not the route, with actor, target, project and `from` / `to` values. Denied and failed access is recorded
   too: failed SSO sign-ins in their routes, and a read refused with 401/403 as `api.denied` (`lib/server/audit/http.ts`,
   at most once a minute per caller and route and 60 a minute in all). Exports (Git sync, data tables) are events. The generic `api.request`
-  event is a fallback, not coverage.
+  event is a fallback, not coverage. A high-value change (roles, API keys, credentials, audit settings, SCIM
+  provisioning) records its event as required: inside `auditedTransaction()` when the change is database writes (the
+  event joins the transaction) or through `auditedChange()` when it is not, so `LANDFLOW_AUDIT_FAIL_CLOSED=true`
+  refuses it with 503 (`AuditUnavailableError`) when the event cannot be stored (key rotation and a person's own
+  password change stay fail-open on purpose; a new high-value action is added to the list deliberately). A failed audit write is counted
+  (`landflow.audit.write_failures`, `lib/server/audit/metrics.ts`), never only logged.
 - **Secrets stay secret.** Never put a credential value, token or key in a log line, error message, span attribute,
   audit detail or run data. Logs redact by key name (`SECRET_KEY` in `lib/server/telemetry/config.ts`), `$secrets`
   values and the credential values handed to a node are scrubbed (`lib/server/secrets/redact.ts`), and the logger
   rewrites secret-shaped values in every string (`redactPatterns`: Bearer tokens, `lf_` keys, URL userinfo, PEM
   keys); widen these when you add a new kind of secret. The API returns a credential's status, never its value. Bearer secrets are stored hashed and shown once;
   compare them with `sameSecret()` (`lib/server/auth/passwords.ts`).
+- **Keys.** Values at rest are sealed by the vault's key ring (`lib/server/credentials/key-ring.ts`, `sealWith` /
+  `openWith`: version 2 names its key and binds the credential id or a purpose as associated data;
+  `LANDFLOW_ENCRYPTION_KEYS`, first key seals; a passphrase is stretched with scrypt). A key for another purpose comes
+  from `vault.deriveKey(label)` (HKDF per label) and is verified against `vault.deriveKeys(label)`, so a rotation
+  (`rotateEncryption()` in `credentials/rotate.ts`) doesn't void links in flight. Never hash or slice the encryption key
+  yourself.
+- **Sessions.** `sessionUser()` (`lib/server/auth/sessions.ts`) enforces the absolute and idle limits
+  (`LANDFLOW_SESSION_TTL_HOURS`, `LANDFLOW_SESSION_IDLE_HOURS`) and marks the session used; a check the person did not
+  make (a stream's re-check, a timer) resolves with `touch: false` (`resolvePrincipal(request, { touch: false })`); in
+  the browser a poll, a heartbeat or a reload after a live event calls `api(path, { background: true })`, which sends
+  `X-Landflow-Background: 1`, and `guardRequest()` resolves it (and `GET /api/events`) without the touch. A new client
+  timer that reads the API must pass `background: true`, or an open tab keeps its session alive. A
+  password change ends the user's other sessions; password sign-in follows `LANDFLOW_LOCAL_SIGN_IN`
+  (`localSignInAllowed()` in `auth/local-sign-in.ts`); `guardRequest()` refuses a cookie-authenticated write with a
+  foreign `Origin`, or with none and a cross-site `Sec-Fetch-Site`.
 - **Outbound calls.** Every request to a URL a user, a webhook or a model can influence goes through `safeFetch`
   (`lib/server/net/safe-fetch.ts`): in the production profile loopback, private, link-local, CGNAT and metadata
   addresses are refused unless `LANDFLOW_OUTBOUND_ALLOW` lists them, names are checked at DNS lookup and every redirect
@@ -175,7 +201,11 @@ session; people read it before they start a feature too.
   `id:` lines and heartbeats and cleans up; a stream that must survive a reconnect replays from the bus ring after
   `Last-Event-ID` (`lib/server/events-stream.ts`) and re-checks the viewer's access while it runs.
 - Metrics follow [observability.md](observability.md) and `lib/server/telemetry/metrics.ts`; labels have bounded
-  cardinality: no workflow, execution, user or other ids as labels (put ids on spans).
+  cardinality: no workflow, execution, user or other ids as labels (put ids on spans; `landflow.workflow.id` is a
+  counter label only with `LANDFLOW_METRICS_WORKFLOW_LABEL=true`, never on a histogram). Database calls go through the
+  `Database` methods, which time each one (`landflow.db.query.duration` by operation, a `db.query` span only over
+  `LANDFLOW_DB_SLOW_MS`); read requests are traced only when slow (`LANDFLOW_TRACE_SLOW_READ_MS`) or failed
+  (`telemetry/processors.ts`); process saturation comes from `telemetry/runtime-metrics.ts`.
 - Health: `/api/health/live` (no I/O) and `/api/health/ready` (boot and draining, database, write queue, schema
   version, Valkey in queue mode; `readiness()` in `lib/server/health.ts`, each check bounded and answering only ok and
   milliseconds); a new dependency that must be up to serve traffic joins readiness.
@@ -220,7 +250,8 @@ session; people read it before they start a feature too.
 - Before a PR: `(cd apps/web && npx vitest run) && pnpm typecheck` and `pnpm test`, plus the Go and Python suites for
   what you touched ([development.md](development.md#verification)). Compare the counts with the last green run on
   `main`; never accept a new failure.
-- A test file that writes shared state (marketplaces, agents, settings) sets its own `LANDFLOW_DATA_DIR` before its
+- A test file that writes or deletes shared state (marketplaces, agents, settings, folders under the data directory such
+  as `oci/`) sets its own `LANDFLOW_DATA_DIR` before its
   imports, and no test reaches the network: the suite's default data directory is shared by every file that doesn't.
   (`marketplace.test.ts` was flaky for that reason, not load; if it fails again, rerun it alone and report both.)
 - A change to the boot (`lib/server/runtime.ts`, `bootstrap.ts`, `lifecycle.ts`), `instrumentation.ts`, the proxy

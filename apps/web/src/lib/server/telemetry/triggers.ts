@@ -4,7 +4,7 @@
  */
 import { context, type Context, type Span } from '@opentelemetry/api';
 import type { NodeItem } from '@landflow/protocol';
-import { hostMetrics } from './metrics';
+import { hostMetrics, workflowLabel } from './metrics';
 import { failSpan, startSpan, traceparentHeader, withSpan } from './spans';
 
 export type TriggerSource = 'manual' | 'webhook' | 'schedule' | 'poll' | 'chat' | 'form' | 'error' | 'mcp' | 'retry' | 'usage' | 'detector' | 'suggestion';
@@ -34,7 +34,7 @@ export interface TriggerFire {
  * execution has finished or been handed off.
  */
 export function startTrigger(info: TriggerInfo): TriggerFire {
-  hostMetrics().triggerFires.add(1, { 'landflow.workflow.id': info.workflowId, 'landflow.trigger.source': info.source, ...(info.test && { 'landflow.trigger.test': true }) });
+  hostMetrics().triggerFires.add(1, { ...workflowLabel(info.workflowId), 'landflow.trigger.source': info.source, ...(info.test && { 'landflow.trigger.test': true }) });
   const { span, context: spanContext } = startSpan('trigger.fire', {
     root: info.source === 'schedule' || info.source === 'poll' || info.source === 'error' || info.source === 'retry',
     attributes: {

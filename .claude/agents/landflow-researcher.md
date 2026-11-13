@@ -24,13 +24,13 @@ Read `docs/constitution.md` and `CLAUDE.md`. Then, for the area you were asked a
 | Area | Start at |
 |---|---|
 | Routes | `apps/web/src/app/api/**/route.ts` (header comment says who may call it); `lib/server/http.ts` (`handler`, `json`, `error`, `parseBody`) |
-| Access | `lib/server/auth/policy.ts` (one table by path), `auth/guard.ts`, `lib/shared/auth-paths.ts` (public paths), `lib/server/projects/access.ts` (`requireResource`, `filterVisible`) |
+| Access | `lib/server/auth/policy.ts` (one table by path), `auth/guard.ts`, `auth/sessions.ts` (idle and absolute limits), `lib/shared/auth-paths.ts` (public paths), `lib/server/projects/access.ts` (`requireResource`, `filterVisible`) |
 | Runs | `lib/server/runner.ts`, `packages/engine/src/executor.ts`, `waits.ts`, `retries.ts`, `trigger-buffers.ts` |
-| Storage | `lib/server/store.ts`, `db/schema.ts` (`MIGRATIONS`, `TABLES`), `db/database.ts`, `db/postgres.ts`, `db/replication.ts`, `config-store.ts` |
+| Storage | `lib/server/store.ts` (`loadExecution` for finished runs), `db/reads.ts` (async read seam), `db/schema.ts` (`MIGRATIONS`, `TABLES`), `db/database.ts`, `db/postgres.ts`, `db/replication.ts`, `config-store.ts` |
 | Plugins | `lib/server/plugins/` (registry, clients, discovery), `transports/`, `packages/protocol`, `packages/sdk`, `sdks/go`, `sdks/python` |
 | Queue mode | `lib/server/cluster/` (`index.ts` `leaderService`, `config.ts`, `worker-main.ts`) |
-| Audit and governance | `lib/server/audit/` (`recordAudit`, `http.ts`, `chain.ts`, `outbox.ts`), `governance/`, `scim/`, `secrets/`, `credentials/vault.ts` |
-| Telemetry | `lib/server/telemetry/` (`logger.ts`, `metrics.ts`, `sdk.ts`, `processors.ts`, `config.ts`), `src/instrumentation.ts` |
+| Audit and governance | `lib/server/audit/` (`recordAudit`, `auditedTransaction`, `http.ts`, `chain.ts`, `outbox.ts`, `metrics.ts`), `governance/`, `scim/`, `secrets/`, `credentials/vault.ts`, `key-ring.ts`, `rotate.ts` |
+| Telemetry | `lib/server/telemetry/` (`logger.ts`, `metrics.ts`, `runtime-metrics.ts`, `sdk.ts`, `processors.ts`, `config.ts`), `src/instrumentation.ts` |
 | AI | `lib/server/assistant/` (Spotlight chat, ops, scope), `agents/`, `agent-teams/`, `a2a/`, `kagent/`, `notebook/`, `brain/`, `journal/` (Run Trace), `nodes/` |
 | UI | `apps/web/src/app/**/page.tsx`, `components/` (`ui/`, `shell/`, `editor/`, `run-trace/`), `lib/client/` |
 | Shared code | `apps/web/src/lib/shared/` (UI and server both run it; never imports server code) |

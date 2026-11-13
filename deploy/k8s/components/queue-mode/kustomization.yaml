@@ -62,6 +62,8 @@ patches:
                     valueFrom: { secretKeyRef: { name: landflow-minio, key: secret-access-key } }
                   - name: LANDFLOW_ENCRYPTION_KEY
                     valueFrom: { secretKeyRef: { name: landflow-queue, key: encryption-key } }
+                  - name: LANDFLOW_ENCRYPTION_KEYS
+                    valueFrom: { secretKeyRef: { name: landflow-queue, key: encryption-keys, optional: true } }
                   - name: LANDFLOW_BINARY_SECRET
                     valueFrom: { secretKeyRef: { name: landflow-queue, key: binary-secret } }
             volumes:

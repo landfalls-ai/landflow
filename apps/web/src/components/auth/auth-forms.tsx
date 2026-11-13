@@ -76,13 +76,14 @@ function useSubmit(run: () => Promise<void>) {
 
 const passwordHint = `At least ${MIN_PASSWORD_LENGTH} characters`;
 
-export function LoginForm({ next, oidcLabel, samlLabel, initialError, smtp }: { next: string; oidcLabel?: string; samlLabel?: string; initialError?: string; smtp: boolean }) {
+export function LoginForm({ next, oidcLabel, samlLabel, initialError, smtp, localSignIn = 'all' }: { next: string; oidcLabel?: string; samlLabel?: string; initialError?: string; smtp: boolean; localSignIn?: 'all' | 'owner' | 'off' }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const { busy, error, submit } = useSubmit(async () => {
     await api('/api/auth/login', { method: 'POST', json: { email, password } });
     window.location.assign(next);
   });
+  const ssoOnly = localSignIn === 'off';
   return (
     <form method="post" onSubmit={submit} className="space-y-3.5">
       {(oidcLabel || samlLabel) && (
@@ -103,26 +104,37 @@ export function LoginForm({ next, oidcLabel, samlLabel, initialError, smtp }: { 
               <KeyRound className="size-3.5" /> {samlLabel}
             </a>
           )}
-          <div className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">
-            <span className="h-px flex-1 bg-hair" /> or <span className="h-px flex-1 bg-hair" />
-          </div>
+          {!ssoOnly && (
+            <div className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">
+              <span className="h-px flex-1 bg-hair" /> or <span className="h-px flex-1 bg-hair" />
+            </div>
+          )}
         </>
       )}
-      <Field label="Email">
-        <Input type="email" name="email" autoComplete="username" required autoFocus value={email} onChange={(e) => setEmail(e.target.value)} />
-      </Field>
-      <Field label="Password">
-        <Input type="password" name="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
-      </Field>
-      <ErrorBox message={error ?? initialError} />
-      <Button type="submit" variant="primary" loading={busy} className="w-full">
-        Sign in <ArrowRight className="size-3.5" />
-      </Button>
-      <div className="text-center text-[12px]">
-        <Link href="/forgot-password" className="text-t3 hover:text-ac">
-          {smtp ? 'Forgot your password?' : 'Can’t sign in?'}
-        </Link>
-      </div>
+      {ssoOnly ? (
+        <>
+          {!oidcLabel && !samlLabel && <p className="text-[13px] text-t2">Signing in with a password is turned off here, and single sign-on is not set up. Ask an admin of this instance.</p>}
+          <ErrorBox message={initialError} />
+        </>
+      ) : (
+        <>
+        <Field label="Email">
+          <Input type="email" name="email" autoComplete="username" required autoFocus value={email} onChange={(e) => setEmail(e.target.value)} />
+        </Field>
+        <Field label="Password">
+          <Input type="password" name="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+        </Field>
+        <ErrorBox message={error ?? initialError} />
+        <Button type="submit" variant="primary" loading={busy} className="w-full">
+          Sign in <ArrowRight className="size-3.5" />
+        </Button>
+        <div className="text-center text-[12px]">
+          <Link href="/forgot-password" className="text-t3 hover:text-ac">
+            {smtp ? 'Forgot your password?' : 'Can’t sign in?'}
+          </Link>
+        </div>
+        </>
+      )}
     </form>
   );
 }

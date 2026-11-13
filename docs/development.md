@@ -68,11 +68,11 @@ filesystem access causes tracing of the whole project".
   table also goes in `TABLES` (its primary key) in the same file.
 - **Environment variables** go in the catalog first: add an entry to `CONFIG_CATALOG` in
   `apps/web/src/lib/server/config/catalog.ts` (default and description as the page shows them, group, `secret`,
-  `profile`, `readBy`, `aliases`), read it with `envFlag` / `envNumber` / `envInt` / `envString` / `envUrl` from
+  `profile`, `readBy`, `aliases`), read it with `envFlag` / `envNumber` / `envInt` / `envString` / `envUrl` (`envWithAliases` for a renamed one) from
   `lib/server/config`, and run `pnpm --filter @landflow/web gen:config-docs` to regenerate
   [reference/configuration.md](reference/configuration.md). `test/config-catalog.test.ts` fails on a name the source
   reads that is not catalogued, on a stale page, and when more files read `process.env` directly than
-  `MAX_FILES_READING_PROCESS_ENV` allows (88; lower it when a reader moves into config, never raise it).
+  `MAX_FILES_READING_PROCESS_ENV` allows (86; lower it when a reader moves into config, never raise it).
 - **Errors**: a route (or the store below it) throws an `HttpError` (`lib/server/errors.ts`: `(message, status = 400,
   { code?, details?, cause?, expose? })`) and does not catch it to build a response: `handler()` answers it as
   `{ error, code, …details }`. Give a domain error its own class (`class OutOfStockError extends HttpError`, same
@@ -306,7 +306,10 @@ LANDFLOW_OWNER_EMAIL=<from deploy/.env.example> LANDFLOW_OWNER_PASSWORD=<from de
   fresh one call `resetSingleton(key)` (the old `forgetSingleton` is the same function); keys used by more than one
   file are in `singletonKeys`, and nothing else touches `globalThis.__landflow` (`test/singletons.test.ts` checks).
   Tests that assert on insights, usage or retention after `store.saveExecution` call `ensureExecutionReactions()`
-  first, because the store only emits the event.
+  first, because the store only emits the event. The same goes for those reactions under `pnpm dev`: the listeners
+  `execution-reactions.ts` registered at boot keep the insights, usage ledger and settings code of the graph that
+  booted, so an edit to `insights.ts`, `usage/ledger.ts` or `retentionTick` takes effect on the save path only after
+  a restart.
 - **Through the API**, a script that signs in with the development owner (`POST /api/auth/login`, then the session
   cookie) can add the marketplace and install plugins. A node plugin's install answers `409` with what it will run until
   it is sent again with `{ "confirm": true }`. The script can then post alerts to a workflow's webhook and read

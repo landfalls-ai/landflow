@@ -13,6 +13,7 @@ import { database } from '../db';
 import { singleton } from '../singleton';
 import { logger } from '../telemetry/logger';
 import { auditDestinations } from './destinations';
+import { ensureAuditMetrics, recordAuditDeliveryFailure } from './metrics';
 import { recordAudit, setOutboxKick } from './index';
 import { getAuditSettings } from './settings';
 import { BATCH_SIZE, deliver } from './sinks';
@@ -114,6 +115,7 @@ async function drainDestination(destinationId: string, now: number): Promise<num
     auditDestinations.noteDelivery(destinationId, { at: new Date().toISOString(), ok: !failure, ...(failure ? { message: failure.message } : { message: `Delivered ${events.length} event${events.length === 1 ? '' : 's'}` }) });
     if (failure) {
       s.backoff.set(destinationId, next);
+      recordAuditDeliveryFailure(destination.name);
       logger.warn('audit destination delivery failed', { 'landflow.audit.destination': destination.name, error: failure.message });
       break;
     }
@@ -174,6 +176,7 @@ export function startAuditOutbox() {
   const s = state();
   if (s.running) return;
   s.running = true;
+  ensureAuditMetrics();
   setOutboxKick(kick);
   s.timer = setInterval(() => void drainOutbox(), TICK_MS);
   s.timer.unref?.();

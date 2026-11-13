@@ -49,7 +49,7 @@ export function useRunJournal(executionId: string | undefined): RunJournal {
     loadingMore.current = true;
     try {
       for (;;) {
-        const page = await api<JournalPage>(`/api/executions/${executionId}/events?after=${last.current}&limit=${PAGE}`);
+        const page = await api<JournalPage>(`/api/executions/${executionId}/events?after=${last.current}&limit=${PAGE}`, { background: true });
         append(page.events);
         if (!page.more || !page.events.length) break;
       }

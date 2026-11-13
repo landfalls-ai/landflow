@@ -37,8 +37,13 @@ Read `docs/constitution.md` ("Data" and "Testing"), `CLAUDE.md`, `docs/architect
   agreement (`auth/saml-state.ts`, `mcp/approvals.ts`, `audit/chain.ts`). A batch Postgres keeps rejecting is never
   dropped: the sink blocks, every write throws `StoreUnavailableError` (503 from `handler()`) until it applies or
   `LANDFLOW_PG_SKIP_BATCH` sets it aside, and `database().writeHealth()` reports the queue
-  (`docs/features/postgres-write-queue.md`); a background writer must catch that error. Still to come: P25 (an async
-  read seam `db/reads.ts`) and P26 (only hot run data in memory); check whether they have landed on your base.
+  (`docs/features/postgres-write-queue.md`); a background writer must catch that error. Every `Database` call is timed
+  (`landflow.db.query.duration`, a `db.query` span over `LANDFLOW_DB_SLOW_MS`).
+- `db/reads.ts`: the async read seam for run data (`readExecutionData`, `readExecutionEvents`, `readRows`). Code that
+  may read a finished run uses `store.loadExecution`, `store.executionsMentioningAsync` or the journal's `*Async`
+  readers (`journal/store.ts`); `store.getExecution` is for runs in flight, and `test/execution-reads.test.ts`
+  allow-lists its callers. Still to come: P26 (Postgres serves the seam; only hot run data in memory); check whether it
+  has landed on your base.
 - Stores: `lib/server/store.ts` (workflows cached in memory, executions on demand), `journal/` (Run Trace events),
   `audit/`, `usage/`, `ai-usage/`, `insights.ts`, `datatables/`, `projects/store.ts`, `config-store.ts` (credentials
   and settings documents in files or the database, `LANDFLOW_CONFIG_STORE`).
@@ -54,7 +59,9 @@ Read `docs/constitution.md` ("Data" and "Testing"), `CLAUDE.md`, `docs/architect
   `visibleIds`, `filterVisible` or `withOwnership` (`projects/access.ts`, over `allShares(kind)` in `projects/store.ts`).
 - Keep the store from importing features; emit an event instead (`onExecutionFinished` in `lib/server/store.ts`,
   subscribed in `lib/server/execution-reactions.ts`), and hold process-wide state only through `singleton()`.
-- Large JSON in `data` columns: never `LIKE '%…%'` over it on a hot path.
+- Large JSON in `data` columns: never `LIKE '%…%'` over it on a hot path; a scan over run data or the journal goes
+  through `readRows()` so Postgres mode can serve it.
+- A new read of a possibly finished run is async (`store.loadExecution`), never `store.getExecution`.
 - Writes in Postgres mode must stay replayable and ordered; never bypass the `Database` write methods with a raw
   `INSERT`, `UPDATE` or `DELETE`.
 

@@ -8,6 +8,7 @@
  * It also writes `id:` / `event:` lines, sends heartbeat comments, and cleans up on abort, cancel and close.
  */
 import { sseHeaders } from './http';
+import { recordSseConnection } from './telemetry/metrics';
 
 export interface SseSendOptions {
   /** The `id:` line: what the browser sends back as `Last-Event-ID` after a reconnect. */
@@ -35,6 +36,8 @@ export interface SseOptions {
   retryMs?: number;
   /** A first comment so proxies flush the headers at once. */
   greeting?: boolean;
+  /** The `http.route` label of landflow.sse.connections: the route template, such as `/api/workflows/:id/run`; default `other`. */
+  route?: string;
   /** Extra response headers (the traceparent). */
   headers?: Record<string, string>;
 }
@@ -49,6 +52,13 @@ export const DEFAULT_STALL_MS = 10_000;
 /** Queued bytes that still count as "nothing queued": the retry hint, greeting and a few heartbeats. */
 const CONTROL_SLACK_BYTES = 256;
 
+/**
+ * The `http.route` label when a caller passes none. A fixed word, never the request path: ids such as `wf_AbCdEfGhIjKl`
+ * have no digit in about one in six, and no path heuristic tells them from a route word, so each would add a series
+ * that lives as long as the process. Every streaming route passes its route template instead.
+ */
+export const UNNAMED_ROUTE = 'other';
+
 export function sseResponse(request: Request, start: SseStart, options: SseOptions = {}): Response {
   const { maxBufferedBytes = DEFAULT_MAX_BUFFERED_BYTES, heartbeatMs = 15_000, retryMs, greeting = false } = options;
   const stallMs = options.stallMs ?? DEFAULT_STALL_MS;
@@ -62,10 +72,13 @@ export function sseResponse(request: Request, start: SseStart, options: SseOptio
   let closed = false;
   let heartbeat: NodeJS.Timeout | undefined;
   let cleanup: (() => void) | undefined;
+  const route = options.route ?? UNNAMED_ROUTE;
+  let counted = false;
 
   const finish = () => {
     if (closed) return;
     closed = true;
+    if (counted) recordSseConnection(route, -1);
     if (heartbeat) clearInterval(heartbeat);
     request.signal.removeEventListener('abort', onAbort);
     try {
@@ -135,6 +148,8 @@ export function sseResponse(request: Request, start: SseStart, options: SseOptio
     close();
   } else {
     request.signal.addEventListener('abort', onAbort);
+    counted = true;
+    recordSseConnection(route, 1);
     if (retryMs !== undefined) write(`retry: ${retryMs}\n\n`);
     if (greeting) write(': connected\n\n');
     if (heartbeatMs > 0) heartbeat = setInterval(() => write(': ping\n\n'), heartbeatMs);

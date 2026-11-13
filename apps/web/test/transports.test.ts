@@ -216,7 +216,7 @@ describe('broker connections', () => {
     const created = transportConnections.create({ name: 'Kafka main', kind: 'kafka', config: { url: 'kafka://127.0.0.1:59092', username: 'host', tls: false }, secrets: { password: 's3cret-pw' } });
     expect(created.id).toBe('kafka-main');
     const raw = database().get<{ secrets: string | null; config: string }>('SELECT secrets, config FROM transport_connections WHERE id = ?', created.id)!;
-    expect(raw.secrets).toMatch(/^v1\./);
+    expect(raw.secrets).toMatch(/^v[12]\./);
     expect(raw.secrets).not.toContain('s3cret-pw');
     expect(raw.config).not.toContain('s3cret-pw');
     expect(transportConnections.get('kafka-main')?.secrets).toEqual({ password: 's3cret-pw' });

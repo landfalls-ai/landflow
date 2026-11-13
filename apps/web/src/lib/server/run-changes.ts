@@ -7,6 +7,7 @@
 import { PROTOCOL_VERSION, type ExecuteRequest, type JsonObject } from '@landflow/protocol';
 import type { Workflow, WorkflowNode } from '@landflow/engine';
 import type { BranchChanges, BranchFile, BranchReply } from '../shared/run-changes';
+import type { JournalEvent } from '../shared/run-trace';
 import { branchOf, repoOf, type RunRepo } from '../shared/run-repo';
 import { journalStore, rebuildJournal } from './journal';
 import { registry } from './plugins/registry';
@@ -33,10 +34,10 @@ const cache = singleton('run-branch-changes', () => new Map<string, Cached>());
 const literal = (value: unknown): string | undefined => (typeof value === 'string' && value.trim() && !/^=|\{\{/.test(value) ? value.trim() : undefined);
 
 /** The journal in full (a run's events are few thousand at most). */
-function journalOf(executionId: string) {
+async function journalOf(executionId: string) {
   const events = [];
   for (let after = 0; ; ) {
-    const page = journalStore.read(executionId, after, 2000);
+    const page = await journalStore.readEventsAsync(executionId, after, 2000);
     events.push(...page);
     if (page.length < 2000) return events;
     after = page.at(-1)!.seq;
@@ -55,11 +56,11 @@ const unavailable = (reason: string): BranchReply => ({ available: false, reason
 /** Compares the run's branch with its base on GitHub. `undefined` when there is no such run. */
 export async function runBranchChanges(executionId: string): Promise<BranchReply | undefined> {
   const running = liveExecution(executionId);
-  const record = running ?? store.getExecution(executionId);
+  const record = running ?? (await store.loadExecution(executionId));
   if (!record) return undefined;
   const workflow = record.workflow ?? store.getWorkflow(record.workflowId);
   if (!running) rebuildJournal(record, workflow);
-  const events = journalOf(executionId);
+  const events = await journalOf(executionId);
   const seq = events.at(-1)?.seq ?? 0;
   const cached = cache.get(executionId);
   const live = Boolean(running) || record.status === 'running' || record.status === 'waiting';
@@ -73,7 +74,7 @@ export async function runBranchChanges(executionId: string): Promise<BranchReply
   return reply;
 }
 
-async function ask(workflow: Workflow | undefined, events: ReturnType<typeof journalOf>, executionId: string): Promise<BranchReply> {
+async function ask(workflow: Workflow | undefined, events: JournalEvent[], executionId: string): Promise<BranchReply> {
   if (!workflow) return unavailable('The flow of this run no longer exists.');
   const nodes = workflow.nodes.filter((n) => n.type === GITHUB_NODE);
   if (!nodes.length) return { available: false, reason: 'This run has no GitHub step.', noGitHub: true };

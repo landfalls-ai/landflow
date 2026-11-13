@@ -261,7 +261,7 @@ export function ExecutionsShell({ workflowId, children }: { workflowId: string; 
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const load = useCallback(() => {
-    api<{ executions: ExecutionSummary[] }>(`/api/executions?workflowId=${encodeURIComponent(workflowId)}&limit=${LIMIT}`)
+    api<{ executions: ExecutionSummary[] }>(`/api/executions?workflowId=${encodeURIComponent(workflowId)}&limit=${LIMIT}`, { background: true })
       .then((r) => setExecutions(r.executions))
       .catch(() => setExecutions((current) => current ?? []));
   }, [workflowId]);

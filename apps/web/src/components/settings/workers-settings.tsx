@@ -67,7 +67,7 @@ export function WorkersSettings() {
   useEffect(() => {
     let alive = true;
     const load = () =>
-      api<ClusterStatus>('/api/settings/workers')
+      api<ClusterStatus>('/api/settings/workers', { background: true })
         .then((next) => {
           if (!alive) return;
           setStatus(next);

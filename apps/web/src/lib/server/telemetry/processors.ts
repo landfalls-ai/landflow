@@ -1,7 +1,8 @@
 /**
  * Host span processing: the sampler (standard OTEL_TRACES_SAMPLER plus a noise
  * filter for Next.js request spans) and the processor that tidies attributes,
- * records http.server.request.duration and writes `span.end` log lines.
+ * records http.server.request.duration and writes `span.end` log lines. Read-only API requests (GET) are sampled at
+ * their end: kept when slow (LANDFLOW_TRACE_SLOW_READ_MS) or failed with a 5xx, dropped otherwise (docs/observability.md §2).
  */
 import { SpanKind, SpanStatusCode, trace, type Attributes, type Context, type Link } from '@opentelemetry/api';
 import { hrTimeToMilliseconds } from '@opentelemetry/core';
@@ -40,6 +41,14 @@ const UNTRACED_PATH = /^\/api\/(events|health|metrics|plugins\/announce)(\/|\?|$
 const WEBHOOK_PATH = /^\/api\/webhook(-test)?\//;
 const TRIGGER_POST_PATH = /^\/(form|form-test|mcp|mcp-test)\//;
 
+/** Marks the server span of a read-only API request whose export is decided when it ends. */
+export const DEFERRED_READ = 'landflow.trace.deferred_read';
+
+/** An API read (not a webhook or a polled path): its trace is kept only when slow or failed. */
+export function isDeferredRead(method: string, path: string): boolean {
+  return READ_METHODS.has(method) && path.startsWith('/api/') && !UNTRACED_PATH.test(path) && !WEBHOOK_PATH.test(path);
+}
+
 export function isTracedRequest(method: string, path: string): boolean {
   if (WEBHOOK_PATH.test(path)) return true;
   if (TRIGGER_POST_PATH.test(path)) return !READ_METHODS.has(method);
@@ -72,7 +81,14 @@ export class LandflowSampler implements Sampler {
   shouldSample(context: Context, traceId: string, name: string, kind: SpanKind, attributes: Attributes, links: Link[]): SamplingResult {
     const type = attributes['next.span_type'];
     if (type === NEXT_REQUEST && kind === SpanKind.SERVER) {
-      if (!isTracedRequest(String(attributes['http.method'] ?? ''), String(attributes['http.target'] ?? ''))) return { decision: SamplingDecision.RECORD };
+      const method = String(attributes['http.method'] ?? '');
+      const path = String(attributes['http.target'] ?? '').split('?')[0];
+      if (!isTracedRequest(method, path)) {
+        // A read is sampled like any request so its children are recorded; the processor drops the trace if it was fast.
+        if (!isDeferredRead(method, path)) return { decision: SamplingDecision.RECORD };
+        const result = this.inner.shouldSample(context, traceId, name, kind, attributes, links);
+        return result.decision === SamplingDecision.RECORD_AND_SAMPLED ? { ...result, attributes: { ...result.attributes, [DEFERRED_READ]: true } } : { decision: SamplingDecision.RECORD };
+      }
     } else if (type && (!NEXT_KEPT.has(String(type)) || !trace.getSpanContext(context))) {
       // Next.js internals, and Next.js work outside a request (compiling, loading modules).
       return { decision: SamplingDecision.NOT_RECORD };
@@ -88,10 +104,104 @@ export class LandflowSampler implements Sampler {
 const KIND = ['internal', 'server', 'client', 'producer', 'consumer'];
 const isSampled = (span: ReadableSpan) => (span.spanContext().traceFlags & 1) === 1;
 
+/** A read still in flight is forgotten after this long (a request that never ends must not leak); a finished read is freed at once. */
+const DEFERRED_TTL_MS = 5 * 60_000;
+const DEFERRED_MAX_SPANS = 500;
+/** Reads held at once; past this the oldest is forgotten (a safety net: a finished read is freed at once). */
+const DEFERRED_MAX_GROUPS = 5_000;
+
+/** One deferred read: its server span and every span that descends from it. `verdict` is unset until the server span ends. */
+interface ReadGroup {
+  since: number;
+  spans: ReadableSpan[];
+  ids: Set<string>;
+  /** Tracked spans started and not yet ended; a decided group with none open is freed. */
+  open: number;
+  verdict?: 'keep' | 'drop';
+}
+
+/**
+ * `downstream` are the processors that export (the OTLP batch processor): they hear only of spans that were kept. The spans
+ * that descend from a read's server span are held until it ends, then released together when the request was slow or
+ * failed, else dropped (metrics and tidying run for every span either way). Held by descent, not by trace id: a GET that
+ * arrives with a `traceparent` shares its trace with the run that caused it, and that run's other spans are not the read's.
+ * A descendant still open when the read ends follows the verdict; once the read and every tracked descendant have ended the
+ * read is freed, so a span started after that (work the handler left running) is exported on its own.
+ */
 export class LandflowSpanProcessor implements SpanProcessor {
-  onStart(): void {}
+  private readonly groups = new Set<ReadGroup>();
+  private readonly bySpan = new Map<string, ReadGroup>();
+  private lastSweep = 0;
+
+  constructor(
+    private readonly downstream: SpanProcessor[] = [],
+    private readonly slowMs: number = telemetryConfig.slowReadMs,
+  ) {}
+
+  onStart(span: Span, parent: Context): void {
+    const spanId = span.spanContext().spanId;
+    if (span.attributes[DEFERRED_READ]) {
+      this.sweep();
+      if (this.groups.size >= DEFERRED_MAX_GROUPS) this.free(this.groups.values().next().value as ReadGroup);
+      const group: ReadGroup = { since: Date.now(), spans: [], ids: new Set([spanId]), open: 1 };
+      this.groups.add(group);
+      this.bySpan.set(spanId, group);
+    } else {
+      this.sweep();
+      const parentId = span.parentSpanContext?.spanId;
+      const group = parentId ? this.bySpan.get(parentId) : undefined;
+      if (group) {
+        group.open++;
+        group.ids.add(spanId);
+        this.bySpan.set(spanId, group);
+      }
+    }
+    for (const processor of this.downstream) processor.onStart(span, parent);
+  }
+
+  private sweep() {
+    const now = Date.now();
+    if (now - this.lastSweep < 60_000) return;
+    this.lastSweep = now;
+    for (const group of this.groups) {
+      if (now - group.since <= DEFERRED_TTL_MS) continue;
+      this.free(group);
+    }
+  }
+
+  /** Forget a read and its span ids. */
+  private free(group: ReadGroup) {
+    this.groups.delete(group);
+    for (const id of group.ids) this.bySpan.delete(id);
+    group.spans = [];
+  }
+
+  /** Release a span to the exporters and the log, or hold it until its read is decided. */
+  private route(span: ReadableSpan) {
+    const group = this.bySpan.get(span.spanContext().spanId);
+    if (!group) return this.release(span);
+    if (group.verdict === 'keep') return this.release(span);
+    if (group.verdict === 'drop') return;
+    if (span.attributes[DEFERRED_READ]) {
+      const status = Number(span.attributes['http.response.status_code'] ?? 0);
+      const keep = hrTimeToMilliseconds(span.duration) >= this.slowMs || status >= 500 || span.status.code === SpanStatusCode.ERROR;
+      group.verdict = keep ? 'keep' : 'drop';
+      const held = group.spans;
+      group.spans = [];
+      if (keep) {
+        for (const child of held) this.release(child);
+        this.release(span);
+      }
+    } else if (group.spans.length < DEFERRED_MAX_SPANS) group.spans.push(span);
+  }
+
+  private release(span: ReadableSpan) {
+    this.log(span);
+    for (const processor of this.downstream) processor.onEnd(span);
+  }
 
   onEnding(span: Span): void {
+    for (const processor of this.downstream) processor.onEnding?.(span);
     const { attributes } = span;
     if (attributes['next.span_type'] === NEXT_REQUEST) {
       // Next.js sets the old HTTP conventions; add the current ones (and never keep the query string).
@@ -118,7 +228,15 @@ export class LandflowSpanProcessor implements SpanProcessor {
         ...(attributes['http.response.status_code'] !== undefined && { 'http.response.status_code': attributes['http.response.status_code'] }),
       });
     }
-    if (!telemetryConfig.logSpans || !isSampled(span)) return;
+    const group = this.bySpan.get(span.spanContext().spanId);
+    if (isSampled(span)) this.route(span);
+    if (group && --group.open <= 0 && group.verdict) this.free(group);
+  }
+
+  private log(span: ReadableSpan): void {
+    const { attributes } = span;
+    const isRequest = attributes['next.span_type'] === NEXT_REQUEST;
+    if (!telemetryConfig.logSpans) return;
     // Next.js' own internal spans stay in the trace but not in the log.
     if (attributes['next.span_type'] && !isRequest) return;
     const failed = span.status.code === SpanStatusCode.ERROR;
@@ -138,11 +256,11 @@ export class LandflowSpanProcessor implements SpanProcessor {
     writeRecord(failed ? 'error' : 'info', 'span.end', fields, new Date(hrTimeToMilliseconds(span.endTime)));
   }
 
-  forceFlush(): Promise<void> {
-    return Promise.resolve();
+  async forceFlush(): Promise<void> {
+    await Promise.all(this.downstream.map((processor) => processor.forceFlush()));
   }
 
-  shutdown(): Promise<void> {
-    return Promise.resolve();
+  async shutdown(): Promise<void> {
+    await Promise.all(this.downstream.map((processor) => processor.shutdown()));
   }
 }

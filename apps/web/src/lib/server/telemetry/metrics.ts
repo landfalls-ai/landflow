@@ -8,8 +8,16 @@ import { telemetryConfig } from './config';
 
 export const HOST_SCOPE = 'landflow-host';
 const advice = { explicitBucketBoundaries: DURATION_BUCKETS_MS };
+/** Finer low buckets than the duration default: database calls and GC pauses are mostly well under a millisecond or a few. */
+const DB_BUCKETS_MS = [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 25, 50, 100, 250, 1000];
 /** Semantic-convention buckets for http.server.request.duration (seconds). */
 const HTTP_BUCKETS_S = [0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10];
+
+/**
+ * `landflow.workflow.id` on the counters below only with LANDFLOW_METRICS_WORKFLOW_LABEL=true: one series per workflow
+ * grows without bound, and on a histogram it multiplies by every bucket. Spans and exemplars keep the id.
+ */
+export const workflowLabel = (workflowId?: string): Attributes => (workflowId && telemetryConfig.workflowLabel ? { 'landflow.workflow.id': workflowId } : {});
 
 function create(provider: MeterProvider) {
   const meter = provider.getMeter(HOST_SCOPE, telemetryConfig.serviceVersion);
@@ -38,6 +46,11 @@ function create(provider: MeterProvider) {
     a2aDuration: meter.createHistogram('landflow.a2a.call.duration', { description: 'Duration of a call to a remote A2A agent (until its task settles)', unit: 'ms', advice }),
     a2aTokens: meter.createCounter('landflow.a2a.tokens', { description: 'Model tokens remote A2A agents report using (kagent usage extension)' }),
     a2aToolCalls: meter.createCounter('landflow.a2a.tool.calls', { description: 'Tool calls remote A2A agents made, by agent, tool and status' }),
+    dbDuration: meter.createHistogram('landflow.db.query.duration', { description: 'Duration of a database call (SQL text is never a label)', unit: 'ms', advice: { explicitBucketBoundaries: DB_BUCKETS_MS } }),
+    gcDuration: meter.createHistogram('landflow.runtime.gc.duration', { description: 'Garbage collection pauses, by kind', unit: 'ms', advice: { explicitBucketBoundaries: DB_BUCKETS_MS } }),
+    signInFailures: meter.createCounter('landflow.auth.sign_in_failures', { description: 'Failed sign-in attempts (wrong password or unknown user)' }),
+    authLimited: meter.createCounter('landflow.auth.limited', { description: 'Attempts a rate limiter refused, by limiter' }),
+    sseConnections: meter.createUpDownCounter('landflow.sse.connections', { description: 'Open Server-Sent Events streams, by route' }),
     runtimeEvents: meter.createCounter('landflow.runtime.events', { description: 'Durable runtime events: deduplicated, skipped, queued, recovered and retried runs' }),
     httpDuration: meter.createHistogram('http.server.request.duration', {
       description: 'Duration of HTTP server requests',
@@ -69,24 +82,45 @@ export function outcomeOf(error: unknown): Outcome {
 // Small recorders used across the host
 // ---------------------------------------------------------------------------
 
-export function recordScheduleLag(workflowId: string, lagMs: number) {
-  hostMetrics().scheduleLag.record(Math.max(0, lagMs), { 'landflow.workflow.id': workflowId });
+export function recordScheduleLag(lagMs: number) {
+  hostMetrics().scheduleLag.record(Math.max(0, lagMs));
 }
 
 export function recordWebhookRequest(status: number, workflowId?: string) {
-  hostMetrics().webhookRequests.add(1, { ...(workflowId && { 'landflow.workflow.id': workflowId }), 'http.response.status_code': status });
+  hostMetrics().webhookRequests.add(1, { ...workflowLabel(workflowId), 'http.response.status_code': status });
 }
 
 /** What the durable runtime did with a run (docs/observability.md §5). */
 export type RuntimeEvent = 'deduplicated' | 'skipped' | 'queued' | 'recovered' | 'recovery_failed' | 'retry_scheduled' | 'retried' | 'stopped';
 
 export function recordRuntimeEvent(event: RuntimeEvent, workflowId?: string, count = 1) {
-  if (count > 0) hostMetrics().runtimeEvents.add(count, { 'landflow.runtime.event': event, ...(workflowId && { 'landflow.workflow.id': workflowId }) });
+  if (count > 0) hostMetrics().runtimeEvents.add(count, { 'landflow.runtime.event': event, ...workflowLabel(workflowId) });
 }
 
 /** One announce or heartbeat from a plugin (HTTP route or gRPC RegistryService). */
 export function recordHeartbeat(pluginId: string) {
   hostMetrics().heartbeats.add(1, { 'landflow.plugin.id': pluginId });
+}
+
+export type DbOperation = 'select' | 'insert' | 'upsert' | 'delete' | 'direct';
+
+export function recordDbQuery(operation: DbOperation, ms: number) {
+  hostMetrics().dbDuration.record(ms, { 'db.operation': operation });
+}
+
+/** A failed sign-in (docs/observability.md §5): the counter an alert on credential stuffing reads. */
+export function recordSignInFailure() {
+  hostMetrics().signInFailures.add(1);
+}
+
+/** A rate limiter said no (`limiter`: `email`, `ip`, `form`). */
+export function recordAuthLimited(limiter: string) {
+  hostMetrics().authLimited.add(1, { 'landflow.limiter': limiter });
+}
+
+/** An SSE stream opened (+1) or closed (-1). */
+export function recordSseConnection(route: string, delta: 1 | -1) {
+  hostMetrics().sseConnections.add(delta, { 'http.route': route });
 }
 
 export function recordHttpServerDuration(seconds: number, attributes: Attributes) {

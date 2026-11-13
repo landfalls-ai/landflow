@@ -26,6 +26,7 @@ import { singleton } from '../singleton';
 import { logger } from '../telemetry/logger';
 import { withAuditRequest, type AuditRequestContext } from './context';
 import { recordAudit } from './index';
+import { recordAuditWriteFailure } from './metrics';
 import { projectTarget, targetProject } from './project';
 
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -219,6 +220,7 @@ export async function auditRequest(args: unknown[], run: () => Promise<Response>
     );
   } catch (error) {
     logger.warn('could not audit an API request', { error: (error as Error).message });
+    recordAuditWriteFailure('api.request');
   }
   return response;
 }

@@ -11,6 +11,8 @@ import { decodeCursor, encodeCursor } from './pagination';
 
 export interface ExecutionsPageQuery {
   workflowId?: string;
+  /** Only saved runs with this status (never `running`: those are the live runs, listed apart). */
+  status?: string;
   limit: number;
   cursor?: string;
   /** The workflows the caller may see; null or undefined = all of them. */
@@ -43,6 +45,10 @@ export function listExecutionsPage(query: ExecutionsPageQuery): ExecutionsPage {
     if (query.workflowId) {
       where.push('workflow_id = ?');
       params.push(query.workflowId);
+    }
+    if (query.status) {
+      where.push('status = ?');
+      params.push(query.status);
     }
     if (ids) {
       where.push(`workflow_id IN (${ids.map(() => '?').join(', ')})`);

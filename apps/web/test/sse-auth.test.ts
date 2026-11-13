@@ -1,7 +1,8 @@
 /**
  * /api/events re-authorisation with real credentials (the test bypass is off): a member who loses access to a
  * workflow stops getting its events within the interval, and the stream closes once the session is deleted, the
- * user is disabled, or the user is no longer the one the cookie names.
+ * user is disabled, or the user is no longer the one the cookie names. The re-check does not mark the session as used,
+ * so an open tab still reaches the idle limit.
  */
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -19,6 +20,8 @@ const { eventStream } = await import('@/lib/server/events-stream');
 const projects = await import('@/lib/server/projects');
 const { store } = await import('@/lib/server/store');
 const { deleteSession } = await import('@/lib/server/auth/sessions');
+const { authDb } = await import('@/lib/server/auth/db');
+const { tokenHash } = await import('@/lib/server/auth/passwords');
 const { setUserDisabled } = await import('@/lib/server/auth/users');
 
 const decoder = new TextDecoder();
@@ -118,6 +121,34 @@ describe('/api/events re-authorisation', () => {
     const result = await drain(reader, () => false, 400);
     abort.abort();
     expect(result.ended).toBe(true);
+  });
+
+  it('re-checks without marking the session as used, so an open stream ends at the idle limit', async () => {
+    const { token } = await makeUser('idle@example.com', 'member');
+    const lastSeen = () => authDb().get<{ last_seen_at: string }>('SELECT last_seen_at FROM sessions WHERE id = ?', tokenHash(token))!.last_seen_at;
+    const setLastSeen = (msAgo: number) => {
+      const row = authDb().get<Record<string, string>>('SELECT * FROM sessions WHERE id = ?', tokenHash(token))!;
+      authDb().upsert('sessions', { ...row, last_seen_at: new Date(Date.now() - msAgo).toISOString() });
+    };
+    const abort = new AbortController();
+    const reader = (await open(token, abort)).body!.getReader();
+    await drain(reader, () => false, 60);
+    setLastSeen(5 * 60_000); // older than the once-a-minute touch interval
+    const before = lastSeen();
+    const open1 = await drain(reader, () => false, 200); // several 20 ms re-checks
+    expect(open1.ended).toBe(false);
+    expect(lastSeen()).toBe(before);
+    const previous = process.env.LANDFLOW_SESSION_IDLE_HOURS;
+    process.env.LANDFLOW_SESSION_IDLE_HOURS = '1';
+    try {
+      setLastSeen(2 * 3_600_000);
+      const result = await drain(reader, () => false, 400);
+      expect(result.ended).toBe(true);
+    } finally {
+      abort.abort();
+      if (previous === undefined) delete process.env.LANDFLOW_SESSION_IDLE_HOURS;
+      else process.env.LANDFLOW_SESSION_IDLE_HOURS = previous;
+    }
   });
 
   it('refuses a request with no valid credentials with 401', () => {

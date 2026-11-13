@@ -21,8 +21,13 @@ Read `docs/constitution.md` (its Security baseline is your checklist), `CLAUDE.m
 - **Request path**: `apps/web/src/proxy.ts` (optimistic cookie or key check; security headers and the nonce CSP,
   `LANDFLOW_CSP`, with an `EMBEDDABLE` list of paths that set their own policy) → `handler()` (`lib/server/http.ts`) →
   `guardRequest()` (`lib/server/auth/guard.ts`: principal from session cookie or `lf_` API key, policy, `Origin` check
-  on cookie writes, protected environments, `resourceRule` project access for paths naming a workflow, credential, data
-  table, agent, team or execution) → the handler in auth and audit contexts.
+  on cookie writes, and `Sec-Fetch-Site` when there is no Origin, protected environments, `resourceRule` project access
+  for paths naming a workflow, credential, data table, agent, team or execution) → the handler in auth and audit
+  contexts.
+- **Sessions** (`lib/server/auth/sessions.ts`): `sessionUser()` refuses a session past `LANDFLOW_SESSION_TTL_HOURS` or
+  idle past `LANDFLOW_SESSION_IDLE_HOURS` (72 in production) and marks it used once a minute; background re-checks
+  pass `touch: false`. A password change ends the user's other sessions; `LANDFLOW_LOCAL_SIGN_IN` (`all`, `owner`,
+  `off`; `auth/local-sign-in.ts`) limits password sign-in and reset for SSO-only instances.
 - **Policy** (`lib/server/auth/policy.ts`): one table by path; API key scopes, role actions, `sessionOnly`. A path
   with no entry needs the `admin` scope from an API key and **nothing from a session**: every new route must have an
   entry or an in-handler check (`requireResource`, `canResource`, `filterVisible`, `visibleProjectIds` in
@@ -36,8 +41,14 @@ Read `docs/constitution.md` (its Security baseline is your checklist), `CLAUDE.m
 - **Audit**: `recordAudit()` (`lib/server/audit/index.ts`) in the library, with actor, target, project, `from`/`to`;
   `auditRequest()` (`audit/http.ts`) adds a generic event for mutating `/api` calls that recorded none and skips paths
   in its `SKIP` list, and records a read refused with 401/403 as `api.denied` (once a minute per caller and route).
-  Permission and secret changes, failed SSO sign-ins and exports are domain events. Writes fail open today (S9).
-- **Secrets**: AES-256-GCM vault (`lib/server/credentials/vault.ts`); key-name redaction (`SECRET_KEY` in
+  Permission and secret changes, failed SSO sign-ins and exports are domain events. A failed write is counted
+  (`landflow.audit.write_failures`); with `LANDFLOW_AUDIT_FAIL_CLOSED=true` role changes, API keys, credentials, audit
+  settings and SCIM provisioning refuse with 503 when their event can't be stored (`auditedTransaction()` /
+  `auditedChange()` with required events). Flag a new high-value change that records its event outside them.
+- **Secrets**: AES-256-GCM vault (`lib/server/credentials/vault.ts`) over a key ring (`credentials/key-ring.ts`:
+  `LANDFLOW_ENCRYPTION_KEYS`, sealed values name their key and are bound to the credential id or a purpose; scrypt for
+  passphrases; `rotateEncryption()` in `credentials/rotate.ts`); other keys come from `vault.deriveKey(label)` (HKDF)
+  and verify against `deriveKeys(label)`; key-name redaction (`SECRET_KEY` in
   `lib/server/telemetry/config.ts`, `redact()` in `telemetry/logger.ts`); `$secrets` value scrubbing
   (`lib/server/secrets/redact.ts`); hashed bearer tokens compared with `sameSecret()`.
 - **Untrusted code**: expressions in a sealed realm (`packages/engine/src/sandbox/realm.ts`: code generation off, only
@@ -48,10 +59,11 @@ Read `docs/constitution.md` (its Security baseline is your checklist), `CLAUDE.m
   the governance host allow-list (`lib/server/governance/policy.ts`) is off by default. Flag a new bare `fetch` to a
   user-influenced URL; the callers still outside `safeFetch` are listed in `docs/limitations.md`.
 - **Known open findings** (don't re-report them as new unless the diff makes them worse; do flag code that copies
-  them), each with the package that closes it: S9 audit fails open (P21), S13 key handling (P23), S14 sessions (P24);
-  an isolate backend for expressions (P30). Drop an entry once its package is on `origin/main` (S3, S6 and S10 closed
-  with P08, P09 and P10; S1, S5, S7, S8 and S12 with P11 to P14; S11 with P16: `parseBody`'s 413 over
-  `LANDFLOW_MAX_BODY_BYTES` and the API and public-trigger rate limits in `lib/server/rate-limit/api-limiter.ts`).
+  them), each with the package that closes it: an isolate backend for expressions (P30). Drop an entry once its package
+  is on `origin/main` (S3, S6 and S10 closed with P08, P09 and P10; S1, S5, S7, S8 and S12 with P11 to P14; S11 with
+  P16: `parseBody`'s 413 over `LANDFLOW_MAX_BODY_BYTES` and the API and public-trigger rate limits in
+  `lib/server/rate-limit/api-limiter.ts`; S9, S13 and S14 with P21, P23 and P24: audit fail-closed, the key ring and
+  session hardening, above).
 
 ## Checklist for every changed route and library function
 

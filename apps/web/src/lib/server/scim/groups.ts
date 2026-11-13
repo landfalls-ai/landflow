@@ -17,6 +17,7 @@
  */
 import { nanoid } from 'nanoid';
 import type { ProjectRole } from '../../shared/projects';
+import { auditedTransaction } from '../audit';
 import { currentActorId } from '../auth/context';
 import { authDb } from '../auth/db';
 import { getUser, updateUser } from '../auth/users';
@@ -164,7 +165,7 @@ export function createGroup(input: { displayName: string; externalId?: string; m
   const displayName = input.displayName.trim();
   if (!displayName) throw new ScimError(400, 'displayName is required', 'invalidValue');
   const database = db();
-  const [group, members] = database.transaction((): [ScimGroup, string[]] => {
+  const [group, members] = auditedTransaction((): [ScimGroup, string[]] => {
     if (nameTaken(displayName)) throw new ScimError(409, `A group named “${displayName}” already exists`, 'uniqueness');
     const now = new Date().toISOString();
     const group: ScimGroup = { id: `grp_${nanoid(12)}`, displayName: displayName.slice(0, 200), ...(input.externalId && { externalId: input.externalId }), createdAt: now, updatedAt: now };
@@ -172,9 +173,9 @@ export function createGroup(input: { displayName: string; externalId?: string; m
     const members = knownUsers(input.members ?? []);
     for (const userId of members) database.insertNew('scim_group_members', { group_id: group.id, user_id: userId });
     recomputeGrants(members);
+    auditGroupCreated(group, members);
     return [group, members];
   });
-  auditGroupCreated(group, members);
   return group;
 }
 
@@ -190,7 +191,7 @@ export interface GroupChange {
 /** Change a group (name, external id, members) and recompute the grants of everyone it affects, in one transaction. */
 export function changeGroup(id: string, change: GroupChange): ScimGroup {
   const database = db();
-  const [before, next, added, removed] = database.transaction((): [ScimGroup, ScimGroup, string[], string[]] => {
+  const next = auditedTransaction((): ScimGroup => {
     const group = getGroup(id);
     if (!group) throw new ScimError(404, `Group ${id} not found`);
     const affected = new Set<string>();
@@ -227,27 +228,26 @@ export function changeGroup(id: string, change: GroupChange): ScimGroup {
       added.push(userId);
     }
     recomputeGrants(affected);
-    return [group, next, added, removed];
+    // Inside the transaction: the audit insert uses the same database, so a rolled-back change leaves no event and,
+    // with LANDFLOW_AUDIT_FAIL_CLOSED, an event that can't be stored rolls the change back.
+    auditGroupChange(group, next, added, removed);
+    return next;
   });
-  // The group events go after the commit, so a rolled-back change leaves none. A role change recomputeGrants made is
-  // recorded inside the transaction, which is safe: the audit insert uses the same database and rolls back with it.
-  auditGroupChange(before, next, added, removed);
   return next;
 }
 
 /** Delete a group; its members lose what it granted. */
 export function deleteGroup(id: string): boolean {
   const database = db();
-  const removed = database.transaction(() => {
+  const removed = auditedTransaction(() => {
     const group = getGroup(id);
     if (!group) return undefined;
     const members = groupMembers(id);
     for (const userId of members) database.delete('scim_group_members', { group_id: id, user_id: userId });
     database.delete('scim_groups', { id });
     recomputeGrants(members);
+    auditGroupRemoved(group, members);
     return { group, members };
   });
-  if (!removed) return false;
-  auditGroupRemoved(removed.group, removed.members);
-  return true;
+  return Boolean(removed);
 }

@@ -28,10 +28,14 @@ names, attributes, metric names, log fields) and `docs/features/observability.md
 - Spans: mutating API requests, triggers (`telemetry/triggers.ts`), runs and nodes (engine), `plugin.rpc`
   (`telemetry/rpc.ts`, with transport and reason), model calls (`telemetry/ai.ts`, GenAI conventions), RAG, agents,
   A2A (`telemetry/a2a.ts`). Context crosses HTTP, gRPC and brokers (CloudEvents `traceparent`), the run queue
-  (`cluster/worker.ts`) and A2A. GET requests are recorded in the duration histogram but not sampled
-  (`telemetry/processors.ts`); automatic fetch spans are off.
-- Metrics: about 44 instruments in `telemetry/metrics.ts`, `flow-metrics.ts`, `transport-metrics.ts`,
-  `triggers.ts`; created with `metrics.getMeter(...)` from `@opentelemetry/api`.
+  (`cluster/worker.ts`) and A2A. Read requests are recorded in the duration histogram and traced only when slower than
+  `LANDFLOW_TRACE_SLOW_READ_MS` or failed with a 5xx (`telemetry/processors.ts` decides at their end); database calls
+  get a `db.query` span only over `LANDFLOW_DB_SLOW_MS` (`db/database.ts`); automatic fetch spans are off.
+- Metrics: the instruments in `telemetry/metrics.ts` (including `landflow.db.query.duration`, SSE connections, failed
+  sign-ins and limiter refusals), `flow-metrics.ts`, `transport-metrics.ts`, `triggers.ts`, process saturation
+  (event-loop delay and utilisation, memory, GC) in `telemetry/runtime-metrics.ts`, and the audit write-failure,
+  outbox depth, age and delivery-failure instruments in `audit/metrics.ts`; created with `metrics.getMeter(...)` from
+  `@opentelemetry/api`. `landflow.workflow.id` is a counter label only with `LANDFLOW_METRICS_WORKFLOW_LABEL=true`.
 - Main and worker boot from one service table (`SERVICES` in `lib/server/runtime.ts`) and stop through the lifecycle
   registry (`lib/server/lifecycle.ts`: `onShutdown()` steps in phases, `installProcessHandlers()`, the
   `landflow.process.errors` counter). Health: `/api/health/live` (no I/O) and `/api/health/ready` (`readiness()` in

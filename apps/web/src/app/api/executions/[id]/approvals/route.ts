@@ -28,7 +28,7 @@ const decisionSchema = z
 
 export const GET = handler(async (_request: Request, { params }: Ctx) => {
   const { id } = await params;
-  const record = liveExecution(id) ? undefined : store.getExecution(id);
+  const record = liveExecution(id) ? undefined : await store.loadExecution(id);
   if (!record && !liveExecution(id)) return error('Execution not found', 404);
   return json({ approval: pendingApproval(record) ?? null });
 });
@@ -37,7 +37,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const { id } = await params;
   const body = await parseBody(request, decisionSchema);
   if (!body.ok) return body.response;
-  const record = store.getExecution(id);
+  const record = await store.loadExecution(id);
   if (!record) return error('Execution not found', 404);
   const approval = pendingApproval(record);
   if (!approval) return error(`This execution is ${record.status}, not waiting for a tool approval`, 409);
@@ -83,5 +83,5 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
     } finally {
       close();
     }
-  });
+  }, { route: '/api/executions/:id/approvals' });
 });

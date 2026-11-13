@@ -19,6 +19,7 @@ import { findTrigger, lastNodeItems, liveExecution, liveExecutions, publicUrl, r
 import { workflowSchema } from '../schemas';
 import { protectedMessage } from '../environments/protection';
 import { isProtectedEnvironment } from '../environments/settings';
+import { listExecutionsPage } from '../executions-query';
 import { store } from '../store';
 import { startTrigger } from '../telemetry';
 import { canResource, creationProject, filterVisible, resourceDenial, type Actor } from '../projects/access';
@@ -87,6 +88,8 @@ const failure = (message: string): CallToolResult => textResult(message, true);
 const workflowUrl = (id: string) => `${publicUrl()}/workflows/${id}`;
 
 const MAX_OUTPUT_ITEMS = 25;
+/** list_executions with a status reads at most this many pages of 200 saved runs (the status is in SQL; only access is filtered after). */
+const STATUS_SCAN_PAGES = 10;
 
 /** Items as JSON, at most MAX_OUTPUT_ITEMS. */
 function itemsJson(items: NodeItem[]): { items: JsonObject[]; total: number; truncated?: true } {
@@ -438,9 +441,25 @@ export function instanceServer(actor?: Actor, scope?: McpScope): McpServer {
     },
     async ({ workflowId, status, limit }) => {
       const max = limit ?? 20;
-      const all: ExecutionSummary[] = [...liveExecutions(workflowId), ...store.listExecutions({ workflowId, limit: status ? Number.POSITIVE_INFINITY : max })];
       const seen = new Set<string>();
-      const list = all.filter((e) => !seen.has(e.id) && seen.add(e.id) && (!status || e.status === status) && (!actor || canResource(actor, 'workflow', e.workflowId, 'read')) && inScope(scope, e.workflowId)).slice(0, max);
+      const list: ExecutionSummary[] = [];
+      const take = (rows: ExecutionSummary[]) => {
+        for (const e of rows) {
+          if (list.length >= max) return;
+          if (!seen.has(e.id) && seen.add(e.id) && (!status || e.status === status) && (!actor || canResource(actor, 'workflow', e.workflowId, 'read')) && inScope(scope, e.workflowId)) list.push(e);
+        }
+      };
+      take(liveExecutions(workflowId));
+      if (!status) take(store.listExecutions({ workflowId, limit: max }));
+      else if (status !== 'running') {
+        // The status is filtered in SQL and saved runs are read a page at a time, never the whole history at once.
+        let cursor: string | undefined;
+        for (let pages = 0; list.length < max && pages < STATUS_SCAN_PAGES; pages += 1) {
+          const page = listExecutionsPage({ workflowId, status, limit: 200, cursor });
+          take(page.executions);
+          if (!(cursor = page.nextCursor)) break;
+        }
+      }
       return json({
         executions: list.map((e) => ({
           id: e.id,
@@ -465,7 +484,7 @@ export function instanceServer(actor?: Actor, scope?: McpScope): McpServer {
       annotations: READ_ONLY,
     },
     async ({ id, includeData }) => {
-      const record = liveExecution(id) ?? store.getExecution(id);
+      const record = liveExecution(id) ?? (await store.loadExecution(id));
       if (record && (denied(record.workflowId, 'read') || !inScope(scope, record.workflowId))) return failure(`Execution ${id} not found`);
       return record ? json(executionDigest(record, Boolean(includeData))) : failure(`Execution ${id} not found`);
     },

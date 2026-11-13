@@ -8,7 +8,7 @@
 import { clientAddress } from '../net/client-address';
 import { clusterActive, coordinator } from '../cluster/state';
 import { singleton } from '../singleton';
-import { logger } from '../telemetry';
+import { logger, recordAuthLimited, recordSignInFailure } from '../telemetry';
 
 export interface RateLimitResult {
   ok: boolean;
@@ -82,6 +82,12 @@ export class AttemptLimiter {
   }
 
   async check(key: string, now = Date.now()): Promise<RateLimitResult> {
+    const result = await this.measure(key, now);
+    if (!result.ok) recordAuthLimited(this.name);
+    return result;
+  }
+
+  private async measure(key: string, now: number): Promise<RateLimitResult> {
     if (!this.shared()) return this.local.check(key, now);
     try {
       const valkey = coordinator();
@@ -97,6 +103,8 @@ export class AttemptLimiter {
   }
 
   async hit(key: string, now = Date.now()): Promise<void> {
+    // The sign-in route hits the email limiter once per failed attempt (the form limiters count other forms).
+    if (this.name === 'email') recordSignInFailure();
     // Always counted here too: it's the fallback while Valkey is away.
     this.local.hit(key, now);
     if (!this.shared()) return;

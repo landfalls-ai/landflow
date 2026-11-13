@@ -1,7 +1,7 @@
 /**
  * Reading the usage ledger: events, grouped reports, and the daily rollups that outlive the raw events.
  *
- * Raw events are kept USAGE_RETENTION_DAYS (default 90). `usage_daily` holds one row per day, kind, workflow, node type,
+ * Raw events are kept LANDFLOW_USAGE_RETENTION_DAYS (default 90). `usage_daily` holds one row per day, kind, workflow, node type,
  * signature and agent, recomputed from the raw events for recent days (hourly, and before a report that needs today),
  * and kept 400 days. A report over a window that starts after the raw events' cutoff reads the raw events (exact, to the
  * second); an older window reads the rollups (whole days).
@@ -10,6 +10,7 @@
  * to neither (Spotlight asks, empty searches) are left out of a scoped report.
  */
 import { ATTR_NAME, isUsageKind, type UsageEvent, type UsageFilter, type UsageGroup, type UsageGroupRow, type UsageKind, type UsageReport } from '../../shared/brain';
+import { envWithAliases } from '../config';
 import { database, type Database, type SqlValue } from '../db';
 import { singleton } from '../singleton';
 import { dayOf, fromRow, type UsageRow } from './ledger';
@@ -18,8 +19,8 @@ const DAY_MS = 86_400_000;
 const ROLLUP_DAYS = 400;
 
 export const rawRetentionDays = () => {
-  // LANDFLOW_USAGE_RETENTION_DAYS; the old name still works.
-  const n = Number(process.env.LANDFLOW_USAGE_RETENTION_DAYS ?? process.env.USAGE_RETENTION_DAYS);
+  // LANDFLOW_USAGE_RETENTION_DAYS; the old USAGE_RETENTION_DAYS still works.
+  const n = Number(envWithAliases('LANDFLOW_USAGE_RETENTION_DAYS'));
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 90;
 };
 
@@ -303,7 +304,7 @@ export function rollupMissing(db: Database = database()) {
   return days.length;
 }
 
-/** Drop raw events past USAGE_RETENTION_DAYS and rollups past 400 days. */
+/** Drop raw events past LANDFLOW_USAGE_RETENTION_DAYS and rollups past 400 days. */
 export function pruneUsage(db: Database = database(), now = Date.now()): number {
   const removed = db.deleteBefore('usage_events', 'at', new Date(now - rawRetentionDays() * DAY_MS).toISOString());
   db.deleteBefore('usage_daily', 'day', dayOf(now - ROLLUP_DAYS * DAY_MS));

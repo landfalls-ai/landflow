@@ -125,6 +125,11 @@ describe('checkConfig', () => {
     expect(checkConfig(env).warnings.join()).toContain('LANDFLOW_CODE_RUNNER_URL');
     expect(checkConfig({ ...env, LANDFLOW_CODE_IN_PROCESS: 'true' }).warnings).toEqual([]);
   });
+  it('takes the key ring in place of the legacy key: no key-file warning with only LANDFLOW_ENCRYPTION_KEYS set', () => {
+    const { LANDFLOW_ENCRYPTION_KEY: _, ...env } = good;
+    expect(checkConfig(env).warnings.join()).toContain('LANDFLOW_ENCRYPTION_KEY is not set');
+    expect(checkConfig({ ...env, LANDFLOW_ENCRYPTION_KEYS: `k1:${'ab'.repeat(32)}` }).warnings).toEqual([]);
+  });
   it('says nothing about development values in development', () => {
     const r = checkConfig({ LANDFLOW_PROFILE: 'development', LANDFLOW_BINARY_SECRET: 'landflow-queue-dev-only-binary-secret', LANDFLOW_OWNER_PASSWORD: 'landflow-dev-only' });
     expect(r.errors).toEqual([]);

@@ -5,10 +5,10 @@
  * (both read the raw events, not the daily rollups).
  * Members see the workflows and agents they can open.
  */
+import { z } from 'zod';
 import type { UsageGroup } from '@/lib/shared/brain';
 import { agentStore } from '@/lib/server/agents/store';
 import { scopeForActor } from '@/lib/server/brain/scope';
-import { z } from 'zod';
 import { error, handler, json, parseQuery } from '@/lib/server/http';
 import { limitParam } from '@/lib/server/pagination';
 import { routeActor } from '@/lib/server/projects/http';

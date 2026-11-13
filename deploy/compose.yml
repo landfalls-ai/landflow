@@ -66,6 +66,7 @@ services:
       LANDFLOW_MCP_GATEWAY_SECRET: ${LANDFLOW_MCP_GATEWAY_SECRET:-landflow-mcp-gateway-dev-only-secret}
       # Empty: the vault generates a key into the data volume (/data/encryption.key) on first use.
       LANDFLOW_ENCRYPTION_KEY: ${LANDFLOW_ENCRYPTION_KEY:-}
+      LANDFLOW_ENCRYPTION_KEYS: ${LANDFLOW_ENCRYPTION_KEYS:-}
       LANDFLOW_LOG_LEVEL: ${LANDFLOW_LOG_LEVEL:-info}
       # Plugins announce themselves; the scan (at boot and the Plugins page's "Scan network")
       # probes the plugin services instead of the container's own 127.0.0.1.

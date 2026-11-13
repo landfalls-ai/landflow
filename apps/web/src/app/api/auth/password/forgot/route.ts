@@ -4,6 +4,7 @@
  */
 import { z } from 'zod';
 import { clientIp, createResetToken, deliverLink, findUserByEmail, formLimit, linkOriginMissing } from '@/lib/server/auth';
+import { localSignInAllowed } from '@/lib/server/auth/local-sign-in';
 import { mailConfigured } from '@/lib/server/auth/mail';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { logger } from '@/lib/server/telemetry';
@@ -25,7 +26,8 @@ export const POST = handler(async (request: Request) => {
   // Before the lookup: failing only for an existing account would tell who has one.
   if (linkOriginMissing()) return error('This Landflow can’t send links yet (LANDFLOW_PUBLIC_URL is not set). Ask an admin.', 503);
   const user = findUserByEmail(body.data.email);
-  if (user) {
+  // Same answer either way; no link goes to a user whose password sign-in LANDFLOW_LOCAL_SIGN_IN refuses.
+  if (user && localSignInAllowed(user)) {
     const { token } = createResetToken(user);
     const sent = await deliverLink('reset', { to: user.email, token, request });
     if (!sent.emailed) logger.warn('the password reset email was not sent', { 'landflow.user.id': user.id, error: sent.emailError });

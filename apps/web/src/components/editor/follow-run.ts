@@ -32,7 +32,7 @@ export function useFollowRun() {
   const reload = useCallback(() => {
     const id = useEditor.getState().following;
     if (!id) return;
-    api<{ execution: ExecutionRecord; progress?: Record<string, NodeProgress> }>(`/api/executions/${id}`)
+    api<{ execution: ExecutionRecord; progress?: Record<string, NodeProgress> }>(`/api/executions/${id}`, { background: true })
       .then(({ execution, progress = {} }) => {
         const state = useEditor.getState();
         if (state.following !== id) return;

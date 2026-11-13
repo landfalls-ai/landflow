@@ -653,7 +653,7 @@ export function EvaluationsPage({ workflowId }: { workflowId: string }) {
 
   const loadOverview = useCallback(
     () =>
-      api<EvaluationsOverview>(`/api/workflows/${workflowId}/evaluations`)
+      api<EvaluationsOverview>(`/api/workflows/${workflowId}/evaluations`, { background: true })
         .then((o) => {
           setOverview(o);
           return o;
@@ -674,7 +674,7 @@ export function EvaluationsPage({ workflowId }: { workflowId: string }) {
 
   const loadDetail = useCallback(() => {
     if (!selectedId) return setDetail(undefined);
-    api<{ run: EvaluationRunDetail }>(`/api/workflows/${workflowId}/evaluations/${selectedId}`)
+    api<{ run: EvaluationRunDetail }>(`/api/workflows/${workflowId}/evaluations/${selectedId}`, { background: true })
       .then((r) => setDetail(r.run))
       .catch(() => setDetail(undefined));
   }, [workflowId, selectedId]);

@@ -57,8 +57,8 @@ async function ask(model: LanguageModel, prompt: string, signal?: AbortSignal): 
 }
 
 /** The latest failing run of a node, as the assistant reads runs: counts always, items only with the project's opt-in. */
-function failingRun(workflow: Workflow, nodeId: string, executionId: string | undefined, message: string): RunDigest {
-  const record = executionId ? store.getExecution(executionId) : undefined;
+async function failingRun(workflow: Workflow, nodeId: string, executionId: string | undefined, message: string): Promise<RunDigest> {
+  const record = executionId ? await store.loadExecution(executionId) : undefined;
   const run = record?.runData[nodeId]?.findLast((r) => r.error) ?? record?.runData[nodeId]?.at(-1);
   const payloads = getProjectSettings(homeProjectId('workflow', workflow.id)).brainPayloads === true;
   const port = (items: unknown[] | undefined): PortDigest => ({ count: items?.length ?? 0, sample: payloads ? (items ?? []).slice(0, 3).map((i) => clip((i as { json?: unknown }).json)) : [] });
@@ -91,7 +91,7 @@ async function enrichOne(finding: Finding, enrich: Enrichment, model: LanguageMo
     case 'fix': {
       const workflow = store.getWorkflow(enrich.workflowId);
       if (!workflow) return finding;
-      const result = await suggestAfterRun({ workflow, nodeId: enrich.nodeId, run: failingRun(workflow, enrich.nodeId, enrich.executionId, enrich.message), model, signal });
+      const result = await suggestAfterRun({ workflow, nodeId: enrich.nodeId, run: await failingRun(workflow, enrich.nodeId, enrich.executionId, enrich.message), model, signal });
       const fix = result.suggestions.find((s) => s.ops.length) ?? result.suggestions[0];
       if (!fix) return finding;
       return {

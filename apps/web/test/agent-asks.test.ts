@@ -51,7 +51,7 @@ describe('an ask from a member in a run', () => {
     expect(model.needsYou).toEqual([expect.objectContaining({ kind: 'wait', title: 'Developer wants to run git push origin main', attrs: expect.objectContaining({ wait: 'approval', ask: open.id }) })]);
     const now = new Date().toISOString();
     store.saveExecution({ executionId: run.executionId, workflowId: run.workflowId, workflowName: 'Ship it', mode: 'manual', status: 'running', startedAt: now, finishedAt: now, durationMs: 1, runData: {}, executionOrder: [] });
-    expect(needsYou(undefined).find((i) => i.executionId === run.executionId)).toMatchObject({ kind: 'approval', title: 'Developer wants to run git push origin main' });
+    expect((await needsYou(undefined)).find((i) => i.executionId === run.executionId)).toMatchObject({ kind: 'approval', title: 'Developer wants to run git push origin main' });
     expect(await (await list.GET(new Request('http://landflow.test'), { params: Promise.resolve({ id: run.executionId }) })).json()).toMatchObject({ asks: [{ id: open.id }] });
 
     // The mod polls: pending until a person decides.
