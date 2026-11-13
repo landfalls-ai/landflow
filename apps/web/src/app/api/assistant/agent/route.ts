@@ -21,12 +21,7 @@ export const dynamic = 'force-dynamic';
 
 const Body = z.object({
   messages: z
-    .array(
-      z.object({
-        role: z.enum(['user', 'assistant']),
-        content: z.string().max(20_000),
-      }),
-    )
+    .array(z.object({ role: z.enum(['user', 'assistant']), content: z.string().max(20_000) }))
     .min(1)
     .max(60)
     .refine((messages) => messages.at(-1)?.role === 'user', 'The last message must be from the user'),
@@ -56,26 +51,12 @@ export const POST = handler(async (request: Request) => {
         write(event, { event: event.type });
       };
       try {
-        await runArchitect({
-          messages,
-          ...(draft && { draft }),
-          ...(model && { model }),
-          types,
-          actor,
-          resources,
-          signal: abort.signal,
-          onEvent: send,
-        });
+        await runArchitect({ messages, ...(draft && { draft }), ...(model && { model }), types, actor, resources, signal: abort.signal, onEvent: send });
       } catch (caught) {
         if (!abort.signal.aborted) send({ type: 'error', message: errorText(caught) });
       } finally {
         // What people ask agents for, and whether a draft came of it (`proposals`, as Spotlight's: the brain's "unmet demand").
-        recordUsage({
-          kind: 'spotlight.asked',
-          actorId,
-          message: messages.at(-1)?.content,
-          attrs: { architect: true, proposals: drafts, turn: messages.length },
-        });
+        recordUsage({ kind: 'spotlight.asked', actorId, message: messages.at(-1)?.content, attrs: { architect: true, proposals: drafts, turn: messages.length } });
         close();
       }
     },

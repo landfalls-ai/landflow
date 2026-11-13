@@ -23,13 +23,7 @@ type Ctx = { params: Promise<{ id: string }> };
 // `input`: the tool's input as a person edited it; the tool runs with it instead of the call's own (approvals only).
 const inputSchema = z.record(z.string(), z.unknown()).refine((value) => JSON.stringify(value).length <= 200_000, 'The edited input is too large');
 const decisionSchema = z
-  .object({
-    callId: z.string().min(1),
-    approved: z.boolean(),
-    input: inputSchema.optional(),
-    text: z.string().min(1).max(200_000).optional(),
-    comment: z.string().max(5_000).optional(),
-  })
+  .object({ callId: z.string().min(1), approved: z.boolean(), input: inputSchema.optional(), text: z.string().min(1).max(200_000).optional(), comment: z.string().max(5_000).optional() })
   .refine((body) => body.approved || (body.input === undefined && body.text === undefined), 'Only an approval can carry an edited input or text');
 
 export const GET = handler(async (_request: Request, { params }: Ctx) => {
@@ -61,9 +55,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
         streaming: true,
         ...(body.data.input && { input: body.data.input as JsonObject }),
         ...(body.data.text !== undefined && { text: body.data.text }),
-        ...(body.data.comment !== undefined && {
-          comment: body.data.comment,
-        }),
+        ...(body.data.comment !== undefined && { comment: body.data.comment }),
         onEvent: (event) => {
           if (!announced) {
             announced = true;
@@ -82,20 +74,12 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
           error: done.error,
           lastNodeId: done.lastNodeId,
           // The agent asked for another approval on its next turn.
-          ...(done.status === 'waiting' &&
-            done.wait?.data?.approval !== undefined && {
-              approval: done.wait.data.approval,
-            }),
+          ...(done.status === 'waiting' && done.wait?.data?.approval !== undefined && { approval: done.wait.data.approval }),
         });
       }
     } catch (caught) {
       const status = caught instanceof ApprovalError ? caught.status : 500;
-      send('result', {
-        executionId: id,
-        status: 'error',
-        error: { message: (caught as Error).message },
-        httpStatus: status,
-      });
+      send('result', { executionId: id, status: 'error', error: { message: (caught as Error).message }, httpStatus: status });
     } finally {
       close();
     }

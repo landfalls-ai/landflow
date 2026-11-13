@@ -23,12 +23,7 @@ export const dynamic = 'force-dynamic';
 
 const Body = z.object({
   messages: z
-    .array(
-      z.object({
-        role: z.enum(['user', 'assistant']),
-        content: z.string().max(20_000),
-      }),
-    )
+    .array(z.object({ role: z.enum(['user', 'assistant']), content: z.string().max(20_000) }))
     .min(1)
     .max(60)
     .refine((messages) => messages.at(-1)?.role === 'user', 'The last message must be from the user'),
@@ -39,21 +34,10 @@ const Body = z.object({
   /** The saved workflow being edited: proposals then use only the node types its project and its own lists allow. */
   workflowId: z.string().max(200).optional(),
   /** What the user tagged in the message: node ids on the canvas, node type ids. */
-  mentions: z
-    .object({
-      nodes: z.array(z.string().max(200)).max(20),
-      types: z.array(z.string().max(200)).max(20),
-    })
-    .partial()
-    .optional(),
+  mentions: z.object({ nodes: z.array(z.string().max(200)).max(20), types: z.array(z.string().max(200)).max(20) }).partial().optional(),
   /** Proposals from earlier replies still waiting for Apply: part of the workflow the model reads, never proposed again. */
   pending: z
-    .array(
-      z.object({
-        summary: z.string().max(300),
-        ops: z.array(z.record(z.string(), z.unknown())).max(80),
-      }),
-    )
+    .array(z.object({ summary: z.string().max(300), ops: z.array(z.record(z.string(), z.unknown())).max(80) }))
     .max(20)
     .optional(),
   /** From Spotlight's test-and-fix session: a request for a fix to a failed run, or whether a run did what was asked. */
@@ -80,27 +64,13 @@ export const POST = handler(async (request: Request) => {
         write(event, { event: event.type });
       };
       try {
-        await runChat({
-          ...rest,
-          types,
-          teams,
-          agents,
-          workflow: { id: workflowId ?? 'draft', ...workflow } as Workflow,
-          signal: abort.signal,
-          onEvent: send,
-        });
+        await runChat({ ...rest, types, teams, agents, workflow: { id: workflowId ?? 'draft', ...workflow } as Workflow, signal: abort.signal, onEvent: send });
       } catch (caught) {
         if (!abort.signal.aborted) send({ type: 'error', message: errorText(caught) });
       } finally {
         // What people ask for, and whether a change came of it (the brain's "unmet demand", docs/second-brain.md).
         if (!rest.session || rest.session === 'auto') {
-          recordUsage({
-            kind: 'spotlight.asked',
-            workflowId,
-            actorId,
-            message: rest.messages.at(-1)?.content,
-            attrs: { proposals, turn: rest.messages.length },
-          });
+          recordUsage({ kind: 'spotlight.asked', workflowId, actorId, message: rest.messages.at(-1)?.content, attrs: { proposals, turn: rest.messages.length } });
         }
         close();
       }

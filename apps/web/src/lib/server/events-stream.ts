@@ -8,6 +8,7 @@
  */
 import { bus, type SeqEvent } from './bus';
 import { resolvePrincipal, currentPrincipal } from './auth/guard';
+import { error } from './http';
 import { getUser } from './auth/users';
 import { liveEventFilter } from './projects/events';
 import { sseResponse, type SseOptions } from './sse';
@@ -41,10 +42,7 @@ export function eventStream(request: Request, options: EventStreamOptions = {}):
   const authorize = options.authorize ?? reauthorize(request);
   let visible = authorize();
   if (!visible)
-    return new Response(JSON.stringify({ error: 'Sign in again' }), {
-      status: 401,
-      headers: { 'content-type': 'application/json' },
-    });
+    return error('Sign in again', 401);
   const lastId = request.headers.get('last-event-id');
   return sseResponse(
     request,

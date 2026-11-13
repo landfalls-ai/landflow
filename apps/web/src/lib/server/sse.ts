@@ -34,6 +34,8 @@ export interface SseOptions {
 }
 
 export const DEFAULT_MAX_BUFFERED_BYTES = 1024 * 1024;
+/** Queued bytes that still count as "nothing queued": the retry hint, greeting and a few heartbeats. */
+const CONTROL_SLACK_BYTES = 256;
 
 export function sseResponse(request: Request, start: SseStart, options: SseOptions = {}): Response {
   const { maxBufferedBytes = DEFAULT_MAX_BUFFERED_BYTES, heartbeatMs = 15_000, retryMs, greeting = false } = options;
@@ -65,8 +67,10 @@ export function sseResponse(request: Request, start: SseStart, options: SseOptio
     if (closed) return false;
     const bytes = encoder.encode(text);
     const room = controller.desiredSize;
-    // An event bigger than the whole limit is still sent when nothing else is queued, or it could never be delivered.
-    if (room !== null && room < bytes.byteLength && room < maxBufferedBytes) {
+    // An event bigger than the whole limit is still sent when only control frames (retry, greeting, ping) are queued,
+    // or it could never be delivered and a resume would loop on it.
+    const queued = room === null ? 0 : maxBufferedBytes - room;
+    if (room !== null && room < bytes.byteLength && queued > CONTROL_SLACK_BYTES) {
       try {
         controller.enqueue(encoder.encode(': buffer limit reached, reconnect\n\n'));
       } catch {}

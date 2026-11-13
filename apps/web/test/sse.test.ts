@@ -83,6 +83,57 @@ describe('sseResponse', () => {
   });
 });
 
+describe('oversize events', () => {
+  const big = (n: number, size: number) => ({ channel: 'registry', event: { type: 'test', n, pad: 'x'.repeat(size) } }) as never;
+
+  it('delivers an event over the limit when only control frames are queued', async () => {
+    const abort = new AbortController();
+    const response = sseResponse(reqWith(abort), (send) => void send('y'.repeat(5000), { id: 1 }), { maxBufferedBytes: 1024, heartbeatMs: 0, retryMs: 3000, greeting: true });
+    const text = await readUntil(response, (t) => t.includes('id: 1'), 300);
+    abort.abort();
+    expect(text).toContain('id: 1\n');
+  });
+
+  it('resumes past an oversize event: it is delivered with its id, then the later ones', async () => {
+    let first = 0;
+    const stop = bus.subscribe((e) => (first ||= e.seq));
+    bus.publish(big(1, 5000));
+    bus.publish(registry(2));
+    stop();
+    const abort = new AbortController();
+    const response = eventStream(reqWith(abort, { 'last-event-id': `${bus.bootId}.${first - 1}` }), { authorize: () => () => true, heartbeatMs: 0, maxBufferedBytes: 1024 });
+    const text = await readUntil(response, (t) => t.includes(`id: ${bus.bootId}.${first}\n`), 300);
+    abort.abort();
+    expect(text).toContain(`id: ${bus.bootId}.${first}\n`);
+    // The next reconnect starts after it and gets the small one.
+    const again = new AbortController();
+    const next = eventStream(reqWith(again, { 'last-event-id': `${bus.bootId}.${first}` }), { authorize: () => () => true, heartbeatMs: 0, maxBufferedBytes: 1024 });
+    const more = await readUntil(next, (t) => t.includes('"n":2'), 300);
+    again.abort();
+    expect(more).toContain('"n":2');
+  });
+
+  it('makes progress across reconnects when the replay is larger than the limit in total', async () => {
+    let first = 0;
+    const stop = bus.subscribe((e) => (first ||= e.seq));
+    for (let i = 0; i < 4; i++) bus.publish(big(900 + i, 600));
+    stop();
+    let last = first - 1;
+    const seen = new Set<number>();
+    for (let attempt = 0; attempt < 6 && seen.size < 4; attempt++) {
+      const abort = new AbortController();
+      const response = eventStream(reqWith(abort, { 'last-event-id': `${bus.bootId}.${last}` }), { authorize: () => () => true, heartbeatMs: 0, maxBufferedBytes: 1024 });
+      const text = await readUntil(response, () => false, 150);
+      abort.abort();
+      const ids = [...text.matchAll(new RegExp(`id: ${bus.bootId}\\.(\\d+)`, 'g'))].map((m) => Number(m[1]));
+      expect(ids.length, `attempt ${attempt}`).toBeGreaterThan(0);
+      for (const id of ids) seen.add(id);
+      last = Math.max(last, ...ids);
+    }
+    expect(seen.size).toBe(4);
+  });
+});
+
 describe('bus replay', () => {
   it('keeps the last events and replays those after a seq', () => {
     const seen: number[] = [];
@@ -115,8 +166,6 @@ describe('/api/events stream', () => {
 
   it('replays events after Last-Event-ID, filtered', async () => {
     bus.publish(registry(100));
-    const mark = new Request('http://x').headers; // keep lint quiet about unused helpers
-    void mark;
     let seq = 0;
     const stop = bus.subscribe((e) => (seq = e.seq));
     bus.publish(registry(101));
@@ -158,7 +207,6 @@ describe('/api/events stream', () => {
     let revoked = false;
     let gone = false;
     const abort = new AbortController();
-    const cleanupSpy = vi.fn();
     const response = eventStream(reqWith(abort), {
       revalidateMs: 20,
       heartbeatMs: 0,
@@ -169,8 +217,7 @@ describe('/api/events stream', () => {
     });
     const reader = response.body!.getReader();
     bus.publish(execution('wf_a'));
-    const first = decoder.decode((await reader.read()).value);
-    void first;
+    await reader.read();
     revoked = true;
     await new Promise((r) => setTimeout(r, 60));
     bus.publish(execution('wf_a'));
@@ -191,7 +238,6 @@ describe('/api/events stream', () => {
       ended = r?.done === true;
     }
     expect(ended).toBe(true);
-    void cleanupSpy;
     abort.abort();
   });
 });

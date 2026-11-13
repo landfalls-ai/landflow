@@ -36,13 +36,7 @@ const runSchema = z.object({
       sessionId: z.string().default('default'),
       /** Files attached in the chat panel (base64): the trigger item's binary data0, data1… */
       files: z
-        .array(
-          z.object({
-            fileName: z.string().max(255),
-            mimeType: z.string().max(255),
-            data: z.string(),
-          }),
-        )
+        .array(z.object({ fileName: z.string().max(255), mimeType: z.string().max(255), data: z.string() }))
         .max(MAX_CHAT_FILES)
         .optional(),
     })
@@ -96,22 +90,9 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
       mode = 'chat';
       // Attached files are stored under the run's id before it starts (lib/server/chat.ts).
       executionId = newExecutionId();
-      const files = (body.data.chat.files ?? []).map((file) => ({
-        fileName: file.fileName,
-        mimeType: file.mimeType,
-        data: Buffer.from(file.data, 'base64'),
-      }));
+      const files = (body.data.chat.files ?? []).map((file) => ({ fileName: file.fileName, mimeType: file.mimeType, data: Buffer.from(file.data, 'base64') }));
       if (files.some((file) => file.data.byteLength > MAX_CHAT_FILE_BYTES)) return error('A file is larger than 20 MB', 413);
-      triggerItems = [
-        await chatItem(
-          {
-            chatInput: body.data.chat.message,
-            sessionId: body.data.chat.sessionId,
-            files,
-          },
-          executionId,
-        ),
-      ];
+      triggerItems = [await chatItem({ chatInput: body.data.chat.message, sessionId: body.data.chat.sessionId, files }, executionId)];
     } else if (!startNodeId) {
       startNodeId = (findTrigger(workflow, 'manual') ?? findTrigger(workflow, 'webhook') ?? findTrigger(workflow, 'chat') ?? findTrigger(workflow, 'schedule'))
         ?.id;
@@ -125,11 +106,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
       // Chat runs stream what AI Agent and chain nodes write (node.chunk events) to the chat panel.
       ...(mode === 'chat' && { streaming: true, executionId }),
     };
-    trigger = startTrigger({
-      source: mode,
-      workflowId: id,
-      nodeName: workflow.nodes.find((n) => n.id === startNodeId)?.name,
-    });
+    trigger = startTrigger({ source: mode, workflowId: id, nodeName: workflow.nodes.find((n) => n.id === startNodeId)?.name });
   }
   // The run happens inside trigger.fire (or, for re-runs, directly under this request's span).
   const runContext = trigger?.context ?? context.active();
@@ -160,10 +137,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
           error: record.error,
           lastNodeId: record.lastNodeId,
           // An AI Agent waiting for a tool approval: the chat panel shows Approve / Reject.
-          ...(record.status === 'waiting' &&
-            record.wait?.data?.approval !== undefined && {
-              approval: record.wait.data.approval,
-            }),
+          ...(record.status === 'waiting' && record.wait?.data?.approval !== undefined && { approval: record.wait.data.approval }),
         });
       } catch (caught) {
         trigger?.end(caught);
@@ -171,13 +145,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
           // The key ran before: name that execution instead of starting another.
           const existing = liveExecution(caught.executionId) ?? store.getExecution(caught.executionId);
           send('started', { executionId: caught.executionId, duplicate: true });
-          send('result', {
-            executionId: caught.executionId,
-            status: existing?.status ?? 'running',
-            error: existing?.error,
-            lastNodeId: existing?.lastNodeId,
-            duplicate: true,
-          });
+          send('result', { executionId: caught.executionId, status: existing?.status ?? 'running', error: existing?.error, lastNodeId: existing?.lastNodeId, duplicate: true });
           return;
         }
         send('result', {

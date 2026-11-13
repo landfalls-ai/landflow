@@ -4,6 +4,7 @@ import type { EditLockView } from '../shared/auth';
 import type { JournalEvent } from '../shared/run-trace';
 import type { RegistryEvent } from '../shared/types';
 import { singleton } from './singleton';
+import { logger } from './telemetry';
 
 export type BusEvent =
   | { channel: 'registry'; event: RegistryEvent }
@@ -56,7 +57,9 @@ export const bus = singleton('bus', () => {
     for (const listener of [...listeners]) {
       try {
         listener(event);
-      } catch {}
+      } catch (caught) {
+        logger.debug('bus listener threw', { error: caught });
+      }
     }
   };
   return {
