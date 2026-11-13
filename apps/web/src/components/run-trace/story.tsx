@@ -240,7 +240,8 @@ function Entry({ entry, model, open }: { entry: StoryEntry; model: RunModel; ope
           <Head at={entry.at}>
             {who(s.caller ?? model.run?.actor)}
             <span>{running ? 'is waiting for' : 'waited for'}</span>
-            {who(s.actor)}
+            {/* Mid-sentence, the generic person is "a person", not a name. */}
+            {s.actor.name === 'A person' ? <b className="font-semibold text-t1">a person</b> : who(s.actor)}
           </Head>
           <Bubble>{preview(textOf(s.input, 400) || s.name, 240)}</Bubble>
           {running ? (

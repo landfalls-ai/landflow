@@ -173,7 +173,7 @@ function DraftPreview({ draft, seed, fresh, onPick }: { draft: Draft; seed: stri
           <p className={cn('whitespace-pre-wrap text-[12px] leading-relaxed text-t2', !open && 'line-clamp-4')}>{instructions}</p>
           {instructions.length > 240 && (
             <button type="button" onClick={() => setOpen(!open)} className="mt-0.5 rounded text-[12px] font-semibold text-ac hover:underline focus-visible:outline-2 focus-visible:outline-ac">
-              {open ? 'Show less' : 'Show all'}
+              {open ? 'Show less' : 'Show more'}
             </button>
           )}
         </div>

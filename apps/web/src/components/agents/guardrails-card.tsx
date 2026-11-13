@@ -174,7 +174,7 @@ function RuleEditor({ stage, rule, onChange }: { stage: Stage; rule: AgentGuardr
               {checks.custom?.map((check, index) => (
                 <div key={index} className="mt-2 grid grid-cols-[1fr_auto] gap-2">
                   <Input aria-label="Check name" value={check.name} onChange={(e) => setChecks({ custom: checks.custom!.map((c, i) => (i === index ? { ...c, name: e.target.value } : c)) })} />
-                  <button type="button" aria-label="Remove check" className="text-t3 hover:text-red-600" onClick={() => setChecks({ custom: checks.custom!.filter((_, i) => i !== index).length ? checks.custom!.filter((_, i) => i !== index) : undefined })}>
+                  <button type="button" aria-label="Remove check" className="text-t3 hover:text-rd" onClick={() => setChecks({ custom: checks.custom!.filter((_, i) => i !== index).length ? checks.custom!.filter((_, i) => i !== index) : undefined })}>
                     <Trash2 className="size-3.5" />
                   </button>
                   <Textarea

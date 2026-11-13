@@ -244,7 +244,7 @@ function DocumentsPanel({ agentId, tool }: { agentId: string; tool: KnowledgeBas
         </Button>
         <input ref={input} type="file" multiple hidden accept=".pdf,.docx,.txt,.md,.markdown,.html,.htm,.csv,.json,text/*,application/pdf,application/json" onChange={(e) => void upload(e.target.files)} />
       </div>
-      {problem && <p className="text-[12px] text-red-600">{problem}</p>}
+      {problem && <p className="text-[12px] text-rd">{problem}</p>}
       {rows?.length === 0 && !problem && <p className="text-[12px] text-t3">No uploaded documents yet.</p>}
       {rows?.map((row) => (
         <div key={row.documentId} className="flex items-center gap-2 rounded-[8px] bg-wl px-2.5 py-1.5 text-[12.5px]">
@@ -254,7 +254,7 @@ function DocumentsPanel({ agentId, tool }: { agentId: string; tool: KnowledgeBas
             {row.pages ? `${row.pages} pages · ` : ''}
             {row.chunks} chunks
           </span>
-          <button type="button" aria-label={`Delete ${row.fileName}`} className="text-t3 hover:text-red-600" onClick={() => void remove(row)}>
+          <button type="button" aria-label={`Delete ${row.fileName}`} className="text-t3 hover:text-rd" onClick={() => void remove(row)}>
             <Trash2 className="size-3.5" />
           </button>
         </div>

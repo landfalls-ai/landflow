@@ -114,6 +114,25 @@ What the new look draws so far:
 
 The registry page shows each plugin with its published icon and colour, language, SDK and endpoints (gRPC and HTTP) with lease bars and latency. You can choose the transport per plugin, scan the network or add an endpoint. Node chips are tinted with each node's colour. n8n's nearest equivalent is community nodes, which are npm packages installed into the n8n process. Landflow's plugins are separate processes in any language, discovered over HTTP or gRPC.
 
+## Words
+
+The same thing has the same name everywhere. When adding a button or a state, use these:
+
+| For | Say |
+|---|---|
+| A tool call an agent wants to make | **Approve** / **Deny**; then *Approved* / *Denied* |
+| Ask a Person (a draft for a person to sign off) | **Approve** / **Reject** (**Approve with these changes** after an edit); then *Approved* / *Rejected* |
+| A change Spotlight or a suggestion proposes | **Apply** / **Dismiss**; then *Applied* / *Dismissed* |
+| Waiting on someone | *Needs you* (for the person looking), *Waiting for Dana* (for a named approver), *a person* mid-sentence |
+| Starting a conversation over | **New conversation** (✎) |
+| Folding a chat away | **Hide the conversation** / **Show the conversation** |
+| Longer text, cut | **Show more** / **Show less**; a section opens with a chevron |
+| What a change left out | *N parts left out* · **Why?** |
+| A reply that failed | **Try again**, raw text under **Details** |
+| Sending, stopping a reply | **Send** (↑), **Stop** (■) |
+| Leaving an edit | **Cancel** |
+| How risky, how sure | *Low risk* / *Medium risk* / *High risk*, *60% sure* |
+
 ## Remaining gaps, most useful first
 
 1. **Webhook app triggers.** Plugins can publish polling triggers; triggers that register a webhook with the service (n8n's Telegram/GitHub/Slack event triggers) still need a lifecycle in the protocol.

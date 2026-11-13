@@ -91,14 +91,14 @@ function TestPanel({ agentId, rules }: { agentId: string; rules: AccessRule[] })
       <Button size="sm" variant="outline" disabled={busy} onClick={() => void check()}>
         {busy ? 'Checking…' : 'What can they do?'}
       </Button>
-      {problem && <p className="text-[12px] text-red-400">{problem}</p>}
+      {problem && <p className="text-[12px] text-rd">{problem}</p>}
       {decisions && !decisions.length && <p className="text-[12px] text-t3">The agent has no tools.</p>}
       {decisions && decisions.length > 0 && (
         <ul className="space-y-1 text-[12px]">
           {decisions.map((d) => (
             <li key={d.tool} className="flex items-center justify-between gap-2">
               <span className="truncate">{d.label}</span>
-              <span className={d.effect === 'deny' ? 'text-red-400' : d.effect === 'ask' ? 'text-amber-400' : 'text-t3'}>
+              <span className={d.effect === 'deny' ? 'text-rd' : d.effect === 'ask' ? 'text-warn' : 'text-t3'}>
                 {EFFECT_TEXT[d.effect]}
                 {d.reason ? ` (${d.reason})` : ''}
               </span>
