@@ -2,10 +2,12 @@ import { NextResponse } from 'next/server';
 import { ZodError, type ZodType } from 'zod';
 import { withAuth } from './auth/context';
 import { guardRequest } from './auth/guard';
+import { envInt } from './config';
 import { auditRequestContext, noteAuditPrincipal } from './audit/context';
 import { auditRequest } from './audit/http';
 import { HttpError } from './errors';
 import { isDraining, trackRequest, whenReady } from './lifecycle';
+import { limitRequest } from './rate-limit/api-limiter';
 import { logger } from './telemetry';
 
 export function json<T>(data: T, init?: number | ResponseInit) {
@@ -50,6 +52,8 @@ function run<A extends unknown[]>(fn: (...args: A) => Promise<Response>, args: A
         const gate = guardRequest(args[0] instanceof Request ? args[0] : undefined);
         if (!gate.ok) return gate.response;
         noteAuditPrincipal(gate.auth.principal);
+        const refused = args[0] instanceof Request ? await limitRequest(args[0], gate.auth.principal?.user.id) : undefined;
+        if (refused) return refused;
         return await withAuth(gate.auth, () => fn(...args));
       } catch (caught) {
         return answer(caught, args[0], options);
@@ -96,14 +100,44 @@ export interface ParseOptions {
   optional?: boolean;
   /** The error text of a body that isn't valid (default: 'Request body must be JSON' / 'Invalid request'). */
   message?: string;
+  /** Refuse a body above this many bytes with 413 (default: maxBodyBytes()). */
+  maxBytes?: number;
 }
 
-/** The request's JSON body checked against `schema`; a failure comes back as the 400 response to return. */
+/** The largest JSON body parseBody reads (LANDFLOW_MAX_BODY_BYTES, default 16 MiB: workflows with pinned data are large). */
+export const maxBodyBytes = (): number => envInt('LANDFLOW_MAX_BODY_BYTES', { fallback: 16 * 1024 * 1024, min: 1024, max: 1024 ** 3 });
+
+class BodyTooLarge extends Error {}
+
+/** The request body as text, refusing more than `limit` bytes: the declared length first, else counted as it streams (never buffered whole). */
+async function readCapped(request: Request, limit: number): Promise<string> {
+  const declared = Number(request.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > limit) throw new BodyTooLarge();
+  if (!request.body) return '';
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > limit) {
+      await reader.cancel().catch(() => {});
+      throw new BodyTooLarge();
+    }
+    chunks.push(value);
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
+}
+
+/** The request's JSON body checked against `schema`; a failure comes back as the 400 response to return (413 above the size cap). */
 export async function parseBody<T>(request: Request, schema: ZodType<T>, options: ParseOptions = {}): Promise<{ ok: true; data: T } | { ok: false; response: Response }> {
+  const limit = options.maxBytes ?? maxBodyBytes();
   let body: unknown;
   try {
-    body = await request.json();
-  } catch {
+    body = JSON.parse(await readCapped(request, limit));
+  } catch (caught) {
+    if (caught instanceof BodyTooLarge) return { ok: false, response: error('Request body too large', 413, { limit }) };
     if (!options.optional) return { ok: false, response: error(options.message ?? 'Request body must be JSON') };
     body = {};
   }
@@ -111,6 +145,18 @@ export async function parseBody<T>(request: Request, schema: ZodType<T>, options
   if (!parsed.success) {
     return { ok: false, response: error(options.message ?? 'Invalid request', 400, { code: 'invalid_request', issues: parsed.error.issues.slice(0, 10) }) };
   }
+  return { ok: true, data: parsed.data };
+}
+
+/** The query string checked against `schema` (repeated keys become arrays); a failure comes back as the 400 response to return. */
+export function parseQuery<T>(request: Request, schema: ZodType<T>): { ok: true; data: T } | { ok: false; response: Response } {
+  const query: Record<string, string | string[]> = {};
+  for (const [key, value] of new URL(request.url).searchParams) {
+    const had = query[key];
+    query[key] = had === undefined ? value : Array.isArray(had) ? [...had, value] : [had, value];
+  }
+  const parsed = schema.safeParse(query);
+  if (!parsed.success) return { ok: false, response: error('Invalid query', 400, { code: 'invalid_request', issues: parsed.error.issues.slice(0, 10) }) };
   return { ok: true, data: parsed.data };
 }
 

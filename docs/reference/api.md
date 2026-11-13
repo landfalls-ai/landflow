@@ -32,7 +32,8 @@ while the Postgres store is blocked answers 503 with `Retry-After`. SCIM routes 
 | `GET/POST /api/folders`, `PATCH/DELETE /api/folders/:id` | folders (`?projectId=`; `{ name, parentId?, projectId? }`: a top-level folder in that project, a subfolder in its parent's); deleting a folder that isn't empty answers 409 |
 | `GET/POST /api/projects/:id/variables`, `GET/PATCH/DELETE /api/projects/:id/variables/:key`, `GET/PUT …/:key/environments` | a project's variables (`{ variables, environments, canEdit }`; `{ key, value }`); members read, editors and admins change |
 | `GET/PATCH /api/projects/:id/settings`, `GET/PUT /api/workflows/:id/policy` | a project's allowed nodes and approvers (`{ nodes?: { mode, plugins, types }, approvers?: default\|admins\|editors\|instance }`, its admins), a workflow's own policy (`{ fourEyes?, nodes? }`, admins of its project) |
-| `GET /api/executions[?workflowId]`, `GET /api/executions/:id` | history. While the run is `running`, the answer also has `progress`: the latest `node.progress` event of each running node by node id (`{ nodeId, nodeName, parentNodeId?, data, at, since }`, `since` being when the node first reported), for a page opened mid-run; this process's runs only |
+| `GET /api/executions/:id` | one execution. While the run is `running`, the answer also has `progress`: the latest `node.progress` event of each running node by node id (`{ nodeId, nodeName, parentNodeId?, data, at, since }`, `since` being when the node first reported), for a page opened mid-run; this process's runs only |
+| `GET /api/executions?workflowId=&limit=&cursor=` | finished and waiting runs, newest first, `{ executions, nextCursor? }`; the live runs are listed on the first page only. See [paging and limits](#paging-and-limits) |
 | `POST /api/workflows/:id/execute` | start a manual run in the background `{ input?, startNode?, idempotencyKey? }` → 202 `{ executionId, workflowId, status }` (the CLI's `run`; follow it with `GET /api/executions/:id`) |
 | `POST /api/executions/:id/stop` | stop a running, waiting or queued execution → `{ executionId, stopped, status }` (409 once it ended) |
 | `GET /api/sync/export[?values=true&workflow=<id>…]` | the instance as Git sync files `{ format, files: [{ path, content, hash }], hashes, summary }` |
@@ -158,3 +159,21 @@ while the Postgres store is blocked answers 503 with `Retry-After`. SCIM routes 
 | `GET/PATCH /api/settings/governance` | Settings → Governance: `{ nodes, http, mcp, fourEyes }` (each part optional in `PATCH`, owners and admins) with the plugins and node types and which are blocked |
 | `GET /api/publish-requests`, `GET /api/publish-requests/:id`, `POST /api/publish-requests/:id/{approve,reject,cancel}` | four-eyes publish requests (pending by default; `?workflowId=`, `?status=all`), each with `canApprove` / `canCancel` for the caller; approve and reject take `{ comment? }`; 409 when stale or decided |
 | `GET /api/openapi.json` | the OpenAPI 3.1 document for workflows, executions, runs, data tables and variables, plus the trigger URLs (webhooks, forms, MCP Server Triggers and their test URLs; public, `security: []`) and the listen stream |
+
+## Paging and limits
+
+- **Paging.** `GET /api/executions` takes `limit` (an integer 1-500, default 100) and `cursor`, the `nextCursor` of the
+  previous page (opaque; pages follow the start time and id, so none repeats or skips a run while new ones start). The
+  answer has `nextCursor` only when another page follows. A `limit` that is not an integer in range (`Infinity`,
+  `abc`, `0`, `501`) or a cursor that isn't one of ours is 400 `{ error: 'Invalid query', issues }`. Other lists
+  validate `limit` the same way: `/api/usage` (max 1000, default 50), `/api/usage/events` (max 5000, default 100),
+  `/api/workflows/:id/git-history` (max 200, default 50), `/api/brain/backtest` (max 100, default 10) and
+  `/api/executions/:id/events` (max 2000, default 500; `after` an integer from 0).
+- **Body size.** A JSON body above `LANDFLOW_MAX_BODY_BYTES` (default 16 MiB) is refused with 413
+  `{ error: 'Request body too large', limit }`, by its `Content-Length` or, without one, as soon as the stream passes the
+  limit.
+- **Rate limits.** In the production profile an authenticated principal may make `LANDFLOW_RATE_LIMIT_API` requests a
+  minute (default 600), and each client address `LANDFLOW_RATE_LIMIT_PUBLIC` (default 120) per public trigger group
+  (webhooks, forms, hosted chat, MCP triggers, waits). Over the limit: 429 `{ error, code: 'rate_limited', retryAfter }`
+  with a `Retry-After` header in seconds. Health checks, plugin announces and `/api/metrics` are never limited. Off in
+  development.
