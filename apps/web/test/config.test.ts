@@ -153,6 +153,11 @@ describe('checkConfig', () => {
     expect(r.effective.OTEL_EXPORTER_OTLP_HEADERS).toBe('[set]');
     expect(r.effective.LANDFLOW_S3_ACCESS_KEY_ID).toBe('AKIAEXAMPLE');
   });
+  it('masks email addresses in email variables', () => {
+    const r = checkConfig({ ...good, LANDFLOW_OWNER_EMAIL: 'owner.person@example.com' });
+    expect(r.effective.LANDFLOW_OWNER_EMAIL).toBe('o***@example.com');
+    expect(JSON.stringify(r.effective)).not.toContain('owner.person');
+  });
   it('redacts credentials in each entry of a comma-separated list of URLs', () => {
     const r = checkConfig({ ...good, LANDFLOW_PLUGINS: 'http://u:listpw7@a:1,http://b:2' });
     expect(r.effective.LANDFLOW_PLUGINS).not.toContain('listpw7');

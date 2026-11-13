@@ -126,7 +126,7 @@ a pure function; the host calls it at boot (`lib/server/runtime.ts`, the first r
 In the production profile any error stops the boot with a `ConfigError` that lists every problem (the process exits non-zero
 and the pod restarts); in development the problems are logged as warnings. `next build` (`NEXT_PHASE=phase-production-build`)
 does not boot the host and only warns, since the image build has none of the deployment's variables. Either way the host logs one `effective configuration`
-line at info with every `LANDFLOW_*`, `OTEL_*` and `DATABASE_URL` variable that is set (secrets shown as `[set]` by the check or `[redacted]` by the logger, URL passwords redacted).
+line at info with every `LANDFLOW_*`, `OTEL_*` and `DATABASE_URL` variable that is set (secrets shown as `[set]` by the check or `[redacted]` by the logger, URL passwords redacted, and email variables such as `LANDFLOW_OWNER_EMAIL` masked to `o***@example.com`).
 
 The compose stacks and the Kubernetes base set `LANDFLOW_PROFILE=development` because they run the development secrets in
 `deploy/.env.example` while their image says `NODE_ENV=production`. A real deployment leaves it unset (or `production`) and

@@ -54,6 +54,9 @@ function urlSecretParam(url: URL): string | undefined {
   return undefined;
 }
 
+/** Email addresses keep their first character and domain (`o***@example.com`): who the owner is stays out of logs. */
+const maskEmails = (value: string) => value.replace(/([^\s,;:<>"'@])[^\s,;:<>"'@]*@([\w.-]+)/g, '$1***@$2');
+
 /** True when a URL carries a credential: userinfo (even a username alone) or a secret query parameter. */
 function hasUrlCredential(value: string): boolean {
   try {
@@ -80,7 +83,7 @@ const KEY_IDS = /(ACCESS_KEY_ID)$/i;
 export interface ConfigCheck {
   errors: string[];
   warnings: string[];
-  /** Every LANDFLOW_*, OTEL_* and DATABASE_URL variable that is set; secrets as `[set]`, URL passwords redacted. */
+  /** Every LANDFLOW_*, OTEL_* and DATABASE_URL variable that is set; secrets as `[set]`, URL passwords redacted, emails masked. */
   effective: Record<string, string>;
 }
 
@@ -115,6 +118,7 @@ export function checkConfig(env: NodeJS.ProcessEnv = process.env): ConfigCheck {
     if (secrets.has(name)) effective[name] = '[set]';
     else if ((URL_SECRETS as readonly string[]).includes(name)) effective[name] = redactUrl(value);
     else if (SECRET_NAME.test(name) && !KEY_IDS.test(name)) effective[name] = '[set]';
+    else if (/EMAIL/.test(name)) effective[name] = maskEmails(value);
     // A comma-separated list of URLs (LANDFLOW_PLUGINS) doesn't parse as one URL: check each entry.
     else effective[name] = value.split(',').map((part) => (hasUrlCredential(part.trim()) ? redactUrl(part.trim()) : part)).join(',');
   }

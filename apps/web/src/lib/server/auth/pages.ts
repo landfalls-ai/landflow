@@ -7,13 +7,14 @@ import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { can, type Action, type Viewer } from '../../shared/auth';
 import { isPublicPath, PATH_HEADER, SESSION_COOKIE } from '../../shared/auth-paths';
-import { ensureBootstrapped } from '../bootstrap';
+import { whenReady } from '../lifecycle';
 import { sessionUser } from './sessions';
 import { setupRequired, viewerOf, type UserRecord } from './users';
 
 /** The signed-in user of this page request, if any (no redirects). */
 export async function currentPageUser(): Promise<UserRecord | undefined> {
-  await ensureBootstrapped();
+  // As routes do (http.ts): wait for the boot instrumentation.ts started, without importing the composition root.
+  await whenReady();
   return sessionUser((await cookies()).get(SESSION_COOKIE)?.value)?.user;
 }
 
