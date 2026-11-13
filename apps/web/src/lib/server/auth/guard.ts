@@ -49,7 +49,8 @@ export function apiKeyOf(request: Request): string | undefined {
 export type Resolved = { ok: true; principal?: Principal } | { ok: false; status: 401; message: string };
 
 /** Who the request's credentials belong to. An API key that doesn't check out fails (no fallback to the cookie). */
-export function resolvePrincipal(request: Request): Resolved {
+/** `touch: false` resolves without marking the session as used (see sessionUser). */
+export function resolvePrincipal(request: Request, { touch = true }: { touch?: boolean } = {}): Resolved {
   // A debug token is no one's credential: it opens three read-only MCP tools at /api/mcp and nothing here (docs/specs/19-debug-token.md).
   if (looksLikeDebugToken(bearerToken(request)) || looksLikeDebugToken(request.headers.get(API_KEY_HEADER)?.trim())) {
     return { ok: false, status: 401, message: 'A debug token only works for explain_failure, get_run_trace and get_execution at /api/mcp' };
@@ -60,7 +61,7 @@ export function resolvePrincipal(request: Request): Resolved {
     if (!checked.ok) return { ok: false, status: 401, message: checked.reason === 'expired' ? 'This API key has expired' : 'Invalid API key' };
     return { ok: true, principal: { user: checked.user, via: 'api-key', apiKey: { id: checked.key.id, scopes: checked.key.scopes } } };
   }
-  const found = sessionUser(readCookie(request, SESSION_COOKIE));
+  const found = sessionUser(readCookie(request, SESSION_COOKIE), Date.now(), { touch });
   if (found) return { ok: true, principal: { user: found.user, via: 'session', sessionId: found.session.id } };
   return { ok: true };
 }

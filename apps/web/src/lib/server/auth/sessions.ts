@@ -77,8 +77,12 @@ export function createSession(user: UserRecord, method: SessionMethod, meta: { i
   return { token, expiresAt };
 }
 
-/** The user of a valid, unexpired session token, else undefined. */
-export function sessionUser(token: string | undefined, now = Date.now()): { user: UserRecord; session: SessionRecord } | undefined {
+/**
+ * The user of a valid, unexpired session token, else undefined. A lookup marks the session as used (`last_seen_at`, at
+ * most once a minute) unless `touch` is false: a check the person did not make (the live stream's re-check) must not
+ * keep an idle session alive.
+ */
+export function sessionUser(token: string | undefined, now = Date.now(), { touch = true }: { touch?: boolean } = {}): { user: UserRecord; session: SessionRecord } | undefined {
   if (!token || token.length > 200) return undefined;
   const db = authDb();
   const row = db.get<SessionRow>('SELECT * FROM sessions WHERE id = ?', tokenHash(token));
@@ -95,7 +99,7 @@ export function sessionUser(token: string | undefined, now = Date.now()): { user
   }
   const user = getUser(row.user_id);
   if (!user || user.disabledAt) return undefined;
-  if (!row.last_seen_at || now - Date.parse(row.last_seen_at) > TOUCH_EVERY_MS) db.upsert('sessions', { ...row, last_seen_at: new Date(now).toISOString() });
+  if (touch && (!row.last_seen_at || now - Date.parse(row.last_seen_at) > TOUCH_EVERY_MS)) db.upsert('sessions', { ...row, last_seen_at: new Date(now).toISOString() });
   return { user, session: { id: row.id, userId: row.user_id, createdAt: row.created_at, expiresAt: row.expires_at, method: row.method as SessionMethod } };
 }
 
