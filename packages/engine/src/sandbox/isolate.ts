@@ -3,7 +3,12 @@
  * (./realm.ts), but inside an isolated-vm Isolate instead of a node:vm context. The isolate has its own V8 heap with a
  * memory cap, so a memory bomb ends the evaluation (and the isolate, which is rebuilt) instead of the host process, and
  * a V8 bug in an expression's code reaches an isolate rather than the host's heap. One isolate per process, one Context
- * per resolver (the 32 most recently used stay, the rest are released and rebuilt on demand); only strings cross the boundary, as in the realm. Semantics are the realm's (V8, Intl).
+ * per resolver (the 32 most recently used stay, the rest are released and rebuilt on demand); only strings cross the
+ * boundary, as in the realm. Semantics are the realm's (V8, Intl).
+ *
+ * The cap is NOT a guarantee that the process survives or stays small: V8 aborts the process on some allocations that
+ * no guard can cover (hash-table growth in Set, Map, WeakMap-heavy loops and sparse objects), and one builtin call can
+ * allocate far past the cap before it is checked. docs/features/engine.md and docs/limitations.md give the measurements.
  *
  * isolated-vm is an optional dependency with a native addon, and on Node 20+ every process that loads it needs
  * `NODE_OPTIONS=--no-node-snapshot`. Nothing here loads it until `isolate` is asked for.
@@ -29,7 +34,6 @@ interface IvmContext {
 }
 interface IvmIsolate {
   isDisposed: boolean;
-  getHeapStatisticsSync(): { used_heap_size: number };
   compileScriptSync(code: string, options?: { filename?: string }): IvmScript;
   createContextSync(): IvmContext;
   dispose(): void;
@@ -101,10 +105,11 @@ function shared(ivm: IvmModule, memoryMb: number): Shared {
 // V8 cannot recover from ONE allocation larger than the heap limit (it aborts the process before isolated-vm's memory
 // limit can end the isolate), so the builtins that make a big block in a single step from a length the caller gives
 // refuse sizes the cap could never hold: `new Array(1e8).fill(1)`, `Array.from({ length: 1e8 }, f)`, `x.repeat(2 ** 28)`.
-// Everything that grows in steps (push loops, string concatenation) reaches the cap normally and ends the isolate.
-// This is a list of the builtins found to allocate that way (about 150 single-step bombs were tried, and only
-// `Array.from` with a length, `fill`, `join`, `repeat`, `padStart` and `padEnd` aborted): it cannot be shown to be
-// complete, and docs/features/engine.md says so.
+// Push loops and string concatenation reach the cap normally and end the isolate, but hash-table growth (Set, Map,
+// sparse objects, groupBy) does not: V8 allocates the larger table in one step and aborts the process when it does not
+// fit, at the default cap and above (docs/features/engine.md lists what was measured). This is a list of the builtins
+// found to allocate from a caller's length (`Array.from` with a length, `fill`, `join`, `repeat`, `padStart`,
+// `padEnd`): it cannot be shown to be complete, and the hash-table class is not on it at all.
 const guards = (memoryMb: number) => `(function () {
   const maxElements = ${memoryMb * 32768};
   const maxChars = ${memoryMb * 262144};

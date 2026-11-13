@@ -10,7 +10,7 @@ const data = {
   parameters: {},
 } as ExpressionData;
 
-configureExpressionSandbox({ backend: 'isolate', memoryMb: 64 });
+configureExpressionSandbox({ backend: 'isolate', memoryMb: Number(process.argv[3] ?? 64) });
 try {
   new ExpressionResolver(data).evaluate(process.argv[2], 0);
   console.log('done');

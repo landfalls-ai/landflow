@@ -25,11 +25,11 @@ beforeAll(() => {
 afterAll(() => configureExpressionSandbox({}));
 
 /** One expression in a process of its own: a V8 abort is a test failure here, not the end of the test run. */
-function inChild(code: string) {
+function inChild(code: string, memoryMb = 64) {
   const support = (name: string) => fileURLToPath(new URL(`./support/${name}`, import.meta.url));
   const run = spawnSync(
     process.execPath,
-    ['--experimental-transform-types', '--disable-warning=ExperimentalWarning', '--import', support('ts-register.mjs'), support('isolate-child.ts'), code],
+    ['--experimental-transform-types', '--disable-warning=ExperimentalWarning', '--import', support('ts-register.mjs'), support('isolate-child.ts'), code, String(memoryMb)],
     { encoding: 'utf8', env: { ...process.env, NODE_OPTIONS: '--no-node-snapshot' }, timeout: 30_000 },
   );
   return { status: run.status, signal: run.signal, out: run.stdout.trim().split('\n'), err: run.stderr.slice(0, 300) };
@@ -78,6 +78,7 @@ describe.skipIf(!on)('isolate backend', () => {
       '(() => { const a = []; while (true) a.push({ x: [1, 2, 3] }); })()',
       'new Uint8Array(2 ** 30).length',
       'new ArrayBuffer(2 ** 31).byteLength',
+      '(() => { const s = new WeakMap(); for (let i = 0; ; i++) s.set({}, i); })()',
     ];
     for (const code of bombs) {
       const result = inChild(code);
@@ -85,6 +86,20 @@ describe.skipIf(!on)('isolate backend', () => {
       expect(result.out.at(-1)).toBe('alive');
     }
   }, 240_000);
+
+  // The known limit, pinned so that the docs are corrected the day it is closed: hash-table growth aborts the process
+  // (V8's heap OOM) before the cap or the timeout can end the evaluation. engine.md and limitations.md say so.
+  it('still aborts the process on hash-table growth (documented limit)', () => {
+    const aborting = [
+      '(() => { const s = new Set(); for (let i = 0; ; i++) s.add(i); })()',
+      '(() => { const o = {}; for (let i = 0; ; i++) o[i * 1000] = i; })()',
+      'Object.groupBy(Array(2000000).fill(0), (x, i) => i)',
+    ];
+    for (const code of aborting) {
+      const result = inChild(code);
+      expect({ code, aborted: result.status !== 0 || result.signal !== null }).toEqual({ code, aborted: true });
+    }
+  }, 120_000);
 
   it('does not fail an innocent expression when thousands of short-lived resolvers come and go', () => {
     const failures: string[] = [];

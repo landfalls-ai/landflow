@@ -527,8 +527,9 @@ image). `host.Dockerfile` also links `isolated-vm` and its addon into the image 
 not, the image runs the realm only and a production start with `isolate` refuses to boot. The in-repo compose and Kubernetes
 stacks leave the default. `NODE_OPTIONS` is inherited by the child processes the host starts (plugin processes, the code
 runner's children when started by pnpm): harmless, but it shows in their environment. The base image is Alpine (musl);
-whether `isolated-vm` installs or builds there has not been verified by a local image build, so check `isolateUnavailable`
-in the log of a started container before relying on `isolate` in the image.
+`isolated-vm` 6.2.0 loads there from its musl prebuild (a container started with `LANDFLOW_EXPRESSION_SANDBOX=isolate`
+logged no fallback warning). The isolate backend can abort the process on `Set`/`Map` growth and its cap does not bound
+resident memory, so give the container headroom ([engine.md](features/engine.md#the-isolate-backend-optional)).
 
 ## Code runner
 
