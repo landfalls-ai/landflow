@@ -253,6 +253,7 @@ Start the matching infra services first ([deployment.md](deployment.md)), then r
 | `aws` | LocalStack (`aws` profile) at `http://127.0.0.1:54566` (`LANDFLOW_LOCALSTACK_PORT`, `LANDFLOW_LOCALSTACK_URL`) | `secrets-aws.integration.test.ts` (access keys and environment auth, a `{environment}` prefix, JSON and plain secrets, redaction; the endpoint must be loopback, the keys are dummies and `~/.aws` is never read) |
 | `audit-anchor` | MinIO; must be the only flag | `audit-integrity.test.ts` (signed heads in a real bucket) |
 | `k8s` | the OrbStack cluster, namespace `landflow-dev`, the plugin image built locally | `kubernetes.integration.test.ts` (discovery, scale to 0 and back, calls spread over two pods) |
+| `isolate` | the optional `isolated-vm` addon, and `NODE_OPTIONS=--no-node-snapshot` | `packages/engine/test/expression-isolate.test.ts` (the realm suite on the isolate, memory bombs each in a child process, churn, benchmark), `apps/web/test/expression-preview-isolate.test.ts` (a route uses the isolate) |
 | `ollama` | Ollama at `OLLAMA_URL` with nomic-embed-text and qwen3-coder:30b | `rag-live.test.ts`, `evaluations-live.test.ts` (qwen3-coder as the judge), `ollama-streaming-live.test.ts` |
 
 `cluster-runtime.test.ts` always runs: a main and workers through the runner on the in-process coordinator.

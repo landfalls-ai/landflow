@@ -6,14 +6,15 @@
  *   "={{ ... }}"                  → n8n's leading "=" is accepted and stripped
  *
  * Expressions run in a sealed realm (./sandbox/realm.ts): a node:vm context with code generation off and no host
- * object reachable, a 250 ms timeout, and only text crossing the boundary. See docs/features/engine.md.
+ * object reachable, a 250 ms timeout, and only text crossing the boundary. With LANDFLOW_EXPRESSION_SANDBOX=isolate
+ * they run in an isolated-vm isolate with a memory cap instead (./sandbox/isolate.ts). See docs/features/engine.md.
  */
 import type { NodeItem } from '@landflow/protocol';
 import type { SecretValues } from './secrets';
 import { createIsolateRealm } from './sandbox/isolate';
+import { createExpressionRealm, type ExpressionRealm } from './sandbox/realm';
 
 export { DEFAULT_MEMORY_MB as DEFAULT_ISOLATE_MEMORY_MB, isolateUnavailable } from './sandbox/isolate';
-import { createExpressionRealm, type ExpressionRealm } from './sandbox/realm';
 
 /** Which sandbox expressions run in: the sealed realm (default) or the isolated-vm isolate with a memory cap. */
 export interface ExpressionSandboxOptions {
@@ -22,11 +23,14 @@ export interface ExpressionSandboxOptions {
   memoryMb?: number;
 }
 
-let sandboxOptions: ExpressionSandboxOptions = {};
+// Kept on globalThis: Next compiles this package once per module graph (instrumentation, each route), and the choice
+// made at boot must reach every copy.
+const OPTIONS = Symbol.for('landflow.expression.sandbox.options');
+const optionsHolder = globalThis as unknown as Record<symbol, ExpressionSandboxOptions | undefined>;
 
-/** Set once at start-up by the host (packages read no environment); a resolver made afterwards uses it. */
+/** Set once at start-up by the host (packages read no environment); a resolver made afterwards uses it, in any module graph. */
 export function configureExpressionSandbox(options: ExpressionSandboxOptions): void {
-  sandboxOptions = { ...options };
+  optionsHolder[OPTIONS] = { ...options };
 }
 
 const EXPRESSION = /\{\{([\s\S]+?)\}\}/g;
@@ -113,7 +117,7 @@ export class ExpressionResolver {
     private readonly data: ExpressionData,
     sandbox?: ExpressionSandboxOptions,
   ) {
-    this.sandbox = sandbox ?? sandboxOptions;
+    this.sandbox = sandbox ?? optionsHolder[OPTIONS] ?? {};
   }
 
   evaluate(code: string, itemIndex: number): unknown {

@@ -525,7 +525,10 @@ The host, the worker and `next start` need `NODE_OPTIONS=--no-node-snapshot` for
 set it yourself for `pnpm start` and `pnpm worker`, and in any Kubernetes or compose environment that does not use the
 image). `host.Dockerfile` also links `isolated-vm` and its addon into the image when the install built it; where it could
 not, the image runs the realm only and a production start with `isolate` refuses to boot. The in-repo compose and Kubernetes
-stacks leave the default.
+stacks leave the default. `NODE_OPTIONS` is inherited by the child processes the host starts (plugin processes, the code
+runner's children when started by pnpm): harmless, but it shows in their environment. The base image is Alpine (musl);
+whether `isolated-vm` installs or builds there has not been verified by a local image build, so check `isolateUnavailable`
+in the log of a started container before relying on `isolate` in the image.
 
 ## Code runner
 

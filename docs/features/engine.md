@@ -90,14 +90,27 @@ stays `realm`.
 
 - **What changes**: one isolate per process with its own V8 heap capped at `LANDFLOW_EXPRESSION_MEMORY_MB` (default 64), and a
   context per resolver. A V8 bug inside an expression now reaches an isolate, not the host's heap, and an expression that
-  exhausts memory fails with "The expression used more than N MB of memory": the isolate is disposed and rebuilt, the
-  process keeps running (the resolvers that shared it get a fresh context on their next evaluation). Semantics (V8, `Intl`),
-  the 250 ms timeout, the tagged-JSON results and the `async`/`import(` refusal are the realm's, and the whole realm test
-  suite runs against it. It was faster than the realm in the benchmark (`test/expression-isolate.test.ts`).
-- **One guard on top**: V8 aborts the process when a single allocation is larger than the heap limit, before isolated-vm can
-  end the isolate, so in an isolate `Array.prototype.fill` and `join` on an array longer than 32,768 times the cap in MB
-  elements, and `String.prototype.repeat`, `padStart` and `padEnd` past 262,144 times the cap in characters, throw a
-  `RangeError` (as an oversized one does anyway). Everything that grows in steps reaches the cap and ends the isolate.
+  exhausts memory fails with "The expression used more than N MB of memory": the isolate is disposed and rebuilt
+  (the resolvers that shared it get a fresh context on their next evaluation), and the process keeps running for every
+  memory bomb the tests try (below). Semantics (V8, `Intl`), the 250 ms timeout, the tagged-JSON results and the
+  `async`/`import(` refusal are the realm's, and the whole realm test suite runs against it (its test checks that it does).
+  Evaluating through the isolate is faster than the realm for a resolver that evaluates many times, and about 1.3 times
+  slower for a fresh resolver per evaluation, which is what the executor makes per node execution
+  (`test/expression-isolate.test.ts` measures both).
+- **Contexts are released by the engine, not the garbage collector**: the host cannot see the isolate's heap, so the 32
+  most recently used contexts stay and older ones are released at once (their resolver builds a new one on its next
+  evaluation); the bootstrap and each expression are compiled once per isolate (a few hundred expressions are kept, fewer
+  with a smaller cap). An isolate disposed through no fault of the expression being evaluated is rebuilt and the
+  expression tried once more. A churn test runs thousands of short-lived resolvers with no failure.
+- **Guards on top, and what they cannot promise**: V8 aborts the whole process when a single allocation is larger than the
+  heap limit, before isolated-vm can end the isolate (about 150 single-step bombs were tried; they come only from builtins
+  that allocate from a length the caller gives). In an isolate, `Array.from` on an array-like longer than 32,768 times the cap in MB
+  elements, `Array.prototype.fill` and `join` on an array longer than that, and `String.prototype.repeat`, `padStart` and
+  `padEnd` past 262,144 times the cap in characters throw a `RangeError` (as an oversized one does anyway). Everything that
+  grows in steps reaches the cap and ends the isolate. This is a list of the builtins found to allocate that way, and
+  **a list cannot be shown to be complete**: isolated-vm gives no hook to turn an oversized allocation into an error, so
+  an allocation path that was not found still aborts the process. The test runs each bomb in a process of its own, so an
+  abort fails the test. The guards also refuse sizes the realm allows (`new Array(3e6).fill(0)` fails at 64 MB).
 - **When to choose it**: people you do not trust write workflows or expressions (shared instances, builders you do not
   review), or a memory bomb in an expression must not take a worker down. Keep `realm` otherwise.
 - **Requirements**: `isolated-vm` is an optional dependency of `@landflow/engine` (a native addon: an install without a
