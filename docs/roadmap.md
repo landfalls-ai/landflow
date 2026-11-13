@@ -1436,6 +1436,10 @@ workbench in place of a page of cards, keeping Spotlight.
 
 - **P28, boundaries as checks** (C11; wave 6): `lib/server/runner.ts` is a barrel over `lib/server/runner/` (types, state, limits, persist, run, resume, rerun, queue, recovery, links, live, stop, jobs; each a few hundred lines at most) and its error classes extend `HttpError`. `pnpm check:deps` (dependency-cruiser, `.dependency-cruiser.cjs`) enforces the layering (server never imports components, shared never imports server values, client components import no server values, routes never import `lib/server/db`, packages never import apps, no new cycles) and `pnpm check` is the local gate (typecheck, `pnpm test`, check:deps; no CI by decision). The `landflow-sync/v1` layout's names and path rules are in `packages/protocol/src/sync-format.ts`, imported by the host and the CLI.
 
+- **P29, shipped alert rules, a dashboard and exception fingerprints** (finding O7): `exception.fingerprint` on error log
+  lines and exception span events; `deploy/observability/prometheus-rules.yml` (13 alerts, each with a runbook link) and
+  `landflow-dashboard.json`, both loaded by the `orbstack-observability` overlay ([observability.md](observability.md#alerts-and-dashboard)).
+
 ## Planned next
 
 1. **Declare event kinds in the UI**: kinds are declared over the API or by Record Event's *Declare Kind If New* only.
