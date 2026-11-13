@@ -34,6 +34,7 @@ import { registry } from '../plugins/registry';
 import { logger } from '../telemetry';
 import { traceMarketplace } from '../telemetry/marketplace';
 import { agentTeamStore } from '../agent-teams/store';
+import { singleton } from '../singleton';
 import { agentFromClaude, skillFromClaude, titleCase } from './map';
 import { commandLine, contentHash, downloadPlugin, freePort, nodePlugins, portFree, readInstallMarker, writeInstallMarker, type SupervisedPlugin } from './node-plugins';
 import { importTemplate, previewTemplate } from '../templates';
@@ -615,8 +616,8 @@ async function stopOne(key: string) {
   if (running && running.announce === false) for (const endpoint of localEndpoints(running)) registry.removeEndpoint(endpoint);
 }
 
-let syncing: Promise<void> | undefined;
-let syncAgain = false;
+/** The sync guard, shared by every module graph: a second graph's sync must wait for (and re-run after) the first. */
+const syncGuard = () => singleton('marketplace-sync', () => ({ running: undefined as Promise<void> | undefined, again: false }));
 
 /**
  * Queue mode: make this process run exactly the installed node plugins. A plugin is started from its directory when this
@@ -626,17 +627,18 @@ let syncAgain = false;
  * replaced by another install (an update), are stopped.
  */
 async function syncNodePlugins(): Promise<void> {
-  if (syncing) {
-    syncAgain = true;
-    return syncing;
+  const guard = syncGuard();
+  if (guard.running) {
+    guard.again = true;
+    return guard.running;
   }
-  syncing = (async () => {
+  guard.running = (async () => {
     do {
-      syncAgain = false;
+      guard.again = false;
       await syncOnce().catch((error: Error) => logger.warn('marketplace: syncing node plugins failed', { error: error.message }));
-    } while (syncAgain);
-  })().finally(() => (syncing = undefined));
-  return syncing;
+    } while (guard.again);
+  })().finally(() => (guard.running = undefined));
+  return guard.running;
 }
 
 async function syncOnce() {

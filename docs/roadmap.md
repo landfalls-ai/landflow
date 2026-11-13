@@ -1284,6 +1284,12 @@ workbench in place of a page of cards, keeping Spotlight.
   profile runs Code nodes only in the code runner unless `LANDFLOW_CODE_IN_PROCESS=true`; the in-process context also loses
   `eval` and `new Function`. An isolate backend remains for a later package.
 - **P15, database conventions** (C18; wave 3): prepared statements are cached in an LRU capped by `LANDFLOW_DB_STATEMENT_CACHE` (default 500); a test fails a new migration whose version is not above every earlier one; `withOwnership` reads shares and memberships once per list instead of per item.
+- **P20, a store that does not call up; one way to hold process-wide state** (C10, C4, contributes to C7; wave 4):
+  `store.saveExecution` emits `onExecutionFinished` and `execution-reactions.ts` subscribes insights, the usage ledger
+  and retention (registered by the runtime for both roles), so the store imports no feature and the store, settings,
+  insights and ledger cycle is gone. Every process-wide holder goes through `singleton()` (`resetSingleton`,
+  `singletonKeys`), including the marketplace sync guard; `LANDFLOW_USAGE_RETENTION_DAYS` and
+  `LANDFLOW_AI_USAGE_RETENTION_DAYS` replace the old names, which still work.
 - **Wave 2 carryover** (applied in wave 3): `pnpm worker` exits 1 when Valkey is unreachable and handles signals
   during its boot, the registry is required on a worker, emails are masked in the
   effective configuration, health state lives in `singleton()`, the registry normalises `grpc://` hosts and keeps

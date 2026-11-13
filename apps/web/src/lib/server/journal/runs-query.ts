@@ -11,6 +11,7 @@ import { foldJournal } from '../../shared/run-trace-model';
 import { runLine, type RunLine } from '../../shared/run-line';
 import { database } from '../db';
 import { parse } from '../db/rows';
+import { singleton } from '../singleton';
 import { store } from '../store';
 import { rebuildJournal } from './index';
 import { lastSeq, readAll as loadEvents } from './store';
@@ -217,7 +218,7 @@ export function searchRuns(filters: RunSearchFilters, visible?: Set<string>): Ru
 
 // ---- one run folded ---------------------------------------------------------
 
-const digests = new Map<string, RunDigest>();
+const digestCache = () => singleton('run-digests', () => new Map<string, RunDigest>());
 const MAX_CACHED = 300;
 
 /**
@@ -230,6 +231,7 @@ export function digestOf(executionId: string): RunDigest | undefined {
   const workflow = record.workflow ?? store.getWorkflow(record.workflowId);
   if (record.status !== 'running') rebuildJournal(record, workflow);
   const key = `${executionId}:${lastSeq(executionId)}:${record.status}`;
+  const digests = digestCache();
   let digest = digests.get(key);
   if (!digest) {
     digest = digestRun(foldJournal(loadEvents(executionId)), { executionId, workflowId: record.workflowId, workflowName: record.workflowName });
@@ -241,7 +243,7 @@ export function digestOf(executionId: string): RunDigest | undefined {
   return digest;
 }
 
-const lines = new Map<string, RunLine>();
+const lineCache = () => singleton('run-lines', () => new Map<string, RunLine>());
 
 /**
  * What a saved or running run did, in one line (lib/shared/run-line.ts): what came in, who did it, what came out. Cached
@@ -252,6 +254,7 @@ export function lineOf(executionId: string): RunLine | undefined {
   if (!record) return undefined;
   if (record.status !== 'running') rebuildJournal(record, record.workflow ?? store.getWorkflow(record.workflowId));
   const key = `${executionId}:${lastSeq(executionId)}:${record.status}`;
+  const lines = lineCache();
   let line = lines.get(key);
   if (!line) {
     const model = foldJournal(loadEvents(executionId));

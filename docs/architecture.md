@@ -228,6 +228,11 @@ and renews the token before it expires (`lib/server/mcp/oauth.ts`).
 
 ## Storage
 
+The store does not call up into features. `store.saveExecution` upserts the run and, for a finished run (not running or
+queued, not a backtest's), emits `onExecutionFinished` to a listener list held in `singleton()`. `lib/server/execution-reactions.ts`
+subscribes insights, the usage ledger and retention, in that order, and `runtime.ts` calls `ensureExecutionReactions()`
+before the first service of either role, so a worker records them too.
+
 | What | Where |
 |---|---|
 | Workflows, versions, executions, checkpoints, waits, users, projects, settings, data tables, audit events… | SQLite (`<data dir>/landflow.db`, WAL) or Postgres (`LANDFLOW_DB=postgres`) |

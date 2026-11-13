@@ -25,6 +25,7 @@ import { database, type Database, type SqlValue } from '../db';
 import { logger } from '../telemetry/logger';
 import { recordUsage } from '../usage/ledger';
 import { instanceTimezone } from '../settings';
+import { singleton } from '../singleton';
 import { aiCaps, capSetActive } from './caps';
 import { getUser } from '../auth/users';
 import { noteUsage } from './notify';
@@ -80,7 +81,7 @@ export class AiUsageMeter implements UsageMeter {
   constructor(
     private readonly db: () => Database = database,
     private readonly timezone: () => string = instanceTimezone,
-    private readonly retentionDays = Number(process.env.AI_USAGE_RETENTION_DAYS) || 400,
+    private readonly retentionDays = Number(process.env.LANDFLOW_AI_USAGE_RETENTION_DAYS ?? process.env.AI_USAGE_RETENTION_DAYS) || 400,
   ) {}
 
   cost(call: { provider: string; model: string; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number }): number {
@@ -270,11 +271,9 @@ export class AiUsageMeter implements UsageMeter {
   }
 }
 
-const holder = globalThis as { __landflowAiUsageMeter?: AiUsageMeter };
-
 /** The process's meter, over the instance database. */
 export function aiUsageMeter(): AiUsageMeter {
-  return (holder.__landflowAiUsageMeter ??= new AiUsageMeter());
+  return singleton('ai-usage-meter', () => new AiUsageMeter());
 }
 
 const tokensOf = (totals: AiUsageTotals) => totals.inputTokens + totals.outputTokens;

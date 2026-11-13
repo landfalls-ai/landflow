@@ -89,8 +89,8 @@ session; people read it before they start a feature too.
 
 **Layers**
 
-- The store does not call up into features: emit an event and let the feature subscribe at boot (target, P20; the bus
-  is `lib/server/bus.ts`).
+- The store does not call up into features: emit an event and let the feature subscribe at boot (`onExecutionFinished` in
+  `lib/server/store.ts`, subscribed in `lib/server/execution-reactions.ts`; the bus is `lib/server/bus.ts`).
 - No server → UI imports, no `lib/shared` → server imports, no client component importing server values, no routes
   touching `db` or holding SQL. `packages/` never import `apps/web`; `engine` and `protocol` read no environment.
   These are checked by `pnpm check:deps` (target, P28).
