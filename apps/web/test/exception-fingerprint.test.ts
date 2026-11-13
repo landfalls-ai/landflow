@@ -33,6 +33,21 @@ describe('exception fingerprint', () => {
     expect(fp).toBe(exceptionFingerprint(withStack('Error', frames(5, 6))));
   });
 
+  it('groups a production bundle across rebuilds, by chunk', () => {
+    const at = (chunk: string, col: number) => `    at e (/app/apps/web/.next/server/chunks/${chunk}:1:${col})`;
+    const a = exceptionFingerprint(withStack('Error', at('apps_web_src_lib_server_0eyl_rv0-2y1j._.js', 100)));
+    const b = exceptionFingerprint(withStack('Error', at('apps_web_src_lib_server_9zzz_q8w7e6r5._.js', 4000)));
+    const other = exceptionFingerprint(withStack('Error', at('apps_web_src_lib_engine_0eyl_rv0-2y1j._.js', 100)));
+    expect(a).toBe(b);
+    expect(a).not.toBe(other);
+  });
+
+  it('anchors on the repo layout, not a parent directory named src', () => {
+    const f = (root: string) => exceptionFingerprint(withStack('Error', `    at save (${root}/apps/web/src/lib/a.ts:1:1)`));
+    expect(f('/home/me/src/landflow')).toBe(f('/srv/app'));
+    expect(exceptionFingerprint(withStack('Error', '    at async save (/srv/app/apps/web/src/lib/a.ts:1:1)'))).toBe(f('/x'));
+  });
+
   it('handles non-errors', () => {
     expect(exceptionFingerprint('x')).toMatch(/^[0-9a-f]{12}$/);
   });

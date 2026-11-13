@@ -608,7 +608,7 @@
       "type": "prometheus",
       "uid": "prometheus"
      },
-     "expr": "sum(increase(landflow_audit_write_failures_total[10m]))",
+     "expr": "sum ((increase(landflow_audit_write_failures_total[10m]) > 0) or ((landflow_audit_write_failures_total unless landflow_audit_write_failures_total offset 10m) unless ignoring(__name__) (increase(landflow_audit_write_failures_total[10m]) > 0)))",
      "legendFormat": "write failures"
     },
     {
@@ -617,7 +617,7 @@
       "type": "prometheus",
       "uid": "prometheus"
      },
-     "expr": "sum by (destination) (increase(landflow_audit_outbox_delivery_failures_total[10m]))",
+     "expr": "sum by (destination) ((increase(landflow_audit_outbox_delivery_failures_total[10m]) > 0) or ((landflow_audit_outbox_delivery_failures_total unless landflow_audit_outbox_delivery_failures_total offset 10m) unless ignoring(__name__) (increase(landflow_audit_outbox_delivery_failures_total[10m]) > 0)))",
      "legendFormat": "delivery {{destination}}"
     }
    ]
@@ -766,7 +766,7 @@
       "type": "prometheus",
       "uid": "prometheus"
      },
-     "expr": "sum by (kind) (increase(landflow_process_errors_total[10m]))",
+     "expr": "sum by (kind) ((increase(landflow_process_errors_total[10m]) > 0) or ((landflow_process_errors_total unless landflow_process_errors_total offset 10m) unless ignoring(__name__) (increase(landflow_process_errors_total[10m]) > 0)))",
      "legendFormat": "{{kind}}"
     }
    ]

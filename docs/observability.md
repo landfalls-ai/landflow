@@ -120,8 +120,14 @@ With `LANDFLOW_LOG_SPANS=true` (the default) every finished span is also written
 - **Exception fingerprint.** Every error line made from an `Error` carries `exception.fingerprint`: 12 hex characters of
   a hash of the exception type and the top three in-repo frames (function and file, with line and column numbers and the
   checkout path stripped; `node:` and `node_modules` frames skipped). The same bug groups across releases and machines,
-  two call sites don't. Failed spans carry the same attribute on their `exception` event (`exception.type`,
-  `exception.message`, `exception.stacktrace`, `exception.fingerprint`), so a Loki query such as
+  two call sites don't, in development and from source. In the shipped host image (Next standalone, minified chunks
+  with a content hash in the name, no source maps) the frames are minified, so the key is the chunk's source-path
+  words with the hash stripped: the group survives a rebuild but is coarser, by exception type and chunk. Exact
+  call-site grouping there needs server source maps with `--enable-source-maps` (a follow-up: `next.config.ts` and
+  the host Dockerfile are outside this change). Spans failed through the host's `failSpan` (plugin RPC, triggers,
+  A2A, MCP, `withSpan`) carry the same attribute on their `exception` event (`exception.type`,
+  `exception.message`, `exception.stacktrace`, `exception.fingerprint`); workflow and node spans (engine), the
+  `db.query` span and SDK spans do not. So a Loki query such as
   `{service_name="landflow-host"} | json | exception_fingerprint="3f2a9c0d41be"` and a Tempo search find the same group.
   A thrown non-`Error` gets a fingerprint from its type alone, which groups all of them.
 - **Over OTLP** (host): with `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`) set and
@@ -431,6 +437,9 @@ Every process writes JSON logs with `trace_id`. To browse traces, run any OTLP b
   ([a2a.md](a2a.md#kagent-next-to-landflow)).
 
 <a id="alerts-and-dashboard"></a>
+<!-- The paging counters are created on their first error, so a series is born at 1 and `increase()` over it is 0; the
+rules and the dashboard panels add `m unless m offset 10m` to catch it. Check with
+`docker run --rm -v "$PWD/deploy/observability:/r" --entrypoint /otel-lgtm/prometheus/promtool grafana/otel-lgtm:0.39.0 test rules /r/tests/prometheus-rules.test.yml` -->
 
 ### Alert rules and the dashboard
 

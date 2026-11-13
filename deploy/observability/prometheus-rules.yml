@@ -78,7 +78,7 @@ groups:
   - name: landflow-audit
     rules:
       - alert: LandflowAuditWriteFailures
-        expr: sum(increase(landflow_audit_write_failures_total[10m])) > 0
+        expr: sum ((increase(landflow_audit_write_failures_total[10m]) > 0) or ((landflow_audit_write_failures_total unless landflow_audit_write_failures_total offset 10m) unless ignoring(__name__) (increase(landflow_audit_write_failures_total[10m]) > 0))) > 0
         for: 0m
         labels: { severity: page }
         annotations:
@@ -101,7 +101,7 @@ groups:
           summary: Event-loop delay p99 is above 200 ms
           runbook: docs/observability.md#alerts-and-dashboard
       - alert: LandflowProcessErrors
-        expr: sum by (kind) (increase(landflow_process_errors_total[10m])) > 0
+        expr: sum by (kind) ((increase(landflow_process_errors_total[10m]) > 0) or ((landflow_process_errors_total unless landflow_process_errors_total offset 10m) unless ignoring(__name__) (increase(landflow_process_errors_total[10m]) > 0))) > 0
         for: 0m
         labels: { severity: page }
         annotations:

@@ -1,0 +1,30 @@
+# Run: docker run --rm -v "$PWD/deploy/observability:/r" --entrypoint promtool grafana/otel-lgtm:0.39.0 test rules /r/tests/prometheus-rules.test.yml
+# A counter is created on its first error, so the series is born at 1: the paging rules must fire on that first error.
+rule_files:
+  - ../prometheus-rules.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'landflow_process_errors_total{kind="unhandledRejection"}'
+        values: '_ _ _ 1 1 1 1 1 1 1'
+      - series: 'landflow_audit_write_failures_total{action="credential.create"}'
+        values: '_ _ _ 1 1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: LandflowProcessErrors
+        exp_alerts:
+          - exp_labels: { kind: unhandledRejection, severity: page }
+            exp_annotations:
+              summary: "A process error was counted (unhandledRejection): an unhandled rejection, an uncaught exception or a service that failed to start"
+              runbook: docs/observability.md#alerts-and-dashboard
+      - eval_time: 5m
+        alertname: LandflowAuditWriteFailures
+        exp_alerts:
+          - exp_labels: { severity: page }
+            exp_annotations:
+              summary: Audit events could not be stored
+              runbook: docs/observability.md#alerts-and-dashboard
+      - eval_time: 30m
+        alertname: LandflowProcessErrors
+        exp_alerts: []

@@ -1,6 +1,6 @@
 /**
  * Exception fingerprint: a short hash of the exception type and the top in-repo frames of its stack, with line and column
- * numbers and the checkout path stripped, so the same bug groups across releases and machines while two call sites don't.
+ * numbers and the checkout path stripped, so the same bug groups across releases and machines while two call sites don't (in a minified production bundle: by chunk).
  * Put on error log lines (`exception.fingerprint`, logger.ts) and on exception span events (spans.ts). See docs/observability.md §3.
  */
 import { createHash } from 'node:crypto';
@@ -13,12 +13,23 @@ function frameKey(line: string): string | undefined {
   if (!match) return undefined;
   const [, fn = '', rawFile] = match;
   if (rawFile.startsWith('node:') || /node_modules|\(<anonymous>\)|^native\b/.test(rawFile)) return undefined;
-  const file = rawFile
+  const cleaned = rawFile
     .replace(/^(webpack-internal:\/\/\/\([^)]*\)\/|webpack:\/\/[^/]*\/|file:\/\/)/, '')
-    .replace(/[?#].*$/, '')
-    // A bundled chunk or a checkout path: keep what follows the first source root, so the key doesn't move with the install.
-    .replace(/^.*?[\\/]((?:src|packages|plugins|services|sdks)[\\/])/, '$1');
-  return `${fn} ${file}`.trim();
+    .replace(/[?#].*$/, '');
+  // A production bundle (Next standalone): the chunk name carries a content hash and the function names are minified,
+  // so the key is the chunk's source-path words alone. Grouping is coarser than in dev: by chunk, not by call site.
+  const bundled = /(?:^|[\\/])\.next[\\/]/.exec(cleaned);
+  if (bundled) {
+    const chunk = (cleaned.split(/[\\/]/).pop() ?? '').replace(/\.(?:c|m)?js$/, '');
+    const words = chunk.replace(/_[0-9a-z]+_[0-9a-z-]+\._$/, '').replace(/\._$/, '');
+    return `chunk ${/^\d+$/.test(words) || /^[0-9a-f]{8,}$/.test(words) ? 'webpack' : words}`;
+  }
+  // A checkout path: anchor on the repo layout so a parent directory named `src` doesn't leak into the key.
+  const file = cleaned
+    .replace(/^.*?[\\/](apps[\\/]web[\\/]src[\\/])/, '$1')
+    .replace(/^.*?[\\/](packages[\\/][^\\/]+[\\/])/, '$1')
+    .replace(/^.*?[\\/]((?:plugins|services|sdks)[\\/])/, '$1');
+  return `${fn.replace(/^async /, '')} ${file}`.trim();
 }
 
 export function exceptionFingerprint(error: unknown): string {
