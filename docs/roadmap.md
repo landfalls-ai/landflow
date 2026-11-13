@@ -1267,6 +1267,14 @@ workbench in place of a page of cards, keeping Spotlight.
     runs themselves read `ollamaUrl()` at call time);
   - tests still missing from wave 1: SCIM `PUT /Users` and `PUT /Groups` events, the 10,000-address eviction, and
     access-scope cases for evaluation-dataset files, a live run's file and an agent the member can open.
+- **P13, safeFetch: one guarded client for outbound calls** (S5, O5; wave 3): `lib/server/net/safe-fetch.ts` refuses
+  loopback, private, link-local, CGNAT and metadata addresses in the production profile unless
+  `LANDFLOW_OUTBOUND_ALLOW` lists them: literal IPs before connecting, names in the socket's DNS lookup (so the address
+  checked is the address connected to), and every redirect hop again (with the governance host list by name). The HTTP
+  Request node (through `ContextExtras.fetch`, which `ctx.http` wraps in its span), alert channels, HTTP SIEM
+  destinations, remote MCP servers, RAG embeddings and rerank, and OIDC and SAML metadata go through it; each call has
+  a client span. Not covered, with the reasons in [limitations.md](limitations.md): remote plugins, configured
+  infrastructure, the marketplace's git, the OAuth2 flow and anchoring webhooks.
 
 ## Planned next
 
