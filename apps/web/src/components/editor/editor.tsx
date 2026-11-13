@@ -737,7 +737,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
         // Refused as stale. A scheduled publish, an approval or a folder move also moves `updatedAt`: if the stored content is still what this tab loaded or saved, nobody else's edit is at stake, so take the new version and save once more.
         const { workflow: stored } = await api<{ workflow: Workflow }>(`/api/workflows/${workflowId}`);
         if (!useEditor.getState().storedMatchesSaved(stored)) throw e;
-        useEditor.getState().rebase(stored.updatedAt);
+        if (stored.updatedAt) useEditor.getState().rebase(stored.updatedAt);
         saved = await put(stored.updatedAt);
       }
       const { workflow, policyWarnings, triggerAuthWarnings } = saved;
