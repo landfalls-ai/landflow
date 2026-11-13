@@ -8,12 +8,19 @@ import type { NodeItem } from '@landflow/protocol';
 import { BinaryTooLargeError } from '@/lib/server/binary/store';
 import { error, handler } from '@/lib/server/http';
 import { liveExecution, resumeExecution, ResumeError, type RunReply } from '@/lib/server/runner';
+import { checkResume } from '@/lib/server/resume-signing';
 import { store } from '@/lib/server/store';
 import { logger, recordWebhookRequest } from '@/lib/server/telemetry';
 import { answerWebhook, deferred, requestItem, type RespondMode } from '@/lib/server/webhooks';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
+
+const checkSignature = (id: string, request: Request, wait: { signed?: boolean }) => {
+  const result = checkResume(id, new URL(request.url).searchParams.get('sig'), wait);
+  if (result.ok && result.legacy) logger.info('resume accepted without a signature: the wait was saved before resume URLs were signed', { 'landflow.execution.id': id });
+  return result;
+};
 
 async function handle(request: Request, { params }: Ctx) {
   const { id } = await params;
@@ -23,6 +30,11 @@ async function handle(request: Request, { params }: Ctx) {
   if (!record || !wait) {
     recordWebhookRequest(404);
     return error(liveExecution(id) ? 'This execution is running, not waiting' : 'No execution is waiting here', liveExecution(id) ? 409 : 404);
+  }
+  const signature = checkSignature(id, request, wait);
+  if (!signature.ok) {
+    recordWebhookRequest(403, record.workflowId);
+    return error('This resume URL is not valid', 403);
   }
   if (wait.resume !== 'webhook') {
     recordWebhookRequest(409, record.workflowId);
@@ -49,6 +61,9 @@ async function handle(request: Request, { params }: Ctx) {
     }
     throw caught;
   }
+  // The signature is a credential: it doesn't go into the run's data.
+  const query = item.json.query;
+  if (query && typeof query === 'object' && !Array.isArray(query)) delete (query as Record<string, unknown>).sig;
   const mode = (['immediately', 'lastNode', 'responseNode'].includes(String(wait.data?.respond)) ? wait.data?.respond : 'immediately') as RespondMode;
   const reply = deferred<RunReply>();
   // The resumed part of the run is a child of this request's span (resumeExecution checks the state again, synchronously).
