@@ -31,6 +31,7 @@ import { bus } from '../bus';
 import { singleton } from '../singleton';
 import { logger } from '../telemetry';
 import { registry } from './registry';
+import { envNumber } from '../config';
 
 export const PLUGIN_LABEL_SELECTOR = 'landflow.dev/plugin=true';
 export const GRPC_PORT_ANNOTATION = 'landflow.dev/grpc-port';
@@ -589,7 +590,7 @@ export function startKubernetesDiscovery(): Promise<KubernetesDiscovery | undefi
       const namespaces = parseNamespaces(process.env.LANDFLOW_K8S_NAMESPACES, namespace);
       const address = process.env.LANDFLOW_K8S_ADDRESS === 'cluster-ip' ? 'cluster-ip' : 'dns';
       const spread = process.env.LANDFLOW_K8S_SPREAD?.trim().toLowerCase() === 'service' ? 'service' : 'pods';
-      const resyncSeconds = Number(process.env.LANDFLOW_K8S_RESYNC_SECONDS ?? 300);
+      const resyncSeconds = envNumber('LANDFLOW_K8S_RESYNC_SECONDS', { fallback: 300, min: 0 });
       const discovery = new KubernetesDiscovery({
         api,
         namespaces,
@@ -598,7 +599,7 @@ export function startKubernetesDiscovery(): Promise<KubernetesDiscovery | undefi
         spread,
         ...(process.env.LANDFLOW_K8S_CLUSTER_DOMAIN && { clusterDomain: process.env.LANDFLOW_K8S_CLUSTER_DOMAIN }),
         ...(process.env.LANDFLOW_K8S_LABEL_SELECTOR && { labelSelector: process.env.LANDFLOW_K8S_LABEL_SELECTOR }),
-        resyncMs: Number.isFinite(resyncSeconds) ? resyncSeconds * 1000 : 300_000,
+        resyncMs: resyncSeconds * 1000,
         notify,
       });
       discovery.start();

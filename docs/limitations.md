@@ -35,6 +35,12 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - **Local telemetry stack** ([deployment.md](deployment.md#telemetry-on-kubernetes)): `landflow-lgtm` keeps everything in an `emptyDir`, so a restart loses it. The dashboard's totals use `increase()`, which can't see the first increment of a new series: after a host restart the first run, approval or call of each kind isn't counted in the stat panels (traces and logs have every one).
 - **By design**: a Respond to Webhook reply built from a secret is not redacted: redaction covers what is kept, and the reply is sent, not kept ([External secrets](features/secrets-and-environments.md)).
 
+## Production profile (2026-11)
+
+- **The production check does not run yet**: `checkConfig()` reports development secrets and a missing public URL in the
+  production profile, but nothing calls it at boot until a later backend-hardening package. Auth cookie and guard code still
+  read `LANDFLOW_PUBLIC_URL` themselves.
+
 ## Browser plugin and retry backoff (built 2026-11-07)
 
 - **Browser** ([plugins/browser](../plugins/browser/README.md)) needs the `agent-browser` CLI and its Chrome on the machine that runs the plugin; it is not in `dev:all`, the compose files or the cluster images. It reads pages and runs listed steps, with no free-form scripting, uploads or downloads, and no signed-in browsing (the CLI refuses saved profiles with an allow-list). The allow-list stops the browser reaching other sites; it can't stop a page from carrying instructions to a model, so page text is fenced and cut but should still be treated as untrusted. A screenshot over 64 KiB needs a host that serves the binary store. It was checked against the real CLI on `example.com` for reading, and on a locally served form, not against a login flow, a slow page or a long run.

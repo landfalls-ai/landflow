@@ -53,6 +53,8 @@ services:
       - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_MCP_GATEWAY_PORT:-54000}:4000"
     environment:
       LANDFLOW_DATA_DIR: /data
+      # These stacks run the development secrets from deploy/.env.example; a real deployment sets production (docs/deployment.md).
+      LANDFLOW_PROFILE: development
       # The bundled MCP gateway (docs/transports.md): the sidecar's admin API and this host, both on the shared loopback;
       # the secret is what the gateway sends as `x-landflow-gateway`; the public URL is where agents connect.
       LANDFLOW_MCP_GATEWAY: ${LANDFLOW_MCP_GATEWAY:-bundled}

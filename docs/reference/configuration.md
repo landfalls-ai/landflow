@@ -4,8 +4,12 @@ The host's environment variables, with their defaults. The compose stacks set th
 ([deployment.md](../deployment.md)); plugins read their own (`LANDFLOW_REGISTRY_URL`, ports, transports), listed in each
 SDK's README. Part of the [Landflow docs](../README.md).
 
+Flags accept `1,true,yes,on` and `0,false,no,off` (any case). A number that does not parse, or a flag that is neither, falls back to its default with one warning in the log (`config.invalid`, naming the variable) instead of breaking a timer; numbers are clamped to a sensible minimum. Read at call time, so a changed value is seen without an import-time snapshot.
+
 | Variable | Default | |
 |---|---|---|
+| `LANDFLOW_PROFILE` | `production` when `NODE_ENV=production`, else `development` | `development` or `production`: whether the host refuses development secrets and a missing `LANDFLOW_PUBLIC_URL` ("Production profile" in [deployment.md](../deployment.md)). The in-repo compose and Kubernetes stacks set `development` |
+| `LANDFLOW_REGISTRY_OPEN` | – | `true`: accept plugin registrations without `LANDFLOW_REGISTRY_SECRET` in the production profile |
 | `LANDFLOW_DATA_DIR` | `apps/web/.data` | data directory: the SQLite database (`landflow.db`), credentials, binary files, the Claude Code plugin images packed for kagent (`oci/`) and the other host files |
 | `LANDFLOW_CLAUDE_PLUGINS_DIR` | `<cwd>/claude-plugins` (`apps/web/claude-plugins`) | where Landflow's own Claude Code plugins are (the landflow-harness mod), packed into images for kagent's Claude Code agents ([a2a.md](../a2a.md#the-landflow-harness-mod)) |
 | `LANDFLOW_DB` | `sqlite` | `postgres` keeps the store in Postgres (`DATABASE_URL`); one host per database |

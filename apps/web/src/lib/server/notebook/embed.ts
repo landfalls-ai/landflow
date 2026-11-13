@@ -5,6 +5,7 @@
  * for a minute so a team run never waits on a host that is down.
  */
 import { ollamaEmbeddings } from '../rag/embeddings';
+import { ollamaUrl } from '../config';
 
 export type NoteEmbedder = (texts: string[], as: 'document' | 'query') => Promise<number[][]>;
 
@@ -28,7 +29,7 @@ const enabled = () => !/^(off|false|0)$/i.test(process.env.LANDFLOW_NOTEBOOK_EMB
 
 function ollama(): NoteEmbedder {
   const embeddings = ollamaEmbeddings({
-    baseUrl: (process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434').replace(/\/+$/, ''),
+    baseUrl: ollamaUrl(),
     model: embedModel(),
     // nomic-embed-text expects these prefixes: a stored text is a document, a question is a query.
     documentPrefix: 'search_document: ',

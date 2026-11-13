@@ -1239,6 +1239,10 @@ workbench in place of a page of cards, keeping Spotlight.
   the leader lease and flushes telemetry. A failed required boot step (database, cluster) exits the process instead of
   serving 500s for ever; an optional one is logged and counted. The host logs and counts unhandled rejections and
   uncaught exceptions.
+- **P02, typed configuration and the production profile** (C5, C6, C7, S15; wave 1): `lib/server/config/` (parsers that
+  never give NaN, `profile()`, `publicUrl()`, `ollamaUrl()`, `checkConfig()`); the public URL and Ollama address are
+  read in one place, six NaN-prone numbers fall back with a warning, and the in-repo stacks say `LANDFLOW_PROFILE=development`.
+  Booting through `checkConfig()` follows in a later package.
 
 ## Planned next
 

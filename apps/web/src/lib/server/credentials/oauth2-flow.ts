@@ -33,6 +33,7 @@ import {
 import { prepareMcpAuthorization } from '../mcp/oauth';
 import { mcpUrlBlocked } from '../governance/policy';
 import { CredentialError, credentials, resolveOAuth2Secrets } from './vault';
+import { publicUrl, publicUrlConfigured } from '../config';
 
 const stateKey = () => credentials.deriveKey('oauth2.state');
 const pkceKey = () => credentials.deriveKey('oauth2.pkce');
@@ -44,7 +45,7 @@ const pkceKey = () => credentials.deriveKey('oauth2.pkce');
 export function oauth2RedirectUrl(request?: Request): string {
   const configured = process.env.LANDFLOW_OAUTH2_REDIRECT_URL?.trim();
   if (configured) return configured;
-  const base = process.env.LANDFLOW_PUBLIC_URL?.trim() || (request ? new URL(request.url).origin : `http://localhost:${process.env.PORT ?? 3000}`);
+  const base = publicUrlConfigured() || !request ? publicUrl() : new URL(request.url).origin;
   return `${base.replace(/\/+$/, '')}${OAUTH2_CALLBACK_PATH}`;
 }
 

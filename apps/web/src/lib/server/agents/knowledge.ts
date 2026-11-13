@@ -15,6 +15,7 @@ import { fileDocuments, type FileInput } from '../rag/files';
 import { recursiveCharacterSplit } from '../rag/splitters';
 import { insertDocuments, MemoryVectorStore, PgVectorStore, SqliteVectorStore, type VectorStore } from '../rag/stores';
 import type { BuiltTool } from './tools';
+import { ollamaUrl } from '../config';
 
 /** The vector store node each kind of store matches (its icon in the timeline, its credential requirement). */
 export const KNOWLEDGE_STORE_NODE: Record<KnowledgeBaseToolConfig['store'], string> = {
@@ -23,7 +24,6 @@ export const KNOWLEDGE_STORE_NODE: Record<KnowledgeBaseToolConfig['store'], stri
   pgvector: 'core.vectorStorePGVector',
 };
 const OPENAI_EMBEDDINGS_NODE = 'core.embeddingsOpenAi';
-const DEFAULT_OLLAMA_URL = (process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434').replace(/\/+$/, '');
 
 /** A credential of `nodeType`'s requirement `name`, decrypted. */
 function credentialFor(nodeType: string, name: string, ref: KnowledgeBaseToolConfig['credential']) {
@@ -47,7 +47,7 @@ function embeddingsFor(config: KnowledgeBaseToolConfig['embeddings']): Embedding
     });
   }
   return ollamaEmbeddings({
-    baseUrl: config.baseUrl?.trim() || DEFAULT_OLLAMA_URL,
+    baseUrl: config.baseUrl?.trim() || ollamaUrl(),
     model: config.model || 'nomic-embed-text',
     ...(dimensions && { dimensions }),
     ...(config.queryPrefix && { queryPrefix: config.queryPrefix }),

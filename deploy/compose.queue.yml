@@ -24,6 +24,8 @@
 name: landflow-queue
 
 x-host-env: &host-env
+  # These stacks run the development secrets from deploy/.env.example; a real deployment sets production (docs/deployment.md).
+  LANDFLOW_PROFILE: development
   LANDFLOW_EXECUTIONS_MODE: queue
   LANDFLOW_DB: postgres
   DATABASE_URL: postgres://landflow:landflow-dev-only@postgres:5432/${LANDFLOW_QUEUE_DATABASE:-landflow_queue}

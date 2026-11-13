@@ -12,7 +12,7 @@
  */
 import { createHash, randomBytes } from 'node:crypto';
 import type { Agent, AgentConfig, CredentialRef, KagentDeployment, KagentDrift, KagentGuard, KagentHarness, KagentPlugin, KagentRuntime, KagentStatus } from '../../shared/agents';
-import { OLLAMA_URL } from '../agents/models';
+import { ollamaUrl } from '../config';
 import { agentStore } from '../agents/store';
 import { buildToolset } from '../agents/tools';
 import { credentials } from '../credentials/vault';
@@ -128,7 +128,7 @@ async function modelSettings(config: AgentConfig, runtime: KagentRuntime): Promi
   if (!model) return {};
   if (runtime === 'claude' && model.provider === 'openai') throw new KagentError('Claude Code runs Anthropic models, or Ollama ones: change the agent’s model, or choose a Harness with kagent’s own runtime');
   if (model.provider === 'ollama') {
-    const host = (model.baseUrl?.trim() || OLLAMA_URL).replace(/\/+$/, '');
+    const host = (model.baseUrl?.trim() || ollamaUrl()).replace(/\/+$/, '');
     let hostname = '';
     try {
       hostname = new URL(host).hostname;

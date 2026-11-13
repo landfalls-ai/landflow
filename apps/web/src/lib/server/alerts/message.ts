@@ -6,6 +6,7 @@
 import type { AlertEvent } from '../../shared/alerts';
 import type { ExecutionRecord } from '../../shared/types';
 import { waitingSince } from './rules';
+import { publicUrl as configPublicUrl } from '../config';
 
 export interface AlertNotice {
   event: AlertEvent;
@@ -50,7 +51,7 @@ const MAX_ERROR = 1_000;
 
 /** Base of the links in alerts: LANDFLOW_PUBLIC_URL, else localhost (as the runner's resume and error-workflow links). */
 export function publicUrl(): string {
-  return (process.env.LANDFLOW_PUBLIC_URL ?? `http://localhost:${process.env.PORT ?? 3000}`).replace(/\/+$/, '');
+  return configPublicUrl();
 }
 
 export const executionUrl = (workflowId: string, executionId: string) => `${publicUrl()}/workflows/${workflowId}/executions/${executionId}`;

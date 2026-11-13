@@ -25,6 +25,7 @@
  *   `LANDFLOW_WORKER_SHUTDOWN_SECONDS` (default 30: how long SIGTERM waits for runs before re-queuing them).
  */
 import { hostname } from 'node:os';
+import { flag as parseFlag, number as parseNumber } from '../config/parse';
 import { parseClusterNat, parseSentinels, type RespAddress, type SentinelOptions } from './resp';
 
 export type ExecutionsMode = 'regular' | 'queue';
@@ -53,20 +54,17 @@ export interface ClusterConfig {
   shutdownMs: number;
 }
 
-const flag = (value: string | undefined) => /^(true|1|yes|on)$/i.test(value?.trim() ?? '');
-const number = (value: string | undefined, fallback: number, min: number) => {
-  const n = Number(value);
-  return Number.isFinite(n) && value?.trim() ? Math.max(min, n) : fallback;
-};
+const flag = (name: string, env: NodeJS.ProcessEnv) => parseFlag(env[name], false, name);
+const number = (name: string, env: NodeJS.ProcessEnv, fallback: number, min: number) => parseNumber(env[name], { fallback, min, name });
 
 /** The settings in `env` (default: this process's environment). */
 export function clusterConfig(env: NodeJS.ProcessEnv = process.env): ClusterConfig {
   const mode: ExecutionsMode = env.LANDFLOW_EXECUTIONS_MODE?.trim().toLowerCase() === 'queue' ? 'queue' : 'regular';
   const role: ProcessRole = env.LANDFLOW_ROLE?.trim().toLowerCase() === 'worker' ? 'worker' : 'main';
   const explicitId = env.LANDFLOW_INSTANCE_ID?.trim();
-  const leaderTtlMs = number(env.LANDFLOW_LEADER_TTL_SECONDS, 10, 3) * 1000;
+  const leaderTtlMs = number('LANDFLOW_LEADER_TTL_SECONDS', env, 10, 3) * 1000;
   // A dead worker's runs wait longer than its run leases (heartbeat × 6), so a takeover never meets a live lease.
-  const stalledMs = Math.max(number(env.LANDFLOW_STALLED_SECONDS, 30, 5) * 1000, 20_000);
+  const stalledMs = Math.max(number('LANDFLOW_STALLED_SECONDS', env, 30, 5) * 1000, 20_000);
   return {
     mode,
     role,
@@ -76,14 +74,14 @@ export function clusterConfig(env: NodeJS.ProcessEnv = process.env): ClusterConf
     ...sentinelConfig(env),
     ...clusterSettings(env),
     prefix: (env.LANDFLOW_QUEUE_PREFIX?.trim() || 'landflow').replace(/[^\w.-]/g, '_'),
-    workerConcurrency: Math.floor(number(env.LANDFLOW_WORKER_CONCURRENCY, 10, 1)),
-    offloadManual: flag(env.LANDFLOW_OFFLOAD_MANUAL_EXECUTIONS),
-    allowSqlite: flag(env.LANDFLOW_QUEUE_ALLOW_SQLITE),
+    workerConcurrency: Math.floor(number('LANDFLOW_WORKER_CONCURRENCY', env, 10, 1)),
+    offloadManual: flag('LANDFLOW_OFFLOAD_MANUAL_EXECUTIONS', env),
+    allowSqlite: flag('LANDFLOW_QUEUE_ALLOW_SQLITE', env),
     leaderTtlMs,
     stalledMs,
     heartbeatMs: Math.min(5_000, Math.floor(stalledMs / 6)),
-    workerPort: Math.floor(number(env.LANDFLOW_WORKER_PORT, 5690, 0)),
-    shutdownMs: number(env.LANDFLOW_WORKER_SHUTDOWN_SECONDS, 30, 0) * 1000,
+    workerPort: Math.floor(number('LANDFLOW_WORKER_PORT', env, 5690, 0)),
+    shutdownMs: number('LANDFLOW_WORKER_SHUTDOWN_SECONDS', env, 30, 0) * 1000,
   };
 }
 
@@ -104,7 +102,7 @@ function sentinelConfig(env: NodeJS.ProcessEnv): { sentinel?: SentinelOptions } 
       masterName: env.LANDFLOW_VALKEY_MASTER_NAME?.trim() || 'mymaster',
       ...(username && { username }),
       ...(password && { password }),
-      ...(flag(env.LANDFLOW_VALKEY_SENTINEL_TLS) && { tls: true }),
+      ...(flag('LANDFLOW_VALKEY_SENTINEL_TLS', env) && { tls: true }),
     },
   };
 }

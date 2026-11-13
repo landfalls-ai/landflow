@@ -76,6 +76,7 @@ import { clusterActive, coordinator, instanceId, runLeaseMs } from './cluster/st
 import { pausedElsewhere } from './cluster/debug';
 import { refreshRows } from './db/replication';
 import { withWorkflowTransports } from './transports/workflow-scope';
+import { publicUrl as configPublicUrl } from './config';
 
 /** How deep Execute Workflow may nest executions. */
 export const MAX_WORKFLOW_DEPTH = 10;
@@ -237,7 +238,7 @@ const finishedChildren = singleton('finished-children', () => new Map<string, Ex
 
 /** Base of the links the host hands out (resume URLs, error workflow links): LANDFLOW_PUBLIC_URL, else localhost. */
 export function publicUrl(): string {
-  return (process.env.LANDFLOW_PUBLIC_URL ?? `http://localhost:${process.env.PORT ?? 3000}`).replace(/\/+$/, '');
+  return configPublicUrl();
 }
 
 /** Where a webhook or form wait of an execution is resumed (`$execution.resumeUrl` / `resumeFormUrl`). */
