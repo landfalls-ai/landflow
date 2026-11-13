@@ -48,6 +48,7 @@ still works.
 | `DATABASE_URL` | – | Postgres connection string for `LANDFLOW_DB=postgres`, e.g. the infra stack's `postgres://landflow:landflow-dev-only@127.0.0.1:55432/landflow` |
 | `LANDFLOW_PG_BLOCKED_RETRY_SECONDS` | `60` | Postgres mode: seconds between retries of a write batch Postgres rejects while the store is blocked (minimum 1) ([postgres-write-queue.md](../features/postgres-write-queue.md)) |
 | `LANDFLOW_PG_SKIP_BATCH` | – | Postgres mode: a batch sequence number to set aside at boot (written to `<data dir>/postgres-rejected-<seq>.jsonl`, or `postgres-rejected-<instance>-<seq>.jsonl` in queue mode) instead of replaying it |
+| `LANDFLOW_PG_HOT_MINUTES` | `15` | Postgres mode: minutes a finished run keeps its data and journal in the in-memory copy (minimum 1); older runs are read from Postgres on demand, and runs in flight, with a retry waiting or a child of a waiting run stay in it ([architecture.md](../architecture.md#storage)) |
 | `LANDFLOW_PG_SPOOL_FSYNC` | `interval` | Postgres mode, spool durability: `interval` (fdatasync at most every 100 ms), `always` (after each append) or `off` |
 | `LANDFLOW_CONFIG_STORE` | `database` in queue mode, else `files` | where credentials and the settings files (mcp.json, marketplaces.json, skill-library.json, agent-channels.json) live: the database (imported once from the files) or the data directory |
 

@@ -34,7 +34,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   for (const check of gate.failed ?? []) {
     if (!check.spanId) continue;
     try {
-      resolveCheck(id, record.workflowId, { spanId: check.spanId, name: check.name, decision, ...(note && { note }) }, by);
+      await resolveCheck(id, record.workflowId, { spanId: check.spanId, name: check.name, decision, ...(note && { note }) }, by);
     } catch {
       // Settled already (from the strip, one by one): the decision on the run still stands.
     }

@@ -111,12 +111,12 @@ export async function decideApproval(
     if (!isJsonObject(options.input)) throw new ApprovalError('The edited input must be a JSON object', 400);
   }
   // A Slack click can come in while the node is still on its way into waiting.
-  let stored = liveExecution(executionId) ? undefined : store.getExecution(executionId);
+  let stored = liveExecution(executionId) ? undefined : await store.loadExecution(executionId);
   for (let tries = 0; tries < 40 && liveExecution(executionId); tries++) {
     await sleep(150);
-    stored = liveExecution(executionId) ? undefined : store.getExecution(executionId);
+    stored = liveExecution(executionId) ? undefined : await store.loadExecution(executionId);
   }
-  stored ??= store.getExecution(executionId);
+  stored ??= await store.loadExecution(executionId);
   if (!stored) throw new ApprovalError('Execution not found', 404);
   const approval = pendingApproval(stored);
   if (!approval) throw new ApprovalError(stored.status === 'waiting' ? 'This execution is not waiting for a tool approval' : `This execution is ${stored.status}, not waiting for an approval`, 409);

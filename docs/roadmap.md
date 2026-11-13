@@ -1425,6 +1425,14 @@ workbench in place of a page of cards, keeping Spotlight.
     and a reconnect to another main; `pnpm dev` with a `pnpm worker` recording insights and usage and pruning, a dev
     edit of a singleton-held class, and no concurrent marketplace sync across two graphs.
 
+- **P26, Postgres mode keeps only hot run data in memory** (C16 steps 2-3, O4; wave 6): the in-memory copy holds the data
+  and journal of hot runs only (in flight, finished in the last `LANDFLOW_PG_HOT_MINUTES`, with a retry waiting, children
+  of a waiting run); `db/reads.ts` serves cold runs and scans from Postgres (a barrier on the write queue first), eviction
+  is a copy-only write (`Database.evictLocal`), deletes on the partly mirrored tables are always replayed,
+  `promoteExecution` loads a cold run back before its journal is written, queue-mode followers keep cold rows empty, and
+  `landflow.db.replication.lag` reports the follower's lag. At 50,000 finished runs boot went from 10.1 s and 14.1 GB to
+  0.7 s and 164 MB ([deployment.md](deployment.md#postgres-memory-sizing)); `scripts/seed-executions.ts` measures it.
+
 ## Planned next
 
 1. **Declare event kinds in the UI**: kinds are declared over the API or by Record Event's *Declare Kind If New* only.

@@ -66,7 +66,7 @@ function fallbackFor(record: ExecutionRecord): { title: string; message: string 
 export const GET = handler(async (request: Request, { params }: Ctx) => {
   const { id } = await params;
   if (liveExecution(id)) return processing();
-  const record = store.getExecution(id);
+  const record = await store.loadExecution(id);
   if (!record) return notFound();
   if (signatureRefused(id, request, record, 'read')) return invalid();
   const page = waitingPage(record);
@@ -78,7 +78,7 @@ export const GET = handler(async (request: Request, { params }: Ctx) => {
 export const POST = handler(async (request: Request, { params }: Ctx) => {
   const { id } = await params;
   if (liveExecution(id)) return processing();
-  const record = store.getExecution(id);
+  const record = await store.loadExecution(id);
   if (!record) return notFound();
   if (signatureRefused(id, request, record, 'run')) return invalid();
   const page = waitingPage(record);

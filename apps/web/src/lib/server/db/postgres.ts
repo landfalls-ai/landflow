@@ -14,8 +14,10 @@
  * so the in-memory copy can't run ahead, and the batch is retried every LANDFLOW_PG_BLOCKED_RETRY_SECONDS. LANDFLOW_PG_SKIP_BATCH=<seq> skips it at the
  * next boot, writing it to `postgres-rejected-<seq>.jsonl` (`-<instance>-<seq>` in queue mode).
  *
- * Limits: one host per database (an advisory lock refuses a second one) in regular mode, and the
- * whole database lives in memory.
+ * Memory: the copy holds every table except the data and journal of cold runs, which Postgres serves on demand
+ * (./hot-mirror, ./reads); the audit log, the usage ledger, insights rows and AI usage still live in it whole.
+ *
+ * Limits: one host per database (an advisory lock refuses a second one) in regular mode.
  *
  * Queue mode (`openPostgres(…, { instanceId })`, lib/server/cluster): mains and workers share the database. Each holds
  * the instance lock in shared mode (so a regular-mode host can't join, nor start beside them), spools to
@@ -28,6 +30,7 @@ import type { Pool, PoolClient } from 'pg';
 import { envNumber, envString } from '../config';
 import { logger } from '../telemetry/logger';
 import { Database, openSqliteConnection, upsertSql, type DirectClient, type SqlValue, type WriteHealth, type WriteOp, type WriteSink } from './database';
+import { hotCutoff, mirrorSelect, startEviction } from './hot-mirror';
 import { CHANGES_CHANNEL, noticesFor, Replica, rowIdOf } from './replication';
 import { recordWriteRejection, recordWriteRetry, registerWriteMetrics } from './write-metrics';
 import { addColumnSql, MIGRATIONS, pendingMigrations, SCHEMA_VERSION_TABLE, TABLES, type TableName } from './schema';
@@ -138,6 +141,15 @@ export class PostgresSink implements WriteSink {
   private readonly pending = new Map<string, number>();
   /** Queue mode: the follower (closed with the store). */
   replica?: Replica;
+  /** The tables the copy holds in part (a delete on them is always replayed). */
+  readonly partial: ReadonlySet<TableName> = new Set<TableName>(['executions', 'execution_events']);
+  /** Executions with writes not yet in Postgres, with how many. */
+  private readonly pendingExecs = new Map<string, number>();
+  /** Sequence number of the last batch applied (or already there at boot), and who waits for a later one. */
+  private applied: number;
+  private waiters: Array<{ seq: number; resolve: (ok: boolean) => void }> = [];
+  /** Stops the evictor of cold runs (./hot-mirror). */
+  stopEviction?: () => void;
 
   constructor(
     private readonly pool: Pool,
@@ -147,6 +159,7 @@ export class PostgresSink implements WriteSink {
     private readonly shared?: Shared,
     options: SinkOptions = {},
   ) {
+    this.applied = seq;
     const mode = options.spoolFsync ?? envString('LANDFLOW_PG_SPOOL_FSYNC')?.toLowerCase();
     this.fsync = mode === 'always' || mode === 'off' ? mode : 'interval';
     // At least a second from the environment, so a blocked sink can't retry in a tight loop; tests pass 0 as an option.
@@ -160,15 +173,47 @@ export class PostgresSink implements WriteSink {
   private track(batches: Batch[], delta: 1 | -1) {
     for (const batch of batches) {
       this.queuedOps += delta * batch.ops.length;
-      if (!this.shared) continue;
       for (const op of batch.ops) {
+        const exec = executionOf(op);
+        if (exec) bump(this.pendingExecs, exec, delta);
+        if (!this.shared) continue;
         const id = rowIdOf(op);
-        if (!id) continue;
-        const count = (this.pending.get(id) ?? 0) + delta;
-        if (count > 0) this.pending.set(id, count);
-        else this.pending.delete(id);
+        if (id) bump(this.pending, id, delta);
       }
     }
+  }
+
+  pendingExecutions(): { has(id: string): boolean } {
+    return this.pendingExecs;
+  }
+
+  /** Resolve true once every batch queued by now is in Postgres, false after `timeoutMs` (a blocked or slow queue). */
+  barrier(timeoutMs: number): Promise<boolean> {
+    if (this.applied >= this.seq) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const waiter = {
+        seq: this.seq,
+        resolve: (ok: boolean) => {
+          clearTimeout(timer);
+          resolve(ok);
+        },
+      };
+      const timer = setTimeout(() => {
+        this.waiters = this.waiters.filter((w) => w !== waiter);
+        resolve(false);
+      }, timeoutMs);
+      timer.unref?.();
+      this.waiters.push(waiter);
+    });
+  }
+
+  private markApplied(seq: number) {
+    this.applied = Math.max(this.applied, seq);
+    this.waiters = this.waiters.filter((waiter) => {
+      if (waiter.seq > this.applied) return true;
+      waiter.resolve(true);
+      return false;
+    });
   }
 
   /** Rows with writes of this process not yet in Postgres. */
@@ -260,6 +305,7 @@ export class PostgresSink implements WriteSink {
         await applyBatches(this.pool, take, this.shared);
         this.queue.splice(0, take.length);
         this.track(take, -1);
+        this.markApplied(take.at(-1)!.seq);
         this.failures = 0;
         this.rejections = 0;
         this.lastError = undefined;
@@ -316,6 +362,7 @@ export class PostgresSink implements WriteSink {
   /** Boot failed after the sink was made: release the spool and the metrics source without flushing (the caller ends the pool). */
   discard() {
     this.closed = true;
+    this.stopEviction?.();
     this.unregister?.();
     clearTimeout(this.fsyncTimer);
     const fd = this.fd;
@@ -332,6 +379,9 @@ export class PostgresSink implements WriteSink {
       await this.flush(this.closeFlushMs);
     } finally {
       this.closed = true;
+      this.stopEviction?.();
+      for (const waiter of this.waiters) waiter.resolve(false);
+      this.waiters = [];
       this.unregister?.();
       clearTimeout(this.fsyncTimer);
       try {
@@ -347,6 +397,21 @@ export class PostgresSink implements WriteSink {
       await this.pool.end();
     }
   }
+}
+
+/** The execution a write belongs to (its row, or one of its journal events), for the evictor's list of rows in flight to Postgres. */
+function executionOf(op: WriteOp): string | undefined {
+  if (op.table !== 'executions' && op.table !== 'execution_events') return undefined;
+  if (op.op === 'deleteBefore') return undefined;
+  const values = op.op === 'delete' ? op.where : op.row;
+  const id = op.table === 'executions' ? values.id : values.execution_id;
+  return typeof id === 'string' ? id : undefined;
+}
+
+function bump(map: Map<string, number>, key: string, delta: 1 | -1) {
+  const count = (map.get(key) ?? 0) + delta;
+  if (count > 0) map.set(key, count);
+  else map.delete(key);
 }
 
 /** Queue mode: each process has its own sequence space, so the file name carries the instance. */
@@ -370,7 +435,7 @@ async function applyBatches(pool: Pool, batches: Batch[], shared?: Shared) {
     }
     if (shared) {
       // Delivered at COMMIT, in commit order, to every other process's LISTEN connection (./replication).
-      for (const payload of noticesFor(shared.origin, batches.flatMap((batch) => batch.ops))) await client.query('SELECT pg_notify($1, $2)', [CHANGES_CHANNEL, payload]);
+      for (const payload of noticesFor(shared.origin, batches.flatMap((batch) => batch.ops), Date.now())) await client.query('SELECT pg_notify($1, $2)', [CHANGES_CHANNEL, payload]);
     }
     await setSeq(client, batches.at(-1)!.seq, shared?.seqKey);
     await client.query('COMMIT');
@@ -429,11 +494,13 @@ export async function replaySpool(pool: Pool, spool: string, shared?: Shared): P
   return last;
 }
 
-/** Copy every table from Postgres into the in-memory SQLite connection. */
+/** Copy every table from Postgres into the in-memory SQLite connection (run data and journal: only the hot runs'). */
 async function loadMirror(pool: Pool, mirror: Database): Promise<Record<string, number>> {
   const counts: Record<string, number> = {};
+  const cutoff = hotCutoff();
   for (const table of Object.keys(TABLES) as TableName[]) {
-    const { rows } = await pool.query(`SELECT * FROM ${table}`);
+    const query = mirrorSelect(table, cutoff);
+    const { rows } = await pool.query(query.text, query.values);
     counts[table] = rows.length;
     if (!rows.length) continue;
     const columns = Object.keys(rows[0]);
@@ -488,8 +555,8 @@ export async function openPostgres(url: string, dataDir: string, options: { inst
     const counts = await loadMirror(pool, db);
     replica?.ready();
     logger.info('postgres store loaded', { 'landflow.db.workflows': counts.workflows ?? 0, 'landflow.db.executions': counts.executions ?? 0 });
-    // Best effort; anything left is in the spool for the next boot.
-    process.once('beforeExit', () => void opened.flush(5_000).catch(() => {}));
+    // Runs that cool down leave the copy (nothing is sent to Postgres); the lifecycle shutdown registry flushes the queue.
+    opened.stopEviction = startEviction(db);
     return db;
   } catch (error) {
     // A test (or a retried boot) that opens again must not inherit this attempt's spool descriptor or metrics source.

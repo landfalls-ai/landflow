@@ -13,14 +13,14 @@ type Ctx = { params: Promise<{ id: string }> };
 export const POST = handler(async (_request: Request, { params }: Ctx) => {
   const { id } = await params;
   const live = liveExecution(id);
-  const record = live ?? store.getExecution(id);
+  const record = live ?? await store.loadExecution(id);
   const audit = (status: string) => recordAudit({ action: 'execution.stop', target: { type: 'execution', id, ...(record?.workflowName && { name: record.workflowName }) }, details: { workflowId: record?.workflowId, status } });
   if (live) {
     const stopped = cancelExecution(id);
     audit(live.status);
     return json({ executionId: id, stopped, status: live.status });
   }
-  const status = store.getExecution(id)?.status;
+  const status = record?.status;
   if (!status) return error('Execution not found', 404);
   if (status === 'waiting' || status === 'queued') {
     const stopped = status === 'waiting' ? cancelWaitingExecution(id) : cancelQueuedExecution(id);

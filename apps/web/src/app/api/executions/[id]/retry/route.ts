@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { error, handler, json } from '@/lib/server/http';
 import { RerunError, startRetry } from '@/lib/server/runner';
 import { traceparentHeader } from '@/lib/server/telemetry';
+import { promoteExecution } from '@/lib/server/db/reads';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
@@ -31,7 +32,10 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   if (!body.success) return error('Invalid request', 400, { issues: body.error.issues.slice(0, 10) });
   try {
     // The retry continues in the background inside this request's trace.
-    const executionId = await startRetry((await params).id, body.data);
+    const id = (await params).id;
+    // Postgres mode: an old run's data is not in memory, and the planner reads it synchronously.
+    await promoteExecution(id);
+    const executionId = await startRetry(id, body.data);
     return json({ executionId }, { status: 202, headers: traceparentHeader() });
   } catch (caught) {
     if (caught instanceof RerunError) return error(caught.message, caught.status);
