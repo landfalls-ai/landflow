@@ -29,6 +29,7 @@ import {
 import { authDb } from '../auth/db';
 import { AuthError } from '../auth/errors';
 import {
+  allShares,
   defaultProjectId,
   ensurePersonalProject,
   getProject,
@@ -68,19 +69,23 @@ export function visibleProjectIds(actor: Actor): Set<string> | undefined {
   return new Set([personalProjectId(actor.id), ...membershipsOf(actor.id).map((m) => m.projectId)]);
 }
 
+/** The access a home role and a list of shares give, with `roleIn` saying the actor's role in a project. */
+function accessFrom(home: string | undefined, homeShares: Array<{ projectId: string; role: string }>, roleIn: (projectId: string | undefined) => ProjectRole | undefined): ResourceAccess | undefined {
+  const homeRole = roleIn(home);
+  let access: ResourceAccess | undefined = homeRole && { role: homeRole, home: true };
+  for (const share of homeShares) {
+    const role = roleIn(share.projectId);
+    if (!role) continue;
+    access = strongerAccess(access, { role: share.role === 'user' ? 'user' : weakerRole<ResourceAccess['role']>(role, share.role as ProjectRole), home: false });
+  }
+  return access;
+}
+
 /** `actor`'s access to one resource (undefined: none, it is invisible to them). */
 export function resourceAccess(actor: Actor | undefined, kind: ResourceKind, id: string): ResourceAccess | undefined {
   if (!actor) return undefined;
   if (isInstanceAdmin(actor)) return FULL_ACCESS;
-  const home = homeProjectId(kind, id);
-  const homeRole = projectRole(actor, home);
-  let access: ResourceAccess | undefined = homeRole && { role: homeRole, home: true };
-  for (const share of shares(kind, id)) {
-    const role = projectRole(actor, share.projectId);
-    if (!role) continue;
-    access = strongerAccess(access, { role: share.role === 'user' ? 'user' : weakerRole<ResourceAccess['role']>(role, share.role), home: false });
-  }
-  return access;
+  return accessFrom(homeProjectId(kind, id), shares(kind, id), (projectId) => projectRole(actor, projectId));
 }
 
 /** Whether `actor` may do `action` with a resource. */
@@ -178,12 +183,18 @@ export function withOwnership<T extends { id: string }>(actor: Actor, kind: Reso
   const fallback = defaultProjectId();
   const projects = new Map(listProjects().map((p) => [p.id, p]));
   const visible = visibleIds(actor, kind, items.map((item) => item.id));
+  // One query per kind for the shares and one for the memberships, not one per item (an N+1 once reads go to Postgres).
+  const allShared = allShares(kind);
+  const admin = isInstanceAdmin(actor);
+  const roles = admin ? undefined : new Map(membershipsOf(actor.id).map((m) => [m.projectId, m.role]));
+  const roleIn = (id: string | undefined): ProjectRole | undefined => (!id ? undefined : admin || id === personalProjectId(actor.id) ? 'admin' : roles?.get(id));
   const out: Array<T & { ownership: ResourceOwnership }> = [];
   for (const item of items) {
     if (visible && !visible.has(item.id)) continue;
     const home = homes.get(item.id) ?? fallback ?? '';
-    if (projectId && home !== projectId && !shares(kind, item.id).some((s) => s.projectId === projectId)) continue;
-    const access = resourceAccess(actor, kind, item.id) ?? FULL_ACCESS;
+    const itemShares = allShared.get(item.id) ?? [];
+    if (projectId && home !== projectId && !itemShares.some((s) => s.projectId === projectId)) continue;
+    const access = (admin ? FULL_ACCESS : accessFrom(homes.get(item.id) ?? fallback, itemShares, roleIn)) ?? FULL_ACCESS;
     const project = projects.get(home);
     out.push({ ...item, ownership: { projectId: home, projectName: project?.name ?? 'Default', projectType: project?.type ?? 'personal', access, shared: !access.home } });
   }

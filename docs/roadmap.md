@@ -1267,6 +1267,7 @@ workbench in place of a page of cards, keeping Spotlight.
     runs themselves read `ollamaUrl()` at call time);
   - tests still missing from wave 1: SCIM `PUT /Users` and `PUT /Groups` events, the 10,000-address eviction, and
     access-scope cases for evaluation-dataset files, a live run's file and an agent the member can open.
+- **P15, database conventions** (C18; wave 3): prepared statements are cached in an LRU capped by `LANDFLOW_DB_STATEMENT_CACHE` (default 500); a test fails a new migration whose version is not above every earlier one; `withOwnership` reads shares and memberships once per list instead of per item.
 
 ## Planned next
 
