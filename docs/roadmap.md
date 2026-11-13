@@ -1268,6 +1268,7 @@ workbench in place of a page of cards, keeping Spotlight.
     runs themselves read `ollamaUrl()` at call time);
   - tests still missing from wave 1: SCIM `PUT /Users` and `PUT /Groups` events, the 10,000-address eviction, and
     access-scope cases for evaluation-dataset files, a live run's file and an agent the member can open.
+- **P12, audit coverage** (S7, S8; wave 3): permission and secret changes are domain events (`project.*`, `project.member_change`, `resource.share` / `unshare` / `transfer`, `variable.*`, `secret_provider.*`, `auth.password_change`) with `from` / `to`; failed SAML and OIDC sign-ins are `auth.sign_in_failed`; refused reads are `api.denied`, once a minute per caller and route; exports (`sync.export`, `datatable.export`), credential tests and agent tool approvals are recorded. See [audit and governance](features/audit-and-governance.md).
 
 ## Planned next
 

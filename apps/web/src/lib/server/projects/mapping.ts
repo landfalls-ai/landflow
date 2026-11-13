@@ -72,7 +72,7 @@ export function syncManagedMemberships(userId: string, source: 'saml' | 'scim', 
   db.transaction(() => {
     const wanted = new Map(desired.map((grant) => [grant.projectId, grant.role]));
     for (const membership of membershipsOf(userId)) {
-      if (membership.source === source && !wanted.has(membership.projectId)) removeMember(membership.projectId, userId);
+      if (membership.source === source && !wanted.has(membership.projectId)) removeMember(membership.projectId, userId, source);
     }
     for (const [projectId, role] of wanted) {
       const current = membershipsOf(userId).find((m) => m.projectId === projectId);

@@ -17,6 +17,7 @@ import { singleton } from '../singleton';
 import { logger } from '../telemetry/logger';
 import { PROVIDERS, SecretProviderError, type ProviderConfig, type SecretsProvider, type SecretValue } from './providers';
 import { redactText } from './redact';
+import { recordAudit } from '../audit';
 import { configOf, providerStore, viewOf, type StoredProvider } from './store';
 
 /** `$secrets.<name>`: an identifier, so `$secrets.vault.x` reads without brackets. */
@@ -139,6 +140,16 @@ function checkRequired(kind: SecretProviderKind, config: ProviderConfig) {
   if (missing.length) throw new SecretsError(`Missing ${missing.map((f) => f.label).join(', ')}`);
 }
 
+/** `secret_provider.create|update|delete`: the provider's name and kind and which fields changed, never a setting or secret value. */
+function auditProvider(change: 'create' | 'update' | 'delete', provider: Pick<StoredProvider, 'name' | 'kind'>, details: Record<string, unknown>) {
+  recordAudit({
+    action: `secret_provider.${change}`,
+    target: { type: 'secret_provider', id: provider.name, name: provider.name },
+    summary: `${change === 'create' ? 'Added' : change === 'update' ? 'Changed' : 'Removed'} the external secrets provider ${provider.name} (${provider.kind})`,
+    details: { provider: provider.name, kind: provider.kind, ...details },
+  });
+}
+
 export const externalSecrets = {
   list(): SecretProviderView[] {
     return providerStore.list().map(viewOf);
@@ -170,6 +181,7 @@ export const externalSecrets = {
     const stored: StoredProvider = { name, kind: input.kind, enabled: input.enabled ?? true, settings, secrets, names: [], createdAt: now, updatedAt: now };
     build(stored).close?.();
     providerStore.save(stored);
+    auditProvider('create', stored, { enabled: stored.enabled });
     return viewOf(stored);
   },
 
@@ -185,12 +197,23 @@ export const externalSecrets = {
     if (stored.enabled) build(stored).close?.();
     providerStore.save(stored);
     dropInstance(name);
+    // Which settings changed (names only), and a secret field is only ever named as “changed”.
+    const changed = Object.keys(input.settings ?? {}).filter((key) => {
+      const sent = input.settings![key];
+      if (sent === undefined) return false;
+      if (key in settings) return String(settings[key] ?? '') !== String(previous.settings[key] ?? '');
+      return sent !== null ? String(sent) !== '' : true;
+    });
+    auditProvider('update', stored, { enabledFrom: previous.enabled, enabledTo: stored.enabled, fieldsChanged: changed });
     return viewOf(stored);
   },
 
   delete(name: string): boolean {
     dropInstance(name);
-    return providerStore.delete(name);
+    const before = providerStore.get(name);
+    const deleted = providerStore.delete(name);
+    if (deleted && before) auditProvider('delete', before, {});
+    return deleted;
   },
 
   /**
