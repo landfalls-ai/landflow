@@ -7,6 +7,7 @@
  * current page. The trigger's authentication and IP allow-list apply; file fields arrive as `item.binary.<field>`.
  * See lib/server/test-webhooks.ts.
  */
+import { resumeFormPath } from '@/lib/server/resume-signing';
 import type { BinaryRef } from '@landflow/protocol';
 import type { WorkflowNode } from '@landflow/engine';
 import { binaryLimits, deleteExecutionBinary } from '@/lib/server/binary/access';
@@ -56,7 +57,7 @@ async function refused(request: Request, workflowId: string, node: WorkflowNode)
 async function submitted(listener: TestListener, status = 200): Promise<Response> {
   const id = listener.executionId;
   if (clusterActive()) await refreshRows('executions', { id }).catch(() => {});
-  if (!liveExecution(id) && waitingPage(store.getExecution(id))) return redirect(`/form/waiting/${id}`);
+  if (!liveExecution(id) && waitingPage(store.getExecution(id))) return redirect(resumeFormPath(id));
   return messagePage({ title: 'Form submitted', message: 'This test form was submitted and its test run is in progress. Listen for a test event in the editor to submit it again.', status });
 }
 

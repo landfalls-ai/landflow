@@ -1246,6 +1246,7 @@ workbench in place of a page of cards, keeping Spotlight.
 - **P03** (C16 step 1, O4): Postgres mode never drops a write batch. A batch Postgres rejects five times blocks the store (writes refused with `StoreUnavailableError`, retried, `LANDFLOW_PG_SKIP_BATCH` to set it aside), the spool is one fsynced descriptor, and `writeHealth()` plus five metrics report the queue ([postgres-write-queue.md](features/postgres-write-queue.md)).
 - **P04, execution retention in SQL off the save path (C17).** `pruneExecutions` selects ids by column in chunks and a finished run triggers it only every `LANDFLOW_RETENTION_EVERY` runs.
 - **P05, SCIM audit, Stop all for admins, project scoping for AI usage and files** (S2, S4, S12 part): SCIM changes and rejected tokens are audit events; stop-all is admin-only; members' AI usage and file reads stop at their projects.
+- **P09, trusted proxies, public URL for emailed links, signed resume URLs** (S6, S12 part): `clientAddress()` trusts `X-Forwarded-For` only up to `LANDFLOW_TRUSTED_PROXIES` hops (sign-in limits, audit and webhook allow-lists use it); invite and reset links never come from request headers in production; resume URLs carry an HMAC `sig` that production requires (`LANDFLOW_RESUME_SIGNATURES`), old waits keep working.
 
 ## Planned next
 

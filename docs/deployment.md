@@ -1017,3 +1017,12 @@ If you joined the networks with `compose.infra-link.yml`, pass it to `down` as w
 - **LocalStack** (profile `aws`) stands in for AWS Secrets Manager: Settings → External secrets → AWS Secrets Manager with the endpoint `http://localhost:54566` (or `http://localstack:4566` from the app stack) and dummy access keys. `LANDFLOW_INTEGRATION=aws npx vitest run test/secrets-aws.integration.test.ts` (in `apps/web`) runs the provider against it with the shared AWS config and credentials files turned off. Secrets are gone after a restart.
 - **GreenMail** is there because Mailpit has no IMAP: it is the mailbox the Email Trigger (IMAP) reads. Mail sent to its SMTP port lands in its own mailboxes, not in Mailpit.
 - Keycloak's realm is imported only when the realm doesn't exist yet. After editing `infra/keycloak/landflow-realm.json`, run `down -v` on the infra stack (or delete the realm in the admin console) and start it again.
+
+## Behind a reverse proxy or ingress
+
+Set `LANDFLOW_TRUSTED_PROXIES` to the number of proxies between the client and the host (an ingress controller behind a
+cloud load balancer is 2). The host then takes the client address from `X-Forwarded-For` that many entries from the end
+and builds its own origin from `X-Forwarded-Host`/`-Proto`; with the default 0 it sees every request as coming from the
+proxy's address (one shared sign-in limit) and ignores those headers. Also set `LANDFLOW_PUBLIC_URL`: invite and reset
+emails refuse to go out in the production profile without it. Resume URLs are signed in production
+(`LANDFLOW_RESUME_SIGNATURES`, see [engine](features/engine.md)).
