@@ -144,9 +144,17 @@ class Store {
     return saved;
   }
 
-  deleteWorkflow(id: string): boolean {
+  /**
+   * Delete a workflow. `alsoDelete` runs in the same transaction (its versions, publications, project rows and policy:
+   * the route passes them, this module doesn't import them), so a failure leaves everything in place; the cache and
+   * the listeners change after the commit.
+   */
+  deleteWorkflow(id: string, alsoDelete?: () => void): boolean {
     if (!this.cache.has(id)) return false;
-    this.db.delete('workflows', { id });
+    this.db.transaction(() => {
+      this.db.delete('workflows', { id });
+      alsoDelete?.();
+    });
     this.cache.delete(id);
     this.listeners.forEach((listener) => listener());
     return true;

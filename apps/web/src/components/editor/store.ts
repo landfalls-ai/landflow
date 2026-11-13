@@ -133,6 +133,8 @@ export type RunCommand = { kind: 'run'; by?: 'spotlight' } | { kind: 'debug' } |
 
 interface EditorState {
   workflowId: string;
+  /** The `updatedAt` of the stored workflow this tab last loaded or saved: sent as `If-Match`, so a save over a newer one is refused (412). */
+  baseUpdatedAt?: string;
   name: string;
   description?: string;
   active: boolean;
@@ -254,7 +256,8 @@ interface EditorState {
   commitName(): void;
   openNode(id?: string): void;
   openPalette(request?: PaletteRequest): void;
-  markSaved(): void;
+  /** The draft is saved: `updatedAt` is the stored workflow's new version. */
+  markSaved(updatedAt?: string): void;
   toggleBreakpoint(id: string): void;
   startRun(debug?: boolean): void;
   applyEvent(event: ExecutionEvent): void;
@@ -546,6 +549,7 @@ export const useEditor = create<EditorState>((set, get) => {
     Object.assign(history, { past: [], future: [], last: undefined, batch: 0, dragging: false, resizing: false, saved: '' });
     set({
       workflowId: workflow.id,
+      baseUpdatedAt: workflow.updatedAt,
       name: workflow.name,
       description: workflow.description,
       active: Boolean(workflow.active),
@@ -1162,9 +1166,9 @@ export const useEditor = create<EditorState>((set, get) => {
     set({ palette: request });
   },
 
-  markSaved() {
+  markSaved(updatedAt) {
     history.saved = savedContent(get());
-    set({ dirty: false });
+    set({ dirty: false, ...(updatedAt && { baseUpdatedAt: updatedAt }) });
   },
 
   toggleBreakpoint(id) {

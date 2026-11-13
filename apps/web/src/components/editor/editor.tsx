@@ -721,12 +721,14 @@ export function Editor({ workflowId }: { workflowId: string }) {
     try {
       // `active` stays out: a save is a draft, and Publish / Unpublish (PublishControl) change what is live.
       const { active: _active, ...draft } = useEditor.getState().toWorkflow();
+      // Based on the version this tab loaded or last saved: someone else's newer save is refused (412) instead of overwritten.
+      const base = useEditor.getState().baseUpdatedAt;
       const { workflow, policyWarnings, triggerAuthWarnings } = await api<{ workflow: Workflow; triggerAuthWarnings?: Array<{ nodeName: string; message: string }> } & PolicyWarnings>(`/api/workflows/${workflowId}`, {
         method: 'PUT',
         json: draft,
-        headers: editorTabHeaders(),
+        headers: { ...editorTabHeaders(), ...(base && { 'if-match': `"${base}"` }) },
       });
-      useEditor.getState().markSaved();
+      useEditor.getState().markSaved(workflow.updatedAt);
       toast.success(`Saved “${workflow.name}”`);
       // Nodes the governance policy doesn't allow: the save stands, publishing is refused and they fail when run.
       if (policyWarnings?.length) toast.warning(`${policyWarnings.length === 1 ? '1 node is' : `${policyWarnings.length} nodes are`} blocked by policy`, { description: policyWarnings.map((w) => `${w.nodeName}: ${w.message}`).join('\n') });
