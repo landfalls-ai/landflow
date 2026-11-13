@@ -5,7 +5,7 @@
  * while that main is up: debug sessions and sign-in redirects live in one main. Streams responses (the editor's SSE).
  *
  * For the local stack only: in production put your own load balancer in front of the mains (nginx, HAProxy, a cloud
- * load balancer) with health checks on /api/health and sticky sessions.
+ * load balancer) with health checks on /api/health/ready and sticky sessions.
  *
  *   LB_UPSTREAMS=main-1:3000,main-2:3000 LB_PORT=3000 node lb.mjs
  */
