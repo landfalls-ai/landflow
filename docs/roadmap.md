@@ -1253,7 +1253,6 @@ workbench in place of a page of cards, keeping Spotlight.
 - **P10, security headers and a nonce CSP** (S10): the proxy sets nosniff, referrer and permissions policies, frame denial, HSTS
   over https and a per-request nonce Content Security Policy on pages (`LANDFLOW_CSP`: enforce in production, report in
   development; `LANDFLOW_HSTS`); embeddable paths keep their own policy; `x-powered-by` is off.
-- **P11, `HttpError`, a generic 500 and one request pipeline** (C15, S12, contributes to C12; wave 3): `lib/server/errors.ts` holds `HttpError`; `handler()` answers it (status, code, details), a ZodError (400) and anything else as a generic 500 with the request id, never the message. `projectRoute`, `dataTableRoute`, the marketplace wrapper (its message regex is gone: `MarketplaceError` and `FetchError` extend `HttpError`) and `scimRoute` (now over `handler()` with `formatError`; gains the readiness wait, drain and request id) no longer map errors by hand; the approval email route runs through `handler()`; seven raw `request.json()` calls use `parseBody`. `PUT /api/workflows/:id` accepts `If-Match` / `baseUpdatedAt` (412 `workflow_conflict`, the editor sends it), deleting a workflow is one transaction, and `routePolicy()` marks its default with `fallback` so `test/policy-coverage.test.ts` fails a mutating route with no access rule. P27 converts the remaining domain error classes and the hand-written `catch` blocks.
 - **Wave 1 carryover** (applied in wave 2): retention counts and the `LANDFLOW_RETENTION_EVERY` floor, the blocked
   Postgres store's 503 and sink fixes, an earlier shutdown registration and capped intake wait, the compose grace
   periods, a load balancer that skips a main that is not ready, AI usage groups and Stop all's key scope, capped SCIM
@@ -1268,6 +1267,7 @@ workbench in place of a page of cards, keeping Spotlight.
     runs themselves read `ollamaUrl()` at call time);
   - tests still missing from wave 1: SCIM `PUT /Users` and `PUT /Groups` events, the 10,000-address eviction, and
     access-scope cases for evaluation-dataset files, a live run's file and an agent the member can open.
+- **P11, `HttpError`, a generic 500 and one request pipeline** (C15, S12, contributes to C12; wave 3): `lib/server/errors.ts` holds `HttpError`; `handler()` answers it (status, code, details), a ZodError (400) and anything else as a generic 500 with the request id, never the message. `projectRoute`, `dataTableRoute`, the marketplace wrapper (its message regex is gone: `MarketplaceError` and `FetchError` extend `HttpError`) and `scimRoute` (now over `handler()` with `formatError`; gains the readiness wait, drain and request id) no longer map errors by hand; the approval email route runs through `handler()`; seven raw `request.json()` calls use `parseBody`. `PUT /api/workflows/:id` accepts `If-Match` / `baseUpdatedAt` (412 `workflow_conflict`, the editor sends it), deleting a workflow is one transaction, and `routePolicy()` marks its default with `fallback` so `test/policy-coverage.test.ts` fails a mutating route with no access rule. P27 converts the remaining domain error classes and the hand-written `catch` blocks.
 - **P12, audit coverage** (S7, S8; wave 3): permission and secret changes are domain events (`project.*`, `project.member_change`, `resource.share` / `unshare` / `transfer`, `variable.*`, `secret_provider.*`, `auth.password_change`) with `from` / `to`; failed SAML and OIDC sign-ins are `auth.sign_in_failed`; refused reads are `api.denied`, once a minute per caller and route; exports (`sync.export`, `datatable.export`), credential tests and agent tool approvals are recorded. See [audit and governance](features/audit-and-governance.md).
 - **P13, safeFetch: one guarded client for outbound calls** (S5, O5; wave 3): `lib/server/net/safe-fetch.ts` refuses
   loopback, private, link-local, CGNAT and metadata addresses in the production profile unless
@@ -1284,12 +1284,6 @@ workbench in place of a page of cards, keeping Spotlight.
   profile runs Code nodes only in the code runner unless `LANDFLOW_CODE_IN_PROCESS=true`; the in-process context also loses
   `eval` and `new Function`. An isolate backend remains for a later package.
 - **P15, database conventions** (C18; wave 3): prepared statements are cached in an LRU capped by `LANDFLOW_DB_STATEMENT_CACHE` (default 500); a test fails a new migration whose version is not above every earlier one; `withOwnership` reads shares and memberships once per list instead of per item.
-- **P20, a store that does not call up; one way to hold process-wide state** (C10, C4, contributes to C7; wave 4):
-  `store.saveExecution` emits `onExecutionFinished` and `execution-reactions.ts` subscribes insights, the usage ledger
-  and retention (registered by the runtime for both roles), so the store imports no feature and the store, settings,
-  insights and ledger cycle is gone. Every process-wide holder goes through `singleton()` (`resetSingleton`,
-  `singletonKeys`), including the marketplace sync guard; `LANDFLOW_USAGE_RETENTION_DAYS` and
-  `LANDFLOW_AI_USAGE_RETENTION_DAYS` replace the old names, which still work.
 - **Wave 2 carryover** (applied in wave 3): `pnpm worker` exits 1 when Valkey is unreachable and handles signals
   during its boot, the registry is required on a worker, emails are masked in the
   effective configuration, health state lives in `singleton()`, the registry normalises `grpc://` hosts and keeps
@@ -1335,6 +1329,43 @@ workbench in place of a page of cards, keeping Spotlight.
   than 88 files reading `process.env` outside `lib/server/config`, and on a stale generated page. SAML, mail, S3,
   marketplace and environment-protection flags now go through `envFlag`; the values they accept changed (`LANDFLOW_S3_FORCE_PATH_STYLE=0` is now off, `LANDFLOW_SMTP_SECURE=1` true, `LANDFLOW_MARKETPLACE_ALLOW_LOCAL=true` on, `LANDFLOW_ENVIRONMENT_PROTECTED=on`/`off` decides, an unparseable SAML flag takes its default; see history.md).
 - **P19, one SSE helper** (C14; wave 4): `lib/server/sse.ts` (`sseResponse`) bounds each client's unread bytes (1 MiB, then a closing comment and the stream ends), writes `id:` / `event:` lines, heartbeats and cleans up; the bus keeps a ring of the last 500 events with `seq` and no longer raises the EventEmitter limit. `/api/events` (`lib/server/events-stream.ts`) numbers events `<boot>.<seq>`, replays after `Last-Event-ID` or sends `event: reset`, and re-checks the viewer's access every 30 s (closing when the session or user is gone). The assistant chat, agent architect, run and approvals routes use the helper.
+- **P20, a store that does not call up; one way to hold process-wide state** (C10, C4, contributes to C7; wave 4):
+  `store.saveExecution` emits `onExecutionFinished` and `execution-reactions.ts` subscribes insights, the usage ledger
+  and retention (registered by the runtime for both roles), so the store imports no feature and the store, settings,
+  insights and ledger cycle is gone. Every process-wide holder goes through `singleton()` (`resetSingleton`,
+  `singletonKeys`), including the marketplace sync guard; `LANDFLOW_USAGE_RETENTION_DAYS` and
+  `LANDFLOW_AI_USAGE_RETENTION_DAYS` replace the old names, which still work.
+- **Wave 3 carryover** (applied in wave 4): a workflow delete tells publication listeners only after its commit and
+  rolls back when the policy delete fails; the SCIM generic 500 names its request id; a marketplace plugin read is a
+  422 only when it is the plugin's fault; a no-op variable PATCH records nothing; the first request boots the host
+  outside its own audit and log context; the reset route says it is a reset; `api.denied` is capped at 60 a minute;
+  a throwing credential test is recorded; remote MCP servers check the MCP list on every redirect hop; IPv4-compatible,
+  6to4 and local NAT64 addresses are judged by their IPv4 part (or reserved); an OpenAI-compatible refusal leads with
+  the Blocked message; the expression `async` check no longer trips on a variable named `asynk`; tests for the
+  node:http SIEM path with blocking on and the statement cache's write path; and docs (If-Match limits, outbound
+  coverage, the realm's console, newer-Node engine runs). Deferred:
+  - SSO sign-in failures are one event a minute per client address, and `refused` covers a bad signature, an unknown
+    and a deactivated user alike: a finer category and a per-address allowance above one need a decision on volume;
+  - `test/policy-coverage.test.ts` matches its markers per route file, not per exported method, so a file with a
+    guarded GET and an unguarded POST passes; matching per handler is a tightening for later;
+  - audit tests still missing: SSO `refused`, `provider_error` and `error` outcomes, a refused HEAD, `api.denied` on a
+    skipped path, and SSO/SCIM group-mapping member events with `source` (each needs an IdP fake or a mapping fixture);
+  - `safeFetch`'s implicit endpoints (code runner, Ollama, MCP gateway) are exempt for every caller, the HTTP Request
+    node and redirects included; an option that limits the exemption to the callers that own each endpoint is a
+    follow-up of its own;
+  - an in-cluster identity provider's token and JWKS endpoints still need `LANDFLOW_OUTBOUND_ALLOW` (only the discovery
+    URL is implicit); deriving them from the discovery document needs the OIDC client to hand them over;
+  - a credential test does not register the values it sends with the redactor (saved credentials handed to nodes are),
+    so a plugin error that quotes one is logged as it is;
+  - `db/replication.ts` keeps its own statement map (bounded in practice: one SQL text per table and column set) and
+    `withOwnership` reads `resource_shares` twice per list (constant per list); both are left for P26, which owns those
+    files;
+  - live checks no automated test covers: hosted-chat POST with a malformed body and SCIM 401/404 documents on a live
+    host; the OIDC and SAML Keycloak suites (`LANDFLOW_INTEGRATION=oidc` / `saml`); a bad SSO assertion in the Audit
+    log, member role, share and transfer events, and one `api.denied` a minute, in a dev host; a production-like
+    deployment with in-cluster gateways and remote MCP, OIDC/SAML, alert and SIEM endpoints; a streaming MCP transport
+    and a multipart or streamed HTTP Request body through the undici path with blocking on; the expression bench on a
+    quiet machine (`LANDFLOW_BENCH=1`) and a large real workflow's expression cost.
 
 ## Planned next
 
