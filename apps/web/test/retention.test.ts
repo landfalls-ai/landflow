@@ -14,7 +14,7 @@ process.env.LANDFLOW_DATA_DIR = mkdtempSync(join(tmpdir(), 'landflow-retention-'
 
 const { store } = await import('@/lib/server/store');
 const { database } = await import('@/lib/server/db');
-const { pruneExecutions, staleExecutionIds, updateSettings } = await import('@/lib/server/settings');
+const { pruneExecutions, resetRetentionTick, retentionCounts, staleExecutionIds, updateSettings } = await import('@/lib/server/settings');
 
 afterAll(() => {
   process.env.LANDFLOW_DATA_DIR = previousDir;
@@ -74,6 +74,8 @@ describe('pruneExecutions in SQL', () => {
     seed(records);
     const policy = { maxCount: 7, maxAgeDays: 4 };
     const expected = staleExecutionIds(all(), policy, now).sort();
+    // Settings → General's counts agree with what the prune removes.
+    expect(retentionCounts(policy, now)).toEqual({ stored: all().length, prunable: expected.length });
     const before = new Set(all().map((e) => e.id));
     pruneExecutions(policy, now);
     const after = new Set(all().map((e) => e.id));
@@ -87,8 +89,9 @@ describe('retentionTick off the save path', () => {
     updateSettings({ executions: { maxCount: 10, maxAgeDays: 0 } });
   });
 
-  it('100 saves at the default setting run at most two prune passes and never list all summaries', () => {
+  it('100 saves at the default setting run exactly two prune passes (at 50 and 100) and never list all summaries', () => {
     delete process.env.LANDFLOW_RETENTION_EVERY;
+    resetRetentionTick();
     const db = database();
     const spy = vi.spyOn(db, 'all');
     const base = Date.now() - 1_000_000;
@@ -96,8 +99,20 @@ describe('retentionTick off the save path', () => {
     const sqls = spy.mock.calls.map((c) => String(c[0]));
     spy.mockRestore();
     const passes = sqls.filter((s) => /FROM executions WHERE status IN/.test(s) && /OFFSET/.test(s)).length;
-    expect(passes).toBeLessThanOrEqual(2);
+    expect(passes).toBe(2);
     expect(sqls.some((s) => /SELECT summary/.test(s) && !/LIMIT/.test(s))).toBe(false);
-    expect(all().length).toBeLessThanOrEqual(10 + 49);
+    // The pass at save 100 left exactly the cap.
+    expect(all().length).toBe(10);
+  });
+
+  it('treats LANDFLOW_RETENTION_EVERY=0 (or a fraction) as 1: every finished save prunes', () => {
+    resetRetentionTick();
+    for (const every of ['0', '0.5']) {
+      process.env.LANDFLOW_RETENTION_EVERY = every;
+      const base = Date.now() - 1_000_000;
+      for (let i = 0; i < 15; i++) store.saveExecution(execution(`every_${every}_${i}`, 'success', base + i * 1000));
+      expect(all().length).toBe(10);
+    }
+    delete process.env.LANDFLOW_RETENTION_EVERY;
   });
 });

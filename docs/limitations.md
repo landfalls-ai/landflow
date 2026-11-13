@@ -111,6 +111,12 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - **`next dev`** keeps Next.js's own signal handling: the host's phased shutdown (flush, lease release) runs only where `NEXT_MANUAL_SIG_HANDLE=true` (`pnpm start`, the Docker image). Without it only the error handlers are ours.
 - **Streams**: in manual mode in-flight requests are awaited, but SSE streams are not; they end when the process exits.
 
+## Execution retention (backend hardening, 2026-11)
+
+- **The cap can be exceeded between passes**: a finished run prunes only every `LANDFLOW_RETENTION_EVERY` runs (default
+  50), so up to that many minus one finished executions above the saved maximum can be stored until the next pass (the
+  hourly timer and **Prune now** prune regardless).
+
 ## Access scope of AI usage and files (2026-11)
 
 - **Files with no execution** aren't project-scoped: an editor upload that no run has used yet, an agent's knowledge file

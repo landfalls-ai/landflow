@@ -5,15 +5,17 @@
  * writes are validated with zod. SettingsFile keeps the same document in a JSON
  * file (the format older versions used; tests use it too).
  *
- * Retention: store.saveExecution prunes every LANDFLOW_RETENTION_EVERY finished saves (retentionTick), bootstrap prunes at
- * boot and hourly, and Settings has "Prune now". Only finished executions
- * (success, error, canceled) are ever removed; running and waiting ones stay.
+ * Retention: store.saveExecution prunes every LANDFLOW_RETENTION_EVERY
+ * finished saves (retentionTick), the leader prunes at boot and hourly, and
+ * Settings has "Prune now". Only finished executions (success, error,
+ * canceled) are ever removed; running and waiting ones stay.
  */
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import type { InstanceSettings, RetentionSettings } from '../shared/platform';
 import type { ExecutionSummary } from '../shared/types';
 import { jsonRenderEnabled } from '../shared/ui-spec';
+import { envInt } from './config';
 import { database, type Database } from './db';
 import { INSTANCE_SETTINGS } from './db/rows';
 import { singleton } from './singleton';
@@ -186,9 +188,11 @@ export function pruneExecutions(policy: RetentionSettings = getSettings().execut
   const drain = (sql: string, ...params: Array<string | number>) => {
     for (;;) {
       const rows = db.all<{ id: string }>(sql, ...params);
-      for (const row of rows) store.deleteExecution(row.id);
-      removed += rows.length;
-      if (rows.length < PRUNE_CHUNK) return;
+      let deleted = 0;
+      for (const row of rows) if (store.deleteExecution(row.id)) deleted++;
+      removed += deleted;
+      // A full chunk that deleted nothing would select the same rows again: stop rather than spin.
+      if (rows.length < PRUNE_CHUNK || deleted === 0) return;
     }
   };
   if (policy.maxAgeDays > 0) {
@@ -201,14 +205,35 @@ export function pruneExecutions(policy: RetentionSettings = getSettings().execut
   return removed;
 }
 
+/**
+ * How many executions are stored and how many the retention settings (or `policy`) would remove now, counted in SQL
+ * the way pruneExecutions selects them (Settings → General shows both), without reading a summary.
+ */
+export function retentionCounts(policy: RetentionSettings = getSettings().executions, now = Date.now()): { stored: number; prunable: number } {
+  const db = database();
+  const count = (sql: string, ...params: Array<string | number>) => Number(db.get<{ n: number }>(sql, ...params)?.n ?? 0);
+  const stored = count("SELECT COUNT(*) AS n FROM executions WHERE status <> 'running'");
+  const cutoff = policy.maxAgeDays > 0 ? new Date(now - policy.maxAgeDays * DAY_MS).toISOString() : undefined;
+  const aged = cutoff ? count(`SELECT COUNT(*) AS n FROM executions WHERE status IN (${FINISHED_SQL}) AND started_at < ?`, ...FINISHED_LIST, cutoff) : 0;
+  const finished = count(`SELECT COUNT(*) AS n FROM executions WHERE status IN (${FINISHED_SQL})`, ...FINISHED_LIST);
+  const overCap = policy.maxCount > 0 ? Math.max(0, finished - aged - policy.maxCount) : 0;
+  return { stored, prunable: aged + overCap };
+}
+
 const retention = singleton('retention-tick', () => ({ finished: 0 }));
 
+/** Tests: start counting finished saves from zero. */
+export function resetRetentionTick(): void {
+  retention.finished = 0;
+}
+
 /**
- * Called by every finished save: runs a prune pass every LANDFLOW_RETENTION_EVERY finished runs (default 50), so
- * the count may exceed its cap by up to N-1 between passes. The hourly timer and "Prune now" prune regardless.
+ * Called by every finished save: runs a prune pass every LANDFLOW_RETENTION_EVERY finished runs (default 50,
+ * minimum 1), so the count may exceed its cap by up to N-1 between passes. The hourly timer and "Prune now" prune
+ * regardless.
  */
 export function retentionTick(): number {
-  const every = Math.max(1, Math.floor(Number(process.env.LANDFLOW_RETENTION_EVERY)) || 50);
+  const every = envInt('LANDFLOW_RETENTION_EVERY', { fallback: 50, min: 1 });
   if (++retention.finished < every) return 0;
   retention.finished = 0;
   return pruneExecutions();
