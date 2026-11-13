@@ -82,6 +82,8 @@ still works.
 | `LANDFLOW_VALKEY_SENTINEL_USERNAME` | – | user for the sentinels themselves, when they require AUTH |
 | `LANDFLOW_VALKEY_SENTINEL_PASSWORD` *(secret)* | – | password for the sentinels themselves, when they require AUTH |
 | `LANDFLOW_VALKEY_SENTINEL_TLS` | `false` | `true` when the sentinels speak TLS |
+| `LANDFLOW_EXPRESSION_SANDBOX` | `realm` | `realm`: `{{ }}` expressions run in a sealed `node:vm` context; `isolate`: in an isolated-vm isolate with its own heap and a memory cap. `isolate` needs the optional `isolated-vm` package and `NODE_OPTIONS=--no-node-snapshot` in every process that evaluates expressions (the host, the worker, the image sets it); where it cannot load, or the value is neither `realm` nor `isolate`, the production profile refuses to start and development falls back to `realm` with a warning ([engine](../features/engine.md#expressions-run-in-a-sealed-realm)) |
+| `LANDFLOW_EXPRESSION_MEMORY_MB` | `64` | the heap cap of the `isolate` expression backend in MB (8 to 4096), shared by all expressions of the process; an expression that exceeds it fails and the isolate is rebuilt. It is not a hard bound: one builtin call can allocate far past it (measured 0.5 to 2 GB resident at 64), and Set/Map/sparse-object growth aborts the process at the default ([engine.md](../features/engine.md#the-isolate-backend-optional)) |
 
 ## Addresses and time
 

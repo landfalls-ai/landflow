@@ -1440,6 +1440,11 @@ workbench in place of a page of cards, keeping Spotlight.
   lines and exception span events; `deploy/observability/prometheus-rules.yml` (13 alerts, each with a runbook link) and
   `landflow-dashboard.json`, both loaded by the `orbstack-observability` overlay ([observability.md](observability.md#alerts-and-dashboard)).
 
+- **P30** (S1, strict mode): `LANDFLOW_EXPRESSION_SANDBOX=isolate` runs expressions in an isolated-vm isolate with a memory
+  cap (`LANDFLOW_EXPRESSION_MEMORY_MB`), sharing the realm's bootstrap and bridge; `realm` stays the default. Optional
+  dependency of the engine, `NODE_OPTIONS=--no-node-snapshot` in the image, refused at boot in production when it cannot load. Open: hash-table growth still aborts the process and the cap does not bound
+  resident memory, so it is no defence against a memory bomb ([limitations.md](limitations.md), [engine.md](features/engine.md#the-isolate-backend-optional)).
+
 ## Planned next
 
 1. **Declare event kinds in the UI**: kinds are declared over the API or by Record Event's *Declare Kind If New* only.

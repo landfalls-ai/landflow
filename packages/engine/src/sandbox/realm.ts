@@ -25,7 +25,7 @@ const bootstrap = new vm.Script(BOOTSTRAP_SOURCE, { filename: 'expression-bootst
  * written and stops parsing after the swap is refused. The swap for `async` has a Cyrillic letter (`a\u0455ync`), so
  * it cannot collide with a variable an expression declares beside one named `async`.
  */
-function refuseAsync(code: string): void {
+export function refuseAsync(code: string): void {
   for (const [word, swap] of [['async', 'a\u0455ync'], ['import', 'export']] as const) {
     const pattern = new RegExp(`(?<![\\p{ID_Continue}$\\\\\\u200c\\u200d])${word}(?![\\p{ID_Continue}$\\u200c\\u200d])`, 'gu');
     if (!pattern.test(code)) continue;
@@ -37,12 +37,17 @@ function refuseAsync(code: string): void {
   }
 }
 
+/** The parse checks `compile` makes before an expression may run in any backend (the isolate shares them). */
+export function checkExpression(code: string): void {
+  new vm.Script(`(\n${code}\n)`); // a syntax error here is the user's; this script is never run
+  refuseAsync(code);
+}
+
 /** The script for one expression: parsed on its own first, so it can only be one expression (nothing can end the wrapper early). */
 function compile(code: string): vm.Script {
   let script = scriptCache.get(code);
   if (!script) {
-    new vm.Script(`(\n${code}\n)`); // a syntax error here is the user's; this script is never run
-    refuseAsync(code);
+    checkExpression(code);
     script = new vm.Script(`__eval(() => { return (\n${code}\n); })`, { filename: 'expression.js' });
     if (scriptCache.size > 2000) scriptCache.clear();
     scriptCache.set(code, script);
@@ -51,7 +56,7 @@ function compile(code: string): vm.Script {
 }
 
 /** The host side of `bridge`: answers with `{"v":…}` or `{"e":message}`, never throws. */
-function createBridge(data: ExpressionData) {
+export function createBridge(data: ExpressionData) {
   const own = (record: Record<string, unknown> | undefined, key: string) => (record && Object.hasOwn(record, key) ? record[key] : undefined);
   const secrets = secretsSandbox(data.secrets) as Record<string, Record<string, unknown>>;
   const handle = (op: string, arg: string): unknown => {
@@ -97,7 +102,7 @@ function createBridge(data: ExpressionData) {
 }
 
 /** Back from tagged JSON: undefined, NaN, ±Infinity, -0 and Dates, as host-realm values. */
-function revive(value: unknown): unknown {
+export function revive(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(revive);
   if (value === null || typeof value !== 'object') return value;
   const record = value as Record<string, unknown>;

@@ -535,6 +535,20 @@ LANDFLOW_QUEUE_VALKEY_CLUSTER=valkey-cluster-1:6379,valkey-cluster-2:6379 docker
 
 Day to day: **Settings → Workers** on either main shows the leader, the queue and every process; `docker compose -f deploy/compose.queue.yml stop worker-1` sends SIGTERM (runs get 30 s, the worker gives itself 40 s in all, `stop_grace_period` is 45 s, and what doesn't finish continues on the other worker); `stop main-1` on the leader hands the leadership over within about 3 s. To add a worker, copy `worker-2` with its own `LANDFLOW_INSTANCE_ID` and port. Valkey keys: `docker compose -f deploy/compose.infra.yml exec valkey valkey-cli --scan --pattern 'landflow-queue:*'`.
 
+## Expression sandbox
+
+`{{ }}` expressions run in a sealed `node:vm` realm by default. `LANDFLOW_EXPRESSION_SANDBOX=isolate` runs them in an
+isolated-vm isolate with a memory cap (`LANDFLOW_EXPRESSION_MEMORY_MB`, default 64; [engine.md](features/engine.md#the-isolate-backend-optional)).
+The host, the worker and `next start` need `NODE_OPTIONS=--no-node-snapshot` for it (the image sets it in `host.Dockerfile`;
+set it yourself for `pnpm start` and `pnpm worker`, and in any Kubernetes or compose environment that does not use the
+image). `host.Dockerfile` also links `isolated-vm` and its addon into the image when the install built it; where it could
+not, the image runs the realm only and a production start with `isolate` refuses to boot. The in-repo compose and Kubernetes
+stacks leave the default. `NODE_OPTIONS` is inherited by the child processes the host starts (plugin processes, the code
+runner's children when started by pnpm): harmless, but it shows in their environment. The base image is Alpine (musl);
+`isolated-vm` 6.2.0 loads there from its musl prebuild (a container started with `LANDFLOW_EXPRESSION_SANDBOX=isolate`
+logged no fallback warning). The isolate backend can abort the process on `Set`/`Map` growth and its cap does not bound
+resident memory, so give the container headroom ([engine.md](features/engine.md#the-isolate-backend-optional)).
+
 ## Code runner
 
 The Code node runs JavaScript in-process (`node:vm` inside the host: quick, but not isolated) or in the **code runner** ([`services/code-runner`](../services/code-runner)), which also runs Python. Every snippet gets a fresh child process (Node for JavaScript, CPython with the standard library only for Python) with an empty environment and its own temporary work directory, deleted afterwards. The host posts the items, the outputs of the nodes the snippet names (`$('Node')`, `_('Node')`), `$vars` and the execution and workflow data to `POST /v1/run` with the shared secret in `x-landflow-runner-secret`; it gets back the items, the `console.log`/`print` output and errors with line numbers (`TypeError: … [line 3, for item 0]`). Files cross the same protocol, because the sandbox has no network: the request's `binary` carries the bytes of the input files (base64, by `"<item>:<property>"`; only when the code reads them, up to the cap, with `binarySkipped` giving the reason for any left out), and a file the snippet creates comes back as `binary.<name>.data` (base64) for the host to store in its binary store (filesystem or S3). The runner caps the files a snippet creates at `CODE_RUNNER_MAX_BINARY_BYTES` (6 MiB, `LANDFLOW_CODE_RUNNER_MAX_BINARY_BYTES` in compose; a request can only lower it), and the request size (`CODE_RUNNER_MAX_REQUEST_BYTES`, 32 MB) and output cap (10 MB) still apply: raise them together when you raise this one. `GET /health` needs no secret; `GET /v1/info` shows versions, limits and the isolation the runner found.

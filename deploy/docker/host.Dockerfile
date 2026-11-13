@@ -53,7 +53,7 @@ RUN pnpm --filter @landflow/web build \
 RUN ESBUILD="$(ls -d /app/node_modules/.pnpm/esbuild@*/node_modules/esbuild/bin/esbuild | sort -V | tail -1)" \
  && cd apps/web && "$ESBUILD" src/lib/server/cluster/worker-main.ts --bundle --platform=node --format=esm --target=node22 \
     --tsconfig=tsconfig.json --outfile=dist/worker.mjs --log-level=warning \
-    --external:@confluentinc/kafka-javascript --external:pulsar-client --external:@aws-sdk/client-sqs --external:@google-cloud/pubsub \
+    --external:@confluentinc/kafka-javascript --external:pulsar-client --external:@aws-sdk/client-sqs --external:@google-cloud/pubsub --external:isolated-vm \
     --banner:js="import { createRequire as __lfCreateRequire } from 'node:module'; import { fileURLToPath as __lfPath } from 'node:url'; const require = __lfCreateRequire(import.meta.url); const __filename = __lfPath(import.meta.url); const __dirname = __lfPath(new URL('.', import.meta.url));"
 
 FROM ${NODE_IMAGE} AS runtime
@@ -62,6 +62,7 @@ LABEL org.opencontainers.image.title="landflow-host" \
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     NEXT_MANUAL_SIG_HANDLE=true \
+    NODE_OPTIONS=--no-node-snapshot \
     HOSTNAME=0.0.0.0 \
     PORT=3000 \
     LANDFLOW_DATA_DIR=/data
@@ -87,6 +88,16 @@ RUN --mount=type=bind,from=build,source=/app/node_modules/.pnpm,target=/store \
          done \
       && mkdir -p "/app/node_modules/$(dirname "$m")" && ln -sfn "$dir" "/app/node_modules/$m" || exit 1; \
     done
+# isolated-vm (LANDFLOW_EXPRESSION_SANDBOX=isolate, an optional dependency of the engine): linked where the mains and the
+# worker find it, with its addon. NODE_OPTIONS above is the flag it needs on Node 20+ and is harmless while it is unused.
+# An install that could not fetch or build it leaves nothing to copy, and the image then runs the realm only.
+RUN --mount=type=bind,from=build,source=/app/node_modules/.pnpm,target=/store \
+    rel="$(cd /store && ls -d isolated-vm@*/node_modules/isolated-vm 2>/dev/null | head -1)"; \
+    if [ -n "$rel" ]; then \
+      dir="/app/node_modules/.pnpm/$rel" && mkdir -p "$dir" && cp -a "/store/$rel/." "$dir/" \
+      && cp -aL "/store/$rel/../node-gyp-build" "$dir/../node-gyp-build" \
+      && ln -sfn "$dir" /app/node_modules/isolated-vm; \
+    fi
 USER node
 VOLUME ["/data"]
 # 5690: a worker's /healthz and /metrics (`node worker.mjs`, queue mode).

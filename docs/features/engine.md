@@ -78,9 +78,60 @@ strings and WebAssembly off, a null-prototype global and a 250 ms timeout per ev
   Dates, `undefined` (also inside arrays and objects), `NaN`, `Infinity` and `-0` as themselves, a BigInt as a string and a
   function as `undefined`. An error thrown by an expression is read inside the realm; one that escapes it (the timeout, a
   stack overflow) is reported without reading the thrown value.
-- **Remaining risks**: a V8 or `vm` bug (the realm is a context in the host process, not a process boundary), and memory
-  exhaustion inside the 250 ms window. A stricter isolate backend is planned; until then, an instance that lets
-  untrusted people write expressions should also keep the production profile's other limits in place.
+- **Remaining risks** (realm): a V8 or `vm` bug (the realm is a context in the host process, not a process boundary), and
+  memory exhaustion inside the 250 ms window. For an instance that lets untrusted people write expressions, choose the
+  isolate backend below.
+
+### The isolate backend (optional)
+
+`LANDFLOW_EXPRESSION_SANDBOX=isolate` runs the same bootstrap and bridge in an [isolated-vm](https://github.com/laverdet/isolated-vm)
+isolate ([`sandbox/isolate.ts`](../../packages/engine/src/sandbox/isolate.ts)) instead of a `node:vm` context. The default
+stays `realm`.
+
+- **What changes**: one isolate per process with its own V8 heap capped at `LANDFLOW_EXPRESSION_MEMORY_MB` (default 64), and a
+  context per resolver. A V8 bug inside an expression now reaches an isolate, not the host's heap, and an expression that
+  exhausts memory fails with "The expression used more than N MB of memory": the isolate is disposed and rebuilt
+  (the resolvers that shared it get a fresh context on their next evaluation), and the process keeps running for the
+  memory bombs the tests try, except the holes listed below. Semantics (V8, `Intl`), the 250 ms timeout, the tagged-JSON results and the
+  `async`/`import(` refusal are the realm's, and the whole realm test suite runs against it (its test checks that it does).
+  Evaluating through the isolate is faster than the realm for a resolver that evaluates many times, and about 1.3 times
+  slower for a fresh resolver per evaluation, which is what the executor makes per node execution
+  (`test/expression-isolate.test.ts` measures both).
+- **Contexts are released by the engine, not the garbage collector**: the host cannot see the isolate's heap, so the 32
+  most recently used contexts stay and older ones are released at once (their resolver builds a new one on its next
+  evaluation); the bootstrap and each expression are compiled once per isolate (a few hundred expressions are kept, fewer
+  with a smaller cap). An isolate disposed through no fault of the expression being evaluated is rebuilt and the
+  expression tried once more. A churn test runs thousands of short-lived resolvers with no failure.
+- **Guards on top, and what they cannot promise**: V8 aborts the whole process when one allocation is larger than the heap
+  limit, before isolated-vm can end the isolate. The builtins that make a big block from a length the caller gives are
+  guarded: in an isolate, `Array.from` on an array-like longer than 32,768 times the cap in MB elements,
+  `Array.prototype.fill` and `join` on an array longer than that, and `String.prototype.repeat`, `padStart` and `padEnd`
+  past 262,144 times the cap in characters throw a `RangeError`. The guards also refuse sizes the realm allows
+  (`new Array(3e6).fill(0)` fails at 64 MB), and the list cannot be shown to be complete.
+- **Known holes (the isolate can abort the process where the realm does not)**: growth of a hash table also ends in a V8
+  heap abort (exit 134, `is_heap_oom = 1`), because V8 allocates the larger table in one step. Measured, each in a process
+  of its own at the default 64 MB: a loop of `Set.add`, `Map.set` or `WeakMap`-heavy inserts, a loop assigning sparse
+  keys to an object or array (`o[i * 1000] = i`), `Object.groupBy` / `Map.groupBy` over two million items, and
+  `new Set(<two million items>)`. No guard list can cover the sparse-object case (it uses no builtin). A larger cap helps
+  only when the 250 ms timeout comes first (at 256 MB a `Set` loop and sparse keys time out, a `Map` loop still aborts),
+  so no cap is a proof. A test pins the abort (`test/expression-isolate.test.ts`) so this text is corrected when it is
+  closed. If an expression that cannot take a worker down is a requirement, `isolate` does not provide it yet; the way
+  to close it is to evaluate in a separate process, which is not built.
+- **The cap does not bound the process's memory**: the heap limit is checked after a builtin returns, and one call can
+  allocate far more than the cap first. Measured with `/usr/bin/time -l` (an idle child is 98 MB) at 64 MB:
+  `[].concat(...Array(60).fill(Array(2000000).fill(0))).length` succeeds at 1.07 GB peak; `JSON.stringify` of eight 16 MB
+  strings succeeds at 498 MB; joining thirty 16 MB strings and then `JSON.stringify` fails with the memory message only
+  after 2.07 GB; a loop keeping 40 concatenated arrays fails after 1.7 GB. In a container with a memory limit the
+  kernel can kill the host first, so set the container limit with that headroom.
+- **When to choose it**: people you do not trust write expressions and you want a V8 bug in one to reach an isolate
+  rather than the host's heap, and you accept the two limits above. Keep `realm` otherwise, and do not choose `isolate`
+  for the sole purpose of surviving a memory bomb: on ordinary `Set`/`Map`/object growth it aborts where the realm
+  survives (the realm's 250 ms timeout ends the loop).
+- **Requirements**: `isolated-vm` is an optional dependency of `@landflow/engine` (a native addon: an install without a
+  prebuilt binary or a compiler skips it and the realm keeps working) and needs `NODE_OPTIONS=--no-node-snapshot` on
+  Node 20+ in every process that evaluates expressions: `next start`, `pnpm worker`, the Docker image (set there). Where it
+  cannot load, the production profile refuses to start and development logs a warning and uses the realm
+  ([deployment.md](../deployment.md#expression-sandbox)). The cap is for the process, not per expression.
 
 ## Triggers and flow nodes
 

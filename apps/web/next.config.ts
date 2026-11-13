@@ -34,6 +34,8 @@ const nextConfig: NextConfig = {
     // the SQS client is kept external like the S3 one.
     '@aws-sdk/client-sqs',
     '@google-cloud/pubsub',
+    // Strict expression backend (LANDFLOW_EXPRESSION_SANDBOX=isolate): a native addon, an optional dependency of the engine.
+    'isolated-vm',
   ],
   // No `x-powered-by: Next.js` fingerprint.
   poweredByHeader: false,

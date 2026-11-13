@@ -271,6 +271,10 @@ importers:
       vitest:
         specifier: ^5.0.5
         version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+    optionalDependencies:
+      isolated-vm:
+        specifier: ^6.2.0
+        version: 6.2.0
 
   packages/protocol:
     dependencies:
@@ -3194,6 +3198,10 @@ packages:
 
   isexe@2.0.0:
     resolution: {integrity: sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==}
+
+  isolated-vm@6.2.0:
+    resolution: {integrity: sha512-UuSlxSHWt2QuJ5WvBhzlIJx2VVZN/a44SqBbEZFKNdvuSyhOvhmyDo8SQ+njVbhnh/njoL/aW0bUTiFYlpweGQ==}
+    engines: {node: '>=22.0.0'}
 
   isomorphic-ws@5.0.0:
     resolution: {integrity: sha512-muId7Zzn9ywDsyXgTIafTry2sV3nySZeUDe6YedVd1Hvuuep5AsIlqK+XefWpYTyJG5e503F2xIuT2lcU6rCSw==}
@@ -7021,6 +7029,11 @@ snapshots:
   is-unsafe@2.0.2: {}
 
   isexe@2.0.0: {}
+
+  isolated-vm@6.2.0:
+    dependencies:
+      node-gyp-build: 4.8.4
+    optional: true
 
   isomorphic-ws@5.0.0(ws@8.22.0):
     dependencies:
