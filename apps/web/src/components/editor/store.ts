@@ -258,6 +258,10 @@ interface EditorState {
   openPalette(request?: PaletteRequest): void;
   /** The draft is saved: `updatedAt` is the stored workflow's new version. */
   markSaved(updatedAt?: string): void;
+  /** True when `stored` has the content this tab last loaded or saved: only `active`, `updatedAt` or the folder moved. */
+  storedMatchesSaved(stored: Workflow): boolean;
+  /** Take `updatedAt` as the baseline for the next save, with no change to the draft. */
+  rebase(updatedAt: string): void;
   toggleBreakpoint(id: string): void;
   startRun(debug?: boolean): void;
   applyEvent(event: ExecutionEvent): void;
@@ -1164,6 +1168,25 @@ export const useEditor = create<EditorState>((set, get) => {
 
   openPalette(request) {
     set({ palette: request });
+  },
+
+  storedMatchesSaved(stored) {
+    const content = savedContent({
+      ...snapshotOf(get()),
+      name: stored.name,
+      description: stored.description,
+      tags: stored.tags ?? [],
+      settings: stored.settings ?? {},
+      pinData: stored.pinData ?? {},
+      ...toFlow(stored),
+      stickies: toStickies(stored.stickyNotes),
+      groups: toFrames(normalizeGroups(stored.groups, stored.nodes.map((n) => n.id))),
+    });
+    return content === history.saved;
+  },
+
+  rebase(updatedAt) {
+    set({ baseUpdatedAt: updatedAt });
   },
 
   markSaved(updatedAt) {

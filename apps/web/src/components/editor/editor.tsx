@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { api, streamEvents } from '@/lib/client/api';
+import { api, streamEvents, type ApiError } from '@/lib/client/api';
 import { duration, plural, timeAgo } from '@/lib/client/format';
 import { useLiveEvents } from '@/lib/client/live';
 import { isPhone, usePhone } from '@/lib/client/use-phone';
@@ -723,11 +723,24 @@ export function Editor({ workflowId }: { workflowId: string }) {
       const { active: _active, ...draft } = useEditor.getState().toWorkflow();
       // Based on the version this tab loaded or last saved: someone else's newer save is refused (412) instead of overwritten.
       const base = useEditor.getState().baseUpdatedAt;
-      const { workflow, policyWarnings, triggerAuthWarnings } = await api<{ workflow: Workflow; triggerAuthWarnings?: Array<{ nodeName: string; message: string }> } & PolicyWarnings>(`/api/workflows/${workflowId}`, {
-        method: 'PUT',
-        json: draft,
-        headers: { ...editorTabHeaders(), ...(base && { 'if-match': `"${base}"` }) },
-      });
+      const put = (baseline?: string) =>
+        api<{ workflow: Workflow; triggerAuthWarnings?: Array<{ nodeName: string; message: string }> } & PolicyWarnings>(`/api/workflows/${workflowId}`, {
+          method: 'PUT',
+          json: draft,
+          headers: { ...editorTabHeaders(), ...(baseline && { 'if-match': `"${baseline}"` }) },
+        });
+      let saved;
+      try {
+        saved = await put(base);
+      } catch (e) {
+        if ((e as ApiError).status !== 412) throw e;
+        // Refused as stale. A scheduled publish, an approval or a folder move also moves `updatedAt`: if the stored content is still what this tab loaded or saved, nobody else's edit is at stake, so take the new version and save once more.
+        const { workflow: stored } = await api<{ workflow: Workflow }>(`/api/workflows/${workflowId}`);
+        if (!useEditor.getState().storedMatchesSaved(stored)) throw e;
+        useEditor.getState().rebase(stored.updatedAt);
+        saved = await put(stored.updatedAt);
+      }
+      const { workflow, policyWarnings, triggerAuthWarnings } = saved;
       useEditor.getState().markSaved(workflow.updatedAt);
       toast.success(`Saved “${workflow.name}”`);
       // Nodes the governance policy doesn't allow: the save stands, publishing is refused and they fail when run.

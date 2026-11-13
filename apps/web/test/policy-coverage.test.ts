@@ -25,11 +25,8 @@ const CHECK_MARKERS = [
   /\bcanResource\(/,
   /\bprojectRoute\(/,
   /\bdataTableRoute\(/,
-  /\bcurrentPrincipal\(/,
-  /\bcurrentActorId\(/,
   /\bcan\(/,
   /\bcheckResourceRule\(/,
-  /\bprojectRole\(/,
 ];
 
 /** Mutating routes the table doesn't name and that check nothing in the handler, each with why that is fine. */

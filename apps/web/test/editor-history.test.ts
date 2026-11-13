@@ -191,4 +191,12 @@ describe('undo / redo of the name, tags and settings', () => {
     editor().redo();
     expect(editor().settings).toEqual({ timezone: 'UTC' });
   });
+
+  it('tells a publish-driven version bump from someone else\u2019s edit (the save retries only for the first)', () => {
+    editor().markSaved('v1');
+    expect(editor().storedMatchesSaved({ ...workflow(), active: true, updatedAt: 'v2' })).toBe(true);
+    editor().rebase('v2');
+    expect(editor().baseUpdatedAt).toBe('v2');
+    expect(editor().storedMatchesSaved({ ...workflow(), name: 'Renamed elsewhere', updatedAt: 'v3' })).toBe(false);
+  });
 });
