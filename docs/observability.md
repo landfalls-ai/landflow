@@ -201,6 +201,18 @@ histograms in **milliseconds** with buckets `1, 5, 10, 25, 50, 100, 250, 500, 10
 | `landflow.webhook.requests` | counter | `landflow.workflow.id`, `http.response.status_code` |
 | `landflow.runtime.events` | counter | `landflow.runtime.event`: `deduplicated` (a trigger call repeated an idempotency key), `skipped` (no free concurrency slot, or a full queue), `queued`, `recovered` (continued after a restart), `recovery_failed`, `retry_scheduled`, `retried` (a retry started), `stopped` (by Stop all); `landflow.workflow.id` (not on `stopped`) |
 
+### Postgres write queue (host, `LANDFLOW_DB=postgres`)
+
+| Metric | Type | Attributes |
+|---|---|---|
+| `landflow.db.write_queue.batches` | gauge | write batches not yet applied on Postgres |
+| `landflow.db.write_queue.oldest_age` | gauge (s) | age of the oldest of them |
+| `landflow.db.write_blocked` | gauge | 1 while Postgres rejects a batch and the store refuses writes (`StoreUnavailableError`) |
+| `landflow.db.write_rejections` | counter | batches Postgres rejected with a non-connection error |
+| `landflow.db.write_retries` | counter | retries of a blocked batch |
+
+See [postgres-write-queue.md](features/postgres-write-queue.md); `Database.writeHealth()` reports the same state.
+
 ### Services (host)
 
 | Metric | Type | Attributes |
