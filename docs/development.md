@@ -84,6 +84,41 @@ filesystem access causes tracing of the whole project".
   `http://127.0.0.1:54566` with dummy keys and `AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_CONFIG_FILE=/dev/null`, so
   `~/.aws` is never read. Use only the development credentials in `deploy/.env.example`.
 
+## Working with Claude Code: constitution, agents, feature skill
+
+Claude Code works on this repository with three things checked in beside the code:
+
+- **The constitution**, [constitution.md](constitution.md): the rules every research and implementation starts from.
+  `CLAUDE.md` imports it (`@docs/constitution.md`), so every session reads it. Rules marked *target* belong to the
+  backend refactor and become current as their package lands on `main`; change the page when a convention changes.
+- **Agents** in `.claude/agents/`: subagents that know this repository: its paths, helpers, pitfalls and the order of
+  work. Claude Code picks one by its description, or you name it ("use landflow-security-reviewer on this branch").
+  Reviewers and the researcher are read-only. None of them starts sub-agents of its own.
+- **The feature skill**, `.claude/skills/landflow-feature/SKILL.md`: the pipeline a feature follows, with the exact
+  commands (worktree, install, gate, secret scan). Ask for it by name (`/landflow-feature`) or let Claude Code load it
+  for any new feature or multi-step change.
+
+| Agent | Model | Tools | Use it for |
+|---|---|---|---|
+| `landflow-researcher` | sonnet | read-only | how an area works today and what to reuse, with file:line |
+| `landflow-planner` | opus | read-only | a plan of packages with disjoint files, tests, docs and acceptance criteria |
+| `landflow-implementer` | sonnet | all | one package in its own worktree from `origin/main` |
+| `landflow-security-reviewer` | fable | read-only | access and project scoping, audit, secrets, outbound calls, sandboxing, input limits |
+| `landflow-code-reviewer` | fable | read-only | correctness, regressions, conventions, tests and docs against the brief |
+| `landflow-test-engineer` | sonnet | all | tests in this repository's style and the regression gate |
+| `landflow-integrator` | sonnet | all | merging a wave's branches, shared-doc conflicts, the full gate |
+| `landflow-data-engineer` | sonnet | all | migrations, the store, Postgres mode, paging, retention |
+| `landflow-observability-engineer` | sonnet | all | logs, spans, metrics, health, alerts |
+| `landflow-ui-engineer` | sonnet | all | pages and components to [ui-review.md](ui-review.md) and [mobile.md](mobile.md), checked at desktop and phone |
+| `landflow-ai-assistant-engineer` | sonnet | all | Spotlight, agents, teams, A2A and kagent, the notebook, the brain, Run Trace |
+| `landflow-plugin-engineer` | sonnet | all | plugins, the protocol, the three SDKs, transports |
+| `landflow-docs-writer` | sonnet | all | feature pages, reference, limitations, roadmap, history rows |
+| `landflow-local-ops` | sonnet | all | the infra stack, the OrbStack cluster, kagent's kind cluster, the scratch host |
+
+The models follow one rule: planning on the strongest planner, implementation on a cheaper model, reviews on fable,
+with at most two fable agents running at once. To change an agent, edit its file; keep its paths true to the code,
+and keep the constitution and the agents in step.
+
 ## Verification
 
 Every suite, from the repository root. All of them run offline.

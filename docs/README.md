@@ -11,6 +11,8 @@ how to run it and how to change it. The [project README](../README.md) has the q
 3. **[development.md](development.md)**: setup, where to start reading the code, conventions, and every test command.
 4. **[limitations.md](limitations.md)** and **[roadmap.md](roadmap.md)**: what is not there yet, and what each wave
    built. [history.md](history.md) lists every change in order.
+5. **[constitution.md](constitution.md)** before you change anything: the rules every research and implementation
+   starts from, and the order a feature goes through.
 
 ## Feature map
 
@@ -83,7 +85,11 @@ how to run it and how to change it. The [project README](../README.md) has the q
 
 - [deployment.md](deployment.md): Compose stacks, ports and credentials, queue mode, the code runner, Kubernetes on
   OrbStack, telemetry on Kubernetes, kagent beside it, stop and reset.
-- [development.md](development.md): setup, code tour, conventions, the full verification list, integration flags.
+- [constitution.md](constitution.md): the rules every research and implementation starts from (Claude Code reads it in
+  every session).
+- [development.md](development.md): setup, code tour, conventions, the full verification list, integration flags, and
+  [working with Claude Code](development.md#working-with-claude-code-constitution-agents-feature-skill): the
+  repository's own agents (`.claude/agents/`) and the feature skill (`.claude/skills/landflow-feature/`).
 - [limitations.md](limitations.md): what Landflow does not do yet.
 - [roadmap.md](roadmap.md): the waves, what each built, and what remains.
 - [history.md](history.md): every change in order, the decisions along the way, and where each is documented.
@@ -130,6 +136,6 @@ how to run it and how to change it. The [project README](../README.md) has the q
 
 ## Keeping the docs current
 
-A change updates the page for its feature, [reference/](reference/api.md) for new routes or variables,
-[limitations.md](limitations.md) when it adds or lifts a limit, and [roadmap.md](roadmap.md) when it closes or opens
-an item. Each commit gets a row in [history.md](history.md). New pages go in this index. [development.md](development.md#conventions) has the rest of the conventions.
+[constitution.md](constitution.md) has every rule in one place. A change updates the page for its feature,
+[reference/](reference/api.md) for new routes or variables, [limitations.md](limitations.md) when it adds or lifts a
+limit, and [roadmap.md](roadmap.md) when it closes or opens an item. Each commit gets a row in [history.md](history.md). New pages go in this index. [development.md](development.md#conventions) has the rest of the conventions.
