@@ -338,6 +338,7 @@ export class CredentialVault {
   deriveKeys(label: string): Buffer[] {
     const legacy = this.ring.keys.get(LEGACY_SHA_KID) ?? this.ring.keys.get(LEGACY_KID);
     const ring = [this.ring.primary, ...[...this.ring.keys.keys()].filter((kid) => kid !== this.ring.primary)].map((kid) => hkdfKey({ ...this.ring, primary: kid }, label));
+    // TODO(2027-02): remove this HMAC fallback once links signed before HKDF (2026-11) have expired.
     return legacy ? [...ring, createHmac('sha256', legacy).update(`landflow:${label}`).digest()] : ring;
   }
 

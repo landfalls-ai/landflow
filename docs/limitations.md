@@ -131,6 +131,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
   sealed with a key that is no longer in the ring can't be opened: remove an old key only after rotate reports no failures.
 - Sealed strings outside credentials (alert channel, SIEM, kagent, signing keys…) are bound to a shared `secret` purpose, not
   to their row: the key id and rotation apply, a copy between two such rows is not refused. Credential blobs are bound to their id.
+- A rolling upgrade to the key ring in queue mode is not seamless: processes before it can't open `v2` values or verify HKDF-signed resume URLs, so upgrade every process together (or stop the workers first).
 - Rotation has no page in Settings (the route and the script only) and in queue mode needs the new ring on every process first.
 - Files outside the data directory's `agents/` and `audit-anchoring.json` that hold a value sealed with `sealSecret` are not
   re-sealed (the stores are listed in `credentials/rotate.ts`).

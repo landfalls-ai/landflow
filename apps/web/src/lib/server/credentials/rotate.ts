@@ -7,8 +7,9 @@
  * skipped, so a run that stops can simply be run again; one that can't be opened is reported and left as it is.
  * Never remove an old key from the ring before a run reports no failures.
  */
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { agentStore } from '../agents/store';
 import { configStoreKind, writeJsonFile } from '../config-store';
 import { database } from '../db';
 import { store } from '../store';
@@ -27,7 +28,7 @@ export interface RotationResult {
 }
 
 /** Tables with sealed values: the key columns (as the database's upsert knows them) and the column to scan (a sealed string or JSON holding some). */
-const TABLES: Array<{ table: 'settings' | 'config_files' | 'alert_channels' | 'audit_destinations' | 'audit_signing_keys' | 'external_secret_providers' | 'transport_connections' | 'agent_definitions'; key: string; column: string }> = [
+const TABLES: Array<{ table: 'settings' | 'config_files' | 'alert_channels' | 'audit_destinations' | 'audit_signing_keys' | 'external_secret_providers' | 'transport_connections'; key: string; column: string }> = [
   { table: 'settings', key: 'key', column: 'value' },
   { table: 'config_files', key: 'name', column: 'data' },
   { table: 'alert_channels', key: 'id', column: 'data' },
@@ -35,10 +36,10 @@ const TABLES: Array<{ table: 'settings' | 'config_files' | 'alert_channels' | 'a
   { table: 'audit_signing_keys', key: 'key_id', column: 'private_key' },
   { table: 'external_secret_providers', key: 'name', column: 'secrets' },
   { table: 'transport_connections', key: 'id', column: 'secrets' },
-  { table: 'agent_definitions', key: 'id', column: 'data' },
 ];
 
-const SEALED = /^v[12]\.[A-Za-z0-9+/=_.-]+$/;
+/** A sealed string's shape: v1 is `v1.iv.tag.value`, v2 is `v2.kid.iv.tag.value`; the iv is 12 bytes (16 base64 characters) and the tag 16 bytes (24), so a version such as `v1.2.3.4` is not one. */
+const SEALED = /^(?:v1|v2\.[A-Za-z0-9_-]{1,32})\.[A-Za-z0-9+/]{16}\.[A-Za-z0-9+/]{22}==\.[A-Za-z0-9+/=]*$/;
 
 /** `text` with every sealed string in it re-sealed (text itself, or JSON holding some); undefined when nothing changed. */
 function resealText(text: string, tally: { resealed: number; current: number; failed: number }): string | undefined {
@@ -98,21 +99,29 @@ export function rotateEncryption(): RotationResult {
       if (!text) continue;
       const tally = { resealed: 0, current: 0, failed: 0 };
       const next = resealText(text, tally);
-      if (next !== undefined) db.upsert(table, { ...row, [column]: next });
+      // A new `updated_at` on a config file, so every process's cached copy (stamped by it) is dropped.
+      if (next !== undefined) db.upsert(table, { ...row, [column]: next, ...(table === 'config_files' && { updated_at: new Date().toISOString() }) });
       count(table, tally, [String(row[key])]);
     }
   }
 
-  // Files mode keeps agents and the audit anchoring settings in files (the database holds them otherwise).
+  // Agents go through their store, which keeps its own copy (files mode) and so must write what it will save next.
+  for (const agent of agentStore.list()) {
+    const tally = { resealed: 0, current: 0, failed: 0 };
+    const next = resealText(JSON.stringify(agent), tally);
+    if (next !== undefined) agentStore.rewrite(JSON.parse(next));
+    count('agent_definitions', tally, [agent.id]);
+  }
+
+  // Files mode keeps the audit anchoring settings in a file (the database holds them otherwise); the file's mtime changes.
   if (configStoreKind() === 'files') {
-    const files = [join(store.dir, 'audit-anchoring.json'), ...safeList(join(store.dir, 'agents')).map((name) => join(store.dir, 'agents', name))];
-    for (const path of files) {
-      const value = readJsonFile<unknown>(path);
-      if (value === undefined) continue;
+    const path = join(store.dir, 'audit-anchoring.json');
+    const value = readJsonFile<unknown>(path);
+    if (value !== undefined) {
       const tally = { resealed: 0, current: 0, failed: 0 };
       const next = resealText(JSON.stringify(value), tally);
       if (next !== undefined) writeJsonFile(path, JSON.parse(next));
-      count('files', tally, [path.slice(store.dir.length + 1)]);
+      count('files', tally, ['audit-anchoring.json']);
     }
   }
   return result;
@@ -123,13 +132,5 @@ function readJsonFile<T>(path: string): T | undefined {
     return JSON.parse(readFileSync(path, 'utf8')) as T;
   } catch {
     return undefined;
-  }
-}
-
-function safeList(dir: string): string[] {
-  try {
-    return readdirSync(dir).filter((name) => name.endsWith('.json'));
-  } catch {
-    return [];
   }
 }

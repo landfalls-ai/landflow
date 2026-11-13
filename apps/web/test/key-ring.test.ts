@@ -44,6 +44,12 @@ function sealV1(text: string): { iv: string; tag: string; value: string } {
   return { iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), value: value.toString('base64') };
 }
 
+/** A well-formed sealed string under a key that is not in the ring. */
+function foreign(): string {
+  const sealed = ring.sealWith(ring.buildKeyRing(`zz:${'cd'.repeat(32)}`, undefined), 'x', 'landflow:secret');
+  return `v2.${sealed.kid}.${sealed.iv}.${sealed.tag}.${sealed.value}`;
+}
+
 const memoryBackend = (seed: StoredCredential[]) => {
   const rows = new Map(seed.map((c) => [c.id, c]));
   return {
@@ -125,7 +131,9 @@ describe('key ring', () => {
     const v1 = sealV1('smtp-password');
     const now = new Date().toISOString();
     db.upsert('alert_channels', { id: 'ch1', name: 'mail', kind: 'email', created_at: now, updated_at: now, data: JSON.stringify({ config: { password: `v1.${v1.iv}.${v1.tag}.${v1.value}`, host: 'smtp.test' } }) });
-    db.upsert('alert_channels', { id: 'ch2', name: 'broken', kind: 'email', created_at: now, updated_at: now, data: JSON.stringify({ config: { password: 'v1.AAAA.AAAA.AAAA' } }) });
+    db.upsert('alert_channels', { id: 'ch2', name: 'broken', kind: 'email', created_at: now, updated_at: now, data: JSON.stringify({ config: { password: foreign() } }) });
+    // Strings that only look like a sealed one (a four-part version) are left alone and not counted.
+    db.upsert('alert_channels', { id: 'ch3', name: 'version', kind: 'email', created_at: now, updated_at: now, data: JSON.stringify({ config: { note: 'v1.2.3.4' } }) });
     const result = rotateEncryption();
     expect(result.primary).toBe('n1');
     expect(result.stores.alert_channels).toBe(1);
@@ -138,6 +146,46 @@ describe('key ring', () => {
     const again = rotateEncryption();
     expect(again.resealed).toBe(0);
     expect(again.failed).toEqual(['alert_channels:ch2']);
+  });
+});
+
+describe('rotation writes through the stores that cache', () => {
+  /** The ring the first test of this file rotated from: sealed under n0, as a host before the rotation would have. */
+  const underN0 = (text: string) => {
+    const sealed = ring.sealWith(ring.buildKeyRing(`n0:${'ab'.repeat(32)}`, undefined), text, 'landflow:secret');
+    return `v2.${sealed.kid}.${sealed.iv}.${sealed.tag}.${sealed.value}`;
+  };
+
+  it('a deployed agent saved after rotation keeps the re-sealed kagent token', async () => {
+    const { agentStore } = await import('@/lib/server/agents/store');
+    const agent = agentStore.create({ name: 'Rotating' });
+    const old = underN0('kagent-token');
+    agentStore.rewrite({ ...agent, kagent: { ...(agent.kagent ?? {}), name: 'a', token: old } as never });
+    expect(rotateEncryption().stores.agent_definitions).toBe(1);
+    // The store's own next save (no new secret) writes from its copy: that copy has to be the re-sealed one.
+    agentStore.saveDraft(agent.id, { name: 'Rotating again' });
+    const token = (agentStore.get(agent.id)?.kagent as { token: string } | undefined)?.token ?? '';
+    expect(parseSealedString(token)).toMatchObject({ v: 2, kid: 'n1' });
+    expect(credentials.openSecret(token)).toBe('kagent-token');
+  });
+
+  it('a settings row and a config file change their stamp, so another process re-reads them', () => {
+    const db = database();
+    const old = underN0('signing');
+    db.upsert('settings', { key: 'saml-test', value: JSON.stringify({ privateKey: old }) });
+    db.upsert('config_files', { name: 'audit-anchoring.json', data: JSON.stringify({ s3: { secretAccessKey: old } }), updated_at: '2026-01-01T00:00:00.000Z', updated_by: 'x' });
+    const result = rotateEncryption();
+    expect(result.stores.settings).toBe(1);
+    expect(result.stores.config_files).toBe(1);
+    const row = db.get<{ data: string; updated_at: string }>('SELECT data, updated_at FROM config_files WHERE name = ?', 'audit-anchoring.json')!;
+    expect(row.updated_at).not.toBe('2026-01-01T00:00:00.000Z');
+    expect(parseSealedString(JSON.parse(row.data).s3.secretAccessKey)).toMatchObject({ kid: 'n1' });
+  });
+
+  it('a malformed key list names the entry by position, not by its first characters', () => {
+    const key = 'ab'.repeat(32);
+    expect(() => ring.parseKeyList(key)).toThrow(/entry 1 is not kid:key/);
+    expect(() => ring.parseKeyList(key)).not.toThrow(new RegExp(key.slice(0, 12)));
   });
 });
 

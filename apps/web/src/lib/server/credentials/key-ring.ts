@@ -46,11 +46,11 @@ export function parseKeyList(text: string): Array<{ kid: string; key: string }> 
     .split(',')
     .map((part) => part.trim())
     .filter(Boolean)
-    .map((part) => {
+    .map((part, index) => {
       const at = part.indexOf(':');
       const kid = at < 0 ? '' : part.slice(0, at).trim();
       const key = at < 0 ? '' : part.slice(at + 1).trim();
-      if (!KID.test(kid) || !key) throw new Error(`LANDFLOW_ENCRYPTION_KEYS: "${part.slice(0, at < 0 ? 12 : at)}…" is not kid:key (a kid is letters, digits, _ or -, up to 32)`);
+      if (!KID.test(kid) || !key) throw new Error(`LANDFLOW_ENCRYPTION_KEYS: entry ${index + 1}${at < 0 ? '' : ` ("${part.slice(0, at)}")`} is not kid:key (a kid is letters, digits, _ or -, up to 32)`);
       return { kid, key };
     });
   const seen = new Set<string>();

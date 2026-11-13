@@ -513,6 +513,11 @@ class AgentStore {
     return this.backend.remove(id);
   }
 
+  /** Store an agent exactly as given (no new `updatedAt`): key rotation re-seals values inside a definition. */
+  rewrite(agent: Agent): void {
+    this.backend.write(agent);
+  }
+
   private write(agent: Agent): Agent {
     this.backend.write(agent);
     return agent;

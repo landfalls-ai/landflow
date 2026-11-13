@@ -56,3 +56,9 @@ external secrets providers, transport connections) use AES-256-GCM with a key ri
      `credentials/rotate.ts` one value at a time, skips what is on the primary key, and can be run again after an interruption.
   4. The answer has `resealed`, `current`, `failed` (what no key opened) and `done`. **Never remove a key before rotate reports
      `done: true`.** Then drop it from the ring and restart.
+     Dropping an old key also voids what was signed under it: resume URLs and approval email links still in flight (waits can
+     live for days with `LANDFLOW_RESUME_SIGNATURES=required`), so wait for those to finish or expire first.
+     A key or passphrase can't contain a comma, and a kid is letters, digits, `_` or `-` (up to 32).
+     The script works with SQLite and Postgres: it opens the database and waits for the write queue before it ends. Rotation
+     rewrites whole rows from the host's copy, so in queue mode a write to the same row from another process during the run
+     (an alert channel's last delivery, say) can be overwritten; run it when the cluster is quiet.
