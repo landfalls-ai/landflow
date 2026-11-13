@@ -49,9 +49,14 @@ export function ConfirmCard({ executionId, request, nodeName, since, onDecided, 
         <div className="flex items-start gap-2 text-[13px] text-t1">
           <Hourglass className="mt-0.5 size-3.5 shrink-0 text-warn" />
           <div className="min-w-0">
-            <b data-testid="confirm-title">Waiting for {who}: {request.title}</b>
+            <b data-testid="confirm-title">{request.approvers?.length ? `Waiting for ${who}` : 'Needs you'} · {request.title}</b>
             <span className="text-t2"> · {nodeName} · since {clock(since)}</span>
           </div>
+          {open && (
+            <button type="button" onClick={open} className="ml-auto shrink-0 text-[12px] font-semibold text-ac hover:underline max-md:min-h-11">
+              Details
+            </button>
+          )}
         </div>
         {editing ? (
           <Textarea aria-label="Text" rows={Math.min(14, Math.max(4, text.split('\n').length + 1))} value={text} onChange={(e) => setText(e.target.value)} data-testid="confirm-editor" />
@@ -79,17 +84,12 @@ export function ConfirmCard({ executionId, request, nodeName, since, onDecided, 
                 setText(request.text);
               }}
             >
-              Cancel edit
+              Cancel
             </Button>
           )}
           <Button variant="danger" loading={busy === 'reject'} disabled={Boolean(busy)} onClick={() => send(false)} data-testid="confirm-reject">
             <X className="size-3.5" /> Reject
           </Button>
-          {open && (
-            <Button variant="ghost" onClick={open}>
-              Details
-            </Button>
-          )}
         </div>
       </div>
     </Card>

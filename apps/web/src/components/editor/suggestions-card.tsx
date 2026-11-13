@@ -78,8 +78,8 @@ function SuggestionRow({ suggestion, state, onApply, onDismiss }: { suggestion: 
           {meta.label}
         </Badge>
         <span className="min-w-0 flex-1 text-[13px] font-semibold leading-snug text-t1">{suggestion.title}</span>
-        <span className="font-mono text-[11px] text-t3" title="How sure the model is">
-          {Math.round(suggestion.confidence * 100)}%
+        <span className="whitespace-nowrap text-[11px] text-t3" title="How sure the model is">
+          {Math.round(suggestion.confidence * 100)}% sure
         </span>
       </div>
       {suggestion.detail && <p className="text-[12px] leading-relaxed text-t2">{suggestion.detail}</p>}

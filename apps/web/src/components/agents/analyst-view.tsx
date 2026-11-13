@@ -7,6 +7,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { ChevronRight, ListTree, Wrench } from 'lucide-react';
+import { Button } from '../ui/button';
 import { cn } from '@/lib/utils';
 import {
   ANALYST_SOURCE_LABEL,
@@ -123,17 +124,12 @@ export function AnswerCard({ chart, text, onSuggest, busy }: { chart: AnalystCha
         </ul>
       )}
       <div className="mt-3 flex flex-wrap gap-2">
-        <Link href={runsHref(chart)} className="rounded-full border border-bd px-3 py-1 text-[12px] text-t1 transition-colors hover:border-ac hover:text-ac">
+        <Link href={runsHref(chart)} className="inline-flex h-7 items-center rounded-full border border-bd px-3 text-[12px] font-medium text-t1 transition-colors hover:border-ac hover:text-ac max-md:h-11">
           Open the runs
         </Link>
-        <button
-          onClick={onSuggest}
-          disabled={busy}
-          title="Asks the analyst to file a suggestion; you still apply it in the suggestions inbox"
-          className="rounded-full bg-ac2 px-3 py-1 text-[12px] text-on-ac transition-colors hover:bg-ac2-hover disabled:opacity-40"
-        >
+        <Button size="sm" variant="primary" onClick={onSuggest} disabled={busy} title="Asks the analyst to file a suggestion; you still apply it in the suggestions inbox" className="max-md:h-11">
           Suggest a fix
-        </button>
+        </Button>
       </div>
     </div>
   );

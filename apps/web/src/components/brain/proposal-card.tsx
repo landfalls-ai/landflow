@@ -190,10 +190,10 @@ export function ProposalCard({ proposal, actions, compact, onFocus }: { proposal
         </Badge>
         <span className="min-w-0 flex-1 text-[13px] font-semibold leading-snug text-t1">{proposal.title}</span>
         <Badge tone={RISK_TONE[proposal.risk]} title="How risky the change is">
-          {proposal.risk} risk
+          {proposal.risk.charAt(0).toUpperCase() + proposal.risk.slice(1)} risk
         </Badge>
-        <span className="font-mono text-[11px] text-t3" title="How sure Landflow is">
-          {Math.round(proposal.confidence * 100)}%
+        <span className="whitespace-nowrap text-[11px] text-t3" title="How sure Landflow is">
+          {Math.round(proposal.confidence * 100)}% sure
         </span>
       </div>
       {target &&
@@ -210,7 +210,7 @@ export function ProposalCard({ proposal, actions, compact, onFocus }: { proposal
           {!!proposal.slack?.messages.length && <MessageSquare className="size-3 text-ac" aria-label="Mirrored to Slack" />}
         </div>
       )}
-      <p className="text-[12px] leading-relaxed text-t2">{proposal.why}</p>
+      <Why text={proposal.why} />
       {!compact && <Evidence proposal={proposal} />}
       {proposal.effect && <p className="text-[12px] leading-relaxed text-t1">Expected: {proposal.effect}</p>}
       {proposal.metricSpec && (
@@ -257,6 +257,22 @@ export function ProposalCard({ proposal, actions, compact, onFocus }: { proposal
           <Clock className="size-3.5" /> Snooze 7 days
         </Button>
       </div>
+    </div>
+  );
+}
+
+/** Why a suggestion is made: four lines, the rest on Show more (a long one would push its buttons off a phone's screen). */
+function Why({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const long = text.length > 280;
+  return (
+    <div>
+      <p className={cn('text-[12px] leading-relaxed text-t2', long && !open && 'line-clamp-4')}>{text}</p>
+      {long && (
+        <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="mt-0.5 text-[12px] font-semibold text-ac hover:underline max-md:min-h-11">
+          {open ? 'Show less' : 'Show more'}
+        </button>
+      )}
     </div>
   );
 }
