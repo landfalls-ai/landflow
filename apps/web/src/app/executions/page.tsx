@@ -14,6 +14,8 @@ import { api } from '@/lib/client/api';
 import { duration, plural, timeAgo } from '@/lib/client/format';
 import { useLiveEvents } from '@/lib/client/live';
 import type { ExecutionRecord, ExecutionSummary } from '@/lib/shared/types';
+import { useViewer } from '@/components/auth/viewer';
+import { can } from '@/lib/shared/auth';
 import { ExecutionMarks, RERUN_LABEL, canRetry, deleteExecution, retryTitle, startRerun, startRetry, stopAllExecutions, stopAllSummary, type RetryBody } from '@/components/executions/meta';
 import { RUN_STATE, RunStateIcon, formatStamp, runStateOf, useNow } from '@/components/run/run-status';
 import { LiveRuns, NeedsYouList } from '@/components/run-trace/run-lists';
@@ -316,6 +318,9 @@ function StopAllButton({ onStopped }: { onStopped: () => void }) {
 }
 
 function ExecutionsInner() {
+  // Stop all reaches every project's runs: admins only (the route enforces it; a null viewer is a host without sign-in).
+  const viewer = useViewer();
+  const canStopAll = !viewer || can(viewer, 'settings:manage');
   const params = useSearchParams();
   const router = useRouter();
   const legacyId = params.get('id');
@@ -418,7 +423,7 @@ function ExecutionsInner() {
               Auto refresh
               {auto && <span className="size-1.5 rounded-full bg-gn animate-pulse-soft" />}
             </label>
-            <StopAllButton onStopped={refresh} />
+            {canStopAll && <StopAllButton onStopped={refresh} />}
           </>
         }
       />

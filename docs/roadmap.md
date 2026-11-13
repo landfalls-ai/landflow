@@ -1232,6 +1232,10 @@ workbench in place of a page of cards, keeping Spotlight.
   the Source, filing a good answer back as a fact, and a detector that turns shared work into a suggestion addressed to
   both teams.
 
+## Backend hardening (2026-11)
+
+- **P05, SCIM audit, Stop all for admins, project scoping for AI usage and files** (S2, S4, S12 part): SCIM changes and rejected tokens are audit events; stop-all is admin-only; members' AI usage and file reads stop at their projects.
+
 ## Planned next
 
 1. **Declare event kinds in the UI**: kinds are declared over the API or by Record Event's *Declare Kind If New* only.

@@ -92,3 +92,10 @@ items still open (its "Wave 6" section); this page is the short list to check be
   compose) starts a second copy under the same plugin id and lists its template twice (built-in and installed); install
   from the marketplace only where the plugin isn't bundled.
 - **Checked against fakes only**: Slack, Google, Notion, Linear, Attio and Fathom activity were tested against local fakes of their APIs, not a real workspace.
+
+## Access scope of AI usage and files (2026-11)
+
+- **Files with no execution** aren't project-scoped: an editor upload that no run has used yet, an agent's knowledge file
+  and the like have no execution or workflow to derive an owner from, so any signed-in caller who knows the id (random,
+  unguessable) can read them. Files of executions and of evaluation datasets are checked against the workflow's project.
+- **AI usage rows with no workflow or agent** (a model call outside both) are visible to owners and admins only.
