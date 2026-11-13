@@ -1017,3 +1017,22 @@ If you joined the networks with `compose.infra-link.yml`, pass it to `down` as w
 - **LocalStack** (profile `aws`) stands in for AWS Secrets Manager: Settings → External secrets → AWS Secrets Manager with the endpoint `http://localhost:54566` (or `http://localstack:4566` from the app stack) and dummy access keys. `LANDFLOW_INTEGRATION=aws npx vitest run test/secrets-aws.integration.test.ts` (in `apps/web`) runs the provider against it with the shared AWS config and credentials files turned off. Secrets are gone after a restart.
 - **GreenMail** is there because Mailpit has no IMAP: it is the mailbox the Email Trigger (IMAP) reads. Mail sent to its SMTP port lands in its own mailboxes, not in Mailpit.
 - Keycloak's realm is imported only when the realm doesn't exist yet. After editing `infra/keycloak/landflow-realm.json`, run `down -v` on the infra stack (or delete the realm in the admin console) and start it again.
+
+## Security headers and Content Security Policy
+
+`apps/web/src/proxy.ts` sets these on every response it produces (pages, API routes, 401s and redirects): `X-Content-Type-Options:
+nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), geolocation=(), microphone=(self)`
+(Spotlight dictation uses the microphone) and `X-Frame-Options: DENY`. `Strict-Transport-Security: max-age=31536000;
+includeSubDomains` is added when the request is https (the URL, or `X-Forwarded-Proto`) unless `LANDFLOW_HSTS=off`. `x-powered-by`
+is not sent.
+
+Pages (not API routes) also get a Content Security Policy with a fresh nonce per request: `script-src 'self' 'nonce-…'
+'strict-dynamic'` (plus `'unsafe-eval'` under `next dev`), inline styles, `img-src 'self' data: blob:`, `connect-src 'self'`,
+`frame-src 'self' blob:`, `worker-src 'self' blob:`, `object-src 'none'`, `base-uri 'self'`, `form-action 'self'` and
+`frame-ancestors 'none'`. `LANDFLOW_CSP` picks the mode: `enforce` (default in the production profile), `report`
+(`Content-Security-Policy-Report-Only`, default in development) or `off`. If a page breaks in production, set
+`LANDFLOW_CSP=report` and read the console for the blocked source.
+
+The embeddable or self-policed paths (`/chat`, `/form`, `/form-test`, `/api/binary`, `/api/mcp/files`, `/mcp`, `/api/webhook`) keep their
+own policy and get no frame headers or CSP from the proxy, only the three fixed headers above. A reverse proxy that serves the host over
+https should forward `X-Forwarded-Proto`.

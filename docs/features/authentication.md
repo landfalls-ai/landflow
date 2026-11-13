@@ -19,3 +19,22 @@ Everything except the public routes below needs a signed-in user or an API key.
 Public without credentials: `/api/health`; the sign-in pages (`/login`, `/setup`, `/invite/*`, `/forgot-password`, `/reset-password/*`) and `/api/auth/*` except `/api/auth/me`; triggers with their own auth: `/api/webhook/*`, `/form/*`, the test URLs `/api/webhook-test/*`, `/form-test/*` and `/mcp-test/*` (only while an editor listens), `/api/waiting/*`, `/mcp/*` (MCP Server Triggers), `/api/mcp` (the instance MCP server's token) and `/scim/v2/*` (a SCIM token); `/api/oauth2/callback`; `/api/slack/*` (verified with Slack's signing secret); `/api/teams/*` (the Bot Framework JWT is validated); `/api/approvals/email/*` (signed, single-use approval links); hosted chat pages (`/chat/*`); `/api/binary/*` with a plugin's per-call token; `/api/plugins/announce` (with the registry secret when set); Next.js static files. `/api/metrics` needs a session or an API key with `executions:read` unless `LANDFLOW_METRICS_PUBLIC=true`. The list is `PUBLIC_ROUTES` in `apps/web/src/lib/shared/auth-paths.ts`; the Next.js proxy (`apps/web/src/proxy.ts`) redirects pages to `/login` and answers 401 for API routes, and the route guard in every handler checks sessions, keys, scopes and roles.
 
 **SCIM audit**: every provisioning change and every rejected SCIM token is an audit event (`user.provision`, `user.update`, `user.deactivate`, `user.reactivate`, `user.remove`, `group.create`, `group.update`, `group.members_change`, `group.remove`, `scim.auth_failed`), credited to the token's user and key id; see [Audit log](audit-and-governance.md).
+
+## Security headers and Content Security Policy
+
+`apps/web/src/proxy.ts` sets these on every response it produces (pages, API routes, 401s and redirects): `X-Content-Type-Options:
+nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), geolocation=(), microphone=(self)`
+(Spotlight dictation uses the microphone) and `X-Frame-Options: DENY`. `Strict-Transport-Security: max-age=31536000;
+includeSubDomains` is added when the request is https (the URL, or `X-Forwarded-Proto`) unless `LANDFLOW_HSTS=off`. `x-powered-by`
+is not sent.
+
+Pages (not API routes) also get a Content Security Policy with a fresh nonce per request: `script-src 'self' 'nonce-…'
+'strict-dynamic'` (plus `'unsafe-eval'` under `next dev`), inline styles, `img-src 'self' data: blob:`, `connect-src 'self'`,
+`frame-src 'self' blob:`, `worker-src 'self' blob:`, `object-src 'none'`, `base-uri 'self'`, `form-action 'self'` and
+`frame-ancestors 'none'`. `LANDFLOW_CSP` picks the mode: `enforce` (default in the production profile), `report`
+(`Content-Security-Policy-Report-Only`, default in development) or `off`. If a page breaks in production, set
+`LANDFLOW_CSP=report` and read the console for the blocked source.
+
+The embeddable or self-policed paths (`/chat`, `/form`, `/form-test`, `/api/binary`, `/api/mcp/files`, `/mcp`, `/api/webhook`) keep their
+own policy and get no frame headers or CSP from the proxy, only the three fixed headers above. A reverse proxy that serves the host over
+https should forward `X-Forwarded-Proto`.
