@@ -10,6 +10,7 @@ import { nodeColor, tint } from '@/lib/client/node-style';
 import type { RemoteRun, TimelineEntry, ToolKind } from '@/lib/shared/agents';
 import type { ChatFeedback, FeedbackRating } from '@/lib/shared/chat-feedback';
 import { Button } from '../ui/button';
+import { AssistantRow, ChatError, ChatMarkdown, ReplyMeta, UserBubble } from '../ui/chat';
 import { NodeIcon } from '../ui/icon';
 import { JsonView } from '../ui/json-view';
 import { shortArg, snippetOf } from '@/lib/client/node-progress';
@@ -232,10 +233,10 @@ function ToolRow({
               ))}
           {onDecide && (
             <div className="mt-2.5 flex gap-2">
-              <Button size="sm" variant="primary" loading={deciding} onClick={() => onDecide(entry.callId, true)}>
+              <Button size="sm" variant="primary" className="max-md:min-h-11" loading={deciding} onClick={() => onDecide(entry.callId, true)}>
                 {!deciding && <Check className="size-3.5" />} Approve
               </Button>
-              <Button size="sm" variant="outline" disabled={deciding} onClick={() => onDecide(entry.callId, false)}>
+              <Button size="sm" variant="outline" className="max-md:min-h-11" disabled={deciding} onClick={() => onDecide(entry.callId, false)}>
                 <Ban className="size-3.5" /> Deny
               </Button>
             </div>
@@ -301,19 +302,6 @@ function ToolRow({
   );
 }
 
-function Avatar({ role }: { role: 'user' | 'assistant' | 'error' }) {
-  return (
-    <div
-      className={cn(
-        'grid size-[26px] shrink-0 place-items-center rounded-full border',
-        role === 'user' ? 'border-hair bg-wl text-t2' : role === 'error' ? 'border-rdbd bg-rddim text-rd' : 'border-acbd bg-acdim text-ac',
-      )}
-    >
-      {role === 'user' ? <User className="size-3.5" /> : role === 'error' ? <TriangleAlert className="size-3.5" /> : <Bot className="size-3.5" />}
-    </div>
-  );
-}
-
 export function TimelineView({
   entries,
   childHref,
@@ -336,33 +324,28 @@ export function TimelineView({
   feedback?: Record<string, ChatFeedback>;
   onRate?: (entryId: string, rating: FeedbackRating | null) => void;
 }) {
-  const bubble = wide ? 'max-w-[min(640px,85%)]' : 'max-w-[290px]';
+  // The Sessions tab is wide: a reply keeps a readable line length.
+  const measure = wide ? 'max-w-[680px]' : undefined;
   return (
     <div className="space-y-3">
       {entries.map((entry) => {
         switch (entry.type) {
           case 'user':
             return (
-              <div key={entry.id} className="flex animate-in flex-row-reverse gap-2.5">
-                <Avatar role="user" />
-                <div className={cn('min-w-0', bubble)}>
-                  {entry.from && entry.from !== 'you' && <div className="mb-0.5 text-right text-[11px] text-t3">{entry.from}</div>}
-                  <div className="whitespace-pre-wrap rounded-xl bg-ac2 px-3 py-2 text-[13px] leading-relaxed text-on-ac [overflow-wrap:anywhere]">
-                    {entry.text}
-                  </div>
-                </div>
-              </div>
+              <UserBubble key={entry.id} from={entry.from && entry.from !== 'you' ? entry.from : undefined}>
+                {entry.text}
+              </UserBubble>
             );
           case 'assistant':
             return (
-              <div key={entry.id} className="flex animate-in gap-2.5">
-                <Avatar role="assistant" />
-                <div className={cn('min-w-0', bubble)}>
-                  <div className="whitespace-pre-wrap rounded-xl border border-hair bg-wl px-3 py-2 text-[13px] leading-relaxed text-t1 [overflow-wrap:anywhere]">
-                    {entry.text}
-                  </div>
+              <AssistantRow key={entry.id} mark={<Bot className="size-3.5" />} className={measure}>
+                <ChatMarkdown text={entry.text} />
+                <ReplyMeta
+                  parts={[entry.model, entry.usage && `${entry.usage.inputTokens.toLocaleString()} in · ${entry.usage.outputTokens.toLocaleString()} out`]}
+                  copy={entry.text}
+                >
                   {onRate && (
-                    <div className="mt-1 flex items-center gap-1">
+                    <span className="flex items-center gap-0.5 font-sans">
                       {(['up', 'down'] as const).map((rating) => {
                         const on = feedback?.[entry.id]?.rating === rating;
                         const Icon = rating === 'up' ? ThumbsUp : ThumbsDown;
@@ -373,54 +356,36 @@ export function TimelineView({
                             aria-pressed={on}
                             aria-label={rating === 'up' ? 'Good reply' : 'Bad reply'}
                             title={rating === 'up' ? 'Good reply' : 'Bad reply'}
-                            className={cn('rounded-md p-1 transition-colors hover:bg-wl', on ? (rating === 'up' ? 'text-gn' : 'text-rd') : 'text-t3 hover:text-t1')}
+                            className={cn('grid size-6 place-items-center rounded-full transition-colors hover:bg-wl max-md:size-11', on ? (rating === 'up' ? 'text-gn' : 'text-rd') : 'text-t3 hover:text-t1')}
                           >
                             <Icon className="size-3" />
                           </button>
                         );
                       })}
                       {feedback?.[entry.id]?.comment && <span className="truncate text-[11px] text-t3" title={feedback[entry.id].comment}>“{feedback[entry.id].comment}”</span>}
-                    </div>
+                    </span>
                   )}
-                  {(entry.model || entry.usage) && (
-                    <div className="mt-1 flex gap-2 font-mono text-[10px] text-t3">
-                      {entry.model && <span>{entry.model}</span>}
-                      {entry.usage && (
-                        <span title="Input / output tokens">
-                          {entry.usage.inputTokens.toLocaleString()} in · {entry.usage.outputTokens.toLocaleString()} out
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
+                </ReplyMeta>
+              </AssistantRow>
             );
           case 'tool':
             return (
-              <div key={entry.id} className={cn('pl-[34px]', !wide && 'pr-1')}>
+              <div key={entry.id} className={cn('pl-7', !wide && 'pr-1', measure)}>
                 <ToolRow entry={entry} childHref={childHref} onDecide={onDecide} deciding={deciding} live={liveSteps?.(entry)} />
               </div>
             );
           case 'error':
             return (
-              <div key={entry.id} className="flex animate-in gap-2.5">
-                <Avatar role="error" />
-                <div
-                  className={cn(
-                    'min-w-0 whitespace-pre-wrap rounded-xl border border-rdbd bg-rddim px-3 py-2 text-[13px] leading-relaxed text-rd [overflow-wrap:anywhere]',
-                    bubble,
-                  )}
-                >
-                  {entry.message}
-                </div>
+              <div key={entry.id} className={cn('pl-7', measure)}>
+                <ChatError message={entry.message} />
               </div>
             );
           case 'guardrail':
             return (
-              <div key={entry.id} className={cn('pl-[34px]', !wide && 'pr-1')}>
-                <div className="animate-in rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12.5px] leading-snug text-t1">
+              <div key={entry.id} className={cn('pl-7', !wide && 'pr-1', measure)}>
+                <div className="animate-in rounded-xl border border-warnbd bg-warndim px-3 py-2 text-[12.5px] leading-snug text-t1">
                   <div className="flex items-center gap-1.5 font-semibold">
-                    <ShieldAlert className="size-3.5 shrink-0 text-amber-600" />
+                    <ShieldAlert className="size-3.5 shrink-0 text-warn" />
                     {entry.stage === 'input' ? 'Input' : entry.stage === 'tool' ? 'Tool result' : 'Output'} guardrail {entry.action}
                   </div>
                   <ul className="mt-1 space-y-0.5 text-t2">

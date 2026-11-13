@@ -5,7 +5,7 @@
  */
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowUp, BookOpen, Bot, Check, ChevronLeft, Loader2, Plug, RadioTower, Square, TriangleAlert, Workflow, X } from 'lucide-react';
+import { BookOpen, Bot, Check, ChevronLeft, Loader2, Plug, RadioTower, TriangleAlert, Workflow, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, streamEvents } from '@/lib/client/api';
 import { nodeColor, tint } from '@/lib/client/node-style';
@@ -16,8 +16,9 @@ import { randomFace } from '@/lib/shared/faces';
 import type { NodeTypeInfo } from '@/lib/shared/types';
 import { Chip } from '../ui/badge';
 import { Button } from '../ui/button';
+import { AssistantRow, ChatComposer, ChatEmpty, ChatError, ChatMarkdown, UserBubble, Working } from '../ui/chat';
 import { NodeIcon } from '../ui/icon';
-import { Input, Textarea } from '../ui/inputs';
+import { Input } from '../ui/inputs';
 import { AgentAvatar } from './avatar';
 import { AGENT_COLORS, AvatarDialog, type AvatarChoice } from './avatar-dialog';
 import { Dialog, Field } from './dialog';
@@ -222,6 +223,9 @@ export function AgentArchitect({ teams, onBack, onClose }: { teams: string[]; on
   const [team, setTeam] = useState('');
   const [picking, setPicking] = useState(false);
   const [creating, setCreating] = useState(false);
+  // A phone shows one pane at a time: the chat, or the draft (it switches to the draft when one arrives).
+  const [pane, setPane] = useState<'chat' | 'draft'>('chat');
+  const box = useRef<HTMLTextAreaElement>(null);
   const abort = useRef<AbortController>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const draftRef = useRef(draft);
@@ -240,10 +244,10 @@ export function AgentArchitect({ teams, onBack, onClose }: { teams: string[]; on
   /** Change the last (streaming) message. */
   const patch = (fn: (m: Message) => Message) => setMessages((list) => list.map((m, i) => (i === list.length - 1 ? fn(m) : m)));
 
-  const send = async (text: string) => {
+  const send = async (text: string, base = messages) => {
     const content = text.trim();
     if (!content || streaming) return;
-    const sent = [...messages, { role: 'user' as const, text: content, tools: [] }];
+    const sent = [...base, { role: 'user' as const, text: content, tools: [] }];
     setMessages([...sent, { role: 'assistant', text: '', tools: [] }]);
     setInput('');
     setStreaming(true);
@@ -262,6 +266,7 @@ export function AgentArchitect({ teams, onBack, onClose }: { teams: string[]; on
             const next = d as unknown as Draft;
             setDraft({ id: next.id, summary: next.summary, config: next.config ?? {}, needs: next.needs ?? [], dropped: next.dropped ?? [], missing: next.missing ?? [] });
             setFresh(true);
+            setPane('draft');
             patch((m) => ({ ...m, proposed: next.summary }));
           } else if (event === 'error') patch((m) => ({ ...m, error: String(d.message ?? 'Something went wrong') }));
         },
@@ -331,97 +336,84 @@ export function AgentArchitect({ teams, onBack, onClose }: { teams: string[]; on
         }
       >
         <div className="flex h-[min(620px,70vh)] min-h-0 flex-col md:flex-row">
-          <section aria-label="Chat with the Agent architect" className="flex min-h-0 flex-1 flex-col border-b border-hair md:w-[400px] md:flex-none md:border-b-0 md:border-r">
+          <div role="group" aria-label="Pane" className="flex shrink-0 gap-1 border-b border-hair p-2 md:hidden">
+            {(['chat', 'draft'] as const).map((p) => (
+              <button
+                key={p}
+                type="button"
+                aria-pressed={pane === p}
+                onClick={() => setPane(p)}
+                className={cn('h-11 flex-1 rounded-full text-[13px] font-semibold transition-colors', pane === p ? 'bg-sf2 text-t1 shadow-sm' : 'text-t3')}
+              >
+                {p === 'chat' ? 'Chat' : draft ? 'Draft' : 'Draft (none yet)'}
+              </button>
+            ))}
+          </div>
+          <section aria-label="Chat with the Agent architect" className={cn('flex min-h-0 flex-1 flex-col border-b border-hair md:w-[400px] md:flex-none md:border-b-0 md:border-r', pane !== 'chat' && 'max-md:hidden')}>
             <div aria-live="polite" className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
               {messages.length === 0 && (
-                <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-                  <AgentAvatar agent={architectAvatar} size={64} />
-                  <p className="max-w-[300px] text-[13px] leading-relaxed text-t2">
-                    Tell me what the agent should do, who it helps and where it works. I’ll pick the persona and the tools from your plugins.
-                  </p>
-                  <div className="flex w-full flex-col gap-1.5">
-                    {STARTERS.map((s) => (
-                      <button
-                        key={s}
-                        type="button"
-                        onClick={() => void send(s)}
-                        className="rounded-xl border border-hair bg-wl px-3 py-2 text-left text-[12px] leading-snug text-t2 transition-colors hover:border-ac hover:text-t1 focus-visible:outline-2 focus-visible:outline-ac"
-                      >
-                        {s}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                <ChatEmpty
+                  className="flex h-full flex-col justify-center"
+                  mark={<AgentAvatar agent={architectAvatar} size={48} />}
+                  title="The Agent architect"
+                  help="Tell me what the agent should do, who it helps and where it works. I’ll pick the persona and the tools from your plugins."
+                  starters={STARTERS}
+                  onStarter={(text) => {
+                    setInput(text);
+                    box.current?.focus();
+                  }}
+                />
               )}
               {messages.map((m, i) => {
                 const last = i === messages.length - 1;
-                if (m.role === 'user')
-                  return (
-                    <div key={i} className="flex justify-end">
-                      <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-acdim px-3 py-2 text-[13px] leading-relaxed text-t1">{m.text}</div>
-                    </div>
-                  );
+                if (m.role === 'user') return <UserBubble key={i}>{m.text}</UserBubble>;
                 return (
-                  <div key={i} className="flex gap-2">
-                    <AgentAvatar agent={architectAvatar} size={28} />
-                    <div className="min-w-0 flex-1 space-y-1.5">
-                      {m.tools.map((t, j) => (
-                        <div key={j} className="flex items-center gap-1.5 text-[11px] text-t3">
-                          {t.ok ? <Check className="size-3 text-gn" /> : <X className="size-3 text-rd" />}
-                          <span className="truncate">{t.label}</span>
-                        </div>
-                      ))}
-                      {m.text && <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-t1">{m.text}</div>}
-                      {m.proposed && <div className="text-[11px] text-t3">Draft updated: {m.proposed}</div>}
-                      {streaming && last && !m.error && (
-                        <div className="flex items-center gap-1.5 text-[12px] text-t3">
-                          <Loader2 className="size-3 animate-spin" /> Thinking…
-                        </div>
-                      )}
-                      {m.error && (
-                        <div role="alert" className="flex gap-1.5 text-[12px] text-rd">
-                          <TriangleAlert className="mt-0.5 size-3.5 shrink-0" /> {m.error}
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  <AssistantRow key={i} mark={<AgentAvatar agent={architectAvatar} size={20} />}>
+                    {m.tools.map((t, j) => (
+                      <div key={j} className="flex items-center gap-1.5 text-[11px] text-t3">
+                        {t.ok ? <Check className="size-3 text-gn" /> : <X className="size-3 text-rd" />}
+                        <span className="truncate">{t.label}</span>
+                      </div>
+                    ))}
+                    {m.text && <ChatMarkdown text={m.text} />}
+                    {m.proposed && (
+                      <button type="button" onClick={() => setPane('draft')} className="text-left text-[11px] text-t3 max-md:min-h-11 max-md:text-ac">
+                        Draft updated: {m.proposed}
+                      </button>
+                    )}
+                    {streaming && last && !m.error && <Working />}
+                    {m.error && (
+                      <ChatError
+                        message={m.error}
+                        onRetry={
+                          streaming || !last
+                            ? undefined
+                            : () => {
+                                const asked = messages[i - 1];
+                                if (asked?.role === 'user') void send(asked.text, messages.slice(0, i - 1));
+                              }
+                        }
+                      />
+                    )}
+                  </AssistantRow>
                 );
               })}
               <div ref={bottom} />
             </div>
-            <form
-              className="flex shrink-0 items-end gap-2 border-t border-hair p-3"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void send(input);
-              }}
-            >
-              <Textarea
-                aria-label="Message the Agent architect"
+            <div className="shrink-0 border-t border-hair p-2.5">
+              <ChatComposer
+                inputRef={box}
                 value={input}
-                rows={2}
-                placeholder={draft ? 'Ask for changes…' : 'Describe the agent…'}
-                className="min-h-0 flex-1 resize-none"
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-                    e.preventDefault();
-                    void send(input);
-                  }
-                }}
+                onChange={setInput}
+                onSend={(text) => void send(text)}
+                onStop={() => abort.current?.abort()}
+                busy={streaming}
+                placeholder={draft ? 'Ask for changes' : 'Describe the agent'}
+                label="Message the Agent architect"
               />
-              {streaming ? (
-                <Button type="button" size="icon-sm" aria-label="Stop" onClick={() => abort.current?.abort()}>
-                  <Square className="size-3.5" />
-                </Button>
-              ) : (
-                <Button type="submit" variant="primary" size="icon-sm" aria-label="Send" disabled={!input.trim()}>
-                  <ArrowUp className="size-3.5" />
-                </Button>
-              )}
-            </form>
+            </div>
           </section>
-          <section aria-label="Draft agent" className="min-h-[260px] min-w-0 flex-1 overflow-y-auto bg-wl p-4">
+          <section aria-label="Draft agent" className={cn('min-h-[260px] min-w-0 flex-1 overflow-y-auto bg-wl p-4', pane !== 'draft' && 'max-md:hidden')}>
             {draft ? (
               <DraftPreview draft={draft} seed={seed} fresh={fresh} onPick={() => setPicking(true)} />
             ) : (

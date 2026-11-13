@@ -68,15 +68,54 @@ export function PageLink({ refId, name, className }: { refId: string; name: stri
 export function WikiText({ text, links = [], onCite, className }: { text: string; links?: WikiLink[]; onCite?: (n: number) => void; className?: string }) {
   const names = new Map(links.map((l) => [l.ref, l.name]));
   const paragraphs = text.split(/\n{2,}/).filter((p) => p.trim());
+  // A model writes a little Markdown: lists (- , * , 1. ), **bold** and `code`; each line keeps its break.
+  const item = /^\s*(?:[-*•]|\d{1,2}[.)])\s+/;
   return (
     <div className={cn('space-y-2.5 text-[13.5px] leading-relaxed text-t1', className)}>
-      {paragraphs.map((paragraph, i) => (
-        <p key={i} className="[overflow-wrap:anywhere]">
-          {inline(paragraph, names, onCite)}
-        </p>
-      ))}
+      {paragraphs.map((paragraph, i) => {
+        const lines = paragraph.split('\n').filter((l) => l.trim());
+        if (lines.length && lines.every((l) => item.test(l))) {
+          const ordered = /^\s*\d/.test(lines[0]);
+          const List = ordered ? 'ol' : 'ul';
+          return (
+            <List key={i} className={cn('space-y-1 pl-5 [overflow-wrap:anywhere]', ordered ? 'list-decimal' : 'list-disc')}>
+              {lines.map((line, j) => (
+                <li key={j}>{marks(line.replace(item, ''), names, onCite)}</li>
+              ))}
+            </List>
+          );
+        }
+        return (
+          <p key={i} className="whitespace-pre-line [overflow-wrap:anywhere]">
+            {marks(paragraph, names, onCite)}
+          </p>
+        );
+      })}
     </div>
   );
+}
+
+/** `**bold**` and `` `code` `` around the links and references `inline` reads. */
+function marks(text: string, names: Map<string, string>, onCite?: (n: number) => void): ReactNode[] {
+  const out: ReactNode[] = [];
+  let last = 0;
+  for (const match of text.matchAll(/\*\*([^*\n]+)\*\*|`([^`\n]+)`/g)) {
+    out.push(<Fragment key={`s${last}`}>{inline(text.slice(last, match.index), names, onCite)}</Fragment>);
+    out.push(
+      match[1] !== undefined ? (
+        <strong key={`b${match.index}`} className="font-semibold">
+          {inline(match[1], names, onCite)}
+        </strong>
+      ) : (
+        <code key={`c${match.index}`} className="rounded bg-acdim px-1 font-mono text-[0.92em]">
+          {match[2]}
+        </code>
+      ),
+    );
+    last = (match.index ?? 0) + match[0].length;
+  }
+  out.push(<Fragment key="end">{inline(text.slice(last), names, onCite)}</Fragment>);
+  return out;
 }
 
 function inline(text: string, names: Map<string, string>, onCite?: (n: number) => void): ReactNode[] {

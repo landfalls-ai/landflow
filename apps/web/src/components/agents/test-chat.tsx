@@ -1,9 +1,10 @@
 'use client';
 /** "Test agent": a slide-over chat with the draft, streaming tool calls and approvals as they happen. */
 import { useEffect, useRef, useState } from 'react';
-import { Bot, Loader2, RotateCcw, SendHorizontal, Square, X } from 'lucide-react';
+import { Bot, SquarePen, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Badge } from '../ui/badge';
+import { AssistantRow, CHAT_ICON_BUTTON, ChatComposer, ChatEmpty, Working } from '../ui/chat';
 import { useNewLook } from '../shell/look-toggle';
 import { isAnalyst, sourcesOf } from '@/lib/shared/analyst-chart';
 import type { AgentToolConfig } from '@/lib/shared/agents';
@@ -86,34 +87,24 @@ export function TestChat({
 
   const last = run.entries[run.entries.length - 1];
   const thinking = run.running && !(last?.type === 'tool' && last.status === 'running');
-  const used = run.usage.inputTokens + run.usage.outputTokens;
 
   return (
     <aside
-      className="z-40 flex h-screen w-[380px] shrink-0 animate-panel flex-col border-l border-hair bg-sf max-md:fixed max-md:inset-0 max-md:w-full"
+      className="z-40 flex h-screen w-[380px] shrink-0 animate-panel flex-col border-l border-hair bg-sf max-md:fixed max-md:inset-0 max-md:h-dvh max-md:w-full max-md:pt-[env(safe-area-inset-top)]"
       aria-label="Test agent"
     >
       <div className="flex h-[52px] shrink-0 items-center gap-2 border-b border-hair px-3">
         <span className="text-[13px] font-semibold text-t1">Test agent</span>
         <Badge tone="muted">Draft</Badge>
-        {run.sessionId && (
-          <span className="min-w-0 truncate font-mono text-[11px] text-t3" title={run.sessionId}>
-            {run.sessionId}
-          </span>
-        )}
         <button
-          title="New session"
-          aria-label="New session"
+          title={run.sessionId ? `New conversation (this one is ${run.sessionId}, under Sessions)` : 'New conversation'}
+          aria-label="New conversation"
           onClick={run.reset}
-          className="ml-auto grid size-7 shrink-0 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1"
+          className={cn(CHAT_ICON_BUTTON, 'ml-auto')}
         >
-          <RotateCcw className="size-3.5" />
+          <SquarePen className="size-3.5" />
         </button>
-        <button
-          onClick={onClose}
-          aria-label="Close test chat"
-          className="grid size-7 shrink-0 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1"
-        >
+        <button onClick={onClose} aria-label="Close test chat" className={CHAT_ICON_BUTTON}>
           <X className="size-4" />
         </button>
       </div>
@@ -122,19 +113,12 @@ export function TestChat({
 
       <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
         {run.entries.length === 0 && (
-          <div className="mt-8 animate-fade-up text-center">
-            {look ? (
-              <AgentAvatar agent={look} size={56} round className="mx-auto mb-3" />
-            ) : (
-              <div className="mx-auto mb-3 grid size-10 place-items-center rounded-full border border-acbd bg-acdim">
-                <Bot className="size-5 text-ac" strokeWidth={1.6} />
-              </div>
-            )}
-            <div className="text-[15px] font-semibold text-t1">Talk to {agentName || 'your agent'}</div>
-            <div className="mx-auto mt-1 max-w-[270px] text-[13px] text-t2">
-              Messages run the current draft. Tool calls show up here as they happen, and the conversation is saved under Sessions.
-            </div>
-          </div>
+          <ChatEmpty
+            className="mt-8"
+            mark={look ? <AgentAvatar agent={look} size={40} round /> : undefined}
+            title={`Talk to ${agentName || 'your agent'}`}
+            help="Messages run the current draft. Tool calls show up here as they happen, and the conversation is saved under Sessions."
+          />
         )}
         {analyst ? (
           <AnalystTimeline
@@ -149,23 +133,16 @@ export function TestChat({
           <TimelineView entries={run.entries} childHref={childHref} onDecide={(callId, approved) => void decide(callId, approved)} deciding={deciding} />
         )}
         {thinking && (
-          <div className="mt-3 flex items-center gap-2.5">
-            <div className="grid size-[26px] shrink-0 place-items-center rounded-full border border-acbd bg-acdim text-ac">
-              <Loader2 className="size-3.5 animate-spin" />
-            </div>
-            <div className="animate-pulse-soft text-[13px] text-t2">Thinking…</div>
-          </div>
+          <AssistantRow mark={<Bot className="size-3.5" />} className="mt-3">
+            <Working />
+          </AssistantRow>
         )}
       </div>
 
-      <div className="border-t border-hair p-3">
-        {(run.traceIds.length > 0 || used > 0 || (run.reason && run.reason !== 'completed')) && (
+      <div className="border-t border-hair p-2.5 max-md:pb-[max(10px,env(safe-area-inset-bottom))]">
+        {/* Tokens are under each reply; here, the run's trace and how it ended. */}
+        {(run.traceIds.length > 0 || (run.reason && run.reason !== 'completed' && !run.running)) && (
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-t3">
-            {used > 0 && (
-              <span className="font-mono" title="Tokens reported by the last run (input · output)">
-                {run.usage.inputTokens.toLocaleString()} in · {run.usage.outputTokens.toLocaleString()} out
-              </span>
-            )}
             {run.traceIds.length > 0 && (
               <TraceChip traceId={run.traceIds[run.traceIds.length - 1]} url={run.traceUrls[run.traceIds[run.traceIds.length - 1]]} />
             )}
@@ -174,42 +151,17 @@ export function TestChat({
             )}
           </div>
         )}
-        <div className="flex items-end gap-2 rounded-[10px] border border-hair bg-wl p-1.5 focus-within:border-ac">
-          <textarea
-            ref={input}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-            rows={1}
-            placeholder={run.awaitingApproval ? 'Approve or deny the tool call first…' : 'Message the agent…'}
-            aria-label="Message"
-            className="max-h-32 min-h-[32px] flex-1 resize-none bg-transparent px-2 py-1.5 text-[13px] text-t1 outline-none placeholder:text-t3"
-          />
-          {run.running ? (
-            <button
-              onClick={run.stop}
-              aria-label="Stop"
-              title="Stop reading the reply"
-              className="grid size-8 place-items-center rounded-full border border-bd text-t2 transition-colors hover:border-ac hover:text-ac"
-            >
-              <Square className="size-3" fill="currentColor" />
-            </button>
-          ) : (
-            <button
-              onClick={() => void send()}
-              disabled={!draft.trim() || run.awaitingApproval}
-              aria-label="Send"
-              className="grid size-8 place-items-center rounded-full bg-ac2 text-on-ac transition-colors hover:bg-ac2-hover disabled:opacity-40"
-            >
-              <SendHorizontal className="size-3.5" />
-            </button>
-          )}
-        </div>
+        <ChatComposer
+          inputRef={input}
+          value={draft}
+          onChange={setDraft}
+          onSend={() => void send()}
+          onStop={run.stop}
+          busy={run.running}
+          canSend={!run.awaitingApproval}
+          placeholder={run.awaitingApproval ? 'Approve or deny the tool call first…' : 'Message the agent'}
+          label="Message the agent"
+        />
       </div>
     </aside>
   );

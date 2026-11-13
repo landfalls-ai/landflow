@@ -31,7 +31,7 @@ function Bubble({ children, human }: { children: ReactNode; human?: boolean }) {
   return (
     <div
       className={cn(
-        'mt-1 whitespace-pre-wrap break-words rounded-2xl rounded-tl-md border px-3 py-2 text-[13.5px] leading-snug text-t1',
+        'mt-1 whitespace-pre-wrap break-words rounded-2xl rounded-tl-md border px-3 py-2 text-[13px] leading-relaxed text-t1',
         human ? 'border-acbd bg-acdim' : 'border-hair bg-sf',
       )}
     >
