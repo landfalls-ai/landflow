@@ -147,6 +147,8 @@ describe('sealed realm', () => {
     expect(r.evaluate('({import(){return 1}}).import()', 0)).toBe(1);
     expect(r.evaluate('({async(){return 1}}).async()', 0)).toBe(1);
     expect(r.evaluate('(()=>{ const async = 2; return async * 2 })()', 0)).toBe(4);
+    // A variable named like the swap word beside one named async is not mistaken for a keyword use.
+    expect(r.evaluate('(()=>{ let async = 1, asynk = 2; return async + asynk })()', 0)).toBe(3);
     expect(() => r.evaluate("(()=>{ {} /'/; (async()=>{})(); return 1 })()", 0)).toThrow(/"async" is not available/);
   });
 

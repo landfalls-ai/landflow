@@ -36,7 +36,8 @@ export const POST = handler(async (request: Request) => {
   const reset = findToken('reset', body.data.token);
   const existing = reset?.userId ? getUser(reset.userId) : undefined;
   if (!reset || !existing) return error(GONE, 404);
-  const user = await setPassword(existing.id, body.data.password);
+  // Always a reset, even from a browser that is signed in (as this user or another): auth.password_reset, below, is the event.
+  const user = await setPassword(existing.id, body.data.password, 'reset');
   markTokenUsed(reset.id);
   deleteUserSessions(user.id);
   recordAudit({ action: 'auth.password_reset', actor: { id: user.id, name: user.name, email: user.email }, target: { type: 'user', id: user.id, name: user.email }, summary: `${user.email} reset their password` });

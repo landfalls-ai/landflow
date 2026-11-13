@@ -165,11 +165,12 @@ export function updateWorkflowPolicy(workflowId: string, patch: z.infer<typeof w
   return getWorkflowPolicy(workflowId) ?? structuredClone(DEFAULT_WORKFLOW_POLICY);
 }
 
-/** A deleted workflow's policy goes with it. */
+/**
+ * A deleted workflow's policy goes with it. The workflow delete calls this inside its transaction, so a failed delete
+ * throws and rolls the whole delete back (clearing the cache early only costs a reload).
+ */
 export function forgetWorkflowPolicy(workflowId: string) {
-  try {
-    projectsDb().delete('workflow_policies', { workflow_id: workflowId });
-  } catch {}
+  projectsDb().delete('workflow_policies', { workflow_id: workflowId });
   caches().workflows.delete(workflowId);
 }
 

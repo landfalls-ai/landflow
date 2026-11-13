@@ -74,12 +74,16 @@ export function newAuditId(at = Date.now()): string {
 
 const clip = (text: string) => (text.length > MAX_TEXT ? `${text.slice(0, MAX_TEXT - 1)}…` : text).replace(TOKEN, '[redacted]');
 
-/** Details as flat AuditValues: secret-looking keys go, nested objects become JSON text, strings and lists are clipped. */
+/**
+ * Details as flat AuditValues: secret-looking keys go (a number or boolean under one stays, as in the logger and spans:
+ * `{ credentials: 3 }` is a count, not a secret), nested objects become JSON text, strings and lists are clipped.
+ */
 export function cleanDetails(details: Record<string, unknown> | undefined): Record<string, AuditValue> | undefined {
   if (!details) return undefined;
   const out: Record<string, AuditValue> = {};
   for (const [key, value] of Object.entries(details)) {
-    if (value === undefined || SECRET_KEY.test(key)) continue;
+    if (value === undefined) continue;
+    if (SECRET_KEY.test(key) && typeof value !== 'number' && typeof value !== 'boolean') continue;
     if (value === null || typeof value === 'boolean') out[key] = value;
     else if (typeof value === 'number') out[key] = Number.isFinite(value) ? value : String(value);
     else if (typeof value === 'string') out[key] = clip(value);

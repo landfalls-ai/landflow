@@ -34,6 +34,7 @@ import { registry } from '../plugins/registry';
 import { logger } from '../telemetry';
 import { traceMarketplace } from '../telemetry/marketplace';
 import { agentTeamStore } from '../agent-teams/store';
+import { singleton } from '../singleton';
 import { agentFromClaude, skillFromClaude, titleCase } from './map';
 import { commandLine, contentHash, downloadPlugin, freePort, nodePlugins, portFree, readInstallMarker, writeInstallMarker, type SupervisedPlugin } from './node-plugins';
 import { importTemplate, previewTemplate } from '../templates';
@@ -56,7 +57,7 @@ export class MarketplaceError extends HttpError {
   }
 }
 
-/** sources.ts and plugin.ts throw plain Errors for input they refuse (a bad address, a path with `..`): the caller's fault, so a 4xx. */
+/** sources.ts throws plain Errors for input it refuses (a bad address, a path with `..`): the caller's fault, so a 4xx. */
 function refusing<T>(status: number, fn: () => T): T {
   try {
     return fn();
@@ -64,6 +65,17 @@ function refusing<T>(status: number, fn: () => T): T {
     if (caught instanceof HttpError || !(caught instanceof Error)) throw caught;
     throw new MarketplaceError(caught.message, status, undefined);
   }
+}
+
+/**
+ * What loadPlugin threw, as the route answers it. Bad input is a FetchError already (an HttpError: path escapes, sizes,
+ * upstream answers) or a warning in the result; a local plugin whose directory or file is gone is the marketplace's
+ * fault, a 422 that does not show the host path; anything else (a TypeError, another filesystem error) stays a plain
+ * Error, so handler() answers the generic 500 and logs it.
+ */
+function pluginReadError(caught: unknown): unknown {
+  if (caught instanceof Error && (caught as NodeJS.ErrnoException).code === 'ENOENT') return new MarketplaceError('A file this plugin lists is missing from its marketplace', 422);
+  return caught;
 }
 
 const sameLocation = (a: MarketplaceLocation, b: MarketplaceLocation) =>
@@ -328,7 +340,7 @@ export const marketplace = {
     const source = refusing(422, () => resolveSource(entry.source, m.location, m.pluginRoot));
     if (source.kind === 'unsupported') throw new MarketplaceError(`Can’t install “${name}”: ${source.reason}`, 422);
     const fromRoot = typeof entry.source === 'string' && (entry.source === '.' || entry.source === './');
-    const loaded = await traceMarketplace('detail', { 'landflow.marketplace.id': id, 'landflow.marketplace.plugin': name }, () => loadPlugin(readerFor(source), entry, fromRoot).catch((caught) => refusing(422, () => { throw caught; })));
+    const loaded = await traceMarketplace('detail', { 'landflow.marketplace.id': id, 'landflow.marketplace.plugin': name }, () => loadPlugin(readerFor(source), entry, fromRoot).catch((caught) => Promise.reject(pluginReadError(caught))));
     const flows = loaded.flows.map((flow) => ({ ...flow, needs: [], link: flowLink(marketplaceName(m), name, flow.path, shareSource(m.location)) }));
     const detail: PluginDetail = { marketplaceId: id, plugin, source, ...loaded, flows };
     details.set(key, { at: Date.now(), detail });
@@ -347,6 +359,9 @@ export const marketplace = {
       file = await readFlow(readerFor(detail.source), path);
     } catch (error) {
       if (error instanceof FetchError) throw error;
+      const missing = pluginReadError(error);
+      if (missing !== error) throw missing;
+      // Not JSON, or not a template file: the flow's fault.
       throw new MarketplaceError(`${path}: ${(error as Error).message}`, 422);
     }
     const pluginKey = installedId(name, m);
@@ -615,8 +630,8 @@ async function stopOne(key: string) {
   if (running && running.announce === false) for (const endpoint of localEndpoints(running)) registry.removeEndpoint(endpoint);
 }
 
-let syncing: Promise<void> | undefined;
-let syncAgain = false;
+/** The sync guard, shared by every module graph: a second graph's sync must wait for (and re-run after) the first. */
+const syncGuard = () => singleton('marketplace-sync', () => ({ running: undefined as Promise<void> | undefined, again: false }));
 
 /**
  * Queue mode: make this process run exactly the installed node plugins. A plugin is started from its directory when this
@@ -626,17 +641,18 @@ let syncAgain = false;
  * replaced by another install (an update), are stopped.
  */
 async function syncNodePlugins(): Promise<void> {
-  if (syncing) {
-    syncAgain = true;
-    return syncing;
+  const guard = syncGuard();
+  if (guard.running) {
+    guard.again = true;
+    return guard.running;
   }
-  syncing = (async () => {
+  guard.running = (async () => {
     do {
-      syncAgain = false;
+      guard.again = false;
       await syncOnce().catch((error: Error) => logger.warn('marketplace: syncing node plugins failed', { error: error.message }));
-    } while (syncAgain);
-  })().finally(() => (syncing = undefined));
-  return syncing;
+    } while (guard.again);
+  })().finally(() => (guard.running = undefined));
+  return guard.running;
 }
 
 async function syncOnce() {

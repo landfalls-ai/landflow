@@ -80,10 +80,28 @@ With `LANDFLOW_LOG_SPANS=true` (the default) every finished span is also written
 - `level` is `error` for spans with error status, plus an `error` field holding the message.
 - Field names: `ts`, `level`, `service`, `msg`, `trace_id`, `span_id`, then attributes flattened
   with their OTel names. `pretty` format prints `HH:MM:SS level service msg (trace=…/span=…) k=v`.
+- **Joining lines to requests** (host): a line written while an API request runs also carries `request_id` (the
+  `X-Request-Id`, taken from the request or generated), `http.route` (the route pattern), `user.id` and, for an API
+  key, `landflow.api_key.id` (the key's id, never the key). The last two appear once the guard has let the request in.
+  The same ids are attributes of the active span (inside a Next.js request this may be the route handler's span rather than the root request span, so the root's `span.end` line need not carry `landflow.request_id`; check in your backend) (`landflow.request_id`, `http.route`, `enduser.id`,
+  `landflow.api_key.id`), and `/api` responses carry a W3C `traceparent` header whenever a span is active, so a support
+  case that starts from an `X-Request-Id` or a trace id finds every line. Lines outside a request (schedules, triggers,
+  workers) have none of these. Reads are not always sampled: a `traceparent` with flags `00` names a trace the
+  backend may not have.
 - **Never log** credential values, `Authorization` headers or item payloads. Log counts and ids. The
-  host and the SDKs redact attribute keys matching `/(token|secret|password|authorization|api[-_]?key|cookie)/i`
+  host redacts (the SDKs keep their narrower list) attribute keys matching `token`, `secret`, `password`, `authorization`, `api[-_]?key`,
+  `cookie`, `private[-_]?key`, `passphrase`, `signature`, `connection[-_]?string`, `session[-_]?(token|secret|cookie)`,
+  a name ending in `dsn`, and a key named exactly `credentials` (case-insensitive; names ending in `url`, `uri`,
+  `endpoint`, `host`, `type` or `algorithm` are kept, as are ids of keys, tokens and sessions, such as `landflow.api_key.id` and `apiKeyId` (`secretId` is redacted), and `session` and `sessionId`: agent session ids are needed to
+  debug a conversation)
   when the value is a string (numbers and booleans such as `gen_ai.usage.input_tokens` are kept), in
-  log fields and span attributes alike. The SDKs also replace the credential values of the current
+  log fields and span attributes alike. The host also scrubs secret-shaped *values* from every string it logs, error
+  messages and stacks included, wherever they appear: `Bearer <token>`, Landflow API keys (`lf_…`), provider keys
+  (`sk-…` including `sk-ant-…`, GitHub `ghp_`/`github_pat_`, Slack `xox…-`), URL userinfo
+  (`scheme://user:password@host` becomes `scheme://[redacted]@host`) and PEM private key blocks. Credential values
+  a node was handed (password-typed fields, secret fields, fields whose name says secret) are remembered for the process
+  and replaced like `$secrets` values in logs, results and stored runs (the most recent 5000, least recently used out). Credential values shorter than 12 characters are not remembered (a weak password such as `postgres` would rewrite unrelated
+  node output). The SDKs also replace the credential values of the current
   request wherever they appear (messages, URLs, errors).
 - Node logs (`ctx.logger.*` / `ExecuteResponse.logs`) are also written to the process log with the
   trace context, besides being returned to the host.

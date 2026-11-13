@@ -60,7 +60,8 @@ strings and WebAssembly off, a null-prototype global and a 250 ms timeout per ev
 
 - **What is reachable**: only what the bootstrap defines inside the realm (`$json`, `$input`, `$('Node')`, `$node`,
   `$itemIndex`, `$now`, `$today`, `$workflow`, `$execution`, `$parameter`, `$vars`, `$composite`, `$secrets`, `$fromAI`) and
-  the language's own builtins. Data arrives lazily through one host function that takes and returns JSON text (the current
+  the language's own builtins. V8 gives every context a `console` of its own: `console.log` from an expression prints
+  nothing on the host (checked on Node 22) and stays so an expression that calls it does not fail. Data arrives lazily through one host function that takes and returns JSON text (the current
   item, all input items, one node's output, tool arguments, a secret the host fetched); the realm caches what it parsed
   for the life of the resolver, so an item is copied once however many parameters read it. Nothing the expression changes
   (`$json.x = 1`, `Object.prototype.polluted = 1`) reaches the host's data or prototypes. Items cross as JSON, so a host

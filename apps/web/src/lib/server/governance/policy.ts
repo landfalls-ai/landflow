@@ -406,7 +406,8 @@ function guardedFetch(httpNode: boolean): typeof fetch {
  * The registry's run-time gate (plugins/registry.ts `resolve`): a node type the policy blocks fails every call with
  * a clear error on the node (and its app webhooks don't register); the HTTP Request node checks each call's URLs.
  * The request's workflow brings its project's and its own allow-lists (`agent:<id>`: the agent's project).
- * Policies off: the node type is returned as is.
+ * With policies off nothing is refused here, but every execute and supplyData call still gets the guarded fetch
+ * (safeFetch's outbound address policy behind `ctx.http`).
  */
 export function withGovernance(resolved: ResolvedNodeType): ResolvedNodeType {
   const blockedNow = (workflowId?: string) => {

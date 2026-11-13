@@ -57,8 +57,9 @@ session; people read it before they start a feature too.
 
 - Wrap every route in `handler()`; answer with `json()` / `error()`; validate bodies with `parseBody()` and zod
   (`apps/web/src/lib/server/http.ts`, shared schemas in `lib/server/schemas.ts`). Never call `request.json()` directly.
-- Validate query strings with `parseQuery()` and the shared page schema (target, P16); until then parse and clamp
-  every number by hand, never `Number(param)` straight into a query.
+- Validate query strings with `parseQuery()` (`lib/server/http.ts`, a zod schema; 400 on a bad value) and page with
+  `pageSchema` / `limitParam()` from `lib/server/pagination.ts` (`limit` 1-500, an opaque `cursor`); never
+  `Number(param)` straight into a query.
 - Decide who may call a route in `lib/server/auth/policy.ts`. A route with no entry falls to a default (`fallback: true`)
   that is open to every signed-in member, so every route has a policy entry or an in-handler check (`requireResource`,
   `filterVisible` in `lib/server/projects/access.ts`); `test/policy-coverage.test.ts` fails a mutating route with
@@ -76,8 +77,11 @@ session; people read it before they start a feature too.
 
 - Read configuration only through `lib/server/config` (`envInt`, `envNumber`, `envFlag`, `envUrl`, `envString`:
   parsed at call time, never NaN, an invalid value falls back with a `config.invalid` warning; `publicUrl()`,
-  `ollamaUrl()`; `checkConfig()` runs first at boot). Add no new ad-hoc `process.env` reads. The catalog of every
-  variable and the generated reference are (target, P18).
+  `ollamaUrl()`; `checkConfig()` runs first at boot). Add no new ad-hoc `process.env` reads. Every variable is an
+  entry of `lib/server/config/catalog.ts` (default, description, group, secret flag, production requirement, aliases),
+  and `docs/reference/configuration.md` is generated from it (`pnpm --filter @landflow/web gen:config-docs`);
+  `test/config-catalog.test.ts` fails on an uncatalogued name, a stale page or more files reading `process.env`
+  outside `lib/server/config` than its budget.
 - Stricter defaults (a required secret, a refused request) apply only in the production profile (`profile()`,
   `isProduction()` from `lib/server/config`), so `pnpm dev`, the scratch host and the offline tests keep working.
 - Hold process-wide state only through `singleton()` (`lib/server/singleton.ts`), with one exported key per object; no
@@ -89,8 +93,8 @@ session; people read it before they start a feature too.
 
 **Layers**
 
-- The store does not call up into features: emit an event and let the feature subscribe at boot (target, P20; the bus
-  is `lib/server/bus.ts`).
+- The store does not call up into features: emit an event and let the feature subscribe at boot (`onExecutionFinished` in
+  `lib/server/store.ts`, subscribed in `lib/server/execution-reactions.ts`; the bus is `lib/server/bus.ts`).
 - No server → UI imports, no `lib/shared` → server imports, no client component importing server values, no routes
   touching `db` or holding SQL. `packages/` never import `apps/web`; `engine` and `protocol` read no environment.
   These are checked by `pnpm check:deps` (target, P28).
@@ -107,8 +111,9 @@ session; people read it before they start a feature too.
 - Writes go through the `Database` write methods (`upsert`, `insertNew`, `delete`, `deleteBefore`) so Postgres
   mode can replay them (`lib/server/db/database.ts`, `db/postgres.ts`). A change of several rows runs in one
   `transaction()`.
-- No unbounded list reads: every list takes a capped limit and pages with a keyset cursor (target, P16; the model is
-  `executions/[id]/events`). Filter by visibility in SQL, not after a fetch.
+- No unbounded list reads: every list takes a capped limit and pages with a keyset cursor (the model is
+  `GET /api/executions`: `lib/server/executions-query.ts` over `pagination.ts`'s `encodeCursor` / `decodeCursor`,
+  answering `nextCursor`). Filter by visibility in SQL, not after a fetch.
 - Nothing on a hot path (saving a run, a request) does work proportional to history: prune and aggregate in SQL on a
   timer or every N events (executions: `pruneExecutions` and `retentionTick` in `lib/server/settings.ts`).
 - `IN (…)` lists and access checks inside loops are N+1 once reads move to Postgres: batch them. For lists, check
@@ -124,12 +129,13 @@ session; people read it before they start a feature too.
   settings, provisioning) records a domain event with `recordAudit()` (`lib/server/audit/index.ts`) in the library
   function, not the route, with actor, target, project and `from` / `to` values. Denied and failed access is recorded
   too: failed SSO sign-ins in their routes, and a read refused with 401/403 as `api.denied` (`lib/server/audit/http.ts`,
-  at most once a minute per caller and route). Exports (Git sync, data tables) are events. The generic `api.request`
+  at most once a minute per caller and route and 60 a minute in all). Exports (Git sync, data tables) are events. The generic `api.request`
   event is a fallback, not coverage.
 - **Secrets stay secret.** Never put a credential value, token or key in a log line, error message, span attribute,
   audit detail or run data. Logs redact by key name (`SECRET_KEY` in `lib/server/telemetry/config.ts`), `$secrets`
-  values are scrubbed (`lib/server/secrets/redact.ts`); widen these when you add a new kind of secret (P17 widens
-  them). The API returns a credential's status, never its value. Bearer secrets are stored hashed and shown once;
+  values and the credential values handed to a node are scrubbed (`lib/server/secrets/redact.ts`), and the logger
+  rewrites secret-shaped values in every string (`redactPatterns`: Bearer tokens, `lf_` keys, URL userinfo, PEM
+  keys); widen these when you add a new kind of secret. The API returns a credential's status, never its value. Bearer secrets are stored hashed and shown once;
   compare them with `sameSecret()` (`lib/server/auth/passwords.ts`).
 - **Outbound calls.** Every request to a URL a user, a webhook or a model can influence goes through `safeFetch`
   (`lib/server/net/safe-fetch.ts`): in the production profile loopback, private, link-local, CGNAT and metadata
@@ -144,8 +150,10 @@ session; people read it before they start a feature too.
   object, function or Buffer into the expression realm. The in-process Code node (development, or
   `LANDFLOW_CODE_IN_PROCESS=true`) is the known exception: its context still holds host helpers
   ([limitations.md](limitations.md)), which is why production runs Code nodes in the runner. A stricter isolate backend is (target, P30).
-- **Bounded input.** Bodies validated with zod and capped in size (cap: target, P16); rate limits per principal and
-  per client address on public and costly routes (target, P16; sign-in limits in `lib/server/auth/rate-limit.ts`).
+- **Bounded input.** Bodies validated with zod and capped in size (`parseBody` refuses more than
+  `LANDFLOW_MAX_BODY_BYTES` with 413 while streaming); the API is rate-limited per principal and the public triggers
+  per client address and route group (`lib/server/rate-limit/api-limiter.ts`, `LANDFLOW_RATE_LIMIT_API` /
+  `LANDFLOW_RATE_LIMIT_PUBLIC`, on in the production profile; sign-in limits in `lib/server/auth/rate-limit.ts`).
 - **Client address** comes from `clientAddress()` (`lib/server/net/client-address.ts`, `LANDFLOW_TRUSTED_PROXIES`),
   never straight from `X-Forwarded-For`. Emailed links use `emailedOrigin()` (`lib/server/auth/cookies.ts`: the
   configured public URL, never a request header in production); resume URLs are signed (`lib/server/resume-signing.ts`).
@@ -160,8 +168,12 @@ session; people read it before they start a feature too.
 - Log with `logger` from `lib/server/telemetry` (one JSON line, trace id), never `console.*` in server code.
 - Structured fields with OpenTelemetry names (`url.path`, `error`, `landflow.*`); a message is a short fixed phrase,
   values go in fields.
-- Every log line and span carries the request id and actor (target, P17); until then pass `landflow.request_id`
-  where you have it.
+- Every log line written in an API request carries `request_id`, `http.route`, `user.id` and `landflow.api_key.id`
+  (`requestLogFields()` in `lib/server/audit/context.ts`), and the request span gets them too (`landflow.request_id`,
+  `http.route`, `enduser.id`, `landflow.api_key.id`); `/api` responses return `X-Request-Id` and `traceparent`. Outside a request (runs, timers), put the ids you have in fields.
+- Server-sent events go through `sseResponse()` (`lib/server/sse.ts`): it bounds a slow client's unread bytes, writes
+  `id:` lines and heartbeats and cleans up; a stream that must survive a reconnect replays from the bus ring after
+  `Last-Event-ID` (`lib/server/events-stream.ts`) and re-checks the viewer's access while it runs.
 - Metrics follow [observability.md](observability.md) and `lib/server/telemetry/metrics.ts`; labels have bounded
   cardinality: no workflow, execution, user or other ids as labels (put ids on spans).
 - Health: `/api/health/live` (no I/O) and `/api/health/ready` (boot and draining, database, write queue, schema
@@ -222,8 +234,8 @@ session; people read it before they start a feature too.
 ## Docs move with the code
 
 - The feature's page; [reference/api.md](reference/api.md) for routes and
-  [reference/configuration.md](reference/configuration.md) for variables (from P18: `config/catalog.ts` and
-  `pnpm --filter @landflow/web gen:config-docs`).
+  [reference/configuration.md](reference/configuration.md) for variables (generated: add the variable to
+  `lib/server/config/catalog.ts` and run `pnpm --filter @landflow/web gen:config-docs`).
 - [limitations.md](limitations.md) when a limit is added or lifted; [roadmap.md](roadmap.md) when an item closes or
   opens; a [history.md](history.md) row per commit (`| (this change) | what changed, in plain words | [page](link) |`).
 - New pages go in [README.md](README.md). Write short, plain sentences: what and why; no marketing.

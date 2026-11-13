@@ -24,8 +24,9 @@ const { database } = await import('@/lib/server/db');
 const { createUser } = await import('@/lib/server/auth/users');
 const { enableTestAuth, TEST_OWNER } = await import('@/lib/server/auth/test-bypass');
 const { queryEvents, countEvents } = await import('@/lib/server/audit/store');
-const { deniedReadDue } = await import('@/lib/server/audit/http');
+const { deniedReadDue, deniedReadUnderCap } = await import('@/lib/server/audit/http');
 const { store } = await import('@/lib/server/store');
+const { registry } = await import('@/lib/server/plugins/registry');
 const { agentStore } = await import('@/lib/server/agents/store');
 const { newSession } = await import('@/lib/server/agents/runtime');
 const { dataTables } = await import('@/lib/server/datatables');
@@ -174,6 +175,10 @@ describe('variables and secret providers', () => {
     expect(latest('variable.create')).toMatchObject({ target: { id: 'COV_VAR' }, details: { scope: 'instance', key: 'COV_VAR' } });
     await variableRoute.PATCH(req('PATCH', '/api/variables/COV_VAR', { key: 'COV_VAR2', value: `${SECRET}-2` }), params({ key: 'COV_VAR' }));
     expect(latest('variable.update')).toMatchObject({ details: { key: 'COV_VAR2', from: 'COV_VAR', to: 'COV_VAR2', valueChanged: true } });
+    // A PATCH that changes nothing records no variable.update.
+    const updates = queryEvents({ action: ['variable.update'] }).events.length;
+    expect((await variableRoute.PATCH(req('PATCH', '/api/variables/COV_VAR2', { value: `${SECRET}-2` }), params({ key: 'COV_VAR2' }))).status).toBe(200);
+    expect(queryEvents({ action: ['variable.update'] }).events).toHaveLength(updates);
     await variableRoute.DELETE(req('DELETE', '/api/variables/COV_VAR2'), params({ key: 'COV_VAR2' }));
     expect(latest('variable.delete')).toMatchObject({ details: { scope: 'instance', key: 'COV_VAR2' } });
 
@@ -183,8 +188,8 @@ describe('variables and secret providers', () => {
     expect(latest('variable.create')).toMatchObject({ projectId: id, details: { scope: 'project', projectId: id, key: 'PROJ_VAR' } });
     await projectVariableRoute.DELETE(req('DELETE', `/api/projects/${id}/variables/PROJ_VAR`), params({ id, key: 'PROJ_VAR' }));
     expect(latest('variable.delete')).toMatchObject({ projectId: id, details: { scope: 'project', key: 'PROJ_VAR' } });
-    // One event each: the generic layer did not add a line.
-    expect(queryEvents({ action: ['api.request'], q: '/variables' }).events).toHaveLength(0);
+    // One event each: the generic layer added a line only for the PATCH that changed nothing.
+    expect(queryEvents({ action: ['api.request'], q: '/variables' }).events.map((e) => [e.route, e.status])).toEqual([['/api/variables/[key]', 200]]);
   });
 
   it('records per-environment values once, by environment name, never the value', async () => {
@@ -269,6 +274,15 @@ describe('failed sign-ins, denied reads', () => {
     expect(deniedReadDue('ip:10049', '/flood', t0 + 120_001)).toBe(false);
     expect(deniedReadDue('ip:0', '/flood', t0 + 120_002)).toBe(true);
   });
+
+  it('records at most 60 denied reads a minute in all', () => {
+    // An hour ahead, past the window the requests above opened.
+    const t0 = Date.now() + 3_600_000;
+    const first = Array.from({ length: 61 }, (_, i) => deniedReadUnderCap(t0 + i));
+    expect(first.filter(Boolean)).toHaveLength(60);
+    expect(first[60]).toBe(false);
+    expect(deniedReadUnderCap(t0 + 60_000)).toBe(true);
+  });
 });
 
 describe('exports and tests', () => {
@@ -291,6 +305,17 @@ describe('exports and tests', () => {
     const response = await credentialTestRoute.POST(req('POST', '/api/credentials/test', { type: 'core.httpBearerAuth', data: { token: SECRET } }));
     expect(response.status).toBe(200);
     expect(latest('credential.test')).toMatchObject({ target: { type: 'credential' }, details: { type: 'core.httpBearerAuth' } });
+    expect(allText()).not.toContain(SECRET);
+
+    // A plugin that throws once it has the secrets is recorded as a failure, without its message.
+    const spy = vi.spyOn(registry, 'testCredentials').mockRejectedValue(new TypeError(`boom ${SECRET}`));
+    try {
+      const thrown = await credentialTestRoute.POST(req('POST', '/api/credentials/test', { type: 'core.httpBearerAuth', data: { token: SECRET } }));
+      expect(thrown.status).toBe(500);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(latest('credential.test')).toMatchObject({ outcome: 'failure', details: { type: 'core.httpBearerAuth', ok: false, error: 'TypeError' } });
     expect(allText()).not.toContain(SECRET);
   });
 

@@ -13,6 +13,9 @@ const previousEvery = process.env.LANDFLOW_RETENTION_EVERY;
 process.env.LANDFLOW_DATA_DIR = mkdtempSync(join(tmpdir(), 'landflow-retention-'));
 
 const { store } = await import('@/lib/server/store');
+// The store only emits finished executions; retention subscribes through the reactions.
+const { ensureExecutionReactions } = await import('@/lib/server/execution-reactions');
+ensureExecutionReactions();
 const { database } = await import('@/lib/server/db');
 const { pruneExecutions, resetRetentionTick, retentionCounts, staleExecutionIds, updateSettings } = await import('@/lib/server/settings');
 

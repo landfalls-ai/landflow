@@ -143,8 +143,9 @@ function describe(error: unknown, endpoint: McpEndpoint): McpClientError {
 async function connect(endpoint: McpEndpoint): Promise<Client> {
   const url = new URL(endpoint.url);
   const requestInit: RequestInit = { headers: endpoint.headers ?? {} };
-  // Remote MCP servers go through the outbound policy (net/safe-fetch.ts); tests inject their own fetch.
-  const guarded = endpoint.fetch ?? (((input, init) => safeFetch(input as string | URL | Request, init)) as typeof fetch);
+  // Remote MCP servers go through the outbound policy (net/safe-fetch.ts) and the governance MCP list on every redirect
+  // hop, not only the first URL; tests inject their own fetch.
+  const guarded = endpoint.fetch ?? (((input, init) => safeFetch(input as string | URL | Request, init, { hostCheck: (hopUrl) => mcpUrlBlocked(hopUrl.href) })) as typeof fetch);
   const transport =
     endpoint.transport === 'sse'
       ? new SSEClientTransport(url, { requestInit, fetch: guarded })

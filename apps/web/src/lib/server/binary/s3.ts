@@ -21,6 +21,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { DEFAULT_MIME_TYPE, type BinaryRef } from '@landflow/protocol';
 import { byteCounter, newBinaryId, refOf, SCOPE, splitBinaryId, toNodeStream, type BinarySource, type BinaryStore, type ByteRange, type PutOptions, type StoredBinaryMeta } from './store';
+import { flag } from '../config';
 
 export interface S3BinaryStoreOptions {
   bucket: string;
@@ -46,7 +47,7 @@ export function s3OptionsFromEnv(env: NodeJS.ProcessEnv = process.env): S3Binary
     region: env.LANDFLOW_S3_REGION || 'us-east-1',
     ...(env.LANDFLOW_S3_ACCESS_KEY_ID && { accessKeyId: env.LANDFLOW_S3_ACCESS_KEY_ID }),
     ...(env.LANDFLOW_S3_SECRET_ACCESS_KEY && { secretAccessKey: env.LANDFLOW_S3_SECRET_ACCESS_KEY }),
-    forcePathStyle: env.LANDFLOW_S3_FORCE_PATH_STYLE !== 'false',
+    forcePathStyle: flag(env.LANDFLOW_S3_FORCE_PATH_STYLE, true, 'LANDFLOW_S3_FORCE_PATH_STYLE'),
     prefix: env.LANDFLOW_S3_PREFIX ?? 'binary/',
   };
 }

@@ -38,13 +38,14 @@ const leaves = (value: unknown, out: string[] = [], depth = 0): string[] => {
  * a multi-line value count on their own too (a PEM key's), unless `lines` is false (a node parameter that read a
  * secret, whose other lines are the workflow's own text).
  */
-export function rememberSecretValues(value: unknown, options: { lines?: boolean } = {}): void {
+export function rememberSecretValues(value: unknown, options: { lines?: boolean; min?: number } = {}): void {
+  const min = Math.max(MIN_LENGTH, options.min ?? 0);
   const now = Date.now();
   let added = false;
   for (const text of leaves(value)) {
-    const candidates = options.lines === false ? [text] : [text, ...text.split(/\r?\n/).filter((line) => line.trim().length >= MIN_LENGTH * 2)];
+    const candidates = options.lines === false ? [text] : [text, ...text.split(/\r?\n/).filter((line) => line.trim().length >= Math.max(min, MIN_LENGTH * 2))];
     for (const candidate of candidates) {
-      if (candidate.length < MIN_LENGTH) continue;
+      if (candidate.length < min) continue;
       if (!state.values.has(candidate)) added = true;
       state.values.set(candidate, now);
     }
@@ -135,4 +136,32 @@ export function redactValue<T>(value: T, depth = 0): T {
 export function containsSecretValue(text: string): boolean {
   if (!state.values.size) return false;
   return sorted().some((value) => text.includes(value) || text.includes(escaped(value)));
+}
+
+// ---------------------------------------------------------------------------
+// Value patterns: secrets recognised by their shape, for text that was never a `$secrets` value (an upstream error
+// that quotes a header, a URL with credentials). The logger applies them to every string it writes. Each pattern is
+// anchored on a literal marker and guarded by an `includes`, so a line without the marker costs one scan.
+// ---------------------------------------------------------------------------
+
+const PATTERNS: { marker: string[]; pattern: RegExp; replace: string }[] = [
+  { marker: ['Bearer'], pattern: /\b(Bearer\s+)(?=[A-Za-z0-9._~+/=-]*[0-9._~+/=-]|[A-Za-z]{24,})[A-Za-z0-9._~+/=-]{8,}/g, replace: `$1${REDACTED}` },
+  // Landflow API keys (lf_…) and MCP / debug tokens (lf_mcp_…, lf_dbg_…).
+  { marker: ['lf_'], pattern: /\blf_[A-Za-z0-9_-]{12,}/g, replace: REDACTED },
+  // Provider keys an upstream error may quote: OpenAI-style and Anthropic (sk-…, sk-proj-…, sk-ant-…), GitHub, Slack.
+  { marker: ['sk-'], pattern: /\bsk-[A-Za-z0-9_-]{20,}/g, replace: REDACTED },
+  { marker: ['ghp_', 'github_pat_', 'gho_', 'ghs_'], pattern: /\b(?:ghp|gho|ghs)_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}/g, replace: REDACTED },
+  { marker: ['xox'], pattern: /\bxox[abposr]-[A-Za-z0-9-]{10,}/g, replace: REDACTED },
+  // `scheme://user:password@host`: the userinfo goes, the host stays.
+  { marker: ['@'], pattern: /(\/\/)[^\s/@:?#'"]*:[^\s/?#'"]+@/g, replace: `$1${REDACTED}@` },
+  { marker: ['-----BEGIN'], pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, replace: REDACTED },
+];
+
+/** A text with the secret-shaped values replaced (the same string when there are none). */
+export function redactPatterns(text: string): string {
+  let out = text;
+  for (const { marker, pattern, replace } of PATTERNS) {
+    if (marker.some((m) => out.includes(m))) out = out.replace(pattern, replace);
+  }
+  return out;
 }

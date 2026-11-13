@@ -30,7 +30,11 @@ class WorkflowConflictError extends HttpError {
   }
 }
 
-/** The `updatedAt` the client says it based the save on: `If-Match: "<updatedAt>"` (weak tags and quotes allowed) or body `baseUpdatedAt`. */
+/**
+ * The `updatedAt` the client says it based the save on: `If-Match: "<updatedAt>"` (weak tags and quotes allowed) or body
+ * `baseUpdatedAt`. One entity tag only: a list (`"a", "b"`) is read as one value and never matches, so it is a 412. The
+ * tag is a millisecond timestamp, so two saves in the same millisecond share it and the second does not conflict.
+ */
 function baseOf(request: Request, fromBody: string | undefined): string | undefined {
   const header = request.headers.get('if-match')?.trim();
   if (header && header !== '*') return header.replace(/^W\//, '').replace(/^"|"$/g, '');
@@ -75,13 +79,16 @@ export const PUT = handler(async (request: Request, { params }: Ctx) => {
 export const DELETE = handler(async (_request: Request, { params }: Ctx) => {
   const { id } = await params;
   const existing = store.getWorkflow(id);
-  // The row, its versions, publications, project rows and policy go in one transaction: all or nothing.
+  // The row, its versions, publications, project rows and policy go in one transaction: all or nothing. Publication
+  // listeners hear of it only after the commit.
+  let publicationGone = () => {};
   const deleted = store.deleteWorkflow(id, () => {
     deleteVersions(id);
-    deletePublications(id);
+    publicationGone = deletePublications(id);
     forgetDeleted('workflow', id);
   });
   if (!deleted) return error('Workflow not found', 404);
+  publicationGone();
   recordAudit({ action: 'workflow.delete', target: { type: 'workflow', id, ...(existing?.name && { name: existing.name }) } });
   // Its publication went with it; app webhook triggers remove their hooks in the background.
   void forgetWorkflow(id);

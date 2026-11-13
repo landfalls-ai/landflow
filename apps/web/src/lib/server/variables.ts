@@ -75,7 +75,9 @@ export const variables = {
     const before = variables.file().get(key);
     const updated = variables.file().update(key, patch);
     if (updated.key !== key) environmentValues.rename(key, updated.key);
-    auditVariable('update', updated.key, {}, { ...(updated.key !== key && { renamedFrom: key }), valueChanged: before?.value !== updated.value });
+    // A PATCH that renamed nothing and kept the value records nothing (as the per-environment path does).
+    const valueChanged = before?.value !== updated.value;
+    if (updated.key !== key || valueChanged) auditVariable('update', updated.key, {}, { ...(updated.key !== key && { renamedFrom: key }), valueChanged });
     return updated;
   },
   delete: (key: string) => {

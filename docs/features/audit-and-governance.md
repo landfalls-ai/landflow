@@ -37,17 +37,21 @@ The host allow and block list above matches host names before a call. Below it s
 user, a webhook or a model can point at a URL: **`safeFetch`** (`lib/server/net/safe-fetch.ts`). With
 `LANDFLOW_OUTBOUND_BLOCK_PRIVATE` on (the default in the production profile; off in development, so local fakes and tests
 on 127.0.0.1 keep working) a request is refused when the address it would reach is loopback, private, link-local, CGNAT,
-multicast, unspecified or a cloud metadata address (`169.254.169.254`, `fd00:ec2::254`); an IPv4-mapped IPv6 address
-counts as its IPv4 address. The check sits in the socket's DNS lookup, so the address that is checked is the one connected
+multicast, unspecified or a cloud metadata address (`169.254.169.254`, `fd00:ec2::254`); an IPv6 address that carries an
+IPv4 one (IPv4-mapped, NAT64 `64:ff9b::/96`, IPv4-compatible `::a.b.c.d`, 6to4 `2002::/16`) counts as that IPv4 address,
+and the local-use NAT64 prefix `64:ff9b:1::/48` is refused. The check sits in the socket's DNS lookup, so the address that is checked is the one connected
 to, and a name with any blocked address among its answers is refused. A literal IP is checked before connecting.
 Redirects are followed by `safeFetch` itself (at most 10) and every hop gets the same checks, plus the governance host list
-for the HTTP Request node, so an allowed host cannot send a request on to a blocked one.
+for the HTTP Request node and the MCP server list for remote MCP servers, so an allowed host cannot send a request on to a
+blocked one. Only `http:` and `https:` URLs are fetched, in development too (`data:` and `blob:` URLs, which the platform
+fetch read, are refused).
 
-A refusal reads "Blocked: <host> resolves to a private address (LANDFLOW_OUTBOUND_ALLOW lists exceptions)". Exceptions:
+A refusal reads "Blocked: <host> resolves to a private address (LANDFLOW_OUTBOUND_ALLOW lists exceptions)" (an
+OpenAI-compatible model call shows it as the error, with the server it could not reach below). Exceptions:
 `LANDFLOW_OUTBOUND_ALLOW` (host names, `*.suffix` globs, IPs and CIDR ranges); the exact endpoints (host and port) of `OLLAMA_URL` (or its default),
-`LANDFLOW_CODE_RUNNER_URL`, `OPENAI_BASE_URL` and `LANDFLOW_MCP_GATEWAY_PUBLIC_URL` are allowed without listing (another port on the same host is not). Covered: the HTTP
+`LANDFLOW_CODE_RUNNER_URL`, `OPENAI_BASE_URL`, `LANDFLOW_MCP_GATEWAY_PUBLIC_URL`, `LANDFLOW_GITHUB_MCP_URL` (or its in-cluster default) and `LANDFLOW_OIDC_DISCOVERY_URL` are allowed without listing (another port on the same host is not). Covered: the HTTP
 Request node and other in-process nodes (their `ctx.http`), alert channels, HTTP SIEM destinations (not syslog), remote MCP
-servers, RAG embeddings and rerank, OpenAI-compatible model calls (the credential's Base URL), OIDC and SAML metadata. Every call has a client span (`HTTP <method>`, URL without its
+servers, RAG embeddings and rerank, OpenAI-compatible model calls (the credential's Base URL), in-process plugins' load-options and credential tests, OIDC and SAML metadata. Every call has a client span (`HTTP <method>`, URL without its
 query). Not covered, by decision, and listed in [limitations.md](../limitations.md): plugin processes, databases, brokers,
 S3, the marketplace's git and a few follow-ups. A production host that calls internal services must list them.
 
@@ -65,8 +69,8 @@ S3, the marketplace's git and a few follow-ups. A production host that calls int
 | `secret_provider.create`, `.update`, `.delete` | an external secrets provider | `provider`, `kind`, `enabledFrom`/`enabledTo`, `fieldsChanged` (setting names only) |
 | `auth.password_change` | someone changes a password (Settings, profile; an admin); a reset link has `auth.password_reset` | `reason` (`self`, `admin`) |
 | `auth.sign_in_failed` | a SAML or OIDC sign-in is refused or fails | `method` (`saml`, `oidc`), `reason` (`not_configured`, `provider_error`, `refused`, `bad_request`, `error`; no assertion or claim contents); at most one a minute per client address |
-| `api.denied` | a GET or HEAD is refused with 401/403, also on paths the change log skips (binary files, agent sessions, MCP, assistant) | one per minute per (user, or client address when nobody is signed in) and route pattern, from an in-memory map of up to 10,000 keys; a refused change is still `api.request` with outcome `denied` |
+| `api.denied` | a GET or HEAD is refused with 401/403, also on paths the change log skips (binary files, agent sessions, MCP, assistant) | one per minute per (user, or client address when nobody is signed in) and route pattern, from an in-memory map of up to 10,000 keys, and at most 60 a minute in all (a caller rotating addresses can't flood the log); a refused change is still `api.request` with outcome `denied`. A request with no session cookie or API key at all is answered 401 by the proxy before any route runs, so it leaves no event: only an invalid credential or a 403 does |
 | `sync.export`, `datatable.export` | `GET /api/sync/export`; a data table's CSV | files and the summary counts (workflows, variables, tables, credentials), `values`; rows, columns, bytes |
-| `credential.test` | `POST /api/credentials/test` (it decrypts and sends the credential) | `type`, `credentialId`, `ok` |
+| `credential.test` | `POST /api/credentials/test` (it decrypts and sends the credential), also when the plugin's test throws (outcome `failure`) | `type`, `credentialId`, `ok`; `error` (the error's class name, never its message) when the test threw |
 | `agent.tool_approval` | a person approves or denies a paused tool call (`POST /api/agents/:id/sessions/:sid/approvals`) | `decision`, `tool`, `sessionId`, `callId` |
 

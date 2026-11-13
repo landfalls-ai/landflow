@@ -12,7 +12,8 @@ import { z } from 'zod';
 import type { JsonObject } from '@landflow/protocol';
 import { ApprovalError, decideApproval, pendingApproval } from '@/lib/server/approvals';
 import { currentPrincipal } from '@/lib/server/auth/guard';
-import { error, handler, json, parseBody, sseHeaders } from '@/lib/server/http';
+import { error, handler, json, parseBody } from '@/lib/server/http';
+import { sseResponse } from '@/lib/server/sse';
 import { liveExecution } from '@/lib/server/runner';
 import { store } from '@/lib/server/store';
 
@@ -44,54 +45,43 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   if (approval.decisions?.[body.data.callId]) return error('Already decided', 409);
   const user = currentPrincipal()?.user;
 
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream({
-    async start(controller) {
-      const send = (event: string, data: unknown) => {
-        try {
-          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
-        } catch {
-          // The client went away; the run goes on.
-        }
-      };
-      try {
-        let announced = false;
-        const outcome = await decideApproval(id, body.data.callId, body.data.approved, {
-          ...(user && { by: user.email || user.name }),
-          streaming: true,
-          ...(body.data.input && { input: body.data.input as JsonObject }),
-          ...(body.data.text !== undefined && { text: body.data.text }),
-          ...(body.data.comment !== undefined && { comment: body.data.comment }),
-          onEvent: (event) => {
-            if (!announced) {
-              announced = true;
-              send('decision', { status: 'resumed', approval });
-            }
-            send('execution', event);
-          },
+  return sseResponse(request, async (write, close) => {
+    // A client that went away (or fell too far behind) loses the stream; the run goes on.
+    const send = (event: string, data: unknown) => void write(data, { event });
+    try {
+      let announced = false;
+      const outcome = await decideApproval(id, body.data.callId, body.data.approved, {
+        ...(user && { by: user.email || user.name }),
+        streaming: true,
+        ...(body.data.input && { input: body.data.input as JsonObject }),
+        ...(body.data.text !== undefined && { text: body.data.text }),
+        ...(body.data.comment !== undefined && { comment: body.data.comment }),
+        onEvent: (event) => {
+          if (!announced) {
+            announced = true;
+            send('decision', { status: 'resumed', approval });
+          }
+          send('execution', event);
+        },
+      });
+      if (outcome.status === 'waiting') send('decision', { status: 'waiting', approval: outcome.approval });
+      else {
+        if (!announced) send('decision', { status: 'resumed', approval });
+        const { record: done } = outcome;
+        send('result', {
+          executionId: done.executionId,
+          status: done.status,
+          error: done.error,
+          lastNodeId: done.lastNodeId,
+          // The agent asked for another approval on its next turn.
+          ...(done.status === 'waiting' && done.wait?.data?.approval !== undefined && { approval: done.wait.data.approval }),
         });
-        if (outcome.status === 'waiting') send('decision', { status: 'waiting', approval: outcome.approval });
-        else {
-          if (!announced) send('decision', { status: 'resumed', approval });
-          const { record: done } = outcome;
-          send('result', {
-            executionId: done.executionId,
-            status: done.status,
-            error: done.error,
-            lastNodeId: done.lastNodeId,
-            // The agent asked for another approval on its next turn.
-            ...(done.status === 'waiting' && done.wait?.data?.approval !== undefined && { approval: done.wait.data.approval }),
-          });
-        }
-      } catch (caught) {
-        const status = caught instanceof ApprovalError ? caught.status : 500;
-        send('result', { executionId: id, status: 'error', error: { message: (caught as Error).message }, httpStatus: status });
-      } finally {
-        try {
-          controller.close();
-        } catch {}
       }
-    },
+    } catch (caught) {
+      const status = caught instanceof ApprovalError ? caught.status : 500;
+      send('result', { executionId: id, status: 'error', error: { message: (caught as Error).message }, httpStatus: status });
+    } finally {
+      close();
+    }
   });
-  return new Response(stream, { headers: sseHeaders });
 });

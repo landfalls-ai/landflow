@@ -16,6 +16,7 @@ import type { Pool } from 'pg';
 import type { AiDocument } from '@landflow/engine';
 import type { JsonObject, JsonValue } from '@landflow/sdk';
 import { traceVectorStore } from '../telemetry';
+import { singleton } from '../singleton';
 import { bm25Scores, cosineSimilarity, reciprocalRankFusion, RRF_K, searchTerms, topK } from './search';
 
 export type StoreKind = 'memory' | 'sqlite' | 'pgvector';
@@ -76,7 +77,7 @@ interface MemoryRecord {
   embedding: Float32Array;
 }
 
-const memoryCollections = ((globalThis as { __landflowVectors?: Map<string, Map<string, MemoryRecord>> }).__landflowVectors ??= new Map());
+const memoryCollections = singleton('rag-memory-collections', () => new Map<string, Map<string, MemoryRecord>>());
 
 /** Rank records by keywords (BM25) and keep those that match at least one term. */
 function keywordRank(records: Array<{ id: string; pageContent: string; metadata: JsonObject }>, query: string, k: number): AiDocument[] {
@@ -155,7 +156,7 @@ const dataDir = () => process.env.LANDFLOW_DATA_DIR ?? join(/*turbopackIgnore: t
 
 export const defaultSqlitePath = () => join(dataDir(), 'vectors.sqlite');
 
-const sqliteDatabases = ((globalThis as { __landflowVectorDbs?: Map<string, DatabaseSync> }).__landflowVectorDbs ??= new Map());
+const sqliteDatabases = singleton('rag-sqlite-databases', () => new Map<string, DatabaseSync>());
 
 /** node:sqlite through process.getBuiltinModule (no bundler has to resolve it), without its one-time "experimental" warning. */
 function loadSqlite(): typeof import('node:sqlite') {
@@ -306,7 +307,7 @@ export interface PgConfig {
   ssl?: 'disable' | 'require' | 'verify';
 }
 
-const pgPools = ((globalThis as { __landflowPgPools?: Map<string, Pool> }).__landflowPgPools ??= new Map());
+const pgPools = singleton('rag-pg-pools', () => new Map<string, Pool>());
 const ensuredTables = new Set<string>();
 
 async function poolFor(config: PgConfig): Promise<Pool> {

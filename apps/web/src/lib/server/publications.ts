@@ -169,16 +169,19 @@ export function publishLog(workflowId: string, limit = 50): PublishLogEntry[] {
     }));
 }
 
-/** Forget a deleted workflow's publication and timeline. */
-export function deletePublications(workflowId: string) {
-  if (!ID.test(workflowId)) return;
+/**
+ * Forget a deleted workflow's publication and timeline. Listeners are not told here: the returned function tells them,
+ * and a caller inside a larger transaction calls it after the commit (a rollback must not have announced anything).
+ */
+export function deletePublications(workflowId: string): () => void {
+  if (!ID.test(workflowId)) return () => {};
   const db = database();
   const had = Boolean(publishedVersionId(workflowId));
   db.transaction(() => {
     db.delete('workflow_publications', { workflow_id: workflowId });
     db.delete('workflow_publish_log', { workflow_id: workflowId });
   });
-  if (had) changed(workflowId);
+  return had ? () => changed(workflowId) : () => {};
 }
 
 /**

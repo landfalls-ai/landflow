@@ -119,6 +119,14 @@ describe('address classes', () => {
       'fd00:ec2::254': 'metadata',
       '8.8.8.8': 'public',
       '2606:4700:4700::1111': 'public',
+      // IPv4-compatible, 6to4 and NAT64 forms are judged by the IPv4 address inside; local-use NAT64 is reserved.
+      '::127.0.0.1': 'loopback',
+      '::a9fe:a9fe': 'metadata',
+      '2002:7f00:1::1': 'loopback',
+      '2002:c0a8:101::': 'private',
+      '2002:808:808::1': 'public',
+      '64:ff9b::10.0.0.1': 'private',
+      '64:ff9b:1::a00:1': 'reserved',
     };
     for (const [ip, kind] of Object.entries(kinds)) expect(classifyAddress(ip), ip).toBe(kind);
   });
@@ -130,6 +138,19 @@ describe('address classes', () => {
     expect(addressInRange('::ffff:10.0.0.9', '10.0.0.0/8')).toBe(true);
     expect(addressInRange('fd00::5', 'fd00::/8')).toBe(true);
     expect(addressInRange('fe80::5', 'fd00::/8')).toBe(false);
+  });
+});
+
+describe('node:http callers (HTTP SIEM destinations)', () => {
+  it('refuses a literal loopback address and a name that resolves to one, and lets them through when listed', async () => {
+    const { post } = await import('@/lib/server/audit/sinks');
+    blockOn();
+    await refused(post(`http://127.0.0.1:${port}/ingest`, '{}', {}), '127.0.0.1');
+    // `localhost` reaches the guarded DNS lookup, which refuses its address (node:http wraps nothing around it).
+    await refused(post(`http://localhost:${port}/ingest`, '{}', {}), 'localhost');
+    process.env.LANDFLOW_OUTBOUND_ALLOW = '127.0.0.1, localhost, ::1';
+    expect((await post(`http://127.0.0.1:${port}/ingest`, '{}', {})).status).toBe(200);
+    expect((await post(`http://localhost:${port}/ingest`, '{}', {})).status).toBe(200);
   });
 });
 
@@ -220,8 +241,9 @@ describe('safeFetch', () => {
     const connection = openAiConnection({ baseUrl: `http://127.0.0.1:${port}` });
     blockOn();
     const blocked = (await openAiEmbeddings(connection, 'm', ['x']).catch((e: unknown) => e)) as Error & { description?: string };
-    expect(blocked.message).toBe(`Cannot reach 127.0.0.1:${port} at http://127.0.0.1:${port}`);
-    expect(blocked.description).toMatch(/Blocked: 127\.0\.0\.1 resolves to a private address/);
+    // The refusal is the headline, as on the HTTP Request node; the description names the server.
+    expect(blocked.message).toBe('Blocked: 127.0.0.1 resolves to a private address (LANDFLOW_OUTBOUND_ALLOW lists exceptions)');
+    expect(blocked.description).toBe(`Cannot reach 127.0.0.1:${port} at http://127.0.0.1:${port}`);
     expect(seen).toEqual([]); // the request never left the host
     process.env.LANDFLOW_OUTBOUND_ALLOW = '127.0.0.1';
     // Allowed now: the request goes out, and the failure is the fake server's reply.

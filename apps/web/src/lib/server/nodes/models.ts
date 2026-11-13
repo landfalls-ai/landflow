@@ -14,7 +14,7 @@ import { NodeOperationError, type JsonObject } from '@landflow/sdk';
 import type { AgentMessage, LanguageModel, ModelAttachment, ModelTurn, ToolCall, ToolResult, ToolSpec } from '@landflow/engine';
 import type { Attributes } from '@opentelemetry/api';
 import { credentialIdOf } from '../ai-usage/credential-id';
-import { safeFetch } from '../net/safe-fetch';
+import { OutboundBlockedError, safeFetch } from '../net/safe-fetch';
 import { traceChat, traceEmbeddings } from '../telemetry';
 import { attachmentText, audioFormat, pdfAttachmentText } from './attachments';
 
@@ -567,6 +567,8 @@ export async function openAiRequest<T>(
   } catch (error) {
     if (init.signal?.aborted) throw error;
     if ((error as Error).name === 'TimeoutError') throw new NodeOperationError(`${connection.label} did not answer within ${Math.round((init.timeoutMs ?? 300_000) / 1000)} s`);
+    // Refused by the outbound policy: say so first, as the HTTP Request node does.
+    if (error instanceof OutboundBlockedError) throw new NodeOperationError(error.message, { description: `Cannot reach ${connection.label} at ${connection.base}` });
     const cause = (error as { cause?: { code?: string; message?: string } }).cause;
     throw new NodeOperationError(`Cannot reach ${connection.label} at ${connection.base}`, { description: cause?.code ?? cause?.message ?? (error as Error).message });
   }

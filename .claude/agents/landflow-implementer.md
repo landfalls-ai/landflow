@@ -35,8 +35,12 @@ Work only inside `<worktree>`. Never touch another worktree, the person's checko
 - **Library code** holds the logic, the audit event (`recordAudit` with `from` / `to`) and the access scoping; routes
   stay thin and hold no SQL.
 - **Configuration**: through `lib/server/config` (`envInt`, `envNumber`, `envFlag`, `envUrl`, `envString`; `profile()`
-  / `isProduction()` for anything stricter in production). Read at call time, never at import. Document every new
-  variable in `docs/reference/configuration.md`.
+  / `isProduction()` for anything stricter in production). Read at call time, never at import. Add every new
+  variable to `lib/server/config/catalog.ts` and regenerate `docs/reference/configuration.md` with
+  `pnpm --filter @landflow/web gen:config-docs` (`config-catalog.test.ts` fails otherwise).
+- **Requests**: bodies through `parseBody` (capped by `LANDFLOW_MAX_BODY_BYTES`), queries through `parseQuery` with
+  `pageSchema` / `limitParam()` (`lib/server/pagination.ts`); a list pages by keyset cursor. Streams use
+  `sseResponse()` (`lib/server/sse.ts`).
 - **State**: `singleton('<key>', () => …)`. A background service is an entry of `SERVICES` in `lib/server/runtime.ts`
   (roles, `leader: true` for one-process work through `leaderService()`, `stop` and `shutdownPhase`); anything else
   that buffers registers a shutdown step with `onShutdown()` (`lib/server/lifecycle.ts`).

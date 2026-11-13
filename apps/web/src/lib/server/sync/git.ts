@@ -26,7 +26,7 @@ import { hasSecretReference } from '@landflow/engine';
 import { credentials as vault } from '../credentials/vault';
 import { database, dataDir } from '../db';
 import { resolveSecretFields } from '../secrets/resolve';
-import { singleton } from '../singleton';
+import { singleton, singletonKeys } from '../singleton';
 import { store } from '../store';
 import { readSyncDir, writeSyncDir } from './files';
 import { MANIFEST_FILE, WORKFLOWS_DIR, WORKFLOW_SUFFIX, entityKey, isManagedPath, isSafePath, renderState } from './format';
@@ -416,7 +416,7 @@ export function git(args: string[], options: { cwd: string; auth?: GitAuth }): P
 }
 
 /** One source-control operation at a time. */
-const queue = singleton('source-control-queue', () => ({ tail: Promise.resolve() as Promise<unknown> }));
+const queue = singleton(singletonKeys.sourceControlQueue, () => ({ tail: Promise.resolve() as Promise<unknown> }));
 function exclusive<T>(fn: () => Promise<T>): Promise<T> {
   const run = queue.tail.then(fn, fn);
   queue.tail = run.catch(() => undefined);

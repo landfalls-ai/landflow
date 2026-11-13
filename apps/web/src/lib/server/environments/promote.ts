@@ -35,7 +35,7 @@ import type { PromotionCredential, PromotionEntry, PromotionResult, PromotionTab
 import { credentials as vault } from '../credentials/vault';
 import { dataTables } from '../datatables';
 import { dataDir } from '../db';
-import { singleton } from '../singleton';
+import { singleton, singletonKeys } from '../singleton';
 import { readSyncDir, writeSyncDir } from '../sync/files';
 import {
   CREDENTIALS_FILE,
@@ -95,7 +95,7 @@ const MAX_DIFF = 200_000;
 const capped = (diff: string) => (diff.length > MAX_DIFF ? `${diff.slice(0, diff.lastIndexOf('\n', MAX_DIFF))}\n… (diff cut at ${MAX_DIFF / 1000} kB)\n` : diff);
 
 /** The queue of ../sync/git.ts (`exclusive` there): one source-control operation at a time, promotions included. */
-const queue = singleton('source-control-queue', () => ({ tail: Promise.resolve() as Promise<unknown> }));
+const queue = singleton(singletonKeys.sourceControlQueue, () => ({ tail: Promise.resolve() as Promise<unknown> }));
 function exclusive<T>(fn: () => Promise<T>): Promise<T> {
   const run = queue.tail.then(fn, fn);
   queue.tail = run.catch(() => undefined);

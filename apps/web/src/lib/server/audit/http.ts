@@ -4,15 +4,19 @@
  * and, for a change (POST, PUT, PATCH, DELETE) that recorded no domain event of its own, records an `api.request`
  * event with the method, route pattern, status and outcome (2xx/3xx success, 401/403 denied, otherwise failure).
  * A read (GET, HEAD) refused with 401 or 403 records `api.denied`, at most once a minute per (user or client address,
- * route pattern), so probing shows up in the log without a polling tab flooding it.
+ * route pattern) and at most 60 a minute in all, so probing shows up in the log without a polling tab, or a caller
+ * rotating addresses, flooding it.
  * Nothing reads the request body, and only the route pattern is kept (no query string, no parameter values beyond
  * the target id). Paths that change nothing anyone audits, or that fire constantly (edit-lock heartbeats, plugin
  * announcements, public webhooks and form resumes, Slack callbacks, MCP JSON-RPC, remote agents' trace batches, editor
  * helpers like load-options and expression previews, assistant chats, binary uploads), are skipped.
  *
- * The response carries the request id as `X-Request-Id` (taken from the request's own header when it is sane).
+ * The response carries the request id as `X-Request-Id` (taken from the request's own header when it is sane) and, when a
+ * trace span is active, `traceparent` (W3C) so a caller can quote the trace; the span gets the request id, route, user and
+ * API key id as attributes, and the logger stamps the same ids on every line (./context `requestLogFields`).
  */
 import { randomUUID } from 'node:crypto';
+import { trace } from '@opentelemetry/api';
 import type { AuditOutcome } from '../../shared/audit';
 import type { Principal } from '../auth/context';
 import { resolvePrincipal } from '../auth/guard';
@@ -47,6 +51,18 @@ export function deniedReadDue(who: string, route: string, now = Date.now()): boo
   }
   seen.set(key, now);
   return true;
+}
+
+/** Denied-read events per minute across every caller, so a caller rotating addresses can't flood the log (as SCIM's). */
+const DENIED_PER_WINDOW = 60;
+const deniedWindow = () => singleton('audit-denied-window', () => ({ start: 0, count: 0 }));
+
+/** True while this minute's denied-read events are under the ceiling (and counts this one). */
+export function deniedReadUnderCap(now = Date.now()): boolean {
+  const window = deniedWindow();
+  // (A clock that moved back opens a new window too.)
+  if (now - window.start >= DENIED_WINDOW_MS || now < window.start) Object.assign(window, { start: now, count: 0 });
+  return ++window.count <= DENIED_PER_WINDOW;
 }
 
 const REQUEST_ID = /^[\w.:-]{1,128}$/;
@@ -115,6 +131,25 @@ async function paramsOf(ctx: unknown): Promise<Record<string, string> | undefine
   }
 }
 
+/** The request's identifiers on the active span (a no-op without one); called again after the handler, once the principal is known. */
+function stampSpan(ctx: AuditRequestContext) {
+  const span = trace.getActiveSpan();
+  if (!span) return;
+  span.setAttribute('landflow.request_id', ctx.requestId);
+  if (ctx.route) span.setAttribute('http.route', ctx.route);
+  if (ctx.principal) {
+    span.setAttribute('enduser.id', ctx.principal.user.id);
+    if (ctx.principal.apiKey) span.setAttribute('landflow.api_key.id', ctx.principal.apiKey.id);
+  }
+}
+
+/** `00-<trace id>-<span id>-<flags>` for the active span, undefined without a valid one. */
+function traceparent(): string | undefined {
+  const span = trace.getActiveSpan()?.spanContext();
+  if (!span || !trace.isSpanContextValid(span)) return undefined;
+  return `00-${span.traceId}-${span.spanId}-${(span.traceFlags & 0xff).toString(16).padStart(2, '0')}`;
+}
+
 /** Run a route handler with an audit context, and record the generic event afterwards (see the module comment). */
 export async function auditRequest(args: unknown[], run: () => Promise<Response>): Promise<Response> {
   const request = args[0] instanceof Request ? args[0] : undefined;
@@ -140,9 +175,13 @@ export async function auditRequest(args: unknown[], run: () => Promise<Response>
   const named = MUTATING.has(method) && path.startsWith('/api/') ? targetOf(ctx.route, params) : undefined;
   if (named?.id && projectTarget(named)) ctx.target = { type: named.type, id: named.id, projectId: targetProject(named) };
 
+  stampSpan(ctx);
   const response = await withAuditRequest(ctx, run);
+  stampSpan(ctx);
   try {
     response.headers.set('x-request-id', ctx.requestId);
+    const parent = path.startsWith('/api/') ? traceparent() : undefined;
+    if (parent && !response.headers.has('traceparent')) response.headers.set('traceparent', parent);
   } catch {
     // Immutable headers (a redirect): no id on this one.
   }
@@ -163,7 +202,7 @@ export async function auditRequest(args: unknown[], run: () => Promise<Response>
     if (principal) ctx.principal = principal;
     const target = targetOf(ctx.route, params);
     if (!MUTATING.has(method)) {
-      if (!deniedReadDue(principal ? `user:${principal.user.id}` : `ip:${ctx.ip ?? 'unknown'}`, ctx.route)) return response;
+      if (!deniedReadDue(principal ? `user:${principal.user.id}` : `ip:${ctx.ip ?? 'unknown'}`, ctx.route) || !deniedReadUnderCap()) return response;
       withAuditRequest(ctx, () =>
         recordAudit({ action: 'api.denied', outcome: 'denied', status: response.status, ...(target && { target }), summary: `${method} ${ctx.route} → ${response.status}` }),
       );

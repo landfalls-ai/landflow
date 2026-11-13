@@ -58,14 +58,21 @@ filesystem access causes tracing of the whole project".
 
 ## Conventions
 
-- **Migrations** live in `apps/web/src/lib/server/db/schema.ts`, in order; the highest so far is 2065. A new one
-  goes at the end with a version above the current highest. A migration numbered below one a database already has
+- **Migrations** live in `apps/web/src/lib/server/db/schema.ts`, in order. A new one goes at the end with a version
+  above the current highest (the last entry of `MIGRATIONS`). A migration numbered below one a database already has
   still runs there, but after the higher ones, while a fresh database runs it before them, so the order differs
   between databases and their schemas can diverge (`apps/web/test/migrations-order.test.ts` fails on one; only 1200
   and 1300, which shipped out of order, are grandfathered). One SQL text runs on SQLite and Postgres (TEXT, BIGINT,
   DOUBLE PRECISION, JSON in TEXT, `ON CONFLICT` upserts); set `postgres` only when the dialects must differ. Never
   edit a shipped migration: add one. A column that a shipped `CREATE TABLE` gained later goes in `addColumns`. A new
   table also goes in `TABLES` (its primary key) in the same file.
+- **Environment variables** go in the catalog first: add an entry to `CONFIG_CATALOG` in
+  `apps/web/src/lib/server/config/catalog.ts` (default and description as the page shows them, group, `secret`,
+  `profile`, `readBy`, `aliases`), read it with `envFlag` / `envNumber` / `envInt` / `envString` / `envUrl` from
+  `lib/server/config`, and run `pnpm --filter @landflow/web gen:config-docs` to regenerate
+  [reference/configuration.md](reference/configuration.md). `test/config-catalog.test.ts` fails on a name the source
+  reads that is not catalogued, on a stale page, and when more files read `process.env` directly than
+  `MAX_FILES_READING_PROCESS_ENV` allows (88; lower it when a reader moves into config, never raise it).
 - **Errors**: a route (or the store below it) throws an `HttpError` (`lib/server/errors.ts`: `(message, status = 400,
   { code?, details?, cause?, expose? })`) and does not catch it to build a response: `handler()` answers it as
   `{ error, code, …details }`. Give a domain error its own class (`class OutOfStockError extends HttpError`, same
@@ -161,8 +168,14 @@ deploy/scripts/smoke.sh code                       # the dockerised code runner:
 The host's suite runs its files in parallel, so `apps/web/vitest.config.ts` gives each test 20 s and each hook 30 s:
 the marketplace, cluster runtime and MCP file-approval tests timed out at the defaults under that load.
 
+The engine's suite runs on the machine's Node (22). `packages/engine/test/expression-sandbox.test.ts` walks the
+expression realm's globals for anything that returns a promise, so after a Node upgrade, or before relying on a newer
+Node than the `engines` field's minimum, run the engine's suite on that version too, for example
+`(cd packages/engine && npx -y node@26 node_modules/vitest/vitest.mjs run)`: a new global of that kind fails it there first.
+
 Route tests boot the way the host does: `apps/web/test/setup.ts` registers the bootstrapper, and the first `handler()`
-call boots through `whenReady()`. Once the boot is `ready`, `handler()` no longer reaches the `bootstrap` singleton, so a
+call boots through `whenReady()`, outside that request's audit and log context (what the boot records is not the
+request's). Once the boot is `ready`, `handler()` no longer reaches the `bootstrap` singleton, so a
 test that forgets that singleton to boot again must call `ensureBootstrapped()` itself; the next request won't reboot.
 
 `pnpm test` runs the TypeScript packages' suites in one go. After editing `packages/protocol/proto/landflow/plugin/v1/plugin.proto`, run
@@ -289,7 +302,11 @@ LANDFLOW_OWNER_EMAIL=<from deploy/.env.example> LANDFLOW_OWNER_PASSWORD=<from de
 - **Restart after changing a singleton.** Server objects made with `singleton()` (`lib/server/singleton.ts`: the
   registry, broker connections and others) live on `globalThis` so that hot reload doesn't duplicate them. A reload
   therefore keeps the old instance, and a method you add to its class isn't on it ("registry.compositeTypes is not a
-  function"). Stop the dev server and start it again; installed node plugins start again with it.
+  function"). Stop the dev server and start it again; installed node plugins start again with it. Tests that need a
+  fresh one call `resetSingleton(key)` (the old `forgetSingleton` is the same function); keys used by more than one
+  file are in `singletonKeys`, and nothing else touches `globalThis.__landflow` (`test/singletons.test.ts` checks).
+  Tests that assert on insights, usage or retention after `store.saveExecution` call `ensureExecutionReactions()`
+  first, because the store only emits the event.
 - **Through the API**, a script that signs in with the development owner (`POST /api/auth/login`, then the session
   cookie) can add the marketplace and install plugins. A node plugin's install answers `409` with what it will run until
   it is sent again with `{ "confirm": true }`. The script can then post alerts to a workflow's webhook and read

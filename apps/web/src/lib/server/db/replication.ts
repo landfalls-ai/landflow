@@ -16,6 +16,7 @@
 import type { StatementSync } from 'node:sqlite';
 import type { Client, Pool } from 'pg';
 import { logger } from '../telemetry/logger';
+import { singleton } from '../singleton';
 import { upsertSql, type Database, type SqlValue, type WriteOp } from './database';
 import { TABLES, type TableName } from './schema';
 
@@ -94,8 +95,7 @@ export interface TablesChanged {
 }
 
 type ChangeListener = (change: TablesChanged) => void;
-const holder = globalThis as unknown as { __landflowReplication?: { listeners: Set<ChangeListener>; replica?: Replica } };
-const state = () => (holder.__landflowReplication ??= { listeners: new Set() });
+const state = () => singleton('db-replication', () => ({ listeners: new Set<ChangeListener>(), replica: undefined as Replica | undefined }));
 
 export function onTablesChanged(listener: ChangeListener): () => void {
   state().listeners.add(listener);
