@@ -75,4 +75,19 @@ describe('statement cache', () => {
     expect(db.all(`SELECT id FROM scratch`)).toHaveLength(10);
     await db.close();
   });
+
+  it('keeps the cached write path (upsert, insertNew, delete) working under a small cap', async () => {
+    const db = open('2');
+    for (let n = 0; n < 10; n++) {
+      db.get(query(n)); // churns the two slots between the writes
+      db.upsert('settings', { key: `k${n}`, value: 'a' });
+      db.upsert('settings', { key: `k${n}`, value: 'b' }); // the same statement again: replaces, does not add
+      expect(db.insertNew('settings', { key: `k${n}`, value: 'c' })).toBe(false);
+      if (n % 2) expect(db.delete('settings', { key: `k${n - 1}` })).toBe(1);
+    }
+    expect(db.statementCount).toBe(2);
+    const rows = db.all<{ key: string; value: string }>(`SELECT key, value FROM settings WHERE key LIKE 'k%' ORDER BY key`);
+    expect(rows).toEqual(['k1', 'k3', 'k5', 'k7', 'k9'].map((key) => ({ key, value: 'b' })));
+    await db.close();
+  });
 });
