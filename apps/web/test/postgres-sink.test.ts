@@ -170,6 +170,30 @@ describe('Postgres write queue', () => {
     fs.closeSync(fd);
   });
 
+  it('a blocked sink closed while it waits does not retry on the ended pool', async () => {
+    const fake = fakePool();
+    const { sink, db } = open(fake, undefined, { blockedRetrySeconds: 0.1, closeFlushMs: 20 });
+    fake.fail.active = true;
+    fake.fail.error = Object.assign(new Error('duplicate key'), { code: '23505' });
+    put(db, 'bad');
+    await until(() => db.writeHealth().state === 'blocked');
+    await expect(sink.close()).rejects.toThrow(/not yet in Postgres/);
+    const begins = fake.statements.filter((s) => s === 'BEGIN').length;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(fake.statements.filter((s) => s === 'BEGIN').length).toBe(begins);
+  });
+
+  it('LANDFLOW_PG_BLOCKED_RETRY_SECONDS below one second counts as one', async () => {
+    process.env.LANDFLOW_PG_BLOCKED_RETRY_SECONDS = '0';
+    try {
+      const sink = new PostgresSink(fakePool().pool, { release() {} } as unknown as PoolClient, join(dir(), 'q.jsonl'), 0, undefined, { spoolFsync: 'off' });
+      expect((sink as unknown as { blockedRetryMs: number }).blockedRetryMs).toBe(1000);
+      await sink.close();
+    } finally {
+      delete process.env.LANDFLOW_PG_BLOCKED_RETRY_SECONDS;
+    }
+  });
+
   it('LANDFLOW_PG_SKIP_BATCH on the last batch of the spool records the sequence', async () => {
     const fake = fakePool();
     const d = dir();

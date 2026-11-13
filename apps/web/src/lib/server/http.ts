@@ -43,6 +43,11 @@ function run<A extends unknown[]>(fn: (...args: A) => Promise<Response>, args: A
         return await withAuth(gate.auth, () => fn(...args));
       } catch (caught) {
         if (caught instanceof AuthError) return error(caught.message, caught.status);
+        // Postgres mode refuses writes while a batch is blocked (db/database.ts StoreUnavailableError): a 503 to retry
+        // later, not a 500. Matched by name so this module doesn't import the database layer.
+        if (caught instanceof Error && caught.name === 'StoreUnavailableError') {
+          return NextResponse.json({ error: caught.message }, { status: 503, headers: { 'Retry-After': '30' } });
+        }
         logger.error('route error', { error: caught, 'url.path': routePath(args[0]) });
         return error((caught as Error).message ?? 'Internal error', 500);
       }

@@ -3,7 +3,7 @@
  * batch Postgres rejects, and counters of rejections and blocked retries. Gauges read the open sink's health when
  * scraped; the counters are recorded by the sink as it fails and retries.
  */
-import { metrics, type MeterProvider } from '@opentelemetry/api';
+import { metrics, type Counter, type MeterProvider } from '@opentelemetry/api';
 import { HOST_SCOPE, hostMetrics } from '../telemetry/metrics';
 import type { WriteHealth } from './database';
 
@@ -36,7 +36,21 @@ export function registerWriteMetrics(health: () => WriteHealth): () => void {
   };
 }
 
+/** The two counters, created once per meter provider like hostMetrics()' own instruments. */
+let counters: { meter: unknown; rejections: Counter; retries: Counter } | undefined;
+function writeCounters() {
+  const { meter } = hostMetrics();
+  if (counters?.meter !== meter) {
+    counters = {
+      meter,
+      rejections: meter.createCounter('landflow.db.write_rejections', { description: 'Write batches Postgres rejected (not connection failures)' }),
+      retries: meter.createCounter('landflow.db.write_retries', { description: 'Retries of a blocked write batch' }),
+    };
+  }
+  return counters;
+}
+
 /** A batch Postgres rejected with a non-connection error. */
-export const recordWriteRejection = () => hostMetrics().meter.createCounter('landflow.db.write_rejections', { description: 'Write batches Postgres rejected (not connection failures)' }).add(1);
+export const recordWriteRejection = () => writeCounters().rejections.add(1);
 /** A retry of a blocked batch. */
-export const recordWriteRetry = () => hostMetrics().meter.createCounter('landflow.db.write_retries', { description: 'Retries of a blocked write batch' }).add(1);
+export const recordWriteRetry = () => writeCounters().retries.add(1);

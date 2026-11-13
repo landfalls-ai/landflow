@@ -101,6 +101,22 @@ describe('draining', () => {
   });
 });
 
+describe('handler errors', () => {
+  it('answers a blocked Postgres store (StoreUnavailableError) with 503 and Retry-After, not 500', async () => {
+    const lc = await fresh();
+    lc.markBooted();
+    const { handler } = await import('../src/lib/server/http');
+    const { StoreUnavailableError } = await import('../src/lib/server/db/database');
+    const route = handler(async () => {
+      throw new StoreUnavailableError(7);
+    });
+    const response = await route(new Request('http://localhost/api/workflows'));
+    expect(response.status).toBe(503);
+    expect(response.headers.get('Retry-After')).toBe('30');
+    expect((await response.json()).error).toMatch(/blocked at batch 7/);
+  });
+});
+
 describe('shutdown reserve', () => {
   it('a hanging runs step still lets a slow storage and telemetry step finish', async () => {
     const lc = await fresh();
