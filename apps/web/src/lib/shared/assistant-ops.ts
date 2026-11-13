@@ -1049,10 +1049,45 @@ export interface DiffLine {
   text: string;
 }
 
+/**
+ * A parameter's value as a person reads it: a Set's `{"values":[{"name":"tagged","value":true}]}` is `tagged = true`,
+ * a list of items is their values, an object its first keys. JSON only for what has no shape to read.
+ */
+export function readableValue(value: unknown, depth = 0): string {
+  if (value === null || value === undefined) return 'empty';
+  if (typeof value !== 'object') return String(value);
+  if (depth > 3) return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    if (!value.length) return 'none';
+    const named = value.every((v) => v && typeof v === 'object' && !Array.isArray(v) && 'name' in v);
+    const shown = value.slice(0, 3).map((v) => (named ? `${String((v as Record<string, unknown>).name)} = ${readableValue((v as Record<string, unknown>).value ?? (v as Record<string, unknown>).type, depth + 1)}` : readableValue(v, depth + 1)));
+    return shown.join(', ') + (value.length > 3 ? ` +${value.length - 3} more` : '');
+  }
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (!entries.length) return 'empty';
+  // A wrapper with one key (`values`, `conditions`, `options`): what it holds.
+  if (entries.length === 1) return readableValue(entries[0][1], depth + 1);
+  const shown = entries.slice(0, 3).map(([key, inner]) => `${key}: ${readableValue(inner, depth + 1)}`);
+  return shown.join(', ') + (entries.length > 3 ? ` +${entries.length - 3} more` : '');
+}
+
 const preview = (value: unknown) => {
-  const shown = typeof value === 'string' ? value : JSON.stringify(value);
-  return shown.length > 48 ? `${shown.slice(0, 47)}…` : shown;
+  const shown = readableValue(value);
+  return shown.length > 64 ? `${shown.slice(0, 63)}…` : shown;
 };
+
+/** A parameter that is a list of named values (a Set's fields), unwrapped from a one-key wrapper: those, else none. */
+const namedItems = (value: unknown): unknown[] | undefined => {
+  let inner = value;
+  if (inner && typeof inner === 'object' && !Array.isArray(inner) && Object.keys(inner).length === 1) inner = Object.values(inner)[0];
+  return Array.isArray(inner) && inner.length && inner.every((v) => v && typeof v === 'object' && !Array.isArray(v) && 'name' in v) ? inner : undefined;
+};
+
+/** Parameters as `key = value` pairs; a Set's fields as their own `name = value` pairs. */
+const pairs = (parameters: Record<string, unknown>) =>
+  Object.entries(parameters)
+    .map(([key, value]) => (namedItems(value) ? preview(value) : `${key} = ${preview(value)}`))
+    .join(', ');
 
 /** One readable line per op: + node, ~ params, → connection, − removed, ✎ renamed. */
 export function describeOps(ops: AssistantOp[], lookup?: DescriptorLookup): DiffLine[] {
@@ -1074,16 +1109,14 @@ export function describeOps(ops: AssistantOp[], lookup?: DescriptorLookup): Diff
           : op.after
             ? ` after “${name(op.after)}”${op.output ? ` (output ${op.output})` : ''}`
             : '';
-        const params = Object.entries(op.parameters ?? {}).slice(0, 3);
-        const set = params.length ? ` · ${params.map(([key, value]) => `${key} = ${preview(value)}`).join(', ')}` : '';
+        const params = Object.fromEntries(Object.entries(op.parameters ?? {}).slice(0, 3));
+        const set = Object.keys(params).length ? ` · ${pairs(params)}` : '';
         return { sign: '+', text: `“${label}”${kind && kind !== label ? ` (${kind})` : ''}${where}${set}` };
       }
       case 'setParameters':
         return {
           sign: '~',
-          text: `“${name(op.node)}”: ${Object.entries(op.parameters)
-            .map(([key, value]) => `${key} = ${preview(value)}`)
-            .join(', ')}`,
+          text: `“${name(op.node)}”: ${pairs(op.parameters)}`,
         };
       case 'connect':
         return { sign: '→', text: `“${name(op.from)}” → “${name(op.to)}”${op.type && op.type !== 'main' ? ` as ${op.type.replace('ai_', '')}` : op.output ? ` (output ${op.output})` : ''}` };

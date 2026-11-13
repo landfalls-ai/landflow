@@ -24,7 +24,7 @@ import { applyChanges, draft as draftCall, sendFeedback, suggestionKey, undos, u
 import { useEditor } from './store';
 import { isPhone, usePhone } from '@/lib/client/use-phone';
 import { dictationSupported, useDictation } from './use-dictation';
-import { OpsDiff, Warnings } from './suggestions-card';
+import { LeftOut, OpsDiff, Warnings } from './suggestions-card';
 import { MAX_FIXES, productionNote, publishToProduction, sendsAllowed, testUntilItRuns } from './test-session';
 import { agentStep, firstSentence, foldLine, lastOutcomeOf, lastRunOf, openNeedOf, runRow, sessionFold, stepsOf, stoppedAtOf, titleOf } from './timeline';
 
@@ -52,11 +52,7 @@ function ProposalCard({ itemId, proposal }: { itemId: string; proposal: Proposal
       <div className="text-[13px] font-semibold leading-snug text-t1">{proposal.summary}</div>
       <OpsDiff ops={proposal.ops} />
       <Warnings warnings={proposal.warnings} />
-      {proposal.dropped.length > 0 && (
-        <p className="text-[11px] text-t3" title={proposal.dropped.join('\n')}>
-          {proposal.dropped.length} part{proposal.dropped.length === 1 ? '' : 's'} left out (hover for why)
-        </p>
-      )}
+      <LeftOut reasons={proposal.dropped} />
       <div className="flex items-center gap-1.5">
         {proposal.state === 'applied' ? (
           <span className="flex animate-pop items-center gap-1 text-[12px] font-semibold text-gn">
@@ -119,7 +115,7 @@ function ProposalRow({ itemId, proposal, fix }: { itemId: string; proposal: Prop
           <ChevronRight className={cn('mt-px size-3.5 shrink-0 text-t3 transition-transform', open && 'rotate-90')} />
         </button>
         {proposal.state === 'applied' && latest && (
-          <button type="button" onClick={undo} className="min-h-7 shrink-0 rounded-full px-2 text-[11.5px] font-semibold text-ac hover:bg-acdim max-md:min-h-9">
+          <button type="button" onClick={undo} className="min-h-7 shrink-0 rounded-full px-2 text-[11.5px] font-semibold text-ac hover:bg-acdim max-md:min-h-11 max-md:px-3">
             Undo
           </button>
         )}
@@ -283,8 +279,8 @@ function RunLine({ run }: { run: TestRun }) {
       <div className="flex items-start gap-1">
         {line}
         {cut && (
-          <button type="button" aria-expanded={more} aria-label={more ? 'Less' : 'The whole error'} onClick={() => setMore((m) => !m)} className="min-h-6 shrink-0 rounded-full px-1.5 text-[11.5px] font-semibold text-ac hover:bg-acdim max-md:min-h-8">
-            {more ? 'less' : 'more'}
+          <button type="button" aria-expanded={more} aria-label={more ? 'Less' : 'The whole error'} onClick={() => setMore((m) => !m)} className="min-h-6 shrink-0 rounded-full px-1.5 text-[11.5px] font-semibold text-ac hover:bg-acdim max-md:min-h-11 max-md:px-2.5">
+            {more ? 'Show less' : 'Show more'}
           </button>
         )}
       </div>
@@ -310,7 +306,7 @@ function AgentRow({ agent }: { agent: AgentProgress }) {
 }
 
 /** Autonomous mode's switch: on, Spotlight applies its changes and tests and fixes the flow without waiting for a click. */
-function AutonomousSwitch() {
+function AutonomousSwitch({ compact }: { compact?: boolean }) {
   const { on, set } = useAutonomous();
   return (
     <button
@@ -321,11 +317,11 @@ function AutonomousSwitch() {
       title={on ? 'Autonomous: Spotlight applies its changes and tests and fixes the flow by itself. Click to ask first.' : 'Asks before applying and testing. Click to let Spotlight do it by itself.'}
       onClick={() => set(!on)}
       className={cn(
-        'flex h-5 shrink-0 items-center gap-1 rounded-full border px-1.5 text-[10.5px] font-semibold transition-colors max-md:h-9 max-md:px-2.5',
-        on ? 'border-acbd bg-acdim text-ac' : 'border-hair text-t3 hover:text-t1',
+        'flex h-7 shrink-0 items-center gap-1 rounded-full border px-2 text-[11.5px] font-semibold transition-colors max-md:h-11 max-md:px-3',
+        on ? 'border-transparent bg-ac2 text-on-ac hover:bg-ac2-hover' : 'border-bd text-t2 hover:text-t1',
       )}
     >
-      <Zap className="size-3" fill={on ? 'currentColor' : 'none'} /> <span className="max-md:sr-only">Autonomous</span>
+      <Zap className="size-3" fill={on ? 'currentColor' : 'none'} /> <span className={cn('max-md:sr-only', compact && 'sr-only')}>Autonomous</span>
     </button>
   );
 }
@@ -399,8 +395,8 @@ function ReplyText({ text, short }: { text: string; short: boolean }) {
     <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-t1 [overflow-wrap:anywhere]">
       {cut ? first : text}
       {cut && (
-        <button type="button" onClick={() => setMore(true)} className="ml-1 text-[12px] font-semibold text-ac hover:underline">
-          more
+        <button type="button" onClick={() => setMore(true)} className="ml-1 text-[12px] font-semibold text-ac hover:underline max-md:min-h-11 max-md:px-1">
+          Show more
         </button>
       )}
     </div>
@@ -422,15 +418,17 @@ function ReplyView({ item, live, status }: { item: Reply; live: boolean; status?
   const steps = building?.replyId === item.id ? building : undefined;
   // A test run shows its own progress; a change being built shows its steps.
   const working = live && !steps && !item.parts.some((p) => p.kind === 'run' || p.kind === 'action');
-  // Rows, not cards: Spotlight applies them itself.
-  const asRows = autonomous || Boolean(item.testId);
-  // Within a session, the reply's texts are one: its first sentence, the rest on "more".
+  // Rows, not cards: Spotlight applied them itself (a session's fix, autonomous mode), or is about to (autonomous mode on
+  // while the reply still has changes to apply). A turn applied by hand stays a card when the switch flips later.
+  const asRows = Boolean(item.testId || item.auto) || (autonomous && (live || spotlightBusy) && pending.length > 0);
+  // Within a session, the reply's texts are one: its first sentence, the rest on "Show more".
   // Autonomous replies that changed the flow too: the rows say what was done.
-  const session = Boolean(item.testId) || (autonomous && !live && item.parts.some((p) => p.kind === 'proposal'));
+  const session = Boolean(item.testId) || (Boolean(item.auto) && !live && item.parts.some((p) => p.kind === 'proposal'));
   // A session's fix: its row says what it did and opens on the model's words; the prose would say it twice.
   const quietText = Boolean(item.testId) && !live && item.parts.some((p) => p.kind === 'proposal' && p.proposal.state);
   const sessionText = session ? item.parts.flatMap((p) => (p.kind === 'text' ? [p.text] : [])).join('\n\n') : '';
   const firstText = item.parts.findIndex((p) => p.kind === 'text');
+  const firstProposal = item.parts.findIndex((p) => p.kind === 'proposal');
   return (
     <div className="flex animate-in gap-2" title={meta || undefined}>
       <span className="mt-0.5 grid size-5 shrink-0 place-items-center text-viz-7">{working ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}</span>
@@ -443,7 +441,9 @@ function ReplyView({ item, live, status }: { item: Reply; live: boolean; status?
               <ReplyText key={i} text={part.text} short={false} />
             )
           ) : part.kind === 'proposal' ? (
-            steps ? null : asRows && (part.proposal.state || live || spotlightBusy) ? (
+            steps ? (
+              i === firstProposal && <LiveSteps key="steps" live={steps} />
+            ) : asRows && (part.proposal.state || live || spotlightBusy) ? (
               <ProposalRow key={part.proposal.id} itemId={item.id} proposal={part.proposal} fix={Boolean(item.testId)} />
             ) : (
               // Not applied by Spotlight (a stopped reply, a change that no longer fits, a Fix bubble): the person decides.
@@ -459,7 +459,7 @@ function ReplyView({ item, live, status }: { item: Reply; live: boolean; status?
             <OutcomeCard key={i} itemId={item.id} outcome={part.outcome} />
           ) : null,
         )}
-        {steps && <LiveSteps live={steps} />}
+        {steps && firstProposal < 0 && <LiveSteps live={steps} />}
         {working && <div className="animate-pulse-soft truncate text-[12px] text-t3">{status ?? (lastTool?.kind === 'tool' ? `${lastTool.tool.label}…` : 'Thinking…')}</div>}
         {item.error && <div className="rounded-[10px] border border-rdbd bg-rddim px-2.5 py-2 text-[12px] text-rd [overflow-wrap:anywhere]">{item.error}</div>}
         {!live && !asRows && pending.length > 1 && (
@@ -484,6 +484,18 @@ function Timeline({ live, status }: { live: boolean; status?: string }) {
     // Reading further up: stay there, unless the person just sent something.
     if (el && (atEnd.current || lastRole === 'user')) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   }, [items, agents, lastRole]);
+  // Sizes change without new items: the bubbles row appears under it, the phone's dock changes height, a card grows.
+  useEffect(() => {
+    const el = scroller.current;
+    const content = el?.firstElementChild;
+    if (!el || !content) return;
+    const follow = new ResizeObserver(() => {
+      if (atEnd.current) el.scrollTop = el.scrollHeight;
+    });
+    follow.observe(el);
+    follow.observe(content);
+    return () => follow.disconnect();
+  }, []);
   const lastId = items.at(-1)?.id;
   const placed = new Set(items.map((i) => i.id));
   // A finished session folds to one line; the person opens it. The one running stays open.
@@ -500,8 +512,9 @@ function Timeline({ live, status }: { live: boolean; status?: string }) {
         const el = e.currentTarget;
         atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
       }}
-      className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3"
+      className="min-h-0 flex-1 overflow-y-auto px-3 py-3"
     >
+      <div className="space-y-3">
       {/* A test-and-fix session's own requests ("Test run 2 failed at …") say what its run row says: left out. */}
       {items.map((item) => (
         <div key={item.id} className={cn('space-y-3', ((item.role === 'user' && item.auto && !agents.some((a) => a.after === item.id)) || (folded(item) && !firstOf.has(item.id))) && 'hidden')}>
@@ -534,6 +547,7 @@ function Timeline({ live, status }: { live: boolean; status?: string }) {
         .map((a) => (
           <AgentRow key={a.nodeId} agent={a} />
         ))}
+      </div>
     </div>
   );
 }
@@ -755,8 +769,9 @@ export function SpotlightPanel({ hiddenOnPhone = false }: { hiddenOnPhone?: bool
               · {draftSeconds} s
             </span>
           )}
-          <AutonomousSwitch />
-          {(live || testing) && (
+          <AutonomousSwitch compact={live || testing} />
+          {/* The composer has its own Stop while a reply streams; this one is for a test run, or when the panel is folded. */}
+          {(collapsed ? live || testing : testing && !live) && (
             <button title="Stop" aria-label="Stop" onClick={stop} className="grid size-7 place-items-center rounded-full text-t3 hover:bg-rddim hover:text-rd disabled:opacity-40 max-md:size-11">
               <Square className="size-3" fill="currentColor" />
             </button>
@@ -793,7 +808,7 @@ export function SpotlightPanel({ hiddenOnPhone = false }: { hiddenOnPhone?: bool
         ) : (
           <div className="flex min-h-0 flex-1 flex-col justify-end gap-1.5 px-4 py-4 text-[12.5px] leading-snug text-t3">
             <p className="font-semibold text-t2">Build and fix this workflow with Spotlight.</p>
-            <p>Describe a flow on an empty canvas and it drafts it, tests it and fixes what fails. On a flow, ask for a change; it uses your agents, or designs one on a local model.</p>
+            <p>Describe a flow on an empty canvas and it drafts it, tests it and fixes what fails. On a flow, ask for a change; it uses your agents, or designs one on a local model. Type @ to point at a node.</p>
           </div>
         )}
         <Composer />
@@ -1043,7 +1058,7 @@ function Composer() {
     } else if (e.key === 'Tab' && !e.shiftKey && bubbles.length && draft.trim()) {
       handled();
       choose(bubbles[Math.max(0, active)]);
-    } else if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+    } else if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.nativeEvent.isComposing) {
       handled();
       if (active >= 0 && bubbles[active]) choose(bubbles[active]);
       else void submit(draft);
@@ -1054,8 +1069,7 @@ function Composer() {
     }
   };
 
-  // A phone's box is narrow: the short form, without the @ hint.
-  const placeholder = drafting || pending ? 'Spotlight is working on the flow…' : empty ? 'Describe the workflow you want…' : phone ? 'Ask or describe a change' : 'Ask, or describe a change…  @ tags a node';
+    const placeholder = drafting || pending ? 'Spotlight is working on the flow…' : empty ? 'Describe the workflow you want…' : 'Ask or describe a change';
 
   return (
     <div className="shrink-0 space-y-2 border-t border-hair p-2.5">
@@ -1093,7 +1107,7 @@ function Composer() {
         {selectedName && !withoutSelection && !empty && (
           <span className="mb-1 flex w-fit max-w-full items-center gap-0.5 rounded-md border border-hair bg-wl py-0.5 pl-1.5 pr-0.5 text-[11.5px] text-t2" title="The selected node is part of what Spotlight sees">
             <span className="truncate">{selectedName}</span>
-            <button onMouseDown={(e) => e.preventDefault()} onClick={() => setWithoutSelection(true)} aria-label={`Leave ${selectedName} out`} className="grid size-4 place-items-center rounded text-t3 hover:text-t1">
+            <button onMouseDown={(e) => e.preventDefault()} onClick={() => setWithoutSelection(true)} aria-label={`Leave ${selectedName} out`} className="grid size-4 place-items-center rounded text-t3 hover:text-t1 max-md:size-9">
               <X className="size-3" />
             </button>
           </span>

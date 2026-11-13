@@ -675,8 +675,10 @@ export async function runChat(input: ChatInput): Promise<void> {
   ].join('\n');
 
   const execute = async (call: ToolCall): Promise<ToolResult> => {
-    const result = (content: string, label: string, ok = true): ToolResult => {
-      onEvent({ type: 'tool', name: call.name, label, ok });
+    // `shownOk`: how the step looks to the person. A change sent back to the model to complete is an error to the model
+    // but not a failure to show: Spotlight is still working on it ("Reworked the change").
+    const result = (content: string, label: string, ok = true, shownOk = ok): ToolResult => {
+      onEvent({ type: 'tool', name: call.name, label, ok: shownOk });
       return { id: call.id, name: call.name, content, ...(!ok && { isError: true }) };
     };
     const args = call.input ?? {};
@@ -772,15 +774,16 @@ export async function runChat(input: ChatInput): Promise<void> {
           branchSentBack = true;
           return result(
             `Not shown yet: ${branching.join(' ')} Call propose_changes again with those connections. If the user asked for exactly this extra node, propose it again as it is.`,
-            `Proposal changed: ${shorten(branching[0], 80)}`,
+            'Reworked the change',
             false,
+            true,
           );
         }
         // A duration the request named, set in the wrong unit ("30 minutes" as 30 or 1800 in a field in milliseconds), goes back once.
         const slips = unitsSentBack ? [] : unitSlips(proposedOps, latest, (op) => types.find((t) => t.type === (op.op === 'addNode' ? String(op.type ?? '') : nodeByName(String(op.node ?? ''))?.type))?.descriptor.properties);
         if (slips.length) {
           unitsSentBack = true;
-          return result(`Not shown yet: ${slips.join('; ')}. Call propose_changes again with the numbers in the field's unit.`, `Proposal changed: ${shorten(slips[0], 80)}`, false);
+          return result(`Not shown yet: ${slips.join('; ')}. Call propose_changes again with the numbers in the field's unit.`, 'Reworked the change', false, true);
         }
         // A change with parts that failed (a type that doesn't exist, a connection to a node it never added) goes back once:
         // shown as it is, it could remove a node without adding the one meant to replace it.
@@ -789,8 +792,9 @@ export async function runChat(input: ChatInput): Promise<void> {
           const why = validated.dropped.join('; ');
           return result(
             `Not shown yet: part of this change failed: ${why}. Add a node before connecting to it (an addNode with that "ref"), use type ids from search_nodes, and call propose_changes again with the complete change.`,
-            `Proposal incomplete: ${shorten(why, 80)}`,
+            'Reworked the change',
             false,
+            true,
           );
         }
         // A change that leaves part of the flow dangling goes back once for the model to complete.
@@ -799,8 +803,9 @@ export async function runChat(input: ChatInput): Promise<void> {
           const why = validated.warnings.join('; ');
           return result(
             `Not shown yet: this change leaves ${why}. To put a new node in front of an existing one, use addNode with "before": "<that node>" (it rewires the input for you) instead of "after" plus connect. Otherwise add the missing connect/disconnect ops. Then call propose_changes again with the complete change.`,
-            `Proposal incomplete: ${shorten(why, 80)}`,
+            'Reworked the change',
             false,
+            true,
           );
         }
         hold(summary, validated.workflow);

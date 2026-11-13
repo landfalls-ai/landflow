@@ -74,6 +74,7 @@ export async function afterReply(goal: string): Promise<void> {
   // Not applied: the proposals stay as cards for the person to decide.
   if (!applied) return;
   for (const p of open) useAssistant.getState().setProposalState(reply.id, p.id, 'applied', skipped);
+  useAssistant.setState((s) => ({ items: s.items.map((i) => (i.id === reply.id && i.role === 'assistant' ? { ...i, auto: true } : i)) }));
   if (open.every((p) => p.ops.every((op) => op.op === 'renameNode'))) return;
   const purpose = useEditor.getState().description?.trim();
   await testUntilItRuns(purpose && purpose !== goal ? `${purpose} (Latest change: ${goal})` : goal, { publishAgents: true });
