@@ -539,7 +539,7 @@ export function NodePanel() {
           <div className={cn('flex min-h-0 flex-col border-l border-hair bg-sf2 max-md:flex-1 max-md:border-l-0', phone && shown !== 'output' && 'hidden')}>
             <PaneHeader title="Output">
               {pinned && pinDraft === null && (
-                <span className="flex animate-pop items-center gap-1 rounded-full bg-viz-7 px-2 py-px text-[11px] font-semibold text-white">
+                <span className="flex animate-pop items-center gap-1 rounded-full bg-viz-7 px-2 py-px text-[11px] font-semibold text-bg">
                   <Pin className="size-3" /> pinned
                 </span>
               )}

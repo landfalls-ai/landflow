@@ -40,7 +40,7 @@ export function TeamStrip({ teamId, live, moments }: { teamId: string; live?: Te
                 <AgentAvatar agent={face} size={20} round className={cn('ring-2', state === 'failed' ? 'ring-rd' : 'ring-sf')} />
                 {now && <span className="pointer-events-none absolute -inset-[3px] animate-pulse-soft rounded-full border-2" style={{ borderColor: color }} />}
                 {state === 'done' && (
-                  <span className="absolute -bottom-1 -right-1 grid size-3 place-items-center rounded-full bg-gn text-white ring-[1.5px] ring-sf">
+                  <span className="absolute -bottom-1 -right-1 grid size-3 place-items-center rounded-full bg-gn text-bg ring-[1.5px] ring-sf">
                     <Check className="size-2" strokeWidth={4} />
                   </span>
                 )}

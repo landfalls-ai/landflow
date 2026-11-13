@@ -150,6 +150,7 @@ The same thing has the same name everywhere. When adding a button or a state, us
   included), 18 px for a detail hero (an execution's date, Evaluations), 22 px for an entity
   hero (an agent's name). A document the Brain renders keeps its own 24 px title.
 - A status bar is quiet: `border-t border-hair bg-sf2 text-t2` (the Brain workbench), never the accent fill.
+- Text on a coloured fill (green, red, amber, violet) is `text-bg`, never `text-white`: in dark those fills are light.
 
 ## Page layout
 

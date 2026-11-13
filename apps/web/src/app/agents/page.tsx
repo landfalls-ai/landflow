@@ -16,7 +16,8 @@ import { NewAgentDialog } from '@/components/agents/new-agent-dialog';
 import { SaveTemplateDialog } from '@/components/agents/save-template-dialog';
 import { configOf, downloadJson, parseAgentFile, slug } from '@/components/agents/util';
 import { useAgentData } from '@/components/agents/use-agent-data';
-import { PageBody, PageHeader } from '@/components/shell/page-header';
+import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
+import { EmptyState } from '@/components/ui/empty-state';
 import { PhoneFilters } from '@/components/ui/phone-filters';
 import { Badge, Chip } from '@/components/ui/badge';
 import { SearchInput } from '@/components/ui/inputs';
@@ -211,24 +212,23 @@ export default function AgentsPage() {
         {view === 'agents' && list && list.length === 0 && (
           <>
             {strip}
-            <div className="mx-auto mt-6 flex max-w-[460px] animate-fade-up flex-col items-center text-center">
-              <span className="grid size-16 place-items-center rounded-[22px] border border-acbd bg-acdim text-ac">
-                <Bot className="size-8" strokeWidth={1.5} />
-              </span>
-              <h2 className="mt-5 text-[18px] font-semibold tracking-[-0.01em] text-t1">Create your first agent</h2>
-              <p className="mt-1.5 text-[13px] leading-relaxed text-t2">Agents automate tasks and answer questions using your connected tools and data.</p>
-              <div className="mt-5 flex flex-wrap justify-center gap-2">
-                <Button variant="primary" onClick={() => openNew()}>
-                  <Plus className="size-3.5" strokeWidth={2} /> New agent
-                </Button>
-                <Button onClick={openArchitect}>
-                  <Sparkles className="size-3.5" /> Ask the Agent architect
-                </Button>
-                <Button onClick={() => fileInput.current?.click()}>
-                  <Upload className="size-3.5" /> Import JSON
-                </Button>
-              </div>
-            </div>
+            <Card className="py-6">
+              <EmptyState
+                icon={<Bot />}
+                title="No agents yet"
+                hint="Agents automate tasks and answer questions using your connected tools and data."
+                action={
+                  <div className="flex flex-wrap justify-center gap-2">
+                    <Button onClick={() => openNew()}>
+                      <Plus className="size-3.5" strokeWidth={2} /> New agent
+                    </Button>
+                    <Button variant="ghost" onClick={openArchitect}>
+                      <Sparkles className="size-3.5" /> Ask the Agent architect
+                    </Button>
+                  </div>
+                }
+              />
+            </Card>
           </>
         )}
         {view === 'agents' && list && list.length > 0 && visible && (
