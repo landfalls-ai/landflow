@@ -31,6 +31,25 @@ To try it locally, `docker compose -f deploy/compose.infra.yml --profile siem up
 - **Four-eyes publishing**: Publish, a rollback from the version history and (by default) Unpublish become a request (`202 { approvalRequired: true, request }`, migration 901) with the note and what it changes against the live version ("2 nodes changed, 1 added"). Someone else approves (which publishes it, credited to the requester, "approved by …" in the note) or rejects it with a comment; nobody approves their own request. Approvers are any other builder (member, admin or owner) or only owners and admins; project roles plug in through `registerApproverCheck` (`lib/server/governance/approvals.ts`): a project's Settings tab says who approves its workflows' requests (the instance's rule, its admins, its admins and editors, or instance owners and admins only; `lib/server/governance/project-approvers.ts`). A request goes **stale** when the draft or the live version changes before it is decided, and a new request replaces the workflow's pending one. Approvers are emailed (with `LANDFLOW_SMTP_HOST`) and chosen alert channels hear about new requests; the requester hears the decision. Everything is in the audit log. The editor's Publish menu shows "Awaiting approval" with Approve / Reject / Withdraw; Settings → Governance lists every request. The CLI's `workflows publish`, `unpublish`, `activate` and `deactivate` exit with code 8 (`approval_pending`, the request in `details.request`).
 - **Scheduled publishes**: publish or unpublish a workflow at a time (Publish menu → *Schedule…*, or Version history → *Schedule…* on a version; `POST /api/workflows/:id/publish` and `/unpublish` with `"at": "<ISO time>"` answer 202 `{ scheduled }`; `landflow publish <wf> --at 2026-11-01T09:00Z|+2h|+1d`, `landflow unpublish <wf> --at …`; `landflow workflows schedules <wf>` lists them and `landflow workflows unschedule <wf> <id>` cancels one; `GET /api/workflows/:id/schedules`, `DELETE …/schedules/:scheduleId`). Schedules live in `scheduled_publishes` (migration 1840): the leader main polls every 5 s, claims a due row, publishes the pinned version (or unpublishes) as the user who scheduled it, and records `done`, or `failed` with the reason (a version pruned by then, a blocked node, a missing workflow); after a crash, rows left running are recovered at start. With **four-eyes** on, scheduling files a request instead (Awaiting approval, with the time): approving *releases* the schedule, which then goes live at its time; a rejected, withdrawn or stale request cancels it, and a schedule made before four-eyes was turned on becomes a request when its time comes. The creator or an admin cancels; schedule changes are audited (`publish_schedule.create`, `.cancel`, `.run`); scheduling is allowed in a protected environment (it publishes later through the same checks).
 
+### Reliability and fail-closed mode
+
+An audit event is written after the change it describes, in its own transaction, so a failing audit insert (disk full,
+a lock, a schema problem) used to leave only a log line. Now it is also counted, and a deployment can refuse the change.
+
+- **Metrics** (lib/server/audit/metrics.ts): `landflow.audit.write_failures{action}` counts events that could not be
+  stored (the generic `api.request` layer counts under that action too); `landflow.audit.outbox.delivery_failures{destination}`
+  counts failed SIEM deliveries; the gauges `landflow.audit.outbox.depth` and `landflow.audit.outbox.oldest_age` (seconds)
+  read the outbox when metrics are collected, so a stuck destination shows as a growing age.
+- **`LANDFLOW_AUDIT_FAIL_CLOSED=true`** (default `false`; recommended for regulated deployments): for role changes, API
+  key create and revoke, credential create, update and delete, audit settings changes and SCIM provisioning (users and
+  groups), an event that cannot be stored refuses the change with `503` (`AuditUnavailableError`) and nothing changes.
+  Where the change is a database write, it and its event share one `auditedTransaction()`, so the insert joins it and a
+  failure rolls both back. Credentials live in the files config store, which is no transaction: update and delete record
+  the event first and refuse the change if that fails; create needs the new id, so it creates, records, and deletes the
+  credential again if the event fails. SCIM user creation does the same (the user is deleted again).
+- **Off**, behaviour is as before: the failure is logged and counted and the change goes on. Everything else (sign-ins,
+  workflow events, credential use in runs) is never required, in either mode.
+
 ### Outbound requests
 
 The host allow and block list above matches host names before a call. Below it sits an address policy for everything a
