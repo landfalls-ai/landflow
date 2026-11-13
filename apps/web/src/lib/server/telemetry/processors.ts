@@ -20,6 +20,7 @@ import {
 import { SECRET_KEY, telemetryConfig } from './config';
 import { isEnabled, writeRecord } from './logger';
 import { recordHttpServerDuration } from './metrics';
+import { envNumber } from '../config';
 
 const NEXT_REQUEST = 'BaseServer.handleRequest';
 /** Next.js spans worth keeping in a request trace; module loading, page-component lookup and the like are dropped. */
@@ -48,8 +49,7 @@ export function isTracedRequest(method: string, path: string): boolean {
 
 export function samplerFromEnv(): Sampler {
   const name = (process.env.OTEL_TRACES_SAMPLER ?? 'parentbased_always_on').trim().toLowerCase();
-  const arg = Number(process.env.OTEL_TRACES_SAMPLER_ARG ?? 1);
-  const ratio = Number.isFinite(arg) ? Math.min(1, Math.max(0, arg)) : 1;
+  const ratio = envNumber('OTEL_TRACES_SAMPLER_ARG', { fallback: 1, min: 0, max: 1 });
   switch (name) {
     case 'always_on':
       return new AlwaysOnSampler();

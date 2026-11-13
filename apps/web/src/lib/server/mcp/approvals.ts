@@ -32,6 +32,7 @@ import { membershipsOf } from '../projects/store';
 import { publicUrl } from '../runner';
 import { mcpDb } from './db';
 import { sameSecret, textResult } from './server';
+import { envNumber } from '../config';
 
 const DEFAULT_WAIT_SECONDS = 20;
 const DEFAULT_TTL_SECONDS = 600;
@@ -85,8 +86,8 @@ interface ApprovalRow {
   used_at: string | null;
 }
 
-const ttlMs = () => 1000 * (Number(process.env.LANDFLOW_MCP_APPROVAL_TTL_SECONDS) || DEFAULT_TTL_SECONDS);
-const waitMs = () => 1000 * Math.max(0, Number(process.env.LANDFLOW_MCP_APPROVAL_WAIT_SECONDS ?? DEFAULT_WAIT_SECONDS));
+const ttlMs = () => 1000 * envNumber('LANDFLOW_MCP_APPROVAL_TTL_SECONDS', { fallback: DEFAULT_TTL_SECONDS, min: 1 });
+const waitMs = () => 1000 * envNumber('LANDFLOW_MCP_APPROVAL_WAIT_SECONDS', { fallback: DEFAULT_WAIT_SECONDS, min: 0 });
 
 export class McpApprovalError extends Error {
   constructor(

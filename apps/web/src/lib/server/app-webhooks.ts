@@ -30,8 +30,9 @@ import { singleton } from './singleton';
 import { store } from './store';
 import { logger } from './telemetry/logger';
 import { variables } from './variables';
+import { envInt } from './config';
 
-const RETRY_INTERVAL_MS = Number(process.env.LANDFLOW_APP_WEBHOOK_RETRY_MS ?? 60_000);
+const RETRY_INTERVAL_MS = envInt('LANDFLOW_APP_WEBHOOK_RETRY_MS', { fallback: 60_000, min: 1_000 });
 const MAX_BACKOFF_MS = 60 * 60_000;
 const ID = /^[\w-]+$/;
 

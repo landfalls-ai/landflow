@@ -2,6 +2,7 @@
 import type { Workflow, WorkflowConnection, WorkflowNode } from '@landflow/engine';
 import { store } from './store';
 import { logger } from './telemetry';
+import { ollamaUrl } from './config';
 
 const node = (id: string, name: string, type: string, x: number, y: number, parameters: Record<string, unknown> = {}, extra: Partial<WorkflowNode> = {}): WorkflowNode => ({
   id,
@@ -80,7 +81,7 @@ const agent: Workflow = {
       options: { maxIterations: 8, sessionId: '{{ $json.sessionId }}', returnIntermediateSteps: true },
     }),
     node('reply', 'Reply', 'core.set', 640, 120, { mode: 'manual', fields: { values: [{ name: 'reply', type: 'string', value: '{{ $json.output }}' }] }, includeOtherFields: true }),
-    node('model', 'Ollama', 'core.ollamaChatModel', 120, 380, { baseUrl: (process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434').replace(/\/+$/, ''), model: 'qwen3-coder:30b', temperature: 0.2 }),
+    node('model', 'Ollama', 'core.ollamaChatModel', 120, 380, { baseUrl: ollamaUrl(), model: 'qwen3-coder:30b', temperature: 0.2 }),
     node('memory', 'Memory', 'core.simpleMemory', 280, 380, { turns: 10 }),
     node('calc', 'Calculator', 'core.calculatorTool', 440, 380),
     node('hash', 'Hash', 'go-crypto.hash', 580, 380, { algorithm: 'sha256', field: 'value', encoding: 'hex', outputField: 'hash' }, { notes: 'Hash the `value` argument with SHA-256 (or the algorithm you pass).' }),

@@ -22,6 +22,7 @@ import { getProject } from '../projects/store';
 import { credentials } from '../credentials/vault';
 import { parse } from '../db/rows';
 import { singleton } from '../singleton';
+import { publicUrl } from '../config';
 
 const SETTINGS_KEY = 'mcp_signing_keys';
 export const MCP_TOKEN_ALG = 'ES256';
@@ -44,7 +45,7 @@ export class McpTokenError extends Error {
 
 /** The instance URL (LANDFLOW_PUBLIC_URL, else localhost): the `iss` of MCP tokens and the base of the MCP resources. */
 export function instanceUrl(): string {
-  return (process.env.LANDFLOW_PUBLIC_URL?.trim() || `http://localhost:${process.env.PORT ?? 3000}`).replace(/\/+$/, '');
+  return publicUrl();
 }
 
 /** LANDFLOW_MCP_GATEWAY_PUBLIC_URL without a trailing slash, when configured. */

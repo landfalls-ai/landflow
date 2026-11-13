@@ -9,7 +9,7 @@ import { cosine, normalizeQuestion, type SemanticCache as SemanticSettings } fro
 import { database } from '../db';
 import { ollamaEmbeddings } from '../rag/embeddings';
 import { singleton } from '../singleton';
-import { OLLAMA_URL } from './models';
+import { ollamaUrl } from '../config';
 import { answerShape } from './response-cache';
 
 export type Embedder = (text: string, signal?: AbortSignal) => Promise<number[]>;
@@ -29,7 +29,7 @@ export function configHash(agentId: string, config: AgentConfig): string {
 
 /** The embedder the settings name: an Ollama embedding model. */
 export function embedderFor(settings: SemanticSettings): Embedder {
-  const embeddings = ollamaEmbeddings({ baseUrl: settings.baseUrl?.trim() || OLLAMA_URL, model: settings.model });
+  const embeddings = ollamaEmbeddings({ baseUrl: settings.baseUrl?.trim() || ollamaUrl(), model: settings.model });
   return (text, signal) => embeddings.embedQuery(normalizeQuestion(text), signal);
 }
 
