@@ -10,7 +10,8 @@
  * without a path, `"active": "False"` strings, value-path paths (`emails[type eq "work"].value`), dotted keys in a
  * path-less value (`"name.givenName"`), and enterprise-extension attributes, which are accepted and ignored.
  */
-import { createUser, findUserByEmail, findUserByExternalId, getUser, listUsers, normalizeEmail, setUserDisabled, updateUser, type UserRecord } from '../auth/users';
+import { auditedTransaction, AuditUnavailableError } from '../audit';
+import { createUser, deleteUser, findUserByEmail, findUserByExternalId, getUser, listUsers, normalizeEmail, setUserDisabled, updateUser, type UserRecord } from '../auth/users';
 import { instanceOwnerId } from '../projects/store';
 import { deleteUserWithTransfer } from '../projects/transfer';
 import { getKey, parsePatchPath } from './filter';
@@ -157,7 +158,13 @@ export async function createScimUser(body: Record<string, unknown>): Promise<Use
     provisionedBy: 'scim',
     disabled: draft.active === false,
   });
-  auditUserProvisioned(created);
+  try {
+    auditedTransaction(() => auditUserProvisioned(created));
+  } catch (failure) {
+    // Fail-closed audit: no provisioning without its event (the user was created first, for the id and the hash).
+    if (failure instanceof AuditUnavailableError) deleteUser(created.id);
+    throw failure;
+  }
   return created;
 }
 
@@ -175,14 +182,16 @@ export function replaceScimUser(id: string, body: Record<string, unknown>): User
     const other = findUserByExternalId(draft.externalId);
     if (other && other.id !== id) throw new ScimError(409, `Another user has the externalId ${draft.externalId}`, 'uniqueness');
   }
-  const updated = updateUser(id, {
-    email,
-    name: draftName(draft, user.name),
-    ...(draft.externalId !== undefined && draft.externalId !== null && { externalId: draft.externalId }),
+  return auditedTransaction(() => {
+    const updated = updateUser(id, {
+      email,
+      name: draftName(draft, user.name),
+      ...(draft.externalId !== undefined && draft.externalId !== null && { externalId: draft.externalId }),
+    });
+    const final = setActive(updated, draft.active);
+    auditUserChange(user, final);
+    return final;
   });
-  const final = setActive(updated, draft.active);
-  auditUserChange(user, final);
-  return final;
 }
 
 /** PATCH /Users/<id> (RFC 7644 §3.5.2). */
@@ -224,10 +233,12 @@ export function patchScimUser(id: string, body: Record<string, unknown>): UserRe
     }
     patch.externalId = draft.externalId ?? undefined;
   }
-  const updated = Object.keys(patch).length ? updateUser(id, patch) : user;
-  const final = setActive(updated, draft.active);
-  auditUserChange(user, final);
-  return final;
+  return auditedTransaction(() => {
+    const updated = Object.keys(patch).length ? updateUser(id, patch) : user;
+    const final = setActive(updated, draft.active);
+    auditUserChange(user, final);
+    return final;
+  });
 }
 
 /** DELETE /Users/<id>: remove the user; what they own goes to the instance owner's personal project. */
@@ -235,6 +246,8 @@ export function deleteScimUser(id: string, actorId?: string) {
   const user = requireScimUser(id);
   if (user.role === 'owner') throw new ScimError(403, 'The owner can’t be removed through SCIM', 'mutability');
   const owner = instanceOwnerId();
-  const result = deleteUserWithTransfer(id, owner ? { userId: owner } : undefined, actorId);
-  auditUserRemoved(user, { transferredTo: result.to?.id });
+  auditedTransaction(() => {
+    const result = deleteUserWithTransfer(id, owner ? { userId: owner } : undefined, actorId);
+    auditUserRemoved(user, { transferredTo: result.to?.id });
+  });
 }

@@ -5,7 +5,7 @@ import { credentialRateLimitSchema } from '@/lib/server/schemas';
 import { ownershipOf } from '@/lib/server/projects';
 import { forgetDeleted, routeActor } from '@/lib/server/projects/http';
 import { resourceCan } from '@/lib/shared/projects';
-import { recordAudit } from '@/lib/server/audit';
+import { auditedChange } from '@/lib/server/audit';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
@@ -23,9 +23,14 @@ export const PATCH = handler(async (request: Request, { params }: Ctx) => {
   const body = await parseBody(request, z.object({ name: z.string().max(120).optional(), data: z.record(z.string(), z.unknown()).optional(), rateLimit: credentialRateLimitSchema.nullable().optional() }));
   if (!body.ok) return body.response;
   try {
-    const credential = credentials.update((await params).id, body.data);
-    // Which fields changed, never their values.
-    recordAudit({ action: 'credential.update', target: { type: 'credential', id: credential.id, name: credential.name }, details: { credentialType: credential.type, renamed: body.data.name !== undefined, rateLimit: body.data.rateLimit === undefined ? undefined : body.data.rateLimit ?? null, fields: Object.keys(body.data.data ?? {}) } });
+    const id = (await params).id;
+    const before = credentials.get(id);
+    // Which fields changed, never their values. Fail-closed audit records it first (the credentials file is no transaction).
+    if (!before) return json({ credential: credentials.update(id, body.data) }); // throws the 404
+    const credential = auditedChange(
+      (done) => ({ action: 'credential.update', target: { type: 'credential', id, ...((done?.name ?? before?.name) && { name: (done?.name ?? before?.name)! }) }, details: { credentialType: done?.type ?? before?.type, renamed: body.data.name !== undefined, rateLimit: body.data.rateLimit === undefined ? undefined : body.data.rateLimit ?? null, fields: Object.keys(body.data.data ?? {}) } }),
+      () => credentials.update(id, body.data),
+    );
     return json({ credential });
   } catch (caught) {
     if (caught instanceof CredentialError) return error(caught.message, caught.status);
@@ -36,8 +41,12 @@ export const PATCH = handler(async (request: Request, { params }: Ctx) => {
 export const DELETE = handler(async (_request: Request, { params }: Ctx) => {
   const { id } = await params;
   const existing = credentials.get(id);
-  if (!credentials.delete(id)) return error('Credential not found', 404);
-  recordAudit({ action: 'credential.delete', target: { type: 'credential', id, ...(existing?.name && { name: existing.name }) }, details: { credentialType: existing?.type } });
+  if (!existing) return error('Credential not found', 404);
+  const removed = auditedChange(
+    () => ({ action: 'credential.delete', target: { type: 'credential', id, ...(existing.name && { name: existing.name }) }, details: { credentialType: existing.type } }),
+    () => credentials.delete(id),
+  );
+  if (!removed) return error('Credential not found', 404);
   forgetDeleted('credential', id);
   return json({ ok: true });
 });

@@ -3,10 +3,11 @@ import type { JsonObject } from '@landflow/protocol';
 import { CredentialError, credentials } from '@/lib/server/credentials/vault';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { homeProjectId, usableCredentialIds, visibleIds, withOwnership } from '@/lib/server/projects';
-import { createInProject, projectParam, routeActor } from '@/lib/server/projects/http';
+import { createInProject, forgetDeleted, projectParam, routeActor } from '@/lib/server/projects/http';
 import { credentialRateLimitSchema } from '@/lib/server/schemas';
 import { store } from '@/lib/server/store';
 import { recordAudit } from '@/lib/server/audit';
+import { auditFailClosed } from '@/lib/server/config/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,8 +36,17 @@ export const POST = handler(async (request: Request) => {
   try {
     // ?projectId= puts it in a project (the caller must be an editor there); else the caller's personal project.
     const credential = createInProject(request, 'credential', () => credentials.create({ ...body.data, data: body.data.data as JsonObject }), (c) => c.id);
-    // Ids, names and the type only: never the data.
-    recordAudit({ action: 'credential.create', target: { type: 'credential', id: credential.id, name: credential.name }, details: { credentialType: credential.type } });
+    // Ids, names and the type only: never the data. The id exists only once it is created, so in fail-closed mode a
+    // credential whose event can't be stored is deleted again (the credentials file is no transaction).
+    try {
+      recordAudit({ action: 'credential.create', target: { type: 'credential', id: credential.id, name: credential.name }, details: { credentialType: credential.type } }, { required: true });
+    } catch (failure) {
+      if (auditFailClosed()) {
+        credentials.delete(credential.id);
+        forgetDeleted('credential', credential.id);
+      }
+      throw failure;
+    }
     return json({ credential }, 201);
   } catch (caught) {
     if (caught instanceof CredentialError) return error(caught.message, caught.status);

@@ -4,7 +4,7 @@
  * Owners and admins.
  */
 import type { AuditSettingsView } from '@/lib/shared/audit';
-import { recordAudit } from '@/lib/server/audit';
+import { auditedTransaction, recordAudit } from '@/lib/server/audit';
 import { auditDestinations } from '@/lib/server/audit/destinations';
 import { pruneAuditLog } from '@/lib/server/audit/outbox';
 import { auditSettingsPatchSchema, getAuditSettings, updateAuditSettings } from '@/lib/server/audit/settings';
@@ -30,8 +30,11 @@ export const PATCH = handler(async (request: Request) => {
   const body = await parseBody(request, auditSettingsPatchSchema);
   if (!body.ok) return body.response;
   const before = getAuditSettings();
-  const after = updateAuditSettings(body.data);
-  recordAudit({ action: 'settings.update', target: { type: 'settings', id: 'audit', name: 'Audit log' }, details: { retentionDays: after.retentionDays, credentialUse: after.credentialUse, ...(before.retentionDays !== after.retentionDays && { previousRetentionDays: before.retentionDays }) } });
+  const after = auditedTransaction(() => {
+    const next = updateAuditSettings(body.data);
+    recordAudit({ action: 'settings.update', target: { type: 'settings', id: 'audit', name: 'Audit log' }, details: { retentionDays: next.retentionDays, credentialUse: next.credentialUse, ...(before.retentionDays !== next.retentionDays && { previousRetentionDays: before.retentionDays }) } });
+    return next;
+  });
   if (after.retentionDays && after.retentionDays < before.retentionDays) await pruneAuditLog();
   return json(settingsView());
 });
