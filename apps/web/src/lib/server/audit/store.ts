@@ -120,7 +120,7 @@ export function enabledDestinationIds(db: Database = database(), projectId?: str
 export function insertEvent(event: AuditEvent, db: Database = database()): number {
   const destinations = enabledDestinationIds(db, event.projectId ?? null);
   const atInsert = chainsAtInsert(db);
-  const row = db.transaction(() => {
+  const row = db.atomic(() => {
     const stored = atInsert ? linkEvent(db, toRow(event)) : toRow(event);
     db.insertNew('audit_events', { ...stored });
     for (const destinationId of destinations) {

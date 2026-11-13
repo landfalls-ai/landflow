@@ -164,6 +164,7 @@ still works.
 | Variable | Default | What it does |
 |---|---|---|
 | `LANDFLOW_AUDIT_OUTBOX` | `on` | `off` stops this process from delivering the audit outbox to SIEM destinations (events still queue; another host or a restart delivers them) |
+| `LANDFLOW_AUDIT_FAIL_CLOSED` | `false` | `true` makes high-value changes (role changes, API key create and revoke, credential create, update and delete, audit settings, SCIM provisioning) fail with 503 when their audit event can't be stored, and the change does not happen; recommended for regulated deployments. Off, a failed audit write is logged and counted in `landflow.audit.write_failures` and the change goes on ([audit-and-governance.md](../features/audit-and-governance.md#reliability-and-fail-closed-mode)) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | – | OTLP/HTTP endpoint for traces and metrics, e.g. `http://localhost:4318`; unset: nothing is exported |
 | `LANDFLOW_LOG_LEVEL` / `LANDFLOW_LOG_FORMAT` / `LANDFLOW_LOG_SPANS` | `info` / `json` / `true` | log level, `json` or `pretty`, one log line per finished span |
 | `LANDFLOW_LOG_OTLP` | `true` | with an OTLP endpoint, also export every log line (but `span.end`) as an OTel log record ([observability.md §3](../observability.md#3-logs)) |

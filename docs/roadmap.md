@@ -1369,6 +1369,11 @@ workbench in place of a page of cards, keeping Spotlight.
     deployment with in-cluster gateways and remote MCP, OIDC/SAML, alert and SIEM endpoints; a streaming MCP transport
     and a multipart or streamed HTTP Request body through the undici path with blocking on; the expression bench on a
     quiet machine (`LANDFLOW_BENCH=1`) and a large real workflow's expression cost.
+- **P21, audit reliability** (S9, O4): a failed audit write is counted (`landflow.audit.write_failures{action}`), the
+  outbox has depth, oldest-age and delivery-failure metrics, and `LANDFLOW_AUDIT_FAIL_CLOSED=true` makes role changes,
+  API keys, credentials, audit settings and SCIM provisioning fail with 503 when their event cannot be stored, with the
+  change and its event in one transaction where both are database writes
+  ([audit-and-governance.md](features/audit-and-governance.md#reliability-and-fail-closed-mode)).
 
 ## Planned next
 

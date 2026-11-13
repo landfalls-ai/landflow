@@ -181,6 +181,7 @@ export const CONFIG_CATALOG: readonly ConfigVariable[] = [
   { name: 'NEXT_PUBLIC_LANDFLOW_JSON_RENDER', group: 'ai', default: 'off', description: '`1` does what `LANDFLOW_JSON_RENDER` does, and also reaches the browser bundle' },
   // Observability
   { name: 'LANDFLOW_AUDIT_OUTBOX', group: 'observability', default: '`on`', description: '`off` stops this process from delivering the audit outbox to SIEM destinations (events still queue; another host or a restart delivers them)' },
+  { name: 'LANDFLOW_AUDIT_FAIL_CLOSED', group: 'observability', default: '`false`', description: '`true` makes high-value changes (role changes, API key create and revoke, credential create, update and delete, audit settings, SCIM provisioning) fail with 503 when their audit event can\'t be stored, and the change does not happen; recommended for regulated deployments. Off, a failed audit write is logged and counted in `landflow.audit.write_failures` and the change goes on ([audit-and-governance.md](../features/audit-and-governance.md#reliability-and-fail-closed-mode))' },
   { name: 'OTEL_EXPORTER_OTLP_ENDPOINT', group: 'observability', default: '–', description: 'OTLP/HTTP endpoint for traces and metrics, e.g. `http://localhost:4318`; unset: nothing is exported' },
   { name: 'LANDFLOW_LOG_LEVEL', group: 'observability', default: '`info`', description: 'log level, `json` or `pretty`, one log line per finished span' },
   { name: 'LANDFLOW_LOG_FORMAT', group: 'observability', default: '`json`', description: 'log level, `json` or `pretty`, one log line per finished span' },

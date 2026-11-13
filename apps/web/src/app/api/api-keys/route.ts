@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { API_KEY_SCOPES, can } from '@/lib/shared/auth';
 import { apiKeyView, createApiKey, listApiKeys, requireUser } from '@/lib/server/auth';
 import { error, handler, json, parseBody } from '@/lib/server/http';
-import { recordAudit } from '@/lib/server/audit';
+import { auditedTransaction, recordAudit } from '@/lib/server/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,7 +32,12 @@ export const POST = handler(async (request: Request) => {
   if (body.data.scopes.includes('scim') && !can(me, 'scim:manage')) return error('Only owners and admins can create SCIM tokens', 403);
   if (body.data.scopes.includes('scim') && body.data.scopes.length > 1) return error('A SCIM token has the scim scope only', 400);
   const expiresAt = body.data.expiresInDays ? new Date(Date.now() + body.data.expiresInDays * 86_400_000).toISOString() : undefined;
-  const { key, token } = createApiKey(me, { label: body.data.label, scopes: body.data.scopes, ...(expiresAt && { expiresAt }) });
-  recordAudit({ action: 'api_key.create', target: { type: 'api_key', id: key.id, name: key.label }, summary: `Created the API key “${key.label}” (${key.scopes.join(', ')})`, details: { scopes: key.scopes, expiresAt: key.expiresAt } });
+  // One transaction with its event: with LANDFLOW_AUDIT_FAIL_CLOSED a key whose event can't be stored is not created.
+  const { key, token } = auditedTransaction(() => {
+    const created = createApiKey(me, { label: body.data.label, scopes: body.data.scopes, ...(expiresAt && { expiresAt }) });
+    const { key } = created;
+    recordAudit({ action: 'api_key.create', target: { type: 'api_key', id: key.id, name: key.label }, summary: `Created the API key “${key.label}” (${key.scopes.join(', ')})`, details: { scopes: key.scopes, expiresAt: key.expiresAt } });
+    return created;
+  });
   return json({ key: apiKeyView(key), token }, 201);
 });

@@ -15,7 +15,7 @@ import { editLocks } from '@/lib/server/auth/edit-locks';
 import { error, json, parseBody } from '@/lib/server/http';
 import { deleteUserWithTransfer } from '@/lib/server/projects';
 import { projectRoute } from '@/lib/server/projects/http';
-import { recordAudit } from '@/lib/server/audit';
+import { auditedTransaction, recordAudit } from '@/lib/server/audit';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
@@ -29,8 +29,12 @@ export const PATCH = projectRoute(async (request: Request, { params }: Ctx) => {
   const body = await parseBody(request, schema);
   if (!body.ok) return body.response;
   if (!canManageUser(me, target, { kind: 'role', role: body.data.role })) return error('You can’t change this user’s role', 403);
-  const updated = updateUser(target.id, { role: body.data.role });
-  recordAudit({ action: 'user.role_change', target: { type: 'user', id: target.id, name: target.email }, summary: `Changed ${target.email}’s role from ${target.role} to ${updated.role}`, details: { from: target.role, to: updated.role } });
+  // Fail-closed audit (LANDFLOW_AUDIT_FAIL_CLOSED): the role changes only if its event is stored, in one transaction.
+  const updated = auditedTransaction(() => {
+    const next = updateUser(target.id, { role: body.data.role });
+    recordAudit({ action: 'user.role_change', target: { type: 'user', id: target.id, name: target.email }, summary: `Changed ${target.email}’s role from ${target.role} to ${next.role}`, details: { from: target.role, to: next.role } });
+    return next;
+  });
   return json({ user: userView(updated) });
 });
 
