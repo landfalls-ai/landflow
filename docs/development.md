@@ -178,8 +178,30 @@ call boots through `whenReady()`, outside that request's audit and log context (
 request's). Once the boot is `ready`, `handler()` no longer reaches the `bootstrap` singleton, so a
 test that forgets that singleton to boot again must call `ensureBootstrapped()` itself; the next request won't reboot.
 
-`pnpm test` runs the TypeScript packages' suites in one go. After editing `packages/protocol/proto/landflow/plugin/v1/plugin.proto`, run
+`pnpm test` runs the TypeScript packages' suites in one go (`pnpm check` adds the host suite, typecheck and the boundary check). After editing `packages/protocol/proto/landflow/plugin/v1/plugin.proto`, run
 `pnpm gen:proto` (re-embeds the proto and regenerates the JSON Schema).
+
+### Checking the boundaries
+
+`pnpm check` is the local gate before a change is done: `pnpm typecheck`, the host's suite, `pnpm test` (the TypeScript
+packages) and `pnpm check:deps`. There is no CI workflow (decision: this project runs and checks everything on this
+machine), so nothing else runs these for you.
+
+`pnpm check:deps` runs dependency-cruiser with `.dependency-cruiser.cjs` over `apps/web/src` and `packages/*/src`. The rules:
+
+| Rule | Forbids |
+|---|---|
+| `server-not-components` | `apps/web/src/lib/server` importing `components/` |
+| `shared-not-server` | `lib/shared` importing `lib/server` (type-only imports are fine) |
+| `client-not-server-values` | a file starting with `'use client'` importing a value from `lib/server` (types are fine) |
+| `routes-not-db` | a route file (`app/**/route.ts`) importing `lib/server/db` |
+| `packages-not-apps` | anything in `packages/` importing `apps/` |
+| `no-circular` | a new import cycle (cycles inside `lib/server/runner/`, whose modules call each other only at run time, are allowed) |
+
+The violations that existed when the rules were added (the cycles, and two routes that import `lib/server/db`: `form-test`
+and `proposals/[id]/applied`) are recorded in `.dependency-cruiser-known-violations.json` and ignored, so only new ones
+fail. Fixing one makes its entry stale and does no harm; to shrink the record after fixing some, or to accept a new cycle
+on purpose, run `pnpm check:deps:baseline` and commit the file with the reason.
 
 ### Recorded plugin manifests
 

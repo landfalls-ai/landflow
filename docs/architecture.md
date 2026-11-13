@@ -59,7 +59,7 @@ errors into JSON. The server code under `src/lib/server` is organised by domain:
 
 | Area | Directories and files |
 |---|---|
-| Runs | `runner.ts` (starts and finishes executions), `waits.ts`, `retries.ts`, `concurrency.ts`, `idempotency.ts`, `sub-executions.ts`, `streaming.ts`, `trigger-buffers.ts` (debounce and batching) |
+| Runs | `runner.ts` (a barrel over `runner/`: `run.ts` starts runs and runs a stretch of one, `resume.ts`, `rerun.ts` (re-runs and retries), `queue.ts` (the concurrency FIFO), `recovery.ts` (checkpoints, boot recovery), `links.ts` (sub-executions, error workflow), `live.ts`, `stop.ts`, `jobs.ts` (queue-mode workers), `state.ts`, `types.ts`), `waits.ts`, `retries.ts`, `concurrency.ts`, `idempotency.ts`, `sub-executions.ts`, `streaming.ts`, `trigger-buffers.ts` (debounce and batching) |
 | Triggers | `webhooks.ts`, `forms.ts`, `app-webhooks.ts`, `scheduler.ts`, `poller.ts`, `imap-idle.ts`, `chat.ts`, `test-webhooks.ts` |
 | Plugins | `plugins/` (registry, discovery, Kubernetes watch, marketplace), `transports/` (selector, Auto, brokers, policies), `nodes/` (the built-in `core` plugin), `composites.ts` (composite types from the plugins and this instance's library, the checks the publish gate and templates run, the run's scopes) |
 | Data | `db/` (SQLite and Postgres, migrations), `store.ts`, `binary/`, `datatables/`, `versions.ts`, `folders.ts`, `variables.ts`, `config-store.ts` |
