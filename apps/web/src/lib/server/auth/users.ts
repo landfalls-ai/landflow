@@ -254,7 +254,19 @@ export async function setPassword(id: string, password: string, reason?: 'self' 
   const updated = updateUser(id, { passwordHash: await hashPassword(password) });
   const actor = requestAuth()?.principal ?? auditRequestContext()?.principal;
   const why = reason ?? (actor ? (actor.user.id === id ? 'self' : 'admin') : 'reset');
-  if (why !== 'reset') recordAudit({ action: 'auth.password_change', target: { type: 'user', id, name: updated.email }, summary: why === 'self' ? `${updated.email} changed their password` : `Changed ${updated.email}’s password`, details: { reason: why } });
+  // A changed password ends the other sign-ins (someone who knew the old one may hold one); your own stays. The reset
+  // route signs everything out itself.
+  let sessionsRevoked = 0;
+  if (why !== 'reset') {
+    const keep = why === 'self' ? actor?.sessionId : undefined;
+    const db = authDb();
+    db.transaction(() => {
+      for (const row of db.all<{ id: string }>('SELECT id FROM sessions WHERE user_id = ?', id)) {
+        if (row.id !== keep) sessionsRevoked += db.delete('sessions', { id: row.id });
+      }
+    });
+  }
+  if (why !== 'reset') recordAudit({ action: 'auth.password_change', target: { type: 'user', id, name: updated.email }, summary: why === 'self' ? `${updated.email} changed their password` : `Changed ${updated.email}’s password`, details: { reason: why, sessionsRevoked } });
   return updated;
 }
 

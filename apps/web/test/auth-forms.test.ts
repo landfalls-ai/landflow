@@ -13,4 +13,12 @@ describe('auth forms', () => {
     expect(forms).toHaveLength(5);
     for (const form of forms) expect(form).toMatch(/method="post"/);
   });
+
+  it('the login form drops the password fields under localSignIn=off and says why when no SSO is set up', () => {
+    const source = readFileSync(join(import.meta.dirname, '..', 'src', 'components', 'auth', 'auth-forms.tsx'), 'utf8');
+    expect(source).toContain("const ssoOnly = localSignIn === 'off'");
+    expect(source).toContain('{!ssoOnly && (');
+    expect(source).toContain('{ssoOnly ? (');
+    expect(source).toContain('Signing in with a password is turned off here');
+  });
 });

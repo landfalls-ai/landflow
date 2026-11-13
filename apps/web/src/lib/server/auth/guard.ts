@@ -68,7 +68,12 @@ export function resolvePrincipal(request: Request): Resolved {
 /** A cookie-authenticated change from another site: refuse (SameSite=Lax already stops most; this stops the rest). */
 function crossSite(request: Request): boolean {
   const origin = request.headers.get('origin');
-  if (!origin || origin === 'null') return Boolean(origin);
+  if (!origin) {
+    // No Origin (some clients omit it): a browser still says where the request came from with Sec-Fetch-Site.
+    const site = request.headers.get('sec-fetch-site');
+    return Boolean(site) && !['same-origin', 'same-site', 'none'].includes(site as string);
+  }
+  if (origin === 'null') return true;
   let originHost: string;
   try {
     originHost = new URL(origin).host;

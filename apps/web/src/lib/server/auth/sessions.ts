@@ -1,10 +1,12 @@
 /**
  * Sign-in sessions: a random token in the session cookie, kept as its SHA-256 in `sessions` with an expiry
- * (LANDFLOW_SESSION_TTL_HOURS, default 14 days). Signing out deletes the row; removing a user or resetting their
- * password deletes all of theirs. Expired rows are swept when sessions are created. A deactivated user (SCIM) gets
+ * (LANDFLOW_SESSION_TTL_HOURS, default 14 days) and an idle limit (LANDFLOW_SESSION_IDLE_HOURS). Signing out deletes
+ * the row; removing a user or resetting their password deletes all of theirs, and changing a password deletes the
+ * others. Expired rows are swept when sessions are created. A deactivated user (SCIM) gets
  * no session, and the sessions they had stop working.
  */
 import { recordAudit } from '../audit';
+import { isProduction } from '../config';
 import { authDb } from './db';
 import { randomToken, tokenHash } from './passwords';
 import { getUser, updateUser, UserError, type UserRecord } from './users';
@@ -41,6 +43,14 @@ export function sessionTtlHours(): number {
   return Number.isFinite(configured) && configured > 0 ? Math.min(configured, 24 * 365) : DEFAULT_TTL_HOURS;
 }
 
+/** LANDFLOW_SESSION_IDLE_HOURS: a session unused this long is refused (default 72 in production, off in development; 0 = off). */
+export function sessionIdleHours(): number {
+  const raw = process.env.LANDFLOW_SESSION_IDLE_HOURS;
+  const configured = raw === undefined || raw.trim() === '' ? NaN : Number(raw);
+  if (Number.isFinite(configured) && configured >= 0) return Math.min(configured, 24 * 365);
+  return isProduction() ? 72 : 0;
+}
+
 /** Start a session for `user`: returns the cookie token (shown nowhere else) and when it expires. */
 export function createSession(user: UserRecord, method: SessionMethod, meta: { ip?: string; userAgent?: string } = {}): { token: string; expiresAt: Date } {
   if (user.disabledAt || getUser(user.id)?.disabledAt) throw new UserError(DEACTIVATED_MESSAGE, 403);
@@ -74,6 +84,12 @@ export function sessionUser(token: string | undefined, now = Date.now()): { user
   const row = db.get<SessionRow>('SELECT * FROM sessions WHERE id = ?', tokenHash(token));
   if (!row) return undefined;
   if (Date.parse(row.expires_at) <= now) {
+    db.delete('sessions', { id: row.id });
+    return undefined;
+  }
+  // Idle: last_seen_at is touched at most once a minute, so this is accurate to about that.
+  const idleMs = sessionIdleHours() * 3_600_000;
+  if (idleMs > 0 && row.last_seen_at && now - Date.parse(row.last_seen_at) > idleMs) {
     db.delete('sessions', { id: row.id });
     return undefined;
   }

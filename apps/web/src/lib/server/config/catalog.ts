@@ -219,6 +219,8 @@ export const CONFIG_CATALOG: readonly ConfigVariable[] = [
   { name: 'LANDFLOW_OWNER_PASSWORD', group: 'auth', default: '–', description: 'create the owner at boot when no user exists (Docker, CI); ignored afterwards', secret: true },
   { name: 'LANDFLOW_OWNER_NAME', group: 'auth', default: '`Owner`', description: 'create the owner at boot when no user exists (Docker, CI); ignored afterwards' },
   { name: 'LANDFLOW_SESSION_TTL_HOURS', group: 'auth', default: '`336` (14 days)', description: 'how long a sign-in lasts' },
+  { name: 'LANDFLOW_SESSION_IDLE_HOURS', group: 'auth', default: '`72` in production, `0` in development', description: 'a session unused this long is signed out (`0` turns it off); the absolute limit is `LANDFLOW_SESSION_TTL_HOURS`' },
+  { name: 'LANDFLOW_LOCAL_SIGN_IN', group: 'auth', default: '`all`', description: 'who may sign in with a password: `all`, `owner` (only the owner, the break-glass account) or `off` (SSO only, OIDC or SAML). The login page hides the password form when `off`' },
   { name: 'LANDFLOW_SECURE_COOKIES', group: 'auth', default: 'auto', description: '`true` / `false` forces the session cookie\'s Secure flag (default: Secure over https or with `X-Forwarded-Proto: https`)' },
   { name: 'LANDFLOW_LOGIN_MAX_ATTEMPTS', group: 'auth', default: '`10`', description: 'failed sign-ins per email in 15 minutes (3× that per IP address)' },
   { name: 'LANDFLOW_MAX_BODY_BYTES', group: 'auth', default: '`16777216` (16 MiB)', description: 'the largest JSON request body `parseBody` reads; a bigger one is refused with 413 (raise it for very large imports)' },

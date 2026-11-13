@@ -1379,6 +1379,7 @@ workbench in place of a page of cards, keeping Spotlight.
   limiter refusals; slow database calls and slow or failed `GET`s are traced and fast reads are dropped; `landflow.workflow.id`
   is off the histogram and (unless `LANDFLOW_METRICS_WORKFLOW_LABEL=true`) off the counters. [observability.md](observability.md#5-metrics)
 - **P23, an encryption key ring, rotation, scrypt and bound credential ids** (S13; wave 5): `LANDFLOW_ENCRYPTION_KEYS` (`kid:key,…`, first seals) next to the legacy key (kid `k0`); sealed values name their key (`v2`) and credential blobs are bound to the credential id; passphrases are stretched with scrypt (the old SHA-256 form still opens data); derived keys use HKDF; `POST /api/settings/encryption/rotate` (owner) and `pnpm --filter @landflow/web rotate-key` re-seal everything. See [secrets and environments](features/secrets-and-environments.md#encryption-keys-and-rotation).
+- **P24** (S14): a password change ends the user's other sessions; sessions expire when idle (`LANDFLOW_SESSION_IDLE_HOURS`); a request without Origin but with a cross-site `Sec-Fetch-Site` is refused; `LANDFLOW_LOCAL_SIGN_IN` (`all`, `owner`, `off`) makes an instance SSO-only. Next: TOTP and passkeys for local accounts.
 
 ## Planned next
 
