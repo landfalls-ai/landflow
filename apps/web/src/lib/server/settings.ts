@@ -5,7 +5,7 @@
  * writes are validated with zod. SettingsFile keeps the same document in a JSON
  * file (the format older versions used; tests use it too).
  *
- * Retention: store.saveExecution prunes every LANDFLOW_RETENTION_EVERY
+ * Retention: execution-reactions.ts prunes (retentionTick) every LANDFLOW_RETENTION_EVERY
  * finished saves (retentionTick), the leader prunes at boot and hourly, and
  * Settings has "Prune now". Only finished executions (success, error,
  * canceled) are ever removed; running and waiting ones stay.

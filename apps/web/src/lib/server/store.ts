@@ -16,10 +16,7 @@ import type { ExecutionRecord, ExecutionState, ExecutionSummary, WorkflowSummary
 import { currentActorId } from './auth/context';
 import { database, dataDir, type Database } from './db';
 import { executionRow, parse, pollRow, summarize, trimRunData, workflowRow } from './db/rows';
-import { recordExecutionInsights } from './insights';
 import { backtestScope } from './brain/backtest-scope';
-import { recordExecutionUsage } from './usage/ledger';
-import { retentionTick } from './settings';
 import { singleton } from './singleton';
 import { syncPublication } from './publications';
 import { recordVersion, versionFor } from './versions';
@@ -62,6 +59,30 @@ export interface StoredCheckpoint {
 }
 
 /** Statuses that were never shown in the history before they finished: left out of stats(). */
+/** What a finished execution tells its listeners (the record as saved, its summary, and its workflow if known). */
+export interface FinishedExecution {
+  record: ExecutionRecord;
+  summary: ExecutionSummary;
+  workflow: Workflow | undefined;
+}
+
+type FinishedListener = (finished: FinishedExecution) => void;
+const finishedListeners = () => singleton('store-execution-finished', () => [] as FinishedListener[]);
+
+/**
+ * Run `listener` after every execution that finished saving: not one still running or queued, and not a backtest's run
+ * (brain/backtest.ts), exactly the saves that count. Held in `singleton()`, so every module graph shares the list.
+ * Returns the unsubscribe.
+ */
+export function onExecutionFinished(listener: FinishedListener): () => void {
+  const listeners = finishedListeners();
+  listeners.push(listener);
+  return () => {
+    const at = listeners.indexOf(listener);
+    if (at >= 0) listeners.splice(at, 1);
+  };
+}
+
 const IN_FLIGHT = new Set<ExecutionState>(['running', 'queued']);
 
 class Store {
@@ -168,13 +189,9 @@ class Store {
     // A backtest's run of a detector flow (brain/backtest.ts) is deleted afterwards and counts nowhere.
     if (backtestScope()) return;
     const summary = summarize(record);
-    // Insights first: its rollup keeps the run's counts after retention deletes the execution.
-    recordExecutionInsights(summary);
-    // The usage ledger too (docs/second-brain.md): what ran, failed and was slow, without the items.
-    recordExecutionUsage(record, record.workflow ?? this.getWorkflow(record.workflowId));
-    // Retention (Settings → General): count and age, every LANDFLOW_RETENTION_EVERY finished runs;
-    // running and waiting executions are never pruned.
-    retentionTick();
+    // The store does not call up into features: insights, the usage ledger and retention subscribe at boot
+    // (execution-reactions.ts), in registration order.
+    for (const listener of [...finishedListeners()]) listener({ record, summary, workflow: record.workflow ?? this.getWorkflow(record.workflowId) });
   }
 
   /** Change fields of a saved execution (links between retries, a scheduled retry) without counting it again. */

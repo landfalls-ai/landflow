@@ -3,6 +3,9 @@
  * instrumentation.ts) and `worker` (`pnpm worker`, cluster/worker-main.ts) read the same SERVICES list and each runs the
  * entries whose `roles` include it, in list order, so a service added here can't be forgotten in one of them.
  *
+ * Before the first entry, `ensureExecutionReactions()` (execution-reactions.ts) subscribes insights, the usage ledger and
+ * retention to finished executions, in both roles.
+ *
  * Boot order matters and is the order bootstrap.ts and worker-main.ts used to have: the configuration check, the
  * database, then (main) the cluster runtime before anything that elects a leader; a worker starts its cluster runtime
  * last, once it can reach plugins, because that is when it begins taking jobs.
@@ -29,6 +32,7 @@ import { clusterState } from './cluster/state';
 import { checkConfig, ConfigError, profile } from './config';
 import { closeDatabase, openDatabase } from './db';
 import { startOnlineEvaluations } from './evaluations/online';
+import { ensureExecutionReactions } from './execution-reactions';
 import { evaluationSchedules } from './evaluations/schedule';
 import { imapIdle } from './imap-idle';
 import { countProcessError, isDraining, markBootFailed, markBooted, onShutdown, shutdownDeadlineMs, type ShutdownPhase } from './lifecycle';
@@ -250,6 +254,8 @@ function registerShutdown(role: Role, specs: ServiceSpec[]): void {
 
 async function bootSteps(role: Role): Promise<void> {
   const specs = servicesFor(role);
+  // Insights, the usage ledger and retention react to finished executions (store.ts only emits them): both roles save runs.
+  ensureExecutionReactions();
   for (const spec of specs) {
     if (spec.when && !spec.when()) continue;
     if (spec.delayMs !== undefined) startLater(spec);
