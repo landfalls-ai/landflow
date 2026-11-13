@@ -14,6 +14,7 @@ export const SECRET_VARIABLES = [
   'LANDFLOW_CODE_RUNNER_SECRET',
   'LANDFLOW_MCP_GATEWAY_SECRET',
   'LANDFLOW_OWNER_PASSWORD',
+  'LANDFLOW_SMTP_PASS',
   'LANDFLOW_S3_SECRET_ACCESS_KEY',
   'LANDFLOW_CLAIM_SECRET_ACCESS_KEY',
   'LANDFLOW_SECRET',
@@ -34,26 +35,46 @@ const DEVELOPMENT_DEFAULTS = new Set(['change-me', 'changeme', 'landflow-dev-cli
 
 const isDevelopmentValue = (value: string) => /dev-only/i.test(value) || DEVELOPMENT_DEFAULTS.has(value.toLowerCase());
 
+const SECRET_PARAMS = /^(password|sslpassword|passwd|pass|token|api_?key|secret)$/i;
+
 function redactUrl(value: string): string {
   try {
     const parsed = new URL(value);
-    if (parsed.password) parsed.password = '[redacted]';
+    if (parsed.password) parsed.password = 'redacted';
+    else if (parsed.username) parsed.username = 'redacted';
+    for (const key of [...parsed.searchParams.keys()]) if (SECRET_PARAMS.test(key)) parsed.searchParams.set(key, 'redacted');
     return parsed.toString();
   } catch {
     return '[set]';
   }
 }
 
+function urlSecretParam(url: URL): string | undefined {
+  for (const [key, val] of url.searchParams) if (SECRET_PARAMS.test(key) && val) return val;
+  return undefined;
+}
+
+/** True when a URL carries a credential: userinfo (even a username alone) or a secret query parameter. */
+function hasUrlCredential(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return Boolean(url.password || url.username || urlSecretParam(url));
+  } catch {
+    return false;
+  }
+}
+
 /** The password in a URL's userinfo, if the value is a URL that has one. */
 function urlPassword(value: string): string | undefined {
   try {
-    return decodeURIComponent(new URL(value).password) || undefined;
+    const url = new URL(value);
+    return decodeURIComponent(url.password) || urlSecretParam(url);
   } catch {
     return undefined;
   }
 }
 
-const SECRET_NAME = /(SECRET|PASSWORD|TOKEN|HEADERS|API_KEY|_KEY$)/i;
+const SECRET_NAME = /(SECRET|PASSWORD|_PASS$|TOKEN|HEADERS|CREDENTIALS|API_KEY|_KEY$)/i;
 /** Key ids are not secret: they stay readable. */
 const KEY_IDS = /(ACCESS_KEY_ID)$/i;
 
@@ -95,7 +116,7 @@ export function checkConfig(env: NodeJS.ProcessEnv = process.env): ConfigCheck {
     if (secrets.has(name)) effective[name] = '[set]';
     else if ((URL_SECRETS as readonly string[]).includes(name)) effective[name] = redactUrl(value);
     else if (SECRET_NAME.test(name) && !KEY_IDS.test(name)) effective[name] = '[set]';
-    else effective[name] = urlPassword(value) ? redactUrl(value) : value;
+    else effective[name] = hasUrlCredential(value) ? redactUrl(value) : value;
   }
   return { errors, warnings, effective };
 }

@@ -143,9 +143,13 @@ describe('checkConfig', () => {
       OTEL_EXPORTER_OTLP_ENDPOINT: 'https://u:urlpw9@otel.example/v1',
       LANDFLOW_GIT_PASSWORD: 'gitpw8',
       LANDFLOW_S3_ACCESS_KEY_ID: 'AKIAEXAMPLE',
+      LANDFLOW_SMTP_PASS: 'smtp-pw-1',
+      LANDFLOW_MCP_CREDENTIALS: '{"k":"credjson"}',
+      LANDFLOW_TEMPLATES_URL: 'https://ghp_tok@host/x',
+      DATABASE_URL: 'postgres://u@h/db?password=qpw',
     });
     const text = JSON.stringify(r.effective);
-    for (const leaked of ['abc123', 'urlpw9', 'gitpw8']) expect(text).not.toContain(leaked);
+    for (const leaked of ['abc123', 'urlpw9', 'gitpw8', 'smtp-pw-1', 'credjson', 'ghp_tok', 'qpw']) expect(text).not.toContain(leaked);
     expect(r.effective.OTEL_EXPORTER_OTLP_HEADERS).toBe('[set]');
     expect(r.effective.LANDFLOW_S3_ACCESS_KEY_ID).toBe('AKIAEXAMPLE');
   });
