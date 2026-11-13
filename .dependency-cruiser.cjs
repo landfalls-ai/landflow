@@ -74,9 +74,10 @@ module.exports = {
       name: 'no-circular',
       comment: 'No new circular dependencies (the known ones are in .dependency-cruiser-known-violations.json).',
       severity: 'error',
+      // Type-only imports are erased at build time, so a cycle that needs one is not a load-time cycle and is not counted.
       // The runner's modules call each other at run time only (functions, never at load), so cycles among them are fine.
       from: { pathNot: `^${WEB}/lib/server/runner/` },
-      to: { circular: true, pathNot: `^${WEB}/lib/server/runner/` },
+      to: { circular: true, pathNot: `^${WEB}/lib/server/runner/`, viaOnly: { dependencyTypesNot: ['type-only'] } },
     },
   ],
   options: {

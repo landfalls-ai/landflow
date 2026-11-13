@@ -6,7 +6,7 @@
  * for all of its waiting children, lib/server/sub-executions.ts), error workflows, and the workflow
  * settings for which executions to keep.
  *
- * The code lives in lib/server/runner/ (types, state, run, resume, rerun, queue, recovery, links, live, stop, jobs); this file
+ * The code lives in lib/server/runner/ (types, state, limits, persist, run, resume, rerun, queue, recovery, links, live, stop, jobs); this file
  * re-exports the public names, so importers (and `import('../runner')`) are unchanged.
  *
  * The durable runtime: every execution is saved when it starts (with the workflow version it

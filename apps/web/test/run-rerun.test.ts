@@ -125,3 +125,18 @@ describe('ask this member again', () => {
     expect(store.getExecution(executionId)).toMatchObject({ rerunOf: { executionId: record.executionId, scope: 'from', nodeId: 'Next' } });
   });
 });
+
+describe('runner error classes', () => {
+  it('ResumeError and RerunError are HttpErrors with their status and class name', async () => {
+    const { ResumeError, RerunError } = await import('@/lib/server/runner');
+    const { HttpError } = await import('@/lib/server/errors');
+    const resume = new ResumeError('x');
+    const rerun = new RerunError('y');
+    expect(resume).toBeInstanceOf(HttpError);
+    expect(resume.status).toBe(409);
+    expect(resume.code).toBe('resume_error');
+    expect(rerun).toBeInstanceOf(HttpError);
+    expect(rerun.status).toBe(400);
+    expect(rerun.code).toBe('rerun_error');
+  });
+});

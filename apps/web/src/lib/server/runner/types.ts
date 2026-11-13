@@ -9,7 +9,7 @@ import type { ExecuteWorkflowOptions, ExecutionEvent, Workflow } from '@landflow
 import type { EvaluationRef } from '../../shared/evaluations';
 import type { ExecutionMcpInfo, ExecutionRecord, FormCompletion, RerunOf } from '../../shared/types';
 import { HttpError } from '../errors';
-import { DebugSession } from './state';
+import type { DebugSession } from './state';
 
 /** How deep Execute Workflow may nest executions. */
 export const MAX_WORKFLOW_DEPTH = 10;

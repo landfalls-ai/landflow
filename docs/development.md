@@ -178,13 +178,13 @@ call boots through `whenReady()`, outside that request's audit and log context (
 request's). Once the boot is `ready`, `handler()` no longer reaches the `bootstrap` singleton, so a
 test that forgets that singleton to boot again must call `ensureBootstrapped()` itself; the next request won't reboot.
 
-`pnpm test` runs the TypeScript packages' suites in one go (`pnpm check` adds the host suite, typecheck and the boundary check). After editing `packages/protocol/proto/landflow/plugin/v1/plugin.proto`, run
+`pnpm test` runs every workspace package's `test` script in one go, the host's included (`pnpm check` adds typecheck and the boundary check). After editing `packages/protocol/proto/landflow/plugin/v1/plugin.proto`, run
 `pnpm gen:proto` (re-embeds the proto and regenerates the JSON Schema).
 
 ### Checking the boundaries
 
-`pnpm check` is the local gate before a change is done: `pnpm typecheck`, the host's suite, `pnpm test` (the TypeScript
-packages) and `pnpm check:deps`. There is no CI workflow (decision: this project runs and checks everything on this
+`pnpm check` is the local gate before a change is done: `pnpm typecheck`, `pnpm test` (every package's suite, the host's
+included) and `pnpm check:deps`. There is no CI workflow (decision: this project runs and checks everything on this
 machine), so nothing else runs these for you.
 
 `pnpm check:deps` runs dependency-cruiser with `.dependency-cruiser.cjs` over `apps/web/src` and `packages/*/src`. The rules:
@@ -196,11 +196,11 @@ machine), so nothing else runs these for you.
 | `client-not-server-values` | a file starting with `'use client'` importing a value from `lib/server` (types are fine) |
 | `routes-not-db` | a route file (`app/**/route.ts`) importing `lib/server/db` |
 | `packages-not-apps` | anything in `packages/` importing `apps/` |
-| `no-circular` | a new import cycle (cycles inside `lib/server/runner/`, whose modules call each other only at run time, are allowed) |
+| `no-circular` | a new value import cycle (cycles inside `lib/server/runner/`, whose modules call each other only at run time, are allowed; type-only imports are not counted, as they are erased at build time). One new edge inside an existing cycle group can re-report neighbouring known edges, because a known cycle is matched by its exact set of modules |
 
 The violations that existed when the rules were added (the cycles, and two routes that import `lib/server/db`: `form-test`
 and `proposals/[id]/applied`) are recorded in `.dependency-cruiser-known-violations.json` and ignored, so only new ones
-fail. Fixing one makes its entry stale and does no harm; to shrink the record after fixing some, or to accept a new cycle
+fail. `client-not-server-values` checks direct imports only: a module without the directive that a client component imports could still pull in a server value. Fixing one makes its entry stale and does no harm; to shrink the record after fixing some, or to accept a new cycle
 on purpose, run `pnpm check:deps:baseline` and commit the file with the reason.
 
 ### Recorded plugin manifests

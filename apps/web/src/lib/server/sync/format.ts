@@ -33,6 +33,7 @@ import {
   MANIFEST_FILE,
   ROWS_SUFFIX,
   SYNC_FORMAT,
+  type SyncManifest,
   TABLE_SUFFIX,
   VARIABLES_FILE,
   WORKFLOW_SUFFIX,
@@ -251,7 +252,7 @@ const folderHash = (f: Folder) => sha256(stringify({ id: f.id, name: f.name, par
 
 /** The files of an instance's state, sorted by path, with the entity hashes. */
 export function renderState(state: SyncState, options: RenderOptions = {}): Rendered {
-  const files: SyncFile[] = [{ path: MANIFEST_FILE, content: stringify({ format: SYNC_FORMAT }) }];
+  const files: SyncFile[] = [{ path: MANIFEST_FILE, content: stringify({ format: SYNC_FORMAT } satisfies SyncManifest) }];
   const hashes: Record<string, string> = {};
   const only = options.workflowIds ? new Set(options.workflowIds) : undefined;
   const workflows = only ? state.workflows.filter((w) => only.has(w.id)) : state.workflows;

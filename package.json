@@ -1,7 +1,7 @@
 {
   "name": "landflow",
   "private": true,
-  "description": "Landflow — a low-code workflow platform with autodiscovered, polyglot node plugins.",
+  "description": "Landflow \u2014 a low-code workflow platform with autodiscovered, polyglot node plugins.",
   "packageManager": "pnpm@10.28.2",
   "engines": {
     "node": ">=22"
@@ -15,7 +15,7 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "check:deps": "depcruise apps/web/src packages/*/src --config .dependency-cruiser.cjs --ignore-known",
     "check:deps:baseline": "depcruise apps/web/src packages/*/src --config .dependency-cruiser.cjs --output-type baseline > .dependency-cruiser-known-violations.json",
-    "check": "pnpm typecheck && pnpm --filter @landflow/web exec vitest run && pnpm test && pnpm check:deps",
+    "check": "pnpm typecheck && pnpm test && pnpm check:deps",
     "landflow": "node packages/cli/dist/main.js",
     "gen:proto": "pnpm --filter @landflow/protocol gen:proto && pnpm --filter @landflow/protocol gen:schema",
     "plugin:ts": "pnpm --filter @landflow/plugin-text-toolkit start",
