@@ -1284,6 +1284,27 @@ workbench in place of a page of cards, keeping Spotlight.
   profile runs Code nodes only in the code runner unless `LANDFLOW_CODE_IN_PROCESS=true`; the in-process context also loses
   `eval` and `new Function`. An isolate backend remains for a later package.
 - **P15, database conventions** (C18; wave 3): prepared statements are cached in an LRU capped by `LANDFLOW_DB_STATEMENT_CACHE` (default 500); a test fails a new migration whose version is not above every earlier one; `withOwnership` reads shares and memberships once per list instead of per item.
+- **Wave 2 carryover** (applied in wave 3): `pnpm worker` exits 1 when Valkey is unreachable and handles signals
+  during its boot, the registry is required on a worker, pages wait through `whenReady()`, emails are masked in the
+  effective configuration, health state lives in `singleton()`, the registry normalises `grpc://` hosts and keeps
+  `guardJoin` per announce, links without `LANDFLOW_PUBLIC_URL` answer 503 before any lookup, the form-wait bypass needs
+  workflow access, zod is jitless before the Run Trace cards' schemas, the proxy drops client CSP request headers, an
+  app icon, and the marketplace test's real cause (a shared data directory and a real network fetch). Deferred:
+  - readiness in Postgres mode does not ping Postgres or check the LISTEN connection: that needs a connect timeout on
+    the pool in `db/postgres.ts` first ([limitations.md](limitations.md));
+  - a plugin endpoint whose DNS name resolves to a metadata address is not refused (plugins are outside `safeFetch`;
+    the literal forms are);
+  - `plugin.endpoint_added` is audited for every source and in every queue-mode process, so each plugin's second
+    transport writes a row per boot; audit only the process that accepted an announce if the log gets noisy;
+  - a refused join raises a `plugin.error` toast naming the real plugin, so in development anyone can raise toasts by
+    announcing repeatedly (low impact, development only);
+  - HSTS, the cookies' `Secure` flag, the OAuth2 callback, the hosted chat page and the same-origin check read
+    `X-Forwarded-Proto` / `-Host` whatever `LANDFLOW_TRUSTED_PROXIES` says; gating them on the hop count belongs with
+    P24 (sessions) and P27;
+  - live checks no automated test covers: Go and Python SDK announces with the registry secret over HTTP and gRPC and
+    the gRPC registry's UNAUTHENTICATED / UNAVAILABLE answers; a production resume by curl with and without `sig`; a
+    multi-page form in a browser; client addresses behind a real ingress; a signed-in pass under the enforced CSP
+    (editor, Run Trace, Brain at desktop and 390 px), which needs a person to sign in.
 
 ## Planned next
 
