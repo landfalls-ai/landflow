@@ -30,9 +30,6 @@ import { resolveSecretFields, resolveSecretsIn } from '../secrets/resolve';
 import { singleton } from '../singleton';
 import { store } from '../store';
 import { SECRET_KEY } from '../telemetry/config';
-
-/** Credential values shorter than this are not remembered: `postgres` or `changeme` would otherwise rewrite every node output that says so. */
-const CREDENTIAL_MIN_LENGTH = 12;
 import { logger } from '../telemetry/logger';
 import {
   ACCOUNT_FIELD,
@@ -52,6 +49,9 @@ import {
   type OAuth2Config,
   type StoredToken,
 } from './oauth2';
+
+/** Credential values shorter than this are not remembered: `postgres` or `changeme` would otherwise rewrite every node output that says so. */
+const CREDENTIAL_MIN_LENGTH = 12;
 
 export interface Sealed {
   iv: string;
@@ -394,7 +394,7 @@ export class CredentialVault {
     const names = new Set([...credential.secretFields, ...secretNames(descriptor)]);
     for (const [key, value] of Object.entries(data)) {
       if (typeof value !== 'string' || isSecretReference(value)) continue;
-      if (names.has(key) || SECRET_KEY.test(key)) rememberSecretValues(value, { min: CREDENTIAL_MIN_LENGTH });
+      if (names.has(key) || SECRET_KEY.test(key)) rememberSecretValues(value, { min: CREDENTIAL_MIN_LENGTH, lines: value.includes('-----BEGIN') });
     }
     return data;
   }

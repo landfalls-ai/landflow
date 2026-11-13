@@ -156,7 +156,8 @@ describe('routes wait on readiness', () => {
     expect(files).not.toContain('lib/server/bootstrap.ts');
     expect(files).not.toContain('lib/server/runtime.ts');
     // Measured: 401 files before this change, 72 after (+10%); 73 with lib/server/errors.ts (HttpError), whose budget is raised to match.
-    expect(closure.size).toBeLessThan(Math.ceil(73 * 1.1));
+    // P17: 81 with secrets/redact.ts (the logger's value patterns); the budget follows (74 * 1.1 rounds up to 82). P16 also edits http.ts: re-measure after merging.
+    expect(closure.size).toBeLessThan(Math.ceil(74 * 1.1));
   });
 
   it('handler() boots through the registered bootstrapper, and rejects rather than hangs without one', async () => {

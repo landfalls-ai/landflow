@@ -60,7 +60,7 @@ export function writeRecord(level: LogLevel, message: string, fields: LogAttribu
     service: telemetryConfig.serviceName,
     msg: redactPatterns(message),
     ...(ids && trace.isSpanContextValid(ids) && { trace_id: ids.traceId, span_id: ids.spanId }),
-    // Added here, not through redact(): `landflow.api_key.id` is an id that the key-name rule would take for the key.
+    // Added here, not through redact(): kept apart from the caller's fields so the ids need no key-name rule.
     ...requestLogFields(),
     ...(redact(fields) as LogAttributes),
   };

@@ -39,9 +39,9 @@ export function traceUrl(traceId: string | undefined): string | undefined {
 
 /**
  * Attribute and field names whose (string or object) values are never logged or exported.
- * Names of addresses, kinds, algorithms and ids (`tokenUrl`, `tokenType`, `signatureAlgorithm`, `landflow.api_key.id`) are not secrets.
+ * Names of addresses, kinds, algorithms and ids of keys, tokens and sessions (`tokenUrl`, `tokenType`, `signatureAlgorithm`, `landflow.api_key.id`, `apiKeyId`) are not secrets; `secretId` and `secret_id` are (the Vault AppRole secret).
  * `credentials` counts only as a whole key name. Plain `session` and `sessionId` stay: agent session ids are needed to
  * debug a conversation, and only `sessionToken`, `sessionSecret` and `sessionCookie` are credentials.
  */
 export const SECRET_KEY =
-  /^(?!.*(?:url|uri|endpoint|host|type|algorithm|[._-]?id)$)(?:.*(?:token|secret|password|authorization|api[-_]?key|cookie|private[-_]?key|passphrase|signature|connection[-_]?string|session[-_]?(?:token|secret|cookie))|.*dsn$|credentials$)/i;
+  /^(?!.*(?:url|uri|endpoint|host|type|algorithm)$)(?!.*(?:key|token|session|credentials?)[._-]?id$)(?:.*(?:token|secret|password|authorization|api[-_]?key|cookie|private[-_]?key|passphrase|signature|connection[-_]?string|session[-_]?(?:token|secret|cookie))|.*dsn$|credentials$)/i;

@@ -32,7 +32,7 @@ afterAll(() => {
 });
 
 describe('secret key names', () => {
-  it.each(['privateKey', 'private_key', 'passphrase', 'signature', 'credentials', 'connectionString', 'connection_string', 'dsn', 'sentryDsn', 'sessionToken', 'session_secret', 'sessionCookie', 'password', 'apiKey'])(
+  it.each(['privateKey', 'private_key', 'passphrase', 'signature', 'credentials', 'connectionString', 'connection_string', 'dsn', 'sentryDsn', 'sessionToken', 'session_secret', 'sessionCookie', 'password', 'apiKey', 'secretId', 'secret_id', 'client_secret_id', 'vault.secret_id', 'tokenValid', 'passwordInvalid'])(
     'redacts %s',
     (key) => expect(SECRET_KEY.test(key)).toBe(true),
   );
@@ -49,19 +49,20 @@ describe('secret-shaped values', () => {
     expect(redactPatterns('401 from upstream: Authorization: Bearer abc.def-ghi_123456')).toBe('401 from upstream: Authorization: Bearer [redacted]');
     expect(redactPatterns('key lf_0123456789abcdefABCD used')).toBe('key [redacted] used');
     expect(redactPatterns('connect postgres://app:hunter2pw@db.internal:5432/x failed')).toBe('connect postgres://[redacted]@db.internal:5432/x failed');
+    expect(redactPatterns('x //user:p@ss@host/y')).toBe('x //[redacted]@host/y');
     expect(redactPatterns('k\n-----BEGIN RSA PRIVATE KEY-----\nMIIEabc\n-----END RSA PRIVATE KEY-----\nafter')).toBe('k\n[redacted]\nafter');
   });
   it('leaves ordinary text alone (no false positives)', () => {
-    for (const text of ['mail me at a@b.com', 'https://example.com/a/b?x=1', 'the bearer of bad news', 'lf_short', 'host:8080//path', 'public -----BEGIN PUBLIC KEY-----']) {
+    for (const text of ['mail me at a@b.com', 'https://example.com/a/b?x=1', 'the bearer of bad news', 'Bearer authentication failed', 'the bearer certificate', 'http://localhost:3000?email=a@b.com', 'lf_short', 'host:8080//path', 'public -----BEGIN PUBLIC KEY-----']) {
       expect(redactPatterns(text)).toBe(text);
     }
   });
   it('applies to messages, fields and error stacks in a log line', () => {
     lines.length = 0;
-    const error = new Error('upstream said Bearer abcdefghijkl and https://u:p4ssw0rd@h.example/x');
-    logger.error('call failed: Bearer zzzzzzzzzzzz', { error, detail: { url: 'redis://:secretpw@cache:6379' } });
+    const error = new Error('upstream said Bearer abcd1efghijkl and https://u:p4ssw0rd@h.example/x');
+    logger.error('call failed: Bearer zzzz1zzzzzzz', { error, detail: { url: 'redis://:secretpw@cache:6379' } });
     const out = lines.join('');
-    for (const leaked of ['zzzzzzzzzzzz', 'abcdefghijkl', 'p4ssw0rd', 'secretpw']) expect(out).not.toContain(leaked);
+    for (const leaked of ['zzzz1zzzzzzz', 'abcd1efghijkl', 'p4ssw0rd', 'secretpw']) expect(out).not.toContain(leaked);
     expect(out).toContain('[redacted]');
     expect(out).toContain('"exception.type":"Error"');
   });
