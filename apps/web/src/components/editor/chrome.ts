@@ -68,14 +68,13 @@ export function topBarControls({ governed }: { governed: boolean }): TopBarContr
 
 export type MenuItemId = 'settings' | 'tags' | 'version-history' | 'git-history' | 'share' | 'move' | 'download' | 'template' | 'import' | 'shortcuts';
 
-/** The ⋯ menu: Git history is always there (its dialog says when source control is not set up); Share and Move need a saved workflow. */
+/** The ⋯ menu: Git history (its dialog says when source control is not set up), Share and Move need a saved workflow. */
 export function menuItems({ saved }: { saved: boolean }): MenuItemId[] {
   return [
     'settings',
     'tags',
     'version-history',
-    'git-history',
-    ...(saved ? (['share', 'move'] as const) : []),
+    ...(saved ? (['git-history', 'share', 'move'] as const) : []),
     'download',
     'template',
     'import',

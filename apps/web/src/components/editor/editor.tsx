@@ -742,7 +742,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
   const rearm = useRef<() => void>(undefined);
   const saveQueue = useRef<Promise<boolean> | undefined>(undefined);
   /** `auto`: the timed save (folds into the session's version); `quiet`: no "Saved" toast (defaults to `auto`). */
-  const saveOnce = useCallback(async (auto = false, quiet = auto): Promise<boolean> => {
+  const saveOnce = useCallback(async (auto = false, quiet = auto, leaving = false): Promise<boolean> => {
     if (useEditLock.getState().readOnly) {
       const environment = useEditLock.getState().protectedEnvironment;
       toast.error(environment ? `${environment} is a protected environment: workflows change only by pull or promotion` : 'Someone else is editing this workflow: it’s read-only here');
@@ -759,6 +759,8 @@ export function Editor({ workflowId }: { workflowId: string }) {
         api<{ workflow: Workflow; triggerAuthWarnings?: Array<{ nodeName: string; message: string }> } & PolicyWarnings>(`/api/workflows/${workflowId}`, {
           method: 'PUT',
           json: draft,
+          // A save sent while the page unloads survives it only with keepalive, which allows about 64 KB; a bigger one relies on the browser's prompt.
+          ...(leaving && JSON.stringify(draft).length < 60_000 && { keepalive: true }),
           headers: { ...editorTabHeaders(), ...(auto && { 'x-landflow-autosave': '1' }), ...(baseline && { 'if-match': `"${baseline}"` }) },
         });
       let saved;
@@ -773,6 +775,8 @@ export function Editor({ workflowId }: { workflowId: string }) {
         saved = await put(stored.updatedAt);
       }
       const { workflow, policyWarnings, triggerAuthWarnings } = saved;
+      // The person opened another workflow while this save was in flight: its store is not this one's to mark.
+      if (useEditor.getState().workflowId !== workflowId) return true;
       useEditor.getState().markSaved(workflow.updatedAt, workflow);
       // Edits made while the request was in flight are not in what was saved: the draft stays unsaved and saves again.
       const { active: _live, ...now } = useEditor.getState().toWorkflow();
@@ -797,9 +801,9 @@ export function Editor({ workflowId }: { workflowId: string }) {
 
   /** One save at a time: a save asked for while another is in flight (⌘S, Publish, a tab) waits for it instead of racing it. */
   const save = useCallback(
-    (auto = false, quiet = auto): Promise<boolean> => {
+    (auto = false, quiet = auto, leaving = false): Promise<boolean> => {
       const prior = saveQueue.current;
-      const run = prior ? prior.catch(() => false).then(() => saveOnce(auto, quiet)) : saveOnce(auto, quiet);
+      const run = prior ? prior.catch(() => false).then(() => saveOnce(auto, quiet, leaving)) : saveOnce(auto, quiet, leaving);
       const tracked = run.finally(() => {
         if (saveQueue.current === tracked) saveQueue.current = undefined;
       });
@@ -932,7 +936,8 @@ export function Editor({ workflowId }: { workflowId: string }) {
     // Leaving inside the 2 s wait (Back, reload, closing the tab) must not drop the last edit: save at once.
     const flush = () => {
       clearTimeout(timer);
-      if (allowed()) void save(true);
+      // The lock may have moved to another tab since this effect ran: ask the live state, so no read-only toast shows.
+      if (allowed() && !useEditLock.getState().readOnly) void save(true, true, true);
     };
     const guard = (event: BeforeUnloadEvent) => {
       if (useEditor.getState().dirty && !readOnly) event.preventDefault();

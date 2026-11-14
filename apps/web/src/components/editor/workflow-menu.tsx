@@ -1,7 +1,7 @@
 'use client';
 /**
- * The editor's "…" menu in the top bar: settings, tags, version history, Git history (only with source control
- * configured), share, move, download as JSON, save as template, one Import… (a paste box and a file drop, Landflow or
+ * The editor's "…" menu in the top bar: settings, tags, version history, Git history (its dialog says when source
+ * control is not set up), share, move (those three need a saved workflow), download as JSON, save as template, one Import… (a paste box and a file drop, Landflow or
  * n8n) and the keyboard shortcuts. The items are listed by `menuItems` (./chrome).
  */
 import { useState } from 'react';

@@ -91,8 +91,9 @@ describe('the ⋯ menu', () => {
     expect(items.filter((i) => i === 'import')).toHaveLength(1);
     expect(items).toContain('git-history');
   });
-  it('leaves Share and Move out for a workflow that is not saved yet', () => {
+  it('leaves Git history, Share and Move out for a workflow that is not saved yet', () => {
     const items = menuItems({ saved: false });
+    expect(items).not.toContain('git-history');
     expect(items).not.toContain('share');
     expect(items).not.toContain('move');
   });
