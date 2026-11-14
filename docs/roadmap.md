@@ -1228,8 +1228,13 @@ Landflow's side of Clickland, the land family's observability system ([features/
   (component `clickland-observability`) sends every process's OTLP, the run journals and the trace links to Clickland;
   `kagent-up.sh` bridges kagent to whichever backend the host uses. The lgtm overlay stays.
 
-**Next:** a live check against a running Clickland (the plugin was built against the contract and a fake); stream the
-assistant analysts' own steps (a node used as a tool would need the run's stream).
+Checked live on 2026-11-14 against Clickland on this machine ([features/clickland.md](features/clickland.md#checked-live)):
+the plugin, both triggers, webhook registration and signatures, knowledge search, telemetry and the assistant's chat
+contract up to the model.
+
+**Next:** the agents' answers live (the cluster's Landflow needs an Anthropic credential: the lead's view markers, its
+`search_clickland` calls and the triage Slack post); stream the assistant analysts' own steps (a node used as a tool
+would need the run's stream).
 
 ## The Brain page (built 2026-11-12)
 

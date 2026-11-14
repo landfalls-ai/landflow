@@ -86,9 +86,15 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 ## Clickland (built 2026-11-14)
 
-- **Built against the contract, not a running Clickland.** The [plugin](../plugins/clickland/README.md) follows
-  Clickland's `docs/reference/api.md` and is tested against a local fake of it; nothing was checked against a live
-  Clickland yet.
+- **The agents' answers are not checked live yet.** On 2026-11-14 the plugin, both triggers, the webhook registration and
+  its signatures, plugin knowledge search, the credential test, telemetry and the assistant's chat contract (Clickland's
+  API → the published chat with Basic Auth → the lead) all ran against a live Clickland on this machine. The Landflow on
+  the OrbStack cluster has no Anthropic credential, so the assistant's lead and the triage agent stopped at their model
+  ("Could not resolve authentication method"): no answer, view marker, `search_clickland` call inside a conversation or
+  Slack post has been seen live. Add an Anthropic credential, pick it on both flows' Anthropic Chat Model and the three
+  analysts, and run the checks in [features/clickland.md](features/clickland.md#checked-live).
+- **The triage flow takes every alert.** The template's Alert Trigger has no Alert ID, so every alert that fires in
+  Clickland starts a triage run (and, while no Anthropic credential is picked, a failed one).
 - **Alert events have no fixed shape in the contract.** The Clickland Trigger reads an event's time from the first of
   `createdAt`, `at`, `timestamp`, `changedAt`, `firedAt`, `time`, and an event without any of them is never emitted. It
   reads events for at most 25 alerts per poll (those whose states changed), so a burst across more alerts takes several
@@ -104,8 +110,8 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - **Triage's Clickland severity is the default.** Clickland's alerts carry no severity, so Normalize Alert gives them
   Default Severity unless the alert has a `severity` field or label.
 - **Telemetry to Clickland assumes its Services.** The `orbstack-clickland` overlay expects `clickland-collector`
-  (OTLP 4317 and 4318) and `clickland-console` (4711) in `clickland-dev`, as Clickland's deployment names them; it was
-  rendered, not applied. Landflow's Grafana dashboard ("Landflow · agent runs") is not in Clickland: it comes only with
+  (OTLP 4317 and 4318) and `clickland-console` (4711) in `clickland-dev`, as Clickland's deployment names them (applied
+  2026-11-14 against Clickland on the Mac through its ExternalName bridge Services). Landflow's Grafana dashboard ("Landflow · agent runs") is not in Clickland: it comes only with
   the lgtm overlay.
 - **Plugin knowledge bases: presets only in the dialog.** The knowledge dialog offers Clickland; another plugin node
   is set through the API. It has no documents, no passages-per-search setting (the node's own limit applies) and is not

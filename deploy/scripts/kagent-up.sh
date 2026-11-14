@@ -73,6 +73,15 @@ else
 fi
 # Agent Substrate's per-actor networking answers ARP for the sandboxes' addresses on the node.
 docker exec "$CLUSTER-control-plane" sysctl -qw net.ipv4.conf.all.proxy_arp=1
+# Clickland on the Mac, bridged into clickland-dev by an ExternalName Service (Clickland's deploy/k8s/bridge): no
+# ClusterIP, so the endpoint is the address its external name has from the kind node (host.orb.internal).
+if [ -z "${OTEL_IP:-}" ] && [ "${OTEL_NAME%% *}" = clickland-collector ]; then
+  OTEL_EXTERNAL=$(orb -n "$CLICKLAND_NS" get svc clickland-collector -o jsonpath='{.spec.externalName}' 2>/dev/null || true)
+  if [ -n "$OTEL_EXTERNAL" ]; then
+    OTEL_IP=$(docker exec "$CLUSTER-control-plane" getent ahostsv4 "$OTEL_EXTERNAL" | awk 'NR == 1 { print $1 }' || true)
+    OTEL_NAME="clickland-collector ($CLICKLAND_NS, $OTEL_EXTERNAL)"
+  fi
+fi
 
 bridge() { sed -e "s/LANDFLOW_HOST_IP/$HOST_IP/" -e "s/LANDFLOW_CACHE_IP/$CACHE_IP/" deploy/kind/bridge.yaml; }
 
