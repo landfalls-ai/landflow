@@ -18,6 +18,8 @@
  * process keeps going. `leader` entries go through `leaderService()` (cluster/index.ts): started where the leader is,
  * moved with leadership. Shutdown steps are registered, in their phases, right after the database step opens.
  */
+// Registers the composite governance rules with workflowViolations() (governance/policy.ts), in both roles.
+import './governance/composite-rules';
 import { agentTriggers } from './agents/triggers';
 import { alerts } from './alerts/service';
 import { auditHeads } from './audit/anchoring';

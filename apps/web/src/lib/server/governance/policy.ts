@@ -18,7 +18,7 @@
  * Below the instance, a workflow's project and the workflow itself can narrow the node list further (./scopes.ts):
  * every check here that takes a workflow also applies those lists (`scopedNodeBlocked`).
  */
-import { splitType } from '@landflow/protocol';
+import { nodeMatcherSchema, splitType } from '@landflow/protocol';
 import type { ExecuteResponse } from '@landflow/protocol';
 import type { ResolvedNodeType, Workflow, WorkflowNode } from '@landflow/engine';
 import { z } from 'zod';
@@ -51,6 +51,17 @@ export class PolicyError extends HttpError {
 const pattern = z.string().trim().min(1).max(300);
 const list = z.array(pattern).max(500);
 
+const compositeRuleSchema = z.strictObject({
+  id: z.string().trim().min(1).max(100),
+  name: z.string().trim().min(1).max(200),
+  kind: z.enum(['require-inside', 'forbid-inside']),
+  match: nodeMatcherSchema,
+  composite: nodeMatcherSchema,
+  nested: z.boolean().optional(),
+  severity: z.enum(['error', 'warn']),
+  message: z.string().max(500).optional(),
+});
+
 export const governanceSchema = z.strictObject({
   nodes: z.strictObject({ mode: z.enum(['off', 'allow', 'block']), types: list, plugins: list, blockCode: z.boolean() }),
   http: z.strictObject({ mode: z.enum(['off', 'allow', 'block']), hosts: list }),
@@ -62,6 +73,7 @@ export const governanceSchema = z.strictObject({
     notifyEmail: z.boolean(),
     channelIds: z.array(z.string().min(1).max(100)).max(50),
   }),
+  compositeRules: z.array(compositeRuleSchema).max(50),
 });
 
 export const governancePatchSchema = z.strictObject({
@@ -69,6 +81,7 @@ export const governancePatchSchema = z.strictObject({
   http: governanceSchema.shape.http.partial().optional(),
   mcp: governanceSchema.shape.mcp.partial().optional(),
   fourEyes: governanceSchema.shape.fourEyes.partial().optional(),
+  compositeRules: governanceSchema.shape.compositeRules.optional(),
 });
 
 const CACHE_MS = 1_000;
@@ -89,6 +102,7 @@ export function getGovernancePolicy(): GovernancePolicy {
         http: { ...policy.http, ...saved.http },
         mcp: { ...policy.mcp, ...saved.mcp },
         fourEyes: { ...policy.fourEyes, ...saved.fourEyes },
+        compositeRules: saved.compositeRules ?? [],
       };
       const parsed = governanceSchema.safeParse(merged);
       if (parsed.success) policy = { ...parsed.data, ...(saved.updatedAt && { updatedAt: saved.updatedAt }), ...(saved.updatedBy && { updatedBy: saved.updatedBy }) };
@@ -109,6 +123,7 @@ export function updateGovernancePolicy(patch: z.infer<typeof governancePatchSche
     http: { ...current.http, ...patch.http },
     mcp: { ...current.mcp, ...patch.mcp },
     fourEyes: { ...current.fourEyes, ...patch.fourEyes },
+    compositeRules: patch.compositeRules ?? current.compositeRules,
   });
   const tidy = (items: string[]) => [...new Set(items.map((item) => item.trim()).filter(Boolean))];
   const saved: GovernancePolicy = {
@@ -359,8 +374,26 @@ export function nodeViolations(node: Pick<WorkflowNode, 'id' | 'name' | 'type' |
  * for a saved workflow (by its id) or the given `scope`, its project's and its own allow-lists.
  */
 export function workflowViolations(workflow: Pick<Workflow, 'nodes'> & { id?: string }, policy = getGovernancePolicy(), scope: PolicyScope = scopeOf(workflow)): PolicyViolation[] {
-  if (!rulesActive(policy) && !scopeActive(scope)) return [];
-  return (workflow.nodes ?? []).filter((node) => !node.disabled).flatMap((node) => nodeViolations(node, policy, scope));
+  const placed = policy.compositeRules.length ? [...workflowRuleChecks.values()].flatMap((check) => check(workflow as Pick<Workflow, 'nodes' | 'groups'>, policy)) : [];
+  if (!rulesActive(policy) && !scopeActive(scope)) return placed;
+  return [...(workflow.nodes ?? []).filter((node) => !node.disabled).flatMap((node) => nodeViolations(node, policy, scope)), ...placed];
+}
+
+type WorkflowRuleCheck = (workflow: Pick<Workflow, 'nodes' | 'groups'>, policy: GovernancePolicy) => PolicyViolation[];
+/** One process-wide list keyed by name: a production build bundles this module once per layer, and each copy registers. */
+export const WORKFLOW_RULE_CHECKS_KEY = 'governance-workflow-rule-checks';
+const workflowRuleChecks = singleton(WORKFLOW_RULE_CHECKS_KEY, () => new Map<string, WorkflowRuleCheck>());
+
+/**
+ * Plug in a check that reads the whole workflow, not one node (the composite rules, ./composite-rules.ts). It lives
+ * outside this file because it needs the plugin registry, which imports this module. Registering a name again
+ * replaces its check.
+ */
+export function registerWorkflowRule(name: string, check: WorkflowRuleCheck): () => void {
+  workflowRuleChecks.set(name, check);
+  return () => {
+    if (workflowRuleChecks.get(name) === check) workflowRuleChecks.delete(name);
+  };
 }
 
 export function violationsMessage(violations: PolicyViolation[]): string {
@@ -370,13 +403,13 @@ export function violationsMessage(violations: PolicyViolation[]): string {
 
 /** Why `workflow` can't be published (nodes the policy, its project or its own policy don't allow), or undefined when it can. */
 export function publishBlockedReason(workflow: Pick<Workflow, 'nodes'> & { id?: string }): string | undefined {
-  const violations = workflowViolations(workflow);
+  const violations = workflowViolations(workflow).filter((v) => v.severity !== 'warn');
   return violations.length ? `This version uses nodes the governance policy doesn’t allow, so it can’t be published: ${violationsMessage(violations)}` : undefined;
 }
 
 /** Publishing gate: throws a PolicyError (422) listing the nodes the policy doesn't allow. */
 export function assertPublishable(workflow: Pick<Workflow, 'nodes'> & { id?: string }) {
-  const violations = workflowViolations(workflow);
+  const violations = workflowViolations(workflow).filter((v) => v.severity !== 'warn');
   if (violations.length) throw new PolicyError(publishBlockedReason(workflow)!, violations);
 }
 

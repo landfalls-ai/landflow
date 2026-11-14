@@ -1520,6 +1520,10 @@ nodes it changed until you close it (or a minute passes), Spotlight's own runs m
 folds to icons ([assistant.md](assistant.md#the-spotlight-panel)). A Fable review of the old layout set the design. Next:
 resizing the column, and keeping a fix bubble's text after it closes (the timeline has it).
 
+## Specs for what comes next (2026-11-05)
+
+Fifteen specs in [specs/](specs/README.md): a code sandbox, guard enforcement, a durable pause, runbooks made and run by themselves, the brain's auto-apply, lazy loading for Postgres, durable telemetry, shared trace comments, more webhook triggers, per-rule Switch outputs, agent evals, public run-report links, composite governance rules and live integration checks. The first slice of composite governance rules is built ([composites.md](composites.md#governance-rules)); the hot run data of backend wave 6 covers part of spec 07.
+
 ## Not planned
 
 Later, maybe: an agent code sandbox, and prompt management. Not planned:
