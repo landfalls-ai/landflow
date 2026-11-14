@@ -2078,7 +2078,7 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Second brain',
     id: 'askBrain',
     summary: 'Ask the second brain',
-    description: 'Finds the pages, facts and work the question is about, among what the caller can open, and the brain’s model answers from them with [[type/id]] page links and [n] references to `work`. `about` (<type>/<id>) asks from a page. Without a model `answer` is left out.',
+    description: 'Finds the pages, facts and work the question is about, among what the caller can open, and the brain’s model answers from them with [[type/id]] page links and [n] references to `work`. `about` (<type>/<id>) asks from a page. Without a model `answer` is left out. An API key needs the `brain:read` scope (`executions:read` alone no longer reaches it).',
     body: jsonBody(object({ question: { type: 'string', maxLength: 500 }, about: { type: 'string', description: '<type>/<id> of the page it is asked from' } }, ['question'])),
     responses: { 200: reply('The answer', object({ question: { type: 'string' }, answer: { type: 'string' }, model: { type: 'string' }, pages: array({ type: 'object' }), facts: array({ type: 'object' }), work: array(workItem), note: { type: 'string' }, about: { type: 'string' } }, ['question', 'pages', 'facts', 'work'])), 400: invalid },
   });

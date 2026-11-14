@@ -5,10 +5,17 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LanguageModel, ModelTurn, Workflow } from '@landflow/engine';
 import type { NodeTypeInfo } from '@/lib/shared/types';
 import type { ChatEvent } from '@/lib/server/assistant/chat';
+
+/** The model the chat route resolves (a test's scripted one); a model object passed in directly is used as is. */
+const routeModel = vi.hoisted(() => ({ current: undefined as LanguageModel | undefined }));
+vi.mock('@/lib/server/assistant/model', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/server/assistant/model')>();
+  return { ...actual, assistantModel: (override?: string | LanguageModel) => (typeof override === 'object' ? override : (routeModel.current ?? actual.assistantModel(override))) };
+});
 
 Object.assign(process.env, { LANDFLOW_DATA_DIR: mkdtempSync(join(tmpdir(), 'landflow-assistant-metering-')), LANDFLOW_REGISTRY_GRPC_PORT: 'off', LANDFLOW_SCAN_ON_START: 'false', LANDFLOW_PLUGINS: '' });
 
@@ -77,6 +84,29 @@ describe('assistant metering', () => {
   it('attributes Spotlight to a workflow only when the caller can read it', () => {
     expect(meteredWorkflowId(undefined, TEST_OWNER)).toBeUndefined();
     expect(meteredWorkflowId('wf_not_mine', { id: 'usr_nobody', role: 'member' } as Parameters<typeof meteredWorkflowId>[1])).toBeUndefined();
+  });
+
+  it('books a member’s Spotlight call on no workflow when they cannot read the one they sent (through the route)', async () => {
+    const { store } = await import('@/lib/server/store');
+    const projects = await import('@/lib/server/projects');
+    const { personalProjectId } = await import('@/lib/shared/projects');
+    const { enableTestAuth } = await import('@/lib/server/auth/test-bypass');
+    const chatRoute = await import('@/app/api/assistant/chat/route');
+    const hidden = { ...workflow(), id: 'wf_owners_only', name: 'Owner only' };
+    store.saveWorkflow(hidden);
+    projects.setHomeProject('workflow', hidden.id, personalProjectId(TEST_OWNER.id));
+    const member = { ...TEST_OWNER, id: 'usr_metering_member', email: 'member@metering.test', name: 'Member', role: 'member' as const };
+    routeModel.current = metered('anthropic', [{ text: 'Hi there.' }]);
+    enableTestAuth(member);
+    try {
+      const response = await chatRoute.POST(new Request('http://localhost/api/assistant/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ messages: [{ role: 'user', content: 'Hello' }], workflow: hidden, workflowId: hidden.id }) }));
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain('event: done');
+    } finally {
+      enableTestAuth();
+      routeModel.current = undefined;
+    }
+    expect(rows()).toEqual([{ surface: 'spotlight', user_id: member.id, workflow_id: null, provider: 'anthropic', input_tokens: 100 }]);
   });
 
   it('recovers every tool the chat offers from text', () => {

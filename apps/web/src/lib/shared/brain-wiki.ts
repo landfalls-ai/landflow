@@ -6,6 +6,7 @@
  * besides the brain's own constants.
  */
 import type { BrainEntity, BrainFact, BrainStatus, EntityKnowledge, EntityType, Proposal } from './brain';
+import { provisionalText } from './leaked-markup';
 
 /** One work event (a `work.*` kind the activity integrations record), as the wiki shows it. */
 export interface WorkItem {
@@ -192,10 +193,11 @@ export type AskEvent =
 
 /**
  * An answer while it is still being written, as plain words: `[[type/id|Name]]` shows as Name, a link not closed yet is
- * left out, so no half a link flashes on screen. The checked text replaces it at the end.
+ * left out, so no half a link flashes on screen, and a local model's leaked tool markup or `<think>` text is held back.
+ * The checked text replaces it at the end.
  */
 export function streamingPreview(text: string): string {
-  return text
+  return provisionalText(text)
     .replace(/\[\[[a-z]+\/[a-z0-9_.-]+\|([^\]]*)\]\]/g, '$1')
     .replace(/\[\[[a-z]+\/([a-z0-9_.-]+)\]\]/g, '$1')
     .replace(/\[\[[^\]]*$/, '')

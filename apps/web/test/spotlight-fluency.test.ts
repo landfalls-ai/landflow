@@ -88,6 +88,18 @@ describe('the reply voice', () => {
     expect(withoutLeakedMarkup('<think>hmm</think>Set the channel.')).toBe('Set the channel.');
   });
 
+  it('holds back leaked markup in streamed words, even half a tag', async () => {
+    const { provisionalText } = await import('@/lib/shared/leaked-markup');
+    const { streamingPreview } = await import('@/lib/shared/brain-wiki');
+    expect(provisionalText('<think>let me see')).toBe('');
+    expect(provisionalText('Checking the run.<tool_c')).toBe('Checking the run.');
+    expect(provisionalText('Done. <function=get_run_data><parameter=no')).toBe('Done.');
+    expect(provisionalText('Set it. </para')).toBe('Set it.');
+    expect(provisionalText('If a < b')).toBe('If a < b');
+    expect(provisionalText('Two steps <')).toBe('Two steps');
+    expect(streamingPreview('<think>plan</think>See [[customer/acme|Acme]] and <thi')).toBe('See Acme and');
+  });
+
   it('cuts the first sentence where a sentence ends', () => {
     expect(firstSentence('Use a filter, e.g. on status. Then post.')).toBe('Use a filter, e.g. on status.');
     expect(firstSentence('It stopped at “Step 2. Send” again. More here.')).toBe('It stopped at “Step 2. Send” again.');

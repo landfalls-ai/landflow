@@ -14,6 +14,7 @@ import { MAX_FIXES, productionNote, publishToProduction, sendsAllowed, testUntil
 import { agentStep, runRow } from '../timeline';
 
 import { ProposalCard, ProposalRow } from './proposal';
+import { provisionalText } from '@/lib/shared/leaked-markup';
 import { swapState } from './swap';
 
 export type Reply = Extract<ChatItem, { role: 'assistant' }>;
@@ -297,11 +298,13 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
   const partsText = item.parts.flatMap((p) => (p.kind === 'text' ? [p.text] : [])).join('\n\n');
   // From the chat stream: the words come in item.text (provisional while streaming), the trace in item.steps.
   const streamed = item.steps !== undefined;
-  const text = streamed ? (item.text ?? partsText) : partsText;
+  const provisional = streamed && live && !item.parts.some((p) => p.kind === 'text');
+  // Provisional words hold back a local model's leaked tool markup and <think> text (the checked text has none).
+  const text = streamed ? (provisional ? provisionalText(item.text ?? partsText) : (item.text ?? partsText)) : partsText;
   const firstText = item.parts.findIndex((p) => p.kind === 'text');
   const firstProposal = item.parts.findIndex((p) => p.kind === 'proposal');
   const hasTrace = (item.steps?.length ?? 0) > 0;
-  const words = quietText || !text.trim() ? null : streamed && live && !item.parts.some((p) => p.kind === 'text') ? (
+  const words = quietText || !text.trim() ? null : provisional ? (
     <StreamingText text={text} streaming />
   ) : streamed ? (
     <ShortReply text={text} sentences={session ? 1 : 2} />

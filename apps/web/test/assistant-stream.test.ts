@@ -6,6 +6,8 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { SpanStatusCode, trace } from '@opentelemetry/api';
+import { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider } from '@opentelemetry/sdk-trace';
 import type { LanguageModel, ModelTurn, Workflow } from '@landflow/engine';
 import type { NodeTypeInfo } from '@/lib/shared/types';
 import type { GenerateInput } from '@/lib/server/nodes/models';
@@ -23,7 +25,9 @@ const agentRoute = await import('@/app/api/assistant/agent/route');
 import type { ChatEvent, ChatState } from '@/lib/server/assistant/chat';
 
 let types: NodeTypeInfo[];
+const spans = new InMemorySpanExporter();
 beforeAll(() => {
+  trace.setGlobalTracerProvider(new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter: spans })] }));
   registry.registerBuiltin(corePlugin);
   types = registry.nodeTypes().filter((t) => t.pluginId === 'core');
 });
@@ -134,10 +138,27 @@ describe('the chat stream', () => {
     expect(events.at(-1)).toEqual({ type: 'error', kind: 'model', message: 'boom' });
   });
 
+  it('marks the request span failed with landflow.error.kind when a reply ends in an error event', async () => {
+    const last = () => spans.getFinishedSpans().filter((s) => s.name === 'assistant.chat').at(-1)!;
+    spans.reset();
+    await chat(streaming([{ toolCalls: [search('c1', 'dedupe')] }, { error: new Error('Ollama error 500') }]).model);
+    expect(last().attributes).toMatchObject({ 'landflow.assistant.request': 'chat', 'landflow.error.kind': 'model', 'landflow.outcome': 'error' });
+    expect(last().status.code).toBe(SpanStatusCode.ERROR);
+    spans.reset();
+    await chat(streaming(Array.from({ length: 5 }, (_, i) => ({ toolCalls: [{ id: `c${i}`, name: 'get_workflow', input: {} }] }))).model);
+    expect(last().attributes).toMatchObject({ 'landflow.error.kind': 'stalled', 'landflow.outcome': 'error' });
+    expect(last().status.code).toBe(SpanStatusCode.ERROR);
+    spans.reset();
+    await chat(streaming([{ tokens: ['Fine.'] }]).model);
+    expect(last().attributes['landflow.error.kind']).toBeUndefined();
+    expect(last().status.code).not.toBe(SpanStatusCode.ERROR);
+  });
+
   it('ends a reply that only repeats as a stalled error with a checkpoint', async () => {
     const { model } = streaming(Array.from({ length: 5 }, (_, i) => ({ toolCalls: [{ id: `c${i}`, name: 'get_workflow', input: {} }] })));
     const events = await chat(model);
-    expect(events.at(-1)).toMatchObject({ type: 'error', kind: 'stalled', checkpoint: expect.stringMatching(/^ck_/), step: 3 });
+    // Three steps ran; a Continue runs step 4, and `step` says so (as a model error names the step it re-runs).
+    expect(events.at(-1)).toMatchObject({ type: 'error', kind: 'stalled', checkpoint: expect.stringMatching(/^ck_/), step: 4 });
   });
 });
 

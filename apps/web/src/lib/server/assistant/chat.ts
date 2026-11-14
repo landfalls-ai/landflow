@@ -69,7 +69,7 @@ export type ChatEvent =
   | { type: 'tool'; name: string; label: string; ok: boolean; id: string; step: number; durationMs: number; detail?: string }
   | { type: 'proposal'; id: string; summary: string; ops: AssistantOp[]; dropped: string[]; warnings: string[] }
   | { type: 'done'; model: string; durationMs: number; steps: number; usage: { inputTokens: number; outputTokens: number }; costUsd?: number; local: boolean }
-  | { type: 'error'; message: string; kind?: ChatErrorKind; checkpoint?: string; step?: number };
+  | { type: 'error'; message: string; kind: ChatErrorKind; checkpoint?: string; step?: number };
 
 /** What a chat keeps to be continued after an error: the messages with the tool results so far, and what the guards remember. */
 export interface ChatState {
@@ -650,7 +650,8 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         setOutcome('error');
         span.setAttribute('landflow.error.kind', 'stalled');
         failSpan(span, new Error(text));
-        onEvent({ type: 'error', kind: 'stalled', message: text, checkpoint: checkpoint(), step: steps });
+        // `step` is the one a Continue runs next, as for a model error (there it is the step that failed).
+        onEvent({ type: 'error', kind: 'stalled', message: text, checkpoint: checkpoint(), step: steps + 1 });
         return;
       }
       if (trace) onEvent({ type: 'text', text, step: steps });
