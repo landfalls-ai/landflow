@@ -1260,7 +1260,10 @@ Landflow's side of Landledger, the land family's cost subledger ([features/landl
 - The Slack plugin's **Button Pressed** (`block_actions`) on the Slack Trigger and **User → Get** (`users.info`), for
   the relay.
 
-**Next:** the live check once Landledger's wave 2 runs ([limitations](limitations.md#landledger-built-2026-11-14));
+Checked live on 2026-11-14 against Landledger's wave 2 ([features/landledger.md](features/landledger.md#checked-live)):
+the credential, the infra change form and the Slack relay path's refusal.
+
+**Next:** a live webhook delivery (a Landledger admin registers the trigger's URL);
 a Teams and an email card for the relay; Mark Applied wired to a real apply step in the infra flow.
 
 ## The Brain page (built 2026-11-12)

@@ -111,6 +111,11 @@ Three templates in [`flows/`](flows) (Templates, from the marketplace), each wit
 - **Raise or hold an AI budget** (`landledger-ai-budget.json`): On Usage Event (`ai.call`) → each agent past 80% of its
   monthly cap → Request → Create (`ai_budget`, as the agent with its sponsor) · `request.decided` → approved: save and
   publish the raised cap through Landflow's API, Mark Applied; rejected, or an agent with unpublished edits: hold.
+  **Set Landflow's URL by hand:** its two Code nodes, **Settings** and **Raise settings**, start with
+  `const LANDFLOW_URL = 'http://localhost:3000';`. Change both to the address this Landflow reaches itself on (in the
+  cluster `http://landflow-host.landflow-dev.svc.cluster.local:3000`), since the HTTP Request nodes call Landflow's own
+  API with the `lf_` key. **Settings** also holds the cost center, the sponsor, the threshold and the raise; **Raise
+  settings** holds `MAX_CAP`.
 - **Ask the approver in Slack** (`landledger-slack-approver.json`): `request.step_pending` → Get → a card per approver
   with Approve / Reject · Slack Trigger **Button Pressed** → who pressed (their Slack email) → Decision → Relay → the
   card says what happened.

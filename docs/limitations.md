@@ -128,12 +128,11 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 ## Landledger (built 2026-11-14)
 
-- **Not checked against a live Landledger yet.** The plugin and the three flows are built against Landledger's wave 2
-  contract (`acf95c6`) and tested against a fake of it; on 2026-11-14 Landledger's wave 2 was still being built (not
-  committed), and minting an `ll_` key needs a Landledger admin (a Landbright sign-in). Once wave 2 runs: mint an `ll_` key with `requests:write` and
-  `decisions:relay` (Landledger's `docs/development.md`), store it as the Landledger credential, use the infra change
-  template, submit its form, and see the request pending in Landledger; then the Slack relay path with a signed
-  `block_actions` payload ([features/landledger.md](features/landledger.md#checked-live)).
+- **No live webhook delivery yet.** Against Landledger's wave 2 (`f78f8fc`) the credential, the infra change form (a
+  pending request with the run as its origin) and the Slack relay path (a non-approver refused) ran live; a Landledger
+  webhook could not be registered, because the key has no `admin` ([features/landledger.md](features/landledger.md#checked-live)).
+- **A webhook secret made by an admin serves one trigger.** Landledger makes a secret per webhook, and the credential
+  holds one, so each Landledger Trigger without an admin key needs a credential of its own.
 - **Webhooks need an admin key or a hand-made subscription.** Landledger lets only an `admin` key manage webhooks, so
   the trigger either gets one or uses the `whsec_` secret of a webhook an admin made, and Landledger must reach
   `LANDFLOW_PUBLIC_URL`: on the OrbStack cluster that URL is cluster-internal, so Landledger on the Mac needs a port

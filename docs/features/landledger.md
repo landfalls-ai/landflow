@@ -138,15 +138,19 @@ forward or Landflow's compose stack, since the cluster's host URL is cluster-int
 
 ## Checked live
 
-On 2026-11-14, on the OrbStack cluster (`orbstack-clickland`):
+On 2026-11-14, on the OrbStack cluster (`orbstack-clickland`), against Landledger's wave 2 (`f78f8fc`) on the Mac:
 
 | Check | Result |
 |---|---|
 | Plugin registered | `GET /api/plugins`: `landledger` online from `kubernetes` with its 2 nodes; `GET /api/health`: 14 plugins, 14 online |
-| Landledger from the cluster | `GET http://landledger-api.landflow-dev.svc.cluster.local:4810/api/health` from the plugin's pod answered Landledger's health (through the ExternalName) |
+| Credential | an `ll_` key with `read`, `requests:write` and `decisions:relay` (key name `landflow-cluster`), stored through `POST /api/credentials` with Base URL `http://landledger-api.landflow-dev.svc.cluster.local:4810` (the ExternalName); Test: "Connected to Landledger 0.1.0 as landflow-cluster (read, requests:write, decisions:relay)" |
+| Infra change form | the template used and published; one submission (Live check: Landflow plugin, ENG-PLATFORM, USD 600 a month, Eden Tzur) ran `ex_4Msy4BrPfZWc` and raised `req_KKKMAdhv9Vr1Vp0f3KxS` (R-2). Landledger's `GET /api/requests/:id`: `pending`, step 1 of 2 (Budget owner: Amit Gal, Shira Navon; then Finance), `origin` `{ type: landflow_run, workflowId, executionId: ex_4Msy4BrPfZWc }`, created by the key, the policy's reason in the evidence |
+| Slack relay path | the approver template published with a Slack credential whose Base URL was a local Slack stand-in; a `block_actions` press signed with that credential's signing secret, Approve by Tal Levi (`tal.levi@landbright.test`), ran `ex_MedAVqdSRVyq`: Who pressed → his email, Decision → Relay refused by Landledger (403 "This step is for Budget Owners; you aren't in it"), the card updated to say so. The request stayed pending with no decision. The same press with a wrong signature got 401 |
+| Landledger → Landflow | the cluster's published URLs (`http://landflow-host.landflow-dev.svc.cluster.local:3000/…`) answer from the Mac directly (OrbStack resolves `*.svc.cluster.local` on the host), so Landledger can deliver without a port forward |
 
-Not run live yet: the requests, the Slack relay and the trigger. Wave 2's contract is on Landledger's main (`acf95c6`);
-its implementation was still being built in Landledger's checkout (the API on this machine answered version 0.1.0 with
-the requests migration applied, nothing committed), and an `ll_` key is minted only by an admin (`POST /api/keys`, a
-Landbright sign-in), so no key was made. See [limitations](../limitations.md#landledger-built-2026-11-14) for the steps
-once it runs.
+Not done: a real Landledger webhook delivery. Landledger lets only an `admin` key or a controller's session manage
+webhooks, and the key has no `admin`, so publishing both flows reported "Landledger API error 403: This needs the admin
+scope" for their Landledger Triggers. To finish it, a Landledger admin adds a webhook (events `request.step_pending`)
+for `http://landflow-host.landflow-dev.svc.cluster.local:3000/api/webhook/app/<workflowId>/pending`, and puts its
+`whsec_` secret in a Landledger credential of its own on that trigger. The next step pending delivers it, signed.
+See [limitations](../limitations.md#landledger-built-2026-11-14).
