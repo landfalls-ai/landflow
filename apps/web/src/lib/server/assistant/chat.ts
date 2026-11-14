@@ -8,14 +8,40 @@
 import { nanoid } from 'nanoid';
 import type { AgentMessage, LanguageModel, ToolCall, ToolResult, ToolSpec } from '@landflow/engine';
 import type { AssistantOp, RunDigest } from '@/lib/shared/assistant-ops';
-import { describeAgents, withAgentId, type AgentBrief } from '@/lib/shared/agent-brief';
-import { describeTeams, withTeamId, type TeamBrief } from '@/lib/shared/agent-teams';
+import { describeAgents, type AgentBrief } from '@/lib/shared/agent-brief';
+import { describeTeams, type TeamBrief } from '@/lib/shared/agent-teams';
 import type { NodeTypeInfo, PropertyDescriptor, Workflow } from '@/lib/shared/types';
 import { compositeOutline } from '../composites';
 import { PARAMETER_FORMATS } from '../flow-builder';
+import { assistantScope, isUsageCapError, runInUsageScope, type UsageScope } from '../ai-usage';
 import { recordSuggestions, traceAssistant } from '../telemetry/assistant';
-import { assistantModel, modelLabel } from './model';
+import { outcomeOf } from '../telemetry/metrics';
+import { failSpan } from '../telemetry/spans';
+import { saveCheckpoint } from './checkpoints';
+import { assistantModel, errorText, modelLabel } from './model';
 import { redundantBranches, registryLookup, validateOps, withoutRepeatedAdds } from './ops';
+import {
+  APPLY_REQUEST,
+  PERSON_ONLY,
+  asNewAgents,
+  opsArgument,
+  recoverToolCalls,
+  standInKey,
+  unitSlips,
+  wastedFix,
+  withAgentIds,
+  withEarlierRefs,
+  withTeamIds,
+  withoutAgentStandIns,
+  withoutAppliedClaims,
+  withoutApplyRequests,
+  withoutEchoedNotes,
+  withoutInventedIds,
+  withoutLeakedMarkup,
+  withoutMadeUpIds,
+  withoutNarration,
+  withoutRepeats,
+} from './guards';
 import { availableTypes, catalogSummary, nodeContext, nodeDocs, searchNodes, workflowOutline } from './research';
 
 /** The most model calls for one message. A reply stops sooner when two steps in a row add nothing new. */
@@ -28,12 +54,34 @@ export interface ChatTurn {
   content: string;
 }
 
+/** Why a chat ended in an error: the model failed, a usage cap was reached, the steps only repeated, or the host failed. */
+export type ChatErrorKind = 'model' | 'cap' | 'stalled' | 'internal';
+
 export type ChatEvent =
-  | { type: 'text'; text: string }
-  | { type: 'tool'; name: string; label: string; ok: boolean }
+  /** A model call begins (with `trace`). */
+  | { type: 'step.start'; step: number; label: string }
+  /** Tokens of the step as they come (with `trace`): provisional, replaced by the step's `text`. */
+  | { type: 'text.delta'; step: number; text: string }
+  /** The checked text of a step. With `trace`, only the last step's text is the reply (it replaces the step's deltas). */
+  | { type: 'text'; text: string; step?: number }
+  /** With `trace`: the text of a step that also called tools or was sent back, after the guards. It goes in the trace, never the reply. */
+  | { type: 'thinking'; step: number; text: string }
+  | { type: 'tool'; name: string; label: string; ok: boolean; id: string; step: number; durationMs: number; detail?: string }
   | { type: 'proposal'; id: string; summary: string; ops: AssistantOp[]; dropped: string[]; warnings: string[] }
-  | { type: 'done'; model: string; durationMs: number; steps: number; usage: { inputTokens: number; outputTokens: number } }
-  | { type: 'error'; message: string };
+  | { type: 'done'; model: string; durationMs: number; steps: number; usage: { inputTokens: number; outputTokens: number }; costUsd?: number; local: boolean }
+  | { type: 'error'; message: string; kind?: ChatErrorKind; checkpoint?: string; step?: number };
+
+/** What a chat keeps to be continued after an error: the messages with the tool results so far, and what the guards remember. */
+export interface ChatState {
+  history: AgentMessage[];
+  /** Model calls made so far. */
+  steps: number;
+  seen: string[];
+  said: string;
+  /** The proposals sent so far in this reply, as validated: a resumed reply builds on them. */
+  proposals: Array<{ summary: string; ops: AssistantOp[] }>;
+  sent: string[];
+}
 
 export interface ChatInput {
   messages: ChatTurn[];
@@ -63,6 +111,15 @@ export interface ChatInput {
   session?: 'fix' | 'review' | 'auto';
   signal?: AbortSignal;
   onEvent: (event: ChatEvent) => void;
+  /**
+   * Stream the step trace: `step.start`, `text.delta`, text of tool steps as `thinking`, and failures as `error` events
+   * with a checkpoint (the route sets it). Without it the events are the older ones: `text` for every step, errors thrown.
+   */
+  trace?: boolean;
+  /** The caller, for AI usage and its per-user caps, and for keeping checkpoints. */
+  userId?: string;
+  /** Continue from a checkpoint (`takeCheckpoint`): the messages so far, no tool run again. */
+  resume?: ChatState;
 }
 
 const OP_SCHEMA = {
@@ -89,7 +146,7 @@ const OP_SCHEMA = {
   required: ['op'],
 };
 
-const TOOLS: ToolSpec[] = [
+export const TOOLS: ToolSpec[] = [
   {
     name: 'search_nodes',
     description: 'Search the node catalog by keywords (e.g. "google sheets", "dedupe", "send message"). Returns type ids, names and descriptions.',
@@ -164,428 +221,53 @@ const AUTO = 'Autonomous mode: Spotlight applies your proposal as soon as you fi
 
 const shorten = (value: string, max = 60) => (value.length > max ? `${value.slice(0, max - 1)}…` : value);
 
-/** The ops argument as the model sent it: an array, or a JSON string of one. */
-/** The ops a model sent: an array, a single op, JSON text of either, or a wrapper with `ops` (local models vary). */
-export function opsArgument(value: unknown): unknown {
-  let ops = value;
-  if (typeof ops === 'string') {
-    try {
-      ops = JSON.parse(ops);
-    } catch {
-      return [];
-    }
-  }
-  if (ops && typeof ops === 'object' && !Array.isArray(ops)) {
-    const one = ops as Record<string, unknown>;
-    if (Array.isArray(one.ops)) return one.ops;
-    if (typeof one.op === 'string') return [one];
-  }
-  return ops;
-}
-const REF_FIELDS = ['from', 'to', 'after', 'before', 'node'] as const;
-/**
- * Ops with the refs of nodes added by earlier proposals in this reply written as those nodes' names: refs live inside one
- * proposal, but models keep using them ("connect Tech Lead → run_report" after proposing `run_report`).
- */
-export function withEarlierRefs(ops: unknown, refs: Map<string, string>): unknown {
-  if (!Array.isArray(ops) || !refs.size) return ops;
-  const record = (op: unknown) => (op && typeof op === 'object' && !Array.isArray(op) ? (op as Record<string, unknown>) : undefined);
-  const own = new Set(ops.flatMap((op) => (typeof record(op)?.ref === 'string' ? [record(op)!.ref as string] : [])));
-  return ops.map((op) => {
-    const fields = record(op);
-    if (!fields) return op;
-    const next = { ...fields };
-    for (const field of REF_FIELDS) {
-      const value = next[field];
-      if (typeof value === 'string' && !own.has(value) && refs.has(value)) next[field] = refs.get(value);
-    }
-    return next;
-  });
-}
+export * from './guards';
 
 /** Where a model put its ops: `ops`, else the names local models reach for. */
 const opsOf = (args: Record<string, unknown>) => opsArgument(args.ops ?? args.changes ?? args.operations);
 
-const TOOL_NAMES = new Set(TOOLS.map((t) => t.name));
 
-const ID_PARAMETER = /^id$|[a-z]Ids?$/;
+/** The text a step's tokens are sent in: at most one `text.delta` per 50 ms. */
+const DELTA_MS = 50;
 
-/**
- * An id the conversation, the workflow, its runs and the node type's own options never mention (a Slack channel, a
- * sheet, a user) can only have been made up: local models write plausible ones. Those parameters are left out, so the
- * user fills them in. `typeText` gives the node type's properties for an op (defaults and fixed options are known).
- */
-export function withoutInventedIds(ops: unknown, known: string, typeText: (op: Record<string, unknown>) => string = () => ''): { ops: unknown; invented: string[]; values: string[] } {
-  if (!Array.isArray(ops)) return { ops, invented: [], values: [] };
-  const invented: string[] = [];
-  const values: string[] = [];
-  const clean = (op: Record<string, unknown>, node: unknown, parameters: unknown) => {
-    if (!parameters || typeof parameters !== 'object') return parameters;
-    const out = { ...(parameters as Record<string, unknown>) };
-    for (const [key, value] of Object.entries(out)) {
-      if (!ID_PARAMETER.test(key) || typeof value !== 'string' || !value.trim() || value.includes('{{') || known.includes(value) || typeText(op).includes(JSON.stringify(value))) continue;
-      delete out[key];
-      invented.push(`${key} of “${String(node)}”: an id nobody gave, left for the user to fill in`);
-      values.push(value);
-    }
-    return out;
+/** Batches tokens into one call per `DELTA_MS`; `flush` sends what is left (call it when the step ends). */
+function coalesced(send: (text: string) => void): { push: (delta: string) => void; flush: () => void } {
+  let buffer = '';
+  let last = 0;
+  let timer: NodeJS.Timeout | undefined;
+  const flush = () => {
+    if (timer) clearTimeout(timer);
+    timer = undefined;
+    if (!buffer) return;
+    const text = buffer;
+    buffer = '';
+    last = Date.now();
+    send(text);
   };
-  const cleaned = ops.map((op) => {
-    if (!op || typeof op !== 'object') return op;
-    const o = op as Record<string, unknown>;
-    if (o.op === 'addNode') return { ...o, parameters: clean(o, o.name ?? o.type, o.parameters) };
-    if (o.op === 'setParameters') return { ...o, parameters: clean(o, o.node, o.parameters) };
-    return op;
-  });
-  return { ops: cleaned, invented, values };
-}
-
-const UNIT_MS = { ms: 1, s: 1000, min: 60_000, h: 3_600_000 } as const;
-type Unit = keyof typeof UNIT_MS;
-const UNIT_NAME: Record<Unit, string> = { ms: 'milliseconds', s: 'seconds', min: 'minutes', h: 'hours' };
-const DURATION = /(\d+(?:\.\d+)?)\s*(milliseconds?|ms|seconds?|secs?|s|minutes?|mins?|hours?|hrs?|h)\b/gi;
-const unitOfWord = (word: string): Unit => (/^(ms|milli)/i.test(word) ? 'ms' : /^s/i.test(word) ? 's' : /^m/i.test(word) ? 'min' : 'h');
-/** The unit a number field is in, from its label or description: "Timeout (ms)", "Wait (seconds)". */
-const unitOfField = (p: PropertyDescriptor): Unit | undefined => {
-  const text = `${p.displayName} ${p.description ?? ''}`;
-  if (/\(ms\)|millisecond/i.test(text)) return 'ms';
-  if (/\((s|sec|seconds?)\)|in seconds/i.test(text)) return 's';
-  if (/\((min|minutes?)\)|in minutes/i.test(text)) return 'min';
-  return undefined;
-};
-
-/**
- * Durations the request named that a proposal set in the wrong unit: "a 30 minute timeout" on a field in milliseconds
- * proposed as 30 or 1800. Each is said as the number it should be, for sending the proposal back.
- */
-export function unitSlips(ops: unknown, request: string, propertiesOf: (op: Record<string, unknown>) => PropertyDescriptor[] | undefined): string[] {
-  const durations = [...request.matchAll(DURATION)].map((m) => ({ text: m[0], value: Number(m[1]), ms: Number(m[1]) * UNIT_MS[unitOfWord(m[2])] }));
-  if (!durations.length || !Array.isArray(ops)) return [];
-  const slips: string[] = [];
-  const check = (p: PropertyDescriptor | undefined, value: unknown) => {
-    const unit = p?.type === 'number' ? unitOfField(p) : undefined;
-    if (!unit || typeof value !== 'number') return;
-    for (const d of durations) {
-      const expected = d.ms / UNIT_MS[unit];
-      const misread = [d.value, ...Object.values(UNIT_MS).map((ms) => d.ms / ms)].includes(value);
-      if (value !== expected && misread) slips.push(`“${p!.displayName}” is in ${UNIT_NAME[unit]}: ${d.text} is ${expected}, not ${value}`);
-    }
+  return {
+    flush,
+    push(delta) {
+      buffer += delta;
+      const wait = DELTA_MS - (Date.now() - last);
+      if (wait <= 0) flush();
+      else timer ??= setTimeout(flush, wait);
+    },
   };
-  for (const op of ops) {
-    if (!op || typeof op !== 'object' || !('parameters' in op)) continue;
-    const properties = propertiesOf(op as Record<string, unknown>);
-    const parameters = (op as { parameters?: unknown }).parameters;
-    if (!properties || !parameters || typeof parameters !== 'object') continue;
-    for (const [key, value] of Object.entries(parameters)) {
-      const props = properties.filter((p) => p.name === key);
-      const collection = props.find((p) => p.type === 'collection');
-      if (collection && value && typeof value === 'object') for (const [k, v] of Object.entries(value)) check(collection.values?.find((p) => p.name === k), v);
-      else check(props.find((p) => p.type === 'number'), value);
-    }
-  }
-  return slips;
 }
 
-/**
- * A Run a Team node's team as the model wrote it: models put the team's name or its lead's title where the id goes
- * ("Tech Lead" for team_COGk…). A name that matches one published team becomes its id, and `teamName` is filled in from
- * the team, so the node shows it and runs. `typeOf` gives the type of a node a setParameters op names.
- */
-export function withTeamIds(ops: unknown, teams: readonly TeamBrief[], typeOf: (node: string) => string | undefined = () => undefined): unknown {
-  if (!Array.isArray(ops) || !teams.length) return ops;
-  const resolve = (parameters: unknown) => withTeamId(parameters, teams);
-  return ops.map((op) => {
-    if (!op || typeof op !== 'object') return op;
-    const o = op as Record<string, unknown>;
-    if (o.op === 'addNode' && o.type === 'core.runTeam') return { ...o, parameters: resolve(o.parameters) };
-    if (o.op === 'setParameters' && typeOf(String(o.node ?? '')) === 'core.runTeam') return { ...o, parameters: resolve(o.parameters) };
-    return op;
-  });
+/** One line of what a tool call did, for the trace: the query, a count, what was read. Never a result body or a secret. */
+const detailOf = (text: string | undefined) => (text === undefined ? undefined : shorten(text, 300));
+
+/** The chat: Spotlight's model calls count in AI usage (surface `spotlight`) and under the caller's caps. */
+export function runChat(input: ChatInput): Promise<void> {
+  const workflowId = input.workflow.id && input.workflow.id !== 'draft' ? input.workflow.id : undefined;
+  const scope = assistantScope({ surface: 'spotlight', ...(input.userId && { userId: input.userId }), ...(workflowId && { workflowId }) });
+  return runInUsageScope(scope, () => chat(input, scope));
 }
 
-/**
- * A Run an Agent node's agent as the model wrote it: its name where the id goes becomes the id of the one published agent
- * of that name. A newAgent op names an agent that doesn't exist yet: any agentId on it is dropped (the editor sets it).
- */
-export function withAgentIds(ops: unknown, agents: readonly AgentBrief[], typeOf: (node: string) => string | undefined = () => undefined): unknown {
-  if (!Array.isArray(ops)) return ops;
-  const resolve = (parameters: unknown) => withAgentId(parameters, agents);
-  return ops.map((op) => {
-    if (!op || typeof op !== 'object') return op;
-    const o = op as Record<string, unknown>;
-    if (o.op === 'newAgent' || (o.op === 'addNode' && o.newAgent)) {
-      const { agentId: _agentId, ...parameters } = (o.parameters && typeof o.parameters === 'object' ? o.parameters : {}) as Record<string, unknown>;
-      return { ...o, parameters };
-    }
-    if (o.op === 'addNode' && o.type === 'core.messageAgent') return { ...o, parameters: resolve(o.parameters) };
-    if (o.op === 'setParameters' && typeOf(String(o.node ?? '')) === 'core.messageAgent') return { ...o, parameters: resolve(o.parameters) };
-    return op;
-  });
-}
-
-const standInKey = (name: string) => name.trim().toLowerCase().replace(/\s+\d+$/, '').replace(/\s+agent$/, '');
-
-/**
- * Local models propose a `newAgent` and then, in the same conversation, an AI Agent for the same job, or a chat model for
- * the new agent's node, believing it needs one (it runs with the agent's own). Those are left out, with what refers to
- * them, and the model is told why. `agents`: the new agents proposed so far, by `standInKey` of their names.
- */
-export function withoutAgentStandIns(ops: unknown, agents: ReadonlySet<string>, kindOf: (type: string) => string | undefined = () => undefined): { ops: unknown; notes: string[] } {
-  if (!Array.isArray(ops) || !agents.size) return { ops, notes: [] };
-  const notes: string[] = [];
-  const gone = new Set<string>();
-  const isAgent = (name: unknown) => typeof name === 'string' && agents.has(standInKey(name));
-  const kept = ops.filter((op) => {
-    if (!op || typeof op !== 'object') return true;
-    const o = op as Record<string, unknown>;
-    if (o.op === 'addNode' && o.type === 'core.aiAgent' && isAgent(o.name)) {
-      notes.push(`“${String(o.name)}” does the new agent's job: its Run an Agent step already runs it`);
-      for (const handle of [o.ref, o.name]) if (typeof handle === 'string') gone.add(handle);
-      return false;
-    }
-    const attached = (o.op === 'addNode' && kindOf(String(o.type ?? '')) === 'subnode' && isAgent(o.after)) || (o.op === 'connect' && typeof o.type === 'string' && o.type !== 'main' && isAgent(o.to));
-    if (attached) {
-      notes.push(`nothing attaches to the new agent's step: it runs with the agent's own model and tools`);
-      for (const handle of [o.ref, o.name]) if (typeof handle === 'string') gone.add(handle);
-      return false;
-    }
-    return !(o.op === 'connect' || o.op === 'disconnect') || !(gone.has(String(o.from)) || gone.has(String(o.to)));
-  });
-  return { ops: kept, notes: [...new Set(notes)] };
-}
-
-/**
- * A new AI Agent step that wouldn't run here (no chat model attached, so OpenAI's, or a hosted one) becomes a dedicated
- * agent: a newAgent the Agent architect designs on a local model, with the tools and knowledge base it needs. One with an
- * Ollama chat model stays, as a small inline step. Its sub-nodes go with withoutAgentStandIns, given the names returned.
- */
-export function asNewAgents(ops: unknown, typeOf: (name: string) => string | undefined = () => undefined, already: ReadonlySet<string> = new Set()): { ops: unknown; names: string[]; handles: string[]; notes: string[] } {
-  if (!Array.isArray(ops)) return { ops, names: [], handles: [], notes: [] };
-  const handles = (o: Record<string, unknown>) => [o.ref, o.name].filter((h): h is string => typeof h === 'string');
-  const added = new Map<string, string>();
-  for (const op of ops) {
-    const o = op as Record<string, unknown>;
-    if (o?.op === 'addNode' && typeof o.type === 'string') for (const h of handles(o)) added.set(h, o.type);
-  }
-  const typeOfHandle = (h: unknown) => (typeof h === 'string' ? (added.get(h) ?? typeOf(h)) : undefined);
-  const LOCAL = 'core.ollamaChatModel';
-  const runsHere = (agent: Record<string, unknown>) =>
-    ops.some((op) => {
-      const o = op as Record<string, unknown>;
-      return (o?.op === 'addNode' && o.type === LOCAL && handles(agent).includes(String(o.after))) || (o?.op === 'connect' && o.type === 'ai_languageModel' && handles(agent).includes(String(o.to)) && typeOfHandle(o.from) === LOCAL);
-    });
-  const names: string[] = [];
-  const agentHandles: string[] = [];
-  const out = ops.map((op) => {
-    const o = op as Record<string, unknown>;
-    // One named after a new agent already proposed is its stand-in: withoutAgentStandIns drops it.
-    if (o?.op !== 'addNode' || o.type !== 'core.aiAgent' || runsHere(o) || (typeof o.name === 'string' && already.has(standInKey(o.name)))) return op;
-    const p = (o.parameters && typeof o.parameters === 'object' ? o.parameters : {}) as Record<string, unknown>;
-    const said = (v: unknown) => (typeof v === 'string' && v.trim() && !v.trim().startsWith('{{') ? v.trim() : undefined);
-    const name = (typeof o.name === 'string' && o.name.trim()) || 'Agent';
-    names.push(name);
-    agentHandles.push(name, ...(typeof o.ref === 'string' ? [o.ref] : []));
-    const instructions = said(p.systemMessage) ?? said(p.prompt) ?? '';
-    return {
-      op: 'newAgent',
-      name,
-      description: (instructions.split(/(?<=[.!?])\s/)[0] ?? '').slice(0, 300) || name,
-      instructions,
-      ...(typeof p.prompt === 'string' && p.prompt.trim() && { parameters: { message: p.prompt } }),
-      ...Object.fromEntries((['ref', 'after', 'before', 'output'] as const).filter((k) => o[k] !== undefined).map((k) => [k, o[k]])),
-    };
-  });
-  return { ops: out, names, handles: agentHandles, notes: names.map((n) => `“${n}” is a dedicated agent (newAgent), designed on a local model: an AI Agent step here has no chat model it can run on`) };
-}
-
-/** An id-like token in prose: a capital, then 8 or more capitals, digits, `_` or `-`, with a digit among them (C057L43652P). */
-const ID_TOKEN = /\b(?=[A-Z\d_-]*\d)[A-Z][A-Z\d_-]{8,}\b/g;
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-/**
- * The reply's text gets the same check as proposals: an id that nobody gave (one left out of a proposal, or an id-like
- * token the conversation, the workflow and its runs never mention) is not repeated as if it were real. In brackets it
- * goes; anywhere else it reads "the right id".
- */
-export function withoutMadeUpIds(text: string, known: string, invented: Iterable<string> = []): string {
-  const made = new Set([...invented].filter((value) => value.length >= 6 && /\d/.test(value)));
-  for (const token of text.match(ID_TOKEN) ?? []) if (!known.includes(token)) made.add(token);
-  let out = text;
-  for (const value of made) {
-    const id = `[“"'\`]?${escapeRegExp(value)}[”"'\`]?`;
-    out = out.replace(new RegExp(`\\s*\\(\\s*${id}\\s*\\)`, 'g'), '').replace(new RegExp(id, 'g'), 'the right id');
-  }
-  return out;
-}
-
-const SENTENCE = /(?<=[^\d\s][.!?])\s+/;
-const LIST_MARKER = /^\s*(?:\d+[.)]|[-*•])\s*/;
-
-/** Drop the sentences `drop` picks, keeping lines and list items in place. Undefined when nothing was dropped. */
-function dropSentences(text: string, drop: (sentence: string) => boolean): string | undefined {
-  let dropped = false;
-  const lines = text.split('\n');
-  const kept = lines.map((line) => {
-    const sentences = line.split(SENTENCE);
-    const left = sentences.filter((sentence) => !drop(sentence.replace(LIST_MARKER, '')));
-    if (left.length !== sentences.length) dropped = true;
-    return left.join(' ');
-  });
-  if (!dropped) return undefined;
-  return kept
-    .filter((line, i) => line.trim() || !lines[i].trim())
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-const DONE = 'updated|added|applied|inserted|connected|removed|deleted|changed|modified|created|configured|replaced|renamed|fixed';
-// A sentence may open with a past tense ("Added a Slack node"), not with "Set up", which is also an instruction.
-const APPLIED_CLAIM = new RegExp(
-  `^(?:${DONE})\\b|\\b(?:has|have) (?:now )?been (?:${DONE}|set up|made)\\b|\\bI(?:'ve| have)?(?: just| now)? (?:${DONE}|set up|made)\\b|\\bis now (?:connected|added|configured|in place)\\b|\\bis (?:now )?ready to\\b|\\bnow (?:has|have|contains|includes)\\b|\\b(?:was|were) (?:${DONE}|set up)\\b|\\bwill now\\b|\\bnow (?:posts|sends|runs|writes|saves|calls|replies|returns|uses|keeps|filters)\\b`,
-  'i',
-);
-
-/**
- * Local models sometimes say a proposed change "has been added" (or "the workflow will now post…") although nothing
- * changes until the user clicks Apply. In a reply that proposed something those sentences are dropped, so the panel
- * never says a change was made. Lines and list items keep their layout; a list number stays with its item.
- */
-export function withoutAppliedClaims(text: string): string {
-  const out = dropSentences(text, (sentence) => APPLIED_CLAIM.test(sentence));
-  if (out === undefined) return text;
-  return out || 'Review the change on the card, then click Apply to make it.';
-}
-
-/** The notes the conversation history gives of earlier proposals and test runs ("[Proposed “…”: applied]"). */
-const ECHOED_NOTE = /^[ \t]*\[(?:Proposed “[^”]*”|Test run \d+ \w+): [^\]\n]*\][ \t]*(?:\n|$)/gm;
-
-/** A local model may copy those notes into its text as if writing one made a change: they are left out. */
-export function withoutEchoedNotes(text: string): string {
-  return text.replace(ECHOED_NOTE, '').replace(/\n{3,}/g, '\n\n').trim();
-}
-
-/** Content words (four letters or more, a plural "s" off) for telling a repeated sentence. */
-const contentWords = (text: string) => new Set((text.toLowerCase().match(/[\p{L}\d][\p{L}\d'-]*/gu) ?? []).map((w) => w.replace(/'s$/, '').replace(/s$/, '')).filter((w) => w.length >= 4));
-
-/**
- * A local model often answers, calls a tool to check, then answers again in other words. A later sentence whose
- * content words (six or more) were nearly all said earlier in the same reply is left out.
- */
-export function withoutRepeats(text: string, earlier: string): string {
-  if (!earlier.trim()) return text;
-  const said = contentWords(earlier);
-  const plain = (sentence: string) => sentence.toLowerCase().replace(/[^\p{L}\d]+/gu, ' ').trim();
-  const sentences = new Set(earlier.split('\n').flatMap((line) => line.split(SENTENCE)).map(plain));
-  return (
-    dropSentences(text, (sentence) => {
-      if (plain(sentence).length > 12 && sentences.has(plain(sentence))) return true;
-      const own = [...contentWords(sentence)];
-      return own.length >= 6 && own.filter((w) => said.has(w)).length / own.length >= 0.8;
-    }) ?? text
-  );
-}
-
-/** A reply that says only the person can fix it: a credential, an account, a key, an id. */
-const PERSON_ONLY = /\b(credential|api key|access token|sign in|log in|permission)s?\b/i;
-
-/** The model saying what it is about to do or what it looked at, before the answer. */
-const NARRATION = /^(?:let me|let's|i'll|i will|i need to|i'm going to|now i|now,? let|first,|next,|looking at|based on|i can see|i see that|to fix this|the user (?:wants|needs|asked))\b/i;
-
-/** Sentences that narrate instead of answer are left out; the answer stays (and all of it, when nothing else is left). */
-export function withoutNarration(text: string): string {
-  const out = dropSentences(text, (sentence) => NARRATION.test(sentence.trim()));
-  return out === undefined || !out.trim() ? text : out;
-}
-
-/**
- * Tool-call markup a local model leaves in its text: a `<function=…>` call with its body up to its end (or the end of
- * the text when it isn't closed), `<think>` blocks, and stray tags.
- */
-export function withoutLeakedMarkup(text: string): string {
-  return text
-    .replace(/<think>[\s\S]*?(?:<\/think>|$)/g, '')
-    .replace(/<tool_call>[\s\S]*?(?:<\/tool_call>|$)/g, '')
-    .replace(/<function=[\s\S]*?(?:<\/function>|$)/g, '')
-    .replace(/<\/?(?:tool_call|function|parameter)\b[^>]*>/g, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trimEnd();
-}
-
-/**
- * Why a test-and-fix session's fix would be wasted, if it is: it touches neither the failing step nor anything that feeds
- * it, it removes a node and adds the same kind back, or it only adds a No Operation step.
- */
-export function wastedFix(ops: AssistantOp[], workflow: Workflow, failingId: string | undefined): string | undefined {
-  if (!ops.length) return undefined;
-  const byRef = (ref: string | undefined) => workflow.nodes.find((n) => n.name === ref || n.id === ref);
-  const removed = ops.flatMap((op) => (op.op === 'removeNode' ? [byRef(op.node)] : [])).filter((n): n is NonNullable<typeof n> => Boolean(n));
-  const readded = ops.find((op) => op.op === 'addNode' && removed.some((n) => n.type === op.type));
-  if (readded?.op === 'addNode') return `removing “${removed.find((n) => n.type === readded.type)?.name}” and adding the same kind of node back changes nothing.`;
-  if (ops.every((op) => op.op === 'addNode' && op.type === 'core.noOp')) return 'a No Operation step changes nothing.';
-  const failing = failingId ? workflow.nodes.find((n) => n.id === failingId) : undefined;
-  if (!failing) return undefined;
-  // The failing step and every node upstream of it.
-  const near = new Set([failing.id]);
-  for (let grew = true; grew; ) {
-    grew = false;
-    for (const c of workflow.connections) if (near.has(c.target) && !near.has(c.source)) (near.add(c.source), (grew = true));
-  }
-  const touches = ops.some((op) => {
-    const refs = [
-      'node' in op ? op.node : undefined,
-      'from' in op ? op.from : undefined,
-      'to' in op ? op.to : undefined,
-      'after' in op ? op.after : undefined,
-      'before' in op ? op.before : undefined,
-    ];
-    return refs.some((ref) => typeof ref === 'string' && near.has(byRef(ref)?.id ?? ''));
-  });
-  return touches ? undefined : `the run failed at “${failing.name}”, and this change touches neither it nor what feeds it.`;
-}
-
-const APPLY_REQUEST = /\bclick (?:on )?(?:the )?["“]?apply\b|\bapply (?:this|that|the|these|those|my)(?: \w+)? (?:change|fix|proposal)e?s?\b|\b(?:run|test) (?:the workflow|it) again\b/i;
-
-/** A line that is only a JSON object: a tool call or its result written as text (`{"error": "No change needed"}`). */
-const JSON_LINE = /^[ \t]*\{[^\n]*\}[ \t]*(?:\n|$)/gm;
-
-/**
- * In a test-and-fix session Spotlight applies and runs by itself: "click Apply" and "run it again" are left out, and so
- * are lines that are only a JSON object (the session's text is a log of what happened, not a place for data).
- */
-export function withoutApplyRequests(text: string): string {
-  const prose = text.replace(JSON_LINE, '').replace(/\n{3,}/g, '\n\n').trim();
-  return dropSentences(prose, (sentence) => APPLY_REQUEST.test(sentence)) ?? prose;
-}
-
-/**
- * Local models (qwen3-coder in particular) sometimes write a tool call as text,
- * `<function=name><parameter=key>value</parameter></function>`, instead of a
- * structured one. Read those back so the turn still works.
- */
-export function recoverToolCalls(text: string, names: ReadonlySet<string> = TOOL_NAMES): { text: string; calls: ToolCall[] } {
-  const calls: ToolCall[] = [];
-  const rest = text
-    .replace(/<function=([\w-]+)>([\s\S]*?)<\/function>/g, (whole, name: string, body: string) => {
-      if (!names.has(name)) return whole;
-      const input: Record<string, unknown> = {};
-      for (const [, key, value] of body.matchAll(/<parameter=([\w-]+)>\s*([\s\S]*?)\s*<\/parameter>/g)) {
-        try {
-          input[key] = JSON.parse(value);
-        } catch {
-          input[key] = value;
-        }
-      }
-      calls.push({ id: `call_text_${Date.now().toString(36)}_${calls.length}`, name, input });
-      return '';
-    })
-    .replace(/<\/?tool_call>/g, '')
-    .trim();
-  return calls.length ? { text: rest, calls } : { text, calls };
-}
-
-export async function runChat(input: ChatInput): Promise<void> {
+async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
   const { onEvent, runs = {} } = input;
+  const trace = input.trace === true;
   const types = input.types ?? availableTypes();
   const lookup = registryLookup(types);
   const model = assistantModel(input.model);
@@ -607,9 +289,19 @@ export async function runChat(input: ChatInput): Promise<void> {
     waitingSummaries.push(shorten(summary, 140));
     working = next;
   };
+  /** The proposals of this reply (and of the reply a resume continues), for the checkpoint. */
+  const proposalLog: ChatState['proposals'] = [];
   for (const earlier of input.pending ?? []) {
     const validated = validateOps(working, opsArgument(earlier.ops), lookup);
     if (validated.ops.length) hold(earlier.summary, validated.workflow);
+  }
+  // A resumed reply builds on the proposals the failed one had sent.
+  for (const earlier of input.resume?.proposals ?? []) {
+    const validated = validateOps(working, earlier.ops, lookup);
+    if (!validated.ops.length) continue;
+    hold(earlier.summary, validated.workflow);
+    proposalLog.push(earlier);
+    for (const op of validated.ops) if (op.op === 'addNode' && op.ref && op.name) proposedRefs.set(op.ref, op.name);
   }
   const outline = () => workflowOutline(working, runs, { types, pending: waiting, pendingSummaries: waitingSummaries, removed: [...removed.values()] });
   const latest = input.messages.findLast((m) => m.role === 'user')?.content.toLowerCase() ?? '';
@@ -631,20 +323,20 @@ export async function runChat(input: ChatInput): Promise<void> {
   let failedSentBack = false;
   /** Whether a proposal that set a duration in the wrong unit was sent back. */
   let unitsSentBack = false;
-  let proposed = false;
+  let proposed = proposalLog.length > 0;
   /** Whether a fix request that proposed nothing was sent back for a proposal. */
   let pressed = false;
   /** A fix that missed the failing step was sent back once. */
   let offTargetSent = false;
   let applyRetried = false;
   /** The ops of each proposal so far, as sent: a model may send the same one again and again. */
-  const sent = new Set<string>();
+  const sent = new Set<string>(input.resume?.sent);
   /** What the user and the editor said, for telling a given id from a made-up one. */
   const known = () =>
     [...input.messages.map((m) => m.content), JSON.stringify(working), JSON.stringify(runs), ...(input.teams?.length ? [describeTeams(input.teams)] : []), ...(input.agents?.length ? [describeAgents(input.agents)] : [])].join('\n');
   /** The agents newAgent proposed in this reply and in pending proposals, by standInKey of their names. */
   const newAgents = new Set<string>(
-    (input.pending ?? []).flatMap((p) => (Array.isArray(p.ops) ? p.ops : []).flatMap((op) => {
+    [...(input.pending ?? []), ...(input.resume?.proposals ?? [])].flatMap((p) => (Array.isArray(p.ops) ? p.ops : []).flatMap((op) => {
       const o = op as Record<string, unknown>;
       const spec = (o.newAgent ?? (o.op === 'newAgent' ? o : undefined)) as { name?: unknown } | undefined;
       return typeof spec?.name === 'string' ? [standInKey(spec.name)] : [];
@@ -653,7 +345,7 @@ export async function runChat(input: ChatInput): Promise<void> {
   /** Ids left out of proposals as made up: the text doesn't repeat them either. */
   const invented = new Set<string>();
   /** The text shown so far in this reply, for leaving out what it says twice. */
-  let said = '';
+  let said = input.resume?.said ?? '';
   const usage = { inputTokens: 0, outputTokens: 0 };
 
   const nodeByName = (name: string) => working.nodes.find((n) => n.name === name) ?? working.nodes.find((n) => n.name.toLowerCase() === name.toLowerCase() || n.id === name);
@@ -674,11 +366,15 @@ export async function runChat(input: ChatInput): Promise<void> {
     input.session === 'auto' ? `\n${AUTO}` : input.session ? `\n${SESSION}` : '',
   ].join('\n');
 
+  /** The step now running, for the tool events. */
+  let currentStep = 0;
   const execute = async (call: ToolCall): Promise<ToolResult> => {
+    const toolStarted = Date.now();
+    let detail: string | undefined;
     // `shownOk`: how the step looks to the person. A change sent back to the model to complete is an error to the model
     // but not a failure to show: Spotlight is still working on it ("Reworked the change").
     const result = (content: string, label: string, ok = true, shownOk = ok): ToolResult => {
-      onEvent({ type: 'tool', name: call.name, label, ok: shownOk });
+      onEvent({ type: 'tool', name: call.name, label, ok: shownOk, id: `t_${nanoid(8)}`, step: currentStep, durationMs: Date.now() - toolStarted, ...(detailOf(detail) && { detail: detailOf(detail) }) });
       return { id: call.id, name: call.name, content, ...(!ok && { isError: true }) };
     };
     const args = call.input ?? {};
@@ -686,10 +382,12 @@ export async function runChat(input: ChatInput): Promise<void> {
       case 'search_nodes': {
         const query = String(args.query ?? '');
         const hits = searchNodes(query, types);
+        detail = `“${query}”: ${hits.length} ${hits.length === 1 ? 'match' : 'matches'}`;
         return result(hits.length ? JSON.stringify(hits.map(({ score: _score, ...hit }) => hit)) : `No node types match “${query}”. Try other words.`, `Searched nodes for “${shorten(query, 40)}”`);
       }
       case 'get_node_docs': {
         const asked = String(args.type ?? args.node ?? '');
+        detail = asked;
         const existing = nodeByName(asked);
         const info = types.find((t) => t.type === (existing?.type ?? asked)) ?? types.find((t) => t.descriptor.displayName.toLowerCase() === asked.toLowerCase());
         if (!info) {
@@ -701,14 +399,17 @@ export async function runChat(input: ChatInput): Promise<void> {
         return result(`${nodeDocs(info, existing?.parameters)}${teamsNote}${agentsNote}`, `Read ${info.descriptor.displayName} docs`);
       }
       case 'get_workflow':
+        detail = `${working.nodes.length} node${working.nodes.length === 1 ? '' : 's'}`;
         return result(outline(), 'Read the workflow');
       case 'get_run_data': {
         const node = nodeByName(String(args.node ?? ''));
+        detail = node?.name ?? String(args.node ?? '');
         if (!node) return result(`No node named “${String(args.node ?? '')}”. Nodes: ${working.nodes.map((n) => n.name).join(', ')}`, `Looked for “${shorten(String(args.node ?? ''), 40)}”: not found`, false);
         return result(nodeContext(working, node.id, runs[node.id], types), `Read run data of “${shorten(node.name, 40)}”`);
       }
       case 'propose_changes': {
         const summary = shorten(String(args.summary ?? '').trim() || 'Proposed change', 140);
+        detail = summary;
         const ops = withEarlierRefs(opsOf(args), proposedRefs);
         const asSent = JSON.stringify(ops);
         if (sent.has(asSent)) return result('Nothing changes: you proposed exactly this above. Do not propose it again.', 'Skipped a repeated proposal');
@@ -809,6 +510,7 @@ export async function runChat(input: ChatInput): Promise<void> {
           );
         }
         hold(summary, validated.workflow);
+        proposalLog.push({ summary, ops: validated.ops });
         for (const op of validated.ops) if (op.op === 'addNode' && op.ref && op.name) proposedRefs.set(op.ref, op.name);
         for (const op of validated.ops) if (op.op === 'addNode' && op.newAgent) for (const name of [op.newAgent.name, op.name]) if (name) newAgents.add(standInKey(name));
         sent.add(asSent);
@@ -828,72 +530,134 @@ export async function runChat(input: ChatInput): Promise<void> {
     }
   };
 
-  await traceAssistant('chat', { 'landflow.workflow.id': input.workflow.id, 'gen_ai.request.model': model.model, 'landflow.assistant.turns': input.messages.length }, async (span) => {
-    const history: AgentMessage[] = input.messages.map((m) => (m.role === 'user' ? { role: 'user', content: m.content } : { role: 'assistant', text: m.content, toolCalls: [] }));
-    let steps = 0;
+  await traceAssistant('chat', { 'landflow.workflow.id': input.workflow.id, 'gen_ai.request.model': model.model, 'landflow.assistant.turns': input.messages.length }, async (span, setOutcome) => {
+    const history: AgentMessage[] = input.resume ? [...input.resume.history] : input.messages.map((m) => (m.role === 'user' ? { role: 'user', content: m.content } : { role: 'assistant', text: m.content, toolCalls: [] }));
+    let steps = input.resume?.steps ?? 0;
+    /** A resumed reply gets a fresh budget of steps; the count goes on from where it stopped. */
+    const stepLimit = steps + MAX_STEPS;
     let finished = false;
     /** Steps in a row that added nothing new, and the tool results seen so far in this reply. */
     let stalled = 0;
-    const seen = new Set<string>();
-    while (steps < MAX_STEPS && !finished && stalled < MAX_STALLED) {
-      steps++;
-      const turn = await model.generate({ system, messages: history, tools: TOOLS, ...(input.signal && { signal: input.signal }) });
-      usage.inputTokens += turn.usage?.inputTokens ?? 0;
-      usage.outputTokens += turn.usage?.outputTokens ?? 0;
-      const { text, calls } = turn.toolCalls.length ? { text: turn.text, calls: turn.toolCalls } : recoverToolCalls(turn.text);
-      const proposing = proposed || calls.some((call) => call.name === 'propose_changes');
-      if (text.trim()) {
-        // A local model leaves its tool-call tags in the text ("…to test it.<tool_call>").
-        const own = withoutNarration(withoutLeakedMarkup(withoutEchoedNotes(text)));
-        // Spotlight applies a session's proposals itself: "it now posts…" is true there.
-        const claimsOff = proposing && !input.session ? withoutAppliedClaims(own) : own;
-        const shown = own && withoutMadeUpIds(withoutRepeats(input.session ? withoutApplyRequests(claimsOff) : claimsOff, said), known(), invented);
-        said += `\n${text}`;
-        if (shown.trim()) onEvent({ type: 'text', text: shown });
-      }
-      history.push({ role: 'assistant', text, toolCalls: calls, ...(turn.raw && { raw: turn.raw }) });
-      finished = !calls.length;
-      // Local models describe a fix without proposing it; a test-and-fix session needs the proposal.
-      // Not when it already said only the person can fix it: pressing makes a local model invent a fix.
-      if (finished && input.session === 'fix' && !proposed && !pressed && !PERSON_ONLY.test(text)) {
-        pressed = true;
-        finished = false;
-        history.push({ role: 'user', content: 'Nothing was proposed: only a propose_changes call changes the workflow. Call propose_changes with the fix now, or, if only I can fix it, say what to do in one sentence.' });
-        continue;
-      }
-      // The reply says to apply a card that was never made: say so and ask once more, instead of ending the turn.
-      if (finished && !input.session && !proposed && !waiting.size && APPLY_REQUEST.test(text)) {
-        if (!applyRetried) {
-          applyRetried = true;
+    const seen = new Set<string>(input.resume?.seen);
+    /** What a checkpoint keeps: the messages up to the last finished step. */
+    const checkpoint = () => saveCheckpoint(input.userId, { history: [...history], steps, seen: [...seen], said, proposals: [...proposalLog], sent: [...sent] } satisfies ChatState);
+    /** Ends the reply with an error event (with `trace`); false when the error is the caller's own abort or the older events are wanted. */
+    const fail = (caught: unknown, kind: ChatErrorKind, failedStep: number): boolean => {
+      if (!trace || input.signal?.aborted) return false;
+      // The error event is the reply's end, but the request still failed: count it and mark the span.
+      setOutcome(outcomeOf(caught));
+      span.setAttribute('landflow.error.kind', kind);
+      failSpan(span, caught);
+      // A checkpoint needs at least one finished step to continue from; a reached cap would only stop it again.
+      const keep = kind !== 'cap' && failedStep > 1 && history.at(-1)?.role === 'tool';
+      onEvent({ type: 'error', kind, message: errorText(caught), ...(keep && { checkpoint: checkpoint(), step: failedStep }) });
+      return true;
+    };
+    try {
+      while (steps < stepLimit && !finished && stalled < MAX_STALLED) {
+        steps++;
+        currentStep = steps;
+        if (trace) onEvent({ type: 'step.start', step: steps, label: steps === 1 ? 'Reading your request' : 'Working on it' });
+        const batch = trace ? coalesced((delta) => onEvent({ type: 'text.delta', step: currentStep, text: delta })) : undefined;
+        let turn: Awaited<ReturnType<typeof model.generate>>;
+        try {
+          turn = await model.generate({ system, messages: history, tools: TOOLS, ...(input.signal && { signal: input.signal }), ...(batch && { onToken: batch.push }) });
+        } catch (caught) {
+          batch?.flush();
+          // The failed step is not in the history: a checkpoint continues at it.
+          steps--;
+          if (isUsageCapError(caught) ? fail(caught, 'cap', steps + 1) : fail(caught, 'model', steps + 1)) return;
+          throw caught;
+        }
+        batch?.flush();
+        usage.inputTokens += turn.usage?.inputTokens ?? 0;
+        usage.outputTokens += turn.usage?.outputTokens ?? 0;
+        const { text, calls } = turn.toolCalls.length ? { text: turn.text, calls: turn.toolCalls } : recoverToolCalls(turn.text);
+        const proposing = proposed || calls.some((call) => call.name === 'propose_changes');
+        // Whether this step is sent back to the model (a fix that proposed nothing; a card announced and never made): then it is not the reply.
+        const pressNow = !calls.length && input.session === 'fix' && !proposed && !pressed && !PERSON_ONLY.test(text);
+        const applyNow = !calls.length && !input.session && !proposed && !waiting.size && APPLY_REQUEST.test(text);
+        const continues = calls.length > 0 || pressNow || (applyNow && !applyRetried);
+        /** Text a step sends: its checked text is the reply when it is the last step, else part of the trace. */
+        const say = (shown: string, last = !continues) => {
+          if (!trace) onEvent({ type: 'text', text: shown });
+          else if (last) onEvent({ type: 'text', text: shown, step: currentStep });
+          else onEvent({ type: 'thinking', step: currentStep, text: shown });
+        };
+        let sentText = false;
+        if (text.trim()) {
+          // A local model leaves its tool-call tags in the text ("…to test it.<tool_call>").
+          const own = withoutNarration(withoutLeakedMarkup(withoutEchoedNotes(text)));
+          // Spotlight applies a session's proposals itself: "it now posts…" is true there.
+          const claimsOff = proposing && !input.session ? withoutAppliedClaims(own) : own;
+          const shown = own && withoutMadeUpIds(withoutRepeats(input.session ? withoutApplyRequests(claimsOff) : claimsOff, said), known(), invented);
+          said += `\n${text}`;
+          if (shown.trim()) {
+            say(shown);
+            sentText = true;
+          }
+        }
+        // The deltas of a last step that the guards left nothing of: an empty `text` clears them.
+        if (trace && !continues && !sentText) onEvent({ type: 'text', text: '', step: currentStep });
+        history.push({ role: 'assistant', text, toolCalls: calls, ...(turn.raw && { raw: turn.raw }) });
+        finished = !calls.length;
+        // Local models describe a fix without proposing it; a test-and-fix session needs the proposal.
+        // Not when it already said only the person can fix it: pressing makes a local model invent a fix.
+        if (finished && pressNow) {
+          pressed = true;
           finished = false;
-          onEvent({ type: 'text', text: '(No change card was created, so there is nothing to apply yet. Trying again.)' });
-          history.push({ role: 'user', content: 'You told me to click Apply, but no proposal exists: nothing was shown to me. Call propose_changes now with the change, or say plainly that you are not changing anything.' });
+          history.push({ role: 'user', content: 'Nothing was proposed: only a propose_changes call changes the workflow. Call propose_changes with the fix now, or, if only I can fix it, say what to do in one sentence.' });
           continue;
         }
-        onEvent({ type: 'text', text: '(Still no change card: nothing was proposed, so there is nothing to apply.)' });
+        // The reply says to apply a card that was never made: say so and ask once more, instead of ending the turn.
+        if (finished && applyNow) {
+          if (!applyRetried) {
+            applyRetried = true;
+            finished = false;
+            say('(No change card was created, so there is nothing to apply yet. Trying again.)', false);
+            history.push({ role: 'user', content: 'You told me to click Apply, but no proposal exists: nothing was shown to me. Call propose_changes now with the change, or say plainly that you are not changing anything.' });
+            continue;
+          }
+          say('(Still no change card: nothing was proposed, so there is nothing to apply.)', true);
+        }
+        if (finished) break;
+        const results: ToolResult[] = [];
+        let progress = false;
+        for (const call of calls) {
+          const shownBefore = waitingSummaries.length;
+          const outcome = await execute(call);
+          span.addEvent('assistant.tool', { 'gen_ai.tool.name': call.name, 'landflow.outcome': outcome.isError ? 'error' : 'ok' });
+          results.push(outcome);
+          // Progress is a new proposal, or a result this reply hasn't had yet.
+          const key = `${outcome.name}\n${outcome.content}`;
+          if (waitingSummaries.length > shownBefore || !seen.has(key)) progress = true;
+          seen.add(key);
+        }
+        stalled = progress ? 0 : stalled + 1;
+        history.push({ role: 'tool', results });
       }
-      if (finished) break;
-      const results: ToolResult[] = [];
-      let progress = false;
-      for (const call of calls) {
-        const shownBefore = waitingSummaries.length;
-        const outcome = await execute(call);
-        span.addEvent('assistant.tool', { 'gen_ai.tool.name': call.name, 'landflow.outcome': outcome.isError ? 'error' : 'ok' });
-        results.push(outcome);
-        // Progress is a new proposal, or a result this reply hasn't had yet.
-        const key = `${outcome.name}\n${outcome.content}`;
-        if (waitingSummaries.length > shownBefore || !seen.has(key)) progress = true;
-        seen.add(key);
-      }
-      stalled = progress ? 0 : stalled + 1;
-      history.push({ role: 'tool', results });
+    } catch (caught) {
+      // Not a model failure (those returned above): a tool or the host failed.
+      if (fail(caught, 'internal', steps)) return;
+      throw caught;
     }
     // A test-and-fix session goes on (or stops) by itself: "ask me to continue" would only be noise there.
     if (!finished && !input.session) {
-      const text = stalled >= MAX_STALLED ? '(Stopped: the last steps only repeated what was already done. Tell me what to change, or ask me to continue.)' : `(Stopped after ${MAX_STEPS} steps. Ask me to continue if there is more to do.)`;
-      onEvent({ type: 'text', text });
+      const repeated = stalled >= MAX_STALLED;
+      const text = repeated ? '(Stopped: the last steps only repeated what was already done. Tell me what to change, or ask me to continue.)' : `(Stopped after ${MAX_STEPS} steps. Ask me to continue if there is more to do.)`;
+      // With a trace, a stall ends as an error the client can continue from; running out of steps is the reply's last word.
+      if (repeated && trace) {
+        setOutcome('error');
+        span.setAttribute('landflow.error.kind', 'stalled');
+        failSpan(span, new Error(text));
+        onEvent({ type: 'error', kind: 'stalled', message: text, checkpoint: checkpoint(), step: steps });
+        return;
+      }
+      if (trace) onEvent({ type: 'text', text, step: steps });
+      else onEvent({ type: 'text', text });
     }
     span.setAttribute('landflow.assistant.steps', steps);
-    onEvent({ type: 'done', model: modelLabel(model), durationMs: Date.now() - started, steps, usage });
+    const costUsd = scope.tree.calls ? Math.round(scope.tree.cost * 1e8) / 1e8 : undefined;
+    onEvent({ type: 'done', model: modelLabel(model), durationMs: Date.now() - started, steps, usage, ...(costUsd !== undefined && { costUsd }), local: model.provider === 'ollama' });
   });
 }

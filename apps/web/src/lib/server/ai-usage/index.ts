@@ -159,6 +159,7 @@ export class AiUsageMeter implements UsageMeter {
         agent_id: scope.lookup('agentId'),
         session_id: scope.lookup('sessionId'),
         user_id: scope.lookup('userId'),
+        surface: scope.lookup('surface'),
         credential_id: call.credentialId,
         cache_read_tokens: call.cacheReadTokens,
         cache_write_tokens: call.cacheWriteTokens,
@@ -199,8 +200,9 @@ export class AiUsageMeter implements UsageMeter {
     return totalsOf(this.db().get<SumRow>(`SELECT ${SUMS} FROM ai_usage WHERE ${where}`, ...params));
   }
 
+  /** A workflow's runs today: Spotlight rows (they carry a surface) do not count against its own per-day caps. */
   workflowDay(workflowId: string, day = this.today()): AiUsageTotals {
-    return this.sum('workflow_id = ? AND day = ?', workflowId, day);
+    return this.sum('workflow_id = ? AND day = ? AND surface IS NULL', workflowId, day);
   }
 
   agentDay(agentId: string, day = this.today()): AiUsageTotals {
@@ -341,6 +343,15 @@ export function executionScope(
 export function agentScope(info: { agentId: string; agentName: string; sessionId: string; settings: Partial<AgentSettings>; userId?: string }, meter: AiUsageMeter = aiUsageMeter()): UsageScope {
   const parent = currentUsageScope();
   return new UsageScope({ agentId: info.agentId, sessionId: info.sessionId, ...(info.userId && { userId: info.userId }) }, agentLimits(info.agentId, info.agentName, info.settings, meter), parent, parent ? undefined : meter);
+}
+
+/**
+ * Open a scope for the assistant's own model calls (Spotlight, the Agent architect, the brain): the calls write
+ * `ai_usage` rows with the `surface`, and the caller's per-user caps apply. Run the work with `runInUsageScope`.
+ */
+export function assistantScope(info: { userId?: string; surface: 'spotlight' | 'architect' | 'brain'; workflowId?: string }, meter: AiUsageMeter = aiUsageMeter()): UsageScope {
+  const parent = currentUsageScope();
+  return new UsageScope({ surface: info.surface, ...(info.workflowId && { workflowId: info.workflowId }), ...(info.userId && { userId: info.userId }) }, [], parent, parent ? undefined : meter);
 }
 
 export { runInUsageScope };

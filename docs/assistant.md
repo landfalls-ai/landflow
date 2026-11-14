@@ -85,6 +85,35 @@ Each message sends the conversation so far, the current workflow (`toWorkflow()`
 | `get_run_data(node)` | The node's parameters, neighbours, run status, error and first items | Read run data of "Code" |
 | `propose_changes(summary, ops)` | Validates the ops and shows them as a proposal card | Proposed 2 changes |
 
+#### The stream
+
+The route streams with `trace` on. What each step sends, and where it goes in Spotlight:
+
+| Event | Fields | Goes in |
+|---|---|---|
+| `step.start` | `step`, `label` | the trace: a model call begins |
+| `text.delta` | `step`, `text` | provisional text, as tokens come (at most one event per 50 ms); the step's `text` replaces it |
+| `thinking` | `step`, `text` | the trace, never the reply: the text of a step that also called tools, or that was sent back, after the guards |
+| `text` | `text`, `step` | the reply: the checked text of the last step (empty when the guards left nothing, so the deltas clear) |
+| `tool` | `id`, `step`, `name`, `label`, `ok`, `durationMs`, `detail?` | the trace: one line per tool call, timed; `detail` (300 characters at most) is the query, a count or what was read, never a result body |
+| `proposal` | as before | a card |
+| `done` | `model`, `durationMs`, `steps`, `usage`, `costUsd?`, `local` | the end: `costUsd` is what the reply's model calls cost (absent when nothing was priced), `local` is true for an Ollama model |
+| `error` | `message`, `kind`, `checkpoint?`, `step?` | the end: `kind` is `model`, `cap` (a usage cap was reached), `stalled` (the last steps only repeated) or `internal` |
+
+Only the last step's text is the reply: narration a model writes before a tool call arrives as `thinking`. A caller that does not ask for the trace (`runChat` without `trace`) gets the older events, `text` for every step and errors thrown.
+
+**Continuing after an error.** When a model call fails, or the reply stalls, after at least one tool step, the `error` event carries a `checkpoint` (the messages so far with the tool results, and the proposals sent) and the `step` that failed. Send the same request with `resume: { checkpoint }` and the chat goes on from that step: nothing already done runs again, the step count continues, and a stalled reply gets a fresh budget of 20 steps. A checkpoint is used once, belongs to the user who made it and lives in the host's memory for 15 minutes (200 at most, the oldest dropped). An unknown, expired or another user's checkpoint answers 409 `checkpoint_expired`. A `cap` error carries none: it would stop again. Details a client should know:
+
+- A checkpoint is tagged with its surface: a Spotlight checkpoint sent to the architect route (or the reverse) answers 409 too. Each user keeps at most 10; past that their own oldest goes, so one user's stalls never evict another's.
+- It keeps the messages and the proposals the failed reply had sent, which the resume replays. The client must therefore leave those cards out of `pending` when it resumes (listing them would hold them twice). It does not keep the once-only nudges (a fix sent back once, a card announced and never made, a press to propose); a resumed reply may send each once more.
+- No checkpoint is kept when the history ends on a user message (a failure right after a "press" or "apply" prompt), nor when no tool step finished.
+- With `trace`, a stall or an error ends the stream with `error` and no `done`: the reply's usage and cost are in AI usage, not in the stream.
+- **Provisional text.** `text.delta`s of a step are provisional. A step that continues sends its checked text as `thinking`; if the guards leave nothing of it, it sends nothing, so a client must drop a step's provisional deltas at the next `tool` or `step.start`. The last step's checked text, or an empty `text`, replaces its deltas.
+
+**Metering.** Spotlight's calls write `ai_usage` rows with surface `spotlight`. The route attributes them to `workflowId` (or the body's `workflow.id`) only when the caller can read that workflow (`meteredWorkflowId`); otherwise they carry no workflow. A workflow's own per-day caps and alerts count its runs only (`workflowDay` skips rows with a surface), so chatting about a workflow never makes its runs fail on a cap; Insights' totals and the per-user caps include the surface rows. A reply that ends in an `error` event still counts as `error` in `landflow.assistant.requests`, and its span records the exception and `landflow.error.kind`.
+
+**AI usage.** Spotlight's and the architect's model calls count like any other: each writes an `ai_usage` row with `surface` (`spotlight`, `architect`; the Brain's will be `brain`), the caller's id and, for Spotlight, the saved workflow's id. They show in Insights' AI usage totals, and the caller's per-user caps (Settings → AI usage caps) apply: a reached cap ends the reply with `error { kind: 'cap' }` and the cap's message. A row with no workflow (the architect's, an unsaved workflow's) is visible to owners and admins only.
+
 Before showing a proposal, `propose_changes` makes these checks. A change it sends back to the model shows as one neutral step, *Reworked the change* (the model still gets it as an error, with the reason), not as a failure the person has to read:
 - **Nothing valid**: if none of the ops apply, the reasons go back to the model to fix.
 - **Parts failed**: if some ops apply and others don't (a type that doesn't exist, a connection to a `ref` no `addNode` gave, a number outside its field's range such as a timeout of `30` in a field measured in milliseconds, which is left out), it goes back **once** with the reasons, so a "replace X with Y" that only removed X isn't shown as is. The second attempt is shown, with what it still leaves out.
@@ -105,7 +134,7 @@ Each card has **Apply** and **Dismiss**. When a reply has two or more open propo
 
 Local models sometimes write a tool call as text (`<function=propose_changes><parameter=…>`) instead of a structured call. The chat reads those back as calls.
 
-More guards cover what local models get wrong (all in `lib/server/assistant/chat.ts`):
+More guards cover what local models get wrong (all in `lib/server/assistant/guards.ts`, re-exported by `chat.ts`):
 - **Made-up ids**: a parameter named like an id (`channelId`, `sheetId`, `id`…) whose value appears nowhere in the conversation, the workflow, its run data or the node type's own options is left out of the proposal, and the card lists it as left for the user to fill in. The prompt also says not to invent ids, channels, addresses, URLs or keys.
 - **"It has been added"**: in a reply that proposed something, sentences that say the change was made ("has been added", "I've updated…", "The workflow now has…", "is ready to…") are dropped, because nothing changes until Apply. Lists keep their lines; if nothing is left, the reply says to review the card and click Apply.
 - **Wiring and purpose warnings**: after a build, the proposal card carries warnings for (a) a connection from one If/Switch output into a node a sibling output also reaches (sent back once like other structural warnings; loops back to the branching node and Merge targets are exempt), (b) a new If/Filter/Switch, or a new Set/Code-like node that is a dead-end stub beside a sibling, that nothing reads ("has no purpose"; shown only, not sent back), and (c) a fix that hides an error: `onError: continue`, or code parameters that catch and return (shown only), (d) a new tool-capable node wired after an agent as a normal step, or a sub-node given a main connection (sent back once: `“Shell” is wired after “Agent” as a normal step; … ai_tool`), and (e) a new node whose required credential is unset, as a caution chip on the card (`“Search” needs the credential braveSearchApi and none is set: pick one in the node's panel`; shown only, and only when the credential slot is visible for the node's parameters). The prompt also covers collection shapes and `ai_*` connections, and says to tell the user what it can't set. The chat has no pin operation: the builder's test data (`cleanTestItems` in `flow-builder.ts`) drops chat-trigger junk (`chatInput`, the trigger's own parameters) and is not pinned when no node reads it.
@@ -285,7 +314,7 @@ The server runs it against the registry's available node types. The editor runs 
 | Route | Body | Response |
 |---|---|---|
 | `POST /api/assistant/suggest` | `{ workflow, workflowId?, nodeId, run: RunDigest, model? }` | `{ suggestions: [{ id, kind, title, detail, confidence, ops, dropped?, warnings? }], model, durationMs, skipped? }` · 404 for an unknown node, 502 when the model fails |
-| `POST /api/assistant/chat` | `{ messages: [{ role, content }], workflow, workflowId?, selectedNodeId?, runs?: { [nodeId]: RunDigest }, mentions?: { nodes?: string[], types?: string[] }, pending?: [{ summary, ops }], session?: fix\|review, model? }` (`session`: a [Test and fix](#test-and-fix) request) | SSE, one event per step: `text {text}`, `tool {name, label, ok}`, `proposal {id, summary, ops, dropped, warnings}`, then `done {model, durationMs, steps, usage}` or `error {message}` |
+| `POST /api/assistant/chat` | `{ messages: [{ role, content }], workflow, workflowId?, selectedNodeId?, runs?: { [nodeId]: RunDigest }, mentions?: { nodes?: string[], types?: string[] }, pending?: [{ summary, ops }], session?: fix\|review, model?, resume?: { checkpoint } }` (`session`: a [Test and fix](#test-and-fix) request; `resume`: [continue after an error](#the-stream)) | SSE: `step.start`, `text.delta`, `thinking`, `text`, `tool`, `proposal`, then `done` or `error` (events in [The stream](#the-stream)) · 409 `checkpoint_expired` |
 | `POST /api/assistant/feedback` | `{ kind: fix\|param\|data\|next\|proposal, action: applied\|dismissed }` | `{ ok: true }` (feeds the metrics below) |
 
 `RunDigest` is `{ status, durationMs, error?, inputs: [{ count, sample }], outputs: [{ count, sample }], logs? }`. `sample` holds the first 3 items' JSON, with long strings, arrays and deep objects clipped. The editor builds digests with `digestRun()`, so full run data never leaves the browser.
