@@ -182,35 +182,34 @@ async function flushOnce($: EngineInterface) {
       for (const item of batch) inFlight.delete(item.event.sourceId)
       await $.store.set('queue', settle(await queueOf($), batch, status, now, fingerprint))
       if (status !== undefined && status >= 200 && status < 300) await markSent($, batch, result, now)
+      // In the same lock as markSent, so the two writers of `problems` cannot interleave.
+      else if (status === 400 || status === 413 || status === 422) {
+        await $.store.set('problems', [`the brain refused ${batch.length} event${batch.length === 1 ? '' : 's'} (HTTP ${status}); they stay held here and are not retried`])
+      }
     })
   } finally {
     for (const item of batch) inFlight.delete(item.event.sourceId)
-  }
-  if (status === 400 || status === 413 || status === 422) {
-    await $.store.set('problems', [`the brain refused ${batch.length} event${batch.length === 1 ? '' : 's'} (HTTP ${status}); they stay held here and are not retried`])
   }
 }
 
 /** Inside the journal lock: the entries whose events the brain saved become `sent`. */
 async function markSent($: EngineInterface, batch: ReturnType<typeof due>, result: Awaited<ReturnType<typeof postWork>>, now: number) {
-  {
-    await $.store.set('problems', result.rejected.map(item => `${item.sourceId}: ${item.reason}`.slice(0, 200)).slice(0, 10))
-    const journal = await load($)
-    const sent = new Set(result.saved)
-    const marked: Entry[] = []
-    for (const entry of journal) {
-      if (entry.status === 'held' && sent.has(entry.sourceId)) {
-        entry.status = 'sent'
-        entry.sentAt = new Date(now).toISOString()
-        const event = batch.find(item => item.event.sourceId === entry.sourceId)?.event
-        if (event) entry.sentEvent = event
-        marked.push(entry)
-      }
+  await $.store.set('problems', result.rejected.map(item => `${item.sourceId}: ${item.reason}`.slice(0, 200)).slice(0, 10))
+  const journal = await load($)
+  const sent = new Set(result.saved)
+  const marked: Entry[] = []
+  for (const entry of journal) {
+    if (entry.status === 'held' && sent.has(entry.sourceId)) {
+      entry.status = 'sent'
+      entry.sentAt = new Date(now).toISOString()
+      const event = batch.find(item => item.event.sourceId === entry.sourceId)?.event
+      if (event) entry.sentEvent = event
+      marked.push(entry)
     }
-    // The same session sent again (a resumed one) replaced the earlier event there; it is one entry here too.
-    for (const entry of journal) if (entry.status === 'sent' && !marked.includes(entry) && marked.some(item => item.sourceId === entry.sourceId)) entry.status = 'dropped'
-    await save($, journal)
   }
+  // The same session sent again (a resumed one) replaced the earlier event there; it is one entry here too.
+  for (const entry of journal) if (entry.status === 'sent' && !marked.includes(entry) && marked.some(item => item.sourceId === entry.sourceId)) entry.status = 'dropped'
+  await save($, journal)
 }
 
 /**

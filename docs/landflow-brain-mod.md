@@ -17,12 +17,13 @@ the number of turns, a title, the directories you edited in (never a file name o
 number of commits, and the pull requests you opened or merged (their URLs).
 
 The title is the first sentence of your first prompt, made on your machine by rules with no model call: secrets masked,
-file paths cut down to their directories, URLs and emails dropped, at most 200 characters. If the prompt reads like code
-the title is "Coding session".
+file paths cut down to their directories (a leading `@` dropped), URLs and emails dropped, at most 200 characters. If
+the prompt reads like code the title is "Coding session".
 
 `/clear` and an in-process resume end the session id but not the process, and no session start follows: the mod holds the
 ending entry and opens a new one for the same repository and branch. A title never shows an absolute, home or drive
-path (also after `@`, `=` or `file:`), or a path that climbs out with `..`; such a path with a space in it goes whole
+path (also after `@`, `=`, `file:` or a flag such as `-I`), a word holding a machine's top-level directory (`/usr/`,
+`/Users/`, `/home/`, `/opt/` and the like), or a path that climbs out with `..`; such a path with a space in it goes whole
 (a quoted span that holds one, and a `\ ` inside a word). After an unquoted one that does not end in a file name, the
 rest of its clause goes too, up to a `.`, `,`, `;`, `:`, `!` or `?` or a new line (`~/a/My Big Project/x` leaves nothing);
 after one that ends in a file name, the words with a slash that follow it go; a relative file path is cut to its first two
@@ -70,7 +71,9 @@ prompt is also connected, or yesterday comes in twice.
 ## Offline queue
 
 A sent entry waits in a queue in the mod's own store: at most 500 events and 14 days, the oldest dropped. A failed send
-backs off from 30 seconds to 30 minutes, and every minute the mod tries what is due. A session that crashed leaves its
+backs off from 30 seconds to 30 minutes, and every minute the mod tries what is due. While its event waits there, the
+entry still reads `held` in `/brain today` and the status line; it becomes `sent` when the brain saves it. Drop in
+`/brain review`, or `/brain forget`, takes a waiting event out of the queue, so it is never sent. A session that crashed leaves its
 entry open; the next session start holds it. The hooks only observe: none denies a tool call or changes a result.
 
 ## Install and set up
