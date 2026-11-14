@@ -38,7 +38,7 @@ const AUTO_KEY = 'landflow-executions-autorefresh';
 const COLS = 'md:grid-cols-[minmax(180px,1.6fr)_minmax(120px,0.9fr)_minmax(150px,1fr)_96px_40px] max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-y-1';
 const NEW_ROW: CSSProperties = { animation: 'lf-slide-right 0.24s cubic-bezier(0.22, 1, 0.36, 1) both, lf-flash 1.2s ease-out' };
 
-const hrefOf = (e: ExecutionSummary) => `/workflows/${e.workflowId}/executions/${e.id}`;
+const hrefOf = (e: ExecutionSummary) => `/workflows/${e.workflowId}/runs/${e.id}`;
 
 type MenuView = 'main' | 'retry' | 'rerun' | 'delete';
 
@@ -53,7 +53,7 @@ function RowMenu({ execution, onChanged }: { execution: ExecutionSummary; onChan
     try {
       const id = await start();
       toast.success(label);
-      router.push(`/workflows/${execution.workflowId}/executions/${id}`);
+      router.push(`/workflows/${execution.workflowId}/runs/${id}`);
     } catch (e) {
       toast.error((e as Error).message);
     }
@@ -515,7 +515,7 @@ export function RunsList() {
         <LiveRuns executions={list} />
         <RunsFilters filters={filters} onChange={change} workflows={workflowChoices} />
         {workflowId && (
-          <Link href={`/workflows/${workflowId}/executions`} className="-mt-2 text-[12px] text-t2 hover:text-t1">
+          <Link href={`/workflows/${workflowId}/runs`} className="-mt-2 text-[12px] text-t2 hover:text-t1">
             Open in workflow →
           </Link>
         )}

@@ -226,8 +226,8 @@ describe('the message', () => {
     const text = message.textOf(notice);
     expect(text).toContain('Failed node: Fetch orders');
     expect(text).toContain('Error: Request failed with status code 502');
-    expect(text).toContain('Execution: http://landflow.test/workflows/wf_orders/executions/exec_msg');
-    expect(message.htmlOf(notice)).toContain('href="http://landflow.test/workflows/wf_orders/executions/exec_msg"');
+    expect(text).toContain('Execution: http://landflow.test/workflows/wf_orders/runs/exec_msg');
+    expect(message.htmlOf(notice)).toContain('href="http://landflow.test/workflows/wf_orders/runs/exec_msg"');
     expect(message.subjectOf(message.noticeFor({ id: 'r1', name: 'Prod' }, 'retriesExhausted', failedRecord({ retryOf: 'x', retryAttempt: 3 })))).toBe('Failed after 3 retries: Orders sync');
     expect(message.subjectOf(message.noticeFor({ id: 'r1', name: 'Prod' }, 'timedOut', failedRecord()))).toBe('Timed out: Orders sync');
     // HTML in an error is escaped.
@@ -391,8 +391,8 @@ describe('rules, throttling and digests', () => {
     expect(received[2].json).toMatchObject({
       type: 'alert.digest',
       summary: 'Orders sync: 2 more failures in the last 10 min',
-      digest: { count: 2, lastError: 'Still 502', lastExecutionUrl: 'http://landflow.test/workflows/wf_orders/executions/exec_c' },
-      executionsUrl: 'http://landflow.test/workflows/wf_orders/executions',
+      digest: { count: 2, lastError: 'Still 502', lastExecutionUrl: 'http://landflow.test/workflows/wf_orders/runs/exec_c' },
+      executionsUrl: 'http://landflow.test/workflows/wf_orders/runs',
     });
     expect(received[2].headers['x-landflow-event']).toBe('alert.digest');
 
@@ -482,7 +482,7 @@ describe('the runner and the workflow shortcut', () => {
     expect(received[0].json).toMatchObject({
       event: 'failed',
       workflow: { id: workflow.id, name: workflow.name },
-      execution: { id: record.executionId, node: 'Boom', error: 'Inventory API said no', mode: 'trigger', url: `http://landflow.test/workflows/${workflow.id}/executions/${record.executionId}` },
+      execution: { id: record.executionId, node: 'Boom', error: 'Inventory API said no', mode: 'trigger', url: `http://landflow.test/workflows/${workflow.id}/runs/${record.executionId}` },
     });
 
     // Turning it off removes the rule.

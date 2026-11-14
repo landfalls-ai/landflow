@@ -72,7 +72,7 @@ export function useProposalActions({ onDone, onForbidden, localApply }: { onDone
   };
   /** The toast that names the workflows a decision started (the missing tool's "Build it" and any On Suggestion Decided). */
   const startedToast = (started?: Array<{ id: string; name: string }>, verb = 'Started') => {
-    if (started?.length) toast.success(`${verb}: ${started.map((w) => `“${w.name}”`).join(', ')}`, { action: { label: 'Executions', onClick: () => router.push('/executions') } });
+    if (started?.length) toast.success(`${verb}: ${started.map((w) => `“${w.name}”`).join(', ')}`, { action: { label: 'Runs', onClick: () => router.push('/runs') } });
   };
   const patch = (p: Proposal, json: unknown) => api(`/api/proposals/${encodeURIComponent(p.id)}`, { method: 'PATCH', json });
 
@@ -107,7 +107,7 @@ export function useProposalActions({ onDone, onForbidden, localApply }: { onDone
           toast.success('Workflow created');
           router.push(`/workflows/${result.workflow.id}`);
         } else if (kind === 'build') {
-          if (result.started?.length) toast.success(`Approved: ${result.started.map((w) => `“${w.name}”`).join(', ')} builds it`, { action: { label: 'Executions', onClick: () => router.push('/executions') } });
+          if (result.started?.length) toast.success(`Approved: ${result.started.map((w) => `“${w.name}”`).join(', ')} builds it`, { action: { label: 'Runs', onClick: () => router.push('/runs') } });
         } else {
           toast.success(kind === 'note' ? 'Kept for the project' : 'Applied');
           startedToast(result.started);

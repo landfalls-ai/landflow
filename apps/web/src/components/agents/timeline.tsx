@@ -336,12 +336,12 @@ function ToolRow({
                 <Link
                   href={
                     entry.workflowId
-                      ? `/workflows/${encodeURIComponent(entry.workflowId)}/executions/${encodeURIComponent(entry.executionId)}`
-                      : `/executions?id=${encodeURIComponent(entry.executionId)}`
+                      ? `/workflows/${encodeURIComponent(entry.workflowId)}/runs/${encodeURIComponent(entry.executionId)}`
+                      : `/runs/${encodeURIComponent(entry.executionId)}`
                   }
                   className="inline-flex items-center gap-1 text-ac hover:underline"
                 >
-                  <ExternalLink className="size-3" /> Open execution
+                  <ExternalLink className="size-3" /> Open run
                 </Link>
               )}
               {entry.childSessionId &&

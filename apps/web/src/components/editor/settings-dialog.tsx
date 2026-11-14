@@ -215,7 +215,7 @@ export function BasicWorkflowSettings({
         className="flex w-full flex-wrap items-center gap-x-1.5 border-t border-hair pt-3 text-left text-[13px] font-semibold text-t2 hover:text-t1"
       >
         <ChevronRight className={cn('size-4 transition-transform', showAdvanced && 'rotate-90')} /> Advanced
-        <span className="basis-full pl-[22px] text-[12px] font-normal text-t3">Timeout, who can call it, executions to keep, concurrency, retries, AI limits, Run Trace, governance</span>
+        <span className="basis-full pl-[22px] text-[12px] font-normal text-t3">Timeout, who can call it, runs to keep, concurrency, retries, AI limits, Run Trace, governance</span>
       </button>
     </>
   );
@@ -423,15 +423,15 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
           </Field>
 
           <div className="space-y-2">
-            <div className="text-[12px] font-semibold text-t2">Executions to keep</div>
+            <div className="text-[12px] font-semibold text-t2">Runs to keep</div>
             <ToggleRow
-              title="Successful executions"
+              title="Successful runs"
               description="Keep successful runs in the history"
               checked={draft.saveSuccessfulExecutions !== false}
               onChange={(v) => patch({ saveSuccessfulExecutions: v })}
             />
-            <ToggleRow title="Failed executions" description="Keep runs that ended with an error" checked={draft.saveFailedExecutions !== false} onChange={(v) => patch({ saveFailedExecutions: v })} />
-            <ToggleRow title="Manual executions" description="Keep runs started from the editor" checked={draft.saveManualExecutions !== false} onChange={(v) => patch({ saveManualExecutions: v })} />
+            <ToggleRow title="Failed runs" description="Keep runs that ended with an error" checked={draft.saveFailedExecutions !== false} onChange={(v) => patch({ saveFailedExecutions: v })} />
+            <ToggleRow title="Manual runs" description="Keep runs started from the editor" checked={draft.saveManualExecutions !== false} onChange={(v) => patch({ saveManualExecutions: v })} />
           </div>
 
           <div className="space-y-2">

@@ -169,7 +169,7 @@ function workflowFacts(db: Database, workflow: Workflow, profile: BrainProfile, 
   );
   if (failure && failure.n >= 2) {
     const node = workflow.nodes.find((n) => n.id === failure.node_id);
-    fact('failure', `Most common failure: “${failure.message ?? 'an error'}” on “${node?.name ?? failure.node_id}”, ${failure.n} times this week.`, 0.85, [{ label: 'Failures', value: failure.n, href: `${href}/executions` }]);
+    fact('failure', `Most common failure: “${failure.message ?? 'an error'}” on “${node?.name ?? failure.node_id}”, ${failure.n} times this week.`, 0.85, [{ label: 'Failures', value: failure.n, href: `${href}/runs` }]);
   }
   const slow = db.get<{ node_id: string; n: number }>(`SELECT node_id, COUNT(*) AS n FROM usage_events WHERE kind = 'node.slow' AND workflow_id = ? AND at >= ? GROUP BY node_id ORDER BY n DESC LIMIT 1`, workflow.id, since);
   if (slow && slow.n >= 2) {

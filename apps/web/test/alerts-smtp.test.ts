@@ -93,8 +93,8 @@ describe.skipIf(!enabled)('failure alerts over SMTP (Mailpit)', async () => {
       expect(detail.From.Address).toBe('alerts@landflow.test');
       expect(detail.Text).toContain('Failed node: Upload to S3');
       expect(detail.Text).toContain('Error: S3 answered 403 AccessDenied');
-      expect(detail.Text).toContain(`http://landflow.test/workflows/wf_smtp/executions/exec_smtp_${tag}`);
-      expect(detail.HTML).toContain(`href="http://landflow.test/workflows/wf_smtp/executions/exec_smtp_${tag}"`);
+      expect(detail.Text).toContain(`http://landflow.test/workflows/wf_smtp/runs/exec_smtp_${tag}`);
+      expect(detail.HTML).toContain(`href="http://landflow.test/workflows/wf_smtp/runs/exec_smtp_${tag}"`);
     }
   }, 60_000);
 

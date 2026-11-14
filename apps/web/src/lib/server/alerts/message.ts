@@ -54,8 +54,8 @@ export function publicUrl(): string {
   return configPublicUrl();
 }
 
-export const executionUrl = (workflowId: string, executionId: string) => `${publicUrl()}/workflows/${workflowId}/executions/${executionId}`;
-export const executionsUrl = (workflowId: string) => `${publicUrl()}/workflows/${workflowId}/executions`;
+export const executionUrl = (workflowId: string, executionId: string) => `${publicUrl()}/workflows/${workflowId}/runs/${executionId}`;
+export const executionsUrl = (workflowId: string) => `${publicUrl()}/workflows/${workflowId}/runs`;
 
 const clip = (text: string | undefined, max = MAX_ERROR) => (text && text.length > max ? `${text.slice(0, max - 1)}…` : text);
 

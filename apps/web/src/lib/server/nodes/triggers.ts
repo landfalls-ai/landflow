@@ -440,7 +440,7 @@ export const errorTrigger = defineNode({
           json: {
             execution: {
               id: 'ex_example',
-              url: `/workflows/wf_example/executions/ex_example`,
+              url: `/workflows/wf_example/runs/ex_example`,
               error: { message: 'Example error message', stack: 'Error: Example error message' },
               lastNodeExecuted: 'Node With Error',
               mode: 'trigger',

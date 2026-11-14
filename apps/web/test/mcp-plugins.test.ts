@@ -308,7 +308,7 @@ describe('tools/call', () => {
     expect(result.structuredContent).toEqual({ items: [{ ok: true, operation: 'create', title: 'Hello', input: { title: 'Hello', extra: 'ignored' } }] });
     expect(JSON.parse(text(result))).toEqual([{ ok: true, operation: 'create', title: 'Hello', input: { title: 'Hello', extra: 'ignored' } }]);
     const executionId = (result._meta as { 'dev.landflow/execution': { id: string; url: string } })['dev.landflow/execution'].id;
-    expect((result._meta as { 'dev.landflow/execution': { url: string } })['dev.landflow/execution'].url).toBe(`http://mcp.test/workflows/${mcpWorkflowId(PLUGIN_ID)}/executions/${executionId}`);
+    expect((result._meta as { 'dev.landflow/execution': { url: string } })['dev.landflow/execution'].url).toBe(`http://mcp.test/workflows/${mcpWorkflowId(PLUGIN_ID)}/runs/${executionId}`);
 
     const list = executions();
     expect(list).toHaveLength(before + 1);

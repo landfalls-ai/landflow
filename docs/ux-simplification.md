@@ -64,7 +64,7 @@ sidebar. (M, phase 4 of [spotlight.md](spotlight.md#delivery).)
   gone, a one-line warning shows above the tiles only when a plugin is offline; "Needs you" is the fourth tile (its
   number in the tile's amber, not red: waiting is not failing; it updates when a run starts to wait, and Home, the
   rail and the runs page share one request); a run of one flow is one line; a suggestion is a compact card, whose
-  warnings stay in view when it is folded. When every recent run is still going, Recent executions says so.
+  warnings stay in view when it is folded. When every recent run is still going, Recent runs says so.
 
 ### Developer details everywhere (high impact, S)
 

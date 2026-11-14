@@ -385,7 +385,7 @@ function RunView({
                   {name}
                 </th>
               ))}
-              <th className="py-2 pl-2 pr-3 text-right font-semibold">Execution</th>
+              <th className="py-2 pl-2 pr-3 text-right font-semibold">Run</th>
             </tr>
           </thead>
           <tbody>
@@ -491,7 +491,7 @@ function CompareView({ comparison, workflowId, onSwap, onClose }: { comparison: 
                   {name}
                 </th>
               ))}
-              <th className="py-2 pl-2 pr-3 text-right font-semibold">Executions</th>
+              <th className="py-2 pl-2 pr-3 text-right font-semibold">Runs</th>
             </tr>
           </thead>
           <tbody>

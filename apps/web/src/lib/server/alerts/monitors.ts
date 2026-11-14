@@ -92,7 +92,7 @@ export async function checkFailureRates(now: number, dispatch: Dispatch): Promis
       if (current?.expiresAt && Date.parse(current.expiresAt) > now) continue;
       const percent = Math.round((window.failed / window.total) * 1000) / 10;
       alertStore.setState(rule.id, key, { percent, failed: window.failed, total: window.total, at: new Date(now).toISOString() }, new Date(now + limits.windowMinutes * 60_000).toISOString());
-      const link = `${publicUrl()}/workflows/${window.workflowId}/executions`;
+      const link = `${publicUrl()}/workflows/${window.workflowId}/runs`;
       await dispatch(
         rule,
         customNotice({

@@ -145,7 +145,7 @@ export function executionDigest(record: ExecutionRecord, includeData: boolean) {
     nodes,
     output: itemsJson(lastNodeItems(record)),
     ...(includeData && { runData: record.runData }),
-    url: `${workflowUrl(record.workflowId)}/executions/${record.executionId}`,
+    url: `${workflowUrl(record.workflowId)}/runs/${record.executionId}`,
   };
 }
 
@@ -426,7 +426,7 @@ export function instanceServer(actor?: Actor, scope?: McpScope, keyScopes?: read
         if (wait === false) {
           const executionId = await context.with(trigger.context, () => startInBackground(options));
           trigger.end();
-          return json({ executionId, status: 'running', url: `${workflowUrl(id)}/executions/${executionId}` });
+          return json({ executionId, status: 'running', url: `${workflowUrl(id)}/runs/${executionId}` });
         }
         const record = await context.with(trigger.context, () => runWorkflow(options));
         trigger.end();

@@ -60,7 +60,7 @@ export function PollStatus({ workflowId, nodeId, active, dirty, interval }: { wo
               {status.lastExecutionId && (
                 <>
                   {' · '}
-                  <Link href={`/workflows/${workflowId}/executions/${status.lastExecutionId}`} className="text-t1 underline-offset-2 hover:text-ac hover:underline">
+                  <Link href={`/workflows/${workflowId}/runs/${status.lastExecutionId}`} className="text-t1 underline-offset-2 hover:text-ac hover:underline">
                     last run
                   </Link>
                 </>

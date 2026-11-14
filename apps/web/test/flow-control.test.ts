@@ -623,7 +623,7 @@ describe('error workflows', () => {
     expect(errorRun.errorOf).toBe(failed.executionId);
     expect(outputOf(errorRun, 'Notify')).toEqual([
       {
-        execution: { id: failed.executionId, url: `http://flow.test/workflows/wf_failing/executions/${failed.executionId}`, error: { message: 'boom' }, lastNodeExecuted: 'Fail', mode: 'trigger' },
+        execution: { id: failed.executionId, url: `http://flow.test/workflows/wf_failing/runs/${failed.executionId}`, error: { message: 'boom' }, lastNodeExecuted: 'Fail', mode: 'trigger' },
         workflow: { id: 'wf_failing', name: 'Failing flow' },
       },
     ]);

@@ -169,7 +169,7 @@ function clip(text: string): string {
  * them and the small images and audio inline, or an error result naming the execution.
  */
 async function callResult(record: ExecutionRecord, plugin: PluginSummary, caller: McpCaller, tool: McpToolDefinition): Promise<CallToolResult> {
-  const url = `${publicUrl()}/workflows/${record.workflowId}/executions/${record.executionId}`;
+  const url = `${publicUrl()}/workflows/${record.workflowId}/runs/${record.executionId}`;
   const meta = { [MCP_EXECUTION_META_KEY]: { id: record.executionId, status: record.status, url } };
   if (record.status !== 'success') {
     return { ...textResult(`${record.error?.message ?? `The run ended as ${record.status}`} (execution ${record.executionId})`, true), _meta: meta };

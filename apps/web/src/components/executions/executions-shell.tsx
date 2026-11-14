@@ -308,7 +308,7 @@ export function ExecutionsShell({ workflowId, children }: { workflowId: string; 
           <span className="hidden max-w-[30%] truncate md:block text-[15px] font-semibold text-t1">{workflow?.name ?? (workflowMissing ? 'Deleted workflow' : ' ')}</span>
           {workflow?.active && <Badge tone="success" className="hidden md:inline-flex">Published</Badge>}
           <WorkflowTabs workflowId={workflowId} active="runs" className="md:absolute md:left-1/2 md:-translate-x-1/2" />
-          <Link href={`/executions?workflowId=${workflowId}`} className="ml-auto hidden text-[12px] text-t2 transition-colors hover:text-t1 md:block">
+          <Link href={`/runs?workflowId=${workflowId}`} className="ml-auto hidden text-[12px] text-t2 transition-colors hover:text-t1 md:block">
             All runs
           </Link>
         </header>

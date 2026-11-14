@@ -622,15 +622,15 @@ function StatusStrip() {
       <div className="flex h-10 shrink-0 items-center gap-2.5 border-b border-hair bg-sf2 px-4 text-[13px]">
         <History className="size-3.5 text-t3" />
         <span className="text-t1">
-          Showing execution <span className="font-mono text-[12px]">{viewing.id}</span>
+          Showing run <span className="font-mono text-[12px]">{viewing.id}</span>
         </span>
         <Badge tone={executionTone(viewing.status)}>{viewing.status}</Badge>
         <span className="text-[12px] text-t3">{timeAgo(viewing.startedAt)} · select a node and use Run node or Run from here to re-run part of it</span>
         <div className="ml-auto flex items-center gap-2">
-          <Link href={`/workflows/${useEditor.getState().workflowId}/executions/${viewing.id}`} className="text-[12px] text-t2 hover:text-ac">
-            Open in executions
+          <Link href={`/workflows/${useEditor.getState().workflowId}/runs/${viewing.id}`} className="text-[12px] text-t2 hover:text-ac">
+            Open in Runs
           </Link>
-          <Button size="icon-sm" variant="ghost" onClick={() => useEditor.getState().clearRun()} aria-label="Clear execution data">
+          <Button size="icon-sm" variant="ghost" onClick={() => useEditor.getState().clearRun()} aria-label="Clear run data">
             <X className="size-3.5" />
           </Button>
         </div>
@@ -711,7 +711,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
             if (followable(r.execution)) useEditor.getState().attachRun(r.execution, r.progress, Boolean(requested));
             else useEditor.getState().loadExecution(r.execution, Boolean(requested));
           })
-          .catch(() => requested && toast.error(`Execution ${requested} not found`));
+          .catch(() => requested && toast.error(`Run ${requested} not found`));
       })
       .catch((e: Error) => toast.error(`Could not load workflow: ${e.message}`));
     return () => {
