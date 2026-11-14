@@ -8,6 +8,7 @@ import { a2aAgentNode } from './a2a';
 import { runTeamNode } from './run-team';
 import { messageAgentNode, workflowTrigger } from './agents';
 import { brainEntityNode } from './entities';
+import { briefingNodes } from './briefing';
 import { detectorTriggerNode, findSimilarNode, landflowUsageNode, recordEventNode, suggestImprovementNode, suggestionDecidedTriggerNode, usageTriggerNode } from './usage';
 import { aiAgentNode, anthropicChatModelNode, calculatorToolNode, ollamaChatModelNode, simpleMemoryNode } from './ai';
 import { chainLlmNode, informationExtractorNode, textClassifierNode } from './chains';
@@ -109,6 +110,8 @@ export const corePlugin = definePlugin({
     suggestionDecidedTriggerNode,
     detectorTriggerNode,
     suggestImprovementNode,
+    // B30:
+    ...briefingNodes,
     chainLlmNode,
     textClassifierNode,
     informationExtractorNode,

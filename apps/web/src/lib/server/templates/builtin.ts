@@ -10,6 +10,8 @@
 import type { StickyNote, Workflow, WorkflowConnection, WorkflowGroup, WorkflowNode } from '@landflow/engine';
 import { NODE_TILE, NODE_WIDE_TILE, frameAround, nodeBox } from '../../shared/groups';
 import { BUILTIN_TEAM_TEMPLATES } from './builtin-teams';
+// B30:
+import { brainTemplates } from './builtin-brain';
 import type { AgentTeamConfig } from '../../shared/agent-teams';
 import type { AgentConfig } from '../../shared/agents';
 import type { TemplateBundle, TemplateCategory, TemplateCredentialSlot, TemplateDataTable, TemplateDetail } from '../../shared/templates';
@@ -1123,4 +1125,10 @@ const WORK_TEMPLATES: TemplateDetail[] = [
 ];
 
 /** Every built-in template: the workflows above, the work ingest ones, then the agent teams. */
-export const BUILTIN_TEMPLATES: TemplateDetail[] = [...WORKFLOW_TEMPLATES, ...WORK_TEMPLATES, ...BUILTIN_TEAM_TEMPLATES];
+export const BUILTIN_TEMPLATES: TemplateDetail[] = [
+  ...WORKFLOW_TEMPLATES,
+  ...WORK_TEMPLATES,
+  ...BUILTIN_TEAM_TEMPLATES,
+  // B30:
+  ...brainTemplates({ template, node, main, daily, SLOT }),
+];

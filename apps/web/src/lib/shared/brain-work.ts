@@ -40,6 +40,8 @@ export interface Briefing {
   yesterday: WorkItem[];
   related: RelatedColleague[];
   summary?: string;
+  /** For `source: 'flow'`: the run of the nightly sync that wrote it. */
+  generatedBy?: { workflowId: string; executionId: string };
   /** The admin's setting: whether tools may send work on their own. */
   autoSend: 'allowed' | 'forbidden';
   brain: 'on' | 'off';
@@ -48,4 +50,14 @@ export interface Briefing {
 /** The instance's brain settings (`PATCH /api/settings`, `brain`). */
 export interface BrainSettings {
   workAutoSend: 'allowed' | 'forbidden';
+}
+
+/** What the nightly sync gathers for one person (docs/work-and-briefings.md#the-nightly-sync). Stored sealed in their own row, never in run data. */
+export interface GatheredWork {
+  /** Their own work of the day before `day` and of `day`, newest first. */
+  own: WorkItem[];
+  /** Colleagues' shared work that overlaps it. */
+  related: RelatedColleague[];
+  /** Work that finished on their repos (merged PRs, releases) which they may be waiting on. */
+  finished: WorkItem[];
 }

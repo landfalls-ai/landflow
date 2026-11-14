@@ -1620,6 +1620,30 @@ export const MIGRATIONS: Migration[] = [
     addColumns: [{ table: 'brain_entities', column: 'user_id', definition: 'TEXT' }],
     statements: [`CREATE INDEX IF NOT EXISTS brain_entities_user ON brain_entities (user_id)`],
   },
+  // B30: the nightly tomorrow-sync briefings (lib/server/brain/briefings-store.ts, docs/work-and-briefings.md#the-nightly-sync).
+  {
+    version: 2090,
+    name: 'brain_briefings',
+    statements: [
+      // One row per person and day and state: `draft` while the flow gathers and writes, `ready` once saved, `superseded` after
+      // a newer run replaced it. `gathered` and `text` are the person's own work; only they read them.
+      `CREATE TABLE IF NOT EXISTS brain_briefings (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        day TEXT NOT NULL,
+        status TEXT NOT NULL,
+        gathered TEXT,
+        text TEXT,
+        model TEXT,
+        workflow_id TEXT,
+        execution_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS brain_briefings_ready ON brain_briefings (user_id, day) WHERE status = 'ready'`,
+      `CREATE INDEX IF NOT EXISTS brain_briefings_user ON brain_briefings (user_id, day, status)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -1726,6 +1750,8 @@ export const TABLES = {
   user_preferences: ['user_id'],
   conversations: ['id'],
   conversation_items: ['conversation_id', 'seq'],
+  // B30:
+  brain_briefings: ['id'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

@@ -175,6 +175,8 @@ export const CONFIG_CATALOG: readonly ConfigVariable[] = [
   { name: 'LANDFLOW_AI_USAGE_RETENTION_DAYS', group: 'ai', default: '`400`', description: 'how long per-call AI usage rows (tokens, cost) are kept', aliases: ['AI_USAGE_RETENTION_DAYS'] },
   { name: 'LANDFLOW_BRAIN', group: 'ai', default: '`true`', description: '`false` turns the [second brain](../second-brain.md) off: no usage ledger, no detectors, no study' },
   { name: 'LANDFLOW_USAGE_RETENTION_DAYS', group: 'ai', default: '`90`', description: 'how long raw usage events are kept; daily rollups are kept 400 days', aliases: ['USAGE_RETENTION_DAYS'] },
+  // B30:
+  { name: 'LANDFLOW_BRIEFING_MAX_CHARS', group: 'ai', default: '`1200`', description: 'most characters of a nightly briefing (the tomorrow-sync flow\'s Write Briefing node; a longer text is cut) ([work-and-briefings.md](../work-and-briefings.md#the-nightly-sync))' },
   { name: 'LANDFLOW_BRAIN_MODEL', group: 'ai', default: 'the builder model', description: 'the model the second brain writes fixes, tips, persona rules, drafts and purposes with; `off`: rules only' },
   { name: 'LANDFLOW_BRAIN_EMBEDDINGS', group: 'ai', default: '`nomic-embed-text`', description: 'the Ollama model that embeds its facts into `landflow-brain-<project>`; `off`: keyword search only' },
   { name: 'LANDFLOW_BRAIN_INTERVAL_MINUTES', group: 'ai', default: '`60`', description: 'how often the leader rolls up, checks effects and runs the detectors (it studies once a day)' },
