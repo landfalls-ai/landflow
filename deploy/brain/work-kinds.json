@@ -1,5 +1,5 @@
 {
-  "$comment": "The work.* event kinds the activity integrations suggest (docs/protocol.md §16). Declared with deploy/scripts/declare-work-kinds.mjs; every kind has the same fields, the activity item's flat part.",
+  "$comment": "The work.* event kinds the activity integrations suggest (docs/protocol.md §16) and the ones people's own tools send (docs/work-and-briefings.md). Declared with deploy/scripts/declare-work-kinds.mjs; every kind has the same fields, the activity item's flat part plus the coding-session ones (repo, branch, areas, commits, turns, endedAt). POST /api/brain/work declares work.session itself on first use.",
   "fields": [
     {
       "name": "source",
@@ -52,6 +52,46 @@
       "name": "occurredAt",
       "type": "string",
       "description": "When it happened (ISO 8601)"
+    },
+    {
+      "name": "repo",
+      "type": "string",
+      "description": "The repository, owner/name"
+    },
+    {
+      "name": "branch",
+      "type": "string",
+      "description": "The branch"
+    },
+    {
+      "name": "areas",
+      "type": "string",
+      "description": "Directory names touched, comma-joined"
+    },
+    {
+      "name": "commits",
+      "type": "number",
+      "description": "Commits made"
+    },
+    {
+      "name": "turns",
+      "type": "number",
+      "description": "Turns of the conversation with the assistant"
+    },
+    {
+      "name": "prs",
+      "type": "number",
+      "description": "Pull requests opened or merged"
+    },
+    {
+      "name": "prUrl",
+      "type": "string",
+      "description": "The first pull request"
+    },
+    {
+      "name": "endedAt",
+      "type": "string",
+      "description": "When it ended (ISO 8601)"
     }
   ],
   "kinds": [
@@ -113,15 +153,19 @@
     },
     {
       "kind": "work.pr_opened",
-      "description": "A pull request was opened"
+      "description": "A pull request was opened (from a Git host integration, or from claude-code, landflow-cli and mcp)"
     },
     {
       "kind": "work.pr_merged",
-      "description": "A pull request was merged"
+      "description": "A pull request was merged (from a Git host integration, or from claude-code, landflow-cli and mcp)"
     },
     {
       "kind": "work.self_update",
       "description": "Someone posted an update on their own work (a project update, a stand-up)"
+    },
+    {
+      "kind": "work.session",
+      "description": "A working session in a coding tool or another harness (the Claude Code mod, landflow work, MCP)"
     }
   ]
 }

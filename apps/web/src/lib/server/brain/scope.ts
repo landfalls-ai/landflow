@@ -15,15 +15,32 @@ import { store } from '../store';
 import type { UsageScope } from '../usage/query';
 import { parseEntityRef, type Proposal } from '../../shared/brain';
 
+/**
+ * What `actor` sees (undefined: no restriction on workflows and agents, for owners and admins). A member's scope names
+ * its viewer, so their own work events are theirs; an owner's is read for the signed-in caller (query.ts, `viewerOf`).
+ * Either way a person's private work events stay theirs alone.
+ */
 export function scopeForActor(actor: Actor): UsageScope | undefined {
   const workflows = visibleIds(actor, 'workflow', store.listWorkflows().map((w) => w.id));
   const agents = visibleIds(actor, 'agent', agentStore.list().map((a) => a.id));
   const teams = visibleIds(actor, 'agentTeam', agentTeamStore.list().map((t) => t.id));
   const entities = entityKeysFor(actor);
-  return workflows || agents || teams || entities ? { workflows: workflows ?? new Set(), agents: agents ?? new Set(), teams: teams ?? new Set(agentTeamStore.list().map((t) => t.id)), entities: entities ?? new Set(listEntities().map(entityKey)) } : undefined;
+  return workflows || agents || teams || entities
+    ? { viewerId: actor.id, workflows: workflows ?? new Set(), agents: agents ?? new Set(), teams: teams ?? new Set(agentTeamStore.list().map((t) => t.id)), entities: entities ?? new Set(listEntities().map(entityKey)) }
+    : undefined;
 }
 
-export function scopeForWorkflow(workflowId: string | undefined): UsageScope | undefined {
+/** A scope no person reads through: the instance's own work for a flow, whose output may reach others. It never sees private work. */
+function forFlow(scope: UsageScope | undefined): UsageScope {
+  const { viewerId: _viewer, ...rest } = scope ?? {};
+  return { ...rest, system: true };
+}
+
+export function scopeForWorkflow(workflowId: string | undefined): UsageScope {
+  return forFlow(workflowScope(workflowId));
+}
+
+function workflowScope(workflowId: string | undefined): UsageScope | undefined {
   // An agent's node tools run as `agent:<id>`: the agent sees its own project.
   if (workflowId?.startsWith('agent:')) {
     const projectId = homeProjectId('agent', workflowId.slice('agent:'.length));
@@ -38,9 +55,12 @@ export function scopeForWorkflow(workflowId: string | undefined): UsageScope | u
   return { workflows: new Set(resourceIdsIn(projectId, 'workflow')), agents: new Set(resourceIdsIn(projectId, 'agent')), entities: entityKeysIn(projectId) };
 }
 
+/** No restriction on workflows and agents (what owners and admins have, and a flow whose creator is one). */
+const unrestricted = (scope: UsageScope | undefined): boolean => !scope || (!scope.workflows && !scope.agents);
+
 /** Whether `scope` covers an event or suggestion about this workflow or agent (undefined scope: everything). */
 export function covers(scope: UsageScope | undefined, subject: { workflowId?: string; agentId?: string; entity?: string }): boolean {
-  if (!scope) return true;
+  if (!scope || unrestricted(scope)) return true;
   if (subject.entity) return Boolean(scope.entities?.has(subject.entity));
   if (subject.workflowId) return Boolean(scope.workflows?.has(subject.workflowId));
   if (subject.agentId) return Boolean(scope.agents?.has(subject.agentId));
@@ -49,7 +69,7 @@ export function covers(scope: UsageScope | undefined, subject: { workflowId?: st
 
 /** The projects whose `landflow-brain-<project>` collections `scope` may search (undefined: all). */
 export function projectsOf(scope: UsageScope | undefined): Set<string> | undefined {
-  if (!scope) return undefined;
+  if (!scope || unrestricted(scope)) return undefined;
   const projects = new Set<string>();
   for (const id of scope.workflows ?? []) {
     const project = homeProjectId('workflow', id);

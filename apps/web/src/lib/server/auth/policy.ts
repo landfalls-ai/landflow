@@ -96,6 +96,9 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (under('/api/usage')) return { scope: 'executions:read' };
   if (path === '/api/brain/run' || path === '/api/brain/backtest') return { scope: 'admin', action: 'settings:manage' };
   if (path === '/api/brain/analyst') return { scope: 'workflows:write' };
+  // B05: work events are the caller's own (docs/work-and-briefings.md): recording needs `brain:write`; the briefing and asking, `brain:read`.
+  if (under('/api/brain/work')) return { scope: 'brain:write' };
+  if (path === '/api/brain/briefing' || path === '/api/brain/ask') return { scope: 'brain:read' };
   if (under('/api/brain')) return { scope: 'executions:read' };
   if (under('/api/proposals')) return { scope: read ? 'workflows:read' : 'workflows:write' };
   // B04: the @ picker's search lists only what the caller can open (lib/server/mentions/search.ts).
