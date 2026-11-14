@@ -481,7 +481,7 @@ images are not loaded.
 
 Three routes read across runs, and two screens use them (made for a phone: one column of cards, no wide tables).
 
-- **Search** (`/runs`, **Search runs** in the side bar; `GET /api/runs/search`): words (span names, inputs and outputs,
+- **Search** (`/runs`, **Runs** → **Search** tab; `GET /api/runs/search`): words (span names, inputs and outputs,
   messages, artifacts, checks), workflow, an agent or actor by name, a tool by name, status, **has failed steps**,
   **a check failed** (by name, or any) and from/to dates. Results are cards (status, workflow, when, how long, the
   failed steps and checks, and where the words were found) that open `/runs/<id>`, 20 at a time with **Show more**.

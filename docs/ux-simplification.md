@@ -24,6 +24,12 @@ features. Size: S is about a day, M a few days.
 
 ## Navigation
 
+**Built (shell, wave 1):** the rail has nine items (Home, Workflows, Runs, Agents, Brain, Data tables, Credentials,
+Plugins, Settings) with section tabs inside Workflows, Runs (with a Search tab until B20) and Plugins
+(`components/shell/section-nav.tsx`); the theme and Build a plugin moved into the user menu; the Live dot shows only as
+"Reconnecting…"; the Preview pill and the plugin count are gone (a red dot marks an offline plugin); the project
+switcher has Manage projects. The six-item proposal below is the older plan.
+
 Today: the project switcher, 11 sidebar items (Build: Home, Workflows, Templates, Agents, Executions, Insights, Data
 tables, Credentials; Extend: Plugins, Marketplace, Build a plugin), then Settings, a Live dot, a theme switch and the
 user. Three places add capabilities: Plugins, Marketplace and Templates.

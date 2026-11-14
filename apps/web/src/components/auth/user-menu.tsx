@@ -1,15 +1,17 @@
 'use client';
-/** The user menu at the bottom of the sidebar: who is signed in (name, email, role), API keys, Users and sign out. */
+/** The user menu at the bottom of the sidebar: who is signed in (name, email, role), the theme, Build a plugin, API keys, Users and sign out. */
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ChevronsUpDown, KeyRound, LogOut, Users } from 'lucide-react';
+import { BookOpenText, ChevronsUpDown, KeyRound, LogOut, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { can, ROLE_LABELS } from '@/lib/shared/auth';
+import { ThemeChoice } from '../shell/theme-toggle';
 import { initials, signOut, useViewer } from './viewer';
 
-export function UserMenu() {
+/** `defaultOpen` lets a test render the open menu on the server. */
+export function UserMenu({ defaultOpen = false }: { defaultOpen?: boolean } = {}) {
   const viewer = useViewer();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const root = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -40,6 +42,11 @@ export function UserMenu() {
             </div>
           </div>
           <div className="my-0.5 border-t border-hair" />
+          <ThemeChoice />
+          <div className="my-0.5 border-t border-hair" />
+          <Link role="menuitem" href="/developers" onClick={() => setOpen(false)} className={item}>
+            <BookOpenText className="size-4 shrink-0" strokeWidth={1.7} /> Build a plugin
+          </Link>
           <Link role="menuitem" href="/settings#api-keys" onClick={() => setOpen(false)} className={item}>
             <KeyRound className="size-4 shrink-0" strokeWidth={1.7} /> API keys
           </Link>

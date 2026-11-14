@@ -8,12 +8,12 @@ Legend: ✅ on par with n8n · ➕ beyond n8n · ◐ partial · ✗ missing
 
 | | n8n | Landflow | |
 |---|---|---|---|
-| Left sidebar | Overview, Templates, Variables, Insights, Help | Home, Workflows, Executions, Credentials, Plugins, Build a plugin; live dot; theme switch | ✅ |
+| Left sidebar | Overview, Templates, Variables, Insights, Help | nine items (Home, Workflows, Runs, Agents, Brain, Data tables, Credentials, Plugins, Settings); section tabs inside Workflows (Templates, Runbooks with the Landfall plugin), Runs (Activity, Insights, Search) and Plugins (Installed, Marketplace, Build your own); a red dot on Plugins while one is offline; "Reconnecting…" only while the event stream is down; theme and Build a plugin in the user menu | ✅ |
 | Credentials | Credentials tab: list, create from a type picker, form per type, "Connection tested successfully" | Credentials page: list with type icon, plugin and "used by N workflows"; create from a searchable type picker (types come from plugin manifests); form rendered from the type's properties; **Test connection** runs the plugin's test; stored AES-256-GCM encrypted, secrets never sent back to the browser | ✅ |
 | Overview | Workflows / Credentials / Executions tabs, insight KPIs | Home: four KPI cards with coloured top bars, count-up numbers, recent executions, plugin list with brand icons | ✅ |
 | Workflows list | Cards with name, last updated, owner; folders, search, tag filter, sort, import | Rows with node icons tinted by node colour, description, tags, active badge, node count; nested folders with a breadcrumb (drag a workflow onto a folder or a breadcrumb step, or Move to folder), search across folders, tag filter, sort by updated / name / created, Import from a Landflow or n8n file with a report | ✅ |
 | Theme | Light, dark, system | Light, dark, system (Landfall tokens) | ✅ |
-| Look | — | **New** or **Classic** under the theme switch ([the look](#the-look)) | ➕ |
+| Look | — | **New** or **Classic** (no longer in the user menu; the switch goes in a later change) ([the look](#the-look)) | ➕ |
 
 ### The look
 
@@ -162,12 +162,12 @@ Every page is drawn the same way, from `components/shell/page-header.tsx`:
   44 px tall; a hidden file input among the actions doesn't count as the last one.
 - **The way back** (`back` on `PageHeader`, `BackLink` on a page with its own header): ← and the parent's name, a `/`,
   then the page's own title. A phone shows the arrow alone, 44 px. Templates, a marketplace flow, a data table, an agent,
-  a project, a run (back to **Executions**) and Compare runs (back to **Search runs**) use it.
+  a project, a run (back to **Runs**) and Compare runs (back to **Search runs**) use it.
 - **Body** (`PageBody`): 24 px in (16 px on a phone). `width="narrow"` stops at 980 px, left-aligned, for lists of
   records, settings and forms (Credentials, Data tables, Projects, a project, Runbooks, Developers, Search runs); the
   default fills the width for grids, tables and canvases.
-- The sidebar marks the section a page belongs to: a run's own page (`/runs/<id>`) is under **Executions**, Search runs
-  and Compare under **Search runs**.
+- The sidebar marks the section a page belongs to: every page of Workflows, Runs and Plugins marks its group's item (a
+  run's page, Search runs and Compare are under **Runs**).
 
 ## Dialogs
 

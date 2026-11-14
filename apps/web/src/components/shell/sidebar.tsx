@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { Activity, BookOpenCheck, BookOpenText, Bot, Brain, ChartColumn, Ellipsis, House, KeyRound, LayoutTemplate, PanelLeftClose, PanelLeftOpen, Puzzle, Search, Settings, Store, Table2, Workflow, X } from 'lucide-react';
+import { Activity, Bot, Brain, Ellipsis, House, KeyRound, PanelLeftClose, PanelLeftOpen, Puzzle, Settings, Table2, Workflow, X } from 'lucide-react';
 import { useNeedsYou } from '@/lib/client/run-trace';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
@@ -12,60 +12,36 @@ import type { PluginSummary } from '@/lib/shared/types';
 import { UserMenu } from '../auth/user-menu';
 import { useViewer } from '../auth/viewer';
 import { ProjectSwitcher } from '../projects/project-switcher';
-import { StatusDot } from '../ui/badge';
 import { EnvironmentBadge } from './environment-badge';
-import { LookToggle } from './look-toggle';
-import { ThemeToggle } from './theme-toggle';
+import { groupOf, offlineDot, railActive, RAIL_ITEMS } from './section-nav';
 import { useDialogFocus } from '../ui/use-dialog-focus';
 
-const GROUPS: Array<{ label: string; items: Array<{ href: string; label: string; icon: typeof House; preview?: boolean }> }> = [
-  {
-    label: 'Build',
-    items: [
-      { href: '/', label: 'Home', icon: House },
-      { href: '/workflows', label: 'Workflows', icon: Workflow },
-      { href: '/templates', label: 'Templates', icon: LayoutTemplate },
-      { href: '/agents', label: 'Agents', icon: Bot, preview: true },
-      { href: '/executions', label: 'Executions', icon: Activity },
-      { href: '/runs', label: 'Search runs', icon: Search },
-      { href: '/insights', label: 'Insights', icon: ChartColumn },
-      { href: '/brain', label: 'Brain', icon: Brain },
-      { href: '/data-tables', label: 'Data tables', icon: Table2 },
-      { href: '/runbooks', label: 'Runbooks', icon: BookOpenCheck },
-      { href: '/credentials', label: 'Credentials', icon: KeyRound },
-    ],
-  },
-  {
-    label: 'Extend',
-    items: [
-      { href: '/plugins', label: 'Plugins', icon: Puzzle },
-      { href: '/marketplace', label: 'Marketplace', icon: Store },
-      { href: '/developers', label: 'Build a plugin', icon: BookOpenText },
-    ],
-  },
-];
+const ICONS: Record<string, typeof House> = {
+  '/': House,
+  '/workflows': Workflow,
+  '/executions': Activity,
+  '/agents': Bot,
+  '/brain': Brain,
+  '/data-tables': Table2,
+  '/credentials': KeyRound,
+  '/plugins': Puzzle,
+  '/settings': Settings,
+};
+/** The rail's nine places: one list, Settings set apart at the foot. */
+const NAV = RAIL_ITEMS.filter((i) => i.href !== '/settings').map((i) => ({ ...i, icon: ICONS[i.href] }));
 
 const RAIL_KEY = 'landflow-rail-collapsed';
 
-/**
- * The left rail: product mark, grouped navigation, live status, the user menu. Not on sign-in and public pages. On a desktop
- * it folds to its icons (the button beside the mark), so the editor's canvas and Spotlight get the room; the choice is kept
- * in the browser. On a phone (below `md`) a tab bar at the bottom takes its place (Home, Flows, Runs, Agents, More), and
- * More opens the rail as a drawer with everything else. Full-screen pages (the editor, a run's trace) have neither: their
- * own header has a back arrow.
- */
-/**
- * Whether a sidebar item is the current page. A run's own page (/runs/<id>) belongs to Executions, where runs are listed;
- * Search runs is /runs and comparing two (/runs/compare).
- */
-export function navActive(href: string, pathname: string): boolean {
-  if (href === '/') return pathname === '/';
-  const runPage = /^\/runs\/(?!compare(?:\/|$))[^/]+/.test(pathname);
-  if (href === '/runs') return pathname.startsWith('/runs') && !runPage;
-  if (href === '/executions') return pathname.startsWith('/executions') || runPage;
-  return pathname.startsWith(href);
-}
+/** Whether a sidebar item is the current page: a group's item (Workflows, Runs, Plugins) holds for every page of its group. */
+export const navActive = railActive;
 
+/**
+ * The left rail: product mark, navigation (nine places, the section tabs inside Workflows, Runs and Plugins), the user
+ * menu. Not on sign-in and public pages. On a desktop it folds to its icons (the button beside the mark), so the editor's
+ * canvas and Spotlight get the room; the choice is kept in the browser. On a phone (below `md`) a tab bar at the bottom
+ * takes its place (Home, Flows, Runs, Agents, More), and More opens the rail as a drawer with everything else.
+ * Full-screen pages (the editor, a run's trace) have neither: their own header has a back arrow.
+ */
 export function Sidebar() {
   const pathname = usePathname();
   const viewer = useViewer();
@@ -85,18 +61,22 @@ export function Sidebar() {
 /** Pages that take the whole phone screen, with a back arrow of their own: the editor and its tabs, an agent, a run's trace. */
 export const fullScreen = (pathname: string) => /^\/(workflows|agents)\/[^/]+/.test(pathname) || (/^\/runs\/[^/]+/.test(pathname) && pathname !== '/runs/compare');
 
-const TABS = [
+/** The tab bar's places; Flows and Runs hold for every page of their group, as the rail's items do. */
+export const TABS = [
   { href: '/', label: 'Home', icon: House, match: (p: string) => p === '/' },
-  { href: '/workflows', label: 'Flows', icon: Workflow, match: (p: string) => p.startsWith('/workflows') || p.startsWith('/templates') },
-  { href: '/executions', label: 'Runs', icon: Activity, match: (p: string) => p.startsWith('/executions') || p.startsWith('/runs') },
+  { href: '/workflows', label: 'Flows', icon: Workflow, match: (p: string) => groupOf(p) === 'workflows' },
+  { href: '/executions', label: 'Runs', icon: Activity, match: (p: string) => groupOf(p) === 'runs' },
   { href: '/agents', label: 'Agents', icon: Bot, match: (p: string) => p.startsWith('/agents') },
 ];
+
+/** The tab a path lights on the phone, if any (else More does). */
+export const tabFor = (pathname: string) => TABS.find((t) => t.match(pathname))?.label;
 
 /** The phone's tab bar: four places and More (the rest, in the rail's drawer). Runs counts what waits for a person. */
 function TabBar({ pathname, more, onMore }: { pathname: string; more: boolean; onMore: () => void }) {
   const { items } = useNeedsYou();
   const waiting = items?.length ?? 0;
-  const inTabs = TABS.some((t) => t.match(pathname));
+  const inTabs = tabFor(pathname) !== undefined;
   return (
     <nav data-tabbar aria-label="Main" className="fixed inset-x-0 bottom-0 z-40 flex border-t border-hair bg-sf2/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
       {TABS.map(({ href, label, icon: Icon, match }) => {
@@ -163,7 +143,7 @@ function Rail({ pathname, open, onClose }: { pathname: string; open: boolean; on
   useLiveEvents((event) => {
     if (event.channel === 'registry' && event.event.type !== 'plugin.heartbeat' && !event.event.type.startsWith('scan.')) void load();
   });
-  const online = plugins.filter((p) => p.status === 'online').length;
+  const offline = offlineDot(plugins);
 
   return (
     <aside
@@ -201,32 +181,31 @@ function Rail({ pathname, open, onClose }: { pathname: string; open: boolean; on
         <ProjectSwitcher />
       </div>
 
-      <nav className="flex flex-col">
-        {GROUPS.map((group) => (
-          <div key={group.label} className="flex flex-col gap-0.5">
-            <div className={cn('px-2.5 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3', label)}>{group.label}</div>
-            {folded && <div className="mx-2 my-2 hidden border-t border-hair md:block" aria-hidden />}
-            {group.items.map((item) => {
-              const active = navActive(item.href, pathname);
-              const Icon = item.icon;
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  aria-current={active ? 'page' : undefined}
-                  aria-label={folded ? item.label : undefined}
-                  title={folded ? item.label : undefined}
-                  className={cn('flex h-9 items-center gap-3 rounded-lg px-2.5 text-[13px] transition-colors duration-[120ms] max-md:h-11 max-md:text-[14px]', folded && 'md:justify-center md:px-0', active ? 'bg-acdim font-semibold text-t1' : 'text-t2 hover:bg-acdim hover:text-t1')}
-                >
-                  <Icon className="size-[18px] shrink-0" strokeWidth={1.7} />
-                  <span className={cn('truncate', label)}>{item.label}</span>
-                  {item.preview && <span className={cn('ml-auto rounded-full border border-acbd bg-acdim px-1.5 text-[10px] font-semibold leading-4 text-ac', label)}>Preview</span>}
-                  {item.href === '/plugins' && plugins.length > 0 && <span className={cn('ml-auto font-mono text-[11px] font-normal text-t3', label)}>{online}/{plugins.length}</span>}
-                </Link>
-              );
-            })}
-          </div>
-        ))}
+      <nav className="flex flex-col gap-0.5">
+        {NAV.map((item) => {
+          const active = navActive(item.href, pathname);
+          const Icon = item.icon;
+          const dot = item.href === '/plugins' && offline.dot;
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              aria-current={active ? 'page' : undefined}
+              aria-label={folded ? item.label : undefined}
+              title={folded ? item.label : undefined}
+              className={cn('relative flex h-9 items-center gap-3 rounded-lg px-2.5 text-[13px] transition-colors duration-[120ms] max-md:h-11 max-md:text-[14px]', folded && 'md:justify-center md:px-0', active ? 'bg-acdim font-semibold text-t1' : 'text-t2 hover:bg-acdim hover:text-t1')}
+            >
+              <Icon className="size-[18px] shrink-0" strokeWidth={1.7} />
+              <span className={cn('truncate', label)}>{item.label}</span>
+              {dot && (
+                <>
+                  <span aria-hidden title={offline.title} className={cn('ml-auto size-2 shrink-0 rounded-full bg-rd', folded && 'md:absolute md:right-2 md:top-2 md:ml-0')} />
+                  <span className="sr-only">, {offline.title}</span>
+                </>
+              )}
+            </Link>
+          );
+        })}
       </nav>
 
       <Link
@@ -243,16 +222,11 @@ function Rail({ pathname, open, onClose }: { pathname: string; open: boolean; on
         <Settings className="size-[18px] shrink-0" strokeWidth={1.7} />
         <span className={cn('truncate', label)}>Settings</span>
       </Link>
-      <div className={cn('flex flex-col gap-2.5 px-2.5 pb-1', folded && 'md:items-center md:px-0')}>
-        <div className="flex items-center gap-2 text-[12px] text-t3" title={connected ? 'Receiving live events' : 'Reconnecting to the event stream'}>
-          <StatusDot status={connected ? 'online' : 'offline'} />
-          <span className={label}>{connected ? 'Live' : 'Reconnecting…'}</span>
+      {!connected && (
+        <div className={cn('px-2.5 pb-1 text-[12px] text-t3', label)} title="Reconnecting to the event stream" role="status">
+          Reconnecting…
         </div>
-        <div className={cn('flex flex-wrap items-center gap-1.5', label)}>
-          <ThemeToggle />
-          <LookToggle />
-        </div>
-      </div>
+      )}
       <div className={cn('mt-2 border-t border-hair pt-2', label)}>
         <UserMenu />
       </div>
