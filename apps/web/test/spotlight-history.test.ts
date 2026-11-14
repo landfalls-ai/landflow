@@ -11,6 +11,7 @@ import type { AssistantOp, DescriptorLookup } from '@/lib/shared/assistant-ops';
 import type { ConversationItem } from '@/lib/shared/conversations';
 import type { AssistantTurn, ChatItem } from '@/components/editor/assistant';
 import { dividerBefore, emptyStored, keptState, markStale, planKeeping, recordPlan, replyInput, restore, shouldResume, stillFits, userInput, withEarlier } from '@/components/editor/spotlight-history';
+import { builtReply } from '@/components/editor/building';
 import { ProposalCard } from '@/components/editor/spotlight/proposal';
 
 const lookup: DescriptorLookup = () => ({ displayName: 'Code', inputs: [{ type: 'main' }], outputs: [{ type: 'main' }], properties: [] }) as never;
@@ -93,11 +94,56 @@ describe('planning what to store', () => {
     expect(planKeeping(items, emptyStored(), { keeping: true, live: false }).inputs).toEqual([]);
   });
 
+  const withState = (id: string, state: 'applied' | 'dismissed' | undefined, extra: Partial<AssistantTurn> = {}): AssistantTurn =>
+    reply(id, { parts: [{ kind: 'text', text: 'Renamed it.' }, { kind: 'proposal', proposal: { id: 'pr_1', summary: 'Rename Code', ops: [rename], dropped: [], warnings: [], ...(state && { state }) } }], ...extra });
+
+  it('stores a marker when an earlier turn’s proposal is applied or dismissed', () => {
+    const kept: ConversationItem[] = [
+      { seq: 1, role: 'user', parts: [{ type: 'text', text: 'Rename Code' }], at: '2026-11-14T08:00:00.000Z' },
+      { seq: 2, role: 'assistant', parts: [{ type: 'proposal', id: 'pr_1', summary: 'Rename Code', ops: [rename], state: 'pending' }], at: '2026-11-14T08:00:00.000Z' },
+    ];
+    const back = restore(kept);
+    for (const state of ['applied', 'dismissed'] as const) {
+      const turns = back.items.map((i) => (i.role === 'assistant' ? { ...i, parts: i.parts.map((p) => (p.kind === 'proposal' ? { ...p, proposal: { ...p.proposal, state } } : p)) } : i));
+      const plan = planKeeping(turns, back.stored, { keeping: true, live: false });
+      expect(plan.inputs).toEqual([{ role: 'assistant', parts: [{ type: 'proposal', id: 'pr_1', summary: 'Rename Code', ops: [], state }] }]);
+    }
+  });
+
+  it('stores a marker when a stored reply becomes auto and applied', () => {
+    const stored = emptyStored();
+    const first = [user('u1', 'Rename Code'), withState('a1', undefined)];
+    recordPlan(stored, planKeeping(first, stored, { keeping: true, live: false }));
+    const plan = planKeeping([first[0], withState('a1', 'applied', { auto: true })], stored, { keeping: true, live: false });
+    expect(plan.inputs).toEqual([{ role: 'assistant', parts: [{ type: 'proposal', id: 'pr_1', summary: 'Rename Code', ops: [], state: 'applied' }] }]);
+  });
+
+  it('stores an auto reply that was not stored yet, with its proposal applied', () => {
+    const plan = planKeeping([user('u1', 'Rename Code'), withState('a1', 'applied', { auto: true })], emptyStored(), { keeping: true, live: false });
+    expect(plan.inputs.map((i) => i.role)).toEqual(['user', 'assistant']);
+    expect(plan.inputs[1].parts.find((p) => p.type === 'proposal')).toMatchObject({ state: 'applied', ops: [rename] });
+  });
+
+  it('plans nothing again over the same turns with the kept record (a remounted panel)', () => {
+    const stored = emptyStored();
+    const items = [user('u1', 'hello'), reply('a1')];
+    recordPlan(stored, planKeeping(items, stored, { keeping: true, live: false }));
+    expect(planKeeping(items, stored, { keeping: true, live: false })).toEqual({ inputs: [], turns: [], proposals: [] });
+  });
+
   it('stores nothing, and shows no divider, when the person keeps nothing', () => {
     const items = [user('u1', 'hello'), reply('a1')];
     expect(planKeeping(items, emptyStored(), { keeping: false, live: false })).toEqual({ inputs: [], turns: [], proposals: [] });
     expect(shouldResume(false, [])).toBe(false);
     expect(items.some((_, i) => dividerBefore(items, i))).toBe(false);
+  });
+});
+
+describe('which reply is being built', () => {
+  it('is the last live reply, never an earlier or a test session’s', () => {
+    expect(builtReply([user('u1', 'x'), reply('a1')])?.id).toBe('a1');
+    expect(builtReply([user('u1', 'x', { earlier: true }), reply('k2', { earlier: true })])).toBeUndefined();
+    expect(builtReply([reply('a1', { testId: 't1' })])).toBeUndefined();
   });
 });
 

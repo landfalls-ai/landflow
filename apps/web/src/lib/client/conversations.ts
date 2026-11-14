@@ -23,6 +23,8 @@ export interface UseConversation {
   kept: boolean;
   append: (items: ConversationItemInput[]) => Promise<void>;
   open: (id: string) => Promise<void>;
+  /** Follow a conversation the chat is already kept in, without reading it (a panel that mounts again over the same chat). */
+  attach: (id: string) => void;
   startNew: () => void;
   /** Open the newest conversation of this surface and subject, if there is one. */
   resumeLatest: () => Promise<boolean>;
@@ -95,6 +97,12 @@ export function useConversation(scope: ConversationScope): UseConversation {
     setItems(body.items);
   }, []);
 
+  const attach = useCallback((target: string) => {
+    generation.current += 1;
+    creating.current = undefined;
+    select(target);
+  }, []);
+
   const startNew = useCallback(() => {
     generation.current += 1;
     creating.current = undefined;
@@ -120,5 +128,5 @@ export function useConversation(scope: ConversationScope): UseConversation {
     return true;
   }, [open]);
 
-  return { id, items, kept, append, open, startNew, resumeLatest };
+  return { id, items, kept, append, open, attach, startNew, resumeLatest };
 }

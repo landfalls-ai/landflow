@@ -17,7 +17,9 @@ import type { NodeRun } from '@/lib/shared/types';
 import type { MentionRef } from '@/lib/shared/mentions';
 import type { ReplyInfo } from '../ui/chat';
 import { useEditor } from './store';
-import { withEarlier } from './spotlight-history';
+import { emptyStored, withEarlier, type Stored } from './spotlight-history';
+
+const freshKept = (): { id?: string; stored: Stored } => ({ stored: emptyStored() });
 import { saveAgentFor, type AgentPlace } from './new-agent';
 import { saveTeamFor } from './turn-into-team';
 
@@ -478,6 +480,13 @@ interface AssistantState {
   setAgent(nodeId: string, patch: Partial<AgentProgress> & { name?: string }): void;
   workflowId?: string;
   items: ChatItem[];
+  /**
+   * The conversation these items are kept in (docs/assistant.md#conversation-history) and what of them is stored: held here
+   * beside the items, so a panel that mounts again over the same chat (Home, then Back) reattaches instead of storing every
+   * turn a second time. Cleared when another workflow is bound, on `reset` and when a conversation replaces the chat.
+   */
+  kept: { id?: string; stored: Stored };
+  setKept(id: string | undefined, stored?: Stored): void;
   /** The checkpoint of the last reply that failed: it can be continued from there (the buttons come with the chat's error actions). */
   lastCheckpoint?: { replyId: string; checkpoint: string; step?: number };
   pending: boolean;
@@ -554,6 +563,7 @@ export const useAssistant = create<AssistantState>((set, get) => ({
     });
   },
   items: [],
+  kept: freshKept(),
   pending: false,
   drafting: false,
 
@@ -583,12 +593,16 @@ export const useAssistant = create<AssistantState>((set, get) => ({
     });
   },
 
+  setKept(id, stored) {
+    set((s) => ({ kept: { id, stored: stored ?? s.kept.stored } }));
+  },
+
   bind(workflowId) {
     if (get().workflowId === workflowId) return;
     get().abort?.abort();
     get().testing?.abort();
     draft.request?.abort();
-    set({ workflowId, items: [], lastCheckpoint: undefined, agents: [], fixNotes: {}, pending: false, drafting: false, abort: undefined, testing: undefined, testingId: undefined, fixing: undefined });
+    set({ workflowId, items: [], kept: freshKept(), lastCheckpoint: undefined, agents: [], fixNotes: {}, pending: false, drafting: false, abort: undefined, testing: undefined, testingId: undefined, fixing: undefined });
     useSuggestions.getState().clear();
   },
 
@@ -651,7 +665,7 @@ export const useAssistant = create<AssistantState>((set, get) => ({
     get().abort?.abort();
     get().testing?.abort();
     draft.request?.abort();
-    set({ items: [], lastCheckpoint: undefined, agents: [], fixNotes: {}, pending: false, drafting: false, abort: undefined, testing: undefined, testingId: undefined, fixing: undefined });
+    set({ items: [], kept: freshKept(), lastCheckpoint: undefined, agents: [], fixNotes: {}, pending: false, drafting: false, abort: undefined, testing: undefined, testingId: undefined, fixing: undefined });
   },
 
   showEarlier(turns, options = {}) {
@@ -659,7 +673,7 @@ export const useAssistant = create<AssistantState>((set, get) => ({
       get().abort?.abort();
       get().testing?.abort();
       draft.request?.abort();
-      set({ items: turns, lastCheckpoint: undefined, agents: [], fixNotes: {}, pending: false, drafting: false, abort: undefined, testing: undefined, testingId: undefined, fixing: undefined });
+      set({ items: turns, kept: freshKept(), lastCheckpoint: undefined, agents: [], fixNotes: {}, pending: false, drafting: false, abort: undefined, testing: undefined, testingId: undefined, fixing: undefined });
     } else set((s) => ({ items: withEarlier(turns, s.items) }));
   },
 

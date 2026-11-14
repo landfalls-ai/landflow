@@ -5,7 +5,7 @@ import { useReactFlow } from '@xyflow/react';
 import { ChevronDown, CircleCheck, CircleStop, Hand, Loader2, PanelRightClose, PanelRightOpen, Sparkles, Square, SquarePen } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { editorLookup, useAssistant } from '../assistant';
-import { emptyStored, markStale, planKeeping, recordPlan, restore, shouldResume } from '../spotlight-history';
+import { markStale, planKeeping, recordPlan, restore, shouldResume } from '../spotlight-history';
 import { ConversationHistory } from '../../ui/conversation-history';
 import { useConversation } from '@/lib/client/conversations';
 import { usePreference } from '@/lib/client/preferences';
@@ -102,7 +102,6 @@ function useSpotlightKeeping() {
   const workflowId = useEditor((s) => s.workflowId);
   const keeping = usePreference('keepConversations');
   const conversation = useConversation({ surface: 'spotlight', subjectType: 'workflow', subjectId: workflowId || undefined });
-  const stored = useRef(emptyStored());
   const items = useAssistant((s) => s.items);
   const live = useAssistant((s) => s.pending || s.drafting);
   const boundTo = useAssistant((s) => s.workflowId);
@@ -111,18 +110,28 @@ function useSpotlightKeeping() {
   const here = Boolean(workflowId) && boundTo === workflowId;
 
   // Show a stored conversation under "Earlier", its waiting proposals checked against the workflow as it is now.
-  const show = useCallback((turns: Parameters<typeof restore>[0], replace: boolean) => {
+  const show = useCallback((turns: Parameters<typeof restore>[0], replace: boolean, id: string) => {
     const back = restore(turns);
     const editor = useEditor.getState();
     const checked = markStale(back.items, editor.toWorkflow(), editorLookup());
-    stored.current = replace ? back.stored : { turns: new Set([...stored.current.turns, ...back.stored.turns]), proposals: new Map([...stored.current.proposals, ...back.stored.proposals]) };
+    const before = useAssistant.getState().kept.stored;
+    const next = replace ? back.stored : { turns: new Set([...before.turns, ...back.stored.turns]), proposals: new Map([...before.proposals, ...back.stored.proposals]) };
     useAssistant.getState().showEarlier(checked, { replace });
+    useAssistant.getState().setKept(id, next);
   }, []);
 
-  // The workflow changed (another one opened, or New conversation): what was stored is of the other chat.
+  // A panel that mounts again over the same chat (Home, then Back) follows the conversation it is already kept in. The kept
+  // record lives in the assistant store, so nothing is stored a second time.
   useEffect(() => {
-    stored.current = emptyStored();
-  }, [workflowId]);
+    const kept = useAssistant.getState().kept;
+    if (here && kept.id) conversation.attach(kept.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [here, workflowId]);
+
+  // A conversation made by the first thing said is the chat's from then on.
+  useEffect(() => {
+    if (here && conversation.id) useAssistant.getState().setKept(conversation.id);
+  }, [here, conversation.id]);
 
   // Fetch a stored conversation and make it the one the chat writes to; null if it could not be read.
   const load = useCallback(
@@ -141,7 +150,7 @@ function useSpotlightKeeping() {
   // Resume: the last conversation of this workflow, once the editor has loaded it (and only if the person has not started).
   const resumed = useRef<string>(undefined);
   useEffect(() => {
-    if (!here || !keeping || resumed.current === workflowId) return;
+    if (!here || !keeping || resumed.current === workflowId || useAssistant.getState().kept.id) return;
     resumed.current = workflowId;
     if (!shouldResume(keeping, useAssistant.getState().items)) return;
     const params = new URLSearchParams({ surface: 'spotlight', subjectType: 'workflow', subjectId: workflowId, limit: '1' });
@@ -151,7 +160,7 @@ function useSpotlightKeeping() {
         // The person may have started while it loaded: theirs stays, with nothing from before mixed into it.
         if (!latest || !shouldResume(true, useAssistant.getState().items) || useEditor.getState().workflowId !== workflowId) return;
         const turns = await load(latest.id);
-        if (turns?.length && useEditor.getState().workflowId === workflowId) show(turns, false);
+        if (turns?.length && useEditor.getState().workflowId === workflowId) show(turns, false, latest.id);
       })
       .catch(() => undefined);
   }, [here, keeping, workflowId, load, show]);
@@ -159,21 +168,20 @@ function useSpotlightKeeping() {
   // Store the turns as they are said and finished.
   useEffect(() => {
     if (!here) return;
-    const plan = planKeeping(items, stored.current, { keeping, live });
+    const plan = planKeeping(items, useAssistant.getState().kept.stored, { keeping, live });
     if (!plan.inputs.length && !plan.turns.length) return;
-    recordPlan(stored.current, plan);
+    recordPlan(useAssistant.getState().kept.stored, plan);
     if (plan.inputs.length) void appendRef.current(plan.inputs).catch(() => undefined);
   }, [items, live, keeping, here]);
 
   const open = async (id: string) => {
     if (useAssistant.getState().pending || useAssistant.getState().testing) return;
     const turns = await load(id);
-    if (turns) show(turns, true);
+    if (turns) show(turns, true, id);
   };
   const startNew = () => {
     useAssistant.getState().reset();
     conversation.startNew();
-    stored.current = emptyStored();
   };
   return { open, startNew, workflowId };
 }

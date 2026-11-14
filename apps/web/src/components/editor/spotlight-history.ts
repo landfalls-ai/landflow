@@ -29,8 +29,12 @@ export const emptyStored = (): Stored => ({ turns: new Set(), proposals: new Map
 
 const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
 
-/** A turn is kept only when it came from the person and the chat: not a test-and-fix session's own notes. */
-const keepable = (item: ChatItem) => !item.auto && !item.testId && !item.earlier;
+/**
+ * Whether a new turn is stored: not a test-and-fix session's own notes, not a turn brought back from the store, and not a
+ * note the chat added to the person's side (`auto` on a user turn). An assistant reply that autonomous mode applied
+ * (`auto`) is stored, with its proposal as applied.
+ */
+const keepable = (item: ChatItem) => !item.testId && !item.earlier && !(item.role === 'user' && item.auto);
 
 /** The user's turn: their words, and the tags they chose (names only, to show them again). */
 export function userInput(item: Extract<ChatItem, { role: 'user' }>): ConversationItemInput {
@@ -91,14 +95,14 @@ export function planKeeping(items: readonly ChatItem[], stored: Stored, options:
   if (!options.keeping) return plan;
   const lastId = items.at(-1)?.id;
   for (const item of items) {
-    if (!keepable(item)) continue;
     if (item.role === 'user') {
-      if (stored.turns.has(item.id)) continue;
+      if (stored.turns.has(item.id) || !keepable(item)) continue;
       plan.inputs.push(userInput(item));
       plan.turns.push(item.id);
       continue;
     }
     if (!stored.turns.has(item.id)) {
+      if (!keepable(item)) continue;
       if (options.live && item.id === lastId) break;
       const input = replyInput(item);
       // Nothing to keep: still counted, so a stopped, empty reply is not looked at again.

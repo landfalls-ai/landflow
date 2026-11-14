@@ -317,7 +317,7 @@ mounts it.
   each proposal with its state, and the tags chosen (names only). It never holds the digest a tag was read as, a tool
   result or the model's thoughts. A test-and-fix session's own notes are not kept. The route has no way to change a stored
   item, so a proposal's later state (applied, dismissed, undone) is stored as a small marker item that names the proposal
-  and replaces its state when the conversation is read back. An item is at most 32 KB: when a reply is bigger, its steps
+  and replaces its state when the conversation is read back. The kept record (which turns and proposal states are stored, and the conversation) lives in the assistant store beside the chat, so leaving the editor and coming back does not store the turns again. A stale state is recomputed on each visit, never stored. An item is at most 32 KB: when a reply is bigger, its steps
   go first, then the proposals' ops (the proposal is then stored as stale).
   **Resume.** When the editor has loaded a workflow, its last conversation comes back under an "Earlier" divider, dimmed;
   nothing is fetched when you keep nothing or have already started typing. **Stale proposals.** A proposal that was still
