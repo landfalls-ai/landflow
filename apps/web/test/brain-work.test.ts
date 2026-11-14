@@ -127,6 +127,22 @@ describe('POST /api/brain/work', () => {
     expect(again.saved).toHaveLength(1);
   });
 
+  it('refuses an event more than a day ahead of the host clock (a row no briefing shows and no prune reaches)', async () => {
+    const ahead = (ms: number) => new Date(Date.now() + ms).toISOString();
+    const body = (await (await post([event('f1', { occurredAt: ahead(3 * 86_400_000) }), event('f2', { occurredAt: ahead(23 * 3_600_000) })])).json()) as { saved: Array<{ sourceId: string }>; rejected: Array<{ sourceId: string; reason: string }> };
+    expect(body.rejected).toEqual([{ sourceId: 'f1', reason: 'occurredAt is more than a day in the future' }]);
+    expect(body.saved.map((s) => s.sourceId)).toEqual(['f2']);
+  });
+
+  it('declares work kinds with the fields and kinds deploy/brain/work-kinds.json lists', async () => {
+    const { readFileSync } = await import('node:fs');
+    const file = JSON.parse(readFileSync(join(__dirname, '../../../deploy/brain/work-kinds.json'), 'utf8')) as { fields: Array<{ name: string; type: string; required?: boolean }>; kinds: Array<{ kind: string }> };
+    const { WORK_FIELDS, DECLARABLE_KINDS } = await import('@/lib/server/brain/work');
+    const shape = (fields: Array<{ name: string; type: string; required?: boolean }>) => fields.map((f) => `${f.name}:${f.type}:${Boolean(f.required)}`).sort();
+    expect(shape(WORK_FIELDS)).toEqual(shape(file.fields));
+    expect([...DECLARABLE_KINDS].sort()).toEqual(file.kinds.map((k) => k.kind).sort());
+  });
+
   it('answers 400 for no events or more than 50', async () => {
     expect((await post([])).status).toBe(400);
     expect((await post(Array.from({ length: 51 }, (_, i) => event(`s${i}`)))).status).toBe(400);
@@ -232,5 +248,26 @@ describe('API key scopes', () => {
     expect((await post([event('k3')], bearer(builder))).status).toBe(403);
     expect((await briefingRoute.GET(req('GET', '/api/brain/briefing?day=2026-11-13', undefined, bearer(builder)))).status).toBe(403);
     expect(rows().map((r) => r.source_id)).toEqual(['k1']);
+  });
+});
+
+describe('deleting a person', () => {
+  it('removes what only they could read: private work, conversations and preferences', async () => {
+    const { deleteUser } = await import('@/lib/server/auth/users');
+    const carol = await createUser({ email: 'carol@work.test', name: 'Carol', role: 'member', password: 'carol-password-1' });
+    enableTestAuth(carol);
+    expect((await post([event('c1')])).status).toBe(200);
+    enableTestAuth(alice);
+    expect((await post([event('a1')])).status).toBe(200);
+    const at = new Date().toISOString();
+    database().upsert('conversations', { id: 'cnv_carol', user_id: carol.id, surface: 'spotlight', project_id: null, subject_type: null, subject_id: null, title: 'Mine', pinned: 0, created_at: at, updated_at: at });
+    database().upsert('conversation_items', { conversation_id: 'cnv_carol', seq: 1, role: 'user', parts: '[]', meta: null, at });
+    database().upsert('user_preferences', { user_id: carol.id, data: '{}', updated_at: at });
+
+    expect(deleteUser(carol.id)).toBe(true);
+    expect(rows().map((r) => r.source_id)).toEqual(['a1']);
+    expect(database().get('SELECT id FROM conversations WHERE id = ?', 'cnv_carol')).toBeUndefined();
+    expect(database().get('SELECT seq FROM conversation_items WHERE conversation_id = ?', 'cnv_carol')).toBeUndefined();
+    expect(database().get('SELECT user_id FROM user_preferences WHERE user_id = ?', carol.id)).toBeUndefined();
   });
 });

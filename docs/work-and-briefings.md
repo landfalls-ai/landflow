@@ -41,7 +41,7 @@ The contract is `WorkEventInput` in `packages/protocol/src/work-events.ts`, with
 | `kind` | `work.<name>`: lowercase letters, digits and underscores |
 | `source` | the tool, 1 to 40 characters of `a-z`, `0-9` and `-` (`claude-code`, `landflow-cli`, `mcp`) |
 | `sourceId` | 1 to 200 characters, the item's id in its tool. Sending it again updates the event |
-| `occurredAt`, `endedAt` | ISO 8601 times |
+| `occurredAt`, `endedAt` | ISO 8601 times. The host refuses an `occurredAt` more than a day ahead of its clock (a row no briefing would show and the 90-day prune would never reach) |
 | `title` | 1 to 200 characters, one line, not code: a title over 80 characters that reads like code is refused |
 | `summary` | up to 500 characters (the host keeps 200) |
 | `repo` | `owner/name` |
@@ -62,6 +62,8 @@ page, Find Similar, the MCP brain tools and the Landflow Usage node.
 - An event with an owner is read by its owner. An `org` event is read by everyone. A `team` event counts as private
   until teams are linked to people. For now the routes accept only `private`.
 - An event with no owner (everything the platform and the flows record) keeps its project scoping.
+- When a person is deleted, their private events go with them (with their conversations and preferences); work they
+  shared stays.
 - Work that is the instance's own to read (the study, the detectors, a flow's Landflow Usage node, the daily rollups) sees
   no private work. The rollups in `usage_daily` count only events with no owner or shared with the organization, so
   totals never include someone's private work. A workflow does not read its creator's private work either, since its

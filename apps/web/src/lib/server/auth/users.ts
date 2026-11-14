@@ -272,12 +272,18 @@ export async function setPassword(id: string, password: string, reason?: 'self' 
   return updated;
 }
 
-/** Remove a user with their sessions and API keys (what they built stays). */
+/** Remove a user with their sessions, API keys, conversations, preferences and private work events (what they built stays). */
 export function deleteUser(id: string): boolean {
   const db = authDb();
   return db.transaction(() => {
     db.delete('sessions', { user_id: id });
     db.delete('api_keys', { user_id: id });
+    // What only this person could read goes with them: their conversations (owner-only, no admin read), their
+    // preferences and their private work events (docs/work-and-briefings.md). Shared work stays with the brain.
+    for (const row of db.all<{ id: string }>('SELECT id FROM conversations WHERE user_id = ?', id)) db.delete('conversation_items', { conversation_id: row.id });
+    db.delete('conversations', { user_id: id });
+    db.delete('user_preferences', { user_id: id });
+    db.delete('usage_events', { owner_id: id, visibility: 'private' });
     return db.delete('users', { id }) > 0;
   });
 }

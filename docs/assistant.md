@@ -289,7 +289,8 @@ mounts it.
   applied or dismissed them), the pages it linked and its sources. **Never kept**: the store takes only those message
   parts, so no attached files and no credentials.
 - **Only yours**: a conversation belongs to the person who had it. Nobody else can open it, an owner or an admin
-  included: another person's id answers 404. API keys are refused too (the routes need a session).
+  included: another person's id answers 404. API keys are refused too (the routes need a session). Deleting a person
+  deletes their conversations and preferences.
 - **The brain re-checks links**: when you reopen a brain answer, a page you can no longer open loses its link, and the
   reply says how many were left out. Tags (`mentions` parts) are checked the way the @ picker checked them: a brain
   page by its entity, a team as an agent team, a node or a run through its workflow, a person while their account is

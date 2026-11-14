@@ -1593,7 +1593,7 @@ no pause over 10 minutes between saves folds into one version (⌘S, Publish and
 The first piece of the company-backbone program (wave 1, B02). Built: the `user_preferences` and `conversations` tables
 (migrations 2070 and 2071), their session-only routes, the retention service, the client hooks and the history popover
 ([assistant.md](assistant.md#conversation-history)). Next: each chat mounts the history button and saves to the store,
-and the account menu gets the switches. Open: `deleteUser` should remove a person's conversations and preferences, a pin should decide whether retention spares a conversation, search wants a plain-text column, and `GET /api/conversations/:id` wants a `limit`.
+and the account menu gets the switches. Deleting a person removes their conversations, preferences and private work events (wave 1 carryover). Open: a pin should decide whether retention spares a conversation, search wants a plain-text column, and `GET /api/conversations/:id` wants a `limit`.
 
 ## Tagging with @ (B04, 2026-11-14)
 
