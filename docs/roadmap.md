@@ -1626,6 +1626,10 @@ The wave 1 review notes were fixed in wave 2's carryover where they were contain
 - **All projects and Manage projects** both open `/projects` in the switcher; dropping one belongs with the projects
   page (B34).
 
+## Runs: one list (B20, 2026-11-14)
+
+Closed from the wave 1 page review: X2 (Executions, Runs and Search runs are one page, **Runs** at `/runs`, the old URLs redirect), P-ex-1 (no ID or Mode column), P-ex-2 (Stop all only while a run runs), P-ex-3 (repeated failures fold into one row), P-ex-4 (two re-run words), P-runs-1 (one search box with Status and Workflow chips, the rest under More filters) and P-cmp-1 (compare with fewer than two runs goes back to the list). See [the Runs list](run-trace.md#the-runs-list).
+
 ## Not planned
 
 Later, maybe: an agent code sandbox, and prompt management. Not planned:
