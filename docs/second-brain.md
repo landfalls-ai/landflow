@@ -276,6 +276,17 @@ prose and a person keeps the facts. Spotlight asks it questions.
     only when the answer cites it, and a `[n]` that points at no work item is dropped. **New conversation** clears
     it. On a phone Ask is a bottom sheet; a link closes it to show the page, and the Ask button brings it back with
     its answers.
+  - **Ask keeps its conversations, and takes tags.** Each page has its own conversation (kept when **Keep my
+    conversations** is on): ask on a page, open another and come back, and the last conversation of that page is there
+    under **Earlier**; new questions continue it. The clock button in the panel header (in the row above the box on a
+    phone) opens the history: this page's conversations, then all of Ask's, with rename and delete
+    ([history](assistant.md#conversation-history)); **New conversation** starts a clean one. On the index and the log
+    there is no page, so nothing is resumed there. `@` in the box tags a page, a person, a workflow, a run or anything else
+    the picker lists ([tagging](assistant.md#tagging-with-)); "On this page" has the open page and the pages the last answers
+    linked to. Each tag is checked as you and read into the answer, and shows in the steps as **Read @Billing**; one you may
+    not open shows **Couldn't read @Billing** and nothing else. A kept turn holds your words, the tags' names, the answer
+    with its links and the steps, never what was read from a tag. When you reopen one, a link to a page you can no longer
+    open is dropped and the turn says **1 link hidden**. The model, time and cost footer comes back too.
   - **Quick open** (⌘P or ⌘K): go to a file by name or path, or `>` for commands (open index or log, toggle Source,
     Problems, Suggestions, run the brain). It only finds pages; it does not ask.
   - **Panel** (⌘J): **Problems** (initiatives and customers without an owner, pages quiet for 30 days, summaries behind
