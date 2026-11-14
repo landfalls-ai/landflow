@@ -174,7 +174,7 @@ describe('markup', () => {
     expect(html.match(/aria-expanded="false"/g)).toHaveLength(4);
     expect(html.match(/Learn more/g)).toHaveLength(4);
     for (const body of ['ACCESS', 'CLIENTS', 'TOOLS', 'GATEWAY']) expect(html).not.toContain(body);
-    expect(html).toContain(`${Object.keys(TOOL_SCOPES).length} tools`);
+    expect(html).toContain(`${Object.keys(TOOL_SCOPES).length} instance tools`);
     expect(html).toContain('Work from local tools');
     expect(page(false)).not.toContain('Work from local tools');
   });
