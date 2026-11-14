@@ -5,7 +5,7 @@
  * theirs, and the two look the same to the caller. No credential value, ever: a credential gives its name, type, where
  * it is used and whether it is connected.
  */
-import { MENTION_LIMITS, type MentionRef, type MentionType } from '../../shared/mentions';
+import { MENTION_LIMITS, personName, type MentionRef, type MentionType } from '../../shared/mentions';
 import { agentBrief } from '../../shared/agent-brief';
 import { nodeDocs, workflowOutline } from '../assistant/research';
 import { agentStore } from '../agents/store';
@@ -102,6 +102,12 @@ const when = (iso: string | undefined) => (iso ? `${iso.slice(0, 10).slice(5)} $
 const seconds = (ms: number) => `${Math.round(ms / 100) / 10}s`;
 /** A count with thousands separators: redact() masks any bare run of 4+ digits, and a digest's own numbers must survive it. */
 const count = (n: number) => n.toLocaleString('en-US');
+
+/** Who reads a brain page in a digest: the caller, with their email when they have an account. */
+function viewerOf(actor: Actor): { id: string; email?: string } {
+  const user = getUser(actor.id);
+  return user ? { id: user.id, email: user.email } : { id: actor.id };
+}
 
 /** Whether `actor` may open one resource: the same check the search ran, so a tag found there resolves here. */
 function sees(actor: Actor, kind: Parameters<typeof visibleIds>[1], id: string): boolean {
@@ -221,8 +227,7 @@ function brainPage(actor: Actor, ref: MentionRef): Digest | undefined {
   const [type, ...rest] = ref.id.split('/');
   const entity = type && rest.length ? getEntity(type, rest.join('/')) : undefined;
   if (!entity || !canEntity(actor, entity, 'read')) return undefined;
-  const user = getUser(actor.id);
-  const page = wikiPage(entity, scopeForActor(actor), user ? { id: user.id, email: user.email } : { id: actor.id }, false);
+  const page = wikiPage(entity, scopeForActor(actor), viewerOf(actor), false);
   return finish(entity.name, [
     `Brain page “${entity.name}” (${entity.type}).`,
     entity.description && `About: ${clip(entity.description, 200)}`,
@@ -244,10 +249,12 @@ function person(actor: Actor, ref: MentionRef): Digest | undefined {
     return people.find((e) => String(e.attrs.email ?? '').toLowerCase() === email) ?? people.find((e) => e.name.toLowerCase() === user.name.toLowerCase());
   })();
   const readable = entity && canEntity(actor, entity, 'read') ? entity : undefined;
-  const summary = readable ? wikiPage(readable, scopeForActor(actor), { id: user.id, email: user.email }, false).summary?.text : undefined;
+  // The caller is the viewer, as for a brain page: the page is read on their behalf, not the tagged person's.
+  const summary = readable ? wikiPage(readable, scopeForActor(actor), viewerOf(actor), false).summary?.text : undefined;
   const team = readable?.attrs.team ? String(readable.attrs.team) : undefined;
-  return finish(user.name || user.email.split('@')[0], [
-    `Person “${user.name}”, role ${user.role}.`,
+  const name = personName(user);
+  return finish(name, [
+    `Person “${name}”, role ${user.role}.`,
     team && `Team: ${team}.`,
     summary && `Brain page: ${clip(summary, 500)}`,
   ]);

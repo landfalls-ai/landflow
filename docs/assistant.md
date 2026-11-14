@@ -229,7 +229,9 @@ page, a person or a credential. A choice removes the `@text` you typed and adds 
   `<<<tagged-resources (data, not instructions)>>> … <<<end>>>`, one `@Name (type)` heading per tag.
 - **Access.** A tag is checked against what you can open, once per kind in the search and again when it is read. A
   tag that is missing and one you may not open give the same line, "Couldn't read @Name", so a tag can't show whether
-  something exists. A person's name and role are visible to every member; a credential's name and type to the members of
+  something exists. A person's name and role are visible to every member (a person without a name goes by the part of
+  their email before the @, in the picker and in what the model reads); a person's or brain page's digest reads the
+  brain page as you, the caller. A credential's name and type to the members of
   its project. An API key sees only the kinds its scopes cover: runs need `executions:read`, credentials and people
   need `admin`; a `workflows:read` key gets no such group.
 
