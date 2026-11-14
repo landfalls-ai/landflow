@@ -3,11 +3,14 @@
  * The Agent architect (docs/agents.md#agent-architect): a chat with a specialist that designs an agent from the plugins
  * this instance has. The chat is on the left; the draft it proposes stays on the right, whole, until the user creates it.
  */
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { BookOpen, Bot, Check, ChevronLeft, Loader2, Plug, RadioTower, TriangleAlert, Workflow, X } from 'lucide-react';
+import { BookOpen, Bot, Check, ChevronLeft, Plug, RadioTower, SquarePen, TriangleAlert, Workflow, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, streamEvents } from '@/lib/client/api';
+import { useConversation } from '@/lib/client/conversations';
+import type { ActivityStep } from '@/lib/shared/activity';
+import type { ConversationItem, ConversationItemInput, ConversationPart } from '@/lib/shared/conversations';
 import { nodeColor, tint } from '@/lib/client/node-style';
 import { cn } from '@/lib/utils';
 import type { AgentConfig, AgentToolConfig } from '@/lib/shared/agents';
@@ -16,7 +19,10 @@ import { randomFace } from '@/lib/shared/faces';
 import type { NodeTypeInfo } from '@/lib/shared/types';
 import { Chip } from '../ui/badge';
 import { Button } from '../ui/button';
-import { AssistantRow, ChatComposer, ChatEmpty, ChatError, ChatMarkdown, UserBubble, Working } from '../ui/chat';
+import { ActivityTrace } from '../ui/activity-trace';
+import { AssistantRow, CHAT_ICON_BUTTON, ChatComposer, ChatEmpty, ChatError, ChatMarkdown, ModelChip, ReplyMeta, UserBubble, Working, type ReplyInfo } from '../ui/chat';
+import { ChatList } from '../ui/chat-motion';
+import { ConversationHistory } from '../ui/conversation-history';
 import { NodeIcon } from '../ui/icon';
 import { Input } from '../ui/inputs';
 import { AgentAvatar } from './avatar';
@@ -31,7 +37,7 @@ const STARTERS = [
   'Review new pull requests and leave a first round of comments',
 ];
 
-interface Draft {
+export interface Draft {
   id: string;
   summary: string;
   config: Partial<AgentConfig>;
@@ -40,14 +46,33 @@ interface Draft {
   missing: ArchitectMissing[];
 }
 
-interface Message {
+/** What the stream says when a reply fails: the kind of failure, and (after some steps) the checkpoint that continues it. */
+interface FailedReply {
+  message: string;
+  kind?: string;
+  checkpoint?: string;
+  /** The step that failed: "Continue from step N". */
+  step?: number;
+}
+
+export interface Message {
   role: 'user' | 'assistant';
   text: string;
-  tools: Array<{ name: string; label: string; ok: boolean }>;
+  /** What the architect did: the tools it used, in order. */
+  steps: ActivityStep[];
   /** The summary of the draft this reply proposed. */
   proposed?: string;
-  error?: string;
+  /** The model, time, steps, tokens and cost of the finished reply. */
+  info?: ReplyInfo;
+  error?: FailedReply;
+  /** What the architect is doing now (the step that began), for the live line. */
+  stepLabel?: string;
+  /** From a conversation kept earlier: shown under the "Earlier" divider. */
+  earlier?: boolean;
 }
+
+/** The architect's conversation is kept under this scope (a design is about an agent that does not exist yet). */
+const SCOPE = { surface: 'architect', subjectType: 'agent', subjectId: 'new' } as const;
 
 const architectAvatar = { name: ARCHITECT.name, color: ARCHITECT.color, avatar: { kind: 'face', face: ARCHITECT.face } } as const;
 
@@ -59,6 +84,56 @@ function history(messages: Message[]): ArchitectTurn[] {
     if (content) turns.push({ role: m.role, content });
   }
   return turns;
+}
+
+/** The body of POST /api/assistant/agent: the conversation, the draft so far, and `resume` to continue a failed reply from its checkpoint. */
+export type ArchitectBody = ArchitectRequest & { resume?: { checkpoint: string } };
+export function architectBody(messages: Message[], draft?: Partial<AgentConfig>, resume?: { checkpoint: string }): ArchitectBody {
+  return { messages: history(messages), ...(draft && { draft }), ...(resume && { resume }) };
+}
+
+/** The conversation item a finished reply is kept as: its words, steps, the draft it proposed, a failure, and what it cost. */
+export function replyItem(m: Message, draft?: Draft): ConversationItemInput {
+  const parts: ConversationPart[] = [];
+  if (m.text.trim()) parts.push({ type: 'text', text: m.text });
+  if (m.steps.length) parts.push({ type: 'steps', steps: m.steps.map((s) => ({ id: s.id, label: s.label, kind: s.kind, status: s.status, ...(s.durationMs !== undefined && { durationMs: s.durationMs }) })) });
+  if (m.proposed && draft) parts.push({ type: 'proposal', id: draft.id, summary: m.proposed, ops: [draft], state: 'pending' });
+  if (m.error) parts.push({ type: 'error', message: m.error.message, ...(m.error.kind && { kind: m.error.kind }) });
+  if (!parts.length) parts.push({ type: 'text', text: '' });
+  const i = m.info;
+  return {
+    role: 'assistant',
+    parts,
+    ...(i && { meta: { ...(i.model && { model: i.model }), ...(i.durationMs !== undefined && { durationMs: i.durationMs }), ...(i.steps !== undefined && { steps: i.steps }), ...(i.inputTokens !== undefined && { inputTokens: i.inputTokens }), ...(i.outputTokens !== undefined && { outputTokens: i.outputTokens }), ...(i.costUsd !== undefined && { costUsd: i.costUsd }) } }),
+  };
+}
+
+/** A kept conversation as chat messages (under "Earlier"), and the last draft it proposed. */
+export function restore(items: ConversationItem[]): { messages: Message[]; draft?: Draft } {
+  let draft: Draft | undefined;
+  const messages = items.map((item): Message => {
+    const text = item.parts.flatMap((p) => (p.type === 'text' ? [p.text] : [])).join('\n\n');
+    if (item.role === 'user') return { role: 'user', text, steps: [], earlier: true };
+    const steps = item.parts.flatMap((p) => (p.type === 'steps' ? p.steps : [])).map((s): ActivityStep => ({ id: s.id, label: s.label, kind: (s.kind as ActivityStep['kind']) || 'tool', status: s.status === 'failed' ? 'failed' : 'ok', ...(s.durationMs !== undefined && { durationMs: s.durationMs }) }));
+    const proposal = item.parts.find((p) => p.type === 'proposal');
+    if (proposal?.type === 'proposal') {
+      const kept = proposal.ops[0] as Partial<Draft> | undefined;
+      if (kept && typeof kept === 'object' && kept.config) draft = { id: proposal.id, summary: proposal.summary, config: kept.config, needs: kept.needs ?? [], dropped: kept.dropped ?? [], missing: kept.missing ?? [] };
+    }
+    const failure = item.parts.find((p) => p.type === 'error');
+    const meta = item.meta;
+    return {
+      role: 'assistant',
+      text,
+      steps,
+      earlier: true,
+      ...(proposal?.type === 'proposal' && { proposed: proposal.summary }),
+      // A kept failure cannot be continued (its checkpoint was in memory): Try again is all it offers.
+      ...(failure?.type === 'error' && { error: { message: failure.message, ...(failure.kind && { kind: failure.kind }) } }),
+      ...(meta && { info: { model: meta.model, durationMs: meta.durationMs, steps: meta.steps, inputTokens: meta.inputTokens, outputTokens: meta.outputTokens, costUsd: meta.costUsd } }),
+    };
+  });
+  return { messages, ...(draft && { draft }) };
 }
 
 function ToolTile({ info, size = 32 }: { info?: NodeTypeInfo; size?: number }) {
@@ -227,13 +302,13 @@ export function AgentArchitect({ teams, onBack, onClose }: { teams: string[]; on
   const [pane, setPane] = useState<'chat' | 'draft'>('chat');
   const box = useRef<HTMLTextAreaElement>(null);
   const abort = useRef<AbortController>(null);
-  const bottom = useRef<HTMLDivElement>(null);
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  // The conversation is kept (when the person keeps conversations): reopening the architect brings the last one back.
+  const kept = useConversation(SCOPE);
 
-  useEffect(() => {
-    bottom.current?.scrollIntoView({ block: 'end' });
-  }, [messages, streaming]);
   useEffect(() => () => abort.current?.abort(), []);
   useEffect(() => {
     if (!fresh) return;
@@ -241,44 +316,146 @@ export function AgentArchitect({ teams, onBack, onClose }: { teams: string[]; on
     return () => clearTimeout(t);
   }, [fresh, draft?.id]);
 
+  /** Show a kept conversation: its messages under "Earlier", and the draft it ended with. */
+  const show = (items: ConversationItem[]) => {
+    const back = restore(items);
+    shown.current = true;
+    setMessages(back.messages);
+    setDraft(back.draft);
+    setPane('chat');
+  };
+  // Opening a kept conversation puts its items in the hook; this shows them once they arrive (a new items array: not the
+  // one there was when it was asked for). Resuming the latest never replaces what the person has already started.
+  const itemsNow = useRef(kept.items);
+  itemsNow.current = kept.items;
+  // The person has sent a message in this chat (a late resume must not mix an earlier conversation into it).
+  const started = useRef(false);
+  const shown = useRef(false);
+  const asked = useRef<{ before: ConversationItem[]; force: boolean }>(null);
+  const ask = (force: boolean) => {
+    asked.current = { before: itemsNow.current, force };
+  };
+  useEffect(() => {
+    const want = asked.current;
+    if (!want || kept.items === want.before) return;
+    asked.current = null;
+    if (want.force || !started.current) show(kept.items);
+  }, [kept.items]); // eslint-disable-line react-hooks/exhaustive-deps
+  const resumed = useRef(false);
+  useEffect(() => {
+    if (resumed.current) return;
+    resumed.current = true;
+    ask(false);
+    void kept
+      .resumeLatest()
+      .then((found) => {
+        if (!found) asked.current = null;
+        // The person started a design while it loaded: theirs stays, and later messages go to a new conversation.
+        else if (started.current && !shown.current) kept.startNew();
+      })
+      .catch(() => {
+        asked.current = null;
+      });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   /** Change the last (streaming) message. */
   const patch = (fn: (m: Message) => Message) => setMessages((list) => list.map((m, i) => (i === list.length - 1 ? fn(m) : m)));
 
-  const send = async (text: string, base = messages) => {
+  /**
+   * Ask the architect. `base` is the conversation before the new message; `resume` continues the failed reply `base` ends
+   * with from its checkpoint (the same message goes on: its steps stay and the new ones follow).
+   */
+  const send = async (text: string, base = messages, resume?: { checkpoint: string }) => {
     const content = text.trim();
     if (!content || streaming) return;
-    const sent = [...base, { role: 'user' as const, text: content, tools: [] }];
-    setMessages([...sent, { role: 'assistant', text: '', tools: [] }]);
+    started.current = true;
+    const sent = resume ? base : [...base, { role: 'user' as const, text: content, steps: [] }];
+    // A continued reply is the failed one, its error cleared.
+    const failed = resume ? sent.at(-1) : undefined;
+    const asked = resume ? sent.slice(0, -1) : sent;
+    const reply: Message = failed && failed.role === 'assistant' ? { ...failed, error: undefined, info: undefined } : { role: 'assistant', text: '', steps: [] };
+    const draftBefore = draftRef.current;
+    setMessages([...asked, reply]);
     setInput('');
     setStreaming(true);
     const controller = new AbortController();
     abort.current = controller;
-    const body: ArchitectRequest = { messages: history(sent), ...(draftRef.current && { draft: draftRef.current.config }) };
+    // The reply as it is built, so it can be kept when the stream ends.
+    let built = reply;
+    let proposal: Draft | undefined;
+    const update = (fn: (m: Message) => Message) => {
+      built = fn(built);
+      patch(fn);
+    };
+    if (!resume) void kept.append([{ role: 'user', parts: [{ type: 'text', text: content }] }]).catch(() => {});
     try {
       await streamEvents(
         '/api/assistant/agent',
-        body,
+        architectBody(asked, draftBefore?.config, resume),
         (event, data) => {
           const d = data as Record<string, unknown>;
-          if (event === 'text') patch((m) => ({ ...m, text: m.text + String(d.text ?? '') }));
-          else if (event === 'tool') patch((m) => ({ ...m, tools: [...m.tools, { name: String(d.name), label: String(d.label ?? d.name), ok: d.ok !== false }] }));
+          if (event === 'step.start') update((m) => ({ ...m, stepLabel: String(d.label ?? '') || undefined }));
+          else if (event === 'text') update((m) => ({ ...m, text: m.text + String(d.text ?? '') }));
+          else if (event === 'tool')
+            update((m) => ({
+              ...m,
+              steps: [
+                ...m.steps,
+                {
+                  id: String(d.id ?? `${d.name}-${m.steps.length}`),
+                  label: String(d.label ?? d.name),
+                  kind: 'tool',
+                  status: d.ok === false ? 'failed' : 'ok',
+                  ...(typeof d.durationMs === 'number' && { durationMs: d.durationMs }),
+                  ...(typeof d.detail === 'string' && d.detail && { detail: d.detail }),
+                },
+              ],
+            }));
           else if (event === 'draft') {
             const next = d as unknown as Draft;
-            setDraft({ id: next.id, summary: next.summary, config: next.config ?? {}, needs: next.needs ?? [], dropped: next.dropped ?? [], missing: next.missing ?? [] });
+            proposal = { id: next.id, summary: next.summary, config: next.config ?? {}, needs: next.needs ?? [], dropped: next.dropped ?? [], missing: next.missing ?? [] };
+            setDraft(proposal);
             setFresh(true);
             setPane('draft');
-            patch((m) => ({ ...m, proposed: next.summary }));
-          } else if (event === 'error') patch((m) => ({ ...m, error: String(d.message ?? 'Something went wrong') }));
+            update((m) => ({ ...m, proposed: next.summary }));
+          } else if (event === 'done') {
+            const usage = (d.usage ?? {}) as { inputTokens?: number; outputTokens?: number };
+            update((m) => ({
+              ...m,
+              info: {
+                model: typeof d.model === 'string' ? d.model : undefined,
+                durationMs: typeof d.durationMs === 'number' ? d.durationMs : undefined,
+                // The tools it used, as the activity line counts them (the model's own step count is a different number).
+                steps: m.steps.length || undefined,
+                inputTokens: usage.inputTokens,
+                outputTokens: usage.outputTokens,
+                costUsd: typeof d.costUsd === 'number' ? d.costUsd : undefined,
+                local: d.local === true,
+              },
+            }));
+          } else if (event === 'error')
+            update((m) => ({
+              ...m,
+              error: {
+                message: String(d.message ?? 'Something went wrong'),
+                ...(typeof d.kind === 'string' && { kind: d.kind }),
+                ...(typeof d.checkpoint === 'string' && { checkpoint: d.checkpoint }),
+                ...(typeof d.step === 'number' && { step: d.step }),
+              },
+            }));
         },
         controller.signal,
       );
     } catch (e) {
-      if (!controller.signal.aborted) patch((m) => ({ ...m, error: (e as Error).message }));
+      if (!controller.signal.aborted) update((m) => ({ ...m, error: { message: (e as Error).message } }));
     } finally {
       setStreaming(false);
       abort.current = null;
+      if (built.text || built.steps.length || built.error) void kept.append([replyItem(built, proposal)]).catch(() => {});
     }
   };
+
+  const lastInfo = messages.findLast((m) => m.info?.model)?.info;
 
   const choice: AvatarChoice | undefined = draft && {
     avatar: draft.config.avatar ?? { kind: 'face', face: randomFace(seed) },
@@ -350,8 +527,41 @@ export function AgentArchitect({ teams, onBack, onClose }: { teams: string[]; on
             ))}
           </div>
           <section aria-label="Chat with the Agent architect" className={cn('flex min-h-0 flex-1 flex-col border-b border-hair md:w-[400px] md:flex-none md:border-b-0 md:border-r', pane !== 'chat' && 'max-md:hidden')}>
-            <div aria-live="polite" className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
-              {messages.length === 0 && (
+            <div className="flex h-9 shrink-0 items-center justify-end gap-0.5 border-b border-hair px-2">
+              <ConversationHistory
+                {...SCOPE}
+                subjectLabel="Agent designs"
+                onOpen={(id) => {
+                  if (streaming) return;
+                  ask(true);
+                  void kept.open(id).catch(() => {
+                    asked.current = null;
+                  });
+                }}
+                onNew={() => {
+                  if (streaming) return;
+                  kept.startNew();
+                  setMessages([]);
+                  setDraft(undefined);
+                }}
+              />
+              <button
+                type="button"
+                aria-label="New design"
+                title="New design"
+                disabled={streaming}
+                onClick={() => {
+                  kept.startNew();
+                  setMessages([]);
+                  setDraft(undefined);
+                }}
+                className={cn(CHAT_ICON_BUTTON, 'disabled:opacity-40')}
+              >
+                <SquarePen className="size-3.5" />
+              </button>
+            </div>
+            <div aria-live="polite" className="flex min-h-0 flex-1 flex-col p-4">
+              {messages.length === 0 ? (
                 <ChatEmpty
                   className="flex h-full flex-col justify-center"
                   mark={<AgentAvatar agent={architectAvatar} size={48} />}
@@ -363,42 +573,63 @@ export function AgentArchitect({ teams, onBack, onClose }: { teams: string[]; on
                     box.current?.focus();
                   }}
                 />
-              )}
-              {messages.map((m, i) => {
-                const last = i === messages.length - 1;
-                if (m.role === 'user') return <UserBubble key={i}>{m.text}</UserBubble>;
-                return (
-                  <AssistantRow key={i} mark={<AgentAvatar agent={architectAvatar} size={20} />}>
-                    {m.tools.map((t, j) => (
-                      <div key={j} className="flex items-center gap-1.5 text-[11px] text-t3">
-                        {t.ok ? <Check className="size-3 text-gn" /> : <X className="size-3 text-rd" />}
-                        <span className="truncate">{t.label}</span>
+              ) : (
+                <ChatList>
+                  {messages.map((m, i) => {
+                    const last = i === messages.length - 1;
+                    const firstEarlier = m.earlier && !messages[i - 1]?.earlier;
+                    const divider = firstEarlier && (
+                      <div role="separator" className="mb-3 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">
+                        <span className="h-px flex-1 bg-hair" />
+                        Earlier
+                        <span className="h-px flex-1 bg-hair" />
                       </div>
-                    ))}
-                    {m.text && <ChatMarkdown text={m.text} />}
-                    {m.proposed && (
-                      <button type="button" onClick={() => setPane('draft')} className="text-left text-[11px] text-t3 max-md:min-h-11 max-md:text-ac">
-                        Draft updated: {m.proposed}
-                      </button>
-                    )}
-                    {streaming && last && !m.error && <Working />}
-                    {m.error && (
-                      <ChatError
-                        message={m.error}
-                        onRetry={
-                          streaming || !last
-                            ? undefined
-                            : () => {
-                                const asked = messages[i - 1];
-                                if (asked?.role === 'user') void send(asked.text, messages.slice(0, i - 1));
+                    );
+                    if (m.role === 'user')
+                      return (
+                        <Fragment key={i}>
+                          {divider}
+                          <UserBubble>{m.text}</UserBubble>
+                        </Fragment>
+                      );
+                    const working = streaming && last && !m.error;
+                    const resumeAt = m.error?.checkpoint && m.error.step && m.error.step > 1 ? m.error.step : undefined;
+                    const asked = messages[i - 1];
+                    return (
+                      <Fragment key={i}>
+                        {divider}
+                        <AssistantRow mark={<AgentAvatar agent={architectAvatar} size={20} />}>
+                          {working ? (m.steps.length ? <ActivityTrace steps={m.steps} live /> : <Working label={m.stepLabel} />) : <ActivityTrace steps={m.steps} live={false} durationMs={m.info?.durationMs} />}
+                          {m.text && <ChatMarkdown text={m.text} />}
+                          {m.proposed && (
+                            <button type="button" onClick={() => setPane('draft')} className="text-left text-[11px] text-t3 max-md:min-h-11 max-md:text-ac">
+                              Draft updated: {m.proposed}
+                            </button>
+                          )}
+                          {m.error && (
+                            <ChatError
+                              message={m.error.message}
+                              onRetry={
+                                streaming || !last
+                                  ? undefined
+                                  : () => {
+                                      if (asked?.role === 'user') void send(asked.text, messages.slice(0, i - 1));
+                                    }
                               }
-                        }
-                      />
-                    )}
-                  </AssistantRow>
-                );
-              })}
-              <div ref={bottom} />
+                              actions={
+                                resumeAt && !streaming && last && asked?.role === 'user'
+                                  ? [{ label: `Continue from step ${resumeAt}`, primary: true, onClick: () => void send(asked.text, messages.slice(0, i + 1), { checkpoint: m.error!.checkpoint! }) }]
+                                  : undefined
+                              }
+                            />
+                          )}
+                          {!working && !m.error && (m.info || m.text) && <ReplyMeta info={m.info} copy={m.text || undefined} />}
+                        </AssistantRow>
+                      </Fragment>
+                    );
+                  })}
+                </ChatList>
+              )}
             </div>
             <div className="shrink-0 border-t border-hair p-2.5">
               <ChatComposer
@@ -410,6 +641,7 @@ export function AgentArchitect({ teams, onBack, onClose }: { teams: string[]; on
                 busy={streaming}
                 placeholder={draft ? 'Ask for changes' : 'Describe the agent'}
                 label="Message the Agent architect"
+                chip={lastInfo?.model ? <ModelChip model={lastInfo.model} local={lastInfo.local} /> : undefined}
               />
             </div>
           </section>

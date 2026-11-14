@@ -1,16 +1,61 @@
 'use client';
-/** "Test agent": a slide-over chat with the draft, streaming tool calls and approvals as they happen. */
+/**
+ * "Test agent": a slide-over chat with the draft, on the chat kit (docs/agents.md#test-chat): tool calls as one activity
+ * line that opens into its steps, approvals as they happen, a footer under each reply, and a history of this person's
+ * earlier test sessions of the agent (they are saved under Sessions already; nothing new is stored).
+ */
 import { useEffect, useRef, useState } from 'react';
-import { Bot, SquarePen, X } from 'lucide-react';
+import { Bot, Clock, SquarePen, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { api } from '@/lib/client/api';
+import { timeAgo } from '@/lib/client/format';
 import { Badge } from '../ui/badge';
-import { AssistantRow, CHAT_ICON_BUTTON, ChatComposer, ChatEmpty, Working } from '../ui/chat';
+import { AssistantRow, CHAT_ICON_BUTTON, ChatComposer, ChatEmpty, ModelChip, Working } from '../ui/chat';
+import { ChatList } from '../ui/chat-motion';
+import { Popover } from '../ui/popover';
 import { isAnalyst, sourcesOf } from '@/lib/shared/analyst-chart';
-import type { AgentToolConfig } from '@/lib/shared/agents';
+import type { AgentToolConfig, SessionSummary } from '@/lib/shared/agents';
 import { AnalystTimeline, SUGGEST_FIX_MESSAGE, SourceChips } from './analyst-view';
 import { AgentAvatar, type AvatarSource } from './avatar';
-import { TimelineView, TraceChip, type ToolEntry } from './timeline';
+import { timelineItems, type ToolEntry } from './timeline';
+import { useAgentList } from './use-agent-data';
 import { REASON_LABEL, useAgentRun } from './use-agent-run';
+
+/** This person's earlier test sessions of the agent, newest first: the sessions route, People, source test, this user. */
+function TestHistory({ agentId, current, onOpen }: { agentId: string; current?: string; onOpen: (id: string) => void }) {
+  const [sessions, setSessions] = useState<SessionSummary[]>();
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let live = true;
+    api<{ sessions: SessionSummary[] }>(`/api/agents/${agentId}/sessions?audience=people&source=test&limit=30`, { background: true })
+      .then((r) => live && setSessions(r.sessions))
+      .catch(() => live && setFailed(true));
+    return () => {
+      live = false;
+    };
+  }, [agentId]);
+  return (
+    <div className="max-h-[50vh] overflow-y-auto p-1 max-md:max-h-none">
+      {failed && <p className="px-3 py-3 text-[12px] text-rd">Couldn’t load your earlier tests.</p>}
+      {!failed && !sessions && <p className="px-3 py-3 text-[12px] text-t3">Loading…</p>}
+      {sessions && !sessions.length && <p className="px-3 py-3 text-[12px] leading-relaxed text-t3">Nothing yet. Your test conversations with this agent show up here.</p>}
+      {sessions?.map((s) => (
+        <button
+          key={s.id}
+          type="button"
+          role="menuitem"
+          onClick={() => onOpen(s.id)}
+          className={cn('flex w-full flex-col gap-0.5 rounded-lg px-3 py-2 text-left hover:bg-acdim max-md:min-h-11 max-md:!items-start', s.id === current && 'bg-acdim')}
+        >
+          <span className="w-full truncate text-[13px] font-semibold text-t1">{s.title || 'Untitled session'}</span>
+          <span className="text-[11px] text-t3">
+            {timeAgo(s.updatedAt)} · {s.turns} {s.turns === 1 ? 'turn' : 'turns'}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export function TestChat({
   agentId,
@@ -38,15 +83,8 @@ export function TestChat({
   const run = useAgentRun(agentId);
   const [draft, setDraft] = useState('');
   const [deciding, setDeciding] = useState(false);
-  const scroller = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    scroller.current?.scrollTo({
-      top: scroller.current.scrollHeight,
-      behavior: 'smooth',
-    });
-  }, [run.entries, run.running]);
+  const agents = useAgentList();
 
   useEffect(() => {
     input.current?.focus();
@@ -85,7 +123,28 @@ export function TestChat({
   };
 
   const last = run.entries[run.entries.length - 1];
-  const thinking = run.running && !(last?.type === 'tool' && last.status === 'running');
+  // A tool call has its own live line; "Thinking…" is for before the first one and between a person's answer and the next step.
+  const thinking = run.running && last?.type !== 'tool';
+  const lastTrace = run.traceIds[run.traceIds.length - 1];
+  // The trace, as the Open trace link of the last activity line: the trace UI when the host has one, else this session under Sessions.
+  const traceUrl = lastTrace ? (run.traceUrls[lastTrace] ?? (run.sessionId ? `/agents/${encodeURIComponent(agentId)}?tab=sessions&session=${encodeURIComponent(run.sessionId)}` : undefined)) : undefined;
+  const model = run.entries.findLast((e): e is Extract<typeof e, { type: 'assistant' }> => e.type === 'assistant' && !!e.model)?.model ?? agents?.find((a) => a.id === agentId)?.model;
+  const items = analyst
+    ? run.entries.length
+      ? [
+          <AnalystTimeline
+            key="analyst"
+            entries={run.entries}
+            running={run.running}
+            childHref={childHref}
+            onDecide={(callId, approved) => void decide(callId, approved)}
+            deciding={deciding}
+            onSuggest={() => void sendText(SUGGEST_FIX_MESSAGE)}
+            traceUrl={traceUrl}
+          />,
+        ]
+      : []
+    : timelineItems({ entries: run.entries, childHref, onDecide: (callId, approved) => void decide(callId, approved), deciding, trace: { running: run.running, traceUrl } });
 
   return (
     <aside
@@ -95,14 +154,33 @@ export function TestChat({
       <div className="flex h-[52px] shrink-0 items-center gap-2 border-b border-hair px-3">
         <span className="text-[13px] font-semibold text-t1">Test agent</span>
         <Badge tone="muted">Draft</Badge>
-        <button
-          title={run.sessionId ? `New conversation (this one is ${run.sessionId}, under Sessions)` : 'New conversation'}
-          aria-label="New conversation"
-          onClick={run.reset}
-          className={cn(CHAT_ICON_BUTTON, 'ml-auto')}
-        >
-          <SquarePen className="size-3.5" />
-        </button>
+        <span className="ml-auto flex items-center">
+          <Popover
+            title="Your earlier tests"
+            label="Your earlier tests"
+            align="end"
+            className="w-[300px] p-0"
+            trigger={({ toggle, open }) => (
+              <button type="button" onClick={toggle} aria-label="Earlier tests" aria-expanded={open} title="Your earlier tests of this agent" className={CHAT_ICON_BUTTON}>
+                <Clock className="size-4" />
+              </button>
+            )}
+          >
+            {(close) => (
+              <TestHistory
+                agentId={agentId}
+                current={run.sessionId}
+                onOpen={(id) => {
+                  close();
+                  void run.load(id).catch(() => {});
+                }}
+              />
+            )}
+          </Popover>
+          <button title="New conversation" aria-label="New conversation" onClick={run.reset} className={CHAT_ICON_BUTTON}>
+            <SquarePen className="size-3.5" />
+          </button>
+        </span>
         <button onClick={onClose} aria-label="Close test chat" className={CHAT_ICON_BUTTON}>
           <X className="size-4" />
         </button>
@@ -110,45 +188,34 @@ export function TestChat({
 
       {analyst && <SourceChips sources={sourcesOf((tools ?? []).map((t) => ('name' in t ? String(t.name) : '')))} />}
 
-      <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-        {run.entries.length === 0 && (
+      <div className="flex min-h-0 flex-1 flex-col px-4 py-4">
+        {run.entries.length === 0 ? (
           <ChatEmpty
             className="mt-8"
             mark={look ? <AgentAvatar agent={look} size={40} round /> : undefined}
             title={`Talk to ${agentName || 'your agent'}`}
             help="Messages run the current draft. Tool calls show up here as they happen, and the conversation is saved under Sessions."
           />
-        )}
-        {analyst ? (
-          <AnalystTimeline
-            entries={run.entries}
-            running={run.running}
-            childHref={childHref}
-            onDecide={(callId, approved) => void decide(callId, approved)}
-            deciding={deciding}
-            onSuggest={() => void sendText(SUGGEST_FIX_MESSAGE)}
-          />
         ) : (
-          <TimelineView entries={run.entries} childHref={childHref} onDecide={(callId, approved) => void decide(callId, approved)} deciding={deciding} />
-        )}
-        {thinking && (
-          <AssistantRow mark={<Bot className="size-3.5" />} className="mt-3">
-            <Working />
-          </AssistantRow>
+          <ChatList>
+            {[
+              ...items,
+              ...(thinking
+                ? [
+                    <AssistantRow key="thinking" mark={<Bot className="size-3.5" />}>
+                      <Working />
+                    </AssistantRow>,
+                  ]
+                : []),
+            ]}
+          </ChatList>
         )}
       </div>
 
       <div className="border-t border-hair p-2.5 max-md:pb-[max(10px,env(safe-area-inset-bottom))]">
-        {/* Tokens are under each reply; here, the run's trace and how it ended. */}
-        {(run.traceIds.length > 0 || (run.reason && run.reason !== 'completed' && !run.running)) && (
-          <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-t3">
-            {run.traceIds.length > 0 && (
-              <TraceChip traceId={run.traceIds[run.traceIds.length - 1]} url={run.traceUrls[run.traceIds[run.traceIds.length - 1]]} />
-            )}
-            {run.reason && run.reason !== 'completed' && !run.running && (
-              <span className={cn('w-full', run.reason === 'error' ? 'text-rd' : 'text-warn')}>{REASON_LABEL[run.reason]}</span>
-            )}
-          </div>
+        {/* The time, tokens and cost are under each reply, the trace in its activity line; here, only how a run ended badly. */}
+        {run.reason && run.reason !== 'completed' && !run.running && (
+          <p className={cn('mb-2 text-[11px]', run.reason === 'error' ? 'text-rd' : 'text-warn')}>{REASON_LABEL[run.reason]}</p>
         )}
         <ChatComposer
           inputRef={input}
@@ -160,6 +227,7 @@ export function TestChat({
           canSend={!run.awaitingApproval}
           placeholder={run.awaitingApproval ? 'Approve or deny the tool call first…' : 'Message the agent'}
           label="Message the agent"
+          chip={model ? <ModelChip model={model} local={model.startsWith('ollama/')} /> : undefined}
         />
       </div>
     </aside>

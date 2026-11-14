@@ -5,7 +5,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { nanoid } from 'nanoid';
-import { streamEvents } from '@/lib/client/api';
+import { api, streamEvents } from '@/lib/client/api';
 import type { AgentSession, AgentStreamEvent, RunEndReason, SessionStatus, TimelineEntry, TokenUsage } from '@/lib/shared/agents';
 
 /** Ids of entries shown before the server echoes them. */
@@ -145,6 +145,21 @@ export function useAgentRun(agentId: string, initial?: AgentSession, initialTrac
     setReason(undefined);
   };
 
+  /** Opens an earlier session of this agent in the chat: what was said so far, and the next message continues it. */
+  const load = async (id: string) => {
+    controller.current?.abort();
+    controller.current = undefined;
+    const body = await api<{ session: AgentSession; traceUrls?: Record<string, string> }>(`/api/agents/${agentId}/sessions/${encodeURIComponent(id)}`);
+    setRunning(false);
+    setEntries(body.session.timeline);
+    setSessionId(body.session.id);
+    setTraceIds(body.session.traceIds);
+    setTraceUrls(body.traceUrls ?? {});
+    setUsage(body.session.usage);
+    setStatus(body.session.status);
+    setReason(undefined);
+  };
+
   const awaitingApproval = entries.some((e) => e.type === 'tool' && e.status === 'awaiting_approval');
   return {
     entries,
@@ -160,6 +175,7 @@ export function useAgentRun(agentId: string, initial?: AgentSession, initialTrac
     decide,
     stop,
     reset,
+    load,
   };
 }
 

@@ -1558,7 +1558,12 @@ The shared pieces every chat will use, built in `components/ui/` and ready; the 
 - CH5 ✅ Done: the hosted chat widget's bubbles rise in, its typing indicator is three dots, and Reduce motion turns both
   off ([Hosted chat and widget](features/ai.md#hosted-chat-and-widget)).
 - CH1 (motion), CH6 (one activity trace), CH7 (one reply footer), CH9 (errors with actions) and CH10 (a model chip): kit
-  ready, surfaces in wave 2 ([Chat surfaces](assistant.md#chat-surfaces)).
+  ready, surfaces in wave 2 ([Chat surfaces](assistant.md#chat-surfaces)). Agents (B10): the test chat, the Agent
+  architect and the analyst are on the kit (CH6, CH7 done for agents); the test chat's raw trace id became the trace's
+  Open trace link (CH23, the test-chat part).
+- CH13 ✅ Done (B10): the Sessions tab opens on People and has Automations and All; no Auto-refresh switch
+  ([agents.md](agents.md#test-chat)). The architect keeps its conversation and can continue a failed design from the
+  failing step.
 
 ## Conversation history and personal preferences (2026-11)
 
