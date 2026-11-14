@@ -1486,6 +1486,17 @@ workbench in place of a page of cards, keeping Spotlight.
   its run went cold first (only with `LANDFLOW_PG_HOT_MINUTES` below the ask's 10-minute TTL); and the isolate backend
   still aborts the process on hash-table growth, so a memory bomb needs a separate evaluation process to be contained.
 
+## Company backbone: work events and the briefing (built 2026-11-14, B05)
+
+People's own tools can send a summary of their work to the brain, and each person gets their own day back
+([work-and-briefings.md](work-and-briefings.md)). This is the first part: the visibility model (a private work event
+is read by its owner alone, owners and admins included, through every reader), the `brain:read` and `brain:write` API
+key scopes, `POST` and `DELETE /api/brain/work`, `GET /api/brain/briefing`, the `work.session` kind and the admin
+setting `brain.workAutoSend`.
+
+- **Next**: the clients (the Claude Code mod, `landflow work`, MCP tools), team and org visibility with related
+  colleagues, repo entities, the link from a person to their user, and a Settings screen for the auto-send setting.
+
 ## Planned next
 
 1. **Declare event kinds in the UI**: kinds are declared over the API or by Record Event's *Declare Kind If New* only.

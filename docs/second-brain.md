@@ -62,6 +62,9 @@ attributes.
   `ai_usage` rows and the audit events of the retention window.
 - **Rollups**: `usage_daily` has rollups per day, kind, workflow, node type, signature and agent, and is kept 400 days.
   Raw events are kept `LANDFLOW_USAGE_RETENTION_DAYS` (90). A report over a longer window reads the rollups.
+- **Work events**: people's own tools send summaries of their work (`work.session`, with a repository, directory names
+  and counts) to `POST /api/brain/work`. Such a row has an owner and a visibility, private by default, and nobody else
+  reads a private one, not even an admin; the rollups leave them out. See [work-and-briefings.md](work-and-briefings.md).
 - **Off switch**: `LANDFLOW_BRAIN=false` stops recording and the brain.
 
 ### 2. Memory: profiles and facts
@@ -306,6 +309,9 @@ node refuses any collection with that name (case ignored) and points at Find Sim
 only what the workflow's creator can see. The brain itself writes them and searches the ones the caller's projects own.
 
 #### The brain over MCP
+
+What a person's tools send the brain about their work, and the briefing that comes back, are in
+[work-and-briefings.md](work-and-briefings.md); over MCP they arrive in a later wave.
 
 The instance MCP server ([reference/api.md](reference/api.md), `POST /api/mcp`) serves the brain, so a coding agent needs
 no hand-built MCP Server Trigger workflow:
