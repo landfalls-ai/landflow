@@ -27,14 +27,14 @@ const icon = { icon: 'lucide:sunrise', color: '#8b5cf6', categories: ['AI', 'Cor
  * their own items under an admin's saved workflow id, and read or send someone else's work
  * (docs/work-and-briefings.md#privacy).
  */
-function requireInstanceFlow(ctx: IExecuteContext): void {
+async function requireInstanceFlow(ctx: IExecuteContext): Promise<void> {
   const trusted = (id: string | undefined) => {
     if (!id) return true;
     const user = getUser(id);
     return Boolean(user && !user.disabledAt && (user.role === 'owner' || user.role === 'admin'));
   };
   const workflow = store.getWorkflow(ctx.getWorkflowId() ?? '');
-  const record = store.getExecution(ctx.getExecutionId());
+  const record = await store.loadExecution(ctx.getExecutionId());
   // A run started by a person (the editor, the API, chat) counts as that person's; an unsaved graph or an evaluation's
   // cases are the caller's own input. No saved record of the run: refused.
   const byPerson = record && (record.mode === 'manual' || record.mode === 'chat');
@@ -121,7 +121,7 @@ export const brainGatherWorkNode = defineNode({
     properties: [],
   },
   async execute(ctx) {
-    requireInstanceFlow(ctx);
+    await requireInstanceFlow(ctx);
     const out: NodeItem[] = [];
     const items = ctx.getInputData();
     for (const [index, item] of items.entries()) {
@@ -151,7 +151,7 @@ export const brainWriteBriefingNode = defineNode({
     properties: [{ name: 'useModel', displayName: 'Use the Brain’s Model', type: 'boolean', default: true, description: 'Off, or with the model off or failing, the text is built from the lists alone. Redacted lines only ever reach the model, as data.' }],
   },
   async execute(ctx) {
-    requireInstanceFlow(ctx);
+    await requireInstanceFlow(ctx);
     const out: NodeItem[] = [];
     const items = ctx.getInputData();
     let model: ReturnType<typeof brainModel>;
@@ -185,7 +185,7 @@ export const brainSaveBriefingNode = defineNode({
     properties: [],
   },
   async execute(ctx) {
-    requireInstanceFlow(ctx);
+    await requireInstanceFlow(ctx);
     const out: NodeItem[] = [];
     for (const [index, item] of ctx.getInputData().entries()) {
       const draft = draftOf(item, index);
@@ -242,7 +242,7 @@ export const brainDeliverBriefingNode = defineNode({
     properties: [],
   },
   async execute(ctx) {
-    requireInstanceFlow(ctx);
+    await requireInstanceFlow(ctx);
     const out: NodeItem[] = [];
     const slack = slackCredentialOf(ctx);
     for (const [index, item] of ctx.getInputData().entries()) {
