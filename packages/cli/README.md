@@ -59,7 +59,7 @@ Workflows are named by id or by exact name (case-insensitive; an ambiguous name 
 | `env pull [--dry-run] [--prune] [--force] [--publish file\|all\|none]` | apply this environment's branch, like `source-control pull`; `--publish` defaults to the environment's publish on pull (`file`: what the files say) |
 | `work repos add [<path>] \| remove <path> \| list` | the allow-list of working copies `landflow work` may read (kept in `work/repos.json` next to the config file); `add` records the path and its `origin`'s `owner/name` |
 | `work collect [--since today\|yesterday\|<ISO>] [--repo <path>]…` | reads the day's commits (subjects, branches, directories touched) and, when `gh` is installed, your PRs, in the allowed repos; summarises them here without a model and holds one entry per repo per day (`work/held.json`, 0600). Nothing is sent. Collecting a day again updates its entry |
-| `work review [--send <id\|all>] [--drop <id>] [--title <id> <text>]` | lists what is held; sends, drops or retitles entries |
+| `work review [--send <id\|all>] [--yes] [--drop <id>] [--title <id> <text>]` | lists what is held; sends, drops or retitles entries |
 | `work send [--yes]` | sends everything held (batches of 50, private). Asks on a terminal; without one it needs `--yes`, and the host must allow tools to send work (`brain.workAutoSend`) |
 | `work status` | what was sent, with ids |
 | `work forget <sourceId>` | deletes a sent entry on the host (`DELETE /api/brain/work/:sourceId?source=landflow-cli`) and here |

@@ -30,6 +30,8 @@ export interface HeldEntry {
   sentAt?: string;
   /** The brain's id for the event once it is sent. */
   serverId?: string;
+  /** The person changed the title (`review --title`): a re-collect keeps it. */
+  titleEdited?: boolean;
   /** Why the host refused it the last time. */
   error?: string;
 }
@@ -102,19 +104,23 @@ const sameEvent = (a: WorkEventInput, b: WorkEventInput) => JSON.stringify(a) ==
 
 /**
  * Add or update an entry by `sourceId`. A re-collected day that changed goes back to held (the person reviews the
- * update); one that did not change keeps its status. A title the person edited survives a re-collect only if the
- * collected event is otherwise the same.
+ * update); one that did not change keeps its status. A title the person edited is left out of the comparison and
+ * survives a re-collect: if only the title differs the entry stays as it is, otherwise the other fields update, the
+ * edited title stays and the entry goes back to held.
  */
 export function upsert(entries: HeldEntry[], event: WorkEventInput, day: string, now: Date): { entries: HeldEntry[]; entry: HeldEntry; changed: boolean } {
   const existing = entries.find((e) => e.sourceId === event.sourceId);
-  if (existing && sameEvent(existing.event, event)) return { entries, entry: existing, changed: false };
+  const edited = Boolean(existing?.titleEdited);
+  const next: WorkEventInput = edited && existing ? { ...event, title: existing.event.title } : event;
+  if (existing && sameEvent(existing.event, next)) return { entries, entry: existing, changed: false };
   const entry: HeldEntry = {
     id: entryId(event.sourceId),
     sourceId: event.sourceId,
     day,
     status: 'held',
-    event,
+    event: next,
     heldAt: now.toISOString(),
+    ...(edited && { titleEdited: true }),
     ...(existing?.serverId && { serverId: existing.serverId }),
   };
   return { entries: [...entries.filter((e) => e.sourceId !== event.sourceId), entry], entry, changed: true };

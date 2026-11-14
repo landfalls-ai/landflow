@@ -111,6 +111,22 @@ async function sendEntries(ctx: Context, all: HeldEntry[], toSend: HeldEntry[]):
   return { entries, sent, refused };
 }
 
+/**
+ * The one guard in front of every send: with no terminal it needs --yes, and a host that forbids automatic sending
+ * (brain.workAutoSend) refuses it. A briefing that cannot be read refuses too, since the setting is unknown.
+ */
+async function guardUnattended(ctx: Context, yes: boolean) {
+  if (ctx.io.interactive) return;
+  if (!yes) throw usage('Refusing to send without a terminal: pass --yes');
+  let briefing: { autoSend?: string };
+  try {
+    briefing = await ctx.client.get<{ autoSend?: string }>('/api/brain/briefing');
+  } catch (caught) {
+    throw new CliError('forbidden', `Refusing to send without a terminal: could not read the host's brain.workAutoSend setting (${caught instanceof Error ? caught.message : 'unknown error'})`);
+  }
+  if (briefing.autoSend === 'forbidden') throw new CliError('forbidden', 'This host does not allow tools to send work on their own (brain.workAutoSend): send from a terminal');
+}
+
 const sentResult = (sent: HeldEntry[], refused: HeldEntry[], extra: Json = {}) => ({
   data: { ...extra, sent: sent.map(view), refused: refused.map(view) },
   human: () =>
@@ -186,6 +202,7 @@ export const review: Command = {
   details: 'With no option it lists what is held. --title takes the entry id and the new title as the argument. Sending is the only thing that leaves this machine.',
   flags: {
     send: flag.string('Send this entry (its id), or all held entries', 'id|all'),
+    yes: flag.boolean('Send without a terminal (with --send)', 'y'),
     drop: flag.string('Drop this entry; it is never sent', 'id'),
     title: flag.string('Change this entry’s title to the text that follows', 'id'),
   },
@@ -201,7 +218,7 @@ export const review: Command = {
       const event = { ...target.event, title: text };
       const checked = validateWorkEvent(event);
       if (!checked.ok) throw usage(checked.errors.join('; '));
-      entries = entries.map((e) => (e.sourceId === target.sourceId ? { ...e, event: checked.value, status: 'held' as const } : e));
+      entries = entries.map((e) => (e.sourceId === target.sourceId ? { ...e, event: checked.value, titleEdited: true } : e));
     }
     if (ctx.flags.drop) {
       const [target] = entriesFor(entries, String(ctx.flags.drop));
@@ -211,6 +228,7 @@ export const review: Command = {
     let sent: HeldEntry[] = [];
     let refused: HeldEntry[] = [];
     if (ctx.flags.send) {
+      await guardUnattended(ctx, Boolean(ctx.flags.yes));
       const targets = entriesFor(entries, String(ctx.flags.send), ['held']).filter((e) => e.status === 'held');
       ({ entries, sent, refused } = await sendEntries(ctx, entries, targets));
     }
@@ -234,15 +252,11 @@ export const send: Command = {
     const entries = readHeld(configFile(ctx));
     const held = entries.filter((e) => e.status === 'held');
     if (!held.length) return { data: { sent: [], refused: [] }, human: () => 'Nothing is held.' };
+    await guardUnattended(ctx, Boolean(ctx.flags.yes));
     if (!ctx.flags.yes) {
-      if (!ctx.io.interactive) throw usage('Refusing to send without a terminal: pass --yes to send, or run `landflow work review --send all`');
       ctx.io.stderr(`${entryTable(held, '')}\n`);
       const answer = (await ctx.io.prompt(`Send ${plural(held.length, 'entry')} to ${ctx.connection.url}? [y/N] `)).trim().toLowerCase();
       if (answer !== 'y' && answer !== 'yes') return { data: { sent: [], refused: [], cancelled: true }, human: () => 'Cancelled. Nothing was sent.' };
-    } else if (!ctx.io.interactive) {
-      // An unattended send is only for hosts that allow it.
-      const briefing = await ctx.client.get<{ autoSend?: string }>('/api/brain/briefing').catch(() => ({}) as { autoSend?: string });
-      if (briefing.autoSend === 'forbidden') throw new CliError('forbidden', 'This host does not allow tools to send work on their own (brain.workAutoSend): use `landflow work review --send all` at a terminal');
     }
     const { sent, refused } = await sendEntries(ctx, entries, held);
     return sentResult(sent, refused);

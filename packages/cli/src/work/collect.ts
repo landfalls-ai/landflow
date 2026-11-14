@@ -74,7 +74,7 @@ export function parseLog(output: string): CollectedCommit[] {
 }
 
 /** The commands this module issues, for the tests: none of them reads a diff or a file's contents. */
-export const COMMANDS_USED = ['git remote get-url origin', 'git config user.email', 'git config user.name', 'git rev-parse --abbrev-ref HEAD', 'git log --all --author … --name-only', 'gh --version', 'gh pr list …'] as const;
+export const COMMANDS_USED = ['git remote get-url origin', 'git config user.email', 'git config user.name', 'git rev-parse --abbrev-ref HEAD', 'git log --branches --remotes --author … --name-only', 'gh --version', 'gh pr list …'] as const;
 
 export async function originRepo(run: Runner, path: string): Promise<string | undefined> {
   const out = await run('git', ['remote', 'get-url', 'origin'], { cwd: path });
@@ -90,7 +90,9 @@ export async function collectRepo(run: Runner, path: string, since: string): Pro
   let commits: CollectedCommit[] = [];
   if (!author) notes.push('No git user.email or user.name is configured here, so no commits were collected');
   else {
-    const log = await run('git', ['log', '--all', '--fixed-strings', `--author=${author}`, `--since=${since}`, '--format=@@%H%x09%aI%x09%D%x09%s', '--name-only'], cwd);
+    // Git fills a bare day with the current time of day, so give it local midnight; and leave out refs/stash.
+    const gitSince = /^\d{4}-\d{2}-\d{2}$/.test(since) ? `${since}T00:00:00` : since;
+    const log = await run('git', ['log', '--branches', '--remotes', '--fixed-strings', `--author=${author}`, `--since=${gitSince}`, '--format=@@%H%x09%aI%x09%D%x09%s', '--name-only'], cwd);
     if (log.code === 0) {
       const sinceDay = since.slice(0, 10);
       commits = parseLog(log.stdout).filter((c) => c.at.slice(0, 10) >= sinceDay);

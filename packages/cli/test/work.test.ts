@@ -8,8 +8,9 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { run } from '../src/index';
 import type { Io } from '../src/command';
-import { branchesFrom, parseRemote, type Runner } from '../src/work/collect';
-import { prune, type HeldEntry } from '../src/work/held';
+import { execFileSync } from 'node:child_process';
+import { branchesFrom, collectRepo, defaultRunner, parseRemote, type Runner } from '../src/work/collect';
+import { prune, upsert, type HeldEntry } from '../src/work/held';
 import { summarizeDay } from '../src/work/summary';
 import { validateWorkEvent } from '../src/work/contract';
 
@@ -249,7 +250,7 @@ describe('review, send, status and forget', () => {
     const [a, b] = readHeld(t.heldFile);
     expect((await t.cli(['work', 'review', '--title', a.id, 'Hardened the retry loop'])).code).toBe(0);
     expect((await t.cli(['work', 'review', '--drop', b.id])).code).toBe(0);
-    const out = await t.cli(['work', 'review', '--send', a.id, '--json']);
+    const out = await t.cli(['work', 'review', '--send', a.id, '--yes', '--json']);
     expect(out.json.sent).toHaveLength(1);
     expect(t.host.posts).toHaveLength(1);
     expect(t.host.posts[0].events[0]).toMatchObject({ sourceId: a.sourceId, title: 'Hardened the retry loop', visibility: 'private' });
@@ -343,5 +344,101 @@ describe('the copied contract', () => {
   it('matches packages/protocol/src/work-events.ts', () => {
     const copy = readFileSync(new URL('../src/work/contract.ts', import.meta.url), 'utf8').split('\n').slice(2).join('\n');
     expect(copy).toBe(readFileSync(new URL('../../protocol/src/work-events.ts', import.meta.url), 'utf8'));
+  });
+});
+
+describe('git arguments and a real repository', () => {
+  it('gives git a midnight for a bare day and leaves out refs/stash', async () => {
+    const fake = fakeRunner({ gh: false });
+    await collectRepo(fake.runner, '/x', '2026-11-14');
+    const log = fake.calls.find((c) => c.startsWith('git log')) as string;
+    expect(log).toContain('--since=2026-11-14T00:00:00');
+    expect(log).toContain('--branches --remotes');
+    expect(log).not.toContain('--all');
+  });
+
+  it('finds a commit from earlier today and ignores a stash, with the real git', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'landflow-work-git-'));
+    const git = (args: string[], env: Record<string, string> = {}) => execFileSync('git', args, { cwd: dir, env: { ...process.env, ...env }, stdio: 'pipe' }).toString();
+    try {
+      git(['init', '-q']);
+      git(['config', 'user.email', 'dev@example.com']);
+      git(['config', 'user.name', 'Dev']);
+    } catch {
+      return; // no git on this machine
+    }
+    const now = new Date();
+    const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const stamp = `${day}T00:05:00`;
+    writeFileSync(join(dir, 'a.txt'), 'a');
+    git(['add', '.']);
+    git(['commit', '-q', '-m', 'Early work'], { GIT_AUTHOR_DATE: stamp, GIT_COMMITTER_DATE: stamp });
+    writeFileSync(join(dir, 'a.txt'), 'b');
+    git(['stash', '-q']);
+    const collected = await collectRepo(defaultRunner, dir, day);
+    expect(collected.commits.map((c) => c.subject)).toEqual(['Early work']);
+  });
+});
+
+describe('a re-collect keeps the title the person edited', () => {
+  const ev = (extra: Record<string, unknown> = {}) => ({ kind: 'work.session', source: 'landflow-cli', sourceId: 'acme/widgets@2026-11-14', occurredAt: '2026-11-14T09:00:00Z', title: 'Machine title', commits: 1, ...extra }) as never;
+  const entry = (over: Partial<HeldEntry>): HeldEntry => ({ id: 'abcd1234', sourceId: 'acme/widgets@2026-11-14', day: '2026-11-14', status: 'held', event: ev({ title: 'My title' }), heldAt: '2026-11-14T10:00:00Z', titleEdited: true, ...over });
+  const now = new Date('2026-11-14T18:00:00Z');
+
+  it('leaves a held or sent entry alone when only the title differs', () => {
+    for (const status of ['held', 'sent'] as const) {
+      const before = [entry({ status })];
+      const out = upsert(before, ev(), '2026-11-14', now);
+      expect(out.changed).toBe(false);
+      expect(out.entries).toBe(before);
+    }
+  });
+
+  it('updates other fields, keeps the edited title and goes back to held', () => {
+    const out = upsert([entry({ status: 'sent', serverId: 'srv_1' })], ev({ commits: 3 }), '2026-11-14', now);
+    expect(out.entry).toMatchObject({ status: 'held', titleEdited: true, serverId: 'srv_1', event: { title: 'My title', commits: 3 } });
+  });
+
+  it('review --title marks the entry edited and a later collect keeps it', async () => {
+    const t = setup();
+    await t.cli(['work', 'repos', 'add', t.repo]);
+    await t.cli(['work', 'collect', '--since', '2026-11-14']);
+    const [a] = readHeld(t.heldFile);
+    await t.cli(['work', 'review', '--title', a.id, 'Reviewed title']);
+    await t.cli(['work', 'collect', '--since', '2026-11-14']);
+    expect(readHeld(t.heldFile)[0]).toMatchObject({ titleEdited: true, event: { title: 'Reviewed title' } });
+  });
+});
+
+describe('review --send is guarded like send', () => {
+  async function held(autoSend = 'allowed') {
+    const t = setup();
+    t.host.autoSend = autoSend;
+    await t.cli(['work', 'repos', 'add', t.repo]);
+    await t.cli(['work', 'collect', '--since', '2026-11-13']);
+    return t;
+  }
+
+  it('is refused without a terminal and without --yes', async () => {
+    const t = await held();
+    const out = await t.cli(['work', 'review', '--send', 'all', '--json']);
+    expect(out.code).toBe(2);
+    expect(t.host.posts).toHaveLength(0);
+  });
+
+  it('is refused with --yes when the host forbids automatic sending, and works when allowed', async () => {
+    const t = await held('forbidden');
+    expect((await t.cli(['work', 'review', '--send', 'all', '--yes', '--json'])).code).toBe(4);
+    expect(t.host.posts).toHaveLength(0);
+    t.host.autoSend = 'allowed';
+    expect((await t.cli(['work', 'review', '--send', 'all', '--yes', '--json'])).json.sent).toHaveLength(2);
+  });
+
+  it('send --yes refuses when the setting cannot be read', async () => {
+    const t = await held();
+    t.host.fetch = (async () => new Response('{}', { status: 500, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+    const out = await t.cli(['work', 'send', '--yes', '--json'], { fetch: t.host.fetch });
+    expect(out.code).not.toBe(0);
+    expect(t.host.posts).toHaveLength(0);
   });
 });
