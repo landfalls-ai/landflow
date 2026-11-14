@@ -311,7 +311,18 @@ export function upsertWorkEvent(ownerId: string, input: WorkEventInput, ownerEma
       db.upsert('usage_events', toRow(event, owned));
       return { id: event.id, created: false };
     }
-    db.insertNew('usage_events', toRow(event, owned));
+    let inserted = false;
+    try {
+      inserted = db.insertNew('usage_events', toRow(event, owned));
+    } catch {
+      // A concurrent post of the same (owner, source, sourceId) took the unique index: update it instead.
+    }
+    if (!inserted) {
+      const winner = db.get<{ id: string }>('SELECT id FROM usage_events WHERE owner_id = ? AND source = ? AND source_id = ?', ownerId, input.source, input.sourceId);
+      if (!winner) throw new Error('The work event could not be saved');
+      db.upsert('usage_events', toRow({ ...event, id: winner.id }, owned));
+      return { id: winner.id, created: false };
+    }
     notify(event, visibility === 'org' ? 'shared' : 'private');
     return { id: event.id, created: true };
   });

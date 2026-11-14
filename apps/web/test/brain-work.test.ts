@@ -135,7 +135,7 @@ describe('POST /api/brain/work', () => {
   it('answers 503 when the brain is off', async () => {
     process.env.LANDFLOW_BRAIN = 'false';
     expect((await post([event('s1')])).status).toBe(503);
-    expect((await remove('claude-code', 's1')).status).toBe(503);
+    expect((await remove('claude-code', 's1')).status).not.toBe(503);
     const off = await briefing('2026-11-13');
     expect(off).toMatchObject({ brain: 'off', today: [], yesterday: [] });
   });

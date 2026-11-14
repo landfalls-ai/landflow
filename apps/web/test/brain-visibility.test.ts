@@ -28,7 +28,7 @@ const { findSimilar } = await import('@/lib/server/brain/similar');
 const { study } = await import('@/lib/server/brain/study');
 const { DETECTOR_RUNS, detectContext } = await import('@/lib/server/brain/detectors');
 const { recordUsage, upsertWorkEvent } = await import('@/lib/server/usage/ledger');
-const { listUsageEvents, usageReport, rollupDays } = await import('@/lib/server/usage/query');
+const { listUsageEvents, usageReport, rollupDays, ledgerSize } = await import('@/lib/server/usage/query');
 const { createTeamProject, setHomeProject, setMember } = await import('@/lib/server/projects/store');
 const { instanceServer } = await import('@/lib/server/mcp/instance-tools');
 const eventsRoute = await import('@/app/api/usage/events/route');
@@ -225,6 +225,17 @@ describe('a private work event', () => {
     expect(strip(await study({ embed: false }))).toEqual(withoutStudy);
     expect(facts()).toBe(withoutFacts);
     expect(detect()).toBe(withoutDetect);
+  });
+});
+
+describe('old private work', () => {
+  it('does not make the detectors think the ledger reaches back further than it does', () => {
+    const detect = () => JSON.stringify(Object.entries(DETECTOR_RUNS).map(([id, run]) => [id, run(detectContext())]));
+    database().delete('usage_events', { owner_id: alice.id });
+    const before = detect();
+    upsertWorkEvent(alice.id, { kind: 'work.session', source: 'claude-code', sourceId: 'old', occurredAt: new Date(Date.now() - 70 * 86_400_000).toISOString(), title: 'An old session' });
+    expect(detect()).toBe(before);
+    expect(Date.parse(ledgerSize().oldest ?? at)).toBeGreaterThan(Date.now() - 60 * 86_400_000);
   });
 });
 

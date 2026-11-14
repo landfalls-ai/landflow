@@ -39,6 +39,7 @@ export interface UsageScope {
    * scope to carry it), and outside a request nobody: only shared work.
    */
   viewerId?: string;
+  // (A caller that writes shared output from inside a request must pass `system: true`, or the signed-in caller's own work leaks into it.)
   /** A reader that works for the instance, not for a person (the study, detectors, a flow): it never sees private work. */
   system?: true;
 }
@@ -347,9 +348,9 @@ export function pruneUsage(db: Database = database(), now = Date.now()): number 
   return removed;
 }
 
-/** How many raw events there are, and the oldest one's time. */
+/** How many raw events the instance ledger holds (people's own work left out), and the oldest one's time. */
 export function ledgerSize(db: Database = database()): { events: number; oldest?: string } {
-  const row = db.get<{ n: number; oldest: string | null }>('SELECT COUNT(*) AS n, MIN(at) AS oldest FROM usage_events');
+  const row = db.get<{ n: number; oldest: string | null }>('SELECT COUNT(*) AS n, MIN(at) AS oldest FROM usage_events WHERE owner_id IS NULL');
   return { events: Number(row?.n ?? 0), ...(row?.oldest && { oldest: row.oldest }) };
 }
 

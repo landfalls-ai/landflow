@@ -108,6 +108,6 @@ export function recordWork(actor: Actor, events: unknown[]): { saved: SavedWork[
 
 /** Delete one of the caller's own work events. Returns whether there was one (someone else's is not found). */
 export function deleteWork(actor: Actor, source: string, sourceId: string): boolean {
-  if (!brainEnabled()) throw new BrainOffError();
+  // Allowed while the brain is off: a person can always remove their own private events.
   return deleteWorkEvent(actor.id, source, sourceId);
 }

@@ -12,6 +12,8 @@ the work was, where (a repository, directory names) and how much (commits, pull 
 file contents, file names or absolute paths. Clients redact before they send, and the host redacts every text again
 (emails, tokens, long numbers).
 
+An unknown `work.*` kind is rejected ("Unknown work kind; an admin can declare it"); `POST /api/brain/work` declares only the 18 listed kinds itself.
+
 An event is a row in the [usage ledger](second-brain.md#1-the-usage-ledger) with a `work.*` kind. The kind
 `work.session` is declared the first time a tool sends it, with the same fields as the other `work.*` kinds
 (`deploy/brain/work-kinds.json`). `work.pr_opened` and `work.pr_merged` now come from the `claude-code`, `landflow-cli`
@@ -71,7 +73,7 @@ these scopes for themselves (Settings → API keys); a key with only these scope
 
 | Route | Scope | What it does |
 |---|---|---|
-| `POST /api/brain/work` | `brain:write` | `{ events: WorkEventInput[1..50] }` records the caller's own work. Answers `{ saved: [{ sourceId, id, created }], rejected: [{ sourceId, reason }] }`: an event that fails the checks is rejected with its reason and the rest are saved. The same `source` and `sourceId` again updates the event (`created: false`; the newer values win). `team` and `org` are refused for now ("Sharing comes later"). 503 when the brain is off |
+| `POST /api/brain/work` | `brain:write` | `{ events: WorkEventInput[1..50] }` records the caller's own work. Answers `{ saved: [{ sourceId, id, created }], rejected: [{ sourceId, reason }] }`: an event that fails the checks is rejected with its reason and the rest are saved. The same `source` and `sourceId` again updates the event (`created: false`; the newer values win). `team` and `org` are refused for now ("Sharing comes later"). 503 when the brain is off (`DELETE` still works while it is off) |
 | `DELETE /api/brain/work/:sourceId?source=<tool>` | `brain:write` | deletes the caller's own event: 204, or 404 when they have none by that source and id (someone else's is never found) |
 | `GET /api/brain/briefing?day=YYYY-MM-DD` | `brain:read` | the caller's own `today` and `yesterday` (the day before `day`), newest first, at most 50 each, in the instance time zone (today by default). `related` is empty for now; `autoSend` is the admin's setting; `brain` is `on` or `off` |
 | `POST /api/brain/ask` | `brain:read` | as before, now with the narrower scope (a key with `executions:read` alone no longer reaches it) |
