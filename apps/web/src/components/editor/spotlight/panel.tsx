@@ -4,10 +4,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { ChevronDown, CircleCheck, CircleStop, Hand, Loader2, PanelRightClose, PanelRightOpen, Sparkles, Square, SquarePen } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { applyChanges, editorLookup, prefillSpotlight, undos, useAssistant } from '../assistant';
+import { applyChanges, editorLookup, undos, useAssistant } from '../assistant';
 import { ChatEmpty } from '../../ui/chat';
 import { Button } from '../../ui/button';
-import { EMPTY_LINE, foldedBar, starters } from './states';
+import { EMPTY_LINE, foldedBar } from './states';
 import { markStale, planKeeping, recordPlan, restore, shouldResume } from '../spotlight-history';
 import { ConversationHistory } from '../../ui/conversation-history';
 import { useConversation } from '@/lib/client/conversations';
@@ -218,7 +218,6 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
   const pending = useAssistant((s) => s.pending);
   const fixing = useAssistant((s) => s.fixing);
   const fixingName = useEditor((s) => (fixing ? s.nodes.find((n) => n.id === fixing)?.data.wf.name : undefined));
-  const nodeCount = useEditor((s) => s.nodes.length);
   const waiting = items.reduce((n, item) => n + (item.role === 'assistant' ? item.parts.filter((p) => p.kind === 'proposal' && !p.proposal.state).length : 0), 0);
   const bar = foldedBar({ waiting });
   const designing = agents.find((a) => a.state === 'designing')?.name;
@@ -249,19 +248,40 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
   const panel = useRef<HTMLElement>(null);
 
   // The column's width eases between the strip and the full panel; once it stops, the flow is fitted again, once.
+  const { fitView } = useReactFlow();
+  const refit = useCallback(() => {
+    if (!isPhone() && useEditor.getState().nodes.length) void fitView({ padding: { left: '72px', top: '56px', bottom: '120px', right: '72px' }, duration: 200, maxZoom: 1 });
+  }, [fitView]);
   const [moving, setMoving] = useState(false);
   const was = useRef(collapsed);
   useEffect(() => {
     if (was.current === collapsed) return;
     was.current = collapsed;
-    // Under Reduce motion the width doesn't transition, so no transitionend comes: fit now.
+    // Under Reduce motion (or a phone) the width doesn't transition, so no transitionend comes: fit now.
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || !window.matchMedia('(min-width: 768px)').matches) return void setTimeout(refit, 60);
     setMoving(true);
-  }, [collapsed]); // eslint-disable-line react-hooks/exhaustive-deps
-  const { fitView } = useReactFlow();
-  const refit = () => {
-    if (!isPhone() && useEditor.getState().nodes.length) void fitView({ padding: { left: '72px', top: '56px', bottom: '120px', right: '72px' }, duration: 200, maxZoom: 1 });
-  };
+    // A hidden panel never transitions: let go after the time it would have taken.
+    const timer = setTimeout(() => setMoving(false), 400);
+    return () => clearTimeout(timer);
+  }, [collapsed, refit]);
+
+  // A phone's sheet: three explicit heights (the bar as measured, peek, half) so each move eases, and the header drag sets
+  // the height live and settles on the nearest one.
+  const [barPx, setBarPx] = useState(0);
+  const [dragH, setDragH] = useState<number>();
+  const content = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = content.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const measure = () => {
+      // Only the natural height counts: while folded the content is not stretched by the sheet.
+      if (el.dataset.folded === 'yes') setBarPx(Math.ceil(el.offsetHeight));
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    measure();
+    return () => observer.disconnect();
+  }, []);
 
   // Toasts (bottom right) keep clear of the panel: left of the column, above the phone sheet.
   useEffect(() => {
@@ -285,7 +305,12 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
 
   const { setCollapsed, stop } = useAssistant.getState();
   const phoneHeight = useAssistant((s) => s.phoneHeight);
-  const drag = useRef<number>(undefined);
+  const drag = useRef<{ y: number; h: number }>(undefined);
+  // The three stops of the sheet, in px: the bar, peek (34 dvh) and half (52 dvh).
+  const stops = () => [barPx, Math.round(window.innerHeight * 0.34), Math.round(window.innerHeight * 0.52)];
+  // The body shows from the moment a drag lifts the bar.
+  const folded = collapsed && !(dragH !== undefined && dragH > barPx + 8);
+  const sheet = dragH !== undefined ? `${dragH}px` : collapsed ? (barPx ? `${barPx}px` : 'auto') : phoneHeight === 'peek' ? '34dvh' : '52dvh';
   // One set of colours: violet while it works, amber when it needs you, green when it passed; a stop is neutral.
   const icon = busy ? (
     <Loader2 className="size-3.5 shrink-0 animate-spin text-viz-7" />
@@ -306,6 +331,7 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
       ref={panel}
       aria-label="Spotlight"
       hidden={hidden}
+      style={{ ['--sheet' as string]: sheet }}
       className={cn(
         'z-30 flex flex-col border-hair bg-sf',
         hidden && 'hidden',
@@ -313,9 +339,10 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
         hiddenOnPhone && 'max-md:hidden',
         // Phone: a sheet under the canvas, which shrinks to the space above it.
         'max-md:shrink-0 max-md:rounded-t-2xl max-md:border-t',
-        // Phone: three heights, folded to its bar, peek (the newest of the timeline) and half; they ease between each other.
-        collapsed ? 'max-md:max-h-[40dvh]' : phoneHeight === 'peek' ? 'max-md:h-[34dvh]' : 'max-md:h-[52dvh]',
-        'max-md:transition-[height,max-height] max-md:duration-[240ms] max-md:ease-out motion-reduce:transition-none',
+        // Phone: three heights, folded to its bar, peek (the newest of the timeline) and half; they ease between each other,
+        // and follow the finger while the header is dragged.
+        'max-md:h-[var(--sheet)] max-md:transition-[height] max-md:duration-[240ms] max-md:ease-out motion-reduce:transition-none',
+        dragH !== undefined && 'max-md:transition-none',
         // Desktop: a column beside the canvas; its width eases (240 ms) and the canvas fits again when it stops.
         'md:relative md:shrink-0 md:border-l md:transition-[width] md:duration-[240ms] md:ease-out',
         moving && 'md:overflow-hidden',
@@ -326,10 +353,12 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
         setMoving(false);
         refit();
       }}
+      onTransitionCancel={(e) => {
+        if (e.target === e.currentTarget && e.propertyName === 'width') setMoving(false);
+      }}
     >
-      {/* Desktop, folded: a strip with what Spotlight is doing. */}
-      {
-        <button
+      {/* The strip at the panel's right edge with what Spotlight is doing: it shows when the panel is folded. */}
+      <button
           type="button"
           onClick={() => focusSpotlight()}
           title={latest ? `${title}: ${latest}` : 'Show Spotlight (⌘I)'}
@@ -341,25 +370,37 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
           {waiting > 0 && <span className="rounded-full bg-viz-7 px-1.5 text-[10.5px] font-semibold leading-4 text-bg">{waiting}</span>}
           <span className="text-[11.5px] font-semibold text-t2 [writing-mode:vertical-rl]">{title}</span>
         </button>
-      }
-      <div className={cn('flex min-h-0 flex-1 flex-col md:absolute md:inset-y-0 md:right-0 md:w-[360px] md:transition-[opacity,visibility] md:duration-200 motion-reduce:transition-none', collapsed && 'md:invisible md:opacity-0')}>
+      <div ref={content} data-folded={folded ? 'yes' : 'no'} className={cn('flex flex-col md:absolute md:inset-y-0 md:right-0 md:w-[360px] md:transition-[opacity,visibility] md:duration-200 motion-reduce:transition-none', folded ? 'max-md:flex-none' : 'min-h-0 flex-1', collapsed && 'md:invisible md:opacity-0')}>
         <div
           // A phone: drag the header up or down for the next height (the chevron goes between the bar and half).
           onPointerDown={(e) => {
             if (!isPhone() || (e.target as HTMLElement).closest('button, input, [role="switch"]')) return;
-            drag.current = e.clientY;
-            // The finger leaves the header as it drags: the header still gets the release.
+            drag.current = { y: e.clientY, h: panel.current?.offsetHeight ?? 0 };
+            // The finger leaves the header as it drags: the header still gets the moves and the release.
             e.currentTarget.setPointerCapture(e.pointerId);
           }}
-          onPointerUp={(e) => {
+          onPointerMove={(e) => {
+            const start = drag.current;
+            if (!start || Math.abs(e.clientY - start.y) < 6) return;
+            const [low, , high] = stops();
+            setDragH(Math.max(low, Math.min(high, start.h + (start.y - e.clientY))));
+          }}
+          onPointerUp={() => {
             const start = drag.current;
             drag.current = undefined;
-            if (start === undefined || Math.abs(e.clientY - start) < 24) return;
+            if (!start) return;
+            const h = dragH;
+            setDragH(undefined);
+            if (h === undefined) return;
+            // Settle on the nearest stop.
             const heights = ['bar', 'peek', 'half'] as const;
-            const at = collapsed ? 0 : phoneHeight === 'peek' ? 1 : 2;
-            useAssistant.getState().setDock(heights[Math.max(0, Math.min(2, at + (e.clientY < start ? 1 : -1)))]);
+            const at = stops().map((v) => Math.abs(v - h));
+            useAssistant.getState().setDock(heights[at.indexOf(Math.min(...at))]);
           }}
-          onPointerCancel={() => (drag.current = undefined)}
+          onPointerCancel={() => {
+            drag.current = undefined;
+            setDragH(undefined);
+          }}
           className="relative flex h-11 shrink-0 items-center gap-1.5 border-b border-hair pl-3 pr-1.5 max-md:touch-none max-md:select-none"
         >
           <span className="absolute left-1/2 top-1 block h-1 w-8 -translate-x-1/2 rounded-full bg-hair md:hidden" aria-hidden />
@@ -373,7 +414,9 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
               · {draftSeconds} s
             </span>
           )}
-          <AutonomousSwitch compact={live || testing} />
+          <div className="md:hidden">
+            <AutonomousSwitch compact={live || testing} />
+          </div>
           {/* The composer has its own Stop while a reply streams; this one is for a test run, or when the panel is folded. */}
           {(collapsed ? live || testing : testing && !live) && (
             <button title="Stop" aria-label="Stop" onClick={stop} className="grid size-7 place-items-center rounded-full text-t3 hover:bg-rddim hover:text-rd disabled:opacity-40 max-md:size-11">
@@ -401,13 +444,18 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
             <ChevronDown className={cn('size-4 transition-transform md:hidden', collapsed && 'rotate-180')} />
           </button>
         </div>
+        {/* Desktop: the switch has a row of its own, so the title keeps its width in the 360 px column. */}
+        <div className="hidden h-9 shrink-0 items-center justify-between gap-2 border-b border-hair px-3 md:flex">
+          <span className="text-[11.5px] text-t3">How Spotlight works</span>
+          <AutonomousSwitch />
+        </div>
         {/* Phone, folded: the step Spotlight is on, and Review and Apply when a change waits. */}
-        {collapsed && latest && (
+        {folded && latest && (
           <p className="flex items-center gap-1.5 truncate px-3 py-1.5 text-[12px] text-t2 md:hidden">
             <span className="truncate">{latest}</span>
           </p>
         )}
-        {collapsed && bar.review && (
+        {folded && bar.review && (
           <div className="flex items-center gap-2 px-3 pb-1.5 md:hidden">
             <Hand className="size-4 shrink-0 text-warn" aria-hidden />
             <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-t1">{waiting === 1 ? 'A change needs you' : `${waiting} changes need you`}</span>
@@ -419,12 +467,12 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
             </Button>
           </div>
         )}
-        <div className={cn('flex min-h-0 flex-1 flex-col', collapsed && 'max-md:hidden')}>
+        <div className={cn('flex min-h-0 flex-1 flex-col', folded && 'max-md:hidden')}>
           {items.length || agents.length ? (
             <Timeline live={live} status={drafting ? 'Drafting the flow from the node catalog…' : undefined} />
           ) : (
             <div className="flex min-h-0 flex-1 flex-col justify-end px-4 py-4">
-              <ChatEmpty title={EMPTY_LINE} starters={starters({ nodes: nodeCount })} onStarter={prefillSpotlight} />
+              <ChatEmpty title={EMPTY_LINE} />
             </div>
           )}
         </div>

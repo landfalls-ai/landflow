@@ -5,10 +5,19 @@
  */
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
-import { EXPLAINER_KEY, MOTION_START, defaultCollapsed, errorActions, explainerDue, foldedBar, motionStep, starters } from '../src/components/editor/spotlight/states';
-import { applyStreamEvent, type AssistantTurn } from '../src/components/editor/assistant';
+import { describe, expect, it, vi } from 'vitest';
+import { EXPLAINER_KEY, cardFolded, defaultCollapsed, errorActions, explainerDue, foldedBar, ghostFade, isNewestUndo, undoGroup } from '../src/components/editor/spotlight/states';
+import { applyStreamEvent, carriedFrom, useAssistant, type AssistantTurn, type ChatItem } from '../src/components/editor/assistant';
 import { ChatEmpty } from '../src/components/ui/chat';
+
+const streamed = vi.hoisted(() => ({ body: undefined as Record<string, unknown> | undefined }));
+vi.mock('@/lib/client/api', async (orig) => ({
+  ...(await orig<typeof import('@/lib/client/api')>()),
+  streamEvents: async (_url: string, body: Record<string, unknown>, onEvent: (name: string, data: unknown) => void) => {
+    streamed.body = body;
+    onEvent('done', { type: 'done', model: 'm', durationMs: 1, steps: 1 });
+  },
+}));
 
 const ids = (list: Array<{ id: string }>) => list.map((a) => a.id);
 
@@ -43,19 +52,11 @@ describe('errorActions', () => {
   });
 });
 
-describe('starters and the empty panel', () => {
-  it('an empty canvas gets examples of flows to build', () => {
-    const list = starters({ nodes: 0 });
-    expect(list).toHaveLength(3);
-    for (const s of list) expect(s).toMatch(/^Build a flow that/);
-  });
-  it('a canvas with nodes gets things to do with it', () => {
-    expect(starters({ nodes: 4 })).toEqual(['Explain this flow', 'Add error handling', 'Test it']);
-  });
-  it('renders one line and three chips', () => {
-    const html = renderToStaticMarkup(createElement(ChatEmpty, { title: 'Describe a flow, or ask about this one', starters: starters({ nodes: 2 }), onStarter: () => undefined }));
+describe('the empty panel', () => {
+  it('renders one line and no chips (the composer has the suggestions)', () => {
+    const html = renderToStaticMarkup(createElement(ChatEmpty, { title: 'Describe a flow, or ask about this one' }));
     expect(html).toContain('Describe a flow, or ask about this one');
-    expect((html.match(/<button/g) ?? []).length).toBe(3);
+    expect((html.match(/<button/g) ?? []).length).toBe(0);
   });
 });
 
@@ -85,25 +86,52 @@ describe('the first visit', () => {
 });
 
 describe('Apply and Undo', () => {
-  it('folds the card while the ghosts fade, then settles', () => {
-    let m = MOTION_START;
-    expect(m).toEqual({ card: 'open', ghosts: 'ghost' });
-    m = motionStep(m, 'apply');
-    expect(m).toEqual({ card: 'collapsing', ghosts: 'fading' });
-    m = motionStep(m, 'settled');
-    expect(m).toEqual({ card: 'row', ghosts: 'real' });
+  it('the ghosts fade out on Apply and come back on Undo, and do nothing otherwise', () => {
+    expect(ghostFade('applied')).toBe('out');
+    expect(ghostFade('undone')).toBe('back');
+    expect(ghostFade('dismissed')).toBeUndefined();
+    expect(ghostFade(undefined)).toBeUndefined();
   });
-  it('plays backwards on Undo', () => {
-    let m = motionStep(motionStep(MOTION_START, 'apply'), 'settled');
-    m = motionStep(m, 'undo');
-    expect(m).toEqual({ card: 'expanding', ghosts: 'returning' });
-    m = motionStep(m, 'settled');
-    expect(m).toEqual(MOTION_START);
+  it('the card folds into its row only while applied', () => {
+    expect(cardFolded('applied')).toBe(true);
+    expect(cardFolded('undone')).toBe(false);
+    expect(cardFolded(undefined)).toBe(false);
   });
-  it('ignores events that do not fit', () => {
-    expect(motionStep(MOTION_START, 'undo')).toEqual(MOTION_START);
-    expect(motionStep(MOTION_START, 'settled')).toEqual(MOTION_START);
-    const mid = motionStep(MOTION_START, 'apply');
-    expect(motionStep(mid, 'apply')).toEqual(mid);
+  it('proposals applied as one step share one undo, and only the newest step can be undone', () => {
+    const one = () => undefined;
+    const two = () => undefined;
+    const undos = new Map<string, () => void>([['a', one], ['b', two], ['c', two]]);
+    expect(undoGroup(undos, 'c')).toEqual(['b', 'c']);
+    expect(undoGroup(undos, 'b')).toEqual(['b', 'c']);
+    expect(undoGroup(undos, 'a')).toEqual(['a']);
+    expect(undoGroup(undos, 'x')).toEqual([]);
+    expect(isNewestUndo(undos, 'b')).toBe(true);
+    expect(isNewestUndo(undos, 'c')).toBe(true);
+    expect(isNewestUndo(undos, 'a')).toBe(false);
+  });
+});
+
+describe('Continue from a failed reply', () => {
+  const proposal = { id: 'p1', summary: 'Add Slack', ops: [], warnings: [], dropped: [] };
+  const failed: ChatItem = {
+    id: 'r1',
+    role: 'assistant',
+    parts: [{ kind: 'proposal', proposal }, { kind: 'text', text: 'draft' }, { kind: 'tool', tool: { name: 'x', label: 'X', ok: true } }],
+    steps: [{ id: 'model1', label: 'Thinking', kind: 'model', status: 'failed' }],
+    error: 'boom',
+    checkpoint: 'c1',
+  };
+  it('keeps the proposals and tool calls, not the words', () => {
+    expect(carriedFrom(failed).parts.map((p) => p.kind)).toEqual(['proposal', 'tool']);
+    expect(carriedFrom(undefined).parts).toEqual([]);
+  });
+  it('the resumed reply still has the proposal, and does not send it back as pending', async () => {
+    useAssistant.setState({ items: [], pending: false });
+    await useAssistant.getState().send('add slack', { resume: { checkpoint: 'c1' }, carry: failed });
+    const reply = useAssistant.getState().items.at(-1);
+    expect(reply?.role === 'assistant' && reply.parts.some((p) => p.kind === 'proposal' && p.proposal.id === 'p1')).toBe(true);
+    expect(reply?.role === 'assistant' && reply.error).toBeFalsy();
+    expect(streamed.body?.pending).toBeUndefined();
+    expect(streamed.body?.resume).toEqual({ checkpoint: 'c1' });
   });
 });

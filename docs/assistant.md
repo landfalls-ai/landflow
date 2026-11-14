@@ -165,7 +165,7 @@ What the panel does between states (the rules for the states themselves are in [
 - **Fold motion.** The desktop column eases its width (240 ms) and its content cross-fades; when it stops, the canvas fits the flow again once. On a phone the sheet eases between peek and half. Under Reduce motion nothing moves and the canvas fits at once.
 - **Apply and Undo.** Apply folds the proposal card (200 ms) into its one-line row with a tick, while the dashed ghosts on the canvas fade out as the real nodes appear in the same places. Undo opens the row again; the ghosts come back for a moment, then fade out. The row has the **Undo**.
 - **Errors with actions.** A reply that failed after some steps offers **Continue from step N** (the chat route's `resume` with the checkpoint) and **Try again**; a usage cap offers **Open AI caps** to admins, else only its text; a stalled reply offers **Try again**. A run that failed at a node in a test-and-fix has **Open the node** and **Ask Spotlight to fix it**, which puts *Fix <node>: <error>* in the box.
-- **Empty panel.** One line, *Describe a flow, or ask about this one*, and three starters that fill the box: examples to build on an empty canvas, else *Explain this flow*, *Add error handling*, *Test it*.
+- **Empty panel.** One line, *Describe a flow, or ask about this one*; the suggestion bubbles above the composer are its starters (the panel adds no chips of its own).
 - **Phone bar.** With a change waiting, the folded bar shows the amber needs-you icon, **Review** (opens the sheet to the proposal) and **Apply** (44 px).
 
 ### Building, step by step
@@ -212,7 +212,7 @@ It stops when:
 
 ### Autonomous mode
 
-The panel's header has a switch, **Asks first | Autonomous** (a `Segmented`, compact; on a phone *Ask* and a bolt). The first time it shows, a note explains the two, once per browser (`landflow-spotlight-autonomous-explained`). Autonomous is the default; the choice is kept in `landflow-spotlight-autonomous`.
+The panel's header has a switch, **Asks first | Autonomous** (a `Segmented`; on a desktop it has a row of its own under the header so the title keeps its width, on a phone it is in the header as *Ask* and a bolt, and its note is a card at the bottom of the screen). The first time it shows, a note explains the two, once per browser (`landflow-spotlight-autonomous-explained`). Autonomous is the default; the choice is kept in `landflow-spotlight-autonomous`.
 
 On by default, Spotlight doesn't wait for clicks (`components/editor/autonomous.ts`):
 - **A new flow**: when it drafts a flow on an empty canvas, Test and fix starts right away (the reply says *Testing it now.*), instead of waiting for the **Test and fix** button.

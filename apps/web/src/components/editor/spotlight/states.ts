@@ -1,7 +1,6 @@
 /**
- * What Spotlight's states offer, as pure functions (docs/assistant.md#the-spotlight-panel): the buttons of an error, the
- * starters of an empty panel, what the folded bar shows, the first-visit fold, the one-time explainer and the order in
- * which Apply and Undo play their motion. The panel only draws what these say.
+ * What Spotlight's states offer, as pure functions (docs/assistant.md#the-spotlight-panel): the buttons of an error, what the folded bar shows, the first-visit fold, the one-time explainer, what the ghosts and the
+ * card do on Apply and Undo, and which proposals share one Undo. The panel only draws what these say.
  */
 
 /** A failed reply as the panel knows it. `kind` and `step` come with the stream's `error` event. */
@@ -47,14 +46,6 @@ export function errorActions(error: ErrorInfo, ctx: ErrorContext): ErrorAction[]
   return actions;
 }
 
-/** The three starters of an empty panel: examples of a flow on an empty canvas, else what to do with the one there. */
-export function starters(canvas: { nodes: number }): string[] {
-  if (canvas.nodes === 0) {
-    return ['Build a flow that posts new GitHub issues to Slack', 'Build a flow that summarizes my inbox every morning', 'Build a flow that answers a webhook with data from an API'];
-  }
-  return ['Explain this flow', 'Add error handling', 'Test it'];
-}
-
 export const EMPTY_LINE = 'Describe a flow, or ask about this one';
 
 /** What the folded bar of a phone shows: the amber needs-you icon with Review and Apply when a proposal waits. */
@@ -79,23 +70,29 @@ export function explainerDue(read: (key: string) => string | null): boolean {
   }
 }
 
-/** Apply and Undo as one sequence: the card folds into its row while its ghosts become nodes, and back. */
-export interface Motion {
-  card: 'open' | 'collapsing' | 'row' | 'expanding';
-  ghosts: 'ghost' | 'fading' | 'real' | 'returning';
+/** What the ghosts of a change do once its card's state changes: fade out as the nodes become real, or come back on Undo. */
+export function ghostFade(state: 'applied' | 'dismissed' | 'undone' | 'stale' | undefined): 'out' | 'back' | undefined {
+  return state === 'applied' ? 'out' : state === 'undone' ? 'back' : undefined;
 }
-export type MotionEvent = 'apply' | 'undo' | 'settled';
 
-export const MOTION_START: Motion = { card: 'open', ghosts: 'ghost' };
+/** A card folds into its one-line row (with the tick) once applied; every other state keeps it open. */
+export function cardFolded(state: 'applied' | 'dismissed' | 'undone' | 'stale' | undefined): boolean {
+  return state === 'applied';
+}
 
-export function motionStep(state: Motion, event: MotionEvent): Motion {
-  if (event === 'apply' && state.card === 'open') return { card: 'collapsing', ghosts: 'fading' };
-  if (event === 'undo' && state.card === 'row') return { card: 'expanding', ghosts: 'returning' };
-  if (event === 'settled') {
-    if (state.card === 'collapsing') return { card: 'row', ghosts: 'real' };
-    if (state.card === 'expanding') return { card: 'open', ghosts: 'ghost' };
-  }
-  return state;
+/**
+ * Proposals applied as one step (Apply all, the phone bar's Apply, the live steps) share one undo function: undoing any of
+ * them reverts them all. Returns the ids that share `id`'s undo, `id` included.
+ */
+export function undoGroup(undos: ReadonlyMap<string, () => void>, id: string): string[] {
+  const fn = undos.get(id);
+  return fn ? [...undos].filter(([, f]) => f === fn).map(([k]) => k) : [];
+}
+
+/** Only the newest undo is safe to use: the one nothing was applied after. */
+export function isNewestUndo(undos: ReadonlyMap<string, () => void>, id: string): boolean {
+  const newest = [...undos.keys()].at(-1);
+  return newest !== undefined && undos.get(newest) === undos.get(id) && undos.has(id);
 }
 
 /** How long each side of the motion takes (ms): the card's Collapsible is 200, the ghosts a little longer. */

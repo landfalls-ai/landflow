@@ -443,6 +443,17 @@ export interface SendOptions {
   testId?: string;
   /** Carry on from the checkpoint of a reply that failed after some steps, instead of starting the reply over. */
   resume?: { checkpoint: string };
+  /**
+   * With `resume`: what the failed reply had already sent (its changes and tool calls, and its trace). The server holds those
+   * changes in its working graph but does not send them again, so the new reply keeps them.
+   */
+  carry?: ChatItem;
+}
+
+/** The parts and trace of a failed reply that a resumed reply keeps: its proposals and tool calls, its steps (the failed one marked). */
+export function carriedFrom(failed: ChatItem | undefined): { parts: ReplyPart[]; steps: ActivityStep[] } {
+  if (failed?.role !== 'assistant') return { parts: [], steps: [] };
+  return { parts: failed.parts.filter((p) => p.kind === 'proposal' || p.kind === 'tool'), steps: failed.steps ?? [] };
 }
 
 /** An agent Spotlight is having the Agent architect design (./new-agent.ts), shown as a row of its timeline. */
@@ -618,7 +629,8 @@ export const useAssistant = create<AssistantState>((set, get) => ({
     const editor = useEditor.getState();
     const group = options.testId ? { testId: options.testId } : {};
     const user: ChatItem = { id: nanoid(8), role: 'user', text: message, ...(options.auto && { auto: true }), ...(options.mentions?.length && { mentions: options.mentions }), ...group };
-    const reply: ChatItem = { id: nanoid(8), role: 'assistant', parts: [], steps: [], text: '', thinking: [], ...group };
+    const carried = options.resume ? carriedFrom(options.carry) : { parts: [], steps: [] };
+    const reply: ChatItem = { id: nanoid(8), role: 'assistant', parts: carried.parts, steps: carried.steps, text: '', thinking: [], ...group };
     const abort = new AbortController();
     // The route takes 60 messages at most: the newest, from a person's turn on (a long kept conversation can be longer).
     const recent = historyOf(options.fresh ? [user] : [...get().items, user]).slice(-59);

@@ -287,7 +287,8 @@ function retryReply(replyId: string, resume?: { checkpoint: string }) {
   useAssistant.setState({ items: items.filter((_, i) => i !== at && i !== at - 1) });
   void useAssistant
     .getState()
-    .send(asked.text, { ...(useAutonomous.getState().on && { session: 'auto' as const }), ...(resume && { resume }) })
+    // Continue keeps what the failed reply had proposed: they are not in `pending` (the reply left the items), the server holds them.
+    .send(asked.text, { ...(useAutonomous.getState().on && { session: 'auto' as const }), ...(resume && { resume, carry: items[at] }) })
     .then(() => afterReply(asked.text));
 }
 

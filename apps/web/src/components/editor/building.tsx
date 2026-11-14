@@ -24,7 +24,7 @@ import { edgePath, useLane } from '../canvas/edge-path';
 import { applyChanges, editorLookup, sendFeedback, undos, useAssistant, useWorking, type AssistantTurn, type ChatItem, type Proposal } from './assistant';
 import { useAutonomous } from './autonomous';
 import { LeftOut } from './suggestions-card';
-import { MOTION_MS } from './spotlight/states';
+import { MOTION_MS, ghostFade } from './spotlight/states';
 import { handleId, useEditor } from './store';
 
 /** How long a step takes to tick off once the plan is there. */
@@ -220,9 +220,9 @@ function useGhostTail(live: Live | undefined, shown: GhostFlowNode[]): GhostFlow
   const now = first && !live ? state(first) : undefined;
   const seen = useRef<string>(undefined);
   useEffect(() => {
-    if (!last.current || !first || (now !== 'applied' && now !== 'undone') || seen.current === `${first}:${now}`) return;
+    const fade = ghostFade(now);
+    if (!last.current || !first || !fade || seen.current === `${first}:${now}`) return;
     seen.current = `${first}:${now}`;
-    const fade = now === 'applied' ? 'out' : 'back';
     setTail(last.current.nodes.map((n) => ({ ...n, id: `fade-${n.id}`, data: { ...n.data, active: false, fade } })));
     const timer = setTimeout(() => setTail([]), fade === 'out' ? MOTION_MS.ghosts + 60 : MOTION_MS.undoHold + MOTION_MS.ghosts + 60);
     return () => clearTimeout(timer);

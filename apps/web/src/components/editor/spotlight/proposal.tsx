@@ -10,7 +10,21 @@ import { Segmented } from '../../ui/segmented';
 import { useAutonomous } from '../autonomous';
 import { applyChanges, sendFeedback, undos, useAssistant, type Proposal } from '../assistant';
 import { LeftOut, OpsDiff, Warnings } from '../suggestions-card';
-import { EXPLAINER_KEY, explainerDue } from './states';
+import { EXPLAINER_KEY, cardFolded, explainerDue, isNewestUndo, undoGroup } from './states';
+
+/** Undo the step this proposal was applied in: every proposal applied with it goes back to 'undone' and loses its undo. */
+export function undoProposal(proposalId: string): void {
+  const group = undoGroup(undos, proposalId);
+  if (!group.length) return;
+  undos.get(proposalId)?.();
+  const store = useAssistant.getState();
+  for (const id of group) {
+    undos.delete(id);
+    for (const item of store.items) {
+      if (item.role === 'assistant' && item.parts.some((p) => p.kind === 'proposal' && p.proposal.id === id)) store.setProposalState(item.id, id, 'undone');
+    }
+  }
+}
 
 /**
  * A change waiting for Apply (autonomous mode off). Apply folds the card into its one-line row, with a tick, while the
@@ -18,20 +32,16 @@ import { EXPLAINER_KEY, explainerDue } from './states';
  */
 export function ProposalCard({ itemId, proposal }: { itemId: string; proposal: Proposal }) {
   const decide = (state: 'applied' | 'dismissed' | 'undone') => useAssistant.getState().setProposalState(itemId, proposal.id, state);
-  const applied = proposal.state === 'applied';
-  // Re-read on each render: the newest undo is the only one that is safe to use.
-  const canUndo = useAssistant((s) => s.items.length) >= 0 && undos.has(proposal.id) && [...undos.keys()].at(-1) === proposal.id;
+  const applied = cardFolded(proposal.state);
+  // Re-read on each render (the subscription): the newest undo is the only one that is safe to use.
+  const canUndo = useAssistant((s) => s.items.length) >= 0 && isNewestUndo(undos, proposal.id);
   const apply = () => {
     const ok = applyChanges([{ ops: proposal.ops, kind: 'proposal' }], proposal.summary, {
       onApplied: ({ undo }) => undos.set(proposal.id, undo),
     });
     if (ok) decide('applied');
   };
-  const undo = () => {
-    undos.get(proposal.id)?.();
-    undos.delete(proposal.id);
-    decide('undone');
-  };
+  const undo = () => undoProposal(proposal.id);
   return (
     <div className={cn('animate-fade-up rounded-xl border bg-sf p-2.5 transition-colors duration-200 motion-reduce:transition-none', applied ? 'border-gnbd' : 'border-acbd')}>
       <div className="flex items-start gap-1.5">
@@ -56,6 +66,9 @@ export function ProposalCard({ itemId, proposal }: { itemId: string; proposal: P
           <div className="flex items-center gap-1.5">
             {proposal.state === 'dismissed' ? (
               <span className="text-[12px] text-t3">Dismissed</span>
+            ) : proposal.state === 'undone' ? (
+              // Taken back: the change is not waiting any more (no ghosts, not counted); ask Spotlight again to bring it back.
+              <span className="text-[12px] text-t3">Undone</span>
             ) : proposal.state === 'stale' ? (
               // Kept from an earlier visit, and the workflow changed since: there is nothing to apply.
               <span className="text-[12px] text-t3">This no longer fits the workflow</span>
@@ -87,16 +100,12 @@ export function ProposalCard({ itemId, proposal }: { itemId: string; proposal: P
  * A change as a row of the timeline: applied by Spotlight (autonomous mode, a fix). Its title says what it did, read from
  * its ops; the model's words and the diff open on a click. The latest one has Undo (a phone has no ⌘Z).
  */
-export function ProposalRow({ itemId, proposal, fix }: { itemId: string; proposal: Proposal; fix: boolean }) {
+export function ProposalRow({ proposal, fix }: { itemId?: string; proposal: Proposal; fix: boolean }) {
   const [open, setOpen] = useState(false);
   // Re-read on each render: the newest undo is the only one that is safe to use.
-  const latest = useAssistant((s) => s.items.length) >= 0 && [...undos.keys()].at(-1) === proposal.id;
+  const latest = useAssistant((s) => s.items.length) >= 0 && isNewestUndo(undos, proposal.id);
   const verb = proposal.state === 'applied' ? (fix ? 'Fixed' : 'Done') : proposal.state === 'dismissed' ? 'Not applied' : proposal.state === 'undone' ? 'Undone' : 'Applying';
-  const undo = () => {
-    undos.get(proposal.id)?.();
-    undos.delete(proposal.id);
-    useAssistant.getState().setProposalState(itemId, proposal.id, 'undone');
-  };
+  const undo = () => undoProposal(proposal.id);
   return (
     <div className="animate-in">
       <div className="flex items-start gap-1">
@@ -180,7 +189,7 @@ export function AutonomousSwitch({ compact }: { compact?: boolean }) {
         ]}
       />
       {note && (
-        <div role="dialog" aria-label="Asks first or Autonomous" className="absolute right-0 top-full z-50 mt-2 w-64 animate-fade-up space-y-1.5 rounded-xl border border-hair bg-sf p-3 text-[12px] leading-snug text-t2 shadow-pop">
+        <div role="dialog" aria-label="Asks first or Autonomous" className="z-50 animate-fade-up max-md:fixed max-md:inset-x-3 max-md:bottom-3 md:absolute md:right-0 md:top-full md:mt-2 md:w-64 space-y-1.5 rounded-xl border border-hair bg-sf p-3 text-[12px] leading-snug text-t2 shadow-pop">
           <p>
             <span className="font-semibold text-t1">Autonomous</span> (now): Spotlight applies its changes, then tests and fixes the flow by itself. Every change has Undo.
           </p>
