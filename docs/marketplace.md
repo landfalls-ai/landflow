@@ -18,7 +18,7 @@ templates that installing adds to Templates, each with a read-only [share page](
 
 ## Using it
 
-**Marketplace** in the sidebar has three tabs.
+**Plugins** → **Marketplace** tab has three tabs.
 
 - **Explore.** Everything in one place: the plugins of every added marketplace, the flows of its Landflow plugins,
   the registry's own plugins and the Templates library. One search covers names, descriptions, authors, keywords and

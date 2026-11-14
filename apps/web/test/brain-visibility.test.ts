@@ -230,12 +230,22 @@ describe('a private work event', () => {
 
 describe('old private work', () => {
   it('does not make the detectors think the ledger reaches back further than it does', () => {
-    const detect = () => JSON.stringify(Object.entries(DETECTOR_RUNS).map(([id, run]) => [id, run(detectContext())]));
+    const DAY = 86_400_000;
+    // A published workflow from 90 days ago with no runs: dead weight, once the ledger looks back 60 days.
+    store.saveWorkflow({ id: 'wf_dead', name: 'Old sync', active: true, nodes: [], connections: [], createdAt: new Date(Date.now() - 90 * DAY).toISOString() } as unknown as Workflow);
+    const deadWeight = () => DETECTOR_RUNS['dead-weight'](detectContext()).filter((f) => JSON.stringify(f).includes('wf_dead'));
     database().delete('usage_events', { owner_id: alice.id });
-    const before = detect();
-    upsertWorkEvent(alice.id, { kind: 'work.session', source: 'claude-code', sourceId: 'old', occurredAt: new Date(Date.now() - 70 * 86_400_000).toISOString(), title: 'An old session' });
-    expect(detect()).toBe(before);
-    expect(Date.parse(ledgerSize().oldest ?? at)).toBeGreaterThan(Date.now() - 60 * 86_400_000);
+    database().deleteBefore('usage_events', 'at', new Date(Date.now() - 30 * DAY).toISOString());
+    database().deleteBefore('usage_daily', 'day', new Date(Date.now() - 30 * DAY).toISOString().slice(0, 10));
+    expect(deadWeight()).toEqual([]);
+    // Alice's private session from 70 days ago doesn't count as the ledger's reach.
+    upsertWorkEvent(alice.id, { kind: 'work.session', source: 'claude-code', sourceId: 'old', occurredAt: new Date(Date.now() - 70 * DAY).toISOString(), title: 'An old session' });
+    expect(deadWeight()).toEqual([]);
+    expect(Date.parse(ledgerSize().oldest ?? at)).toBeGreaterThan(Date.now() - 60 * DAY);
+    // Control: an unowned event from 70 days ago does, so the setup can find dead weight.
+    recordUsage({ kind: 'work.discussion', at: new Date(Date.now() - 70 * DAY).toISOString(), attrs: { source: 'slack', sourceId: 'old-unowned', title: 'An old flow event' } });
+    expect(deadWeight()).toHaveLength(1);
+    store.deleteWorkflow('wf_dead');
   });
 });
 

@@ -12,7 +12,7 @@ No model is used. The folding is a fixed set of rules, so the same room always g
 
 ## Making one
 
-**Runbooks** in the sidebar (`/runbooks`) → **New runbook** opens a dialog: paste the room (JSON), optionally give the
+**Workflows** → **Runbooks** tab (shown when the Landfall plugin is registered; `/runbooks` still opens directly) → **New runbook** opens a dialog: paste the room (JSON), optionally give the
 alert kind, then **Fold into steps**. Each step card has its title (editable), an **Approval first** switch and the
 notes; remove a step with the bin. **Back** returns to the room; **Save as draft** makes the workflow and opens it.
 

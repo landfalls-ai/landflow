@@ -2,7 +2,7 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { offlineDot, RAIL_ITEMS, railActive, SECTION_GROUPS, stripGroup, visibleTabs } from '../src/components/shell/section-nav';
+import { offlineDot, RAIL_ITEMS, railActive, SECTION_GROUPS, showReconnecting, stripGroup, visibleTabs } from '../src/components/shell/section-nav';
 
 vi.mock('../src/components/auth/viewer', () => ({
   useViewer: () => ({ id: 'u1', name: 'Test Owner', email: 'owner@landflow.test', role: 'owner', sso: false }),
@@ -71,6 +71,14 @@ describe('the offline dot', () => {
     expect(offlineDot([{ status: 'online' }, { status: 'online' }])).toEqual({ dot: false });
     expect(offlineDot([{ status: 'online' }, { status: 'offline' }])).toEqual({ dot: true, title: '1 plugin offline' });
     expect(offlineDot([{ status: 'error' }, { status: 'offline' }])).toEqual({ dot: true, title: '2 plugins offline' });
+  });
+});
+
+describe('the reconnecting line', () => {
+  it('stays hidden until the stream was connected once, and shows when it then drops', () => {
+    expect(showReconnecting(false, false)).toBe(false);
+    expect(showReconnecting(true, true)).toBe(false);
+    expect(showReconnecting(true, false)).toBe(true);
   });
 });
 

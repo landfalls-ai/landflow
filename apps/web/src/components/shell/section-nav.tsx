@@ -91,6 +91,14 @@ export function offlineDot(plugins: Array<{ status: string }>): { dot: boolean; 
   return offline === 0 ? { dot: false } : { dot: true, title: `${offline} ${offline === 1 ? 'plugin' : 'plugins'} offline` };
 }
 
+/**
+ * The rail's "Reconnecting…" line: only after the event stream was connected once in this tab and then dropped. The
+ * stream starts closed on every load (and on the server), so `!connected` alone would flash the line on each page.
+ */
+export function showReconnecting(everConnected: boolean, connected: boolean): boolean {
+  return everConnected && !connected;
+}
+
 export function SectionNav({ group }: { group: SectionGroup }) {
   const pathname = usePathname();
   const [plugins, setPlugins] = useState<Array<Pick<PluginSummary, 'id'>>>([]);

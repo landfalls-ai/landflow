@@ -86,7 +86,7 @@ pull requests, issues and branches it creates.
 
 **Run trace** sits next to **Canvas** above every execution. It opens by itself when the run has agents (the choice is
 remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phone; its header goes back to **Executions** (the run
-in its workflow's Executions tab), and the side bar marks **Executions** while it is open.
+in its workflow's Executions tab), and the rail marks **Runs** while it is open.
 
 - **The header**: live or finished, the time, who is working on what right now, the outcome as reported (the last
   agent's answer) and as checked (the Run report's verdict in the profile's words, with how many checks failed). A live

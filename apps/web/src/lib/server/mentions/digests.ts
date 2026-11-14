@@ -100,6 +100,8 @@ export function parameterLines(parameters: Record<string, unknown>, limit = 12):
 
 const when = (iso: string | undefined) => (iso ? `${iso.slice(0, 10).slice(5)} ${iso.slice(11, 16)} UTC` : '');
 const seconds = (ms: number) => `${Math.round(ms / 100) / 10}s`;
+/** A count with thousands separators: redact() masks any bare run of 4+ digits, and a digest's own numbers must survive it. */
+const count = (n: number) => n.toLocaleString('en-US');
 
 /** Whether `actor` may open one resource: the same check the search ran, so a tag found there resolves here. */
 function sees(actor: Actor, kind: Parameters<typeof visibleIds>[1], id: string): boolean {
@@ -136,7 +138,7 @@ async function run(actor: Actor, ref: MentionRef): Promise<Digest | undefined> {
   return finish(`${record.workflowName} run`, [
     `Run of “${record.workflowName}”: ${record.status}, ${record.mode}, started ${when(record.startedAt)}, ${seconds(record.durationMs)}.`,
     record.error && `Error: ${record.error.message}${record.error.nodeName ? ` (at “${record.error.nodeName}”)` : ''}`,
-    digest && `${digest.steps} steps, ${digest.failedSteps} failed; ${digest.modelCalls} model calls, ${digest.tokensIn + digest.tokensOut} tokens${digest.costUsd ? `, about $${digest.costUsd.toFixed(2)}` : ''}.`,
+    digest && `${count(digest.steps)} steps, ${count(digest.failedSteps)} failed; ${count(digest.modelCalls)} model calls, ${count(digest.tokensIn + digest.tokensOut)} tokens${digest.costUsd ? `, about $${digest.costUsd.toFixed(2)}` : ''}.`,
     digest?.failedChecks.length && `Failed checks: ${digest.failedChecks.slice(0, 5).join('; ')}.`,
     digest?.actors.length && `Who took part: ${digest.actors.slice(0, 6).map((a) => `${a.name} (${a.type})`).join(', ')}.`,
   ]);
@@ -162,7 +164,7 @@ function team(actor: Actor, ref: MentionRef): Digest | undefined {
   if (!found || !sees(actor, 'agentTeam', ref.id)) return undefined;
   const config = found.published ?? found.draft;
   const lead = config.members.find((m) => !m.reportsTo);
-  const budget = (tokens?: number) => (tokens ? `, budget ${tokens} tokens` : '');
+  const budget = (tokens?: number) => (tokens ? `, budget ${count(tokens)} tokens` : '');
   return finish(config.name, [
     `Team “${config.name}”${found.published ? `, version ${found.published.version}` : ' (not published yet)'}.`,
     config.goal && `Goal: ${config.goal}`,
@@ -179,7 +181,7 @@ function dataTable(actor: Actor, ref: MentionRef, options: DigestOptions): Diges
   const page = dataTables().listRows(ref.id, { limit: options.samples ? 5 : 0 });
   const columns = table.columns.slice(0, 20).map((c) => `${c.name} (${c.type})`);
   return finish(table.name, [
-    `Data table “${table.name}”: ${page.total} row${page.total === 1 ? '' : 's'}.`,
+    `Data table “${table.name}”: ${count(page.total)} row${page.total === 1 ? '' : 's'}.`,
     `Columns: ${columns.join(', ') || 'none'}.`,
     options.samples && page.rows.length ? 'Sample rows:' : undefined,
     ...(options.samples ? page.rows.map((row) => `  ${clip(Object.fromEntries(table.columns.map((c) => [c.name, row[c.name]])), 200)}`) : []),

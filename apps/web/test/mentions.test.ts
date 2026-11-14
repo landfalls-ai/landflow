@@ -37,6 +37,7 @@ const { routePolicy } = await import('@/lib/server/auth/policy');
 const { singleton } = await import('@/lib/server/singleton');
 const { upsertEntity, entityKey } = await import('@/lib/server/brain/entities');
 const { agentStore } = await import('@/lib/server/agents/store');
+const { agentTeamStore } = await import('@/lib/server/agent-teams/store');
 
 type User = Awaited<ReturnType<typeof createUser>>;
 let member: User;
@@ -374,6 +375,20 @@ describe('digests for the other kinds', () => {
     const missingAgent = await resolveMentions(member, [{ type: 'agent', id: 'agent_missing' }]);
     expect(missingAgent.read[0].ok).toBe(false);
     expect(typeof agentStore.get).toBe('function');
+  });
+
+  it('keeps a team budget and a big table’s row count readable after redaction', async () => {
+    const owner = { id: 'owner', role: 'owner' as const };
+    const team = agentTeamStore.create({ name: 'Budget team', members: [{ id: 'm_lead', title: 'Lead', kind: 'agent', agentId: 'agent_x', budgetTokens: 50000 }] });
+    const teamBlock = (await resolveMentions(owner, [{ type: 'team', id: team.id }])).block;
+    expect(teamBlock).toContain('budget 50,000 tokens');
+    expect(teamBlock).not.toMatch(/budget <n>/);
+    const big = dataTables().createTable({ name: 'Big table', columns: [{ name: 'n', type: 'number' }], projectId: mineProject }).id;
+    projects.setHomeProject('dataTable', big, mineProject);
+    dataTables().insertRows(big, Array.from({ length: 1200 }, (_, n) => ({ n })));
+    const tableBlock = (await resolveMentions(member, [{ type: 'dataTable', id: big }])).block;
+    expect(tableBlock).toContain('1,200 rows');
+    expect(tableBlock).not.toContain('<n> rows');
   });
 
   it('hides a nested secret in a node’s parameters and keeps the plain name on the chip', async () => {

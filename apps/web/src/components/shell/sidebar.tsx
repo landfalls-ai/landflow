@@ -13,7 +13,7 @@ import { UserMenu } from '../auth/user-menu';
 import { useViewer } from '../auth/viewer';
 import { ProjectSwitcher } from '../projects/project-switcher';
 import { EnvironmentBadge } from './environment-badge';
-import { groupOf, offlineDot, railActive, RAIL_ITEMS } from './section-nav';
+import { groupOf, offlineDot, railActive, RAIL_ITEMS, showReconnecting } from './section-nav';
 import { useDialogFocus } from '../ui/use-dialog-focus';
 
 const ICONS: Record<string, typeof House> = {
@@ -127,6 +127,10 @@ function useRailCollapsed(): [boolean, (collapsed: boolean) => void] {
 
 function Rail({ pathname, open, onClose }: { pathname: string; open: boolean; onClose: () => void }) {
   const connected = useLiveConnected();
+  const [everConnected, setEverConnected] = useState(false);
+  useEffect(() => {
+    if (connected) setEverConnected(true);
+  }, [connected]);
   const [plugins, setPlugins] = useState<PluginSummary[]>([]);
   const [railCollapsed, setRailCollapsed] = useRailCollapsed();
   // Folded on a desktop only: the phone drawer always shows the labels.
@@ -222,7 +226,7 @@ function Rail({ pathname, open, onClose }: { pathname: string; open: boolean; on
         <Settings className="size-[18px] shrink-0" strokeWidth={1.7} />
         <span className={cn('truncate', label)}>Settings</span>
       </Link>
-      {!connected && (
+      {showReconnecting(everConnected, connected) && (
         <div className={cn('px-2.5 pb-1 text-[12px] text-t3', label)} title="Reconnecting to the event stream" role="status">
           Reconnecting…
         </div>
