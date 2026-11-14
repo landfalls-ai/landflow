@@ -12,7 +12,7 @@ and post suggestions next to the built-in ones.
  AI call, action)   index               Platform analyst    Apply with a diff   facts
 ```
 
-Try it: open **Brain** in the sidebar, then **What Landflow knows** (the gear at the bottom left), and press **Run now** (owners and admins). Then open Home: suggestions
+Try it: open **Brain** in the sidebar, then **What Landflow knows** (the gear at the bottom left; with an empty brain, ⌘P then `>` or the link on the index), and press **Run now** (owners and admins). Then open Home: suggestions
 show up in the **Suggestions** card, and on the canvas of the workflow they are about.
 
 ## Principles
@@ -148,8 +148,7 @@ The first tick is 30 s after start.
   the node name selects the node.
 - **[The Brain page](#the-brain-page)** (`/brain`): the brain as a repository of Markdown files in an editor's workbench,
   a file per entity, Ask to ask it, and what more than one team worked on.
-- **Brain → What Landflow knows** (the gear at the foot of the Brain page's activity bar; it was on Insights, which now
-  links to it):
+- **Brain → What Landflow knows** (the gear at the foot of the Brain page's activity bar; it was on Insights):
   - the ledger's size, the facts, the model, and when the brain last studied and detected;
   - a search over the facts;
   - each detector's record (made, applied, dismissed, quieted) with **Run**, which runs that detector alone, and
@@ -260,7 +259,7 @@ prose and a person keeps the facts. Spotlight asks it questions.
   Explorer marks each file with its work this week, an **S** when two or more teams worked on it this week, and amber
   with **!** when it needs a person.
 - **The workbench.**
-  - **Activity bar**: Explorer (Open Editors, the tree, the open file's **Outline** and its **Backlinks**: the pages
+  - **Activity bar**: Explorer (the tree, the open file's **Outline** and its **Backlinks**: the pages
     whose summary links to it or whose description names it, and the pages sharing its work), **Search** (pages, facts
     and the latest work), **Timeline** (the latest work as a history), and **What Landflow knows** (status, fact
     search, detectors with Run and Backtest, the analyst, Run now; it moved here from Insights), which opens as a tab.
@@ -300,13 +299,16 @@ prose and a person keeps the facts. Spotlight asks it questions.
   - **Quick open** (⌘P or ⌘K): go to a file by name or path, or `>` for commands (open index or log, toggle Source,
     Problems, Suggestions, run the brain). It only finds pages; it does not ask.
   - **Panel** (⌘J): **Problems** (initiatives and customers without an owner, pages quiet for 30 days, summaries behind
-    their work) and **Suggestions** with their buttons. **Status bar**: problems, shared pages, open suggestions, pages
-    and facts, the last study, the model.
+    their work) and **Suggestions** with their buttons. **Status bar**: two items, the page count and the problems
+    ("12 pages · 0 problems"). The Explorer has no Open editors list; the tabs are the open files.
+  - **An empty brain** shows the index alone: no Explorer, activity bar or tabs, until the first page exists.
+    What Landflow knows stays reachable: a link in the empty index's intro, the command bar (⌘P, then `>`), and
+    `/brain/settings`. The side-bar commands and ⌘B are left out while there is no side bar.
   - **On a phone**: the side bar is a drawer behind the Files button, with the views at its top; tabs scroll; the Ask
     button stays in the title bar and the status bar at the bottom.
 - **index.md**: **Shared across teams** (customers and initiatives two or more teams worked on in the last 7 days, most
   teams first, with their teams, people and latest items: no other product flags this, and it is what the Company
-  Brain is for), **Suggestions**, **Teams this week** and **Needs a person**.
+  Brain is for), **Suggestions**, **Teams this week** and **Needs a person**. A card with nothing in it is not shown.
 - **A page**:
   - **Kept by people**: name, what it is and owner, editable by editors of its project (`PATCH /api/entities/…`), and
     chips for owner (amber when none, not on people), teams, sources and last work.

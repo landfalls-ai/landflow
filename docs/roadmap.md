@@ -1721,6 +1721,13 @@ Closed from the wave 1 page review: X2 (Executions, Runs and Search runs are one
 Follow-up: the Runs list filters load only the latest 200 runs and its journal filters 100 matches; page the list server-side and bring journal word search back into the UI (see [limitations](limitations.md#runs-list-filters-b20-2026-11)).
 
 
+## Quieter Brain and Insights (B28, 2026-11-14)
+
+- **Quieter Brain and Insights (B28, backbone wave 4; P-br-1, P-br-2, P-in-1, P-in-2, X13 for the brain and Insights)**: an empty
+  brain shows the index alone, Open editors is gone, the status bar has the page count and problems, empty index cards are
+  hidden; Insights drops the migration banner, shows the Agent layers card only when the cache or router was used, hides
+  "no change" deltas and puts its footer behind a help line.
+
 ## Not planned
 
 Later, maybe: an agent code sandbox, and prompt management. Not planned:

@@ -8,7 +8,7 @@
  *   keeps it), breadcrumbs, and each file as Preview or Source (⌘⇧V).
  * - Ask (⌘I, or the Ask button in the title bar) is the one way to ask the brain: a column docked at the right of the editor
  *   (a bottom sheet on a phone), about the open page unless its chip is removed. A link in an answer opens beside it.
- * - Panel (⌘J): Problems (pages that need a person) and Suggestions. Status bar: problems, shared pages, the model, counts.
+ * - Panel (⌘J): Problems (pages that need a person) and Suggestions. Status bar: the page count and problems. With no pages the index shows alone.
  * - ⌘P (or ⌘K): go to a file, or `>` for commands.
  * The open tabs and the side bar's width are kept in this browser. On a phone the side bar is a drawer and the activity
  * bar folds into it.
@@ -17,14 +17,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { AlertTriangle, Brain, ChevronRight, Code2, Eye, Files, GitCommitHorizontal, PanelBottom, PanelLeft, Search, Settings2, Sparkles, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
-import { timeAgo } from '@/lib/client/format';
 import { cn } from '@/lib/utils';
 import { brainTree, INDEX, indexMarkdown, LOG, logMarkdown, outlineOf, pageMarkdown, SETTINGS, urlOf, type BrainTree, type FileRef, type OutlineItem } from '@/lib/shared/brain-files';
 import type { WikiHome, WikiPage, WikiSummary } from '@/lib/shared/brain-wiki';
 import { CopyButton } from '../../ui/copy-button';
 import { BrainPanel } from '../brain-panel';
 import { ProposalCard, useProposalActions } from '../proposal-card';
-import { IndexDoc, LogDoc } from './index-doc';
+import { IndexDoc, indexOutline, LogDoc } from './index-doc';
 import { PageDoc } from './page-doc';
 import { WikiNav } from './parts';
 import { ExplorerView, FileIcon, SearchView, TimelineView, type Opener } from './side-views';
@@ -44,6 +43,17 @@ type Loaded = WikiPage | { error: string };
 
 const STORE = 'landflow.brain.workbench';
 const isPage = (ref: FileRef) => ref.includes('/');
+
+/** What chrome the workbench shows: with no pages and the index open, the index alone (no Explorer, no tabs). */
+export function workbenchLayout(pages: number | undefined, active?: FileRef): { indexOnly: boolean; explorer: boolean; tabs: boolean } {
+  const indexOnly = pages === 0 && (!active || active === INDEX);
+  return { indexOnly, explorer: !indexOnly, tabs: !indexOnly };
+}
+
+/** The status bar: the page count and the pages that need a person. Nothing else. */
+export function statusItems(pages: number, problems: number): [string, string] {
+  return [`${pages} page${pages === 1 ? '' : 's'}`, `${problems} problem${problems === 1 ? '' : 's'}`];
+}
 
 export function BrainWorkbench({ initial }: { initial: FileRef }) {
   const [home, setHome] = useState<WikiHome>();
@@ -154,7 +164,13 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
     if (active === LOG) return logMarkdown(home);
     return page ? pageMarkdown(page) : undefined;
   }, [active, home, page]);
-  const outline = useMemo(() => (markdown ? outlineOf(markdown) : []), [markdown]);
+  const outline = useMemo(() => {
+    const all = markdown ? outlineOf(markdown) : [];
+    return active === INDEX && home ? indexOutline(all, home) : all;
+  }, [markdown, active, home]);
+  const layout = workbenchLayout(home?.entries.length, active);
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
   const mode: Mode = active ? (modes[active] ?? 'preview') : 'preview';
   const toggleMode = useCallback(() => active && active !== SETTINGS && setModes((m) => ({ ...m, [active]: (m[active] ?? 'preview') === 'preview' ? 'source' : 'preview' })), [active]);
 
@@ -196,7 +212,7 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
         }
       } else if (key === 'b') {
         e.preventDefault();
-        setSidebar((v) => !v);
+        if (layoutRef.current.explorer) setSidebar((v) => !v);
       } else if (key === 'j') {
         e.preventDefault();
         setPanel((p) => (p ? undefined : 'problems'));
@@ -211,13 +227,14 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
 
   const nameOf = (ref: FileRef) => (ref === SETTINGS ? 'What Landflow knows' : (tree?.files.get(ref)?.name ?? `${ref.split('/').pop()}.md`));
   const problems = tree ? [...tree.files.values()].filter((f) => f.problems.length) : [];
+  const status = home && statusItems(home.entries.length, problems.length);
   const spotlightFile: SpotlightFile | undefined = active
     ? { ref: active, name: page?.entity.name ?? tree?.files.get(active)?.title ?? nameOf(active), page: isPage(active), ...(home?.shared[0] && { topShared: home.shared[0].name }) }
     : undefined;
 
   const sideView = home && tree && (
     <>
-      {view === 'explorer' && <ExplorerView tree={tree} active={active} openTabs={tabs} outline={outline} page={page} opener={opener} onCloseTab={close} onOutline={jump} onRefresh={loadHome} />}
+      {view === 'explorer' && <ExplorerView tree={tree} active={active} outline={outline} page={page} opener={opener} onOutline={jump} onRefresh={loadHome} />}
       {view === 'search' && <SearchView home={home} tree={tree} opener={opener} />}
       {view === 'timeline' && <TimelineView home={home} opener={opener} />}
     </>
@@ -240,7 +257,7 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
       <div className="flex h-[calc(100dvh-3.5rem-env(safe-area-inset-bottom))] flex-col overflow-hidden bg-bg md:h-dvh">
         {/* Title bar: the command center. */}
         <div className="flex h-10 shrink-0 items-center gap-2 border-b border-hair bg-sf2 px-2">
-          <button type="button" onClick={() => setDrawer(true)} className="grid size-7 place-items-center rounded-md text-t2 hover:bg-acdim md:hidden" aria-label="Files">
+          <button type="button" onClick={() => setDrawer(true)} className={cn('grid size-7 place-items-center rounded-md text-t2 hover:bg-acdim md:hidden', !layout.explorer && 'hidden')} aria-label="Files">
             <Files className="size-4" />
           </button>
           <span className="hidden items-center gap-1.5 text-[12px] font-medium text-t2 md:flex">
@@ -268,9 +285,11 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
             <kbd className="hidden rounded border border-hair px-1 font-mono text-[10.5px] text-t3 lg:inline">⌘I</kbd>
           </button>
           <div className="hidden items-center gap-0.5 md:flex">
-            <ToolbarButton title="Toggle side bar (⌘B)" onClick={() => setSidebar((v) => !v)} active={sidebar}>
-              <PanelLeft className="size-3.5" />
-            </ToolbarButton>
+            {layout.explorer && (
+              <ToolbarButton title="Toggle side bar (⌘B)" onClick={() => setSidebar((v) => !v)} active={sidebar}>
+                <PanelLeft className="size-3.5" />
+              </ToolbarButton>
+            )}
             <ToolbarButton title="Toggle panel (⌘J)" onClick={() => setPanel((p) => (p ? undefined : 'problems'))} active={Boolean(panel)}>
               <PanelBottom className="size-3.5" />
             </ToolbarButton>
@@ -279,7 +298,7 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
 
         <div className="relative flex min-h-0 flex-1">
           {/* Activity bar. */}
-          <nav className="hidden w-11 shrink-0 flex-col items-center gap-1 border-r border-hair bg-sf2 py-1.5 md:flex" aria-label="Views">
+          <nav className={cn('hidden w-11 shrink-0 flex-col items-center gap-1 border-r border-hair bg-sf2 py-1.5', layout.explorer && 'md:flex')} aria-label="Views">
             {VIEWS.map((v) => (
               <ActivityButton key={v.id} label={v.label} active={sidebar && view === v.id} onClick={() => pickView(v.id)}>
                 <v.icon className="size-[18px]" />
@@ -292,7 +311,8 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
           </nav>
 
           {/* Side bar: in place on a desktop, a drawer on a phone. */}
-          {drawer && <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={() => setDrawer(false)} aria-hidden />}
+          {layout.explorer && drawer && <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={() => setDrawer(false)} aria-hidden />}
+          {layout.explorer && (
           <aside
             className={cn(
               'min-h-0 shrink-0 flex-col border-r border-hair bg-sf2',
@@ -319,10 +339,12 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
             </div>
             <div className="min-h-0 flex-1">{sideView ?? <div className="m-3 h-40 rounded-lg bg-acdim animate-pulse-soft" />}</div>
           </aside>
-          {sidebar && <ResizeHandle width={width} onWidth={setWidth} />}
+          )}
+          {layout.explorer && sidebar && <ResizeHandle width={width} onWidth={setWidth} />}
 
           {/* Editor group. */}
           <div className="flex min-w-0 flex-1 flex-col">
+            {layout.tabs && (
             <div className="flex h-9 shrink-0 items-stretch overflow-x-auto border-b border-hair bg-sf2 [scrollbar-width:none]" role="tablist">
               {tabs.map((t) => (
                 <div
@@ -357,8 +379,9 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
                 </div>
               ))}
             </div>
+            )}
 
-            {active && (
+            {active && !layout.indexOnly && (
               <div className="flex h-7 shrink-0 items-center gap-1 border-b border-hair px-3 text-[12px] text-t3">
                 <div className="flex min-w-0 items-center gap-1 overflow-hidden">
                   {(active === SETTINGS ? ['What Landflow knows'] : ['brain', ...(tree?.paths.get(active) ?? [nameOf(active)])]).map((part, i, all) => (
@@ -427,29 +450,17 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
 
         {/* Status bar. */}
         <div className="flex h-6 shrink-0 items-center gap-3 border-t border-hair bg-sf2 px-2.5 text-[11px] text-t2">
-          <span className="flex items-center gap-1">
-            <Brain className="size-3" aria-hidden />
-            brain
-          </span>
-          <button type="button" onClick={() => setPanel((p) => (p === 'problems' ? undefined : 'problems'))} className="flex items-center gap-1 hover:opacity-80" title="Pages that need a person">
-            <AlertTriangle className="size-3" aria-hidden />
-            {problems.length}
-          </button>
-          {home && (
-            <button type="button" onClick={() => open(INDEX)} className="hover:opacity-80" title="Pages two or more teams worked on this week">
-              {home.shared.length} shared
-            </button>
+          {status && (
+            <>
+              <button type="button" onClick={() => open(INDEX)} className="hover:opacity-80" title="Open the index">
+                {status[0]}
+              </button>
+              <button type="button" onClick={() => setPanel((p) => (p === 'problems' ? undefined : 'problems'))} className="flex items-center gap-1 hover:opacity-80" title="Pages that need a person">
+                <AlertTriangle className="size-3" aria-hidden />
+                {status[1]}
+              </button>
+            </>
           )}
-          {home && home.proposals.length > 0 && (
-            <button type="button" onClick={() => setPanel('suggestions')} className="hidden hover:opacity-80 sm:inline" title="Open suggestions">
-              {home.proposals.length} suggestion{home.proposals.length === 1 ? '' : 's'}
-            </button>
-          )}
-          <span className="ml-auto hidden truncate sm:inline">{home ? `${home.entries.length} pages · ${home.status.facts} facts` : ''}</span>
-          {home?.status.lastStudy && <span className="hidden lg:inline">studied {timeAgo(home.status.lastStudy)}</span>}
-          <span className="hidden truncate md:inline" title="LANDFLOW_BRAIN_MODEL">
-            {home?.model ? `model ${home.model}` : 'no model'}
-          </span>
         </div>
 
         <Sheet open={askOpen && phone} onClose={() => setAskOpen(false)} title="Ask the brain" className="h-[85dvh]">
@@ -466,10 +477,10 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
               { label: 'Open log.md', run: () => open(LOG, { pin: true }) },
               { label: 'What Landflow knows', run: () => open(SETTINGS, { pin: true }) },
               { label: 'Toggle Preview and Source', run: toggleMode },
-              { label: 'Toggle the side bar', run: () => setSidebar((v) => !v) },
+              ...(layout.explorer ? [{ label: 'Toggle the side bar', run: () => setSidebar((v) => !v) }] : []),
               { label: 'Show Problems', run: () => setPanel('problems') },
               { label: 'Show Suggestions', run: () => setPanel('suggestions') },
-              { label: 'Search the brain', run: () => (setView('search'), setSidebar(true), setDrawer(true)) },
+              ...(layout.explorer ? [{ label: 'Search the brain', run: () => (setView('search'), setSidebar(true), setDrawer(true)) }] : []),
               { label: 'Refresh', run: loadHome },
               {
                 label: 'Run the brain now (study and detect)',

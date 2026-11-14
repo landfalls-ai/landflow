@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/client/api';
 import { formatCost } from '@/lib/shared/ai-usage';
+import { showLayersCard } from './format';
 import { Card } from '../shell/page-header';
 import { SectionLabel } from '../ui/inputs';
 
@@ -24,8 +25,8 @@ export function AgentLayersCard({ days, label }: { days: number; label: string }
       // Extra: the page works without it.
       .catch(() => setStats(undefined));
   }, [days]);
-  // Nothing to show until an agent has been asked something.
-  if (!stats?.requests) return null;
+  // Nothing to show until the cache or the router has answered something.
+  if (!stats || !showLayersCard(stats)) return null;
   const tiles = [
     { name: 'Agent requests', value: stats.requests.toLocaleString(), note: `in the last ${label}` },
     { name: 'Answered from the cache', value: stats.cached.toLocaleString(), note: `${percent(stats.cached, stats.requests)} of requests, no model call` },

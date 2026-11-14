@@ -5,10 +5,10 @@
  * period before, runs per hour or day, and a row per workflow. Manual runs
  * (editor and chat tests) are left out unless "Include manual runs" is on.
  * The estimated AI cost of the workflows' model calls (/api/insights/ai-usage)
- * comes alongside, test runs included. What the second brain knows moved to /brain; a link stays here.
+ * comes alongside, test runs included.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowDown, ArrowUp, Brain, Minus } from 'lucide-react';
+import { ArrowDown, ArrowUp, CircleHelp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import type { InsightsPeriod, InsightsReport, InsightsTotals } from '@/lib/shared/platform';
@@ -19,7 +19,6 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { SectionLabel, Switch } from '@/components/ui/inputs';
 import { change, formatMinutes, formatRate, formatRunTime } from '@/components/insights/format';
 import { FAILED_COLOR, RunsChart, SUCCEEDED_COLOR } from '@/components/insights/runs-chart';
-import Link from 'next/link';
 import { WorkflowTable } from '@/components/insights/workflow-table';
 import { AgentLayersCard } from '@/components/insights/agent-layers-card';
 import { Segmented } from '@/components/ui/segmented';
@@ -78,7 +77,7 @@ const KPIS: { metric: Metric; label: string; format: (t: InsightsTotals) => stri
 
 function Kpi({ label, value, metric, report, index, previousLabel }: { label: string; value: string; metric: Metric; report: InsightsReport; index: number; previousLabel: string }) {
   const delta = change(metric, report.current, report.previous);
-  const Icon = delta.direction > 0 ? ArrowUp : delta.direction < 0 ? ArrowDown : Minus;
+  const Icon = delta.direction > 0 ? ArrowUp : ArrowDown;
   const before = KPIS.find((k) => k.metric === metric)!.format(report.previous);
   return (
     <StatCard
@@ -86,13 +85,15 @@ function Kpi({ label, value, metric, report, index, previousLabel }: { label: st
       label={label}
       value={value}
       sub={
-        <>
-          <span title={`${previousLabel}: ${before}`} className={cn('inline-flex items-center gap-0.5 whitespace-nowrap font-medium', delta.trend === 'good' ? 'text-gn' : delta.trend === 'bad' ? 'text-rd' : 'text-t2')}>
-            <Icon className="size-3" strokeWidth={2.4} />
-            {delta.text}
-          </span>
-          <span>vs {previousLabel}</span>
-        </>
+        delta.text ? (
+          <>
+            <span title={`${previousLabel}: ${before}`} className={cn('inline-flex items-center gap-0.5 whitespace-nowrap font-medium', delta.trend === 'good' ? 'text-gn' : delta.trend === 'bad' ? 'text-rd' : 'text-t2')}>
+              <Icon className="size-3" strokeWidth={2.4} />
+              {delta.text}
+            </span>
+            <span>vs {previousLabel}</span>
+          </>
+        ) : undefined
       }
     />
   );
@@ -210,18 +211,17 @@ export default function InsightsPage() {
           )}
         </Card>
 
-        <Link href="/brain" className="flex items-center gap-2 rounded-2xl border border-hair bg-sf px-4 py-3 text-[13px] text-t1 hover:border-ac">
-          <Brain className="size-4 text-viz-7" aria-hidden />
-          <span className="font-medium">What Landflow knows</span>
-          <span className="min-w-0 truncate text-t3">moved to the Brain: its pages, what teams share, its facts and detectors</span>
-          <span className="ml-auto text-ac">Open →</span>
-        </Link>
-
-        <p className="text-[12px] leading-relaxed text-t3">
-          Insights are counted as runs finish and kept for 400 days, apart from execution history, so pruning executions doesn’t change them. Time saved is the
-          successful runs times the minutes a run saves, which you set per workflow above. AI cost is estimated per model call from the price table in Settings → AI
-          prices (local models such as Ollama cost nothing unless priced there) and includes test runs.
-        </p>
+        <details className="group text-[12px] leading-relaxed text-t3">
+          <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 hover:text-t2 [&::-webkit-details-marker]:hidden" aria-label="How Insights are counted">
+            <CircleHelp className="size-3.5" aria-hidden />
+            How these are counted
+          </summary>
+          <p className="mt-1.5">
+            Insights are counted as runs finish and kept for 400 days, apart from execution history, so pruning executions doesn’t change them. Time saved is the
+            successful runs times the minutes a run saves, which you set per workflow above. AI cost is estimated per model call from the price table in Settings → AI
+            prices (local models such as Ollama cost nothing unless priced there) and includes test runs.
+          </p>
+        </details>
       </PageBody>
     </>
   );
