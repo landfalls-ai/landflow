@@ -55,7 +55,7 @@ export function useConversation(scope: ConversationScope): UseConversation {
   const ensure = useCallback(async (firstText: string | undefined): Promise<string | undefined> => {
     if (idRef.current) return idRef.current;
     const started = generation.current;
-    creating.current ??= api<{ conversation: ConversationRecord | null; kept?: boolean }>('/api/conversations', {
+    const promise: Promise<string | undefined> = creating.current ??= api<{ conversation: ConversationRecord | null; kept?: boolean }>('/api/conversations', {
       method: 'POST',
       json: createBody(scopeRef.current, firstText),
     })
@@ -70,9 +70,9 @@ export function useConversation(scope: ConversationScope): UseConversation {
         return body.conversation.id;
       })
       .finally(() => {
-        creating.current = undefined;
+        if (creating.current === promise) creating.current = undefined;
       });
-    return creating.current;
+    return promise;
   }, []);
 
   const append = useCallback(
@@ -90,12 +90,14 @@ export function useConversation(scope: ConversationScope): UseConversation {
   const open = useCallback(async (target: string) => {
     const body = await api<{ conversation: ConversationRecord; items: ConversationItem[] }>(`/api/conversations/${target}`);
     generation.current += 1;
+    creating.current = undefined;
     select(body.conversation.id);
     setItems(body.items);
   }, []);
 
   const startNew = useCallback(() => {
     generation.current += 1;
+    creating.current = undefined;
     select(undefined);
     setItems([]);
   }, []);

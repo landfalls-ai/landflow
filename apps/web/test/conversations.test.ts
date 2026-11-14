@@ -70,6 +70,9 @@ describe('conversations', () => {
     expect((await read('?q=nightly')).conversations.map((c) => c.id)).toEqual([b.id]);
     expect((await read('?q=churning')).conversations.map((c) => c.id)).toEqual([a.id]);
     expect((await read('?q=100%25')).conversations).toEqual([]);
+    expect((await read('?q=NIGHTLY')).conversations.map((c) => c.id)).toEqual([b.id]);
+    const umlaut = await create({ surface: 'brain', title: 'Ärger mit dem Webhook' });
+    expect((await read(`?q=${encodeURIComponent('Ärger')}`)).conversations.map((c) => c.id)).toEqual([umlaut.id]);
     const first = await read('?limit=2');
     expect(first.conversations).toHaveLength(2);
     expect(first.nextCursor).toBeTruthy();
@@ -177,7 +180,7 @@ describe('conversations', () => {
     expect(html).toContain('aria-label="Conversation history"');
     const record = (id: string) => ({ id, surface: 'spotlight' as const, projectId: null, subjectType: null, subjectId: null, title: id, pinned: false, createdAt: '', updatedAt: '' });
     expect(leaveOut([record('a'), record('b'), record('c')], [record('b')]).map((c) => c.id)).toEqual(['a', 'c']);
-    // The subject group asks for its own subject (the conversations_subject index), "Everywhere" for none.
+    // The subject group asks for its own subject (a per-subject request), "Everywhere" for none.
     expect(historyParams(' plan ', { subjectType: 'workflow', subjectId: 'wf_1' }, 'cur').toString()).toBe('limit=50&subjectType=workflow&subjectId=wf_1&q=plan&cursor=cur');
     expect(historyParams('').toString()).toBe('limit=50');
   });

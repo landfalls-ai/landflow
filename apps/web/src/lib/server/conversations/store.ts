@@ -114,10 +114,10 @@ export function listConversations(userId: string, query: ConversationQuery): { c
     params.push(query.subjectId);
   }
   if (query.q?.trim()) {
-    const like = likePattern(query.q.trim().toLowerCase());
-    // Titles and the person's own words; what the assistant answered is not searched.
+    const like = likePattern(query.q.trim());
+    // SQLite LIKE ignores ASCII case only, so a non-ASCII word matches as typed. Titles and the person's own words; what the assistant answered is not searched.
     where.push(
-      `(LOWER(c.title) LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM conversation_items i WHERE i.conversation_id = c.id AND i.role = 'user' AND LOWER(i.parts) LIKE ? ESCAPE '\\'))`,
+      `(c.title LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM conversation_items i WHERE i.conversation_id = c.id AND i.role = 'user' AND i.parts LIKE ? ESCAPE '\\'))`,
     );
     params.push(like, like);
   }
