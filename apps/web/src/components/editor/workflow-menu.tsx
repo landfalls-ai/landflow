@@ -4,11 +4,9 @@
  * configured), share, move, download as JSON, save as template, one Import… (a paste box and a file drop, Landflow or
  * n8n) and the keyboard shortcuts. The items are listed by `menuItems` (./chrome).
  */
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { ArrowRightLeft, Download, FileUp, GitCommitHorizontal, History, Keyboard, LayoutTemplate, MoreHorizontal, Settings2, Share2, Tag } from 'lucide-react';
 import { toast } from 'sonner';
-import { api } from '@/lib/client/api';
-import type { SourceControlView } from '@/lib/shared/sync';
 import { MoveToProjectDialog, ShareDialog } from '../projects/share-dialog';
 import { SaveTemplateDialog } from '../templates/save-template-dialog';
 import { Button } from '../ui/button';
@@ -40,28 +38,12 @@ function download() {
   toast(`Downloaded ${link.download}`);
 }
 
-/** Whether source control is configured (Settings → Source control). Only an admin can read it: for anyone else, no Git history. */
-function useSourceControl(): boolean {
-  const [configured, setConfigured] = useState(false);
-  useEffect(() => {
-    let live = true;
-    api<SourceControlView>('/api/source-control')
-      .then((view) => live && setConfigured(view.configured))
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, []);
-  return configured;
-}
-
 export function WorkflowMenu({ onSave }: { onSave: () => Promise<boolean> }) {
   const [dialog, setDialog] = useState<'settings' | 'tags' | 'import' | 'share' | 'move' | 'template' | 'git'>();
   const workflowId = useEditor((s) => s.workflowId);
   const name = useEditor((s) => s.name);
   const tagCount = useEditor((s) => s.tags.length);
-  const sourceControl = useSourceControl();
-  const shown = menuItems({ sourceControl, saved: Boolean(workflowId) });
+  const shown = menuItems({ saved: Boolean(workflowId) });
   return (
     <>
       <Popover

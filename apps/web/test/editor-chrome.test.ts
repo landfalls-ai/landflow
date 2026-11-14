@@ -40,6 +40,8 @@ describe('the right column', () => {
     expect(showColumnSwitch({ hasChat: true, column: null, spotlightFolded: false })).toBe(true);
     expect(showColumnSwitch({ hasChat: true, column: 'chat', spotlightFolded: true })).toBe(true);
     expect(showColumnSwitch({ hasChat: true, column: null, spotlightFolded: true })).toBe(false);
+    // Picking Spotlight from Chat unfolds it (showSpotlight), so the strip stays.
+    expect(showColumnSwitch({ hasChat: true, column: chatColumnAfter('chat', 'show-spotlight'), spotlightFolded: false })).toBe(true);
     expect(showColumnSwitch({ hasChat: false, column: 'spotlight', spotlightFolded: false })).toBe(false);
   });
 });
@@ -83,17 +85,14 @@ describe('the top bar', () => {
 });
 
 describe('the ⋯ menu', () => {
-  it('holds Tags, Version history and one Import, and no Git history without source control', () => {
-    const items = menuItems({ sourceControl: false, saved: true });
+  it('holds Tags, Version history, Git history (for members too) and one Import', () => {
+    const items = menuItems({ saved: true });
     expect(items).toEqual(expect.arrayContaining(['tags', 'version-history', 'import']));
     expect(items.filter((i) => i === 'import')).toHaveLength(1);
-    expect(items).not.toContain('git-history');
-  });
-  it('adds Git history with source control configured', () => {
-    expect(menuItems({ sourceControl: true, saved: true })).toContain('git-history');
+    expect(items).toContain('git-history');
   });
   it('leaves Share and Move out for a workflow that is not saved yet', () => {
-    const items = menuItems({ sourceControl: false, saved: false });
+    const items = menuItems({ saved: false });
     expect(items).not.toContain('share');
     expect(items).not.toContain('move');
   });

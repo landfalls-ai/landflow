@@ -740,7 +740,9 @@ export function Editor({ workflowId }: { workflowId: string }) {
   // Autosave: set by the effect below; a save that finds edits made while it was in flight asks for another.
   const savingNow = useRef(false);
   const rearm = useRef<() => void>(undefined);
-  const save = useCallback(async (auto = false): Promise<boolean> => {
+  const saveQueue = useRef<Promise<boolean> | undefined>(undefined);
+  /** `auto`: the timed save (folds into the session's version); `quiet`: no "Saved" toast (defaults to `auto`). */
+  const saveOnce = useCallback(async (auto = false, quiet = auto): Promise<boolean> => {
     if (useEditLock.getState().readOnly) {
       const environment = useEditLock.getState().protectedEnvironment;
       toast.error(environment ? `${environment} is a protected environment: workflows change only by pull or promotion` : 'Someone else is editing this workflow: it’s read-only here');
@@ -757,7 +759,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
         api<{ workflow: Workflow; triggerAuthWarnings?: Array<{ nodeName: string; message: string }> } & PolicyWarnings>(`/api/workflows/${workflowId}`, {
           method: 'PUT',
           json: draft,
-          headers: { ...editorTabHeaders(), ...(baseline && { 'if-match': `"${baseline}"` }) },
+          headers: { ...editorTabHeaders(), ...(auto && { 'x-landflow-autosave': '1' }), ...(baseline && { 'if-match': `"${baseline}"` }) },
         });
       let saved;
       try {
@@ -778,7 +780,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
         useEditor.setState({ dirty: true });
         rearm.current?.();
       }
-      if (!auto) toast.success(`Saved “${workflow.name}”`);
+      if (!quiet) toast.success(`Saved “${workflow.name}”`);
       // Nodes the governance policy doesn't allow: the save stands, publishing is refused and they fail when run.
       if (policyWarnings?.length) toast.warning(`${policyWarnings.length === 1 ? '1 node is' : `${policyWarnings.length} nodes are`} blocked by policy`, { id: 'policy-warnings', description: policyWarnings.map((w) => `${w.nodeName}: ${w.message}`).join('\n') });
       // A trigger checking callers with a credential this workflow's project can't use: its calls are refused (403).
@@ -792,6 +794,20 @@ export function Editor({ workflowId }: { workflowId: string }) {
       setSaving(false);
     }
   }, [workflowId]);
+
+  /** One save at a time: a save asked for while another is in flight (⌘S, Publish, a tab) waits for it instead of racing it. */
+  const save = useCallback(
+    (auto = false, quiet = auto): Promise<boolean> => {
+      const prior = saveQueue.current;
+      const run = prior ? prior.catch(() => false).then(() => saveOnce(auto, quiet)) : saveOnce(auto, quiet);
+      const tracked = run.finally(() => {
+        if (saveQueue.current === tracked) saveQueue.current = undefined;
+      });
+      saveQueue.current = tracked;
+      return tracked;
+    },
+    [saveOnce],
+  );
 
   const execute = useCallback(
     async (extra: Record<string, unknown> = {}, debug = false, onChunk?: (chunk: ChatChunk) => void): Promise<RunResult | undefined> => {
@@ -895,7 +911,8 @@ export function Editor({ workflowId }: { workflowId: string }) {
   useEffect(() => {
     if (!loaded) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const allowed = () => shouldAutosave({ dirty: useEditor.getState().dirty, readOnly, governed: GOVERNED_SAVES, locked: !readOnly });
+    // Not while Spotlight is drafting the flow: a half-built draft is not worth a save (or a version).
+    const allowed = () => shouldAutosave({ dirty: useEditor.getState().dirty && !useAssistant.getState().drafting, readOnly, governed: GOVERNED_SAVES, locked: !readOnly });
     const arm = () => {
       clearTimeout(timer);
       if (!allowed()) return;
@@ -909,10 +926,26 @@ export function Editor({ workflowId }: { workflowId: string }) {
     const unsubscribe = useEditor.subscribe((state, prev) => {
       if (AUTOSAVE_WATCHED.some((key) => state[key] !== prev[key])) arm();
     });
+    const unsubscribeDrafting = useAssistant.subscribe((state, prev) => {
+      if (state.drafting !== prev.drafting) arm();
+    });
+    // Leaving inside the 2 s wait (Back, reload, closing the tab) must not drop the last edit: save at once.
+    const flush = () => {
+      clearTimeout(timer);
+      if (allowed()) void save(true);
+    };
+    const guard = (event: BeforeUnloadEvent) => {
+      if (useEditor.getState().dirty && !readOnly) event.preventDefault();
+    };
+    window.addEventListener('pagehide', flush);
+    window.addEventListener('beforeunload', guard);
     arm();
     return () => {
-      clearTimeout(timer);
+      flush();
+      window.removeEventListener('pagehide', flush);
+      window.removeEventListener('beforeunload', guard);
       unsubscribe();
+      unsubscribeDrafting();
       rearm.current = undefined;
     };
   }, [loaded, readOnly, save]);
@@ -1013,7 +1046,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
           <WorkflowTabs
             workflowId={workflowId}
             active="editor"
-            beforeLeave={async () => useEditor.getState().dirty && (await save())}
+            beforeLeave={async () => useEditor.getState().dirty && (await save(false, true))}
             className="absolute left-1/2 -translate-x-1/2 max-md:static max-md:order-3 max-md:translate-x-0"
           />
 
@@ -1093,7 +1126,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
                   size="sm"
                   stretch
                   value={chatOpen ? 'chat' : 'spotlight'}
-                  onChange={(value) => useChatColumn.getState().apply(value === 'chat' ? 'show-chat' : 'show-spotlight')}
+                  onChange={(value) => (value === 'chat' ? useChatColumn.getState().apply('show-chat') : showSpotlight())}
                   options={[
                     { value: 'spotlight', label: 'Spotlight', title: 'Build and fix this flow (⌘I)' },
                     { value: 'chat', label: 'Chat', title: 'Talk to this workflow' },

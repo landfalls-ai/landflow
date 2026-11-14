@@ -18,6 +18,9 @@ import { logger } from './telemetry/logger';
 /** Versions kept per workflow; older ones are deleted. */
 export const MAX_VERSIONS = 50;
 
+/** Autosaves by one person within this long of each other are one version (one editing session). */
+export const AUTOSAVE_WINDOW_MS = 10 * 60 * 1000;
+
 const ID = /^[\w-]+$/;
 
 /** JSON with object keys sorted, so equal documents hash the same. */
@@ -148,27 +151,37 @@ export function versionFor(workflow: Workflow): WorkflowVersionSummary | undefin
 
 /**
  * Record a saved workflow as a new version, unless nothing that counts changed since the newest one.
+ * An autosave (`options.autosave`) replaces the newest version when that was an autosave by the same person within
+ * AUTOSAVE_WINDOW_MS (and is not the published one), so an editing session is one version, not one per drag. Manual
+ * saves, publishes and tab-leave saves always add a version.
  * Never throws: a save must not fail because of its history.
  */
-export function recordVersion(workflow: Workflow): WorkflowVersionSummary | undefined {
+export function recordVersion(workflow: Workflow, options: { autosave?: { by: string } } = {}): WorkflowVersionSummary | undefined {
   try {
     if (!ID.test(workflow.id)) return undefined;
     const db = database();
     const newest = readIndex(workflow.id)[0];
     const hash = versionHash(workflow);
     if (newest?.hash === hash) return undefined;
-    const previous = newest ? getVersion(workflow.id, newest.id)?.workflow : undefined;
+    const createdAt = workflow.updatedAt ?? new Date().toISOString();
+    const auto = options.autosave;
+    const replaces =
+      auto && newest?.autosave?.by === auto.by && newest.id !== publishedVersionId(workflow.id) && Math.abs(Date.parse(createdAt) - Date.parse(newest.createdAt)) < AUTOSAVE_WINDOW_MS ? newest : undefined;
+    // A replaced version is compared with the one before it, so its line still says everything the session changed.
+    const base = replaces ? readIndex(workflow.id)[1] : newest;
+    const previous = base ? getVersion(workflow.id, base.id)?.workflow : undefined;
     const diff = diffWorkflows(previous, workflow);
     const summary: WorkflowVersionSummary = {
-      id: `v_${Date.now().toString(36)}${randomBytes(3).toString('hex')}`,
+      id: replaces?.id ?? `v_${Date.now().toString(36)}${randomBytes(3).toString('hex')}`,
       workflowId: workflow.id,
-      number: (newest?.number ?? 0) + 1,
-      createdAt: workflow.updatedAt ?? new Date().toISOString(),
+      number: replaces?.number ?? (newest?.number ?? 0) + 1,
+      createdAt,
       name: workflow.name,
       nodeCount: workflow.nodes.length,
       hash,
-      summary: summarizeDiff(diff, !newest),
+      summary: summarizeDiff(diff, !base),
       diff,
+      ...(auto && { autosave: auto }),
     };
     db.transaction(() => {
       db.upsert('workflow_versions', versionRow({ ...summary, workflow }));

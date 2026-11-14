@@ -101,6 +101,21 @@ describe('recordVersion', () => {
     expect(getVersion(id, '../etc')).toBeUndefined();
   });
 
+  it('folds an editing session of autosaves by one person into one version', () => {
+    const id = uniqueId('auto');
+    const at = (n: number) => new Date(Date.now() + n * 1000).toISOString();
+    const first = recordVersion({ ...workflow(id), updatedAt: at(0) });
+    const a = recordVersion({ ...workflow(id, { settings: { timezone: 'UTC' } }), updatedAt: at(1) }, { autosave: { by: 'u1' } });
+    const b = recordVersion({ ...workflow(id, { settings: { timezone: 'CET' } }), updatedAt: at(2) }, { autosave: { by: 'u1' } });
+    expect(b).toMatchObject({ id: a!.id, number: 2 });
+    expect(listVersions(id).map((v) => v.number)).toEqual([2, 1]);
+    expect(getVersion(id, b!.id)?.workflow.settings).toEqual({ timezone: 'CET' });
+    // Another person, or a manual save, adds a version.
+    expect(recordVersion({ ...workflow(id, { settings: { timezone: 'PST' } }), updatedAt: at(3) }, { autosave: { by: 'u2' } })).toMatchObject({ number: 3 });
+    expect(recordVersion({ ...workflow(id, { settings: { timezone: 'EST' } }), updatedAt: at(4) })).toMatchObject({ number: 4 });
+    expect(first!.number).toBe(1);
+  });
+
   it(`keeps the newest ${MAX_VERSIONS} and deletes older files`, () => {
     const id = uniqueId('cap');
     const ids: string[] = [];
