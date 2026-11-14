@@ -18,7 +18,7 @@ const KIND: Record<NeedsYouRow['kind'], string> = { approval: 'Approval', form: 
 export function NeedsYouList() {
   const { items } = useNeedsYou();
   if (!items?.length) return null;
-  // The new look: who has something for you, across the runs (a dot on each member that waits).
+  // Who has something for you, across the runs (a dot on each member that waits).
   const faces = listFaces(items.filter((i) => i.member || i.actor?.type === 'agent'));
   return (
     <section aria-label="Needs you">

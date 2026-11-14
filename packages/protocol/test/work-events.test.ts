@@ -68,6 +68,16 @@ describe('validateWorkEvent', () => {
     expect(validateWorkEvent({ ...base, title: 'x'.repeat(WORK_LIMITS.title) }).ok).toBe(true);
   });
 
+  it('rejects a path on the machine in the title or summary, but not a URL path', () => {
+    for (const title of ['Moved /Users/alice/secret/plan.md around', 'Edited ~/notes/q3.md', 'Read C:\\Users\\bob\\plan.docx', 'Opened \\\\fileserver\\share', 'Fixed path=/home/dev/app', 'see "/Volumes/Data/x"', 'Read file:///etc/hosts']) {
+      expect(errorsOf({ title }), title).toEqual(['title holds a path on your machine; describe the work without it']);
+    }
+    expect(errorsOf({ summary: 'Worked in /private/var/folders/x' })).toEqual(['summary holds a path on your machine; describe the work without it']);
+    for (const title of ['Fixed /api/brain/work refusals', 'Wired the export and/or the queue', 'Cut release 1.2: done', 'Moved apps/web/src to packages']) {
+      expect(errorsOf({ title }), title).toEqual([]);
+    }
+  });
+
   it('rejects absolute paths and file names in areas', () => {
     expect(errorsOf({ areas: ['/Users/someone/project'] })[0]).toMatch(/absolute path/);
     expect(errorsOf({ areas: ['~/project'] })[0]).toMatch(/absolute path/);

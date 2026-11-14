@@ -2,8 +2,8 @@
 /**
  * Draft and publish in the editor header (lib/server/publish.ts): saves are drafts; Publish puts the saved draft live
  * for production triggers (webhooks, forms, schedules, polls, app webhooks, MCP, error workflows and sub-workflow
- * calls), with an optional note. The chip says whether the editor shows what is live ("Published · v4") or has
- * unpublished changes; the menu unpublishes and lists where app webhook triggers stand. Older versions are published
+ * calls), with an optional note. The top bar's button says "Publish" or "Live v4" (a dot
+ * marks unpublished changes); its menu unpublishes and lists where app webhook triggers stand. Older versions are published
  * (rolled back to) from the version history. With four-eyes publishing on (Settings → Governance), Publish and Unpublish
  * ask for approval instead (202 `approvalRequired`), and the menu lists the workflow's pending requests to approve,
  * reject or withdraw. The menu also schedules a publish or unpublish for a later time (./publish-schedules) and lists
@@ -22,6 +22,7 @@ import { PublishRequestCard, usePublishRequests } from '../governance/publish-re
 import { Button } from '../ui/button';
 import { Textarea } from '../ui/inputs';
 import { MenuItem, MenuLabel, MenuSeparator, Popover } from '../ui/popover';
+import { publishLabel } from './chrome';
 import { useEditLock } from './edit-lock';
 import { ScheduleForm, ScheduleRows, useSchedules } from './publish-schedules';
 import { useEditor } from './store';
@@ -73,6 +74,49 @@ export async function publishVersion(workflowId: string, options: { versionId?: 
 /** The toast for a request that waits for approval. */
 export function toastApprovalRequested(result: PublishAnswer) {
   toast.info('Sent for approval', { description: `${result.request?.diff?.summary ? `${result.request.diff.summary}. ` : ''}Someone else has to approve it before it goes live.` });
+}
+
+/**
+ * The top bar's Publish button, which carries the state: "Publish" for a draft, "Live v3" once a version is live. A dot says
+ * whether the draft still matches what is live (green) or has changes (amber), a warning mark that an app webhook failed,
+ * and "awaiting approval" that a request waits for someone else.
+ */
+export function PublishButton({
+  published,
+  versionNumber,
+  changes,
+  awaiting,
+  failing,
+  open,
+  disabled,
+  title,
+  onClick,
+}: {
+  published: boolean;
+  versionNumber?: number;
+  changes: boolean;
+  awaiting?: boolean;
+  failing?: boolean;
+  open?: boolean;
+  disabled?: boolean;
+  title?: string;
+  onClick?: () => void;
+}) {
+  return (
+    <Button variant={published ? 'outline' : 'primary'} onClick={onClick} aria-expanded={open} disabled={disabled} title={title}>
+      {failing ? (
+        <AlertTriangle className="size-3.5 text-warn" />
+      ) : published ? (
+        <span aria-hidden className={cn('size-1.5 rounded-full', changes ? 'bg-warn' : 'bg-gn')} />
+      ) : (
+        <Rocket className="size-3.5" />
+      )}
+      {publishLabel({ published, versionNumber })}
+      {published && changes && <span className="sr-only">, with unpublished changes</span>}
+      {awaiting && <span className="rounded-md border border-warnbd bg-warndim px-1 text-[10.5px] font-semibold leading-4 text-warn max-md:hidden">Awaiting approval</span>}
+      <ChevronDown className="size-3 opacity-70" />
+    </Button>
+  );
 }
 
 export function PublishControl({ workflowId, onSave }: { workflowId: string; onSave: () => Promise<boolean> }) {
@@ -141,38 +185,27 @@ export function PublishControl({ workflowId, onSave }: { workflowId: string; onS
     [workflowId],
   );
 
-  const chip = !published ? (
-    <span className="flex items-center gap-1.5 text-[12px] text-t3" title="Production triggers are off until you publish">
-      <span className="size-1.5 rounded-full bg-t3" /> Not published
-    </span>
-  ) : changes ? (
-    <span className="flex items-center gap-1.5 text-[12px] text-warn" title={`Version ${published.versionNumber ?? '?'} is live; the draft differs from it`}>
-      <span className="size-1.5 rounded-full bg-warn" /> Unpublished changes
-    </span>
-  ) : (
-    <span className="flex items-center gap-1.5 text-[12px] text-gn" title={`Published ${timeAgo(published.publishedAt)}${published.publishedByName ? ` by ${published.publishedByName}` : ''}`}>
-      <span className="size-1.5 rounded-full bg-gn" /> Published{published.versionNumber ? ` · v${published.versionNumber}` : ''}
-    </span>
-  );
+  const lines = [
+    !published ? 'Production triggers are off until you publish' : changes ? `Version ${published.versionNumber ?? '?'} is live; the draft differs from it` : `Published ${timeAgo(published.publishedAt)}${published.publishedByName ? ` by ${published.publishedByName}` : ''}`,
+    pending.length > 0 && `${pending.length} publish request${pending.length === 1 ? '' : 's'} waiting for approval`,
+    ...failing.map((hook) => `${hook.nodeName}: ${hook.error}`),
+  ].filter(Boolean);
 
   return (
     <div className="flex items-center gap-2">
-      {failing.length > 0 && (
-        <span className="text-warn" title={failing.map((hook) => `${hook.nodeName}: ${hook.error}`).join('\n')}>
-          <AlertTriangle className="size-3.5" />
-        </span>
-      )}
-      {chip}
-      {pending.length > 0 && (
-        <span className="rounded-md border border-warnbd bg-warndim px-1.5 py-px text-[11px] font-semibold text-warn" title={`${pending.length} publish request${pending.length === 1 ? '' : 's'} waiting for approval`}>
-          Awaiting approval
-        </span>
-      )}
       <Popover
         trigger={({ toggle, open }) => (
-          <Button variant={!published || changes ? 'primary' : 'outline'} onClick={toggle} aria-expanded={open} disabled={readOnly} title="Publish the saved draft for production triggers">
-            <Rocket className="size-3.5" /> Publish <ChevronDown className="size-3 opacity-70" />
-          </Button>
+          <PublishButton
+            published={Boolean(published)}
+            versionNumber={published?.versionNumber}
+            changes={changes}
+            awaiting={pending.length > 0}
+            failing={failing.length > 0}
+            open={open}
+            disabled={readOnly}
+            title={lines.join('\n')}
+            onClick={toggle}
+          />
         )}
         className="w-[320px]"
       >
@@ -184,6 +217,7 @@ export function PublishControl({ workflowId, onSave }: { workflowId: string; onS
                 {timeAgo(published.publishedAt)}
                 {published.publishedByName ? ` by ${published.publishedByName}` : published.publishedBy === 'migration' ? ' (was active before draft and publish)' : ''}
                 {published.note ? ` · “${published.note}”` : ''}
+                {changes && <div className="text-warn">The draft has changes that are not live yet.</div>}
               </div>
             )}
             <div className="flex flex-col gap-2 px-2.5 pb-2 pt-1">

@@ -17,7 +17,7 @@
  * and this host as authorization servers. `canListTool` / `canCallTool` apply the grants (./grants).
  */
 import { createRemoteJWKSet, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
-import { can, type Role } from '../../shared/auth';
+import { can, type ApiKeyScope, type Role } from '../../shared/auth';
 import { API_KEY_PREFIX, SESSION_COOKIE } from '../../shared/auth-paths';
 import { verifyApiKey } from '../auth/api-keys';
 import { looksLikeDebugToken } from '../auth/debug-tokens';
@@ -39,6 +39,8 @@ export interface McpCaller {
   role?: string;
   /** Token scopes (lib/shared/mcp.ts); everything for sessions, API keys and identity provider tokens. */
   scopes: string[];
+  /** B13: an API key's own scopes (`workflows:read`, `brain:write`…); the instance MCP server shows and allows only the tools they cover. Absent for every other caller: all tools. */
+  keyScopes?: ApiKeyScope[];
   tokenId?: string;
   /** The project a Landflow MCP token is scoped to (the instance server then shows only that project's workflows). */
   projectId?: string;
@@ -275,7 +277,7 @@ export async function authenticateMcpRequest(request: Request, resource: { plugi
     if (bearer.startsWith(API_KEY_PREFIX)) {
       const checked = verifyApiKey(bearer);
       if (!checked.ok) throw new McpAuthError(checked.reason === 'expired' ? 'This API key has expired' : 'Invalid API key', 401, challenge);
-      return userCaller('apiKey', checked.user, { issuer: instanceUrl() });
+      return userCaller('apiKey', checked.user, { issuer: instanceUrl(), keyScopes: checked.key.scopes });
     }
     const claims = unverifiedClaims(bearer);
     if (!claims) throw new McpAuthError('Send a Landflow MCP token, an access token of the identity provider, or an API key as “Authorization: Bearer …”', 401, challenge);

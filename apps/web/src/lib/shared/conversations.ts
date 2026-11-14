@@ -42,6 +42,8 @@ export const conversationMetaSchema = z.object({
   inputTokens: z.number().optional(),
   outputTokens: z.number().optional(),
   costUsd: z.number().optional(),
+  /** A local model answered: the footer says "local" in place of a cost. */
+  local: z.boolean().optional(),
 });
 /** What the store keeps beside an item, plus `hidden` that a read adds: the links it dropped for lack of access. */
 export type ConversationMeta = z.infer<typeof conversationMetaSchema> & { hidden?: number };
@@ -89,9 +91,11 @@ export function createBody(scope: { surface: ConversationSurface; subjectType?: 
   return { ...scope, ...(firstText?.trim() && { title: titleFrom(firstText) }) };
 }
 
-/** A title from the first user text: one line, clipped to 80 characters. */
+/** A title from the first user text: one line, clipped to 80 characters (code points). */
 export function titleFrom(textValue: string | undefined): string {
   const line = (textValue ?? '').replace(/\s+/g, ' ').trim();
   if (!line) return NEW_CONVERSATION_TITLE;
-  return line.length > 80 ? `${line.slice(0, 79)}…` : line;
+  // By code point, so an emoji at the cut is kept whole or left out, never split into half a surrogate pair.
+  const chars = Array.from(line);
+  return chars.length > 80 ? `${chars.slice(0, 79).join('')}…` : line;
 }

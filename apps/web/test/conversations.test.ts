@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { enableTestAuth, TEST_OWNER } from '@/lib/server/auth/test-bypass';
 
 const previousDir = process.env.LANDFLOW_DATA_DIR;
@@ -150,6 +150,29 @@ describe('conversations', () => {
     });
   });
 
+  it('keeps the tags a person may still open: brain pages, people, node types; drops the rest', async () => {
+    upsertEntity({ type: 'customer', id: 'tagged', name: 'Tagged Co', projectId: personalProjectId(MEMBER.id), source: 'test' } as Parameters<typeof upsertEntity>[0]);
+    upsertEntity({ type: 'customer', id: 'walled-tag', name: 'Walled Tag Co', projectId: 'prj_nobody_is_in', source: 'test' } as Parameters<typeof upsertEntity>[0]);
+    const { createUser } = await import('@/lib/server/auth/users');
+    const colleague = await createUser({ email: 'colleague@conversations.test', name: 'Colleague', role: 'member', password: 'colleague-password-1' });
+    const refs = [
+      { type: 'brainPage', id: 'customer/tagged', name: 'Tagged Co' },
+      { type: 'brainPage', id: 'customer/walled-tag', name: 'Walled Tag Co' },
+      { type: 'person', id: colleague.id, name: 'Colleague' },
+      { type: 'person', id: 'usr_nobody', name: 'Gone' },
+      { type: 'nodeType', id: 'core.set', name: 'Set' },
+      { type: 'team', id: 'team_missing', name: 'Missing team' },
+      { type: 'run', id: 'exec_missing', name: 'Missing run' },
+    ];
+    await asMember(async () => {
+      const conversation = await create({ surface: 'brain', title: 'Tags' });
+      await items.POST(req(`/api/conversations/${conversation.id}/items`, 'POST', { items: [{ role: 'user', parts: [{ type: 'text', text: 'about these' }, { type: 'mentions', refs }] }] }), ctx(conversation.id));
+      const item = (await (await one.GET(req(`/api/conversations/${conversation.id}`), ctx(conversation.id))).json()).items[0];
+      expect(item.parts[1].refs.map((r: { type: string; id: string }) => `${r.type}:${r.id}`)).toEqual(['brainPage:customer/tagged', `person:${colleague.id}`, 'nodeType:core.set']);
+      expect(item.meta.hidden).toBe(4);
+    });
+  });
+
   it('retention deletes only old conversations, with their items', async () => {
     const old = await create({ surface: 'spotlight', title: 'Old' });
     await say(old.id, 'ancient');
@@ -163,9 +186,36 @@ describe('conversations', () => {
     expect(database().get<{ n: number }>('SELECT COUNT(*) AS n FROM conversation_items WHERE conversation_id = ?', old.id)?.n).toBe(0);
   });
 
-  it('the retention service starts and stops', () => {
-    conversationRetention.start();
-    conversationRetention.stop();
+  it('the retention service prunes a minute after it starts, daily after that, and not once stopped', async () => {
+    const old = await create({ surface: 'spotlight' });
+    await say(old.id, 'old enough to go');
+    const age = (id: string) => database().upsert('conversations', { ...database().get<Record<string, string | number>>('SELECT * FROM conversations WHERE id = ?', id)!, updated_at: new Date(Date.now() - 100 * 86_400_000).toISOString() });
+    const exists = (id: string) => Boolean(database().get('SELECT id FROM conversations WHERE id = ?', id));
+    age(old.id);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      // The host's boot in this process may have started it already (with real timers): start it afresh.
+      conversationRetention.stop();
+      conversationRetention.start();
+      vi.advanceTimersByTime(59_000);
+      expect(exists(old.id)).toBe(true);
+      vi.advanceTimersByTime(1_000);
+      expect(exists(old.id)).toBe(false);
+      const next = await create({ surface: 'spotlight' });
+      await say(next.id, 'old by tomorrow');
+      age(next.id);
+      vi.advanceTimersByTime(86_400_000);
+      expect(exists(next.id)).toBe(false);
+      conversationRetention.stop();
+      const last = await create({ surface: 'spotlight' });
+      await say(last.id, 'kept: the service is stopped');
+      age(last.id);
+      vi.advanceTimersByTime(2 * 86_400_000);
+      expect(exists(last.id)).toBe(true);
+    } finally {
+      conversationRetention.stop();
+      vi.useRealTimers();
+    }
   });
 
   it('is session only (an API key is refused)', () => {
@@ -183,6 +233,8 @@ describe('conversations', () => {
     // The subject group asks for its own subject (a per-subject request), "Everywhere" for none.
     expect(historyParams(' plan ', { subjectType: 'workflow', subjectId: 'wf_1' }, 'cur').toString()).toBe('limit=50&subjectType=workflow&subjectId=wf_1&q=plan&cursor=cur');
     expect(historyParams('').toString()).toBe('limit=50');
+    // A chat that can only show its own surface (the Agent architect) asks for it in both groups.
+    expect(historyParams('', undefined, null, 'architect').toString()).toBe('limit=50&surface=architect');
   });
 
   it('names a conversation from a first message over 200 characters, clipped to 80', async () => {
@@ -195,5 +247,13 @@ describe('conversations', () => {
     const got = await (await one.GET(req(`/api/conversations/${conversation.id}`), ctx(conversation.id))).json();
     expect(got.conversation.title).toHaveLength(80);
     expect(createBody({ surface: 'brain' }).title).toBeUndefined();
+  });
+
+  it('never cuts an emoji in half when it clips a title', async () => {
+    const { titleFrom } = await import('@/lib/shared/conversations');
+    const title = titleFrom(`${'a'.repeat(78)}😀😀 and more`);
+    expect(Array.from(title)).toHaveLength(80);
+    expect(title).toBe(`${'a'.repeat(78)}😀…`);
+    expect(title).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
   });
 });

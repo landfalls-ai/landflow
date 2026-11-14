@@ -4,7 +4,7 @@
  * checked once per kind (`visibleIds`, `entityKeysFor`), never per item. Credentials and people give a name and a type
  * or a role, nothing else.
  */
-import { MENTION_LIMITS, MENTION_TYPES, rankHits, type MentionGroup, type MentionHit, type MentionType } from '../../shared/mentions';
+import { MENTION_LIMITS, MENTION_TYPES, personName, rankHits, type MentionGroup, type MentionHit, type MentionType } from '../../shared/mentions';
 import { agentStore } from '../agents/store';
 import { agentTeamStore } from '../agent-teams/store';
 import { listUsers } from '../auth/users';
@@ -96,7 +96,7 @@ function pages(actor: Actor): Found[] {
 function people(): Found[] {
   return listUsers()
     .filter((u) => !u.disabledAt)
-    .map((u) => ({ type: 'person', id: u.id, name: u.name || u.email.split('@')[0], hint: u.role }));
+    .map((u) => ({ type: 'person', id: u.id, name: personName(u), hint: u.role }));
 }
 
 function credentialHits(actor: Actor): Found[] {

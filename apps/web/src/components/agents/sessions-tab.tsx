@@ -1,6 +1,6 @@
 'use client';
 /** The Sessions tab: every conversation the agent had (test chat, schedules, channels, workflows, other agents) and its timeline. */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Bot, Clock, Code, FlaskConical, Loader2, MessagesSquare, RefreshCw, Send, Trash2, Workflow } from 'lucide-react';
 import { toast } from 'sonner';
@@ -12,7 +12,7 @@ import type { ChatFeedback, FeedbackRating } from '@/lib/shared/chat-feedback';
 import { Badge, type Tone } from '../ui/badge';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
-import { Switch } from '../ui/inputs';
+import { Segmented } from '../ui/segmented';
 import { TimelineView, TraceChip, type ToolEntry } from './timeline';
 import { REASON_LABEL, useAgentRun } from './use-agent-run';
 
@@ -52,6 +52,8 @@ function StatusBadge({ status }: { status: SessionStatus }) {
   );
 }
 
+type Audience = 'all' | 'people' | 'automations';
+const PAGE = 50;
 const versionLabel = (version: 'draft' | number) => (version === 'draft' ? 'Draft' : `v${version}`);
 const tokens = (u: { inputTokens: number; outputTokens: number }) => (u.inputTokens + u.outputTokens).toLocaleString();
 
@@ -254,45 +256,126 @@ export function SessionsTab({
   childHref?: (entry: ToolEntry) => string | undefined;
 }) {
   const [sessions, setSessions] = useState<SessionSummary[]>();
+  const [next, setNext] = useState<string | null>(null);
   const [error, setError] = useState<string>();
-  const [auto, setAuto] = useState(true);
+  // Who the list shows: undefined until it is known whether there are people's sessions (People opens first when there are).
+  const [audience, setAudience] = useState<Audience>();
   const [loading, setLoading] = useState(false);
+  const [more, setMore] = useState(false);
+  const hovering = useRef(false);
+  const scrolledAt = useRef(0);
 
-  const load = useCallback(() => {
-    setLoading(true);
-    return api<{ sessions: SessionSummary[] }>(`/api/agents/${agentId}/sessions`, { background: true })
+  const url = (a: Audience, cursor?: string | null) => `/api/agents/${agentId}/sessions?limit=${PAGE}${a === 'all' ? '' : `&audience=${a}`}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+
+  const fetchPage = useCallback((a: Audience, cursor?: string | null) => api<{ sessions: SessionSummary[]; nextCursor: string | null }>(url(a, cursor), { background: true }), [agentId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** The first page of an audience (a person's own refresh, and the quiet one). */
+  const load = useCallback(
+    (a: Audience) => {
+      setLoading(true);
+      return fetchPage(a)
+        .then((r) => {
+          setSessions(r.sessions);
+          setNext(r.nextCursor);
+          setError(undefined);
+        })
+        .catch((e: Error) => setError(e.message))
+        .finally(() => setLoading(false));
+    },
+    [fetchPage],
+  );
+
+  // The first look: People when there are any, else everything.
+  useEffect(() => {
+    let live = true;
+    setAudience(undefined);
+    setSessions(undefined);
+    void fetchPage('people')
       .then((r) => {
-        setSessions(r.sessions);
-        setError(undefined);
+        if (!live) return;
+        if (r.sessions.length) {
+          setAudience('people');
+          setSessions(r.sessions);
+          setNext(r.nextCursor);
+          setError(undefined);
+        } else {
+          setAudience('all');
+          void load('all');
+        }
+      })
+      .catch((e: Error) => {
+        if (!live) return;
+        setAudience('all');
+        setError(e.message);
+      });
+    return () => {
+      live = false;
+    };
+  }, [agentId, fetchPage, load]);
+
+  const choose = (a: Audience) => {
+    setAudience(a);
+    setSessions(undefined);
+    setNext(null);
+    void load(a);
+  };
+
+  const showMore = () => {
+    if (!audience || !next) return;
+    setMore(true);
+    fetchPage(audience, next)
+      .then((r) => {
+        setSessions((before) => [...(before ?? []), ...r.sessions.filter((x) => !before?.some((y) => y.id === x.id))]);
+        setNext(r.nextCursor);
       })
       .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [agentId]);
+      .finally(() => setMore(false));
+  };
 
+  // New sessions show up on their own, quietly: not while a hand is on the list or it is being scrolled, and only the first page.
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (sessionId || !audience) return;
+    const onScroll = () => (scrolledAt.current = Date.now());
+    window.addEventListener('scroll', onScroll, true);
+    const timer = setInterval(() => {
+      if (hovering.current || Date.now() - scrolledAt.current < 2000 || document.hidden) return;
+      void fetchPage(audience)
+        .then((r) =>
+          setSessions((before) => {
+            if (!before) return r.sessions;
+            // Keep any further pages already opened: replace only the first page's rows.
+            const fresh = new Set(r.sessions.map((x) => x.id));
+            return [...r.sessions, ...before.filter((x) => !fresh.has(x.id) && x.updatedAt < (r.sessions.at(-1)?.updatedAt ?? ''))];
+          }),
+        )
+        .catch(() => {});
+    }, 6000);
+    return () => {
+      window.removeEventListener('scroll', onScroll, true);
+      clearInterval(timer);
+    };
+  }, [sessionId, audience, fetchPage]);
 
-  useEffect(() => {
-    if (!auto || sessionId) return;
-    const timer = setInterval(() => void load(), 4000);
-    return () => clearInterval(timer);
-  }, [auto, sessionId, load]);
-
-  const sorted = useMemo(() => [...(sessions ?? [])].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [sessions]);
+  const sorted = sessions ?? [];
 
   if (sessionId)
-    return <SessionDetail agentId={agentId} sessionId={sessionId} onBack={() => onOpen(undefined)} childHref={childHref} onChanged={() => void load()} />;
+    return <SessionDetail agentId={agentId} sessionId={sessionId} onBack={() => onOpen(undefined)} childHref={childHref} onChanged={() => audience && void load(audience)} />;
 
   return (
     <div className="animate-fade-up">
       <div className="mb-3 flex flex-wrap items-center gap-3">
-        <span className="text-[13px] text-t2">{sessions ? `${sessions.length} ${sessions.length === 1 ? 'session' : 'sessions'}` : 'Loading…'}</span>
-        <label className="ml-auto flex items-center gap-2 text-[12px] text-t2">
-          <Switch checked={auto} onChange={setAuto} label="Auto-refresh" />
-          Auto-refresh
-        </label>
-        <Button size="icon-sm" variant="ghost" aria-label="Refresh" title="Refresh" onClick={() => void load()}>
+        <Segmented<Audience>
+          label="Who the sessions are with"
+          value={audience ?? 'people'}
+          onChange={choose}
+          options={[
+            { value: 'all', label: 'All' },
+            { value: 'people', label: 'People', title: 'Test chat, Telegram, Slack and Teams' },
+            { value: 'automations', label: 'Automations', title: 'Schedules, workflows, other agents and the API' },
+          ]}
+        />
+        <span className="text-[13px] text-t2">{sessions ? `${sessions.length}${next ? '+' : ''} ${sessions.length === 1 && !next ? 'session' : 'sessions'}` : 'Loading…'}</span>
+        <Button size="icon-sm" variant="ghost" className="ml-auto" aria-label="Refresh" title="Refresh" onClick={() => audience && void load(audience)}>
           <RefreshCw className={cn('size-3.5', loading && 'animate-spin')} />
         </Button>
       </div>
@@ -300,14 +383,20 @@ export function SessionsTab({
       {sessions && !sessions.length && (
         <div className="rounded-2xl border border-hair bg-sf">
           <EmptyState
-            title="No sessions yet"
-            hint="Every conversation lands here: the test chat, schedules, Telegram, workflows and other agents."
+            title={audience === 'people' ? 'No conversations with people yet' : audience === 'automations' ? 'Nothing has run on its own yet' : 'No sessions yet'}
+            hint={
+              audience === 'people'
+                ? 'Your test chats and the conversations on Telegram, Slack and Teams land here.'
+                : audience === 'automations'
+                  ? 'Schedules, workflows, other agents and the API land here.'
+                  : 'Every conversation lands here: the test chat, schedules, Telegram, workflows and other agents.'
+            }
             action={<MessagesSquare className="size-6 text-t3" strokeWidth={1.5} />}
           />
         </div>
       )}
       {sorted.length > 0 && (
-        <div className="overflow-hidden rounded-2xl border border-hair bg-sf">
+        <div className="overflow-hidden rounded-2xl border border-hair bg-sf" onMouseEnter={() => (hovering.current = true)} onMouseLeave={() => (hovering.current = false)}>
           <div className="hidden grid-cols-[92px_minmax(0,1fr)_110px_56px_56px_72px_56px_72px] gap-3 border-b border-hair px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3 md:grid">
             <span>Source</span>
             <span>Session</span>
@@ -352,6 +441,13 @@ export function SessionsTab({
               <span className="hidden text-right tabular-nums text-t2 md:block">{timeAgo(s.updatedAt)}</span>
             </button>
           ))}
+        </div>
+      )}
+      {next && (
+        <div className="mt-3 flex justify-center">
+          <Button size="sm" variant="outline" loading={more} onClick={showMore} className="max-md:min-h-11">
+            Show more
+          </Button>
         </div>
       )}
     </div>

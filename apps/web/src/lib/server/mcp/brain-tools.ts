@@ -13,12 +13,18 @@ import { z } from 'zod';
 import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
 import { ENTITY_TYPES, entityRef, FACT_KINDS, FACT_SUBJECTS, SIMILAR_KINDS, USAGE_KINDS, isDetectorId, type FactKind, type FactSubject, type ProposalStatus, type UsageGroup, type UsageKind } from '../../shared/brain';
 import { agentStore } from '../agents/store';
+import { briefingFor } from '../brain/briefing';
 import { entityKeysIn, getEntity } from '../brain/entities';
 import { getProfile, listFacts, searchFacts } from '../brain/facts';
 import { listProposals, proposeFrom, ProposalError } from '../brain/proposals';
 import { canProposal, covers, projectsOf, scopeForActor } from '../brain/scope';
 import { findSimilar } from '../brain/similar';
 import { vectorFactHits } from '../brain/study';
+import { askBrain } from '../brain/wiki';
+import { WORK_LIMITS } from '@landflow/protocol';
+import { MAX_WORK_EVENTS, recordWork } from '../brain/work';
+import { briefingMarkdown } from './brain-prompts';
+import { HttpError } from '../errors';
 import { homeProjectId } from '../projects/store';
 import type { Actor } from '../projects/access';
 import { store } from '../store';
@@ -195,6 +201,85 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
         return json(proposal ? { saved: true, proposal } : { saved: false, reason: 'held back: the same advice is already open for this node, it was dismissed or applied recently, or the weekly cap is full' });
       } catch (caught) {
         if (caught instanceof ProposalError) return failure(caught.message);
+        throw caught;
+      }
+    },
+  );
+
+  // B13: ask the brain, the caller's own briefing and recording their work. The last two are about a person: the instance access token has none.
+  server.registerTool(
+    'brain_ask',
+    {
+      title: 'Ask the brain',
+      description: 'Ask the second brain a question in words. It finds the pages, facts and work you can open that the question is about, and answers from them (with [[type/id]] page links) when the brain has a model; without one you get what it found.',
+      inputSchema: z.object({ question: z.string().trim().min(1).max(500), about: z.string().max(140).optional().describe('A page to ask from, <type>/<id>') }),
+      annotations: READ_ONLY,
+    },
+    async ({ question, about }) => {
+      const vectorHits = await vectorFactHits(question, projectsOf(scope));
+      return json(await askBrain(question, scope, actor, { vectorHits, ...(about && { about }) }));
+    },
+  );
+
+  server.registerTool(
+    'my_briefing',
+    {
+      title: 'My briefing',
+      description: 'Your own work from today and yesterday (what you or your tools recorded), as text and JSON. Nobody else’s work is in it.',
+      inputSchema: z.object({ day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('YYYY-MM-DD; default today') }),
+      annotations: READ_ONLY,
+    },
+    async ({ day }) => {
+      if (!actor) return failure('A briefing is a person’s own: connect with a personal API key or sign in, not the instance access token');
+      const briefing = briefingFor(actor, day ? { day } : {});
+      return json({ text: briefingMarkdown(briefing), briefing });
+    },
+  );
+
+  server.registerTool(
+    'record_work',
+    {
+      title: 'Record my work',
+      description:
+        'Save what you did as your own work events: private to you, shown in your briefing. Sending the same sourceId again updates it. Each event: kind (work.session, work.pr_opened…), title, occurredAt (ISO 8601), a sourceId of your own, and optionally summary, repo, areas (directory names only), commits, prs ([{ url, state: opened|merged }]), branch, url. Never put secrets, file contents or absolute paths in it.',
+      inputSchema: z.object({
+        events: z
+          .array(
+            // Limits are checked per event by recordWork (the REST route's rules), so one bad event is rejected and the rest are saved.
+            z.object({
+              kind: z.string().describe('work.<name>, e.g. work.session'),
+              source: z.string().optional().describe('The tool sending it; default mcp'),
+              sourceId: z.string(),
+              occurredAt: z.string(),
+              endedAt: z.string().optional(),
+              title: z.string(),
+              summary: z.string().optional(),
+              repo: z.string().optional().describe('owner/name'),
+              branch: z.string().optional(),
+              areas: z.array(z.string()).optional(),
+              commits: z.number().int().optional(),
+              prs: z.array(z.object({ url: z.string(), state: z.enum(['opened', 'merged']) })).max(WORK_LIMITS.prs).optional(),
+              turns: z.number().int().optional(),
+              initiative: z.string().optional(),
+              customer: z.string().optional(),
+              team: z.string().optional(),
+              url: z.string().optional(),
+              visibility: z.string().optional().describe('Only private is accepted for now'),
+            }),
+          )
+          .min(1)
+          .max(MAX_WORK_EVENTS),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ events }) => {
+      if (!actor) return failure('Work is a person’s own: connect with a personal API key or sign in, not the instance access token');
+      try {
+        // Always the caller's: the actor comes from the connection, never from the arguments. recordWork refuses a shared visibility.
+        const result = recordWork(actor, events.map((event) => ({ ...event, source: event.source ?? 'mcp' })));
+        return json(result);
+      } catch (caught) {
+        if (caught instanceof HttpError) return failure(caught.message);
         throw caught;
       }
     },

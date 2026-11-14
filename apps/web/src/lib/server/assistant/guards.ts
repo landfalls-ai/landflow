@@ -343,19 +343,7 @@ export function withoutNarration(text: string): string {
   return out === undefined || !out.trim() ? text : out;
 }
 
-/**
- * Tool-call markup a local model leaves in its text: a `<function=…>` call with its body up to its end (or the end of
- * the text when it isn't closed), `<think>` blocks, and stray tags.
- */
-export function withoutLeakedMarkup(text: string): string {
-  return text
-    .replace(/<think>[\s\S]*?(?:<\/think>|$)/g, '')
-    .replace(/<tool_call>[\s\S]*?(?:<\/tool_call>|$)/g, '')
-    .replace(/<function=[\s\S]*?(?:<\/function>|$)/g, '')
-    .replace(/<\/?(?:tool_call|function|parameter)\b[^>]*>/g, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trimEnd();
-}
+export { withoutLeakedMarkup } from '@/lib/shared/leaked-markup';
 
 /**
  * Why a test-and-fix session's fix would be wasted, if it is: it touches neither the failing step nor anything that feeds

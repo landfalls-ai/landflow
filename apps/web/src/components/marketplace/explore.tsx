@@ -1,4 +1,5 @@
 'use client';
+import { DevOnly } from '@/lib/client/developer-details';
 /**
  * The marketplace's Explore tab: every node plugin, workflow, composite type and Claude Code plugin in one place. It
  * merges GET /api/marketplaces/explore (every added marketplace, the Landflow plugins' flows), the registry's own
@@ -128,7 +129,11 @@ function NodePluginTile({ plugin, onOpen }: { plugin: ExplorePlugin; onOpen: () 
             <StatusDot status={live.status as PluginSummary['status']} /> {live.status} · {live.nodes} nodes
           </span>
         )}
-        {plugin.read?.nodePlugin && <Badge tone="muted">{plugin.read.nodePlugin.runtime}</Badge>}
+        {plugin.read?.nodePlugin && (
+          <DevOnly>
+            <Badge tone="muted">{plugin.read.nodePlugin.runtime}</Badge>
+          </DevOnly>
+        )}
         {plugin.flows > 0 && <Badge tone="accent">Flows {plugin.flows}</Badge>}
         {plugin.category && <Chip>{categoryLabel(plugin.category)}</Chip>}
       </div>
@@ -145,7 +150,9 @@ function LocalPluginTile({ plugin }: { plugin: PluginSummary }) {
         <span className="inline-flex items-center gap-1.5">
           <StatusDot status={plugin.status} /> {plugin.status} · {plugin.nodes.length} nodes
         </span>
-        <LanguageBadge language={plugin.info.language} />
+        <DevOnly>
+          <LanguageBadge language={plugin.info.language} />
+        </DevOnly>
       </div>
     </Link>
   );
@@ -214,7 +221,9 @@ function CompositeTile({ composite, onDeleted }: { composite: CompositeTypeInfo;
           {d.slots.length} slot{d.slots.length === 1 ? '' : 's'}, {required} required
         </span>
         {d.closed && <Chip>Closed</Chip>}
-        <span className="truncate font-mono">{composite.type}</span>
+        <DevOnly>
+          <span className="truncate font-mono">{composite.type}</span>
+        </DevOnly>
       </div>
     </div>
   );

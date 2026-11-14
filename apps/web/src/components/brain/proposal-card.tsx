@@ -183,9 +183,20 @@ export function firstSentence(text: string): string {
 }
 
 /**
+ * The card's one button and what goes under ⋯ (before Dismiss and Snooze): Apply, with every flow button under ⋯; or,
+ * for advice whose flow gave buttons of its own, the first of those in Apply's place and the rest under ⋯. Pure, so
+ * the split is tested without opening the menu.
+ */
+export function cardButtons(proposal: Proposal): { hasApply: boolean; lead?: NonNullable<Proposal['actions']>[number]; rest: NonNullable<Proposal['actions']> } {
+  const flowActions = proposal.actions ?? [];
+  const hasApply = proposalKind(proposal) !== 'advice' || !flowActions.length;
+  return hasApply ? { hasApply, rest: flowActions } : { hasApply, lead: flowActions[0], rest: flowActions.slice(1) };
+}
+
+/**
  * A suggestion as four things: the title, one line of why, the button that does it and ⋯ (Dismiss, Snooze and the
- * flow's other buttons). Kind, subject, risk, confidence, the whole why, the evidence and what to expect are behind
- * Show more. `expanded` opens it from the start; `href` adds an "All suggestions" link.
+ * flow's other buttons). Kind, subject, risk, confidence, the whole why, the evidence, what to expect and the changes are
+ * behind Show more; what the change leaves out (its warnings) is always shown. `expanded` opens it from the start; `href` adds an "All suggestions" link.
  */
 export function ProposalCard({ proposal, actions, compact, onFocus, expanded, href }: { proposal: Proposal; actions: ProposalActions; compact?: boolean; onFocus?: () => void; expanded?: boolean; href?: string }) {
   const [more, setMore] = useState(Boolean(expanded));
@@ -195,11 +206,7 @@ export function ProposalCard({ proposal, actions, compact, onFocus, expanded, hr
   // An entity says what kind it is: “Invoice reminders · Initiative”.
   const entityType = proposal.target.type === 'entity' ? parseEntityRef(proposal.target.id)?.type : undefined;
   const target = [proposal.target.name, entityType && ENTITY_LABELS[entityType], proposal.target.nodeName].filter(Boolean).join(' · ');
-  // The one button: Apply, or when the flow gave advice buttons of its own, the first of those; the rest go under ⋯.
-  const flowActions = proposal.actions ?? [];
-  const hasApply = kind !== 'advice' || !flowActions.length;
-  const lead = hasApply ? undefined : flowActions[0];
-  const rest = hasApply ? flowActions : flowActions.slice(1);
+  const { hasApply, lead, rest } = cardButtons(proposal);
   return (
     <div className={cn('animate-fade-up space-y-1.5 rounded-[10px] border border-hair bg-wl', compact ? 'p-2.5' : 'p-3')}>
       <span className="block text-[13px] font-semibold leading-snug text-t1">{proposal.title}</span>
@@ -238,9 +245,10 @@ export function ProposalCard({ proposal, actions, compact, onFocus, expanded, hr
             </p>
           )}
           <Changes proposal={proposal} />
-          <Warnings warnings={proposal.warnings} />
         </div>
       )}
+      {/* What the change leaves out stays in view: nobody should press Apply without seeing it. */}
+      <Warnings warnings={proposal.warnings} />
       <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
         {hasApply ? (
           <Button size="sm" variant="primary" onClick={() => actions.apply(proposal)} loading={busy} disabled={!!actions.busy && !busy}>

@@ -142,7 +142,8 @@ class Store {
     return this.cache.get(id);
   }
 
-  saveWorkflow(workflow: Workflow): Workflow {
+  /** `autosave`: the editor's timed save, which folds into the newest autosave's version (lib/server/versions.ts). */
+  saveWorkflow(workflow: Workflow, options: { autosave?: boolean } = {}): Workflow {
     const now = new Date().toISOString();
     // Who: the signed-in user of the request saving it (none for system saves, which keep the last one).
     const actor = currentActorId();
@@ -159,7 +160,7 @@ class Store {
     this.db.transaction(() => {
       this.db.upsert('workflows', workflowRow(saved));
       // A save is a draft; turning `active` on or off (older clients) publishes it or unpublishes.
-      syncPublication(saved, (recordVersion(saved) ?? versionFor(saved))?.id);
+      syncPublication(saved, (recordVersion(saved, options.autosave ? { autosave: { by: actor ?? '' } } : {}) ?? versionFor(saved))?.id);
     });
     this.cache.set(saved.id, saved);
     this.listeners.forEach((listener) => listener());

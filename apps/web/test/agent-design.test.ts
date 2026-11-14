@@ -109,6 +109,15 @@ describe('designing Spotlight’s new agent', () => {
     expect(design).toMatchObject({ designed: false, config: { name: 'Legal Contract Reviewer', instructions: 'Flag auto-renewal and liability caps.', model: { provider: 'ollama', model: 'qwen3-coder:30b' }, tools: [] } });
   });
 
+  it('passes a reached usage cap on instead of making an agent; a failing model still gets the fallback', async () => {
+    const { UsageCapError } = await import('@/lib/server/ai-usage');
+    const failing = (error: Error): LanguageModel => ({ provider: 'test', model: 'failing', generate: async () => { throw error; } });
+    const cap = new UsageCapError({ metric: 'tokens', max: 1000, subject: 'Your account', setIn: 'Settings → AI usage caps' } as ConstructorParameters<typeof UsageCapError>[0], 1200);
+    await expect(designAgent(spec, { types, actor: TEST_OWNER, resources, model: failing(cap) })).rejects.toBe(cap);
+    const design = await designAgent(spec, { types, actor: TEST_OWNER, resources, model: failing(new Error('Ollama error 500')) });
+    expect(design.designed).toBe(false);
+  });
+
   it('hands the model what it would look up, and offers one flat call first', async () => {
     const brief = designBrief({ name: 'CRM Sender', description: 'Sends each ticket to the CRM over HTTP', instructions: '' }, { types, resources });
     expect(brief).toContain('ollama/qwen3-coder:30b (local, tools ✓)');

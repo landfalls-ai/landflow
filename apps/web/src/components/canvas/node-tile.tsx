@@ -11,6 +11,7 @@ import { indexedPorts } from '@landflow/protocol';
 import { Check, Hourglass, Pause, Pin, Plus, X, Zap } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { duration, languageMeta, TRANSPORT_META } from '@/lib/client/format';
+import { DevOnly, useDeveloperDetails } from '@/lib/client/developer-details';
 import { nodeColor, tint } from '@/lib/client/node-style';
 import type { NodeStatus } from '@/lib/client/run-data';
 import type { ConnectionType, NodeTypeInfo, PortDescriptor } from '@/lib/shared/types';
@@ -103,7 +104,7 @@ export interface NodeTileProps {
    * `head` replaces the icon and name, `body` sits under them and grows the tile, and `color` tints the running frame.
    */
   live?: NodeLive;
-  /** Names for the sub-node slots by connection type, over the descriptor's: a team node's "Lead's model" (the new look). */
+  /** Names for the sub-node slots by connection type, over the descriptor's: a team node's "Lead's model". */
   slotNames?: Partial<Record<ConnectionType, string>>;
   /** Toolbars and overlays rendered inside the node. */
   children?: ReactNode;
@@ -203,21 +204,23 @@ export function NodeTile(props: NodeTileProps) {
   const subtitle = subtitleOf(descriptor?.subtitle, parameters);
   const lang = info && info.pluginId !== 'core' ? languageMeta(info.language) : undefined;
   const ran = ranFor(status);
+  const developerDetails = useDeveloperDetails();
+  const showLang = Boolean(lang) && developerDetails;
   const style = { '--node': live?.color ?? color } as CSSProperties;
   const isImage = Boolean(descriptor?.icon && /^(https?:|data:)/.test(descriptor.icon));
 
-  const meta = (lang || unavailable || ran) && (
+  const meta = (showLang || unavailable || ran) && (
     <div className="mt-0.5 flex items-center justify-center gap-1 whitespace-nowrap font-mono text-[10px] text-t3">
-      {lang && (
-        <>
+      {lang && showLang && (
+        <DevOnly>
           <span className="size-1.5 rounded-full" style={{ background: lang.color }} />
           {lang.short} · {TRANSPORT_META[info!.transport].label}
-        </>
+        </DevOnly>
       )}
       {unavailable && <span className="text-warn">{info ? 'offline' : 'unknown type'}</span>}
       {ran && (
         <span>
-          {lang ? '· ' : ''}
+          {showLang ? '· ' : ''}
           {status!.reused ? 'reused' : duration(status!.durationMs)}
         </span>
       )}

@@ -82,6 +82,8 @@ them with the response (`ExecuteResponse.records`, [protocol.md](protocol.md)) o
 way the engine emits a `node.record` event and the journal keeps it in the node's span. The GitHub plugin reports the
 pull requests, issues and branches it creates.
 
+Run ids, trace ids, model and token lines and **Debug access** appear only with **Show developer details** on (user menu; [Developer details](ui-review.md#developer-details)).
+
 ## The screens
 
 **Run trace** sits next to **Canvas** above every execution. It opens by itself when the run has agents (the choice is

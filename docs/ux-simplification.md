@@ -27,7 +27,7 @@ features. Size: S is about a day, M a few days.
 **Built (shell, wave 1):** the rail has nine items (Home, Workflows, Runs, Agents, Brain, Data tables, Credentials,
 Plugins, Settings) with section tabs inside Workflows, Runs (with a Search tab until B20) and Plugins
 (`components/shell/section-nav.tsx`); the theme and Build a plugin moved into the user menu; the Live dot shows only as
-"Reconnecting…"; the Preview pill and the plugin count are gone (a red dot marks an offline plugin); the project
+"Reconnecting…" with an amber dot (the dot alone on a folded rail); the Preview pill and the plugin count are gone (a red dot marks an offline plugin); the project
 switcher has Manage projects. The six-item proposal below is the older plan.
 
 Today: the project switcher, 11 sidebar items (Build: Home, Workflows, Templates, Agents, Executions, Insights, Data
@@ -61,8 +61,10 @@ sidebar. (M, phase 4 of [spotlight.md](spotlight.md#delivery).)
   an empty-state card for new instances.
 - **Built (2026-11-14):** the header's primary is "New workflow" (a blank one, opened in the editor); "Open polyglot
   demo" sits in the empty state of an instance with no runs; the Plugins KPI and panel and the header meta line are
-  gone, a one-line warning shows above the tiles only when a plugin is offline; "Needs you" is the fourth tile; a run
-  of one flow is one line; a suggestion is a compact card.
+  gone, a one-line warning shows above the tiles only when a plugin is offline; "Needs you" is the fourth tile (its
+  number in the tile's amber, not red: waiting is not failing; it updates when a run starts to wait, and Home, the
+  rail and the runs page share one request); a run of one flow is one line; a suggestion is a compact card, whose
+  warnings stay in view when it is folded. When every recent run is still going, Recent executions says so.
 
 ### Developer details everywhere (high impact, S)
 

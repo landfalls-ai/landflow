@@ -1,6 +1,6 @@
 'use client';
 /**
- * What a run did, in one line (docs/run-trace.md#what-a-run-did-in-one-line), drawn in the new look: what came in, who did
+ * What a run did, in one line (docs/run-trace.md#what-a-run-did-in-one-line): what came in, who did
  * it (the agent's face, or the team's lead with the faces of the members who worked under it), and what came out, green
  * when done, amber when it waits for you, red when it failed. A tap on the result opens it (a pull request on GitHub);
  * the rest of the row opens the run's Story.

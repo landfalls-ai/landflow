@@ -41,7 +41,7 @@ export function homeKpis(stats: HomeStats | undefined, needsYou: number | undefi
       icon: 'lucide:hand',
       color: 'var(--warn)',
       value: needsYou,
-      danger: !!needsYou,
+      // Waiting is not a failure: the number stays in the tile's own amber, not the Failed tile's red.
       ...(needsYou !== undefined && { sub: needsYou ? 'waiting for a decision' : 'nothing waits' }),
       href: '/executions?status=waiting',
     },

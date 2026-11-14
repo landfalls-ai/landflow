@@ -22,6 +22,7 @@ import {
   type AgentSession,
   type AgentSummary,
   type KagentDeployment,
+  type SessionSource,
   type SessionSummary,
 } from '../../shared/agents';
 import { releaseSessionImages } from './session-images';
@@ -35,6 +36,7 @@ import { ConfigFile, configStoreKind, importOnce } from '../config-store';
 import { database, type Database } from '../db';
 import { singleton } from '../singleton';
 import { store } from '../store';
+import type { Cursor } from '../pagination';
 
 /** A `running` session no process has saved for this long is idle again (its process died; files mode resets them at boot). */
 const STALE_RUNNING_MS = 30 * 60_000;
@@ -123,6 +125,28 @@ function summarizeSession(session: AgentSession): SessionSummary {
   };
 }
 
+/** Sources a person talks through (the Sessions tab's People) and those that run without one (Automations). */
+export const PEOPLE_SOURCES: readonly SessionSource[] = ['test', 'telegram', 'slack', 'teams'];
+export const AUTOMATION_SOURCES: readonly SessionSource[] = ['schedule', 'workflow', 'agent', 'api'];
+export type SessionAudience = 'people' | 'automations';
+export const audienceSources = (audience?: SessionAudience): readonly SessionSource[] | undefined => (audience === 'people' ? PEOPLE_SOURCES : audience === 'automations' ? AUTOMATION_SOURCES : undefined);
+
+/** What `listSessions` narrows to: some sources, one user, and the page after a cursor (`s` the last row's updatedAt, `i` its id). */
+export interface SessionFilter {
+  sources?: readonly SessionSource[];
+  userId?: string;
+  cursor?: Cursor;
+}
+
+/** Newest first, ties by id descending: the order both stores list in, so a cursor pages the same on either. */
+function sessionMatches(s: SessionSummary, filter?: SessionFilter): boolean {
+  if (!filter) return true;
+  if (filter.sources && !filter.sources.includes(s.source)) return false;
+  if (filter.userId && s.userId !== filter.userId) return false;
+  const after = filter.cursor;
+  return !after || s.updatedAt < after.s || (s.updatedAt === after.s && s.id < after.i);
+}
+
 /** Where the agents, sessions and memories are kept; the store on top adds what is the same for both. */
 interface AgentBackend {
   readonly kind: 'files' | 'database';
@@ -132,7 +156,7 @@ interface AgentBackend {
   /** The agent, its sessions and its memory. */
   remove(id: string): boolean;
   sessionCount(agentId: string): number;
-  listSessions(agentId: string, limit: number): SessionSummary[];
+  listSessions(agentId: string, limit: number, filter?: SessionFilter): SessionSummary[];
   getSession(id: string): AgentSession | undefined;
   findConversation(agentId: string, conversationKey: string): AgentSession | undefined;
   saveSession(session: AgentSession): void;
@@ -200,8 +224,11 @@ class FileAgents implements AgentBackend {
     return this.sessions.get(agentId)?.length ?? 0;
   }
 
-  listSessions(agentId: string, limit: number): SessionSummary[] {
-    return (this.sessions.get(agentId) ?? []).slice(0, limit);
+  listSessions(agentId: string, limit: number, filter?: SessionFilter): SessionSummary[] {
+    return [...(this.sessions.get(agentId) ?? [])]
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.id.localeCompare(a.id))
+      .filter((s) => sessionMatches(s, filter))
+      .slice(0, limit);
   }
 
   getSession(id: string): AgentSession | undefined {
@@ -327,11 +354,24 @@ class DatabaseAgents implements AgentBackend {
     return Number(this.sql.get<{ n: number }>('SELECT COUNT(*) AS n FROM agent_sessions WHERE agent_id = ?', agentId)?.n ?? 0);
   }
 
-  listSessions(agentId: string, limit: number): SessionSummary[] {
-    return this.sql
-      .all<{ summary: string }>('SELECT summary FROM agent_sessions WHERE agent_id = ? ORDER BY updated_at DESC LIMIT ?', agentId, Math.max(1, Math.floor(limit)))
-      .flatMap((row) => parsed<SessionSummary>(row.summary) ?? [])
-      .map(settleStale);
+  listSessions(agentId: string, limit: number, filter?: SessionFilter): SessionSummary[] {
+    const cap = Math.max(1, Math.floor(limit));
+    // Without a filter the database cuts the list; with one, the summaries are read newest first and cut here.
+    const after = filter?.cursor;
+    const rows = this.sql.all<{ summary: string }>(
+      `SELECT summary FROM agent_sessions WHERE agent_id = ?${after ? ' AND (updated_at < ? OR (updated_at = ? AND id < ?))' : ''} ORDER BY updated_at DESC, id DESC${filter?.sources || filter?.userId ? '' : ' LIMIT ?'}`,
+      ...[agentId, ...(after ? [after.s, after.s, after.i] : []), ...(filter?.sources || filter?.userId ? [] : [cap])],
+    );
+    const out: SessionSummary[] = [];
+    for (const row of rows) {
+      const summary = parsed<SessionSummary>(row.summary);
+      if (!summary) continue;
+      const settled = settleStale(summary);
+      if (!sessionMatches(settled, filter)) continue;
+      out.push(settled);
+      if (out.length >= cap) break;
+    }
+    return out;
   }
 
   getSession(id: string): AgentSession | undefined {
@@ -525,8 +565,8 @@ class AgentStore {
 
   // ---- sessions -----------------------------------------------------------
 
-  listSessions(agentId: string, limit = 100): SessionSummary[] {
-    return this.backend.listSessions(agentId, limit);
+  listSessions(agentId: string, limit = 100, filter?: SessionFilter): SessionSummary[] {
+    return this.backend.listSessions(agentId, limit, filter);
   }
 
   getSession(id: string): AgentSession | undefined {

@@ -1,6 +1,6 @@
 'use client';
 /**
- * An approval with its evidence (docs/run-trace.md#an-approval-with-its-evidence), drawn in the new look only: when a run waits
+ * An approval with its evidence (docs/run-trace.md#an-approval-with-its-evidence): when a run waits
  * for a person to approve a tool, the card says in the member's own words what it wants and recommends, shows the case (what
  * the tool acts on and its input made readable), lists what the member looked at (each row leads to its place in the Run
  * Trace), and offers buttons named by the action: "Post review & approve", Edit, Deny. Edit opens the input; "Approve with these

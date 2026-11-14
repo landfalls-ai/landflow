@@ -1494,7 +1494,13 @@ is read by its owner alone, owners and admins included, through every reader), t
 key scopes, `POST` and `DELETE /api/brain/work`, `GET /api/brain/briefing`, the `work.session` kind and the admin
 setting `brain.workAutoSend`.
 
-- **Next**: the clients (the Claude Code mod, `landflow work`, MCP tools), team and org visibility with related
+- **Built (B13)**: MCP for everyone: the instance MCP server's brain tools (`brain_ask`, `record_work`, `my_briefing`), the
+  `morning-briefing` prompt and `brain://` resources, with API-key scopes checked per tool ([work-and-briefings.md](work-and-briefings.md#over-mcp)).
+- **Built (B14)**: the first slice of the Claude Code mod `landflow-brain` ([landflow-brain-mod.md](landflow-brain-mod.md)):
+  capture, a held journal, `/brain today|review|status|pause|resume|forget`, the status line, yesterday at session start
+  and an offline queue.
+- **`landflow work`** (built, backbone wave 2, B15): the harness-agnostic daily offloader (collect, summarise on the machine, hold for review, send), with cron, launchd and Task Scheduler examples ([cli.md](features/cli.md#recording-your-day-landflow-work)).
+- **Next**: the rest of the clients (the mod's colleagues, pane and band), team and org visibility with related
   colleagues, repo entities, the link from a person to their user, and a Settings screen for the auto-send setting.
 
 ## Shell: nine-item rail (built 2026-11-14)
@@ -1503,7 +1509,7 @@ X1 (nine rail items, section tabs in Workflows, Runs and Plugins; Runs also has 
 pages), X4 (theme in the user menu, the connection shown only while reconnecting), X6 (no Preview pill in the rail), X7
 (a red dot for an offline plugin instead of a count), P-dev-1 (Build a plugin out of the rail), P-rb-1 (Runbooks only
 with the Landfall plugin) and P-pr-1 (Manage projects in the switcher, no intro on /projects) are closed. The look
-switch (`look-toggle.tsx`, still imported by B07's pages) stays until B12 deletes it.
+switch (`look-toggle.tsx`) was deleted by B12, which also closed X8 (developer details behind one switch).
 
 ## Planned next
 
@@ -1558,20 +1564,67 @@ The shared pieces every chat will use, built in `components/ui/` and ready; the 
 - CH5 ✅ Done: the hosted chat widget's bubbles rise in, its typing indicator is three dots, and Reduce motion turns both
   off ([Hosted chat and widget](features/ai.md#hosted-chat-and-widget)).
 - CH1 (motion), CH6 (one activity trace), CH7 (one reply footer), CH9 (errors with actions) and CH10 (a model chip): kit
-  ready, surfaces in wave 2 ([Chat surfaces](assistant.md#chat-surfaces)).
+  ready, surfaces in wave 2 ([Chat surfaces](assistant.md#chat-surfaces)). Spotlight in the editor is on the kit (B08): CH1, CH6, CH7 and CH20 are closed for it, CH10 too once a route names the model before the first reply; CH3 is closed by B09.
+  Agents (B10): the test chat, the Agent architect and the analyst are on the kit (CH6, CH7 done for agents); the test
+  chat's raw trace id became the trace's Open trace link (CH23, the test-chat part).
+- CH13 ✅ Done (B10): the Sessions tab opens on People and has Automations and All; no Auto-refresh switch
+  ([agents.md](agents.md#test-chat)). The architect keeps its conversation and can continue a failed design from the
+  failing step.
+
+## Ask the brain, docked and streamed (B09, 2026-11-14)
+
+- CH3 ✅ Done: the brain's answer streams (what it found first, then the words) and shows its steps.
+- CH18 ✅ Done (brain): Ask is a column beside the page, not a card over it, so a link opens the page and the answer stays.
+- CH23 ✅ Done (brain): `[n]` appears only with a source, and a follow-up knows the last two turns.
+- CH8 (brain half) ✅ Done: Ask writes `ai_usage` rows with surface `brain`.
+- P-br-3 ✅ Done: one **Ask** button and ⌘I; the bottom bar, the toolbar and status-bar buttons and quick open's ask row are gone
+  ([second-brain.md](second-brain.md#the-brain-page)). Open: history and @ tags for Ask (B17), the app-wide panel (B35).
+
+## The editor's layout (B11, 2026-11-14)
+
+Built ([Building and debugging a flow](features/editor.md#the-editors-chrome)): one right column (CH19: **Spotlight |
+Chat**, never both, each kept mounted), the flow chat on the chat kit (CH10 for the editor: the list, the Working line,
+the reply footer, the model chip, plain errors), a top bar of seven controls with autosave and a Publish button that
+carries the state (P-ed-1), one canvas toolbar and a minimap only above 25 nodes (P-ed-2), and one **Import…** dialog
+(P-ed-3). All of CH10 (editor), CH19 and P-ed-1 to 3 are done. Open: the phone's Chat is still a sheet under the canvas
+with no Spotlight | Chat switch (the Execute bar's chat button opens and closes it), and a long editing session with
+no pause over 10 minutes between saves folds into one version (⌘S, Publish and a tab-leave save add their own).
 
 ## Conversation history and personal preferences (2026-11)
 
 The first piece of the company-backbone program (wave 1, B02). Built: the `user_preferences` and `conversations` tables
 (migrations 2070 and 2071), their session-only routes, the retention service, the client hooks and the history popover
 ([assistant.md](assistant.md#conversation-history)). Next: each chat mounts the history button and saves to the store,
-and the account menu gets the switches. Open: `deleteUser` should remove a person's conversations and preferences, a pin should decide whether retention spares a conversation, search wants a plain-text column, and `GET /api/conversations/:id` wants a `limit`.
+and the account menu gets the switches. Deleting a person removes their conversations, preferences and private work events (wave 1 carryover). Open: a pin should decide whether retention spares a conversation, search wants a plain-text column, and `GET /api/conversations/:id` wants a `limit`.
 
 ## Tagging with @ (B04, 2026-11-14)
 
 The foundation is built: `GET /api/mentions`, `resolveMentions` with a digest per kind, and the picker
 ([assistant.md](assistant.md#tagging-with-)). Open: mount it in Spotlight and Ask the brain, and resolve the tags in
 their servers.
+
+## Test chat history per person (B10, 2026-11-14)
+
+Open: the test chat writes every session as user "you", so "Earlier tests" lists everyone's tests of that agent. The chat
+route should store the caller's id (it also affects memory and the policy role check); then the sessions route can filter
+`source=test` to the caller. Also: `source` wins over `audience` when both are given.
+
+## Company backbone: left open from the wave 1 reviews (2026-11-14)
+
+The wave 1 review notes were fixed in wave 2's carryover where they were contained; these wait, each with its reason:
+
+- **Token wording in the reply footer**: it reads *1,600 tokens* (`formatTokens`, as Insights does) where the brief's
+  example said *1.6k tokens*. Which one the footer should use is the person's call; the docs and tests agree with the code.
+- **Insights per workflow vs today**: the per-workflow report includes Spotlight's rows for a workflow while its
+  `today` figure (`workflowDay`) leaves them out, so the two can differ. A surface breakdown in the report would explain it.
+- **A checkpoint taken before the stream starts**: a request aborted between `takeCheckpoint` and its first failed step
+  loses the checkpoint, and a resume does not carry the guard's `invented` id set. Both need the checkpoint to be
+  re-saved on abort, a larger change than a carryover.
+- **Section tabs**: `SectionNav` makes its own `/api/plugins` request and does not follow registry events (Runbooks shows
+  after a navigation when Landfall registers), and its tabs are `role="tab"` links without arrow keys or a tabpanel (a
+  `nav` with `aria-current` would be more correct). Both change the shell's markup; left for the next shell pass.
+- **All projects and Manage projects** both open `/projects` in the switcher; dropping one belongs with the projects
+  page (B34).
 
 ## Not planned
 

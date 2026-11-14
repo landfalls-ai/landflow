@@ -61,7 +61,7 @@ export const PUT = handler(async (request: Request, { params }: Ctx) => {
   const base = baseOf(request, baseUpdatedAt);
   if (base && existing.updatedAt && base !== existing.updatedAt) throw new WorkflowConflictError(existing);
   // Governance (lib/server/governance/saves.ts): an `active` switch may be held for approval or refused; policy warnings.
-  const { workflow, extras } = governedSave({ ...existing, ...fields, id } as Workflow, existing, (w) => store.saveWorkflow(w), { by: currentActorId() });
+  const { workflow, extras } = governedSave({ ...existing, ...fields, id } as Workflow, existing, (w) => store.saveWorkflow(w, { autosave: request.headers.get('x-landflow-autosave') === '1' }), { by: currentActorId() });
   // Saves are drafts. A client from before draft and publish sends `active: true` with an active workflow to put the
   // save live (the editor leaves `active` out): publish what it saved, as such a save used to do (or ask, four-eyes on).
   if (fields.active === true && existing.active) {

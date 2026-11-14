@@ -17,7 +17,7 @@ import { liveTeam, TeamStrip } from './team-strip';
 import { canTurnNodeIntoTeam, turnIntoTeam } from './turn-into-team';
 import { useEditor, type FlowNode } from './store';
 
-/** What a team node's slots feed: the lead, not every member (the new look). */
+/** What a team node's slots feed: the lead, not every member. */
 const LEAD_SLOTS = { ai_languageModel: "Lead's model", ai_memory: "Lead's memory", ai_tool: "Lead's tools" } as const;
 
 function ToolbarButton({

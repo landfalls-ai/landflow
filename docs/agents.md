@@ -58,6 +58,15 @@ call (those starting with **When Called by a Workflow or Agent**), the other age
 never values) and the persona templates. Then it proposes the whole agent (`propose_agent`); asking for a change sends
 the whole agent again, built on the draft so far.
 
+The chat is on the chat kit ([assistant.md](assistant.md#chat-surfaces)): the tools it used are one line ("6 steps ·
+24.8 s") that opens into each step with its time, a footer under the reply gives the model, time, steps, tokens and
+cost, and a model chip sits in the box. It **keeps its conversation** with the others
+([assistant.md](assistant.md#conversation-history), surface `architect`, subject `agent` / `new`): close the dialog and
+open it again and the latest design is there under an **Earlier** divider, with its last draft on the right, and the
+clock button lists the older ones (architect conversations only: a Spotlight or brain conversation is not offered here). When the model fails after some steps, the error offers **Continue from step N**
+(the request carries `resume: { checkpoint }`, so no tool runs twice; the checkpoint lives 15 minutes in the host's
+memory) beside **Try again**. A failure read back from a kept conversation can only be tried again.
+
 Every draft is checked before you see it:
 - node types that aren't online or can't be tools are left out, and so are workflows an agent can't call and agents
   that don't exist; the draft says what was left out;
@@ -413,8 +422,23 @@ agents. At most 200 sessions are kept per agent. Each one keeps:
 - token usage;
 - one trace id per run (guardrail checks are `landflow.guardrails` spans with a `landflow.guardrails.stage` attribute, for every check).
 
-The **Sessions** tab lists them by source (`test`, `schedule`, `telegram`, `slack`, `teams`, `workflow`, `agent`).
+The **Sessions** tab lists them with a switch: **People** (the test chat, Telegram, Slack and Teams), **Automations**
+(schedules, workflows, other agents and the API) and **All**. It opens on People when there are any, otherwise on All.
+`GET /api/agents/:id/sessions?audience=people|automations` does the filtering, in the store, so it is the same for files
+and the database, and pages with `cursor` (**Show more** loads the next page). There is no Auto-refresh switch: new
+sessions appear on their own every few seconds, except while the pointer is over the list or it is being scrolled.
 Only one run can be active per session.
+
+### Test chat
+
+**Test agent** opens a chat with the draft on the chat kit. The tool calls of a turn are one activity line that opens
+into its steps (a call waiting for your **Approve** stays a full row); the footer under each reply gives the model, the
+time from your question to the reply, the steps, the tokens and the cost (or "local"); the model chip sits in the box.
+There is no trace id above the box any more: the activity line ends with **Open trace**, the host's trace UI when
+`LANDFLOW_TRACE_URL` is set, otherwise this session under Sessions, where the trace ids are. The clock in the header lists
+the earlier test sessions of this agent (per agent, not per person yet; see [limitations](limitations.md)) (the sessions route with `audience=people&source=test`); opening one carries it
+on in the chat. Nothing new is stored for it: the sessions are the record. The Platform analyst's chat uses the same line
+and footer, and keeps its answer card.
 
 ## From workflows
 

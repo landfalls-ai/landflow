@@ -19,6 +19,7 @@ import { envCommands } from './commands/env';
 import { runCommands } from './commands/runs';
 import { syncCommands } from './commands/sync';
 import { transferCommands } from './commands/transfer';
+import { workCommands } from './commands/work';
 import { workflowCommands } from './commands/workflows';
 import { configPath, resolveConnection } from './config';
 import { CliError, EXIT } from './errors';
@@ -28,7 +29,7 @@ export type { Io } from './command';
 export { EXIT } from './errors';
 export { VERSION } from './version';
 
-export const COMMANDS: Command[] = [...authCommands, ...workflowCommands, ...runCommands, ...transferCommands, ...dataCommands, ...syncCommands, ...envCommands, ...auditCommands, ...debugCommands, ...debugTokenCommands];
+export const COMMANDS: Command[] = [...authCommands, ...workflowCommands, ...runCommands, ...transferCommands, ...dataCommands, ...syncCommands, ...envCommands, ...auditCommands, ...debugCommands, ...debugTokenCommands, ...workCommands];
 
 const GLOBAL_FLAGS: FlagSpecs = {
   json: { type: 'boolean', description: 'Print one JSON document (stable shapes; errors too)' },
@@ -47,6 +48,7 @@ const GROUPS: Record<string, string> = {
   'source-control': 'The host’s own Git repository (Settings → Source control)',
   env: 'Environments: promote between environments’ branches, pull this one',
   claude: 'Set up a local Claude Code for this host (.mcp.json and a skill)',
+  work: 'Record your day’s work in the company brain',
   audit: 'The audit log: verify its hash chain and signed heads, with or without the host',
 };
 

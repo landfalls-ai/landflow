@@ -27,13 +27,19 @@ export interface ConversationHistoryProps {
   subjectId?: string;
   /** The heading of the conversations about this subject: "This workflow" or "This page". */
   subjectLabel?: string;
+  /**
+   * List only this surface's conversations, also under "Everywhere": for a chat that cannot show another surface's items
+   * (the Agent architect would read a Spotlight conversation as its own and append to it).
+   */
+  ownSurfaceOnly?: boolean;
   onOpen: (id: string) => void;
   onNew: () => void;
 }
 
 /** The query of one request: the subject group asks for its subject, "Everywhere" for none. Pure, so it is tested without a DOM. */
-export function historyParams(text: string, subject?: { subjectType: string; subjectId: string }, cursor?: string | null): URLSearchParams {
+export function historyParams(text: string, subject?: { subjectType: string; subjectId: string }, cursor?: string | null, surface?: ConversationSurface): URLSearchParams {
   const params = new URLSearchParams({ limit: String(PAGE) });
+  if (surface) params.set('surface', surface);
   if (subject) {
     params.set('subjectType', subject.subjectType);
     params.set('subjectId', subject.subjectId);
@@ -66,7 +72,7 @@ export function ConversationHistory(props: ConversationHistoryProps) {
   );
 }
 
-function HistoryList({ subjectType, subjectId, subjectLabel, onOpen, onNew }: ConversationHistoryProps) {
+function HistoryList({ surface, subjectType, subjectId, subjectLabel, ownSurfaceOnly, onOpen, onNew }: ConversationHistoryProps) {
   const keeping = usePreference('keepConversations');
   const [query, setQuery] = useState('');
   const subject = subjectType && subjectId ? { subjectType, subjectId } : undefined;
@@ -86,7 +92,7 @@ function HistoryList({ subjectType, subjectId, subjectLabel, onOpen, onNew }: Co
       const token = ++mine.current;
       const set = which === 'here' ? setHere : setEverywhere;
       try {
-        const body = await api<{ conversations: ConversationRecord[]; nextCursor: string | null }>(`/api/conversations?${historyParams(text, which === 'here' ? subject : undefined, cursor)}`, { background: true });
+        const body = await api<{ conversations: ConversationRecord[]; nextCursor: string | null }>(`/api/conversations?${historyParams(text, which === 'here' ? subject : undefined, cursor, ownSurfaceOnly ? surface : undefined)}`, { background: true });
         if (token !== mine.current) return;
         setFailed(false);
         set((before) => ({ list: cursor && before ? [...before.list, ...body.conversations] : body.conversations, next: body.nextCursor }));
@@ -95,7 +101,7 @@ function HistoryList({ subjectType, subjectId, subjectLabel, onOpen, onNew }: Co
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [subjectType, subjectId],
+    [subjectType, subjectId, surface, ownSurfaceOnly],
   );
 
   // 250 ms after the last key.

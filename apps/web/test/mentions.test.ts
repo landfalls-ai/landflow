@@ -366,7 +366,7 @@ describe('digests for the other kinds', () => {
     expect(other.block).toBe('');
   });
 
-  it('reads a person, an agent, a node type and a plugin', async () => {
+  it('reads a person, an agent, a team, a node type and a plugin', async () => {
     const person = await resolveMentions(member, [{ type: 'person', id: member.id }]);
     expect(person.block).toContain('role member');
     expect(person.block).not.toContain('mia-password');
@@ -374,7 +374,38 @@ describe('digests for the other kinds', () => {
     expect(nodeType.read[0].ok).toBe(true);
     const missingAgent = await resolveMentions(member, [{ type: 'agent', id: 'agent_missing' }]);
     expect(missingAgent.read[0].ok).toBe(false);
-    expect(typeof agentStore.get).toBe('function');
+
+    const mine = agentStore.create({ name: 'Invoice helper', description: 'Answers questions about invoices' });
+    projects.setHomeProject('agent', mine.id, mineProject);
+    const theirs = agentStore.create({ name: 'Invoice auditor', description: 'Audits the private ledger' });
+    projects.setHomeProject('agent', theirs.id, theirProject);
+    const agents = await resolveMentions(member, [{ type: 'agent', id: mine.id }, { type: 'agent', id: theirs.id }]);
+    expect(agents.read.map((r) => r.ok)).toEqual([true, false]);
+    expect(agents.block).toContain('Agent “Invoice helper” (not published yet)');
+    expect(agents.block).toContain('Does: Answers questions about invoices');
+    expect(agents.block).not.toContain('private ledger');
+
+    const team = agentTeamStore.create({ name: 'Invoice desk', goal: 'Close the month', members: [{ id: 'm_lead', title: 'Desk lead', kind: 'agent', agentId: mine.id }] });
+    projects.setHomeProject('agentTeam', team.id, mineProject);
+    const teamRead = await resolveMentions(member, [{ type: 'team', id: team.id }]);
+    expect(teamRead.read[0].ok).toBe(true);
+    expect(teamRead.block).toContain('Team “Invoice desk” (not published yet)');
+    expect(teamRead.block).toContain('Lead: Desk lead');
+
+    const pluginId = registry.list()[0]!.id;
+    const plugin = await resolveMentions(member, [{ type: 'plugin', id: pluginId }]);
+    expect(plugin.read[0].ok).toBe(true);
+    expect(plugin.block).toContain(`(${pluginId})`);
+    expect((await resolveMentions(member, [{ type: 'plugin', id: 'no-such-plugin' }])).read[0].ok).toBe(false);
+  });
+
+  it('calls a person without a name the same in the picker and in their digest', async () => {
+    const nameless = await createUser({ email: 'noname.person@mentions.test', name: '', role: 'member', password: 'noname-password-1' });
+    const hit = hitsOf(await searchMentions(member, { q: 'noname', types: ['person'] }), 'person').find((h) => h.id === nameless.id);
+    expect(hit?.name).toBe('noname.person');
+    const read = await resolveMentions(member, [{ type: 'person', id: nameless.id }]);
+    expect(read.block).toContain('Person “noname.person”, role member.');
+    expect(read.block).not.toContain('Person “”');
   });
 
   it('keeps a team budget and a big table’s row count readable after redaction', async () => {

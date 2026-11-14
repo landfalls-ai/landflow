@@ -8,7 +8,7 @@ Legend: ✅ on par with n8n · ➕ beyond n8n · ◐ partial · ✗ missing
 
 | | n8n | Landflow | |
 |---|---|---|---|
-| Left sidebar | Overview, Templates, Variables, Insights, Help | nine items (Home, Workflows, Runs, Agents, Brain, Data tables, Credentials, Plugins, Settings); section tabs inside Workflows (Templates, Runbooks with the Landfall plugin), Runs (Activity, Insights, Search) and Plugins (Installed, Marketplace, Build your own); a red dot on Plugins while one is offline; "Reconnecting…" only while the event stream is down; theme and Build a plugin in the user menu | ✅ |
+| Left sidebar | Overview, Templates, Variables, Insights, Help | nine items (Home, Workflows, Runs, Agents, Brain, Data tables, Credentials, Plugins, Settings); section tabs inside Workflows (Templates, Runbooks with the Landfall plugin), Runs (Activity, Insights, Search) and Plugins (Installed, Marketplace, Build your own); a red dot on Plugins while one is offline; "Reconnecting…" with an amber dot only while the event stream is down (the dot alone when the rail is folded to icons); theme and Build a plugin in the user menu | ✅ |
 | Credentials | Credentials tab: list, create from a type picker, form per type, "Connection tested successfully" | Credentials page: list with type icon, plugin and "used by N workflows"; create from a searchable type picker (types come from plugin manifests); form rendered from the type's properties; **Test connection** runs the plugin's test; stored AES-256-GCM encrypted, secrets never sent back to the browser | ✅ |
 | Overview | Workflows / Credentials / Executions tabs, insight KPIs | Home: four KPI cards with coloured top bars, count-up numbers, recent executions, plugin list with brand icons | ✅ |
 | Workflows list | Cards with name, last updated, owner; folders, search, tag filter, sort, import | Rows with node icons tinted by node colour, description, tags, active badge, node count; nested folders with a breadcrumb (drag a workflow onto a folder or a breadcrumb step, or Move to folder), search across folders, tag filter, sort by updated / name / created, Import from a Landflow or n8n file with a report | ✅ |
@@ -32,7 +32,7 @@ What the look draws:
   Needs you and on the waiting node, with a row of faces for who has something for you
   ([run-trace.md](run-trace.md#an-approval-with-its-evidence));
 - team members as cards above the team chart ([agent-teams.md](agent-teams.md#member-cards));
-- the analyst answering with a chart: source chips, one "Looking across N sources…" line, and an answer card whose chart
+- the analyst answering with a chart: source chips, the kit's activity line ("N steps · time", opening into the steps, with Open trace), and an answer card with the reply footer whose chart
   comes from the tool results ([second-brain.md](second-brain.md#the-analyst-agent));
 - building step by step: while Spotlight builds a change, a side card ticks off its steps, the nodes it adds appear on the
   canvas as dashed ghosts (the one being made shimmers), new connections draw dashed, and a thin bar on top of the canvas
@@ -55,7 +55,7 @@ What the look draws:
 | Sticky notes | Yes | Markdown notes behind the nodes (`⇧S` or the toolbar): double-click to edit, resize from the corners, seven colours that follow the theme; read-only in the Executions tab | ✅ |
 | Copy/paste between workflows | JSON on the clipboard | ⌘C / ⌘X / ⌘V / ⌘D through the system clipboard with connections, notes and pinned data; taken names become `Name1`, `$('Name')` between pasted nodes follows the rename; n8n clipboard JSON is converted on paste | ✅ |
 | Undo / redo | ⌘Z / ⇧⌘Z | ⌘Z / ⇧⌘Z and canvas buttons; drags, deletes, pastes and parameter typing (coalesced) | ✅ |
-| Workflow menu | Settings, download, import, version history | `…` menu: Settings (error workflow, time zone, timeout, callers, saved executions), Version history (diff summary, read-only preview, restore), Download JSON, Import from file or pasted JSON (Landflow or n8n); tags in the top bar | ✅ |
+| Workflow menu | Settings, download, import, version history | `…` menu: Settings (error workflow, time zone, timeout, callers, saved executions), Version history (diff summary, read-only preview, restore), Download JSON, one Import… (paste or file; Landflow, n8n or Flowise), Tags… | ✅ |
 
 ## Node creator (the side menu)
 
@@ -110,6 +110,16 @@ What the look draws:
 ## Plugins (no n8n equivalent)
 
 The registry page shows each plugin with its published icon and colour, language, SDK and endpoints (gRPC and HTTP) with lease bars and latency. You can choose the transport per plugin, scan the network or add an endpoint. Node chips are tinted with each node's colour. n8n's nearest equivalent is community nodes, which are npm packages installed into the n8n process. Landflow's plugins are separate processes in any language, discovered over HTTP or gRPC.
+
+## Developer details
+
+One per-person switch, **Show developer details** in the user menu (off by default, kept on the server, so it follows
+you to another browser). With it off, a screen shows what a builder acts on and none of what only developers and
+operators act on: the node panel's type id, language and transport; node tiles' and the node creator's language and
+transport; import report type ids; the team node's runs-on chips and tool commands; a run's id, trace id and mode chip,
+and the run list's Execution ID and Mode columns; plugin cards' language, SDK and endpoints, and the Marketplace Explore tiles' language and runtime badges; an agent card's model, tool
+and skill counts; and the run trace's token, model and cost lines and Debug access. With it on, everything shows as it
+did. Code gates a detail with `<DevOnly>` or `useDeveloperDetails()` from `lib/client/developer-details.tsx`.
 
 ## Words
 

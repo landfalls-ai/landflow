@@ -373,6 +373,8 @@ export interface WorkflowVersionSummary {
   diff?: VersionDiff;
   /** Set when this version was made by restoring an older one. */
   restoredFrom?: { id: string; number: number };
+  /** Set when the editor's autosave made it: the next autosave by the same person soon after replaces it instead of adding one. */
+  autosave?: { by: string };
 }
 
 /** GET /api/workflows/:id/versions/:versionId */

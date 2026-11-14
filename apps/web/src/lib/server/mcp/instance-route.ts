@@ -29,7 +29,7 @@ export async function serveInstance(request: Request, projectId?: string): Promi
       (info) => {
         const who = callerOf(info.authInfo);
         if (who?.kind === 'debug') return debugTokenServer(who.token, who.record, { digest: executionDigest });
-        return instanceServer(who?.kind === 'user' ? who.actor : undefined, who?.scope);
+        return instanceServer(who?.kind === 'user' ? who.actor : undefined, who?.scope, who?.kind === 'user' ? who.keyScopes : undefined);
       },
       authInfo,
     );

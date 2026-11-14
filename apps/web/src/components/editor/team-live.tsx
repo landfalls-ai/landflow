@@ -23,6 +23,7 @@ import { lastRunWords, rosterText } from '@/lib/shared/team-node';
 import { chartOrder, memberAgent, type TeamMember } from '@/lib/shared/agent-teams';
 import type { AgentSummary } from '@/lib/shared/agents';
 import type { TeamActivity, TeamApprovalWait, TeamMoment, TeamProgress, TeamStep, TeamTurn, TeamUsage } from '@/lib/shared/team-progress';
+import { DevOnly } from '@/lib/client/developer-details';
 import { cn } from '@/lib/utils';
 import { AgentAvatar, type AvatarSource } from '../agents/avatar';
 import { faceOf as agentFace, loadRoster, loadTeam } from '../agents/faces';
@@ -181,9 +182,11 @@ function WorkerHead({ live, faces, elapsed, paused }: { live: TeamProgress; face
           {words}
         </div>
         {live.command && (
-          <div className="truncate font-mono text-[10px] leading-4 text-t3" title={live.command}>
-            {live.command}
-          </div>
+          <DevOnly>
+            <div className="truncate font-mono text-[10px] leading-4 text-t3" title={live.command}>
+              {live.command}
+            </div>
+          </DevOnly>
         )}
         <div className="font-mono text-[10px] leading-4 tabular-nums text-t3">
           {clock(elapsed)}
@@ -372,7 +375,7 @@ export function AnswerLink({ executionId, className }: { executionId: string; cl
  */
 export function ApprovalButtons({ executionId, onDecide, className, member }: { executionId: string; onDecide?: DecideFn; className?: string; member?: string }) {
   const [busy, setBusy] = useState<'approve' | 'deny'>();
-  // The new look: Review opens the decision card (the member's reasons, the case, the evidence, Edit) over the page.
+  // Review opens the decision card (the member's reasons, the case, the evidence, Edit) over the page.
   const [reviewing, setReviewing] = useState(false);
   const decide = async (approved: boolean) => {
     setBusy(approved ? 'approve' : 'deny');
@@ -413,23 +416,21 @@ export function ApprovalButtons({ executionId, onDecide, className, member }: { 
       >
         {busy === 'deny' ? <Loader2 className="size-3.5 animate-spin" /> : <X className="size-3.5" strokeWidth={3} />} Deny
       </button>
-      <>
-          <button
-            type="button"
-            {...own}
-            onClick={(e) => {
-              e.stopPropagation();
-              setReviewing(true);
-            }}
-            data-testid="team-review"
-            title="See why, what it looked at, and edit before approving"
-            aria-label="Review before deciding"
-            className="nodrag nopan inline-flex h-7 basis-full items-center justify-center gap-1.5 rounded-full text-[12px] font-semibold text-warn transition-colors hover:bg-warndim"
-          >
-            <FileSearch className="size-3.5" /> Review the case
-          </button>
-          {reviewing && <ApprovalSheet executionId={executionId} {...(member && { member })} {...(onDecide && { onDecide })} onClose={() => setReviewing(false)} />}
-        </>
+      <button
+        type="button"
+        {...own}
+        onClick={(e) => {
+          e.stopPropagation();
+          setReviewing(true);
+        }}
+        data-testid="team-review"
+        title="See why, what it looked at, and edit before approving"
+        aria-label="Review before deciding"
+        className="nodrag nopan inline-flex h-7 basis-full items-center justify-center gap-1.5 rounded-full text-[12px] font-semibold text-warn transition-colors hover:bg-warndim"
+      >
+        <FileSearch className="size-3.5" /> Review the case
+      </button>
+      {reviewing && <ApprovalSheet executionId={executionId} {...(member && { member })} {...(onDecide && { onDecide })} onClose={() => setReviewing(false)} />}
     </span>
   );
 }
@@ -500,7 +501,7 @@ export interface TeamTileOptions {
   onDecide?: DecideFn;
   /** Open the Run Trace in a new tab (from the editor, so the flow stays open). */
   newTab?: boolean;
-  /** The editor, in the new look: before any run the node shows who is on the team and how its last run ended. */
+  /** The editor: before any run the node shows who is on the team and how its last run ended. */
   idleRoster?: boolean;
 }
 
@@ -667,7 +668,7 @@ export function useTeamTile(teamId: string | undefined, live: TeamProgress | und
 }
 
 /**
- * A team node before it runs, in the editor's new look: the members after the lead (whose face is the node's), and how
+ * A team node before it runs, in the editor: the members after the lead (whose face is the node's), and how
  * the team's last run ended. The strip above the node then stays away (flow-node.tsx), since this says the same.
  */
 function TeamIdle({ teamId, faces }: { teamId: string; faces: TeamFace[] }) {
@@ -741,7 +742,11 @@ export function TeamNowCard({ teamId, live, nodeName, onOpenTrace, executionId }
             {paused ? `${worker.title} is paused` : consulting && live.consulting ? `${consulting.title} ${live.consulting.kind === 'handoff' ? 'handed over to the' : 'is consulting the'} ${worker.title}` : `${worker.title} is ${lowerFirst(words)}`}
           </div>
           {consulting && <div className="text-[12.5px] leading-4 text-t2">{words}</div>}
-          {live.command && <div className="truncate font-mono text-[10.5px] text-t3">{live.command}</div>}
+          {live.command && (
+            <DevOnly>
+              <div className="truncate font-mono text-[10.5px] text-t3">{live.command}</div>
+            </DevOnly>
+          )}
         </div>
       </div>
       <TeamTicker steps={live.steps} className="mt-2.5" />
@@ -767,7 +772,7 @@ export function TeamAskCard({ teamId, waiting, nodeName, executionId, onDecide }
   const faces = useTeamFaces(teamId);
   if (!faces?.length) return null;
   const face = faceByTitle(faces, waiting.member) ?? faces[0];
-  const classic = (
+  const plainCard = (
     <section className="rounded-2xl border border-warn/50 bg-warndim p-3 shadow-pop" data-testid="team-ask-card" aria-live="polite">
       <div className="mb-2 truncate text-[11px] font-semibold uppercase tracking-[0.06em] text-warn">Needs you · {nodeName}</div>
       <div className="flex min-w-0 items-start gap-3">
@@ -799,7 +804,7 @@ export function TeamAskCard({ teamId, waiting, nodeName, executionId, onDecide }
       {executionId && (waiting.approval ? <ApprovalButtons executionId={executionId} onDecide={onDecide} className="mt-3" /> : <AnswerLink executionId={executionId} className="mt-3 w-full" />)}
     </section>
   );
-  // The new look: a tool approval is a decision card with the member's reasons and the evidence it looked at.
-  if (executionId && waiting.approval) return <LiveApprovalCard executionId={executionId} member={waiting.member} {...(onDecide && { onDecide })} fallback={classic} />;
-  return classic;
+  // A tool approval is a decision card with the member's reasons and the evidence it looked at.
+  if (executionId && waiting.approval) return <LiveApprovalCard executionId={executionId} member={waiting.member} {...(onDecide && { onDecide })} fallback={plainCard} />;
+  return plainCard;
 }

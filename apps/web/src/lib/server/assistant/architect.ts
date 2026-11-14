@@ -44,7 +44,7 @@ export type ArchitectStreamEvent =
   | { type: 'step.start'; step: number; label: string }
   | { type: 'tool'; name: string; label: string; ok: boolean; id: string; step: number; durationMs: number; detail?: string }
   | { type: 'done'; model: string; durationMs: number; steps: number; usage: { inputTokens: number; outputTokens: number }; costUsd?: number; local: boolean }
-  | { type: 'error'; message: string; kind?: 'model' | 'cap' | 'stalled' | 'internal'; checkpoint?: string; step?: number };
+  | { type: 'error'; message: string; kind: 'model' | 'cap' | 'stalled' | 'internal'; checkpoint?: string; step?: number };
 
 /** What an architect chat keeps to be continued after an error. */
 export interface ArchitectState {
@@ -581,7 +581,7 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
       while (steps < stepLimit && !finished) {
         steps++;
         currentStep = steps;
-        if (trace) onEvent({ type: 'step.start', step: steps, label: steps === 1 ? 'Reading your request' : 'Working on it' });
+        if (trace) onEvent({ type: 'step.start', step: steps, label: steps === 1 ? 'Reading your request' : 'Thinking' });
         const generate = () => model.generate({ system, messages: history, tools, ...(input.signal && { signal: input.signal }) });
         let turn: Awaited<ReturnType<typeof generate>>;
         try {
@@ -692,7 +692,7 @@ export function designBrief(spec: AgentSpec, input: Pick<ArchitectInput, 'types'
  * Spotlight's newAgent, designed by the architect without a conversation (POST /api/agents/design): its last draft,
  * named as Spotlight named it. The first try hands the model what it would look up (designBrief) and offers only
  * propose_agent; the second lets it look around. When neither proposes (or both fail), the agent is what Spotlight gave,
- * on the first model the host has, so the step still has an agent to run.
+ * on the first model the host has, so the step still has an agent to run. A reached usage cap is thrown, not swallowed.
  */
 export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, 'messages' | 'onEvent' | 'draft' | 'only'>): Promise<DraftResult & { designed: boolean }> {
   let last: DraftResult | undefined;
@@ -705,7 +705,10 @@ export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, '
   ];
   for (const attempt of attempts) {
     if (last || input.signal?.aborted) break;
-    await runArchitect({ ...input, ...attempt, onEvent }).catch(() => undefined);
+    // A model that fails gets the fallback below; a reached usage cap is the caller's answer (the route says 429).
+    await runArchitect({ ...input, ...attempt, onEvent }).catch((caught: unknown) => {
+      if (isUsageCapError(caught)) throw caught;
+    });
   }
   if (last) return { ...last, config: { ...last.config, name: spec.name, description: last.config.description || spec.description }, designed: true };
   const model = input.resources ? chooseModel(undefined, input.resources.models) : undefined;

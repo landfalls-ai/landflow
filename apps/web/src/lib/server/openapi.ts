@@ -1767,8 +1767,9 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'MCP',
     id: 'callProjectMcp',
     summary: 'Talk to one project’s MCP server',
+    // B13: the description's key-scope sentence.
     description:
-      'The instance MCP server (`/api/mcp`: build, validate and run workflows) scoped to one project: it lists, reads, changes and runs only that project’s workflows and creates new ones in it. Off while the instance server is off (Settings → MCP). Callers: the instance access token, a Landflow MCP token (one scoped to another project gets 403), an identity provider token, an API key, or the bundled gateway.',
+      'The instance MCP server (`/api/mcp`: build, validate and run workflows) scoped to one project: it lists, reads, changes and runs only that project’s workflows and creates new ones in it. Off while the instance server is off (Settings → MCP). Callers: the instance access token, a Landflow MCP token (one scoped to another project gets 403), an identity provider token, an API key, or the bundled gateway. An API key lists and calls only the tools its scopes cover (`workflows:read` the workflow and node-type reads, `workflows:write` create and update, `run` execute, retry and run a node, `executions:read` executions and the debug reads, `brain:read` the brain reads, `brain_ask` and `my_briefing`, `brain:write` also `brain_suggest` and `record_work`); the same server serves the `morning-briefing` prompt and the `brain://briefing/today`, `brain://briefing/yesterday` and `brain://work/today` resources to a key with `brain:read`.',
     public: true,
     pathParams: { id: 'The project id' },
     body: jsonBody(jsonRpc),
@@ -2077,9 +2078,9 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Second brain',
     id: 'askBrain',
     summary: 'Ask the second brain',
-    description: 'Finds the pages, facts and work the question is about, among what the caller can open, and the brain’s model answers from them with [[type/id]] page links and [n] references to `work`. `about` (<type>/<id>) asks from a page. Without a model `answer` is left out.',
-    body: jsonBody(object({ question: { type: 'string', maxLength: 500 }, about: { type: 'string', description: '<type>/<id> of the page it is asked from' } }, ['question'])),
-    responses: { 200: reply('The answer', object({ question: { type: 'string' }, answer: { type: 'string' }, model: { type: 'string' }, pages: array({ type: 'object' }), facts: array({ type: 'object' }), work: array(workItem), note: { type: 'string' }, about: { type: 'string' } }, ['question', 'pages', 'facts', 'work'])), 400: invalid },
+    description: 'Finds the pages, facts and work the question is about, among what the caller can open, and the brain’s model answers from them with [[type/id]] page links and [n] references to `work`. `about` (<type>/<id>) asks from a page; `history` (the last two turns) makes it a follow-up. Without a model `answer` is left out. With `Accept: text/event-stream` the answer streams instead: `found`, step events, `text.delta`, `text`, then `done` (with `links`, `cited`, `sources`, `model`, `durationMs`, `steps`, tokens and `local`) or `error`. An API key needs the `brain:read` scope (`executions:read` alone no longer reaches it).',
+    body: jsonBody(object({ question: { type: 'string', maxLength: 500 }, about: { type: 'string', description: '<type>/<id> of the page it is asked from' }, history: array(object({ question: { type: 'string' }, answer: { type: 'string' } }, ['question', 'answer'])) }, ['question'])),
+    responses: { 200: reply('The answer', object({ question: { type: 'string' }, answer: { type: 'string' }, links: array(object({ ref: { type: 'string' }, name: { type: 'string' } }, ['ref', 'name'])), cited: array({ type: 'integer' }), model: { type: 'string' }, pages: array({ type: 'object' }), facts: array({ type: 'object' }), work: array(workItem), note: { type: 'string' }, about: { type: 'string' } }, ['question', 'pages', 'facts', 'work'])), 400: invalid },
   });
   // B04: tagging with @ (docs/assistant.md#tagging-with-).
   add('get', '/api/mentions', {

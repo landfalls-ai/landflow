@@ -1,4 +1,5 @@
 'use client';
+import { DevOnly } from '@/lib/client/developer-details';
 /** Agents (Preview): a roster of personas, grouped by team, that use your tools, workflows and other agents. */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
@@ -372,11 +373,13 @@ function AgentCard({ agent, teams, index, onSave, onExport }: { agent: AgentSumm
           )}
         </div>
         <div className="flex items-center justify-between gap-2 border-t border-hair pt-2 text-[11px] text-t3">
-          <span className="min-w-0 truncate">
-            <span className="font-mono text-t2">{agent.model || 'No model'}</span> · {agent.tools} {agent.tools === 1 ? 'tool' : 'tools'} · {agent.skills}{' '}
-            {agent.skills === 1 ? 'skill' : 'skills'}
-          </span>
-          <span className="shrink-0 tabular-nums">
+          <DevOnly>
+            <span className="min-w-0 truncate">
+              <span className="font-mono text-t2">{agent.model || 'No model'}</span> · {agent.tools} {agent.tools === 1 ? 'tool' : 'tools'} · {agent.skills}{' '}
+              {agent.skills === 1 ? 'skill' : 'skills'}
+            </span>
+          </DevOnly>
+          <span className="ml-auto shrink-0 tabular-nums">
             {agent.sessions} {agent.sessions === 1 ? 'session' : 'sessions'} · {timeAgo(agent.updatedAt)}
           </span>
         </div>

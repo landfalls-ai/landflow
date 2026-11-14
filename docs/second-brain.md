@@ -131,8 +131,8 @@ The first tick is 30 s after start.
 
 - **Home → Suggestions**: the open suggestions the viewer can see, best first. Each card is compact: the title, one
   line of why (its first sentence), one button and **⋯**. **Show more** adds the kind, the subject, risk and
-  confidence, the whole why, the evidence, what to expect and the **Changes** (the diff, as in Spotlight). The
-  Brain index uses the same card and can link to Home with **All suggestions**. The buttons:
+  confidence, the whole why, the evidence, what to expect and the **Changes** (the diff, as in Spotlight). What the
+  change leaves out (*Leaves …*) is always shown, so nobody applies without seeing it. The Brain index uses the same card and can link to Home with **All suggestions**. The buttons:
   - **Apply**, which saves through governance; **Create workflow** for a draft; **Mark done** for advice.
   - **Build it** for a missing tool. It records the go-ahead (`proposal.applied`, with the detector), and published
     workflows that start from On Usage Event on `proposal.applied` with **Suggestion From: Missing tool** get the
@@ -147,7 +147,7 @@ The first tick is 30 s after start.
   and the canvas stays visible. Apply here changes the open canvas (one undo), and you save it like any edit. Clicking
   the node name selects the node.
 - **[The Brain page](#the-brain-page)** (`/brain`): the brain as a repository of Markdown files in an editor's workbench,
-  a file per entity, Spotlight to ask it, and what more than one team worked on.
+  a file per entity, Ask to ask it, and what more than one team worked on.
 - **Brain → What Landflow knows** (the gear at the foot of the Brain page's activity bar; it was on Insights, which now
   links to it):
   - the ledger's size, the facts, the model, and when the brain last studied and detected;
@@ -267,16 +267,22 @@ prose and a person keeps the facts. Spotlight asks it questions.
     the summary with its `[[type/id|Name]]` links and `[n]` references, then the work, people, related pages, facts,
     suggestions and mentions. In the Source, a link opens its page and a reference jumps to its work line. **Copy**
     takes the Markdown. The Source is read-only.
-  - **Spotlight** at the bottom of the editor, as in the workflow editor (⌘I): one bar, bubbles with questions about the
-    open file, and the conversation above the bar. With a page open, the question is about that page (the `@` chip)
-    until the chip is removed. Each answer has page links, which open tabs, and its numbered sources, folded.
-  - **Quick open** (⌘P or ⌘K): go to a file by name or path, `>` for commands (open index or log, toggle Source,
-    Problems, Suggestions, run the brain), or send what was typed to Spotlight.
+  - **Ask** (the **Ask** button in the title bar, or ⌘I): the one way to ask the brain. On a desktop it is a 360 px
+    column docked at the right of the editor: the page narrows and nothing overlaps, and a link in an answer opens
+    that page in the editor beside it while the answer stays. With a page open, the question is about that page (the
+    `@` chip) until the chip is removed. The answer streams: first **Found 3 pages · 2 facts · 5 work items** (with
+    the pages as links), then its steps and its words, then the model, time, tokens and cost under it (a local model
+    says "local"). A follow-up ("and since when?") knows the last two turns of the conversation. A source is numbered
+    only when the answer cites it, and a `[n]` that points at no work item is dropped. **New conversation** clears
+    it. On a phone Ask is a bottom sheet; a link closes it to show the page, and the Ask button brings it back with
+    its answers.
+  - **Quick open** (⌘P or ⌘K): go to a file by name or path, or `>` for commands (open index or log, toggle Source,
+    Problems, Suggestions, run the brain). It only finds pages; it does not ask.
   - **Panel** (⌘J): **Problems** (initiatives and customers without an owner, pages quiet for 30 days, summaries behind
     their work) and **Suggestions** with their buttons. **Status bar**: problems, shared pages, open suggestions, pages
     and facts, the last study, the model.
-  - **On a phone**: the side bar is a drawer behind the Files button, with the views at its top; tabs scroll; Spotlight
-    and the status bar stay at the bottom.
+  - **On a phone**: the side bar is a drawer behind the Files button, with the views at its top; tabs scroll; the Ask
+    button stays in the title bar and the status bar at the bottom.
 - **index.md**: **Shared across teams** (customers and initiatives two or more teams worked on in the last 7 days, most
   teams first, with their teams, people and latest items: no other product flags this, and it is what the Company
   Brain is for), **Suggestions**, **Teams this week** and **Needs a person**.
@@ -292,10 +298,13 @@ prose and a person keeps the facts. Spotlight asks it questions.
     is linked on its first mention.
   - **Work** (90 days, numbered), **People** (or **Works with** on a person's page), **Related pages** (the pages named
     in the same work, with how often), **Facts** with **Add a fact**, **Suggestions** and **Mentioned in**.
-- **Ask** (`POST /api/brain/ask`, what Spotlight calls) finds pages by words in names, descriptions, owners and
+- **Ask** (`POST /api/brain/ask`, what the Ask panel calls) finds pages by words in names, descriptions, owners and
   attributes, facts by search (by meaning too when embeddings are on), and work by words and by the pages found; then
   the model answers from those alone, in a few sentences with page links and numbered work. Without a model it returns
-  what it found.
+  what it found. A short follow-up borrows the words of the last question to find its pages. It streams when asked
+  with `Accept: text/event-stream` and is one JSON body otherwise (MCP and older callers). **Ask is metered**: each
+  model call writes an `ai_usage` row with surface `brain` under the asker, so the per-user caps apply and a cap shows
+  as an error in the panel ([observability.md](observability.md)).
 - **Walls.** Everything goes through the reader's scope: a page, a link, a person or a work item from a project the reader
   can't open is not shown, not linked and not sent to the model.
 - Code: `brain/wiki.ts`, `lib/shared/brain-wiki.ts`, `lib/shared/brain-files.ts` (the tree and the Markdown),
@@ -313,7 +322,7 @@ only what the workflow's creator can see. The brain itself writes them and searc
 #### The brain over MCP
 
 What a person's tools send the brain about their work, and the briefing that comes back, are in
-[work-and-briefings.md](work-and-briefings.md); over MCP they arrive in a later wave.
+[work-and-briefings.md](work-and-briefings.md#over-mcp): `record_work`, `my_briefing`, the `morning-briefing` prompt and the `brain://` resources.
 
 The instance MCP server ([reference/api.md](reference/api.md), `POST /api/mcp`) serves the brain, so a coding agent needs
 no hand-built MCP Server Trigger workflow:
@@ -326,8 +335,11 @@ no hand-built MCP Server Trigger workflow:
 | `brain_usage_report` | the usage report (`groupBy`, `kinds`, `days`, `workflowId`) |
 | `check_overlap` | Find Similar for a title and a goal; other projects as the projection above (`includeOthers`, default true) |
 | `brain_suggest` | post a suggestion (source `analyst`, like `POST /api/proposals`) |
+| `brain_ask` | ask the brain a question (`question`, `about`), like `POST /api/brain/ask` |
+| `my_briefing` | the caller's own briefing (`day`) |
+| `record_work` | save the caller's own work events, private |
 
-Each tool sees what the token's user sees (an instance access token sees everything), cut down to the project on a
+An API key sees only the tools its scopes cover (`brain:read`, `brain:write`; [features/ai.md](features/ai.md#mcp)). Each tool sees what the token's user sees (an instance access token sees everything), cut down to the project on a
 project server (`/api/mcp/projects/<id>`, a project token), where `brain_suggest` must name a workflow or agent of it.
 A workflow the user can't open is "not found". `brain_suggest` needs edit access to the workflow or agent. Code:
 `mcp/brain-tools.ts`.
@@ -453,10 +465,10 @@ In its chat (Test agent), the analyst draws differently from a plain chat:
 - **What it reads**: chips above the chat, one per source its tools read (Runs, Usage & cost, Facts, Suggestions, and
   Team notebook when it has a notebook tool). The analyst is recognised by its tools: a Landflow Usage tool named
   `usage_report`.
-- **While it looks**: the tool calls fold into one line, "Looking across N sources…" (N = the sources it has called in
-  this turn), with **Show steps** for the raw calls. A call waiting for your approval is always shown in full.
+- **While it looks**: the tool calls fold into the chat kit's activity line ("N steps · time"), which opens into the
+  steps and ends with **Open trace**. A call waiting for your approval is always shown in full.
 - **The answer card**: when the turn is done and a `usage_report` with at least two groups came back, one card with the
-  period and scope ("This week · Tech Review Workflow", the scope from `workflow_knowledge`), the model's answer, a small
+  period and scope ("This week · Tech Review Workflow", the scope from `workflow_knowledge`), the model's answer, the reply footer (time, steps, tokens, cost), a small
   chart (days as columns in time order; workflows, nodes or models as one labelled bar each, biggest first, with its
   value), and up to two of the model's own bullet lines as drivers. The bars are cost, else failures, else event
   counts, **taken from the tool results** (`lib/shared/analyst-chart.ts`), never parsed from the model's text; a dashed
@@ -475,8 +487,9 @@ other flows react to what was decided.
 
 - **Buttons.** Suggest Improvement's **Actions** (or `actions` in `POST /api/proposals`) add up to four buttons:
   `{ id, label, style?: primary|default, confirm? }`. An id is lowercase letters, digits, `-` or `_` (up to 32) and
-  can't be `applied`, `dismissed`, `snoozed` or `action`. `confirm` asks first. Both cards (Home and the canvas) show
-  them next to Apply; Dismiss and Snooze stay.
+  can't be `applied`, `dismissed`, `snoozed` or `action`. `confirm` asks first. Every card (Home, the Brain and the
+  canvas) keeps one button: Apply, with the flow's buttons under **⋯** beside Dismiss and Snooze; for advice that has
+  buttons of its own, the first of them takes Apply's place (drawn as the primary button) and the rest go under **⋯**.
 - **Taking one.** `POST /api/proposals/:id/act { action, note? }` (edit access, like apply) saves
   `decision: { action, label, by, at, note }` on the suggestion, marks it applied (so effect measurement and quieting
   count it as applied) and starts the listening flows. It changes nothing else: what a button means is up to the flow.

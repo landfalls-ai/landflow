@@ -1,7 +1,7 @@
 /**
  * One chat message to the Agent architect (docs/agents.md#agent-architect). The reply streams as SSE, one event per
- * step: `step.start`, `text`, `tool` (timed activity), `draft` (a whole agent to review), then `done`, or `error`. The architect proposes
- * agents; creating one is POST /api/agents/import with the draft.
+ * step: `step.start`, `text`, `tool` (timed activity), `draft` (a whole agent to review), then `done`, or `error`. The
+ * architect proposes agents; creating one is POST /api/agents/import with the draft.
  */
 import { z } from 'zod';
 import { agentResources } from '@/lib/server/assistant/agent-resources';

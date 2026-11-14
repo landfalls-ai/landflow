@@ -1,5 +1,5 @@
 /**
- * The Platform analyst's chat in the new look (docs/second-brain.md#the-analyst-agent): which sources it can read, how many
+ * The Platform analyst's chat (docs/second-brain.md#the-analyst-agent): which sources it can read, how many
  * it has looked across in a turn, and the chart of its answer. The numbers come from the results of the tools the analyst
  * really called (lib/server/brain/analyst.ts: `usage_report`, `search_facts`, `workflow_knowledge`, `open_suggestions`),
  * never from the model's prose; the prose only supplies the answer sentence and its drivers.

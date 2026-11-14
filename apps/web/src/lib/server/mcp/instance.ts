@@ -15,7 +15,7 @@ import { getUser, type UserRecord } from '../auth/users';
 import { looksLikeDebugToken, verifyDebugToken, type DebugTokenRecord } from '../auth/debug-tokens';
 import { recordAudit } from '../audit';
 import type { Actor } from '../projects/access';
-import type { Role } from '../../shared/auth';
+import type { ApiKeyScope, Role } from '../../shared/auth';
 
 interface McpAccessFile {
   enabled: boolean;
@@ -78,7 +78,7 @@ export function verifyMcpToken(token: string | undefined): boolean {
 /** Who is calling the instance server: the instance (its access token: no per-user checks) or a Landflow user (their permissions apply). */
 export type InstanceCaller =
   | { kind: 'instance'; scope?: McpScope }
-  | { kind: 'user'; actor: Actor; user: UserRecord; via: string; scope?: McpScope }
+  | { kind: 'user'; actor: Actor; user: UserRecord; via: string; scope?: McpScope; /** An API key's scopes: only the tools they cover (lib/shared/mcp.ts TOOL_SCOPES). */ keyScopes?: ApiKeyScope[] }
   /** A debug token: no user, no project scope; the server is the three-tool one of ./debug-token-server.ts. */
   | { kind: 'debug'; token: string; record: DebugTokenRecord };
 
@@ -107,7 +107,7 @@ export async function authenticateInstanceRequest(request: Request, projectId?: 
     if (!caller.scopes.includes('tools:call')) return jsonRpcError(403, -32003, 'This MCP token has no tools:call scope');
     const scope = scopeOf(projectId, caller.projectId);
     if (scope instanceof Response) return scope;
-    return { kind: 'user', actor: { id: user.id, role: user.role as Role }, user, via: `${caller.kind}:${caller.subject}`, ...(scope && { scope }) };
+    return { kind: 'user', actor: { id: user.id, role: user.role as Role }, user, via: `${caller.kind}:${caller.subject}`, ...(scope && { scope }), ...(caller.keyScopes && { keyScopes: caller.keyScopes }) };
   };
   if (request.headers.get(GATEWAY_SECRET_HEADER) !== null) {
     try {

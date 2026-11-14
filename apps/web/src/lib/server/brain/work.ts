@@ -21,6 +21,8 @@ export class BrainOffError extends HttpError {
 }
 
 export const MAX_WORK_EVENTS = 50;
+/** How far ahead of the host's clock an event's `occurredAt` may be. */
+const FUTURE_SLACK_MS = 86_400_000;
 
 export interface SavedWork {
   sourceId: string;
@@ -34,7 +36,7 @@ export interface RejectedWork {
 }
 
 /** The fields every work kind declares (deploy/brain/work-kinds.json holds the same list for the declare script). */
-const WORK_FIELDS: UsageKindField[] = [
+export const WORK_FIELDS: UsageKindField[] = [
   { name: 'source', type: 'string', required: true, description: 'The tool the work was done in: claude-code, landflow-cli, mcp…' },
   { name: 'sourceId', type: 'string', required: true, description: 'Stable id of this item in its tool (sending it again updates it)' },
   { name: 'url', type: 'string', description: 'Link to the item' },
@@ -60,7 +62,7 @@ const KIND_NOTES: Record<string, string> = {
 };
 
 /** The kinds the route may declare itself (the `kinds` of deploy/brain/work-kinds.json). Any other needs an admin to declare it. */
-const DECLARABLE_KINDS = new Set(['work.discussion', 'work.decision', 'work.bug_reported', 'work.release', 'work.deal_won', 'work.deal_moved', 'work.meeting_scheduled', 'work.meeting_held', 'work.meeting_cancelled', 'work.meeting_notes', 'work.action_item', 'work.doc_edited', 'work.ticket_moved', 'work.feature_request', 'work.pr_opened', 'work.pr_merged', 'work.self_update', 'work.session']);
+export const DECLARABLE_KINDS = new Set(['work.discussion', 'work.decision', 'work.bug_reported', 'work.release', 'work.deal_won', 'work.deal_moved', 'work.meeting_scheduled', 'work.meeting_held', 'work.meeting_cancelled', 'work.meeting_notes', 'work.action_item', 'work.doc_edited', 'work.ticket_moved', 'work.feature_request', 'work.pr_opened', 'work.pr_merged', 'work.self_update', 'work.session']);
 
 /** Declare a listed work kind the first time a tool sends it (the Record Event declare path, usage/kinds.ts). */
 function ensureKind(kind: string, actor: Actor) {
@@ -88,6 +90,11 @@ export function recordWork(actor: Actor, events: unknown[]): { saved: SavedWork[
     const event: WorkEventInput = checked.value;
     if (event.visibility && event.visibility !== 'private') {
       rejected.push({ sourceId: event.sourceId, reason: 'Sharing comes later: send it as private for now' });
+      continue;
+    }
+    // A date far ahead would be a row no briefing shows and the prune never reaches: a day of clock skew is the most.
+    if (Date.parse(event.occurredAt) > Date.now() + FUTURE_SLACK_MS) {
+      rejected.push({ sourceId: event.sourceId, reason: 'occurredAt is more than a day in the future' });
       continue;
     }
     if (!DECLARABLE_KINDS.has(event.kind) && !getKind(event.kind)) {

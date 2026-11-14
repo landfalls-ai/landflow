@@ -1,27 +1,24 @@
 'use client';
 /**
- * The Platform analyst's chat in the new look (docs/second-brain.md#the-analyst-agent): chips for what it can read, one
- * "Looking across N sources…" line in place of the scrolling tool calls (the calls stay behind "Show steps"), and its
- * answer as a card with a chart drawn from the tool results it really fetched (lib/shared/analyst-chart.ts).
+ * The Platform analyst's chat (docs/second-brain.md#the-analyst-agent): chips for what it can read, one
+ * kit's activity line in place of the scrolling tool calls (the calls stay behind it), and its answer as a card with a chart drawn from the tool results it really fetched (lib/shared/analyst-chart.ts).
  */
-import { useState } from 'react';
 import Link from 'next/link';
-import { ChevronRight, ListTree, Wrench } from 'lucide-react';
 import { Button } from '../ui/button';
-import { cn } from '@/lib/utils';
+import { ActivityTrace } from '../ui/activity-trace';
+import { ReplyMeta, type ReplyInfo } from '../ui/chat';
 import {
   ANALYST_SOURCE_LABEL,
   analystChart,
   chartHeading,
   formatMetric,
   runsHref,
-  sourcesOf,
   splitAnswer,
   type AnalystChart,
   type AnalystSource,
 } from '@/lib/shared/analyst-chart';
 import type { TimelineEntry } from '@/lib/shared/agents';
-import { TimelineView, type ToolEntry } from './timeline';
+import { replyInfo, TimelineView, traceOf, type ToolEntry } from './timeline';
 
 export const SUGGEST_FIX_MESSAGE =
   'Call suggest_improvement with one concrete fix for what you just found, with the numbers in why. It goes to the suggestions inbox for a person to apply or dismiss.';
@@ -104,7 +101,7 @@ export function AnalystChartSvg({ chart }: { chart: AnalystChart }) {
 }
 
 /** The answer as one card: period and scope, the sentence, the chart, up to two drivers and the next steps. */
-export function AnswerCard({ chart, text, onSuggest, busy }: { chart: AnalystChart; text: string; onSuggest: () => void; busy: boolean }) {
+export function AnswerCard({ chart, text, onSuggest, busy, info }: { chart: AnalystChart; text: string; onSuggest: () => void; busy: boolean; info?: ReplyInfo }) {
   const { answer, drivers } = splitAnswer(text);
   return (
     <div className="animate-in rounded-xl border border-hair bg-wl p-3">
@@ -131,42 +128,14 @@ export function AnswerCard({ chart, text, onSuggest, busy }: { chart: AnalystCha
           Suggest a fix
         </Button>
       </div>
-    </div>
-  );
-}
-
-type Segment = { kind: 'tools'; entries: ToolEntry[]; turn: ToolEntry[] } | { kind: 'other'; entries: TimelineEntry[] };
-
-/** The tool calls of a turn become one line; everything else is shown as it is. */
-function LookingLine({ group, turn, live, children }: { group: ToolEntry[]; turn: ToolEntry[]; live: boolean; children: React.ReactNode }) {
-  const [open, setOpen] = useState(false);
-  const n = sourcesOf(turn.map((e) => e.tool)).length;
-  const failed = group.some((e) => e.status === 'error');
-  return (
-    <div>
-      <div className="flex items-center gap-2">
-        <span className="grid size-[26px] shrink-0 place-items-center rounded-full border border-acbd bg-acdim text-ac">
-          <Wrench className="size-3.5" />
-        </span>
-        <span
-          className={cn('min-w-0 flex-1 text-[13px]', live ? 'animate-pulse-soft text-t1' : 'text-t2')}
-        >
-          {live ? `Looking across ${n || 1} source${n === 1 ? '' : 's'}…` : `Looked across ${n || 1} source${n === 1 ? '' : 's'}${failed ? ' (one failed)' : ''}`}
-        </span>
-        <button
-          onClick={() => setOpen(!open)}
-          aria-expanded={open}
-          className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-t3 hover:bg-acdim hover:text-t1"
-        >
-          <ChevronRight className={cn('size-3 transition-transform', open && 'rotate-90')} />
-          <ListTree className="size-3" />
-          {open ? 'Hide steps' : 'Show steps'}
-        </button>
+      <div className="mt-1.5">
+        <ReplyMeta info={info} copy={text} />
       </div>
-      {open && <div className="mt-2">{children}</div>}
     </div>
   );
 }
+
+type Segment = { kind: 'tools'; entries: ToolEntry[] } | { kind: 'other'; entries: TimelineEntry[] };
 
 export function AnalystTimeline({
   entries,
@@ -175,6 +144,7 @@ export function AnalystTimeline({
   onDecide,
   deciding,
   onSuggest,
+  traceUrl,
 }: {
   entries: TimelineEntry[];
   running: boolean;
@@ -182,6 +152,8 @@ export function AnalystTimeline({
   onDecide: (callId: string, approved: boolean) => void;
   deciding: boolean;
   onSuggest: () => void;
+  /** The last activity line's Open trace link. */
+  traceUrl?: string;
 }) {
   // The last turn: what came after the last thing the person said.
   let turnStart = 0;
@@ -198,17 +170,13 @@ export function AnalystTimeline({
 
   // Segments: runs of tool calls (one line each) between the other entries.
   const segments: Segment[] = [];
-  let turnTools: ToolEntry[] = [];
   entries.forEach((e, i) => {
     if (i === cardAt) return;
-    if (e.type === 'user') turnTools = [];
     if (e.type === 'tool') {
-      turnTools = [...turnTools, e];
       const prev = segments[segments.length - 1];
       if (prev?.kind === 'tools') {
         prev.entries.push(e);
-        prev.turn = turnTools;
-      } else segments.push({ kind: 'tools', entries: [e], turn: turnTools });
+      } else segments.push({ kind: 'tools', entries: [e] });
     } else {
       const prev = segments[segments.length - 1];
       if (prev?.kind === 'other') prev.entries.push(e);
@@ -222,20 +190,21 @@ export function AnalystTimeline({
       text={(entries[cardAt] as Extract<TimelineEntry, { type: 'assistant' }>).text}
       onSuggest={onSuggest}
       busy={running}
+      info={replyInfo(entries, cardAt)}
     />
   );
   return (
     <div className="space-y-3">
       {segments.map((seg, i) => {
         if (seg.kind === 'other') return <TimelineView key={i} entries={seg.entries} childHref={childHref} onDecide={onDecide} deciding={deciding} />;
-        const view = <TimelineView entries={seg.entries} childHref={childHref} onDecide={onDecide} deciding={deciding} />;
         // A call waiting for approval is shown in full: the person has to decide.
-        if (seg.entries.some((e) => e.status === 'awaiting_approval')) return <div key={i}>{view}</div>;
+        if (seg.entries.some((e) => e.status === 'awaiting_approval')) return <TimelineView key={i} entries={seg.entries} childHref={childHref} onDecide={onDecide} deciding={deciding} />;
         const live = running && i === segments.length - 1;
+        const { steps, durationMs } = traceOf(seg.entries);
         return (
-          <LookingLine key={i} group={seg.entries} turn={seg.turn} live={live || seg.entries.some((e) => e.status === 'running')}>
-            {view}
-          </LookingLine>
+          <div key={i} className="pl-7">
+            <ActivityTrace steps={steps} live={live || seg.entries.some((e) => e.status === 'running')} durationMs={durationMs} {...(i === segments.length - 1 && traceUrl && { traceUrl })} />
+          </div>
         );
       })}
       {card}

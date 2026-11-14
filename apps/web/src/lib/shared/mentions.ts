@@ -54,6 +54,9 @@ export const MENTION_NOUNS: Record<MentionType, string> = {
   credential: 'credential',
 };
 
+/** What a person is called in the picker and in their digest: their name, or the part of their email before the @. */
+export const personName = (user: { name?: string; email: string }): string => user.name?.trim() || user.email.split('@')[0]!;
+
 export const isMentionType = (value: unknown): value is MentionType => typeof value === 'string' && (MENTION_TYPES as readonly string[]).includes(value);
 
 export interface MentionGroup {

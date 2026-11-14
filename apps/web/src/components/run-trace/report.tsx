@@ -1,5 +1,6 @@
 'use client';
 /** The Report tab: the generic run report, plain facts from the model. */
+import { DevOnly } from '@/lib/client/developer-details';
 import type { ReactNode } from 'react';
 import { Copy } from 'lucide-react';
 import { toast } from 'sonner';
@@ -308,10 +309,12 @@ export function Report({ model, report, open, profile, onProfile }: { model: Run
               <Item key={a.actor.id} mark={a.priced ? '$' : '·'} onOpen={() => open({ kind: 'actor', id: a.actor.id })}>
                 <b>{a.actor.name}</b>
                 {a.workMs ? ` · ${fmtMs(a.workMs)}` : ''}
-                <Small>
-                  <ModelMark connections={a.actor.connections} model={a.models[0]} />
-                  {spendLine(a)}
-                </Small>
+                <DevOnly>
+                  <Small>
+                    <ModelMark connections={a.actor.connections} model={a.models[0]} />
+                    {spendLine(a)}
+                  </Small>
+                </DevOnly>
               </Item>
             ))}
           </List>

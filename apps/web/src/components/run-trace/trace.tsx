@@ -1,5 +1,6 @@
 'use client';
 /** The Trace tab: the timed span tree down to remote steps, collapsible, with a duration bar per row. */
+import { useDeveloperDetails } from '@/lib/client/developer-details';
 import { useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -20,16 +21,17 @@ const OP: Record<string, string> = {
   model: 'chat',
 };
 
-function nameOf(s: RunSpan) {
+function nameOf(s: RunSpan, developerDetails: boolean) {
   if (s.kind === 'delegate' || s.kind === 'handoff') return `${s.caller ? `${s.caller.name} → ` : ''}${s.actor.name}`;
   if (s.kind === 'wait') return `waits for ${s.actor.name}`;
-  if (s.kind === 'model' && s.usage) return `${s.name} · ${s.usage.inputTokens.toLocaleString()} in · ${s.usage.outputTokens.toLocaleString()} out`;
+  if (developerDetails && s.kind === 'model' && s.usage) return `${s.name} · ${s.usage.inputTokens.toLocaleString()} in · ${s.usage.outputTokens.toLocaleString()} out`;
   return s.name;
 }
 
 export function Trace({ model, open }: { model: RunModel; open: (o: Open) => void }) {
   // The user's toggles; the rest opens by default for agents and small branches.
   const [toggled, setToggled] = useState<Record<string, boolean>>({});
+  const developerDetails = useDeveloperDetails();
   const run = model.run;
   if (!run) return <EmptyState compact title="Nothing recorded yet" hint="The trace appears as the run starts." />;
   const total = Math.max(1, model.t1 - model.t0);
@@ -71,7 +73,7 @@ export function Trace({ model, open }: { model: RunModel; open: (o: Open) => voi
           <button type="button" onClick={() => open({ kind: 'span', id: s.id })} className="min-w-0 flex-1 py-2 pr-3 text-left">
             <div className="flex items-center gap-2">
               <span className="size-2 shrink-0 rounded-full" style={{ background: color }} />
-              <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-t1">{cut(nameOf(s), 80)}</span>
+              <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-t1">{cut(nameOf(s, developerDetails), 80)}</span>
               <span className={cn('shrink-0 font-mono text-[11px] tabular-nums', running ? 'text-warn' : 'text-t3')}>
                 {s.ms < 500 && !running ? clock(s.startedAt) : `${fmtMs(s.ms)}${running ? ' …' : ''}`}
               </span>
