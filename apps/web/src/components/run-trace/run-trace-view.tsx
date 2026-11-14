@@ -1,12 +1,14 @@
 'use client';
 /**
- * Run Trace of one execution: header (live or finished, who is working now, reported vs checked), the Needs you strip,
- * the Story | Trace | Team | Report tabs, a time slider to replay the run, and the detail of a tapped row.
+ * Run Trace of one execution: header (live or finished, who is working now), the Needs you strip,
+ * the Story | Trace | Team | Artifacts tabs (each only when it has something; the Run report is the Story's summary), a
+ * time slider to replay a longer run with a team, and the detail of a tapped row.
  * Phone first: one column; `/runs/:id` shows it full screen, the execution page embeds it.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Hourglass, Pause, Play, TriangleAlert } from 'lucide-react';
+import { timeAgo } from '@/lib/client/format';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { decideGate, decideToolApprovals, resolveCheck, useRunJournal, type RunJournal } from '@/lib/client/run-trace';
@@ -19,8 +21,8 @@ import type { RunChanges } from '@/lib/shared/run-changes';
 import { foldChanges } from '@/lib/shared/run-changes';
 import { githubOf } from '@/lib/shared/run-repo';
 import { lineCommentsNote } from '@/lib/shared/line-comments';
-import { buildRunReport, checksLine, type RunReport } from '@/lib/shared/run-report';
-import { cut, fmtMs, foldJournal, preview, quietMs, type NeedsYouItem, type RunCheckItem, type RunModel } from '@/lib/shared/run-trace-model';
+import { buildRunReport, type RunReport } from '@/lib/shared/run-report';
+import { cut, fmtMs, foldJournal, quietMs, type NeedsYouItem, type RunCheckItem, type RunModel } from '@/lib/shared/run-trace-model';
 import { turnEntryKey } from '@/lib/shared/run-headlines';
 import { RUN_STATE, useNow, type RunState } from '../run/run-status';
 import { Badge, executionTone } from '../ui/badge';
@@ -31,8 +33,8 @@ import { EmptyState } from '../ui/empty-state';
 import { Textarea } from '../ui/inputs';
 import { Artifacts } from './artifacts';
 import { LineCommentsProvider, useLineComments } from './line-comments';
-import { Card, ToneBadge, clock } from './parts';
-import { Report } from './report';
+import { Card, clock } from './parts';
+import { ReportDetails, StorySummary, hasDetails } from './report';
 import { MembersAtWork, RerunOfBadge, RunControlsProvider } from './run-controls';
 import { RunTimelineCard } from './run-timeline-card';
 import { TakeOver } from '../editor/team-pause';
@@ -40,22 +42,16 @@ import { DetailSheet, type Open } from './sheet';
 import { Story } from './story';
 import { Team } from './team';
 import { Trace } from './trace';
+import { TAB_LABELS, showScrubber, visibleTabs, type Tab } from './run-trace-tabs';
 
-const TABS = [
-  ['story', 'Story'],
-  ['trace', 'Trace'],
-  ['team', 'Team'],
-  ['artifacts', 'Artifacts'],
-  ['report', 'Report'],
-] as const;
-type Tab = (typeof TABS)[number][0];
+const TAB_IDS = Object.keys(TAB_LABELS) as Tab[];
 const TAB_KEY = 'landflow-run-trace-tab';
 const QUIET_MS = 5 * 60_000;
 
 function readTab(): Tab {
   try {
     const v = localStorage.getItem(TAB_KEY);
-    return TABS.some(([id]) => id === v) ? (v as Tab) : 'story';
+    return TAB_IDS.includes(v as Tab) ? (v as Tab) : 'story';
   } catch {
     return 'story';
   }
@@ -66,9 +62,8 @@ export function hasAgentSpans(model: RunModel) {
   return model.order.some((s) => s.kind === 'agent' || s.kind === 'delegate' || s.kind === 'handoff');
 }
 
-const VERDICT_TONE = { pass: 'ok', warn: 'warn', fail: 'bad' } as const;
-
-function Head({ model, report, now, replay }: { model: RunModel; report?: RunReport; now: number; replay: boolean }) {
+/** The status once: what it is, how long it took and when it began; who is working now follows while it goes. */
+export function Head({ model, now, replay }: { model: RunModel; now: number; replay: boolean }) {
   const quiet = !replay ? quietMs(model, now) : 0;
   const working = model.working.slice(-2);
   const waiting = model.status === 'waiting' || model.needsYou.some((n) => n.kind === 'wait');
@@ -87,6 +82,7 @@ function Head({ model, report, now, replay }: { model: RunModel; report?: RunRep
       ) : (
         <Badge tone={executionTone(model.status as RunState)}>
           {RUN_STATE[model.status as RunState]?.label ?? model.status} · {fmtMs(model.t1 - model.t0)}
+          {model.startedAt && ` · ${timeAgo(model.startedAt)}`}
         </Badge>
       )}
       {quiet >= QUIET_MS && model.live && (
@@ -101,26 +97,23 @@ function Head({ model, report, now, replay }: { model: RunModel; report?: RunRep
           </span>
         </Badge>
       ))}
-      {!model.live && !waiting && !model.empty && (
-        <>
-          {model.outcome.reported && (
-            <Badge tone="muted" className="max-w-full">
-              <span className="truncate">Reported: {preview(model.outcome.reported.text, 40)}</span>
-            </Badge>
-          )}
-          {report && (
-            <ToneBadge tone={VERDICT_TONE[report.verdict]}>
-              {report.label} · {checksLine(report)}
-            </ToneBadge>
-          )}
-        </>
-      )}
       {model.run?.attrs?.rebuilt === true && (
         <Badge tone="muted" title="This run was recorded before the Run trace: its trace was rebuilt from the run data. Progress notes, artifacts, checks and decisions were not kept.">
           Rebuilt from the run data
         </Badge>
       )}
     </div>
+  );
+}
+
+/** The facts behind the Story's summary, folded away: the checks, claims and who called whom. */
+function StoryFacts({ model, report, open }: { model: RunModel; report?: RunReport; open: (o: Open) => void }) {
+  if (!hasDetails(model, report)) return null;
+  return (
+    <details className="mt-3 rounded-2xl border border-hair bg-sf px-3.5 py-2 [&[open]>summary]:mb-2">
+      <summary className="cursor-pointer select-none text-[13px] font-semibold text-t1">The report in full</summary>
+      <ReportDetails model={model} report={report} open={open} />
+    </details>
   );
 }
 
@@ -205,7 +198,7 @@ function NeedsYou({
           <ConfirmCard key={`w${n.spanId}`} executionId={executionId} since={n.since} request={n.attrs.confirm} nodeName={String(n.attrs.nodeName ?? n.actor.name)} onDecided={onDecided} open={() => open({ kind: 'span', id: n.spanId })} />
         ) : // A tool approval is a decision card with the member's reasons and the evidence it looked at.
         n.kind === 'wait' && n.attrs.wait === 'approval' ? (
-          <ApprovalCard key={`w${n.spanId}`} wait={n} model={model} executionId={executionId} executionHref={executionHref} changes={changes} profile={profile} open={open} onTab={(tab, member) => (member && tab === 'team' ? open({ kind: 'actor', id: model.actors.find((a) => a.actor.name.trim().toLowerCase() === member.trim().toLowerCase())?.actor.id ?? '' }) : onTab(tab))} onDecided={onDecided} />
+          <ApprovalCard key={`w${n.spanId}`} wait={n} model={model} executionId={executionId} executionHref={executionHref} changes={changes} profile={profile} open={open} onTab={(tab, member) => (member && tab === 'team' ? open({ kind: 'actor', id: model.actors.find((a) => a.actor.name.trim().toLowerCase() === member.trim().toLowerCase())?.actor.id ?? '' }) : onTab(tab === 'report' ? 'story' : tab))} onDecided={onDecided} />
         ) : n.kind === 'wait' ? (
           <Card key={`w${n.spanId}`} tone="warn" className="bg-warndim">
             <div className="text-[13px] text-t1">
@@ -373,7 +366,8 @@ function TraceBody({
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const asked = params.get('tab');
-    setTabState(asked && TABS.some(([id]) => id === asked) ? (asked as Tab) : readTab());
+    // ?tab=report is the Story now.
+    setTabState(asked === 'report' ? 'story' : asked && TAB_IDS.includes(asked as Tab) ? (asked as Tab) : readTab());
     const member = params.get('member');
     // ?tab=story&member=Developer&turn=2 (a ribbon segment): the Story at that turn, not the member's sheet.
     const turn = Number(params.get('turn'));
@@ -430,8 +424,9 @@ function TraceBody({
   const seen = useMemo(() => (replay ? events.filter((e) => Date.parse(e.at) <= (cursor as number)) : events), [events, replay, cursor]);
   const changes = useMemo(() => foldChanges(seen), [seen]);
   const github = useMemo(() => githubOf(seen), [seen]);
+  const allChanges = useMemo(() => foldChanges(events), [events]);
 
-  // The Run report's checks, live, with the run's profile or the one picked on the Report tab: the header's verdict and the tab.
+  // The Run report's checks, live, with the run's profile or the one picked in the Story's summary.
   const [profileId, setProfileId] = useState<keyof typeof RUN_PROFILES>();
   const report = useMemo(
     () => (model.empty ? undefined : buildRunReport(model, profileId ? RUN_PROFILES[profileId] : resolveRunProfile(model.run?.attrs.profile), { changes })),
@@ -502,89 +497,104 @@ function TraceBody({
   const needs = replay ? [] : model.needsYou.filter((n) => n.kind !== 'check' || !settled.has(n.check.id));
   const span = Math.max(1, (full.live ? now : full.t1) - full.t0);
   const at = replay ? (cursor as number) : full.live ? now : full.t1;
+  // A tab shows only with something in it; one that is gone (an old link, the saved tab) falls back to the Story.
+  // Decided from the whole run, not the replay cut, so a replay does not make tabs vanish.
+  const tabs = visibleTabs(full, allChanges);
+  const current: Tab = tabs.includes(tab) ? tab : 'story';
+  // A finished run's line and steps are the Story's (its Re-run from here too): the card above the tabs is for a run going on or waiting.
+  const cardAbove = model.live || model.status === 'waiting';
+  const scrubber = showScrubber(full) || replay;
 
   return (
     <div className={cn('mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 pb-0 pt-3', className)}>
       <div className="flex flex-col gap-1.5">
         <h2 className="break-words text-[16px] font-semibold leading-tight text-t1">{model.run?.name ?? 'Run'}</h2>
-        <Head model={model} report={report} now={now} replay={replay} />
+        <Head model={model} now={now} replay={replay} />
       </div>
 
-      <RunTimelineCard model={model} onStory={() => setTab('story')} />
+      {cardAbove && <RunTimelineCard model={model} onStory={() => setTab('story')} />}
 
       {!replay && <MembersAtWork executionId={executionId} members={working.members} onChanged={() => { working.refresh(); refresh(); }} />}
 
       <NeedsYou items={needs} executionId={executionId} executionHref={executionHref} open={open} onResolve={onResolve} busy={busy} onDecided={refresh} model={model} changes={changes} profile={profileId ? RUN_PROFILES[profileId] : resolveRunProfile(model.run?.attrs.profile)} onTab={setTab} />
 
-      <div role="tablist" aria-label="Run views" className="grid grid-cols-5 gap-0.5 rounded-full border border-hair bg-sf2 p-0.5">
-        {TABS.map(([id, label]) => (
+      <div role="tablist" aria-label="Run views" className="grid gap-0.5 rounded-full border border-hair bg-sf2 p-0.5" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
+        {tabs.map((id) => (
           <button
             key={id}
             role="tab"
             id={`rt-tab-${id}`}
-            aria-selected={tab === id}
+            aria-selected={current === id}
             aria-controls="rt-panel"
             onClick={() => setTab(id)}
             className={cn(
               'h-9 rounded-full text-[13px] text-t2 transition-all duration-200 hover:text-t1',
-              tab === id && 'bg-sf font-semibold text-t1 shadow-[0_1px_3px_rgba(0,0,0,0.08),0_0_0_1px_var(--hair)]',
+              current === id && 'bg-sf font-semibold text-t1 shadow-[0_1px_3px_rgba(0,0,0,0.08),0_0_0_1px_var(--hair)]',
             )}
           >
-            {label}
+            {TAB_LABELS[id]}
           </button>
         ))}
       </div>
 
-      <div role="tabpanel" id="rt-panel" aria-labelledby={`rt-tab-${tab}`} className="min-w-0">
-        {tab === 'story' && <Story model={model} open={open} />}
-        {tab === 'trace' && <Trace model={model} open={open} />}
-        {tab === 'team' && <Team model={model} open={open} />}
-        {tab === 'artifacts' && <Artifacts executionId={executionId} model={model} changes={changes} repo={github} open={open} replay={replay} />}
-        {tab === 'report' && <Report model={model} report={report} open={open} profile={profileId} onProfile={(id) => setProfileId(id as keyof typeof RUN_PROFILES | undefined)} />}
+      <div role="tabpanel" id="rt-panel" aria-labelledby={`rt-tab-${current}`} className="min-w-0">
+        {current === 'story' && (
+          <Story
+            model={model}
+            open={open}
+            top={<StorySummary model={model} report={report} changes={changes} open={open} profile={profileId} onProfile={(id) => setProfileId(id as keyof typeof RUN_PROFILES | undefined)} />}
+            bottom={<StoryFacts model={model} report={report} open={open} />}
+          />
+        )}
+        {current === 'trace' && <Trace model={model} open={open} />}
+        {current === 'team' && <Team model={model} open={open} />}
+        {current === 'artifacts' && <Artifacts executionId={executionId} model={model} changes={changes} repo={github} open={open} replay={replay} />}
       </div>
 
       {/* The time slider stays at the bottom of the scrolling area. */}
-      <div className="sticky bottom-0 z-30 -mx-4 mt-2 border-t border-hair bg-bg/95 px-4 pb-[max(10px,env(safe-area-inset-bottom))] pt-2 backdrop-blur">
-        <div className="mx-auto flex max-w-3xl items-center gap-3">
-          <button
-            type="button"
-            onClick={() => {
-              if (!playing && !replay) setCursor(full.t0);
-              setPlaying(!playing);
-            }}
-            className="grid size-9 shrink-0 place-items-center rounded-full border border-bd text-t1 hover:border-ac"
-            aria-label={playing ? 'Pause the replay' : 'Replay the run'}
-          >
-            {playing ? <Pause className="size-4" /> : <Play className="size-4" fill="currentColor" />}
-          </button>
-          <input
-            type="range"
-            min={0}
-            max={1000}
-            value={Math.round(((at - full.t0) / span) * 1000)}
-            onChange={(e) => {
-              setPlaying(false);
-              const v = Number(e.target.value);
-              setCursor(v >= 995 ? undefined : full.t0 + (v / 1000) * span);
-            }}
-            aria-label="Move through the run"
-            aria-valuetext={`${clock(at)}`}
-            className="h-9 min-w-0 flex-1 accent-[var(--ac)]"
-          />
-          <button
-            type="button"
-            onClick={() => {
-              setPlaying(false);
-              setCursor(undefined);
-            }}
-            disabled={!replay}
-            className="w-[72px] shrink-0 rounded-md text-right font-mono text-[12px] tabular-nums text-t2 enabled:underline enabled:decoration-dotted enabled:hover:text-t1"
-            aria-label={replay ? 'Back to the end of the run' : 'Time of the run'}
-          >
-            {replay ? clock(at) : model.live ? 'live' : clock(at)}
-          </button>
+      {scrubber && (
+        <div className="sticky bottom-0 z-30 -mx-4 mt-2 border-t border-hair bg-bg/95 px-4 pb-[max(10px,env(safe-area-inset-bottom))] pt-2 backdrop-blur">
+          <div className="mx-auto flex max-w-3xl items-center gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                if (!playing && !replay) setCursor(full.t0);
+                setPlaying(!playing);
+              }}
+              className="grid size-9 shrink-0 place-items-center rounded-full border border-bd text-t1 hover:border-ac"
+              aria-label={playing ? 'Pause the replay' : 'Replay the run'}
+            >
+              {playing ? <Pause className="size-4" /> : <Play className="size-4" fill="currentColor" />}
+            </button>
+            <input
+              type="range"
+              min={0}
+              max={1000}
+              value={Math.round(((at - full.t0) / span) * 1000)}
+              onChange={(e) => {
+                setPlaying(false);
+                const v = Number(e.target.value);
+                setCursor(v >= 995 ? undefined : full.t0 + (v / 1000) * span);
+              }}
+              aria-label="Move through the run"
+              aria-valuetext={`${clock(at)}`}
+              className="h-9 min-w-0 flex-1 accent-[var(--ac)]"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                setPlaying(false);
+                setCursor(undefined);
+              }}
+              disabled={!replay}
+              className="w-[72px] shrink-0 rounded-md text-right font-mono text-[12px] tabular-nums text-t2 enabled:underline enabled:decoration-dotted enabled:hover:text-t1"
+              aria-label={replay ? 'Back to the end of the run' : 'Time of the run'}
+            >
+              {replay ? clock(at) : model.live ? 'live' : clock(at)}
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {target && (
         <DetailSheet

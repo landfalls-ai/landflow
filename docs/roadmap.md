@@ -966,6 +966,9 @@ Code runtime that write the plugin in this repository and open a draft pull requ
 Watching and reviewing what a run did, for any flow, phone first ([run-trace.md](run-trace.md)). Phases 1 to 3 of the
 approved plan:
 
+- **Quieter run screens (B21, backbone wave 3; P-trace-1 to P-trace-5, X13 for runs)**: tabs only with content (Story and
+  Trace always, Team and Artifacts when they have something), the Report merged into the Story as a summary, one status
+  line, no time slider on a short or single-participant run, Debug access in the header's ⋯ without tool names.
 - **The journal** (`execution_events`, migration 2000): actors, spans, messages, artifacts and checks per execution,
   written by the runner's translator, Landflow agent sessions, the A2A Agent node (every remote step kept, failed ones
   marked failed, `isError` results included), approvals (web, Slack, email) and the Run report gate. Redacted, cut to
@@ -975,7 +978,7 @@ approved plan:
   `ExecuteResponse.records` over every transport, the engine's `node.record` event. The GitHub plugin reports its pull
   requests, issues and branches.
 - **The screens**: Run trace next to Canvas on every execution and full screen at `/runs/<id>`. They have a header with
-  who is working now, Needs you, and the Story, Trace, Team and Report tabs. Details open in a sheet, and a time slider
+  who is working now, Needs you, and the Story, Trace, Team and Artifacts tabs (Team and Artifacts only with something in them; the Report is in the Story). Details open in a sheet, and a time slider
   replays the run. Needs you and live cards appear on Executions.
 - **Checks, profiles and the report**: the built-in checks (six since 2026-10-31: Agent notes committed), the Generic, Software delivery and Customer support
   profiles (or a custom one as JSON), the structured reply block, and the **Run Report** node. The node saves the
