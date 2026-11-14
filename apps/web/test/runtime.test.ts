@@ -36,8 +36,9 @@ function staticClosure(entry: string): Set<string> {
 // What bootstrap.ts and worker-main.ts started before this change, in order.
 const OLD_WORKER = ['config check', 'database', 'registry', 'broker providers', 'broker connections', 'static plugin seeds', 'kubernetes discovery', 'binary maintenance', 'online evaluations', 'worker cluster'];
 const OLD_MAIN = [
-  'config check', 'database', 'cluster', 'owner from environment', 'registry', 'broker providers', 'broker connections', 'mcp gateway sync', 'seed workflows', 'data maintenance', 'audit',
-  'audit head signing', 'binary maintenance', 'publications', 'project adoption', 'scheduled publishes', 'scheduler', 'mcp trigger subscriptions', 'wait timers', 'trigger buffers',
+  'config check', 'database', 'cluster', 'owner from environment', 'registry', 'broker providers', 'broker connections', 'mcp gateway sync', 'seed workflows', 'data maintenance',
+  // B02: the conversation store's daily retention, a leader service after data maintenance.
+  'conversation retention', 'audit', 'audit head signing', 'binary maintenance', 'publications', 'project adoption', 'scheduled publishes', 'scheduler', 'mcp trigger subscriptions', 'wait timers', 'trigger buffers',
   'held trigger events', 'recovery', 'retry timers', 'alerts', 'agent triggers', 'evaluation schedules', 'online evaluations', 'usage listeners', 'usage trigger', 'second brain',
   'registry gRPC server', 'static plugin seeds', 'kubernetes discovery', 'startup scan', 'node plugins', 'app webhooks', 'IMAP IDLE',
 ];
