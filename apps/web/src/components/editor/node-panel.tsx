@@ -14,6 +14,7 @@ import { FieldLabel, Input, SectionLabel, Select, Switch, Textarea } from '../ui
 import { DataView } from '../run/data-view';
 import { NodeCredentials } from '../credentials/node-credentials';
 import { ParamForm } from './param-form';
+import { NodeSettingsPane } from './node-settings';
 import { PollStatus } from './poll-status';
 import { usePublication } from './publish-control';
 import { parseHandle, useEditor } from './store';
@@ -24,15 +25,7 @@ import { TeamNodePanel } from './team-node-panel';
 import { useDialogFocus } from '../ui/use-dialog-focus';
 import { isPhone, usePhone } from '@/lib/client/use-phone';
 
-function Segmented<T extends string>({
-  value,
-  options,
-  onChange,
-}: {
-  value: T;
-  options: Array<{ value: T; label: React.ReactNode }>;
-  onChange: (value: T) => void;
-}) {
+function Segmented<T extends string>({ value, options, onChange }: { value: T; options: Array<{ value: T; label: React.ReactNode }>; onChange: (value: T) => void }) {
   return (
     <div className="flex gap-0.5 rounded-lg border border-hair bg-wl p-0.5">
       {options.map((o) => (
@@ -56,6 +49,28 @@ function PaneHeader({ title, children }: { title: string; children?: React.React
     <div className="flex h-10 shrink-0 items-center gap-2 border-b border-hair px-3">
       <SectionLabel>{title}</SectionLabel>
       <div className="ml-auto flex items-center gap-2">{children}</div>
+    </div>
+  );
+}
+
+/** The panel header's actions: Docs, one Run step (not for a sub-node) and Close. Run from here and Breakpoint are in Settings. */
+export function NodeHeaderActions({ docsUrl, isSubnode, running, onRun, onClose }: { docsUrl?: string; isSubnode: boolean; running: boolean; onRun: () => void; onClose: () => void }) {
+  return (
+    // A phone: running and moving between steps are in the bar at the foot.
+    <div className="ml-auto flex items-center gap-2 max-md:hidden">
+      {docsUrl && (
+        <a href={docsUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[13px] text-t2 hover:text-ac">
+          <BookOpen className="size-3.5" /> Docs
+        </a>
+      )}
+      {!isSubnode && (
+        <Button variant="primary" size="sm" onClick={onRun} disabled={running} title="Run just this step with its last input">
+          <Play className="size-3.5" fill="currentColor" /> Run step
+        </Button>
+      )}
+      <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close">
+        <X className="size-4" />
+      </Button>
     </div>
   );
 }
@@ -94,6 +109,8 @@ export function NodePanel() {
   // Saved but not published yet: the trigger URL still serves the published version.
   const unpublished = usePublication((s) => (s.workflowId === workflowId ? (s.status?.unpublishedChanges ?? false) : false));
   const [tab, setTab] = useState<'parameters' | 'settings'>('parameters');
+  // Settings past the three that matter are under More.
+  const [more, setMore] = useState(false);
   const pinned = useEditor((s) => (openNodeId ? s.pinData[openNodeId] : undefined));
   const nodes = useEditor((s) => s.nodes);
   /** JSON being edited as the node's pinned output (test data), or null. */
@@ -129,7 +146,9 @@ export function NodePanel() {
   const backButton = useRef<HTMLButtonElement>(null);
   const card = useRef<HTMLDivElement>(null);
   // A phone's editor is a dialog: focus moves to its back arrow, stays inside, and goes back to the step when it closes.
-  useDialogFocus(card, phone && Boolean(openNodeId && node), { initial: backButton });
+  useDialogFocus(card, phone && Boolean(openNodeId && node), {
+    initial: backButton,
+  });
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -181,7 +200,12 @@ export function NodePanel() {
       items: inputItems,
       nodeOutputs,
       nodeNames: upstream,
-      workflowNodes: nodes.map((n) => ({ id: n.id, name: n.data.wf.name, type: n.data.wf.type, parameters: n.data.wf.parameters as Record<string, unknown> })),
+      workflowNodes: nodes.map((n) => ({
+        id: n.id,
+        name: n.data.wf.name,
+        type: n.data.wf.type,
+        parameters: n.data.wf.parameters as Record<string, unknown>,
+      })),
       self: openNodeId ?? undefined,
     };
   }, [nodes, edges, allRuns, inputItems, openNodeId]);
@@ -275,54 +299,19 @@ export function NodePanel() {
           <div className="min-w-0 max-md:flex-1">
             <NodeNameInput nodeId={openNodeId} name={wf.name} />
             <NodeTypeLine type={wf.type} info={info} />
+            {descriptor?.description && (
+              <p className="max-w-[560px] truncate text-[12px] text-t3 max-md:hidden" title={descriptor.description}>
+                {descriptor.description}
+              </p>
+            )}
           </div>
           {/* A phone: running and moving between steps are in the bar at the foot. */}
-          <div className="ml-auto flex items-center gap-2 max-md:hidden">
-            {descriptor?.documentationUrl && (
-              <a href={descriptor.documentationUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[13px] text-t2 hover:text-ac">
-                <BookOpen className="size-3.5" /> Docs
-              </a>
-            )}
-            {!isSubnode && (
-              <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => useEditor.getState().toggleBreakpoint(openNodeId)}
-                  title="Pause here when debugging (F9)"
-                  className={cn(breakpoint && 'text-rd hover:text-rd')}
-                >
-                  <CircleDot className="size-3.5" /> {breakpoint ? 'Breakpoint on' : 'Breakpoint'}
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={() => runNode('from')}
-                  disabled={running}
-                  title="Re-run this step and everything after it, reusing the data before it"
-                >
-                  <SkipForward className="size-3.5" /> Run from here
-                </Button>
-                <Button variant="primary" size="sm" onClick={() => runNode('only')} disabled={running} title="Run just this step with its last input">
-                  <Play className="size-3.5" fill="currentColor" /> Run step
-                </Button>
-              </>
-            )}
-            <Button variant="ghost" size="icon-sm" onClick={close} aria-label="Close">
-              <X className="size-4" />
-            </Button>
-          </div>
+          <NodeHeaderActions docsUrl={descriptor?.documentationUrl} isSubnode={isSubnode} running={running} onRun={() => runNode('only')} onClose={close} />
         </div>
 
         {phone && (
           <div role="group" aria-label="Pane" className="flex shrink-0 gap-1 border-b border-hair px-2 py-1.5">
-            {(
-              [
-                ...(isTrigger ? [] : ([['input', 'Input']] as const)),
-                ['parameters', 'Parameters'],
-                ['output', 'Output'],
-                ['settings', 'Settings'],
-              ] as const
-            ).map(([key, label]) => {
+            {([...(isTrigger ? [] : ([['input', 'Input']] as const)), ['parameters', 'Parameters'], ['output', 'Output'], ['settings', 'Settings']] as const).map(([key, label]) => {
               const on = key === 'settings' ? shown === 'parameters' && tab === 'settings' : key === 'parameters' ? shown === 'parameters' && tab === 'parameters' : shown === key;
               return (
                 <button
@@ -342,12 +331,7 @@ export function NodePanel() {
           </div>
         )}
 
-        <div
-          className={cn(
-            'grid min-h-0 flex-1 max-md:flex max-md:flex-col',
-            isTrigger ? 'grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]' : 'grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)_minmax(0,1fr)]',
-          )}
-        >
+        <div className={cn('grid min-h-0 flex-1 max-md:flex max-md:flex-col', isTrigger ? 'grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]' : 'grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)_minmax(0,1fr)]')}>
           {/* input */}
           {!isTrigger && (
             <div className={cn('flex min-h-0 flex-col border-r border-hair bg-sf2 max-md:flex-1 max-md:border-r-0', phone && shown !== 'input' && 'hidden')}>
@@ -366,7 +350,8 @@ export function NodePanel() {
                     <>
                       No input yet.
                       <br />
-                      Run the workflow to see what flows into this step{phone ? ', then tap {} beside a parameter to use a field.' : ', then drag fields into parameters.'}
+                      Run the workflow to see what flows into this step
+                      {phone ? ', then tap {} beside a parameter to use a field.' : ', then drag fields into parameters.'}
                     </>
                   }
                 />
@@ -381,10 +366,7 @@ export function NodePanel() {
                 <button
                   key={t}
                   onClick={() => setTab(t)}
-                  className={cn(
-                    'h-9 px-3 text-[13px] text-t2 transition-colors hover:text-t1',
-                    tab === t && 'font-semibold text-t1 shadow-[inset_0_-2px_0_var(--ac)]',
-                  )}
+                  className={cn('h-9 px-3 text-[13px] text-t2 transition-colors hover:text-t1', tab === t && 'font-semibold text-t1 shadow-[inset_0_-2px_0_var(--ac)]')}
                 >
                   {t === 'parameters' ? 'Parameters' : 'Settings'}
                 </button>
@@ -393,7 +375,7 @@ export function NodePanel() {
             <div className="min-h-0 flex-1 overflow-y-auto p-5 max-md:p-4">
               {tab === 'parameters' ? (
                 <>
-                  {descriptor?.description && <p className="mb-4 text-[13px] text-t2">{descriptor.description}</p>}
+                  {descriptor?.description && <p className="mb-4 text-[13px] text-t2 md:hidden">{descriptor.description}</p>}
                   {descriptor?.triggerSource === 'poll' && (
                     <PollStatus workflowId={workflowId} nodeId={openNodeId} active={workflowActive} dirty={dirty} interval={Number(wf.parameters.pollInterval ?? 60)} />
                   )}
@@ -416,7 +398,11 @@ export function NodePanel() {
                         update({ parameters });
                         if (parameters.teamId !== wf.parameters.teamId) void syncTeamName(openNodeId);
                       }}
-                      form={{ preview, credentials: wf.credentials, scope: workflowId ? { workflowId } : undefined }}
+                      form={{
+                        preview,
+                        credentials: wf.credentials,
+                        scope: workflowId ? { workflowId } : undefined,
+                      }}
                     />
                   ) : descriptor ? (
                     <ParamForm
@@ -438,107 +424,22 @@ export function NodePanel() {
                   )}
                 </>
               ) : (
-                <div className="space-y-2">
-                  {phone && !isSubnode && (
-                    // A phone's header has no room for these: they lead the Settings pane.
-                    <div className="flex flex-wrap gap-2 pb-2">
-                      <Button className={cn('h-11', breakpoint && 'text-rd')} onClick={() => useEditor.getState().toggleBreakpoint(openNodeId)}>
-                        <CircleDot className="size-4" /> {breakpoint ? 'Breakpoint on' : 'Breakpoint'}
-                      </Button>
-                      <Button
-                        className="h-11"
-                        disabled={running}
-                        onClick={() => {
-                          runNode('from');
-                          setPane('output');
-                        }}
-                      >
-                        <SkipForward className="size-4" /> Run from here
-                      </Button>
-                    </div>
-                  )}
-                  <SettingRow label="Disabled" hint="Pass input straight through without running">
-                    <Switch checked={Boolean(wf.disabled)} onChange={(v) => update({ disabled: v })} />
-                  </SettingRow>
-                  <SettingRow label="On error" hint="Stop the workflow or continue with the error attached to items">
-                    <Select value={wf.onError ?? 'stop'} onChange={(e) => update({ onError: e.target.value as 'stop' | 'continue' })} className="w-40">
-                      <option value="stop">Stop workflow</option>
-                      <option value="continue">Continue</option>
-                    </Select>
-                  </SettingRow>
-                  <SettingRow label="Retry on fail" hint="Run the step again when it errors">
-                    <Switch checked={Boolean(wf.retryOnFail)} onChange={(v) => update({ retryOnFail: v })} />
-                  </SettingRow>
-                  {wf.retryOnFail && (
-                    <SettingRow label="Max tries">
-                      <Input
-                        type="number"
-                        min={1}
-                        max={10}
-                        value={wf.maxTries ?? 3}
-                        onChange={(e) => update({ maxTries: Number(e.target.value) })}
-                        className="w-24"
-                      />
-                    </SettingRow>
-                  )}
-                  {wf.retryOnFail && (
-                    <SettingRow label="Wait between tries (ms)" hint="Before the first retry; the most is a minute">
-                      <Input
-                        type="number"
-                        min={0}
-                        max={60_000}
-                        value={wf.waitBetweenTriesMs ?? 1000}
-                        onChange={(e) => update({ waitBetweenTriesMs: Math.max(0, Math.min(60_000, Math.round(Number(e.target.value) || 0))) })}
-                        aria-label="Wait between tries (ms)"
-                        className="w-24"
-                      />
-                    </SettingRow>
-                  )}
-                  {wf.retryOnFail && (
-                    <SettingRow label="Backoff" hint="Exponential doubles the wait after each failed try, up to a minute">
-                      <Select value={wf.retryBackoff ?? 'fixed'} onChange={(e) => update({ retryBackoff: e.target.value as 'fixed' | 'exponential' })} className="w-40">
-                        <option value="fixed">Fixed</option>
-                        <option value="exponential">Exponential</option>
-                      </Select>
-                    </SettingRow>
-                  )}
-                  <SettingRow label="Timeout (seconds)" hint="Fail a try that takes longer; retries and On error apply. Empty: no timeout">
-                    <Input
-                      type="number"
-                      min={0.1}
-                      max={86_400}
-                      step="any"
-                      value={wf.timeoutSeconds ?? ''}
-                      onChange={(e) => update({ timeoutSeconds: e.target.value === '' ? undefined : Number(e.target.value) })}
-                      // Out of range once typing is done: 0 or less is no timeout, the most is a day.
-                      onBlur={() => {
-                        const seconds = wf.timeoutSeconds;
-                        if (seconds !== undefined && !(seconds >= 0.1)) update({ timeoutSeconds: undefined });
-                        else if (seconds !== undefined && seconds > 86_400) update({ timeoutSeconds: 86_400 });
-                      }}
-                      placeholder="None"
-                      aria-label="Timeout (seconds)"
-                      className="w-24"
-                    />
-                  </SettingRow>
-                  <RateLimitSetting value={wf.rateLimit} onChange={(rateLimit) => update({ rateLimit })} />
-                  {isTrigger && <TriggerBufferSettings debounce={wf.debounce} batch={wf.batch} onChange={(patch) => update(patch)} />}
-                  <SettingRow label="Always output data" hint="Continue down the branch even with zero items">
-                    <Switch checked={Boolean(wf.alwaysOutputData)} onChange={(v) => update({ alwaysOutputData: v })} />
-                  </SettingRow>
-                  <SettingRow label="Execute once" hint="Only process the first item">
-                    <Switch checked={Boolean(wf.executeOnce)} onChange={(v) => update({ executeOnce: v })} />
-                  </SettingRow>
-                  <div className="pt-2">
-                    <FieldLabel>Notes</FieldLabel>
-                    <Textarea
-                      rows={3}
-                      value={wf.notes ?? ''}
-                      onChange={(e) => update({ notes: e.target.value })}
-                      placeholder={descriptor?.usableAsTool ? 'Also used as the tool description for AI agents' : 'Notes for your team'}
-                    />
-                  </div>
-                </div>
+                <NodeSettingsPane
+                  wf={wf}
+                  update={update}
+                  usableAsTool={descriptor?.usableAsTool}
+                  isTrigger={isTrigger}
+                  isSubnode={isSubnode}
+                  breakpoint={breakpoint}
+                  running={running}
+                  more={more}
+                  onToggleMore={() => setMore((v) => !v)}
+                  onToggleBreakpoint={() => useEditor.getState().toggleBreakpoint(openNodeId)}
+                  onRunFrom={() => {
+                    runNode('from');
+                    if (phone) setPane('output');
+                  }}
+                />
               )}
             </div>
           </div>
@@ -557,12 +458,7 @@ export function NodePanel() {
                     <PencilLine className="size-3.5" /> {pinned ? 'Edit' : isTrigger ? 'Set test data' : 'Edit output'}
                   </Button>
                   {pinned ? (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => useEditor.getState().setPinData(openNodeId, undefined)}
-                      title="Run the step again instead of using pinned data"
-                    >
+                    <Button size="sm" variant="ghost" onClick={() => useEditor.getState().setPinData(openNodeId, undefined)} title="Run the step again instead of using pinned data">
                       <PinOff className="size-3.5" /> Unpin
                     </Button>
                   ) : (
@@ -581,12 +477,7 @@ export function NodePanel() {
                 </>
               )}
               {runs && runs.length > 1 && (
-                <select
-                  value={runIndex}
-                  onChange={(e) => setRunIndex(Number(e.target.value))}
-                  aria-label="Run"
-                  className="rounded-md border border-hair bg-wl px-1.5 py-0.5 text-[12px] text-t2"
-                >
+                <select value={runIndex} onChange={(e) => setRunIndex(Number(e.target.value))} aria-label="Run" className="rounded-md border border-hair bg-wl px-1.5 py-0.5 text-[12px] text-t2">
                   {runs.map((r, i) => (
                     <option key={i} value={i}>
                       {r.source === 'main' ? 'Run' : r.source} {i + 1} of {runs.length}
@@ -643,9 +534,7 @@ export function NodePanel() {
               <div className="flex min-h-0 flex-1 animate-fade-up flex-col gap-2 p-3">
                 <div className="flex items-center gap-2 text-[12px] text-t2">
                   <Pin className="size-3.5 text-viz-7" />
-                  {isTrigger
-                    ? 'Test data: the trigger outputs these items when you execute the workflow.'
-                    : 'Pinned output: the step returns these items instead of running.'}
+                  {isTrigger ? 'Test data: the trigger outputs these items when you execute the workflow.' : 'Pinned output: the step returns these items instead of running.'}
                 </div>
                 <textarea
                   autoFocus
@@ -676,18 +565,13 @@ export function NodePanel() {
                 items={run && !run.error ? run.outputs[branch] : pinned}
                 emptyLabel={
                   <div className="flex flex-col items-center gap-3">
-                    <div>No output yet.</div>
+                    <div>No output yet.{!isSubnode && ' Use Run step.'}</div>
                     {info && info.pluginId !== 'core' && (
                       <DevOnly>
                         <div className="max-w-xs text-[12px]">
                           This step runs in a {languageMeta(info.language).label} process and is called over {info.transport.toUpperCase()}.
                         </div>
                       </DevOnly>
-                    )}
-                    {!isSubnode && (
-                      <Button size="sm" onClick={() => runNode('only')} disabled={running}>
-                        <Play className="size-3.5" /> Run step
-                      </Button>
                     )}
                   </div>
                 }
@@ -730,133 +614,6 @@ export function NodePanel() {
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-type NodeSettings = Parameters<ReturnType<typeof useEditor.getState>['updateNode']>[1];
-
-/**
- * A number input for a node setting. While typing, valid numbers go through at once; an empty field is `undefined`
- * when the setting is `optional`, otherwise the last value comes back on blur. Out-of-range values are fixed on blur.
- */
-function NumberField(props: { value: number | undefined; onChange: (value: number | undefined) => void; min: number; max: number; step?: string; placeholder?: string; label: string; optional?: boolean }) {
-  const { value, onChange, min, max, step, placeholder, label, optional } = props;
-  const [draft, setDraft] = useState(value === undefined ? '' : String(value));
-  useEffect(() => setDraft((current) => (current !== '' && Number(current) === value ? current : value === undefined ? '' : String(value))), [value]);
-  return (
-    <Input
-      type="number"
-      min={min}
-      max={max}
-      step={step ?? 'any'}
-      value={draft}
-      onChange={(e) => {
-        setDraft(e.target.value);
-        if (e.target.value === '') {
-          if (optional) onChange(undefined);
-        } else if (Number.isFinite(Number(e.target.value))) onChange(Number(e.target.value));
-      }}
-      onBlur={() => {
-        if (draft === '' && !optional) setDraft(value === undefined ? '' : String(value));
-        else if (value !== undefined && value < min) onChange(min);
-        else if (value !== undefined && value > max) onChange(max);
-      }}
-      placeholder={placeholder}
-      aria-label={label}
-      className="w-20"
-    />
-  );
-}
-
-/** `node.rateLimit`: at most `limit` calls per `intervalSeconds`, shared by every run; calls over it wait their turn. */
-function RateLimitSetting({ value, onChange }: { value: NodeSettings['rateLimit']; onChange: (value: NodeSettings['rateLimit']) => void }) {
-  return (
-    <SettingRow label="Rate limit" hint="At most this many calls per interval, across all runs; calls over it wait their turn. Empty: no limit">
-      <div className="flex shrink-0 items-center gap-1.5 text-[12px] text-t3">
-        <NumberField
-          label="Calls per interval"
-          optional
-          min={1}
-          max={100_000}
-          step="1"
-          placeholder="None"
-          value={value?.limit}
-          onChange={(limit) => onChange(limit === undefined || !(limit >= 1) ? undefined : { limit: Math.floor(limit), intervalSeconds: value?.intervalSeconds ?? 1 })}
-        />
-        per
-        <NumberField label="Interval (seconds)" min={0.1} max={86_400} placeholder="1" value={value?.intervalSeconds} onChange={(intervalSeconds) => value && onChange({ ...value, intervalSeconds: intervalSeconds ?? 1 })} />
-        s
-      </div>
-    </SettingRow>
-  );
-}
-
-/** Trigger nodes: debounce (`node.debounce`) or batch (`node.batch`) the events of production runs. */
-function TriggerBufferSettings({ debounce, batch, onChange }: { debounce: NodeSettings['debounce']; batch: NodeSettings['batch']; onChange: (patch: NodeSettings) => void }) {
-  const held = 'Production runs only (webhooks, schedules, polls, public chats); manual runs are never held.';
-  return (
-    <>
-      <SettingRow label="Debounce" hint={`Collapse events that arrive close together into one run, after a quiet window. ${held}`}>
-        <Switch checked={Boolean(debounce)} onChange={(on) => onChange(on ? { debounce: { windowSeconds: 10 }, batch: undefined } : { debounce: undefined })} />
-      </SettingRow>
-      {debounce && (
-        <div className="space-y-2 rounded-[10px] border border-hair bg-wl px-3 py-2.5 text-[12px] text-t2">
-          <div className="flex items-center justify-between gap-3">
-            <span>Quiet window (seconds)</span>
-            <NumberField label="Quiet window (seconds)" min={0.1} max={86_400} value={debounce.windowSeconds} onChange={(windowSeconds) => onChange({ debounce: { ...debounce, windowSeconds: windowSeconds ?? 10 } })} />
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span title="Events with different keys are debounced separately">Key (expression)</span>
-            <Input
-              value={debounce.key ?? ''}
-              onChange={(e) => onChange({ debounce: { ...debounce, key: e.target.value || undefined } })}
-              placeholder="{{ $json.body.userId }}"
-              aria-label="Debounce key"
-              className="w-56 font-mono text-[12px]"
-            />
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span>The run gets</span>
-            <Select value={debounce.mode ?? 'last'} onChange={(e) => onChange({ debounce: { ...debounce, mode: e.target.value as 'last' | 'all' } })} className="w-40">
-              <option value="last">The last event</option>
-              <option value="all">All events</option>
-            </Select>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span>Start at the latest after (seconds)</span>
-            <NumberField label="Maximum wait (seconds)" optional min={0} max={604_800} placeholder="No max" value={debounce.maxWaitSeconds} onChange={(maxWaitSeconds) => onChange({ debounce: { ...debounce, maxWaitSeconds } })} />
-          </div>
-          <div className="text-t3">Empty key: one window for all events. Held webhook calls are answered 202 with when the run starts.</div>
-        </div>
-      )}
-      <SettingRow label="Batch" hint={`Collect events and start one run with all of them, when the batch is full or on a timeout. ${held}`}>
-        <Switch checked={Boolean(batch)} onChange={(on) => onChange(on ? { batch: { size: 10, timeoutSeconds: 30 }, debounce: undefined } : { batch: undefined })} />
-      </SettingRow>
-      {batch && (
-        <div className="space-y-2 rounded-[10px] border border-hair bg-wl px-3 py-2.5 text-[12px] text-t2">
-          <div className="flex items-center justify-between gap-3">
-            <span>Events per batch</span>
-            <NumberField label="Batch size" min={1} max={10_000} step="1" value={batch.size} onChange={(size) => onChange({ batch: { ...batch, size: Math.floor(size ?? 10) } })} />
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span>Timeout after the first event (seconds)</span>
-            <NumberField label="Batch timeout (seconds)" min={0.1} max={86_400} value={batch.timeoutSeconds} onChange={(timeoutSeconds) => onChange({ batch: { ...batch, timeoutSeconds: timeoutSeconds ?? 30 } })} />
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
-
-function SettingRow({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-4 rounded-[10px] border border-hair bg-wl px-3 py-2.5">
-      <div>
-        <div className="text-[13px] font-semibold text-t1">{label}</div>
-        {hint && <div className="text-[12px] text-t3">{hint}</div>}
-      </div>
-      {children}
     </div>
   );
 }

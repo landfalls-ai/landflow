@@ -1613,6 +1613,14 @@ carries the state (P-ed-1), one canvas toolbar and a minimap only above 25 nodes
 with no Spotlight | Chat switch (the Execute bar's chat button opens and closes it), and a long editing session with
 no pause over 10 minutes between saves folds into one version (⌘S, Publish and a tab-leave save add their own).
 
+## The node panel and editor details (B23, 2026-11-14)
+
+Built ([Building and debugging a flow](features/editor.md)): the node panel header is the name, a
+line of description and one Run step, with Breakpoint and Run from here in Settings (P-np-1, P-np-2); Settings shows On
+error, Retry and Notes, the rest under More (P-np-3); view switches show only with data (P-np-4); Events is a tab in
+the open logs panel (P-ed-5); workflow settings show three fields, the rest under Advanced (P-ed-6); a node's toolbar
+is Run, Disable, Delete and ⋯, and the right-click menu matches (P-ed-7). All seven are done.
+
 ## Conversation history and personal preferences (2026-11)
 
 The first piece of the company-backbone program (wave 1, B02). Built: the `user_preferences` and `conversations` tables

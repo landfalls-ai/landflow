@@ -10,7 +10,7 @@ import type { AgentTeam, AgentTeamConfig } from '@/lib/shared/agent-teams';
 import { replaceWithTeam, teamFromLead, turnIntoTeamBlocker } from '@/lib/shared/turn-into-team';
 import { useEditor } from './store';
 
-/** Whether the node on the canvas can become a team (the toolbar shows the action only then). */
+/** Whether the node on the canvas can become a team (the toolbar's ⋯ and the right-click menu show the action only then). */
 export const canTurnNodeIntoTeam = (nodeId: string) => turnIntoTeamBlocker(useEditor.getState().toWorkflow(), nodeId) === undefined;
 
 /** Save a team and publish it; left as a draft when it can't be published yet (the Agents page lists what stops it). */
