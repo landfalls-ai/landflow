@@ -2,7 +2,7 @@
  * Write Briefing with a real model (opt-in):
  *   LANDFLOW_INTEGRATION=ollama npx vitest run test/briefing-live.test.ts
  * OLLAMA_URL picks the server (default http://127.0.0.1:11434); LANDFLOW_OLLAMA_CHAT_MODEL the model. The briefing stays within
- * 1,200 characters and carries nothing the person's own gathered work does not (no other person's private item).
+ * 1,200 characters. The model is given the person's allowed items only; what it never sees is covered in briefing-nodes.test.ts.
  */
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -31,6 +31,5 @@ describe.skipIf(!enabled)('Write Briefing on Ollama', () => {
     expect(result.model).toBe(`ollama/${chatModel}`);
     expect(result.text.length).toBeGreaterThan(20);
     expect(result.text.length).toBeLessThanOrEqual(1200);
-    expect(result.text).not.toContain('PRIVATE');
   });
 });

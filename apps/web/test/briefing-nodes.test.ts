@@ -32,6 +32,8 @@ const { briefingText } = await import('@/lib/server/mcp/brain-prompts');
 const { setMailTransport } = await import('@/lib/server/auth/mail');
 const { createTeamProject, setMember } = await import('@/lib/server/projects/store');
 const { items } = await import('./helpers');
+const { store } = await import('@/lib/server/store');
+const { briefingMarkdown } = await import('@/lib/server/mcp/brain-prompts');
 
 registry.registerBuiltin(corePlugin);
 const owner = await createUser({ email: 'owner@sync.test', name: 'Owner', role: 'owner', password: 'owner-password-1' });
@@ -78,8 +80,8 @@ afterAll(() => {
 const minutesAgo = (n: number) => new Date(Date.now() - n * 60_000).toISOString();
 const work = (sourceId: string, patch: Record<string, unknown> = {}) => ({ kind: 'work.session', source: 'claude-code', sourceId, occurredAt: minutesAgo(1), title: `Work ${sourceId}`, ...patch });
 
-async function sync(options: { credentials?: Record<string, unknown> } = {}) {
-  const workflow = { ...template.workflow, id: 'wf_sync', nodes: template.workflow.nodes.map((n) => (n.id === 'deliver' && options.credentials ? { ...n, credentials: {} } : n)) };
+async function sync(options: { credentials?: Record<string, unknown>; workflowId?: string } = {}) {
+  const workflow = { ...template.workflow, id: options.workflowId ?? 'wf_sync', nodes: template.workflow.nodes.map((n) => (n.id === 'deliver' && options.credentials ? { ...n, credentials: {} } : n)) };
   return executeWorkflow({
     workflow,
     resolver,
@@ -92,6 +94,10 @@ async function sync(options: { credentials?: Record<string, unknown> } = {}) {
 }
 
 const rowsFor = (userId: string, status?: string) => database().all<{ id: string; status: string; text: string; model: string; gathered: string; day: string }>(`SELECT * FROM brain_briefings WHERE user_id = ?${status ? ` AND status = '${status}'` : ''} ORDER BY created_at`, userId);
+
+// The nodes run only in a workflow that an owner or admin made, or that nobody made: a seeded one, and one a member made.
+store.saveWorkflow({ ...template.workflow, id: 'wf_sync' });
+store.saveWorkflow({ ...template.workflow, id: 'wf_member', createdBy: alice.id });
 
 beforeEach(() => {
   const db = database();
@@ -165,6 +171,55 @@ describe('a run of the sync', () => {
     expect(briefingText(served)).toContain('From last night’s sync');
     // Bob never sees Alice's.
     expect(briefingFor(actorOf(bob), { day }).source).toBe('live');
+  });
+});
+
+describe('the day', () => {
+  it('a 02:00 run on D gathers D-1 and D, and the morning of D finds it with no day given', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-11-13T15:00:00Z'));
+      recordWork(actorOf(alice), [work('y1', { title: 'Fix the invoice export', occurredAt: '2026-11-13T14:00:00Z' })]);
+      vi.setSystemTime(new Date('2026-11-14T02:00:00Z'));
+      const result = await sync();
+      expect(result.status).toBe('success');
+      const ready = rowsFor(alice.id, 'ready')[0];
+      expect(ready.day).toBe('2026-11-14');
+      expect(ready.gathered).toContain('Fix the invoice export');
+      expect(ready.text).toContain('Recently you');
+      vi.setSystemTime(new Date('2026-11-14T08:00:00Z'));
+      const served = briefingFor(actorOf(alice));
+      expect(served.day).toBe('2026-11-14');
+      expect(served.source).toBe('flow');
+      expect(served.summary).toBe(ready.text);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('who may run the nodes', () => {
+  it('a member’s workflow gathers, saves and delivers nothing, even with their own Slack credential', async () => {
+    recordWork(actorOf(alice), [work('a1')]);
+    recordWork(actorOf(bob), [work('b1')]);
+    setPreferences(bob.id, { briefingDelivery: 'slack' });
+    const result = await sync({ workflowId: 'wf_member', credentials: { 'messaging.slackApi': { accessToken: 'xoxb-dev-only', baseUrl: slackUrl } } });
+    expect(result.status).not.toBe('success');
+    expect(rowsFor(alice.id)).toHaveLength(0);
+    expect(rowsFor(bob.id)).toHaveLength(0);
+    expect(slackCalls).toEqual([]);
+  });
+});
+
+describe('what MCP carries of a stored briefing', () => {
+  it('names a colleague only in the quoted prompt, not in the markdown of the tool and resources', () => {
+    const d = createDraft({ userId: alice.id, day: '2026-11-14', gathered: { own: [], related: [], finished: [] } });
+    writeText(d.id, alice.id, 'Ben worked on something related: Invoice export.', 'deterministic');
+    markReady(d.id, alice.id);
+    const served = briefingFor(actorOf(alice), { day: '2026-11-14' });
+    expect(served.source).toBe('flow');
+    expect(briefingMarkdown(served)).not.toContain('Ben');
+    expect(briefingText(served)).toContain('> Ben worked on something related');
   });
 });
 

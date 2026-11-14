@@ -231,10 +231,11 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
     },
     async ({ day }) => {
       if (!actor) return failure('A briefing is a person’s own: connect with a personal API key or sign in, not the instance access token');
-      // `related` (colleagues' shared work, B18) stays out: this tool's text and JSON are the caller's own work only, and
-      // text other people wrote must not reach a harness labelled as theirs.
+      // `related` (colleagues' shared work, B18) and `summary` (the nightly sync's text, which can name colleagues) stay out:
+      // this tool's text and JSON are the caller's own work only, and text other people wrote must not reach a harness
+      // labelled as theirs. The prompt `morning-briefing` quotes the summary as data.
       const briefing = briefingFor(actor, day ? { day } : {});
-      const { related: _related, ...own } = briefing;
+      const { related: _related, summary: _summary, generatedBy: _generatedBy, ...own } = briefing;
       return json({ text: briefingMarkdown(briefing), briefing: own });
     },
   );

@@ -55,7 +55,7 @@ export const briefingMaxChars = (): number => envInt('LANDFLOW_BRIEFING_MAX_CHAR
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const clipText = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text);
 
-/** What each kind of own work reads as in "Yesterday you …": [verb phrase for one, for many]. */
+/** What each kind of own work reads as in "Yesterday you …": a verb phrase for the count. */
 const DOING: Record<string, (n: number) => string> = {
   'work.pr_merged': (n) => `merged ${plural(n, 'PR')}`,
   'work.pr_opened': (n) => `opened ${plural(n, 'PR')}`,

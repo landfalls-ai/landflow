@@ -15,36 +15,51 @@ import { getPreferences } from '../preferences';
 import { postMessage, SLACK_CREDENTIAL, SLACK_OAUTH2_CREDENTIAL, slackCredential, type SlackCredential } from '../slack';
 import { logger } from '../telemetry/logger';
 import { brainEnabled, dayOf } from '../usage/ledger';
+import { store } from '../store';
 
 const main = [{ type: 'main' as const }];
 const icon = { icon: 'lucide:sunrise', color: '#8b5cf6', categories: ['AI', 'Core'] };
 
-/** The day after `day` (YYYY-MM-DD), by the calendar. */
-const dayAfter = (day: string): string => {
-  const [year, month, date] = day.split('-').map(Number);
-  return new Date(Date.UTC(year, month - 1, date + 1)).toISOString().slice(0, 10);
-};
+/**
+ * Who may run the nodes that read or write a person's private briefing: a workflow made and last saved by an owner or an
+ * admin, or one nobody made (seeded). A member's workflow could otherwise feed any `userId` through them and read or
+ * send someone else's work (docs/work-and-briefings.md#privacy).
+ */
+function requireInstanceFlow(ctx: IExecuteContext): void {
+  const workflow = store.getWorkflow(ctx.getWorkflowId() ?? '');
+  const trusted = (id: string | undefined) => {
+    if (!id) return true;
+    const user = getUser(id);
+    return Boolean(user && !user.disabledAt && (user.role === 'owner' || user.role === 'admin'));
+  };
+  if (!workflow || !trusted(workflow.createdBy) || !trusted(workflow.updatedBy)) {
+    throw new NodeOperationError('Only an owner’s or admin’s workflow may handle people’s briefings', { description: 'A person’s briefing is private to them: save this workflow as an owner or admin.' });
+  }
+}
 
 const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
 
-/** The item's person: an active user, or a node error naming the item. */
-function personOf(item: NodeItem, index: number): { user: UserRecord; day: string } {
+const skip = (reason: string, index: number) => logger.warn(`briefing: skipping item ${index}: ${reason}`);
+
+/** The item's person: an active user and a day, or undefined (a user disabled since List People; the item is skipped, not the run). */
+function personOf(item: NodeItem, index: number): { user: UserRecord; day: string } | undefined {
   const userId = text(item.json.userId);
   const user = userId ? getUser(userId) : undefined;
-  if (!user || user.disabledAt) throw new NodeOperationError('The item has no active person (userId)', { itemIndex: index, description: 'Run List People first.' });
+  if (!user || user.disabledAt) return skip('no active person (userId)', index), undefined;
   const day = text(item.json.day);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new NodeOperationError('The item has no day (YYYY-MM-DD)', { itemIndex: index });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return skip('no day (YYYY-MM-DD)', index), undefined;
   return { user, day };
 }
 
 const countsOf = (briefing: StoredBriefing) => ({ own: briefing.gathered.own.length, related: briefing.gathered.related.length, finished: briefing.gathered.finished.length });
 const outOf = (briefing: StoredBriefing, index: number, extra: JsonObject = {}): NodeItem => ({ json: { userId: briefing.userId, day: briefing.day, briefingId: briefing.id, counts: countsOf(briefing), ...extra }, pairedItem: { item: index } });
 
-function draftOf(item: NodeItem, index: number): StoredBriefing {
-  const { user } = personOf(item, index);
-  const draft = getDraft(text(item.json.briefingId), user.id);
-  if (!draft) throw new NodeOperationError('The briefing draft is gone', { itemIndex: index, description: 'Gather Work makes the draft; run it before this node.' });
-  return draft;
+/** The item's draft, or undefined (skipped with a warning) when its person or draft is gone, e.g. replaced by a concurrent run. */
+function draftOf(item: NodeItem, index: number): StoredBriefing | undefined {
+  const person = personOf(item, index);
+  const draft = person && getDraft(text(item.json.briefingId), person.user.id);
+  if (person && !draft) skip('the briefing draft is gone', index);
+  return draft || undefined;
 }
 
 export const brainListPeopleNode = defineNode({
@@ -61,7 +76,7 @@ export const brainListPeopleNode = defineNode({
     outputs: main,
     properties: [
       { name: 'withinDays', displayName: 'Work in the Last (Days)', type: 'number', default: 3, typeOptions: { minValue: 0, maxValue: 90 }, description: 'Only people who recorded work in this many days. 0: every active person.' },
-      { name: 'day', displayName: 'Day', type: 'string', default: '', placeholder: 'next day', description: 'The day the briefings are for, YYYY-MM-DD. Empty: the next day in the instance time zone.' },
+      { name: 'day', displayName: 'Day', type: 'string', default: '', placeholder: 'today', description: 'The day the briefings are read on, YYYY-MM-DD. Empty: today in the instance time zone, so a run at 02:00 prepares the briefing for the morning that follows and gathers yesterday and today so far.' },
     ],
   },
   async execute(ctx) {
@@ -69,7 +84,7 @@ export const brainListPeopleNode = defineNode({
     const withinDays = Math.max(0, Math.floor(Number(ctx.getNodeParameter('withinDays', 0, 3)) || 0));
     const given = text(ctx.getNodeParameter('day', 0, ''));
     if (given && !/^\d{4}-\d{2}-\d{2}$/.test(given)) throw new NodeOperationError('Day must be YYYY-MM-DD');
-    const day = given || dayAfter(dayOf(Date.now()));
+    const day = given || dayOf(Date.now());
     const active = withinDays
       ? new Set(database().all<{ owner_id: string }>(`SELECT DISTINCT owner_id FROM usage_events WHERE kind LIKE 'work.%' AND source_id IS NOT NULL AND owner_id IS NOT NULL AND at >= ?`, new Date(Date.now() - withinDays * 86_400_000).toISOString()).map((row) => row.owner_id))
       : undefined;
@@ -95,10 +110,13 @@ export const brainGatherWorkNode = defineNode({
     properties: [],
   },
   async execute(ctx) {
+    requireInstanceFlow(ctx);
     const out: NodeItem[] = [];
     const items = ctx.getInputData();
     for (const [index, item] of items.entries()) {
-      const { user, day } = personOf(item, index);
+      const person = personOf(item, index);
+      if (!person) continue;
+      const { user, day } = person;
       const gathered = gatherFor({ id: user.id, role: user.role }, day);
       const draft = createDraft({ userId: user.id, day, gathered, workflowId: ctx.getWorkflowId(), executionId: ctx.getExecutionId() });
       out.push(outOf(draft, index));
@@ -122,6 +140,7 @@ export const brainWriteBriefingNode = defineNode({
     properties: [{ name: 'useModel', displayName: 'Use the Brain’s Model', type: 'boolean', default: true, description: 'Off, or with the model off or failing, the text is built from the lists alone. Redacted lines only ever reach the model, as data.' }],
   },
   async execute(ctx) {
+    requireInstanceFlow(ctx);
     const out: NodeItem[] = [];
     const items = ctx.getInputData();
     let model: ReturnType<typeof brainModel>;
@@ -132,7 +151,8 @@ export const brainWriteBriefingNode = defineNode({
     }
     for (const [index, item] of items.entries()) {
       const draft = draftOf(item, index);
-      const written = await writeBriefingText(draft.gathered, model);
+      if (!draft) continue;
+      const written = await writeBriefingText(draft.gathered, model, AbortSignal.timeout(60_000));
       out.push(outOf(writeText(draft.id, draft.userId, written.text, written.model) ?? draft, index));
     }
     return [out];
@@ -154,9 +174,11 @@ export const brainSaveBriefingNode = defineNode({
     properties: [],
   },
   async execute(ctx) {
+    requireInstanceFlow(ctx);
     const out: NodeItem[] = [];
     for (const [index, item] of ctx.getInputData().entries()) {
       const draft = draftOf(item, index);
+      if (!draft) continue;
       if (!draft.text) throw new NodeOperationError('The draft has no text yet', { itemIndex: index, description: 'Write Briefing writes it.' });
       const ready = markReady(draft.id, draft.userId);
       if (!ready) throw new NodeOperationError('The briefing draft is gone', { itemIndex: index });
@@ -209,10 +231,13 @@ export const brainDeliverBriefingNode = defineNode({
     properties: [],
   },
   async execute(ctx) {
+    requireInstanceFlow(ctx);
     const out: NodeItem[] = [];
     const slack = slackCredentialOf(ctx);
     for (const [index, item] of ctx.getInputData().entries()) {
-      const { user } = personOf(item, index);
+      const person = personOf(item, index);
+      if (!person) continue;
+      const { user } = person;
       const briefing = getBriefing(text(item.json.briefingId), user.id);
       const choice = getPreferences(user.id).briefingDelivery;
       let channel: string | undefined;
