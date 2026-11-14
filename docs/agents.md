@@ -30,7 +30,7 @@ Once there are agents the strip is gone.
 
 ### Templates
 
-The **New agent** dialog has three ways in at its top: **From a persona** (the gallery below), **Design with AI** (the
+The **New agent** dialog has three ways in at its top: **From a persona** (the gallery below; pressing it moves the focus to the chosen card), **Design with AI** (the
 [Agent architect](#agent-architect)) and **From a file**, which imports an agent exported as JSON and opens it (this was
 **Import JSON** in the page header). The gallery starts an agent from a persona template, grouped by category: the built-in ones (Support lead,
 Researcher, Incident responder, Release notes writer, Data analyst, Onboarding guide, Account researcher, and a blank

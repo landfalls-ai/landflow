@@ -108,6 +108,13 @@ export function NewAgentDialog({
   const [creating, setCreating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string>();
   const selectedCard = useRef<HTMLButtonElement>(null);
+  const gallery = useRef<HTMLDivElement>(null);
+  // From a persona: the gallery below is the way, so the button takes you to its chosen card (or its first).
+  const toGallery = () => {
+    const card = selectedCard.current ?? gallery.current?.querySelector<HTMLButtonElement>(':scope > div.relative > button');
+    card?.scrollIntoView({ block: 'nearest' });
+    card?.focus();
+  };
   const fileInput = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
 
@@ -257,8 +264,8 @@ export function NewAgentDialog({
           <nav aria-label="Template categories" className="flex shrink-0 gap-1 overflow-x-auto border-b border-hair p-3 md:w-[200px] md:flex-col md:overflow-visible md:border-b-0 md:border-r">
             {[ALL, ...categories].map(navItem)}
           </nav>
-          <div className="grid min-w-0 flex-1 grid-cols-1 content-start gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
-            <NewAgentWays importing={importing} onPick={(way) => (way === 'ai' ? setMode('architect') : way === 'file' ? fileInput.current?.click() : undefined)} />
+          <div ref={gallery} className="grid min-w-0 flex-1 grid-cols-1 content-start gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
+            <NewAgentWays importing={importing} onPick={(way) => (way === 'ai' ? setMode('architect') : way === 'file' ? fileInput.current?.click() : toGallery())} />
             <input ref={fileInput} type="file" accept=".json,application/json" aria-label="Agent JSON file" className="hidden" onChange={(e) => void importFile(e.target.files?.[0])} />
             {shown.map((t) => {
               const on = t.id === selected?.id;
