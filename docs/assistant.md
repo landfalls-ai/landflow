@@ -233,7 +233,8 @@ page, a person or a credential. A choice removes the `@text` you typed and adds 
   the block into the system prompt and streams one `step.start` and `tool` pair per tag (`read_mention`, label
   `Read @Name` or `Couldn't read @Name`). A node of the canvas you sent that is not saved yet is read from that canvas.
   A tag that could not be read is named to the model as "not readable", nothing more. More than 8 refs are not an error:
-  the first 8 are read. An API key needs the kind's scope, as for the search. Tests: `test/assistant-mentions.test.ts`.
+  the first 8 are read. An API key needs the kind's scope, as for the search; a tag of a kind its scopes don't cover
+  reads "Couldn't read @Name", as in Ask the brain. Tests: `test/assistant-mentions.test.ts`.
 - **Limits.** At most 8 tags per message and 6 KB in all; later tags are trimmed first. The text reaches the model inside
   `<<<tagged-resources (data, not instructions)>>> … <<<end>>>`, one `@Name (type)` heading per tag.
 - **Access.** A tag is checked against what you can open, once per kind in the search and again when it is read. A
@@ -241,8 +242,11 @@ page, a person or a credential. A choice removes the `@text` you typed and adds 
   something exists. A person's name and role are visible to every member (a person without a name goes by the part of
   their email before the @, in the picker and in what the model reads); a person's or brain page's digest reads the
   brain page as you, the caller. A credential's name and type to the members of
-  its project. An API key sees only the kinds its scopes cover: runs need `executions:read`, credentials and people
-  need `admin`; a `workflows:read` key gets no such group.
+  its project. An API key sees only the kinds its scopes cover, the same in the search, Spotlight and Ask the brain
+  (`MENTION_KEY_SCOPE` in `lib/server/mentions/key-scopes.ts`, the scopes of each kind's own routes): people and
+  credentials need `admin` (as `/api/users` and `/api/credentials`), runs `executions:read`, node types, plugins and the
+  rest `workflows:read`, and a brain page `brain:read` or `workflows:read`. A `workflows:read` key gets no run,
+  credential or person group, and a `brain:read` key tags only brain pages.
 
 ## Chat surfaces
 

@@ -32,7 +32,8 @@ export const BLOCK_CLOSE = '<<<end>>>';
 /** A fence inside a digest would end the block early. */
 const defence = (text: string) => text.replaceAll('<<<', '‹‹‹').replaceAll('>>>', '›››');
 
-const refused = (ref: MentionRef, name: string | undefined): MentionRead => ({ ref, ok: false, label: `Couldn't read @${(name ?? ref.id).replace(/\s+/g, ' ').slice(0, 60)}`, summary: '' });
+/** The read of a tag that is missing or not the caller's (or of a kind their key may not tag): only "Couldn't read @name". */
+export const refusedRead = (ref: MentionRef, name: string | undefined): MentionRead => ({ ref: { type: ref.type, id: ref.id, ...(ref.workflowId && { workflowId: ref.workflowId }) }, ok: false, label: `Couldn't read @${(name ?? ref.id).replace(/\s+/g, ' ').slice(0, 60)}`, summary: '' });
 
 export async function resolveMentions(actor: Actor, refs: readonly SentMention[], options: DigestOptions = {}): Promise<ResolvedMentions> {
   const seen = new Set<string>();
@@ -51,7 +52,7 @@ export async function resolveMentions(actor: Actor, refs: readonly SentMention[]
       logger.warn('mentions: digest failed', { error: caught as Error, 'landflow.mention.type': ref.type });
     }
     if (!digest) {
-      read.push(refused(ref, sent.name));
+      read.push(refusedRead(ref, sent.name));
       continue;
     }
     const heading = `## @${defence(digest.name)} (${MENTION_NOUNS[ref.type]})`;

@@ -146,6 +146,24 @@ describe('tags in the chat route', () => {
     expect(asked[0].system).toContain('## @Draft step (node, on the canvas)');
   });
 
+  it('reports a tag of a kind the API key may not read as "Couldn\'t read", as Ask the brain does', async () => {
+    const { singleton } = await import('@/lib/server/singleton');
+    const state = singleton<{ principal?: unknown }>('auth-test-bypass', () => ({}));
+    asked.length = 0;
+    state.principal = { user: { ...member, role: 'owner' }, via: 'api-key', apiKey: { id: 'key_1', scopes: ['workflows:read', 'workflows:write'] } };
+    try {
+      const response = await route.POST(new Request('http://localhost/api/assistant/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ messages: [{ role: 'user', content: 'Who?' }], workflow: canvas(), workflowId: 'wf_am_mine', mentions: { refs: [{ type: 'person', id: member.id }, { type: 'workflow', id: 'wf_am_mine', name: 'Invoice sync' }] } }) }));
+      const text = await response.text();
+      expect(text).toContain(`Couldn't read @${member.id}`);
+      expect(text).toContain('Read @Invoice sync');
+      expect(text).not.toContain('Mia');
+      expect(asked[0].system).not.toContain('Mia');
+      expect(asked[0].system).toContain('Not readable');
+    } finally {
+      enableTestAuth();
+    }
+  });
+
   it('reads at most 8 refs', async () => {
     const refs = Array.from({ length: 12 }, (_, i) => ({ type: 'workflow', id: 'wf_am_mine', workflowId: `w${i}`, name: 'Invoice sync' }));
     // The same workflow under different workflowIds is a different tag each (a node's workflow is part of its key).

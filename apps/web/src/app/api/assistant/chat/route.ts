@@ -18,8 +18,9 @@ import { runDigestSchema, workflowSchema } from '@/lib/server/schemas';
 import { withOwnership } from '@/lib/server/projects';
 import { routeActor } from '@/lib/server/projects/http';
 import { traceparentHeader } from '@/lib/server/telemetry';
-import { hasScope, type ApiKeyScope } from '@/lib/shared/auth';
-import { MENTION_TYPES, type MentionType } from '@/lib/shared/mentions';
+import { splitByScopes } from '@/lib/server/mentions/key-scopes';
+import { refusedRead } from '@/lib/server/mentions/resolve';
+import { MENTION_TYPES } from '@/lib/shared/mentions';
 import { recordUsage } from '@/lib/server/usage/ledger';
 
 export const dynamic = 'force-dynamic';
@@ -60,9 +61,6 @@ const Body = z.object({
   resume: z.object({ checkpoint: z.string().max(64) }).optional(),
 });
 
-/** The key scope the routes that serve a kind need (as in /api/mentions): a tag to a kind the key may not read is left out. */
-const KIND_SCOPE: Partial<Record<MentionType, ApiKeyScope>> = { run: 'executions:read', credential: 'admin', person: 'admin' };
-
 export const POST = handler(async (request: Request) => {
   const parsed = await parseBody(request, Body);
   if (!parsed.ok) return parsed.response;
@@ -77,9 +75,10 @@ export const POST = handler(async (request: Request) => {
   const resumed = resume ? takeCheckpoint<ChatState>(actorId, resume.checkpoint) : undefined;
   let proposals = 0;
   // What was tagged, read as the caller: a tag to what they may not open reads as "Couldn't read" and reveals nothing.
-  const keyScopes = currentPrincipal()?.apiKey?.scopes;
-  const refs = refsOf(mentions, workflowId).filter((ref) => !keyScopes || !KIND_SCOPE[ref.type] || hasScope(keyScopes, KIND_SCOPE[ref.type]!));
-  const tagged = await tagMentions(routeActor(), refs, { workflow: workflow as Workflow, ...(workflowId && { workflowId }), types, ...(rest.runs && { runs: rest.runs }) });
+  // An API key may tag only the kinds its scopes cover (as in /api/mentions and /api/brain/ask); the rest read the same.
+  const { allowed, denied } = splitByScopes(refsOf(mentions, workflowId), currentPrincipal()?.apiKey?.scopes);
+  const tagged = await tagMentions(routeActor(), allowed, { workflow: workflow as Workflow, ...(workflowId && { workflowId }), types, ...(rest.runs && { runs: rest.runs }) });
+  if (denied.length) tagged.reads.push(...denied.map((ref) => refusedRead(ref, ref.name)));
 
   return sseResponse(
     request,

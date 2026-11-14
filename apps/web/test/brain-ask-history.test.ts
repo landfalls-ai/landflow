@@ -138,12 +138,14 @@ describe('tags in the ask route', () => {
   });
 
   it('{ question, about } without tags keeps the JSON contract: the fact list is returned', async () => {
+    const { upsertFact } = await import('@/lib/server/brain/facts');
+    upsertFact({ subjectType: 'entity', subjectId: 'customer/acme', kind: 'failure', statement: 'Billing for Acme retries the invoice export', confidence: 0.9 });
     const res = await askRoute.POST(new Request('http://localhost/api/brain/ask', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question: 'Billing for Acme', about: 'customer/acme' }) }));
     const body = await res.json();
     expect(body.about).toBe('customer/acme');
     expect(body.tags).toBeUndefined();
-    expect(body.facts.length + body.pages.length).toBeGreaterThan(0);
-    expect(Array.isArray(body.facts)).toBe(true);
+    expect(body.facts.length).toBeGreaterThan(0);
+    expect(body.pages.length).toBeGreaterThan(0);
   });
 
   it('a brain:read key cannot tag a workflow or a credential: refused, no digest, nothing in the prompt', async () => {
@@ -168,10 +170,47 @@ describe('tags in the ask route', () => {
     } finally {
       state.principal = before;
     }
+    // The control: without the key restriction the same workflow tag is read.
+    const control = await askRoute.POST(
+      new Request('http://localhost/api/brain/ask', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
+        body: JSON.stringify({ question: 'What is up?', mentions: { refs: [{ type: 'workflow', id: 'wf_keyed', name: 'Keyed flow' }] } }),
+      }),
+    );
+    expect(await control.text()).toContain('Read @Keyed flow');
     const { splitByScopes } = await import('@/lib/server/mentions/key-scopes');
-    const split = splitByScopes([{ type: 'workflow' as const }, { type: 'run' as const }, { type: 'brainPage' as const }, { type: 'credential' as const }], ['brain:read', 'executions:read']);
+    const split = splitByScopes([{ type: 'workflow' as const }, { type: 'run' as const }, { type: 'brainPage' as const }, { type: 'credential' as const }, { type: 'person' as const }], ['brain:read', 'executions:read']);
     expect(split.allowed.map((r) => r.type)).toEqual(['run', 'brainPage']);
-    expect(split.denied.map((r) => r.type)).toEqual(['workflow', 'credential']);
+    expect(split.denied.map((r) => r.type)).toEqual(['workflow', 'credential', 'person']);
+    // A brain page is reached by brain:read or workflows:read; node types and plugins need workflows:read, as their routes do.
+    expect(splitByScopes([{ type: 'brainPage' as const }, { type: 'nodeType' as const }, { type: 'plugin' as const }], ['workflows:read']).denied).toEqual([]);
+    expect(splitByScopes([{ type: 'nodeType' as const }, { type: 'plugin' as const }], ['brain:read']).allowed).toEqual([]);
+  });
+
+  it('a brain:read key cannot tag a person: no name, no role, only "Couldn\'t read"', async () => {
+    const state = singleton<{ principal?: unknown }>('auth-test-bypass', () => ({}));
+    const before = state.principal;
+    state.principal = { user: { ...owner, role: 'owner' }, via: 'api-key', apiKey: { id: 'key_2', scopes: ['brain:read'] } };
+    try {
+      const ask = (accept?: string) =>
+        askRoute.POST(
+          new Request('http://localhost/api/brain/ask', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', ...(accept && { accept }) },
+            body: JSON.stringify({ question: 'Who is this?', mentions: { refs: [{ type: 'person', id: alice.id }] } }),
+          }),
+        );
+      const text = await (await ask('text/event-stream')).text();
+      expect(text).toContain(`Couldn't read @${alice.id}`);
+      expect(text).not.toContain('Alice');
+      expect(text).not.toContain('role member');
+      const body = (await (await ask()).json()) as { tags: Array<{ ok: boolean; label: string }> };
+      expect(body.tags).toEqual([{ ok: false, label: `Couldn't read @${alice.id}` }]);
+      expect(JSON.stringify(body)).not.toContain('Alice');
+    } finally {
+      state.principal = before;
+    }
   });
 
   it('the folded JSON form carries the answer', async () => {

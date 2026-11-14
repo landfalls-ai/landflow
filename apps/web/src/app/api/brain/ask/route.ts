@@ -41,8 +41,7 @@ export const POST = handler(async (request: Request) => {
   const vectorHits = await vectorFactHits(question, projectsOf(scope));
   const { kept, cut } = askMentionsSplit(mentions?.refs, about);
   // An API key may tag only what its scopes cover reading elsewhere; the rest is refused like a tag that is not theirs.
-  const key = currentPrincipal()?.apiKey;
-  const { allowed, denied } = key ? splitByScopes(kept, key.scopes) : { allowed: kept, denied: [] };
+  const { allowed, denied } = splitByScopes(kept, currentPrincipal()?.apiKey?.scopes);
   const name = (r: { id: string; name?: string }) => (r.name ?? r.id).replace(/\s+/g, ' ').slice(0, 60);
   const refusals = [...denied.map((r) => `Couldn't read @${name(r)}`), ...cut.map((r) => `Left out @${name(r)}: too many tags`)];
   const base = { vectorHits, ...(about && { about }), ...(history && { history }), signal: request.signal };
