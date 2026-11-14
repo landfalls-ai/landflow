@@ -14,7 +14,7 @@ under [What's next](#whats-next), and this page grows as they land.
   runs), **Agents** and **More** (`TabBar` in `components/shell/sidebar.tsx`). It replaces the old top bar and its menu
   button. **Runs** carries the number of things waiting for a person (`GET /api/runs/needs-you`, refreshed when a run
   waits or ends). **More** opens the rail as a drawer, grouped as on a desktop (Build, Extend, Settings, live status,
-  theme, the look and the user menu). The bar pads for the home indicator (`env(safe-area-inset-bottom)`), and pages get
+  theme and the user menu). The bar pads for the home indicator (`env(safe-area-inset-bottom)`), and pages get
   the same room at their foot.
 - **Full screen.** The editor (and its Executions and Evaluations tabs), an agent's page and a run's trace have no tab bar
   (`fullScreen()`): their own header starts with a back arrow, and the editor uses the whole height for the canvas and

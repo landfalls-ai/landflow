@@ -2,43 +2,42 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowRight } from 'lucide-react';
+import { Plus } from 'lucide-react';
+import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
-import { duration, plural, timeAgo } from '@/lib/client/format';
 import { useLiveEvents } from '@/lib/client/live';
+import { useNeedsYou } from '@/lib/client/run-trace';
 import type { ExecutionSummary, PluginSummary } from '@/lib/shared/types';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
-import { Badge, executionTone, LanguageBadge, StatusDot, TransportBadge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { CountUp } from '@/components/ui/count-up';
-import { AppIcon, NodeIcon } from '@/components/ui/icon';
+import { NodeIcon } from '@/components/ui/icon';
 import { SectionLabel } from '@/components/ui/inputs';
 import { SuggestionsInbox } from '@/components/brain/suggestions-inbox';
 import { LiveRuns } from '@/components/run-trace/run-lists';
 import { RunLines } from '@/components/run-trace/run-line';
-import { useNewLook } from '@/components/shell/look-toggle';
+import { homeKpis, offlinePlugins, PluginsOfflineLine, type HomeStats, type Kpi as KpiData } from '@/components/home/home-kpis';
 import { StatCard } from '@/components/ui/stat-card';
 
-interface Stats {
-  workflows: number;
-  activeWorkflows: number;
-  executions24h: number;
-  failed24h: number;
-  avgDurationMs: number;
-}
-
-function Kpi({ label, value, sub, danger, color, icon, index }: { label: string; value?: number; sub?: string; danger?: boolean; color: string; icon: string; index: number }) {
-  return (
+function Kpi({ kpi, index }: { kpi: KpiData; index: number }) {
+  const card = (
     <StatCard
       index={index}
-      label={label}
-      color={color}
-      danger={danger}
-      icon={<NodeIcon icon={icon} size={14} style={{ color }} strokeWidth={2} />}
-      value={value === undefined ? '—' : <CountUp value={value} />}
-      sub={sub && <span className="truncate">{sub}</span>}
+      label={kpi.label}
+      color={kpi.color}
+      danger={kpi.danger}
+      icon={<NodeIcon icon={kpi.icon} size={14} style={{ color: kpi.color }} strokeWidth={2} />}
+      value={kpi.value === undefined ? '—' : <CountUp value={kpi.value} />}
+      sub={kpi.sub && <span className="truncate">{kpi.sub}</span>}
     />
+  );
+  return kpi.href ? (
+    <Link href={kpi.href} className="rounded-2xl focus-visible:outline-2 focus-visible:outline-ac">
+      {card}
+    </Link>
+  ) : (
+    card
   );
 }
 
@@ -58,113 +57,86 @@ function Panel({ title, href, linkLabel, children }: { title: string; href: stri
 
 export default function Overview() {
   const router = useRouter();
-  const [stats, setStats] = useState<Stats>();
+  const [stats, setStats] = useState<HomeStats>();
   const [plugins, setPlugins] = useState<PluginSummary[]>();
-  const newLook = useNewLook();
   const [executions, setExecutions] = useState<ExecutionSummary[]>();
-  const [nodeTypes, setNodeTypes] = useState(0);
+  const [creating, setCreating] = useState(false);
+  const { items: needsYou } = useNeedsYou();
 
   const load = () => {
-    void api<{ stats: Stats }>('/api/workflows').then((r) => setStats(r.stats));
+    void api<{ stats: HomeStats }>('/api/workflows').then((r) => setStats(r.stats));
     void api<{ plugins: PluginSummary[] }>('/api/plugins').then((r) => setPlugins(r.plugins));
     void api<{ executions: ExecutionSummary[] }>('/api/executions?limit=8').then((r) => setExecutions(r.executions.slice(0, 8))); // live runs come first and may add to the 8
-    void api<{ nodeTypes: unknown[] }>('/api/node-types').then((r) => setNodeTypes(r.nodeTypes.length));
   };
   useEffect(load, []);
+  // The Classic look is gone: nobody stays on a stored `landflow-look=classic`.
+  useEffect(() => {
+    try {
+      localStorage.removeItem('landflow-look');
+      delete document.documentElement.dataset.look;
+    } catch {}
+  }, []);
   useLiveEvents((event) => {
     if (event.channel === 'registry' && event.event.type !== 'plugin.heartbeat' && !event.event.type.startsWith('scan.')) load();
     if (event.channel === 'execution' && (event.event.type === 'execution.finished' || event.event.type === 'execution.started' || event.event.type === 'execution.paused' || event.event.type === 'execution.resumed')) load();
   });
 
-  const online = plugins?.filter((p) => p.status === 'online').length ?? 0;
-  const languages = new Set(plugins?.map((p) => p.info.language)).size;
+  // A blank workflow, the way the workflows list makes one, then the editor.
+  const create = async () => {
+    setCreating(true);
+    try {
+      const { workflow } = await api<{ workflow: { id: string } }>('/api/workflows', { method: 'POST', json: { name: 'Untitled workflow', nodes: [], connections: [] } });
+      router.push(`/workflows/${workflow.id}`);
+    } catch (e) {
+      toast.error((e as Error).message);
+      setCreating(false);
+    }
+  };
+
+  const recent = executions?.filter((e) => e.status !== 'running').slice(0, 6);
 
   return (
     <>
       <PageHeader
         title="Home"
-        meta={plugins && <span>{plural(online, 'plugin')} online · {plural(languages, 'language')} · {plural(nodeTypes, 'node type')}</span>}
         actions={
-          <Button size="sm" variant="primary" onClick={() => router.push('/workflows/wf_polyglot_pipeline')}>
-            Open polyglot demo <ArrowRight className="size-3.5" strokeWidth={1.7} />
+          <Button size="sm" variant="primary" onClick={() => void create()} loading={creating}>
+            {!creating && <Plus className="size-3.5" strokeWidth={2} />} New workflow
           </Button>
         }
       />
       <PageBody className="flex flex-col gap-5">
+        <PluginsOfflineLine count={offlinePlugins(plugins)} />
         <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <Kpi index={0} label="Workflows" icon="lucide:workflow" color="var(--viz-1)" value={stats?.workflows} sub={stats && `${stats.activeWorkflows} active`} />
-          <Kpi index={1} label="Executions (24h)" icon="lucide:activity" color="var(--viz-3)" value={stats?.executions24h} sub={stats && `avg ${duration(stats.avgDurationMs)}`} />
-          <Kpi
-            index={2}
-            label="Failed (24h)"
-            icon="lucide:triangle-alert"
-            color="var(--rd)"
-            value={stats?.failed24h}
-            danger={!!stats?.failed24h}
-            sub={stats && (stats.executions24h ? `${Math.round((stats.failed24h / stats.executions24h) * 100)}% of runs` : 'no runs yet')}
-          />
-          <Kpi index={3} label="Plugins online" icon="lucide:puzzle" color="var(--viz-7)" value={plugins ? online : undefined} sub={plugins && `${plugins.length} registered · ${nodeTypes} node types`} />
+          {homeKpis(stats, needsYou?.length).map((kpi, i) => (
+            <Kpi key={kpi.label} kpi={kpi} index={i} />
+          ))}
         </section>
 
         <SuggestionsInbox />
 
-        {newLook && executions && <LiveRuns executions={executions} />}
+        {executions && <LiveRuns executions={executions} />}
 
-        <section className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[1.4fr_1fr]">
-          <Panel title="Recent executions" href="/executions" linkLabel="View all">
-            {newLook && executions?.length ? (
-              <div className="p-3">
-                <RunLines runs={executions.filter((e) => e.status !== 'running').slice(0, 6).map((e) => ({ id: e.id, href: `/runs/${e.id}`, name: e.workflowName, startedAt: e.startedAt }))} />
-              </div>
-            ) : (
-            <div className="divide-y divide-hair">
-              {executions?.map((execution) => (
-                <Link key={execution.id} href={`/workflows/${execution.workflowId}/executions/${execution.id}`} className="flex items-center gap-3 px-4 py-2.5 transition-colors duration-[120ms] hover:bg-sf2">
-                  <StatusDot status={execution.paused ? 'paused' : execution.status} pulse={execution.status === 'running' && !execution.paused} />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex min-w-0 items-center gap-1.5">
-                      <span className="truncate text-[13px] font-semibold text-t1">{execution.workflowName}</span>
-                      {execution.rerunOf && <Badge tone="muted">re-run</Badge>}
-                      {execution.debug && <Badge tone="neutral">debug</Badge>}
-                      {execution.paused && <Badge tone="warning">paused</Badge>}
-                    </div>
-                    <div className="mt-0.5 truncate text-[12px] text-t3">
-                      {execution.mode} · {execution.nodesRun} node runs
-                    </div>
-                  </div>
-                  <Badge tone={executionTone(execution.status)}>{execution.status}</Badge>
-                  <div className="w-[68px] shrink-0 text-right">
-                    <div className="font-mono text-[12px] text-t2">{execution.status === 'running' ? '—' : duration(execution.durationMs)}</div>
-                    <div className="text-[12px] text-t3">{timeAgo(execution.startedAt)}</div>
-                  </div>
-                </Link>
-              ))}
+        <Panel title="Recent executions" href="/executions" linkLabel="View all">
+          {recent?.length ? (
+            <div className="p-3">
+              <RunLines runs={recent.map((e) => ({ id: e.id, href: `/runs/${e.id}`, name: e.workflowName, startedAt: e.startedAt }))} />
             </div>
-            )}
-            {executions?.length === 0 && <EmptyState compact title="No executions yet" hint="Run a workflow and it shows up here." className="py-8" />}
-          </Panel>
-
-          <Panel title="Plugins" href="/plugins" linkLabel="Registry">
-            <div className="divide-y divide-hair">
-              {plugins?.map((plugin) => (
-                <Link key={plugin.id} href={`/plugins?plugin=${encodeURIComponent(plugin.id)}`} className="flex items-center gap-3 px-4 py-2.5 transition-colors duration-[120ms] hover:bg-sf2">
-                  <AppIcon icon={plugin.info.icon} color={plugin.info.color} size={30} />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex min-w-0 items-center gap-1.5">
-                      <span className="truncate text-[13px] font-semibold text-t1">{plugin.info.name}</span>
-                      <span className="font-mono text-[11px] text-t3">v{plugin.info.version}</span>
-                    </div>
-                    <div className="mt-0.5 text-[12px] text-t3">{plugin.nodes.length} {plugin.nodes.length === 1 ? 'node' : 'nodes'}</div>
-                  </div>
-                  <LanguageBadge language={plugin.info.language} className="hidden sm:inline-flex" />
-                  <TransportBadge transport={plugin.transport} />
-                  <StatusDot status={plugin.status} />
-                </Link>
-              ))}
-            </div>
-            {plugins?.length === 0 && <EmptyState compact title="No plugins registered" hint="Start one or scan the network from the Plugins page." className="py-8" />}
-          </Panel>
-        </section>
+          ) : null}
+          {executions?.length === 0 && (
+            <EmptyState
+              compact
+              title="No executions yet"
+              hint="Run a workflow and it shows up here. Or open the demo to see one run."
+              action={
+                <Button size="sm" variant="outline" onClick={() => router.push('/workflows/wf_polyglot_pipeline')}>
+                  Open polyglot demo
+                </Button>
+              }
+              className="py-8"
+            />
+          )}
+        </Panel>
       </PageBody>
     </>
   );

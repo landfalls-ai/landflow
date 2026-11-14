@@ -13,19 +13,16 @@ Legend: ✅ on par with n8n · ➕ beyond n8n · ◐ partial · ✗ missing
 | Overview | Workflows / Credentials / Executions tabs, insight KPIs | Home: four KPI cards with coloured top bars, count-up numbers, recent executions, plugin list with brand icons | ✅ |
 | Workflows list | Cards with name, last updated, owner; folders, search, tag filter, sort, import | Rows with node icons tinted by node colour, description, tags, active badge, node count; nested folders with a breadcrumb (drag a workflow onto a folder or a breadcrumb step, or Move to folder), search across folders, tag filter, sort by updated / name / created, Import from a Landflow or n8n file with a report | ✅ |
 | Theme | Light, dark, system | Light, dark, system (Landfall tokens) | ✅ |
-| Look | — | **New** or **Classic** under the theme switch ([the look](#the-look)) | ➕ |
 
 ### The look
 
-A second switch under the theme switch picks the look: **New** (the default) draws the run cards and timelines from the
+There is one look. The Classic look and its switch under the theme switch are gone: the run cards and timelines from the
 design review against blocks.diy (a run as a timeline, what a run did in one line, an approval with its evidence, team
-members as cards, the analyst answering with a chart, building step by step); **Classic** draws the screens as they were
-before them. Only the drawing changes: every feature, route and button works the same in both. The choice is kept per
-browser in `localStorage` (`landflow-look`), set on `<html data-look>` before paint so a classic page never flashes the
-new look, and read in components with `useLook()` / `useNewLook()` from `components/shell/look-toggle.tsx`. The git
-branch `design-before-blocks` keeps the code as it was before these designs.
+members as cards, the analyst answering with a chart, building step by step) are how every screen draws. A browser that
+had Classic stored (`landflow-look`) has the key cleared when Home loads. The git branch `design-before-blocks` keeps
+the code as it was before these designs.
 
-What the new look draws so far:
+What the look draws:
 
 - a run as a timeline above the Run Trace's tabs, under Running now on Home and the Executions page, and on the team page
   while the team works ([run-trace.md](run-trace.md#a-run-as-a-timeline));

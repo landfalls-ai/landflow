@@ -53,6 +53,10 @@ sidebar. (M, phase 4 of [spotlight.md](spotlight.md#delivery).)
 - **Change:** the Home in [spotlight.md](spotlight.md#1-home-20) (Needs you, KPIs with deltas, runs chart, rankings,
   Continue). Group runs by workflow; show plugins only when one is offline; primary action "New workflow"; demo links in
   an empty-state card for new instances.
+- **Built (2026-11-14):** the header's primary is "New workflow" (a blank one, opened in the editor); "Open polyglot
+  demo" sits in the empty state of an instance with no runs; the Plugins KPI and panel and the header meta line are
+  gone, a one-line warning shows above the tiles only when a plugin is offline; "Needs you" is the fourth tile; a run
+  of one flow is one line; a suggestion is a compact card.
 
 ### Developer details everywhere (high impact, S)
 
