@@ -74,6 +74,7 @@ export function Popover({ trigger, children, align = 'end', className, title, la
           <div
             ref={panel}
             role={role}
+            aria-label={role === 'dialog' ? (label ?? title) : undefined}
             style={pos}
             className={cn('fixed z-50 min-w-[200px] animate-in rounded-xl border border-hair bg-sf p-1 text-[13px] shadow-pop', className)}
           >

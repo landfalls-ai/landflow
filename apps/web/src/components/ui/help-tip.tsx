@@ -22,7 +22,7 @@ export function HelpTipButton({ label, open, onClick, children, className }: { l
       aria-haspopup="dialog"
       onClick={onClick}
       className={cn(
-        'inline-flex items-center gap-1 rounded-full text-t3 transition-colors hover:text-t1 focus-visible:text-t1 relative after:absolute after:-inset-3 after:content-[""]',
+        'inline-flex items-center gap-1 rounded-full text-t3 transition-colors hover:text-t1 focus-visible:text-t1 relative max-md:after:absolute max-md:after:-inset-3 max-md:after:content-[""]',
         children ? 'text-[12px] font-medium' : 'size-5 justify-center',
         className,
       )}
