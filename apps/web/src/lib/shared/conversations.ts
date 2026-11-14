@@ -4,6 +4,10 @@
  */
 import { z } from 'zod';
 
+// As in ui-spec.ts: the browser loads this module (lib/client/conversations.ts uses createBody), and zod probes
+// `new Function` when it builds an object schema, which the production CSP reports. Jitless in the browser avoids the probe.
+if (typeof window !== 'undefined') z.config({ jitless: true });
+
 export const CONVERSATION_SURFACES = ['spotlight', 'brain', 'architect', 'agent-test'] as const;
 export type ConversationSurface = (typeof CONVERSATION_SURFACES)[number];
 

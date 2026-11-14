@@ -10,7 +10,8 @@ process.env.LANDFLOW_DATA_DIR = mkdtempSync(join(tmpdir(), 'landflow-preferences
 
 const route = await import('@/app/api/me/preferences/route');
 const { routePolicy } = await import('@/lib/server/auth/policy');
-const { readPreferences, PREFERENCE_DEFAULTS } = await import('@/lib/shared/preferences');
+const { readPreferences, PREFERENCE_DEFAULTS, BRIEFING_DELIVERIES } = await import('@/lib/shared/preferences');
+const { preferencesSchema } = await import('@/lib/shared/preferences-schema');
 
 const OTHER = { ...TEST_OWNER, id: 'usr_test_other', email: 'other@landflow.test', name: 'Other', role: 'member' as const };
 
@@ -23,6 +24,27 @@ const patch = (body: unknown) => route.PATCH(new Request('http://localhost/api/m
 const get = async () => ((await route.GET(new Request('http://localhost/api/me/preferences'))).json() as Promise<{ preferences: Record<string, unknown> }>).then((b) => b.preferences);
 
 describe('preferences', () => {
+  it('writes its defaults out, equal to the schema’s (no zod in the browser module: the production CSP)', () => {
+    expect(PREFERENCE_DEFAULTS).toEqual(preferencesSchema.parse({}));
+    expect(Object.keys(preferencesSchema.shape).sort()).toEqual(Object.keys(PREFERENCE_DEFAULTS).sort());
+  });
+
+  it('reads each value the way the schema does', () => {
+    const samples = [true, false, 'yes', 0, null, undefined, {}, ...BRIEFING_DELIVERIES, 'carrier pigeon'];
+    for (const key of Object.keys(PREFERENCE_DEFAULTS) as (keyof typeof PREFERENCE_DEFAULTS)[]) {
+      for (const sample of samples) {
+        const field = preferencesSchema.shape[key].safeParse(sample);
+        expect(readPreferences({ [key]: sample })[key], `${key} ${String(sample)}`).toEqual(field.success ? field.data : PREFERENCE_DEFAULTS[key]);
+      }
+    }
+  });
+
+  it('keeps zod out of the module every page loads', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('../src/lib/shared/preferences.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/from 'zod'/);
+  });
+
   it('answers the defaults until something is set', async () => {
     expect(await get()).toEqual({ developerDetails: false, keepConversations: true, briefingDelivery: 'none' });
   });

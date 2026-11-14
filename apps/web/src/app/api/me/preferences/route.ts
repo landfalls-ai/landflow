@@ -1,7 +1,7 @@
 import { handler, json, parseBody } from '@/lib/server/http';
 import { routeActor } from '@/lib/server/projects/http';
 import { getPreferences, setPreferences } from '@/lib/server/preferences';
-import { preferencesPatchSchema } from '@/lib/shared/preferences';
+import { preferencesPatchSchema } from '@/lib/shared/preferences-schema';
 
 export const dynamic = 'force-dynamic';
 
