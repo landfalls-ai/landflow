@@ -53,9 +53,11 @@ export function summarizeDay(input: DayInput): WorkEventInput {
   const n = commits.length;
   const where = branches.length ? ` on ${clip(branches.slice(0, 2).join(', '), 60)}` : '';
   let title = n
-    ? `${n} commit${n === 1 ? '' : 's'}${where}${subjects.length ? `: ${subjects.join('; ')}` : ''}`
+    ? `${n} commit${n === 1 ? '' : 's'}${where}${subjects.length ? `: ${subjects.join(' · ')}` : ''}`
     : `${input.prs.length} pull request${input.prs.length === 1 ? '' : 's'} on ${input.repo}`;
   title = clip(title, WORK_LIMITS.title);
+  // Subjects are joined with ' · ', not '; ': a semicolon is one of the two signs `looksLikeCode` needs, so with it one
+  // ordinary word ("return early", "let users") would make a long title fall back to the counts.
   // A subject that reads like code must not make the whole title be refused: fall back to the counts.
   if (title.length > WORK_LIMITS.codeTitle && looksLikeCode(title)) title = clip(`${n} commit${n === 1 ? '' : 's'}${where}`, WORK_LIMITS.title);
 

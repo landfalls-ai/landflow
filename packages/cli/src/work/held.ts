@@ -104,7 +104,7 @@ const sameEvent = (a: WorkEventInput, b: WorkEventInput) => JSON.stringify(a) ==
 
 /**
  * Add or update an entry by `sourceId`. A re-collected day that changed goes back to held (the person reviews the
- * update); one that did not change keeps its status. A title the person edited is left out of the comparison and
+ * update); one that did not change keeps its status, and a dropped one stays dropped. A title the person edited is left out of the comparison and
  * survives a re-collect: if only the title differs the entry stays as it is, otherwise the other fields update, the
  * edited title stays and the entry goes back to held.
  */
@@ -113,11 +113,14 @@ export function upsert(entries: HeldEntry[], event: WorkEventInput, day: string,
   const edited = Boolean(existing?.titleEdited);
   const next: WorkEventInput = edited && existing ? { ...event, title: existing.event.title } : event;
   if (existing && sameEvent(existing.event, next)) return { entries, entry: existing, changed: false };
+  // A dropped day stays dropped: `review --drop` promises it is never sent, so a later commit that day must not bring
+  // it back as held (where a `send --yes` from cron would post it).
+  const dropped = existing?.status === 'dropped';
   const entry: HeldEntry = {
     id: entryId(event.sourceId),
     sourceId: event.sourceId,
     day,
-    status: 'held',
+    status: dropped ? 'dropped' : 'held',
     event: next,
     heldAt: now.toISOString(),
     ...(edited && { titleEdited: true }),
