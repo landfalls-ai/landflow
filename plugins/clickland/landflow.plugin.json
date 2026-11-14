@@ -1,0 +1,5 @@
+{
+  "id": "clickland",
+  "runtime": "node",
+  "start": ["tsx", "src/main.ts"]
+}

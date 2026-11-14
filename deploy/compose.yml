@@ -70,8 +70,8 @@ services:
       LANDFLOW_LOG_LEVEL: ${LANDFLOW_LOG_LEVEL:-info}
       # Plugins announce themselves; the scan (at boot and the Plugins page's "Scan network")
       # probes the plugin services instead of the container's own 127.0.0.1.
-      LANDFLOW_SCAN_HOSTS: text-toolkit,py-insights,go-crypto,messaging,productivity,google-workspace,databases,github,browser,agent-shell,web-search,linear,attio,fathom
-      LANDFLOW_SCAN_PORTS: 7101-7107,7111-7114,7116-7118,7201-7207,7211-7214,7216-7218
+      LANDFLOW_SCAN_HOSTS: text-toolkit,py-insights,go-crypto,messaging,productivity,google-workspace,databases,github,browser,agent-shell,web-search,linear,attio,fathom,clickland
+      LANDFLOW_SCAN_PORTS: 7101-7107,7111-7114,7116-7119,7201-7207,7211-7214,7216-7219
       # Base of links the host hands out (resume URLs, error-workflow links): the published port.
       LANDFLOW_PUBLIC_URL: http://localhost:${LANDFLOW_HOST_PORT:-53000}
       # Where plugins fetch and upload item files (/api/binary): the host on the compose network.
@@ -267,6 +267,19 @@ services:
     environment:
       <<: *plugin-env
       LANDFLOW_ADVERTISE_HOST: fathom
+
+  # Clickland (plugins/clickland): observability. Its credential's Base URL is Clickland's API (http://host.docker.internal:4710
+  # from this stack when Clickland runs on the Mac).
+  clickland:
+    <<: *plugin
+    image: ${LANDFLOW_IMAGE_PREFIX:-landflow}/plugin-clickland:${LANDFLOW_IMAGE_TAG:-dev}
+    build:
+      context: ..
+      dockerfile: deploy/docker/node-plugin.Dockerfile
+      args: { PLUGIN: clickland, HTTP_PORT: "7119", GRPC_PORT: "7219" }
+    environment:
+      <<: *plugin-env
+      LANDFLOW_ADVERTISE_HOST: clickland
 
   # Browser plugin (plugins/browser): its own image with Chrome and the agent-browser CLI (plugins/browser/Dockerfile).
   # Optional: the profile `browser` keeps it out of a plain `up` (the image is large); add `--profile browser`. It runs

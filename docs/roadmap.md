@@ -1209,6 +1209,18 @@ Calendar, Notion and the Directory, then for Linear, Attio and Fathom.
 the same customer named by a channel or folder. Open from Phase A: a Notion webhook trigger once Notion can create subscriptions over its API; push channels for Drive and Calendar
 once app webhooks can renew themselves; Slack message edits and deletions; the Directory's groups and org units.
 
+## Clickland (built 2026-11-14)
+
+Landflow's side of Clickland, the land family's observability system ([features/clickland.md](features/clickland.md)).
+**Built:**
+
+- The [`clickland` plugin](../plugins/clickland/README.md) (TypeScript, 7119/7219): logs, traces, services, metrics,
+  patterns, alerts, notes, knowledge search and views (dashboards included) as one node usable as an agent tool and
+  over MCP, the **Clickland Alert Trigger** (a Standard Webhooks subscription made on publish) and the **Clickland
+  Trigger** (poll). In compose, the Kubernetes base and the OrbStack overlay.
+
+**Next:** a live check against a running Clickland (the plugin was built against the contract and a fake).
+
 ## The Brain page (built 2026-11-12)
 
 `/brain` opens the second brain as a repository of Markdown files in an editor's workbench

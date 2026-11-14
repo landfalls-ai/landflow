@@ -41,6 +41,7 @@ images:
   - { name: landflow/plugin-linear, newTag: k8s-dev }
   - { name: landflow/plugin-attio, newTag: k8s-dev }
   - { name: landflow/plugin-fathom, newTag: k8s-dev }
+  - { name: landflow/plugin-clickland, newTag: k8s-dev }
   - { name: landflow/plugin-browser, newTag: k8s-dev } # only used with components/browser
   - { name: landflow/plugin-agent-shell, newTag: k8s-dev } # only used with components/agent-shell
   - { name: landflow/plugin-web-search, newTag: k8s-dev } # only used with components/web-search

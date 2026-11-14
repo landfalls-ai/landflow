@@ -1,0 +1,22 @@
+{
+  "name": "@landflow/plugin-clickland",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Clickland for Landflow: search logs and traces, services, metrics, log patterns, alerts, notes and knowledge search, a signed alert webhook trigger and a polling trigger.",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "dev": "tsx watch src/main.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@landflow/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "tsx": "^4.23.15",
+    "vitest": "^5.0.5",
+    "@landflow/protocol": "workspace:*"
+  }
+}

@@ -84,6 +84,18 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - **Agent Shell's isolation is in-process**: just-bash is a library inside the plugin's Node process (beta by its own README), not a VM. Run the plugin in a container, not on a host that holds secrets. It has no image or deploy entry yet.
 - **Dropped: a capped deepsec scan** (W5d): the user dropped it, since there is no API key (local Ollama only).
 
+## Clickland (built 2026-11-14)
+
+- **Built against the contract, not a running Clickland.** The [plugin](../plugins/clickland/README.md) follows
+  Clickland's `docs/reference/api.md` and is tested against a local fake of it; nothing was checked against a live
+  Clickland yet.
+- **Alert events have no fixed shape in the contract.** The Clickland Trigger reads an event's time from the first of
+  `createdAt`, `at`, `timestamp`, `changedAt`, `firedAt`, `time`, and an event without any of them is never emitted. It
+  reads events for at most 25 alerts per poll (those whose states changed), so a burst across more alerts takes several
+  polls. The Alert Trigger has no such limit.
+- **Alert → Update reads, then writes the whole alert** (Clickland's `PUT` takes all fields), so a change made in
+  Clickland between the two calls is overwritten.
+
 ## Integrations that report activity (built 2026-11-12)
 
 - **Activity items** ([protocol.md §16](protocol.md#16-activity-items)) are a shape, not a pipeline: a flow records them (Record Event, Entity). `kind` is a suggestion each integration makes (`work.discussion`, `work.doc_edited`, `work.meeting_*`); the hints come from names (Slack channel prefixes, Drive folders and Notion ancestors called `Customers` / `Projects`, a shared drive's name, an attendee's domain), not from the vendor's own team model.
