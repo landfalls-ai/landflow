@@ -19,7 +19,6 @@ import { cn } from '@/lib/utils';
 import { Button } from '../ui/button';
 import { NodeIcon } from '../ui/icon';
 import { edgePath, useLane } from '../canvas/edge-path';
-import { useNewLook } from '../shell/look-toggle';
 import { applyChanges, editorLookup, sendFeedback, useAssistant, useWorking, type Proposal } from './assistant';
 import { useAutonomous } from './autonomous';
 import { LeftOut } from './suggestions-card';
@@ -44,9 +43,8 @@ export interface Live {
   progress: number;
 }
 
-/** The change being built, if any: the last reply is still going or has proposals waiting. Undefined in the classic look. */
+/** The change being built, if any: the last reply is still going or has proposals waiting. */
 export function useLive(): Live | undefined {
-  const newLook = useNewLook();
   const items = useAssistant((s) => s.items);
   const streaming = useAssistant((s) => s.pending);
   const busy = useAssistant((s) => s.drafting || Boolean(s.testing));
@@ -60,13 +58,13 @@ export function useLive(): Live | undefined {
   const asked = last?.role === 'assistant' && !last.testId ? last : undefined;
   const proposals = useMemo(() => (asked ? asked.parts.flatMap((p) => (p.kind === 'proposal' && !p.proposal.state && p.proposal.ops.length ? [{ itemId: asked.id, proposal: p.proposal }] : [])) : []), [asked]);
   const plan = useMemo(
-    () => (newLook && asked && proposals.length ? planOf(useEditor.getState().toWorkflow(), proposals.flatMap((p) => p.proposal.ops), editorLookup()) : undefined),
+    () => (asked && proposals.length ? planOf(useEditor.getState().toWorkflow(), proposals.flatMap((p) => p.proposal.ops), editorLookup()) : undefined),
     // The graph is read through the store; nodes and edges change it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [newLook, asked, proposals, nodes, edges],
+    [asked, proposals, nodes, edges],
   );
   const failed = Boolean(asked?.error) && !proposals.length;
-  const active = newLook && Boolean(asked) && !busy && !working && !failed && (streaming || proposals.length > 0);
+  const active = Boolean(asked) && !busy && !working && !failed && (streaming || proposals.length > 0);
   const empty = useMemo<Plan>(() => ({ steps: [], nodes: [], links: [], dropped: [] }), []);
   const used = plan ?? empty;
   const revealed = asked && reply === asked.id ? Math.min(revealedNow, used.steps.length) : 0;

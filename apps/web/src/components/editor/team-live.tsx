@@ -17,7 +17,6 @@ import { decideAsk, useRunAsks, useWorkingMembers } from '@/lib/client/run-contr
 import { duration, timeAgo } from '@/lib/client/format';
 import { decideToolApprovals } from '@/lib/client/run-trace';
 import { ApprovalSheet, LiveApprovalCard, type DecideFn } from '../run-trace/approval-live';
-import { useNewLook } from '../shell/look-toggle';
 import { useLastTeamRun } from '../agents/team-run-data';
 import { useRunLines } from '../run-trace/run-line';
 import { lastRunWords, rosterText } from '@/lib/shared/team-node';
@@ -374,7 +373,6 @@ export function AnswerLink({ executionId, className }: { executionId: string; cl
 export function ApprovalButtons({ executionId, onDecide, className, member }: { executionId: string; onDecide?: DecideFn; className?: string; member?: string }) {
   const [busy, setBusy] = useState<'approve' | 'deny'>();
   // The new look: Review opens the decision card (the member's reasons, the case, the evidence, Edit) over the page.
-  const newLook = useNewLook();
   const [reviewing, setReviewing] = useState(false);
   const decide = async (approved: boolean) => {
     setBusy(approved ? 'approve' : 'deny');
@@ -415,8 +413,7 @@ export function ApprovalButtons({ executionId, onDecide, className, member }: { 
       >
         {busy === 'deny' ? <Loader2 className="size-3.5 animate-spin" /> : <X className="size-3.5" strokeWidth={3} />} Deny
       </button>
-      {newLook && (
-        <>
+      <>
           <button
             type="button"
             {...own}
@@ -433,7 +430,6 @@ export function ApprovalButtons({ executionId, onDecide, className, member }: { 
           </button>
           {reviewing && <ApprovalSheet executionId={executionId} {...(member && { member })} {...(onDecide && { onDecide })} onClose={() => setReviewing(false)} />}
         </>
-      )}
     </span>
   );
 }
@@ -579,7 +575,6 @@ const AMBER = 'var(--warn)';
  * member's question, the question in amber with an Answer button. `moments` go above the node, with the roster.
  */
 export function useTeamTile(teamId: string | undefined, live: TeamProgress | undefined, activity: TeamActivity | undefined, options: TeamTileOptions = {}): { tile?: NodeLive; moments?: ReactNode; roster?: boolean } {
-  const newLook = useNewLook();
   const faces = useTeamFaces(teamId);
   const elapsed = useElapsed(live);
   const working = useWorkingMembers(options.executionId, Boolean(live && options.executionId && !options.waiting));
@@ -667,7 +662,7 @@ export function useTeamTile(teamId: string | undefined, live: TeamProgress | und
       },
     };
   }
-  if (options.idleRoster && newLook && teamId) return { tile: { body: <TeamIdle teamId={teamId} faces={faces} /> }, roster: true };
+  if (options.idleRoster && teamId) return { tile: { body: <TeamIdle teamId={teamId} faces={faces} /> }, roster: true };
   return {};
 }
 
@@ -770,7 +765,6 @@ export function TeamNowCard({ teamId, live, nodeName, onOpenTrace, executionId }
 /** The phone card of a run waiting on a member's question: who asks, the question in full, and the Answer button. */
 export function TeamAskCard({ teamId, waiting, nodeName, executionId, onDecide }: { teamId: string; waiting: TeamWaiting; nodeName: string; executionId?: string; onDecide?: DecideFn }) {
   const faces = useTeamFaces(teamId);
-  const newLook = useNewLook();
   if (!faces?.length) return null;
   const face = faceByTitle(faces, waiting.member) ?? faces[0];
   const classic = (
@@ -806,6 +800,6 @@ export function TeamAskCard({ teamId, waiting, nodeName, executionId, onDecide }
     </section>
   );
   // The new look: a tool approval is a decision card with the member's reasons and the evidence it looked at.
-  if (newLook && executionId && waiting.approval) return <LiveApprovalCard executionId={executionId} member={waiting.member} {...(onDecide && { onDecide })} fallback={classic} />;
+  if (executionId && waiting.approval) return <LiveApprovalCard executionId={executionId} member={waiting.member} {...(onDecide && { onDecide })} fallback={classic} />;
   return classic;
 }
