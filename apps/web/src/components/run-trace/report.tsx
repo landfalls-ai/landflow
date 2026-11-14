@@ -10,7 +10,6 @@ import { checksLine, type RunReport } from '@/lib/shared/run-report';
 import type { RunChanges } from '@/lib/shared/run-changes';
 import { cut, edgeParts, fmtMs, preview, resultOf, spendLine, textOf, type RunModel } from '@/lib/shared/run-trace-model';
 import { Button } from '../ui/button';
-import { EmptyState } from '../ui/empty-state';
 import { Select } from '../ui/inputs';
 import { ModelMark } from './connections';
 import { Card, SectionTitle, Tap, who } from './parts';
@@ -51,8 +50,6 @@ function Item({ onOpen, mark, children, tone }: { onOpen?: () => void; mark: str
 
 const Small = ({ children }: { children: ReactNode }) => <small className="block text-[12px] text-t3">{children}</small>;
 
-/** One sentence per fact, no interpretation. */
-const teamOf = participantsOf;
 
 /** The name of the profile the run started with. */
 function resolvedName(model: RunModel): string {
@@ -60,7 +57,7 @@ function resolvedName(model: RunModel): string {
   return typeof setting === 'string' && setting in RUN_PROFILES ? RUN_PROFILES[setting as keyof typeof RUN_PROFILES].name : setting && typeof setting === 'object' ? 'custom' : RUN_PROFILES.generic.name;
 }
 
-/** Requests and failed steps in a sentence or two; nothing when there were none. */
+/** Requests and failed steps in a sentence or two, one sentence per fact; nothing when there were none. */
 function summary(model: RunModel): string {
   const requests = model.order.filter((s) => s.kind === 'delegate' || s.kind === 'handoff');
   const results = requests.map((s) => resultOf(s)[0]);
@@ -92,6 +89,8 @@ export function StorySummary({ model, report, changes, open, profile, onProfile 
       () => toast.error('Could not copy'),
     );
   };
+  // A passing run with no checks says nothing more than the header: no card, only a small profile picker.
+  const showChecked = !(report.verdict === 'pass' && report.checks.length === 0);
   const next = nextSteps(report);
   const tiles = summaryTiles(model, changes);
   return (
@@ -99,33 +98,35 @@ export function StorySummary({ model, report, changes, open, profile, onProfile 
       {model.live && <p className="rounded-xl bg-warndim px-3 py-2 text-[12.5px] text-warn">The run is still going: this is the summary so far.</p>}
       <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
         {outcome.reported && (
-          <Card>
+          <Card className={showChecked ? undefined : 'min-[420px]:col-span-2'}>
             <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Reported</div>
             <div className="mt-1 line-clamp-4 text-[13.5px] text-t1">{preview(outcome.reported.text, 220)}</div>
             <div className="mt-1 text-[12px] text-t3">by {outcome.reported.by}</div>
           </Card>
         )}
-        <Card tone={report.verdict === 'fail' ? 'bad' : report.verdict === 'warn' ? 'warn' : 'ok'} className={outcome.reported ? undefined : 'min-[420px]:col-span-2'}>
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Checked</span>
-            {onProfile ? (
-              <Select aria-label="Check with the profile" className="h-7 w-auto py-0 text-[12px]" value={profile ?? ''} onChange={(e) => onProfile(e.target.value || undefined)}>
-                <option value="">The flow’s ({resolvedName(model)})</option>
-                {Object.values(RUN_PROFILES).map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </Select>
-            ) : (
-              <span className="text-[11px] text-t3">{report.profile.name}</span>
-            )}
-          </div>
-          <div className="mt-1 text-[13.5px] font-semibold text-t1">{report.label}</div>
-          <div className="mt-1 text-[12px] text-t3">{checksLine(report)[0].toUpperCase() + checksLine(report).slice(1)}</div>
-        </Card>
+        {showChecked && (
+          <Card tone={report.verdict === 'fail' ? 'bad' : report.verdict === 'warn' ? 'warn' : 'ok'} className={outcome.reported ? undefined : 'min-[420px]:col-span-2'}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Checked</span>
+              {onProfile ? (
+                <Select aria-label="Check with the profile" className="h-7 w-auto py-0 text-[12px]" value={profile ?? ''} onChange={(e) => onProfile(e.target.value || undefined)}>
+                  <option value="">The flow’s ({resolvedName(model)})</option>
+                  {Object.values(RUN_PROFILES).map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </Select>
+              ) : (
+                <span className="text-[11px] text-t3">{report.profile.name}</span>
+              )}
+            </div>
+            <div className="mt-1 text-[13.5px] font-semibold text-t1">{report.label}</div>
+            {report.checks.length > 0 && <div className="mt-1 text-[12px] text-t3">{checksLine(report)[0].toUpperCase() + checksLine(report).slice(1)}</div>}
+          </Card>
+        )}
       </div>
-      <div className={cn('grid gap-2 text-center', tiles.length === 1 ? 'grid-cols-1' : tiles.length === 2 ? 'grid-cols-2' : 'grid-cols-3')} data-testid="summary-tiles">
+      <div className={cn('grid gap-2 text-center', tiles.length === 1 ? 'grid-cols-1' : tiles.length === 2 || tiles.length === 4 ? 'grid-cols-2' : 'grid-cols-3')} data-testid="summary-tiles">
         {tiles.map(([v, l]) => (
           <div key={l} className="rounded-xl border border-hair bg-sf px-1 py-2">
             <b className="block text-[15px] font-semibold text-t1">{v}</b>
@@ -154,6 +155,16 @@ export function StorySummary({ model, report, changes, open, profile, onProfile 
         <Button variant="outline" size="sm" onClick={copy}>
           <Copy className="size-3.5" /> Copy as Markdown
         </Button>
+        {!showChecked && onProfile && (
+          <Select aria-label="Check with the profile" className="h-8 w-auto py-0 text-[12px]" value={profile ?? ''} onChange={(e) => onProfile(e.target.value || undefined)}>
+            <option value="">Check with a profile</option>
+            {Object.values(RUN_PROFILES).map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </Select>
+        )}
         {saved && (
           <Button variant="ghost" size="sm" onClick={() => open({ kind: 'artifact', id: saved.id })}>
             Saved report · {saved.actor?.name ?? 'Run report'}
@@ -187,7 +198,7 @@ export function ReportDetails({ model, report, open }: { model: RunModel; report
   const otherReport = report.checks.filter((c) => !failedReport.includes(c));
   const requests = model.order.filter((s) => s.kind === 'delegate' || s.kind === 'handoff');
   const waits = model.order.filter((s) => s.kind === 'wait');
-  const team = teamOf(model);
+  const team = participantsOf(model);
   const spenders = team.filter((a) => a.tokensIn + a.tokensOut > 0);
   const name = (id: string) => model.actors.find((a) => a.actor.id === id)?.actor;
   return (

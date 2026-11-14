@@ -978,7 +978,7 @@ approved plan:
   `ExecuteResponse.records` over every transport, the engine's `node.record` event. The GitHub plugin reports its pull
   requests, issues and branches.
 - **The screens**: Run trace next to Canvas on every execution and full screen at `/runs/<id>`. They have a header with
-  who is working now, Needs you, and the Story, Trace, Team and Report tabs. Details open in a sheet, and a time slider
+  who is working now, Needs you, and the Story, Trace, Team and Artifacts tabs (Team and Artifacts only with something in them; the Report is in the Story). Details open in a sheet, and a time slider
   replays the run. Needs you and live cards appear on Executions.
 - **Checks, profiles and the report**: the built-in checks (six since 2026-10-31: Agent notes committed), the Generic, Software delivery and Customer support
   profiles (or a custom one as JSON), the structured reply block, and the **Run Report** node. The node saves the

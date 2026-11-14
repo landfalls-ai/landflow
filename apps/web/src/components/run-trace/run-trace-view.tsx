@@ -425,7 +425,7 @@ function TraceBody({
   const changes = useMemo(() => foldChanges(seen), [seen]);
   const github = useMemo(() => githubOf(seen), [seen]);
 
-  // The Run report's checks, live, with the run's profile or the one picked on the Report tab: the header's verdict and the tab.
+  // The Run report's checks, live, with the run's profile or the one picked in the Story's summary.
   const [profileId, setProfileId] = useState<keyof typeof RUN_PROFILES>();
   const report = useMemo(
     () => (model.empty ? undefined : buildRunReport(model, profileId ? RUN_PROFILES[profileId] : resolveRunProfile(model.run?.attrs.profile), { changes })),
@@ -516,26 +516,24 @@ function TraceBody({
 
       <NeedsYou items={needs} executionId={executionId} executionHref={executionHref} open={open} onResolve={onResolve} busy={busy} onDecided={refresh} model={model} changes={changes} profile={profileId ? RUN_PROFILES[profileId] : resolveRunProfile(model.run?.attrs.profile)} onTab={setTab} />
 
-      {tabs.length > 1 && (
-        <div role="tablist" aria-label="Run views" className="grid gap-0.5 rounded-full border border-hair bg-sf2 p-0.5" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
-          {tabs.map((id) => (
-            <button
-              key={id}
-              role="tab"
-              id={`rt-tab-${id}`}
-              aria-selected={current === id}
-              aria-controls="rt-panel"
-              onClick={() => setTab(id)}
-              className={cn(
-                'h-9 rounded-full text-[13px] text-t2 transition-all duration-200 hover:text-t1',
-                current === id && 'bg-sf font-semibold text-t1 shadow-[0_1px_3px_rgba(0,0,0,0.08),0_0_0_1px_var(--hair)]',
-              )}
-            >
-              {TAB_LABELS[id]}
-            </button>
-          ))}
-        </div>
-      )}
+      <div role="tablist" aria-label="Run views" className="grid gap-0.5 rounded-full border border-hair bg-sf2 p-0.5" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
+        {tabs.map((id) => (
+          <button
+            key={id}
+            role="tab"
+            id={`rt-tab-${id}`}
+            aria-selected={current === id}
+            aria-controls="rt-panel"
+            onClick={() => setTab(id)}
+            className={cn(
+              'h-9 rounded-full text-[13px] text-t2 transition-all duration-200 hover:text-t1',
+              current === id && 'bg-sf font-semibold text-t1 shadow-[0_1px_3px_rgba(0,0,0,0.08),0_0_0_1px_var(--hair)]',
+            )}
+          >
+            {TAB_LABELS[id]}
+          </button>
+        ))}
+      </div>
 
       <div role="tabpanel" id="rt-panel" aria-labelledby={`rt-tab-${current}`} className="min-w-0">
         {current === 'story' && (
@@ -553,47 +551,47 @@ function TraceBody({
 
       {/* The time slider stays at the bottom of the scrolling area. */}
       {scrubber && (
-      <div className="sticky bottom-0 z-30 -mx-4 mt-2 border-t border-hair bg-bg/95 px-4 pb-[max(10px,env(safe-area-inset-bottom))] pt-2 backdrop-blur">
-        <div className="mx-auto flex max-w-3xl items-center gap-3">
-          <button
-            type="button"
-            onClick={() => {
-              if (!playing && !replay) setCursor(full.t0);
-              setPlaying(!playing);
-            }}
-            className="grid size-9 shrink-0 place-items-center rounded-full border border-bd text-t1 hover:border-ac"
-            aria-label={playing ? 'Pause the replay' : 'Replay the run'}
-          >
-            {playing ? <Pause className="size-4" /> : <Play className="size-4" fill="currentColor" />}
-          </button>
-          <input
-            type="range"
-            min={0}
-            max={1000}
-            value={Math.round(((at - full.t0) / span) * 1000)}
-            onChange={(e) => {
-              setPlaying(false);
-              const v = Number(e.target.value);
-              setCursor(v >= 995 ? undefined : full.t0 + (v / 1000) * span);
-            }}
-            aria-label="Move through the run"
-            aria-valuetext={`${clock(at)}`}
-            className="h-9 min-w-0 flex-1 accent-[var(--ac)]"
-          />
-          <button
-            type="button"
-            onClick={() => {
-              setPlaying(false);
-              setCursor(undefined);
-            }}
-            disabled={!replay}
-            className="w-[72px] shrink-0 rounded-md text-right font-mono text-[12px] tabular-nums text-t2 enabled:underline enabled:decoration-dotted enabled:hover:text-t1"
-            aria-label={replay ? 'Back to the end of the run' : 'Time of the run'}
-          >
-            {replay ? clock(at) : model.live ? 'live' : clock(at)}
-          </button>
+        <div className="sticky bottom-0 z-30 -mx-4 mt-2 border-t border-hair bg-bg/95 px-4 pb-[max(10px,env(safe-area-inset-bottom))] pt-2 backdrop-blur">
+          <div className="mx-auto flex max-w-3xl items-center gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                if (!playing && !replay) setCursor(full.t0);
+                setPlaying(!playing);
+              }}
+              className="grid size-9 shrink-0 place-items-center rounded-full border border-bd text-t1 hover:border-ac"
+              aria-label={playing ? 'Pause the replay' : 'Replay the run'}
+            >
+              {playing ? <Pause className="size-4" /> : <Play className="size-4" fill="currentColor" />}
+            </button>
+            <input
+              type="range"
+              min={0}
+              max={1000}
+              value={Math.round(((at - full.t0) / span) * 1000)}
+              onChange={(e) => {
+                setPlaying(false);
+                const v = Number(e.target.value);
+                setCursor(v >= 995 ? undefined : full.t0 + (v / 1000) * span);
+              }}
+              aria-label="Move through the run"
+              aria-valuetext={`${clock(at)}`}
+              className="h-9 min-w-0 flex-1 accent-[var(--ac)]"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                setPlaying(false);
+                setCursor(undefined);
+              }}
+              disabled={!replay}
+              className="w-[72px] shrink-0 rounded-md text-right font-mono text-[12px] tabular-nums text-t2 enabled:underline enabled:decoration-dotted enabled:hover:text-t1"
+              aria-label={replay ? 'Back to the end of the run' : 'Time of the run'}
+            >
+              {replay ? clock(at) : model.live ? 'live' : clock(at)}
+            </button>
+          </div>
         </div>
-      </div>
       )}
 
       {target && (

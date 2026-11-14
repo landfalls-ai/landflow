@@ -14,6 +14,8 @@ import { resolveRunProfile } from '@/lib/shared/run-profiles';
 import { nextSteps, showScrubber, summaryTiles, visibleTabs } from '../src/components/run-trace/run-trace-tabs';
 import { DebugAccessDialog } from '../src/components/run-trace/debug-access';
 import { StorySummary } from '../src/components/run-trace/report';
+import { Head } from '../src/components/run-trace/run-trace-view';
+import { Story } from '../src/components/run-trace/story';
 
 const T0 = Date.parse('2026-11-01T10:00:00.000Z');
 const flow: RunActor = { id: 'workflow', type: 'system', name: 'Notes' };
@@ -96,6 +98,10 @@ describe('the Story summary', () => {
     expect(html).toContain('story-summary');
     expect(html).not.toContain('What should happen next');
     expect(html).not.toMatch(/>0</);
+    // The header already says it passed: no "Checked / Done / No checks" card.
+    expect(html).not.toContain('No checks');
+    expect(html).not.toContain('Done');
+    expect(html).not.toContain('Checked');
   });
 
   it('shows next steps when the report has some', () => {
@@ -110,4 +116,20 @@ describe('Debug access', () => {
     expect(html).toContain('See every step of the run');
     for (const tool of ['get_execution', 'explain_failure', 'get_run_trace']) expect(html).not.toContain(tool);
   });
+});
+
+describe('one status line', () => {
+  for (const [name, model] of [['short run', shortRun()], ['team run', teamRun(true)]] as const) {
+    it(`the header of the ${name} has one status badge and no verdict or Reported badge`, () => {
+      const html = renderToStaticMarkup(createElement(Head, { model, now: T0 + 120_000, replay: false }));
+      expect(html).toMatch(/Succeeded · [^<]*ms|Succeeded · [\d.]+ ?(s|min)/);
+      expect(html.match(/Succeeded/g)).toHaveLength(1);
+      expect(html).not.toContain('Reported');
+      expect(html).not.toMatch(/Done|Needs attention|Checked/);
+    });
+    it(`the Story of the ${name} does not end with "Run finished at"`, () => {
+      const html = renderToStaticMarkup(createElement(Story, { model, open: () => {} }));
+      expect(html).not.toContain('Run finished at');
+    });
+  }
 });

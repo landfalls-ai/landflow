@@ -110,7 +110,7 @@ in its workflow's Executions tab), and the rail marks **Runs** while it is open.
   `lib/shared/run-trace-model.ts` picks them. A team run opens with its [headlines](#headlines).
 - **Tabs only with something in them.** **Story** and **Trace** are always there. **Team** shows when more than one
   person or agent took part, **Artifacts** when the run made something (files agents wrote count), and a run with
-  nothing else (a short single-flow run) has just the two, with no tab bar to speak of. A saved or linked tab that is
+  nothing else (a short single-flow run) has just the two, with Story and Trace only. A saved or linked tab that is
   not shown falls back to the Story. `visibleTabs()` in `components/run-trace/run-trace-tabs.ts`.
 - **The time slider** shows only when the run took 5 seconds or more and more than one took part
   (`showScrubber()`); otherwise there is nothing to replay.
@@ -133,7 +133,7 @@ in its workflow's Executions tab), and the rail marks **Runs** while it is open.
   (the run report, computed live with the run's profile) and tiles for run time, who took part, requests, tokens (with
   the run's cost when some was priced), failed steps and artifacts. A tile that would read 0 is left out, and **What
   should happen next** shows only when the report found something to do. **Checked** can pick another profile to look at
-  the run through (a flow without one through Software delivery, say) without changing the flow; the header follows it.
+  the run through (a flow without one through Software delivery, say) without changing the flow. A passing run with no checks draws no Checked card: the picker is a small "Check with a profile" menu beside Copy as Markdown.
   **Copy as Markdown** copies it; when a Run report node saved one, **Saved report** opens it. **The report in full**
   at the bottom of the Story folds the rest: failed steps, checks, claims, problems, who called whom, each request's
   result, what each agent used, cycles and waits; it is not drawn when none of them has anything.
