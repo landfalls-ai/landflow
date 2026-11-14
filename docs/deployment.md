@@ -1058,7 +1058,11 @@ as one trace) and `LANDFLOW_TRACE_URL=http://clickland-console.clickland-dev.svc
 (the run page's trace link opens Clickland's console). Nothing runs in `landflow-dev` for it; while Clickland is down
 the exporters drop what they can't send. kagent in the kind cluster follows: `deploy/scripts/kagent-up.sh` reads the
 host's endpoint and bridges kind's `landflow-otel` name to `clickland-collector`'s ClusterIP (OTLP gRPC 4317, HTTP 4318;
-`CLICKLAND_NS` changes the namespace). Coming from the lgtm overlay: apply `orbstack-clickland`, then delete Deployment
+`CLICKLAND_NS` changes the namespace). When Clickland runs on the Mac and `clickland-collector` is the ExternalName
+Service of Clickland's `deploy/k8s/bridge` (pointing at `host.orb.internal`), there is no ClusterIP: the script uses the
+address the external name has from the kind node instead. The overlay needs only Clickland's three bridge Services
+(`clickland-collector`, `clickland-console` for trace links, `clickland-api` for the plugin's default Base URL), so it
+works the same against the Mac or an in-cluster Clickland. Coming from the lgtm overlay: apply `orbstack-clickland`, then delete Deployment
 and Service `landflow-lgtm` and its ConfigMaps (below), and run `kagent-up.sh` again to move kagent's bridge.
 
 **Without Clickland**, the bundled backend:

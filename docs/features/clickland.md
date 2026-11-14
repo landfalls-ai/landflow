@@ -15,8 +15,8 @@ in four ways:
   [chat behind Clickland's Assistant panel](#the-observability-assistant) with its [contract](#the-assistant-chat-contract).
 - **Telemetry**: Landflow's own traces, metrics and logs go to Clickland's collector on the OrbStack cluster.
 
-Clickland's API is specified in its repository (`docs/reference/api.md`); the plugin was built against that contract
-and tested against a local fake of it.
+Clickland's API is specified in its repository (`docs/reference/api.md`); the plugin was built against that contract,
+is tested against a local fake of it, and was [checked live](#checked-live) against Clickland on this machine.
 
 ## The plugin
 
@@ -153,3 +153,26 @@ and `POST …/feedback` `{ sessionId, executionId, rating: "up" | "down" | null,
 **Setting it up.** Use the template with the Clickland and Anthropic credentials, set the trigger's **Password**,
 publish. Clickland's side needs the URL, the user `clickland` and the password (its API holds them; the browser never
 sees them).
+
+## Checked live
+
+On 2026-11-14, with Clickland's API, collector and ClickHouse running on the Mac and reached from the cluster through
+Clickland's `deploy/k8s/bridge` (ExternalName Services `clickland-api`, `clickland-collector` and `clickland-console` in
+`clickland-dev`, all pointing at `host.orb.internal`), and Landflow from `orbstack-clickland`:
+
+| Check | Result |
+|---|---|
+| Plugin registered | `GET /api/plugins`: `clickland` online from `kubernetes` with its 3 nodes; 13 plugins online |
+| Credential | a `ck_` key with `read`, `alerts:write`, `webhooks:write`, `notes:write`, `views:write`; Test: "Connected to Clickland 0.1.0" over `http://clickland-api.clickland-dev.svc.cluster.local:4710` |
+| Telemetry | the host's spans and logs (`service:landflow-host`) and the plugin's (`landflow-plugin-clickland`) searchable in Clickland seconds after they happen |
+| Plugin nodes | a manual run: Log → Search returned rows with stats, Knowledge → Search returned service passages in the knowledge-tool shape |
+| Clickland Trigger | a manual run emitted recent alert events |
+| Alert Trigger | publishing created the webhook (`GET /api/webhooks`); an alert that fired was delivered signed and started the triage flow with the event (alert, value, 5 samples); an unsigned delivery got 401 `invalid signature` |
+| Assistant | Clickland's `POST /api/assistant/chat` reached the published chat with Basic Auth (a wrong or missing password gets 401) and started the lead's run |
+
+Not seen live yet: the agents' answers. The cluster's Landflow had no Anthropic credential, so the lead and the triage
+agent stopped at the model ([limitations](../limitations.md#clickland-built-2026-11-14)). To finish the check, pick an
+Anthropic credential on both flows' **Anthropic Chat Model** and on the three analysts, republish, and ask Clickland's
+assistant "Which land services had errors in the last hour, and why? Show me a view.": the stream should show the
+analysts as `tool` events, `search_clickland` on the lead, and a `[[clickland:view:vw_…]]` marker whose view
+`GET /api/views/:id` returns.
