@@ -139,8 +139,8 @@ export function ConnectSteps({ harness, onHarness, scopes, onScopes, days, onDay
             </Button>
             {!token && <span className="text-[12px] text-t3">Make a key first: the test sends it.</span>}
             {test && (
-              <span role="status" className={cn('flex items-center gap-1.5 text-[13px]', test.ok ? 'text-gn' : 'text-rd')}>
-                {test.ok ? <Check className="size-4" /> : <CircleAlert className="size-4" />}
+              <span role="status" className={cn('flex min-w-0 max-w-full items-start gap-1.5 text-[13px] [overflow-wrap:anywhere]', test.ok ? 'text-gn' : 'text-rd')}>
+                {test.ok ? <Check className="mt-0.5 size-4 shrink-0" /> : <CircleAlert className="mt-0.5 size-4 shrink-0" />}
                 {test.message}
               </span>
             )}

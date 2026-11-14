@@ -326,12 +326,16 @@ export function GrantsCard({ tools, tokens }: { tools: McpToolsResponse['tools']
 
 // ---- approvals ---------------------------------------------------------------------------
 
-/** MCP tool calls waiting for a person (lib/server/mcp/approvals.ts), refreshed while the page is open. */
-export function ApprovalsCard() {
+export interface McpApprovals {
+  approvals?: McpApprovalView[];
+  error?: string;
+  load: () => Promise<void>;
+}
+
+/** MCP tool calls waiting for a person (lib/server/mcp/approvals.ts), polled every 4 s while the page is open: one poll for the page's badge and the card. */
+export function useMcpApprovals(): McpApprovals {
   const [approvals, setApprovals] = useState<McpApprovalView[]>();
   const [error, setError] = useState<string>();
-  const [busy, setBusy] = useState<string>();
-
   const load = useCallback(async () => {
     try {
       setApprovals((await api<{ approvals: McpApprovalView[] }>('/api/mcp/approvals', { background: true })).approvals);
@@ -345,6 +349,12 @@ export function ApprovalsCard() {
     const timer = setInterval(() => void load(), 4000);
     return () => clearInterval(timer);
   }, [load]);
+  return { approvals, error, load };
+}
+
+/** The approvals the page polls (`useMcpApprovals`): waiting calls to approve or deny, then the latest decisions. */
+export function ApprovalsCard({ approvals, error, load }: McpApprovals) {
+  const [busy, setBusy] = useState<string>();
 
   const decide = async (approval: McpApprovalView, approve: boolean) => {
     setBusy(approval.id);

@@ -165,6 +165,17 @@ describe('markup', () => {
     expect(html).not.toContain(ESCAPED_PLACEHOLDER);
     expect(html).toContain('Connected: 25 tools');
     expect(html).not.toContain('<button disabled=""');
+    // A long result wraps inside the card instead of running past it.
+    const long = steps({ token: TOKEN, test: { ok: false, message: `Refused: ${'x'.repeat(200)}` } });
+    expect(long).toMatch(/role="status" class="[^"]*min-w-0[^"]*\[overflow-wrap:anywhere\]/);
+  });
+
+  it('the Approvals card shows what the page polled: it fetches nothing itself', async () => {
+    const { ApprovalsCard } = await import('@/components/settings/mcp-grants');
+    const approval = { id: 'ap_1', tool: 'delete_rows', pluginId: 'tables', caller: 'Alice', summary: 'Delete 3 rows', status: 'pending', canDecide: true, createdAt: new Date().toISOString() };
+    const html = renderToStaticMarkup(createElement(ApprovalsCard, { approvals: [approval] as never, load: async () => undefined }));
+    expect(html).toContain('1 waiting');
+    expect(html).toContain('delete_rows');
   });
 
   it('MCP settings is four collapsed sections, and the switch row is for admins', () => {

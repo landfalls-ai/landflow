@@ -20,7 +20,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { FieldLabel, Input, SectionLabel, Select, Switch } from '@/components/ui/inputs';
 import { Alert, PLACEHOLDER, Snippet } from './mcp-common';
 import { GatewayCard } from './mcp-gateway';
-import { ApprovalsCard, GrantsCard } from './mcp-grants';
+import { ApprovalsCard, GrantsCard, useMcpApprovals } from './mcp-grants';
 import { McpSections } from './mcp-sections';
 
 
@@ -475,7 +475,6 @@ export function McpSettings() {
   const [tokens, setTokens] = useState<McpTokenView[]>([]);
   const [issued, setIssued] = useState<string>();
   const [error, setError] = useState<string>();
-  const [pending, setPending] = useState(0);
   const [origin, setOrigin] = useState('http://localhost:3000');
 
   useEffect(() => {
@@ -492,15 +491,9 @@ export function McpSettings() {
   }, []);
 
   // Pending approvals: the server sends people here (Settings → MCP → Approvals), so the Tools section opens when one waits.
-  useEffect(() => {
-    const load = () =>
-      api<{ approvals: Array<{ status: string }> }>('/api/mcp/approvals', { background: true })
-        .then((r) => setPending(r.approvals.filter((a) => a.status === 'pending').length))
-        .catch(() => {});
-    void load();
-    const timer = setInterval(() => void load(), 4000);
-    return () => clearInterval(timer);
-  }, []);
+  // One poll feeds both that count and the Approvals card.
+  const approvals = useMcpApprovals();
+  const pending = (approvals.approvals ?? []).filter((a) => a.status === 'pending').length;
 
   if (!status) return error ? <Alert>{error}</Alert> : <div className="h-36 rounded-2xl border border-hair bg-sf animate-pulse-soft" />;
 
@@ -521,7 +514,7 @@ export function McpSettings() {
           <>
             <ToolBrowser data={tools} unavailable={toolsUnavailable} />
             {status.canManage && <GrantsCard tools={tools?.tools ?? []} tokens={tokens} />}
-            <ApprovalsCard />
+            <ApprovalsCard {...approvals} />
           </>
         }
         gateway={<GatewayCard status={status} />}
