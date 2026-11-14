@@ -10,7 +10,7 @@ import { runChat, type ChatEvent, type ChatState } from '@/lib/server/assistant/
 import { takeCheckpoint } from '@/lib/server/assistant/checkpoints';
 import { errorText } from '@/lib/server/assistant/model';
 import { roster } from '@/lib/server/assistant/roster';
-import { allowedTypes } from '@/lib/server/assistant/scope';
+import { allowedTypes, meteredWorkflowId } from '@/lib/server/assistant/scope';
 import { currentPrincipal } from '@/lib/server/auth/guard';
 import { handler, parseBody } from '@/lib/server/http';
 import { sseResponse } from '@/lib/server/sse';
@@ -69,7 +69,7 @@ export const POST = handler(async (request: Request) => {
         write(event, { event: event.type });
       };
       try {
-        await runChat({ ...rest, types, teams, agents, workflow: { id: workflowId ?? 'draft', ...workflow } as Workflow, signal: abort.signal, onEvent: send, trace: true, ...(actorId && { userId: actorId }), ...(resumed && { resume: resumed }) });
+        await runChat({ ...rest, types, teams, agents, workflow: { ...workflow, id: meteredWorkflowId(workflowId ?? workflow.id) ?? 'draft' } as Workflow, signal: abort.signal, onEvent: send, trace: true, ...(actorId && { userId: actorId }), ...(resumed && { resume: resumed }) });
       } catch (caught) {
         if (!abort.signal.aborted) send({ type: 'error', kind: 'internal', message: errorText(caught) });
       } finally {

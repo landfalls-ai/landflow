@@ -44,7 +44,7 @@ export const POST = handler(async (request: Request) => {
   request.signal.addEventListener('abort', () => abort.abort());
   const actorId = currentPrincipal()?.user?.id;
   // An unknown, expired or another user's checkpoint answers 409 before the stream starts.
-  const resumed = resume ? takeCheckpoint<ArchitectState>(actor.id, resume.checkpoint) : undefined;
+  const resumed = resume ? takeCheckpoint<ArchitectState>(actor.id, resume.checkpoint, 'architect') : undefined;
   let drafts = 0;
 
   return sseResponse(

@@ -15,6 +15,8 @@ import { compositeOutline } from '../composites';
 import { PARAMETER_FORMATS } from '../flow-builder';
 import { assistantScope, isUsageCapError, runInUsageScope, type UsageScope } from '../ai-usage';
 import { recordSuggestions, traceAssistant } from '../telemetry/assistant';
+import { outcomeOf } from '../telemetry/metrics';
+import { failSpan } from '../telemetry/spans';
 import { saveCheckpoint } from './checkpoints';
 import { assistantModel, errorText, modelLabel } from './model';
 import { redundantBranches, registryLookup, validateOps, withoutRepeatedAdds } from './ops';
@@ -144,7 +146,7 @@ const OP_SCHEMA = {
   required: ['op'],
 };
 
-const TOOLS: ToolSpec[] = [
+export const TOOLS: ToolSpec[] = [
   {
     name: 'search_nodes',
     description: 'Search the node catalog by keywords (e.g. "google sheets", "dedupe", "send message"). Returns type ids, names and descriptions.',
@@ -528,7 +530,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
     }
   };
 
-  await traceAssistant('chat', { 'landflow.workflow.id': input.workflow.id, 'gen_ai.request.model': model.model, 'landflow.assistant.turns': input.messages.length }, async (span) => {
+  await traceAssistant('chat', { 'landflow.workflow.id': input.workflow.id, 'gen_ai.request.model': model.model, 'landflow.assistant.turns': input.messages.length }, async (span, setOutcome) => {
     const history: AgentMessage[] = input.resume ? [...input.resume.history] : input.messages.map((m) => (m.role === 'user' ? { role: 'user', content: m.content } : { role: 'assistant', text: m.content, toolCalls: [] }));
     let steps = input.resume?.steps ?? 0;
     /** A resumed reply gets a fresh budget of steps; the count goes on from where it stopped. */
@@ -542,6 +544,10 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
     /** Ends the reply with an error event (with `trace`); false when the error is the caller's own abort or the older events are wanted. */
     const fail = (caught: unknown, kind: ChatErrorKind, failedStep: number): boolean => {
       if (!trace || input.signal?.aborted) return false;
+      // The error event is the reply's end, but the request still failed: count it and mark the span.
+      setOutcome(outcomeOf(caught));
+      span.setAttribute('landflow.error.kind', kind);
+      failSpan(span, caught);
       // A checkpoint needs at least one finished step to continue from; a reached cap would only stop it again.
       const keep = kind !== 'cap' && failedStep > 1 && history.at(-1)?.role === 'tool';
       onEvent({ type: 'error', kind, message: errorText(caught), ...(keep && { checkpoint: checkpoint(), step: failedStep }) });
@@ -641,6 +647,9 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
       const text = repeated ? '(Stopped: the last steps only repeated what was already done. Tell me what to change, or ask me to continue.)' : `(Stopped after ${MAX_STEPS} steps. Ask me to continue if there is more to do.)`;
       // With a trace, a stall ends as an error the client can continue from; running out of steps is the reply's last word.
       if (repeated && trace) {
+        setOutcome('error');
+        span.setAttribute('landflow.error.kind', 'stalled');
+        failSpan(span, new Error(text));
         onEvent({ type: 'error', kind: 'stalled', message: text, checkpoint: checkpoint(), step: steps });
         return;
       }

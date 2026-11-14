@@ -16,7 +16,7 @@ const { corePlugin } = await import('@/lib/server/nodes');
 const { registry } = await import('@/lib/server/plugins/registry');
 const { runChat } = await import('@/lib/server/assistant/chat');
 const { runArchitect } = await import('@/lib/server/assistant/architect');
-const { saveCheckpoint, takeCheckpoint, CheckpointExpiredError, MAX_CHECKPOINTS, CHECKPOINT_TTL_MS } = await import('@/lib/server/assistant/checkpoints');
+const { saveCheckpoint, takeCheckpoint, CheckpointExpiredError, MAX_CHECKPOINTS, MAX_CHECKPOINTS_PER_USER, CHECKPOINT_TTL_MS } = await import('@/lib/server/assistant/checkpoints');
 const { TEST_OWNER } = await import('@/lib/server/auth/test-bypass');
 const chatRoute = await import('@/app/api/assistant/chat/route');
 const agentRoute = await import('@/app/api/assistant/agent/route');
@@ -146,11 +146,21 @@ describe('checkpoints', () => {
     const id = saveCheckpoint('usr_a', { n: 1 });
     expect(() => takeCheckpoint('usr_b', id)).toThrow(CheckpointExpiredError);
     expect(takeCheckpoint('usr_a', id)).toEqual({ n: 1 });
-    const old = saveCheckpoint('usr_a', {}, Date.now() - CHECKPOINT_TTL_MS - 1);
+    const old = saveCheckpoint('usr_a', {}, 'chat', Date.now() - CHECKPOINT_TTL_MS - 1);
     expect(() => takeCheckpoint('usr_a', old)).toThrow(CheckpointExpiredError);
     const first = saveCheckpoint('usr_c', { first: true });
-    for (let i = 0; i < MAX_CHECKPOINTS; i++) saveCheckpoint('usr_c', { i });
+    for (let i = 0; i < MAX_CHECKPOINTS; i++) saveCheckpoint(`usr_many_${i}`, { i });
     expect(() => takeCheckpoint('usr_c', first)).toThrow(CheckpointExpiredError);
+  });
+
+  it('are tagged by surface, and one user cannot push out another’s', () => {
+    const chatId = saveCheckpoint('usr_s', { n: 1 }, 'chat');
+    expect(() => takeCheckpoint('usr_s', chatId, 'architect')).toThrow(CheckpointExpiredError);
+    const kept = saveCheckpoint('usr_keep', { keep: true });
+    const mine = Array.from({ length: MAX_CHECKPOINTS_PER_USER + 3 }, (_, i) => saveCheckpoint('usr_flood', { i }));
+    expect(() => takeCheckpoint('usr_flood', mine[0]!)).toThrow(CheckpointExpiredError);
+    expect(takeCheckpoint('usr_flood', mine.at(-1)!)).toEqual({ i: MAX_CHECKPOINTS_PER_USER + 2 });
+    expect(takeCheckpoint('usr_keep', kept)).toEqual({ keep: true });
   });
 
   const post = (route: { POST: (request: Request) => Promise<Response> }, path: string, body: unknown) => route.POST(new Request(`http://localhost${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }));
@@ -189,7 +199,7 @@ describe('the architect stream', () => {
     const events = await run(first.model);
     const failure = events.at(-1)!;
     expect(failure).toMatchObject({ type: 'error', kind: 'model', step: 3, checkpoint: expect.stringMatching(/^ck_/) });
-    const state = takeCheckpoint<Parameters<typeof runArchitect>[0]['resume'] & object>(TEST_OWNER.id, failure.checkpoint as string);
+    const state = takeCheckpoint<Parameters<typeof runArchitect>[0]['resume'] & object>(TEST_OWNER.id, failure.checkpoint as string, 'architect');
     const second = streaming([{ tokens: ['Done.'] }]);
     const resumed = await run(second.model, { resume: state });
     expect(resumed.map((e) => e.type)).toEqual(['step.start', 'text', 'done']);

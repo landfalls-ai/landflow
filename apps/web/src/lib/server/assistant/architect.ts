@@ -20,6 +20,8 @@ import { qualifyCredentialType } from '../mcp/bind';
 import { canResource, withOwnership, type Actor } from '../projects';
 import { store } from '../store';
 import { traceAssistant } from '../telemetry/assistant';
+import { outcomeOf } from '../telemetry/metrics';
+import { failSpan } from '../telemetry/spans';
 import { recordUsage } from '../usage/ledger';
 import { assistantScope, isUsageCapError, runInUsageScope, type UsageScope } from '../ai-usage';
 import { recoverToolCalls, withoutInventedIds, withoutRepeats } from './chat';
@@ -559,15 +561,19 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
     }
   };
 
-  await traceAssistant('architect', { 'gen_ai.request.model': model.model, 'landflow.assistant.turns': input.messages.length }, async (span) => {
+  await traceAssistant('architect', { 'gen_ai.request.model': model.model, 'landflow.assistant.turns': input.messages.length }, async (span, setOutcome) => {
     const history: AgentMessage[] = input.resume ? [...input.resume.history] : input.messages.map((m) => (m.role === 'user' ? { role: 'user', content: m.content } : { role: 'assistant', text: m.content, toolCalls: [] }));
     let steps = input.resume?.steps ?? 0;
     const stepLimit = steps + MAX_ARCHITECT_STEPS;
     let finished = false;
     const fail = (caught: unknown, kind: 'model' | 'cap' | 'internal', failedStep: number): boolean => {
       if (!trace || input.signal?.aborted) return false;
+      // The error event is the reply's end, but the request still failed: count it and mark the span.
+      setOutcome(outcomeOf(caught));
+      span.setAttribute('landflow.error.kind', kind);
+      failSpan(span, caught);
       const keep = kind !== 'cap' && failedStep > 1 && history.at(-1)?.role === 'tool';
-      const checkpoint = keep ? saveCheckpoint(actor.id, { history: [...history], steps, draft, said, proposals, ...(lastProposal && { lastProposal }) } satisfies ArchitectState) : undefined;
+      const checkpoint = keep ? saveCheckpoint(actor.id, { history: [...history], steps, draft, said, proposals, ...(lastProposal && { lastProposal }) } satisfies ArchitectState, 'architect') : undefined;
       onEvent({ type: 'error', kind, message: errorText(caught), ...(checkpoint && { checkpoint, step: failedStep }) });
       return true;
     };

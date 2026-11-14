@@ -19,6 +19,9 @@ const { runArchitect } = await import('@/lib/server/assistant/architect');
 const { TEST_OWNER } = await import('@/lib/server/auth/test-bypass');
 const { traceChat } = await import('@/lib/server/telemetry');
 const { database } = await import('@/lib/server/db');
+const { meteredWorkflowId } = await import('@/lib/server/assistant/scope');
+const { TOOLS } = await import('@/lib/server/assistant/chat');
+const { TOOL_NAMES } = await import('@/lib/server/assistant/guards');
 const { aiUsageMeter, saveAiCaps } = await import('@/lib/server/ai-usage');
 
 let types: NodeTypeInfo[];
@@ -63,6 +66,21 @@ describe('assistant metering', () => {
     const done = events.at(-1) as Extract<ChatEvent, { type: 'done' }>;
     expect(done.local).toBe(false);
     expect(done.costUsd).toBeGreaterThanOrEqual(0);
+  });
+
+  it('does not count Spotlight against the workflow’s own per-day cap', async () => {
+    await chat(metered('anthropic', [{ text: 'Hi there.' }]));
+    expect(rows()).toHaveLength(1);
+    expect(aiUsageMeter().workflowDay('wf_metered').inputTokens).toBe(0);
+  });
+
+  it('attributes Spotlight to a workflow only when the caller can read it', () => {
+    expect(meteredWorkflowId(undefined, TEST_OWNER)).toBeUndefined();
+    expect(meteredWorkflowId('wf_not_mine', { id: 'usr_nobody', role: 'member' } as Parameters<typeof meteredWorkflowId>[1])).toBeUndefined();
+  });
+
+  it('recovers every tool the chat offers from text', () => {
+    expect([...TOOL_NAMES].sort()).toEqual(TOOLS.map((t) => t.name).sort());
   });
 
   it('counts every step of a reply', async () => {

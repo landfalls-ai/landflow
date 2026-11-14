@@ -200,8 +200,9 @@ export class AiUsageMeter implements UsageMeter {
     return totalsOf(this.db().get<SumRow>(`SELECT ${SUMS} FROM ai_usage WHERE ${where}`, ...params));
   }
 
+  /** A workflow's runs today: Spotlight rows (they carry a surface) do not count against its own per-day caps. */
   workflowDay(workflowId: string, day = this.today()): AiUsageTotals {
-    return this.sum('workflow_id = ? AND day = ?', workflowId, day);
+    return this.sum('workflow_id = ? AND day = ? AND surface IS NULL', workflowId, day);
   }
 
   agentDay(agentId: string, day = this.today()): AiUsageTotals {
