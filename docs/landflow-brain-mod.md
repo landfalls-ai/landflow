@@ -3,10 +3,10 @@
 Your own Claude Code work in the [company brain](second-brain.md): a local journal, a summary held for your review, and
 your yesterday back at the next session. Part of the [Landflow docs](README.md). It sends [work events](work-and-briefings.md)
 (`work.session`) to `POST /api/brain/work`, and nothing it sends is visible to anyone else: every event is `private`.
-This is the first slice. Colleagues, a pane, a band, sharing with a team and `brain_ask` come later.
+Items stay private until you pick team or org. `brain_ask` comes later.
 
 The code is `apps/web/claude-plugins/landflow-brain/`: `hooks/journal.ts` (the entry and its rules), `hooks/summary.ts`
-(the title and the event), `hooks/client.ts` (the calls and the queue) and `hooks/register.ts` (the hooks and the
+(the title and the event), `hooks/client.ts` (the calls and the queue) `hooks/pane.tsx` (the pane and the band) and `hooks/register.ts` (the hooks and the
 commands). The first three are plain functions with no engine calls, tested in `apps/web/test/claude-brain-mod.test.ts`;
 the hooks are tested with Claude Code's own kit.
 
@@ -47,6 +47,9 @@ Every event is private: not even an admin reads it.
 
 | Command | What it does |
 |---|---|
+| `/brain`, `/brain sync` | open the pane; `sync` also lists yesterday and your related colleagues, each with its reason |
+| `/brain visibility <id> private\|team\|org` | who reads a held or sent item (a sent one is changed with `PATCH`) |
+| `/brain post <id>` | Post as my update, after a confirm |
 | `/brain today` | today's entries, held and sent, with their ids |
 | `/brain review` | asks about each held entry: send, drop, skip, or a new title |
 | `/brain status` | the state, and exactly what was sent, with ids (the event as JSON) |
@@ -67,6 +70,19 @@ Landflow is slower or off, it uses the answer it cached for that day, or goes on
 system prompt as "Yesterday, from the company brain": at most 1,200 characters, every line quoted with `>`, and marked as
 data, not instructions. The option `sync` turns it off; turn it off if the instance MCP server's `morning-briefing`
 prompt is also connected, or yesterday comes in twice.
+
+## Colleagues
+
+`/brain sync` shows your yesterday and the briefing's `related` colleagues ([work and briefings](work-and-briefings.md#related-colleagues)),
+each person with the reason (same repository, initiative, customer, directory, or similar work) and up to three items.
+The server returns only what you may read, so a colleague appears only when they shared the item.
+
+- **The pane.** `/brain` or `/brain sync` opens a `Pane` with Today, Yesterday and Related colleagues as one-column cards. Nothing else opens it, and Esc closes it. A card of your own work has "Post as my update".
+- **The band.** One line above the prompt, only when a colleague touched the same thing ("Ada changed billing/ yesterday · /brain sync"), with a Dismiss button that holds for the day. No overlap, no band. The overlap comes from the briefing read at session start or `/brain sync`.
+- **Team or org per item.** Items are private. In `/brain review`, Send wider asks Team or Org; Back returns to the first question. `/brain visibility <id> team` changes a held item (before it is sent) or a sent one (`PATCH /api/brain/work/:sourceId`).
+- **Post as my update.** `/brain post <id>` or the pane's button asks "Post to org / Post to team / Cancel" first, then calls `POST /api/brain/work/:sourceId/share`. With nobody to ask, nothing is posted. The item keeps its own visibility.
+- **The admin's rule.** When the briefing says `autoSend: forbidden`, mode `auto` behaves as `review`, and the status line says "brain: review (auto off by admin)". Nothing is sent without your review.
+- **Untrusted text.** Names, titles and reasons from the server are cut to one line of at most 40 to 160 characters, shown quoted (`>`) and as data. A link is kept only when it is on your configured Landflow URL or `https://github.com`; this holds for an item's link and for links written inside a title, a name or a reason (a markdown link keeps its words, a bare URL becomes "(link removed)"). Bidirectional and zero-width characters are removed. A stored briefing view from an earlier day is never drawn: no band, no pane items. Post as my update sends the item's own source, and is not offered on an update you already posted.
 
 ## Offline queue
 
