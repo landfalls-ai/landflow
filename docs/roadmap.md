@@ -1540,6 +1540,12 @@ The first piece of the company-backbone program (wave 1, B02). Built: the `user_
 ([assistant.md](assistant.md#conversation-history)). Next: each chat mounts the history button and saves to the store,
 and the account menu gets the switches. Open: `deleteUser` should remove a person's conversations and preferences, a pin should decide whether retention spares a conversation, search wants a plain-text column, and `GET /api/conversations/:id` wants a `limit`.
 
+## Tagging with @ (B04, 2026-11-14)
+
+The foundation is built: `GET /api/mentions`, `resolveMentions` with a digest per kind, and the picker
+([assistant.md](assistant.md#tagging-with-)). Open: mount it in Spotlight and Ask the brain, and resolve the tags in
+their servers.
+
 ## Not planned
 
 Later, maybe: an agent code sandbox, and prompt management. Not planned:

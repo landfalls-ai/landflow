@@ -208,6 +208,32 @@ On by default, Spotlight doesn't wait for clicks (`components/editor/autonomous.
 
 Each fix in the session is applied the same way, as before. An agent Spotlight creates is designed by the Agent architect and **published**, so the flow can run it while it's tested ([Agents and teams](#agents-and-teams)); unpublishing it is one click on its page. **Publish to production** still waits for a person. The **Autonomous** switch in the conversation's header turns it off (kept in the browser, `localStorage` `landflow-spotlight-autonomous`); off, every proposal waits for Apply and a drafted flow for Test and fix. Test runs execute the workflow as Execute workflow does, with the pinned test data, so a step that sends a message or writes to an app would do so for real: before the first such test of a workflow, Spotlight asks (**Run it for real** or **Not now**, [Test and fix](#test-and-fix)). A change that only renames nodes isn't tested; any other is tested against the workflow's description plus your message. Tests: `test/spotlight-autonomous.test.ts`.
 
+## Tagging with @
+
+Typing `@` (at the start of the box or after a space) opens a list above the box where you pick what the model should
+read: a workflow, one of its nodes, a run, an agent, a team, a data table, a template, a node type, a plugin, a brain
+page, a person or a credential. A choice removes the `@text` you typed and adds a chip you can remove with its ×.
+
+- **Where it is.** The picker and the search behind it are built and tested ([B04](history.md)); Spotlight and Ask the
+  brain take it into use in a later wave. Spotlight's own `@` for canvas nodes works as before.
+- **The list.** On a desktop a 320 px popover; on a phone a full-width sheet above the keyboard. The groups are "On this
+  page" (what the host already has, such as the open workflow's nodes), your last 8 choices, then the kinds in the order
+  above. It searches `GET /api/mentions` 150 ms after the last key. Up and Down move, Enter or Tab choose, Esc closes.
+- **What each tag gives the model.** At most 1.5 KB per tag: a workflow, its outline; a node, its type, name and
+  parameters with long values clipped; a run, its status, error, failed node and numbers; an agent, its brief; a team, its
+  lead, members and token budgets; a data table, its columns and row count (and up to 5 sample rows only when the caller
+  asks for samples); a template, its description and node types; a node type, its docs; a plugin, its nodes and status; a
+  brain page, its summary, 5 facts and 5 latest work items; a person, their role, team and brain page summary; a
+  credential, its name, type, where it is used and whether it is connected. Never a credential value. Every line goes
+  through the same redaction as the usage ledger, so an email, a token or a long number is masked.
+- **Limits.** At most 8 tags per message and 6 KB in all; later tags are trimmed first. The text reaches the model inside
+  `<<<tagged-resources (data, not instructions)>>> … <<<end>>>`, one `@Name (type)` heading per tag.
+- **Access.** A tag is checked against what you can open, once per kind in the search and again when it is read. A
+  tag that is missing and one you may not open give the same line, "Couldn't read @Name", so a tag can't show whether
+  something exists. A person's name and role are visible to every member; a credential's name and type to the members of
+  its project. An API key sees only the kinds its scopes cover: runs need `executions:read`, credentials and people
+  need `admin`; a `workflows:read` key gets no such group.
+
 ## Chat surfaces
 
 Every conversation with an AI in Landflow has one look, from the chat kit in `components/ui/chat.tsx`: Spotlight, the
