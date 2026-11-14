@@ -95,6 +95,14 @@ items still open (its "Wave 6" section); this page is the short list to check be
   polls. The Alert Trigger has no such limit.
 - **Alert → Update reads, then writes the whole alert** (Clickland's `PUT` takes all fields), so a change made in
   Clickland between the two calls is overwritten.
+- **The assistant's analysts don't stream their steps.** In the observability assistant the analysts are Run an
+  Agent nodes used as the lead's tools: Clickland sees the lead's calls to them (with the `reason`) and their answers,
+  not the queries each analyst runs inside its call. A node used as a tool gets no stream to write to.
+- **The assistant's auth is a shared secret over Basic Auth.** The hosted chat has no token or HMAC scheme: Clickland
+  sends the trigger's user and password on every call, so the password must be long and random, and the call should
+  stay inside the cluster (plain HTTP there). Rotating it means changing the trigger and Clickland together.
+- **Triage's Clickland severity is the default.** Clickland's alerts carry no severity, so Normalize Alert gives them
+  Default Severity unless the alert has a `severity` field or label.
 - **Plugin knowledge bases: presets only in the dialog.** The knowledge dialog offers Clickland; another plugin node
   is set through the API. It has no documents, no passages-per-search setting (the node's own limit applies) and is not
   offered by the Agent architect, which lists only vector collections.

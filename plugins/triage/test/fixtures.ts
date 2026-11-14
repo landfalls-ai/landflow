@@ -200,3 +200,21 @@ export const EML = [
   '',
 ].join('\r\n');
 export const EML_ATTACHMENT_SHA256 = '' as string; // computed in the test from the bytes
+
+/** A Clickland delivery (docs/reference/api.md in Clickland: Webhooks), as Clickland signs and sends it. */
+export const clickland = {
+  type: 'alert.firing',
+  id: 'evt_01JDCLICK',
+  timestamp: '2026-11-14T15:03:00.000Z',
+  data: {
+    alert: { id: 'al_api_errors', name: 'API errors', signal: 'logs', query: 'service:api level:error', groupBy: null, thresholdType: 'above', threshold: 10, windowMinutes: 5 },
+    status: 'firing',
+    groupKey: '',
+    value: 42,
+    fingerprint: 'al_api_errors:',
+    window: { from: '2026-11-14T14:58:00.000Z', to: '2026-11-14T15:03:00.000Z' },
+    url: 'http://127.0.0.1:4711/alerts/al_api_errors',
+    searchUrl: 'http://127.0.0.1:4711/search?signal=logs&query=service%3Aapi%20level%3Aerror',
+    samples: [{ timestamp: '2026-11-14T15:02:59.000Z', service: 'api', level: 'error', body: 'upstream timed out' }],
+  },
+};

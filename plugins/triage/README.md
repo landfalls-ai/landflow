@@ -35,13 +35,13 @@ alert). It accepts a raw payload item, or a Webhook item whose `body` holds the 
 
 | Parameter | Type | Default |
 |---|---|---|
-| Format (`format`) | options: `auto`, `alertmanager`, `grafana`, `datadog`, `cloudwatch`, `sentry`, `wazuh`, `generic` | `auto` |
+| Format (`format`) | options: `auto`, `alertmanager`, `grafana`, `datadog`, `cloudwatch`, `sentry`, `wazuh`, `clickland`, `generic` | `auto` |
 | Source Name / Title / Severity / Service / ID / Description / Status / Fingerprint / Environment Path (`genericSource`, `titlePath`, `severityPath`, `servicePath`, `idPath`, `descriptionPath`, `statusPath`, `fingerprintPath`, `environmentPath`), Generic only | string, dot paths | `generic`, `title`, `severity`, `service`, `id`, `description`, `status`, empty, `environment` |
 | Severity Map (`severityMap`) | JSON, raw value (lower case) to `sev1`-`sev4` | `{}` |
 | Default Severity (`defaultSeverity`) | options `sev1`-`sev4` | `sev3` |
 | Keep Raw Payload (`includeRaw`) | boolean | `true` |
 
-`auto` tries grafana, alertmanager, cloudwatch, sentry, wazuh, datadog in that order; a payload that fits none is read as
+`auto` tries clickland, grafana, alertmanager, cloudwatch, sentry, wazuh, datadog in that order; a payload that fits none is read as
 `generic` with the default paths (`title`, `severity`, `service`, …), so an alert from an unknown source is triaged, not
 dropped. Pick `generic` to map other paths, or a fixed format to reject everything else.
 
@@ -84,10 +84,19 @@ dropped. Pick `generic` to map other paths, or a fixed format to reject everythi
 | CloudWatch | an `sev1`-`sev4` or `P0`-`P4` tag in the alarm name or description; else ALARM = sev2, INSUFFICIENT_DATA = sev3, OK = sev4 | |
 | Sentry | `level`: fatal = sev1, error = sev2, warning = sev3, info/debug = sev4 | |
 | Wazuh | `rule.level`: 13-15 = sev1, 10-12 = sev2, 7-9 = sev3, 0-6 = sev4 | |
+| Clickland | the alert's `severity` or its `severity` / `priority` label, if any (Clickland's alerts have none by default) | Default Severity |
 | Anything else | | Default Severity |
 
 Status: `resolved`/`ok`/`recovered` (Alertmanager and Grafana `status`, Datadog `alert_transition` Recovered, CloudWatch `OK`, Sentry
-`resolved`) is `resolved`, everything else `firing`.
+`resolved`, Clickland `alert.resolved` or a group state `ok`) is `resolved`, everything else `firing`.
+
+**Clickland** ([plugins/clickland](../clickland/README.md)) is read in three shapes: a delivery as Clickland sends it
+(`{ type: 'alert.firing', id, timestamp, data: { alert, status, groupKey, value, fingerprint, window, url, searchUrl, samples } }`),
+the Clickland Alert Trigger's item (that `data` with `type`, `id`, `timestamp`) and the Clickland Trigger's
+(`{ event: 'alert.event', alert, alertEvent }`). The title is the alert's name (with its group), the description its
+signal, query and condition (`logs \`service:api level:error\` (42 above 10 in 5 min)`), the service its group when
+grouped by service, else a `service:` term of its query, else a sample's; `fingerprint` is Clickland's
+(`<alertId>:<groupKey>`), the id the event's; links are the alert page and the search over its window.
 
 ### Extract IOCs (`triage.extractIocs`)
 

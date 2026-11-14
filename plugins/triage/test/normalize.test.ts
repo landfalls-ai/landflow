@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { NormalizeAlert } from '../src/nodes/normalize-alert';
-import { alertmanager, cloudwatch, cloudwatchOk, datadog, generic, grafana, sentry, wazuh, webhook } from './fixtures';
+import { alertmanager, clickland, cloudwatch, cloudwatchOk, datadog, generic, grafana, sentry, wazuh, webhook } from './fixtures';
 import { jsonOf, run } from './helpers';
 
 const normalize = async (items: object[], params: Record<string, unknown> = {}, options = {}) => {
@@ -126,6 +126,50 @@ describe('Normalize Alert', () => {
     expect(alerts[0].labels).toMatchObject({ srcip: '198.51.100.23', agent_ip: '10.0.4.12' });
     const bands = await Promise.all([3, 7, 10, 13, 15].map((level) => normalize([{ ...wazuh, rule: { ...wazuh.rule, level } }])));
     expect(bands.map((b) => b.alerts[0].severity)).toEqual(['sev4', 'sev3', 'sev2', 'sev1', 'sev1']);
+  });
+
+  it('Clickland: a delivery, the Alert Trigger item and the poll trigger item give the same alert', async () => {
+    const delivered = (await normalize([clickland])).alerts[0];
+    expect(delivered).toMatchObject({
+      source: 'clickland',
+      id: 'evt_01JDCLICK',
+      fingerprint: 'al_api_errors:',
+      dedupKey: 'clickland:al_api_errors:',
+      status: 'firing',
+      title: 'API errors',
+      description: 'logs `service:api level:error` (42 above 10 in 5 min)',
+      service: 'api',
+      entity: { kind: 'service', id: 'api' },
+      startsAt: '2026-11-14T14:58:00.000Z',
+      endsAt: null,
+      labels: { alert_id: 'al_api_errors', signal: 'logs', value: '42', threshold: '10', service: 'api' },
+      links: [
+        { kind: 'alert', url: 'http://127.0.0.1:4711/alerts/al_api_errors' },
+        { kind: 'dashboard', url: clickland.data.searchUrl },
+      ],
+      tags: ['signal:logs', 'service:api'],
+    });
+    // The Clickland Alert Trigger's item: the delivery's data with type, id and timestamp.
+    const triggerItem = { ...clickland.data, type: clickland.type, id: clickland.id, timestamp: clickland.timestamp };
+    expect((await normalize([triggerItem])).alerts[0]).toMatchObject({ source: 'clickland', id: 'evt_01JDCLICK', fingerprint: 'al_api_errors:', service: 'api' });
+    // Behind the host's plain Webhook node.
+    expect((await normalize([webhook(clickland)])).alerts[0].source).toBe('clickland');
+    // The Clickland Trigger's item, grouped by service and resolved.
+    const polled = {
+      event: 'alert.event',
+      alert: { id: 'al_latency', name: 'Slow checkout', signal: 'traces', query: 'duration_ms:>500', groupBy: 'service', thresholdType: 'above', threshold: 20 },
+      alertEvent: { id: 'ae_9', groupKey: 'checkout', state: 'ok', value: 3, createdAt: '2026-11-14T16:00:00.000Z' },
+    };
+    expect((await normalize([polled], { format: 'clickland' })).alerts[0]).toMatchObject({
+      id: 'ae_9',
+      status: 'resolved',
+      title: 'Slow checkout (checkout)',
+      service: 'checkout',
+      groupKey: 'checkout',
+      fingerprint: 'al_latency:checkout',
+      endsAt: '2026-11-14T16:00:00.000Z',
+      severity: 'sev3',
+    });
   });
 
   it('Generic: maps title, severity, service and id by dot path; hashes a dedup key without a fingerprint', async () => {

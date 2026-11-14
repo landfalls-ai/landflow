@@ -318,9 +318,14 @@ const equal = (a: string, b: string) => {
   return left.length === right.length && timingSafeEqual(left, right);
 };
 
-/** Basic Auth of the trigger: true when not required, or when the request carries the right user and password. */
+/**
+ * Basic Auth of the trigger: true when not required, or when the request carries the right user and password. Basic
+ * Auth with no password set refuses everyone (fail closed): a template that ships with the password empty stays shut
+ * until someone sets one.
+ */
 export function basicAuthOk(config: Pick<PublicChatConfig, 'basicAuth'>, request: Request): boolean {
   if (!config.basicAuth) return true;
+  if (!config.basicAuth.password) return false;
   const match = /^Basic\s+(.+)$/i.exec(request.headers.get('authorization') ?? '');
   if (!match) return false;
   const decoded = Buffer.from(match[1], 'base64').toString('utf8');

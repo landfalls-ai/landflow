@@ -1,0 +1,1961 @@
+{
+ "protocol": "landflow.plugin/v1",
+ "plugin": {
+  "language": "typescript",
+  "sdk": {
+   "name": "landflow-sdk-typescript",
+   "version": "0.2.0"
+  },
+  "id": "clickland",
+  "name": "Clickland",
+  "version": "0.1.0",
+  "description": "Clickland observability: search logs and traces, services, metrics, log patterns, alerts, notes, knowledge search and views, an alert webhook trigger and a polling trigger; reachable over HTTP, gRPC, any installed broker and MCP",
+  "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iI0U4ODMzQSIvPgogIDxnIGZpbGw9IiNmZmYiPgogICAgPHJlY3QgeD0iMTEiIHk9IjI2IiB3aWR0aD0iNiIgaGVpZ2h0PSIxMiIgcng9IjEuNSIvPgogICAgPHJlY3QgeD0iMjEiIHk9IjE5IiB3aWR0aD0iNiIgaGVpZ2h0PSIxOSIgcng9IjEuNSIvPgogICAgPHJlY3QgeD0iMzEiIHk9IjIyIiB3aWR0aD0iNiIgaGVpZ2h0PSIxNiIgcng9IjEuNSIvPgogIDwvZz4KICA8ZyBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMi40IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPgogICAgPHBhdGggZD0iTTI0IDl2NCIvPgogICAgPHBhdGggZD0iTTE2IDEyLjVsMi41IDIuNU0zMiAxMi41bC0yLjUgMi41Ii8+CiAgPC9nPgo8L3N2Zz4K",
+  "color": "#E8833A",
+  "author": "Landflow"
+ },
+ "nodes": [
+  {
+   "name": "clickland",
+   "displayName": "Clickland",
+   "description": "Search logs and traces, read services, metrics and log patterns, manage alerts, add and search notes, ask the knowledge search and render views in Clickland",
+   "version": 1,
+   "kind": "action",
+   "categories": [
+    "Development",
+    "Analytics"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iI0U4ODMzQSIvPgogIDxnIGZpbGw9IiNmZmYiPgogICAgPHJlY3QgeD0iMTEiIHk9IjI2IiB3aWR0aD0iNiIgaGVpZ2h0PSIxMiIgcng9IjEuNSIvPgogICAgPHJlY3QgeD0iMjEiIHk9IjE5IiB3aWR0aD0iNiIgaGVpZ2h0PSIxOSIgcng9IjEuNSIvPgogICAgPHJlY3QgeD0iMzEiIHk9IjIyIiB3aWR0aD0iNiIgaGVpZ2h0PSIxNiIgcng9IjEuNSIvPgogIDwvZz4KICA8ZyBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMi40IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPgogICAgPHBhdGggZD0iTTI0IDl2NCIvPgogICAgPHBhdGggZD0iTTE2IDEyLjVsMi41IDIuNU0zMiAxMi41bC0yLjUgMi41Ii8+CiAgPC9nPgo8L3N2Zz4K",
+   "color": "#E8833A",
+   "subtitle": "{{operation}}: {{resource}}",
+   "documentationUrl": "https://github.com/landfalls-ai/landflow/blob/main/plugins/clickland/README.md",
+   "keywords": [
+    "clickland",
+    "observability",
+    "logs",
+    "traces",
+    "metrics",
+    "alerts",
+    "monitoring",
+    "apm",
+    "otel",
+    "opentelemetry",
+    "dashboard"
+   ],
+   "usableAsTool": true,
+   "idempotent": false,
+   "toolDescription": "Clickland observability: search logs and traces with Clickland's query language, read one trace, list services with their error rate and latency, list and query metrics, find log patterns, list alerts and their events, create or change alerts, add and search notes, search Clickland's knowledge (notes, alert events, patterns, services) and render views (charts, tables, traces) that show inline in Clickland's console.",
+   "inputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "credentials": [
+    {
+     "name": "clicklandApi",
+     "required": true
+    }
+   ],
+   "properties": [
+    {
+     "name": "resource",
+     "displayName": "Resource",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "logs",
+     "options": [
+      {
+       "name": "Alert",
+       "value": "alerts"
+      },
+      {
+       "name": "Knowledge",
+       "value": "knowledge"
+      },
+      {
+       "name": "Log",
+       "value": "logs"
+      },
+      {
+       "name": "Metric",
+       "value": "metrics"
+      },
+      {
+       "name": "Note",
+       "value": "notes"
+      },
+      {
+       "name": "Service",
+       "value": "services"
+      },
+      {
+       "name": "Trace",
+       "value": "traces"
+      },
+      {
+       "name": "View",
+       "value": "views"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "search",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "logs"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Search",
+       "value": "search",
+       "description": "Log rows matching a query, newest first",
+       "action": "Search logs",
+       "idempotent": true
+      },
+      {
+       "name": "Histogram",
+       "value": "getHistogram",
+       "description": "Matching rows counted per time bucket, optionally per value of a field (at most 10 series)",
+       "action": "Count logs over time",
+       "idempotent": true
+      },
+      {
+       "name": "Patterns",
+       "value": "getPatterns",
+       "description": "The templates the matching log lines follow (Drain over a sample), with counts and an example",
+       "action": "Find log patterns",
+       "idempotent": true
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "search",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "traces"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Search",
+       "value": "search",
+       "description": "Spans matching a query, newest first",
+       "action": "Search spans",
+       "idempotent": true
+      },
+      {
+       "name": "Get",
+       "value": "get",
+       "description": "Every span of one trace, sorted by start time",
+       "action": "Get a trace",
+       "idempotent": true
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "list",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "services"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "List",
+       "value": "list",
+       "description": "Services with requests, errors, error rate and p50/p95/p99 latency in a window",
+       "action": "List services",
+       "idempotent": true
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "list",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "metrics"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "List",
+       "value": "list",
+       "description": "Metric names with type, unit and the services that send them",
+       "action": "List metrics",
+       "idempotent": true
+      },
+      {
+       "name": "Query",
+       "value": "getSeries",
+       "description": "One metric aggregated over time (avg, sum, rate, p95…), optionally per service or attribute",
+       "action": "Query a metric",
+       "idempotent": true
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "list",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "alerts"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Create",
+       "value": "create",
+       "description": "Alert when the rows matching a query in a window cross a threshold",
+       "action": "Create an alert"
+      },
+      {
+       "name": "Delete",
+       "value": "delete",
+       "description": "Delete an alert",
+       "action": "Delete an alert"
+      },
+      {
+       "name": "Events",
+       "value": "getEvents",
+       "description": "When the alert fired and resolved, newest first",
+       "action": "Get alert events",
+       "idempotent": true
+      },
+      {
+       "name": "Get",
+       "value": "get",
+       "description": "One alert with its states per group",
+       "action": "Get an alert",
+       "idempotent": true
+      },
+      {
+       "name": "List",
+       "value": "list",
+       "description": "Every alert with its states",
+       "action": "List alerts",
+       "idempotent": true
+      },
+      {
+       "name": "Update",
+       "value": "update",
+       "description": "Change some fields of an alert (the rest stay)",
+       "action": "Update an alert"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "create",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "notes"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Create",
+       "value": "create",
+       "description": "Write down what was learned about an incident or a service (Clickland's long-term knowledge)",
+       "action": "Add a note"
+      },
+      {
+       "name": "List",
+       "value": "list",
+       "description": "Notes, optionally of one service or matching words",
+       "action": "List notes",
+       "idempotent": true
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "search",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "knowledge"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Search",
+       "value": "search",
+       "description": "Passages from notes, recent alert events, log patterns and services that help answer a question ({ results: [{ pageContent, metadata, score }] })",
+       "action": "Search Clickland knowledge",
+       "idempotent": true
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "render",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "views"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Render",
+       "value": "render",
+       "description": "Build a view (charts, tables, a trace) from a spec; answers with its id, url and the marker [[clickland:view:<id>]] that Clickland's console shows inline as a live view",
+       "action": "Render a view (charts, tables, a trace) and get its [[clickland:view:<id>]] marker"
+      },
+      {
+       "name": "Add Panel",
+       "value": "addPanel",
+       "description": "Add one panel to a view or dashboard (appended, or at a position) without resending the rest",
+       "action": "Add a panel to a view"
+      },
+      {
+       "name": "Get",
+       "value": "get",
+       "description": "One view or dashboard with its spec and version",
+       "action": "Get a view",
+       "idempotent": true
+      },
+      {
+       "name": "List",
+       "value": "list",
+       "description": "Dashboards (pinned views) with id, title and when they were made; or every view",
+       "action": "List dashboards",
+       "idempotent": true
+      },
+      {
+       "name": "Pin",
+       "value": "pin",
+       "description": "Save a view as a dashboard, optionally renaming it (or unpin it)",
+       "action": "Save a view as a dashboard"
+      },
+      {
+       "name": "Remove Panel",
+       "value": "removePanel",
+       "description": "Remove the panel at an index (0 = the first) from a view or dashboard",
+       "action": "Remove a panel from a view"
+      },
+      {
+       "name": "Update",
+       "value": "update",
+       "description": "Replace a view's spec, rename it or pin it; with Version set, fails with 409 when someone saved in between",
+       "action": "Update a view"
+      }
+     ]
+    },
+    {
+     "name": "query",
+     "displayName": "Query",
+     "type": "string",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "logs"
+       ],
+       "operation": [
+        "search",
+        "getHistogram",
+        "getPatterns"
+       ]
+      }
+     },
+     "description": "Clickland's search language: field:value terms, free text, quotes for phrases, comparisons like duration:>500 (e.g. \"service:api level:error timeout\"). Empty matches everything"
+    },
+    {
+     "name": "lastMinutes",
+     "displayName": "Last Minutes",
+     "type": "number",
+     "default": 60,
+     "typeOptions": {
+      "minValue": 1,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "logs"
+       ],
+       "operation": [
+        "search",
+        "getHistogram",
+        "getPatterns"
+       ]
+      }
+     },
+     "description": "How far back to look, ending at To (default: now). Ignored when From is set"
+    },
+    {
+     "name": "from",
+     "displayName": "From",
+     "type": "dateTime",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "logs"
+       ],
+       "operation": [
+        "search",
+        "getHistogram",
+        "getPatterns"
+       ]
+      }
+     },
+     "description": "Start of the window (ISO 8601). Empty: Last Minutes before To"
+    },
+    {
+     "name": "to",
+     "displayName": "To",
+     "type": "dateTime",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "logs"
+       ],
+       "operation": [
+        "search",
+        "getHistogram",
+        "getPatterns"
+       ]
+      }
+     },
+     "description": "End of the window (ISO 8601). Empty: now"
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 100,
+     "typeOptions": {
+      "minValue": 1,
+      "maxValue": 500,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "logs"
+       ],
+       "operation": [
+        "search"
+       ]
+      }
+     },
+     "description": "Rows to return, newest first (1-500)"
+    },
+    {
+     "name": "before",
+     "displayName": "Before (Cursor)",
+     "type": "string",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "logs"
+       ],
+       "operation": [
+        "search"
+       ]
+      }
+     },
+     "description": "The nextCursor of a previous page, for the next (older) page"
+    },
+    {
+     "name": "output",
+     "displayName": "Output",
+     "type": "options",
+     "default": "rows",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "logs"
+       ],
+       "operation": [
+        "search"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "One Item per Row",
+       "value": "rows"
+      },
+      {
+       "name": "One Item With Rows, Cursor and Stats",
+       "value": "response"
+      }
+     ]
+    },
+    {
+     "name": "query",
+     "displayName": "Query",
+     "type": "string",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "traces"
+       ],
+       "operation": [
+        "search",
+        "getHistogram",
+        "getPatterns"
+       ]
+      }
+     },
+     "description": "Clickland's search language: field:value terms, free text, quotes for phrases, comparisons like duration:>500 (e.g. \"service:api level:error timeout\"). Empty matches everything"
+    },
+    {
+     "name": "lastMinutes",
+     "displayName": "Last Minutes",
+     "type": "number",
+     "default": 60,
+     "typeOptions": {
+      "minValue": 1,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "traces"
+       ],
+       "operation": [
+        "search",
+        "getHistogram",
+        "getPatterns"
+       ]
+      }
+     },
+     "description": "How far back to look, ending at To (default: now). Ignored when From is set"
+    },
+    {
+     "name": "from",
+     "displayName": "From",
+     "type": "dateTime",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "traces"
+       ],
+       "operation": [
+        "search",
+        "getHistogram",
+        "getPatterns"
+       ]
+      }
+     },
+     "description": "Start of the window (ISO 8601). Empty: Last Minutes before To"
+    },
+    {
+     "name": "to",
+     "displayName": "To",
+     "type": "dateTime",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "traces"
+       ],
+       "operation": [
+        "search",
+        "getHistogram",
+        "getPatterns"
+       ]
+      }
+     },
+     "description": "End of the window (ISO 8601). Empty: now"
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 100,
+     "typeOptions": {
+      "minValue": 1,
+      "maxValue": 500,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "traces"
+       ],
+       "operation": [
+        "search"
+       ]
+      }
+     },
+     "description": "Rows to return, newest first (1-500)"
+    },
+    {
+     "name": "before",
+     "displayName": "Before (Cursor)",
+     "type": "string",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "traces"
+       ],
+       "operation": [
+        "search"
+       ]
+      }
+     },
+     "description": "The nextCursor of a previous page, for the next (older) page"
+    },
+    {
+     "name": "output",
+     "displayName": "Output",
+     "type": "options",
+     "default": "rows",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "traces"
+       ],
+       "operation": [
+        "search"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "One Item per Row",
+       "value": "rows"
+      },
+      {
+       "name": "One Item With Rows, Cursor and Stats",
+       "value": "response"
+      }
+     ]
+    },
+    {
+     "name": "groupBy",
+     "displayName": "Group By",
+     "type": "string",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "logs"
+       ],
+       "operation": [
+        "getHistogram"
+       ]
+      }
+     },
+     "description": "A field to count per value of (service, level…); empty: one series"
+    },
+    {
+     "name": "sample",
+     "displayName": "Sample",
+     "type": "number",
+     "default": 5000,
+     "typeOptions": {
+      "minValue": 100,
+      "maxValue": 20000,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "logs"
+       ],
+       "operation": [
+        "getPatterns"
+       ]
+      }
+     },
+     "description": "How many of the newest matching rows to read (up to 20000)"
+    },
+    {
+     "name": "traceId",
+     "displayName": "Trace ID",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "traces"
+       ],
+       "operation": [
+        "get"
+       ]
+      }
+     },
+     "description": "The trace's id (32 hex characters)"
+    },
+    {
+     "name": "lastMinutes",
+     "displayName": "Last Minutes",
+     "type": "number",
+     "default": 60,
+     "typeOptions": {
+      "minValue": 1,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "services"
+       ],
+       "operation": [
+        "list"
+       ]
+      }
+     },
+     "description": "How far back to look, ending at To (default: now). Ignored when From is set"
+    },
+    {
+     "name": "from",
+     "displayName": "From",
+     "type": "dateTime",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "services"
+       ],
+       "operation": [
+        "list"
+       ]
+      }
+     },
+     "description": "Start of the window (ISO 8601). Empty: Last Minutes before To"
+    },
+    {
+     "name": "to",
+     "displayName": "To",
+     "type": "dateTime",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "services"
+       ],
+       "operation": [
+        "list"
+       ]
+      }
+     },
+     "description": "End of the window (ISO 8601). Empty: now"
+    },
+    {
+     "name": "lastMinutes",
+     "displayName": "Last Minutes",
+     "type": "number",
+     "default": 60,
+     "typeOptions": {
+      "minValue": 1,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "metrics"
+       ],
+       "operation": [
+        "list",
+        "getSeries"
+       ]
+      }
+     },
+     "description": "How far back to look, ending at To (default: now). Ignored when From is set"
+    },
+    {
+     "name": "from",
+     "displayName": "From",
+     "type": "dateTime",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "metrics"
+       ],
+       "operation": [
+        "list",
+        "getSeries"
+       ]
+      }
+     },
+     "description": "Start of the window (ISO 8601). Empty: Last Minutes before To"
+    },
+    {
+     "name": "to",
+     "displayName": "To",
+     "type": "dateTime",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "metrics"
+       ],
+       "operation": [
+        "list",
+        "getSeries"
+       ]
+      }
+     },
+     "description": "End of the window (ISO 8601). Empty: now"
+    },
+    {
+     "name": "metric",
+     "displayName": "Metric",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "http.server.duration",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "metrics"
+       ],
+       "operation": [
+        "getSeries"
+       ]
+      }
+     }
+    },
+    {
+     "name": "metricType",
+     "displayName": "Metric Type",
+     "type": "options",
+     "default": "gauge",
+     "options": [
+      {
+       "name": "Gauge",
+       "value": "gauge"
+      },
+      {
+       "name": "Sum",
+       "value": "sum"
+      },
+      {
+       "name": "Histogram",
+       "value": "histogram"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "metrics"
+       ],
+       "operation": [
+        "getSeries"
+       ]
+      }
+     },
+     "description": "The type Metrics → List gives for it"
+    },
+    {
+     "name": "aggregation",
+     "displayName": "Aggregation",
+     "type": "options",
+     "default": "avg",
+     "options": [
+      {
+       "name": "avg",
+       "value": "avg"
+      },
+      {
+       "name": "min",
+       "value": "min"
+      },
+      {
+       "name": "max",
+       "value": "max"
+      },
+      {
+       "name": "sum",
+       "value": "sum"
+      },
+      {
+       "name": "rate",
+       "value": "rate"
+      },
+      {
+       "name": "p50",
+       "value": "p50"
+      },
+      {
+       "name": "p95",
+       "value": "p95"
+      },
+      {
+       "name": "p99",
+       "value": "p99"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "metrics"
+       ],
+       "operation": [
+        "getSeries"
+       ]
+      }
+     }
+    },
+    {
+     "name": "service",
+     "displayName": "Service",
+     "type": "string",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "metrics"
+       ],
+       "operation": [
+        "getSeries"
+       ]
+      }
+     },
+     "description": "Only this service (empty: all)"
+    },
+    {
+     "name": "groupBy",
+     "displayName": "Group By",
+     "type": "string",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "metrics"
+       ],
+       "operation": [
+        "getSeries"
+       ]
+      }
+     },
+     "description": "An attribute key to split the series by"
+    },
+    {
+     "name": "alertId",
+     "displayName": "Alert ID",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "alerts"
+       ],
+       "operation": [
+        "get",
+        "update",
+        "delete",
+        "getEvents"
+       ]
+      }
+     },
+     "description": "The alert's id (al_…)"
+    },
+    {
+     "name": "name",
+     "displayName": "Name",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "alerts"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "signal",
+     "displayName": "Signal",
+     "type": "options",
+     "default": "logs",
+     "options": [
+      {
+       "name": "Logs",
+       "value": "logs"
+      },
+      {
+       "name": "Traces",
+       "value": "traces"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "alerts"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "query",
+     "displayName": "Query",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "description": "The rows the alert counts. Clickland's search language: field:value terms, free text, quotes for phrases, comparisons like duration:>500 (e.g. \"service:api level:error timeout\"). Empty matches everything",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "alerts"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "groupBy",
+     "displayName": "Group By",
+     "type": "string",
+     "default": "",
+     "description": "A field to count per value of (one state per group); empty: one count",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "alerts"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "thresholdType",
+     "displayName": "Threshold Type",
+     "type": "options",
+     "default": "above",
+     "options": [
+      {
+       "name": "Above",
+       "value": "above"
+      },
+      {
+       "name": "Below",
+       "value": "below"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "alerts"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "threshold",
+     "displayName": "Threshold",
+     "type": "number",
+     "default": 10,
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "alerts"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "windowMinutes",
+     "displayName": "Window (Minutes)",
+     "type": "number",
+     "default": 5,
+     "typeOptions": {
+      "minValue": 1,
+      "numberPrecision": 0
+     },
+     "description": "The sliding window the rows are counted in",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "alerts"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "intervalMinutes",
+     "displayName": "Check Every (Minutes)",
+     "type": "number",
+     "default": 1,
+     "typeOptions": {
+      "minValue": 1,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "alerts"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "enabled",
+     "displayName": "Enabled",
+     "type": "boolean",
+     "default": true,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "alerts"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "updateFields",
+     "displayName": "Update Fields",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Field",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "alerts"
+       ],
+       "operation": [
+        "update"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "name",
+       "displayName": "Name",
+       "type": "string",
+       "default": ""
+      },
+      {
+       "name": "signal",
+       "displayName": "Signal",
+       "type": "options",
+       "default": "logs",
+       "options": [
+        {
+         "name": "Logs",
+         "value": "logs"
+        },
+        {
+         "name": "Traces",
+         "value": "traces"
+        }
+       ]
+      },
+      {
+       "name": "query",
+       "displayName": "Query",
+       "type": "string",
+       "default": "",
+       "required": false,
+       "description": "The rows the alert counts. Clickland's search language: field:value terms, free text, quotes for phrases, comparisons like duration:>500 (e.g. \"service:api level:error timeout\"). Empty matches everything"
+      },
+      {
+       "name": "groupBy",
+       "displayName": "Group By",
+       "type": "string",
+       "default": "",
+       "description": "A field to count per value of (one state per group); empty: one count"
+      },
+      {
+       "name": "thresholdType",
+       "displayName": "Threshold Type",
+       "type": "options",
+       "default": "above",
+       "options": [
+        {
+         "name": "Above",
+         "value": "above"
+        },
+        {
+         "name": "Below",
+         "value": "below"
+        }
+       ]
+      },
+      {
+       "name": "threshold",
+       "displayName": "Threshold",
+       "type": "number",
+       "default": 10,
+       "required": false
+      },
+      {
+       "name": "windowMinutes",
+       "displayName": "Window (Minutes)",
+       "type": "number",
+       "default": 5,
+       "typeOptions": {
+        "minValue": 1,
+        "numberPrecision": 0
+       },
+       "description": "The sliding window the rows are counted in"
+      },
+      {
+       "name": "intervalMinutes",
+       "displayName": "Check Every (Minutes)",
+       "type": "number",
+       "default": 1,
+       "typeOptions": {
+        "minValue": 1,
+        "numberPrecision": 0
+       }
+      },
+      {
+       "name": "enabled",
+       "displayName": "Enabled",
+       "type": "boolean",
+       "default": true
+      }
+     ]
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 20,
+     "typeOptions": {
+      "minValue": 1,
+      "maxValue": 500,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "alerts"
+       ],
+       "operation": [
+        "getEvents"
+       ]
+      }
+     },
+     "description": "Events to return, newest first"
+    },
+    {
+     "name": "title",
+     "displayName": "Title",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "notes"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "body",
+     "displayName": "Body",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "typeOptions": {
+      "rows": 5
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "notes"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "description": "Markdown: what was found, the evidence and what fixed it"
+    },
+    {
+     "name": "noteFields",
+     "displayName": "Additional Fields",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Field",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "notes"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "service",
+       "displayName": "Service",
+       "type": "string",
+       "default": ""
+      },
+      {
+       "name": "tags",
+       "displayName": "Tags",
+       "type": "string",
+       "default": "",
+       "description": "Comma-separated"
+      },
+      {
+       "name": "traceIds",
+       "displayName": "Trace IDs",
+       "type": "string",
+       "default": "",
+       "description": "Comma-separated trace ids the note is about"
+      },
+      {
+       "name": "alertEventId",
+       "displayName": "Alert Event ID",
+       "type": "string",
+       "default": ""
+      },
+      {
+       "name": "author",
+       "displayName": "Author",
+       "type": "string",
+       "default": "",
+       "description": "Who wrote it (default: the API key's name)"
+      }
+     ]
+    },
+    {
+     "name": "service",
+     "displayName": "Service",
+     "type": "string",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "notes"
+       ],
+       "operation": [
+        "list"
+       ]
+      }
+     },
+     "description": "Only notes about this service"
+    },
+    {
+     "name": "q",
+     "displayName": "Search",
+     "type": "string",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "notes"
+       ],
+       "operation": [
+        "list"
+       ]
+      }
+     },
+     "description": "Words the notes contain"
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 20,
+     "typeOptions": {
+      "minValue": 1,
+      "maxValue": 200,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "notes"
+       ],
+       "operation": [
+        "list"
+       ]
+      }
+     }
+    },
+    {
+     "name": "query",
+     "displayName": "Question",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "knowledge"
+       ],
+       "operation": [
+        "search"
+       ]
+      }
+     },
+     "description": "What to look for, in natural language (\"why does checkout time out?\")"
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 8,
+     "typeOptions": {
+      "minValue": 1,
+      "maxValue": 25,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "knowledge"
+       ],
+       "operation": [
+        "search"
+       ]
+      }
+     }
+    },
+    {
+     "name": "from",
+     "displayName": "From",
+     "type": "dateTime",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "knowledge"
+       ],
+       "operation": [
+        "search"
+       ]
+      }
+     },
+     "description": "Start of the window (empty: the last 24 hours)"
+    },
+    {
+     "name": "to",
+     "displayName": "To",
+     "type": "dateTime",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "knowledge"
+       ],
+       "operation": [
+        "search"
+       ]
+      }
+     }
+    },
+    {
+     "name": "spec",
+     "displayName": "View Spec (JSON)",
+     "type": "json",
+     "required": true,
+     "default": "{\n  \"title\": \"\",\n  \"range\": { \"lastMinutes\": 60 },\n  \"panels\": []\n}",
+     "typeOptions": {
+      "rows": 10
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "views"
+       ],
+       "operation": [
+        "render"
+       ]
+      }
+     },
+     "description": "A Clickland view as JSON: { title, description?, range, panels } with up to 12 panels. range: { \"lastMinutes\": n } (relative, refreshes) or { \"from\", \"to\" } (ISO 8601). Every panel has type, title and optional width \"half\" (default) or \"full\". Panel types: timeseries { signal: \"logs\"|\"traces\", query, groupBy? } counts over time; metric { metric, metricType: \"gauge\"|\"sum\"|\"histogram\", aggregation: \"avg\"|\"min\"|\"max\"|\"sum\"|\"rate\"|\"p50\"|\"p95\"|\"p99\", service?, groupBy? }; stat { signal, query } one count; logs { query, limit? } matching log rows; spans { query, limit? } matching spans; trace { traceId } one trace as a waterfall; services {} request rate, errors and latency per service; patterns { query } log templates (Drain); markdown { text } a finding in words. Example: {\"title\":\"Checkout latency\",\"description\":\"p95 went up at 14:05\",\"range\":{\"lastMinutes\":60},\"panels\":[ {\"type\":\"timeseries\",\"title\":\"Errors by service\",\"signal\":\"logs\",\"query\":\"level:error\",\"groupBy\":\"service\"}, {\"type\":\"metric\",\"title\":\"p95 latency\",\"metric\":\"http.server.duration\",\"metricType\":\"histogram\",\"aggregation\":\"p95\",\"service\":\"checkout\"}, {\"type\":\"stat\",\"title\":\"Error spans\",\"signal\":\"traces\",\"query\":\"status:error service:checkout\"}, {\"type\":\"logs\",\"title\":\"Latest errors\",\"query\":\"service:checkout level:error\",\"limit\":20,\"width\":\"full\"}, {\"type\":\"spans\",\"title\":\"Slow spans\",\"query\":\"service:checkout duration:>500\"}, {\"type\":\"trace\",\"title\":\"A slow trace\",\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\",\"width\":\"full\"}, {\"type\":\"services\",\"title\":\"Services\"},{\"type\":\"patterns\",\"title\":\"Error patterns\",\"query\":\"level:error\"}, {\"type\":\"markdown\",\"title\":\"Finding\",\"text\":\"Timeouts to **payments** since 14:05.\"}]}"
+    },
+    {
+     "name": "pinned",
+     "displayName": "Pin as Dashboard",
+     "type": "boolean",
+     "default": false,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "views"
+       ],
+       "operation": [
+        "render"
+       ]
+      }
+     },
+     "description": "Whether to keep it as a dashboard (otherwise an ad-hoc view)"
+    },
+    {
+     "name": "viewId",
+     "displayName": "View ID",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "views"
+       ],
+       "operation": [
+        "get",
+        "pin",
+        "update",
+        "addPanel",
+        "removePanel"
+       ]
+      }
+     },
+     "description": "The view's id (vw_…)"
+    },
+    {
+     "name": "pinned",
+     "displayName": "Pinned",
+     "type": "boolean",
+     "default": true,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "views"
+       ],
+       "operation": [
+        "pin"
+       ]
+      }
+     },
+     "description": "Whether it is a dashboard (off: unpin)"
+    },
+    {
+     "name": "title",
+     "displayName": "Title",
+     "type": "string",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "views"
+       ],
+       "operation": [
+        "pin"
+       ]
+      }
+     },
+     "description": "The dashboard's name (empty: keep the view's title)"
+    },
+    {
+     "name": "pinnedOnly",
+     "displayName": "Dashboards Only",
+     "type": "boolean",
+     "default": true,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "views"
+       ],
+       "operation": [
+        "list"
+       ]
+      }
+     },
+     "description": "Whether to list only dashboards (pinned views)"
+    },
+    {
+     "name": "viewFields",
+     "displayName": "Update Fields",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Field",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "views"
+       ],
+       "operation": [
+        "update"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "spec",
+       "displayName": "View Spec (JSON)",
+       "type": "json",
+       "default": "",
+       "typeOptions": {
+        "rows": 10
+       },
+       "description": "The whole new spec (Get the view first and change it). A Clickland view as JSON: { title, description?, range, panels } with up to 12 panels. range: { \"lastMinutes\": n } (relative, refreshes) or { \"from\", \"to\" } (ISO 8601). Every panel has type, title and optional width \"half\" (default) or \"full\". Panel types: timeseries { signal: \"logs\"|\"traces\", query, groupBy? } counts over time; metric { metric, metricType: \"gauge\"|\"sum\"|\"histogram\", aggregation: \"avg\"|\"min\"|\"max\"|\"sum\"|\"rate\"|\"p50\"|\"p95\"|\"p99\", service?, groupBy? }; stat { signal, query } one count; logs { query, limit? } matching log rows; spans { query, limit? } matching spans; trace { traceId } one trace as a waterfall; services {} request rate, errors and latency per service; patterns { query } log templates (Drain); markdown { text } a finding in words. Example: {\"title\":\"Checkout latency\",\"description\":\"p95 went up at 14:05\",\"range\":{\"lastMinutes\":60},\"panels\":[ {\"type\":\"timeseries\",\"title\":\"Errors by service\",\"signal\":\"logs\",\"query\":\"level:error\",\"groupBy\":\"service\"}, {\"type\":\"metric\",\"title\":\"p95 latency\",\"metric\":\"http.server.duration\",\"metricType\":\"histogram\",\"aggregation\":\"p95\",\"service\":\"checkout\"}, {\"type\":\"stat\",\"title\":\"Error spans\",\"signal\":\"traces\",\"query\":\"status:error service:checkout\"}, {\"type\":\"logs\",\"title\":\"Latest errors\",\"query\":\"service:checkout level:error\",\"limit\":20,\"width\":\"full\"}, {\"type\":\"spans\",\"title\":\"Slow spans\",\"query\":\"service:checkout duration:>500\"}, {\"type\":\"trace\",\"title\":\"A slow trace\",\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\",\"width\":\"full\"}, {\"type\":\"services\",\"title\":\"Services\"},{\"type\":\"patterns\",\"title\":\"Error patterns\",\"query\":\"level:error\"}, {\"type\":\"markdown\",\"title\":\"Finding\",\"text\":\"Timeouts to **payments** since 14:05.\"}]}"
+      },
+      {
+       "name": "title",
+       "displayName": "Title",
+       "type": "string",
+       "default": ""
+      },
+      {
+       "name": "pinned",
+       "displayName": "Pinned",
+       "type": "boolean",
+       "default": true
+      },
+      {
+       "name": "version",
+       "displayName": "Version",
+       "type": "number",
+       "default": 0,
+       "typeOptions": {
+        "minValue": 0,
+        "numberPrecision": 0
+       },
+       "description": "The version Get returned: the save fails (409) if someone saved since. 0: no check"
+      }
+     ]
+    },
+    {
+     "name": "panel",
+     "displayName": "Panel (JSON)",
+     "type": "json",
+     "required": true,
+     "default": "{\n  \"type\": \"timeseries\",\n  \"title\": \"\",\n  \"signal\": \"logs\",\n  \"query\": \"\"\n}",
+     "typeOptions": {
+      "rows": 6
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "views"
+       ],
+       "operation": [
+        "addPanel"
+       ]
+      }
+     },
+     "description": "One panel object, as in a view spec's panels. A Clickland view as JSON: { title, description?, range, panels } with up to 12 panels. range: { \"lastMinutes\": n } (relative, refreshes) or { \"from\", \"to\" } (ISO 8601). Every panel has type, title and optional width \"half\" (default) or \"full\". Panel types: timeseries { signal: \"logs\"|\"traces\", query, groupBy? } counts over time; metric { metric, metricType: \"gauge\"|\"sum\"|\"histogram\", aggregation: \"avg\"|\"min\"|\"max\"|\"sum\"|\"rate\"|\"p50\"|\"p95\"|\"p99\", service?, groupBy? }; stat { signal, query } one count; logs { query, limit? } matching log rows; spans { query, limit? } matching spans; trace { traceId } one trace as a waterfall; services {} request rate, errors and latency per service; patterns { query } log templates (Drain); markdown { text } a finding in words. Example: {\"title\":\"Checkout latency\",\"description\":\"p95 went up at 14:05\",\"range\":{\"lastMinutes\":60},\"panels\":[ {\"type\":\"timeseries\",\"title\":\"Errors by service\",\"signal\":\"logs\",\"query\":\"level:error\",\"groupBy\":\"service\"}, {\"type\":\"metric\",\"title\":\"p95 latency\",\"metric\":\"http.server.duration\",\"metricType\":\"histogram\",\"aggregation\":\"p95\",\"service\":\"checkout\"}, {\"type\":\"stat\",\"title\":\"Error spans\",\"signal\":\"traces\",\"query\":\"status:error service:checkout\"}, {\"type\":\"logs\",\"title\":\"Latest errors\",\"query\":\"service:checkout level:error\",\"limit\":20,\"width\":\"full\"}, {\"type\":\"spans\",\"title\":\"Slow spans\",\"query\":\"service:checkout duration:>500\"}, {\"type\":\"trace\",\"title\":\"A slow trace\",\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\",\"width\":\"full\"}, {\"type\":\"services\",\"title\":\"Services\"},{\"type\":\"patterns\",\"title\":\"Error patterns\",\"query\":\"level:error\"}, {\"type\":\"markdown\",\"title\":\"Finding\",\"text\":\"Timeouts to **payments** since 14:05.\"}]}"
+    },
+    {
+     "name": "position",
+     "displayName": "Position",
+     "type": "number",
+     "default": -1,
+     "typeOptions": {
+      "minValue": -1,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "views"
+       ],
+       "operation": [
+        "addPanel"
+       ]
+      }
+     },
+     "description": "Where to insert it (0 = first); -1 appends"
+    },
+    {
+     "name": "index",
+     "displayName": "Panel Index",
+     "type": "number",
+     "required": true,
+     "default": 0,
+     "typeOptions": {
+      "minValue": 0,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "views"
+       ],
+       "operation": [
+        "removePanel"
+       ]
+      }
+     },
+     "description": "The panel's place in the spec's panels (0 = the first; Get the view to see them)"
+    }
+   ]
+  },
+  {
+   "name": "clicklandAlertTrigger",
+   "displayName": "Clickland Alert Trigger",
+   "description": "Starts the workflow when a Clickland alert fires or resolves (a signed webhook Clickland sends; registered on publish)",
+   "version": 1,
+   "kind": "trigger",
+   "triggerSource": "appWebhook",
+   "categories": [
+    "Development",
+    "Analytics"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iI0U4ODMzQSIvPgogIDxnIGZpbGw9IiNmZmYiPgogICAgPHJlY3QgeD0iOSIgeT0iMjciIHdpZHRoPSI2IiBoZWlnaHQ9IjExIiByeD0iMS41Ii8+CiAgICA8cmVjdCB4PSIxOSIgeT0iMjEiIHdpZHRoPSI2IiBoZWlnaHQ9IjE3IiByeD0iMS41Ii8+CiAgPC9nPgogIDxwYXRoIGQ9Ik0zMyAxMGwtNiAxM2g1bC0zIDEzIDktMTZoLTUuNWwzLjUtMTB6IiBmaWxsPSIjZmZmIi8+Cjwvc3ZnPgo=",
+   "color": "#E8833A",
+   "subtitle": "{{events}}",
+   "documentationUrl": "https://github.com/landfalls-ai/landflow/blob/main/plugins/clickland/README.md",
+   "keywords": [
+    "clickland",
+    "alert",
+    "webhook",
+    "firing",
+    "resolved",
+    "observability",
+    "trigger"
+   ],
+   "inputs": [],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "credentials": [
+    {
+     "name": "clicklandApi",
+     "required": true
+    }
+   ],
+   "properties": [
+    {
+     "name": "notice",
+     "displayName": "Publishing the workflow subscribes it in Clickland (POST /api/webhooks; the API key needs webhooks:write) and keeps the signing secret for you; unpublishing deletes the subscription. Clickland must reach Landflow at the published URL (LANDFLOW_PUBLIC_URL). Every delivery is checked against its Standard Webhooks signature.",
+     "type": "notice",
+     "default": ""
+    },
+    {
+     "name": "events",
+     "displayName": "Trigger On",
+     "type": "multiOptions",
+     "default": [
+      "alert.firing",
+      "alert.resolved"
+     ],
+     "options": [
+      {
+       "name": "Alert Firing",
+       "value": "alert.firing",
+       "description": "A group of an alert went from ok to firing"
+      },
+      {
+       "name": "Alert Resolved",
+       "value": "alert.resolved",
+       "description": "A firing group went back to ok"
+      }
+     ]
+    },
+    {
+     "name": "alertId",
+     "displayName": "Alert ID",
+     "type": "string",
+     "default": "",
+     "placeholder": "al_…",
+     "description": "Only this alert (empty: every alert)"
+    },
+    {
+     "name": "options",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add option",
+     "values": [
+      {
+       "name": "tolerance",
+       "displayName": "Signature Tolerance (s)",
+       "type": "number",
+       "default": 300,
+       "typeOptions": {
+        "minValue": 0
+       },
+       "description": "How far the signed webhook-timestamp may be from now before the call is rejected as a replay"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "clicklandTrigger",
+   "displayName": "Clickland Trigger",
+   "description": "Starts the workflow on new Clickland alert events (fired or resolved) and, optionally, new notes. Polls the Clickland API: no public URL needed",
+   "version": 1,
+   "kind": "trigger",
+   "triggerSource": "poll",
+   "categories": [
+    "Development",
+    "Analytics"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iI0U4ODMzQSIvPgogIDxnIGZpbGw9IiNmZmYiPgogICAgPHJlY3QgeD0iOSIgeT0iMjciIHdpZHRoPSI2IiBoZWlnaHQ9IjExIiByeD0iMS41Ii8+CiAgICA8cmVjdCB4PSIxOSIgeT0iMjEiIHdpZHRoPSI2IiBoZWlnaHQ9IjE3IiByeD0iMS41Ii8+CiAgPC9nPgogIDxwYXRoIGQ9Ik0zMyAxMGwtNiAxM2g1bC0zIDEzIDktMTZoLTUuNWwzLjUtMTB6IiBmaWxsPSIjZmZmIi8+Cjwvc3ZnPgo=",
+   "color": "#E8833A",
+   "subtitle": "every {{pollInterval}}s",
+   "documentationUrl": "https://github.com/landfalls-ai/landflow/blob/main/plugins/clickland/README.md",
+   "keywords": [
+    "clickland",
+    "alert",
+    "note",
+    "observability",
+    "poll",
+    "trigger"
+   ],
+   "inputs": [],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "credentials": [
+    {
+     "name": "clicklandApi",
+     "required": true
+    }
+   ],
+   "properties": [
+    {
+     "name": "pollInterval",
+     "displayName": "Poll Interval (seconds)",
+     "type": "number",
+     "default": 60,
+     "description": "How often to check for new events while the workflow is active",
+     "noDataExpression": true,
+     "typeOptions": {
+      "minValue": 10,
+      "numberPrecision": 0
+     }
+    },
+    {
+     "name": "events",
+     "displayName": "Trigger On",
+     "type": "multiOptions",
+     "default": [
+      "alertEvent"
+     ],
+     "options": [
+      {
+       "name": "New Alert Event",
+       "value": "alertEvent",
+       "description": "An alert group fired or resolved"
+      },
+      {
+       "name": "New Note",
+       "value": "note",
+       "description": "Someone (or an agent) added a note"
+      }
+     ]
+    },
+    {
+     "name": "notice",
+     "displayName": "The first poll sets a baseline and emits nothing. Events are read for at most 25 alerts per poll (the most recently changed first). Execute in the editor shows up to 5 recent items and changes nothing. For instant delivery use the Clickland Alert Trigger.",
+     "type": "notice",
+     "default": ""
+    }
+   ]
+  }
+ ],
+ "credentialTypes": [
+  {
+   "name": "clicklandApi",
+   "displayName": "Clickland API (ck_…)",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iI0U4ODMzQSIvPgogIDxnIGZpbGw9IiNmZmYiPgogICAgPHJlY3QgeD0iMTEiIHk9IjI2IiB3aWR0aD0iNiIgaGVpZ2h0PSIxMiIgcng9IjEuNSIvPgogICAgPHJlY3QgeD0iMjEiIHk9IjE5IiB3aWR0aD0iNiIgaGVpZ2h0PSIxOSIgcng9IjEuNSIvPgogICAgPHJlY3QgeD0iMzEiIHk9IjIyIiB3aWR0aD0iNiIgaGVpZ2h0PSIxNiIgcng9IjEuNSIvPgogIDwvZz4KICA8ZyBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMi40IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPgogICAgPHBhdGggZD0iTTI0IDl2NCIvPgogICAgPHBhdGggZD0iTTE2IDEyLjVsMi41IDIuNU0zMiAxMi41bC0yLjUgMi41Ii8+CiAgPC9nPgo8L3N2Zz4K",
+   "documentationUrl": "https://github.com/landfalls-ai/landflow/blob/main/plugins/clickland/README.md",
+   "properties": [
+    {
+     "name": "baseUrl",
+     "displayName": "Base URL",
+     "type": "string",
+     "required": true,
+     "default": "http://clickland-api.clickland-dev.svc.cluster.local:4710",
+     "placeholder": "http://127.0.0.1:4710",
+     "description": "Clickland's API. On the OrbStack cluster the default; on this machine http://127.0.0.1:4710"
+    },
+    {
+     "name": "apiKey",
+     "displayName": "API Key",
+     "type": "string",
+     "required": true,
+     "typeOptions": {
+      "password": true
+     },
+     "default": "",
+     "placeholder": "ck_…",
+     "description": "A Clickland API key (ck_…). Scopes: read for searches; alerts:write, webhooks:write (the Alert Trigger) and notes:write for the writes"
+    }
+   ],
+   "testable": true
+  }
+ ]
+}

@@ -1220,8 +1220,13 @@ Landflow's side of Clickland, the land family's observability system ([features/
   Trigger** (poll). In compose, the Kubernetes base and the OrbStack overlay.
 - [Knowledge bases from a plugin](agents.md#knowledge-bases-from-a-plugin): a standalone agent takes Clickland as a
   knowledge base (`source: 'node'`), searched like a vector collection and judged by the grounded guardrail.
+- Flows: [Clickland alert triage into Slack](features/clickland.md#alert-triage-into-slack) and the
+  [observability assistant](features/clickland.md#the-observability-assistant) behind Clickland's Assistant panel (a
+  lead with logs, traces and metrics analysts, views and dashboards), with its
+  [chat contract](features/clickland.md#the-assistant-chat-contract); Normalize Alert reads Clickland alerts.
 
-**Next:** a live check against a running Clickland (the plugin was built against the contract and a fake).
+**Next:** a live check against a running Clickland (the plugin was built against the contract and a fake); stream the
+assistant analysts' own steps (a node used as a tool would need the run's stream).
 
 ## The Brain page (built 2026-11-12)
 

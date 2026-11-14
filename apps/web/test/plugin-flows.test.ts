@@ -43,9 +43,11 @@ const flows = readdirSync(join(repo, 'plugins')).flatMap((plugin) => {
 const qualified = (nodeType: string, key: string) => (key.includes('.') ? key : `${nodeType.split('.')[0]}.${key}`);
 
 describe('plugin flows', () => {
-  it('ship with the Landfall, triage, threat-intel, Linear, Attio and Fathom plugins', () => {
+  it('ship with the Landfall, triage, threat-intel, Linear, Attio, Fathom and Clickland plugins', () => {
     expect(flows.map(([path]) => path).sort()).toEqual([
       'attio/flows/work-attio.json',
+      'clickland/flows/clickland-alert-triage.json',
+      'clickland/flows/clickland-observability-assistant.json',
       'fathom/flows/work-fathom.json',
       'landfall/flows/landflow-failures-to-landfall.json',
       'landfall/flows/landflow-heartbeat.json',

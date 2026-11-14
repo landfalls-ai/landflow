@@ -1,11 +1,11 @@
-/** Alert normalisation: seven source formats to one canonical alert. Pure functions, no I/O. */
+/** Alert normalisation: eight source formats to one canonical alert. Pure functions, no I/O. */
 import { cleanLinks, firstStr, getPath, isObj, nul, sha256Hex, str, stringMap, toIso, tryJson, type Link, type LinkKind, type Obj } from './util';
 
 export type Severity = 'sev1' | 'sev2' | 'sev3' | 'sev4';
-export const FORMATS = ['alertmanager', 'grafana', 'datadog', 'cloudwatch', 'sentry', 'wazuh', 'generic'] as const;
+export const FORMATS = ['alertmanager', 'grafana', 'datadog', 'cloudwatch', 'sentry', 'wazuh', 'clickland', 'generic'] as const;
 export type AlertFormat = (typeof FORMATS)[number];
 /** The formats auto-detection tries, in order. Generic is never auto-detected. */
-export const DETECTABLE: AlertFormat[] = ['grafana', 'alertmanager', 'cloudwatch', 'sentry', 'wazuh', 'datadog'];
+export const DETECTABLE: AlertFormat[] = ['clickland', 'grafana', 'alertmanager', 'cloudwatch', 'sentry', 'wazuh', 'datadog'];
 
 export interface CanonicalAlert {
   source: string;
@@ -167,6 +167,13 @@ export const MATCHERS: Record<Exclude<AlertFormat, 'generic'>, (b: Obj) => boole
     return typeof b.culprit === 'string' && (b.project !== undefined || b.project_name !== undefined || isObj(b.event));
   },
   wazuh: (b) => isObj(b.rule) && b.rule.level !== undefined && (isObj(b.agent) || isObj(b.manager) || 'full_log' in b),
+  clickland: (b) => {
+    // A delivery ({ type: 'alert.firing', data: { alert, … } }), the Clickland Alert Trigger's item (the delivery's data
+    // with type and id) or the Clickland Trigger's ({ event: 'alert.event', alert, alertEvent }).
+    if (isObj(b.data) && isObj(b.data.alert) && /^alert\./.test(str(b.type))) return true;
+    if (!isObj(b.alert) || typeof b.alert.id !== 'string') return false;
+    return b.event === 'alert.event' || /^alert\./.test(str(b.type)) || 'searchUrl' in b || ('fingerprint' in b && isObj(b.window));
+  },
   datadog: (b) => b.alert_transition !== undefined || b.alert_id !== undefined || b.alert_type !== undefined || (b.event_type !== undefined && b.title !== undefined && (isObj(b.org) || b.link !== undefined)),
 };
 
@@ -410,6 +417,73 @@ function fromWazuh(b: Obj, opts: NormalizeOptions, includeRaw: boolean): Canonic
   ];
 }
 
+/** The service a Clickland alert is about: its group when grouped by service, a `service:` term of its query, a sample's. */
+function clicklandService(alert: Obj, groupKey: string, samples: Obj[]): string {
+  if (/^(service|service\.name|service_name)$/.test(str(alert.groupBy)) && groupKey) return groupKey;
+  const term = /(?:^|\s)service(?:\.name)?:("?)([\w.\-/]+)\1/.exec(str(alert.query));
+  if (term) return term[2];
+  return firstStr(...samples.map((s) => s.service));
+}
+
+function fromClickland(b: Obj, opts: NormalizeOptions, includeRaw: boolean): CanonicalAlert[] {
+  const delivery = isObj(b.data) && isObj(b.data.alert);
+  const d: Obj = delivery ? (b.data as Obj) : b;
+  const alert = isObj(d.alert) ? d.alert : {};
+  const event = isObj(d.alertEvent) ? d.alertEvent : {};
+  const window = isObj(d.window) ? d.window : isObj(event.window) ? event.window : {};
+  const samples = (Array.isArray(d.samples) ? d.samples : []).filter(isObj);
+  const groupKey = firstStr(d.groupKey, event.groupKey);
+  const type = str(b.type);
+  const statusRaw = firstStr(d.status, event.status, event.state, type === 'alert.resolved' ? 'resolved' : type === 'alert.firing' ? 'firing' : '');
+  const status = parseStatus(statusRaw);
+  const service = clicklandService(alert, groupKey, samples);
+  const labels = stringMap(isObj(alert.labels) ? alert.labels : {});
+  const set = (k: string, v: unknown) => {
+    const s = str(v);
+    if (s) labels[k] = s;
+  };
+  set('alert_id', alert.id);
+  set('signal', alert.signal);
+  set('query', alert.query);
+  set('group_by', alert.groupBy);
+  set('group', groupKey);
+  set('value', d.value ?? event.value);
+  set('threshold', alert.threshold);
+  if (service) labels.service ??= service;
+  const severityRaw = firstStr(alert.severity, labels.severity, labels.priority);
+  const value = d.value ?? event.value;
+  const condition = alert.thresholdType !== undefined && alert.threshold !== undefined ? ` (${str(value) || '?'} ${str(alert.thresholdType)} ${str(alert.threshold)}${alert.windowMinutes ? ` in ${str(alert.windowMinutes)} min` : ''})` : '';
+  return [
+    finish(
+      {
+        source: 'clickland',
+        id: firstStr(delivery ? b.id : undefined, event.id, b.id),
+        fingerprint: firstStr(d.fingerprint, event.fingerprint, alert.id ? `${str(alert.id)}:${groupKey}` : '') || undefined,
+        status,
+        title: `${firstStr(alert.name) || 'Clickland alert'}${groupKey ? ` (${groupKey})` : ''}`,
+        description: `${firstStr(alert.signal) || 'logs'} \`${str(alert.query)}\`${condition}`,
+        severity: mapSeverity(severityRaw, opts, 'clickland'),
+        severityRaw,
+        service: nul(service),
+        entity: service ? { kind: 'service', id: service } : { kind: 'alert', id: str(alert.id) },
+        environment: nul(firstStr(labels.environment, labels.env, ...samples.map((s) => (isObj(s.resource) ? s.resource['deployment.environment'] : undefined)))),
+        startsAt: toIso(window.from ?? event.createdAt ?? event.at ?? (delivery ? b.timestamp : d.timestamp)) ?? null,
+        endsAt: status === 'resolved' ? (toIso(window.to ?? event.createdAt ?? b.timestamp) ?? null) : null,
+        groupKey: nul(groupKey),
+        labels,
+        links: cleanLinks([
+          { kind: 'alert', url: d.url ?? event.url },
+          { kind: 'dashboard', url: d.searchUrl ?? event.searchUrl },
+          { kind: 'dashboard', url: d.viewUrl },
+        ]),
+        tags: [alert.signal ? `signal:${str(alert.signal)}` : '', service ? `service:${service}` : ''].filter(Boolean),
+      },
+      b,
+      includeRaw,
+    ),
+  ];
+}
+
 function fromGeneric(b: Obj, opts: NormalizeOptions, includeRaw: boolean): CanonicalAlert[] {
   const g = opts.generic ?? {};
   const get = (p: string | undefined, fallback: string) => getPath(b, (p ?? '').trim() || fallback);
@@ -460,6 +534,8 @@ export function normalizePayload(format: AlertFormat, payload: Obj, opts: Normal
       return fromSentry(payload, opts, includeRaw);
     case 'wazuh':
       return fromWazuh(payload, opts, includeRaw);
+    case 'clickland':
+      return fromClickland(payload, opts, includeRaw);
     case 'generic':
       return fromGeneric(payload, opts, includeRaw);
   }
