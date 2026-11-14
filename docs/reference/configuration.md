@@ -44,7 +44,7 @@ still works.
 | `LANDFLOW_DATA_DIR` | `apps/web/.data` | data directory: the SQLite database (`landflow.db`), credentials, binary files, the Claude Code plugin images packed for kagent (`oci/`) and the other host files |
 | `LANDFLOW_CHAT_RETENTION_DAYS` | `90` | days a conversation (Spotlight, the brain, the Agent architect, an agent's test chat) is kept after its last message; older ones are deleted daily (`0` keeps them) ([assistant.md](../assistant.md#conversation-history)) |
 | `LANDFLOW_DB_STATEMENT_CACHE` | `500` | most prepared SQL statements one database connection keeps (least recently used go first) |
-| `LANDFLOW_CLAUDE_PLUGINS_DIR` | `<cwd>/claude-plugins` (`apps/web/claude-plugins`) | where Landflow's own Claude Code plugins are (the landflow-harness mod), packed into images for kagent's Claude Code agents ([a2a.md](../a2a.md#the-landflow-harness-mod)) |
+| `LANDFLOW_CLAUDE_PLUGINS_DIR` | `<cwd>/claude-plugins` (`apps/web/claude-plugins`) | where Landflow's own Claude Code plugins are (the landflow-harness mod, packed into images for kagent's Claude Code agents ([a2a.md](../a2a.md#the-landflow-harness-mod)), and the per-person landflow-brain mod ([landflow-brain-mod.md](../landflow-brain-mod.md)), which harness agents do not get) |
 | `LANDFLOW_DB` | `sqlite` | `postgres` keeps the store in Postgres (`DATABASE_URL`); one host per database |
 | `DATABASE_URL` | – | Postgres connection string for `LANDFLOW_DB=postgres`, e.g. the infra stack's `postgres://landflow:landflow-dev-only@127.0.0.1:55432/landflow` |
 | `LANDFLOW_PG_BLOCKED_RETRY_SECONDS` | `60` | Postgres mode: seconds between retries of a write batch Postgres rejects while the store is blocked (minimum 1) ([postgres-write-queue.md](../features/postgres-write-queue.md)) |

@@ -1,9 +1,9 @@
 'use client';
 /** The Trace tab: the timed span tree down to remote steps, collapsible, with a duration bar per row. */
-import { useDeveloperDetails } from '@/lib/client/developer-details';
 import { useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useDeveloperDetails } from '@/lib/client/developer-details';
 import { cut, fmtMs, resultOf, type RunModel, type RunSpan } from '@/lib/shared/run-trace-model';
 import { EmptyState } from '../ui/empty-state';
 import { actorColor, clock } from './parts';

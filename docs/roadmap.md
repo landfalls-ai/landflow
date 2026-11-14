@@ -1556,7 +1556,7 @@ resizing the column, and keeping a fix bubble's text after it closes (the timeli
 ## Backbone wave 1: one look, a plainer Home (2026-11-14)
 
 The Classic look is retired (X5): every screen draws the New look and `useLook`, `useNewLook` and `setLook` are gone
-(`look-toggle.tsx` stays as an empty shell for one wave). Home's primary is **New workflow** (P-home-1), a Needs you tile
+(`look-toggle.tsx` stayed as an empty shell for one wave; B12 deleted it). Home's primary is **New workflow** (P-home-1), a Needs you tile
 replaces Plugins online, the Plugins panel and the header meta are gone and an offline plugin shows one line above the
 tiles (P-home-2), a suggestion is a compact card with Show more (P-home-3), and a run of one flow is one line
 (P-home-4). The Executions page does not read `?status=waiting` yet, so the Needs you tile opens the unfiltered list.
@@ -1576,7 +1576,7 @@ The shared pieces every chat will use, built in `components/ui/` and ready; the 
   Agents (B10): the test chat, the Agent architect and the analyst are on the kit (CH6, CH7 done for agents); the test
   chat's raw trace id became the trace's Open trace link (CH23, the test-chat part).
 - CH13 ✅ Done (B10): the Sessions tab opens on People and has Automations and All; no Auto-refresh switch
-  ([agents.md](agents.md#test-chat)). The architect keeps its conversation and can continue a failed design from the
+  ([agents.md](agents.md#how-a-run-works)). The architect keeps its conversation and can continue a failed design from the
   failing step.
 
 ## Spotlight history and @ tags (B16, backbone wave 3)

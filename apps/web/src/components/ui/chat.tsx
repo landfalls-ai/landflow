@@ -105,12 +105,13 @@ export function ModelChip({ model, local }: { model: string; local?: boolean }) 
   );
 }
 
-/**
- * The first `n` sentences of a reply, and whether there is more. Not cut after "e.g.", "i.e.", "etc.", nor after a list
- * marker at the start of a line ("2."), nor inside a quoted name or a fenced code block.
- */
 const LIST_ITEM = /^\s*(?:[-*+•]|\d+[.)])\s+\S/;
 
+/**
+ * The first `n` sentences of a reply, and whether there is more. Not cut after "e.g.", "i.e.", "etc.", nor after a list
+ * marker at the start of a line ("2."), nor inside a quoted name or a fenced code block. A list whose items have no
+ * full stop counts as one sentence where it ends.
+ */
 export function firstSentences(text: string, n: number): { text: string; more: boolean } {
   const t = text.trim();
   if (n < 1) return { text: '', more: t.length > 0 };

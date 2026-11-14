@@ -120,6 +120,16 @@ describe('record_work, my_briefing and the prompt', () => {
     expect(JSON.stringify(prompt)).not.toContain('Fixed the retry loop');
   });
 
+  it('refuses a day that is not on the calendar, in the tool and the prompt', async () => {
+    const a = await connect(alice, ['brain:read']);
+    for (const day of ['2026-13-45', '2026-02-30']) {
+      const tool = await a.callTool({ name: 'my_briefing', arguments: { day } }).then((r) => Boolean((r as { isError?: boolean }).isError), () => true);
+      expect(tool).toBe(true);
+      expect(await a.getPrompt({ name: 'morning-briefing', arguments: { day } }).then(() => false, () => true)).toBe(true);
+    }
+    expect(JSON.parse(textOf(await a.callTool({ name: 'my_briefing', arguments: { day: '2026-02-28' } }))).briefing).toBeDefined();
+  });
+
   it('saves an event without a visibility as private, saves a team one, and rejects an invalid one while saving the rest', async () => {
     const a = await connect(alice, ['brain:write']);
     const saved = JSON.parse(textOf(await a.callTool({ name: 'record_work', arguments: { events: [event('a-2', 'Another'), event('a-3', 'Shared', { visibility: 'team' }), event('a-4', 'x'.repeat(300))] } })));

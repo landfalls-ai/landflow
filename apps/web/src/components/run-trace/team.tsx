@@ -1,9 +1,9 @@
 'use client';
 /** The Team tab: who called whom (a vertical layout, no sideways scroll) and a card per actor. */
-import { useDeveloperDetails } from '@/lib/client/developer-details';
 import { useRef, useState } from 'react';
 import { ArrowRight, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useDeveloperDetails } from '@/lib/client/developer-details';
 import { teamSnapshotOf, type TeamSnapshot, type TeamSnapshotMember } from '@/lib/shared/agent-teams';
 import { fixCyclesOf, type FixCycle } from '@/lib/shared/fix-cycles';
 import { resolveRunProfile } from '@/lib/shared/run-profiles';

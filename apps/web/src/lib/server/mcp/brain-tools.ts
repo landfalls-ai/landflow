@@ -23,7 +23,7 @@ import { vectorFactHits } from '../brain/study';
 import { askBrain } from '../brain/wiki';
 import { WORK_LIMITS } from '@landflow/protocol';
 import { MAX_WORK_EVENTS, recordWork } from '../brain/work';
-import { briefingMarkdown } from './brain-prompts';
+import { briefingMarkdown, dayArgument } from './brain-prompts';
 import { HttpError } from '../errors';
 import { homeProjectId } from '../projects/store';
 import type { Actor } from '../projects/access';
@@ -226,7 +226,7 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
     {
       title: 'My briefing',
       description: 'Your own work from today and yesterday (what you or your tools recorded), as text and JSON. Nobody else’s work is in it.',
-      inputSchema: z.object({ day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('YYYY-MM-DD; default today') }),
+      inputSchema: z.object({ day: dayArgument('YYYY-MM-DD; default today') }),
       annotations: READ_ONLY,
     },
     async ({ day }) => {

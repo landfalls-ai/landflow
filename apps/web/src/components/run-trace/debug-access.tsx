@@ -3,12 +3,12 @@
  * "Debug access" on the Run Trace page: mint, list and revoke the debug tokens of one execution
  * (docs/specs/19-debug-token.md). The token is shown once, with what to give an agent; the list never has it.
  */
-import { DevOnly } from '@/lib/client/developer-details';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { KeyRound, MoreHorizontal, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
+import { DevOnly } from '@/lib/client/developer-details';
 import { cn } from '@/lib/utils';
 import { claudeAddCommand, curlCheck, DEBUG_TTL_CHOICES, mcpConfigJson, relativeTime, tokenPrefix, tokenState } from '@/lib/shared/debug-token-snippets';
 import { Badge, type Tone } from '../ui/badge';
