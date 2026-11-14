@@ -109,8 +109,8 @@ in its workflow's Executions tab), and the rail marks **Runs** while it is open.
   for what), while **Needs you** keeps the run's (its buttons answer the execution); `waitEchoes` in
   `lib/shared/run-trace-model.ts` picks them. A team run opens with its [headlines](#headlines).
 - **Tabs only with something in them.** **Story** and **Trace** are always there. **Team** shows when more than one
-  person or agent took part, **Artifacts** when the run made something (files agents wrote count), and a run with
-  nothing else (a short single-flow run) has just the two, with Story and Trace only. A saved or linked tab that is
+  person or agent took part, **Artifacts** when the run made something (files agents wrote count), so a short
+  single-flow run has just Story and Trace. The tabs are decided from the whole run, not the replay cut. A saved or linked tab that is
   not shown falls back to the Story. `visibleTabs()` in `components/run-trace/run-trace-tabs.ts`.
 - **The time slider** shows only when the run took 5 seconds or more and more than one took part
   (`showScrubber()`); otherwise there is nothing to replay.

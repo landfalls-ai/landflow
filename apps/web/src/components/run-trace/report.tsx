@@ -82,6 +82,7 @@ function summary(model: RunModel): string {
 export function StorySummary({ model, report, changes, open, profile, onProfile }: { model: RunModel; report?: RunReport; changes?: RunChanges; open: (o: Open) => void; profile?: string; onProfile?: (id: string | undefined) => void }) {
   if (model.empty || !report) return null;
   const { outcome } = model;
+  const text = summary(model);
   const saved = model.artifacts.filter((a) => a.artifact.kind === 'report').at(-1);
   const copy = () => {
     navigator.clipboard.writeText(saved?.artifact.text ?? report.markdown).then(
@@ -134,9 +135,9 @@ export function StorySummary({ model, report, changes, open, profile, onProfile 
           </div>
         ))}
       </div>
-      {summary(model) && (
+      {text && (
         <Card>
-          <p className="text-[13.5px] leading-snug text-t1">{summary(model)}</p>
+          <p className="text-[13.5px] leading-snug text-t1">{text}</p>
         </Card>
       )}
       {next.length > 0 && (

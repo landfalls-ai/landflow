@@ -72,6 +72,24 @@ describe('visibleTabs', () => {
   });
 });
 
+describe('tabs during a replay', () => {
+  it('are those of the whole run, while a cut model has one participant', () => {
+    const events = journal((add) => {
+      add(0, { type: 'span.started', spanId: 'run', kind: 'run', name: 'Review', actor: flow });
+      add(1000, { type: 'span.started', spanId: 'node:team:0', parentSpanId: 'run', kind: 'agent', name: 'Team', actor: lead, nodeId: 'team' });
+      add(2000, { type: 'span.started', spanId: 'node:team:0/ask:1', parentSpanId: 'node:team:0', kind: 'delegate', name: 'Review #5', actor: rev, caller: lead, input: 'Review #5' });
+      add(3000, { type: 'artifact', spanId: 'node:team:0/ask:1', artifact: { name: 'Notes', kind: 'report', text: '# Notes' } });
+      add(4000, { type: 'span.ended', spanId: 'node:team:0/ask:1', status: 'success', output: 'Approved' });
+      add(59_000, { type: 'span.ended', spanId: 'node:team:0', status: 'success', output: { reply: 'Reviewed' } });
+      add(60_000, { type: 'span.ended', spanId: 'run', status: 'success' });
+    });
+    const full = foldJournal(events);
+    const cut = foldJournal(events, { until: T0 + 1500 });
+    expect(visibleTabs(full)).toEqual(['story', 'trace', 'team', 'artifacts']);
+    expect(visibleTabs(cut)).not.toContain('team');
+  });
+});
+
 describe('showScrubber', () => {
   it('is hidden for a short run and for one participant, shown for a longer team run', () => {
     expect(showScrubber(shortRun())).toBe(false);

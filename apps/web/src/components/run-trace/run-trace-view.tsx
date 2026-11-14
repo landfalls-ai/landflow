@@ -1,6 +1,6 @@
 'use client';
 /**
- * Run Trace of one execution: header (live or finished, who is working now, reported vs checked), the Needs you strip,
+ * Run Trace of one execution: header (live or finished, who is working now), the Needs you strip,
  * the Story | Trace | Team | Artifacts tabs (each only when it has something; the Run report is the Story's summary), a
  * time slider to replay a longer run with a team, and the detail of a tapped row.
  * Phone first: one column; `/runs/:id` shows it full screen, the execution page embeds it.
@@ -424,6 +424,7 @@ function TraceBody({
   const seen = useMemo(() => (replay ? events.filter((e) => Date.parse(e.at) <= (cursor as number)) : events), [events, replay, cursor]);
   const changes = useMemo(() => foldChanges(seen), [seen]);
   const github = useMemo(() => githubOf(seen), [seen]);
+  const allChanges = useMemo(() => foldChanges(events), [events]);
 
   // The Run report's checks, live, with the run's profile or the one picked in the Story's summary.
   const [profileId, setProfileId] = useState<keyof typeof RUN_PROFILES>();
@@ -497,7 +498,8 @@ function TraceBody({
   const span = Math.max(1, (full.live ? now : full.t1) - full.t0);
   const at = replay ? (cursor as number) : full.live ? now : full.t1;
   // A tab shows only with something in it; one that is gone (an old link, the saved tab) falls back to the Story.
-  const tabs = visibleTabs(model, changes);
+  // Decided from the whole run, not the replay cut, so a replay does not make tabs vanish.
+  const tabs = visibleTabs(full, allChanges);
   const current: Tab = tabs.includes(tab) ? tab : 'story';
   // A finished run's line and steps are the Story's (its Re-run from here too): the card above the tabs is for a run going on or waiting.
   const cardAbove = model.live || model.status === 'waiting';
