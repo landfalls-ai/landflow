@@ -11,5 +11,5 @@ export default async function LegacyEvaluationsPage({
   const { id } = await params;
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(await searchParams)) for (const v of Array.isArray(value) ? value : value === undefined ? [] : [value]) query.append(key, v);
-  redirect(`/workflows/${id}/tests${query.size ? `?${query}` : ''}`);
+  redirect(`/workflows/${encodeURIComponent(id)}/tests${query.size ? `?${query}` : ''}`);
 }

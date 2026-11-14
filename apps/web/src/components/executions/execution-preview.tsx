@@ -9,7 +9,6 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   Bug,
-  Check,
   ChevronDown,
   Ellipsis,
   CircleDashed,
@@ -50,8 +49,8 @@ import { liveTeam } from '../editor/team-strip';
 import { AgentSessionPanel, type AgentNodeRef } from './agent-session-panel';
 import { ExecutionCanvas } from './execution-canvas';
 import { useExecutions } from './executions-shell';
-import { DevOnly, useDeveloperDetails } from '@/lib/client/developer-details';
-import { MODE_META, RERUN_LABEL, canRetry, deleteExecution, startRerun, startRetry, type RerunBody, type RetryBody } from './meta';
+import { useDeveloperDetails } from '@/lib/client/developer-details';
+import { RERUN_LABEL, canRetry, deleteExecution, startRerun, startRetry, type RerunBody, type RetryBody } from './meta';
 import { AiUsageChip, BufferedChip, FeedbackChip, ParentChip, SubWorkflowWait, waitedChildren } from './run-extras';
 
 const HEIGHT_KEY = 'landflow-logs-height';
@@ -71,36 +70,6 @@ function Sep() {
   return <span className="h-3 w-px bg-bd" />;
 }
 
-/** The run's OpenTelemetry trace id: copyable, and a link when the host has LANDFLOW_TRACE_URL. */
-function TraceId({ traceId, url }: { traceId: string; url?: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = () => {
-    navigator.clipboard.writeText(traceId).then(
-      () => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      },
-      () => toast.error('Could not copy the trace id'),
-    );
-  };
-  return (
-    <span className="flex items-center gap-1 rounded-full border border-hair py-px pl-2 pr-0.5 text-[12px] text-t2" title={`Trace ${traceId}`}>
-      <Waypoints className="size-3 shrink-0" />
-      {url ? (
-        <a href={url} target="_blank" rel="noreferrer" className="flex items-center gap-1 font-mono text-t2 hover:text-t1" title="Open the trace">
-          {traceId.slice(0, 12)}…
-          <ExternalLink className="size-3" />
-        </a>
-      ) : (
-        <span className="font-mono text-t3">{traceId.slice(0, 12)}…</span>
-      )}
-      <button onClick={copy} aria-label="Copy trace id" title="Copy trace id" className="grid size-5 place-items-center rounded-full text-t3 transition-colors hover:bg-acdim hover:text-t1">
-        {copied ? <Check className="size-3 text-gn" /> : <Copy className="size-3" />}
-      </button>
-    </span>
-  );
-}
-
 function Skeleton() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -110,22 +79,6 @@ function Skeleton() {
       </div>
       <div className="canvas-readonly min-h-0 flex-1 bg-[repeating-linear-gradient(-45deg,transparent_0_14px,var(--acdim)_14px_28px)]" />
     </div>
-  );
-}
-
-/** The run's id, trace id and mode chip: developer details. */
-export function RunIdentity({ record, traceUrl }: { record: Pick<ExecutionRecord, 'executionId' | 'traceId' | 'mode'>; traceUrl?: string }) {
-  const mode = MODE_META[record.mode] ?? MODE_META.manual;
-  const ModeIcon = mode.icon;
-  return (
-    <DevOnly>
-      <Sep />
-      <span className="font-mono text-[12px] text-t3">ID#{record.executionId}</span>
-      {record.traceId && <TraceId traceId={record.traceId} url={traceUrl} />}
-      <span className="flex items-center gap-1 rounded-full border border-hair px-2 text-[12px] text-t2" title={mode.label}>
-        <ModeIcon className="size-3" /> {record.mode}
-      </span>
-    </DevOnly>
   );
 }
 
@@ -730,7 +683,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                           </MenuItem>
                         </div>
                       )}
-                      {(record.aiUsage || record.chatFeedback) && (
+                      {(record.aiUsage?.calls || record.chatFeedback) && (
                         <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 md:hidden">
                           <AiUsageChip usage={record.aiUsage} />
                           <FeedbackChip key={record.executionId} executionId={record.executionId} feedback={record.chatFeedback} />
