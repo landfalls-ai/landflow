@@ -1633,8 +1633,8 @@ and the account menu gets the switches. Deleting a person removes their conversa
 ## Tagging with @ (B04, 2026-11-14)
 
 The foundation is built: `GET /api/mentions`, `resolveMentions` with a digest per kind, and the picker
-([assistant.md](assistant.md#tagging-with-)). Open: mount it in Spotlight and Ask the brain, and resolve the tags in
-their servers.
+([assistant.md](assistant.md#tagging-with-)). Closed by B16 and B17: Spotlight and Ask the brain mount the picker and
+their servers resolve the tags, with one key-scope table for all three routes.
 
 ## Test chat history per person (B10, 2026-11-14)
 

@@ -118,8 +118,8 @@ you to another browser). With it off, a screen shows what a builder acts on and 
 operators act on: the node panel's type id, language and transport; node tiles' and the node creator's language and
 transport; import report type ids; the team node's runs-on chips and tool commands; a run's id, trace id and mode chip,
 and the run list's Execution ID and Mode columns; plugin cards' language, SDK and endpoints, and the Marketplace Explore tiles' language and runtime badges; an agent card's model, tool
-and skill counts; and the run trace's token, model and cost lines and Debug access. With it on, everything shows as it
-did. Code gates a detail with `<DevOnly>` or `useDeveloperDetails()` from `lib/client/developer-details.tsx`.
+and skill counts; and the run trace's token, model and cost lines and the tool names in Debug access (the **Debug access** item itself is
+always in the run trace's **⋯** menu, B21). With it on, everything shows as it did. Code gates a detail with `<DevOnly>` or `useDeveloperDetails()` from `lib/client/developer-details.tsx`.
 
 ## Words
 

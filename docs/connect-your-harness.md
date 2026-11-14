@@ -37,7 +37,7 @@ Settings → Security. The route refuses the rest with the reason (`scopeRefusal
 ## What the brain gives at session start
 
 With the mod (or the `morning-briefing` prompt of the MCP server), your own work from yesterday comes into the session as
-quoted data, and your sessions are held for your review before they are sent. Nothing is shared: every event is private.
+quoted data, and your sessions are held for your review before they are sent. Every event is private unless you share it with your team or the organization (B18).
 See [work-and-briefings.md](work-and-briefings.md).
 
 ## The admin's switch
