@@ -1,7 +1,7 @@
 'use client';
 /**
- * A workflow's Executions tab (n8n's shape): the editor-style top bar with
- * the Editor | Executions switch, a list of execution cards on the left and
+ * A workflow's Runs tab: the editor-style top bar with
+ * the Editor | Runs | Tests switch, a list of run cards on the left and
  * the selected execution (the route's child page) on the right. The list,
  * the workflow and the node types live here so they survive moving between
  * executions.
@@ -9,14 +9,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { ArrowLeft, Check, ListFilter, RefreshCw, Timer, X } from 'lucide-react';
+import { ArrowLeft, Check, ListFilter, Timer, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { useLiveEvents } from '@/lib/client/live';
 import type { ExecutionSummary, NodeTypeInfo, Workflow } from '@/lib/shared/types';
 import { WorkflowTabs } from '../shell/workflow-tabs';
 import { Badge } from '../ui/badge';
-import { Switch } from '../ui/inputs';
 import { Popover } from '../ui/popover';
 import { RUN_STATE, RunStateIcon, formatStamp, runStateOf, statusText, useNow, type RunState } from '../run/run-status';
 import { ExecutionMarks } from './meta';
@@ -43,7 +42,6 @@ export function useExecutions() {
 
 const LIMIT = 100;
 const POLL_MS = 8000;
-const AUTO_KEY = 'landflow-executions-autorefresh';
 const NEW_ROW: CSSProperties = { animation: 'lf-slide-right 0.24s cubic-bezier(0.22, 1, 0.36, 1) both, lf-flash 1.2s ease-out' };
 
 type Filter = 'all' | RunState;
@@ -58,12 +56,12 @@ const FILTERS: Array<{ value: Filter; label: string }> = [
   { value: 'canceled', label: 'Canceled' },
 ];
 
-function readAuto() {
-  try {
-    return localStorage.getItem(AUTO_KEY) !== 'off';
-  } catch {
-    return true;
-  }
+/**
+ * The list updates by itself, except while the person is reading it: with the pointer over the list, or scrolled away
+ * from the top (a new run would move the cards under their eyes). It catches up the moment both stop.
+ */
+export function shouldPauseLiveUpdates({ pointerOver, scrollTop }: { pointerOver: boolean; scrollTop: number }) {
+  return pointerOver || scrollTop > 8;
 }
 
 function ExecutionCard({ execution, workflowId, selected, now, index, isNew }: { execution: ExecutionSummary; workflowId: string; selected: boolean; now: number; index: number; isNew: boolean }) {
@@ -72,7 +70,7 @@ function ExecutionCard({ execution, workflowId, selected, now, index, isNew }: {
   const ms = live ? Math.max(0, now - Date.parse(execution.startedAt)) : execution.durationMs;
   return (
     <Link
-      href={`/workflows/${workflowId}/executions/${execution.id}`}
+      href={`/workflows/${workflowId}/runs/${execution.id}`}
       data-id={execution.id}
       aria-current={selected || undefined}
       className={cn(
@@ -109,29 +107,33 @@ function Sidebar() {
   const params = useParams<{ executionId?: string[] }>();
   const selectedId = params.executionId?.[0];
   const [filter, setFilter] = useState<Filter>('all');
-  const [auto, setAuto] = useState(true);
   const listRef = useRef<HTMLDivElement>(null);
   const known = useRef<Set<string>>(undefined);
   const flashed = useRef(new Set<string>());
 
-  useEffect(() => setAuto(readAuto()), []);
-  const toggleAuto = (value: boolean) => {
-    setAuto(value);
-    try {
-      localStorage.setItem(AUTO_KEY, value ? 'on' : 'off');
-    } catch {}
-    if (value) refresh();
+  // Live updates wait while the person reads the list (see shouldPauseLiveUpdates) and catch up after.
+  const reading = useRef({ pointerOver: false, scrollTop: 0 });
+  const missed = useRef(false);
+  const update = useCallback(() => {
+    if (shouldPauseLiveUpdates(reading.current)) missed.current = true;
+    else refresh();
+  }, [refresh]);
+  const settle = (next: Partial<typeof reading.current>) => {
+    reading.current = { ...reading.current, ...next };
+    if (missed.current && !shouldPauseLiveUpdates(reading.current)) {
+      missed.current = false;
+      refresh();
+    }
   };
 
   // Polling backs up the live stream (missed events, other tabs' deletes).
   useEffect(() => {
-    if (!auto) return;
-    const timer = setInterval(refresh, POLL_MS);
+    const timer = setInterval(update, POLL_MS);
     return () => clearInterval(timer);
-  }, [auto, refresh]);
+  }, [update]);
   useLiveEvents((event) => {
-    if (!auto || event.channel !== 'execution' || event.workflowId !== workflowId) return;
-    if (['execution.started', 'execution.finished', 'execution.paused', 'execution.resumed'].includes(event.event.type)) refresh();
+    if (event.channel !== 'execution' || event.workflowId !== workflowId) return;
+    if (['execution.started', 'execution.finished', 'execution.paused', 'execution.resumed'].includes(event.event.type)) update();
   });
 
   // Executions that appear after the first load flash in.
@@ -165,19 +167,14 @@ function Sidebar() {
     <aside className="flex min-h-0 flex-col border-r border-hair bg-sf2">
       <div className="shrink-0 px-4 pb-2 pt-3.5">
         <div className="flex items-center gap-2">
-          <h2 className="text-[15px] font-semibold text-t1">Executions</h2>
+          <h2 className="text-[15px] font-semibold text-t1">Runs</h2>
           {executions && <span className="font-mono text-[11px] text-t3">{executions.length}</span>}
           <div className="ml-auto flex items-center gap-1">
-            {!auto && (
-              <button onClick={refresh} title="Refresh" aria-label="Refresh" className="grid size-7 place-items-center rounded-full text-t2 transition-colors hover:bg-acdim hover:text-t1">
-                <RefreshCw className="size-3.5" />
-              </button>
-            )}
             <Popover
               trigger={({ open, toggle }) => (
                 <button
                   onClick={toggle}
-                  aria-label="Filter executions"
+                  aria-label="Filter runs"
                   aria-expanded={open}
                   className={cn('relative grid size-7 place-items-center rounded-full transition-colors hover:bg-acdim hover:text-t1', filter !== 'all' || open ? 'bg-acdim text-t1' : 'text-t2')}
                 >
@@ -211,11 +208,6 @@ function Sidebar() {
             </Popover>
           </div>
         </div>
-        <label className="mt-2 flex w-fit cursor-pointer select-none items-center gap-2 text-[12px] text-t2 max-md:min-h-11">
-          <Switch checked={auto} onChange={toggleAuto} label="Auto refresh" />
-          Auto refresh
-          {auto && <span className="size-1.5 rounded-full bg-gn animate-pulse-soft" />}
-        </label>
         {filter !== 'all' && (
           <div className="mt-2 flex items-center gap-1.5 animate-in">
             <span className={cn('flex items-center gap-1 rounded-full border border-hair bg-sf px-2 py-px text-[12px]', RUN_STATE[filter].text)}>
@@ -231,7 +223,13 @@ function Sidebar() {
           </div>
         )}
       </div>
-      <div ref={listRef} className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 pb-3 pt-1">
+      <div
+        ref={listRef}
+        onPointerEnter={(e) => e.pointerType === 'mouse' && settle({ pointerOver: true })}
+        onPointerLeave={(e) => e.pointerType === 'mouse' && settle({ pointerOver: false })}
+        onScroll={(e) => settle({ scrollTop: e.currentTarget.scrollTop })}
+        className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 pb-3 pt-1"
+      >
         {!executions &&
           Array.from({ length: 6 }, (_, i) => (
             <div key={i} className="h-[52px] rounded-[10px] border border-hair bg-sf animate-pulse-soft" style={{ animationDelay: `${i * 90}ms` }} />
@@ -241,7 +239,7 @@ function Sidebar() {
         ))}
         {executions && !visible.length && (
           <div className="px-2 py-8 text-center animate-in">
-            <p className="text-[13px] font-semibold text-t1">{executions.length ? 'Nothing matches this filter' : 'No executions yet'}</p>
+            <p className="text-[13px] font-semibold text-t1">{executions.length ? 'Nothing matches this filter' : 'No runs yet'}</p>
             <p className="mt-1 text-[12px] text-t3">{executions.length ? 'Pick another status.' : 'Run the workflow from the editor and it shows up here.'}</p>
           </div>
         )}
@@ -283,7 +281,7 @@ export function ExecutionsShell({ workflowId, children }: { workflowId: string; 
 
   const open = useCallback(
     (executionId: string, how: 'push' | 'replace' = 'push') => {
-      const href = `/workflows/${workflowId}/executions/${executionId}`;
+      const href = `/workflows/${workflowId}/runs/${executionId}`;
       if (how === 'replace') router.replace(href, { scroll: false });
       else router.push(href, { scroll: false });
     },
@@ -303,15 +301,15 @@ export function ExecutionsShell({ workflowId, children }: { workflowId: string; 
             <ArrowLeft className="size-4" />
           </Link>
           {selectedId && (
-            <Link href={`/workflows/${workflowId}/executions`} aria-label="Back to executions" className="grid size-8 place-items-center rounded-full text-t2 transition-colors hover:bg-acdim hover:text-t1 md:hidden">
+            <Link href={`/workflows/${workflowId}/runs`} aria-label="Back to runs" className="grid size-8 place-items-center rounded-full text-t2 transition-colors hover:bg-acdim hover:text-t1 md:hidden">
               <ArrowLeft className="size-4" />
             </Link>
           )}
           <span className="hidden max-w-[30%] truncate md:block text-[15px] font-semibold text-t1">{workflow?.name ?? (workflowMissing ? 'Deleted workflow' : ' ')}</span>
           {workflow?.active && <Badge tone="success" className="hidden md:inline-flex">Published</Badge>}
-          <WorkflowTabs workflowId={workflowId} active="executions" className="md:absolute md:left-1/2 md:-translate-x-1/2" />
+          <WorkflowTabs workflowId={workflowId} active="runs" className="md:absolute md:left-1/2 md:-translate-x-1/2" />
           <Link href={`/executions?workflowId=${workflowId}`} className="ml-auto hidden text-[12px] text-t2 transition-colors hover:text-t1 md:block">
-            All executions
+            All runs
           </Link>
         </header>
         {/* On a phone the list and an open execution take the whole width in turn; the back arrow returns to the list. */}

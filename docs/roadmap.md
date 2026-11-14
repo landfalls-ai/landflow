@@ -1632,6 +1632,17 @@ Open: the test chat writes every session as user "you", so "Earlier tests" lists
 route should store the caller's id (it also affects memory and the policy role check); then the sessions route can filter
 `source=test` to the caller. Also: `source` wins over `audience` when both are given.
 
+## Workflow runs and tests (B22, 2026-11-14)
+
+Built ([the Runs tab](features/editor.md), [Run Trace](run-trace.md#the-screens)): a workflow's tabs are **Editor | Runs |
+Tests** at `/workflows/:id/runs` and `/workflows/:id/tests`, and the old `executions` and `evaluations` links redirect
+with their query. A run's view has no Canvas / Run trace switch (P-wfexec-1; **Full screen ↗** opens the trace), a plain
+header with the run id in **⋯** and **Debug in editor** in the Re-run menu (P-wfexec-2), and no Auto refresh: the list
+updates live and waits while the pointer is over it or it is scrolled down (P-wfexec-3). The Tests tab drops the yellow
+"no evaluation trigger" box and says **Add an evaluation trigger** (P-eval-1). X12 (tabs three levels deep) is closed.
+Links elsewhere in the app still name the old paths and go through the redirect; the retry and re-run words wait for
+B20's constants.
+
 ## Company backbone: left open from the wave 1 reviews (2026-11-14)
 
 The wave 1 review notes were fixed in wave 2's carryover where they were contained; these wait, each with its reason:
