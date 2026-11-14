@@ -136,6 +136,8 @@ export default function Overview() {
               className="py-8"
             />
           )}
+          {/* Every listed run is still going: they show above, as live runs, so the panel says so instead of staying blank. */}
+          {!!executions?.length && !recent?.length && <p className="px-4 py-6 text-center text-[12.5px] text-t3">Nothing has finished yet: the runs in progress are above.</p>}
         </Panel>
       </PageBody>
     </>

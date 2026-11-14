@@ -408,7 +408,7 @@ export function NodePanel() {
                     />
                   ) : null}
                   {descriptor && wf.type === 'core.runTeam' ? (
-                    // The new look: the team as people with jobs, then the message and where approvals go (team-node-panel.tsx).
+                    // The team as people with jobs, then the message and where approvals go (team-node-panel.tsx).
                     <TeamNodePanel
                       properties={descriptor.properties}
                       values={wf.parameters}

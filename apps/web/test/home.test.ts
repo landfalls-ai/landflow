@@ -8,7 +8,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { homeKpis, offlinePlugins, PluginsOfflineLine } from '../src/components/home/home-kpis';
-import { ProposalCard, firstSentence, type ProposalActions } from '../src/components/brain/proposal-card';
+import { ProposalCard, cardButtons, firstSentence, type ProposalActions } from '../src/components/brain/proposal-card';
 import { isSingleFlow, RunLineRow } from '../src/components/run-trace/run-line';
 import type { Proposal } from '../src/lib/shared/brain';
 import type { RunLine } from '../src/lib/shared/run-line';
@@ -53,6 +53,9 @@ describe('Home tiles', () => {
     const needs = homeKpis(undefined, 2)[3]!;
     expect(needs.value).toBe(2);
     expect(needs.href).toBe('/executions?status=waiting');
+    // Waiting is not failing: only the Failed tile draws its number in red.
+    expect(needs.danger).toBeFalsy();
+    expect(homeKpis({ workflows: 1, activeWorkflows: 1, executions24h: 4, failed24h: 1, avgDurationMs: 10 }, 2)[2]!.danger).toBe(true);
   });
 
   it('shows the offline line only when a plugin is offline', () => {
@@ -97,6 +100,29 @@ describe('the compact suggestion card', () => {
     expect(html).toContain('aria-label="More: dismiss, snooze"');
     expect(html).toContain('Show more');
     for (const hidden of ['Failed runs', 'Low risk', '80% sure', 'Expected:']) expect(html).not.toContain(hidden);
+  });
+
+  it('keeps what the change leaves out in view, even folded', () => {
+    const html = renderToStaticMarkup(createElement(ProposalCard, { proposal: { ...proposal, warnings: ['the Slack step without a channel'] } as Proposal, actions }));
+    expect(html).toContain('Leaves the Slack step without a channel.');
+    expect(html).not.toContain('Failed runs');
+  });
+
+  it('puts the flow’s buttons under ⋯, or the first in Apply’s place for advice', () => {
+    const buttons = [
+      { id: 'ship', label: 'Ship it', style: 'primary' as const },
+      { id: 'later', label: 'Later' },
+    ];
+    const build = cardButtons({ ...proposal, actions: buttons } as Proposal);
+    expect(build).toEqual({ hasApply: true, rest: buttons });
+    const advice = cardButtons({ ...proposal, detector: 'quiet', ops: [], actions: buttons } as unknown as Proposal);
+    expect(advice).toEqual({ hasApply: false, lead: buttons[0], rest: [buttons[1]] });
+    const plain = cardButtons({ ...proposal, detector: 'quiet', ops: [] } as unknown as Proposal);
+    expect(plain).toEqual({ hasApply: true, rest: [] });
+    const html = renderToStaticMarkup(createElement(ProposalCard, { proposal: { ...proposal, detector: 'quiet', ops: [], actions: buttons } as unknown as Proposal, actions }));
+    expect(html).toContain('Ship it');
+    expect(html).not.toContain('Later');
+    expect(html).not.toContain('Mark done');
   });
 
   it('shows the evidence, risk and what to expect once expanded', () => {

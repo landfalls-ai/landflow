@@ -3,7 +3,7 @@
  * Run Trace on the client: the journal of one execution, live (`useRunJournal`), what needs a person across runs
  * (`useNeedsYou`), and the two things a person can do from the trace: settle a failed check, decide a tool approval.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { JournalEvent, RunActor } from '../shared/run-trace';
 import { foldJournal, type RunModel } from '../shared/run-trace-model';
 import { api, streamEvents } from './api';
@@ -107,22 +107,45 @@ export interface NeedsYouRow {
   since: string;
 }
 
+/**
+ * One list for every component that shows it (Home's tile, the rail's badge, the runs page): requests asked for in the
+ * same tick share one `GET /api/runs/needs-you`, and an older answer never replaces a newer one.
+ */
+const needsYouStore = { items: undefined as NeedsYouRow[] | undefined, listeners: new Set<() => void>(), scheduled: false, seq: 0 };
+
+function loadNeedsYou() {
+  if (needsYouStore.scheduled) return;
+  needsYouStore.scheduled = true;
+  setTimeout(() => {
+    needsYouStore.scheduled = false;
+    const mine = ++needsYouStore.seq;
+    const settle = (items: NeedsYouRow[]) => {
+      if (mine !== needsYouStore.seq) return;
+      needsYouStore.items = items;
+      for (const listener of needsYouStore.listeners) listener();
+    };
+    api<{ items: NeedsYouRow[] }>('/api/runs/needs-you')
+      .then((r) => settle(r.items))
+      .catch(() => settle(needsYouStore.items ?? []));
+  }, 0);
+}
+
+function subscribeNeedsYou(listener: () => void) {
+  needsYouStore.listeners.add(listener);
+  return () => needsYouStore.listeners.delete(listener);
+}
+
 export function useNeedsYou(): {
   items: NeedsYouRow[] | undefined;
   refresh: () => void;
 } {
-  const [items, setItems] = useState<NeedsYouRow[]>();
-  const refresh = useCallback(() => {
-    api<{ items: NeedsYouRow[] }>('/api/runs/needs-you')
-      .then((r) => setItems(r.items))
-      .catch(() => setItems((current) => current ?? []));
-  }, []);
-  useEffect(refresh, [refresh]);
-  // A run waiting or finishing changes the list.
+  const items = useSyncExternalStore(subscribeNeedsYou, () => needsYouStore.items, () => undefined);
+  useEffect(loadNeedsYou, []);
+  // A run starting to wait, resuming or finishing changes the list.
   useLiveEvents((event) => {
-    if (event.channel === 'execution' && (event.event.type === 'execution.finished' || event.event.type === 'execution.resumed')) refresh();
+    if (event.channel === 'execution' && (event.event.type === 'execution.paused' || event.event.type === 'execution.finished' || event.event.type === 'execution.resumed')) loadNeedsYou();
   });
-  return { items, refresh };
+  return { items, refresh: loadNeedsYou };
 }
 
 /** Settle a failed check: accept it as is, or send it back for a fix. */

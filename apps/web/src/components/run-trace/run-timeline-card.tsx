@@ -1,6 +1,6 @@
 'use client';
 /**
- * A run as a timeline (docs/run-trace.md#a-run-as-a-timeline), drawn in the new look only: the face of who leads the run,
+ * A run as a timeline (docs/run-trace.md#a-run-as-a-timeline): the face of who leads the run,
  * the workflow, who and which team, a status pill, and the steps joined by a line that fills as the run goes. The member at
  * work sits on its step with a bubble saying what it does; a wait for a person pulses amber with what it asks, a failure is
  * a red cross with Re-run from here. Above the Run Trace's tabs (`RunTimelineCard`), and as a card per run going on
@@ -144,7 +144,7 @@ function CardHead({ timeline }: { timeline: RunTimeline }) {
 }
 
 /**
- * Above the Run Trace's tabs, in the new look. A wait points at Needs you below (its buttons decide it); a failure offers
+ * Above the Run Trace's tabs. A wait points at Needs you below (its buttons decide it); a failure offers
  * Re-run from the failed step; a run that is done says how long it took and what it used, with a link to the Story.
  */
 export function RunTimelineCard({ model, onStory }: { model: RunModel; onStory?: () => void }) {

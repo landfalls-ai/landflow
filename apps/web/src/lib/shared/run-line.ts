@@ -1,5 +1,5 @@
 /**
- * What a run did, in one line (docs/run-trace.md#what-a-run-did-in-one-line, the new look): what came in (the trigger and
+ * What a run did, in one line (docs/run-trace.md#what-a-run-did-in-one-line): what came in (the trigger and
  * what it carried), who did it (the agent, or the team's lead with the members who worked under it) and what came out
  * (from the run's artifacts and reply), green when done, amber when it waits for a person, red when it failed.
  */

@@ -1,5 +1,5 @@
 /**
- * A run as a timeline (docs/run-trace.md#a-run-as-a-timeline, the new look): who leads it, a status pill and its steps in
+ * A run as a timeline (docs/run-trace.md#a-run-as-a-timeline): who leads it, a status pill and its steps in
  * the order they happened. A team run's steps are its members' turns, each named by its result where it has one (a
  * headline: "14 tests pass", "Review: approve"), else by what the member does ("Planned"); any other run's steps are its
  * nodes in run order. The member at work sits on its step with what it does; a wait for a person turns its step amber, a

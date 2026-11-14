@@ -104,7 +104,7 @@ export interface NodeTileProps {
    * `head` replaces the icon and name, `body` sits under them and grows the tile, and `color` tints the running frame.
    */
   live?: NodeLive;
-  /** Names for the sub-node slots by connection type, over the descriptor's: a team node's "Lead's model" (the new look). */
+  /** Names for the sub-node slots by connection type, over the descriptor's: a team node's "Lead's model". */
   slotNames?: Partial<Record<ConnectionType, string>>;
   /** Toolbars and overlays rendered inside the node. */
   children?: ReactNode;

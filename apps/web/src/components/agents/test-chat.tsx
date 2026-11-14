@@ -77,7 +77,7 @@ export function TestChat({
   beforeSend: () => Promise<void>;
   childHref?: (entry: ToolEntry) => string | undefined;
   onSessionChange?: () => void;
-  /** The agent's tools: the Platform analyst is drawn with source chips and an answer card in the new look. */
+  /** The agent's tools: the Platform analyst is drawn with source chips and an answer card. */
   tools?: AgentToolConfig[];
 }) {
   const analyst = isAnalyst(tools);

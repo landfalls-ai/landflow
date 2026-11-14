@@ -146,7 +146,7 @@ function KeepRunningInView({ moved }: { moved: RefObject<boolean> }) {
 }
 
 /**
- * While a change is being built (new look), a ghost that lands outside the view brings the whole flow and its ghosts into
+ * While a change is being built, a ghost that lands outside the view brings the whole flow and its ghosts into
  * view, never zooming in: a node added after the last one is often past the right edge.
  */
 function KeepGhostsInView({ ids }: { ids: string[] }) {
@@ -187,7 +187,7 @@ function Canvas({ onSave }: { onSave: () => void }) {
   const reports = useCompositeReports();
   const ports = useMemo(() => boxPorts(groups, reports), [groups, reports]);
   const built = useMemo<{ nodes: CanvasNode[]; edges: (FlowEdge | GroupProxyEdge)[] }>(() => canvasGraph(groups, stickies, flowNodes, flowEdges, ports), [groups, stickies, flowNodes, flowEdges, ports]);
-  // New look: the nodes and connections a change being built adds, as dashed ghosts (./building.tsx). Not in the store.
+  // The nodes and connections a change being built adds, as dashed ghosts (./building.tsx). Not in the store.
   const ghosts = useGhosts();
   const nodes = useMemo(() => (ghosts.nodes.length ? [...built.nodes, ...(ghosts.nodes as unknown as CanvasNode[])] : built.nodes), [built.nodes, ghosts.nodes]);
   const edges = useMemo(() => (ghosts.edges.length ? [...built.edges, ...(ghosts.edges as unknown as FlowEdge[])] : built.edges), [built.edges, ghosts.edges]);

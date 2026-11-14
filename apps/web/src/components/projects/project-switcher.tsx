@@ -69,7 +69,8 @@ export function ProjectSwitcher() {
                 {project.name}
               </ProjectLink>
             ))}
-            {(team.length > 0 || mayCreate) && <MenuSeparator />}
+            {/* Always: Manage projects is never run on from the last project row. */}
+            <MenuSeparator />
             <MenuItem
               onClick={() => {
                 close();

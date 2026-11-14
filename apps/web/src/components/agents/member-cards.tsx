@@ -1,6 +1,6 @@
 'use client';
 /**
- * The team's members as cards (docs/agent-teams.md#member-cards), above the org chart in the new look: a big face, the
+ * The team's members as cards (docs/agent-teams.md#member-cards), above the org chart: a big face, the
  * team's name and the member's title, “what I do” lines, and chips for where it runs, who it may consult, its budget and
  * how its last turn went. While a run goes on, the member at work is outlined in its colour and says “Working…”. On a
  * phone the cards swipe sideways (scroll-snap); on a wide screen they wrap. A tap opens the agent's page.

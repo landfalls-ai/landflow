@@ -131,8 +131,8 @@ The first tick is 30 s after start.
 
 - **Home → Suggestions**: the open suggestions the viewer can see, best first. Each card is compact: the title, one
   line of why (its first sentence), one button and **⋯**. **Show more** adds the kind, the subject, risk and
-  confidence, the whole why, the evidence, what to expect and the **Changes** (the diff, as in Spotlight). The
-  Brain index uses the same card and can link to Home with **All suggestions**. The buttons:
+  confidence, the whole why, the evidence, what to expect and the **Changes** (the diff, as in Spotlight). What the
+  change leaves out (*Leaves …*) is always shown, so nobody applies without seeing it. The Brain index uses the same card and can link to Home with **All suggestions**. The buttons:
   - **Apply**, which saves through governance; **Create workflow** for a draft; **Mark done** for advice.
   - **Build it** for a missing tool. It records the go-ahead (`proposal.applied`, with the detector), and published
     workflows that start from On Usage Event on `proposal.applied` with **Suggestion From: Missing tool** get the
@@ -487,8 +487,9 @@ other flows react to what was decided.
 
 - **Buttons.** Suggest Improvement's **Actions** (or `actions` in `POST /api/proposals`) add up to four buttons:
   `{ id, label, style?: primary|default, confirm? }`. An id is lowercase letters, digits, `-` or `_` (up to 32) and
-  can't be `applied`, `dismissed`, `snoozed` or `action`. `confirm` asks first. Both cards (Home and the canvas) show
-  them next to Apply; Dismiss and Snooze stay.
+  can't be `applied`, `dismissed`, `snoozed` or `action`. `confirm` asks first. Every card (Home, the Brain and the
+  canvas) keeps one button: Apply, with the flow's buttons under **⋯** beside Dismiss and Snooze; for advice that has
+  buttons of its own, the first of them takes Apply's place (drawn as the primary button) and the rest go under **⋯**.
 - **Taking one.** `POST /api/proposals/:id/act { action, note? }` (edit access, like apply) saves
   `decision: { action, label, by, at, note }` on the suggestion, marks it applied (so effect measurement and quieting
   count it as applied) and starts the listening flows. It changes nothing else: what a button means is up to the flow.

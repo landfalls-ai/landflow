@@ -227,8 +227,10 @@ function Rail({ pathname, open, onClose }: { pathname: string; open: boolean; on
         <span className={cn('truncate', label)}>Settings</span>
       </Link>
       {showReconnecting(everConnected, connected) && (
-        <div className={cn('px-2.5 pb-1 text-[12px] text-t3', label)} title="Reconnecting to the event stream" role="status">
-          Reconnecting…
+        // Folded to icons, the words hide and the amber dot alone says it (its title and the status label still read it).
+        <div className="flex items-center gap-2 px-2.5 pb-1 text-[12px] text-t3" title="Reconnecting to the event stream" role="status" aria-label="Reconnecting…">
+          <span aria-hidden className="size-2 shrink-0 rounded-full bg-warn" />
+          <span className={label}>Reconnecting…</span>
         </div>
       )}
       <div className={cn('mt-2 border-t border-hair pt-2', label)}>

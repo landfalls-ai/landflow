@@ -1,6 +1,6 @@
 'use client';
 /**
- * Building, step by step (docs/assistant.md#building-step-by-step), drawn in the new look only. While Spotlight works on a
+ * Building, step by step (docs/assistant.md#building-step-by-step). While Spotlight works on a
  * change, its reply in the Spotlight panel lists the steps and ticks each one off (LiveSteps); the nodes the plan adds
  * appear on the canvas as dashed ghosts (the one being made shimmers) with dashed new connections; a thin bar on top of the
  * canvas shows how far the plan is. It is still a plan: nothing changes in the workflow until it is applied (by Apply, or

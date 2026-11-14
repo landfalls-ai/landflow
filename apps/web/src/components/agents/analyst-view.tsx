@@ -1,6 +1,6 @@
 'use client';
 /**
- * The Platform analyst's chat in the new look (docs/second-brain.md#the-analyst-agent): chips for what it can read, one
+ * The Platform analyst's chat (docs/second-brain.md#the-analyst-agent): chips for what it can read, one
  * kit's activity line in place of the scrolling tool calls (the calls stay behind it), and its answer as a card with a chart drawn from the tool results it really fetched (lib/shared/analyst-chart.ts).
  */
 import Link from 'next/link';

@@ -1,6 +1,6 @@
 'use client';
 /**
- * The Run a Team node's panel in the new look (docs/agent-teams.md#the-team-node-in-the-editor): the team as a card with
+ * The Run a Team node's panel (docs/agent-teams.md#the-team-node-in-the-editor): the team as a card with
  * its faces, who is on it (a row per member, from the team page's cards), "What to ask the lead", where a member's
  * approvals go as choices, how the team runs as a small picture, and the team's last run in one line. With no team chosen
  * it shows the teams as cards to tap. Slack and email settings and the wait stay the usual form, under the choices.

@@ -301,7 +301,7 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
 
           {lastRun?.live && <RunTimelineLive executionId={lastRun.executionId} name={lastRun.workflowName} />}
           {lastRun && !lastRun.live && <RunLines runs={[{ id: lastRun.executionId, href: `/runs/${lastRun.executionId}`, name: lastRun.workflowName, startedAt: lastRun.startedAt }]} />}
-          {<MemberCards config={draft} teamName={draft.name} agents={agents ?? []} run={lastRun} />}
+          <MemberCards config={draft} teamName={draft.name} agents={agents ?? []} run={lastRun} />
 
           <section aria-label="Org chart">
             <div className="mb-1.5 flex items-center justify-between">
