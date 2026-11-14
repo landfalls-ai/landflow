@@ -5,7 +5,7 @@
  * overrides, which win per model. USD per million tokens; a model id also prices ids that start with it.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { CircleDollarSign, Plus, Save, Search, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, CircleDollarSign, Plus, Save, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { can } from '@/lib/shared/auth';
@@ -13,6 +13,7 @@ import type { ModelPrice, PriceTable } from '@/lib/shared/ai-usage';
 import { useViewer } from '@/components/auth/viewer';
 import { Card } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
+import { HelpTip } from '@/components/ui/help-tip';
 import { Input, SectionLabel } from '@/components/ui/inputs';
 
 /** An override row as typed (numbers kept as text until saved). */
@@ -66,6 +67,7 @@ function parse(rows: Row[]): { prices: ModelPrice[] } | { error: string } {
 }
 
 export function AiPricesSettings() {
+  const [showBuiltIn, setShowBuiltIn] = useState(false);
   const viewer = useViewer();
   const admin = can(viewer, 'settings:manage');
   const [table, setTable] = useState<PriceTable>();
@@ -127,10 +129,11 @@ export function AiPricesSettings() {
           )}
         </div>
         <p className="mb-3 text-[12px] leading-relaxed text-t3">
-          USD per million tokens. Your prices win over the built-in ones. A model id also prices the ids that start with it (<code className="font-mono">claude-sonnet-5-5</code>{' '}
-          prices <code className="font-mono">claude-sonnet-5-5-20261001</code>). Cache read and write prices apply to the cached part of the prompt (Anthropic cache reads and
-          writes, OpenAI cached input); empty means the input price. Ollama and other local models cost $0 unless you price them here — e.g. to count electricity or hardware. Costs
-          are estimates; your provider’s bill is what counts.
+          Your prices win over the built-in ones, in USD per million tokens.
+          <HelpTip label="How prices are matched" className="ml-1 align-middle">
+            A model id also prices the ids that start with it (<code className="font-mono">claude-sonnet-5-5</code> prices <code className="font-mono">claude-sonnet-5-5-20261001</code>). Cache read and write prices apply to
+            the cached part of the prompt; empty means the input price. Ollama and other local models cost $0 unless you price them here. Costs are estimates; your provider’s bill is what counts.
+          </HelpTip>
         </p>
         {rows.length ? (
           <div className="overflow-x-auto">
@@ -209,15 +212,18 @@ export function AiPricesSettings() {
       </Card>
 
       <Card className="px-5 py-4">
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          <SectionLabel>Built-in prices</SectionLabel>
-          <span className="text-[12px] text-t3">List prices, USD per million tokens</span>
-          <div className="relative ml-auto">
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" aria-expanded={showBuiltIn} aria-controls="ai-builtin-prices" onClick={() => setShowBuiltIn((v) => !v)} className="flex min-h-8 items-center gap-1.5 text-[13px] font-semibold text-t1 max-md:min-h-11">
+            {showBuiltIn ? <ChevronDown className="size-4 text-t3" /> : <ChevronRight className="size-4 text-t3" />}
+            {showBuiltIn ? 'Hide built-in prices' : 'Show built-in prices'}
+            <span className="font-normal text-t3">({defaults.length})</span>
+          </button>
+          {showBuiltIn && <div className="relative ml-auto">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-t3" />
             <Input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter models" aria-label="Filter models" className="h-8 w-48 pl-8 text-[12px]" />
-          </div>
+          </div>}
         </div>
-        <div className="overflow-x-auto">
+        {showBuiltIn && <div id="ai-builtin-prices" className="mt-3 overflow-x-auto">
           <table className="w-full min-w-[640px] border-collapse text-[13px]">
             <thead>
               <tr className="border-b border-hair text-left text-[12px] text-t2">
@@ -261,7 +267,7 @@ export function AiPricesSettings() {
               )}
             </tbody>
           </table>
-        </div>
+        </div>}
       </Card>
     </div>
   );

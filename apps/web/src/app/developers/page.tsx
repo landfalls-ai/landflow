@@ -8,6 +8,7 @@ import { DevOnly } from '@/lib/client/developer-details';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
 import { TransportBadge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ApiDocs } from '@/components/settings/api-docs';
 
 const SAMPLES = {
   typescript: {
@@ -274,9 +275,9 @@ service RegistryService {           // hosted by Landflow on :7070
 
 const codeBlock = 'rounded-[10px] border border-hair bg-wl font-mono text-[12px] leading-[1.6] text-t1';
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, id, children }: { title: string; id?: string; children: React.ReactNode }) {
   return (
-    <section>
+    <section id={id} className="scroll-mt-4">
       <h2 className="mb-3 text-[15px] font-semibold text-t1">{title}</h2>
       {children}
     </section>
@@ -388,6 +389,10 @@ export default function DevelopersPage() {
             The host&apos;s own built-in nodes implement the same <Mono>INodeType</Mono> interface; they are simply registered in-process. The full spec lives in <Mono>docs/protocol.md</Mono>, the contract in{' '}
             <Mono>packages/protocol/proto/landflow/plugin/v1/plugin.proto</Mono>, and JSON Schemas in <Mono>packages/protocol/schema/</Mono>.
           </p>
+        </Section>
+
+        <Section title="API reference" id="api-reference">
+          <ApiDocs />
         </Section>
       </PageBody>
     </>

@@ -9,7 +9,7 @@
  * Integrity: the Ed25519 key and the signed chain head, Sign now, and where signed heads are anchored (S3, webhook). Owners and admins only (the `audit:read` action); `AuditLog` alone, fixed to one project,
  * is the project page's Audit log tab for project admins.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useReducer, useState } from 'react';
 import { Check, Download, Pencil, Plus, RotateCw, Search, Send, ShieldCheck, Trash2, TriangleAlert, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -34,11 +34,14 @@ import {
   type AuditSettingsView,
 } from '@/lib/shared/audit';
 import { useViewer } from '@/components/auth/viewer';
+import { auditQuery, filtersReducer, hasPending, initialFilters, NO_FILTERS, type AuditFilters } from './audit-filters';
 import { projectLabel, useProjects } from '@/components/projects/use-projects';
 import { Card } from '@/components/shell/page-header';
 import { Badge, type Tone } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
+import { HelpTip } from '@/components/ui/help-tip';
+import { Segmented } from '@/components/ui/segmented';
 import { FieldLabel, Input, SectionLabel, Select, Switch, Textarea } from '@/components/ui/inputs';
 
 const OUTCOME_TONE: Record<AuditOutcome, Tone> = { success: 'success', failure: 'danger', denied: 'warning' };
@@ -53,25 +56,8 @@ const RETENTION = [
 ];
 const CATEGORIES = [...new Set(Object.keys(AUDIT_ACTIONS).map((a) => a.split('.')[0]))];
 
-interface Filters {
-  actor: string;
-  action: string;
-  targetType: string;
-  targetId: string;
-  projectId: string;
-  outcome: '' | AuditOutcome;
-  from: string;
-  to: string;
-  q: string;
-}
-const NO_FILTERS: Filters = { actor: '', action: '', targetType: '', targetId: '', projectId: '', outcome: '', from: '', to: '', q: '' };
-
-function query(filters: Filters, extra: Record<string, string> = {}): string {
-  const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(filters)) if (value) params.set(key, key === 'to' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T23:59:59.999Z` : value);
-  for (const [key, value] of Object.entries(extra)) params.set(key, value);
-  return params.toString();
-}
+type Filters = AuditFilters;
+const query = auditQuery;
 
 function actorLabel(event: AuditEvent): string {
   const { actor } = event;
@@ -240,8 +226,7 @@ function ChainResult({ report, onClose }: { report: AuditChainReport; onClose: (
 export function AuditLog({ projectId }: { projectId?: string } = {}) {
   const viewer = useViewer();
   const fixed = projectId ? { ...NO_FILTERS, projectId } : NO_FILTERS;
-  const [draft, setDraft] = useState<Filters>(fixed);
-  const [filters, setFilters] = useState<Filters>(fixed);
+  const [{ draft, applied: filters }, dispatch] = useReducer(filtersReducer, fixed, initialFilters);
   const [events, setEvents] = useState<AuditEvent[]>();
   const [cursor, setCursor] = useState<string>();
   const [loading, setLoading] = useState(false);
@@ -282,12 +267,15 @@ export function AuditLog({ projectId }: { projectId?: string } = {}) {
 
   useEffect(() => void load(filters), [filters, load]);
 
-  const apply = (patch: Partial<Filters> = {}) => {
-    const next = { ...draft, ...patch };
-    setDraft(next);
-    setFilters(next);
-  };
-  const set = (patch: Partial<Filters>) => setDraft((d) => ({ ...d, ...patch }));
+  // A choice applies at once; typed text after a short pause.
+  const apply = (patch: Partial<Filters>) => dispatch({ type: 'choose', patch });
+  const set = (patch: Partial<Filters>) => dispatch({ type: 'type', patch });
+  const pending = hasPending({ draft, applied: filters });
+  useEffect(() => {
+    if (!pending) return;
+    const timer = setTimeout(() => dispatch({ type: 'commit' }), 350);
+    return () => clearTimeout(timer);
+  }, [draft, pending]);
   const filtered = Object.entries(filters).some(([key, value]) => value && !(projectId && key === 'projectId'));
 
   return (
@@ -312,13 +300,7 @@ export function AuditLog({ projectId }: { projectId?: string } = {}) {
       </div>
       {report && <ChainResult report={report} onClose={() => setReport(undefined)} />}
       <Card className="space-y-2.5 p-3">
-        <form
-          className="grid grid-cols-2 gap-2 sm:grid-cols-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            apply();
-          }}
-        >
+        <form className="grid grid-cols-2 gap-2 sm:grid-cols-4" onSubmit={(e) => e.preventDefault()}>
           <div className="relative col-span-2">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-t3" />
             <Input value={draft.q} onChange={(e) => set({ q: e.target.value })} placeholder="Search summaries and names" className="pl-8" aria-label="Search" />
@@ -362,18 +344,12 @@ export function AuditLog({ projectId }: { projectId?: string } = {}) {
             </Select>
           )}
           <div className={cn('col-span-2 flex items-center gap-2', projectId ? 'sm:col-span-4' : 'sm:col-span-3')}>
-            <Button size="sm" variant="primary" type="submit">
-              Apply
-            </Button>
             {filtered && (
               <Button
                 size="sm"
                 variant="ghost"
                 type="button"
-                onClick={() => {
-                  setDraft(fixed);
-                  setFilters(fixed);
-                }}
+                onClick={() => dispatch({ type: 'reset', to: fixed })}
               >
                 <X className="size-3.5" /> Clear filters
               </Button>
@@ -829,8 +805,11 @@ function IntegrityCard({ admin }: { admin: boolean }) {
       <SectionLabel>Integrity</SectionLabel>
       <Card className="space-y-3.5 p-4">
         <p className="text-[12px] text-t3">
-          The hash chain shows changes inside the log; a signed head pins its newest link from outside. The leader checks the whole chain and signs its head with an Ed25519 key on a schedule, and copies each signed head to the places
-          below, so a rewritten log can’t also rewrite them. Check one offline with <code className="font-mono">landflow audit verify --head head.json --public-key key.pem</code>.
+          A signed head pins the newest link of the log from outside, so a rewritten log is caught.
+          <HelpTip label="How the log proves it is intact" className="ml-1 align-middle">
+            The hash chain shows changes inside the log; a signed head pins its newest link from outside. The leader checks the whole chain and signs its head with an Ed25519 key on a schedule, and copies each signed head to
+            the places below, so a rewritten log can’t also rewrite them. Check one offline with <code className="font-mono">landflow audit verify --head head.json --public-key key.pem</code>.
+          </HelpTip>
         </p>
         <div className="space-y-1 text-[12px] text-t2">
           <div>
@@ -906,6 +885,7 @@ export function AuditSettings() {
   const [edit, setEdit] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<string>();
   const [busy, setBusy] = useState<string>();
+  const [tab, setTab] = useState<'log' | 'configuration'>('log');
 
   useEffect(() => {
     api<AuditSettingsView>('/api/settings/audit').then(setView, (e: Error) => setError(e.message));
@@ -954,14 +934,30 @@ export function AuditSettings() {
   if (error) return <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>;
 
   return (
-    <div className="space-y-6">
-      <p className="text-[13px] text-t2">
-        Who did what, when and from where: sign-ins, user and role changes, API keys, workflow changes and publishes, credentials (and which runs used them — ids only, never values), settings,
-        stopped and deleted executions, Git push and pull, plugins. Every other change through the API is recorded too. Events can also stream to your SIEM.
-      </p>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <Segmented
+          label="Audit view"
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: 'log', label: 'Log' },
+            { value: 'configuration', label: 'Configuration' },
+          ]}
+        />
+        <p className="min-w-0 flex-1 text-[13px] text-t2">
+          {tab === 'log' ? 'Who did what, when and from where.' : 'How long events are kept, how the log proves it is intact, and where it streams.'}
+          <HelpTip label="What the audit log records" className="ml-1 align-middle">
+            Sign-ins, user and role changes, API keys, workflow changes and publishes, credentials (and which runs used them: ids only, never values), settings, stopped and deleted executions, Git push and pull, and
+            plugins. Events can also stream to your SIEM.
+          </HelpTip>
+        </p>
+      </div>
 
-      <AuditLog />
+      {tab === 'log' && <AuditLog />}
 
+      {tab === 'configuration' && (
+        <div className="space-y-6">
       {view && (
         <section className="space-y-2.5">
           <SectionLabel>Retention</SectionLabel>
@@ -983,7 +979,10 @@ export function AuditSettings() {
             </div>
             <div className="space-y-0.5 text-[12px] text-t3">
               <div>
-                {view.stored.toLocaleString()} events stored. Separate from execution retention (Settings → General); events still waiting for a SIEM destination are kept until delivered.
+                {view.stored.toLocaleString()} events stored.
+                <HelpTip label="About audit retention" className="ml-1 align-middle">
+                  Separate from execution retention (Settings → General). Events still waiting for a SIEM destination are kept until delivered.
+                </HelpTip>
               </div>
               <div>
                 {view.otlp.enabled ? (
@@ -992,7 +991,10 @@ export function AuditSettings() {
                   </span>
                 ) : (
                   <span>
-                    Set <code className="font-mono">OTEL_EXPORTER_OTLP_ENDPOINT</code> (or <code className="font-mono">OTEL_EXPORTER_OTLP_LOGS_ENDPOINT</code>) to also send events as OpenTelemetry log records.
+                    OpenTelemetry log records: not set up.
+                    <HelpTip label="How to send events as OpenTelemetry logs" text="How to set up ›" className="ml-1">
+                      Set <code className="font-mono">OTEL_EXPORTER_OTLP_ENDPOINT</code> (or <code className="font-mono">OTEL_EXPORTER_OTLP_LOGS_ENDPOINT</code>) to also send events as OpenTelemetry log records.
+                    </HelpTip>
                   </span>
                 )}
               </div>
@@ -1088,6 +1090,8 @@ export function AuditSettings() {
             )}
           </Card>
         </section>
+      )}
+        </div>
       )}
     </div>
   );
