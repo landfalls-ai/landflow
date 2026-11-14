@@ -20,10 +20,8 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   const oidc = oidcConfig();
   const saml = samlConfig();
   const mode = localSignInMode();
-  // SSO-only with no provider: nobody can sign in here, so no welcome above the notice.
-  const noWay = mode === 'off' && !oidc && !saml;
   return (
-    <AuthShell title="Sign in" subtitle={noWay ? undefined : 'Welcome back. Sign in to build and run workflows.'}>
+    <AuthShell title="Sign in">
       <LoginForm next={next} oidcLabel={oidc?.label} samlLabel={saml?.label} initialError={params.error?.slice(0, 300)} smtp={mailConfigured()} localSignIn={mode} />
     </AuthShell>
   );

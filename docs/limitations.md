@@ -228,6 +228,11 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - The Runs list filters cover the latest 200 runs it loads: the search box, Status and From/To never reach older runs, so a date range older than those shows "No runs match".
 - Journal filters (actor, tool, failed steps, a check failed) take at most 100 matches from `GET /api/runs/search` and intersect them with those 200 runs.
 - Word search over journal text, with match snippets, is API-only (`GET /api/runs/search?text=`); the UI dropped the Search page. Follow-up: page the list and bring journal word search back (see [the roadmap](roadmap.md)).
+- **List pages, backbone wave 5.** The Workflows list reads the newest 500 executions for its last-run column; with
+  retention raised above the default 300 a workflow whose last run is older shows no last run (not "Not run yet").
+  `/data-tables` and `/agents` do not read `?project=`, so the project Overview's counts for them open unfiltered lists
+  (the Overview lists its data tables and agents itself). Settings → Variables and Agents → Teams still show their create
+  button beside the empty state (X10 open there).
 
 ## Plugins, Marketplace and Templates (B33)
 

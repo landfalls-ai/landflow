@@ -1765,6 +1765,27 @@ Follow-up: the Runs list filters load only the latest 200 runs and its journal f
   hidden; Insights drops the migration banner, shows the Agent layers card only when the cache or router was used, hides
   "no change" deltas and puts its footer behind a help line.
 
+## Lists, credentials, tables, projects and sign-in (B34, backbone wave 5)
+
+Closes P-wf-1, P-wf-2, P-cr-1, P-cr-2, P-dt-1, P-pr-2 and P-auth-1; X10 closed in part (below).
+
+- **Workflows** has one **New ▾** (Workflow, From template, Import…, Folder) in place of three buttons. A row shows its
+  last run (Succeeded, Failed, … and when) instead of the step count; the list reads the newest 500 runs after it has
+  drawn, so a workflow with no run among them says "Not run yet" (and nothing at all when older runs exist beyond the 500). On a
+  phone the row shows the state badge beside the updated time. The "All workflows" crumb shows only inside a folder or a project.
+- **Credentials** has no type grid; **New credential** opens the searchable type list, grouped by app, with no plugin
+  column and no "API" suffix. `/credentials?project=<id>` lists one project's credentials (the API's `?projectId=` read).
+- **Data tables**: Import CSV and Export CSV are in **⋯**; **+** at the end of the header row adds a column.
+- **Projects**: four tabs, Overview (counts that open the global page for the project, a **New ▾** that makes a workflow,
+  credential, data table or agent in it, and the project's data tables and agents each with **Move to project…**),
+  Members, Settings (with Variables) and Audit log. The old `?tab=` values map to them.
+- **Empty pages** (X10): on Workflows, Credentials and the data table's rows the header button hides while the empty state
+  shows its own; the empty Workflows states carry every New action (Folder at the root, Import in an empty folder).
+- **Sign-in**: no welcome sentence; an invalid or expired invite shows only the message.
+- Left open: `/data-tables` and `/agents` do not read `?project=` yet, so the Overview's counts for them open the whole
+  list (the Overview lists those items itself); X10 still shows twice in Settings → Variables ("Add variable" beside
+  "Add your first variable", now also in a project's Settings tab) and in Agents → Teams, both outside this package.
+
 ## Not planned
 
 Later, maybe: an agent code sandbox, and prompt management. Not planned:

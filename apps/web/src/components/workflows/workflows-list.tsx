@@ -12,15 +12,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowRightLeft, ChevronRight, Download, ExternalLink, FileUp, Folder as FolderIcon, FolderInput, FolderPlus, LayoutTemplate, Lock, MoreHorizontal, Pencil, Plus, Share2, Trash2 } from 'lucide-react';
+import { ArrowRightLeft, ChevronDown, ChevronRight, Download, ExternalLink, FileUp, Folder as FolderIcon, FolderInput, FolderPlus, LayoutTemplate, Lock, MoreHorizontal, Pencil, Plus, Share2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api, ApiError } from '@/lib/client/api';
 import { useWorkflowsReadOnly } from '@/lib/client/environment';
 import { plural, timeAgo } from '@/lib/client/format';
+import { showHeaderAction } from '@/lib/client/list-page';
 import { nodeColor, tint } from '@/lib/client/node-style';
 import { resourceCan, type ResourceOwnership } from '@/lib/shared/projects';
-import type { Folder, ImportReport, NodeTypeInfo, Workflow, WorkflowSummary as Summary } from '@/lib/shared/types';
+import type { ExecutionSummary, Folder, ImportReport, NodeTypeInfo, Workflow, WorkflowSummary as Summary } from '@/lib/shared/types';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
 import { ProtectedGate } from '@/components/shell/protected-gate';
 import { Badge } from '@/components/ui/badge';
@@ -37,6 +38,7 @@ import { MoveToProjectDialog, ShareDialog } from '@/components/projects/share-di
 import { projectLabel, useProjects } from '@/components/projects/use-projects';
 import { useViewer } from '@/components/auth/viewer';
 import { FolderNameDialog, MoveDialog } from './folder-dialogs';
+import { describeLastRun, lastRunByWorkflow, NEW_MENU_ITEMS, type NewMenuItem } from './list-model';
 
 /** A listed workflow with its project and the viewer's access (GET /api/workflows). */
 type WorkflowSummary = Summary & { ownership?: ResourceOwnership };
@@ -91,7 +93,7 @@ function Crumb({
   onOpen,
   onDropWorkflow,
   readOnly,
-  rootLabel = 'All workflows',
+  rootLabel = 'Workflows',
 }: {
   folder?: Folder;
   last: boolean;
@@ -242,6 +244,8 @@ function FolderRow({
 function WorkflowRow({
   workflow,
   types,
+  lastRun,
+  lastRunsUnknown,
   folderPath,
   onMove,
   onShare,
@@ -251,6 +255,10 @@ function WorkflowRow({
 }: {
   workflow: WorkflowSummary;
   types: Record<string, NodeTypeInfo>;
+  /** The workflow's newest run in the list's executions, if any. */
+  lastRun?: ExecutionSummary;
+  /** The executions read did not reach back to every workflow's newest run. */
+  lastRunsUnknown?: boolean;
   /** Shown when the list spans folders (search, tag filter). */
   folderPath?: string;
   onMove: () => void;
@@ -325,9 +333,7 @@ function WorkflowRow({
           ))}
           {workflow.ownership?.shared && <Badge tone="muted" title={`Shared from ${workflow.ownership.projectName}`}>{workflow.ownership.access.role === 'viewer' ? 'Shared · view' : 'Shared'}</Badge>}
           {workflow.active && <Badge tone="success">Published</Badge>}
-          <span className="hidden w-16 text-right text-[12px] text-t3 sm:inline">
-            {plural(workflow.nodeCount, 'step')}
-          </span>
+          <LastRun run={lastRun} unknown={lastRunsUnknown} />
           <span className="w-16 text-right text-[12px] tabular-nums text-t2" title={`Updated ${new Date(workflow.updatedAt).toLocaleString()}`}>
             {timeAgo(workflow.updatedAt)}
           </span>
@@ -424,6 +430,63 @@ function WorkflowRow({
   );
 }
 
+/**
+ * The row's last run: its state, and when it started (or "Not run yet"). On a phone only the state badge shows, beside
+ * the updated time. `unknown` (the executions read did not reach back far enough) shows nothing for a row without a run.
+ */
+export function LastRun({ run, unknown }: { run?: ExecutionSummary; unknown?: boolean }) {
+  if (!run && unknown) return null;
+  const last = describeLastRun(run);
+  const title = last.startedAt ? `Last run ${new Date(last.startedAt).toLocaleString()}` : undefined;
+  return (
+    <>
+      <span className="flex w-[110px] shrink-0 flex-col items-end gap-0.5 max-md:hidden" data-testid="last-run" title={title}>
+        <Badge tone={last.tone}>{last.label}</Badge>
+        {last.startedAt && <span className="text-[11px] tabular-nums text-t3">{timeAgo(last.startedAt)}</span>}
+      </span>
+      <span className="shrink-0 md:hidden" data-testid="last-run-phone" title={title}>
+        <Badge tone={last.tone}>{last.label}</Badge>
+      </span>
+    </>
+  );
+}
+
+/** The page's one create menu: workflow, from template, import, folder. A bottom sheet on a phone (Popover does that). */
+const NEW_MENU_ICON = { workflow: Plus, template: LayoutTemplate, import: FileUp, folder: FolderPlus };
+
+function NewMenu({ locked, creating, onWorkflow, onTemplate, onImport, onFolder }: { locked: boolean; creating: boolean; onWorkflow: () => void; onTemplate: () => void; onImport: () => void; onFolder: () => void }) {
+  const actions: Record<NewMenuItem, () => void> = { workflow: onWorkflow, template: onTemplate, import: onImport, folder: onFolder };
+  return (
+    <Popover
+      title="New"
+      trigger={({ toggle, open }) => (
+        <Button variant="primary" size="sm" onClick={toggle} loading={creating} disabled={locked} aria-haspopup="menu" aria-expanded={open}>
+          {!creating && <Plus className="size-3.5" strokeWidth={2} />} New <ChevronDown className="size-3" />
+        </Button>
+      )}
+    >
+      {(close) => {
+        const pick = (run: () => void) => () => {
+          close();
+          run();
+        };
+        return (
+          <>
+            {NEW_MENU_ITEMS.map((item) => {
+              const Icon = NEW_MENU_ICON[item.id];
+              return (
+                <MenuItem key={item.id} onClick={pick(actions[item.id])}>
+                  <Icon /> {item.label}
+                </MenuItem>
+              );
+            })}
+          </>
+        );
+      }}
+    </Popover>
+  );
+}
+
 export function WorkflowsList() {
   const router = useRouter();
   const params = useSearchParams();
@@ -434,6 +497,9 @@ export function WorkflowsList() {
   const project = projects?.find((p) => p.id === projectId);
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>();
   const [folders, setFolders] = useState<Folder[]>([]);
+  const [lastRuns, setLastRuns] = useState<Map<string, ExecutionSummary>>(new Map());
+  // True when older executions exist beyond the read: a row without a run there may still have one.
+  const [lastRunsUnknown, setLastRunsUnknown] = useState(true);
   const [types, setTypes] = useState<Record<string, NodeTypeInfo>>({});
   const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -449,17 +515,31 @@ export function WorkflowsList() {
   const scopeQuery = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
   const load = useCallback(
     () =>
-      Promise.all([api<{ workflows: WorkflowSummary[] }>(`/api/workflows${scopeQuery}`), api<{ folders: Folder[] }>(`/api/folders${scopeQuery}`).catch(() => ({ folders: [] as Folder[] }))]).then(([w, f]) => {
+      Promise.all([
+        api<{ workflows: WorkflowSummary[] }>(`/api/workflows${scopeQuery}`),
+        api<{ folders: Folder[] }>(`/api/folders${scopeQuery}`).catch(() => ({ folders: [] as Folder[] })),
+      ]).then(([w, f]) => {
         setWorkflows(w.workflows);
         setFolders(f.folders);
       }),
     [scopeQuery],
   );
+  // One batched read of the newest runs, after the list has drawn; each row takes its own newest.
+  const loadLastRuns = useCallback(
+    () =>
+      api<{ executions: ExecutionSummary[]; nextCursor?: string }>('/api/executions?limit=500')
+        .then((e) => {
+          setLastRuns(lastRunByWorkflow(e.executions));
+          setLastRunsUnknown(Boolean(e.nextCursor));
+        })
+        .catch(() => undefined),
+    [],
+  );
   useEffect(() => {
-    void load();
+    void load().then(loadLastRuns);
     setSortState(readSort());
     api<{ nodeTypes: NodeTypeInfo[] }>('/api/node-types').then((r) => setTypes(Object.fromEntries(r.nodeTypes.map((t) => [t.type, t]))));
-  }, [load]);
+  }, [load, loadLastRuns]);
 
   const setSort = (next: Sort) => {
     setSortState(next);
@@ -587,6 +667,11 @@ export function WorkflowsList() {
   const count = searching ? visibleWorkflows?.length : workflows?.length;
   const loaded = workflows !== undefined;
   const emptyHere = loaded && !searching && !childFolders.length && !visibleWorkflows?.length;
+  const templatesHref = current
+    ? `/templates?folder=${encodeURIComponent(current.id)}${current.projectId ? `&project=${encodeURIComponent(current.projectId)}` : ''}`
+    : projectId
+      ? `/templates?project=${encodeURIComponent(projectId)}`
+      : '/templates';
 
   return (
     <>
@@ -604,21 +689,18 @@ export function WorkflowsList() {
         }
         actions={
           <>
-            <ProtectedGate reason={readOnly}>
-              <Button size="sm" variant="ghost" onClick={() => picker.current?.click()} loading={importing} disabled={locked} title={locked ? undefined : 'Create a workflow from a Landflow, n8n or Flowise JSON file'}>
-                {!importing && <FileUp className="size-3.5" />} Import
-              </Button>
-            </ProtectedGate>
-            <ProtectedGate reason={readOnly}>
-              <Button size="sm" onClick={() => setDialog({ kind: 'new-folder' })} disabled={locked}>
-                <FolderPlus className="size-3.5" /> New folder
-              </Button>
-            </ProtectedGate>
-            <ProtectedGate reason={readOnly}>
-              <Button variant="primary" size="sm" onClick={() => void create()} loading={creating} disabled={locked}>
-                {!creating && <Plus className="size-3.5" strokeWidth={2} />} New workflow
-              </Button>
-            </ProtectedGate>
+            {showHeaderAction(emptyHere) && (
+              <ProtectedGate reason={readOnly}>
+                <NewMenu
+                  locked={locked}
+                  creating={creating}
+                  onWorkflow={() => void create()}
+                  onTemplate={() => router.push(templatesHref)}
+                  onImport={() => picker.current?.click()}
+                  onFolder={() => setDialog({ kind: 'new-folder' })}
+                />
+              </ProtectedGate>
+            )}
             <input ref={picker} type="file" accept=".json,application/json" className="hidden" onChange={(e) => void importFile(e.target.files?.[0] ?? undefined)} />
           </>
         }
@@ -635,6 +717,7 @@ export function WorkflowsList() {
               </span>
             ) : (
               <>
+                {(breadcrumb.length > 0 || project) && (
                 <Crumb
                   last={!breadcrumb.length}
                   onOpen={() => openFolder(undefined)}
@@ -642,6 +725,7 @@ export function WorkflowsList() {
                   readOnly={readOnly}
                   rootLabel={project ? projectLabel(project, viewer?.id) : undefined}
                 />
+                )}
                 {breadcrumb.map((folder, i) => (
                   <span key={folder.id} className="flex min-w-0 items-center gap-0.5">
                     <ChevronRight className="size-3.5 shrink-0 text-t3" />
@@ -714,6 +798,8 @@ export function WorkflowsList() {
               key={workflow.id}
               workflow={workflow}
               types={types}
+              lastRun={lastRuns.get(workflow.id)}
+              lastRunsUnknown={lastRunsUnknown}
               folderPath={searching && known(workflow.folderId) ? pathOf(workflow.folderId).map((f) => f.name).join(' / ') : undefined}
               onMove={() => setDialog({ kind: 'move', workflow })}
               onShare={() => setDialog({ kind: 'share', workflow })}
@@ -735,13 +821,18 @@ export function WorkflowsList() {
               title="No workflows yet"
               hint="Chain built-in nodes with plugins written in any language. Every node, local or remote, implements the same interface. Start from a template, or import a workflow from n8n or Flowise."
               action={
-                <div className="flex gap-2">
+                <div className="flex flex-wrap justify-center gap-2">
                   <ProtectedGate reason={readOnly}>
                     <Button size="sm" onClick={() => picker.current?.click()} disabled={locked}>
                       <FileUp className="size-3.5" /> Import
                     </Button>
                   </ProtectedGate>
-                  <Button size="sm" onClick={() => router.push(projectId ? `/templates?project=${encodeURIComponent(projectId)}` : '/templates')}>
+                  <ProtectedGate reason={readOnly}>
+                    <Button size="sm" onClick={() => setDialog({ kind: 'new-folder' })} disabled={locked}>
+                      <FolderPlus className="size-3.5" /> Folder
+                    </Button>
+                  </ProtectedGate>
+                  <Button size="sm" onClick={() => router.push(templatesHref)}>
                     <LayoutTemplate className="size-3.5" /> Browse templates
                   </Button>
                   <ProtectedGate reason={readOnly}>
@@ -761,10 +852,15 @@ export function WorkflowsList() {
               title="This folder is empty"
               hint="Create a workflow or a folder here, or drag workflows onto it from another folder."
               action={
-                <div className="flex gap-2">
+                <div className="flex flex-wrap justify-center gap-2">
                   <ProtectedGate reason={readOnly}>
                     <Button size="sm" onClick={() => setDialog({ kind: 'new-folder' })} disabled={locked}>
                       <FolderPlus className="size-3.5" /> New folder
+                    </Button>
+                  </ProtectedGate>
+                  <ProtectedGate reason={readOnly}>
+                    <Button size="sm" onClick={() => picker.current?.click()} disabled={locked}>
+                      <FileUp className="size-3.5" /> Import
                     </Button>
                   </ProtectedGate>
                   <ProtectedGate reason={readOnly}>

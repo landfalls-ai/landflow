@@ -10,7 +10,6 @@ export default async function InvitePage({ params }: { params: Promise<{ token: 
   return (
     <AuthShell
       title="Join Landflow"
-      subtitle="Choose your name and a password to finish creating your account."
       footer={
         <>
           Have an account already?{' '}
