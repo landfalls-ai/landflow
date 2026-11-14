@@ -200,7 +200,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
   next time the same `sourceId` is sent (the safe direction). The command should omit it.
 - Deleting a work item leaves its posted `work.self_update` readable; remove it with
   `DELETE /api/brain/work/update:<source>:<sourceId>?source=landflow`. The update also shows beside the original in the
-  owner's own day, and a `team` event of a deleted user stays unreadable until retention removes it.
+  owner's own day (a colleague's related list shows it once, as the update), and a `team` event of a deleted user stays unreadable until retention removes it.
 - A repository is matched by two-segment `owner/name` remotes (a GitLab subgroup is not matched), and pull request links are recognised only on github.com. A quiet commit (`git commit -q`) prints nothing and is not counted.
 - Two clients on one repository send the same work twice: the mod (`claude-code`, one event per session) and
   `landflow work` (`landflow-cli`, one per repo and day) do not know of each other, so a person who runs both sees the

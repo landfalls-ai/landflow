@@ -11,7 +11,8 @@ import { database, type Database } from '../db';
 import { HttpError } from '../errors';
 import type { Actor } from '../projects/access';
 import { getKind, saveKind } from '../usage/kinds';
-import { brainEnabled, deleteWorkEvent, fromRow, upsertWorkEvent, type UsageRow } from '../usage/ledger';
+import { brainEnabled, dayOf, deleteWorkEvent, fromRow, upsertWorkEvent, type UsageRow } from '../usage/ledger';
+import { rawRetentionDays, rollupDays } from '../usage/query';
 import type { UsageKindField } from '../../shared/brain';
 import type { WorkVisibility } from '../../shared/brain-work';
 import { getEntity, upsertEntity } from './entities';
@@ -154,6 +155,9 @@ export function setWorkVisibility(actor: Actor, sourceId: string, visibility: Wo
   if (!row) return undefined;
   const next = { ...row, visibility };
   db.upsert('usage_events', next);
+  // The daily totals count only `org` work (counts per kind, no owner or text): a change to or from `org` recomputes that
+  // day, unless the day is at the raw retention's edge (some of its events may be pruned already).
+  if ((row.visibility === 'org') !== (visibility === 'org') && row.day > dayOf(Date.now() - rawRetentionDays() * 86_400_000)) rollupDays([row.day], db);
   // Sharing is the moment the repository may become a page; going back to private does not remove it.
   const repo = fromRow(next).attrs?.repo;
   if (visibility !== 'private' && typeof repo === 'string' && repo) recordRepo(repo, db);

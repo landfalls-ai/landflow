@@ -100,6 +100,21 @@ describe('who reads a work item', () => {
   });
 });
 
+describe('the daily totals', () => {
+  it('count a work event once it is shared with the organization, and no longer once it is private again', async () => {
+    const { rollupDays } = await import('@/lib/server/usage/query');
+    recordWork(actorOf(alice), [session('daily')]);
+    const day = database().get<{ day: string }>("SELECT day FROM usage_events WHERE source_id = 'daily'")!.day;
+    rollupDays([day]);
+    const count = () => Number(database().get<{ n: number | null }>("SELECT SUM(count) AS n FROM usage_daily WHERE day = ? AND kind = 'work.session'", day)?.n ?? 0);
+    expect(count()).toBe(0);
+    expect((await callPatch(alice, 'daily', 'org')).status).toBe(200);
+    expect(count()).toBe(1);
+    expect((await callPatch(alice, 'daily', 'team')).status).toBe(200);
+    expect(count()).toBe(0);
+  });
+});
+
 describe('Post as my update', () => {
   it('creates one work.self_update that links the item, and posting again updates it', async () => {
     recordWork(actorOf(alice), [session('s1', { repo: 'acme/api', summary: 'Retries now back off' })]);
@@ -132,6 +147,14 @@ describe('related colleagues in the briefing', () => {
     // Carol shares no project with Alice: a team item is not hers to read; Alice's own briefing lists nobody private.
     recordWork(actorOf(carol), [session('c2', { repo: 'acme/api', title: 'Carol’s second', visibility: 'org' })]);
     expect(briefingFor(actorOf(carol)).related.map((r) => r.person.name)).toEqual([]);
+  });
+
+  it('an item its owner also posted as an update is listed once, as the update', async () => {
+    recordWork(actorOf(bob), [session('b1', { repo: 'acme/api', title: 'Fixing the retry loop' })]);
+    recordWork(actorOf(alice), [session('a1', { repo: 'acme/api', title: 'Backoff for billing retries', visibility: 'team' })]);
+    expect((await callShare(alice, 'a1')).status).toBe(200);
+    const { related } = briefingFor(actorOf(bob));
+    expect(related.map((r) => r.items.map((i) => [i.kind, i.title]))).toEqual([[['work.self_update', 'Backoff for billing retries']]]);
   });
 
   it('an org item relates to anyone; items older than two days do not', () => {

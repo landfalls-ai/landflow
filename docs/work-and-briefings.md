@@ -71,7 +71,8 @@ page, Find Similar, the MCP brain tools and the Landflow Usage node.
   (`UsageScope`). It never sees private ones.
 - Work that is the instance's own to read (the study, the detectors, a flow's Landflow Usage node, the daily rollups) sees
   no private work. The rollups in `usage_daily` count only events with no owner or shared with the organization, so
-  totals never include someone's private work. A workflow does not read its creator's private work either, since its
+  totals never include someone's private work: changing an event's visibility to or from `org` (PATCH) recomputes its
+  day (counts per kind; no owner or text is kept), except a day at the raw retention's edge, which may be partly pruned. A workflow does not read its creator's private work either, since its
   output can reach other people.
 
 ## The routes
@@ -104,7 +105,8 @@ the strongest reason among them, in this order:
 4. `area`: a directory name you both touched.
 5. `similar`: summaries that share enough words (the same floor, 0.15, that Find Similar uses).
 
-At most 5 people, 3 items each, strongest reason first and then the newest item. Code: `lib/server/brain/related.ts`
+At most 5 people, 3 items each, strongest reason first and then the newest item. An item its owner also posted as an
+update is listed once, as the `work.self_update`. Code: `lib/server/brain/related.ts`
 (`rankRelated` is pure and tested on its own).
 
 ## Repositories as systems
