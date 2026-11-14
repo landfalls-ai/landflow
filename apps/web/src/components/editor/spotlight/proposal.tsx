@@ -100,7 +100,7 @@ export function ProposalCard({ itemId, proposal }: { itemId: string; proposal: P
  * A change as a row of the timeline: applied by Spotlight (autonomous mode, a fix). Its title says what it did, read from
  * its ops; the model's words and the diff open on a click. The latest one has Undo (a phone has no ⌘Z).
  */
-export function ProposalRow({ proposal, fix }: { itemId?: string; proposal: Proposal; fix: boolean }) {
+export function ProposalRow({ proposal, fix }: { proposal: Proposal; fix: boolean }) {
   const [open, setOpen] = useState(false);
   // Re-read on each render: the newest undo is the only one that is safe to use.
   const latest = useAssistant((s) => s.items.length) >= 0 && isNewestUndo(undos, proposal.id);
@@ -142,13 +142,8 @@ export function ProposalRow({ proposal, fix }: { itemId?: string; proposal: Prop
   );
 }
 
-/**
- * Autonomous mode's switch, in the header: Asks first | Autonomous (on by default). Autonomous: Spotlight applies its
- * changes and tests and fixes the flow by itself; Asks first: it waits for Apply. The first time it shows, a note
- * explains the two, once (`EXPLAINER_KEY`).
- */
-export function AutonomousSwitch({ compact }: { compact?: boolean }) {
-  const { on, set } = useAutonomous();
+/** The first-run note on Asks first and Autonomous: due until Got it (or a pick on the switch), once (`EXPLAINER_KEY`). */
+export function useAutonomousExplainer(): { note: boolean; close: () => void } {
   const [note, setNote] = useState(false);
   useEffect(() => {
     if (explainerDue((k) => localStorage.getItem(k))) setNote(true);
@@ -161,6 +156,37 @@ export function AutonomousSwitch({ compact }: { compact?: boolean }) {
       // Private mode: it shows again next visit.
     }
   };
+  return { note, close };
+}
+
+/** The note itself. `className` places it: pinned to the phone's bottom edge, or in the panel's flow on a desktop. */
+export function AutonomousExplainer({ onClose, className }: { onClose: () => void; className?: string }) {
+  return (
+    <div role="dialog" aria-label="Asks first or Autonomous" className={cn('animate-fade-up space-y-1.5 rounded-xl border border-hair bg-sf p-3 text-[12px] leading-snug text-t2 shadow-pop', className)}>
+      <p>
+        <span className="font-semibold text-t1">Autonomous</span> (now): Spotlight applies its changes, then tests and fixes the flow by itself. Every change has Undo.
+      </p>
+      <p>
+        <span className="font-semibold text-t1">Asks first</span>: it waits for your Apply before changing anything.
+      </p>
+      <Button size="sm" variant="primary" onClick={onClose}>
+        Got it
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * Autonomous mode's switch, in the header: Asks first | Autonomous (on by default). Autonomous: Spotlight applies its
+ * changes and tests and fixes the flow by itself; Asks first: it waits for Apply. The first time it shows, a note
+ * explains the two, once. Without `explainer` the switch keeps the note itself and pins it to the bottom of the screen
+ * (the phone's header); the desktop row passes its own and shows the note under the row, so it never covers the
+ * conversation.
+ */
+export function AutonomousSwitch({ compact, explainer }: { compact?: boolean; explainer?: { note: boolean; close: () => void } }) {
+  const { on, set } = useAutonomous();
+  const own = useAutonomousExplainer();
+  const { note, close } = explainer ?? own;
   return (
     <div className="relative shrink-0">
       <Segmented
@@ -188,19 +214,7 @@ export function AutonomousSwitch({ compact }: { compact?: boolean }) {
             title: 'Spotlight applies its changes and tests and fixes the flow by itself.', ariaLabel: 'Autonomous' },
         ]}
       />
-      {note && (
-        <div role="dialog" aria-label="Asks first or Autonomous" className="z-50 animate-fade-up max-md:fixed max-md:inset-x-3 max-md:bottom-3 md:absolute md:right-0 md:top-full md:mt-2 md:w-64 space-y-1.5 rounded-xl border border-hair bg-sf p-3 text-[12px] leading-snug text-t2 shadow-pop">
-          <p>
-            <span className="font-semibold text-t1">Autonomous</span> (now): Spotlight applies its changes, then tests and fixes the flow by itself. Every change has Undo.
-          </p>
-          <p>
-            <span className="font-semibold text-t1">Asks first</span>: it waits for your Apply before changing anything.
-          </p>
-          <Button size="sm" variant="primary" onClick={close}>
-            Got it
-          </Button>
-        </div>
-      )}
+      {note && !explainer && <AutonomousExplainer onClose={close} className="fixed inset-x-3 bottom-3 z-50" />}
     </div>
   );
 }

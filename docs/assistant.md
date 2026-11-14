@@ -212,7 +212,7 @@ It stops when:
 
 ### Autonomous mode
 
-The panel's header has a switch, **Asks first | Autonomous** (a `Segmented`; on a desktop it has a row of its own under the header so the title keeps its width, on a phone it is in the header as *Ask* and a bolt, and its note is a card at the bottom of the screen). The first time it shows, a note explains the two, once per browser (`landflow-spotlight-autonomous-explained`). Autonomous is the default; the choice is kept in `landflow-spotlight-autonomous`.
+The panel's header has a switch, **Asks first | Autonomous** (a `Segmented`; on a desktop it has a row of its own under the header so the title keeps its width, on a phone it is in the header as *Ask* and a bolt). On a desktop the first-run note sits under the switch's row and pushes the conversation down until **Got it**; on a phone it is a card at the bottom of the screen. The first time it shows, a note explains the two, once per browser (`landflow-spotlight-autonomous-explained`). Autonomous is the default; the choice is kept in `landflow-spotlight-autonomous`.
 
 On by default, Spotlight doesn't wait for clicks (`components/editor/autonomous.ts`):
 - **A new flow**: when it drafts a flow on an empty canvas, Test and fix starts right away (the reply says *Testing it now.*), instead of waiting for the **Test and fix** button.
