@@ -12,7 +12,7 @@ export function failureKey(run: Pick<ExecutionSummary, 'workflowId' | 'status' |
   return JSON.stringify([run.workflowId, run.error.nodeId ?? run.error.nodeName ?? '', run.error.message]);
 }
 
-/** Two or more neighbours with one key become a group; a run of another kind (a success, another error) ends it. */
+/** Two or more neighbours with one key become a group, keyed by its oldest run so a newer failure doesn't remount an open row; a run of another kind (a success, another error) ends it. */
 export function groupFailures(runs: ExecutionSummary[]): RunRow[] {
   const rows: RunRow[] = [];
   let i = 0;
@@ -22,7 +22,7 @@ export function groupFailures(runs: ExecutionSummary[]): RunRow[] {
     if (key) while (j < runs.length && failureKey(runs[j]) === key) j++;
     if (key && j - i > 1) {
       const first = runs[i];
-      rows.push({ kind: 'group', key: `${key}#${first.id}`, runs: runs.slice(i, j), workflowName: first.workflowName, node: first.error?.nodeName, message: first.error?.message ?? '' });
+      rows.push({ kind: 'group', key: `${key}#${runs[j - 1].id}`, runs: runs.slice(i, j), workflowName: first.workflowName, node: first.error?.nodeName, message: first.error?.message ?? '' });
     } else for (let k = i; k < j; k++) rows.push({ kind: 'run', run: runs[k] });
     i = j;
   }

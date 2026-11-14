@@ -199,3 +199,9 @@ items still open (its "Wave 6" section); this page is the short list to check be
   prompt connected, yesterday can enter a session twice. Run one of each, or turn the mod's `sync` off.
 - A send the brain refuses (400, 413, 422) or an event it rejects stays held and is not retried; `/brain status` says why.
 - The hook names were checked against Claude Code 2.1.322's types only; run the live check in [landflow-brain-mod.md](landflow-brain-mod.md) after an update.
+
+## Runs list filters (B20, 2026-11-14)
+
+- The Runs list filters cover the latest 200 runs it loads: the search box, Status and From/To never reach older runs, so a date range older than those shows "No runs match".
+- Journal filters (actor, tool, failed steps, a check failed) take at most 100 matches from `GET /api/runs/search` and intersect them with those 200 runs.
+- Word search over journal text, with match snippets, is API-only (`GET /api/runs/search?text=`); the UI dropped the Search page. Follow-up: page the list and bring journal word search back (see [the roadmap](roadmap.md)).

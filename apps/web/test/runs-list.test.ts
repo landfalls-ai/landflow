@@ -46,6 +46,14 @@ describe('groupFailures', () => {
     expect(rows.map((r) => (r.kind === 'group' ? r.runs.length : 1))).toEqual([2, 1, 3]);
   });
 
+  it('keeps the group key when a newer matching failure arrives', () => {
+    const older = [failed(), failed(), failed()];
+    const [before] = groupFailures(older);
+    const [after] = groupFailures([failed(), ...older]);
+    expect(before.kind === 'group' && after.kind === 'group' && before.key === after.key).toBe(true);
+    if (after.kind === 'group') expect(after.runs).toHaveLength(4);
+  });
+
   it('leaves successes and a lone failure as runs, and a run without an error has no key', () => {
     expect(groupFailures([run(), run(), failed()]).every((r) => r.kind === 'run')).toBe(true);
     expect(failureKey(run({ status: 'error' }))).toBeUndefined();
