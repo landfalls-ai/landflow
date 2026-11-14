@@ -2,8 +2,7 @@
 /**
  * The section tabs under the rail's Workflows, Runs and Plugins items (docs/ux-simplification.md#navigation): the pages
  * that used to be rail items of their own, one click away from their group. The strip sits above a list page and not
- * above a page of its own (the editor, a run's trace, a compare), and not on a phone, where the tab bar and More reach
- * every page. The logic is plain functions, so a test can read it without a browser.
+ * above a page of its own (the editor, a run's trace, a compare), and on a phone the row scrolls sideways. The logic is plain functions, so a test can read it without a browser.
  */
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
@@ -30,6 +29,8 @@ export const SECTION_GROUPS: Record<SectionGroup, SectionTab[]> = {
   runs: [
     { href: '/executions', label: 'Activity' },
     { href: '/insights', label: 'Insights' },
+    // B20 removes this: until the pages merge, Search runs has no other entry point.
+    { href: '/runs', label: 'Search' },
   ],
   plugins: [
     { href: '/plugins', label: 'Installed' },
@@ -94,13 +95,13 @@ export function SectionNav({ group }: { group: SectionGroup }) {
   const pathname = usePathname();
   const [plugins, setPlugins] = useState<Array<Pick<PluginSummary, 'id'>>>([]);
   useEffect(() => {
-    if (group !== 'workflows') return;
+    if (group !== 'workflows' || stripGroup(pathname) !== group) return;
     api<{ plugins: PluginSummary[] }>('/api/plugins').then((r) => setPlugins(r.plugins)).catch(() => {});
-  }, [group]);
+  }, [group, pathname]);
   if (stripGroup(pathname) !== group) return null;
   return (
-    <nav aria-label="Section" className="border-b border-hair bg-sf2/50 px-6 max-md:hidden">
-      <div role="tablist" aria-label="Section" className="flex items-center gap-1">
+    <nav aria-label="Section" className="border-b border-hair bg-sf2/50 px-6 max-md:overflow-x-auto max-md:px-4 max-md:[scrollbar-width:none] max-md:[&::-webkit-scrollbar]:hidden">
+      <div role="tablist" aria-label="Section" className="flex items-center gap-1 max-md:w-max">
         {visibleTabs(group, plugins).map((tab) => {
           const current = pathname === tab.href || (tab.href === '/marketplace' && pathname.startsWith('/marketplace/'));
           return (
@@ -111,7 +112,7 @@ export function SectionNav({ group }: { group: SectionGroup }) {
               aria-selected={current}
               aria-current={current ? 'page' : undefined}
               className={cn(
-                '-mb-px flex h-9 items-center border-b-2 px-3 text-[13px] transition-colors duration-[120ms] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ac',
+                '-mb-px flex h-9 shrink-0 whitespace-nowrap max-md:h-11 items-center border-b-2 px-3 text-[13px] transition-colors duration-[120ms] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ac',
                 current ? 'border-ac font-semibold text-t1' : 'border-transparent text-t2 hover:text-t1',
               )}
             >

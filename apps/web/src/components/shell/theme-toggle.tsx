@@ -1,7 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { Monitor, Moon, Sun } from 'lucide-react';
-import { cn } from '@/lib/utils';
 import { Segmented } from '../ui/segmented';
 
 type Theme = 'system' | 'light' | 'dark';
@@ -48,26 +47,6 @@ export function ThemeChoice() {
     <div className="px-2.5 py-1.5">
       <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Theme</div>
       <Segmented label="Theme" size="sm" stretch value={theme} onChange={setTheme} options={OPTIONS.map(({ value, icon: Icon, label }) => ({ value, label: <Icon className="size-3.5" />, ariaLabel: label, title: label }))} />
-    </div>
-  );
-}
-
-export function ThemeToggle() {
-  const [theme, setTheme] = useTheme();
-  return (
-    <div className="flex w-fit gap-0.5 rounded-lg border border-hair bg-wl p-0.5" role="radiogroup" aria-label="Theme">
-      {OPTIONS.map(({ value, icon: Icon, label }) => (
-        <button
-          key={value}
-          role="radio"
-          aria-checked={theme === value}
-          title={label}
-          onClick={() => setTheme(value)}
-          className={cn('grid size-6 place-items-center rounded-md border border-transparent text-t3 transition-colors hover:text-t1', theme === value && 'border-bd bg-sf text-t1 shadow-[0_1px_2px_var(--hair)]')}
-        >
-          <Icon className="size-3.5" />
-        </button>
-      ))}
     </div>
   );
 }

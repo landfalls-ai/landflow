@@ -40,7 +40,7 @@ describe('the rail', () => {
 describe('the section tabs', () => {
   it('lists each group', () => {
     expect(SECTION_GROUPS.workflows.map((t) => t.href)).toEqual(['/workflows', '/templates', '/runbooks']);
-    expect(SECTION_GROUPS.runs.map((t) => t.href)).toEqual(['/executions', '/insights']);
+    expect(SECTION_GROUPS.runs.map((t) => t.href)).toEqual(['/executions', '/insights', '/runs']);
     expect(SECTION_GROUPS.plugins.map((t) => t.href)).toEqual(['/plugins', '/marketplace', '/developers']);
   });
 
@@ -80,10 +80,10 @@ describe('the user menu', () => {
     const theme = renderToStaticMarkup(createElement(ThemeChoice));
     expect(theme).toContain('Theme');
     for (const label of ['System', 'Light', 'Dark']) expect(theme).toContain(label);
-    const { readFileSync } = await import('node:fs');
-    const source = readFileSync(new URL('../src/components/auth/user-menu.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('<ThemeChoice />');
-    expect(source).toContain('href="/developers"');
-    expect(source).toContain('Build a plugin');
+    const { UserMenu } = await import('../src/components/auth/user-menu');
+    const menu = renderToStaticMarkup(createElement(UserMenu, { defaultOpen: true }));
+    expect(menu).toContain('Theme');
+    expect(menu).toContain('href="/developers"');
+    expect(menu).toContain('Build a plugin');
   });
 });

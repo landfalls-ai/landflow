@@ -8,9 +8,9 @@ import { can, ROLE_LABELS } from '@/lib/shared/auth';
 import { ThemeChoice } from '../shell/theme-toggle';
 import { initials, signOut, useViewer } from './viewer';
 
-export function UserMenu() {
+export function UserMenu({ defaultOpen = false }: { defaultOpen?: boolean } = {}) {
   const viewer = useViewer();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const root = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
