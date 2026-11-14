@@ -13,8 +13,10 @@ import { describeTeams, type TeamBrief } from '@/lib/shared/agent-teams';
 import type { NodeTypeInfo, PropertyDescriptor, Workflow } from '@/lib/shared/types';
 import { compositeOutline } from '../composites';
 import { PARAMETER_FORMATS } from '../flow-builder';
+import { assistantScope, isUsageCapError, runInUsageScope, type UsageScope } from '../ai-usage';
 import { recordSuggestions, traceAssistant } from '../telemetry/assistant';
-import { assistantModel, modelLabel } from './model';
+import { saveCheckpoint } from './checkpoints';
+import { assistantModel, errorText, modelLabel } from './model';
 import { redundantBranches, registryLookup, validateOps, withoutRepeatedAdds } from './ops';
 import {
   APPLY_REQUEST,
@@ -50,12 +52,34 @@ export interface ChatTurn {
   content: string;
 }
 
+/** Why a chat ended in an error: the model failed, a usage cap was reached, the steps only repeated, or the host failed. */
+export type ChatErrorKind = 'model' | 'cap' | 'stalled' | 'internal';
+
 export type ChatEvent =
-  | { type: 'text'; text: string }
-  | { type: 'tool'; name: string; label: string; ok: boolean }
+  /** A model call begins (with `trace`). */
+  | { type: 'step.start'; step: number; label: string }
+  /** Tokens of the step as they come (with `trace`): provisional, replaced by the step's `text`. */
+  | { type: 'text.delta'; step: number; text: string }
+  /** The checked text of a step. With `trace`, only the last step's text is the reply (it replaces the step's deltas). */
+  | { type: 'text'; text: string; step?: number }
+  /** With `trace`: the text of a step that also called tools or was sent back, after the guards. It goes in the trace, never the reply. */
+  | { type: 'thinking'; step: number; text: string }
+  | { type: 'tool'; name: string; label: string; ok: boolean; id: string; step: number; durationMs: number; detail?: string }
   | { type: 'proposal'; id: string; summary: string; ops: AssistantOp[]; dropped: string[]; warnings: string[] }
-  | { type: 'done'; model: string; durationMs: number; steps: number; usage: { inputTokens: number; outputTokens: number } }
-  | { type: 'error'; message: string };
+  | { type: 'done'; model: string; durationMs: number; steps: number; usage: { inputTokens: number; outputTokens: number }; costUsd?: number; local: boolean }
+  | { type: 'error'; message: string; kind?: ChatErrorKind; checkpoint?: string; step?: number };
+
+/** What a chat keeps to be continued after an error: the messages with the tool results so far, and what the guards remember. */
+export interface ChatState {
+  history: AgentMessage[];
+  /** Model calls made so far. */
+  steps: number;
+  seen: string[];
+  said: string;
+  /** The proposals sent so far in this reply, as validated: a resumed reply builds on them. */
+  proposals: Array<{ summary: string; ops: AssistantOp[] }>;
+  sent: string[];
+}
 
 export interface ChatInput {
   messages: ChatTurn[];
@@ -85,6 +109,15 @@ export interface ChatInput {
   session?: 'fix' | 'review' | 'auto';
   signal?: AbortSignal;
   onEvent: (event: ChatEvent) => void;
+  /**
+   * Stream the step trace: `step.start`, `text.delta`, text of tool steps as `thinking`, and failures as `error` events
+   * with a checkpoint (the route sets it). Without it the events are the older ones: `text` for every step, errors thrown.
+   */
+  trace?: boolean;
+  /** The caller, for AI usage and its per-user caps, and for keeping checkpoints. */
+  userId?: string;
+  /** Continue from a checkpoint (`takeCheckpoint`): the messages so far, no tool run again. */
+  resume?: ChatState;
 }
 
 const OP_SCHEMA = {
@@ -192,8 +225,47 @@ export * from './guards';
 const opsOf = (args: Record<string, unknown>) => opsArgument(args.ops ?? args.changes ?? args.operations);
 
 
-export async function runChat(input: ChatInput): Promise<void> {
+/** The text a step's tokens are sent in: at most one `text.delta` per 50 ms. */
+const DELTA_MS = 50;
+
+/** Batches tokens into one call per `DELTA_MS`; `flush` sends what is left (call it when the step ends). */
+function coalesced(send: (text: string) => void): { push: (delta: string) => void; flush: () => void } {
+  let buffer = '';
+  let last = 0;
+  let timer: NodeJS.Timeout | undefined;
+  const flush = () => {
+    if (timer) clearTimeout(timer);
+    timer = undefined;
+    if (!buffer) return;
+    const text = buffer;
+    buffer = '';
+    last = Date.now();
+    send(text);
+  };
+  return {
+    flush,
+    push(delta) {
+      buffer += delta;
+      const wait = DELTA_MS - (Date.now() - last);
+      if (wait <= 0) flush();
+      else timer ??= setTimeout(flush, wait);
+    },
+  };
+}
+
+/** One line of what a tool call did, for the trace: the query, a count, what was read. Never a result body or a secret. */
+const detailOf = (text: string | undefined) => (text === undefined ? undefined : shorten(text, 300));
+
+/** The chat: Spotlight's model calls count in AI usage (surface `spotlight`) and under the caller's caps. */
+export function runChat(input: ChatInput): Promise<void> {
+  const workflowId = input.workflow.id && input.workflow.id !== 'draft' ? input.workflow.id : undefined;
+  const scope = assistantScope({ surface: 'spotlight', ...(input.userId && { userId: input.userId }), ...(workflowId && { workflowId }) });
+  return runInUsageScope(scope, () => chat(input, scope));
+}
+
+async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
   const { onEvent, runs = {} } = input;
+  const trace = input.trace === true;
   const types = input.types ?? availableTypes();
   const lookup = registryLookup(types);
   const model = assistantModel(input.model);
@@ -215,9 +287,19 @@ export async function runChat(input: ChatInput): Promise<void> {
     waitingSummaries.push(shorten(summary, 140));
     working = next;
   };
+  /** The proposals of this reply (and of the reply a resume continues), for the checkpoint. */
+  const proposalLog: ChatState['proposals'] = [];
   for (const earlier of input.pending ?? []) {
     const validated = validateOps(working, opsArgument(earlier.ops), lookup);
     if (validated.ops.length) hold(earlier.summary, validated.workflow);
+  }
+  // A resumed reply builds on the proposals the failed one had sent.
+  for (const earlier of input.resume?.proposals ?? []) {
+    const validated = validateOps(working, earlier.ops, lookup);
+    if (!validated.ops.length) continue;
+    hold(earlier.summary, validated.workflow);
+    proposalLog.push(earlier);
+    for (const op of validated.ops) if (op.op === 'addNode' && op.ref && op.name) proposedRefs.set(op.ref, op.name);
   }
   const outline = () => workflowOutline(working, runs, { types, pending: waiting, pendingSummaries: waitingSummaries, removed: [...removed.values()] });
   const latest = input.messages.findLast((m) => m.role === 'user')?.content.toLowerCase() ?? '';
@@ -239,20 +321,20 @@ export async function runChat(input: ChatInput): Promise<void> {
   let failedSentBack = false;
   /** Whether a proposal that set a duration in the wrong unit was sent back. */
   let unitsSentBack = false;
-  let proposed = false;
+  let proposed = proposalLog.length > 0;
   /** Whether a fix request that proposed nothing was sent back for a proposal. */
   let pressed = false;
   /** A fix that missed the failing step was sent back once. */
   let offTargetSent = false;
   let applyRetried = false;
   /** The ops of each proposal so far, as sent: a model may send the same one again and again. */
-  const sent = new Set<string>();
+  const sent = new Set<string>(input.resume?.sent);
   /** What the user and the editor said, for telling a given id from a made-up one. */
   const known = () =>
     [...input.messages.map((m) => m.content), JSON.stringify(working), JSON.stringify(runs), ...(input.teams?.length ? [describeTeams(input.teams)] : []), ...(input.agents?.length ? [describeAgents(input.agents)] : [])].join('\n');
   /** The agents newAgent proposed in this reply and in pending proposals, by standInKey of their names. */
   const newAgents = new Set<string>(
-    (input.pending ?? []).flatMap((p) => (Array.isArray(p.ops) ? p.ops : []).flatMap((op) => {
+    [...(input.pending ?? []), ...(input.resume?.proposals ?? [])].flatMap((p) => (Array.isArray(p.ops) ? p.ops : []).flatMap((op) => {
       const o = op as Record<string, unknown>;
       const spec = (o.newAgent ?? (o.op === 'newAgent' ? o : undefined)) as { name?: unknown } | undefined;
       return typeof spec?.name === 'string' ? [standInKey(spec.name)] : [];
@@ -261,7 +343,7 @@ export async function runChat(input: ChatInput): Promise<void> {
   /** Ids left out of proposals as made up: the text doesn't repeat them either. */
   const invented = new Set<string>();
   /** The text shown so far in this reply, for leaving out what it says twice. */
-  let said = '';
+  let said = input.resume?.said ?? '';
   const usage = { inputTokens: 0, outputTokens: 0 };
 
   const nodeByName = (name: string) => working.nodes.find((n) => n.name === name) ?? working.nodes.find((n) => n.name.toLowerCase() === name.toLowerCase() || n.id === name);
@@ -282,11 +364,15 @@ export async function runChat(input: ChatInput): Promise<void> {
     input.session === 'auto' ? `\n${AUTO}` : input.session ? `\n${SESSION}` : '',
   ].join('\n');
 
+  /** The step now running, for the tool events. */
+  let currentStep = 0;
   const execute = async (call: ToolCall): Promise<ToolResult> => {
+    const toolStarted = Date.now();
+    let detail: string | undefined;
     // `shownOk`: how the step looks to the person. A change sent back to the model to complete is an error to the model
     // but not a failure to show: Spotlight is still working on it ("Reworked the change").
     const result = (content: string, label: string, ok = true, shownOk = ok): ToolResult => {
-      onEvent({ type: 'tool', name: call.name, label, ok: shownOk });
+      onEvent({ type: 'tool', name: call.name, label, ok: shownOk, id: `t_${nanoid(8)}`, step: currentStep, durationMs: Date.now() - toolStarted, ...(detailOf(detail) && { detail: detailOf(detail) }) });
       return { id: call.id, name: call.name, content, ...(!ok && { isError: true }) };
     };
     const args = call.input ?? {};
@@ -294,10 +380,12 @@ export async function runChat(input: ChatInput): Promise<void> {
       case 'search_nodes': {
         const query = String(args.query ?? '');
         const hits = searchNodes(query, types);
+        detail = `“${query}”: ${hits.length} ${hits.length === 1 ? 'match' : 'matches'}`;
         return result(hits.length ? JSON.stringify(hits.map(({ score: _score, ...hit }) => hit)) : `No node types match “${query}”. Try other words.`, `Searched nodes for “${shorten(query, 40)}”`);
       }
       case 'get_node_docs': {
         const asked = String(args.type ?? args.node ?? '');
+        detail = asked;
         const existing = nodeByName(asked);
         const info = types.find((t) => t.type === (existing?.type ?? asked)) ?? types.find((t) => t.descriptor.displayName.toLowerCase() === asked.toLowerCase());
         if (!info) {
@@ -309,14 +397,17 @@ export async function runChat(input: ChatInput): Promise<void> {
         return result(`${nodeDocs(info, existing?.parameters)}${teamsNote}${agentsNote}`, `Read ${info.descriptor.displayName} docs`);
       }
       case 'get_workflow':
+        detail = `${working.nodes.length} node${working.nodes.length === 1 ? '' : 's'}`;
         return result(outline(), 'Read the workflow');
       case 'get_run_data': {
         const node = nodeByName(String(args.node ?? ''));
+        detail = node?.name ?? String(args.node ?? '');
         if (!node) return result(`No node named “${String(args.node ?? '')}”. Nodes: ${working.nodes.map((n) => n.name).join(', ')}`, `Looked for “${shorten(String(args.node ?? ''), 40)}”: not found`, false);
         return result(nodeContext(working, node.id, runs[node.id], types), `Read run data of “${shorten(node.name, 40)}”`);
       }
       case 'propose_changes': {
         const summary = shorten(String(args.summary ?? '').trim() || 'Proposed change', 140);
+        detail = summary;
         const ops = withEarlierRefs(opsOf(args), proposedRefs);
         const asSent = JSON.stringify(ops);
         if (sent.has(asSent)) return result('Nothing changes: you proposed exactly this above. Do not propose it again.', 'Skipped a repeated proposal');
@@ -417,6 +508,7 @@ export async function runChat(input: ChatInput): Promise<void> {
           );
         }
         hold(summary, validated.workflow);
+        proposalLog.push({ summary, ops: validated.ops });
         for (const op of validated.ops) if (op.op === 'addNode' && op.ref && op.name) proposedRefs.set(op.ref, op.name);
         for (const op of validated.ops) if (op.op === 'addNode' && op.newAgent) for (const name of [op.newAgent.name, op.name]) if (name) newAgents.add(standInKey(name));
         sent.add(asSent);
@@ -437,71 +529,126 @@ export async function runChat(input: ChatInput): Promise<void> {
   };
 
   await traceAssistant('chat', { 'landflow.workflow.id': input.workflow.id, 'gen_ai.request.model': model.model, 'landflow.assistant.turns': input.messages.length }, async (span) => {
-    const history: AgentMessage[] = input.messages.map((m) => (m.role === 'user' ? { role: 'user', content: m.content } : { role: 'assistant', text: m.content, toolCalls: [] }));
-    let steps = 0;
+    const history: AgentMessage[] = input.resume ? [...input.resume.history] : input.messages.map((m) => (m.role === 'user' ? { role: 'user', content: m.content } : { role: 'assistant', text: m.content, toolCalls: [] }));
+    let steps = input.resume?.steps ?? 0;
+    /** A resumed reply gets a fresh budget of steps; the count goes on from where it stopped. */
+    const stepLimit = steps + MAX_STEPS;
     let finished = false;
     /** Steps in a row that added nothing new, and the tool results seen so far in this reply. */
     let stalled = 0;
-    const seen = new Set<string>();
-    while (steps < MAX_STEPS && !finished && stalled < MAX_STALLED) {
-      steps++;
-      const turn = await model.generate({ system, messages: history, tools: TOOLS, ...(input.signal && { signal: input.signal }) });
-      usage.inputTokens += turn.usage?.inputTokens ?? 0;
-      usage.outputTokens += turn.usage?.outputTokens ?? 0;
-      const { text, calls } = turn.toolCalls.length ? { text: turn.text, calls: turn.toolCalls } : recoverToolCalls(turn.text);
-      const proposing = proposed || calls.some((call) => call.name === 'propose_changes');
-      if (text.trim()) {
-        // A local model leaves its tool-call tags in the text ("…to test it.<tool_call>").
-        const own = withoutNarration(withoutLeakedMarkup(withoutEchoedNotes(text)));
-        // Spotlight applies a session's proposals itself: "it now posts…" is true there.
-        const claimsOff = proposing && !input.session ? withoutAppliedClaims(own) : own;
-        const shown = own && withoutMadeUpIds(withoutRepeats(input.session ? withoutApplyRequests(claimsOff) : claimsOff, said), known(), invented);
-        said += `\n${text}`;
-        if (shown.trim()) onEvent({ type: 'text', text: shown });
-      }
-      history.push({ role: 'assistant', text, toolCalls: calls, ...(turn.raw && { raw: turn.raw }) });
-      finished = !calls.length;
-      // Local models describe a fix without proposing it; a test-and-fix session needs the proposal.
-      // Not when it already said only the person can fix it: pressing makes a local model invent a fix.
-      if (finished && input.session === 'fix' && !proposed && !pressed && !PERSON_ONLY.test(text)) {
-        pressed = true;
-        finished = false;
-        history.push({ role: 'user', content: 'Nothing was proposed: only a propose_changes call changes the workflow. Call propose_changes with the fix now, or, if only I can fix it, say what to do in one sentence.' });
-        continue;
-      }
-      // The reply says to apply a card that was never made: say so and ask once more, instead of ending the turn.
-      if (finished && !input.session && !proposed && !waiting.size && APPLY_REQUEST.test(text)) {
-        if (!applyRetried) {
-          applyRetried = true;
+    const seen = new Set<string>(input.resume?.seen);
+    /** What a checkpoint keeps: the messages up to the last finished step. */
+    const checkpoint = () => saveCheckpoint(input.userId, { history: [...history], steps, seen: [...seen], said, proposals: [...proposalLog], sent: [...sent] } satisfies ChatState);
+    /** Ends the reply with an error event (with `trace`); false when the error is the caller's own abort or the older events are wanted. */
+    const fail = (caught: unknown, kind: ChatErrorKind, failedStep: number): boolean => {
+      if (!trace || input.signal?.aborted) return false;
+      // A checkpoint needs at least one finished step to continue from; a reached cap would only stop it again.
+      const keep = kind !== 'cap' && failedStep > 1 && history.at(-1)?.role === 'tool';
+      onEvent({ type: 'error', kind, message: errorText(caught), ...(keep && { checkpoint: checkpoint(), step: failedStep }) });
+      return true;
+    };
+    try {
+      while (steps < stepLimit && !finished && stalled < MAX_STALLED) {
+        steps++;
+        currentStep = steps;
+        if (trace) onEvent({ type: 'step.start', step: steps, label: steps === 1 ? 'Reading your request' : 'Working on it' });
+        const batch = trace ? coalesced((delta) => onEvent({ type: 'text.delta', step: currentStep, text: delta })) : undefined;
+        let turn: Awaited<ReturnType<typeof model.generate>>;
+        try {
+          turn = await model.generate({ system, messages: history, tools: TOOLS, ...(input.signal && { signal: input.signal }), ...(batch && { onToken: batch.push }) });
+        } catch (caught) {
+          batch?.flush();
+          // The failed step is not in the history: a checkpoint continues at it.
+          steps--;
+          if (isUsageCapError(caught) ? fail(caught, 'cap', steps + 1) : fail(caught, 'model', steps + 1)) return;
+          throw caught;
+        }
+        batch?.flush();
+        usage.inputTokens += turn.usage?.inputTokens ?? 0;
+        usage.outputTokens += turn.usage?.outputTokens ?? 0;
+        const { text, calls } = turn.toolCalls.length ? { text: turn.text, calls: turn.toolCalls } : recoverToolCalls(turn.text);
+        const proposing = proposed || calls.some((call) => call.name === 'propose_changes');
+        // Whether this step is sent back to the model (a fix that proposed nothing; a card announced and never made): then it is not the reply.
+        const pressNow = !calls.length && input.session === 'fix' && !proposed && !pressed && !PERSON_ONLY.test(text);
+        const applyNow = !calls.length && !input.session && !proposed && !waiting.size && APPLY_REQUEST.test(text);
+        const continues = calls.length > 0 || pressNow || (applyNow && !applyRetried);
+        /** Text a step sends: its checked text is the reply when it is the last step, else part of the trace. */
+        const say = (shown: string, last = !continues) => {
+          if (!trace) onEvent({ type: 'text', text: shown });
+          else if (last) onEvent({ type: 'text', text: shown, step: currentStep });
+          else onEvent({ type: 'thinking', step: currentStep, text: shown });
+        };
+        let sentText = false;
+        if (text.trim()) {
+          // A local model leaves its tool-call tags in the text ("…to test it.<tool_call>").
+          const own = withoutNarration(withoutLeakedMarkup(withoutEchoedNotes(text)));
+          // Spotlight applies a session's proposals itself: "it now posts…" is true there.
+          const claimsOff = proposing && !input.session ? withoutAppliedClaims(own) : own;
+          const shown = own && withoutMadeUpIds(withoutRepeats(input.session ? withoutApplyRequests(claimsOff) : claimsOff, said), known(), invented);
+          said += `\n${text}`;
+          if (shown.trim()) {
+            say(shown);
+            sentText = true;
+          }
+        }
+        // The deltas of a last step that the guards left nothing of: an empty `text` clears them.
+        if (trace && !continues && !sentText) onEvent({ type: 'text', text: '', step: currentStep });
+        history.push({ role: 'assistant', text, toolCalls: calls, ...(turn.raw && { raw: turn.raw }) });
+        finished = !calls.length;
+        // Local models describe a fix without proposing it; a test-and-fix session needs the proposal.
+        // Not when it already said only the person can fix it: pressing makes a local model invent a fix.
+        if (finished && pressNow) {
+          pressed = true;
           finished = false;
-          onEvent({ type: 'text', text: '(No change card was created, so there is nothing to apply yet. Trying again.)' });
-          history.push({ role: 'user', content: 'You told me to click Apply, but no proposal exists: nothing was shown to me. Call propose_changes now with the change, or say plainly that you are not changing anything.' });
+          history.push({ role: 'user', content: 'Nothing was proposed: only a propose_changes call changes the workflow. Call propose_changes with the fix now, or, if only I can fix it, say what to do in one sentence.' });
           continue;
         }
-        onEvent({ type: 'text', text: '(Still no change card: nothing was proposed, so there is nothing to apply.)' });
+        // The reply says to apply a card that was never made: say so and ask once more, instead of ending the turn.
+        if (finished && applyNow) {
+          if (!applyRetried) {
+            applyRetried = true;
+            finished = false;
+            say('(No change card was created, so there is nothing to apply yet. Trying again.)', false);
+            history.push({ role: 'user', content: 'You told me to click Apply, but no proposal exists: nothing was shown to me. Call propose_changes now with the change, or say plainly that you are not changing anything.' });
+            continue;
+          }
+          say('(Still no change card: nothing was proposed, so there is nothing to apply.)', true);
+        }
+        if (finished) break;
+        const results: ToolResult[] = [];
+        let progress = false;
+        for (const call of calls) {
+          const shownBefore = waitingSummaries.length;
+          const outcome = await execute(call);
+          span.addEvent('assistant.tool', { 'gen_ai.tool.name': call.name, 'landflow.outcome': outcome.isError ? 'error' : 'ok' });
+          results.push(outcome);
+          // Progress is a new proposal, or a result this reply hasn't had yet.
+          const key = `${outcome.name}\n${outcome.content}`;
+          if (waitingSummaries.length > shownBefore || !seen.has(key)) progress = true;
+          seen.add(key);
+        }
+        stalled = progress ? 0 : stalled + 1;
+        history.push({ role: 'tool', results });
       }
-      if (finished) break;
-      const results: ToolResult[] = [];
-      let progress = false;
-      for (const call of calls) {
-        const shownBefore = waitingSummaries.length;
-        const outcome = await execute(call);
-        span.addEvent('assistant.tool', { 'gen_ai.tool.name': call.name, 'landflow.outcome': outcome.isError ? 'error' : 'ok' });
-        results.push(outcome);
-        // Progress is a new proposal, or a result this reply hasn't had yet.
-        const key = `${outcome.name}\n${outcome.content}`;
-        if (waitingSummaries.length > shownBefore || !seen.has(key)) progress = true;
-        seen.add(key);
-      }
-      stalled = progress ? 0 : stalled + 1;
-      history.push({ role: 'tool', results });
+    } catch (caught) {
+      // Not a model failure (those returned above): a tool or the host failed.
+      if (fail(caught, 'internal', steps)) return;
+      throw caught;
     }
     // A test-and-fix session goes on (or stops) by itself: "ask me to continue" would only be noise there.
     if (!finished && !input.session) {
-      const text = stalled >= MAX_STALLED ? '(Stopped: the last steps only repeated what was already done. Tell me what to change, or ask me to continue.)' : `(Stopped after ${MAX_STEPS} steps. Ask me to continue if there is more to do.)`;
-      onEvent({ type: 'text', text });
+      const repeated = stalled >= MAX_STALLED;
+      const text = repeated ? '(Stopped: the last steps only repeated what was already done. Tell me what to change, or ask me to continue.)' : `(Stopped after ${MAX_STEPS} steps. Ask me to continue if there is more to do.)`;
+      // With a trace, a stall ends as an error the client can continue from; running out of steps is the reply's last word.
+      if (repeated && trace) {
+        onEvent({ type: 'error', kind: 'stalled', message: text, checkpoint: checkpoint(), step: steps });
+        return;
+      }
+      if (trace) onEvent({ type: 'text', text, step: steps });
+      else onEvent({ type: 'text', text });
     }
     span.setAttribute('landflow.assistant.steps', steps);
-    onEvent({ type: 'done', model: modelLabel(model), durationMs: Date.now() - started, steps, usage });
+    const costUsd = scope.tree.calls ? Math.round(scope.tree.cost * 1e8) / 1e8 : undefined;
+    onEvent({ type: 'done', model: modelLabel(model), durationMs: Date.now() - started, steps, usage, ...(costUsd !== undefined && { costUsd }), local: model.provider === 'ollama' });
   });
 }

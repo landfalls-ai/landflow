@@ -21,15 +21,38 @@ import { canResource, withOwnership, type Actor } from '../projects';
 import { store } from '../store';
 import { traceAssistant } from '../telemetry/assistant';
 import { recordUsage } from '../usage/ledger';
+import { assistantScope, isUsageCapError, runInUsageScope, type UsageScope } from '../ai-usage';
 import { recoverToolCalls, withoutInventedIds, withoutRepeats } from './chat';
 import { chooseModel, type AgentResources } from './agent-resources';
-import { assistantModel, modelLabel } from './model';
+import { saveCheckpoint } from './checkpoints';
+import { assistantModel, errorText, modelLabel } from './model';
 import { catalogSummary, nodeDocs, searchNodes } from './research';
 
 export const MAX_ARCHITECT_STEPS = 10;
 
 /** Node types an agent can call: actions whose only required inputs are main ones (the Abilities tab's own filter). */
 export const usableAsTool = (t: NodeTypeInfo) => t.descriptor.kind === 'action' && t.descriptor.inputs.every((p) => p.type === 'main' || !p.required);
+
+/**
+ * What the architect's stream sends besides ArchitectEvent (lib/shared/agent-architect.ts), with `trace`: the step
+ * that begins, tool events with timings, `done` with the cost and `error` with its kind and a checkpoint.
+ */
+export type ArchitectStreamEvent =
+  | ArchitectEvent
+  | { type: 'step.start'; step: number; label: string }
+  | { type: 'tool'; name: string; label: string; ok: boolean; id: string; step: number; durationMs: number; detail?: string }
+  | { type: 'done'; model: string; durationMs: number; steps: number; usage: { inputTokens: number; outputTokens: number }; costUsd?: number; local: boolean }
+  | { type: 'error'; message: string; kind?: 'model' | 'cap' | 'stalled' | 'internal'; checkpoint?: string; step?: number };
+
+/** What an architect chat keeps to be continued after an error. */
+export interface ArchitectState {
+  history: AgentMessage[];
+  steps: number;
+  draft?: Partial<AgentConfig>;
+  said: string;
+  proposals: number;
+  lastProposal?: string;
+}
 
 export interface ArchitectInput {
   messages: ArchitectTurn[];
@@ -39,7 +62,11 @@ export interface ArchitectInput {
   types: NodeTypeInfo[];
   actor: Actor;
   signal?: AbortSignal;
-  onEvent: (event: ArchitectEvent) => void;
+  onEvent: (event: ArchitectStreamEvent) => void;
+  /** Stream the step trace and send failures as `error` events with a checkpoint (the route sets it); without it errors are thrown. */
+  trace?: boolean;
+  /** Continue from a checkpoint (`takeCheckpoint`): the messages so far, no tool run again. */
+  resume?: ArchitectState;
   /** The models, knowledge bases and embeddings this host has (agentResources): the draft gets a model and may search a knowledge base. */
   resources?: AgentResources;
   /** The only tools the model is offered (designAgent's short attempt offers propose_agent alone); all of them when absent. */
@@ -414,18 +441,25 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
   return { config, needs, dropped, missing };
 }
 
-export async function runArchitect(input: ArchitectInput): Promise<void> {
+/** The architect: its model calls count in AI usage (surface `architect`) and under the caller's caps. */
+export function runArchitect(input: ArchitectInput): Promise<void> {
+  const scope = assistantScope({ surface: 'architect', userId: input.actor.id });
+  return runInUsageScope(scope, () => architect(input, scope));
+}
+
+async function architect(input: ArchitectInput, scope: UsageScope): Promise<void> {
   const { onEvent, actor } = input;
+  const trace = input.trace === true;
   const types = input.types.filter(usableAsTool);
   const tools = input.only ? [...TOOLS, DESIGN_TOOL].filter((t) => input.only!.includes(t.name)) : TOOLS;
   const toolNames = new Set(tools.map((t) => t.name));
   const model = assistantModel(input.model);
   const started = Date.now();
-  let draft = input.draft;
-  let said = '';
-  let proposals = 0;
+  let draft = input.resume ? input.resume.draft : input.draft;
+  let said = input.resume?.said ?? '';
+  let proposals = input.resume?.proposals ?? 0;
   /** The last proposal's arguments, as sent: local models propose the same agent again and again. */
-  let lastProposal: string | undefined;
+  let lastProposal: string | undefined = input.resume?.lastProposal;
   /** Missing tools recorded in this reply, once each. */
   const recorded = new Set<string>();
   const usage = { inputTokens: 0, outputTokens: 0 };
@@ -436,9 +470,12 @@ export async function runArchitect(input: ArchitectInput): Promise<void> {
     draft ? `\nThe draft so far (propose_agent replaces it):\n${JSON.stringify({ ...draft, avatar: undefined }).slice(0, 6000)}` : '',
   ].join('\n');
 
+  let currentStep = 0;
   const execute = async (call: ToolCall): Promise<ToolResult> => {
+    const toolStarted = Date.now();
+    let detail: string | undefined;
     const result = (content: string, label: string, ok = true): ToolResult => {
-      onEvent({ type: 'tool', name: call.name, label, ok });
+      onEvent({ type: 'tool', name: call.name, label, ok, id: `t_${nanoid(8)}`, step: currentStep, durationMs: Date.now() - toolStarted, ...(detail && { detail: shorten(detail, 300) }) });
       return { id: call.id, name: call.name, content, ...(!ok && { isError: true }) };
     };
     const design = call.name === DESIGN_TOOL.name;
@@ -446,6 +483,7 @@ export async function runArchitect(input: ArchitectInput): Promise<void> {
     switch (design ? 'propose_agent' : call.name) {
       case 'search_nodes': {
         const query = String(args.query ?? '');
+        detail = `“${query}”`;
         const hits = searchNodes(query, types).map(({ score: _score, ...hit }) => {
           const info = types.find((t) => t.type === hit.type);
           const needed = info?.descriptor.credentials?.filter((c) => c.required).map((c) => c.name);
@@ -455,6 +493,7 @@ export async function runArchitect(input: ArchitectInput): Promise<void> {
       }
       case 'get_node_docs': {
         const asked = String(args.type ?? '');
+        detail = asked;
         // By type id, by the id without its plugin ("httpRequest"), or by name ("HTTP Request", "http.request").
         const plain = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
         const info =
@@ -496,6 +535,7 @@ export async function runArchitect(input: ArchitectInput): Promise<void> {
       }
       case 'propose_agent': {
         const { summary: _summary, ...rest } = args;
+        detail = text(args.summary, 200);
         const asSent = JSON.stringify(rest);
         if (asSent === lastProposal) return result('Nothing changes: you proposed exactly this agent already. Do not propose it again; answer the user.', 'Skipped a repeated proposal');
         lastProposal = asSent;
@@ -520,41 +560,64 @@ export async function runArchitect(input: ArchitectInput): Promise<void> {
   };
 
   await traceAssistant('architect', { 'gen_ai.request.model': model.model, 'landflow.assistant.turns': input.messages.length }, async (span) => {
-    const history: AgentMessage[] = input.messages.map((m) => (m.role === 'user' ? { role: 'user', content: m.content } : { role: 'assistant', text: m.content, toolCalls: [] }));
-    let steps = 0;
+    const history: AgentMessage[] = input.resume ? [...input.resume.history] : input.messages.map((m) => (m.role === 'user' ? { role: 'user', content: m.content } : { role: 'assistant', text: m.content, toolCalls: [] }));
+    let steps = input.resume?.steps ?? 0;
+    const stepLimit = steps + MAX_ARCHITECT_STEPS;
     let finished = false;
-    while (steps < MAX_ARCHITECT_STEPS && !finished) {
-      steps++;
-      const generate = () => model.generate({ system, messages: history, tools, ...(input.signal && { signal: input.signal }) });
-      // Ollama answers 500 when it can't parse the tool call qwen3-coder wrote ("XML syntax error", sometimes with no detail): ask once more.
-      const turn = await generate().catch((error: unknown) => {
-        if (input.signal?.aborted || !/XML syntax error|tool call|unexpected end|Ollama error 500/i.test(String((error as Error)?.message ?? error))) throw error;
-        span.addEvent('assistant.retry', { 'landflow.reason': String((error as Error)?.message ?? error).slice(0, 200) });
-        return generate();
-      });
-      usage.inputTokens += turn.usage?.inputTokens ?? 0;
-      usage.outputTokens += turn.usage?.outputTokens ?? 0;
-      const { text: reply, calls } = turn.toolCalls.length ? { text: turn.text, calls: turn.toolCalls } : recoverToolCalls(turn.text, toolNames);
-      if (reply.trim()) {
-        const shown = withoutRepeats(reply, said);
-        said += `\n${reply}`;
-        if (shown.trim()) onEvent({ type: 'text', text: shown });
+    const fail = (caught: unknown, kind: 'model' | 'cap' | 'internal', failedStep: number): boolean => {
+      if (!trace || input.signal?.aborted) return false;
+      const keep = kind !== 'cap' && failedStep > 1 && history.at(-1)?.role === 'tool';
+      const checkpoint = keep ? saveCheckpoint(actor.id, { history: [...history], steps, draft, said, proposals, ...(lastProposal && { lastProposal }) } satisfies ArchitectState) : undefined;
+      onEvent({ type: 'error', kind, message: errorText(caught), ...(checkpoint && { checkpoint, step: failedStep }) });
+      return true;
+    };
+    try {
+      while (steps < stepLimit && !finished) {
+        steps++;
+        currentStep = steps;
+        if (trace) onEvent({ type: 'step.start', step: steps, label: steps === 1 ? 'Reading your request' : 'Working on it' });
+        const generate = () => model.generate({ system, messages: history, tools, ...(input.signal && { signal: input.signal }) });
+        let turn: Awaited<ReturnType<typeof generate>>;
+        try {
+          // Ollama answers 500 when it can't parse the tool call qwen3-coder wrote ("XML syntax error", sometimes with no detail): ask once more.
+          turn = await generate().catch((error: unknown) => {
+            if (input.signal?.aborted || !/XML syntax error|tool call|unexpected end|Ollama error 500/i.test(String((error as Error)?.message ?? error))) throw error;
+            span.addEvent('assistant.retry', { 'landflow.reason': String((error as Error)?.message ?? error).slice(0, 200) });
+            return generate();
+          });
+        } catch (caught) {
+          steps--;
+          if (fail(caught, isUsageCapError(caught) ? 'cap' : 'model', steps + 1)) return;
+          throw caught;
+        }
+        usage.inputTokens += turn.usage?.inputTokens ?? 0;
+        usage.outputTokens += turn.usage?.outputTokens ?? 0;
+        const { text: reply, calls } = turn.toolCalls.length ? { text: turn.text, calls: turn.toolCalls } : recoverToolCalls(turn.text, toolNames);
+        if (reply.trim()) {
+          const shown = withoutRepeats(reply, said);
+          said += `\n${reply}`;
+          if (shown.trim()) onEvent({ type: 'text', text: shown });
+        }
+        history.push({ role: 'assistant', text: reply, toolCalls: calls, ...(turn.raw && { raw: turn.raw }) });
+        finished = !calls.length;
+        if (finished) break;
+        const results: ToolResult[] = [];
+        for (const call of calls) {
+          const outcome = await execute(call);
+          span.addEvent('assistant.tool', { 'gen_ai.tool.name': call.name, 'landflow.outcome': outcome.isError ? 'error' : 'ok' });
+          results.push(outcome);
+        }
+        history.push({ role: 'tool', results });
       }
-      history.push({ role: 'assistant', text: reply, toolCalls: calls, ...(turn.raw && { raw: turn.raw }) });
-      finished = !calls.length;
-      if (finished) break;
-      const results: ToolResult[] = [];
-      for (const call of calls) {
-        const outcome = await execute(call);
-        span.addEvent('assistant.tool', { 'gen_ai.tool.name': call.name, 'landflow.outcome': outcome.isError ? 'error' : 'ok' });
-        results.push(outcome);
-      }
-      history.push({ role: 'tool', results });
+    } catch (caught) {
+      if (fail(caught, 'internal', steps)) return;
+      throw caught;
     }
     if (!finished) onEvent({ type: 'text', text: `(Stopped after ${MAX_ARCHITECT_STEPS} steps. Ask me to continue if there is more to do.)` });
     span.setAttribute('landflow.assistant.steps', steps);
     span.setAttribute('landflow.architect.proposals', proposals);
-    onEvent({ type: 'done', model: modelLabel(model), durationMs: Date.now() - started, steps, usage });
+    const costUsd = scope.tree.calls ? Math.round(scope.tree.cost * 1e8) / 1e8 : undefined;
+    onEvent({ type: 'done', model: modelLabel(model), durationMs: Date.now() - started, steps, usage, ...(costUsd !== undefined && { costUsd }), local: model.provider === 'ollama' });
   });
 }
 
