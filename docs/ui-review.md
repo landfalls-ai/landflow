@@ -78,7 +78,7 @@ What the look draws:
 | Expression result | Result preview under the field | Each expression shows its resolved value for the first input item (green) or the error (red), updated as you type | ✅ |
 | Expression editor | Inline editor with highlighting and autocomplete | `{{ }}` highlighted in the field; autocomplete for `$json` fields from the input, `$('Node').item.json`, `$input`, `$now`, `$today`, `$workflow`, `$execution`, `$itemIndex`, `$vars` and methods for the value's type; `{{` closes itself | ✅ |
 | Pin data | Pin output; edit output | Pin, Unpin, "Set test data" on triggers, "Edit output" with a JSON editor (⌘↵ saves) | ✅ |
-| Run step | "Execute step" | Run step, Run from here, Breakpoint | ➕ |
+| Run step | "Execute step" | Run step in the header; Run from here and Breakpoint under Settings | ➕ |
 | Dependent parameters | Switching Resource resets Operation to its default; collection options follow displayOptions | Same: the default comes from the property shown for the current values, dependent values reset, nested displayOptions use n8n's sibling / `/root` scoping | ✅ |
 | Fixed / Expression on pickers | Every field can switch to an expression | Live-loaded pickers (channels, spreadsheets) switch to a text field for an id or `{{ expression }}` with the resolved preview; static pickers take expressions only when one is already set | ◐ |
 | Credential on the node | Credential picker at the top of the parameters, "Create new credential", edit | Same: one picker per credential the node declares (only the ones its auth method needs), create and edit inline, the only matching credential is picked automatically, warning when a selected credential was deleted | ✅ |
@@ -88,7 +88,7 @@ What the look draws:
 
 | | n8n | Landflow | |
 |---|---|---|---|
-| Logs panel | Bottom panel: node runs on the left, Input/Output on the right | Same layout, plus a mini waterfall per row, sub-node calls nested under the node that made them, "Re-run task" and "Run from here" on the selected run, a raw **Events** stream, a resizable height | ➕ |
+| Logs panel | Bottom panel: node runs on the left, Input/Output on the right | Same layout, plus a mini waterfall per row, sub-node calls nested under the node that made them, "Re-run task" and "Run from here" on the selected run, an **Events** tab (the raw stream), a resizable height | ➕ |
 | Partial execution | Execute a step or run to a node using earlier data | Re-run one task with its earlier input, or re-run from a node with upstream results reused | ✅ |
 | Breakpoints and stepping | No | Breakpoints (F9), Step (F10), Continue (F8), Stop; pause banner with the input waiting at the node; the paused node glows amber | ➕ |
 | Test data for triggers | Pin data on the trigger | Same; the AI builder pins sample items automatically | ✅ |

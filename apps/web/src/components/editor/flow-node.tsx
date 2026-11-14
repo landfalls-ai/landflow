@@ -46,8 +46,10 @@ export function nodeActions(id: string): { main: NodeAction[]; more: NodeAction[
   const compact = isCompact(descriptor, wf.parameters, asTool);
   const breakpoint = state.breakpoints.includes(id);
   const canTeam =
-    state.nodeTypes[wf.type] !== undefined && wf.type === 'core.messageAgent' && state.edges.some((e) => e.target === id && e.data?.connectionType === 'ai_tool') && canTurnNodeIntoTeam(id);
-  const run = (scope: 'from' | 'only') => () => !state.running && void state.run?.({ kind: 'node', nodeId: id, scope });
+    wf.type === 'core.messageAgent' &&
+    state.edges.some((e) => e.target === id && e.data?.connectionType === 'ai_tool') &&
+    canTurnNodeIntoTeam(id);
+  const run = (scope: 'from' | 'only') => () => !useEditor.getState().running && void state.run?.({ kind: 'node', nodeId: id, scope });
   const main: NodeAction[] = [
     ...(compact ? [] : [{ id: 'run' as const, label: 'Run this node', icon: Play, hint: 'and what it needs', disabled: state.running, run: run('only') }]),
     { id: 'disable', label: wf.disabled ? 'Enable' : 'Disable', icon: Power, run: () => state.updateNode(id, { disabled: !wf.disabled }) },

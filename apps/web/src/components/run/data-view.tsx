@@ -322,24 +322,26 @@ export function DataView({ items, emptyLabel = 'No data', draggable, toolbar, no
             </>
           )}
         </span>
-        {showViewSwitch(items) && <Segmented
-          label="Display mode"
-          size="sm"
-          className="ml-auto"
-          value={mode}
-          onChange={setMode}
-          options={MODES.filter(({ mode: m }) => m !== 'binary' || files > 0).map(({ mode: m, label, icon: Icon }) => ({
-            value: m,
-            title: label,
-            ariaLabel: label,
-            label: (
-              <>
-                <Icon className="size-3" />
-                <span className="hidden @xl:inline">{label}</span>
-              </>
-            ),
-          }))}
-        />}
+        {showViewSwitch(items) && (
+          <Segmented
+            label="Display mode"
+            size="sm"
+            className="ml-auto"
+            value={mode}
+            onChange={setMode}
+            options={MODES.filter(({ mode: m }) => m !== 'binary' || files > 0).map(({ mode: m, label, icon: Icon }) => ({
+              value: m,
+              title: label,
+              ariaLabel: label,
+              label: (
+                <>
+                  <Icon className="size-3" />
+                  <span className="hidden @xl:inline">{label}</span>
+                </>
+              ),
+            }))}
+          />
+        )}
       </div>
       {notice && <div className="shrink-0 px-3 pb-2">{notice}</div>}
       <div className="min-h-0 flex-1 overflow-auto border-t border-hair">
