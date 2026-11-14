@@ -1524,6 +1524,12 @@ resizing the column, and keeping a fix bubble's text after it closes (the timeli
 
 Fifteen specs in [specs/](specs/README.md): a code sandbox, guard enforcement, a durable pause, runbooks made and run by themselves, the brain's auto-apply, lazy loading for Postgres, durable telemetry, shared trace comments, more webhook triggers, per-rule Switch outputs, agent evals, public run-report links, composite governance rules and live integration checks. The first slice of composite governance rules is built ([composites.md](composites.md#governance-rules)); the hot run data of backend wave 6 covers part of spec 07.
 
+## Tagging with @ (B04, 2026-11-14)
+
+The foundation is built: `GET /api/mentions`, `resolveMentions` with a digest per kind, and the picker
+([assistant.md](assistant.md#tagging-with-)). Open: mount it in Spotlight and Ask the brain, and resolve the tags in
+their servers.
+
 ## Not planned
 
 Later, maybe: an agent code sandbox, and prompt management. Not planned:

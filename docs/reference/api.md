@@ -64,6 +64,7 @@ while the Postgres store is blocked answers 503 with `Retry-After`. SCIM routes 
 | `POST/DELETE /api/plugins/announce` | plugin self-registration: 401 without the registry secret (production), 409 when a join comes from another host (development), one generic 422 when the endpoint cannot be reached or proven; [rules](../plugins.md#registration-rules) |
 | `/api/marketplaces…`, `/api/skills` | marketplaces, Explore across all of them (`GET /api/marketplaces/explore`), plugin install and uninstall, a flow's share view (`GET /api/marketplaces/:id/plugins/:name/flow?path=`), the skill library: the table in [docs/marketplace.md](../marketplace.md#api) |
 | `GET /api/node-types`, `POST /api/node-types/load-options` | catalog |
+| `GET /api/mentions` | `?q=` (at most 80 characters) `&types=` (a comma list of `workflow, node, run, agent, team, dataTable, template, nodeType, plugin, brainPage, person, credential`; an unknown one is 400) `&workflowId=` (adds its nodes, puts its runs first) → `{ groups: [{ type, items: [{ type, id, name, hint?, workflowId? }] }] }`: what the caller can open, at most 8 per kind, a prefix match first then the newest; [tagging with @](../assistant.md#tagging-with-) |
 | `GET/POST /api/credentials`, `GET/PATCH/DELETE /api/credentials/:id` | credentials vault (secrets are never returned) |
 | `POST /api/credentials/test` | `{ type, data, id? }` → `{ ok, message, durationMs }`, the plugin's connection test |
 | `GET /api/credential-types` | credential types published by the plugins |
