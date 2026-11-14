@@ -114,7 +114,7 @@ header p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
 header button { border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 8px; padding: 4px 8px; font: inherit; font-size: 12px; cursor: pointer; }
 .fullscreen .inner { width: 100%; max-width: 760px; margin: 0 auto; }
 .log { flex: 1; overflow-y: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
-.msg { max-width: 85%; padding: 9px 13px; border-radius: 14px; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: anywhere; }
+.msg { animation: lf-rise .18s ease-out both; max-width: 85%; padding: 9px 13px; border-radius: 14px; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: anywhere; }
 .msg.bot { background: var(--bubble); align-self: flex-start; border-bottom-left-radius: 4px; }
 .msg.user { background: var(--accent); color: var(--accent-fg); align-self: flex-end; border-bottom-right-radius: 4px; }
 .msg.error { background: #fee2e2; color: #991b1b; align-self: flex-start; }
@@ -128,8 +128,14 @@ header button { border: 1px solid var(--line); background: transparent; color: v
 .who { align-self: flex-start; display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); margin-bottom: -6px; }
 .who .face { width: 20px; height: 20px; border-radius: 50%; background: var(--bubble); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; }
 .ask { align-self: flex-start; font-size: 12px; color: var(--muted); font-style: italic; }
-.typing { align-self: flex-start; color: var(--muted); font-size: 13px; }
+.typing { align-self: flex-start; display: flex; gap: 4px; align-items: center; height: 20px; padding: 0 4px; animation: lf-rise .18s ease-out both; }
+.typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); animation: lf-dot 1.2s ease-in-out infinite; }
+.typing i:nth-child(2) { animation-delay: .15s; }
+.typing i:nth-child(3) { animation-delay: .3s; }
 @keyframes pulse { 50% { opacity: .3; } }
+@keyframes lf-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes lf-dot { 0%, 60%, 100% { opacity: .25; } 30% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .msg, .typing, .typing i, .tool.running::before { animation: none; } .typing i { opacity: .6; } }
 form { border-top: 1px solid var(--line); padding: 10px 12px; display: flex; gap: 8px; align-items: flex-end; }
 textarea { flex: 1; resize: none; border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; font: inherit; color: var(--fg); background: var(--bg); max-height: 140px; min-height: 40px; }
 textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
@@ -342,7 +348,7 @@ const CLIENT = `(function () {
     picked = [];
     pickedLine.textContent = '';
     setBusy(true);
-    var typing = el('div', { class: 'typing', text: '…' });
+    var typing = el('div', { class: 'typing', role: 'status', 'aria-label': 'Typing' }, [el('i'), el('i'), el('i')]);
     log.appendChild(typing);
     scroll();
     var body, headers = { accept: config.responseMode === 'streaming' ? 'text/event-stream' : 'application/json' };

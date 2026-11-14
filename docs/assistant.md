@@ -199,6 +199,23 @@ Agent architect and the brain's Spotlight on `/brain`.
 - **An error** (`ChatError`) says what went wrong in words; a provider's raw error (*Ollama error 500: {…}*) reads *The
   model returned an error*, with the raw text under **Details**, and **Try again** sends the same message again.
 - **Empty**: a mark, one line, one line of help and up to three starters that fill the box (`ChatEmpty`).
+
+New pieces of the kit, ready to use (the surfaces adopt them one by one):
+
+- **Motion** (`components/ui/chat-motion.tsx`, on `motion`, loaded lazily): `ChatList` scrolls a conversation, rises new
+  messages in and stays at the bottom unless you scrolled up, when **Jump to latest** shows; `StatusSwap` cross-fades the
+  Working line into the reply; `Collapsible` opens and closes a block; `StreamingText` adds a soft caret while a reply
+  streams. Only opacity and a 6 px rise move, never width or padding, and Reduce motion stops the movement. Use CSS
+  (`animate-in`, `animate-pulse-soft`) for a thing that just appears; use these when a block changes size or swaps.
+- **The activity trace** (`ActivityTrace`): while it works, one line with the step it is on (*Searching the brain · step
+  3*); once done, *10 steps · 14.5 s ›*, which opens a list of what it read, searched, ran and wrote, each with its time
+  and a tick or a cross. A step with a detail opens it; a failed one reads in red; `traceUrl` adds **Open trace**. On a
+  phone it starts closed and the list scrolls inside itself. The steps are `ActivityStep` in `lib/shared/activity.ts`.
+- **The reply footer** (`ReplyMeta` with `info`): *model · 14.5 s · 10 steps · 1,600 tokens · ≈$0.004*, with *local* in
+  place of the cost for a local model; what is unknown is left out. `parts` still works.
+- **The model chip** (`ModelChip`, and the composer's `chip`): the model's short name in a small pill before Send.
+- **Error actions** (`ChatError` `actions`): buttons beside **Try again**, one of them filled (*Open settings*).
+- **Short replies** (`ShortReply`, `firstSentences`): the first two sentences and **Show more**.
 - **The header**: **New conversation** (✎) and close or fold (*Hide the conversation*); a session's id is in the New
   conversation button's tooltip, not the header. On a phone every button is 44 px, the Test agent chat fills the screen
   above the home bar, the editor's Chat is a sheet with a handle, the Agent architect shows **Chat | Draft** one at a time

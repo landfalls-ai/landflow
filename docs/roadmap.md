@@ -1524,6 +1524,15 @@ resizing the column, and keeping a fix bubble's text after it closes (the timeli
 
 Fifteen specs in [specs/](specs/README.md): a code sandbox, guard enforcement, a durable pause, runbooks made and run by themselves, the brain's auto-apply, lazy loading for Postgres, durable telemetry, shared trace comments, more webhook triggers, per-rule Switch outputs, agent evals, public run-report links, composite governance rules and live integration checks. The first slice of composite governance rules is built ([composites.md](composites.md#governance-rules)); the hot run data of backend wave 6 covers part of spec 07.
 
+## The chat kit, motion and one trace (backbone wave 1)
+
+The shared pieces every chat will use, built in `components/ui/` and ready; the surfaces adopt them in wave 2.
+
+- CH5 ✅ Done: the hosted chat widget's bubbles rise in, its typing indicator is three dots, and Reduce motion turns both
+  off ([Hosted chat and widget](features/ai.md#hosted-chat-and-widget)).
+- CH1 (motion), CH6 (one activity trace), CH7 (one reply footer), CH9 (errors with actions) and CH10 (a model chip): kit
+  ready, surfaces in wave 2 ([Chat surfaces](assistant.md#chat-surfaces)).
+
 ## Not planned
 
 Later, maybe: an agent code sandbox, and prompt management. Not planned:
