@@ -383,6 +383,7 @@ export const Slack = defineNode({
         default: 'getByEmail',
         displayOptions: { show: { resource: ['user'] } },
         options: [
+          { name: 'Get', value: 'get', description: 'A user by member ID, with their email (users.info; the email needs users:read.email)', action: 'Get a user', idempotent: true },
           { name: 'Get by Email', value: 'getByEmail', description: 'Find a user by email address', action: 'Get a user by email', idempotent: true },
           { name: 'Get Many', value: 'getAll', description: 'List the workspace’s members with their email addresses', action: 'Get many users', idempotent: true },
         ],
@@ -577,6 +578,16 @@ export const Slack = defineNode({
         displayOptions: { show: { resource: ['user'], operation: ['getByEmail'] } },
       },
       {
+        name: 'userId',
+        displayName: 'User ID',
+        type: 'string',
+        required: true,
+        default: '',
+        placeholder: 'U0123456789',
+        description: 'The member ID (a message\'s or a button press\'s `user`)',
+        displayOptions: { show: { resource: ['user'], operation: ['get'] } },
+      },
+      {
         name: 'returnAll',
         displayName: 'Return All',
         type: 'boolean',
@@ -731,6 +742,10 @@ export const Slack = defineNode({
         const users = await listUsers(api, credentials, { includeBots: filters.includeBots === true, includeDeleted: filters.includeDeleted === true }, returnAll ? Infinity : limit);
         const simplify = ctx.getNodeParameter<boolean>('simplify', i, true);
         return users.map((u) => (simplify ? simplifyUser(u) : u));
+      }
+      if (resource === 'user' && operation === 'get') {
+        const { user } = await slackCall<{ user: JsonObject }>(api, credentials, 'users.info', { user: requireString(ctx, 'userId', 'User ID', i) }, 'GET');
+        return ctx.getNodeParameter<boolean>('simplify', i, true) ? simplifyUser(user) : user;
       }
       if (resource === 'user' && operation === 'getByEmail') {
         const { user } = await slackCall<{ user: JsonObject }>(

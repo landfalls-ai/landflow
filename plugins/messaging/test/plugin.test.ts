@@ -76,6 +76,7 @@ describe('manifest', () => {
       'telegram.get',
       'telegram.get',
       'slack.getAll',
+      'slack.get',
       'slack.getByEmail',
       'slack.getAll',
       'slack.get',
