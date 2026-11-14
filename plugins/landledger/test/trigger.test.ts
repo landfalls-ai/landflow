@@ -1,14 +1,15 @@
 /**
- * The Landledger Trigger: registration with an admin key (create / checkExists / delete against the fake), a
- * subscription an admin made (the credential's secret, nothing registered), signed, forged, stale and filtered
- * deliveries, and the redelivery key; the Standard Webhooks signature itself.
+ * The Landledger Trigger: registration with a webhooks:write key of its own (create / checkExists / delete against the
+ * fake; the secret kept in static data, never in an item), a subscription an admin made (the credential's secret,
+ * nothing registered), signed, forged, stale and filtered deliveries, a tolerance capped at 5 minutes, the review's new
+ * event types, and the redelivery key; the Standard Webhooks signature itself.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { PROTOCOL_VERSION, type JsonObject } from '@landflow/protocol';
 import { runWebhook, runWebhookMethod } from '@landflow/sdk';
 import { LandledgerTrigger } from '../src/nodes/landledger-trigger';
 import { signStandardWebhook, verifyStandardWebhook } from '../src/signature';
-import { ADMIN_KEY, KEY, startFakeLandledger, type FakeLandledger } from './fake-landledger';
+import { ADMIN_KEY, KEY, READ_KEY, startFakeLandledger, WEBHOOKS_KEY, type FakeLandledger } from './fake-landledger';
 import { credentials, extras } from './helpers';
 
 let fake: FakeLandledger;
@@ -39,7 +40,7 @@ describe('Standard Webhooks signature', () => {
 describe('Landledger Trigger', () => {
   const URL_ = 'https://landflow.example/api/webhook/app/wf_l/n1';
   const node = { id: 'n1', name: 'Landledger Trigger', type: 'landledger.landledgerTrigger', typeVersion: 1 };
-  const admin = () => credentials(fake, { apiKey: ADMIN_KEY });
+  const admin = () => credentials(fake, { apiKey: WEBHOOKS_KEY });
   const base = (parameters: JsonObject, creds: Record<string, JsonObject>, webhookUrl = URL_) => ({ protocol: PROTOCOL_VERSION, workflowId: 'wf_l', node, parameters, webhookUrl, credentials: creds });
   const method = (name: 'create' | 'delete' | 'checkExists', staticData: JsonObject, parameters: JsonObject = {}, creds = admin(), webhookUrl?: string) =>
     runWebhookMethod(LandledgerTrigger, { ...base(parameters, creds, webhookUrl), method: name, staticData }, extras);
@@ -111,10 +112,19 @@ describe('Landledger Trigger', () => {
     expect((await method('delete', data)).error).toBeUndefined();
   });
 
-  it('without an admin key, registration fails with the scope it needs', async () => {
-    const response = await method('create', {}, {}, credentials(fake));
-    expect(response.error?.message).toMatch(/403/);
-    expect(response.error?.description).toMatch(/needs admin/);
+  it('without webhooks:write, registration fails with the scope it needs', async () => {
+    const response = await method('create', {}, {}, credentials(fake, { apiKey: READ_KEY }));
+    expect(response.error?.message).toBe('Landledger API error 403: This needs the webhooks:write scope');
+    expect(response.error?.description).toMatch(/needs webhooks:write/);
+  });
+
+  it('a webhooks:write key sees only its own subscriptions: another key\'s hook for the same URL is not ours', async () => {
+    await runWebhookMethod(LandledgerTrigger, { ...base({}, credentials(fake, { apiKey: ADMIN_KEY })), method: 'create', staticData: {} }, extras);
+    const [adminHook] = [...fake.state.webhooks.keys()];
+    expect((await method('checkExists', { id: adminHook, secret: 'whsec_x', url: URL_, events: 'budget.at_risk,period.closing,request.applied,request.decided,request.step_pending' })).exists ?? false).toBe(false);
+    const ours = await created();
+    expect(ours.id).not.toBe(adminHook);
+    expect((await method('checkExists', ours)).exists).toBe(true);
   });
 
   it('turns a signed delivery into an item with the request id, kind and cost center lifted out, once per webhook-id', async () => {
@@ -134,6 +144,34 @@ describe('Landledger Trigger', () => {
       approvers: [{ email: 'amit.gal@landbright.test' }],
       step: { position: 1 },
     });
+  });
+
+  it('keeps the whsec_ secret Landledger returns only in its static data: never in an item', async () => {
+    const data = await created();
+    const response = await deliver(data, stepPending);
+    expect(JSON.stringify(response.items)).not.toContain(String(data.secret));
+    expect(JSON.stringify(response.items)).not.toContain('whsec_');
+  });
+
+  it('caps the signature tolerance at 5 minutes, whatever the option says', async () => {
+    const data = await created();
+    const tenMinutesAgo = Math.floor(Date.now() / 1000) - 600;
+    const wide = await deliver(data, stepPending, { timestamp: tenMinutesAgo, parameters: { options: { tolerance: 3600 } } });
+    expect(wide.response?.status).toBe(401);
+    const fourMinutesAgo = Math.floor(Date.now() / 1000) - 240;
+    expect((await deliver(data, stepPending, { timestamp: fourMinutesAgo, parameters: { options: { tolerance: 3600 } } })).items).toHaveLength(1);
+  });
+
+  it('starts on the review\'s new events: a request that needs confirmation, a relayed decision, the exceptions report', async () => {
+    const events = ['request.needs_confirmation', 'decision.relayed', 'report.exceptions'];
+    const data = await created({ events });
+    const parameters = { events };
+    const confirm = { type: 'request.needs_confirmation', timestamp: 't', data: { request: { ...request, status: 'awaiting_confirmation' }, person: { name: 'Shira Navon', email: 'shira.navon@landbright.test' }, createdBy: { kind: 'key', id: 'key_flows', name: 'Landflow flows' }, url: 'http://localhost:4811/requests/req_7' } };
+    expect((await deliver(data, confirm, { parameters })).items![0].json).toMatchObject({ type: 'request.needs_confirmation', requestId: 'req_7', kind: 'infra_change', costCenter: 'ENG-PLATFORM', person: { email: 'shira.navon@landbright.test' }, url: 'http://localhost:4811/requests/req_7' });
+    const relayed = { type: 'decision.relayed', timestamp: 't', data: { request, decision: { outcome: 'approve', via: 'relay' }, person: { name: 'Amit Gal' }, channel: { id: 'rch_1', kind: 'slack', name: 'Slack' }, url: 'u' } };
+    expect((await deliver(data, relayed, { parameters, id: 'evt_2' })).items![0].json).toMatchObject({ type: 'decision.relayed', requestId: 'req_7', channel: { kind: 'slack' } });
+    const report = { type: 'report.exceptions', timestamp: 't', data: { id: 'rep_1', sha256: 'f'.repeat(64), from: '2026-11-01', to: '2026-11-07', generatedAt: 't', rows: 3, url: 'u' } };
+    expect((await deliver(data, report, { parameters, id: 'evt_3' })).items![0].json).toMatchObject({ type: 'report.exceptions', id: 'evt_3', requestId: null, rows: 3, sha256: 'f'.repeat(64) });
   });
 
   it('a missing, forged or stale signature answers 401 and starts nothing', async () => {

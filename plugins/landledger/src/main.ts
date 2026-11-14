@@ -1,7 +1,7 @@
 /**
  * Landledger, the land family's cost ledger, for Landflow flows and agents: check a budget, query spend, raise and read
- * spend requests, reserve and release budget, read a month's status, relay a person's decision (flows only), and a
- * signed webhook trigger for requests, budgets and periods.
+ * spend requests, reserve and release budget, read a month's status, relay a person's signed Slack press (flows only),
+ * and a signed webhook trigger for requests, budgets and periods.
  *
  *   pnpm --filter @landflow/plugin-landledger start
  *
@@ -10,7 +10,7 @@
  */
 import { definePlugin } from '@landflow/sdk';
 import { serve } from '@landflow/sdk/serve';
-import { COLOR, landledgerApi, LandledgerNode } from './nodes/landledger';
+import { COLOR, landledgerApi, LandledgerNode, landledgerRelayApi } from './nodes/landledger';
 import { LandledgerTrigger } from './nodes/landledger-trigger';
 
 export const plugin = definePlugin({
@@ -19,13 +19,13 @@ export const plugin = definePlugin({
     name: 'Landledger',
     version: '0.1.0',
     description:
-      'Landledger cost ledger: budgets, spend, requests, reservations and periods, a person\'s decision relayed from Slack, Teams or email, and a webhook trigger for requests, budgets and periods; reachable over HTTP, gRPC, any installed broker and MCP',
+      'Landledger cost ledger: budgets, spend, requests, reservations and periods, a person\'s signed Slack press relayed for Landledger to verify, and a webhook trigger for requests, confirmations, decisions, budgets, periods and reports; reachable over HTTP, gRPC, any installed broker and MCP',
     icon: 'file:landledger.svg',
     color: COLOR,
     author: 'Landflow',
   },
   nodes: [LandledgerNode, LandledgerTrigger],
-  credentialTypes: [landledgerApi],
+  credentialTypes: [landledgerApi, landledgerRelayApi],
   // `file:` icons (plugin, nodes and credential types) are inlined from here as data: URLs when the manifest is built.
   iconDir: new URL('../icons/', import.meta.url),
 });

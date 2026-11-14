@@ -194,7 +194,15 @@ describe.each(['in-process', 'http', 'grpc'] as const)('Slack Trigger (%s)', (na
       responseUrl: 'https://hooks.slack.com/actions/T1/1/x',
       triggerId: '1234.5678.abcd',
       text: 'R-12 needs you',
+      userTeamId: 'T1',
     });
+    // The press as Slack signed it, for a service that checks Slack's signature itself (Landledger's relays).
+    const json = received.items![0].json as JsonObject;
+    expect(json.rawBody).toBe(form);
+    const headers = json.headers as JsonObject;
+    expect(Object.keys(headers).sort()).toEqual(['x-slack-request-timestamp', 'x-slack-signature']);
+    expect(headers['x-slack-signature']).toMatch(/^v0=[0-9a-f]{64}$/);
+    expect(slackSignature(SIGNING_SECRET, String(json.rawBody), Number(headers['x-slack-request-timestamp']))).toBe(headers['x-slack-signature']);
     // Not selected (Any Event is the Events API only): acknowledged, no run.
     const skipped = await deliver(staticData, form, { headers: formHeaders, parameters: { ...PARAMETERS, events: ['*'] } });
     expect(skipped.items).toBeUndefined();

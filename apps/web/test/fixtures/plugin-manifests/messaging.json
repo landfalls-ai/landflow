@@ -928,7 +928,7 @@
       {
        "name": "Get",
        "value": "get",
-       "description": "A user by member ID, with their email (users.info; the email needs users:read.email)",
+       "description": "A user by member ID, with their email (users.info; the email needs users:read.email) and whether they are a guest, from another organization or deactivated",
        "action": "Get a user",
        "idempotent": true
       },

@@ -14,27 +14,48 @@ import {
   unsupported,
   type ApiContext,
   type LandledgerCredentials,
+  type LandledgerRelayCredentials,
 } from '../shared';
 
 const ICON = 'file:landledger.svg';
 export const COLOR = '#2F7D5B';
 const DOCS = 'https://github.com/landfalls-ai/landflow/blob/main/plugins/landledger/README.md';
 
+const baseUrlProperty = {
+  name: 'baseUrl',
+  displayName: 'Base URL',
+  type: 'string' as const,
+  required: true,
+  default: DEFAULT_BASE_URL,
+  placeholder: 'http://127.0.0.1:4810',
+  description: 'Landledger\'s API. On the OrbStack cluster the default; on this machine http://127.0.0.1:4810',
+};
+
+/** Scopes no flow key needs beside decisions:relay (Landledger refuses a relay key with requests:write or admin). */
+const NOT_WITH_RELAY = ['requests:write', 'reservations:write', 'webhooks:write', 'ingest', 'admin'];
+
+/** `GET /api/health` and `GET /api/auth/me`: the version, the key's name and id, its scopes. */
+async function whoIs(ctx: { http: ApiContext['http'] }, data: LandledgerCredentials | LandledgerRelayCredentials) {
+  const client = new Landledger({ http: ctx.http }, data);
+  const health = await client.health();
+  const me = await client.me();
+  const scopes = Array.isArray(me.scopes) ? me.scopes.map(String) : [];
+  const who = `Landledger${health.version ? ` ${health.version}` : ''} as ${me.user?.name ?? me.kind}${me.kind === 'key' && me.user?.id ? ` (key ${me.user.id})` : ''}`;
+  return { scopes, who };
+}
+
+/**
+ * The key for everything but relays: `read` and `requests:write` for the Landledger node (`reservations:write` to
+ * reserve), `webhooks:write` for a Landledger Trigger to subscribe itself. Give the trigger its own credential with a
+ * `webhooks:write` key, and relays their own (Landledger Relay Key).
+ */
 export const landledgerApi = defineCredentialType<LandledgerCredentials>({
   name: 'landledgerApi',
   displayName: 'Landledger API (ll_…)',
   icon: ICON,
   documentationUrl: DOCS,
   properties: [
-    {
-      name: 'baseUrl',
-      displayName: 'Base URL',
-      type: 'string',
-      required: true,
-      default: DEFAULT_BASE_URL,
-      placeholder: 'http://127.0.0.1:4810',
-      description: 'Landledger\'s API. On the OrbStack cluster the default; on this machine http://127.0.0.1:4810',
-    },
+    baseUrlProperty,
     {
       name: 'apiKey',
       displayName: 'API Key',
@@ -44,7 +65,7 @@ export const landledgerApi = defineCredentialType<LandledgerCredentials>({
       default: '',
       placeholder: 'll_…',
       description:
-        'A Landledger API key (ll_…). Scopes: read for budgets, spend, requests and periods; requests:write to raise requests; reservations:write to reserve and release; decisions:relay to relay a person\'s decision; admin for the trigger to register its webhook',
+        'A Landledger API key (ll_…). For the Landledger node: read, and requests:write to raise requests (reservations:write to reserve and release). For a Landledger Trigger, a key of its own with only webhooks:write, so it subscribes itself on publish. Never decisions:relay: relays take a Landledger Relay Key credential',
     },
     {
       name: 'webhookSecret',
@@ -54,16 +75,55 @@ export const landledgerApi = defineCredentialType<LandledgerCredentials>({
       default: '',
       placeholder: 'whsec_…',
       description:
-        'Optional. The secret of a webhook subscription a Landledger admin made for the Landledger Trigger\'s URL. Set, the trigger registers nothing and checks deliveries with it; empty, the trigger subscribes itself on publish (the key needs admin)',
+        'Optional. The secret of a webhook subscription a Landledger admin made for the Landledger Trigger\'s URL. Set, the trigger registers nothing and checks deliveries with it; empty, the trigger subscribes itself on publish (the key needs webhooks:write) and keeps the secret Landledger returns, never shown',
     },
   ],
   async test(data, ctx) {
     try {
-      const client = new Landledger({ http: ctx.http }, data);
-      const health = await client.health();
-      const me = await client.me();
-      const scopes = Array.isArray(me.scopes) ? me.scopes.join(', ') : '';
-      return { ok: true, message: `Connected to Landledger${health.version ? ` ${health.version}` : ''} as ${me.user?.name ?? me.kind}${scopes ? ` (${scopes})` : ''}` };
+      const { scopes, who } = await whoIs(ctx, data);
+      const warnings: string[] = [];
+      if (scopes.includes('decisions:relay')) warnings.push('this key also holds decisions:relay: relays take their own key (a Landledger Relay Key credential), so the key that raises a request never carries its approval');
+      if (scopes.includes('admin')) warnings.push('admin is more than a flow needs (read and requests:write for the node, webhooks:write for a trigger)');
+      return { ok: true, message: `Connected to ${who}: ${scopes.join(', ') || 'no scopes'}${warnings.map((w) => `. Warning: ${w}`).join('')}` };
+    } catch (error) {
+      return { ok: false, message: (error as Error).message };
+    }
+  },
+});
+
+/**
+ * The relay key: `decisions:relay` only. Decision → Relay carries a person's signed Slack press to Landledger, which
+ * verifies it and decides as the person who linked that Slack user; the key never names who decided.
+ */
+export const landledgerRelayApi = defineCredentialType<LandledgerRelayCredentials>({
+  name: 'landledgerRelayApi',
+  displayName: 'Landledger Relay Key (decisions:relay)',
+  icon: ICON,
+  documentationUrl: DOCS,
+  properties: [
+    baseUrlProperty,
+    {
+      name: 'apiKey',
+      displayName: 'Relay Key',
+      type: 'string',
+      required: true,
+      typeOptions: { password: true },
+      default: '',
+      placeholder: 'll_…',
+      description: 'A Landledger API key with decisions:relay and nothing else (Landledger refuses a relay key with requests:write or admin; this test refuses any other write scope)',
+    },
+  ],
+  async test(data, ctx) {
+    try {
+      const { scopes, who } = await whoIs(ctx, data);
+      const list = scopes.join(', ') || 'no scopes';
+      if (!scopes.includes('decisions:relay')) return { ok: false, message: `Connected to ${who}, but the key has no decisions:relay (${list}): it can't relay a press` };
+      const extra = scopes.filter((s) => NOT_WITH_RELAY.includes(s));
+      if (extra.length) {
+        return { ok: false, message: `Connected to ${who}, but a relay key must hold decisions:relay only; this one also holds ${extra.join(', ')}. Ask a Landledger admin for a key with decisions:relay alone` };
+      }
+      const others = scopes.filter((s) => s !== 'decisions:relay');
+      return { ok: true, message: `Connected to ${who}: ${list}${others.length ? `. Warning: a relay needs only decisions:relay; this key also holds ${others.join(', ')}` : ''}` };
     } catch (error) {
       return { ok: false, message: (error as Error).message };
     }
@@ -98,7 +158,7 @@ const REQUEST_KINDS = [
 const EVIDENCE_HELP =
   'Any JSON object (≤ 64 kB) shown beside the request. Keys Landledger\'s console shows: lines ([{ label, amount }], the cost change), basis (how it was sized), links ([{ label, url }]), match (which real cost consumes the reservation: namespace, workload, service, agent, workflow, provider, model…, * wildcards)';
 
-const personHint = 'Their Landbright email (or `sub`); Landledger finds the person';
+const personHint = 'Their Landbright email (or `sub`); Landledger finds the person and asks them to confirm the request in their own session';
 
 const requestId = (resource: string, operation: string[]): PropertyDescriptor => ({
   name: 'requestId',
@@ -114,7 +174,7 @@ export const LandledgerNode = defineNode({
   description: {
     name: 'landledger',
     displayName: 'Landledger',
-    description: 'Check a cost center\'s budget, query spend, raise and read spend requests, reserve and release budget, read a month\'s status, and relay a person\'s approval in Landledger',
+    description: 'Check a cost center\'s budget, query spend, raise and read spend requests, reserve and release budget, read a month\'s status, and relay a person\'s signed Slack approval to Landledger',
     version: 1,
     kind: 'action',
     categories: ['Finance', 'Productivity'],
@@ -130,7 +190,11 @@ export const LandledgerNode = defineNode({
       'Landledger, the cost ledger: check what a cost center has left this month after actuals and reservations (and whether a planned amount fits), query spend grouped by cost center, team, service, agent, model…, raise a spend request (an agent always names its sponsor, the accountable person) and read its status and evidence, reserve or release budget for an approved request, and read whether a month is open, closing or locked. Agents request; people decide: no tool here approves or rejects.',
     inputs: [{ type: 'main' }],
     outputs: [{ type: 'main' }],
-    credentials: [{ name: 'landledgerApi', required: true }],
+    // Relays take their own key (decisions:relay only); everything else the flow's key.
+    credentials: [
+      { name: 'landledgerApi', required: true, displayOptions: { hide: { resource: ['decision'] } } },
+      { name: 'landledgerRelayApi', required: true, displayOptions: { show: { resource: ['decision'] } } },
+    ],
     properties: [
       {
         name: 'resource',
@@ -143,6 +207,7 @@ export const LandledgerNode = defineNode({
           { name: 'Cost', value: 'cost' },
           // A person's decision, carried by a flow (Slack, Teams, email). Never a tool: not for agents or MCP.
           { name: 'Decision', value: 'decision', mcp: false },
+          { name: 'Key', value: 'key' },
           { name: 'Period', value: 'period' },
           { name: 'Request', value: 'request' },
           { name: 'Reservation', value: 'reservation' },
@@ -224,13 +289,31 @@ export const LandledgerNode = defineNode({
         displayName: 'Operation',
         type: 'options',
         noDataExpression: true,
+        default: 'me',
+        displayOptions: { show: { resource: ['key'] } },
+        options: [
+          {
+            name: 'Who Am I',
+            value: 'me',
+            description: 'The key this node uses: its id (what a request\'s createdBy.id names when this key raised it), name and scopes',
+            action: 'Get the key\'s identity',
+            idempotent: true,
+            toolAnnotations: { readOnlyHint: true },
+          },
+        ],
+      },
+      {
+        name: 'operation',
+        displayName: 'Operation',
+        type: 'options',
+        noDataExpression: true,
         default: 'relay',
         displayOptions: { show: { resource: ['decision'] } },
         options: [
           {
             name: 'Relay',
             value: 'relay',
-            description: 'Carry a person\'s approve or reject (pressed in Slack, Teams or an email) to Landledger, in their name. For flows only: refused when an agent or an MCP client calls it',
+            description: 'Carry a person\'s signed Slack press to Landledger as Slack sent it; Landledger verifies it and decides as the person who linked that Slack user. For flows only: refused when an agent or an MCP client calls it',
             action: 'Relay a decision',
             mcp: false,
           },
@@ -239,7 +322,7 @@ export const LandledgerNode = defineNode({
       {
         name: 'notice',
         displayName:
-          'Decision → Relay carries a person\'s own decision: the key needs decisions:relay, and Landledger checks that the person is among the step\'s approvers and is not the requester or the sponsor. An agent never decides: this operation is refused when the node runs as an AI tool or over MCP.',
+          'Decision → Relay carries a press exactly as Slack sent it (the Slack Trigger\'s Button Pressed rawBody and headers) with a key that holds only decisions:relay. Landledger checks Slack\'s signature with the relay channel\'s signing secret, the team and the app, finds the person who linked that Slack user from their own session, and decides as them only on the budget owner\'s step of an infra change, AI budget, tool or seat, or other request. The flow never names who decided. An agent never decides: this operation is refused when the node runs as an AI tool or over MCP.',
         type: 'notice',
         default: '',
         displayOptions: { show: { resource: ['decision'] } },
@@ -419,78 +502,79 @@ export const LandledgerNode = defineNode({
       { name: 'month', displayName: 'Month', type: 'string', default: '', placeholder: '2026-11', displayOptions: show('period', ['getStatus']), description: 'YYYY-MM. Empty: this month (UTC)' },
 
       // ---- Decision → Relay
-      requestId('decision', ['relay']),
-      {
-        name: 'outcome',
-        displayName: 'Outcome',
-        type: 'options',
-        default: 'approve',
-        options: [
-          { name: 'Approve', value: 'approve' },
-          { name: 'Reject', value: 'reject', description: 'Needs a comment of 3 characters or more' },
-        ],
-        displayOptions: show('decision', ['relay']),
-      },
-      {
-        name: 'person',
-        displayName: 'Person',
-        type: 'string',
-        required: true,
-        default: '',
-        placeholder: 'amit.gal@landbright.test',
-        displayOptions: show('decision', ['relay']),
-        description: `Who decided: the person who pressed the button. ${personHint}`,
-      },
-      {
-        name: 'evidenceSha256',
-        displayName: 'Evidence SHA-256',
-        type: 'string',
-        required: true,
-        default: '',
-        displayOptions: show('decision', ['relay']),
-        description: 'The evidenceSha256 of what the person was shown (request.step_pending carries it, as does Request → Get)',
-      },
-      { name: 'comment', displayName: 'Comment', type: 'string', default: '', displayOptions: show('decision', ['relay']), description: 'Why (required to reject)' },
-      { name: 'step', displayName: 'Step', type: 'number', default: 0, typeOptions: { minValue: 0, numberPrecision: 0 }, displayOptions: show('decision', ['relay']), description: 'The step the person saw (1-based; Landledger answers 409 if the request moved on). 0: not checked' },
       {
         name: 'channel',
         displayName: 'Channel',
         type: 'options',
         default: 'slack',
-        options: [
-          { name: 'Slack', value: 'slack' },
-          { name: 'Microsoft Teams', value: 'teams' },
-          { name: 'Email', value: 'email' },
-          { name: 'Landflow', value: 'landflow' },
-        ],
+        options: [{ name: 'Slack', value: 'slack', description: 'A Block Kit button press (block_actions) on a Landledger card' }],
         displayOptions: show('decision', ['relay']),
-        description: 'Where the person decided',
+        description: 'Where the person pressed. Only Slack is a relay channel in Landledger so far',
+      },
+      {
+        name: 'slackBody',
+        displayName: 'Slack Request Body',
+        type: 'string',
+        required: true,
+        default: '{{ $json.rawBody }}',
+        displayOptions: show('decision', ['relay']),
+        description: 'The interaction exactly as Slack sent it (form-encoded payload=…): the Slack Trigger\'s Button Pressed rawBody. Never rebuilt: Landledger checks Slack\'s signature over these bytes',
+      },
+      {
+        name: 'slackSignature',
+        displayName: 'X-Slack-Signature',
+        type: 'string',
+        required: true,
+        default: "{{ $json.headers['x-slack-signature'] }}",
+        displayOptions: show('decision', ['relay']),
+      },
+      {
+        name: 'slackTimestamp',
+        displayName: 'X-Slack-Request-Timestamp',
+        type: 'string',
+        required: true,
+        default: "{{ $json.headers['x-slack-request-timestamp'] }}",
+        displayOptions: show('decision', ['relay']),
+        description: 'Landledger refuses a press older than 5 minutes',
+      },
+      {
+        name: 'relayChannelId',
+        displayName: 'Relay Channel ID',
+        type: 'string',
+        default: '',
+        displayOptions: show('decision', ['relay']),
+        description: 'The relay channel registered in Landledger (Settings → Relay channels). Empty: the one whose team and app match the press',
       },
     ],
   },
   async execute(ctx) {
     const api: ApiContext = { http: ctx.http, ...(ctx.signal && { signal: ctx.signal }) };
-    const client = new Landledger(api, ctx.getCredentials<LandledgerCredentials>('landledgerApi'));
+    // The flow's key, read only when an operation needs it (a relay node has the relay key instead).
+    let flowClient: Landledger | undefined;
+    const client = () => (flowClient ??= new Landledger(api, ctx.getCredentials<LandledgerCredentials>('landledgerApi')));
     return mapItems(ctx, async (i) => {
       const resource = ctx.getNodeParameter<string>('resource', i);
       const operation = ctx.getNodeParameter<string>('operation', i);
       switch (resource) {
         case 'budget':
           if (operation !== 'check') break;
-          return checkBudget(ctx, client, i);
+          return checkBudget(ctx, client(), i);
         case 'cost':
           if (operation !== 'query') break;
-          return querySpend(ctx, client, i);
+          return querySpend(ctx, client(), i);
         case 'request':
-          return requestOperation(ctx, client, operation, i);
+          return requestOperation(ctx, client(), operation, i);
         case 'reservation':
-          return reservationOperation(ctx, client, operation, i);
+          return reservationOperation(ctx, client(), operation, i);
         case 'period':
           if (operation !== 'getStatus') break;
-          return periodStatus(ctx, client, i);
+          return periodStatus(ctx, client(), i);
         case 'decision':
           if (operation !== 'relay') break;
-          return relayDecision(ctx, client, i);
+          return relayDecision(ctx, api, i);
+        case 'key':
+          if (operation !== 'me') break;
+          return whoAmI(client());
       }
       throw unsupported(resource, operation);
     });
@@ -631,9 +715,17 @@ export function createBody(ctx: IExecuteContext, i: number): JsonObject {
       : { kind: 'person', person: personRef(requireString(ctx, 'requester', 'Requester', i)) };
 
   const workflowId = ctx.getWorkflowId();
+  // The origin is how a flow finds its own requests again (and what a key bound to the workflow vouches for): an
+  // unsaved workflow has no id to give, so it raises nothing rather than a made-up one.
+  if (!workflowId || workflowId === 'unsaved') {
+    throw new NodeOperationError('Save the workflow before it raises a Landledger request', {
+      itemIndex: i,
+      description: 'Landledger keeps the workflow and the run as the request\'s origin; an unsaved workflow has no id yet.',
+    });
+  }
   const origin: JsonObject = {
     type: 'landflow_run',
-    workflowId: workflowId || 'unsaved',
+    workflowId,
     executionId: ctx.getExecutionId(),
     ...(text('runUrl') && { url: text('runUrl') }),
     ...(text('originTitle') && { title: text('originTitle').slice(0, 300) }),
@@ -682,26 +774,35 @@ async function periodStatus(ctx: IExecuteContext, client: Landledger, i: number)
   return period ? { ...period, known: true } : { month, status: 'open', known: false, openedAt: null, closingBy: null, closingAt: null, lockedBy: null, lockedAt: null };
 }
 
-async function relayDecision(ctx: IExecuteContext, client: Landledger, i: number): Promise<JsonObject> {
+/** `GET /api/auth/me` for the node's key: compare `id` with a request's `createdBy.id` to know this key raised it. */
+async function whoAmI(client: Landledger): Promise<JsonObject> {
+  const me = await client.me();
+  return { kind: me.kind, id: me.user?.id ?? null, name: me.user?.name ?? null, scopes: Array.isArray(me.scopes) ? me.scopes : [] };
+}
+
+async function relayDecision(ctx: IExecuteContext, api: ApiContext, i: number): Promise<JsonObject> {
   if (byAgent(ctx)) {
     throw new NodeOperationError('Decision → Relay is for flows only: an agent never decides', {
       itemIndex: i,
-      description: 'A person decides in Landledger\'s console, or presses a button a flow relays in their name.',
+      description: 'A person decides in Landledger\'s console, or presses a button whose signed press a flow relays.',
     });
   }
-  const outcome = String(ctx.getNodeParameter('outcome', i, 'approve'));
-  if (outcome !== 'approve' && outcome !== 'reject') throw new NodeOperationError(`Outcome "${outcome}" is not approve or reject`, { itemIndex: i });
-  const comment = optionalString(ctx, 'comment', i).slice(0, 2000);
-  if (outcome === 'reject' && comment.length < 3) throw new NodeOperationError('Say why it is rejected: a comment of 3 characters or more', { itemIndex: i });
-  const sha = requireString(ctx, 'evidenceSha256', 'Evidence SHA-256', i).toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(sha)) throw new NodeOperationError('Evidence SHA-256 must be 64 hex characters', { itemIndex: i });
-  const step = Math.trunc(Number(ctx.getNodeParameter('step', i, 0)) || 0);
-  return client.relayDecision(requireString(ctx, 'requestId', 'Request ID', i), {
-    outcome,
-    comment,
-    evidenceSha256: sha,
-    ...(step > 0 && { step }),
-    person: personRef(requireString(ctx, 'person', 'Person', i)),
-    channel: String(ctx.getNodeParameter('channel', i, 'slack')),
-  });
+  const channel = String(ctx.getNodeParameter('channel', i, 'slack'));
+  if (channel !== 'slack') throw new NodeOperationError(`Channel "${channel}" is not a relay channel (only slack)`, { itemIndex: i });
+  // Exactly the bytes Slack signed: no trimming, no re-encoding.
+  const raw = ctx.getNodeParameter<unknown>('slackBody', i, '');
+  const body = typeof raw === 'string' ? raw : '';
+  if (!body) {
+    throw new NodeOperationError('Slack Request Body is empty', {
+      itemIndex: i,
+      description: 'Use the Slack Trigger\'s Button Pressed item: rawBody, with headers x-slack-signature and x-slack-request-timestamp.',
+    });
+  }
+  const signature = optionalString(ctx, 'slackSignature', i);
+  if (!/^v0=[0-9a-f]{64}$/.test(signature)) throw new NodeOperationError('X-Slack-Signature must be v0=<64 hex characters>, as Slack sent it', { itemIndex: i });
+  const timestamp = optionalString(ctx, 'slackTimestamp', i);
+  if (!/^\d{1,12}$/.test(timestamp)) throw new NodeOperationError('X-Slack-Request-Timestamp must be Unix seconds, as Slack sent it', { itemIndex: i });
+  const channelId = optionalString(ctx, 'relayChannelId', i);
+  const relay = new Landledger(api, ctx.getCredentials<LandledgerRelayCredentials>('landledgerRelayApi'));
+  return relay.relaySlack({ body, signature, timestamp, ...(channelId && { channelId }) });
 }

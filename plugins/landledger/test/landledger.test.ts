@@ -1,13 +1,16 @@
 /**
- * The Landledger node and credential against the fake API: each operation's request and output, the rules a flow and
- * an agent meet (a sponsor for an agent, no decision from an agent or MCP), exact amounts, errors with hints.
+ * The Landledger node and its two credentials against the fake API: each operation's request and output, the rules a
+ * flow and an agent meet (a sponsor for an agent, a person named by a key confirms, no decision from an agent or MCP,
+ * a relay is the raw signed Slack press with a relay-only key), exact amounts, errors with hints.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { JsonObject } from '@landflow/sdk';
 import { LandledgerNode } from '../src/nodes/landledger';
 import { amountParameter, fromMicros, toMicros } from '../src/shared';
-import { KEY, READ_KEY, startFakeLandledger, type FakeLandledger } from './fake-landledger';
-import { credentials, jsonOf, run, testCredentials, type RequestOptions } from './helpers';
+import { executeRequest, extras } from './helpers';
+import { runNode } from '@landflow/sdk';
+import { KEY, MIXED_RELAY_KEY, READ_KEY, RELAY_KEY, SLACK_CHANNEL, startFakeLandledger, WEBHOOKS_KEY, type FakeLandledger } from './fake-landledger';
+import { credentials, jsonOf, relayCredentials, run, slackPress, testCredentials, type RequestOptions } from './helpers';
 
 let fake: FakeLandledger;
 beforeAll(async () => {
@@ -36,19 +39,41 @@ const CREATE: JsonObject = {
 };
 
 describe('credential', () => {
-  it('checks health without the key, then who the key is and its scopes', async () => {
+  it('checks health without the key, then who the key is (its id) and its scopes', async () => {
     const result = await testCredentials({ baseUrl: `${fake.url}/`, apiKey: KEY });
-    expect(result).toMatchObject({ ok: true, message: 'Connected to Landledger 0.2.0 as Landflow flows (read, requests:write, reservations:write, decisions:relay)' });
+    expect(result).toEqual({ ok: true, message: 'Connected to Landledger 0.2.0 as Landflow flows (key key_flows): read, requests:write, reservations:write' });
     expect(fake.requests.map((r) => [r.method, r.path, r.headers.authorization])).toEqual([
       ['GET', '/api/health', undefined],
       ['GET', '/api/auth/me', `Bearer ${KEY}`],
     ]);
+    expect((await testCredentials({ baseUrl: fake.url, apiKey: WEBHOOKS_KEY })).message).toBe('Connected to Landledger 0.2.0 as Landflow webhooks (key key_hooks): webhooks:write');
+  });
+
+  it('warns when the flows\' key also holds decisions:relay', async () => {
+    const result = await testCredentials({ baseUrl: fake.url, apiKey: MIXED_RELAY_KEY });
+    expect(result.ok).toBe(true);
+    expect(result.message).toMatch(/read, requests:write, decisions:relay\. Warning: this key also holds decisions:relay: relays take their own key/);
   });
 
   it('fails with the 401 hint on a wrong key', async () => {
     const result = await testCredentials({ baseUrl: fake.url, apiKey: 'll_wrong' });
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/401: Invalid API key/);
+  });
+});
+
+describe('relay credential', () => {
+  it('passes a key with decisions:relay alone', async () => {
+    expect(await testCredentials({ baseUrl: fake.url, apiKey: RELAY_KEY }, 'landledgerRelayApi')).toEqual({ ok: true, message: 'Connected to Landledger 0.2.0 as Landflow relay (key key_relay): decisions:relay' });
+  });
+
+  it('refuses a relay key that also holds requests:write, and a key without decisions:relay', async () => {
+    const mixed = await testCredentials({ baseUrl: fake.url, apiKey: MIXED_RELAY_KEY }, 'landledgerRelayApi');
+    expect(mixed.ok).toBe(false);
+    expect(mixed.message).toMatch(/a relay key must hold decisions:relay only; this one also holds requests:write/);
+    const flows = await testCredentials({ baseUrl: fake.url, apiKey: KEY }, 'landledgerRelayApi');
+    expect(flows).toMatchObject({ ok: false });
+    expect(flows.message).toMatch(/has no decisions:relay/);
   });
 });
 
@@ -140,11 +165,27 @@ describe('Request', () => {
       submit: true,
       idempotencyKey: 'ex_test:n1:0:0',
     });
-    expect(jsonOf(response)[0]).toMatchObject({ created: true, request: { id: 'req_1', status: 'pending' } });
+    // A key naming a person: it waits on that person's confirmation; Landledger stamps who raised it and whether the origin is vouched for.
+    expect(jsonOf(response)[0]).toMatchObject({
+      created: true,
+      request: { id: 'req_1', status: 'awaiting_confirmation', createdBy: { kind: 'key', id: 'key_flows' }, origin: { workflowId: 'wf_test', verified: false } },
+    });
     // A retried step sends the same key: Landledger answers the first request (200), nothing is raised twice.
     const again = jsonOf(await call(CREATE, { idempotencyKey: 'ex_test:n1:0' }))[0];
     expect(again).toMatchObject({ created: false, request: { id: 'req_1' } });
     expect(fake.state.requests.size).toBe(1);
+  });
+
+  it('an unsaved workflow raises nothing (no made-up origin); the same idempotency key with another body is a 409', async () => {
+    for (const workflowId of ['', 'unsaved']) {
+      const response = await runNode(LandledgerNode, { ...executeRequest('landledger', CREATE, { credentials: credentials(fake) }), workflowId }, extras);
+      expect(response.error?.message).toBe('Save the workflow before it raises a Landledger request');
+    }
+    expect(fake.requests).toHaveLength(0);
+    await call({ ...CREATE, requestFields: { idempotencyKey: 'same' } });
+    const changed = await call({ ...CREATE, amount: '2000', requestFields: { idempotencyKey: 'same' } });
+    expect(changed.error?.message).toBe('Landledger API error 409: This idempotency key came with another body');
+    expect(changed.error?.description).toMatch(/idempotency key came back with a different body/);
   });
 
   it('an agent raises it as itself with its sponsor, and can\'t raise it in a person\'s name', async () => {
@@ -212,53 +253,84 @@ describe('Period → Status', () => {
   });
 });
 
+describe('Key → Who Am I', () => {
+  it('names the node\'s key: the id a request\'s createdBy carries, its name and scopes', async () => {
+    expect(jsonOf(await call({ resource: 'key', operation: 'me' }))).toEqual([{ kind: 'key', id: 'key_flows', name: 'Landflow flows', scopes: ['read', 'requests:write', 'reservations:write'] }]);
+  });
+});
+
 describe('Decision → Relay', () => {
-  const relay = (overrides: JsonObject = {}) => ({
+  /** A pending request (confirmed by its requester) and the hash Landledger served for it. */
+  async function pending() {
+    await call(CREATE);
+    fake.state.requests.get('req_1').status = 'pending';
+    const detail = jsonOf(await call({ resource: 'request', operation: 'get', requestId: 'req_1' }))[0];
+    return { value: `ll1|req_1|1|${detail.evidenceSha256}`, sha: String(detail.evidenceSha256) };
+  }
+  const relay = (press: { body: string; signature: string; timestamp: string }, overrides: JsonObject = {}) => ({
     resource: 'decision',
     operation: 'relay',
-    requestId: 'req_1',
-    outcome: 'approve',
-    person: 'Amit.Gal@landbright.test',
-    evidenceSha256: 'a'.repeat(64),
-    step: 1,
     channel: 'slack',
+    slackBody: press.body,
+    slackSignature: press.signature,
+    slackTimestamp: press.timestamp,
     ...overrides,
   });
+  const relayCall = (parameters: JsonObject, options: Omit<RequestOptions, 'credentials'> & { key?: string } = {}) =>
+    run(LandledgerNode, parameters, { credentials: relayCredentials(fake, options.key), ...options });
 
-  it('carries the person\'s decision with the evidence hash and the channel', async () => {
-    await call(CREATE);
-    const response = await call(relay());
-    expect(last()).toMatchObject({
-      method: 'POST',
-      path: '/api/requests/req_1/decisions',
-      body: { outcome: 'approve', comment: '', evidenceSha256: 'a'.repeat(64), step: 1, person: { email: 'amit.gal@landbright.test' }, channel: 'slack' },
+  it('carries the press exactly as Slack sent it, with the relay key; Landledger decides as the person who linked that Slack user', async () => {
+    const { value, sha } = await pending();
+    const press = slackPress({ user: 'U_AMIT', value });
+    const response = await relayCall(relay(press, { relayChannelId: SLACK_CHANNEL.id }));
+    expect(response.error).toBeUndefined();
+    expect(last()).toMatchObject({ method: 'POST', path: '/api/relays/slack' });
+    expect(last().headers.authorization).toBe(`Bearer ${RELAY_KEY}`);
+    expect(last().body).toEqual({ body: press.body, signature: press.signature, timestamp: press.timestamp, channelId: SLACK_CHANNEL.id });
+    expect(jsonOf(response)[0]).toMatchObject({
+      request: { status: 'approved' },
+      decision: { via: 'relay', channel: 'slack', person: { email: 'amit.gal@landbright.test' }, evidenceSha256: sha, relay: { externalUserId: 'U_AMIT' } },
     });
-    expect(jsonOf(response)[0]).toMatchObject({ request: { status: 'approved' }, decision: { via: 'relay', channel: 'slack' } });
   });
 
   it('is refused when an agent or an MCP client calls it', async () => {
+    const press = slackPress({ value: `ll1|req_1|1|${'a'.repeat(64)}` });
     for (const mode of ['tool', 'mcp'] as const) {
-      const response = await call(relay(), { mode });
+      const response = await relayCall(relay(press), { mode });
       expect(response.error?.message).toBe('Decision → Relay is for flows only: an agent never decides');
     }
     expect(fake.requests).toHaveLength(0);
   });
 
-  it('a reject needs a reason; Landledger refuses someone outside the step or the requester', async () => {
-    await call(CREATE);
-    expect((await call(relay({ outcome: 'reject', comment: 'no' }))).error?.message).toMatch(/comment of 3 characters/);
-    expect((await call(relay({ evidenceSha256: 'xyz' }))).error?.message).toMatch(/64 hex/);
-    const outsider = await call(relay({ person: 'tal.levi@landbright.test' }));
-    expect(outsider.error?.message).toBe('Landledger API error 403: tal.levi@landbright.test is not among this step\'s approvers');
-    expect((await call(relay({ person: 'eden.tzur@landbright.test' }))).error?.message).toMatch(/requester can't decide/);
-    const rejected = jsonOf(await call(relay({ outcome: 'reject', comment: 'Use the reserved instance' })))[0];
-    expect((rejected.request as JsonObject).status).toBe('rejected');
+  it('checks the press is whole before calling: the body, the signature and the timestamp as Slack sent them', async () => {
+    const press = slackPress({ value: `ll1|req_1|1|${'a'.repeat(64)}` });
+    expect((await relayCall(relay(press, { slackBody: '' }))).error?.message).toBe('Slack Request Body is empty');
+    expect((await relayCall(relay(press, { slackSignature: 'v1,abc' }))).error?.message).toMatch(/v0=<64 hex/);
+    expect((await relayCall(relay(press, { slackTimestamp: 'yesterday' }))).error?.message).toMatch(/Unix seconds/);
+    expect(fake.requests).toHaveLength(0);
+  });
+
+  it('Landledger refuses a bad signature, another team, an unlinked user, someone outside the step, the requester, a stale card and a Finance step', async () => {
+    const { value } = await pending();
+    const forged = await relayCall(relay(slackPress({ value, secret: 'not-the-channel-secret' })));
+    expect(forged.error?.message).toMatch(/^Landledger API error 401: The Slack signature does not match/);
+    expect(forged.error?.description).toMatch(/Slack's signature/);
+    expect((await relayCall(relay(slackPress({ value, team: 'T_ELSEWHERE' })))).error?.message).toMatch(/401: Another Slack team or app/);
+    expect((await relayCall(relay(slackPress({ value, user: 'U_NOBODY' })))).error?.message).toMatch(/403: This Slack user is not linked/);
+    expect((await relayCall(relay(slackPress({ value, user: 'U_TAL' })))).error?.message).toMatch(/403: This step is for Budget Owners; tal\.levi@landbright\.test isn't in it/);
+    expect((await relayCall(relay(slackPress({ value, user: 'U_EDEN' })))).error?.message).toMatch(/requester can't decide/);
+    const stale = await relayCall(relay(slackPress({ value: `ll1|req_1|1|${'c'.repeat(64)}` })));
+    expect(stale.error?.message).toBe('Landledger API error 409: The request changed or the evidence is stale; reopen it');
+    expect(stale.error?.description).toMatch(/served more than 30 minutes ago/);
+    fake.state.requests.get('req_1').steps[0].key = 'finance';
+    expect((await relayCall(relay(slackPress({ value })))).error?.message).toMatch(/403: Only the budget owner's step is decided through a relay/);
+    expect(fake.state.requests.get('req_1').status).toBe('pending');
   });
 
   it('a key without decisions:relay is refused by Landledger', async () => {
-    await call(CREATE);
-    const response = await call(relay(), { key: READ_KEY });
-    expect(response.error?.message).toMatch(/403: An API key without decisions:relay/);
+    const { value } = await pending();
+    const response = await relayCall(relay(slackPress({ value })), { key: READ_KEY });
+    expect(response.error?.message).toBe('Landledger API error 403: This needs the decisions:relay scope');
   });
 });
 

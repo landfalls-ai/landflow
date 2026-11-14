@@ -1,18 +1,28 @@
 import { defineNode, NodeOperationError, type IWebhookMethodContext, type JsonObject } from '@landflow/sdk';
 import { Landledger } from '../client';
 import type { LandledgerCredentials } from '../shared';
-import { TOLERANCE_SECONDS, verifyStandardWebhook } from '../signature';
+import { MAX_TOLERANCE_SECONDS, TOLERANCE_SECONDS, toleranceOf, verifyStandardWebhook } from '../signature';
 import { COLOR } from './landledger';
 
 /** The events the trigger offers (Landledger's docs/reference/api.md, "Webhook events"). */
-export const EVENTS = ['request.step_pending', 'request.decided', 'request.applied', 'budget.at_risk', 'period.closing', 'request.created'] as const;
+export const EVENTS = [
+  'request.step_pending',
+  'request.decided',
+  'request.applied',
+  'budget.at_risk',
+  'period.closing',
+  'request.created',
+  'request.needs_confirmation',
+  'decision.relayed',
+  'report.exceptions',
+] as const;
 /** What a new trigger listens to. */
 export const DEFAULT_EVENTS = ['request.step_pending', 'request.decided', 'request.applied', 'budget.at_risk', 'period.closing'];
 
 const NOTICE =
-  'Publishing the workflow subscribes it in Landledger (POST /api/webhooks; Landledger lets only an admin key manage webhooks) and keeps the signing secret for you; unpublishing deletes the subscription. ' +
-  'Without an admin key, have a Landledger admin add a webhook for this node\'s URL (Publish menu → App webhooks) with these events, and put its whsec_ secret in the credential\'s Webhook Signing Secret: then nothing is registered. ' +
-  'Landledger must reach Landflow at the published URL (LANDFLOW_PUBLIC_URL). Every delivery is checked against its Standard Webhooks signature.';
+  'Give this trigger its own Landledger credential, with a key that holds only webhooks:write: publishing the workflow subscribes it in Landledger (POST /api/webhooks) and keeps the signing secret Landledger returns once, never shown; unpublishing deletes the subscription. ' +
+  'Or have a Landledger admin add a webhook for this node\'s URL (Publish menu → App webhooks) with these events, and put its whsec_ secret in the credential\'s Webhook Signing Secret: then nothing is registered. ' +
+  'Landledger must reach Landflow at the published URL (LANDFLOW_PUBLIC_URL). Every delivery is checked against its Standard Webhooks signature, at most 5 minutes old.';
 
 interface Stored extends JsonObject {
   id: string;
@@ -42,16 +52,18 @@ const listOf = (value: unknown) =>
 
 /**
  * Landledger's webhooks: one item per delivery, the event's `data` (for request events `request`, a RequestSummary;
- * `request.step_pending` adds `step`, `approvers`, `url` and `evidenceSha256`; `request.decided` adds `outcome`,
- * `decision` and `reservations`) plus `type`, `id`, `timestamp`, and `requestId`, `kind` and `costCenter` lifted out
- * of the request, for joining a flow that raised it. The `webhook-id` header (stable across Landledger's retries) is
- * the idempotency key.
+ * `request.step_pending` adds `step`, `approvers`, `url`, `evidenceSha256` and `relayable`; `request.decided` adds
+ * `outcome`, `decision` and `reservations`; `request.needs_confirmation` adds `person`, `createdBy` and `url`;
+ * `decision.relayed` adds `decision`, `person`, `channel` and `url`; `report.exceptions` is the stored report's id,
+ * sha256, window, rows and url) plus `type`, `id`, `timestamp`, and `requestId`, `kind` and `costCenter` lifted out of
+ * the request, for joining a flow that raised it. The `webhook-id` header (stable across Landledger's retries) is the
+ * idempotency key.
  */
 export const LandledgerTrigger = defineNode({
   description: {
     name: 'landledgerTrigger',
     displayName: 'Landledger Trigger',
-    description: 'Starts the workflow when a Landledger request waits on its approvers, is decided or applied, a budget is at risk, or a month starts closing (a signed webhook)',
+    description: 'Starts the workflow when a Landledger request waits on its approvers or on a person\'s confirmation, is decided (also through a relay) or applied, a budget is at risk, a month starts closing, or the exceptions report is stored (a signed webhook)',
     version: 1,
     kind: 'trigger',
     triggerSource: 'appWebhook',
@@ -78,6 +90,13 @@ export const LandledgerTrigger = defineNode({
           { name: 'Budget at Risk', value: 'budget.at_risk', description: 'A cost center crossed into at risk or over in a month' },
           { name: 'Period Closing', value: 'period.closing', description: 'A month starts closing' },
           { name: 'Request Created', value: 'request.created', description: 'A request was submitted' },
+          {
+            name: 'Request Needs Confirmation',
+            value: 'request.needs_confirmation',
+            description: 'A key raised a request naming a person (requester or sponsor): they confirm it in Landledger before it goes to approvers',
+          },
+          { name: 'Decision Relayed', value: 'decision.relayed', description: 'A person\'s press in a relay channel (Slack) was recorded as their decision' },
+          { name: 'Exceptions Report', value: 'report.exceptions', description: 'The weekly exceptions report was stored, with its sha256' },
         ],
       },
       { name: 'kinds', displayName: 'Request Kinds', type: 'string', default: '', placeholder: 'infra_change, ai_budget', description: 'Only requests of these kinds (comma-separated; empty: every kind). Events without a request pass' },
@@ -94,8 +113,8 @@ export const LandledgerTrigger = defineNode({
             displayName: 'Signature Tolerance (s)',
             type: 'number',
             default: TOLERANCE_SECONDS,
-            typeOptions: { minValue: 0 },
-            description: 'How far the signed webhook-timestamp may be from now before the call is rejected as a replay',
+            typeOptions: { minValue: 0, maxValue: MAX_TOLERANCE_SECONDS },
+            description: `How far the signed webhook-timestamp may be from now before the call is rejected as a replay (at most ${MAX_TOLERANCE_SECONDS} s)`,
           },
         ],
       },
@@ -149,13 +168,12 @@ export const LandledgerTrigger = defineNode({
     const data = ctx.getStaticData<Stored>();
     const secret = manualSecret(credentials) || String(data.secret ?? '');
     const options = (ctx.getNodeParameter<JsonObject>('options', {}) ?? {}) as JsonObject;
-    const tolerance = Number(options.tolerance ?? TOLERANCE_SECONDS);
     const id = ctx.getHeader('webhook-id');
     const valid = verifyStandardWebhook(
       secret,
       ctx.getRawBody(),
       { id, timestamp: ctx.getHeader('webhook-timestamp'), signature: ctx.getHeader('webhook-signature') },
-      { toleranceSeconds: Number.isFinite(tolerance) && tolerance >= 0 ? tolerance : TOLERANCE_SECONDS },
+      { toleranceSeconds: toleranceOf(options.tolerance) },
     );
     if (!valid) {
       ctx.logger.warn('rejected a call with a missing, invalid or stale Landledger signature');

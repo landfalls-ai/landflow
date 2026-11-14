@@ -18,6 +18,12 @@ export interface LandledgerCredentials extends JsonObject {
   webhookSecret: string;
 }
 
+/** The relay key's credential (`landledgerRelayApi`): a key with `decisions:relay` and nothing that raises or administers. */
+export interface LandledgerRelayCredentials extends JsonObject {
+  baseUrl: string;
+  apiKey: string;
+}
+
 /**
  * Where Landledger's API answers from inside the OrbStack cluster (the credential's default): the ExternalName Service
  * `landledger-api` in `landflow-dev` (deploy/k8s/components/landledger) pointing at Landledger on this machine.
@@ -105,7 +111,7 @@ export function errorDetail(response: ApiResponse): string {
 }
 
 /** The scope each kind of call needs, for the 403 hint (Landledger's docs/reference/api.md). */
-export type Scope = 'read' | 'requests:write' | 'reservations:write' | 'decisions:relay' | 'admin';
+export type Scope = 'read' | 'requests:write' | 'reservations:write' | 'decisions:relay' | 'webhooks:write' | 'ingest' | 'admin';
 
 /** "Landledger API error 403: …" with a hint for the errors people hit. */
 export function landledgerError(response: ApiResponse, hints: { scope?: Scope } = {}): NodeOperationError {
@@ -116,16 +122,21 @@ export function landledgerError(response: ApiResponse, hints: { scope?: Scope } 
       description = 'Landledger refused the request: check the fields (amounts are decimal strings, months YYYY-MM, days YYYY-MM-DD, a known cost center).';
       break;
     case 401:
-      description = 'Landledger rejected the API key. It is a Landledger key (ll_…, made by an admin under /api/keys), not a Landflow lf_ key.';
+      description =
+        'Landledger rejected the API key (a Landledger key, ll_…, made by an admin person under /api/keys, not a Landflow lf_ key), or, for a relayed press, Slack\'s signature, its age (5 minutes), the team or the app.';
       break;
     case 403:
-      description = `The key or the person may not do this${hints.scope ? ` (the key needs ${hints.scope})` : ''}. A decision is refused for the requester, the sponsor, someone not among the step's approvers, or a relay without the person.`;
+      description = `The key or the person may not do this${hints.scope ? ` (the key needs ${hints.scope})` : ''}. A relayed press is refused for a Slack user nobody linked, a step other than the budget owner's, the requester, the sponsor, or someone not among the step's approvers.`;
       break;
     case 404:
       description = 'Check the id: the request, reservation or webhook does not exist (or is gone).';
       break;
     case 409:
-      description = 'The request or the month has moved on (another step is pending, the month is closing or locked, or the request is no longer pending).';
+      description =
+        'The request or the month has moved on (another step is pending, the month is closing or locked, the request is no longer pending), the evidence a decision cites is stale (served more than 30 minutes ago: show the request again), or an idempotency key came back with a different body.';
+      break;
+    case 422:
+      description = 'Landledger understood the request but can\'t take it yet (only USD until FX is set up).';
       break;
     case 429:
       description = 'Landledger is rate-limiting this key; try again shortly.';

@@ -1263,8 +1263,16 @@ Landflow's side of Landledger, the land family's cost subledger ([features/landl
 Checked live on 2026-11-14 against Landledger's wave 2 ([features/landledger.md](features/landledger.md#checked-live)):
 the credential, the infra change form and the Slack relay path's refusal.
 
-**Next:** a live webhook delivery (a Landledger admin registers the trigger's URL);
-a Teams and an email card for the relay; Mark Applied wired to a real apply step in the infra flow.
+**Review (2026-11-15), against Landledger's contract `c3c0115`:** keys split per use (requests, webhooks, a relay key
+with `decisions:relay` only) with scope-reporting credential tests; Decision → Relay sends the raw signed Slack press so
+Landledger verifies the presser; the infra flow's requester confirms in Landledger and the flow acts only on its own
+key's approved request from one of its runs; the AI budget flow raises by the approved amount, once per agent a month,
+with an hourly reconcile; the Slack flow relays only presses on cards it recorded, from its team and app, by members,
+and keeps Try again on outages; the trigger's tolerance is held to 300 s and it takes the three new events.
+
+**Next:** the live check against `c3c0115` (a `webhooks:write` subscription and a signed `request.needs_confirmation`
+delivery); Slack's reject modal (`view_submission`); a Teams and an email card for the relay; Mark Applied wired to a
+real apply step in the infra flow.
 
 ## The Brain page (built 2026-11-12)
 

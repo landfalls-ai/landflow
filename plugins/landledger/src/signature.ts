@@ -8,6 +8,15 @@
 import { DEFAULT_SIGNATURE_TOLERANCE_SECONDS, hmacSha256, safeEqual } from '@landflow/sdk';
 
 export const TOLERANCE_SECONDS = DEFAULT_SIGNATURE_TOLERANCE_SECONDS;
+/** The most a node may allow: a wider window would let a captured delivery be replayed for longer. */
+export const MAX_TOLERANCE_SECONDS = 300;
+
+/** A tolerance option as the verifier takes it: a number from 0 to 300 s; anything else is the default. */
+export function toleranceOf(value: unknown): number {
+  const n = Number(value ?? TOLERANCE_SECONDS);
+  if (!Number.isFinite(n) || n < 0) return TOLERANCE_SECONDS;
+  return Math.min(n, MAX_TOLERANCE_SECONDS);
+}
 
 export interface WebhookHeaders {
   id?: string | null;

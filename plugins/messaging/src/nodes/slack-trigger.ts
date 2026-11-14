@@ -238,7 +238,13 @@ export const SlackTrigger = defineNode({
     // Interactivity: a button press arrives as a form field `payload` (getBody unwraps it), signed like events.
     if (body?.type === 'block_actions') {
       if (!selected.includes('block_actions')) return ignored('block_actions');
-      const item = buttonPress(body);
+      // The press exactly as Slack signed it (the form body and the two headers), so a service that verifies Slack
+      // itself (Landledger's relays) can check it again rather than trust this item.
+      const item = buttonPress(body, {
+        rawBody: ctx.getRawBody().toString('utf8'),
+        signature: ctx.getHeader('x-slack-signature') ?? '',
+        timestamp: ctx.getHeader('x-slack-request-timestamp') ?? '',
+      });
       if (!(await channelAllowed(ctx, credentials, (item.channel as string | null) ?? undefined))) return ignored('channel');
       // trigger_id is unique per press: a repeated delivery of the same press starts one run.
       return { items: [item], ...(typeof body.trigger_id === 'string' && { idempotencyKey: `block_actions:${body.trigger_id}` }) };
@@ -304,12 +310,20 @@ async function channelAllowed(ctx: IWebhookContext, credentials: SlackCredential
   return true;
 }
 
+/** A press as Slack sent it: the raw (form-encoded) body and its signature headers. */
+export interface SignedPress {
+  rawBody: string;
+  signature: string;
+  timestamp: string;
+}
+
 /**
- * A `block_actions` payload as one item: who pressed (`user`, the member ID; `userName`), the first action's
- * `actionId` and `value` (the button's value, as the app set it), every action, where the message is (`channel`,
- * `messageTs`) and the `responseUrl` to answer through, with the whole payload in `raw`.
+ * A `block_actions` payload as one item: who pressed (`user`, the member ID; `userName`; `userTeamId`, their home
+ * team), the first action's `actionId` and `value` (the button's value, as the app set it), every action, where the
+ * message is (`channel`, `messageTs`) and the `responseUrl` to answer through, with the whole payload in `raw`. Given
+ * the signed request, `rawBody` and `headers` (`x-slack-signature`, `x-slack-request-timestamp`) keep it as received.
  */
-export function buttonPress(body: JsonObject): JsonObject {
+export function buttonPress(body: JsonObject, signed?: SignedPress): JsonObject {
   const user = asObject(body.user);
   const container = asObject(body.container);
   const message = asObject(body.message);
@@ -321,6 +335,7 @@ export function buttonPress(body: JsonObject): JsonObject {
     apiAppId: asString(body.api_app_id) ?? null,
     user: idOf(user) ?? null,
     userName: asString(user?.username) ?? asString(user?.name) ?? null,
+    userTeamId: asString(user?.team_id) ?? null,
     channel: asString(container?.channel_id) ?? idOf(body.channel) ?? null,
     messageTs: asString(container?.message_ts) ?? asString(message?.ts) ?? null,
     actionId: asString(first?.action_id) ?? null,
@@ -331,5 +346,9 @@ export function buttonPress(body: JsonObject): JsonObject {
     triggerId: asString(body.trigger_id) ?? null,
     text: asString(message?.text) ?? '',
     raw: body,
+    ...(signed && {
+      rawBody: signed.rawBody,
+      headers: { 'x-slack-signature': signed.signature, 'x-slack-request-timestamp': signed.timestamp },
+    }),
   };
 }

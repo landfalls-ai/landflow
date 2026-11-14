@@ -17,8 +17,15 @@ describe('manifest', () => {
     ]);
     for (const icon of [manifest.plugin.icon, ...manifest.nodes.map((n) => n.icon), ...(manifest.credentialTypes ?? []).map((c) => c.icon)]) expect(icon).toMatch(/^data:image\/svg\+xml;base64,/);
     expect(JSON.stringify(manifest)).not.toContain('file:');
-    const [credential] = manifest.credentialTypes ?? [];
+    const [credential, relay] = manifest.credentialTypes ?? [];
     expect(credential).toMatchObject({ name: 'landledgerApi', testable: true });
+    expect(relay).toMatchObject({ name: 'landledgerRelayApi', testable: true });
+    expect(relay.properties.find((p) => p.name === 'apiKey')?.typeOptions?.password).toBe(true);
+    // A relay takes the relay key; every other operation the flows' key.
+    expect(manifest.nodes[0].credentials).toEqual([
+      { name: 'landledgerApi', required: true, displayOptions: { hide: { resource: ['decision'] } } },
+      { name: 'landledgerRelayApi', required: true, displayOptions: { show: { resource: ['decision'] } } },
+    ]);
     expect(credential.properties.find((p) => p.name === 'apiKey')?.typeOptions?.password).toBe(true);
     expect(credential.properties.find((p) => p.name === 'webhookSecret')?.typeOptions?.password).toBe(true);
     expect(credential.properties.find((p) => p.name === 'baseUrl')?.default).toBe('http://landledger-api.landflow-dev.svc.cluster.local:4810');
@@ -34,6 +41,7 @@ describe('MCP tools', () => {
     expect(tools.map((t) => t.name).sort()).toEqual([
       'budget_check',
       'cost_query',
+      'key_me',
       'period_getStatus',
       'request_create',
       'request_get',
@@ -45,7 +53,7 @@ describe('MCP tools', () => {
   });
 
   it('read-only hints on exactly the reads', () => {
-    expect(tools.filter((t) => t.annotations.readOnlyHint).map((t) => t.name).sort()).toEqual(['budget_check', 'cost_query', 'period_getStatus', 'request_get', 'request_list']);
+    expect(tools.filter((t) => t.annotations.readOnlyHint).map((t) => t.name).sort()).toEqual(['budget_check', 'cost_query', 'key_me', 'period_getStatus', 'request_get', 'request_list']);
   });
 
   it('request_create asks for the agent and its sponsor', () => {

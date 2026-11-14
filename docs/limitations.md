@@ -129,23 +129,23 @@ items still open (its "Wave 6" section); this page is the short list to check be
 ## Landledger (built 2026-11-14)
 
 - **No live webhook delivery yet.** Against Landledger's wave 2 (`f78f8fc`) the credential, the infra change form (a
-  pending request with the run as its origin) and the Slack relay path (a non-approver refused) ran live; a Landledger
-  webhook could not be registered, because the key has no `admin` ([features/landledger.md](features/landledger.md#checked-live)).
-- **A webhook secret made by an admin serves one trigger.** Landledger makes a secret per webhook, and the credential
-  holds one, so each Landledger Trigger without an admin key needs a credential of its own.
-- **Webhooks need an admin key or a hand-made subscription.** Landledger lets only an `admin` key manage webhooks, so
-  the trigger either gets one or uses the `whsec_` secret of a webhook an admin made, and Landledger must reach
-  `LANDFLOW_PUBLIC_URL`: on the OrbStack cluster that URL is cluster-internal, so Landledger on the Mac needs a port
-  forward to deliver.
+  pending request with the run as its origin) and the Slack relay path (a non-approver refused) ran live; the trigger's
+  subscription with a `webhooks:write` key waits on Landledger's `c3c0115` contract running and its keys
+  ([features/landledger.md](features/landledger.md#checked-live)).
+- **A webhook secret made by an admin serves one trigger.** Without a `webhooks:write` key, each Landledger Trigger
+  needs a credential of its own holding the `whsec_` secret of a webhook an admin made.
 - **The infra change flow applies nothing.** **Apply the change** is a placeholder; the flow posts the outcome to Slack
   and leaves Request → Mark Applied to whoever fills it in.
-- **The AI budget flow holds an agent with unpublished edits.** Publishing would ship the edits with the new cap, so
-  such an agent waits for a person. Its Settings code nodes hold Landflow's own URL (the HTTP Request nodes call
-  Landflow's API with an `lf_` key), set by hand per instance.
-- **Slack identity is the Slack email.** The approver flow relays a press as the person whose Slack profile email it
-  is (`users:read.email`); Landledger decides whether that person may decide. A Slack workspace whose emails are not the
-  Landbright ones cannot relay. A card shows what Landledger showed when it was sent; if the request changed since,
-  Landledger refuses the relayed decision and the card says so.
+- **The infra form's requester is a claim.** Landflow's form trigger has no signed-in user, so the form names the
+  person who asks and Landledger holds the request until that person confirms it; a flow can't raise a request in a
+  person's name on its own.
+- **The AI budget flow raises automatically once per agent a month,** and holds an agent with unpublished edits
+  (publishing would ship them); a publish that fails three times is held for a person. Its Settings code nodes hold
+  Landflow's own URL, set by hand per instance.
+- **Slack decides only the budget owner's step, and only approves.** Landledger relays only that step, and a reject
+  needs a comment, which a button can't carry: the card's Reject opens Landledger (Slack's modal is not built). The
+  flow's Slack team and app ids (`SLACK_TEAM_ID`, `SLACK_APP_ID` in **Check the press**) are set by hand, and
+  Landledger's Slack relay channel must hold the same signing secret as the Slack credential.
 - **No knowledge kind.** Landledger has no explain or search route, so the plugin is not offered as an agent's knowledge
   base.
 

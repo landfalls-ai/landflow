@@ -3,7 +3,7 @@
  * libs/contracts/src/requests.ts), over the shared HTTP client. Nothing here reads node parameters.
  */
 import { NodeOperationError, type JsonObject } from '@landflow/sdk';
-import { baseUrl, expectOk, fetchLandledger, type ApiContext, type ApiResponse, type LandledgerCredentials, type Scope } from './shared';
+import { baseUrl, expectOk, fetchLandledger, type ApiContext, type ApiResponse, type LandledgerCredentials, type LandledgerRelayCredentials, type Scope } from './shared';
 
 interface RequestOptions {
   query?: Record<string, string | number | boolean | undefined>;
@@ -18,7 +18,7 @@ export class Landledger {
   readonly base: string;
   constructor(
     private readonly api: ApiContext,
-    private readonly credentials: LandledgerCredentials,
+    private readonly credentials: LandledgerCredentials | LandledgerRelayCredentials,
   ) {
     this.base = baseUrl(credentials.baseUrl);
   }
@@ -90,9 +90,12 @@ export class Landledger {
     return this.json<JsonObject>('POST', `/api/requests/${enc(id)}/applied`, { body, scope: 'requests:write' });
   }
 
-  /** `POST /api/requests/:id/decisions` with a `decisions:relay` key: `{ request, decision }`. */
-  relayDecision(id: string, body: JsonObject) {
-    return this.json<{ request: JsonObject; decision: JsonObject }>('POST', `/api/requests/${enc(id)}/decisions`, { body, scope: 'decisions:relay' });
+  /**
+   * `POST /api/relays/slack` with a `decisions:relay` key: the raw Slack interaction (body and signature headers as
+   * Slack sent them). Landledger verifies it and decides as the person who linked that Slack user: `{ request, decision }`.
+   */
+  relaySlack(body: { body: string; signature: string; timestamp: string; channelId?: string }) {
+    return this.json<{ request: JsonObject; decision: JsonObject }>('POST', '/api/relays/slack', { body, scope: 'decisions:relay' });
   }
 
   /** `POST /api/reservations`: 201 for a new reservation, 200 when that month's exists. */
@@ -108,19 +111,21 @@ export class Landledger {
     return (answer?.reservation && typeof answer.reservation === 'object' ? answer.reservation : answer) as JsonObject;
   }
 
+  /** A `webhooks:write` key lists only the subscriptions it created. */
   webhooks() {
-    return this.json<{ webhooks: JsonObject[] }>('GET', '/api/webhooks', { scope: 'admin' });
+    return this.json<{ webhooks: JsonObject[] }>('GET', '/api/webhooks', { scope: 'webhooks:write' });
   }
 
+  /** Answers with the `whsec_` signing secret, once. */
   createWebhook(body: { url: string; events: string[]; description: string }) {
-    return this.json<JsonObject>('POST', '/api/webhooks', { body, scope: 'admin' });
+    return this.json<JsonObject>('POST', '/api/webhooks', { body, scope: 'webhooks:write' });
   }
 
   /** Delete a webhook; true when it was there, false when it was already gone (404). */
   async deleteWebhook(id: string): Promise<boolean> {
     const response = await this.raw('DELETE', `/api/webhooks/${enc(id)}`);
     if (response.status === 404) return false;
-    expectOk(response, { scope: 'admin' });
+    expectOk(response, { scope: 'webhooks:write' });
     return true;
   }
 }
