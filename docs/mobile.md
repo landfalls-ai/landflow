@@ -143,9 +143,10 @@ On a phone, what floats on a desktop rises from the bottom or takes the screen:
 
 ## Settings and agents
 
-- **Settings** is a list on a phone: each section as a row with its hint (Time zone and execution retention, $vars for
-  expressions…). A tap opens it alone, with **‹ Settings** to go back; the address keeps its `#section`, so a link to
-  `/settings#users` opens Users. A desktop keeps the sections beside the page.
+- **Settings** is five group cards on a phone (Workspace, People & access, Governance, AI, Infrastructure), each
+  section a row in its card with its hint (Time zone and execution retention, $vars for expressions…). A tap opens it alone, with **‹ Settings** to go back; the address keeps its `#section`, so a link to
+  `/settings#users` opens Users. A desktop keeps the sections beside the page. The audit log's dates take a row of
+  their own, and its table drops the Who column: the actor is a line under each event's summary.
 - **An agent's page** keeps its header on screen as you scroll, and every change saves itself (its ✓ is read out as
   *Saved* on a phone), so there is no Save to reach for.
 
