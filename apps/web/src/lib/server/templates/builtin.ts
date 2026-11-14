@@ -12,6 +12,7 @@ import { NODE_TILE, NODE_WIDE_TILE, frameAround, nodeBox } from '../../shared/gr
 import { BUILTIN_TEAM_TEMPLATES } from './builtin-teams';
 // B30:
 import { brainTemplates } from './builtin-brain';
+import { workGithubTemplates } from './builtin-work-github'; // B31:
 import type { AgentTeamConfig } from '../../shared/agent-teams';
 import type { AgentConfig } from '../../shared/agents';
 import type { TemplateBundle, TemplateCategory, TemplateCredentialSlot, TemplateDataTable, TemplateDetail } from '../../shared/templates';
@@ -1125,9 +1126,13 @@ const WORK_TEMPLATES: TemplateDetail[] = [
 ];
 
 /** Every built-in template: the workflows above, the work ingest ones, then the agent teams. */
+// B31: GitHub into the brain
+const WORK_GITHUB_TEMPLATES = workGithubTemplates({ template, node, main, slot: SLOT.github });
+
 export const BUILTIN_TEMPLATES: TemplateDetail[] = [
   ...WORKFLOW_TEMPLATES,
   ...WORK_TEMPLATES,
+  ...WORK_GITHUB_TEMPLATES,
   ...BUILTIN_TEAM_TEMPLATES,
   // B30:
   ...brainTemplates({ template, node, main, daily, SLOT }),

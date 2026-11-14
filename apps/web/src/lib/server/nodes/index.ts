@@ -48,6 +48,7 @@ import { chatTrigger, errorTrigger, manualTrigger, scheduleTrigger, webhookTrigg
 import { executeWorkflowNode } from './workflows';
 import { findRunbookNode } from './runbooks';
 import { runReportNode } from './run-report';
+import { githubWorkEventNode } from './github-work'; // B31:
 
 export const corePlugin = definePlugin({
   info: {
@@ -105,6 +106,7 @@ export const corePlugin = definePlugin({
     landflowUsageNode,
     recordEventNode,
     brainEntityNode,
+    githubWorkEventNode, // B31:
     findSimilarNode,
     usageTriggerNode,
     suggestionDecidedTriggerNode,

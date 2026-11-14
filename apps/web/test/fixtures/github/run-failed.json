@@ -1,0 +1,36 @@
+{
+  "event": "workflow_run",
+  "action": "completed",
+  "deliveryId": "d-run-failed",
+  "body": {
+    "action": "completed",
+    "workflow_run": {
+      "id": 7001,
+      "name": "CI",
+      "conclusion": "failure",
+      "run_attempt": 2,
+      "head_sha": "abc1234def5678",
+      "head_branch": "retry-sync",
+      "html_url": "https://github.com/acme-demo/widgets/actions/runs/7001",
+      "run_started_at": "2026-11-10T09:10:00Z",
+      "updated_at": "2026-11-10T09:14:30Z",
+      "actor": {
+        "login": "octo-dev"
+      },
+      "pull_requests": [
+        {
+          "number": 42
+        }
+      ]
+    },
+    "repository": {
+      "full_name": "acme-demo/widgets"
+    },
+    "sender": {
+      "login": "octo-dev"
+    }
+  },
+  "headers": {
+    "x-github-event": "workflow_run"
+  }
+}

@@ -404,7 +404,9 @@ shows up in the ledger and can start other flows.
   `sourceId`, `url`, `actor`, `title`, `summary`, `team`, `initiative`, `customer`, `occurredAt`). `pnpm brain:work-kinds
   [url]` declares them all on an instance (again: it updates them), signing in with `LANDFLOW_API_KEY` or the owner in
   `LANDFLOW_OWNER_EMAIL` / `LANDFLOW_OWNER_PASSWORD`. The [work ingest templates](features/integrations.md#work-ingest-templates)
-  record into them.
+  record into them. The GitHub kinds (`work.pr_closed`, `work.pr_reviewed`, `work.review_requested`, `work.ci_failed`,
+  `work.ci_passed`) list their own fields (`repo`, `prNumber`, `state`, `reviewState`, `ciConclusion`, `ciDurationMs`, `ciAttempt`,
+  `waitedMs`); see [GitHub into the brain](features/integrations.md#github-into-the-brain).
 
 #### Flow detectors
 

@@ -41,7 +41,7 @@ export interface RejectedWork {
   reason: string;
 }
 
-/** The fields every work kind declares (deploy/brain/work-kinds.json holds the same list for the declare script). */
+/** The fields the tools' work kinds declare (deploy/brain/work-kinds.json holds the same list for the declare script; the GitHub-only kinds list their own there). */
 export const WORK_FIELDS: UsageKindField[] = [
   { name: 'source', type: 'string', required: true, description: 'The tool the work was done in: claude-code, landflow-cli, mcp…' },
   { name: 'sourceId', type: 'string', required: true, description: 'Stable id of this item in its tool (sending it again updates it)' },
@@ -68,7 +68,7 @@ const KIND_NOTES: Record<string, string> = {
 };
 
 /** The kinds the route may declare itself (the `kinds` of deploy/brain/work-kinds.json). Any other needs an admin to declare it. */
-export const DECLARABLE_KINDS = new Set(['work.discussion', 'work.decision', 'work.bug_reported', 'work.release', 'work.deal_won', 'work.deal_moved', 'work.meeting_scheduled', 'work.meeting_held', 'work.meeting_cancelled', 'work.meeting_notes', 'work.action_item', 'work.doc_edited', 'work.ticket_moved', 'work.feature_request', 'work.pr_opened', 'work.pr_merged', 'work.self_update', 'work.session']);
+export const DECLARABLE_KINDS = new Set(['work.discussion', 'work.decision', 'work.bug_reported', 'work.release', 'work.deal_won', 'work.deal_moved', 'work.meeting_scheduled', 'work.meeting_held', 'work.meeting_cancelled', 'work.meeting_notes', 'work.action_item', 'work.doc_edited', 'work.ticket_moved', 'work.feature_request', 'work.pr_opened', 'work.pr_merged', 'work.pr_closed', 'work.pr_reviewed', 'work.review_requested', 'work.ci_failed', 'work.ci_passed', 'work.self_update', 'work.session']);
 
 /** Declare a listed work kind the first time a tool sends it (the Record Event declare path, usage/kinds.ts). */
 function ensureKind(kind: string, actor: Actor) {

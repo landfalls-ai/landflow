@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Declares the work.* event kinds the activity integrations suggest (deploy/brain/work-kinds.json) on a Landflow
- * instance, through POST /api/usage/kinds. Safe to run again: a declared kind gets the catalogue's description and
+ * instance, through POST /api/usage/kinds (a kind may list its own `fields`; the others use the shared ones). Safe to run again: a declared kind gets the catalogue's description and
  * fields (events already recorded stay).
  *
  *   node deploy/scripts/declare-work-kinds.mjs [url]      # default http://127.0.0.1:3000
@@ -29,8 +29,8 @@ async function headers() {
 
 const auth = await headers();
 let failed = 0;
-for (const { kind, description } of catalogue.kinds) {
-  const response = await fetch(`${url}/api/usage/kinds`, { method: 'POST', headers: auth, body: JSON.stringify({ kind, description, fields: catalogue.fields }) });
+for (const { kind, description, fields } of catalogue.kinds) {
+  const response = await fetch(`${url}/api/usage/kinds`, { method: 'POST', headers: auth, body: JSON.stringify({ kind, description, fields: fields ?? catalogue.fields }) });
   const verb = response.status === 201 ? 'declared' : response.status === 200 ? 'updated ' : `failed (HTTP ${response.status}: ${await response.text()})`;
   if (!response.ok) failed++;
   console.log(`${verb}  ${kind}`);

@@ -12,12 +12,12 @@ the work was, where (a repository, directory names) and how much (commits, pull 
 file contents, file names or absolute paths. Clients redact before they send, and the host redacts every text again
 (emails, tokens, long numbers).
 
-An unknown `work.*` kind is rejected ("Unknown work kind; an admin can declare it"); `POST /api/brain/work` declares only the 18 listed kinds itself.
+An unknown `work.*` kind is rejected ("Unknown work kind; an admin can declare it"); `POST /api/brain/work` declares only the 23 listed kinds itself.
 
 An event is a row in the [usage ledger](second-brain.md#1-the-usage-ledger) with a `work.*` kind. The kind
 `work.session` is declared the first time a tool sends it, with the same fields as the other `work.*` kinds
 (`deploy/brain/work-kinds.json`). `work.pr_opened` and `work.pr_merged` now come from the `claude-code`, `landflow-cli`
-and `mcp` sources too, not only from Git host integrations.
+and `mcp` sources too, not only from Git host integrations. GitHub itself is a source: the `work-github` template records `work.pr_opened`, `work.pr_merged`, `work.pr_closed`, `work.pr_reviewed`, `work.review_requested`, `work.ci_failed` and `work.ci_passed` ([GitHub into the brain](features/integrations.md#github-into-the-brain)).
 
 ## Who sends them
 

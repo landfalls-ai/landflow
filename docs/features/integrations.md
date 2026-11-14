@@ -48,15 +48,53 @@ from the name, so the same customer from Slack and Drive is one entity):
 | `work-linear` | Linear Trigger (webhook) | `work.bug_reported`, `work.feature_request`, `work.ticket_moved`, `work.release`, `work.self_update`, `work.discussion` |
 | `work-attio` | Attio Trigger (webhook) | `work.deal_moved`, `work.deal_won`, `work.discussion` (notes), `work.action_item` (tasks) |
 | `work-fathom` | Fathom Trigger (webhook, transcripts off) | `work.meeting_held`, `work.action_item` (one item per action item) |
+| `work-github` | GitHub Webhook Trigger (webhook, productivity plugin) → GitHub to Work Event | `work.pr_opened`, `work.pr_merged`, `work.pr_closed`, `work.pr_reviewed`, `work.review_requested`, `work.ci_failed`, `work.ci_passed`; the repository as a `system` |
 | `work-google-directory` | Schedule, daily at 6 → Google Directory → Entity | none: each person as a `person` entity keyed by email, with title, department, org unit and manager |
 
 Declare the kinds first with `pnpm brain:work-kinds` (the templates' fallback declares a kind from the first event's fields,
-all optional). The events and entities show on the [Brain page](../second-brain.md#the-brain-page): a page per person, customer and
+all optional; for `work-github` prefer the script, since the fallback drops any field the first event leaves unset). The events and entities show on the [Brain page](../second-brain.md#the-brain-page): a page per person, customer and
 initiative with its work, and what two or more teams worked on this week.
 
 The Linear, Attio and Fathom templates also ship as marketplace flows (`plugins/<name>/flows/work-<name>.json`, exported
 from the built-in ones) with their plugins in the repository's marketplace (`.claude-plugin/marketplace.json`), so an
 instance that doesn't run those plugins can install one with its flow from **Marketplace**. An instance that runs them
 already (`pnpm dev:all`, compose) has the built-in templates and needs no install.
+
+## GitHub into the brain
+
+`work-github` ("Work from GitHub into the second brain") turns GitHub deliveries into work events, so pull requests, reviews
+and CI that happen outside Claude Code show up in the brain. The flow is the productivity plugin's **GitHub Webhook Trigger**
+(events `pull_request`, `pull_request_review`, `workflow_run`, `status`), then **GitHub to Work Event**, then **Record work
+event**, and the repository kept as a `system` entity.
+
+**GitHub to Work Event** (`core.githubWorkEvent`) reads a trigger item (the `x-github-event` header and the body) and outputs
+zero or one flat item. Anything else, such as a push, a comment, a label or a pending status, outputs nothing.
+
+| Delivery | Kind | `sourceId` |
+|---|---|---|
+| Pull request opened | `work.pr_opened` | `<repo>#<pr>:opened` |
+| Pull request closed and merged | `work.pr_merged` | `<repo>#<pr>:merged` |
+| Pull request closed, not merged | `work.pr_closed` | `<repo>#<pr>:closed` |
+| Review requested | `work.review_requested` | `<repo>#<pr>:review_requested:<reviewer>` |
+| Review submitted (approved, changes requested, commented) | `work.pr_reviewed` | `<repo>#<pr>:reviewed:<review id>` |
+| Workflow run completed (success; failure, timed out) | `work.ci_passed`, `work.ci_failed` | `<repo>#<pr>:<kind>:<run id>:<attempt>` |
+| Commit status (success; failure, error) | `work.ci_passed`, `work.ci_failed` | `<repo>@<sha7>:<kind>:<status id>:1` |
+
+The `sourceId` is stable, and the trigger starts no second run for a redelivery (its `X-GitHub-Delivery` key). Record Event itself does not replace an earlier event with the same `sourceId`, so running a pinned delivery again records it again. A review also carries `waitedMs`
+(from the pull request's creation to the review) and a CI result carries its conclusion, duration and attempt, recorded as
+`ciConclusion`, `ciDurationMs` and `ciAttempt` because event attributes are flat.
+
+**Recorded:** repository, pull request number and link, title, state, a review's state, timing, CI results, and the first
+300 characters of a pull request's description (emails and secrets redacted). **Never recorded:** diffs, code, commit
+contents, file names, or what a review or comment says.
+
+**People.** Set **People** on the node to a JSON table of GitHub login to email, such as `{"octo-dev": "dev@example.com"}`. Only
+that table sets the event's actor email, so person pages match; without it the actor is the login.
+
+**Setup.** The productivity plugin must run. The token needs `admin:repo_hook` (or fine-grained Webhooks read and write) on the
+repository, and Landflow must be reachable from GitHub, because publishing registers the webhook. To try it without GitHub,
+pin a delivery on the trigger and run the flow. Declare the kinds with `pnpm brain:work-kinds`, not the first-event fallback (it keeps only the fields the first event sets, and `POST /api/brain/work` declares the shared fields). The five GitHub-only kinds list
+their own fields in `deploy/brain/work-kinds.json` (a kind declares at most 20), so `work.pr_opened` and `work.pr_merged`,
+which keep the shared fields for the tools that also send them, drop `prNumber`, `state` and the like.
 
 **App webhook triggers.** A node with `triggerSource: "appWebhook"` registers a webhook at the service when its workflow is published and removes it when it is unpublished, so events arrive as they happen instead of on a poll. The TypeScript, Go and Python SDKs check GitHub (`X-Hub-Signature-256`), Stripe (`Stripe-Signature`, with a timestamp tolerance) and Slack (`X-Slack-Signature`) signatures in constant time ([docs/protocol.md §12](../protocol.md#12-app-webhook-triggers)).
