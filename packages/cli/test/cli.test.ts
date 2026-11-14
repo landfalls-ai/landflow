@@ -342,3 +342,10 @@ describe('data tables and variables', () => {
     expect((await cli(['variables', 'delete', 'API_BASE', '--json'])).code).toBe(3);
   });
 });
+
+describe('plural', () => {
+  it('counts words, with -ies after a consonant and y', async () => {
+    const { plural } = await import('../src/output');
+    expect([plural(0, 'entry'), plural(1, 'entry'), plural(2, 'entry'), plural(3, 'workflow'), plural(2, 'key'), plural(1, 'node')]).toEqual(['0 entries', '1 entry', '2 entries', '3 workflows', '2 keys', '1 node']);
+  });
+});
