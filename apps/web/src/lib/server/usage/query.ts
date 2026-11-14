@@ -42,6 +42,11 @@ export interface UsageScope {
   // (A caller that writes shared output from inside a request must pass `system: true`, or the signed-in caller's own work leaks into it.)
   /** A reader that works for the instance, not for a person (the study, detectors, a flow): it never sees private work. */
   system?: true;
+  /**
+   * A system reader whose output reaches one person's team only (a teammate's briefing, the overlap detector): it also
+   * reads `team` work of the people who share a project with this user. Without it a system reader sees `org` alone.
+   */
+  teamOf?: string;
 }
 
 /** An ISO time from `from`/`to` (ISO or YYYY-MM-DD), else `fallback`. */
@@ -79,10 +84,13 @@ const viewerOf = (scope: UsageScope | undefined): string | undefined => (scope?.
 /**
  * The one visibility rule of the ledger (docs/work-and-briefings.md): a row with no owner is the platform's, seen by the
  * workflows and agents the scope covers; a row someone owns is seen by its owner and, when shared with the whole
- * organization (`org`), by everyone. `team` counts as private until teams are linked to people. Nobody else reads a
- * private row, owners and admins included, so this holds with no scope at all.
+ * organization (`org`), by everyone; shared with a team (`team`), by the people who share a non-personal project with
+ * its owner. Nobody else reads a private row, owners and admins included, so this holds with no scope at all.
  */
-function scopeClause(scope: UsageScope | undefined, where: string[], params: SqlValue[], timeColumn: 'at' | 'day' = 'at') {
+/** The owners whose `team` work `userId` reads: the members of every non-personal project `userId` is in. */
+const TEAMMATES_SQL = `SELECT m2.user_id FROM project_members m1 JOIN project_members m2 ON m1.project_id = m2.project_id WHERE m1.user_id = ? AND substr(m1.project_id, 1, 9) <> 'personal_'`;
+
+export function scopeClause(scope: UsageScope | undefined, where: string[], params: SqlValue[], timeColumn: 'at' | 'day' = 'at') {
   const inner: SqlValue[] = [];
   const cover = coverClause(scope, inner);
   // `usage_daily` rolls up only unowned and shared rows (rollupDays) and has no owner column.
@@ -94,8 +102,12 @@ function scopeClause(scope: UsageScope | undefined, where: string[], params: Sql
     return;
   }
   const viewer = viewerOf(scope);
-  where.push(`(owner_id IS NULL${cover ? ` AND ${cover}` : ''} OR (owner_id IS NOT NULL AND (visibility = 'org'${viewer ? ' OR owner_id = ?' : ''})))`);
-  params.push(...inner, ...(viewer ? [viewer] : []));
+  // Whose team work is read: the viewer's teammates', or (a system reader reaching one team) the named user's.
+  const teamOf = viewer ?? (scope?.system ? scope.teamOf : undefined);
+  where.push(
+    `(owner_id IS NULL${cover ? ` AND ${cover}` : ''} OR (owner_id IS NOT NULL AND (visibility = 'org'${viewer ? ' OR owner_id = ?' : ''}${teamOf ? ` OR (visibility = 'team' AND owner_id IN (${TEAMMATES_SQL}))` : ''})))`,
+  );
+  params.push(...inner, ...(viewer ? [viewer] : []), ...(teamOf ? [teamOf] : []));
 }
 
 function filterClause(filter: UsageFilter, timeColumn: 'at' | 'day', scope?: UsageScope): Where {

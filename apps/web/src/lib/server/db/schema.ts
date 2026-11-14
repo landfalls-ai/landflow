@@ -1613,6 +1613,13 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS usage_events_owner_at ON usage_events (owner_id, at)`,
     ],
   },
+  // B18: a person page is linked to its user (lib/server/brain/entities.ts, docs/second-brain.md#entities).
+  {
+    version: 2080,
+    name: 'brain_entities_user',
+    addColumns: [{ table: 'brain_entities', column: 'user_id', definition: 'TEXT' }],
+    statements: [`CREATE INDEX IF NOT EXISTS brain_entities_user ON brain_entities (user_id)`],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
