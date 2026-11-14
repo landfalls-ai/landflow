@@ -1718,7 +1718,7 @@ The wave 2 review notes were fixed in wave 3's carryover where they were contain
 
 Closed from the wave 1 page review: X2 (Executions, Runs and Search runs are one page, **Runs** at `/runs`, the old URLs redirect), P-ex-1 (no ID or Mode column), P-ex-2 (Stop all only while a run runs), P-ex-3 (repeated failures fold into one row), P-ex-4 (two re-run words), P-runs-1 (one search box with Status and Workflow chips, the rest under More filters) and P-cmp-1 (compare with fewer than two runs goes back to the list). See [the Runs list](run-trace.md#the-runs-list).
 
-Follow-up: the Runs list filters load only the latest 200 runs and its journal filters 100 matches; page the list server-side and bring journal word search back into the UI (see [limitations](limitations.md#runs-list-filters-b20-2026-11)).
+Follow-up: the Runs list filters load only the latest 200 runs and its journal filters 100 matches; page the list server-side and bring journal word search back into the UI (see [limitations](limitations.md#runs-list-filters-b20-2026-11-14)).
 
 
 ## Quieter Brain and Insights (B28, 2026-11-14)

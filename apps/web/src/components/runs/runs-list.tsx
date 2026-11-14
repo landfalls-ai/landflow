@@ -273,9 +273,8 @@ function Row({ execution, now, index, isNew, onChanged, picked, onPick, nested }
   );
 }
 
-/** "Failed ×9 · Post to Slack: no credential": one row for the repeats; it opens to the runs. */
-function GroupRow({ group, children }: { group: Extract<RunRow, { kind: 'group' }>; children: (open: boolean) => React.ReactNode }) {
-  const [open, setOpen] = useState(false);
+/** "Failed ×9 · Post to Slack: no credential": one row for the repeats; it opens to the runs. The list holds `open`. */
+function GroupRow({ group, open, onToggle, children }: { group: Extract<RunRow, { kind: 'group' }>; open: boolean; onToggle(): void; children: (open: boolean) => React.ReactNode }) {
   const latest = group.runs[0];
   return (
     <>
@@ -283,7 +282,7 @@ function GroupRow({ group, children }: { group: Extract<RunRow, { kind: 'group' 
         <span className="absolute inset-y-0 left-0 w-[3px] bg-rd" />
         <button
           type="button"
-          onClick={() => setOpen((o) => !o)}
+          onClick={onToggle}
           aria-expanded={open}
           aria-label={`${groupTitle(group)}, ${open ? 'hide' : 'show'} the ${group.runs.length} runs`}
           className="flex w-full min-w-0 items-center gap-3 px-4 py-2.5 text-left text-[13px] hover:bg-[color-mix(in_oklab,var(--rd)_12%,var(--sf))] max-md:min-h-11 max-md:items-start"
@@ -368,6 +367,14 @@ export function RunsList() {
   const [picked, setPicked] = useState<string[]>([]);
   const [trend, setTrend] = useState<RunMeasure[]>();
   const [auto, setAuto] = useState(true);
+  /** Open failure groups, by `failureKey`: the row's own key changes when its oldest run leaves the list, this does not. */
+  const [openGroups, setOpenGroups] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleGroup = (failure: string) =>
+    setOpenGroups((now) => {
+      const next = new Set(now);
+      if (!next.delete(failure)) next.add(failure);
+      return next;
+    });
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const known = useRef<Set<string>>(undefined);
   const flashed = useRef(new Set<string>());
@@ -537,7 +544,7 @@ export function RunsList() {
             row.kind === 'run' ? (
               renderRun(row.run)
             ) : (
-              <GroupRow key={row.key} group={row}>
+              <GroupRow key={row.key} group={row} open={openGroups.has(row.failure)} onToggle={() => toggleGroup(row.failure)}>
                 {(open) => open && row.runs.map((run) => renderRun(run, true))}
               </GroupRow>
             ),
