@@ -1,10 +1,16 @@
 'use client';
 /** The Spotlight panel (see ./index.tsx). */
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { ChevronDown, CircleCheck, CircleStop, Hand, Loader2, PanelRightClose, PanelRightOpen, Sparkles, Square, SquarePen } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useAssistant } from '../assistant';
+import { editorLookup, useAssistant } from '../assistant';
+import { emptyStored, markStale, planKeeping, recordPlan, restore, shouldResume } from '../spotlight-history';
+import { ConversationHistory } from '../../ui/conversation-history';
+import { useConversation } from '@/lib/client/conversations';
+import { usePreference } from '@/lib/client/preferences';
+import { api } from '@/lib/client/api';
+import type { ConversationItem, ConversationRecord } from '@/lib/shared/conversations';
 import { useEditor } from '../store';
 import { isPhone } from '@/lib/client/use-phone';
 import { lastOutcomeOf, lastRunOf, openNeedOf, stepsOf, stoppedAtOf, titleOf } from '../timeline';
@@ -88,10 +94,96 @@ function useSeconds(on: boolean): number {
 
 
 /**
+ * Spotlight's conversation is kept per workflow (docs/assistant.md#conversation-history): each turn is stored when it is
+ * said or has finished, the last conversation of this workflow comes back under "Earlier" when the editor opens, and the
+ * history button opens another in place. With the person's "keep conversations" off nothing is stored and nothing comes back.
+ */
+function useSpotlightKeeping() {
+  const workflowId = useEditor((s) => s.workflowId);
+  const keeping = usePreference('keepConversations');
+  const conversation = useConversation({ surface: 'spotlight', subjectType: 'workflow', subjectId: workflowId || undefined });
+  const stored = useRef(emptyStored());
+  const items = useAssistant((s) => s.items);
+  const live = useAssistant((s) => s.pending || s.drafting);
+  const boundTo = useAssistant((s) => s.workflowId);
+  const appendRef = useRef(conversation.append);
+  appendRef.current = conversation.append;
+  const here = Boolean(workflowId) && boundTo === workflowId;
+
+  // Show a stored conversation under "Earlier", its waiting proposals checked against the workflow as it is now.
+  const show = useCallback((turns: Parameters<typeof restore>[0], replace: boolean) => {
+    const back = restore(turns);
+    const editor = useEditor.getState();
+    const checked = markStale(back.items, editor.toWorkflow(), editorLookup());
+    stored.current = replace ? back.stored : { turns: new Set([...stored.current.turns, ...back.stored.turns]), proposals: new Map([...stored.current.proposals, ...back.stored.proposals]) };
+    useAssistant.getState().showEarlier(checked, { replace });
+  }, []);
+
+  // The workflow changed (another one opened, or New conversation): what was stored is of the other chat.
+  useEffect(() => {
+    stored.current = emptyStored();
+  }, [workflowId]);
+
+  // Fetch a stored conversation and make it the one the chat writes to; null if it could not be read.
+  const load = useCallback(
+    async (id: string) => {
+      try {
+        const body = await api<{ conversation: ConversationRecord; items: ConversationItem[] }>(`/api/conversations/${id}`, { background: true });
+        await conversation.open(id);
+        return body.items;
+      } catch {
+        return null;
+      }
+    },
+    [conversation],
+  );
+
+  // Resume: the last conversation of this workflow, once the editor has loaded it (and only if the person has not started).
+  const resumed = useRef<string>(undefined);
+  useEffect(() => {
+    if (!here || !keeping || resumed.current === workflowId) return;
+    resumed.current = workflowId;
+    if (!shouldResume(keeping, useAssistant.getState().items)) return;
+    const params = new URLSearchParams({ surface: 'spotlight', subjectType: 'workflow', subjectId: workflowId, limit: '1' });
+    void api<{ conversations: ConversationRecord[] }>(`/api/conversations?${params}`, { background: true })
+      .then(async ({ conversations }) => {
+        const latest = conversations[0];
+        // The person may have started while it loaded: theirs stays, with nothing from before mixed into it.
+        if (!latest || !shouldResume(true, useAssistant.getState().items) || useEditor.getState().workflowId !== workflowId) return;
+        const turns = await load(latest.id);
+        if (turns?.length && useEditor.getState().workflowId === workflowId) show(turns, false);
+      })
+      .catch(() => undefined);
+  }, [here, keeping, workflowId, load, show]);
+
+  // Store the turns as they are said and finished.
+  useEffect(() => {
+    if (!here) return;
+    const plan = planKeeping(items, stored.current, { keeping, live });
+    if (!plan.inputs.length && !plan.turns.length) return;
+    recordPlan(stored.current, plan);
+    if (plan.inputs.length) void appendRef.current(plan.inputs).catch(() => undefined);
+  }, [items, live, keeping, here]);
+
+  const open = async (id: string) => {
+    if (useAssistant.getState().pending || useAssistant.getState().testing) return;
+    const turns = await load(id);
+    if (turns) show(turns, true);
+  };
+  const startNew = () => {
+    useAssistant.getState().reset();
+    conversation.startNew();
+    stored.current = emptyStored();
+  };
+  return { open, startNew, workflowId };
+}
+
+/**
  * The Spotlight panel, at the right of the editor. Desktop: a column beside the canvas (and its logs), folded to a thin
  * strip. Phone: a sheet under the canvas (which shrinks above it), folded to its header, a line and the input.
  */
 export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hiddenOnPhone?: boolean; /** Stays mounted and keeps its conversation, but shows nothing (the Spotlight | Chat switch). */ hidden?: boolean }) {
+  const keep = useSpotlightKeeping();
   const collapsed = useAssistant((s) => s.collapsed);
   const items = useAssistant((s) => s.items);
   const agents = useAssistant((s) => s.agents);
@@ -148,7 +240,7 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
     };
   }, []);
 
-  const { setCollapsed, reset, stop } = useAssistant.getState();
+  const { setCollapsed, stop } = useAssistant.getState();
   const phoneHeight = useAssistant((s) => s.phoneHeight);
   const drag = useRef<number>(undefined);
   // One set of colours: violet while it works, amber when it needs you, green when it passed; a stop is neutral.
@@ -238,9 +330,10 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
               <Square className="size-3" fill="currentColor" />
             </button>
           )}
-          <button title="New conversation" aria-label="New conversation" onClick={reset} className="grid size-7 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1 max-md:size-11">
+          <button title="New conversation" aria-label="New conversation" onClick={keep.startNew} className="grid size-7 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1 max-md:size-11">
             <SquarePen className="size-3.5" />
           </button>
+          {keep.workflowId && <ConversationHistory surface="spotlight" subjectType="workflow" subjectId={keep.workflowId} subjectLabel="This workflow" ownSurfaceOnly onOpen={(id) => void keep.open(id)} onNew={keep.startNew} />}
           <button
             title={collapsed ? 'Show the conversation' : 'Hide the conversation'}
             aria-label={collapsed ? 'Show the conversation' : 'Hide the conversation'}
@@ -270,7 +363,7 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
         ) : (
           <div className="flex min-h-0 flex-1 flex-col justify-end gap-1.5 px-4 py-4 text-[12.5px] leading-snug text-t3">
             <p className="font-semibold text-t2">Build and fix this workflow with Spotlight.</p>
-            <p>Describe a flow on an empty canvas and it drafts it, tests it and fixes what fails. On a flow, ask for a change; it uses your agents, or designs one on a local model. Type @ to point at a node.</p>
+            <p>Describe a flow on an empty canvas and it drafts it, tests it and fixes what fails. On a flow, ask for a change; it uses your agents, or designs one on a local model. Type @ to tag a node, a run, an agent or anything else you may open.</p>
           </div>
         )}
         <Composer />

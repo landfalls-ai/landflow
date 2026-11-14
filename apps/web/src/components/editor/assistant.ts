@@ -14,8 +14,10 @@ import type { AgentTeamConfig } from '@/lib/shared/agent-teams';
 import { teamFromLead } from '@/lib/shared/turn-into-team';
 import type { ActivityKind, ActivityStep } from '@/lib/shared/activity';
 import type { NodeRun } from '@/lib/shared/types';
+import type { MentionRef } from '@/lib/shared/mentions';
 import type { ReplyInfo } from '../ui/chat';
 import { useEditor } from './store';
+import { withEarlier } from './spotlight-history';
 import { saveAgentFor, type AgentPlace } from './new-agent';
 import { saveTeamFor } from './turn-into-team';
 
@@ -235,7 +237,8 @@ export interface Proposal {
   ops: AssistantOp[];
   dropped: string[];
   warnings: string[];
-  state?: 'applied' | 'dismissed' | 'undone';
+  /** `stale`: kept from an earlier visit, and its ops no longer apply to the workflow (its card has no Apply). */
+  state?: 'applied' | 'dismissed' | 'undone' | 'stale';
   /** Ops that no longer fit when it was applied. */
   skipped?: number;
 }
@@ -308,8 +311,8 @@ export type ReplyPart =
  * words of steps that also called tools, which never reach the reply) and `meta` (model, time, steps, tokens, cost).
  */
 export type ChatItem =
-  /** `auto`: written by a test-and-fix session, not typed. */
-  | { id: string; role: 'user'; text: string; auto?: boolean; testId?: string }
+  /** `auto`: written by a test-and-fix session, not typed. `earlier`: kept from an earlier visit (shown under "Earlier"). `mentions`: the tags the person chose. */
+  | { id: string; role: 'user'; text: string; auto?: boolean; testId?: string; earlier?: boolean; mentions?: KeptMention[] }
   /** `auto`: autonomous mode applied its changes (drawn as rows, whatever the switch says later). */
   | {
       id: string;
@@ -319,6 +322,8 @@ export type ChatItem =
       error?: string;
       testId?: string;
       auto?: boolean;
+      /** Kept from an earlier visit (shown under "Earlier", dimmed). */
+      earlier?: boolean;
       steps?: ActivityStep[];
       text?: string;
       thinking?: string[];
@@ -328,6 +333,9 @@ export type ChatItem =
       /** When the running model step began (to time it). */
       stepStartedAt?: number;
     };
+
+/** A tag as the chat keeps and sends it: what it points at, and the name it showed. */
+export type KeptMention = MentionRef & { name: string };
 
 export type AssistantTurn = Extract<ChatItem, { role: 'assistant' }>;
 
@@ -412,8 +420,8 @@ export function applyStreamEvent(turn: AssistantTurn, event: StreamEvent, now: n
 }
 
 export interface SendOptions {
-  /** What the user tagged with Spotlight's bubbles: node ids on the canvas, node type ids. */
-  mentions?: { nodes: string[]; types: string[] };
+  /** What the user tagged with @ (the picker's chips, and node types chosen from the bubbles): the server reads them as the caller. */
+  mentions?: KeptMention[];
   /** Leave the selected node out of the context (its chip was removed). */
   withoutSelection?: boolean;
   /** Sent by a test-and-fix session: shown as a note, not as something the user typed. */
@@ -495,6 +503,11 @@ interface AssistantState {
   append(items: ChatItem[]): void;
   stop(): void;
   reset(): void;
+  /**
+   * Show a kept conversation: its turns go first, under "Earlier". `replace` puts it in place of the chat (the history
+   * button); otherwise what was said since stays below it (resuming on arrival).
+   */
+  showEarlier(turns: ChatItem[], options?: { replace?: boolean }): void;
   setProposalState(itemId: string, proposalId: string, state: 'applied' | 'dismissed' | 'undone', skipped?: number): void;
   /** Change the parts of one reply (a test-and-fix session adds and updates its runs; buttons record what was chosen). */
   updateParts(itemId: string, fn: (parts: ReplyPart[]) => ReplyPart[]): void;
@@ -584,10 +597,12 @@ export const useAssistant = create<AssistantState>((set, get) => ({
     if (!message || get().pending) return;
     const editor = useEditor.getState();
     const group = options.testId ? { testId: options.testId } : {};
-    const user: ChatItem = { id: nanoid(8), role: 'user', text: message, ...(options.auto && { auto: true }), ...group };
+    const user: ChatItem = { id: nanoid(8), role: 'user', text: message, ...(options.auto && { auto: true }), ...(options.mentions?.length && { mentions: options.mentions }), ...group };
     const reply: ChatItem = { id: nanoid(8), role: 'assistant', parts: [], steps: [], text: '', thinking: [], ...group };
     const abort = new AbortController();
-    const messages = historyOf(options.fresh ? [user] : [...get().items, user]);
+    // The route takes 60 messages at most: the newest, from a person's turn on (a long kept conversation can be longer).
+    const recent = historyOf(options.fresh ? [user] : [...get().items, user]).slice(-59);
+    const messages = recent.slice(Math.max(0, recent.findIndex((m) => m.role === 'user')));
     const pending = options.fresh ? [] : pendingProposals(get().items).slice(-20);
     set((s) => ({ items: [...s.items, user, reply], pending: true, abort }));
     const patch = (fn: (item: Extract<ChatItem, { role: 'assistant' }>) => Partial<Extract<ChatItem, { role: 'assistant' }>>) =>
@@ -602,7 +617,7 @@ export const useAssistant = create<AssistantState>((set, get) => ({
           selectedNodeId: options.nodeId ?? (options.withoutSelection ? undefined : (editor.openNodeId ?? editor.nodes.find((n) => n.selected)?.id)),
           runs: runDigests(),
           ...(pending.length && { pending }),
-          ...(options.mentions && { mentions: options.mentions }),
+          ...(options.mentions?.length && { mentions: { refs: options.mentions } }),
           ...(options.session && { session: options.session }),
         },
         (_event, data) => {
@@ -637,6 +652,15 @@ export const useAssistant = create<AssistantState>((set, get) => ({
     get().testing?.abort();
     draft.request?.abort();
     set({ items: [], lastCheckpoint: undefined, agents: [], fixNotes: {}, pending: false, drafting: false, abort: undefined, testing: undefined, testingId: undefined, fixing: undefined });
+  },
+
+  showEarlier(turns, options = {}) {
+    if (options.replace) {
+      get().abort?.abort();
+      get().testing?.abort();
+      draft.request?.abort();
+      set({ items: turns, lastCheckpoint: undefined, agents: [], fixNotes: {}, pending: false, drafting: false, abort: undefined, testing: undefined, testingId: undefined, fixing: undefined });
+    } else set((s) => ({ items: withEarlier(turns, s.items) }));
   },
 
   setProposalState(itemId, proposalId, state, skipped) {
