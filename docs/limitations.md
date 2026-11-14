@@ -228,3 +228,8 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - The Runs list filters cover the latest 200 runs it loads: the search box, Status and From/To never reach older runs, so a date range older than those shows "No runs match".
 - Journal filters (actor, tool, failed steps, a check failed) take at most 100 matches from `GET /api/runs/search` and intersect them with those 200 runs.
 - Word search over journal text, with match snippets, is API-only (`GET /api/runs/search?text=`); the UI dropped the Search page. Follow-up: page the list and bring journal word search back (see [the roadmap](roadmap.md)).
+
+## Plugins, Marketplace and Templates (B33)
+
+- Template-file Import is no longer on the Templates page; it lives in Workflows' New menu (B34). Until that menu imports template files too (`POST /api/templates`), there is no UI for it.
+- With one marketplace (the default, the built-in Anthropic official one) the source menu is hidden, and with it that marketplace's Refresh card and the "This instance" source filter. Listings re-read after the 10-minute cache.

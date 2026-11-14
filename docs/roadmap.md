@@ -1528,6 +1528,8 @@ pages), X4 (theme in the user menu, the connection shown only while reconnecting
 with the Landfall plugin) and P-pr-1 (Manage projects in the switcher, no intro on /projects) are closed. The look
 switch (`look-toggle.tsx`) was deleted by B12, which also closed X8 (developer details behind one switch).
 
+- **Plugins, Marketplace and Templates (B33, backbone wave 5; X3, X11, P-pl-1, P-pl-2, P-mk-1, P-mk-2, P-tp-1, P-tp-2)**: Plugins is one column (the feed behind **Show feed**, **Add endpoint** in the Scan button's menu, only the list count in the header) with 12 node chips and **+N**; Marketplace has Explore and Installed (plugins and skills together, a type filter), no workflows (Templates is their home), one category dropdown and a source dropdown only with several marketplaces; Templates has no project menu, usable templates first and the rest dimmed with *Needs <plugin>*. Import left the Templates page; B34 puts it in Workflows' New menu.
+
 ## Planned next
 
 1. **Declare event kinds in the UI**: kinds are declared over the API or by Record Event's *Declare Kind If New* only.
