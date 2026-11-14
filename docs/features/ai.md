@@ -109,6 +109,8 @@ Landflow speaks the [Model Context Protocol](https://modelcontextprotocol.io) bo
   claude mcp add --transport http landflow http://localhost:3000/api/mcp --header "Authorization: Bearer <token>"
   ```
 
+**Connect your harness** (`/connect`, [connect-your-harness.md](../connect-your-harness.md)) makes a brain key and the setup for Claude Code, Cursor, Codex CLI, Gemini CLI, VS Code or any MCP client, and tests it with `tools/list`. Settings → MCP is four collapsed sections (Access token, Connected clients, Tools with each tool's scope, Gateway), and owners and admins have **Allow automatic sending** there.
+
 **API keys, scopes and the brain**: a Landflow API key sent as the Bearer sees and calls only the tools its scopes cover; a session, an MCP token, an identity-provider token and the instance access token keep every tool. A tool a key may not use is left out of `tools/list` and refused if called. One map holds it (`TOOL_SCOPES` in `apps/web/src/lib/shared/mcp.ts`):
 
 | Scope | Tools |

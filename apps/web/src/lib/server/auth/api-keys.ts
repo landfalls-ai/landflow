@@ -5,7 +5,7 @@
  * deactivated user don't work. The `scim` scope is for identity providers (lib/server/scim) and grants nothing else.
  */
 import { nanoid } from 'nanoid';
-import { API_KEY_SCOPES, type ApiKeyScope, type ApiKeyView } from '../../shared/auth';
+import { API_KEY_SCOPES, can, type ApiKeyScope, type ApiKeyView } from '../../shared/auth';
 import { API_KEY_PREFIX } from '../../shared/auth-paths';
 import { singleton } from '../singleton';
 import { authDb } from './db';
@@ -56,6 +56,18 @@ function fromRow(row: ApiKeyRow): ApiKeyRecord {
 export function apiKeyView(key: ApiKeyRecord): ApiKeyView {
   const { userId: _userId, ...view } = key;
   return view;
+}
+
+/**
+ * Why `user` may not create a key with `scopes`, or undefined when they may. Everyone makes keys with the brain and
+ * workflow scopes their role has (members build and run workflows, so they have `workflows:*`, `executions:*` and
+ * `run`); the `admin` scope and SCIM tokens (the `scim` scope, alone) are for owners and admins.
+ */
+export function scopeRefusal(user: { role: UserRecord['role'] }, scopes: readonly ApiKeyScope[]): { reason: string; status: 400 | 403 } | undefined {
+  if (scopes.includes('admin') && !can(user, 'apiKeys:admin')) return { reason: 'Only owners and admins can create keys with the admin scope', status: 403 };
+  if (scopes.includes('scim') && !can(user, 'scim:manage')) return { reason: 'Only owners and admins can create SCIM tokens', status: 403 };
+  if (scopes.includes('scim') && scopes.length > 1) return { reason: 'A SCIM token has the scim scope only', status: 400 };
+  return undefined;
 }
 
 /** A new key (`lf_…`, never `lf_mcp_…`, which is the instance MCP token's prefix). */
