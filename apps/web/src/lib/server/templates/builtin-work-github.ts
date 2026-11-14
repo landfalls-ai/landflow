@@ -24,7 +24,7 @@ export function workGithubTemplates(h: WorkGithubHelpers): TemplateDetail[] {
     template({
       id: 'work-github',
       name: 'Work from GitHub into the second brain',
-      description: 'Pull requests opened, merged, closed or waiting for review, reviews (their state only) and CI results in GitHub become work.pr_opened, work.pr_merged, work.pr_closed, work.pr_reviewed, work.review_requested, work.ci_passed and work.ci_failed events, and each repository is kept as a system. No diffs, code or review text come in.',
+      description: 'Pull requests opened, merged, closed or waiting for review, reviews (their state only) and CI results in GitHub become work events in the second brain, and each repository is kept as a system. No diffs, code or review text come in.',
       categories: ['productivity', 'data'],
       setup: [
         'Needs the **productivity** plugin (it holds the GitHub Webhook Trigger). Pick or add a GitHub token that can create webhooks: admin:repo_hook, or Webhooks read and write on a fine-grained token.',
