@@ -5,6 +5,7 @@
  */
 import { createContext, useContext, type ReactNode } from 'react';
 import type { Viewer } from '@/lib/shared/auth';
+import { clearPreferencesCache } from '@/lib/client/preferences';
 
 const ViewerContext = createContext<Viewer | null>(null);
 
@@ -18,6 +19,7 @@ export function useViewer(): Viewer | null {
 
 /** Sign out and go to the sign-in page (a full load, so nothing of the old session stays on screen), or to the SAML IdP's logout. */
 export async function signOut() {
+  clearPreferencesCache();
   const result = (await fetch('/api/auth/logout', { method: 'POST' })
     .then((r) => r.json())
     .catch(() => undefined)) as { redirect?: string } | undefined;

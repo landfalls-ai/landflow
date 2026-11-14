@@ -1533,6 +1533,13 @@ The shared pieces every chat will use, built in `components/ui/` and ready; the 
 - CH1 (motion), CH6 (one activity trace), CH7 (one reply footer), CH9 (errors with actions) and CH10 (a model chip): kit
   ready, surfaces in wave 2 ([Chat surfaces](assistant.md#chat-surfaces)).
 
+## Conversation history and personal preferences (2026-11)
+
+The first piece of the company-backbone program (wave 1, B02). Built: the `user_preferences` and `conversations` tables
+(migrations 2070 and 2071), their session-only routes, the retention service, the client hooks and the history popover
+([assistant.md](assistant.md#conversation-history)). Next: each chat mounts the history button and saves to the store,
+and the account menu gets the switches. Open: `deleteUser` should remove a person's conversations and preferences, a pin should decide whether retention spares a conversation, search wants a plain-text column, and `GET /api/conversations/:id` wants a `limit`.
+
 ## Not planned
 
 Later, maybe: an agent code sandbox, and prompt management. Not planned:

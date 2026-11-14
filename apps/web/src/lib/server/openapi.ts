@@ -40,7 +40,7 @@ function fromZod(schema: z.ZodType): Json {
 const samplePath = (path: string) => path.replace(/\{[^}]+\}/g, 'sample');
 
 interface Operation {
-  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Settings' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks';
+  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Settings' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks' | 'Conversations';
   id: string;
   summary: string;
   description?: string;
@@ -1672,6 +1672,63 @@ function paths(): Record<string, Record<string, Json>> {
   });
   add('delete', '/api/api-keys/{id}', { tag: 'Account', id: 'deleteApiKey', summary: 'Revoke an API key', description: 'It stops working at once.', responses: { 200: reply('Revoked', ok), 404: notFound } });
 
+  // ---- B02: personal preferences and conversations (docs/assistant.md#conversation-history) ----
+  const preferences = object({ developerDetails: { type: 'boolean' }, keepConversations: { type: 'boolean' }, briefingDelivery: { type: 'string', enum: ['none', 'slack', 'email'] } }, ['developerDetails', 'keepConversations', 'briefingDelivery']);
+  const conversation = object(
+    { id: { type: 'string' }, surface: { type: 'string', enum: ['spotlight', 'brain', 'architect', 'agent-test'] }, projectId: { type: ['string', 'null'] }, subjectType: { type: ['string', 'null'] }, subjectId: { type: ['string', 'null'] }, title: { type: 'string' }, pinned: { type: 'boolean' }, createdAt: { type: 'string' }, updatedAt: { type: 'string' } },
+    ['id', 'surface', 'title', 'pinned', 'createdAt', 'updatedAt'],
+  );
+  const conversationItem = object({ seq: { type: 'integer' }, role: { type: 'string', enum: ['user', 'assistant'] }, parts: array({ type: 'object' }), meta: { type: 'object' }, at: { type: 'string' } }, ['seq', 'role', 'parts', 'at']);
+  add('get', '/api/me/preferences', { tag: 'Conversations', id: 'getMyPreferences', summary: 'Get your preferences', description: 'Defaults fill what you never set.', responses: { 200: reply('Your preferences', object({ preferences }, ['preferences'])) } });
+  add('patch', '/api/me/preferences', {
+    tag: 'Conversations',
+    id: 'updateMyPreferences',
+    summary: 'Change your preferences',
+    description: 'A partial body; a bad value is a 400 and an unknown key is dropped.',
+    body: jsonBody(object({ developerDetails: { type: 'boolean' }, keepConversations: { type: 'boolean' }, briefingDelivery: { type: 'string', enum: ['none', 'slack', 'email'] } })),
+    responses: { 200: reply('Your preferences', object({ preferences }, ['preferences'])), 400: invalid },
+  });
+  add('get', '/api/conversations', {
+    tag: 'Conversations',
+    id: 'listConversations',
+    summary: 'List your conversations',
+    description: 'Only yours, newest first. `q` searches titles and your own messages.',
+    query: [
+      { name: 'surface', description: 'spotlight, brain, architect or agent-test', schema: { type: 'string' } },
+      { name: 'subjectType', description: 'What the chat was about, such as workflow', schema: { type: 'string' } },
+      { name: 'subjectId', description: 'Its id', schema: { type: 'string' } },
+      { name: 'q', description: 'Search text', schema: { type: 'string' } },
+      { name: 'limit', description: '1 to 100, default 50', schema: { type: 'integer' } },
+      { name: 'cursor', description: 'The nextCursor of the previous page', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('A page', object({ conversations: array(conversation), nextCursor: { type: ['string', 'null'] } }, ['conversations'])), 400: invalid },
+  });
+  add('post', '/api/conversations', {
+    tag: 'Conversations',
+    id: 'createConversation',
+    summary: 'Start a conversation',
+    description: 'With “Keep my conversations” off, nothing is stored: 200 `{ conversation: null, kept: false }`.',
+    body: jsonBody(object({ surface: { type: 'string', enum: ['spotlight', 'brain', 'architect', 'agent-test'] }, subjectType: { type: 'string' }, subjectId: { type: 'string' }, projectId: { type: 'string' }, title: { type: 'string' } }, ['surface'])),
+    responses: { 201: reply('Created', object({ conversation }, ['conversation'])), 200: reply('Not kept', object({ conversation: { type: 'null' }, kept: { type: 'boolean', const: false } }, ['conversation', 'kept'])), 400: invalid },
+  });
+  add('get', '/api/conversations/{id}', { tag: 'Conversations', id: 'getConversation', summary: 'Get a conversation with its items', description: 'Someone else’s id is a 404, for admins too.', responses: { 200: reply('The conversation', object({ conversation, items: array(conversationItem) }, ['conversation', 'items'])), 404: notFound } });
+  add('patch', '/api/conversations/{id}', {
+    tag: 'Conversations',
+    id: 'updateConversation',
+    summary: 'Rename or pin a conversation',
+    body: jsonBody(object({ title: { type: 'string' }, pinned: { type: 'boolean' } })),
+    responses: { 200: reply('Updated', object({ conversation }, ['conversation'])), 400: invalid, 404: notFound },
+  });
+  add('delete', '/api/conversations/{id}', { tag: 'Conversations', id: 'deleteConversation', summary: 'Delete a conversation', description: 'The row and its items are removed for good.', responses: { 204: reply('Deleted'), 404: notFound } });
+  add('post', '/api/conversations/{id}/items', {
+    tag: 'Conversations',
+    id: 'appendConversationItems',
+    summary: 'Add messages to a conversation',
+    description: '1 to 20 items, each up to 32 KB. With keeping off, 204 and nothing stored.',
+    body: jsonBody(object({ items: array(object({ role: { type: 'string', enum: ['user', 'assistant'] }, parts: array({ type: 'object' }), meta: { type: 'object' } }, ['role', 'parts'])) }, ['items'])),
+    responses: { 200: reply('The last seq', object({ seq: { type: 'integer' } }, ['seq'])), 204: reply('Not kept'), 400: invalid, 404: notFound },
+  });
+
   // ---- plugins and transports (docs/transports.md) ----
   const pluginsReply = reply('Every plugin: its endpoints by transport, its transport policy, and the transport the next call takes with the reason', object({ plugins: array(ref('Plugin')) }, ['plugins']));
   add('get', '/api/plugins', { tag: 'Plugins', id: 'listPlugins', summary: 'List plugins', responses: { 200: pluginsReply } });
@@ -2055,6 +2112,7 @@ export function openApiDocument(origin?: string): Record<string, unknown> {
       { name: 'Runbooks', description: 'Runbook workflows made from closed Landfall war rooms, found by alert kind (docs/runbooks.md)' },
       { name: 'Agents', description: 'Agents that run elsewhere (kagent) reporting what they did back to the run that asked them (docs/a2a.md)' },
       { name: 'Agent teams', description: 'Teams of agents with standing relations: who leads, who reports to whom, who reviews (docs/agent-teams.md)' },
+      { name: 'Conversations', description: 'A person’s own chats with Spotlight, the brain and the Agent architect, and their personal preferences: session only, owner only (docs/assistant.md#conversation-history)' },
       { name: 'MCP', description: 'Agents and MCP (docs/transports.md): Landflow-issued MCP tokens, tool grants, the JWKS, the plugin catalog (server.json, the registry API) and protected resource metadata' },
     ],
     security: [{ bearerAuth: [] }, { apiKeyHeader: [] }, { sessionCookie: [] }],

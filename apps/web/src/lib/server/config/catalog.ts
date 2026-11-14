@@ -69,6 +69,8 @@ export const CONFIG_CATALOG: readonly ConfigVariable[] = [
   { name: 'LANDFLOW_TRANSPORT_SECRET_PREVIOUS', group: 'security', default: '–', description: 'comma-separated old transport secrets that still verify and decrypt, for rotation ([transports.md](../transports.md#security-over-brokers))', secret: true },
   // Data and database
   { name: 'LANDFLOW_DATA_DIR', group: 'data', default: '`apps/web/.data`', description: 'data directory: the SQLite database (`landflow.db`), credentials, binary files, the Claude Code plugin images packed for kagent (`oci/`) and the other host files' },
+  // B02:
+  { name: 'LANDFLOW_CHAT_RETENTION_DAYS', group: 'data', default: '`90`', description: 'days a conversation (Spotlight, the brain, the Agent architect, an agent\'s test chat) is kept after its last message; older ones are deleted daily (`0` keeps them) ([assistant.md](../assistant.md#conversation-history))' },
   { name: 'LANDFLOW_DB_STATEMENT_CACHE', group: 'data', default: '`500`', description: 'most prepared SQL statements one database connection keeps (least recently used go first)' },
   { name: 'LANDFLOW_CLAUDE_PLUGINS_DIR', group: 'data', default: '`<cwd>/claude-plugins` (`apps/web/claude-plugins`)', description: 'where Landflow\'s own Claude Code plugins are (the landflow-harness mod), packed into images for kagent\'s Claude Code agents ([a2a.md](../a2a.md#the-landflow-harness-mod))' },
   { name: 'LANDFLOW_DB', group: 'data', default: '`sqlite`', description: '`postgres` keeps the store in Postgres (`DATABASE_URL`); one host per database' },

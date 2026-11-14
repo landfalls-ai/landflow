@@ -32,6 +32,7 @@ import { startUsageTrigger } from './brain/usage-trigger';
 import { clusterActive, leaderService, startCluster, stopCluster, stopLeaderServices } from './cluster';
 import { clusterState } from './cluster/state';
 import { checkConfig, ConfigError, profile } from './config';
+import { conversationRetention } from './conversations/retention';
 import { closeDatabase, openDatabase } from './db';
 import { startOnlineEvaluations } from './evaluations/online';
 import { ensureExecutionReactions } from './execution-reactions';
@@ -137,6 +138,8 @@ export const SERVICES: ServiceSpec[] = [
   { name: 'seed workflows', roles: MAIN, leader: true, start: seedWorkflows },
   // Insights backfill (first boot) and execution retention, before anything can start a run.
   { name: 'data maintenance', roles: MAIN, leader: true, start: startDataMaintenance },
+  // B02: kept conversations older than LANDFLOW_CHAT_RETENTION_DAYS are deleted daily (lib/server/conversations/retention.ts).
+  { name: 'conversation retention', roles: MAIN, leader: true, start: () => conversationRetention.start(), stop: () => conversationRetention.stop() },
   // Audit log: publish/plugin listeners, SIEM outbox delivery and hourly retention (lib/server/audit).
   { name: 'audit', roles: MAIN, start: startAudit },
   // Signed chain heads (lib/server/audit/anchoring.ts): the leader signs the head on a schedule and anchors it (S3, webhook).
