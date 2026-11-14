@@ -149,8 +149,8 @@ export function useAgentRun(agentId: string, initial?: AgentSession, initialTrac
   const load = async (id: string) => {
     controller.current?.abort();
     controller.current = undefined;
-    const body = await api<{ session: AgentSession; traceUrls?: Record<string, string> }>(`/api/agents/${agentId}/sessions/${encodeURIComponent(id)}`);
     setRunning(false);
+    const body = await api<{ session: AgentSession; traceUrls?: Record<string, string> }>(`/api/agents/${agentId}/sessions/${encodeURIComponent(id)}`);
     setEntries(body.session.timeline);
     setSessionId(body.session.id);
     setTraceIds(body.session.traceIds);

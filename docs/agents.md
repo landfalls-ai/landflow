@@ -436,7 +436,7 @@ into its steps (a call waiting for your **Approve** stays a full row); the foote
 time from your question to the reply, the steps, the tokens and the cost (or "local"); the model chip sits in the box.
 There is no trace id above the box any more: the activity line ends with **Open trace**, the host's trace UI when
 `LANDFLOW_TRACE_URL` is set, otherwise this session under Sessions, where the trace ids are. The clock in the header lists
-your earlier test sessions of this agent (the sessions route with `audience=people&source=test`); opening one carries it
+the earlier test sessions of this agent (per agent, not per person yet; see [limitations](limitations.md)) (the sessions route with `audience=people&source=test`); opening one carries it
 on in the chat. Nothing new is stored for it: the sessions are the record. The Platform analyst's chat uses the same line
 and footer, and keeps its answer card.
 

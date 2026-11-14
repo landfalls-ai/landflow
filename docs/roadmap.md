@@ -1578,6 +1578,12 @@ The foundation is built: `GET /api/mentions`, `resolveMentions` with a digest pe
 ([assistant.md](assistant.md#tagging-with-)). Open: mount it in Spotlight and Ask the brain, and resolve the tags in
 their servers.
 
+## Test chat history per person (B10, 2026-11-14)
+
+Open: the test chat writes every session as user "you", so "Earlier tests" lists everyone's tests of that agent. The chat
+route should store the caller's id (it also affects memory and the policy role check); then the sessions route can filter
+`source=test` to the caller. Also: `source` wins over `audience` when both are given.
+
 ## Not planned
 
 Later, maybe: an agent code sandbox, and prompt management. Not planned:

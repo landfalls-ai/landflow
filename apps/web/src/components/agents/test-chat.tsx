@@ -5,6 +5,7 @@
  * earlier test sessions of the agent (they are saved under Sessions already; nothing new is stored).
  */
 import { useEffect, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import { Bot, Clock, SquarePen, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
@@ -156,12 +157,12 @@ export function TestChat({
         <Badge tone="muted">Draft</Badge>
         <span className="ml-auto flex items-center">
           <Popover
-            title="Your earlier tests"
-            label="Your earlier tests"
+            title="Earlier tests"
+            label="Earlier tests"
             align="end"
             className="w-[300px] p-0"
             trigger={({ toggle, open }) => (
-              <button type="button" onClick={toggle} aria-label="Earlier tests" aria-expanded={open} title="Your earlier tests of this agent" className={CHAT_ICON_BUTTON}>
+              <button type="button" onClick={toggle} aria-label="Earlier tests" aria-expanded={open} title="Earlier tests of this agent" className={CHAT_ICON_BUTTON}>
                 <Clock className="size-4" />
               </button>
             )}
@@ -172,7 +173,7 @@ export function TestChat({
                 current={run.sessionId}
                 onOpen={(id) => {
                   close();
-                  void run.load(id).catch(() => {});
+                  void run.load(id).catch((e: Error) => toast.error(`Could not open that test: ${e.message}`));
                 }}
               />
             )}
