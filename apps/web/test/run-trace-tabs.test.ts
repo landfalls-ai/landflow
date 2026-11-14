@@ -122,7 +122,7 @@ describe('one status line', () => {
   for (const [name, model] of [['short run', shortRun()], ['team run', teamRun(true)]] as const) {
     it(`the header of the ${name} has one status badge and no verdict or Reported badge`, () => {
       const html = renderToStaticMarkup(createElement(Head, { model, now: T0 + 120_000, replay: false }));
-      expect(html).toMatch(/Succeeded · [^<]*ms|Succeeded · [\d.]+ ?(s|min)/);
+      expect(html).toMatch(/Succeeded · [^<]+ · [^<]+ ago/);
       expect(html.match(/Succeeded/g)).toHaveLength(1);
       expect(html).not.toContain('Reported');
       expect(html).not.toMatch(/Done|Needs attention|Checked/);
