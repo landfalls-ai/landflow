@@ -32,6 +32,7 @@ import { startUsageTrigger } from './brain/usage-trigger';
 import { clusterActive, leaderService, startCluster, stopCluster, stopLeaderServices } from './cluster';
 import { clusterState } from './cluster/state';
 import { checkConfig, ConfigError, profile } from './config';
+import { conversationRetention } from './conversations/retention';
 import { closeDatabase, openDatabase } from './db';
 import { startOnlineEvaluations } from './evaluations/online';
 import { ensureExecutionReactions } from './execution-reactions';
@@ -42,7 +43,6 @@ import { countProcessError, isDraining, markBootFailed, markBooted, onShutdown, 
 import { marketplace } from './marketplace/service';
 import { mcpGatewaySync } from './mcp/gateway-sync';
 import { triggerSubscriptionSweeper } from './mcp/triggers';
-import { conversationRetention } from './conversations/retention';
 import { startDataMaintenance } from './maintenance';
 import { corePlugin } from './nodes';
 import { registry } from './plugins/registry';

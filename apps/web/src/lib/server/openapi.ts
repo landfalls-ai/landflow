@@ -1684,7 +1684,7 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Conversations',
     id: 'updateMyPreferences',
     summary: 'Change your preferences',
-    description: 'A partial body; an unknown key or a bad value is a 400.',
+    description: 'A partial body; a bad value is a 400 and an unknown key is dropped.',
     body: jsonBody(object({ developerDetails: { type: 'boolean' }, keepConversations: { type: 'boolean' }, briefingDelivery: { type: 'string', enum: ['none', 'slack', 'email'] } })),
     responses: { 200: reply('Your preferences', object({ preferences }, ['preferences'])), 400: invalid },
   });

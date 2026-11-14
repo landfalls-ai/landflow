@@ -44,7 +44,7 @@ export type ConversationMeta = z.infer<typeof conversationMetaSchema> & { hidden
 
 export const conversationItemInputSchema = z
   .object({ role: z.enum(['user', 'assistant']), parts: z.array(conversationPartSchema).min(1).max(50), meta: conversationMetaSchema.optional() })
-  .refine((item) => JSON.stringify(item).length <= MAX_ITEM_BYTES, 'An item is at most 32 KB');
+  .refine((item) => new TextEncoder().encode(JSON.stringify(item)).length <= MAX_ITEM_BYTES, 'An item is at most 32 KB');
 export type ConversationItemInput = z.infer<typeof conversationItemInputSchema>;
 
 export const appendItemsSchema = z.object({ items: z.array(conversationItemInputSchema).min(1).max(MAX_ITEMS_PER_APPEND) });
@@ -78,6 +78,11 @@ export interface ConversationItem {
   parts: ConversationPart[];
   meta?: ConversationMeta;
   at: string;
+}
+
+/** The body of POST /api/conversations: the scope, and the title clipped to what the schema takes (never the raw message). */
+export function createBody(scope: { surface: ConversationSurface; subjectType?: string; subjectId?: string }, firstText?: string) {
+  return { ...scope, ...(firstText?.trim() && { title: titleFrom(firstText) }) };
 }
 
 /** A title from the first user text: one line, clipped to 80 characters. */

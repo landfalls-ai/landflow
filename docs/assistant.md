@@ -222,9 +222,13 @@ mounts it.
 - **Delete is real**: **Delete** in the history popover removes the conversation and its messages from the database at
   once. **Rename** edits the title; a new conversation is named after your first message.
 - **The switch**: **Keep my conversations** is a personal preference (on by default). With it off nothing is stored and
-  the popover says so; chats work as before.
+  the popover says so; chats work as before. Turning it off keeps what is already stored: those conversations stay
+  listed and can be deleted one by one.
+- **A pin changes nothing yet**: `pinned` is stored, but it does not change the order, the display or retention, so a
+  pinned conversation is deleted after 90 days like the rest. Whether a pin should exempt it is open.
 - **The popover** (`components/ui/conversation-history.tsx`): a search box (titles and your own messages), the
-  conversations about this workflow or page, then everywhere. A sheet on a phone, with 44 px rows.
+  conversations about this workflow or page, then everywhere. The two groups are separate requests (the subject group
+  asks for its `subjectType` and `subjectId`, with the search text), and each pages on its own with **Show more**. A sheet on a phone, with 44 px rows.
 
 The routes are `/api/conversations` and `/api/me/preferences` ([reference/api.md](reference/api.md)).
 

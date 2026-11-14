@@ -31,11 +31,27 @@ export interface ConversationHistoryProps {
   onNew: () => void;
 }
 
-/** Splits conversations into those about the subject and the rest. Pure, so it is tested without a DOM. */
-export function groupConversations(list: ConversationRecord[], subjectType?: string, subjectId?: string): { here: ConversationRecord[]; elsewhere: ConversationRecord[] } {
-  if (!subjectType || !subjectId) return { here: [], elsewhere: list };
-  const here = list.filter((c) => c.subjectType === subjectType && c.subjectId === subjectId);
-  return { here, elsewhere: list.filter((c) => !here.includes(c)) };
+/** The query of one request: the subject group asks for its subject, "Everywhere" for none. Pure, so it is tested without a DOM. */
+export function historyParams(text: string, subject?: { subjectType: string; subjectId: string }, cursor?: string | null): URLSearchParams {
+  const params = new URLSearchParams({ limit: String(PAGE) });
+  if (subject) {
+    params.set('subjectType', subject.subjectType);
+    params.set('subjectId', subject.subjectId);
+  }
+  if (text.trim()) params.set('q', text.trim());
+  if (cursor) params.set('cursor', cursor);
+  return params;
+}
+
+/** "Everywhere" without the conversations the subject group already shows. */
+export function leaveOut(list: ConversationRecord[], shown: ConversationRecord[]): ConversationRecord[] {
+  const ids = new Set(shown.map((c) => c.id));
+  return list.filter((c) => !ids.has(c.id));
+}
+
+interface Page {
+  list: ConversationRecord[];
+  next: string | null;
 }
 
 export function ConversationHistory(props: ConversationHistoryProps) {
@@ -53,50 +69,76 @@ export function ConversationHistory(props: ConversationHistoryProps) {
 function HistoryList({ subjectType, subjectId, subjectLabel, onOpen, onNew }: ConversationHistoryProps) {
   const keeping = usePreference('keepConversations');
   const [query, setQuery] = useState('');
-  const [list, setList] = useState<ConversationRecord[]>();
-  const [next, setNext] = useState<string | null>(null);
+  const subject = subjectType && subjectId ? { subjectType, subjectId } : undefined;
+  const [here, setHere] = useState<Page>();
+  const [everywhere, setEverywhere] = useState<Page>();
   const [failed, setFailed] = useState(false);
+  const [problem, setProblem] = useState<string>();
   const [editing, setEditing] = useState<string>();
   const [menu, setMenu] = useState<string>();
-  const seq = useRef(0);
+  const subjectSeq = useRef(0);
+  const everywhereSeq = useRef(0);
 
-  const load = useCallback(async (text: string, cursor?: string) => {
-    const mine = ++seq.current;
-    const params = new URLSearchParams({ limit: String(PAGE) });
-    if (text.trim()) params.set('q', text.trim());
-    if (cursor) params.set('cursor', cursor);
-    try {
-      const body = await api<{ conversations: ConversationRecord[]; nextCursor: string | null }>(`/api/conversations?${params}`, { background: true });
-      if (mine !== seq.current) return;
-      setFailed(false);
-      setList((before) => (cursor && before ? [...before, ...body.conversations] : body.conversations));
-      setNext(body.nextCursor);
-    } catch {
-      if (mine === seq.current) setFailed(true);
-    }
-  }, []);
+  // Each group is its own request and pages on its own; a newer search or a later page of an older one is dropped.
+  const load = useCallback(
+    async (text: string, which: 'here' | 'everywhere', cursor?: string) => {
+      const mine = which === 'here' ? subjectSeq : everywhereSeq;
+      const token = ++mine.current;
+      const set = which === 'here' ? setHere : setEverywhere;
+      try {
+        const body = await api<{ conversations: ConversationRecord[]; nextCursor: string | null }>(`/api/conversations?${historyParams(text, which === 'here' ? subject : undefined, cursor)}`, { background: true });
+        if (token !== mine.current) return;
+        setFailed(false);
+        set((before) => ({ list: cursor && before ? [...before.list, ...body.conversations] : body.conversations, next: body.nextCursor }));
+      } catch {
+        if (token === mine.current) setFailed(true);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [subjectType, subjectId],
+  );
 
   // 250 ms after the last key.
   useEffect(() => {
-    const timer = setTimeout(() => void load(query), query ? 250 : 0);
+    const timer = setTimeout(() => {
+      if (subject) void load(query, 'here');
+      void load(query, 'everywhere');
+    }, query ? 250 : 0);
     return () => clearTimeout(timer);
-  }, [query, load]);
+  }, [query, load]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const patch = (fn: (list: ConversationRecord[]) => ConversationRecord[]) => {
+    setHere((before) => before && { ...before, list: fn(before.list) });
+    setEverywhere((before) => before && { ...before, list: fn(before.list) });
+  };
 
   const rename = async (c: ConversationRecord, title: string) => {
     setEditing(undefined);
     const clean = title.trim();
     if (!clean || clean === c.title) return;
-    const body = await api<{ conversation: ConversationRecord }>(`/api/conversations/${c.id}`, { method: 'PATCH', json: { title: clean } });
-    setList((before) => before?.map((x) => (x.id === c.id ? body.conversation : x)));
+    try {
+      const body = await api<{ conversation: ConversationRecord }>(`/api/conversations/${c.id}`, { method: 'PATCH', json: { title: clean } });
+      setProblem(undefined);
+      patch((list) => list.map((x) => (x.id === c.id ? body.conversation : x)));
+    } catch {
+      setProblem("Couldn't rename it.");
+    }
   };
   const remove = async (c: ConversationRecord) => {
     setMenu(undefined);
     if (!(await confirmAction(`Delete “${c.title}”? It can't be brought back.`, { action: 'Delete', danger: true }))) return;
-    await api(`/api/conversations/${c.id}`, { method: 'DELETE' });
-    setList((before) => before?.filter((x) => x.id !== c.id));
+    try {
+      await api(`/api/conversations/${c.id}`, { method: 'DELETE' });
+      setProblem(undefined);
+      patch((list) => list.filter((x) => x.id !== c.id));
+    } catch {
+      setProblem("Couldn't delete it.");
+    }
   };
 
-  const { here, elsewhere } = groupConversations(list ?? [], subjectType, subjectId);
+  const hereList = here?.list ?? [];
+  const elsewhere = leaveOut(everywhere?.list ?? [], hereList);
+  const loaded = everywhere && (!subject || here);
   const hereLabel = subjectLabel ?? (subjectType === 'workflow' ? 'This workflow' : 'This page');
 
   const row = (c: ConversationRecord) => {
@@ -126,7 +168,7 @@ function HistoryList({ subjectType, subjectId, subjectLabel, onOpen, onNew }: Co
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13px] text-t1 max-md:text-[15px]">{c.title}</span>
                 <span className="flex items-center gap-1.5 text-[11px] text-t3">
-                  {c.subjectType && <span className="rounded bg-wl px-1 py-px">{c.subjectType}</span>}
+                  {c.subjectType && <span className="rounded bg-wl px-1 py-px">{c.subjectType === 'workflow' ? 'Workflow' : c.subjectType}</span>}
                   <span>{timeAgo(c.updatedAt)}</span>
                 </span>
               </span>
@@ -170,17 +212,23 @@ function HistoryList({ subjectType, subjectId, subjectLabel, onOpen, onNew }: Co
         <p className="rounded-lg bg-wl px-2 py-1.5 text-[12px] text-t2">
           Your conversations aren't being kept.{' '}
           <button type="button" onClick={() => void setPreference('keepConversations', true).catch(() => {})} className="text-ac2 underline">
-            Turn on “Keep my conversations” in your account menu
+            Turn it on
           </button>
         </p>
       )}
       <div className="min-h-0 overflow-y-auto">
         {failed && <p className="px-2 py-3 text-t3">Couldn't load your conversations.</p>}
-        {!failed && list && list.length === 0 && <p className="px-2 py-3 text-t3">{query.trim() ? 'No matching conversations' : 'No earlier conversations'}</p>}
-        {group(hereLabel, here)}
-        {group(here.length ? 'Everywhere' : undefined, elsewhere)}
-        {next && (
-          <button type="button" onClick={() => void load(query, next)} className="w-full rounded-md px-2 py-1.5 text-t2 hover:bg-acdim max-md:min-h-11">
+        {problem && <p role="alert" className="px-2 py-1.5 text-rd">{problem}</p>}
+        {!failed && loaded && hereList.length === 0 && elsewhere.length === 0 && <p className="px-2 py-3 text-t3">{query.trim() ? 'No matching conversations' : 'No earlier conversations'}</p>}
+        {group(hereLabel, hereList)}
+        {group(hereList.length ? 'Everywhere' : undefined, elsewhere)}
+        {here?.next && (
+          <button type="button" onClick={() => void load(query, 'here', here.next!)} className="w-full rounded-md px-2 py-1.5 text-t2 hover:bg-acdim max-md:min-h-11">
+            Show more of {hereLabel.toLowerCase()}
+          </button>
+        )}
+        {everywhere?.next && (
+          <button type="button" onClick={() => void load(query, 'everywhere', everywhere.next!)} className="w-full rounded-md px-2 py-1.5 text-t2 hover:bg-acdim max-md:min-h-11">
             Show more
           </button>
         )}

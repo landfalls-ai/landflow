@@ -1529,7 +1529,7 @@ Fifteen specs in [specs/](specs/README.md): a code sandbox, guard enforcement, a
 The first piece of the company-backbone program (wave 1, B02). Built: the `user_preferences` and `conversations` tables
 (migrations 2070 and 2071), their session-only routes, the retention service, the client hooks and the history popover
 ([assistant.md](assistant.md#conversation-history)). Next: each chat mounts the history button and saves to the store,
-and the account menu gets the switches.
+and the account menu gets the switches. Open: `deleteUser` should remove a person's conversations and preferences, a pin should decide whether retention spares a conversation, search wants a plain-text column, and `GET /api/conversations/:id` wants a `limit`.
 
 ## Not planned
 

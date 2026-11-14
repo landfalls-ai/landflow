@@ -5,8 +5,9 @@
  * `resumeLatest` move between conversations. When the person keeps nothing (`kept: false`) the items stay in the chat
  * only: nothing is sent to be stored.
  */
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ConversationItem, ConversationItemInput, ConversationRecord, ConversationSurface } from '../shared/conversations';
+import { createBody } from '../shared/conversations';
 import { api } from './api';
 
 export interface ConversationScope {
@@ -43,6 +44,8 @@ export function useConversation(scope: ConversationScope): UseConversation {
   const idRef = useRef<string>(undefined);
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
+  // Moving to another conversation (open, startNew, another scope) bumps this: a create still in flight then no longer selects itself.
+  const generation = useRef(0);
 
   const select = (next: string | undefined) => {
     idRef.current = next;
@@ -51,9 +54,10 @@ export function useConversation(scope: ConversationScope): UseConversation {
 
   const ensure = useCallback(async (firstText: string | undefined): Promise<string | undefined> => {
     if (idRef.current) return idRef.current;
+    const started = generation.current;
     creating.current ??= api<{ conversation: ConversationRecord | null; kept?: boolean }>('/api/conversations', {
       method: 'POST',
-      json: { ...scopeRef.current, ...(firstText && { title: firstText }) },
+      json: createBody(scopeRef.current, firstText),
     })
       .then((body) => {
         if (!body.conversation) {
@@ -61,8 +65,8 @@ export function useConversation(scope: ConversationScope): UseConversation {
           return undefined;
         }
         setKept(true);
-        idRef.current = body.conversation.id;
-        setId(body.conversation.id);
+        // The message that made it still goes to it, but the chat has moved on: don't select it.
+        if (started === generation.current) select(body.conversation.id);
         return body.conversation.id;
       })
       .finally(() => {
@@ -85,15 +89,25 @@ export function useConversation(scope: ConversationScope): UseConversation {
 
   const open = useCallback(async (target: string) => {
     const body = await api<{ conversation: ConversationRecord; items: ConversationItem[] }>(`/api/conversations/${target}`);
-    idRef.current = body.conversation.id;
-    setId(body.conversation.id);
+    generation.current += 1;
+    select(body.conversation.id);
     setItems(body.items);
   }, []);
 
   const startNew = useCallback(() => {
+    generation.current += 1;
     select(undefined);
     setItems([]);
   }, []);
+
+  // Another workflow or page is another subject: start clean rather than keep writing to the old conversation.
+  const scopeKey = `${scope.surface}|${scope.subjectType ?? ''}|${scope.subjectId ?? ''}`;
+  const lastScope = useRef(scopeKey);
+  useEffect(() => {
+    if (lastScope.current === scopeKey) return;
+    lastScope.current = scopeKey;
+    startNew();
+  }, [scopeKey, startNew]);
 
   const resumeLatest = useCallback(async () => {
     const params = query(scopeRef.current);

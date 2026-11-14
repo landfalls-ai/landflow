@@ -16,6 +16,7 @@ const items = await import('@/app/api/conversations/[id]/items/route');
 const prefs = await import('@/app/api/me/preferences/route');
 const { routePolicy } = await import('@/lib/server/auth/policy');
 const { database } = await import('@/lib/server/db');
+const { personalProjectId } = await import('@/lib/shared/projects');
 const { upsertEntity } = await import('@/lib/server/brain/entities');
 const { pruneConversations } = await import('@/lib/server/conversations/retention');
 const { conversationRetention } = await import('@/lib/server/conversations/retention');
@@ -119,20 +120,23 @@ describe('conversations', () => {
   });
 
   it('drops a brain link the reader can no longer open and counts it', async () => {
+    upsertEntity({ type: 'customer', id: 'open', name: 'Open Co', projectId: personalProjectId(TEST_OWNER.id), source: 'test' } as Parameters<typeof upsertEntity>[0]);
     upsertEntity({ type: 'customer', id: 'walled', name: 'Walled Co', projectId: 'prj_nobody_is_in', source: 'test' } as Parameters<typeof upsertEntity>[0]);
     const conversation = await create({ surface: 'brain', title: 'Brain' });
     await items.POST(
       req(`/api/conversations/${conversation.id}/items`, 'POST', {
-        items: [{ role: 'assistant', parts: [{ type: 'answer', text: 'See [[customer/walled]]', links: [{ type: 'customer', id: 'walled', name: 'Walled Co' }] }] }],
+        items: [{ role: 'assistant', parts: [{ type: 'answer', text: 'See [[customer/walled]]', links: [{ type: 'customer', id: 'open', name: 'Open Co' }, { type: 'customer', id: 'walled', name: 'Walled Co' }] }] }],
       }),
       ctx(conversation.id),
     );
     const read = async () => (await (await one.GET(req(`/api/conversations/${conversation.id}`), ctx(conversation.id))).json()).items[0];
     const asOwner = await read();
-    expect(asOwner.parts[0].links.length + (asOwner.meta?.hidden ?? 0)).toBe(1);
+    // The owner can open both: the link to the page in their project is kept, nothing is counted as hidden.
+    expect(asOwner.parts[0].links.map((l: { id: string }) => l.id)).toEqual(['open', 'walled']);
+    expect(asOwner.meta?.hidden).toBeUndefined();
     // The stored row keeps the link: only a read drops it.
     const stored = database().get<{ parts: string }>('SELECT parts FROM conversation_items WHERE conversation_id = ?', conversation.id)!;
-    expect(JSON.parse(stored.parts)[0].links).toHaveLength(1);
+    expect(JSON.parse(stored.parts)[0].links).toHaveLength(2);
     // The member opened the owner's conversation? No: they own a copy of their own.
     await asMember(async () => {
       const copy = await create({ surface: 'brain', title: 'Mine' });
@@ -168,13 +172,25 @@ describe('conversations', () => {
   });
 
   it('the history button renders and groups by subject', async () => {
-    const { ConversationHistory, groupConversations } = await import('@/components/ui/conversation-history');
+    const { ConversationHistory, historyParams, leaveOut } = await import('@/components/ui/conversation-history');
     const html = renderToStaticMarkup(createElement(ConversationHistory, { surface: 'spotlight', subjectType: 'workflow', subjectId: 'wf_1', onOpen: () => {}, onNew: () => {} }));
     expect(html).toContain('aria-label="Conversation history"');
-    const record = (id: string, subjectId: string | null) => ({ id, surface: 'spotlight' as const, projectId: null, subjectType: subjectId ? 'workflow' : null, subjectId, title: id, pinned: false, createdAt: '', updatedAt: '' });
-    const groups = groupConversations([record('a', 'wf_1'), record('b', 'wf_2'), record('c', null)], 'workflow', 'wf_1');
-    expect(groups.here.map((c) => c.id)).toEqual(['a']);
-    expect(groups.elsewhere.map((c) => c.id)).toEqual(['b', 'c']);
-    expect(groupConversations([record('a', 'wf_1')]).elsewhere).toHaveLength(1);
+    const record = (id: string) => ({ id, surface: 'spotlight' as const, projectId: null, subjectType: null, subjectId: null, title: id, pinned: false, createdAt: '', updatedAt: '' });
+    expect(leaveOut([record('a'), record('b'), record('c')], [record('b')]).map((c) => c.id)).toEqual(['a', 'c']);
+    // The subject group asks for its own subject (the conversations_subject index), "Everywhere" for none.
+    expect(historyParams(' plan ', { subjectType: 'workflow', subjectId: 'wf_1' }, 'cur').toString()).toBe('limit=50&subjectType=workflow&subjectId=wf_1&q=plan&cursor=cur');
+    expect(historyParams('').toString()).toBe('limit=50');
+  });
+
+  it('names a conversation from a first message over 200 characters, clipped to 80', async () => {
+    const { createBody } = await import('@/lib/shared/conversations');
+    const long = `Please ${'draft a very long flow '.repeat(20)}`;
+    const body = createBody({ surface: 'spotlight' }, long);
+    expect(body.title!.length).toBe(80);
+    const conversation = await create(body);
+    await say(conversation.id, long);
+    const got = await (await one.GET(req(`/api/conversations/${conversation.id}`), ctx(conversation.id))).json();
+    expect(got.conversation.title).toHaveLength(80);
+    expect(createBody({ surface: 'brain' }).title).toBeUndefined();
   });
 });

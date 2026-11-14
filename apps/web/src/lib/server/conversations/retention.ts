@@ -1,6 +1,6 @@
 /**
  * Conversation retention (LANDFLOW_CHAT_RETENTION_DAYS, default 90): conversations whose last message is older go, with
- * their items. The leader runs it once a minute after boot and then daily; `stop` clears the timer.
+ * their items. The leader runs it once, a minute after boot, and then daily; `stop` clears the timer.
  */
 import { envInt } from '../config';
 import { singleton } from '../singleton';

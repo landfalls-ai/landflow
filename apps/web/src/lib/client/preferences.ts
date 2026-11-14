@@ -34,6 +34,15 @@ function publish(next: Preferences) {
   for (const listener of listeners) listener();
 }
 
+/** Forget the cached preferences (at sign-out: the cache is per browser, not per person). */
+export function clearPreferencesCache() {
+  try {
+    localStorage.removeItem(PREFERENCES_CACHE_KEY);
+  } catch {}
+  current = PREFERENCE_DEFAULTS;
+  loaded = false;
+}
+
 /** Ask the server once per page load; the answer replaces the cache. */
 function load() {
   if (loaded || typeof window === 'undefined') return;
@@ -49,11 +58,12 @@ function load() {
 
 function subscribe(listener: () => void) {
   listeners.add(listener);
+  // One window listener for all subscribers, added with the first and removed with the last.
+  if (listeners.size === 1) window.addEventListener('storage', onStorage);
   load();
-  window.addEventListener('storage', onStorage);
   return () => {
     listeners.delete(listener);
-    window.removeEventListener('storage', onStorage);
+    if (listeners.size === 0) window.removeEventListener('storage', onStorage);
   };
 }
 
@@ -74,13 +84,13 @@ export function usePreference<K extends PreferenceKey>(key: K): Preferences[K] {
 
 /** Change a preference: shown at once, saved to the server, put back (and the error thrown) if the save fails. */
 export async function setPreference<K extends PreferenceKey>(key: K, value: Preferences[K]): Promise<void> {
-  const before = current;
+  const before = current[key];
   publish({ ...current, [key]: value });
   try {
     const body = await api<{ preferences: Preferences }>('/api/me/preferences', { method: 'PATCH', json: { [key]: value } });
     publish(readPreferences(body.preferences));
   } catch (caught) {
-    publish(before);
+    publish({ ...current, [key]: before });
     throw caught;
   }
 }
