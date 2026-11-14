@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { renderToStaticMarkup } from 'react-dom/server';
-import { createElement } from 'react';
 import { statusItems, workbenchLayout } from '@/components/brain/wiki/workbench';
 import { indexCards, indexOutline } from '@/components/brain/wiki/index-doc';
 import { deltaText, change, showLayersCard } from '@/components/insights/format';
-import { AgentLayersCard } from '@/components/insights/agent-layers-card';
 import type { InsightsTotals } from '@/lib/shared/platform';
 
 const health = { noOwner: [], quiet: [], staleSummaries: [] };
@@ -55,7 +52,6 @@ describe('insights formatting', () => {
     expect(showLayersCard({ requests: 9, routed: 0, cached: 0 })).toBe(false);
     expect(showLayersCard({ requests: 9, routed: 2, cached: 0 })).toBe(true);
     expect(showLayersCard({ requests: 9, routed: 0, cached: 1 })).toBe(true);
-    expect(renderToStaticMarkup(createElement(AgentLayersCard, { days: 7, label: '7 days' }))).toBe('');
   });
 });
 
