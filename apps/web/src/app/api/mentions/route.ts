@@ -38,6 +38,9 @@ function kindsFor(requested: readonly MentionType[] | undefined): MentionType[] 
 export const GET = handler(async (request: Request) => {
   const query = parseQuery(request, querySchema);
   if (!query.ok) return query.response;
-  const groups = await searchMentions(routeActor(), { ...query.data, types: kindsFor(query.data.types) });
+  const types = kindsFor(query.data.types);
+  // An empty list would read as "every kind" downstream; a key that may tag none of what it asked for gets nothing.
+  if (!types.length) return json({ groups: [] });
+  const groups = await searchMentions(routeActor(), { ...query.data, types });
   return json({ groups });
 });

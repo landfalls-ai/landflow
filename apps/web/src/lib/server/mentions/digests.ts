@@ -81,10 +81,13 @@ const clip = (value: unknown, max: number) => {
 
 const SECRET_KEY = /pass(word)?|secret|token|api.?key|authorization|credential|private/i;
 
-/** `value` with every nested key that looks like a secret (and its header-style name) hidden. */
+/** `value` with every nested key that looks like a secret hidden. */
 function maskSecrets(value: unknown, depth = 0): unknown {
   if (depth > 6 || value === null || typeof value !== 'object') return value;
   if (Array.isArray(value)) return value.map((v) => maskSecrets(v, depth + 1));
+  // A `{ name: 'X-Api-Key', value }` pair hides its value by the name.
+  const rec = value as Record<string, unknown>;
+  if (typeof rec.name === 'string' && SECRET_KEY.test(rec.name) && 'value' in rec) return { ...rec, value: '<hidden>' };
   return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, SECRET_KEY.test(k) ? '<hidden>' : maskSecrets(v, depth + 1)]));
 }
 
@@ -239,7 +242,7 @@ function person(actor: Actor, ref: MentionRef): Digest | undefined {
     return people.find((e) => String(e.attrs.email ?? '').toLowerCase() === email) ?? people.find((e) => e.name.toLowerCase() === user.name.toLowerCase());
   })();
   const readable = entity && canEntity(actor, entity, 'read') ? entity : undefined;
-  const summary = readable ? wikiPage(readable, scopeForActor(actor), { id: actor.id }, false).summary?.text : undefined;
+  const summary = readable ? wikiPage(readable, scopeForActor(actor), { id: user.id, email: user.email }, false).summary?.text : undefined;
   const team = readable?.attrs.team ? String(readable.attrs.team) : undefined;
   return finish(user.name || user.email.split('@')[0], [
     `Person “${user.name}”, role ${user.role}.`,

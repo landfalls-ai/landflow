@@ -237,6 +237,10 @@ describe('GET /api/mentions', () => {
       const kinds = body.groups.map((g) => g.type);
       expect(kinds).toContain('workflow');
       for (const kind of ['run', 'credential', 'person']) expect(kinds).not.toContain(kind);
+      for (const types of ['credential', 'person', 'run', 'credential,person,run']) {
+        const none = (await (await (route.GET as (r: Request) => Promise<Response>)(new Request(`http://mentions.test/api/mentions?types=${types}`))).json()) as { groups: unknown[] };
+        expect(none.groups).toEqual([]);
+      }
       keyed(['workflows:read', 'executions:read']);
       const withRuns = (await (await (route.GET as (r: Request) => Promise<Response>)(new Request('http://mentions.test/api/mentions?types=run,credential'))).json()) as { groups: Array<{ type: string }> };
       expect(withRuns.groups.map((g) => g.type)).toEqual(['run']);

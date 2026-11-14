@@ -125,7 +125,7 @@ async function foundFor(actor: Actor, type: MentionType, search: MentionSearch):
 /** The groups for `q`, in `MENTION_TYPES` order; a kind with no hit is left out. */
 export async function searchMentions(actor: Actor, search: MentionSearch): Promise<MentionGroup[]> {
   const q = (search.q ?? '').trim();
-  const wanted = new Set<MentionType>(search.types?.length ? search.types : MENTION_TYPES);
+  const wanted = new Set<MentionType>(search.types ?? MENTION_TYPES);
   const groups: MentionGroup[] = [];
   for (const type of MENTION_TYPES) {
     if (!wanted.has(type)) continue;
