@@ -28,6 +28,9 @@ import { inScope, type McpScope } from './project-servers';
 import { createIn } from '../projects/http';
 import type { ResourceAction } from '../../shared/projects';
 import { MCP_SERVER_VERSION, textResult } from './server';
+import type { ApiKeyScope } from '../../shared/auth';
+import { toolAllowed } from '../../shared/mcp';
+import { registerBrainPrompts } from './brain-prompts';
 import { registerBrainTools } from './brain-tools';
 import { registerDebugTools } from './debug-tools';
 import { normalizeWorkflow, validateWorkflow, type WorkflowInput } from './workflows';
@@ -40,7 +43,7 @@ How to build one:
 3. Connections go from source to target by node name. "sourceIndex" picks the output (If/Filter: 0 = true, 1 = false). AI sub-nodes (chat models, memory, tools) connect from the sub-node to the root node with type ai_languageModel, ai_memory or ai_tool.
 4. validate_workflow (it warns when an expression reads a field the node before it does not write), then create_workflow or update_workflow (nodes and connections given to update_workflow replace the current ones), then execute_workflow to test and get_execution to see each node's output.
 5. When a run fails: explain_failure (failing node, resolved parameters, sample input, upstream fields, what to check), get_run_trace (the journal), get_plugin_logs (a node plugin's output), then run_node to reproduce on a pinned input and retry_execution to continue after a fix.
-The second brain: check_overlap before building (is anyone already doing this?), brain_search_facts, brain_workflow_knowledge, brain_list_suggestions, brain_usage_report, and brain_suggest to post a suggestion.
+The second brain: check_overlap before building (is anyone already doing this?), brain_search_facts, brain_workflow_knowledge, brain_list_suggestions, brain_usage_report, brain_ask to ask in words, brain_suggest to post a suggestion, my_briefing for the person's own day and record_work to save what they did (private to them).
 Credentials can't be created here: nodes that need one get it chosen in the editor (the workflow's url).
 
 ${PARAMETER_FORMATS}`;
@@ -158,12 +161,20 @@ function startNode(workflow: Workflow, ref?: string) {
  * `resourceCan`), and what they create goes to their personal project. Without one (the instance access token) the
  * server acts for the instance and checks nothing, as before.
  */
-export function instanceServer(actor?: Actor, scope?: McpScope): McpServer {
+export function instanceServer(actor?: Actor, scope?: McpScope, keyScopes?: readonly ApiKeyScope[]): McpServer {
   const project = scope && getProject(scope.projectId);
   const server = new McpServer(
     { name: 'landflow', title: project ? `Landflow · ${project.name}` : 'Landflow', version: MCP_SERVER_VERSION },
     { instructions: project ? `${SCOPE_NOTE(project.name)}\n\n${INSTRUCTIONS}` : INSTRUCTIONS },
   );
+  // B13: an API key sees and calls only the tools its scopes cover (lib/shared/mcp.ts TOOL_SCOPES): a tool it may not use is registered
+  // disabled (so tools/list leaves it out) and its handler checks again. Other callers keep every tool.
+  const register = server.registerTool.bind(server) as (name: string, config: unknown, cb: (...args: unknown[]) => unknown) => { disable(): void };
+  (server as { registerTool: unknown }).registerTool = (name: string, config: unknown, cb: (...args: unknown[]) => unknown) => {
+    const tool = register(name, config, (...args) => (toolAllowed(keyScopes, name) ? cb(...args) : failure(`This API key's scopes do not allow ${name}`)));
+    if (!toolAllowed(keyScopes, name)) tool.disable();
+    return tool;
+  };
   /** The refusal for `actor` doing `action` with a workflow, or undefined when allowed (a workflow they cannot see is "not found"; neither is one outside the project this server is scoped to). */
   const denied = (id: string, action: ResourceAction): CallToolResult | undefined => {
     if (!inScope(scope, id)) return failure(`Workflow ${id} not found`);
@@ -502,6 +513,8 @@ export function instanceServer(actor?: Actor, scope?: McpScope): McpServer {
   });
 
   registerBrainTools(server, { actor, scope, denied: (id, action) => denied(id, action), json, failure });
+  // The caller's briefing as a prompt and resources: for a person who may read the brain (not the instance access token).
+  if (actor && toolAllowed(keyScopes, 'my_briefing')) registerBrainPrompts(server, actor);
 
   return server;
 }
