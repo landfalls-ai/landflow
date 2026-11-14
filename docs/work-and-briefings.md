@@ -42,8 +42,8 @@ The contract is `WorkEventInput` in `packages/protocol/src/work-events.ts`, with
 | `source` | the tool, 1 to 40 characters of `a-z`, `0-9` and `-` (`claude-code`, `landflow-cli`, `mcp`) |
 | `sourceId` | 1 to 200 characters, the item's id in its tool. Sending it again updates the event |
 | `occurredAt`, `endedAt` | ISO 8601 times. The host refuses an `occurredAt` more than a day ahead of its clock (a row no briefing would show and the 90-day prune would never reach) |
-| `title` | 1 to 200 characters, one line, not code: a title over 80 characters that reads like code is refused |
-| `summary` | up to 500 characters (the host keeps 200) |
+| `title` | 1 to 200 characters, one line, not code: a title over 80 characters that reads like code is refused. A path on the sender's machine is refused too (`/Users/…`, `/home/…`, `/root/…`, `/private/…`, `/Volumes/…`, `/mnt/…`, `/var/folders/…`, `~/…`, a Windows drive, a UNC share or `file://`); a URL path such as `/api/brain/work` is fine (`containsMachinePath`) |
+| `summary` | up to 500 characters (the host keeps 200); a path on the machine is refused as in `title` |
 | `repo` | `owner/name` |
 | `branch` | up to 120 characters (the redaction also reads a long branch name with a digit as a token, so `feature/brain-work-api-b05` may be stored as `feature/<token>`) |
 | `areas` | up to 20 directory names of up to 80 characters. An absolute path, `..` or a file name with an extension (`src/app.ts`) is refused; a comma in a name is refused too, and only the names that fit 200 characters in all are kept |

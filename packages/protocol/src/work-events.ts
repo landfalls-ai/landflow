@@ -72,6 +72,16 @@ const isoOk = (value: unknown): value is string => typeof value === 'string' && 
 /** An absolute path (POSIX, home-relative, UNC or a Windows drive). */
 export const isAbsolutePath = (text: string): boolean => /^(\/|~|\\\\|[A-Za-z]:[\\/])/.test(text);
 
+/**
+ * Whether free text holds a path on someone's machine: a home or volume directory (`/Users/…`, `/home/…`, `/root/…`,
+ * `/private/…`, `/Volumes/…`, `/mnt/…`, `/var/folders/…`), a home-relative path (`~/…`), a Windows drive (`C:\\…`) or a
+ * UNC share. A URL path such as `/api/brain/work` is not one. The clients clean titles on the machine; this is the
+ * server's backstop for any other sender (an MCP client, a script).
+ */
+export const containsMachinePath = (text: string): boolean =>
+  /(?:^|[\s"'`(=:@<\[])(?:\/(?:Users|home|root|private|Volumes|mnt|var\/folders)\/|~\/|[A-Za-z]:\\|\\\\[A-Za-z0-9])/.test(text) ||
+  /file:\/\//i.test(text);
+
 /** Whether the last segment of `text` looks like a file name with an extension (`app.ts`, `README.md`). */
 export const hasFileExtension = (text: string): boolean => /[^./\\]\.[A-Za-z][A-Za-z0-9]{0,7}$/.test(text.split(/[\\/]/).pop() ?? '');
 
@@ -125,7 +135,9 @@ export function validateWorkEvent(input: unknown): WorkEventResult {
   const title = text('title', WORK_LIMITS.title, true);
   if (title && title.length > WORK_LIMITS.codeTitle && looksLikeCode(title)) errors.push('title reads like code; send a one-line description of the work');
   else if (title && /\r|\n/.test(title)) errors.push('title is one line');
+  if (title && containsMachinePath(title)) errors.push('title holds a path on your machine; describe the work without it');
   const summary = text('summary', WORK_LIMITS.summary);
+  if (summary && containsMachinePath(summary)) errors.push('summary holds a path on your machine; describe the work without it');
   const branch = text('branch', WORK_LIMITS.branch);
   const url = text('url', WORK_LIMITS.url);
   if (url && !HTTP_URL.test(url)) errors.push('url must start with http:// or https://');
