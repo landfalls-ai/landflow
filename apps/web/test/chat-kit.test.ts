@@ -88,6 +88,11 @@ describe('short replies', () => {
   it('counts a list as its items', () => {
     expect(firstSentences('Steps:\n1. First.\n2. Second.\n3. Third.', 2).more).toBe(true);
   });
+  it('counts a list without full stops as one sentence where it ends', () => {
+    const reply = 'I can add three steps.\n- a Slack message\n- a delay\n- an email\nShall I go ahead?';
+    expect(firstSentences(reply, 2)).toEqual({ text: 'I can add three steps.\n- a Slack message\n- a delay\n- an email', more: true });
+    expect(firstSentences('Here:\n- one\n- two', 2)).toEqual({ text: 'Here:\n- one\n- two', more: false });
+  });
 });
 
 describe('the reply footer', () => {

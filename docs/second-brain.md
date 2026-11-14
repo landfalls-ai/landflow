@@ -321,7 +321,10 @@ prose and a person keeps the facts. Spotlight asks it questions.
     in the same work, with how often), **Facts** with **Add a fact**, **Suggestions** and **Mentioned in**.
 - **Ask** (`POST /api/brain/ask`, what the Ask panel calls) finds pages by words in names, descriptions, owners and
   attributes, facts by search (by meaning too when embeddings are on), and work by words and by the pages found; then
-  the model answers from those alone, in a few sentences with page links and numbered work. Without a model it returns
+  the model answers from those alone, in a few sentences with page links and numbered work. A link to a page that does
+  not exist (or that the reader can't open) shows as a plain word, whatever its form (`[[Support/11]]` reads
+  "Support"), and a fact about something with no name is given to the model by its kind ("a workflow"), never by its
+  id. Leaving the Brain page mid-answer stops it, as **Stop** does. Without a model it returns
   what it found. A short follow-up borrows the words of the last question to find its pages. It streams when asked
   with `Accept: text/event-stream` and is one JSON body otherwise (MCP and older callers). **Ask is metered**: each
   model call writes an `ai_usage` row with surface `brain` under the asker, so the per-user caps apply and a cap shows

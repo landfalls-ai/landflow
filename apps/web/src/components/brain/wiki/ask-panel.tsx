@@ -309,6 +309,9 @@ export function useAskConversation() {
     itemsRef.current = items;
     keptRef.current = kept;
   });
+  // Leaving /brain mid-answer stops the request, so the server stops the model (and its metering) too; the turn is kept
+  // as stopped, as the Stop button keeps it.
+  useEffect(() => () => reading.current?.abort(), []);
 
   const awaitItems = (force: boolean) => {
     want.current = { before: keptRef.current.items, force };

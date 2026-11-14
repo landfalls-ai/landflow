@@ -149,7 +149,7 @@ export async function askBrainStream(actor: AskActor | undefined, input: AskStre
         onToken: (delta) => emit({ type: 'text.delta', step: writing, text: delta }),
         ...(input.signal && { signal: input.signal }),
       });
-      emit({ type: 'tool', name: 'read_work', label: 'Wrote the answer', ok: true, id: `t_${nanoid(8)}`, step: writing, durationMs: Date.now() - modelStarted });
+      emit({ type: 'tool', name: 'write_answer', label: 'Wrote the answer', ok: true, id: `t_${nanoid(8)}`, step: writing, durationMs: Date.now() - modelStarted });
       const finished = finishAnswer(turn.text ?? '', g);
       if (!finished) {
         emit({ type: 'error', kind: 'model', message: 'The model wrote nothing' });

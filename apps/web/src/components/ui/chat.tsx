@@ -109,6 +109,8 @@ export function ModelChip({ model, local }: { model: string; local?: boolean }) 
  * The first `n` sentences of a reply, and whether there is more. Not cut after "e.g.", "i.e.", "etc.", nor after a list
  * marker at the start of a line ("2."), nor inside a quoted name or a fenced code block.
  */
+const LIST_ITEM = /^\s*(?:[-*+•]|\d+[.)])\s+\S/;
+
 export function firstSentences(text: string, n: number): { text: string; more: boolean } {
   const t = text.trim();
   if (n < 1) return { text: '', more: t.length > 0 };
@@ -125,6 +127,11 @@ export function firstSentences(text: string, n: number): { text: string; more: b
     else if (c === '”') quoted = Math.max(0, quoted - 1);
     else if ('.!?'.includes(c) && !quoted && /\s/.test(t[i + 1] ?? '') && !/\b(?:e\.g|i\.e|etc|vs|approx|Mr|Mrs|Ms|Dr)\.$/i.test(t.slice(Math.max(0, i - 5), i + 1)) && !/(?:^|\n)\s*\d+\.$/.test(t.slice(Math.max(0, i - 6), i + 1))) {
       if (++found >= n) return { text: t.slice(0, i + 1), more: t.slice(i + 1).trim().length > 0 };
+    } else if (c === '\n' && !quoted) {
+      // A list whose items have no full stop counts as one sentence where it ends ("One line.\n- a\n- b\nAnd a question?").
+      const line = t.slice(t.lastIndexOf('\n', i - 1) + 1, i);
+      const next = /^[^\S\n]*(\S.*)?$/m.exec(t.slice(i + 1))?.[1] ?? '';
+      if (LIST_ITEM.test(line) && !/[.!?]\s*$/.test(line) && !LIST_ITEM.test(next) && next.trim() && ++found >= n) return { text: t.slice(0, i), more: true };
     }
   }
   return { text: t, more: false };
@@ -138,7 +145,8 @@ export function ShortReply({ text, sentences = 2 }: { text: string; sentences?: 
   return (
     <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-t1 [overflow-wrap:anywhere]">
       {cut.text.replace(/\*\*|`/g, '')}
-      <button type="button" onClick={() => setMore(true)} className="ml-1 text-[12px] font-semibold text-ac hover:underline max-md:min-h-11 max-md:px-1">
+      {/* A 44 px target on a phone without a taller line: the hit area grows, the button does not. */}
+      <button type="button" onClick={() => setMore(true)} className="relative ml-1 text-[12px] font-semibold text-ac hover:underline max-md:after:absolute max-md:after:-inset-x-2 max-md:after:-inset-y-3.5 max-md:after:content-['']">
         Show more
       </button>
     </div>

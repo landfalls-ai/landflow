@@ -23,6 +23,7 @@ const { store } = await import('@/lib/server/store');
 const { database } = await import('@/lib/server/db');
 const { createUser } = await import('@/lib/server/auth/users');
 const entities = await import('@/lib/server/brain/entities');
+const { upsertFact } = await import('@/lib/server/brain/facts');
 const { scopeForActor } = await import('@/lib/server/brain/scope');
 const { saveKind } = await import('@/lib/server/usage/kinds');
 const { recordUsage } = await import('@/lib/server/usage/ledger');
@@ -165,6 +166,14 @@ describe('the stream', () => {
     expect(events.some((e) => e.type === 'done')).toBe(false);
   });
 
+  it('ends with a cap error in the cap’s own words when the asker’s AI usage cap is reached', async () => {
+    const { UsageCapError } = await import('@/lib/server/ai-usage');
+    const capped = new UsageCapError({ metric: 'tokens', max: 1_000, subject: 'you today', setIn: 'Settings → AI usage limits', used: () => 1_200 }, 1_200);
+    const events = await stream('Acme exports', { provider: 'fake', model: 'capped', generate: () => Promise.reject(capped) });
+    expect(events.at(-1)).toEqual({ type: 'error', kind: 'cap', message: capped.message });
+    expect(events.some((e) => e.type === 'done')).toBe(false);
+  });
+
   it('without a model (brain off) ends with what it found and a note; an empty question is an error event', async () => {
     const events = await stream('Acme exports', undefined);
     expect(events.map((e) => e.type)).toEqual(['found', 'step.start', 'tool', 'step.start', 'tool', 'step.start', 'tool', 'done']);
@@ -227,6 +236,21 @@ describe('citations', () => {
     const plain = await wiki.askBrain('Acme exports', undefined, undefined, { model: fakeModel('Slow exports [4].') });
     expect(plain.cited).toEqual([]);
     expect(plain.answer).toBe('Slow exports.');
+  });
+
+  it('turns a link to a page that does not exist into a word, whatever its case', async () => {
+    const answer = await wiki.askBrain('Acme exports', undefined, undefined, { model: fakeModel('See [[Support/11]], [[customer/nope|Nope Inc]] and [[customer/acme|Acme]].') });
+    expect(answer.answer).toBe('See Support, Nope Inc and [[customer/acme|Acme]].');
+    expect(answer.links).toEqual([{ ref: 'customer/acme', name: 'Acme' }]);
+  });
+
+  it('names a fact without a subject name by its type, never by its id, and asks for no ids', async () => {
+    upsertFact({ subjectType: 'workflow', subjectId: 'wf_2nCmERLJ', kind: 'failure', statement: 'Acme exports retry three times', confidence: 0.9 });
+    const model = fakeModel('Fine.');
+    await wiki.askBrain('Acme exports retry', undefined, undefined, { model });
+    expect(model.prompts[0]).toContain('- a workflow (failure): Acme exports retry three times');
+    expect(model.prompts[0]).not.toContain('wf_2nCmERLJ');
+    expect(model.prompts[0]).toContain('never make up a link or write an id');
   });
 
   it('tells the model to cite nothing when no work was found', async () => {
@@ -307,6 +331,8 @@ describe('the panel', () => {
     expect(streamingPreview('Dana works on [[initiative/atlas|Atlas]] and [[customer/acme]] [1]')).toBe('Dana works on Atlas and acme [1]');
     expect(streamingPreview('Dana works on [[initiative/at')).toBe('Dana works on ');
     expect(streamingPreview('Slow [')).toBe('Slow ');
+    expect(streamingPreview('{"answer": "Acme is on [[customer/acme|Acme')).toBe('Acme is on ');
+    expect(streamingPreview('{"answer": "Acme is \\"fine\\"."}')).toBe('Acme is "fine".');
   });
 
   it('renders its empty state with starters and the model', () => {

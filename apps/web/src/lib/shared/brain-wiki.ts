@@ -170,7 +170,7 @@ export type AskEvent =
   /** What it found, before any word: the page refs (`type/id`) with names, and how many facts and work items. */
   | { type: 'found'; pages: Array<{ id: string; name: string }>; facts: number; work: number }
   | { type: 'step.start'; step: number; label: string }
-  | { type: 'tool'; name: 'read_pages' | 'search_facts' | 'read_work'; label: string; ok: boolean; id: string; step: number; durationMs: number; detail?: string }
+  | { type: 'tool'; name: 'read_pages' | 'search_facts' | 'read_work' | 'write_answer'; label: string; ok: boolean; id: string; step: number; durationMs: number; detail?: string }
   /** Words as they come: provisional, replaced by the checked `text`. */
   | { type: 'text.delta'; step: number; text: string }
   | { type: 'text'; text: string }
@@ -197,8 +197,11 @@ export type AskEvent =
  * The checked text replaces it at the end.
  */
 export function streamingPreview(text: string): string {
-  return provisionalText(text)
-    .replace(/\[\[[a-z]+\/[a-z0-9_.-]+\|([^\]]*)\]\]/g, '$1')
+  // A model that answers JSON despite the plain-text prompt: show the answer's words, not `{"answer": "`.
+  const json = /^\s*\{\s*"answer"\s*:\s*"?/.exec(text);
+  const words = json ? text.slice(json[0].length).replace(/"\s*\}?\s*$/, '').replace(/\\n/g, ' ').replace(/\\"/g, '"') : text;
+  return provisionalText(words)
+    .replace(/\[\[[^\]|]+\|([^\]]*)\]\]/g, '$1')
     .replace(/\[\[[a-z]+\/([a-z0-9_.-]+)\]\]/g, '$1')
     .replace(/\[\[[^\]]*$/, '')
     .replace(/\[\d{0,3}$/, '');
