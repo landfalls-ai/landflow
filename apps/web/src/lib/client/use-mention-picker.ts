@@ -19,7 +19,7 @@ import {
   pushRecent,
   refOf,
   removeChip,
-  removeMentionText,
+  replaceMentionText,
   stepActive,
   MENTION_LIMITS,
   mentionKey,
@@ -167,7 +167,7 @@ export function useMentionPicker({
       if (!at) return;
       // At the cap a new tag cannot be added: keep the @text and the list as they are.
       if (chips.length >= MENTION_LIMITS.refs && !chips.some((c) => mentionKey(c) === mentionKey(hit))) return;
-      const next = removeMentionText(value, at.start, Math.min(caret, value.length));
+      const next = replaceMentionText(value, at.start, Math.min(caret, value.length), hit.name);
       onChange(next.value);
       setChips((current) => addChip(current, hit));
       setRecents((current) => {

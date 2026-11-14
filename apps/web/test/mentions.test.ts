@@ -268,17 +268,15 @@ describe('the picker’s pure parts', () => {
     expect(mentionQueryAt(`@${'a'.repeat(50)}`, 51)).toBeUndefined();
   });
 
-  it('removes the @query text and keeps one space', () => {
-    const { removeMentionText } = shared;
-    expect(removeMentionText('check @inv now', 6, 10)).toEqual({ value: 'check now', caret: 6 });
-    expect(removeMentionText('@inv', 0, 4)).toEqual({ value: '', caret: 0 });
-    expect(removeMentionText('why is @in', 7, 10)).toEqual({ value: 'why is ', caret: 7 });
-    // The spaces around a chosen tag collapse to one, never two ("Look at  please").
-    expect(removeMentionText('Look at @inv  please', 8, 12)).toEqual({ value: 'Look at please', caret: 8 });
-    expect(removeMentionText('Look at  @inv please', 9, 13)).toEqual({ value: 'Look at please', caret: 8 });
-    expect(removeMentionText('Look at @Invoice sync please', 8, 21)).toEqual({ value: 'Look at please', caret: 8 });
-    expect(removeMentionText('@inv please', 0, 4)).toEqual({ value: 'please', caret: 0 });
-    expect(removeMentionText('first\n@inv next', 6, 10)).toEqual({ value: 'first\nnext', caret: 6 });
+  it('turns the @query into @Name with one space after it', () => {
+    const { replaceMentionText } = shared;
+    expect(replaceMentionText('check @inv now', 6, 10, 'Invoice sync')).toEqual({ value: 'check @Invoice sync now', caret: 20 });
+    expect(replaceMentionText('@inv', 0, 4, 'Invoice sync')).toEqual({ value: '@Invoice sync ', caret: 14 });
+    expect(replaceMentionText('why is @in', 7, 10, 'Invoice sync')).toEqual({ value: 'why is @Invoice sync ', caret: 21 });
+    expect(replaceMentionText('Look at @inv  please', 8, 12, 'Invoice sync')).toEqual({ value: 'Look at @Invoice sync please', caret: 22 });
+    expect(replaceMentionText('What does @Sam?', 10, 14, 'Sample ticket')).toEqual({ value: 'What does @Sample ticket?', caret: 24 });
+    expect(replaceMentionText('first\n@inv\nnext', 6, 10, 'Inv')).toEqual({ value: 'first\n@Inv\nnext', caret: 10 });
+    expect(replaceMentionText('a @x b', 2, 4, '  Two   words ')).toEqual({ value: 'a @Two words b', caret: 13 });
   });
 
   it('adds a chip once, up to 8, and removes it again', () => {

@@ -211,7 +211,7 @@ Each fix in the session is applied the same way, as before. An agent Spotlight c
 
 Typing `@` (at the start of the box or after a space) opens a list above the box where you pick what the model should
 read: a workflow, one of its nodes, a run, an agent, a team, a data table, a template, a node type, a plugin, a brain
-page, a person or a credential. A choice removes the `@text` you typed and adds a chip you can remove with its ×.
+page, a person or a credential. A choice turns the `@text` you typed into `@Name` (so the message still reads as a sentence, in the box and in history) and adds a chip you can remove with its ×; the chip is what the server reads.
 
 - **Where it is.** The picker and the search behind it are built and tested ([B04](history.md)). Spotlight uses it
   ([B16](history.md)): the open workflow's nodes are its "On this page" group, the chips sit above the box beside the
