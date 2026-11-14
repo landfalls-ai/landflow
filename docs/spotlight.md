@@ -2,7 +2,7 @@
 
 Status: **in progress**. Written 2026-10-27 at commit 493177a. **Spotlight in the editor is built** (2026-10-27): the bar at
 the bottom of the canvas with suggestion bubbles, `@` mentions and node-type completion, replacing the Assistant panel;
-[assistant.md](assistant.md#spotlight) documents it. The new Home, Spotlight on the other pages and the action layer are
+[assistant.md](assistant.md#spotlight) documents it. It now sits on the chat kit (B08, 2026-11): streamed words, one activity trace, the full reply footer and a model chip ([what you see while it works](assistant.md#the-spotlight-panel)). The new Home, Spotlight on the other pages and the action layer are
 still a plan. Spotlight in the editor knows the published [agent teams](agent-teams.md#spotlight) and can turn a lead and its agents into one. An interactive version with UI
 mockups is the artifact <https://claude.ai/artifact/3FPJ1Ci3Jb8K3oJfjcvV8F> (private to the owner). The screen-by-screen
 simplification review that goes with it is [ux-simplification.md](ux-simplification.md).

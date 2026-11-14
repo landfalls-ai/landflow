@@ -307,9 +307,9 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
     <ShortReply text={text} sentences={session ? 1 : 2} />
   ) : null;
   return (
-    <AssistantRow mark={live && !own ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}>
+    <AssistantRow mark={working ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}>
       {streamed && steps && <LiveSteps live={steps} trace={item.steps} durationMs={item.meta?.durationMs} />}
-      {streamed && !steps && hasTrace && !quietText && <ActivityTrace steps={item.steps!} live={live} durationMs={item.meta?.durationMs} defaultOpen />}
+      {streamed && !steps && hasTrace && !quietText && <ActivityTrace steps={item.steps!} live={live} durationMs={item.meta?.durationMs ?? item.done?.durationMs} />}
       {(working || words) && (
         <StatusSwap working={working} label={status ?? (lastTool?.kind === 'tool' ? `${lastTool.tool.label}…` : 'Thinking…')}>
           {words}

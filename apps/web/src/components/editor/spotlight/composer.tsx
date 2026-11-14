@@ -327,13 +327,21 @@ export function Composer() {
           else setFocused(false);
         }}
         top={
-          selectedName && !withoutSelection && !empty ? (
-            <span className="mb-1 flex w-fit max-w-full items-center gap-0.5 rounded-md border border-hair bg-wl py-0.5 pl-1.5 pr-0.5 text-[11.5px] text-t2" title="The selected node is part of what Spotlight sees">
-              <span className="truncate">{selectedName}</span>
-              <button onMouseDown={(e) => e.preventDefault()} onClick={() => setWithoutSelection(true)} aria-label={`Leave ${selectedName} out`} className="grid size-4 place-items-center rounded text-t3 hover:text-t1 max-md:size-9">
-                <X className="size-3" />
-              </button>
-            </span>
+          (selectedName && !withoutSelection && !empty) || (model && !drafting && !pending) ? (
+            // The model chip sits with the selected node: a 360 px column has no room for it beside the text.
+            <div className="mb-1 flex items-center justify-between gap-2">
+              {selectedName && !withoutSelection && !empty ? (
+                <span className="flex w-fit min-w-0 max-w-full items-center gap-0.5 rounded-md border border-hair bg-wl py-0.5 pl-1.5 pr-0.5 text-[11.5px] text-t2" title="The selected node is part of what Spotlight sees">
+                  <span className="truncate">{selectedName}</span>
+                  <button onMouseDown={(e) => e.preventDefault()} onClick={() => setWithoutSelection(true)} aria-label={`Leave ${selectedName} out`} className="grid size-4 place-items-center rounded text-t3 hover:text-t1 max-md:size-9">
+                    <X className="size-3" />
+                  </button>
+                </span>
+              ) : (
+                <span />
+              )}
+              {model && !drafting && !pending && <ModelChip model={model} local={local} />}
+            </div>
           ) : undefined
         }
         before={<Sparkles className="mb-[9px] size-4 shrink-0 text-viz-7" />}
@@ -360,7 +368,6 @@ export function Composer() {
             )}
           </>
         }
-        chip={model ? <ModelChip model={model} local={local} /> : undefined}
       />
     </div>
   );

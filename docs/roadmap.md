@@ -1558,7 +1558,7 @@ The shared pieces every chat will use, built in `components/ui/` and ready; the 
 - CH5 ✅ Done: the hosted chat widget's bubbles rise in, its typing indicator is three dots, and Reduce motion turns both
   off ([Hosted chat and widget](features/ai.md#hosted-chat-and-widget)).
 - CH1 (motion), CH6 (one activity trace), CH7 (one reply footer), CH9 (errors with actions) and CH10 (a model chip): kit
-  ready, surfaces in wave 2 ([Chat surfaces](assistant.md#chat-surfaces)).
+  ready, surfaces in wave 2 ([Chat surfaces](assistant.md#chat-surfaces)). Spotlight in the editor is on the kit (B08): CH1, CH6, CH7 and CH20 are closed for it, CH10 too once a route names the model before the first reply; CH3 closes with B09.
 
 ## Conversation history and personal preferences (2026-11)
 
