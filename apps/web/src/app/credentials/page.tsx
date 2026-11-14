@@ -1,8 +1,9 @@
 'use client';
-import { Suspense, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { ArrowRightLeft, MoreHorizontal, Plus, Share2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
 import { showHeaderAction } from '@/lib/client/list-page';
 import { resourceCan, type ResourceOwnership } from '@/lib/shared/projects';
@@ -31,8 +32,21 @@ export default function CredentialsPage() {
 function CredentialsView() {
   const projectId = useSearchParams().get('project') ?? undefined;
   const { credentials: all, types, error } = useCredentials();
-  // `?project=` (the project page's Overview links here) lists the credentials that project owns or can use.
-  const credentials = projectId && all ? (all as Listed[]).filter((c) => !c.ownership || c.ownership.projectId === projectId || c.ownership.shared) : all;
+  // `?project=` (the project page's Overview links here) lists what that project owns or has shared with it: the API's
+  // `?projectId=` read is exact, so the list asks it instead of filtering the viewer's whole list.
+  const [scoped, setScoped] = useState<Listed[]>();
+  const [scopedFor, setScopedFor] = useState<string>();
+  useEffect(() => {
+    if (!projectId) return;
+    let live = true;
+    api<{ credentials: Listed[] }>(`/api/credentials?projectId=${encodeURIComponent(projectId)}`)
+      .then((r) => live && (setScoped(r.credentials), setScopedFor(projectId)))
+      .catch((e: Error) => toast.error(e.message));
+    return () => {
+      live = false;
+    };
+  }, [projectId, all]);
+  const credentials = projectId ? (scopedFor === projectId ? scoped : undefined) : all;
   const isEmpty = credentials?.length === 0;
   const [dialog, setDialog] = useState<{ id?: string; type?: string } | null>(null);
   const [sharing, setSharing] = useState<{ kind: 'share' | 'move'; credential: Listed }>();

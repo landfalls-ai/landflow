@@ -554,7 +554,7 @@ export function DataTableView({ tableId }: { tableId: string }) {
                   ),
                 )}
                 {header('updatedAt', 'Updated', 'date', 'w-[150px]')}
-                <th scope="col" className="w-11 border-b border-hair bg-sf2 px-1.5 text-center">
+                <th scope="col" className="sticky right-0 w-11 border-b border-hair bg-sf2 px-1.5 text-center">
                   <AddColumn onAdd={addColumn} />
                 </th>
               </tr>

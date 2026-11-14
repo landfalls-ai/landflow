@@ -5,15 +5,15 @@
  * approves its publish requests, MCP, variables, delete); Audit log (project admins). An earlier `?tab=` value maps
  * to its new tab (project-tabs.ts). Its folders are on /workflows?project=<id>.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowRight, Bot, KeyRound, Table2, Trash2, UserPlus, Workflow as WorkflowIcon } from 'lucide-react';
+import { ArrowRight, ArrowRightLeft, Bot, MoreHorizontal, Plus, KeyRound, Table2, Trash2, UserPlus, Workflow as WorkflowIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { plural } from '@/lib/client/format';
 import type { UserView } from '@/lib/shared/auth';
-import { PROJECT_ROLES, projectRoleCan, type ProjectDetail, type ProjectRole } from '@/lib/shared/projects';
+import { PROJECT_ROLES, projectRoleCan, resourceCan, type ResourceKind, type ResourceOwnership, type ProjectDetail, type ProjectRole } from '@/lib/shared/projects';
 import type { ProjectMcpView } from '@/lib/shared/mcp';
 import { EMPTY_NODE_POLICY, PROJECT_APPROVER_LABELS, type ProjectApprovers, type ProjectSettingsView, type ScopedNodePolicy } from '@/lib/shared/project-policy';
 import { ScopedNodeList } from '@/components/governance/scoped-node-list';
@@ -25,6 +25,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { FieldLabel, Input, Select, Switch, Textarea } from '@/components/ui/inputs';
+import { CredentialDialog } from '@/components/credentials/credential-dialog';
+import { CreateTableDialog } from '@/components/data-tables/create-table-dialog';
+import { MenuItem, Popover } from '@/components/ui/popover';
+import { MoveToProjectDialog, RESOURCE_PATH } from './share-dialog';
 import { DeleteProjectDialog, describeCounts } from './project-dialogs';
 import { rememberProject } from './current-project';
 import { projectLabel, useProjectStore } from './use-projects';
@@ -86,6 +90,7 @@ export function ProjectPage({ projectId }: { projectId: string }) {
             </>
           )
         }
+        actions={project && tab === 'overview' && projectRoleCan.create(project.role) && <NewInProject project={project} onChanged={() => void loadProject()} />}
       />
       <PageBody width="narrow">
         {project?.description && <p className="mb-4 text-[13px] text-t2">{project.description}</p>}
@@ -96,7 +101,7 @@ export function ProjectPage({ projectId }: { projectId: string }) {
           onChange={setTab}
           options={PROJECT_TABS.filter((t) => t.id !== 'audit' || projectRoleCan.manage(role)).map((t) => ({ value: t.id, label: t.label }))}
         />
-        {project && tab === 'overview' && <Overview project={project} />}
+        {project && tab === 'overview' && <Overview project={project} onChanged={() => void loadProject()} />}
         {project && tab === 'audit' && projectRoleCan.manage(role) && <AuditLog projectId={project.id} />}
         {project && tab === 'members' && <ProjectSettings section="members" project={project} onChanged={(next) => (next ? setProject(next) : void loadProject())} />}
         {project && tab === 'settings' && (
@@ -115,26 +120,146 @@ export function ProjectPage({ projectId }: { projectId: string }) {
 
 const ICON: Record<string, typeof WorkflowIcon> = { workflow: WorkflowIcon, credential: KeyRound, dataTable: Table2, agent: Bot };
 
-/** What the project owns, by kind: each count opens the global page for it, filtered to this project. */
-function Overview({ project }: { project: ProjectDetail }) {
+/** Header "New ▾": a workflow, credential, data table or agent made in this project. */
+function NewInProject({ project, onChanged }: { project: ProjectDetail; onChanged: () => void }) {
+  const router = useRouter();
+  const [dialog, setDialog] = useState<'credential' | 'table'>();
+  const [busy, setBusy] = useState(false);
+  const make = async (kind: 'workflow' | 'agent') => {
+    setBusy(true);
+    try {
+      const query = `?projectId=${encodeURIComponent(project.id)}`;
+      if (kind === 'workflow') {
+        const { workflow } = await api<{ workflow: { id: string } }>(`/api/workflows${query}`, { method: 'POST', json: { name: 'Untitled workflow', nodes: [], connections: [] } });
+        router.push(`/workflows/${workflow.id}`);
+      } else {
+        const { agent } = await api<{ agent: { id: string } }>(`/api/agents${query}`, { method: 'POST', json: {} });
+        router.push(`/agents/${agent.id}`);
+      }
+    } catch (e) {
+      toast.error((e as Error).message);
+      setBusy(false);
+    }
+  };
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-      {OVERVIEW_KINDS.map(({ kind, label, href }) => {
-        const Icon = ICON[kind];
-        const count = project.counts?.[kind] ?? 0;
-        return (
-          <Link key={kind} href={href(project.id)} className="group flex items-center gap-3.5 rounded-2xl border border-hair bg-sf px-4 py-4 transition-colors hover:border-ac">
-            <span className="grid size-9 shrink-0 place-items-center rounded-[10px] border border-hair bg-wl text-t2">
-              <Icon className="size-4" strokeWidth={1.7} />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-[22px] font-semibold leading-none tabular-nums text-t1">{count}</span>
-              <span className="mt-1 block text-[12px] text-t3">{label}</span>
-            </span>
-            <ArrowRight className="size-4 shrink-0 text-t3 transition-colors group-hover:text-ac" />
-          </Link>
-        );
-      })}
+    <>
+      <Popover
+        trigger={({ toggle }) => (
+          <Button variant="primary" size="sm" onClick={toggle} loading={busy}>
+            {!busy && <Plus className="size-3.5" />} New
+          </Button>
+        )}
+      >
+        {(close) => (
+          <>
+            <MenuItem onClick={() => { close(); void make('workflow'); }}><WorkflowIcon /> Workflow</MenuItem>
+            <MenuItem onClick={() => { close(); setDialog('credential'); }}><KeyRound /> Credential</MenuItem>
+            <MenuItem onClick={() => { close(); setDialog('table'); }}><Table2 /> Data table</MenuItem>
+            <MenuItem onClick={() => { close(); void make('agent'); }}><Bot /> Agent</MenuItem>
+          </>
+        )}
+      </Popover>
+      {dialog === 'credential' && <CredentialDialog projectId={project.id} onClose={() => setDialog(undefined)} onSaved={onChanged} />}
+      {dialog === 'table' && <CreateTableDialog projectId={project.id} existingNames={[]} onClose={() => { setDialog(undefined); onChanged(); }} />}
+    </>
+  );
+}
+
+type OwnedItem = { id: string; name: string; ownership?: ResourceOwnership };
+const OWNED: Array<{ kind: 'dataTable' | 'agent'; title: string; href: (id: string) => string }> = [
+  { kind: 'dataTable', title: 'Data tables', href: (id) => `/data-tables/${id}` },
+  { kind: 'agent', title: 'Agents', href: (id) => `/agents/${id}` },
+];
+
+/** What the project owns, by kind: each count opens the global page for it; data tables and agents also list here with Move to project. */
+function Overview({ project, onChanged }: { project: ProjectDetail; onChanged: () => void }) {
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {OVERVIEW_KINDS.map(({ kind, label, href }) => {
+          const Icon = ICON[kind];
+          const count = project.counts?.[kind] ?? 0;
+          return (
+            <Link key={kind} href={href(project.id)} className="group flex items-center gap-3.5 rounded-2xl border border-hair bg-sf px-4 py-4 transition-colors hover:border-ac">
+              <span className="grid size-9 shrink-0 place-items-center rounded-[10px] border border-hair bg-wl text-t2">
+                <Icon className="size-4" strokeWidth={1.7} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[22px] font-semibold leading-none tabular-nums text-t1">{count}</span>
+                <span className="mt-1 block text-[12px] text-t3">{label}</span>
+              </span>
+              <ArrowRight className="size-4 shrink-0 text-t3 transition-colors group-hover:text-ac" />
+            </Link>
+          );
+        })}
+      </div>
+      {OWNED.map((o) => (
+        <OwnedList key={o.kind} project={project} {...o} onChanged={onChanged} />
+      ))}
+    </div>
+  );
+}
+
+/** The data tables or agents the project owns, each with its Move to project menu (their global lists have none). */
+function OwnedList({ project, kind, title, href, onChanged }: { project: ProjectDetail; kind: ResourceKind; title: string; href: (id: string) => string; onChanged: () => void }) {
+  const [items, setItems] = useState<OwnedItem[]>();
+  const [moving, setMoving] = useState<OwnedItem>();
+  const k = kind === 'dataTable' ? 'tables' : 'agents';
+  const load = useCallback(
+    () =>
+      api<Record<string, OwnedItem[]>>(`${RESOURCE_PATH[kind]}?projectId=${encodeURIComponent(project.id)}`)
+        .then((r) => setItems(r[k] ?? []))
+        .catch((e: Error) => toast.error(e.message)),
+    [kind, k, project.id],
+  );
+  useEffect(() => {
+    void load();
+  }, [load]);
+  const sorted = useMemo(() => [...(items ?? [])].sort((a, b) => a.name.localeCompare(b.name)), [items]);
+  if (!sorted.length) return null;
+  return (
+    <div>
+      <div className="mb-2 text-[12px] font-semibold text-t2">{title}</div>
+      <div className="overflow-hidden rounded-2xl border border-hair bg-sf">
+        {sorted.map((item) => (
+          <div key={item.id} className="group flex items-center border-b border-hair last:border-b-0 hover:bg-acdim">
+            <Link href={href(item.id)} className="min-w-0 flex-1 truncate px-4 py-2.5 text-[13px] font-semibold text-t1">
+              {item.name}
+            </Link>
+            {resourceCan(item.ownership?.access, 'move') && (
+              <div className="pr-2.5">
+                <Popover
+                  trigger={({ toggle }) => (
+                    <Button variant="ghost" size="icon-sm" onClick={toggle} aria-label={`${item.name} menu`} className="text-t3">
+                      <MoreHorizontal className="size-4" />
+                    </Button>
+                  )}
+                >
+                  {(close) => (
+                    <MenuItem onClick={() => { close(); setMoving(item); }}>
+                      <ArrowRightLeft /> Move to project…
+                    </MenuItem>
+                  )}
+                </Popover>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {moving && (
+        <MoveToProjectDialog
+          kind={kind}
+          id={moving.id}
+          name={moving.name}
+          currentProjectId={moving.ownership?.projectId}
+          onClose={() => setMoving(undefined)}
+          onMoved={() => {
+            void load();
+            onChanged();
+            void useProjectStore.getState().refresh();
+          }}
+        />
+      )}
     </div>
   );
 }

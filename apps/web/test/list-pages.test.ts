@@ -29,8 +29,9 @@ describe('workflows: the New menu', () => {
   it('has Workflow, From template, Import and Folder, in that order', () => {
     expect(NEW_MENU_ITEMS.map((i) => i.label)).toEqual(['Workflow', 'From template', 'Import…', 'Folder']);
     const page = src('components', 'workflows', 'workflows-list.tsx');
-    const labels = [...page.matchAll(/<MenuItem onClick=\{pick\([A-Za-z]+\)\}>\s*<[A-Za-z]+ \/> ([^<\n]+)\s*<\/MenuItem>/g)].map((m) => m[1].trim());
-    expect(labels).toEqual(['Workflow', 'From template', 'Import…', 'Folder']);
+    // The menu renders from the constant, so this list is what ships.
+    expect(page).toContain('NEW_MENU_ITEMS.map((item)');
+    expect(page).not.toMatch(/<MenuItem onClick=\{pick\(/);
     // The step count and the "All workflows" heading are gone.
     expect(page).not.toContain("plural(workflow.nodeCount, 'step')");
     expect(page).not.toContain('All workflows');
@@ -56,6 +57,22 @@ describe('workflows: last run', () => {
     expect(html).toContain('Failed');
     expect(html).toContain('3h ago');
     expect(renderToStaticMarkup(createElement(LastRun, {}))).toContain('Not run yet');
+  });
+
+  it('shows the state badge on a phone row too, and nothing for an unknown run', () => {
+    const html = renderToStaticMarkup(createElement(LastRun, { run: run('a', 'error', new Date().toISOString()) }));
+    expect(html).toContain('data-testid="last-run-phone"');
+    expect(html).toContain('md:hidden');
+    expect(html).not.toContain('max-sm:hidden');
+    expect(renderToStaticMarkup(createElement(LastRun, { unknown: true }))).toBe('');
+  });
+
+  it('every empty state carries the New actions its hidden header menu had', () => {
+    const page = src('components', 'workflows', 'workflows-list.tsx');
+    const root = page.slice(page.indexOf('emptyHere && !current'), page.indexOf('emptyHere && current'));
+    const folder = page.slice(page.indexOf('emptyHere && current'));
+    for (const label of ['Import', 'Folder', 'Browse templates', 'New workflow']) expect(root).toContain(label);
+    for (const label of ['Import', 'New folder', 'From a template', 'New workflow']) expect(folder).toContain(label);
   });
 });
 

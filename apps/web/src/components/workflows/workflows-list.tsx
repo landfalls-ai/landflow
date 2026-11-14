@@ -38,7 +38,7 @@ import { MoveToProjectDialog, ShareDialog } from '@/components/projects/share-di
 import { projectLabel, useProjects } from '@/components/projects/use-projects';
 import { useViewer } from '@/components/auth/viewer';
 import { FolderNameDialog, MoveDialog } from './folder-dialogs';
-import { describeLastRun, lastRunByWorkflow } from './list-model';
+import { describeLastRun, lastRunByWorkflow, NEW_MENU_ITEMS, type NewMenuItem } from './list-model';
 
 /** A listed workflow with its project and the viewer's access (GET /api/workflows). */
 type WorkflowSummary = Summary & { ownership?: ResourceOwnership };
@@ -245,6 +245,7 @@ function WorkflowRow({
   workflow,
   types,
   lastRun,
+  lastRunsUnknown,
   folderPath,
   onMove,
   onShare,
@@ -256,6 +257,8 @@ function WorkflowRow({
   types: Record<string, NodeTypeInfo>;
   /** The workflow's newest run in the list's executions, if any. */
   lastRun?: ExecutionSummary;
+  /** The executions read did not reach back to every workflow's newest run. */
+  lastRunsUnknown?: boolean;
   /** Shown when the list spans folders (search, tag filter). */
   folderPath?: string;
   onMove: () => void;
@@ -330,7 +333,7 @@ function WorkflowRow({
           ))}
           {workflow.ownership?.shared && <Badge tone="muted" title={`Shared from ${workflow.ownership.projectName}`}>{workflow.ownership.access.role === 'viewer' ? 'Shared · view' : 'Shared'}</Badge>}
           {workflow.active && <Badge tone="success">Published</Badge>}
-          <LastRun run={lastRun} />
+          <LastRun run={lastRun} unknown={lastRunsUnknown} />
           <span className="w-16 text-right text-[12px] tabular-nums text-t2" title={`Updated ${new Date(workflow.updatedAt).toLocaleString()}`}>
             {timeAgo(workflow.updatedAt)}
           </span>
@@ -427,19 +430,32 @@ function WorkflowRow({
   );
 }
 
-/** The row's last run: its state, and when it started (or "Not run yet"). */
-export function LastRun({ run }: { run?: ExecutionSummary }) {
+/**
+ * The row's last run: its state, and when it started (or "Not run yet"). On a phone only the state badge shows, beside
+ * the updated time. `unknown` (the executions read did not reach back far enough) shows nothing for a row without a run.
+ */
+export function LastRun({ run, unknown }: { run?: ExecutionSummary; unknown?: boolean }) {
+  if (!run && unknown) return null;
   const last = describeLastRun(run);
+  const title = last.startedAt ? `Last run ${new Date(last.startedAt).toLocaleString()}` : undefined;
   return (
-    <span className="flex w-[110px] shrink-0 flex-col items-end gap-0.5 max-sm:hidden" data-testid="last-run" title={last.startedAt ? `Last run ${new Date(last.startedAt).toLocaleString()}` : undefined}>
-      <Badge tone={last.tone}>{last.label}</Badge>
-      {last.startedAt && <span className="text-[11px] tabular-nums text-t3">{timeAgo(last.startedAt)}</span>}
-    </span>
+    <>
+      <span className="flex w-[110px] shrink-0 flex-col items-end gap-0.5 max-md:hidden" data-testid="last-run" title={title}>
+        <Badge tone={last.tone}>{last.label}</Badge>
+        {last.startedAt && <span className="text-[11px] tabular-nums text-t3">{timeAgo(last.startedAt)}</span>}
+      </span>
+      <span className="shrink-0 md:hidden" data-testid="last-run-phone" title={title}>
+        <Badge tone={last.tone}>{last.label}</Badge>
+      </span>
+    </>
   );
 }
 
 /** The page's one create menu: workflow, from template, import, folder. A bottom sheet on a phone (Popover does that). */
+const NEW_MENU_ICON = { workflow: Plus, template: LayoutTemplate, import: FileUp, folder: FolderPlus };
+
 function NewMenu({ locked, creating, onWorkflow, onTemplate, onImport, onFolder }: { locked: boolean; creating: boolean; onWorkflow: () => void; onTemplate: () => void; onImport: () => void; onFolder: () => void }) {
+  const actions: Record<NewMenuItem, () => void> = { workflow: onWorkflow, template: onTemplate, import: onImport, folder: onFolder };
   return (
     <Popover
       title="New"
@@ -456,18 +472,14 @@ function NewMenu({ locked, creating, onWorkflow, onTemplate, onImport, onFolder 
         };
         return (
           <>
-            <MenuItem onClick={pick(onWorkflow)}>
-              <Plus /> Workflow
-            </MenuItem>
-            <MenuItem onClick={pick(onTemplate)}>
-              <LayoutTemplate /> From template
-            </MenuItem>
-            <MenuItem onClick={pick(onImport)}>
-              <FileUp /> Import…
-            </MenuItem>
-            <MenuItem onClick={pick(onFolder)}>
-              <FolderPlus /> Folder
-            </MenuItem>
+            {NEW_MENU_ITEMS.map((item) => {
+              const Icon = NEW_MENU_ICON[item.id];
+              return (
+                <MenuItem key={item.id} onClick={pick(actions[item.id])}>
+                  <Icon /> {item.label}
+                </MenuItem>
+              );
+            })}
           </>
         );
       }}
@@ -486,6 +498,8 @@ export function WorkflowsList() {
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>();
   const [folders, setFolders] = useState<Folder[]>([]);
   const [lastRuns, setLastRuns] = useState<Map<string, ExecutionSummary>>(new Map());
+  // True when older executions exist beyond the read: a row without a run there may still have one.
+  const [lastRunsUnknown, setLastRunsUnknown] = useState(true);
   const [types, setTypes] = useState<Record<string, NodeTypeInfo>>({});
   const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -504,20 +518,28 @@ export function WorkflowsList() {
       Promise.all([
         api<{ workflows: WorkflowSummary[] }>(`/api/workflows${scopeQuery}`),
         api<{ folders: Folder[] }>(`/api/folders${scopeQuery}`).catch(() => ({ folders: [] as Folder[] })),
-        // One batched read: the newest runs of every workflow; each row takes its own newest.
-        api<{ executions: ExecutionSummary[] }>('/api/executions?limit=500').catch(() => ({ executions: [] as ExecutionSummary[] })),
-      ]).then(([w, f, e]) => {
+      ]).then(([w, f]) => {
         setWorkflows(w.workflows);
         setFolders(f.folders);
-        setLastRuns(lastRunByWorkflow(e.executions));
       }),
     [scopeQuery],
   );
+  // One batched read of the newest runs, after the list has drawn; each row takes its own newest.
+  const loadLastRuns = useCallback(
+    () =>
+      api<{ executions: ExecutionSummary[]; nextCursor?: string }>('/api/executions?limit=500')
+        .then((e) => {
+          setLastRuns(lastRunByWorkflow(e.executions));
+          setLastRunsUnknown(Boolean(e.nextCursor));
+        })
+        .catch(() => undefined),
+    [],
+  );
   useEffect(() => {
-    void load();
+    void load().then(loadLastRuns);
     setSortState(readSort());
     api<{ nodeTypes: NodeTypeInfo[] }>('/api/node-types').then((r) => setTypes(Object.fromEntries(r.nodeTypes.map((t) => [t.type, t]))));
-  }, [load]);
+  }, [load, loadLastRuns]);
 
   const setSort = (next: Sort) => {
     setSortState(next);
@@ -777,6 +799,7 @@ export function WorkflowsList() {
               workflow={workflow}
               types={types}
               lastRun={lastRuns.get(workflow.id)}
+              lastRunsUnknown={lastRunsUnknown}
               folderPath={searching && known(workflow.folderId) ? pathOf(workflow.folderId).map((f) => f.name).join(' / ') : undefined}
               onMove={() => setDialog({ kind: 'move', workflow })}
               onShare={() => setDialog({ kind: 'share', workflow })}
@@ -804,6 +827,11 @@ export function WorkflowsList() {
                       <FileUp className="size-3.5" /> Import
                     </Button>
                   </ProtectedGate>
+                  <ProtectedGate reason={readOnly}>
+                    <Button size="sm" onClick={() => setDialog({ kind: 'new-folder' })} disabled={locked}>
+                      <FolderPlus className="size-3.5" /> Folder
+                    </Button>
+                  </ProtectedGate>
                   <Button size="sm" onClick={() => router.push(templatesHref)}>
                     <LayoutTemplate className="size-3.5" /> Browse templates
                   </Button>
@@ -828,6 +856,11 @@ export function WorkflowsList() {
                   <ProtectedGate reason={readOnly}>
                     <Button size="sm" onClick={() => setDialog({ kind: 'new-folder' })} disabled={locked}>
                       <FolderPlus className="size-3.5" /> New folder
+                    </Button>
+                  </ProtectedGate>
+                  <ProtectedGate reason={readOnly}>
+                    <Button size="sm" onClick={() => picker.current?.click()} disabled={locked}>
+                      <FileUp className="size-3.5" /> Import
                     </Button>
                   </ProtectedGate>
                   <ProtectedGate reason={readOnly}>
