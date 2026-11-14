@@ -13,6 +13,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
    built. [history.md](history.md) lists every change in order.
 5. **[constitution.md](constitution.md)** before you change anything: the rules every research and implementation
    starts from, and the order a feature goes through.
+6. **[specs/](specs/README.md)**: proposals for the features not built yet, one spec each.
 
 ## Feature map
 
@@ -50,7 +51,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | Spec cards in Run Trace drawn with json-render, behind `LANDFLOW_JSON_RENDER` | [research/json-render-verdict.md](research/json-render-verdict.md) | [reference/configuration.md](reference/configuration.md) |
 | Debug token: a read-only key to one execution for a debugging agent (`landflow debug-token`, or Debug access on the Run Trace page) | [specs/19-debug-token.md](specs/19-debug-token.md) | [reference/api.md](reference/api.md), [features/cli.md](features/cli.md) |
 | Images in tool results: a tool can return a screenshot or other image to the AI Agent's model | [features/ai.md](features/ai.md) | [specs/18-desktop-agent-node.md](specs/18-desktop-agent-node.md) |
-| Specs: proposals written before the code (chat with agents, the parallel build plan, the Desktop agent node, the debug token) | [specs/README.md](specs/README.md) | |
+| Specs: proposals written before the code (fifteen next features from 2026-11-05, chat with agents, the parallel build plan, the Desktop agent node, the debug token) | [specs/README.md](specs/README.md) | |
 | Files and binary data | [features/files.md](features/files.md) | [protocol.md](protocol.md) §11 |
 | Settings, variables, data tables, insights | [features/settings-and-data.md](features/settings-and-data.md) | |
 | Authentication: users, roles, projects, API keys, OIDC, SAML, SCIM | [features/authentication.md](features/authentication.md) | |

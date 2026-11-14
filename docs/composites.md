@@ -120,10 +120,20 @@ What entered a frame is saved with checkpoints and waits, so a resumed run still
 
 Reading needs `workflows:read`, saving and deleting `workflows:write`.
 
+## Governance rules
+
+The `compositeRules` of the governance document (`GET/PATCH /api/settings/governance`) say where nodes may live. A rule
+has a `match` (a node matcher, as in a slot), a `composite` (a matcher for frames), a `kind` (`require-inside` or
+`forbid-inside`) and a `severity`: `error` shows on save and refuses to publish (422), `warn` only shows on save. The
+ready-made rule, `AI_STEP_RULE` ("AI calls only inside an AI step"), matches nodes with a chat-model input and wants a
+`core.aiStep` frame; a frame nested in a matching frame counts unless the rule sets `nested: false`. A node whose
+plugin isn't loaded can't be judged by a rule that reads its descriptor, so it gets a `warn`, never an error. With no
+rules (the default) nothing changes. Code: `lib/server/governance/composite-rules.ts`, hooked into `workflowViolations()`.
+
 ## Not built
 
-- A governance rule that requires a composite (for example "AI calls only inside an AI step"): see
-  [limitations.md](limitations.md).
+- Composite governance rules are instance-wide and set as JSON only; project and workflow scopes, a run-start check,
+  the rules editor and a one-click wrap are specified in [specs/14](specs/14-composite-governance-rules.md).
 - The fallback is picked in the contract panel and isn't drawn as an edge on the canvas.
 - Composite types aren't part of Git sync or environment promotion yet; a workflow that uses a `local.` type on another
   instance shows the type as unknown until it is saved there too.
