@@ -1714,6 +1714,37 @@ The wave 2 review notes were fixed in wave 3's carryover where they were contain
 - **Ask's short follow-ups** borrow the last question's words when they have three or fewer of their own, so a short
   question on another topic also pulls in the earlier pages; watch it in the Ollama live check.
 
+## Company backbone: left open from the wave 3 reviews (2026-11-14)
+
+The wave 3 review notes were fixed in wave 4's carryover where they were contained; these wait, each with its reason:
+
+- **Two trace rows per tag**: Spotlight streams a `step.start` and a `tool` event per tag (C3), so the trace shows
+  "Reading @X" and "Read @X" for the same 0.0 s read. Folding the pair into one row changes the stream contract the
+  timeline and the stored steps read; it belongs with the one Spotlight (B35).
+- **A stale proposal mid-visit**: whether a Spotlight proposal is stale is decided when the conversation is shown, so a
+  card does not get its Apply back if the workflow changes again during the same visit (docs/assistant.md says so).
+  Re-deciding on every canvas change needs a subscription the panel does not have yet.
+- **Ask the brain after A → B → A**: following a link and coming back starts a new conversation for A, so the history
+  splits (nothing is lost). Reopening the began-in conversation when the subject returns fits B35, which takes over
+  `ask-panel.tsx`; the hook's wiring (`storeElsewhere`, the began-at and began-in refs) has no test until then.
+- **A new `team` event on the live stream**: `notify` in `usage/ledger.ts` sends only `org` events to everyone, so a
+  teammate sees a new `team` item at the next fetch, not live (the safe direction). Sending it live needs the stream to
+  know each listener's projects.
+- **Repository page ids can collide**: `repoEntityId` turns `acme/api-x` and `acme-api/x` into the same id, so the second
+  repository gets no page of its own. A collision-free id would orphan the pages made so far; it needs a migration.
+- **A viewer-style role**: `/connect` offers every workflow scope to every role because owner, admin and member all hold
+  them; a role without them would need `can()` per scope on that page.
+- **Run trace checkboxes** (P-trace-5): Debug access still shows its two checkboxes (both on); the review also asked to
+  hide them behind the defaults. B21's brief asked only for plain words, so this waits for the person's call.
+- **A paused Runs list goes stale**: while the list waits (pointer over it, scrolled down), a row that was running keeps
+  saying Running until the list resumes. Applying status changes to shown rows and holding back only new rows would fix it.
+- **Tests on a phone**: the Tests page's fixed 300 px sidebar squeezes the main pane to a word per line and the centred
+  tabs cover the workflow name; it needs the phone layout the Runs page has.
+- **Canvas details from B23**: right-click on one node no longer offers Ungroup (Shift+Cmd+G or the group's menu still
+  do; the menu follows the toolbar, so adding it back is the person's call); the toolbar's Run button has no disabled
+  look while a run is going on (a click does nothing); the node toolbar's ⋯ menu stays where it opened when the canvas
+  pans under it.
+
 ## Runs: one list (B20, 2026-11-14)
 
 Closed from the wave 1 page review: X2 (Executions, Runs and Search runs are one page, **Runs** at `/runs`, the old URLs redirect), P-ex-1 (no ID or Mode column), P-ex-2 (Stop all only while a run runs), P-ex-3 (repeated failures fold into one row), P-ex-4 (two re-run words), P-runs-1 (one search box with Status and Workflow chips, the rest under More filters) and P-cmp-1 (compare with fewer than two runs goes back to the list). See [the Runs list](run-trace.md#the-runs-list).
