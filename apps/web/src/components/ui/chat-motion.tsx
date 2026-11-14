@@ -179,12 +179,12 @@ export function Collapsible({ open, children, keepMounted, className }: { open: 
 }
 
 /** The Working line and the reply that replaces it cross-fade (160 ms), so a reply never pops in place of the spinner. */
-export function StatusSwap({ working, label, children }: { working: boolean; label?: string; children: ReactNode }) {
+export function StatusSwap({ working, label, silent, children }: { working: boolean; label?: string; silent?: boolean; children: ReactNode }) {
   return (
     <Shell>
       <AnimatePresence mode="popLayout" initial={false}>
         <m.div key={working ? 'working' : 'reply'} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.16 }}>
-          {working ? <Working label={label} /> : children}
+          {working ? (silent ? null : <Working label={label} />) : children}
         </m.div>
       </AnimatePresence>
     </Shell>

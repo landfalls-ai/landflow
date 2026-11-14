@@ -134,3 +134,18 @@ describe('buildSteps', () => {
     expect(stepProgress(buildSteps({ tools: [], plan, revealed: 5, working: true }))).toBeLessThan(1);
   });
 });
+
+describe('mergeTrace', () => {
+  it('keeps the stream rows with their times and adds only the plan changes', async () => {
+    const { mergeTrace } = await import('../src/lib/shared/build-steps');
+    const stream = [{ id: 'tool1', label: 'Searched nodes', kind: 'read' as const, status: 'ok' as const, durationMs: 120 }];
+    const plan = [
+      { id: 's1', kind: 'read', state: 'done', title: 'Read the workflow', doing: 'Reading', parts: [] },
+      { id: 's2', kind: 'add', state: 'done', title: 'Add Slack', doing: 'Adding Slack', parts: [] },
+    ] as never;
+    const rows = mergeTrace(stream, plan);
+    expect(rows.map((r) => r.id)).toEqual(['tool1', 's2']);
+    expect(rows[0].durationMs).toBe(120);
+    expect(mergeTrace(undefined, plan).map((r) => r.id)).toEqual(['s1', 's2']);
+  });
+});

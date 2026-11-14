@@ -110,3 +110,16 @@ describe('build steps as trace rows', () => {
     ]);
   });
 });
+
+describe('trace row ids', () => {
+  it('keeps two thinking events of one step apart', () => {
+    const t = play([
+      [{ type: 'step.start', step: 1, label: 'Writing…' }, 0],
+      [{ type: 'thinking', step: 1, text: 'Click Apply.' }, 1],
+      [{ type: 'thinking', step: 1, text: '(No change card was created.)' }, 2],
+    ]);
+    const ids = (t.steps ?? []).filter((s) => s.kind === 'think').map((s) => s.id);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+  });
+});

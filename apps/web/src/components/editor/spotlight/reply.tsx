@@ -300,18 +300,19 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
   const firstText = item.parts.findIndex((p) => p.kind === 'text');
   const firstProposal = item.parts.findIndex((p) => p.kind === 'proposal');
   const hasTrace = (item.steps?.length ?? 0) > 0;
-  const working = live && !steps && !own && !hasTrace;
   const words = quietText || !text.trim() ? null : streamed && live && !item.parts.some((p) => p.kind === 'text') ? (
     <StreamingText text={text} streaming />
   ) : streamed ? (
     <ShortReply text={text} sentences={session ? 1 : 2} />
   ) : null;
+  // Working until the first words arrive (a trace's own live line says it once there are steps), so the line cross-fades to the text.
+  const working = live && !steps && !own && !words;
   return (
     <AssistantRow mark={working ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}>
       {streamed && steps && <LiveSteps live={steps} trace={item.steps} durationMs={item.meta?.durationMs} />}
       {streamed && !steps && hasTrace && !quietText && <ActivityTrace steps={item.steps!} live={live} durationMs={item.meta?.durationMs ?? item.done?.durationMs} />}
-      {(working || words) && (
-        <StatusSwap working={working} label={status ?? (lastTool?.kind === 'tool' ? `${lastTool.tool.label}…` : 'Thinking…')}>
+      {(working || words || (streamed && live && !steps)) && (
+        <StatusSwap working={working} silent={hasTrace} label={status ?? (lastTool?.kind === 'tool' ? `${lastTool.tool.label}…` : 'Thinking…')}>
           {words}
         </StatusSwap>
       )}

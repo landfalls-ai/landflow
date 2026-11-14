@@ -264,3 +264,13 @@ export function toActivitySteps(steps: BuildStep[]): ActivityStep[] {
       };
     });
 }
+
+/**
+ * The rows for a change being built once the chat stream has its own trace: the stream's rows keep their times and icons,
+ * and the plan adds only its changes (the plan's read rows say what the stream's tool rows already do).
+ */
+export function mergeTrace(stream: ActivityStep[] | undefined, steps: BuildStep[]): ActivityStep[] {
+  const plan = toActivitySteps(steps);
+  if (!stream?.length) return plan;
+  return [...stream, ...plan.filter((s) => s.kind !== 'read' && s.kind !== 'think')];
+}

@@ -384,7 +384,7 @@ export function applyStreamEvent(turn: AssistantTurn, event: StreamEvent, now: n
         // Its deltas were provisional text: they belong to the trace now.
         text: checked ? turn.text : '',
         thinking: [...(turn.thinking ?? []), event.text],
-        steps: [...steps, { id: `think${event.step}`, label: 'Thought', kind: 'think', status: 'ok', detail: clip(event.text) }],
+        steps: [...steps, { id: `think${event.step}-${steps.length}`, label: 'Thought', kind: 'think', status: 'ok', detail: clip(event.text) }],
       };
     case 'tool':
       return {

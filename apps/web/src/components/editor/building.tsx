@@ -13,7 +13,7 @@ import { useEffect, useMemo } from 'react';
 import { BaseEdge, Handle, Position, type Edge, type EdgeProps, type Node, type NodeProps } from '@xyflow/react';
 import { TriangleAlert } from 'lucide-react';
 import { create } from 'zustand';
-import { buildSteps, planOf, stepProgress, toActivitySteps, visibleGhosts, type BuildStep, type GhostNode, type Plan } from '@/lib/shared/build-steps';
+import { buildSteps, planOf, stepProgress, mergeTrace, visibleGhosts, type BuildStep, type GhostNode, type Plan } from '@/lib/shared/build-steps';
 import { nodeColor } from '@/lib/client/node-style';
 import type { ActivityStep } from '@/lib/shared/activity';
 import { cn } from '@/lib/utils';
@@ -142,7 +142,7 @@ export function LiveSteps({ live, trace, durationMs }: { live: Live; trace?: Act
   return (
     <div className="space-y-2">
       {/* The plan's steps once there are some, else what the chat stream says it did (with times): one trace line while it works. */}
-      <ActivityTrace steps={plan.steps.length ? toActivitySteps(steps) : (trace ?? toActivitySteps(steps))} live={streaming || !all} durationMs={durationMs} defaultOpen />
+      <ActivityTrace steps={mergeTrace(trace, steps)} live={streaming || !all} durationMs={durationMs} />
       {ready && warnings.length > 0 && (
         <p className="flex items-start gap-1.5 text-[11px] leading-snug text-warn">
           <TriangleAlert className="mt-px size-3 shrink-0" /> Leaves {warnings.join('; ')}.
