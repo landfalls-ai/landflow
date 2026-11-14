@@ -4,7 +4,7 @@
  * ended, actions (debug in editor, retry / re-run, delete, debugger
  * controls for a paused run), the workflow as it ran, and the Logs panel.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -136,7 +136,7 @@ function copyText(text: string, what: string) {
 }
 
 /** The run header's first two lines: when it ran, then status, duration and the workflow. No id, hash or mode chip: the id is in the more menu. */
-export function RunHeaderMain({ startedAt, state, statusLabel, workflowName }: { startedAt: string; state: RunState; statusLabel: string; workflowName?: string }) {
+export function RunHeaderMain({ startedAt, state, statusLabel, workflowName, children }: { startedAt: string; state: RunState; statusLabel: string; workflowName?: string; children?: ReactNode }) {
   return (
     <>
       <h1 className="text-[18px] font-semibold leading-tight tabular-nums text-t1">{formatStamp(startedAt)}</h1>
@@ -151,6 +151,7 @@ export function RunHeaderMain({ startedAt, state, statusLabel, workflowName }: {
             <span className="min-w-0 truncate text-t2">{workflowName}</span>
           </>
         )}
+        {children}
       </div>
     </>
   );
@@ -564,8 +565,8 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
               state={state}
               statusLabel={state === 'paused' && record.paused ? `Paused before ${record.paused.nodeName}` : statusText(state, durationMs)}
               workflowName={workflowName}
-            />
-            <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[13px] empty:hidden">
+            >
+              <span className="contents max-md:hidden">
               {record.versionNumber !== undefined && (
                 <span
                   className={cn('flex items-center gap-1 rounded-full border px-2 text-[12px] max-md:hidden', record.versionPublished ? 'border-acbd text-ac' : 'border-hair text-t2')}
@@ -632,7 +633,8 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
               <BufferedChip buffered={record.buffered} />
               <AiUsageChip usage={record.aiUsage} />
               <FeedbackChip key={record.executionId} executionId={record.executionId} feedback={record.chatFeedback} />
-            </div>
+              </span>
+            </RunHeaderMain>
           </div>
 
           <div className="ml-auto flex items-center gap-2 animate-slide-left">
@@ -695,6 +697,47 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                       >
                         <Copy /> Copy run id
                       </MenuItem>
+                      {record.versionNumber !== undefined && (
+                        <p className="px-3 py-1.5 text-[12px] text-t2 md:hidden">
+                          Ran version {record.versionNumber} ({record.versionPublished ? 'published' : 'draft'})
+                        </p>
+                      )}
+                      {record.rerunOf && (
+                        <div className="md:hidden">
+                          <MenuItem
+                            onClick={() => {
+                              close();
+                              open(record.rerunOf!.executionId);
+                            }}
+                          >
+                            <RotateCcw /> Open the run this re-ran
+                          </MenuItem>
+                        </div>
+                      )}
+                      {record.retryOf && (
+                        <div className="md:hidden">
+                          <MenuItem
+                            onClick={() => {
+                              close();
+                              open(record.retryOf!);
+                            }}
+                          >
+                            <Repeat /> Open the run this retried
+                          </MenuItem>
+                        </div>
+                      )}
+                      {record.retriedBy && (
+                        <div className="md:hidden">
+                          <MenuItem
+                            onClick={() => {
+                              close();
+                              open(record.retriedBy!);
+                            }}
+                          >
+                            <Redo2 /> Open the retry of this run
+                          </MenuItem>
+                        </div>
+                      )}
                       {developerDetails && record.traceId && (
                         <MenuItem
                           onClick={() => {
