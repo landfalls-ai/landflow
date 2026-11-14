@@ -27,7 +27,7 @@ instance access token, the identity provider) can mistake it for theirs, and it 
 
 ## Debug access dialog (built 2026-11-07)
 
-The Run Trace page (`/runs/:executionId`, `components/run-trace/run-page.tsx`) has a **Debug access** button in its header that opens
+The Run Trace page (`/runs/:executionId`, `components/run-trace/run-page.tsx`) has a **Debug access** item in its header's **⋯** menu that opens
 `components/run-trace/debug-access.tsx`: a bottom sheet on a phone, a centred dialog from 768 px, one column either way. It uses the three routes
 above and adds none:
 

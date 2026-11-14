@@ -566,7 +566,7 @@ stops posting there), and uses what it reported:
   → AI prices; Ollama's are free unless priced there). A team member's usage counts against its budget as real usage,
   not an estimate;
 - the Team tab's card and the actor sheet show each member's model calls, tokens in (and cached), out, cost and model;
-  the Report tab has **What each agent used** and the run's cost next to its tokens;
+  the report in the Story tab has **What each agent used** and the run's cost next to its tokens;
 - each model request is a `model` span under the member's request in Run Trace ([run-trace.md](run-trace.md#who-writes-it)),
   with its tokens, cost, model and time; the request keeps the totals;
 - each tool call the guardrails stopped is a **Guardrail** check on the request (warn: "Stopped Bash: git push origin

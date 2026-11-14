@@ -115,8 +115,9 @@ the run in its workflow's Runs tab (`/workflows/<id>/runs/<executionId>`, no red
 - **The time slider** shows only when the run took 5 seconds or more and more than one took part
   (`showScrubber()`); otherwise there is nothing to replay.
 - **One status line**: the header says it once, as *Succeeded · 9 ms · 1d ago*. A run going on or waiting also has the
-  timeline card above the tabs; a finished run's line and **steps** are in the Story, which no longer ends with a second
-  status line.
+  timeline card above the tabs (decided from the whole run, so replaying a finished run does not bring it in); a finished
+  run's line and **steps** are in the Story, which no longer ends with a second status line. A passing run with no checks
+  and nothing reported has no summary cards at all.
 - **Debug access** is in the header's **⋯** menu. Its dialog says what the key can read in plain words (*See how the
   run went*, *See every step of the run*); the tool names behind them show only with **Show developer details** on.
 - **Trace**: the span tree with timing bars, down to a remote agent's single tool calls. A request shows why it was

@@ -120,6 +120,8 @@ describe('the Story summary', () => {
     expect(html).not.toContain('No checks');
     expect(html).not.toContain('Done');
     expect(html).not.toContain('Checked');
+    // Nothing reported either: no empty cards' grid adding a gap.
+    expect(html).not.toContain('summary-cards');
   });
 
   it('shows next steps when the report has some', () => {

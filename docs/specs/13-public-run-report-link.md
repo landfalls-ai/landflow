@@ -2,7 +2,7 @@
 
 ## Problem
 
-A run report (the Run Trace **Report** tab and the **Run Report** node's `report` artifact, `lib/shared/run-report.ts`
+A run report (the report in the Run Trace's **Story** tab and the **Run Report** node's `report` artifact, `lib/shared/run-report.ts`
 `buildRunReport()`) can be read only by a signed-in member. Sharing it with a client, a reviewer or a phone without an
 account means copying Markdown out. The same gap is stated for flow share pages: [marketplace.md](../marketplace.md#share-pages)
 ("The page needs a signed-in member (`workflows:read`); it isn't public") and [limitations.md](../limitations.md) (Alert
@@ -115,7 +115,7 @@ LAN or a tunnel, which is the user's call and not something this work sets up.
    and an API key without scope get 403; switch off gives 403 with a clear message.
 4. Public route, page, auth-paths entries. Test: unauthenticated request works; expired/revoked/unknown are identical
    404s; headers present; `proxy` allows the path (`apps/web/test/auth-paths*.test.ts`).
-5. UI: **Share report** on the Report tab (preview, options, copy link, list, revoke). Test: component test plus a
+5. UI: **Share report** beside the report in the Story tab (preview, options, copy link, list, revoke). Test: component test plus a
    manual phone-width check in the running app.
 6. Rate limit and view counter. Test: limiter unit test.
 

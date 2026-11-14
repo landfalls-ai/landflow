@@ -502,7 +502,8 @@ function TraceBody({
   const tabs = visibleTabs(full, allChanges);
   const current: Tab = tabs.includes(tab) ? tab : 'story';
   // A finished run's line and steps are the Story's (its Re-run from here too): the card above the tabs is for a run going on or waiting.
-  const cardAbove = model.live || model.status === 'waiting';
+  // Decided from the whole run, so a replay (whose cut is live until its end) does not pop the card in and shift the tabs.
+  const cardAbove = full.live || full.status === 'waiting';
   const scrubber = showScrubber(full) || replay;
 
   return (

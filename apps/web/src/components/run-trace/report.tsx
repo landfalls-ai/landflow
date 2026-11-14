@@ -90,43 +90,46 @@ export function StorySummary({ model, report, changes, open, profile, onProfile 
       () => toast.error('Could not copy'),
     );
   };
-  // A passing run with no checks says nothing more than the header: no card, only a small profile picker.
+  // A passing run with no checks says nothing more than the header: no card, only a small profile picker; with nothing
+  // reported either, the cards' grid is left out so it adds no gap.
   const showChecked = !(report.verdict === 'pass' && report.checks.length === 0);
   const next = nextSteps(report);
   const tiles = summaryTiles(model, changes);
   return (
     <section aria-label="Summary" data-testid="story-summary" className="mb-3 flex flex-col gap-2">
       {model.live && <p className="rounded-xl bg-warndim px-3 py-2 text-[12.5px] text-warn">The run is still going: this is the summary so far.</p>}
-      <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
-        {outcome.reported && (
-          <Card className={showChecked ? undefined : 'min-[420px]:col-span-2'}>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Reported</div>
-            <div className="mt-1 line-clamp-4 text-[13.5px] text-t1">{preview(outcome.reported.text, 220)}</div>
-            <div className="mt-1 text-[12px] text-t3">by {outcome.reported.by}</div>
-          </Card>
-        )}
-        {showChecked && (
-          <Card tone={report.verdict === 'fail' ? 'bad' : report.verdict === 'warn' ? 'warn' : 'ok'} className={outcome.reported ? undefined : 'min-[420px]:col-span-2'}>
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Checked</span>
-              {onProfile ? (
-                <Select aria-label="Check with the profile" className="h-7 w-auto py-0 text-[12px]" value={profile ?? ''} onChange={(e) => onProfile(e.target.value || undefined)}>
-                  <option value="">The flow’s ({resolvedName(model)})</option>
-                  {Object.values(RUN_PROFILES).map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </Select>
-              ) : (
-                <span className="text-[11px] text-t3">{report.profile.name}</span>
-              )}
-            </div>
-            <div className="mt-1 text-[13.5px] font-semibold text-t1">{report.label}</div>
-            {report.checks.length > 0 && <div className="mt-1 text-[12px] text-t3">{checksLine(report)[0].toUpperCase() + checksLine(report).slice(1)}</div>}
-          </Card>
-        )}
-      </div>
+      {(outcome.reported || showChecked) && (
+        <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2" data-testid="summary-cards">
+          {outcome.reported && (
+            <Card className={showChecked ? undefined : 'min-[420px]:col-span-2'}>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Reported</div>
+              <div className="mt-1 line-clamp-4 text-[13.5px] text-t1">{preview(outcome.reported.text, 220)}</div>
+              <div className="mt-1 text-[12px] text-t3">by {outcome.reported.by}</div>
+            </Card>
+          )}
+          {showChecked && (
+            <Card tone={report.verdict === 'fail' ? 'bad' : report.verdict === 'warn' ? 'warn' : 'ok'} className={outcome.reported ? undefined : 'min-[420px]:col-span-2'}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Checked</span>
+                {onProfile ? (
+                  <Select aria-label="Check with the profile" className="h-7 w-auto py-0 text-[12px]" value={profile ?? ''} onChange={(e) => onProfile(e.target.value || undefined)}>
+                    <option value="">The flow’s ({resolvedName(model)})</option>
+                    {Object.values(RUN_PROFILES).map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </Select>
+                ) : (
+                  <span className="text-[11px] text-t3">{report.profile.name}</span>
+                )}
+              </div>
+              <div className="mt-1 text-[13.5px] font-semibold text-t1">{report.label}</div>
+              {report.checks.length > 0 && <div className="mt-1 text-[12px] text-t3">{checksLine(report)[0].toUpperCase() + checksLine(report).slice(1)}</div>}
+            </Card>
+          )}
+        </div>
+      )}
       <div className={cn('grid gap-2 text-center', tiles.length === 1 ? 'grid-cols-1' : tiles.length === 2 || tiles.length === 4 ? 'grid-cols-2' : 'grid-cols-3')} data-testid="summary-tiles">
         {tiles.map(([v, l]) => (
           <div key={l} className="rounded-xl border border-hair bg-sf px-1 py-2">
