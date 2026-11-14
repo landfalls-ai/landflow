@@ -1,13 +1,15 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Ban, Bot, Check, ChevronRight, FileText, Loader2, Paperclip, ShieldAlert, SquarePen, Wrench, X } from 'lucide-react';
 import { nanoid } from 'nanoid';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { ExecutionEvent } from '@/lib/shared/types';
 import { Button } from '../ui/button';
-import { AssistantRow, CHAT_ICON_BUTTON, ChatComposer, ChatEmpty, ChatError, ChatMarkdown, UserBubble, Working } from '../ui/chat';
+import { AssistantRow, CHAT_ICON_BUTTON, ChatComposer, ChatEmpty, ChatError, ChatMarkdown, ModelChip, ReplyMeta, UserBubble, type ReplyInfo } from '../ui/chat';
+import { ChatList, StatusSwap, StreamingText } from '../ui/chat-motion';
 import { NodeIcon } from '../ui/icon';
+import { chatModelOf } from './chrome';
 import { useEditor } from './store';
 
 /** What AI Agent and chain nodes stream while the run goes on (node.chunk events of the run route SSE). */
@@ -58,6 +60,8 @@ export interface ChatMessage {
   calls?: ChatTool[];
   files?: Array<{ fileName: string; mimeType: string; size: number }>;
   approval?: ChatApproval & { executionId: string; decided: Record<string, boolean | 'busy'> };
+  /** What answered and how long it took, under a finished reply. */
+  info?: ReplyInfo;
 }
 
 const MAX_FILES = 10;
@@ -97,6 +101,11 @@ function applyChunk(current: { text: string; calls: ChatTool[]; error?: string }
   return current;
 }
 
+/** An engine failure in plain words; a provider's raw error goes through the kit's ChatError. */
+function plainRunError(message: string): string {
+  return /^execution failed$/i.test(message.trim()) ? 'The run failed. The log under the canvas says where.' : message;
+}
+
 const EMPTY_REPLY = { text: '', calls: [] as ChatTool[] };
 
 export function ChatPanel({
@@ -119,17 +128,18 @@ export function ChatPanel({
   const log = useEditor((s) => s.log);
   const nodes = useEditor((s) => s.nodes);
   const nodeTypes = useEditor((s) => s.nodeTypes);
-  const scroller = useRef<HTMLDivElement>(null);
+  const edges = useEditor((s) => s.edges);
+  const model = useMemo(
+    () =>
+      chatModelOf(
+        nodes.map((n) => ({ id: n.id, type: n.data.wf.type, parameters: n.data.wf.parameters })),
+        edges.map((e) => ({ source: e.source, connectionType: e.data?.connectionType })),
+      ),
+    [nodes, edges],
+  );
   const fileInput = useRef<HTMLInputElement>(null);
   const runStart = useRef(0);
   const reply = useRef(EMPTY_REPLY as { text: string; calls: ChatTool[]; error?: string });
-
-  // Follow the reply only when you are at the end (reading further up stays put), or just sent something.
-  const atEnd = useRef(true);
-  useEffect(() => {
-    const el = scroller.current;
-    if (el && (atEnd.current || messages.at(-1)?.role === 'user')) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-  }, [messages, log.length, live]);
 
   // Live tool activity of the current run (sub-node calls on the canvas), when the agent streams nothing itself.
   const activity = pending ? log.slice(runStart.current).filter((l) => l.kind !== 'log' && (l.source === 'tool' || l.source === 'model')) : [];
@@ -147,6 +157,7 @@ export function ChatPanel({
     reply.current = EMPTY_REPLY;
     setLive(EMPTY_REPLY);
     runStart.current = useEditor.getState().log.length;
+    const started = Date.now();
     try {
       const outcome = await work();
       if (outcome.stillWaiting) return;
@@ -168,14 +179,15 @@ export function ChatPanel({
           // Streamed calls carry their input and output; otherwise the tool nodes that ran.
           ...(streamed.calls.length ? { calls: streamed.calls } : { tools }),
           ...(approval && { approval }),
+          ...(text && { info: { ...(model && { model: model.model, local: model.local }), durationMs: Date.now() - started, steps: streamed.calls.length || tools.length } }),
         },
       ]);
-      if (streamed.error) setMessages((m) => [...m, { id: nanoid(), role: 'error', text: streamed.error! }]);
+      if (streamed.error) setMessages((m) => [...m, { id: nanoid(), role: 'error', text: plainRunError(streamed.error!) }]);
     } catch (error) {
       // What streamed before the failure stays visible.
       const streamed = reply.current;
       if (streamed.text.trim() || streamed.calls.length) setMessages((m) => [...m, { id: nanoid(), role: 'assistant', text: streamed.text, calls: streamed.calls }]);
-      setMessages((m) => [...m, { id: nanoid(), role: 'error', text: (error as Error).message }]);
+      setMessages((m) => [...m, { id: nanoid(), role: 'error', text: plainRunError((error as Error).message) }]);
     } finally {
       reply.current = EMPTY_REPLY;
       setLive(EMPTY_REPLY);
@@ -249,9 +261,14 @@ export function ChatPanel({
     return node ? nodeTypes[node.data.wf.type]?.descriptor.icon : undefined;
   };
 
-  if (!open) return null;
+  // Mounted while closed (hidden), so the conversation and a running reply survive switching to Spotlight.
   return (
-    <aside className="z-30 flex w-[380px] shrink-0 animate-panel flex-col border-l border-hair bg-sf max-md:h-[52dvh] max-md:w-full max-md:rounded-t-2xl max-md:border-l-0 max-md:border-t">
+    <aside
+      aria-label="Chat"
+      aria-hidden={!open}
+      inert={!open}
+      className={cn('z-30 flex w-[360px] shrink-0 animate-panel flex-col border-l border-hair bg-sf max-md:h-[52dvh] max-md:w-full max-md:rounded-t-2xl max-md:border-l-0 max-md:border-t', !open && 'hidden')}
+    >
       <div className="relative flex h-11 shrink-0 items-center gap-1.5 border-b border-hair pl-3 pr-1.5">
         <span className="absolute left-1/2 top-1 block h-1 w-8 -translate-x-1/2 rounded-full bg-hair md:hidden" aria-hidden />
         <Bot className="size-3.5 shrink-0 text-viz-7" />
@@ -272,16 +289,10 @@ export function ChatPanel({
         </button>
       </div>
 
-      <div
-        ref={scroller}
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-        }}
-        className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3"
-      >
-        {messages.length === 0 && (
+      <ChatList className="px-3 py-3">
+        {messages.length === 0 && !pending && (
           <ChatEmpty
+            key="empty"
             className="mt-8"
             mark={
               <span className="grid size-10 place-items-center rounded-full border border-hair bg-wl text-viz-7">
@@ -316,13 +327,16 @@ export function ChatPanel({
               {m.calls && m.calls.length > 0 && <ToolCalls calls={m.calls} />}
               {m.text ? <ChatMarkdown text={m.text} /> : null}
               {m.approval && <ApprovalCard approval={m.approval} disabled={pending || !onDecide} onDecide={(callId, approved) => void decide(m.id, m.approval!.executionId, callId, approved)} />}
+              {m.text && <ReplyMeta info={m.info} copy={m.text} />}
             </AssistantRow>
           ),
         )}
         {pending && (
-          <AssistantRow mark={<Bot className="size-3.5" />}>
+          <AssistantRow key="live" mark={<Bot className="size-3.5" />}>
             {live.calls.length > 0 && <ToolCalls calls={live.calls} />}
-            {live.text ? <ChatMarkdown text={live.text} /> : <Working label={thinking || !(liveTools.length || live.calls.length) ? 'Thinking…' : 'Using tools…'} />}
+            <StatusSwap working={!live.text} label={thinking || !(liveTools.length || live.calls.length) ? 'Thinking…' : 'Using tools…'}>
+              <StreamingText text={live.text} streaming />
+            </StatusSwap>
             {!live.calls.length && liveTools.length > 0 && (
               <div className="flex flex-wrap gap-1">
                 {liveTools.map((t) => (
@@ -334,7 +348,7 @@ export function ChatPanel({
             )}
           </AssistantRow>
         )}
-      </div>
+      </ChatList>
 
       <div className="shrink-0 border-t border-hair p-2.5 max-md:pb-[max(10px,env(safe-area-inset-bottom))]">
         <input ref={fileInput} type="file" multiple hidden onChange={(e) => void attach(e.target.files)} />
@@ -345,6 +359,7 @@ export function ChatPanel({
           busy={pending}
           placeholder="Message the agent"
           label="Message the agent"
+          chip={model ? <ModelChip model={model.model} local={model.local} /> : undefined}
           top={
             files.length > 0 && (
               <div className="mb-1 flex flex-wrap gap-1">

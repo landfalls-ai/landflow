@@ -1,7 +1,7 @@
 'use client';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import Link from 'next/link';
-import { Background, BackgroundVariant, ControlButton, Controls, MiniMap, ReactFlow, ReactFlowProvider, useReactFlow, useStore, type OnConnectEnd, type OnEdgesChange } from '@xyflow/react';
+import { Background, BackgroundVariant, MiniMap, ReactFlow, ReactFlowProvider, useReactFlow, useStore, type OnConnectEnd, type OnEdgesChange } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useShallow } from 'zustand/react/shallow';
 import {
@@ -15,12 +15,15 @@ import {
   Play,
   Plus,
   Redo2,
+  Sparkles,
   Square,
   StepForward,
   StickyNote,
   Undo2,
   WandSparkles,
   X,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -37,11 +40,13 @@ import { Badge, executionTone } from '../ui/badge';
 import { Button } from '../ui/button';
 import { NodeIcon } from '../ui/icon';
 import { Kbd } from '../ui/inputs';
+import { Segmented } from '../ui/segmented';
 import { WorkflowTabs } from '../shell/workflow-tabs';
 import { prefetchFailure, spotlightOwnsRun, useAssistant } from './assistant';
 import { BrainCanvasCard } from '../brain/canvas-card';
 import { focusSpotlight, SpotlightPanel } from './spotlight';
 import { BuildProgressBar, GhostEdgeView, GhostNodeView, useGhosts } from './building';
+import { AUTOSAVE_MS, shouldAutosave, showColumnSwitch, showMinimap, useChatColumn, visibleColumn } from './chrome';
 import { ChatPanel, type ChatApproval, type ChatChunk, type ChatFile, type ChatOutcome } from './chat-panel';
 import { parseClipboard, type ClipboardData } from './clipboard';
 import { FlowEdgeView } from './flow-edge';
@@ -58,7 +63,6 @@ import { EditorLogs } from './editor-logs';
 import { ShortcutsDialog, useShortcuts } from './shortcuts-dialog';
 import { StickyNodeView } from './sticky-node';
 import { useEditor, type CanvasNode, type FlowEdge, type RunCommand } from './store';
-import { TagsEditor } from './tags-editor';
 import { VersionHistory, useVersionHistory } from './version-history';
 import { WorkflowMenu } from './workflow-menu';
 import { PublishControl } from './publish-control';
@@ -70,6 +74,11 @@ import { useFollowWaiting } from './waiting';
 
 const nodeTypesMap = { lf: FlowNodeView, sticky: StickyNodeView, frame: GroupNodeView, ghost: GhostNodeView };
 const edgeTypesMap = { lf: FlowEdgeView, groupProxy: GroupProxyEdgeView, ghost: GhostEdgeView };
+
+/** What an edit changes in the store: the autosave timer restarts when any of these does. */
+const AUTOSAVE_WATCHED = ['nodes', 'edges', 'stickies', 'groups', 'name', 'description', 'tags', 'settings', 'pinData'] as const;
+/** A save that waits for someone's approval keeps the Save button and skips autosave. None does today: saves are drafts and Publish asks. */
+const GOVERNED_SAVES = false;
 
 type RunResult = { executionId?: string; status: string; lastNodeId?: string; error?: { message: string }; approval?: ChatApproval };
 
@@ -162,13 +171,17 @@ function KeepGhostsInView({ ids }: { ids: string[] }) {
   return null;
 }
 
+/** ⌘I, the Spotlight button and the empty canvas's hint: the right column shows Spotlight (unfolded, caret in its box). */
+function showSpotlight() {
+  useChatColumn.getState().apply('show-spotlight');
+  focusSpotlight();
+}
+
 function Canvas({ onSave }: { onSave: () => void }) {
   const flowNodes = useEditor((s) => s.nodes);
   const stickies = useEditor((s) => s.stickies);
   const groups = useEditor((s) => s.groups);
   const flowEdges = useEditor((s) => s.edges);
-  const canUndo = useEditor((s) => s.history.past > 0);
-  const canRedo = useEditor((s) => s.history.future > 0);
   // Group frames, then notes, then nodes; collapsed groups hide their nodes and take over their connections (a
   // collapsed composite's through its named outputs).
   const reports = useCompositeReports();
@@ -276,7 +289,7 @@ function Canvas({ onSave }: { onSave: () => void }) {
         state.run?.({ kind: e.shiftKey ? 'debug' : 'run' });
       } else if (mod && e.key === 'i') {
         e.preventDefault();
-        focusSpotlight();
+        showSpotlight();
       } else if (e.key === 'F8' && state.paused) {
         e.preventDefault();
         void sendDebug(state.executionId, 'continue');
@@ -377,22 +390,16 @@ function Canvas({ onSave }: { onSave: () => void }) {
       <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="var(--canvas-dot)" />
       <KeepRunningInView moved={moved} />
       <KeepGhostsInView ids={ghostIds} />
-      {/* A phone pinches to zoom; undo and redo are in the toolbar (CanvasToolbar). */}
-      <Controls position="bottom-left" showInteractive={false} className="!bottom-3 !left-3 max-md:!hidden">
-        <ControlButton onClick={() => useEditor.getState().undo()} disabled={!canUndo} title="Undo (⌘Z)" aria-label="Undo">
-          <Undo2 />
-        </ControlButton>
-        <ControlButton onClick={() => useEditor.getState().redo()} disabled={!canRedo} title="Redo (⇧⌘Z)" aria-label="Redo">
-          <Redo2 />
-        </ControlButton>
-      </Controls>
-      <MiniMap
-        position="bottom-right"
-        className="!bottom-3 !right-3 max-md:!hidden"
-        pannable
-        zoomable
-        nodeColor={(node) => (node.type === 'sticky' ? 'var(--acbd)' : node.type === 'frame' ? 'color-mix(in oklab, var(--t3) 14%, transparent)' : 'var(--bd)')}
-      />
+      {/* One toolbar for zoom, fit, tidy, add, undo and redo (CanvasToolbar); a phone pinches to zoom. */}
+      {showMinimap(flowNodes.length) && (
+        <MiniMap
+          position="bottom-right"
+          className="!bottom-3 !right-3 max-md:!hidden"
+          pannable
+          zoomable
+          nodeColor={(node) => (node.type === 'sticky' ? 'var(--acbd)' : node.type === 'frame' ? 'color-mix(in oklab, var(--t3) 14%, transparent)' : 'var(--bd)')}
+        />
+      )}
     </ReactFlow>
     <CanvasMenu />
     </div>
@@ -457,7 +464,7 @@ function EmptyCanvas() {
           or press <Kbd>N</Kbd>
         </span>
       </button>
-      <button onClick={focusSpotlight} className="pointer-events-auto -mt-4 animate-fade-up text-[12.5px] text-t3 transition-colors hover:text-t1" style={{ animationDelay: '80ms' }}>
+      <button onClick={showSpotlight} className="pointer-events-auto -mt-4 animate-fade-up text-[12.5px] text-t3 transition-colors hover:text-t1" style={{ animationDelay: '80ms' }}>
         or describe it to Spotlight <Kbd>⌘I</Kbd>
       </button>
       {templates.length > 0 && (
@@ -489,9 +496,9 @@ function EmptyCanvas() {
   );
 }
 
-/** n8n's floating canvas buttons, top right: add a node, tidy up, fit view. */
+/** The one canvas toolbar, top right: add a node or note, tidy up, zoom in and out, fit view, undo and redo. */
 function CanvasToolbar() {
-  const { fitView } = useReactFlow();
+  const { fitView, zoomIn, zoomOut } = useReactFlow();
   const hasNodes = useEditor((s) => s.nodes.length > 0);
   const creatorOpen = useEditor((s) => Boolean(s.palette));
   const { screenToFlowPosition } = useReactFlow();
@@ -529,6 +536,13 @@ function CanvasToolbar() {
             >
               <WandSparkles className="size-4" />
             </button>
+            {/* A phone pinches to zoom. */}
+            <button title="Zoom in" aria-label="Zoom in" onClick={() => void zoomIn({ duration: 200 })} className={cn(button, 'border-t border-hair max-md:hidden')}>
+              <ZoomIn className="size-4" />
+            </button>
+            <button title="Zoom out" aria-label="Zoom out" onClick={() => void zoomOut({ duration: 200 })} className={cn(button, 'border-t border-hair max-md:hidden')}>
+              <ZoomOut className="size-4" />
+            </button>
             <button
               title="Fit view (1)"
               aria-label="Fit view"
@@ -539,11 +553,10 @@ function CanvasToolbar() {
             </button>
           </>
         )}
-        {/* A phone has no zoom rail, so undo and redo live here. */}
-        <button title="Undo" aria-label="Undo" disabled={!canUndo} onClick={() => useEditor.getState().undo()} className={cn(button, 'border-t border-hair md:hidden')}>
+        <button title="Undo" aria-label="Undo" disabled={!canUndo} onClick={() => useEditor.getState().undo()} className={cn(button, 'border-t border-hair')}>
           <Undo2 className="size-4" />
         </button>
-        <button title="Redo" aria-label="Redo" disabled={!canRedo} onClick={() => useEditor.getState().redo()} className={cn(button, 'border-t border-hair md:hidden')}>
+        <button title="Redo" aria-label="Redo" disabled={!canRedo} onClick={() => useEditor.getState().redo()} className={cn(button, 'border-t border-hair')}>
           <Redo2 className="size-4" />
         </button>
       </div>
@@ -635,7 +648,8 @@ export function Editor({ workflowId }: { workflowId: string }) {
   const [view, setView] = useState<'steps' | 'canvas'>('steps');
   const hasSteps = useEditor((s) => s.nodes.length > 0);
   const showSteps = phone && hasSteps && view === 'steps';
-  const [chatOpen, setChatOpen] = useState(false);
+  // The right column holds one panel: Spotlight or the flow chat (./chrome).
+  const columnState = useChatColumn((s) => s.column);
   const abortRef = useRef<AbortController | null>(null);
   // Stop pressed before the server named the execution: stopped as soon as it does.
   const stopWhenStarted = useRef(false);
@@ -645,15 +659,27 @@ export function Editor({ workflowId }: { workflowId: string }) {
   const debugging = useEditor((s) => s.debugging);
   const breakpoints = useEditor((s) => s.breakpoints);
   const hasChatTrigger = useEditor((s) => s.nodes.some((n) => n.data.wf.type === 'core.chatTrigger'));
+  const column = visibleColumn(columnState, hasChatTrigger);
+  const chatOpen = column === 'chat';
+  const nodeCount = useEditor((s) => s.nodes.length);
   const readOnly = useEditLock((s) => s.readOnly);
   const { takeOver } = useEditLockSync(workflowId, loaded);
   // A waiting run on the canvas keeps its waiting mark current and shows the rest once it resumes.
   useFollowWaiting();
   // A run this editor started before a reload goes on: show it live again.
   useFollowRun();
-  const spotlightOpen = useAssistant((s) => !s.collapsed);
+  const spotlightFolded = useAssistant((s) => s.collapsed);
+  const spotlightOpen = !spotlightFolded;
+  const spotlightVisible = column !== 'chat' && spotlightOpen;
   // On a phone, Spotlight's own runs take the canvas: the Execute bar steps aside while it drafts or tests.
   const spotlightWorks = useAssistant((s) => s.drafting || Boolean(s.testing));
+
+  // Spotlight starts a build or a test: it takes the column (once, so the person can still switch to the chat while it works).
+  const wasWorking = useRef(false);
+  useEffect(() => {
+    if (spotlightWorks && !wasWorking.current && useChatColumn.getState().column === 'chat') useChatColumn.getState().apply('show-spotlight');
+    wasWorking.current = spotlightWorks;
+  }, [spotlightWorks]);
 
   // The assistant's conversation lasts while this workflow is open.
   useEffect(() => useAssistant.getState().bind(workflowId), [workflowId]);
@@ -668,7 +694,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
         useEditor.getState().load(workflow, nodeTypes);
         loadComposites();
         setLoaded(true);
-        setChatOpen(workflow.nodes.some((n) => n.type === 'core.chatTrigger') && !requested);
+        useChatColumn.setState({ column: workflow.nodes.some((n) => n.type === 'core.chatTrigger') && !requested ? 'chat' : null });
         // Show an execution from history if one was asked for, else the last run, so the canvas isn't blank.
         const record = requested
           ? api<OpenedExecution>(`/api/executions/${requested}`)
@@ -711,13 +737,17 @@ export function Editor({ workflowId }: { workflowId: string }) {
     api(`/api/executions/${executionId}/debug`, { method: 'POST', json: { breakpoints } }).catch(() => {});
   }, [breakpoints, running, debugging]);
 
-  const save = useCallback(async (): Promise<boolean> => {
+  // Autosave: set by the effect below; a save that finds edits made while it was in flight asks for another.
+  const savingNow = useRef(false);
+  const rearm = useRef<() => void>(undefined);
+  const save = useCallback(async (auto = false): Promise<boolean> => {
     if (useEditLock.getState().readOnly) {
       const environment = useEditLock.getState().protectedEnvironment;
       toast.error(environment ? `${environment} is a protected environment: workflows change only by pull or promotion` : 'Someone else is editing this workflow: it’s read-only here');
       return false;
     }
     setSaving(true);
+    savingNow.current = true;
     try {
       // `active` stays out: a save is a draft, and Publish / Unpublish (PublishControl) change what is live.
       const { active: _active, ...draft } = useEditor.getState().toWorkflow();
@@ -742,16 +772,23 @@ export function Editor({ workflowId }: { workflowId: string }) {
       }
       const { workflow, policyWarnings, triggerAuthWarnings } = saved;
       useEditor.getState().markSaved(workflow.updatedAt, workflow);
-      toast.success(`Saved “${workflow.name}”`);
+      // Edits made while the request was in flight are not in what was saved: the draft stays unsaved and saves again.
+      const { active: _live, ...now } = useEditor.getState().toWorkflow();
+      if (JSON.stringify(now) !== JSON.stringify(draft)) {
+        useEditor.setState({ dirty: true });
+        rearm.current?.();
+      }
+      if (!auto) toast.success(`Saved “${workflow.name}”`);
       // Nodes the governance policy doesn't allow: the save stands, publishing is refused and they fail when run.
-      if (policyWarnings?.length) toast.warning(`${policyWarnings.length === 1 ? '1 node is' : `${policyWarnings.length} nodes are`} blocked by policy`, { description: policyWarnings.map((w) => `${w.nodeName}: ${w.message}`).join('\n') });
+      if (policyWarnings?.length) toast.warning(`${policyWarnings.length === 1 ? '1 node is' : `${policyWarnings.length} nodes are`} blocked by policy`, { id: 'policy-warnings', description: policyWarnings.map((w) => `${w.nodeName}: ${w.message}`).join('\n') });
       // A trigger checking callers with a credential this workflow's project can't use: its calls are refused (403).
-      if (triggerAuthWarnings?.length) toast.warning('Trigger authentication isn’t available to this project', { description: triggerAuthWarnings.map((w) => `${w.nodeName}: ${w.message}`).join('\n') });
+      if (triggerAuthWarnings?.length) toast.warning('Trigger authentication isn’t available to this project', { id: 'trigger-auth-warnings', description: triggerAuthWarnings.map((w) => `${w.nodeName}: ${w.message}`).join('\n') });
       return true;
     } catch (e) {
-      toast.error(`Save failed: ${(e as Error).message}`);
+      toast.error(`Save failed: ${(e as Error).message}`, { id: 'save-failed' });
       return false;
     } finally {
+      savingNow.current = false;
       setSaving(false);
     }
   }, [workflowId]);
@@ -853,6 +890,33 @@ export function Editor({ workflowId }: { workflowId: string }) {
     return () => useEditor.setState({ save: undefined });
   }, [save]);
 
+  // Autosave: a draft saves itself 2 s after the last edit when the save needs nobody's approval and this tab holds the edit
+  // lock (⌘S still saves now). Saves are drafts, so none needs approval today; `GOVERNED_SAVES` is where one would say so.
+  useEffect(() => {
+    if (!loaded) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const allowed = () => shouldAutosave({ dirty: useEditor.getState().dirty, readOnly, governed: GOVERNED_SAVES, locked: !readOnly });
+    const arm = () => {
+      clearTimeout(timer);
+      if (!allowed()) return;
+      timer = setTimeout(() => {
+        // A save still in flight: look again once it is done.
+        if (savingNow.current) return arm();
+        if (allowed()) void save(true);
+      }, AUTOSAVE_MS);
+    };
+    rearm.current = arm;
+    const unsubscribe = useEditor.subscribe((state, prev) => {
+      if (AUTOSAVE_WATCHED.some((key) => state[key] !== prev[key])) arm();
+    });
+    arm();
+    return () => {
+      clearTimeout(timer);
+      unsubscribe();
+      rearm.current = undefined;
+    };
+  }, [loaded, readOnly, save]);
+
   const stop = () => {
     stopListening();
     const { debugging: inDebug, executionId, running } = useEditor.getState();
@@ -919,7 +983,8 @@ export function Editor({ workflowId }: { workflowId: string }) {
     <ReactFlowProvider>
       {/* The whole screen (a phone has no tab bar here, sidebar.tsx): the box at the bottom of Spotlight stays on screen. */}
       <div className="flex h-dvh flex-col">
-        {/* Phone: two rows. Back, name, saved state, Save and ⋯; then the tabs, Publish and History. */}
+        {/* Seven controls: back, name, save state, Spotlight, Run, Publish, ⋯ (Save only where autosave is off; the tabs are
+            navigation). Phone: two rows. Back, name, saved state and ⋯; then the tabs and Publish. */}
         <header className="relative flex h-[52px] shrink-0 items-center gap-3 border-b border-hair bg-bg px-4 max-md:h-auto max-md:flex-wrap max-md:gap-x-1.5 max-md:gap-y-1.5 max-md:px-2 max-md:pb-2 max-md:pt-[max(6px,env(safe-area-inset-top))]">
           <Link href="/workflows" aria-label="Back to workflows" className="grid size-8 shrink-0 place-items-center rounded-full text-t2 hover:bg-acdim hover:text-t1 max-md:size-11">
             <ArrowLeft className="size-4" />
@@ -935,12 +1000,13 @@ export function Editor({ workflowId }: { workflowId: string }) {
               size={Math.max(12, Math.min(name.length + 1, 40))}
               className="min-w-0 max-w-[300px] shrink bg-transparent text-[15px] font-semibold text-t1 outline-none"
             />
-            <span className="contents max-md:hidden">
-              <TagsEditor />
-            </span>
-            <span className={cn('flex shrink-0 items-center gap-1.5 text-[12px]', dirty ? 'text-warn' : 'text-t3')} title={dirty ? 'Unsaved' : 'Saved'}>
-              <span className={cn('size-1.5 rounded-full transition-colors', dirty ? 'bg-warn' : 'bg-gn')} />
-              <span className="max-md:sr-only">{dirty ? 'Unsaved' : 'Saved'}</span>
+            <span
+              role="status"
+              className={cn('flex shrink-0 items-center gap-1.5 text-[12px]', dirty || saving ? 'text-warn' : 'text-t3')}
+              title={saving ? 'Saving…' : dirty ? 'Unsaved: it saves by itself in a moment' : 'Saved'}
+            >
+              <span className={cn('size-1.5 rounded-full transition-colors', dirty || saving ? 'bg-warn' : 'bg-gn')} />
+              <span className="max-md:sr-only">{saving ? 'Saving…' : dirty ? 'Unsaved' : 'Saved'}</span>
             </span>
           </div>
 
@@ -952,21 +1018,32 @@ export function Editor({ workflowId }: { workflowId: string }) {
           />
 
           <div className="ml-auto flex items-center gap-2 max-md:contents">
+            <Button
+              variant={spotlightVisible ? 'outline' : 'ghost'}
+              onClick={() => (spotlightVisible ? useAssistant.getState().setCollapsed(true) : showSpotlight())}
+              title="Spotlight: build and fix this flow by talking (⌘I)"
+              aria-pressed={spotlightVisible}
+              className="max-md:hidden"
+            >
+              <Sparkles className="size-3.5 text-viz-7" /> Spotlight
+            </Button>
+            <Button
+              variant={running ? 'danger' : 'outline'}
+              onClick={() => (running ? stop() : void runCommand({ kind: 'run' }))}
+              disabled={nodeCount === 0}
+              title={running ? 'Stop the run' : 'Run the workflow (⌘↵)'}
+              className="max-md:hidden"
+            >
+              {running ? <Square className="size-3" fill="currentColor" /> : <Play className="size-3.5" fill="currentColor" />} {running ? 'Stop' : 'Run'}
+            </Button>
             <span className="contents max-md:[&>*]:order-4 max-md:[&>*:first-child]:ml-auto">
               <PublishControl workflowId={workflowId} onSave={save} />
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => useVersionHistory.getState().setOpen(true)}
-                title="Version history: every save is a version"
-                aria-label="Version history"
-              >
-                <History className="size-4" />
-              </Button>
             </span>
-            <Button onClick={() => void save()} loading={saving} disabled={readOnly} title="Save (⌘S)" variant={dirty ? 'primary' : 'outline'}>
-              Save
-            </Button>
+            {GOVERNED_SAVES && (
+              <Button onClick={() => void save()} loading={saving} disabled={readOnly} title="Save (⌘S)" variant={dirty ? 'primary' : 'outline'}>
+                Save
+              </Button>
+            )}
             <WorkflowMenu onSave={save} />
           </div>
           {/* Phone: the second row starts here. */}
@@ -988,7 +1065,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
               <BuildProgressBar />
               {!showSteps && <BrainCanvasCard />}
               {/* The run controls at the bottom, clear of zoom and the minimap. */}
-              <div className={cn('pointer-events-none absolute inset-x-0 bottom-4 z-20 flex flex-wrap-reverse items-start justify-center gap-2 pl-14 pr-[232px] max-md:bottom-3 max-md:pr-3', spotlightWorks && 'max-md:hidden')}>
+              <div className={cn('pointer-events-none absolute inset-x-0 bottom-4 z-20 flex flex-wrap-reverse items-start justify-center gap-2 px-3 max-md:bottom-3', showMinimap(nodeCount) && 'md:pr-[232px]', spotlightWorks && 'max-md:hidden')}>
                 <ExecuteBar
                   running={running}
                   breakpoints={breakpoints.length}
@@ -997,7 +1074,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
                   onRun={() => void runCommand({ kind: 'run' })}
                   onDebug={() => void runCommand({ kind: 'debug' })}
                   onStop={stop}
-                  onChat={() => setChatOpen((o) => !o)}
+                  onChat={() => useChatColumn.getState().apply('toggle-chat')}
                 />
               </div>
             </div>
@@ -1006,9 +1083,31 @@ export function Editor({ workflowId }: { workflowId: string }) {
               <EditorLogs />
             </div>
           </div>
-          {/* Spotlight beside the canvas (under it on a phone), never over it: the canvas shrinks when it is open. */}
-          <SpotlightPanel hiddenOnPhone={chatOpen} />
-          <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} onSend={sendChat} onDecide={decideChat} />
+          {/* One column beside the canvas (under it on a phone): Spotlight or the flow chat, never both, never over the canvas.
+              The one not shown stays mounted, so a running build or chat goes on. */}
+          <div className="flex min-h-0 flex-col max-md:contents">
+            {showColumnSwitch({ hasChat: hasChatTrigger, column, spotlightFolded }) && (
+              <div className="flex h-11 shrink-0 items-center border-b border-l border-hair bg-sf px-2 max-md:hidden">
+                <Segmented
+                  label="Right panel"
+                  size="sm"
+                  stretch
+                  value={chatOpen ? 'chat' : 'spotlight'}
+                  onChange={(value) => useChatColumn.getState().apply(value === 'chat' ? 'show-chat' : 'show-spotlight')}
+                  options={[
+                    { value: 'spotlight', label: 'Spotlight', title: 'Build and fix this flow (⌘I)' },
+                    { value: 'chat', label: 'Chat', title: 'Talk to this workflow' },
+                  ]}
+                />
+              </div>
+            )}
+            <div className="flex min-h-0 flex-1 max-md:contents">
+              <div className={chatOpen ? 'hidden' : 'contents'}>
+                <SpotlightPanel hiddenOnPhone={chatOpen} />
+              </div>
+              <ChatPanel open={chatOpen} onClose={() => useChatColumn.getState().apply('close-chat')} onSend={sendChat} onDecide={decideChat} />
+            </div>
+          </div>
           <NodeCreator />
         </div>
         <NodePanel />

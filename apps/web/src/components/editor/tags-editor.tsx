@@ -1,6 +1,6 @@
 'use client';
 /**
- * Tags in the editor's top bar: pills with a remove button and an inline
+ * Tags, from the editor's ⋯ menu (TagsDialog): pills with a remove button and an inline
  * field to add one (suggesting tags used by other workflows). Tags are saved
  * with the workflow (`workflow.tags`) and filter the workflows list.
  */
@@ -8,6 +8,8 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { Plus, Tag, X } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import type { WorkflowSummary } from '@/lib/shared/types';
+import { Button } from '../ui/button';
+import { Dialog } from '../ui/dialog';
 import { useEditor } from './store';
 
 const MAX_SHOWN = 3;
@@ -38,7 +40,7 @@ export function TagsEditor() {
   const shown = expanded ? tags : tags.slice(0, MAX_SHOWN);
 
   return (
-    <div className="flex min-w-0 items-center gap-1">
+    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
       {shown.map((tag) => (
         <span key={tag} className="group/tag flex h-6 max-w-[140px] shrink-0 items-center gap-1 rounded-full border border-hair bg-sf2 pl-2 pr-1 text-[12px] text-t2">
           <span className="truncate">{tag}</span>
@@ -103,5 +105,25 @@ export function TagsEditor() {
         </button>
       )}
     </div>
+  );
+}
+
+/** "Tags…" in the ⋯ menu: the tags of this workflow, saved with it. */
+export function TagsDialog({ onClose }: { onClose: () => void }) {
+  return (
+    <Dialog
+      title="Tags"
+      subtitle="Tags are saved with the workflow and filter the workflows list."
+      icon={<Tag className="size-5 text-t2" />}
+      onClose={onClose}
+      width={480}
+      footer={
+        <Button variant="primary" onClick={onClose}>
+          Done
+        </Button>
+      }
+    >
+      <TagsEditor />
+    </Dialog>
   );
 }
