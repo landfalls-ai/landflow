@@ -29,6 +29,7 @@ const { askBrainStream, askMentions, askJson } = await import('@/lib/server/brai
 const { sanitizeItems } = await import('@/lib/server/conversations/sanitize');
 const { BLOCK_OPEN } = await import('@/lib/server/mentions/resolve');
 const { traceChat } = await import('@/lib/server/telemetry');
+const { singleton } = await import('@/lib/server/singleton');
 const askRoute = await import('@/app/api/brain/ask/route');
 const panel = await import('@/components/brain/wiki/ask-panel');
 
@@ -136,10 +137,56 @@ describe('tags in the ask route', () => {
     expect((await json.json()).tags).toEqual([{ ok: true, label: 'Read @Acme' }]);
   });
 
+  it('{ question, about } without tags keeps the JSON contract: the fact list is returned', async () => {
+    const res = await askRoute.POST(new Request('http://localhost/api/brain/ask', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question: 'Billing for Acme', about: 'customer/acme' }) }));
+    const body = await res.json();
+    expect(body.about).toBe('customer/acme');
+    expect(body.tags).toBeUndefined();
+    expect(body.facts.length + body.pages.length).toBeGreaterThan(0);
+    expect(Array.isArray(body.facts)).toBe(true);
+  });
+
+  it('a brain:read key cannot tag a workflow or a credential: refused, no digest, nothing in the prompt', async () => {
+    const { store } = await import('@/lib/server/store');
+    store.saveWorkflow({ id: 'wf_keyed', name: 'Keyed flow', nodes: [], connections: [] } as never);
+    const state = singleton<{ principal?: unknown }>('auth-test-bypass', () => ({}));
+    const before = state.principal;
+    state.principal = { user: { ...owner, role: 'owner' }, via: 'api-key', apiKey: { id: 'key_1', scopes: ['brain:read'] } };
+    try {
+      const response = await askRoute.POST(
+        new Request('http://localhost/api/brain/ask', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
+          body: JSON.stringify({ question: 'What is up?', mentions: { refs: [{ type: 'workflow', id: 'wf_keyed', name: 'Keyed flow' }, { type: 'credential', id: 'cred_x', name: 'Secret cred' }, { type: 'brainPage', id: 'customer/acme', name: 'Acme' }] } }),
+        }),
+      );
+      const text = await response.text();
+      expect(text).toContain("Couldn't read @Keyed flow");
+      expect(text).toContain("Couldn't read @Secret cred");
+      expect(text).toContain('Read @Acme');
+      expect(text).not.toMatch(/"detail":"[^"]*(Keyed flow|nodes)/);
+    } finally {
+      state.principal = before;
+    }
+    const { splitByScopes } = await import('@/lib/server/mentions/key-scopes');
+    const split = splitByScopes([{ type: 'workflow' as const }, { type: 'run' as const }, { type: 'brainPage' as const }, { type: 'credential' as const }], ['brain:read', 'executions:read']);
+    expect(split.allowed.map((r) => r.type)).toEqual(['run', 'brainPage']);
+    expect(split.denied.map((r) => r.type)).toEqual(['workflow', 'credential']);
+  });
+
   it('the folded JSON form carries the answer', async () => {
     const out = await askJson(aliceActor, { question: 'How is billing going?', scope: scopeForActor(aliceActor), model: fakeModel('Fine [[customer/acme|Acme]].'), mentions: [{ type: 'brainPage', id: 'customer/acme' }] });
     expect(out.answer).toContain('Fine');
     expect(out.model).toBe('fake/ask');
+  });
+});
+
+describe('a change of page', () => {
+  it('keeps this visit\'s turns; resumes only when the panel holds none of this visit', () => {
+    expect(panel.subjectChange([])).toBe('resume');
+    expect(panel.subjectChange([{ earlier: true }, { earlier: true }])).toBe('resume');
+    expect(panel.subjectChange([{ earlier: true }, {}])).toBe('keep');
+    expect(panel.subjectChange([{}])).toBe('keep');
   });
 });
 

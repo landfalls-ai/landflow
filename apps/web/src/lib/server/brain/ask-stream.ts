@@ -25,6 +25,8 @@ export interface AskStreamInput extends Pick<AskOptions, 'vectorHits' | 'about' 
   model?: LanguageModel;
   /** What the person tagged with @ (at most 8): checked against what they may open, then read as context. */
   mentions?: SentMention[];
+  /** Labels of tags that were not read ("Couldn't read @X", "Left out @Y: …"): told as steps first, never resolved. */
+  refusals?: string[];
 }
 
 /** Who asks: a person with a role, so a tag can be checked against what they may open. */
@@ -35,9 +37,14 @@ export type AskActor = Pick<Actor, 'id' | 'role'> & { email?: string };
  * the tags do not already name it. At most 8.
  */
 export function askMentions(mentions: readonly SentMention[] | undefined, about: string | undefined): SentMention[] {
+  return askMentionsSplit(mentions, about).kept;
+}
+
+/** The same, with what the cap of 8 cut off (the page chip comes first, so the last picks go). */
+export function askMentionsSplit(mentions: readonly SentMention[] | undefined, about: string | undefined): { kept: SentMention[]; cut: SentMention[] } {
   const refs: SentMention[] = [...(mentions ?? [])];
   if (about && !refs.some((r) => r.type === 'brainPage' && r.id === about)) refs.unshift({ type: 'brainPage', id: about } satisfies MentionRef);
-  return refs.slice(0, MENTION_LIMITS.refs);
+  return { kept: refs.slice(0, MENTION_LIMITS.refs), cut: refs.slice(MENTION_LIMITS.refs) };
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -66,6 +73,11 @@ export async function askBrainStream(actor: AskActor | undefined, input: AskStre
       emit({ type: 'step.start', step, label });
       emit({ type: 'tool', name, label, ok: true, id: `t_${nanoid(8)}`, step, durationMs: ms ?? 0, ...(detail && { detail }) });
     };
+    for (const label of input.refusals ?? []) {
+      step++;
+      emit({ type: 'step.start', step, label });
+      emit({ type: 'tool', name: 'read_pages', label, ok: false, id: `t_${nanoid(8)}`, step, durationMs: 0 });
+    }
     for (const tag of tagged?.read ?? []) {
       step++;
       const label = tag.ok ? `Read @${tag.label}` : tag.label;

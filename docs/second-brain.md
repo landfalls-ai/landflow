@@ -275,10 +275,15 @@ prose and a person keeps the facts. Spotlight asks it questions.
     says "local"). A follow-up ("and since when?") knows the last two turns of the conversation. A source is numbered
     only when the answer cites it, and a `[n]` that points at no work item is dropped. **New conversation** clears
     it. On a phone Ask is a bottom sheet; a link closes it to show the page, and the Ask button brings it back with
-    its answers.
+    the same answers.
+  - **A key's tags follow its scopes.** A tag reads a digest, so an API key tags only what its scopes cover: brain pages, people, node types and plugins with `brain:read`; workflows, nodes, agents, teams, data tables and templates with `workflows:read`; runs with `executions:read`; credentials with `admin`. The rest is told as "Couldn't read @X" with no digest. Tags past the cap of 8 (the page chip counts) are told as "Left out @X". `{ question, about }` without `mentions` answers as before, with the fact list.
   - **Ask keeps its conversations, and takes tags.** Each page has its own conversation (kept when **Keep my
-    conversations** is on): ask on a page, open another and come back, and the last conversation of that page is there
-    under **Earlier**; new questions continue it. The clock button in the panel header (in the row above the box on a
+    conversations** is on): open a page and its last conversation is there under **Earlier**; new questions continue
+    it. Following a link in an answer (or in "Found N pages") to another page keeps the answers on screen: a turn still
+    streaming finishes and is stored in the page it began on, and the page's own conversation is not resumed over them.
+    They stay until you ask on the new page, press **New conversation** or open another from the history. A panel
+    with no answers of this visit resumes the page's last conversation (`subjectChange`). On a phone the link closes
+    the sheet; the Ask button brings it back with the same answers. The clock button in the panel header (in the row above the box on a
     phone) opens the history: this page's conversations, then all of Ask's, with rename and delete
     ([history](assistant.md#conversation-history)); **New conversation** starts a clean one. On the index and the log
     there is no page, so nothing is resumed there. `@` in the box tags a page, a person, a workflow, a run or anything else

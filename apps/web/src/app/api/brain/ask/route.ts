@@ -11,8 +11,10 @@
 import { z } from 'zod';
 import { projectsOf, scopeForActor } from '@/lib/server/brain/scope';
 import { vectorFactHits } from '@/lib/server/brain/study';
-import { askBrainStream, askJson, askMentions } from '@/lib/server/brain/ask-stream';
+import { askBrainStream, askJson, askMentionsSplit } from '@/lib/server/brain/ask-stream';
 import { askBrain } from '@/lib/server/brain/wiki';
+import { currentPrincipal } from '@/lib/server/auth/guard';
+import { splitByScopes } from '@/lib/server/mentions/key-scopes';
 import { handler, json, parseBody } from '@/lib/server/http';
 import { routeActor } from '@/lib/server/projects/http';
 import { sseResponse } from '@/lib/server/sse';
@@ -36,9 +38,15 @@ export const POST = handler(async (request: Request) => {
   const actor = routeActor();
   const scope = scopeForActor(actor);
   const { question, about, history, mentions } = parsed.data;
-  const tags = askMentions(mentions?.refs, about);
   const vectorHits = await vectorFactHits(question, projectsOf(scope));
-  const options = { vectorHits, ...(about && { about }), ...(history && { history }), ...(tags.length && { mentions: tags }), signal: request.signal };
+  const { kept, cut } = askMentionsSplit(mentions?.refs, about);
+  // An API key may tag only what its scopes cover reading elsewhere; the rest is refused like a tag that is not theirs.
+  const key = currentPrincipal()?.apiKey;
+  const { allowed, denied } = key ? splitByScopes(kept, key.scopes) : { allowed: kept, denied: [] };
+  const name = (r: { id: string; name?: string }) => (r.name ?? r.id).replace(/\s+/g, ' ').slice(0, 60);
+  const refusals = [...denied.map((r) => `Couldn't read @${name(r)}`), ...cut.map((r) => `Left out @${name(r)}: too many tags`)];
+  const base = { vectorHits, ...(about && { about }), ...(history && { history }), signal: request.signal };
+  const options = { ...base, ...(allowed.length && { mentions: allowed }), ...(refusals.length && { refusals }) };
   if (request.headers.get('accept')?.includes('text/event-stream')) {
     return sseResponse(
       request,
@@ -53,6 +61,6 @@ export const POST = handler(async (request: Request) => {
     );
   }
   // The JSON form with tags: the same answer as the stream, folded (askBrain does not take tags).
-  if (tags.length) return json(await askJson(actor, { question, scope, ...options }));
-  return json(await askBrain(question, scope, actor, options));
+  if (mentions?.refs.length) return json(await askJson(actor, { question, scope, ...options }));
+  return json(await askBrain(question, scope, actor, base));
 });

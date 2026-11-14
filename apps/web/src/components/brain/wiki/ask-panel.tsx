@@ -5,8 +5,8 @@
  * The answer streams: first what the brain found ("Found 3 pages · 2 facts"), then its words, then the sources it cited,
  * the model, time and cost. A follow-up carries the last two turns. Built on the chat kit.
  *
- * The conversation is kept per page (docs/assistant.md#conversation-history): coming back to a page shows the last one
- * under "Earlier", the history button opens any other, and `@` tags pages, people, workflows and runs, each read as a step.
+ * The conversation is kept per page (docs/assistant.md#conversation-history): opening a page shows its last one under
+ * "Earlier" when this visit has no answers yet (following a link keeps the answers on screen), the history button opens any other, and `@` tags pages, people, workflows and runs, each read as a step.
  */
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SquarePen, Sparkles, X } from 'lucide-react';
@@ -17,6 +17,7 @@ import { useMentionPicker } from '@/lib/client/use-mention-picker';
 import { usePhone } from '@/lib/client/use-phone';
 import { cn } from '@/lib/utils';
 import type { ActivityStep } from '@/lib/shared/activity';
+import { createBody } from '@/lib/shared/conversations';
 import type { ConversationItem, ConversationItemInput, ConversationPart, ConversationRecord } from '@/lib/shared/conversations';
 import { mentionKey, type MentionHit, type MentionRef } from '@/lib/shared/mentions';
 import { ASK_HISTORY_CHARS, ASK_HISTORY_TURNS, streamingPreview, type AskEvent, type AskTurn, type WikiLink, type WorkItem } from '@/lib/shared/brain-wiki';
@@ -270,13 +271,23 @@ export function restoreAsk(items: ConversationItem[]): AskItem[] {
   return out;
 }
 
+/**
+ * What a change of page does to the turns on screen. A turn from this visit (not `earlier`) is never dropped by moving to
+ * another page, so following a link in an answer keeps the answer: `keep` leaves everything where it is and the page's own
+ * conversation is not resumed. Only a panel that holds nothing of this visit resumes the page's last conversation.
+ */
+export function subjectChange(items: readonly Pick<AskItem, 'earlier'>[]): 'keep' | 'resume' {
+  return items.some((i) => !i.earlier) ? 'keep' : 'resume';
+}
+
 /** "1 link hidden" / "3 links hidden": under a reopened turn that lost links the reader may no longer open. */
 export const hiddenLine = (n: number) => `${n} ${n === 1 ? 'link' : 'links'} hidden`;
 
 /**
  * The conversation: kept by whoever shows the panel, so closing it and opening it again brings the answers back. It is
  * also kept on the server, per page (`setSubject`): the page's last conversation comes back under "Earlier", and what is
- * said is stored as it finishes (nothing when the person keeps no conversations).
+ * said is stored as it finishes (nothing when the person keeps no conversations). Following a link to another page keeps
+ * this visit's turns on screen (a running one finishes and is stored in the page it began on); see `subjectChange`.
  */
 export function useAskConversation() {
   const [items, setItems] = useState<AskItem[]>([]);
@@ -288,6 +299,10 @@ export function useAskConversation() {
   const reading = useRef<AbortController | undefined>(undefined);
   // Moving to another page or conversation: a turn still finishing must not be stored in the new one.
   const epoch = useRef(0);
+  // A page's own conversation was asked for: a question asked before it arrives cancels the resume.
+  const resumeToken = useRef(0);
+  const askedFrom = useRef<string | undefined>(undefined);
+  askedFrom.current = subject;
   // A conversation was asked for: its items are shown when they arrive (a new array, not the one there was then).
   const want = useRef<{ before: ConversationItem[]; force: boolean } | null>(null);
   useEffect(() => {
@@ -311,16 +326,18 @@ export function useAskConversation() {
   useEffect(() => {
     if (lastSubject.current === subject) return;
     lastSubject.current = subject;
-    epoch.current += 1;
-    reading.current?.abort();
     want.current = null;
+    // This visit's turns stay (and a running one finishes); only a panel with none resumes the page's conversation.
+    if (subjectChange(itemsRef.current) === 'keep') return;
+    epoch.current += 1;
     setItems([]);
     if (!subject) return;
+    const token = ++resumeToken.current;
     const params = new URLSearchParams({ surface: 'brain', subjectType: 'brainPage', subjectId: subject, limit: '1' });
     void api<{ conversations: ConversationRecord[] }>(`/api/conversations?${params}`, { background: true })
       .then(({ conversations }) => {
         // The person moved to another page while it loaded.
-        if (lastSubject.current !== subject || !conversations[0]) return;
+        if (lastSubject.current !== subject || resumeToken.current !== token || !conversations[0]) return;
         awaitItems(false);
         return keptRef.current.open(conversations[0].id).catch(() => {
           want.current = null;
@@ -339,6 +356,11 @@ export function useAskConversation() {
     const controller = new AbortController();
     reading.current = controller;
     const started = epoch.current;
+    // The page and conversation it began in: a turn that finishes after a link was followed is stored there.
+    const beganAt = askedFrom.current;
+    const beganIn = keptRef.current.id;
+    resumeToken.current++;
+    want.current = null;
     let current = item;
     const update = (change: (i: AskItem) => AskItem) => {
       current = change(current);
@@ -365,7 +387,9 @@ export function useAskConversation() {
       reading.current = undefined;
       setBusy(false);
     }
-    if (epoch.current === started) void keptRef.current.append(turnItems(current)).catch(() => undefined);
+    if (epoch.current !== started) return;
+    if (askedFrom.current === beganAt) void keptRef.current.append(turnItems(current)).catch(() => undefined);
+    else void storeElsewhere(beganAt, beganIn, current).catch(() => undefined);
   }, []);
   const stop = useCallback(() => reading.current?.abort(), []);
   const clear = useCallback(() => {
@@ -392,6 +416,13 @@ export function useAskConversation() {
     [ask],
   );
   return { items, busy, ask, stop, clear, retry, open, setSubject };
+}
+/** A turn that finished on another page than the panel is on now: stored in the conversation it began in (or a new one for that page). */
+async function storeElsewhere(subject: string | undefined, id: string | undefined, item: AskItem): Promise<void> {
+  const target =
+    id ??
+    (await api<{ conversation: ConversationRecord | null }>('/api/conversations', { method: 'POST', json: createBody({ surface: 'brain', ...(subject && { subjectType: 'brainPage', subjectId: subject }) }, item.question) })).conversation?.id;
+  if (target) await api(`/api/conversations/${target}/items`, { method: 'POST', json: { items: turnItems(item) } });
 }
 export type AskConversation = ReturnType<typeof useAskConversation>;
 
