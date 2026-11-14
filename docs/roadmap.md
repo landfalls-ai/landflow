@@ -1607,6 +1607,23 @@ Open: the test chat writes every session as user "you", so "Earlier tests" lists
 route should store the caller's id (it also affects memory and the policy role check); then the sessions route can filter
 `source=test` to the caller. Also: `source` wins over `audience` when both are given.
 
+## Company backbone: left open from the wave 1 reviews (2026-11-14)
+
+The wave 1 review notes were fixed in wave 2's carryover where they were contained; these wait, each with its reason:
+
+- **Token wording in the reply footer**: it reads *1,600 tokens* (`formatTokens`, as Insights does) where the brief's
+  example said *1.6k tokens*. Which one the footer should use is the person's call; the docs and tests agree with the code.
+- **Insights per workflow vs today**: the per-workflow report includes Spotlight's rows for a workflow while its
+  `today` figure (`workflowDay`) leaves them out, so the two can differ. A surface breakdown in the report would explain it.
+- **A checkpoint taken before the stream starts**: a request aborted between `takeCheckpoint` and its first failed step
+  loses the checkpoint, and a resume does not carry the guard's `invented` id set. Both need the checkpoint to be
+  re-saved on abort, a larger change than a carryover.
+- **Section tabs**: `SectionNav` makes its own `/api/plugins` request and does not follow registry events (Runbooks shows
+  after a navigation when Landfall registers), and its tabs are `role="tab"` links without arrow keys or a tabpanel (a
+  `nav` with `aria-current` would be more correct). Both change the shell's markup; left for the next shell pass.
+- **All projects and Manage projects** both open `/projects` in the switcher; dropping one belongs with the projects
+  page (B34).
+
 ## Not planned
 
 Later, maybe: an agent code sandbox, and prompt management. Not planned:
