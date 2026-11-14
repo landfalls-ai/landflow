@@ -259,7 +259,7 @@ prose and a person keeps the facts. Spotlight asks it questions.
   Explorer marks each file with its work this week, an **S** when two or more teams worked on it this week, and amber
   with **!** when it needs a person.
 - **The workbench.**
-  - **Activity bar**: Explorer (Open Editors, the tree, the open file's **Outline** and its **Backlinks**: the pages
+  - **Activity bar**: Explorer (the tree, the open file's **Outline** and its **Backlinks**: the pages
     whose summary links to it or whose description names it, and the pages sharing its work), **Search** (pages, facts
     and the latest work), **Timeline** (the latest work as a history), and **What Landflow knows** (status, fact
     search, detectors with Run and Backtest, the analyst, Run now; it moved here from Insights), which opens as a tab.

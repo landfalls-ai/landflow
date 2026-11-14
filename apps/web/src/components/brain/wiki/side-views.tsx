@@ -1,7 +1,7 @@
 'use client';
 /**
  * The Brain workbench's side bar (docs/second-brain.md#the-brain-page), one view per activity:
- * - Explorer: open editors, the repository tree (folders per type, people per department; each file with its work this
+ * - Explorer: the repository tree (folders per type, people per department; each file with its work this
  *   week, an S when two or more teams shared it, and amber when it needs a person), the open file's outline and its
  *   backlinks;
  * - Search: pages by name, description, owner and team, the brain's facts, and the latest work;
