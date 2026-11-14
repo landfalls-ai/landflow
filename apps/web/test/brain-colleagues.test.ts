@@ -170,11 +170,20 @@ describe('ranking related work', () => {
 
 describe('repos and people', () => {
   it('records one system entity per repository, however many events name it', () => {
-    recordWork(actorOf(alice), [session('a', { repo: 'acme/api' }), session('b', { repo: 'acme/api' })]);
-    recordWork(actorOf(bob), [session('c', { repo: 'acme/api' }), session('d', { repo: 'acme/web' })]);
+    recordWork(actorOf(alice), [session('a', { repo: 'acme/api', visibility: 'team' }), session('b', { repo: 'acme/api', visibility: 'org' })]);
+    recordWork(actorOf(bob), [session('c', { repo: 'acme/api', visibility: 'org' }), session('d', { repo: 'acme/web', visibility: 'org' })]);
     const systems = entities.listEntities({ type: 'system' });
     expect(systems.map((s) => s.attrs.repo).sort()).toEqual(['acme/api', 'acme/web']);
     expect(systems.map((s) => s.id)).toContain(repoEntityId('acme/api'));
+  });
+
+  it('a private event makes no repository entity; sharing it (PATCH or Post as my update) does', async () => {
+    recordWork(actorOf(alice), [session('p1', { repo: 'acme/secret' }), session('p2', { repo: 'acme/other' })]);
+    expect(entities.listEntities({ type: 'system' })).toEqual([]);
+    expect((await callPatch(alice, 'p1', 'team')).status).toBe(200);
+    expect(entities.listEntities({ type: 'system' }).map((s) => s.id)).toEqual([repoEntityId('acme/secret')]);
+    expect((await callShare(alice, 'p2')).status).toBe(200);
+    expect(entities.listEntities({ type: 'system' }).map((s) => s.id).sort()).toEqual([repoEntityId('acme/other'), repoEntityId('acme/secret')]);
   });
 
   it('links a person page to the user with the same email, and personForUser finds or stores the link', () => {

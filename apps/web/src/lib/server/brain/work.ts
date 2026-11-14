@@ -107,7 +107,8 @@ export function recordWork(actor: Actor, events: unknown[]): { saved: SavedWork[
       // An event sent again without a visibility keeps the one its owner gave it (PATCH); a new one is private.
       const visibility = event.visibility ?? (ownRow(actor.id, event.source, event.sourceId)?.visibility as WorkVisibility | undefined) ?? 'private';
       const { id, created } = upsertWorkEvent(actor.id, { ...event, visibility }, email);
-      if (event.repo) recordRepo(event.repo);
+      // A private event names no repository: the page would be readable by the instance owner (Q3, MOD6).
+      if (event.repo && visibility !== 'private') recordRepo(event.repo);
       saved.push({ sourceId: event.sourceId, id, created });
     } catch (error) {
       if (error instanceof HttpError) rejected.push({ sourceId: event.sourceId, reason: error.message });
@@ -153,6 +154,9 @@ export function setWorkVisibility(actor: Actor, sourceId: string, visibility: Wo
   if (!row) return undefined;
   const next = { ...row, visibility };
   db.upsert('usage_events', next);
+  // Sharing is the moment the repository may become a page; going back to private does not remove it.
+  const repo = fromRow(next).attrs?.repo;
+  if (visibility !== 'private' && typeof repo === 'string' && repo) recordRepo(repo, db);
   return itemOf(next);
 }
 
@@ -183,9 +187,14 @@ export function shareWork(actor: Actor, sourceId: string, options: { source?: st
     ...(text('url') && { url: text('url') }),
     visibility,
   };
-  const saved = upsertWorkEvent(actor.id, input, getUser(actor.id)?.email, db);
-  // The ledger's attrs have no link field: add `of` to the row it wrote.
-  const written = db.get<UsageRow>('SELECT * FROM usage_events WHERE id = ?', saved.id);
-  if (written) db.upsert('usage_events', { ...written, attrs: JSON.stringify({ ...(fromRow(written).attrs ?? {}), of }) });
+  const email = getUser(actor.id)?.email;
+  const saved = db.transaction(() => {
+    const result = upsertWorkEvent(actor.id, input, email, db);
+    // The ledger's attrs have no link field: add `of` to the row it wrote.
+    const written = db.get<UsageRow>('SELECT * FROM usage_events WHERE id = ?', result.id);
+    if (written) db.upsert('usage_events', { ...written, attrs: JSON.stringify({ ...(fromRow(written).attrs ?? {}), of }) });
+    return result;
+  });
+  if (input.repo) recordRepo(input.repo, db);
   return { id: saved.id, created: saved.created, of, visibility };
 }

@@ -192,6 +192,13 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - Only the directories of files edited through Claude Code's file tools become areas; a file changed by a shell command is not. A commit or pull request is counted from the command and its output, so one made by another tool is missed.
 - The session ends with the entry held; a session that crashes is held at the next start, with no end time.
 - The key and options are set by hand; a page that creates them comes later. The mod's colleagues, pane and band are not built (sharing with a team or the organization is, through the API).
+- Repository pages (B18): made only when a `team` or `org` event names the repository; they land in the instance owner's
+  personal project, so members cannot open them, and the event does not link to the page (a repository page shows no work yet).
+- `landflow work` always sends `visibility: 'private'`, so an item changed to `team` or `org` goes back to private the
+  next time the same `sourceId` is sent (the safe direction). The command should omit it.
+- Deleting a work item leaves its posted `work.self_update` readable; remove it with
+  `DELETE /api/brain/work/update:<source>:<sourceId>?source=landflow`. The update also shows beside the original in the
+  owner's own day, and a `team` event of a deleted user stays unreadable until retention removes it.
 - A repository is matched by two-segment `owner/name` remotes (a GitLab subgroup is not matched), and pull request links are recognised only on github.com. A quiet commit (`git commit -q`) prints nothing and is not counted.
 - Two clients on one repository send the same work twice: the mod (`claude-code`, one event per session) and
   `landflow work` (`landflow-cli`, one per repo and day) do not know of each other, so a person who runs both sees the
