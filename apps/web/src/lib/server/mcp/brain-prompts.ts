@@ -1,8 +1,9 @@
 /**
  * The person's briefing over MCP (docs/work-and-briefings.md#over-mcp): the prompt `morning-briefing` and the resources
  * `brain://briefing/today`, `brain://briefing/yesterday` and `brain://work/today`. A harness loads the prompt at the start of a
- * session, so the assistant knows what the person did yesterday and today. All of it is the caller's own work (`briefingFor`),
- * shown as quoted data. Registered by instanceServer (./instance-tools.ts) for a user who may read the brain.
+ * session, so the assistant knows what the person did yesterday and today. All of it is the caller's own work: `briefingFor`'s
+ * `today` and `yesterday`, shown as quoted data. Its `related` (colleagues' shared work) is never shown here, nor by the
+ * `my_briefing` tool. Registered by instanceServer (./instance-tools.ts) for a user who may read the brain.
  */
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
