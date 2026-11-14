@@ -1218,6 +1218,8 @@ Landflow's side of Clickland, the land family's observability system ([features/
   patterns, alerts, notes, knowledge search and views (dashboards included) as one node usable as an agent tool and
   over MCP, the **Clickland Alert Trigger** (a Standard Webhooks subscription made on publish) and the **Clickland
   Trigger** (poll). In compose, the Kubernetes base and the OrbStack overlay.
+- [Knowledge bases from a plugin](agents.md#knowledge-bases-from-a-plugin): a standalone agent takes Clickland as a
+  knowledge base (`source: 'node'`), searched like a vector collection and judged by the grounded guardrail.
 
 **Next:** a live check against a running Clickland (the plugin was built against the contract and a fake).
 

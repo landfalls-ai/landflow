@@ -95,6 +95,9 @@ items still open (its "Wave 6" section); this page is the short list to check be
   polls. The Alert Trigger has no such limit.
 - **Alert → Update reads, then writes the whole alert** (Clickland's `PUT` takes all fields), so a change made in
   Clickland between the two calls is overwritten.
+- **Plugin knowledge bases: presets only in the dialog.** The knowledge dialog offers Clickland; another plugin node
+  is set through the API. It has no documents, no passages-per-search setting (the node's own limit applies) and is not
+  offered by the Agent architect, which lists only vector collections.
 
 ## Integrations that report activity (built 2026-11-12)
 

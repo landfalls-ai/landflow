@@ -98,8 +98,10 @@ export interface McpServerToolConfig extends ToolBase {
  * A knowledge base: a vector store collection the agent searches with a `search_…` tool. It is filled by a
  * workflow with the same store and collection in “Insert Documents” mode, using the same embeddings model.
  */
-export interface KnowledgeBaseToolConfig extends ToolBase {
+export interface VectorKnowledgeBaseConfig extends ToolBase {
   type: 'knowledge';
+  /** `vector` (or absent, as in every config saved before plugin knowledge bases): a vector store collection. */
+  source?: 'vector';
   /** The tool name the model sees (made provider-safe). */
   name: string;
   /** When to search it. */
@@ -124,6 +126,62 @@ export interface KnowledgeBaseToolConfig extends ToolBase {
   topK?: number;
   searchMode?: 'vector' | 'hybrid';
 }
+
+/**
+ * A knowledge base a plugin node answers (docs/agents.md#knowledge-bases-from-a-plugin): the node runs with fixed
+ * parameters (Clickland: `{ resource: 'knowledge', operation: 'search' }`) and the model's question in `queryParameter`,
+ * through the same path as a node tool. What it returns (`{ results: [{ pageContent, metadata, score }] }` is the shape
+ * to aim for) is what the grounded-answer guardrail judges answers against. Documents can't be uploaded to it.
+ */
+export interface NodeKnowledgeBaseConfig extends ToolBase {
+  type: 'knowledge';
+  source: 'node';
+  /** The tool name the model sees (made provider-safe). */
+  name: string;
+  /** When to search it. */
+  description: string;
+  /** The plugin node, qualified (`clickland.clickland`). */
+  nodeType: string;
+  /** Its fixed parameters; the question is set into `queryParameter`. */
+  parameters: Record<string, unknown>;
+  /** The node parameter that takes the question (default `query`). */
+  queryParameter?: string;
+  /** By the node's credential names. */
+  credentials?: Record<string, CredentialRef>;
+}
+
+export type KnowledgeBaseToolConfig = VectorKnowledgeBaseConfig | NodeKnowledgeBaseConfig;
+
+/** Whether a knowledge base is answered by a plugin node rather than a vector store collection. */
+export const isNodeKnowledge = (tool: KnowledgeBaseToolConfig): tool is NodeKnowledgeBaseConfig => tool.source === 'node';
+
+/** A plugin knowledge base people can pick in the builder: the node and parameters that search it. */
+export interface KnowledgeNodePreset {
+  key: string;
+  label: string;
+  nodeType: string;
+  parameters: Record<string, unknown>;
+  queryParameter: string;
+  /** The credential the node asks for. */
+  credential: string;
+  description: string;
+  /** An Iconify name for lists and the Run Trace. */
+  icon: string;
+}
+
+/** Plugin nodes known to answer knowledge searches: Clickland is the first; any other node can be named by hand. */
+export const KNOWLEDGE_NODE_PRESETS: KnowledgeNodePreset[] = [
+  {
+    key: 'clickland',
+    label: 'Clickland',
+    nodeType: 'clickland.clickland',
+    parameters: { resource: 'knowledge', operation: 'search' },
+    queryParameter: 'query',
+    credential: 'clicklandApi',
+    icon: 'lucide:activity',
+    description: 'Search Clickland’s knowledge (notes on incidents and services, recent alert events, log patterns, services) before answering questions about production: errors, latency, alerts, what was learned before.',
+  },
+];
 
 /**
  * A remote agent over A2A 1.0 (docs/a2a.md): a kagent agent, a Google ADK agent, any A2A server. The model asks it with an

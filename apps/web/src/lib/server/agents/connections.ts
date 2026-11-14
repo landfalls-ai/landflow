@@ -6,6 +6,7 @@
  */
 import type { WorkflowNode } from '@landflow/engine';
 import type { Agent, AgentConfig, AgentToolConfig } from '../../shared/agents';
+import { isNodeKnowledge, KNOWLEDGE_NODE_PRESETS } from '../../shared/agents';
 import { brandIcon, brandOfProvider } from '../../shared/brand-icons';
 import { mergeConnections, type ActorConnection } from '../../shared/run-trace';
 import { PACKAGE_POLICY } from '../../shared/team-progress';
@@ -55,6 +56,11 @@ function toolConnection(tool: AgentToolConfig): ActorConnection {
       return { kind: 'tool', name: tool.name, detail: host ? `MCP server · ${host}` : 'MCP server', icon: brandIcon('mcp'), from: 'agent' };
     }
     case 'knowledge': {
+      if (isNodeKnowledge(tool)) {
+        const preset = KNOWLEDGE_NODE_PRESETS.find((p) => p.nodeType === tool.nodeType);
+        const plugin = tool.nodeType.split('.')[0] ?? tool.nodeType;
+        return { kind: 'knowledge', name: tool.name || preset?.label || tool.nodeType, detail: `${preset?.label ?? plugin} · plugin knowledge`, icon: preset?.icon ?? 'lucide:library', from: 'agent' };
+      }
       const embeddings = `${PROVIDER[tool.embeddings.provider] ?? tool.embeddings.provider} ${tool.embeddings.model}`;
       const store = { memory: 'in memory', sqlite: 'SQLite', pgvector: 'Postgres pgvector' }[tool.store] ?? tool.store;
       const icon = tool.store === 'pgvector' ? brandIcon('postgresql') : tool.store === 'sqlite' ? brandIcon('sqlite') : 'lucide:library';

@@ -29,6 +29,7 @@ import { useWorkflowsReadOnly } from '@/lib/client/environment';
 import { languageMeta } from '@/lib/client/format';
 import { nodeColor, tint } from '@/lib/client/node-style';
 import type { A2aAgentToolConfig, AgentConfig, AgentToolConfig, KnowledgeBaseToolConfig, McpServerToolConfig, NodeToolConfig, SubAgentConfig, WorkflowToolConfig } from '@/lib/shared/agents';
+import { isNodeKnowledge, KNOWLEDGE_NODE_PRESETS } from '@/lib/shared/agents';
 import type { NodeTypeInfo } from '@/lib/shared/types';
 import { NodeCredentials } from '../credentials/node-credentials';
 import { ParamForm } from '../editor/param-form';
@@ -704,7 +705,9 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
     } else if (tool.type === 'knowledge') {
       icon = <KnowledgeTile />;
       title = tool.name;
-      subtitle = `Knowledge base · ${STORE_LABEL[tool.store]} “${tool.collection}” · ${tool.embeddings.model}`;
+      subtitle = isNodeKnowledge(tool)
+        ? `Knowledge base · ${KNOWLEDGE_NODE_PRESETS.find((p) => p.nodeType === tool.nodeType)?.label ?? tool.nodeType} (plugin)`
+        : `Knowledge base · ${STORE_LABEL[tool.store]} “${tool.collection}” · ${tool.embeddings.model}`;
     } else {
       const agent = agents?.find((a) => a.id === tool.agentId);
       icon = <AgentAvatar agent={agent ?? {}} size={32} />;

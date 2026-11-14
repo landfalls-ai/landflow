@@ -4,7 +4,8 @@
  * `skills/<slug>/SKILL.md`; what only Landflow has (persona parts, tools, avatar, model provider, the team's relations)
  * goes in `.landflow/`, which Claude Code never opens, and the import reads it back.
  */
-import type { Agent, AgentConfig, AgentSkill } from '../../shared/agents';
+import type { Agent, AgentConfig, AgentSkill, VectorKnowledgeBaseConfig } from '../../shared/agents';
+import { isNodeKnowledge } from '../../shared/agents';
 import type { AgentTeamConfig } from '../../shared/agent-teams';
 import { LANDFLOW_AGENT_KIND, LANDFLOW_TEAM_KIND, type LandflowAgentData, type LandflowTeamData } from '../../shared/marketplace';
 import { personaPrompt } from '../../shared/persona';
@@ -75,7 +76,7 @@ export function portableConfig(config: AgentConfig): Partial<AgentConfig> {
   rest.tools = rest.tools.map((tool) => {
     const { credentials: _credentials, ...kept } = tool as typeof tool & { credentials?: unknown };
     if ('credential' in kept) delete (kept as { credential?: unknown }).credential;
-    if (kept.type === 'knowledge') delete (kept.embeddings as { credential?: unknown }).credential;
+    if (tool.type === 'knowledge' && !isNodeKnowledge(tool)) delete (kept as unknown as VectorKnowledgeBaseConfig).embeddings.credential;
     return kept as typeof tool;
   });
   return rest;

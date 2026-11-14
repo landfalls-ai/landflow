@@ -6,6 +6,7 @@
  */
 import { chartOrder, type AgentTeam, type AgentTeamConfig, type TeamMember } from '../../shared/agent-teams';
 import type { Agent, AgentConfig, AgentToolConfig, CredentialRef } from '../../shared/agents';
+import { isNodeKnowledge } from '../../shared/agents';
 import type { TemplateBundle, TemplateCredentialSlot, TemplateFace, TemplateTeamSummary } from '../../shared/templates';
 import type { Workflow, WorkflowNode } from '../../shared/types';
 import { agentTeamStore, issuesOf } from '../agent-teams/store';
@@ -66,6 +67,7 @@ export function visitAgentCredentials(config: AgentConfig, visit: Visit) {
     const where = `${who} (${'name' in tool ? tool.name : tool.type})`;
     if (tool.type === 'node') visitMap(tool, (key) => qualify(tool.nodeType, key), where, visit);
     else if (tool.type === 'mcp' || tool.type === 'a2a') visitMap(tool, (key) => qualify('core.x', key), where, visit);
+    else if (tool.type === 'knowledge' && isNodeKnowledge(tool)) visitMap(tool, (key) => qualify(tool.nodeType, key), where, visit);
     else if (tool.type === 'knowledge') {
       if (tool.credential) {
         const next = visit(tool.credential, { type: typeOf(tool.credential, 'core.postgres'), optional: false, where });

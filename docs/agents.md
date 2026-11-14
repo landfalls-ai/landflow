@@ -263,7 +263,8 @@ absent from an agent without any). Publishing needs a model, and a persona part 
     /api/agents/:id/knowledge/:toolId/documents`). The store must be one that supports deletion
     by metadata (all three do). The timeline shows searches with
     the vector store's icon. In the workflow editor the same collection is reachable from an AI
-    Agent with the vector store in **Retrieve Documents (As Tool)** mode.
+    Agent with the vector store in **Retrieve Documents (As Tool)** mode. A knowledge base can
+    also come [from a plugin](#knowledge-bases-from-a-plugin) (Clickland), with nothing to upload.
   - **Require approval** on any capability pauses the run before that tool executes (below).
 - **Claude Code plugins** (Abilities). Plugins from the added marketplaces that the agent loads when it
   runs on kagent's Claude Code runtime (kagent card, **Runtime**: Claude Code). The picker lists
@@ -382,6 +383,34 @@ kagent**. **Runtime** picks the cluster's Harness: kagent's own (ADK) or Claude 
 own-image Harnesses are listed but can't be picked); a deployed agent can move between them, and
 the card shows the runtime and, on Claude Code, the plugins at their commits. See
 [a2a.md](a2a.md#landflow-agents-on-kagent).
+
+### Knowledge bases from a plugin
+
+**Add knowledge base → Knowledge from → From a plugin: Clickland** makes a knowledge base that a plugin node answers
+instead of a vector store: the agent's tool (`search_clickland({ query })` by default, renameable) runs the node with
+fixed parameters and the model's question, on the same path as a node tool (registry, credentials, expressions,
+`$secrets`). The config is the knowledge tool with `source: 'node'` (a vector one has `source: 'vector'` or none, so
+older configs are unchanged):
+
+```json
+{ "type": "knowledge", "source": "node", "name": "search_clickland", "description": "…",
+  "nodeType": "clickland.clickland", "parameters": { "resource": "knowledge", "operation": "search" },
+  "queryParameter": "query", "credentials": { "clicklandApi": { "id": "…", "name": "Clickland" } } }
+```
+
+- The model sees `{ query }`; the node gets `parameters` plus the question in `queryParameter`. Its answer comes back
+  as `{ results: [{ pageContent, metadata, score }] }`: Clickland's Knowledge → Search answers in that shape, and any
+  other node's items are turned into one result each.
+- It is a knowledge tool for the **Grounded in the knowledge base** guardrail (above): the passages it returned are what the answer is judged
+  against, as with a vector store.
+- There are no documents: the dialog has no upload list and `GET/POST/DELETE /api/agents/:id/knowledge/:toolId/documents`
+  answers 400 for it. Clickland keeps the knowledge (notes, alert events, log patterns, services).
+- A missing plugin, or a node without the query parameter, leaves the tool out with a notice in the timeline, like a
+  node tool.
+- The dialog offers the presets in `KNOWLEDGE_NODE_PRESETS` (`lib/shared/agents.ts`; Clickland is the first). Any other
+  plugin node can be named through the API (`PUT /api/agents/:id` with the config above).
+- Exports drop its credentials; team and flow templates swap them by slot; the Run Trace shows it as
+  "Clickland · plugin knowledge"; the Agent architect's `list_knowledge_bases` lists only vector collections.
 
 ## How a run works
 

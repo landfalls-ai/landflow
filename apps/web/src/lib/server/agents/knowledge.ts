@@ -5,7 +5,7 @@
  */
 import { nanoid } from 'nanoid';
 import { toToolName, type Embeddings } from '@landflow/engine';
-import type { KnowledgeBaseToolConfig } from '../../shared/agents';
+import type { VectorKnowledgeBaseConfig as KnowledgeBaseToolConfig } from '../../shared/agents';
 import { credentials } from '../credentials/vault';
 import { openAiConnection } from '../nodes/models';
 import { pgConfig, search } from '../nodes/vector-stores';
