@@ -56,7 +56,9 @@ switches to the flow chart and back; the canvas stays loaded underneath. A deskt
 - **Tap to open.** On a phone the first tap on a step selects it (its toolbar shows above it), and a second tap opens it.
   A double tap still opens it too. Tapping the canvas starts again.
 - **One toolbar.** The zoom rail is gone (pinch to zoom). The toolbar at the top right keeps add a step, add a note, tidy
-  up and fit view, gets **Undo** and **Redo**, and its buttons are 44 px.
+  up and fit view, gets **Undo** and **Redo**, and its buttons are 44 px. (A desktop has the same toolbar plus zoom in
+  and out.) The header keeps its two rows; Save, Run and Spotlight are not there: a draft saves itself, the Execute bar
+  runs it and the Spotlight sheet is under the canvas.
 
 ### The node editor
 
