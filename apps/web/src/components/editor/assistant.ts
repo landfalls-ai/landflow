@@ -21,6 +21,7 @@ import { emptyStored, withEarlier, type Stored } from './spotlight-history';
 
 import { saveAgentFor, type AgentPlace } from './new-agent';
 import { saveTeamFor } from './turn-into-team';
+import { defaultCollapsed } from './spotlight/states';
 
 const freshKept = (): { id?: string; stored: Stored } => ({ stored: emptyStored() });
 
@@ -333,6 +334,9 @@ export type ChatItem =
       meta?: ReplyInfo;
       /** What a failed reply can be continued from (`error` events); the actions come with the chat's error buttons. */
       checkpoint?: string;
+      /** What failed (`error` events): the model, a usage cap, a stall; and the step it failed at. */
+      errorKind?: 'model' | 'cap' | 'stalled' | 'internal';
+      errorStep?: number;
       /** When the running model step began (to time it). */
       stepStartedAt?: number;
     };
@@ -351,7 +355,7 @@ export type StreamEvent =
   | { type: 'tool'; name: string; label: string; ok: boolean; id?: string; step?: number; durationMs?: number; detail?: string }
   | ({ type: 'proposal' } & Omit<Proposal, 'state'>)
   | { type: 'done'; model: string; durationMs: number; steps: number; usage?: { inputTokens: number; outputTokens: number }; costUsd?: number; local?: boolean }
-  | { type: 'error'; message: string; checkpoint?: string; step?: number };
+  | { type: 'error'; message: string; kind?: 'model' | 'cap' | 'stalled' | 'internal'; checkpoint?: string; step?: number };
 
 /** What kind of trace row a tool call is. */
 export function toolKind(name: string): ActivityKind {
@@ -418,7 +422,7 @@ export function applyStreamEvent(turn: AssistantTurn, event: StreamEvent, now: n
         meta: { model: event.model, durationMs: event.durationMs, steps: event.steps, ...(event.usage && { inputTokens: event.usage.inputTokens, outputTokens: event.usage.outputTokens }), ...(event.costUsd !== undefined && { costUsd: event.costUsd }), ...(event.local && { local: true }) },
       };
     case 'error':
-      return { ...turn, steps: settleModel(turn, now, 'failed'), error: event.message, ...(event.checkpoint && { checkpoint: event.checkpoint }) };
+      return { ...turn, steps: settleModel(turn, now, 'failed'), error: event.message, ...(event.checkpoint && { checkpoint: event.checkpoint }), ...(event.kind && { errorKind: event.kind }), ...(event.step !== undefined && { errorStep: event.step }) };
   }
 }
 
@@ -437,6 +441,8 @@ export interface SendOptions {
   session?: 'fix' | 'review' | 'auto';
   /** The test-and-fix session the request belongs to. */
   testId?: string;
+  /** Carry on from the checkpoint of a reply that failed after some steps, instead of starting the reply over. */
+  resume?: { checkpoint: string };
 }
 
 /** An agent Spotlight is having the Agent architect design (./new-agent.ts), shown as a row of its timeline. */
@@ -457,11 +463,10 @@ const COLLAPSED_KEY = 'landflow-spotlight-collapsed';
 function readCollapsed(): boolean {
   try {
     const saved = localStorage.getItem(COLLAPSED_KEY);
-    // Not set yet: folded on a tablet or a small laptop, where the column would leave the canvas too narrow, and on a
-    // phone, where the open sheet would cover the steps (docs/mobile.md#spotlights-dock).
-    return saved ? saved === 'yes' : window.matchMedia('(max-width: 1099px)').matches;
+    // Not chosen yet: folded everywhere, to a strip on a desktop and to the bar on a phone (docs/assistant.md#the-spotlight-panel).
+    return defaultCollapsed(saved);
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -634,6 +639,7 @@ export const useAssistant = create<AssistantState>((set, get) => ({
           ...(pending.length && { pending }),
           ...(options.mentions?.length && { mentions: { refs: options.mentions } }),
           ...(options.session && { session: options.session }),
+          ...(options.resume && { resume: options.resume }),
         },
         (_event, data) => {
           const event = data as StreamEvent;
@@ -735,4 +741,21 @@ export function fixedNodes(ops: AssistantOp[], fallback?: string): string[] {
   const asked = fallback && nodes.some((n) => n.id === fallback) ? fallback : undefined;
   if (asked && (!ids.length || ids.includes(asked))) return [asked];
   return ids.slice(0, 1);
+}
+
+/**
+ * Put words in Spotlight's box and the caret after them (a starter, "Fix <node>: <error>"): unfolds the panel, sets the
+ * value through the input's own setter so React's controlled text area sees it.
+ */
+export function prefillSpotlight(text: string) {
+  useAssistant.getState().setCollapsed(false);
+  requestAnimationFrame(() => {
+    const box = document.getElementById('spotlight-input') as HTMLTextAreaElement | HTMLInputElement | null;
+    if (!box) return;
+    const proto = box instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, 'value')?.set?.call(box, text);
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    box.focus();
+    box.setSelectionRange(text.length, text.length);
+  });
 }

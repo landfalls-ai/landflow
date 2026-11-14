@@ -9,7 +9,7 @@
  * A proposal arrives whole, so its steps are revealed one by one on a short timer (`useReveal`); the tool calls before it
  * (Read the workflow, Searched nodes…) are steps as they stream.
  */
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { BaseEdge, Handle, Position, type Edge, type EdgeProps, type Node, type NodeProps } from '@xyflow/react';
 import { TriangleAlert } from 'lucide-react';
 import { create } from 'zustand';
@@ -21,9 +21,10 @@ import { ActivityTrace } from '../ui/activity-trace';
 import { Button } from '../ui/button';
 import { NodeIcon } from '../ui/icon';
 import { edgePath, useLane } from '../canvas/edge-path';
-import { applyChanges, editorLookup, sendFeedback, useAssistant, useWorking, type AssistantTurn, type ChatItem, type Proposal } from './assistant';
+import { applyChanges, editorLookup, sendFeedback, undos, useAssistant, useWorking, type AssistantTurn, type ChatItem, type Proposal } from './assistant';
 import { useAutonomous } from './autonomous';
 import { LeftOut } from './suggestions-card';
+import { MOTION_MS } from './spotlight/states';
 import { handleId, useEditor } from './store';
 
 /** How long a step takes to tick off once the plan is there. */
@@ -143,7 +144,11 @@ export function LiveSteps({ live, trace, durationMs }: { live: Live; trace?: Act
   };
   const apply = () => {
     const label = live.proposals.length === 1 ? live.proposals[0].proposal.summary : `${live.proposals.length} changes`;
-    if (!applyChanges(live.proposals.map((p) => ({ ops: p.proposal.ops, kind: 'proposal' as const })), label)) return;
+    // Each proposal keeps the one Undo, so the row it folds into can offer it.
+    const onApplied = ({ undo }: { undo: () => void }) => {
+      for (const p of live.proposals) undos.set(p.proposal.id, undo);
+    };
+    if (!applyChanges(live.proposals.map((p) => ({ ops: p.proposal.ops, kind: 'proposal' as const })), label, { onApplied })) return;
     decide('applied');
   };
 
@@ -191,16 +196,49 @@ export interface GhostData extends Record<string, unknown> {
   ins: string[];
   outs: string[];
   active: boolean;
+  /** Apply: the ghost fades out as the real node fades in. Undo: it comes back for a moment, then fades out. */
+  fade?: 'out' | 'back';
 }
 export type GhostFlowNode = Node<GhostData, 'ghost'>;
 export type GhostFlowEdge = Edge<{ connectionType: string; active: boolean }, 'ghost'>;
 
 const NONE = { nodes: [] as GhostFlowNode[], edges: [] as GhostFlowEdge[] };
 
+/**
+ * The ghosts that stay a moment after the change is applied (they fade out as the real nodes fade in; their ids carry a
+ * prefix so they never share one with the real node) or come back when it is undone (docs/assistant.md#apply-and-undo).
+ */
+function useGhostTail(live: Live | undefined, shown: GhostFlowNode[]): GhostFlowNode[] {
+  const last = useRef<{ nodes: GhostFlowNode[]; ids: string[] }>(undefined);
+  const [tail, setTail] = useState<GhostFlowNode[]>([]);
+  const ids = live?.proposals.map((p) => p.proposal.id) ?? [];
+  if (live && shown.length) last.current = { nodes: shown, ids };
+  const states = useAssistant((s) => s.items);
+  // What the proposals of the last ghosts did since: applied, or undone again.
+  const state = (id: string) => states.flatMap((i) => (i.role === 'assistant' ? i.parts.flatMap((p) => (p.kind === 'proposal' && p.proposal.id === id ? [p.proposal.state] : [])) : []))[0];
+  const first = last.current?.ids[0];
+  const now = first && !live ? state(first) : undefined;
+  const seen = useRef<string>(undefined);
+  useEffect(() => {
+    if (!last.current || !first || (now !== 'applied' && now !== 'undone') || seen.current === `${first}:${now}`) return;
+    seen.current = `${first}:${now}`;
+    const fade = now === 'applied' ? 'out' : 'back';
+    setTail(last.current.nodes.map((n) => ({ ...n, id: `fade-${n.id}`, data: { ...n.data, active: false, fade } })));
+    const timer = setTimeout(() => setTail([]), fade === 'out' ? MOTION_MS.ghosts + 60 : MOTION_MS.undoHold + MOTION_MS.ghosts + 60);
+    return () => clearTimeout(timer);
+  }, [now, first]);
+  // A new change starts over.
+  const going = Boolean(live);
+  useEffect(() => {
+    if (going) setTail((t) => (t.length ? [] : t));
+  }, [going]);
+  return tail;
+}
+
 /** The nodes and connections the plan adds, as React Flow nodes and edges to draw beside the real ones. */
 export function useGhosts(): { nodes: GhostFlowNode[]; edges: GhostFlowEdge[] } {
   const live = useLive();
-  return useMemo(() => {
+  const built = useMemo(() => {
     if (!live || !live.plan.nodes.length) return NONE;
     const shown = visibleGhosts(live.plan, live.revealed);
     // The one being made is the step in progress; once every step is reached nothing shimmers.
@@ -230,6 +268,8 @@ export function useGhosts(): { nodes: GhostFlowNode[]; edges: GhostFlowEdge[] } 
     }));
     return { nodes, edges };
   }, [live]);
+  const tail = useGhostTail(live, built.nodes);
+  return useMemo(() => (tail.length ? { nodes: tail, edges: [] as GhostFlowEdge[] } : built), [tail, built]);
 }
 
 /** A node the plan adds: a dashed tile in its colour; the one being made shimmers. */
@@ -237,8 +277,18 @@ export function GhostNodeView({ data }: NodeProps<GhostFlowNode>) {
   const info = useEditor((s) => s.nodeTypes[data.type]);
   const color = nodeColor(info);
   const isAi = (id: string) => id.startsWith('ai_');
+  // Applied: fade out at once (the real node fades in beneath). Undone: show, then fade out.
+  const [gone, setGone] = useState(false);
+  useEffect(() => {
+    if (!data.fade) return;
+    const frame = requestAnimationFrame(() => setTimeout(() => setGone(true), data.fade === 'back' ? MOTION_MS.undoHold : 0));
+    return () => cancelAnimationFrame(frame);
+  }, [data.fade]);
   return (
-    <div className="pointer-events-none flex w-[88px] flex-col items-center gap-1.5 animate-node-in" style={{ ['--node' as string]: color }}>
+    <div
+      className={cn('pointer-events-none flex w-[88px] flex-col items-center gap-1.5', !data.fade && 'animate-node-in', data.fade && 'transition-opacity ease-out motion-reduce:transition-none')}
+      style={{ ['--node' as string]: color, ...(data.fade && { opacity: gone ? 0 : 1, transitionDuration: `${MOTION_MS.ghosts}ms` }) }}
+    >
       <div className={cn('relative grid size-[88px] place-items-center overflow-hidden rounded-2xl border-2 border-dashed bg-sf/80', data.active ? 'border-viz-7' : 'border-[color-mix(in_oklab,var(--node)_55%,var(--bd))]')}>
         {data.active && <span className="lf-shimmer absolute inset-x-0 bottom-0 h-[3px]" />}
         <NodeIcon icon={info?.descriptor.icon} size={26} style={{ color }} strokeWidth={1.7} />

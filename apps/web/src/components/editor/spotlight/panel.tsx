@@ -4,7 +4,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { ChevronDown, CircleCheck, CircleStop, Hand, Loader2, PanelRightClose, PanelRightOpen, Sparkles, Square, SquarePen } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { editorLookup, useAssistant } from '../assistant';
+import { applyChanges, editorLookup, prefillSpotlight, undos, useAssistant } from '../assistant';
+import { ChatEmpty } from '../../ui/chat';
+import { Button } from '../../ui/button';
+import { EMPTY_LINE, foldedBar, starters } from './states';
 import { markStale, planKeeping, recordPlan, restore, shouldResume } from '../spotlight-history';
 import { ConversationHistory } from '../../ui/conversation-history';
 import { useConversation } from '@/lib/client/conversations';
@@ -77,6 +80,21 @@ function useFlowInView(working: boolean, focus: string | undefined) {
     }, 160);
     return () => clearTimeout(timer);
   }, [working, nodeCount, size, fitView, focus]);
+}
+
+/** Apply every change that waits (the phone bar's Apply): one step each, with its Undo. */
+function applyWaiting() {
+  const open = useAssistant
+    .getState()
+    .items.flatMap((item) => (item.role === 'assistant' ? item.parts.flatMap((p) => (p.kind === 'proposal' && !p.proposal.state ? [{ itemId: item.id, proposal: p.proposal }] : [])) : []));
+  if (!open.length) return;
+  const label = open.length === 1 ? open[0].proposal.summary : `${open.length} changes`;
+  const ok = applyChanges(open.map((o) => ({ ops: o.proposal.ops, kind: 'proposal' as const })), label, {
+    onApplied: ({ undo }) => {
+      for (const o of open) undos.set(o.proposal.id, undo);
+    },
+  });
+  if (ok) for (const o of open) useAssistant.getState().setProposalState(o.itemId, o.proposal.id, 'applied');
 }
 
 /** Whole seconds since `on` turned true; 0 while off. */
@@ -200,7 +218,9 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
   const pending = useAssistant((s) => s.pending);
   const fixing = useAssistant((s) => s.fixing);
   const fixingName = useEditor((s) => (fixing ? s.nodes.find((n) => n.id === fixing)?.data.wf.name : undefined));
+  const nodeCount = useEditor((s) => s.nodes.length);
   const waiting = items.reduce((n, item) => n + (item.role === 'assistant' ? item.parts.filter((p) => p.kind === 'proposal' && !p.proposal.state).length : 0), 0);
+  const bar = foldedBar({ waiting });
   const designing = agents.find((a) => a.state === 'designing')?.name;
   const live = pending || drafting;
   const busy = live || testing || Boolean(designing);
@@ -228,6 +248,21 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
 
   const panel = useRef<HTMLElement>(null);
 
+  // The column's width eases between the strip and the full panel; once it stops, the flow is fitted again, once.
+  const [moving, setMoving] = useState(false);
+  const was = useRef(collapsed);
+  useEffect(() => {
+    if (was.current === collapsed) return;
+    was.current = collapsed;
+    // Under Reduce motion the width doesn't transition, so no transitionend comes: fit now.
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || !window.matchMedia('(min-width: 768px)').matches) return void setTimeout(refit, 60);
+    setMoving(true);
+  }, [collapsed]); // eslint-disable-line react-hooks/exhaustive-deps
+  const { fitView } = useReactFlow();
+  const refit = () => {
+    if (!isPhone() && useEditor.getState().nodes.length) void fitView({ padding: { left: '72px', top: '56px', bottom: '120px', right: '72px' }, duration: 200, maxZoom: 1 });
+  };
+
   // Toasts (bottom right) keep clear of the panel: left of the column, above the phone sheet.
   useEffect(() => {
     const el = panel.current;
@@ -254,7 +289,7 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
   // One set of colours: violet while it works, amber when it needs you, green when it passed; a stop is neutral.
   const icon = busy ? (
     <Loader2 className="size-3.5 shrink-0 animate-spin text-viz-7" />
-  ) : need ? (
+  ) : need || bar.needsYou ? (
     <Hand className="size-3.5 shrink-0 text-warn" />
   ) : run?.state === 'passed' && !ended ? (
     <CircleCheck className="size-3.5 shrink-0 text-gn" />
@@ -278,29 +313,36 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
         hiddenOnPhone && 'max-md:hidden',
         // Phone: a sheet under the canvas, which shrinks to the space above it.
         'max-md:shrink-0 max-md:rounded-t-2xl max-md:border-t',
-        // Phone: three heights, folded to its bar, peek (the newest of the timeline) and half.
+        // Phone: three heights, folded to its bar, peek (the newest of the timeline) and half; they ease between each other.
         collapsed ? 'max-md:max-h-[40dvh]' : phoneHeight === 'peek' ? 'max-md:h-[34dvh]' : 'max-md:h-[52dvh]',
-        // Desktop: a column beside the canvas.
-        'md:relative md:shrink-0 md:border-l',
+        'max-md:transition-[height,max-height] max-md:duration-[240ms] max-md:ease-out motion-reduce:transition-none',
+        // Desktop: a column beside the canvas; its width eases (240 ms) and the canvas fits again when it stops.
+        'md:relative md:shrink-0 md:border-l md:transition-[width] md:duration-[240ms] md:ease-out',
+        moving && 'md:overflow-hidden',
         collapsed ? 'md:w-11' : 'md:w-[360px]',
       )}
+      onTransitionEnd={(e) => {
+        if (e.target !== e.currentTarget || e.propertyName !== 'width') return;
+        setMoving(false);
+        refit();
+      }}
     >
       {/* Desktop, folded: a strip with what Spotlight is doing. */}
-      {collapsed && (
+      {
         <button
           type="button"
           onClick={() => focusSpotlight()}
           title={latest ? `${title}: ${latest}` : 'Show Spotlight (⌘I)'}
           aria-label="Show Spotlight"
-          className="hidden flex-1 flex-col items-center gap-3 py-3 text-t3 hover:bg-acdim hover:text-t1 md:flex"
+          className={cn('hidden flex-1 flex-col items-center gap-3 py-3 text-t3 hover:bg-acdim hover:text-t1 md:absolute md:inset-y-0 md:right-0 md:flex md:w-11 md:transition-[opacity,visibility] md:duration-200 motion-reduce:transition-none', !collapsed && 'md:invisible md:opacity-0')}
         >
           <PanelRightOpen className="size-4" />
           {icon}
           {waiting > 0 && <span className="rounded-full bg-viz-7 px-1.5 text-[10.5px] font-semibold leading-4 text-bg">{waiting}</span>}
           <span className="text-[11.5px] font-semibold text-t2 [writing-mode:vertical-rl]">{title}</span>
         </button>
-      )}
-      <div className={cn('flex min-h-0 flex-1 flex-col', collapsed && 'md:hidden')}>
+      }
+      <div className={cn('flex min-h-0 flex-1 flex-col md:absolute md:inset-y-0 md:right-0 md:w-[360px] md:transition-[opacity,visibility] md:duration-200 motion-reduce:transition-none', collapsed && 'md:invisible md:opacity-0')}>
         <div
           // A phone: drag the header up or down for the next height (the chevron goes between the bar and half).
           onPointerDown={(e) => {
@@ -359,21 +401,33 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
             <ChevronDown className={cn('size-4 transition-transform md:hidden', collapsed && 'rotate-180')} />
           </button>
         </div>
-        {collapsed ? (
-          // Phone, folded: the step Spotlight is on.
-          latest && (
-            <p className="flex items-center gap-1.5 truncate px-3 py-1.5 text-[12px] text-t2 md:hidden">
-              <span className="truncate">{latest}</span>
-            </p>
-          )
-        ) : items.length || agents.length ? (
-          <Timeline live={live} status={drafting ? 'Drafting the flow from the node catalog…' : undefined} />
-        ) : (
-          <div className="flex min-h-0 flex-1 flex-col justify-end gap-1.5 px-4 py-4 text-[12.5px] leading-snug text-t3">
-            <p className="font-semibold text-t2">Build and fix this workflow with Spotlight.</p>
-            <p>Describe a flow on an empty canvas and it drafts it, tests it and fixes what fails. On a flow, ask for a change; it uses your agents, or designs one on a local model. Type @ to tag a node, a run, an agent or anything else you may open.</p>
+        {/* Phone, folded: the step Spotlight is on, and Review and Apply when a change waits. */}
+        {collapsed && latest && (
+          <p className="flex items-center gap-1.5 truncate px-3 py-1.5 text-[12px] text-t2 md:hidden">
+            <span className="truncate">{latest}</span>
+          </p>
+        )}
+        {collapsed && bar.review && (
+          <div className="flex items-center gap-2 px-3 pb-1.5 md:hidden">
+            <Hand className="size-4 shrink-0 text-warn" aria-hidden />
+            <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-t1">{waiting === 1 ? 'A change needs you' : `${waiting} changes need you`}</span>
+            <Button size="sm" variant="outline" className="min-h-11" onClick={() => useAssistant.getState().setDock('half')}>
+              Review
+            </Button>
+            <Button size="sm" variant="primary" className="min-h-11" onClick={applyWaiting}>
+              Apply
+            </Button>
           </div>
         )}
+        <div className={cn('flex min-h-0 flex-1 flex-col', collapsed && 'max-md:hidden')}>
+          {items.length || agents.length ? (
+            <Timeline live={live} status={drafting ? 'Drafting the flow from the node catalog…' : undefined} />
+          ) : (
+            <div className="flex min-h-0 flex-1 flex-col justify-end px-4 py-4">
+              <ChatEmpty title={EMPTY_LINE} starters={starters({ nodes: nodeCount })} onStarter={prefillSpotlight} />
+            </div>
+          )}
+        </div>
         <Composer />
       </div>
     </aside>
