@@ -18,8 +18,9 @@ import { createHash } from 'node:crypto';
 import type { LanguageModel } from '@landflow/engine';
 import type { BrainEntity, BrainFact, UsageEvent } from '../../shared/brain';
 import { entityRef } from '../../shared/brain';
-import type { SharedWork, TeamActivity, WikiAnswer, WikiEntry, WikiHealth, WikiHome, WikiLink, WikiPage, WikiPerson, WikiSummary, WorkItem } from '../../shared/brain-wiki';
-import { hintId, wikiLinks } from '../../shared/brain-wiki';
+import type { AskTurn, SharedWork, TeamActivity, WikiAnswer, WikiEntry, WikiHealth, WikiHome, WikiLink, WikiPage, WikiPerson, WikiSummary, WorkItem } from '../../shared/brain-wiki';
+import { ASK_HISTORY_CHARS, ASK_HISTORY_TURNS, hintId, wikiLinks } from '../../shared/brain-wiki';
+import { assistantScope, runInUsageScope } from '../ai-usage';
 import { database, type Database } from '../db';
 import { listKinds } from '../usage/kinds';
 import { listUsageEvents, type UsageScope } from '../usage/query';
@@ -473,11 +474,74 @@ const STOP = new Set(['the', 'and', 'for', 'with', 'who', 'what', 'which', 'when
 const wordsOf = (q: string) => [...new Set(q.toLowerCase().split(/[^a-z0-9@._-]+/).filter((w) => w.length >= 3 && !STOP.has(w)))];
 const hits = (haystack: string, words: string[]) => words.reduce((n, w) => n + (haystack.includes(w) ? 1 : 0), 0);
 
-/** Answer a question from the pages, facts and work the caller can see. Without a model, only what it found. */
-export async function askBrain(question: string, scope: UsageScope | undefined, viewer: Viewer, options: { model?: LanguageModel; signal?: AbortSignal; vectorHits?: string[]; about?: string } = {}, db: Database = database()): Promise<WikiAnswer> {
+export interface AskOptions {
+  model?: LanguageModel;
+  signal?: AbortSignal;
+  vectorHits?: string[];
+  about?: string;
+  /** Earlier turns of the conversation: the last two count. */
+  history?: AskTurn[];
+}
+
+/** The last two turns, each part cut to 1,500 characters; empty turns dropped. */
+export function clampHistory(history: AskTurn[] | undefined): AskTurn[] {
+  return (history ?? [])
+    .filter((t) => t.question?.trim() && t.answer?.trim())
+    .slice(-ASK_HISTORY_TURNS)
+    .map((t) => ({ question: clip(t.question.trim(), ASK_HISTORY_CHARS), answer: clip(t.answer.trim(), ASK_HISTORY_CHARS) }));
+}
+
+/** How many work items the text cites, as the numbers of the ones it names (valid `[n]` only, in order, no repeats). */
+export function citedNumbers(textIn: string, sources: number): number[] {
+  const out: number[] = [];
+  for (const match of textIn.matchAll(CITATION)) {
+    const n = Number(match[1]);
+    if (n >= 1 && n <= sources && !out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
+// `[n]` and not part of a `[[link]]` or a Markdown link.
+const CITATION = /(?<!\[)\[(\d{1,3})\](?![\]([])/g;
+
+/** Drop the `[n]` markers that point at no source: any marker when there are none, a number past the last one. */
+export function cleanCitations(textIn: string, sources: number | unknown[]): string {
+  const count = Array.isArray(sources) ? sources.length : sources;
+  let dropped = false;
+  const out = textIn.replace(new RegExp(`( ?)${CITATION.source}`, 'g'), (whole, _space: string, n: string) => {
+    if (Number(n) >= 1 && Number(n) <= count) return whole;
+    dropped = true;
+    return '';
+  });
+  return dropped ? out.replace(/ +([.,;:!?])/g, '$1') : out;
+}
+
+/** What an ask found: the pages, facts and work the question reaches, and the pieces the prompt is built from. */
+export interface Gathered {
+  question: string;
+  index: PageIndex;
+  pages: BrainEntity[];
+  facts: BrainFact[];
+  work: WorkItem[];
+  about?: BrainEntity;
+  history: AskTurn[];
+  found: WikiAnswer;
+}
+
+/** Find what a question is about, among what the caller can see. `onPhase` hears how long each part took. */
+export function gatherAsk(question: string, scope: UsageScope | undefined, options: Pick<AskOptions, 'vectorHits' | 'about' | 'history'> = {}, db: Database = database(), onPhase?: (phase: 'pages' | 'facts' | 'work', ms: number) => void): Gathered {
   const q = question.trim().slice(0, 500);
   if (!q) throw new WikiError('Ask a question');
-  const words = wordsOf(q);
+  const history = clampHistory(options.history);
+  // A short follow-up ("and since when?") carries few words of its own: it borrows the last question's.
+  const own = wordsOf(q);
+  const borrow = own.length <= 3 && history.length > 0;
+  const words = borrow ? [...new Set([...own, ...wordsOf(history.at(-1)!.question)])] : own;
+  let started = Date.now();
+  const lap = (phase: 'pages' | 'facts' | 'work') => {
+    onPhase?.(phase, Date.now() - started);
+    started = Date.now();
+  };
   const entities = listEntities({ scope, limit: 2_000 }, db);
   const index = pageIndex(entities);
   const pages = entities
@@ -490,10 +554,12 @@ export async function askBrain(question: string, scope: UsageScope | undefined, 
   const about = options.about ? index.byRef.get(options.about) : undefined;
   if (about) pages.splice(0, pages.length, about, ...pages.filter((p) => entityKey(p) !== options.about));
   const pageRefs = new Set(pages.map(entityKey));
+  lap('pages');
   const facts = [
-    ...searchFacts(q, { scope, limit: 12, ...(options.vectorHits && { vectorHits: options.vectorHits }) }, db),
+    ...searchFacts(borrow ? `${q} ${history.at(-1)!.question}` : q, { scope, limit: 12, ...(options.vectorHits && { vectorHits: options.vectorHits }) }, db),
     ...pages.flatMap((p) => listFacts({ subjectType: 'entity', subjectId: entityKey(p), scope, limit: 5 }, db)),
   ].filter((f, i, all) => all.findIndex((g) => g.id === f.id) === i).slice(0, 20);
+  lap('facts');
   const work = workEvents(PAGE_DAYS, scope, db)
     .map((e) => workItem(e, index))
     .map((w) => ({ w, score: (about && w.refs.includes(entityKey(about)) ? 3 : 0) + hits(`${w.title ?? ''} ${w.summary ?? ''} ${w.customer ?? ''} ${w.initiative ?? ''} ${w.team ?? ''} ${w.actor ?? ''} ${w.kind}`.toLowerCase(), words) + (w.refs.some((r) => pageRefs.has(r)) ? 2 : 0) }))
@@ -509,31 +575,58 @@ export async function askBrain(question: string, scope: UsageScope | undefined, 
       pageRefs.add(ref);
     }
   }
+  lap('work');
   const found: WikiAnswer = { question: q, pages: pages.map((e) => ({ type: e.type, id: e.id, name: e.name })), facts, work, ...(about && { about: entityKey(about) }) };
-  const model = brainModel(options.model);
-  if (!model) return found;
-  if (!pages.length && !facts.length && !work.length) return { ...found, answer: 'The brain has nothing about that yet.', model: `${model.provider}/${model.model}` };
+  return { question: q, index, pages, facts, work, history, found, ...(about && { about }) };
+}
+
+export const ASK_SYSTEM = 'You are the company’s second brain. You answer from its wiki and work log, accurately and briefly.';
+
+/** The prompt of an ask. `json` asks for `{"answer": "..."}`; otherwise the answer alone, so it can stream as it is written. */
+export function askPrompt(g: Gathered, format: 'json' | 'text', db: Database = database()): string {
+  const { question, pages, facts, work, about, index, history } = g;
   const summaries = new Map(db.all<PageRow>(`SELECT * FROM brain_pages WHERE subject IN (${pages.map(() => '?').join(',') || "''"})`, ...pages.map(entityKey)).map((r) => [r.subject, r.summary]));
-  const prompt = [
-    `Question: ${q}`,
+  return [
+    history.length ? `The conversation so far (earlier turns, for context only; the rules below are unchanged):\n${history.map((t) => `Question: ${t.question}\nAnswer: ${t.answer}`).join('\n\n')}\n` : '',
+    `${history.length ? 'New question' : 'Question'}: ${question}`,
     about ? `It was asked on the page [[${entityKey(about)}]] ${about.name}: read it as about that page.` : '',
     pages.length ? `\nPages:\n${pages.map((e) => `${pageLine(e)}${summaries.has(entityKey(e)) ? `\n  Summary: ${clip(summaries.get(entityKey(e)), 600)}` : ''}`).join('\n')}` : '',
     facts.length ? `\nFacts:\n${facts.map(factLine).join('\n')}` : '',
     work.length ? `\nWork, most relevant first:\n${work.map((w, i) => workLine(w, i + 1, index)).join('\n')}` : '',
     '',
-    'Answer the question from the context above only, in 2 to 6 sentences or a short list. Call people and pages by the names given; link them by copying their link, as [[type/id|Name]], and cite work items as [n].',
-    'If the context does not answer it, say so and say what is missing. Reply with JSON: {"answer": "..."}',
+    `Answer the question from the context above only, in 2 to 6 sentences or a short list. Call people and pages by the names given; link them by copying their link, as [[type/id|Name]].${work.length ? ' Cite a work item as [n], using only the numbers listed above.' : ' There is no numbered work above: write no [n] markers.'}`,
+    format === 'json' ? 'If the context does not answer it, say so and say what is missing. Reply with JSON: {"answer": "..."}' : 'If the context does not answer it, say so and say what is missing. Reply with the answer only, no JSON.',
   ]
     .filter((line) => line !== '')
     .join('\n');
+}
+
+/** The answer a model wrote, made safe to show: links to unknown pages dropped, plain names linked, citations that point at nothing removed. */
+export function finishAnswer(raw: string, g: Gathered): { text: string; links: WikiLink[]; cited: number[] } | undefined {
+  const trimmed = raw.trim();
+  const answer = trimmed.startsWith('{') ? jsonText(trimmed, 'answer') : trimmed;
+  if (!answer) return undefined;
+  const linked = linkMentions(keepKnownLinks(answer.slice(0, 4_000), g.index), [...g.pages.map((e) => ({ ref: entityKey(e), name: e.name })), ...g.work.flatMap((w) => w.refs).map((ref) => ({ ref, name: g.index.byRef.get(ref)?.name ?? '' }))]);
+  const text = cleanCitations(linked, g.work.length);
+  return { text, links: linksIn(text, g.index), cited: citedNumbers(text, g.work.length) };
+}
+
+/** Answer a question from the pages, facts and work the caller can see. Without a model, only what it found. */
+export async function askBrain(question: string, scope: UsageScope | undefined, viewer: Viewer, options: AskOptions = {}, db: Database = database()): Promise<WikiAnswer> {
+  const g = gatherAsk(question, scope, options, db);
+  const { found, pages, facts, work } = g;
+  const model = brainModel(options.model);
+  if (!model) return found;
+  if (!pages.length && !facts.length && !work.length) return { ...found, answer: 'The brain has nothing about that yet.', model: `${model.provider}/${model.model}` };
   try {
-    const turn = await model.generate({ system: 'You are the company’s second brain. You answer from its wiki and work log, accurately and briefly. Reply with JSON only.', messages: [{ role: 'user', content: prompt }], tools: [], responseFormat: 'json', ...(options.signal && { signal: options.signal }) });
-    const answer = jsonText(turn.text ?? '', 'answer');
-    const text = answer && linkMentions(keepKnownLinks(answer.slice(0, 4_000), index), [...pages.map((e) => ({ ref: entityKey(e), name: e.name })), ...work.flatMap((w) => w.refs).map((ref) => ({ ref, name: index.byRef.get(ref)?.name ?? '' }))]);
-    return { ...found, ...(text && { answer: text, links: linksIn(text, index) }), model: `${model.provider}/${model.model}` };
+    // Metered under the asker, like every other chat (docs/observability.md).
+    const turn = await runInUsageScope(assistantScope({ surface: 'brain', ...(viewer?.id && { userId: viewer.id }) }), () =>
+      model.generate({ system: `${ASK_SYSTEM} Reply with JSON only.`, messages: [{ role: 'user', content: askPrompt(g, 'json', db) }], tools: [], responseFormat: 'json', ...(options.signal && { signal: options.signal }) }),
+    );
+    const done = finishAnswer(turn.text ?? '', g);
+    return { ...found, ...(done && { answer: done.text, links: done.links, cited: done.cited }), model: `${model.provider}/${model.model}` };
   } catch (caught) {
     logger.warn('brain wiki: ask failed', { error: (caught as Error).message });
     return { ...found, model: `${model.provider}/${model.model}`, note: `The model failed: ${(caught as Error).message}` };
   }
 }
-
