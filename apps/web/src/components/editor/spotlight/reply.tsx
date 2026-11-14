@@ -14,6 +14,7 @@ import { MAX_FIXES, productionNote, publishToProduction, sendsAllowed, testUntil
 import { agentStep, runRow } from '../timeline';
 
 import { ProposalCard, ProposalRow } from './proposal';
+import { swapState } from './swap';
 
 export type Reply = Extract<ChatItem, { role: 'assistant' }>;
 
@@ -306,13 +307,13 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
     <ShortReply text={text} sentences={session ? 1 : 2} />
   ) : null;
   // Working until the first words arrive (a trace's own live line says it once there are steps), so the line cross-fades to the text.
-  const working = live && !steps && !own && !words;
+  const swap = swapState({ live, streamed, hasSteps: Boolean(steps), own, hasWords: Boolean(words), hasTrace });
   return (
-    <AssistantRow mark={working ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}>
+    <AssistantRow mark={swap.spinner ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}>
       {streamed && steps && <LiveSteps live={steps} trace={item.steps} durationMs={item.meta?.durationMs} />}
       {streamed && !steps && hasTrace && !quietText && <ActivityTrace steps={item.steps!} live={live} durationMs={item.meta?.durationMs ?? item.done?.durationMs} />}
-      {(working || words || (streamed && live && !steps)) && (
-        <StatusSwap working={working} silent={hasTrace} label={status ?? (lastTool?.kind === 'tool' ? `${lastTool.tool.label}…` : 'Thinking…')}>
+      {swap.mounted && (
+        <StatusSwap working={swap.working} silent={swap.silent} label={status ?? (lastTool?.kind === 'tool' ? `${lastTool.tool.label}…` : 'Thinking…')}>
           {words}
         </StatusSwap>
       )}

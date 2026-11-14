@@ -557,7 +557,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
       while (steps < stepLimit && !finished && stalled < MAX_STALLED) {
         steps++;
         currentStep = steps;
-        if (trace) onEvent({ type: 'step.start', step: steps, label: steps === 1 ? 'Reading your request' : 'Working on it' });
+        if (trace) onEvent({ type: 'step.start', step: steps, label: steps === 1 ? 'Reading your request' : 'Thinking' });
         const batch = trace ? coalesced((delta) => onEvent({ type: 'text.delta', step: currentStep, text: delta })) : undefined;
         let turn: Awaited<ReturnType<typeof model.generate>>;
         try {
