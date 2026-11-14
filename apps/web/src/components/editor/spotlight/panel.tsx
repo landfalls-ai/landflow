@@ -20,6 +20,7 @@ import { lastOutcomeOf, lastRunOf, openNeedOf, stepsOf, stoppedAtOf, titleOf } f
 import { Composer, focusSpotlight } from './composer';
 import { AutonomousSwitch } from './proposal';
 import { Timeline } from './timeline-view';
+import { useAskParam } from './ask-param';
 
 /**
  * While Spotlight works, the canvas keeps the whole flow in view as the panel and the logs change its size; once it is on
@@ -210,6 +211,9 @@ function useSpotlightKeeping() {
  */
 export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hiddenOnPhone?: boolean; /** Stays mounted and keeps its conversation, but shows nothing (the Spotlight | Chat switch). */ hidden?: boolean }) {
   const keep = useSpotlightKeeping();
+  // "Build it" on a suggestion opens the editor with ?ask=proposal:<id>: Spotlight builds from its prompt once (./ask-param.ts).
+  const boundTo = useAssistant((s) => s.workflowId);
+  useAskParam(Boolean(keep.workflowId) && boundTo === keep.workflowId);
   const collapsed = useAssistant((s) => s.collapsed);
   const items = useAssistant((s) => s.items);
   const agents = useAssistant((s) => s.agents);

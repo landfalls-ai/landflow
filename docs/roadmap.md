@@ -1512,6 +1512,9 @@ setting `brain.workAutoSend`.
   Post as my update (`POST /api/brain/work/:sourceId/share`), related colleagues in the briefing with the reason,
   repositories as `system` entities and the link from a person page to its user (migration 2080)
   ([work-and-briefings.md](work-and-briefings.md#related-colleagues)).
+- **Built (B32, wave 5)**: V4, nightly SDLC velocity: the Velocity Signals and Propose Flows nodes, the template
+  `brain-sdlc-velocity`, Suggest Improvement's Build Prompt, and **Build it** opening a new workflow with Spotlight
+  building from the suggestion's prompt ([second-brain.md](second-brain.md#nightly-sdlc-velocity)). Closes V4.
 - Follow-ups: `landflow work` should omit `visibility`; the briefing prompt (`briefingText`) does not render `related` yet (MOD6's clip, quote and link rules apply when it does); link a work event to its repository page and index systems by repo in the wiki; check `canEntity` before showing a person page's user link.
 - **Built (B29)**: the mod's colleagues: `/brain sync`, the pane, the overlap band, team or org per item, Post as my update and the admin's no-auto rule ([landflow-brain-mod.md](landflow-brain-mod.md#colleagues)).
 - **Built (B30, V3's server part)**: the Tomorrow sync template and its five brain nodes, the `brain_briefings` store, briefings served over MCP and `GET /api/brain/briefing` ([work-and-briefings.md](work-and-briefings.md#the-nightly-sync)). Open, carried to B38: the landflow-brain mod's session start shows `summary` and `source` (`hooks/client.ts`, `register.ts`).

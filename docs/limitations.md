@@ -189,6 +189,15 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - Over MCP a `brain:read` key reaches `brain_search_facts`, `brain_usage_report` and `brain_list_suggestions`, and a `brain:write` key also `brain_suggest`, which over REST need `executions:read` or `workflows:read`/`workflows:write`. Each tool is still limited to what the user can open.
 - The bundled gateway passes on only the identity it validated (an MCP token, or the identity provider's sign-in), never an API key: a key sent to the gateway does not reach the instance as a key. Send an API key straight to `/api/mcp`, where its scopes apply per tool.
 
+## Nightly SDLC velocity (B32)
+
+- The signals need the pull request, review and CI events in the brain (the GitHub ingest template) and work sessions
+  shared with the organization; private and `team` events are never read, so a company that shares little sees few signals.
+- A flaky CI pair is a failed attempt and a later passing attempt of the same run id (B31's events carry no commit), or a failure and a pass on the same commit when an event carries one (`sha`, `headSha` or `commit`). An event with neither is skipped, and a red run fixed by a new push is not counted.
+- Toil phrases come from work-session titles, which may contain a person's name; only structured fields are kept clear of
+  names. The Slack mirror shows no Apply button for a build-prompt suggestion.
+- Suggestions carry the evidence as event ids in their text, not as chips with links.
+
 ## The landflow-brain mod (first slice, 2026-11)
 
 - `/brain review` asks about one held entry at a time and needs a person at the prompt; in a run with nobody to ask it lists them instead.
