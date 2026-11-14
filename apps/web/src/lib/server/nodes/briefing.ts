@@ -115,7 +115,7 @@ export const brainWriteBriefingNode = defineNode({
     version: 1,
     kind: 'action',
     ...icon,
-    subtitle: '{{useModel ? "brain model" : "plain text"}}',
+    subtitle: 'the brain’s model or plain text',
     keywords: ['briefing', 'write', 'summary', 'tomorrow sync', 'second brain'],
     inputs: main,
     outputs: main,
