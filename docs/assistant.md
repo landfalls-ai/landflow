@@ -259,7 +259,9 @@ Agent architect and the brain's Spotlight on `/brain`.
 New pieces of the kit, ready to use (the surfaces adopt them one by one):
 
 - **Motion** (`components/ui/chat-motion.tsx`, on `motion`, loaded lazily): `ChatList` scrolls a conversation, rises new
-  messages in and stays at the bottom unless you scrolled up, when **Jump to latest** shows; `StatusSwap` cross-fades the
+  messages in and stays at the bottom unless you scrolled up, when **Jump to latest** shows (its glide ends on
+  `scrollend`, or after a second where a browser has no such event, and a reply that grew meanwhile is scrolled to its new
+  bottom at once); `StatusSwap` cross-fades the
   Working line into the reply (its `silent` prop keeps the line empty when a trace already speaks); `Collapsible` opens and closes a block; `StreamingText` adds a soft caret while a reply
   streams. Only opacity and a 6 px rise move, never width or padding, and Reduce motion stops the movement. Use CSS
   (`animate-in`, `animate-pulse-soft`) for a thing that just appears; use these when a block changes size or swaps.

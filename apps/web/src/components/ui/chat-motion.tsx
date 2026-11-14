@@ -34,6 +34,8 @@ function Shell({ children }: { children: ReactNode }) {
 }
 
 const NEAR_BOTTOM = 48;
+/** The longest a smooth glide is allowed before it counts as over (a browser without `scrollend` never says so). */
+const GLIDE_MS = 1000;
 
 /**
  * What a scroll event means: whether the reader is pinned to the bottom, and whether a programmatic glide is still in
@@ -70,13 +72,27 @@ export function ChatList({ children, className }: { children: ReactNode; classNa
     known.current = new Set(keys);
   });
 
+  const glideTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  // A glide ends on `scrollend`, or after GLIDE_MS where the browser has no such event (older Safari). If the content
+  // grew while it ran, the glide stopped short of the new bottom: finish the job at once while the reader is pinned.
+  const endGlide = useCallback(() => {
+    clearTimeout(glideTimer.current);
+    if (!gliding.current) return;
+    gliding.current = false;
+    const el = scroller.current;
+    if (el && pinned.current && el.scrollHeight - el.scrollTop - el.clientHeight > 1) el.scrollTo({ top: el.scrollHeight, behavior: 'auto' });
+  }, []);
+  useEffect(() => () => clearTimeout(glideTimer.current), []);
+
   const toBottom = useCallback((smooth = false) => {
     const el = scroller.current;
     if (!el) return;
     const glide = smooth && !reduced;
     gliding.current = glide;
+    clearTimeout(glideTimer.current);
+    if (glide) glideTimer.current = setTimeout(endGlide, GLIDE_MS);
     el.scrollTo({ top: el.scrollHeight, behavior: glide ? 'smooth' : 'auto' });
-  }, [reduced]);
+  }, [reduced, endGlide]);
 
   useLayoutEffect(() => {
     toBottom();
@@ -115,7 +131,7 @@ export function ChatList({ children, className }: { children: ReactNode; classNa
   return (
     <Shell>
       <div className="relative min-h-0 flex-1">
-        <div ref={scroller} onScroll={onScroll} onScrollEnd={() => (gliding.current = false)} className={cn('h-full min-h-0 overflow-y-auto', className)}>
+        <div ref={scroller} onScroll={onScroll} onScrollEnd={endGlide} className={cn('h-full min-h-0 overflow-y-auto', className)}>
           <div ref={content} className="space-y-3">
             {items.map((child, i) => (
               <m.div
