@@ -69,7 +69,7 @@ export interface ReplyInfo {
   costUsd?: number;
 }
 
-/** "model · 14.5 s · 10 steps · 1.6k tokens · ≈$0.004" (or "local" in place of the cost). */
+/** "model · 14.5 s · 10 steps · 1,600 tokens · ≈$0.004" (or "local" in place of the cost). */
 export function replyInfoParts(info: ReplyInfo): string[] {
   const tokens = (info.inputTokens ?? 0) + (info.outputTokens ?? 0);
   return [
@@ -106,8 +106,8 @@ export function ModelChip({ model, local }: { model: string; local?: boolean }) 
 }
 
 /**
- * The first `n` sentences of a reply, and whether there is more. Not cut after "e.g.", "i.e.", "etc." or a digit
- * ("Step 2."), nor inside a quoted name; a list or a code block is not split, so it counts as one sentence's worth.
+ * The first `n` sentences of a reply, and whether there is more. Not cut after "e.g.", "i.e.", "etc.", nor after a list
+ * marker at the start of a line ("2."), nor inside a quoted name or a fenced code block.
  */
 export function firstSentences(text: string, n: number): { text: string; more: boolean } {
   const t = text.trim();
@@ -124,7 +124,6 @@ export function firstSentences(text: string, n: number): { text: string; more: b
     else if (c === '“') quoted++;
     else if (c === '”') quoted = Math.max(0, quoted - 1);
     else if ('.!?'.includes(c) && !quoted && /\s/.test(t[i + 1] ?? '') && !/\b(?:e\.g|i\.e|etc|vs|approx|Mr|Mrs|Ms|Dr|No)\.$/i.test(t.slice(Math.max(0, i - 5), i + 1)) && !/(?:^|\n)\s*\d+\.$/.test(t.slice(Math.max(0, i - 6), i + 1))) {
-      // A list item or table row ends at its line, not at a full stop inside a following item.
       if (++found >= n) return { text: t.slice(0, i + 1), more: t.slice(i + 1).trim().length > 0 };
     }
   }
@@ -135,7 +134,7 @@ export function firstSentences(text: string, n: number): { text: string; more: b
 export function ShortReply({ text, sentences = 2 }: { text: string; sentences?: number }) {
   const [more, setMore] = useState(false);
   const cut = firstSentences(text, sentences);
-  if (more || !cut.more) return <ChatMarkdown text={text} />;
+  if (more || !cut.more || cut.text.includes('```')) return <ChatMarkdown text={text} />;
   return (
     <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-t1 [overflow-wrap:anywhere]">
       {cut.text.replace(/\*\*|`/g, '')}

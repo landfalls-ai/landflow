@@ -7,7 +7,7 @@
  * `ChatMotion` above it wraps itself.
  */
 import { Children, createContext, isValidElement, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { AnimatePresence, LazyMotion, MotionConfig, m } from 'motion/react';
+import { AnimatePresence, LazyMotion, MotionConfig, m, useReducedMotion } from 'motion/react';
 import { ArrowDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ChatMarkdown, Working } from './chat';
@@ -36,6 +36,15 @@ function Shell({ children }: { children: ReactNode }) {
 const NEAR_BOTTOM = 48;
 
 /**
+ * Whether a scroll event means the reader left the bottom. While a programmatic scroll is in flight, only a move up
+ * unpins; reaching the bottom pins again.
+ */
+export function nextPinned({ gap, prevTop, top, programmatic }: { gap: number; prevTop: number; top: number; programmatic: boolean }): boolean {
+  if (gap <= NEAR_BOTTOM) return true;
+  return programmatic ? top >= prevTop : false;
+}
+
+/**
  * A chat's scroll area. A new child rises in (180 ms, 30 ms apart; the first render does not animate). It stays at the
  * bottom while the reader is within 48 px of it; when they have scrolled up and something new arrives, "Jump to latest"
  * shows. `className` styles the scroll area itself.
@@ -47,6 +56,9 @@ export function ChatList({ children, className }: { children: ReactNode; classNa
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
+  const gliding = useRef(false);
+  const lastTop = useRef(0);
+  const reduced = useReducedMotion();
   const [away, setAway] = useState(false);
   const lastKey = keys[keys.length - 1];
   const prevLast = useRef(lastKey);
@@ -59,8 +71,11 @@ export function ChatList({ children, className }: { children: ReactNode; classNa
 
   const toBottom = useCallback((smooth = false) => {
     const el = scroller.current;
-    if (el) el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
-  }, []);
+    if (!el) return;
+    const glide = smooth && !reduced;
+    gliding.current = glide;
+    el.scrollTo({ top: el.scrollHeight, behavior: glide ? 'smooth' : 'auto' });
+  }, [reduced]);
 
   useLayoutEffect(() => {
     toBottom();
@@ -87,9 +102,13 @@ export function ChatList({ children, className }: { children: ReactNode; classNa
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
-    const near = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM;
-    pinned.current = near;
-    if (near) setAway(false);
+    const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+    pinned.current = nextPinned({ gap, prevTop: lastTop.current, top: el.scrollTop, programmatic: gliding.current });
+    lastTop.current = el.scrollTop;
+    if (gap <= NEAR_BOTTOM) {
+      gliding.current = false;
+      setAway(false);
+    }
   };
 
   let order = 0;

@@ -211,7 +211,7 @@ New pieces of the kit, ready to use (the surfaces adopt them one by one):
   3*); once done, *10 steps · 14.5 s ›*, which opens a list of what it read, searched, ran and wrote, each with its time
   and a tick or a cross. A step with a detail opens it; a failed one reads in red; `traceUrl` adds **Open trace**. On a
   phone it starts closed and the list scrolls inside itself. The steps are `ActivityStep` in `lib/shared/activity.ts`.
-- **The reply footer** (`ReplyMeta` with `info`): *model · 14.5 s · 10 steps · 1.6k tokens · ≈$0.004*, with *local* in
+- **The reply footer** (`ReplyMeta` with `info`): *model · 14.5 s · 10 steps · 1,600 tokens · ≈$0.004*, with *local* in
   place of the cost for a local model; what is unknown is left out. `parts` still works.
 - **The model chip** (`ModelChip`, and the composer's `chip`): the model's short name in a small pill before Send.
 - **Error actions** (`ChatError` `actions`): buttons beside **Try again**, one of them filled (*Open settings*).
