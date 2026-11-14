@@ -1571,6 +1571,14 @@ The shared pieces every chat will use, built in `components/ui/` and ready; the 
   ([agents.md](agents.md#test-chat)). The architect keeps its conversation and can continue a failed design from the
   failing step.
 
+## Spotlight history and @ tags (B16, backbone wave 3)
+
+- CH12 ✅ Done: Spotlight keeps its conversation per workflow, brings the last one back under "Earlier", has the history
+  button, and checks a waiting proposal against the workflow (stale ones lose Apply). Leaving the editor no longer loses
+  an unapplied proposal ([Spotlight](spotlight.md), [Conversation history](assistant.md#conversation-history)).
+- CH14 ✅ Done: `@` in Spotlight is the app-wide picker; the server resolves the refs as the caller and shows each read as
+  a step ([Tagging with @](assistant.md#tagging-with-)). The unchecked node path is gone.
+
 ## Ask the brain, docked and streamed (B09, 2026-11-14)
 
 - CH3 ✅ Done: the brain's answer streams (what it found first, then the words) and shows its steps.

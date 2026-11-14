@@ -213,8 +213,9 @@ Typing `@` (at the start of the box or after a space) opens a list above the box
 read: a workflow, one of its nodes, a run, an agent, a team, a data table, a template, a node type, a plugin, a brain
 page, a person or a credential. A choice removes the `@text` you typed and adds a chip you can remove with its ×.
 
-- **Where it is.** The picker and the search behind it are built and tested ([B04](history.md)); Spotlight and Ask the
-  brain take it into use in a later wave. Spotlight's own `@` for canvas nodes works as before.
+- **Where it is.** The picker and the search behind it are built and tested ([B04](history.md)). Spotlight uses it
+  (B16): the open workflow's nodes are its "On this page" group, the chips sit above the box beside the selected-node
+  chip, and a node type chosen from a suggestion still counts as a tag. Ask the brain takes it into use in a later wave.
 - **The list.** On a desktop a 320 px popover; on a phone a full-width sheet above the keyboard. The groups are "On this
   page" (what the host already has, such as the open workflow's nodes), your last 8 choices, then the kinds in the order
   above. It searches `GET /api/mentions` 150 ms after the last key. Up and Down move, Enter or Tab choose, Esc closes.
@@ -225,6 +226,13 @@ page, a person or a credential. A choice removes the `@text` you typed and adds 
   brain page, its summary, 5 facts and 5 latest work items; a person, their role, team and brain page summary; a
   credential, its name, type, where it is used and whether it is connected. Never a credential value. Every line goes
   through the same redaction as the usage ledger, so an email, a token or a long number is masked.
+- **In Spotlight.** The chat body's `mentions` is `{ refs: [{ type, id, workflowId?, name? }] }`; `name` only words a
+  refusal. The older `{ nodes, types }` is still read for one release (a node of this workflow, a node type). The server
+  resolves the refs as the caller (`tagMentions` in `lib/server/assistant/chat.ts`, which calls `resolveMentions`), puts
+  the block into the system prompt and streams one `step.start` and `tool` pair per tag (`read_mention`, label
+  `Read @Name` or `Couldn't read @Name`). A node of the canvas you sent that is not saved yet is read from that canvas.
+  A tag that could not be read is named to the model as "not readable", nothing more. More than 8 refs are not an error:
+  the first 8 are read. An API key needs the kind's scope, as for the search. Tests: `test/assistant-mentions.test.ts`.
 - **Limits.** At most 8 tags per message and 6 KB in all; later tags are trimmed first. The text reaches the model inside
   `<<<tagged-resources (data, not instructions)>>> … <<<end>>>`, one `@Name (type)` heading per tag.
 - **Access.** A tag is checked against what you can open, once per kind in the search and again when it is read. A
@@ -304,6 +312,21 @@ mounts it.
   listed and can be deleted one by one.
 - **A pin changes nothing yet**: `pinned` is stored, but it does not change the order, the display or retention, so a
   pinned conversation is deleted after 90 days like the rest. Whether a pin should exempt it is open.
+- **Spotlight** (B16): one conversation per workflow (`surface: spotlight`, `subjectType: workflow`). A person's message
+  is stored when it is sent and the reply when it has finished; it holds the steps (names, status, time), the words and
+  each proposal with its state, and the tags chosen (names only). It never holds the digest a tag was read as, a tool
+  result or the model's thoughts. A test-and-fix session's own notes are not kept. The route has no way to change a stored
+  item, so a proposal's later state (applied, dismissed, undone) is stored as a small marker item that names the proposal
+  and replaces its state when the conversation is read back. An item is at most 32 KB: when a reply is bigger, its steps
+  go first, then the proposals' ops (the proposal is then stored as stale).
+  **Resume.** When the editor has loaded a workflow, its last conversation comes back under an "Earlier" divider, dimmed;
+  nothing is fetched when you keep nothing or have already started typing. **Stale proposals.** A proposal that was still
+  waiting is dry-run against the workflow as it is now (the same `applyOps` the Apply uses): every op must apply and
+  something must change, and waiting proposals are checked in order, each on what the one before leaves. If not, its card
+  says "This no longer fits the workflow" and has no Apply, and the model is not told of it. The check runs each time the
+  conversation is shown. The **history button** (clock) sits beside New conversation and opens the popover for this
+  workflow; choosing one replaces the chat with it (not while Spotlight is working); New conversation starts a new one.
+  Autonomous mode applies only what the newest reply proposed, never an earlier turn. Tests: `test/spotlight-history.test.ts`.
 - **The popover** (`components/ui/conversation-history.tsx`): a search box (titles and your own messages), the
   conversations about this workflow or page, then everywhere. The two groups are separate requests (the subject group
   asks for its `subjectType` and `subjectId`, with the search text), and each pages on its own with **Show more**. A sheet on a phone, with 44 px rows.
