@@ -1,3 +1,4 @@
+import { TEMPLATE_FILE_KIND } from '@/lib/shared/templates';
 import type { ExecutionState, ExecutionSummary } from '@/lib/shared/types';
 
 /** The items of the Workflows page's one "New" menu, in order. */
@@ -8,6 +9,20 @@ export const NEW_MENU_ITEMS = [
   { id: 'folder', label: 'Folder' },
 ] as const;
 export type NewMenuItem = (typeof NEW_MENU_ITEMS)[number]['id'];
+
+/**
+ * Where New -> Import... sends a file: a template file ("Export" on a template page, `kind: 'landflow/template'`) goes
+ * to the templates library (POST /api/templates); anything else (Landflow, n8n or Flowise JSON, or text that isn't
+ * JSON, which the workflow importer explains) to the workflow importer.
+ */
+export function importTarget(text: string): 'template' | 'workflow' {
+  try {
+    const data: unknown = JSON.parse(text);
+    return data && typeof data === 'object' && (data as { kind?: unknown }).kind === TEMPLATE_FILE_KIND ? 'template' : 'workflow';
+  } catch {
+    return 'workflow';
+  }
+}
 
 /** The newest run of each workflow, from a newest-first list of executions. */
 export function lastRunByWorkflow(executions: ExecutionSummary[]): Map<string, ExecutionSummary> {

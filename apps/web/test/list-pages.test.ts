@@ -12,7 +12,7 @@ import { AuthShell, InviteView } from '../src/components/auth/auth-forms';
 import { groupCredentialTypes, stripApiSuffix } from '../src/components/credentials/credential-groups';
 import { AddColumn } from '../src/components/data-tables/table-view';
 import { OVERVIEW_KINDS, PROJECT_TABS, projectTab } from '../src/components/projects/project-tabs';
-import { describeLastRun, lastRunByWorkflow, NEW_MENU_ITEMS } from '../src/components/workflows/list-model';
+import { describeLastRun, importTarget, lastRunByWorkflow, NEW_MENU_ITEMS } from '../src/components/workflows/list-model';
 import { LastRun } from '../src/components/workflows/workflows-list';
 import { showHeaderAction } from '../src/lib/client/list-page';
 import type { CredentialTypeInfo, ExecutionSummary } from '../src/lib/shared/types';
@@ -35,6 +35,25 @@ describe('workflows: the New menu', () => {
     // The step count and the "All workflows" heading are gone.
     expect(page).not.toContain("plural(workflow.nodeCount, 'step')");
     expect(page).not.toContain('All workflows');
+  });
+});
+
+describe('workflows: New -> Import... takes a template file too', () => {
+  it('sends a template export to the templates library and anything else to the workflow importer', () => {
+    const file = { kind: 'landflow/template', version: 1, template: { name: 'T', workflow: { nodes: [], connections: [] } } };
+    expect(importTarget(JSON.stringify(file))).toBe('template');
+    expect(importTarget(JSON.stringify({ name: 'W', nodes: [], connections: [] }))).toBe('workflow');
+    expect(importTarget(JSON.stringify({ kind: 'other', nodes: [] }))).toBe('workflow');
+    expect(importTarget('[1, 2]')).toBe('workflow');
+    expect(importTarget('null')).toBe('workflow');
+    // Not JSON: the workflow importer says what is wrong.
+    expect(importTarget('not json')).toBe('workflow');
+  });
+  it('wires the branch into the page: a template file goes through useTemplateImport and its page opens', () => {
+    const page = src('components', 'workflows', 'workflows-list.tsx');
+    expect(page).toContain("importTarget(text) === 'template'");
+    expect(page).toContain('templateImport.importText(text)');
+    expect(page).toContain('router.push(`/templates/${template.id}`)');
   });
 });
 

@@ -6,7 +6,7 @@
  * ones; there is no project menu here. Templates that can be used come first; the rest are dimmed and say what they
  * need. `?folder=` and the project carry through to "Use template", so a template picked from an empty folder lands in
  * it. "Show all projects" in the scope note clears the project (and the remembered one). Import lives in Workflows' New
- * menu; `useTemplateImport` is its hook.
+ * menu, which sends a template file here through `useTemplateImport`.
  */
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
@@ -34,15 +34,18 @@ const SOURCES: Array<{ id?: TemplateSource; label: string }> = [
   { id: 'remote', label: 'Remote' },
 ];
 
-/** Import a template file (from "Export" on another instance) into `projectId` (else the server's default); the new template opens. */
+/**
+ * Import a template file (from "Export" on another instance) into `projectId` (else the server's default); the new
+ * template opens. `importText` takes the file's text already read (Workflows' New -> Import... reads it to tell a
+ * template file from a workflow); `open` and `input` are a file picker of the hook's own.
+ */
 export function useTemplateImport(onImported: (template: TemplateDetail) => void, projectId?: string) {
   const picker = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
-  const importFile = async (file?: File) => {
-    if (!file) return;
+  const importText = async (data: string) => {
     setImporting(true);
     try {
-      const { template } = await api<{ template: TemplateDetail }>('/api/templates', { method: 'POST', json: { data: await file.text(), ...(projectId && { projectId }) } });
+      const { template } = await api<{ template: TemplateDetail }>('/api/templates', { method: 'POST', json: { data, ...(projectId && { projectId }) } });
       toast.success(`Imported “${template.name}”`);
       onImported(template);
     } catch (e) {
@@ -52,8 +55,11 @@ export function useTemplateImport(onImported: (template: TemplateDetail) => void
       if (picker.current) picker.current.value = '';
     }
   };
+  const importFile = async (file?: File) => {
+    if (file) await importText(await file.text());
+  };
   const input = <input ref={picker} type="file" accept=".json,application/json" className="hidden" onChange={(e) => void importFile(e.target.files?.[0] ?? undefined)} />;
-  return { input, importing, open: () => picker.current?.click() };
+  return { input, importing, importText, open: () => picker.current?.click() };
 }
 
 /** The note under the filters when a project scopes the list; "Show all projects" is the way back to the unscoped list. */

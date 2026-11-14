@@ -1791,7 +1791,9 @@ Follow-up: the Runs list filters load only the latest 200 runs and its journal f
 
 Closes P-wf-1, P-wf-2, P-cr-1, P-cr-2, P-dt-1, P-pr-2 and P-auth-1; X10 closed in part (below).
 
-- **Workflows** has one **New ▾** (Workflow, From template, Import…, Folder) in place of three buttons. A row shows its
+- **Workflows** has one **New ▾** (Workflow, From template, Import…, Folder) in place of three buttons. **Import…** takes
+  a workflow file (Landflow, n8n or Flowise) or a template file (a template page's **Export**), which goes to the
+  templates library in the folder's or picked project and opens its page. A row shows its
   last run (Succeeded, Failed, … and when) instead of the step count; the list reads the newest 500 runs after it has
   drawn, so a workflow with no run among them says "Not run yet" (and nothing at all when older runs exist beyond the 500). On a
   phone the row shows the state badge beside the updated time. The "All workflows" crumb shows only inside a folder or a project.

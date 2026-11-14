@@ -236,5 +236,4 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 ## Plugins, Marketplace and Templates (B33)
 
-- Template-file Import is no longer on the Templates page; it lives in Workflows' New menu (B34). Until that menu imports template files too (`POST /api/templates`), there is no UI for it.
 - With one marketplace (the default, the built-in Anthropic official one) the source menu is hidden, and with it that marketplace's Refresh card and the "This instance" source filter. Listings re-read after the 10-minute cache.

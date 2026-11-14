@@ -6,7 +6,8 @@
  * from their menu or by dragging them onto a folder or a breadcrumb step;
  * folders belong to a project (`?project=<id>` shows one project's folders and workflows, and creates there; a
  * workflow only goes into a folder of its own project);
- * Import creates a workflow from a Landflow, n8n or Flowise JSON file. In a protected environment (workflows
+ * Import creates a workflow from a Landflow, n8n or Flowise JSON file, or adds a template file (a template page's
+ * Export) to the templates library, in the folder's project (else the project picked), and opens it. In a protected environment (workflows
  * read-only, the API refuses changes) the buttons that create, move or delete are disabled with the reason.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
@@ -37,8 +38,9 @@ import { rememberProject } from '@/components/projects/current-project';
 import { MoveToProjectDialog, ShareDialog } from '@/components/projects/share-dialog';
 import { projectLabel, useProjects } from '@/components/projects/use-projects';
 import { useViewer } from '@/components/auth/viewer';
+import { useTemplateImport } from '@/components/templates/template-library';
 import { FolderNameDialog, MoveDialog } from './folder-dialogs';
-import { describeLastRun, lastRunByWorkflow, NEW_MENU_ITEMS, type NewMenuItem } from './list-model';
+import { describeLastRun, importTarget, lastRunByWorkflow, NEW_MENU_ITEMS, type NewMenuItem } from './list-model';
 
 /** A listed workflow with its project and the viewer's access (GET /api/workflows). */
 type WorkflowSummary = Summary & { ownership?: ResourceOwnership };
@@ -606,11 +608,17 @@ export function WorkflowsList() {
     }
   };
 
+  // A template file goes to the templates library, in the folder's project (else the project picked); its page opens.
+  const templateImport = useTemplateImport((template) => router.push(`/templates/${template.id}`), current?.projectId ?? projectId);
   const importFile = async (file?: File) => {
     if (!file) return;
     setImporting(true);
     try {
       const text = await readJsonFile(file);
+      if (importTarget(text) === 'template') {
+        await templateImport.importText(text);
+        return;
+      }
       const { workflow, report } = await api<{ workflow: Workflow; report: ImportReport }>(`/api/workflows/import${current ? '' : scopeQuery}`, {
         method: 'POST',
         json: { data: text, create: true, ...(current && { folderId: current.id }) },
