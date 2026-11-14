@@ -164,6 +164,21 @@ describe('tags in the chat route', () => {
     }
   });
 
+  it('reads a canvas node after a refused tag (each read is matched on its own ref)', async () => {
+    const draft = { ...canvas(), nodes: [...canvas().nodes, { id: 'n3', name: 'Later step', type: 'core.set', typeVersion: 1, position: [400, 0] as [number, number], parameters: {} }] };
+    asked.length = 0;
+    enableTestAuth(member);
+    try {
+      const refs = [{ type: 'workflow', id: 'wf_am_theirs', name: 'Invoice secrets' }, { type: 'node', id: 'n3', workflowId: 'wf_am_mine', name: 'Later step' }];
+      const response = await route.POST(new Request('http://localhost/api/assistant/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ messages: [{ role: 'user', content: 'Explain it' }], workflow: draft, workflowId: 'wf_am_mine', mentions: { refs } }) }));
+      await response.text();
+    } finally {
+      enableTestAuth();
+    }
+    expect(asked[0].system).toContain('## @Later step (node, on the canvas)');
+    expect(asked[0].system).not.toContain('## @Invoice secrets');
+  });
+
   it('reads at most 8 refs', async () => {
     const refs = Array.from({ length: 12 }, (_, i) => ({ type: 'workflow', id: 'wf_am_mine', workflowId: `w${i}`, name: 'Invoice sync' }));
     // The same workflow under different workflowIds is a different tag each (a node's workflow is part of its key).

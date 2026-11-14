@@ -121,9 +121,13 @@ export function mentionQueryAt(value: string, caret: number): { start: number; q
 export function removeMentionText(value: string, start: number, caret: number): { value: string; caret: number } {
   const before = value.slice(0, start);
   const after = value.slice(caret);
-  // Don't leave two spaces where the tag was.
-  const glue = before.endsWith(' ') && after.startsWith(' ') ? after.slice(1) : after;
-  return { value: `${before}${glue}`, caret: start };
+  // Nothing after it on the line: keep the box as typed up to the tag, so the next word follows on.
+  if (!after || after.startsWith('\n')) return { value: `${before}${after}`, caret: start };
+  // Otherwise the spaces on both sides collapse to one ("Look at @inv  please" → "Look at please"), none at the start.
+  const head = before.replace(/[ \t]+$/, '');
+  const tail = after.replace(/^[ \t]+/, '');
+  const gap = head && !head.endsWith('\n') ? ' ' : '';
+  return { value: `${head}${gap}${tail}`, caret: head.length + gap.length };
 }
 
 /** Add a chip: the same tag twice is one; at most `MENTION_LIMITS.refs`. */

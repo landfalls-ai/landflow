@@ -273,6 +273,12 @@ describe('the picker’s pure parts', () => {
     expect(removeMentionText('check @inv now', 6, 10)).toEqual({ value: 'check now', caret: 6 });
     expect(removeMentionText('@inv', 0, 4)).toEqual({ value: '', caret: 0 });
     expect(removeMentionText('why is @in', 7, 10)).toEqual({ value: 'why is ', caret: 7 });
+    // The spaces around a chosen tag collapse to one, never two ("Look at  please").
+    expect(removeMentionText('Look at @inv  please', 8, 12)).toEqual({ value: 'Look at please', caret: 8 });
+    expect(removeMentionText('Look at  @inv please', 9, 13)).toEqual({ value: 'Look at please', caret: 8 });
+    expect(removeMentionText('Look at @Invoice sync please', 8, 21)).toEqual({ value: 'Look at please', caret: 8 });
+    expect(removeMentionText('@inv please', 0, 4)).toEqual({ value: 'please', caret: 0 });
+    expect(removeMentionText('first\n@inv next', 6, 10)).toEqual({ value: 'first\nnext', caret: 6 });
   });
 
   it('adds a chip once, up to 8, and removes it again', () => {

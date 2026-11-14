@@ -705,10 +705,10 @@ export async function tagMentions(actor: Actor, refs: readonly SentMention[], ca
   const resolved = await resolveMentions(actor, refs);
   const reads = [...resolved.read];
   const extra: string[] = [];
-  const wanted = refs.filter((r, i, all) => all.findIndex((o) => mentionKey(o) === mentionKey(r)) === i).slice(0, MENTION_LIMITS.refs);
+  // A read carries its own ref: a canvas node is matched on it, not paired with the sent refs by position.
   reads.forEach((read, i) => {
-    const ref: MentionRef | undefined = wanted[i];
-    if (read.ok || !ref || ref.type !== 'node' || !canvas.workflowId || ref.workflowId !== canvas.workflowId) return;
+    const ref: MentionRef = read.ref;
+    if (read.ok || ref.type !== 'node' || !canvas.workflowId || ref.workflowId !== canvas.workflowId) return;
     const node = canvas.workflow.nodes.find((n) => n.id === ref.id);
     if (!node) return;
     extra.push(`## @${node.name.replaceAll('<<<', '‹‹‹').replaceAll('>>>', '›››')} (node, on the canvas)\n${nodeContext(canvas.workflow, node.id, canvas.runs?.[node.id], canvas.types).replaceAll('<<<', '‹‹‹').replaceAll('>>>', '›››').slice(0, 1200)}`);
