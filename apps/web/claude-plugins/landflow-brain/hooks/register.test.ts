@@ -533,3 +533,23 @@ test('visibility changes a held entry here and a sent entry with PATCH', { optio
   expect(patches[0]).toEqual({ url: 'http://localhost:3000/api/brain/work/sess-1?source=claude-code', body: { visibility: 'org' } })
   expect(((await command($, 'status')) as { text: string }).text).toContain('"visibility":"org"')
 })
+
+test('mode auto holds when an earlier day allowed it and today\'s briefing fails', { options: { ...OPTIONS, mode: 'auto' } }, async ($, on) => {
+  const { posts } = world(on, { briefingStatus: 500, seed: { autoSend: 'allowed' } })
+  await start($)
+  await say($, 'Do a thing.')
+  await $.session.end({ reason: 'other', sessionId: 's-stale', resume: { id: 's-stale' } } as never)
+  expect(posts).toEqual([])
+})
+
+test('/brain sync still answers with its text when no pane can open', { options: OPTIONS }, async ($, on) => {
+  world(on, { briefing: RELATED })
+  on('ui.open', () => {
+    throw new Error('no surface')
+  })
+  await start($)
+  const text = ((await command($, 'sync')) as { text: string }).text
+  expect(text).toContain('> - Ship the billing page (acme/widgets)')
+  const bare = ((await command($, '')) as { text: string }).text
+  expect(bare).toContain('no pane here')
+})

@@ -305,6 +305,11 @@ describe('untrusted text in titles and names', () => {
     expect(related[0]?.name).toBe('Ada x');
     expect(related[0]?.because.name).not.toContain('evil.example');
   });
+  it('keeps an item id whole, link and all, since it is only sent back (Post as my update), never drawn', () => {
+    const item = cleanItem({ title: 't', sourceId: 'linear:https://linear.app/acme/issue/ENG-1\u202e', source: 'linear' }, base);
+    expect(item.sourceId).toBe('linear:https://linear.app/acme/issue/ENG-1');
+    expect(item.source).toBe('linear');
+  });
   it('clip removes bidi and zero-width characters', () => {
     expect(clip('a\u202eb\u200bc\u2066d', 20)).toBe('a b c d');
   });

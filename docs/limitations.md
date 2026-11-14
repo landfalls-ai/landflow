@@ -203,7 +203,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - `/brain review` asks about one held entry at a time and needs a person at the prompt; in a run with nobody to ask it lists them instead.
 - Only the directories of files edited through Claude Code's file tools become areas; a file changed by a shell command is not. A commit or pull request is counted from the command and its output, so one made by another tool is missed.
 - The session ends with the entry held; a session that crashes is held at the next start, with no end time.
-- The key and options are set by hand; a page that creates them comes later. The pane and band redraw only when the engine redraws them, so a dismissal or a post may show at the next redraw. The band shows the first related colleague only, from the briefing read at session start or `/brain sync`; the overlap detector is B38.
+- The key and options come from `/connect`, which makes the brain key and shows the mod's options; they are pasted into Claude Code by hand. The pane and band redraw only when the engine redraws them, so a dismissal or a post may show at the next redraw. The band shows the first related colleague only, from the briefing read at session start or `/brain sync`; the overlap detector is B38.
 - Repository pages (B18): made only when a `team` or `org` event names the repository; they land in the instance owner's
   personal project, so members cannot open them, and the event does not link to the page (a repository page shows no work yet).
 - `landflow work` always sends `visibility: 'private'`, so an item changed to `team` or `org` goes back to private the

@@ -1518,7 +1518,7 @@ setting `brain.workAutoSend`.
 - Follow-ups: `landflow work` should omit `visibility`; the briefing prompt (`briefingText`) does not render `related` yet (MOD6's clip, quote and link rules apply when it does); link a work event to its repository page and index systems by repo in the wiki; check `canEntity` before showing a person page's user link.
 - **Built (B29)**: the mod's colleagues: `/brain sync`, the pane, the overlap band, team or org per item, Post as my update and the admin's no-auto rule ([landflow-brain-mod.md](landflow-brain-mod.md#colleagues)).
 - **Built (B30, V3's server part)**: the Tomorrow sync template and its five brain nodes, the `brain_briefings` store, briefings served over MCP and `GET /api/brain/briefing` ([work-and-briefings.md](work-and-briefings.md#the-nightly-sync)). Open, carried to B38: the landflow-brain mod's session start shows `summary` and `source` (`hooks/client.ts`, `register.ts`).
-- **Next**: the overlap detector, a Settings screen for the auto-send setting, the web card and setup button (B37), and the mod showing the nightly text at session start.
+- **Next**: the overlap detector, the web card and setup button (B37), and the mod showing the nightly text at session start. (The admin's auto-send switch is in Settings → MCP.)
 
 ## Shell: nine-item rail (built 2026-11-14)
 

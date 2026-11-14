@@ -189,14 +189,16 @@ const BECAUSE = ['repo', 'initiative', 'customer', 'area', 'similar']
 export function cleanItem(raw: unknown, baseUrl: string): BriefingItem {
   const item = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
   const text = (value: unknown, max: number) => (typeof value === 'string' && value ? cleanText(value, max, baseUrl) || undefined : undefined)
+  // Ids are sent back to the brain (Post as my update), never drawn: one clipped line, with any link in them kept, or the post would miss.
+  const id = (value: unknown, max: number) => (typeof value === 'string' && value ? clip(value, max) || undefined : undefined)
   const url = typeof item.url === 'string' ? safeLink(item.url, baseUrl) : undefined
   const visibility = VISIBILITIES.find(v => v === item.visibility)
   return {
     title: text(item.title, 160) ?? '',
     ...(text(item.repo, 80) && { repo: text(item.repo, 80) }),
     ...(text(item.at, 40) && { at: text(item.at, 40) }),
-    ...(text(item.sourceId, 120) && { sourceId: text(item.sourceId, 120) }),
-    ...(text(item.source, 40) && { source: text(item.source, 40) }),
+    ...(id(item.sourceId, 120) && { sourceId: id(item.sourceId, 120) }),
+    ...(id(item.source, 40) && { source: id(item.source, 40) }),
     ...(visibility && { visibility }),
     ...(url && { url }),
   }

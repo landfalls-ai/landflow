@@ -2,11 +2,11 @@
 
 Your own Claude Code work in the [company brain](second-brain.md): a local journal, a summary held for your review, and
 your yesterday back at the next session. Part of the [Landflow docs](README.md). It sends [work events](work-and-briefings.md)
-(`work.session`) to `POST /api/brain/work`, and nothing it sends is visible to anyone else: every event is `private`.
-Items stay private until you pick team or org. `brain_ask` comes later.
+(`work.session`) to `POST /api/brain/work`, and every event is `private` by default: nobody else sees it until you pick
+team or org for it (`/brain visibility`, or Send wider in `/brain review`) or post it as your update. `brain_ask` comes later.
 
 The code is `apps/web/claude-plugins/landflow-brain/`: `hooks/journal.ts` (the entry and its rules), `hooks/summary.ts`
-(the title and the event), `hooks/client.ts` (the calls and the queue) `hooks/pane.tsx` (the pane and the band) and `hooks/register.ts` (the hooks and the
+(the title and the event), `hooks/client.ts` (the calls and the queue), `hooks/pane.tsx` (the pane and the band) and `hooks/register.ts` (the hooks and the
 commands). The first three are plain functions with no engine calls, tested in `apps/web/test/claude-brain-mod.test.ts`;
 the hooks are tested with Claude Code's own kit.
 
@@ -38,10 +38,10 @@ At the end of a session the entry is held in the local journal. Nothing leaves u
 one entry at a time: send it, drop it, skip it, or type a new title. Drop also takes its event out of the queue; if
 it was sent meanwhile (a flush while you answered), it is deleted in the brain as `/brain forget` does. Mode `auto` queues it at the end instead, unless
 your admin has forbidden tools sending work on their own (`brain.workAutoSend`, which the briefing reports as
-`autoSend`); then it is held as in `review`. It is held too while no briefing has ever answered, because the policy is
-unknown. The briefing is read at every session start for this, whatever `sync` says. Mode `off` records nothing.
+`autoSend`); then it is held as in `review`. It is held too while no briefing has answered, because the policy is
+unknown: when this session's briefing fails and none is cached for today, an earlier day's `allowed` is forgotten. The briefing is read at every session start for this, whatever `sync` says. Mode `off` records nothing.
 
-Every event is private: not even an admin reads it.
+Every event is private by default, and not even an admin reads a private one.
 
 ## Commands
 
@@ -82,7 +82,7 @@ The server returns only what you may read, so a colleague appears only when they
 - **Team or org per item.** Items are private. In `/brain review`, Send wider asks Team or Org; Back returns to the first question. `/brain visibility <id> team` changes a held item (before it is sent) or a sent one (`PATCH /api/brain/work/:sourceId`).
 - **Post as my update.** `/brain post <id>` or the pane's button asks "Post to org / Post to team / Cancel" first, then calls `POST /api/brain/work/:sourceId/share`. With nobody to ask, nothing is posted. The item keeps its own visibility.
 - **The admin's rule.** When the briefing says `autoSend: forbidden`, mode `auto` behaves as `review`, and the status line says "brain: review (auto off by admin)". Nothing is sent without your review.
-- **Untrusted text.** Names, titles and reasons from the server are cut to one line of at most 40 to 160 characters, shown quoted (`>`) and as data. A link is kept only when it is on your configured Landflow URL or `https://github.com`; this holds for an item's link and for links written inside a title, a name or a reason (a markdown link keeps its words, a bare URL becomes "(link removed)"). Bidirectional and zero-width characters are removed. A stored briefing view from an earlier day is never drawn: no band, no pane items. Post as my update sends the item's own source, and is not offered on an update you already posted.
+- **Untrusted text.** Names, titles and reasons from the server are cut to one line of at most 40 to 160 characters, shown quoted (`>`) and as data. A link is kept only when it is on your configured Landflow URL or `https://github.com`; this holds for an item's link and for links written inside a title, a name or a reason (a markdown link keeps its words, a bare URL becomes "(link removed)"). Only text with a scheme (`https://…`) or starting `www.` counts as a link: a bare domain such as `evil.example/login`, or `mailto:` and `javascript:` text, stays as plain text, which the views never make clickable. An item's id is kept whole (one clipped line), since it is only sent back to the brain and never drawn. Bidirectional and zero-width characters are removed. A stored briefing view from an earlier day is never drawn: no band, no pane items. Post as my update sends the item's own source, and is not offered on an update you already posted.
 
 ## Offline queue
 
