@@ -7,11 +7,12 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Columns3, Download, Ellipsis, Loader2, Pencil, Plus, Search, Trash2, Upload, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Download, Ellipsis, Loader2, Pencil, Plus, Search, Trash2, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api, ApiError } from '@/lib/client/api';
 import { plural, timeAgo } from '@/lib/client/format';
+import { showHeaderAction } from '@/lib/client/list-page';
 import { COLUMN_TYPES, type ColumnType, type CsvImportResult, type DataTable, type DataTableColumn, type DataTableRow, type RowPage } from '@/lib/shared/data-tables';
 import { PageHeader } from '../shell/page-header';
 import { Button } from '../ui/button';
@@ -65,7 +66,8 @@ function CellEditor({ column, value, onCommit, onCancel }: { column: DataTableCo
   );
 }
 
-function AddColumn({ onAdd }: { onAdd: (name: string, type: ColumnType) => Promise<boolean> }) {
+/** The + at the end of the header row: opens a small form that adds a column. */
+export function AddColumn({ onAdd }: { onAdd: (name: string, type: ColumnType) => Promise<boolean> }) {
   const [name, setName] = useState('');
   const [type, setType] = useState<ColumnType>('string');
   const [busy, setBusy] = useState(false);
@@ -74,9 +76,9 @@ function AddColumn({ onAdd }: { onAdd: (name: string, type: ColumnType) => Promi
       align="end"
       className="w-[280px] p-3"
       trigger={({ toggle }) => (
-        <Button size="sm" onClick={toggle}>
-          <Columns3 className="size-3.5" /> Add column
-        </Button>
+        <button onClick={toggle} aria-label="Add column" title="Add column" className="grid size-7 place-items-center rounded-md text-t3 transition-colors hover:bg-acdim hover:text-t1">
+          <Plus className="size-4" />
+        </button>
       )}
     >
       {(close) => {
@@ -395,12 +397,6 @@ export function DataTableView({ tableId }: { tableId: string }) {
         actions={
           <>
             <input ref={fileInput} type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => e.target.files?.[0] && void importCsv(e.target.files[0])} />
-            <Button size="sm" onClick={() => fileInput.current?.click()} disabled={busy} title="Append rows from a CSV whose first line names the columns">
-              <Upload className="size-3.5" /> Import CSV
-            </Button>
-            <a href={`/api/data-tables/${tableId}/export`} download className="inline-flex h-7 items-center gap-1.5 rounded-full border border-bd px-[11px] text-[12px] font-semibold text-t1 transition-colors hover:border-ac hover:text-ac">
-              <Download className="size-3.5" /> Export CSV
-            </a>
             <Popover
               trigger={({ toggle }) => (
                 <Button size="icon-sm" variant="ghost" onClick={toggle} aria-label="More actions">
@@ -418,6 +414,24 @@ export function DataTableView({ tableId }: { tableId: string }) {
                   >
                     <Pencil /> Rename table
                   </MenuItem>
+                  <MenuItem
+                    disabled={busy}
+                    onClick={() => {
+                      fileInput.current?.click();
+                      close();
+                    }}
+                  >
+                    <Upload /> Import CSV…
+                  </MenuItem>
+                  <a
+                    href={`/api/data-tables/${tableId}/export`}
+                    download
+                    onClick={close}
+                    role="menuitem"
+                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-t1 hover:bg-acdim [&_svg]:size-3.5"
+                  >
+                    <Download /> Export CSV
+                  </a>
                   <MenuSeparator />
                   <MenuItem
                     danger
@@ -458,16 +472,18 @@ export function DataTableView({ tableId }: { tableId: string }) {
               </Button>
             </div>
           )}
-          <div className="ml-auto flex items-center gap-2">
-            <AddColumn onAdd={addColumn} />
-            <Button size="sm" variant="primary" onClick={addRow} disabled={!table}>
-              <Plus className="size-3.5" /> Add row
-            </Button>
-          </div>
+          {/* The empty grid carries its own Add row, so the toolbar's copy hides until there are rows. */}
+          {showHeaderAction(Boolean(page && !rows.length && !query && columns.length)) && (
+            <div className="ml-auto flex items-center gap-2">
+              <Button size="sm" variant="primary" onClick={addRow} disabled={!table}>
+                <Plus className="size-3.5" /> Add row
+              </Button>
+            </div>
+          )}
         </div>
 
         <div className="max-h-[calc(100vh-190px)] min-h-[220px] overflow-auto rounded-2xl border border-hair bg-sf">
-          <table className="w-full border-separate border-spacing-0 text-[13px]" style={{ minWidth: 120 + columns.length * 180 + 150 }}>
+          <table className="w-full border-separate border-spacing-0 text-[13px]" style={{ minWidth: 120 + columns.length * 180 + 150 + 44 }}>
             <thead className="sticky top-0 z-10">
               <tr>
                 <th scope="col" className="w-10 border-b border-r border-hair bg-sf2 px-2.5">
@@ -538,6 +554,9 @@ export function DataTableView({ tableId }: { tableId: string }) {
                   ),
                 )}
                 {header('updatedAt', 'Updated', 'date', 'w-[150px]')}
+                <th scope="col" className="w-11 border-b border-hair bg-sf2 px-1.5 text-center">
+                  <AddColumn onAdd={addColumn} />
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -579,9 +598,10 @@ export function DataTableView({ tableId }: { tableId: string }) {
                       </td>
                     );
                   })}
-                  <td className="border-b border-hair px-2.5 text-[12px] text-t3" title={row.updatedAt}>
+                  <td className="border-b border-r border-hair px-2.5 text-[12px] text-t3" title={row.updatedAt}>
                     {timeAgo(row.updatedAt)}
                   </td>
+                  <td className="border-b border-hair" />
                 </tr>
               ))}
             </tbody>

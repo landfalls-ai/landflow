@@ -1759,6 +1759,23 @@ Follow-up: the Runs list filters load only the latest 200 runs and its journal f
   hidden; Insights drops the migration banner, shows the Agent layers card only when the cache or router was used, hides
   "no change" deltas and puts its footer behind a help line.
 
+## Lists, credentials, tables, projects and sign-in (B34, backbone wave 5)
+
+Closes X10, P-wf-1, P-wf-2, P-cr-1, P-cr-2, P-dt-1, P-pr-2 and P-auth-1.
+
+- **Workflows** has one **New ▾** (Workflow, From template, Import…, Folder) in place of three buttons. A row shows its
+  last run (Succeeded, Failed, … and when) instead of the step count; the list reads the newest 500 runs once, so a
+  workflow with no run among them says "Not run yet". The "All workflows" crumb shows only inside a folder or a project.
+- **Credentials** has no type grid; **New credential** opens the searchable type list, grouped by app, with no plugin
+  column and no "API" suffix. `/credentials?project=<id>` lists one project's credentials.
+- **Data tables**: Import CSV and Export CSV are in **⋯**; **+** at the end of the header row adds a column.
+- **Projects**: four tabs, Overview (counts that open the global page for the project), Members, Settings (with
+  Variables) and Audit log. The old `?tab=` values map to them.
+- **Empty pages** (X10): the header button hides while the empty state shows its own.
+- **Sign-in**: no welcome sentence; an invalid or expired invite shows only the message.
+- Left open: `/data-tables` and `/agents` do not read `?project=` yet, so the Overview's counts for them open the whole
+  list; a project's items no longer have Share and Move in a per-project list (use the global pages' menus).
+
 ## Not planned
 
 Later, maybe: an agent code sandbox, and prompt management. Not planned:

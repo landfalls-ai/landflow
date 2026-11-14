@@ -19,7 +19,8 @@ import { ParamForm } from '../editor/param-form';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { AppIcon } from '../ui/icon';
-import { FieldLabel, Input } from '../ui/inputs';
+import { FieldLabel, Input, SectionLabel } from '../ui/inputs';
+import { groupCredentialTypes } from './credential-groups';
 import { OAuth2Connection, OAuth2Presets } from './oauth2-connect';
 import { useCredentialStore } from './use-credentials';
 import { useDialogFocus } from '../ui/use-dialog-focus';
@@ -40,13 +41,11 @@ function TypePicker({ types, onPick }: { types: CredentialTypeInfo[]; onPick: (t
   const [active, setActive] = useState(0);
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => input.current?.focus(), []);
-  const shown = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return types
-      .filter((t) => !q || `${t.descriptor.displayName} ${t.pluginName} ${t.descriptor.description ?? ''}`.toLowerCase().includes(q))
-      .sort((a, b) => a.descriptor.displayName.localeCompare(b.descriptor.displayName));
-  }, [types, query]);
+  const groups = useMemo(() => groupCredentialTypes(types, query), [types, query]);
+  // The arrow keys walk the rows in the order they are drawn, across groups.
+  const flat = useMemo(() => groups.flatMap((g) => g.rows), [groups]);
   useEffect(() => setActive(0), [query]);
+  let index = -1;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -57,9 +56,9 @@ function TypePicker({ types, onPick }: { types: CredentialTypeInfo[]; onPick: (t
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'ArrowDown') setActive((i) => Math.min(shown.length - 1, i + 1));
+            if (e.key === 'ArrowDown') setActive((i) => Math.min(flat.length - 1, i + 1));
             else if (e.key === 'ArrowUp') setActive((i) => Math.max(0, i - 1));
-            else if (e.key === 'Enter' && shown[active]) onPick(shown[active].type);
+            else if (e.key === 'Enter' && flat[active]) onPick(flat[active].info.type);
             else return;
             e.preventDefault();
           }}
@@ -68,24 +67,30 @@ function TypePicker({ types, onPick }: { types: CredentialTypeInfo[]; onPick: (t
         />
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-        {shown.map((info, index) => (
-          <button
-            key={info.type}
-            onClick={() => onPick(info.type)}
-            onMouseEnter={() => setActive(index)}
-            style={{ animationDelay: `${Math.min(index, 12) * 18}ms` }}
-            className={cn('flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors animate-fade-up', index === active && 'bg-acdim')}
-          >
-            <CredentialTypeIcon info={info} />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[13px] font-semibold text-t1">{info.descriptor.displayName}</span>
-              <span className="block truncate text-[12px] text-t3">{info.descriptor.description ?? `Used by ${info.nodeTypes.length} node${info.nodeTypes.length === 1 ? '' : 's'}`}</span>
-            </span>
-            <span className="shrink-0 text-[11px] text-t3">{info.pluginName}</span>
-            {!info.available && <Badge tone="warning">offline</Badge>}
-          </button>
+        {groups.map((group) => (
+          <section key={group.app} aria-label={group.app} className="mb-2">
+            <SectionLabel className="px-2.5 pb-1 pt-2">{group.app}</SectionLabel>
+            {group.rows.map(({ info, label }) => {
+              const i = ++index;
+              return (
+                <button
+                  key={info.type}
+                  onClick={() => onPick(info.type)}
+                  onMouseEnter={() => setActive(i)}
+                  className={cn('flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors', i === active && 'bg-acdim')}
+                >
+                  <CredentialTypeIcon info={info} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] font-semibold text-t1">{label}</span>
+                    <span className="block truncate text-[12px] text-t3">{info.descriptor.description ?? `Used by ${info.nodeTypes.length} node${info.nodeTypes.length === 1 ? '' : 's'}`}</span>
+                  </span>
+                  {!info.available && <Badge tone="warning">offline</Badge>}
+                </button>
+              );
+            })}
+          </section>
         ))}
-        {!shown.length && (
+        {!flat.length && (
           <p className="px-3 py-10 text-center text-[13px] text-t3">
             {types.length ? 'No credential type matches.' : 'No plugin publishes a credential type yet. Start an integration plugin and it shows up here.'}
           </p>

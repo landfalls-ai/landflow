@@ -12,15 +12,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowRightLeft, ChevronRight, Download, ExternalLink, FileUp, Folder as FolderIcon, FolderInput, FolderPlus, LayoutTemplate, Lock, MoreHorizontal, Pencil, Plus, Share2, Trash2 } from 'lucide-react';
+import { ArrowRightLeft, ChevronDown, ChevronRight, Download, ExternalLink, FileUp, Folder as FolderIcon, FolderInput, FolderPlus, LayoutTemplate, Lock, MoreHorizontal, Pencil, Plus, Share2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api, ApiError } from '@/lib/client/api';
 import { useWorkflowsReadOnly } from '@/lib/client/environment';
 import { plural, timeAgo } from '@/lib/client/format';
+import { showHeaderAction } from '@/lib/client/list-page';
 import { nodeColor, tint } from '@/lib/client/node-style';
 import { resourceCan, type ResourceOwnership } from '@/lib/shared/projects';
-import type { Folder, ImportReport, NodeTypeInfo, Workflow, WorkflowSummary as Summary } from '@/lib/shared/types';
+import type { ExecutionSummary, Folder, ImportReport, NodeTypeInfo, Workflow, WorkflowSummary as Summary } from '@/lib/shared/types';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
 import { ProtectedGate } from '@/components/shell/protected-gate';
 import { Badge } from '@/components/ui/badge';
@@ -37,6 +38,7 @@ import { MoveToProjectDialog, ShareDialog } from '@/components/projects/share-di
 import { projectLabel, useProjects } from '@/components/projects/use-projects';
 import { useViewer } from '@/components/auth/viewer';
 import { FolderNameDialog, MoveDialog } from './folder-dialogs';
+import { describeLastRun, lastRunByWorkflow } from './list-model';
 
 /** A listed workflow with its project and the viewer's access (GET /api/workflows). */
 type WorkflowSummary = Summary & { ownership?: ResourceOwnership };
@@ -91,7 +93,7 @@ function Crumb({
   onOpen,
   onDropWorkflow,
   readOnly,
-  rootLabel = 'All workflows',
+  rootLabel = 'Workflows',
 }: {
   folder?: Folder;
   last: boolean;
@@ -242,6 +244,7 @@ function FolderRow({
 function WorkflowRow({
   workflow,
   types,
+  lastRun,
   folderPath,
   onMove,
   onShare,
@@ -251,6 +254,8 @@ function WorkflowRow({
 }: {
   workflow: WorkflowSummary;
   types: Record<string, NodeTypeInfo>;
+  /** The workflow's newest run in the list's executions, if any. */
+  lastRun?: ExecutionSummary;
   /** Shown when the list spans folders (search, tag filter). */
   folderPath?: string;
   onMove: () => void;
@@ -325,9 +330,7 @@ function WorkflowRow({
           ))}
           {workflow.ownership?.shared && <Badge tone="muted" title={`Shared from ${workflow.ownership.projectName}`}>{workflow.ownership.access.role === 'viewer' ? 'Shared · view' : 'Shared'}</Badge>}
           {workflow.active && <Badge tone="success">Published</Badge>}
-          <span className="hidden w-16 text-right text-[12px] text-t3 sm:inline">
-            {plural(workflow.nodeCount, 'step')}
-          </span>
+          <LastRun run={lastRun} />
           <span className="w-16 text-right text-[12px] tabular-nums text-t2" title={`Updated ${new Date(workflow.updatedAt).toLocaleString()}`}>
             {timeAgo(workflow.updatedAt)}
           </span>
@@ -424,6 +427,54 @@ function WorkflowRow({
   );
 }
 
+/** The row's last run: its state, and when it started (or "Not run yet"). */
+export function LastRun({ run }: { run?: ExecutionSummary }) {
+  const last = describeLastRun(run);
+  return (
+    <span className="flex w-[110px] shrink-0 flex-col items-end gap-0.5 max-sm:hidden" data-testid="last-run" title={last.startedAt ? `Last run ${new Date(last.startedAt).toLocaleString()}` : undefined}>
+      <Badge tone={last.tone}>{last.label}</Badge>
+      {last.startedAt && <span className="text-[11px] tabular-nums text-t3">{timeAgo(last.startedAt)}</span>}
+    </span>
+  );
+}
+
+/** The page's one create menu: workflow, from template, import, folder. A bottom sheet on a phone (Popover does that). */
+function NewMenu({ locked, creating, onWorkflow, onTemplate, onImport, onFolder }: { locked: boolean; creating: boolean; onWorkflow: () => void; onTemplate: () => void; onImport: () => void; onFolder: () => void }) {
+  return (
+    <Popover
+      title="New"
+      trigger={({ toggle, open }) => (
+        <Button variant="primary" size="sm" onClick={toggle} loading={creating} disabled={locked} aria-haspopup="menu" aria-expanded={open}>
+          {!creating && <Plus className="size-3.5" strokeWidth={2} />} New <ChevronDown className="size-3" />
+        </Button>
+      )}
+    >
+      {(close) => {
+        const pick = (run: () => void) => () => {
+          close();
+          run();
+        };
+        return (
+          <>
+            <MenuItem onClick={pick(onWorkflow)}>
+              <Plus /> Workflow
+            </MenuItem>
+            <MenuItem onClick={pick(onTemplate)}>
+              <LayoutTemplate /> From template
+            </MenuItem>
+            <MenuItem onClick={pick(onImport)}>
+              <FileUp /> Import…
+            </MenuItem>
+            <MenuItem onClick={pick(onFolder)}>
+              <FolderPlus /> Folder
+            </MenuItem>
+          </>
+        );
+      }}
+    </Popover>
+  );
+}
+
 export function WorkflowsList() {
   const router = useRouter();
   const params = useSearchParams();
@@ -434,6 +485,7 @@ export function WorkflowsList() {
   const project = projects?.find((p) => p.id === projectId);
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>();
   const [folders, setFolders] = useState<Folder[]>([]);
+  const [lastRuns, setLastRuns] = useState<Map<string, ExecutionSummary>>(new Map());
   const [types, setTypes] = useState<Record<string, NodeTypeInfo>>({});
   const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -449,9 +501,15 @@ export function WorkflowsList() {
   const scopeQuery = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
   const load = useCallback(
     () =>
-      Promise.all([api<{ workflows: WorkflowSummary[] }>(`/api/workflows${scopeQuery}`), api<{ folders: Folder[] }>(`/api/folders${scopeQuery}`).catch(() => ({ folders: [] as Folder[] }))]).then(([w, f]) => {
+      Promise.all([
+        api<{ workflows: WorkflowSummary[] }>(`/api/workflows${scopeQuery}`),
+        api<{ folders: Folder[] }>(`/api/folders${scopeQuery}`).catch(() => ({ folders: [] as Folder[] })),
+        // One batched read: the newest runs of every workflow; each row takes its own newest.
+        api<{ executions: ExecutionSummary[] }>('/api/executions?limit=500').catch(() => ({ executions: [] as ExecutionSummary[] })),
+      ]).then(([w, f, e]) => {
         setWorkflows(w.workflows);
         setFolders(f.folders);
+        setLastRuns(lastRunByWorkflow(e.executions));
       }),
     [scopeQuery],
   );
@@ -587,6 +645,11 @@ export function WorkflowsList() {
   const count = searching ? visibleWorkflows?.length : workflows?.length;
   const loaded = workflows !== undefined;
   const emptyHere = loaded && !searching && !childFolders.length && !visibleWorkflows?.length;
+  const templatesHref = current
+    ? `/templates?folder=${encodeURIComponent(current.id)}${current.projectId ? `&project=${encodeURIComponent(current.projectId)}` : ''}`
+    : projectId
+      ? `/templates?project=${encodeURIComponent(projectId)}`
+      : '/templates';
 
   return (
     <>
@@ -604,21 +667,18 @@ export function WorkflowsList() {
         }
         actions={
           <>
-            <ProtectedGate reason={readOnly}>
-              <Button size="sm" variant="ghost" onClick={() => picker.current?.click()} loading={importing} disabled={locked} title={locked ? undefined : 'Create a workflow from a Landflow, n8n or Flowise JSON file'}>
-                {!importing && <FileUp className="size-3.5" />} Import
-              </Button>
-            </ProtectedGate>
-            <ProtectedGate reason={readOnly}>
-              <Button size="sm" onClick={() => setDialog({ kind: 'new-folder' })} disabled={locked}>
-                <FolderPlus className="size-3.5" /> New folder
-              </Button>
-            </ProtectedGate>
-            <ProtectedGate reason={readOnly}>
-              <Button variant="primary" size="sm" onClick={() => void create()} loading={creating} disabled={locked}>
-                {!creating && <Plus className="size-3.5" strokeWidth={2} />} New workflow
-              </Button>
-            </ProtectedGate>
+            {showHeaderAction(emptyHere) && (
+              <ProtectedGate reason={readOnly}>
+                <NewMenu
+                  locked={locked}
+                  creating={creating}
+                  onWorkflow={() => void create()}
+                  onTemplate={() => router.push(templatesHref)}
+                  onImport={() => picker.current?.click()}
+                  onFolder={() => setDialog({ kind: 'new-folder' })}
+                />
+              </ProtectedGate>
+            )}
             <input ref={picker} type="file" accept=".json,application/json" className="hidden" onChange={(e) => void importFile(e.target.files?.[0] ?? undefined)} />
           </>
         }
@@ -635,6 +695,7 @@ export function WorkflowsList() {
               </span>
             ) : (
               <>
+                {(breadcrumb.length > 0 || project) && (
                 <Crumb
                   last={!breadcrumb.length}
                   onOpen={() => openFolder(undefined)}
@@ -642,6 +703,7 @@ export function WorkflowsList() {
                   readOnly={readOnly}
                   rootLabel={project ? projectLabel(project, viewer?.id) : undefined}
                 />
+                )}
                 {breadcrumb.map((folder, i) => (
                   <span key={folder.id} className="flex min-w-0 items-center gap-0.5">
                     <ChevronRight className="size-3.5 shrink-0 text-t3" />
@@ -714,6 +776,7 @@ export function WorkflowsList() {
               key={workflow.id}
               workflow={workflow}
               types={types}
+              lastRun={lastRuns.get(workflow.id)}
               folderPath={searching && known(workflow.folderId) ? pathOf(workflow.folderId).map((f) => f.name).join(' / ') : undefined}
               onMove={() => setDialog({ kind: 'move', workflow })}
               onShare={() => setDialog({ kind: 'share', workflow })}
@@ -741,7 +804,7 @@ export function WorkflowsList() {
                       <FileUp className="size-3.5" /> Import
                     </Button>
                   </ProtectedGate>
-                  <Button size="sm" onClick={() => router.push(projectId ? `/templates?project=${encodeURIComponent(projectId)}` : '/templates')}>
+                  <Button size="sm" onClick={() => router.push(templatesHref)}>
                     <LayoutTemplate className="size-3.5" /> Browse templates
                   </Button>
                   <ProtectedGate reason={readOnly}>
