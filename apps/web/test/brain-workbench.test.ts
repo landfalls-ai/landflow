@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
 import { statusItems, workbenchLayout } from '@/components/brain/wiki/workbench';
-import { indexCards } from '@/components/brain/wiki/index-doc';
+import { indexCards, indexOutline } from '@/components/brain/wiki/index-doc';
 import { deltaText, change, showLayersCard } from '@/components/insights/format';
 import { AgentLayersCard } from '@/components/insights/agent-layers-card';
 import type { InsightsTotals } from '@/lib/shared/platform';
@@ -56,5 +56,14 @@ describe('insights formatting', () => {
     expect(showLayersCard({ requests: 9, routed: 2, cached: 0 })).toBe(true);
     expect(showLayersCard({ requests: 9, routed: 0, cached: 1 })).toBe(true);
     expect(renderToStaticMarkup(createElement(AgentLayersCard, { days: 7, label: '7 days' }))).toBe('');
+  });
+});
+
+describe('index outline', () => {
+  const home = { shared: [], proposals: [], teams: [], health } as never;
+  const all = [{ title: 'Shared across teams' }, { title: 'Suggestions' }, { title: 'Teams this week' }, { title: 'Needs a person' }];
+  it('drops the sections whose cards are hidden', () => {
+    expect(indexOutline(all, home)).toEqual([]);
+    expect(indexOutline(all, { ...home, shared: [1] }).map((o) => o.title)).toEqual(['Shared across teams']);
   });
 });

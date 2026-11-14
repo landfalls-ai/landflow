@@ -5,10 +5,11 @@
  * team's week and the pages that need a person. The log is the latest work, a heading per day. Their Source views are
  * `indexMarkdown` and `logMarkdown` (lib/shared/brain-files.ts).
  */
+import Link from 'next/link';
 import { useMemo } from 'react';
 import { AlertTriangle, Users } from 'lucide-react';
 import { timeAgo } from '@/lib/client/format';
-import { byDay, FOLDERS } from '@/lib/shared/brain-files';
+import { byDay, FOLDERS, SETTINGS, urlOf } from '@/lib/shared/brain-files';
 import type { SharedWork, WikiHome } from '@/lib/shared/brain-wiki';
 import { Card } from '../../shell/page-header';
 import { Chip } from '../../ui/badge';
@@ -26,6 +27,13 @@ export function indexCards(home: Pick<WikiHome, 'shared' | 'proposals' | 'teams'
   return cards;
 }
 
+/** The headings of `indexMarkdown` that the index shows as cards: a hidden card has no outline entry. */
+export function indexOutline<T extends { title: string }>(outline: T[], home: Pick<WikiHome, 'shared' | 'proposals' | 'teams' | 'health'>): T[] {
+  const titles: Record<string, 'shared' | 'suggestions' | 'teams' | 'needs'> = { 'Shared across teams': 'shared', Suggestions: 'suggestions', 'Teams this week': 'teams', 'Needs a person': 'needs' };
+  const shown = indexCards(home);
+  return outline.filter((o) => !(o.title in titles) || shown.includes(titles[o.title]!));
+}
+
 const namesOf = (home: WikiHome) => new Map(home.entries.map((e) => [`${e.type}/${e.id}`, e.name]));
 
 export function IndexDoc({ home, onChanged }: { home: WikiHome; onChanged: () => void }) {
@@ -40,6 +48,15 @@ export function IndexDoc({ home, onChanged }: { home: WikiHome; onChanged: () =>
           {home.entries.length
             ? `${home.entries.length} pages: ${FOLDERS.map(({ type, folder }) => `${home.entries.filter((e) => e.type === type).length} ${folder}`).join(', ')}. What the work flows recorded in Slack, Drive, Calendar, Notion, Linear, Attio and Fathom, read as a wiki. Open a page from the Explorer, or press Ask to ask the brain.`
             : 'No pages yet. Install a work template (Templates → work) and the pages fill in from what your work flows record.'}
+          {!home.entries.length && (
+            <>
+              {' '}
+              <Link href={urlOf(SETTINGS)} className="text-ac hover:underline">
+                What Landflow knows
+              </Link>
+              : run the brain now, facts and detectors.
+            </>
+          )}
         </p>
       </header>
 

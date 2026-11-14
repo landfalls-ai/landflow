@@ -9,12 +9,12 @@
  * One click opens a file in the preview tab (replaced by the next one), a double click keeps it open.
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ChevronDown, ChevronRight, ChevronsDownUp, FileText, Folder, FolderOpen, GitCommitHorizontal, Link2, ListTree, RefreshCw, Search as SearchIcon, Settings2, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, ChevronsDownUp, FileText, Folder, FolderOpen, GitCommitHorizontal, Link2, ListTree, RefreshCw, Search as SearchIcon } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
 import { cn } from '@/lib/utils';
 import type { BrainFact } from '@/lib/shared/brain';
-import { byDay, SETTINGS, type BrainTree, type FileRef, type OutlineItem, type TreeFile, type TreeNode } from '@/lib/shared/brain-files';
+import { byDay, type BrainTree, type FileRef, type OutlineItem, type TreeFile, type TreeNode } from '@/lib/shared/brain-files';
 import type { WikiHome, WikiPage } from '@/lib/shared/brain-wiki';
 import { kindLabel, sourceLabel, TYPE_ICON } from './parts';
 

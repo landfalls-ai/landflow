@@ -17,14 +17,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { AlertTriangle, Brain, ChevronRight, Code2, Eye, Files, GitCommitHorizontal, PanelBottom, PanelLeft, Search, Settings2, Sparkles, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
-import { timeAgo } from '@/lib/client/format';
 import { cn } from '@/lib/utils';
 import { brainTree, INDEX, indexMarkdown, LOG, logMarkdown, outlineOf, pageMarkdown, SETTINGS, urlOf, type BrainTree, type FileRef, type OutlineItem } from '@/lib/shared/brain-files';
 import type { WikiHome, WikiPage, WikiSummary } from '@/lib/shared/brain-wiki';
 import { CopyButton } from '../../ui/copy-button';
 import { BrainPanel } from '../brain-panel';
 import { ProposalCard, useProposalActions } from '../proposal-card';
-import { IndexDoc, LogDoc } from './index-doc';
+import { IndexDoc, indexOutline, LogDoc } from './index-doc';
 import { PageDoc } from './page-doc';
 import { WikiNav } from './parts';
 import { ExplorerView, FileIcon, SearchView, TimelineView, type Opener } from './side-views';
@@ -165,7 +164,13 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
     if (active === LOG) return logMarkdown(home);
     return page ? pageMarkdown(page) : undefined;
   }, [active, home, page]);
-  const outline = useMemo(() => (markdown ? outlineOf(markdown) : []), [markdown]);
+  const outline = useMemo(() => {
+    const all = markdown ? outlineOf(markdown) : [];
+    return active === INDEX && home ? indexOutline(all, home) : all;
+  }, [markdown, active, home]);
+  const layout = workbenchLayout(home?.entries.length, active);
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
   const mode: Mode = active ? (modes[active] ?? 'preview') : 'preview';
   const toggleMode = useCallback(() => active && active !== SETTINGS && setModes((m) => ({ ...m, [active]: (m[active] ?? 'preview') === 'preview' ? 'source' : 'preview' })), [active]);
 
@@ -207,7 +212,7 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
         }
       } else if (key === 'b') {
         e.preventDefault();
-        setSidebar((v) => !v);
+        if (layoutRef.current.explorer) setSidebar((v) => !v);
       } else if (key === 'j') {
         e.preventDefault();
         setPanel((p) => (p ? undefined : 'problems'));
@@ -222,11 +227,11 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
 
   const nameOf = (ref: FileRef) => (ref === SETTINGS ? 'What Landflow knows' : (tree?.files.get(ref)?.name ?? `${ref.split('/').pop()}.md`));
   const problems = tree ? [...tree.files.values()].filter((f) => f.problems.length) : [];
+  const status = home && statusItems(home.entries.length, problems.length);
   const spotlightFile: SpotlightFile | undefined = active
     ? { ref: active, name: page?.entity.name ?? tree?.files.get(active)?.title ?? nameOf(active), page: isPage(active), ...(home?.shared[0] && { topShared: home.shared[0].name }) }
     : undefined;
 
-  const layout = workbenchLayout(home?.entries.length, active);
   const sideView = home && tree && (
     <>
       {view === 'explorer' && <ExplorerView tree={tree} active={active} outline={outline} page={page} opener={opener} onOutline={jump} onRefresh={loadHome} />}
@@ -445,14 +450,14 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
 
         {/* Status bar. */}
         <div className="flex h-6 shrink-0 items-center gap-3 border-t border-hair bg-sf2 px-2.5 text-[11px] text-t2">
-          {home && (
+          {status && (
             <>
               <button type="button" onClick={() => open(INDEX)} className="hover:opacity-80" title="Open the index">
-                {statusItems(home.entries.length, problems.length)[0]}
+                {status[0]}
               </button>
               <button type="button" onClick={() => setPanel((p) => (p === 'problems' ? undefined : 'problems'))} className="flex items-center gap-1 hover:opacity-80" title="Pages that need a person">
                 <AlertTriangle className="size-3" aria-hidden />
-                {statusItems(home.entries.length, problems.length)[1]}
+                {status[1]}
               </button>
             </>
           )}
@@ -472,10 +477,10 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
               { label: 'Open log.md', run: () => open(LOG, { pin: true }) },
               { label: 'What Landflow knows', run: () => open(SETTINGS, { pin: true }) },
               { label: 'Toggle Preview and Source', run: toggleMode },
-              { label: 'Toggle the side bar', run: () => setSidebar((v) => !v) },
+              ...(layout.explorer ? [{ label: 'Toggle the side bar', run: () => setSidebar((v) => !v) }] : []),
               { label: 'Show Problems', run: () => setPanel('problems') },
               { label: 'Show Suggestions', run: () => setPanel('suggestions') },
-              { label: 'Search the brain', run: () => (setView('search'), setSidebar(true), setDrawer(true)) },
+              ...(layout.explorer ? [{ label: 'Search the brain', run: () => (setView('search'), setSidebar(true), setDrawer(true)) }] : []),
               { label: 'Refresh', run: loadHome },
               {
                 label: 'Run the brain now (study and detect)',
