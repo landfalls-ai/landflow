@@ -109,7 +109,7 @@ before sign-in and AI. ✅ Done; see [Durable runtime](features/engine.md#durabl
   and password resets by email (Mailpit) or as links to copy, an edit lock with take-over, and
   `createdBy` / `updatedBy` / `startedBy`; see [Authentication](features/authentication.md).
 - Scoped API keys and a documented public API. ✅ Done: `lf_…` keys with scopes and expiry,
-  stored hashed; OpenAPI 3.1 at `/api/openapi.json` and Settings → API docs.
+  stored hashed; OpenAPI 3.1 at `/api/openapi.json` and the API reference on the Developers page.
 - Free OIDC login (Keycloak in Docker). n8n charges for it. ✅ Done: authorization code + PKCE,
   just-in-time users, role mapping from a claim, tested against the infra stack's Keycloak.
 - A sandboxed Code node running out of process in a locked-down container, with JavaScript and
@@ -1724,3 +1724,7 @@ RPA, process mining, an app builder, and a chat hub (n8n is retiring its own).
 ## Connect your harness
 
 Built: `/connect` (copy-paste setup and a brain key for each harness), Settings → MCP in four collapsed sections, and the admin's switch that forbids automatic sending ([connect-your-harness.md](connect-your-harness.md)). Closes V1, MOD4 and P-set-3 of the company backbone plan.
+
+## Settings in five groups
+
+Built: Settings in five groups, API docs moved to Developers, the built-in price table folded and AI caps their own section, status rows with a help-tip instead of environment-variable paragraphs, an Audit Log and Configuration split with filters that apply on change, json-render under Advanced and "Prune now" in the ⋯ menu, and one sentence of help with a "?" popover everywhere in the settings ([settings-and-data.md](features/settings-and-data.md)). Closes P-set-1, P-set-2, P-set-4, P-set-5, P-set-6, P-set-7 and X9 of the company backbone plan.
