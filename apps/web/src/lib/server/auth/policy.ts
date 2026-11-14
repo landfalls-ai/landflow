@@ -31,6 +31,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
 
   if (under('/api/auth/me')) return { scope: 'any' };
   if (under('/api/api-keys')) return { scope: 'any', sessionOnly: true };
+  // B02: a person's own preferences and chats; an API key can't read them (the handlers answer the owner only).
+  if (under('/api/me/preferences') || under('/api/conversations')) return { scope: 'any', sessionOnly: true };
   if (path === '/api/openapi.json') return { scope: 'any' };
 
   // Stopping every run of every project is instance-wide: admins, like the other instance-wide controls (/api/settings).
