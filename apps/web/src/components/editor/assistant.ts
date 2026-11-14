@@ -12,7 +12,9 @@ import { api, streamEvents } from '@/lib/client/api';
 import { applyOps, digestRun, type AssistantOp, type DescriptorLookup, type NewAgentSpec, type RunDigest } from '@/lib/shared/assistant-ops';
 import type { AgentTeamConfig } from '@/lib/shared/agent-teams';
 import { teamFromLead } from '@/lib/shared/turn-into-team';
+import type { ActivityKind, ActivityStep } from '@/lib/shared/activity';
 import type { NodeRun } from '@/lib/shared/types';
+import type { ReplyInfo } from '../ui/chat';
 import { useEditor } from './store';
 import { saveAgentFor, type AgentPlace } from './new-agent';
 import { saveTeamFor } from './turn-into-team';
@@ -299,19 +301,115 @@ export type ReplyPart =
   | { kind: 'outcome'; outcome: Outcome }
   | ({ kind: 'action' } & ReplyAction);
 
-/** `testId`: the test-and-fix session the turn belongs to; Spotlight folds a finished session into one line. */
+/**
+ * `testId`: the test-and-fix session the turn belongs to; Spotlight folds a finished session into one line.
+ * An assistant turn that streamed (`send`) also holds what the chat stream says (C3 in lib/server/assistant/chat.ts):
+ * `steps` (the activity trace), `text` (provisional while streaming, the checked reply at the end), `thinking` (the
+ * words of steps that also called tools, which never reach the reply) and `meta` (model, time, steps, tokens, cost).
+ */
 export type ChatItem =
   /** `auto`: written by a test-and-fix session, not typed. */
   | { id: string; role: 'user'; text: string; auto?: boolean; testId?: string }
   /** `auto`: autonomous mode applied its changes (drawn as rows, whatever the switch says later). */
-  | { id: string; role: 'assistant'; parts: ReplyPart[]; done?: { model: string; durationMs: number; steps: number }; error?: string; testId?: string; auto?: boolean };
+  | {
+      id: string;
+      role: 'assistant';
+      parts: ReplyPart[];
+      done?: { model: string; durationMs: number; steps: number };
+      error?: string;
+      testId?: string;
+      auto?: boolean;
+      steps?: ActivityStep[];
+      text?: string;
+      thinking?: string[];
+      meta?: ReplyInfo;
+      /** What a failed reply can be continued from (`error` events); the actions come with the chat's error buttons. */
+      checkpoint?: string;
+      /** When the running model step began (to time it). */
+      stepStartedAt?: number;
+    };
 
-type StreamEvent =
-  | { type: 'text'; text: string }
-  | { type: 'tool'; name: string; label: string; ok: boolean }
+export type AssistantTurn = Extract<ChatItem, { role: 'assistant' }>;
+
+/** The chat stream's events (C3, lib/server/assistant/chat.ts), as Spotlight reads them. */
+export type StreamEvent =
+  | { type: 'step.start'; step: number; label: string }
+  | { type: 'text.delta'; step: number; text: string }
+  | { type: 'text'; text: string; step?: number }
+  | { type: 'thinking'; step: number; text: string }
+  | { type: 'tool'; name: string; label: string; ok: boolean; id?: string; step?: number; durationMs?: number; detail?: string }
   | ({ type: 'proposal' } & Omit<Proposal, 'state'>)
-  | { type: 'done'; model: string; durationMs: number; steps: number }
-  | { type: 'error'; message: string };
+  | { type: 'done'; model: string; durationMs: number; steps: number; usage?: { inputTokens: number; outputTokens: number }; costUsd?: number; local?: boolean }
+  | { type: 'error'; message: string; checkpoint?: string; step?: number };
+
+/** What kind of trace row a tool call is. */
+export function toolKind(name: string): ActivityKind {
+  if (/^search/.test(name)) return 'search';
+  if (/^(get|read|describe)/.test(name)) return 'read';
+  if (/^(propose|write|set|add|apply)/.test(name)) return 'write';
+  if (/^(run|execute|test)/.test(name)) return 'run';
+  return 'tool';
+}
+
+const clip = (text: string | undefined) => (text ? text.slice(0, 300) : undefined);
+
+/** Close the model step that is running: it took until `now`. */
+function settleModel(turn: AssistantTurn, now: number, status: 'ok' | 'failed' = 'ok'): ActivityStep[] {
+  return (turn.steps ?? []).map((s) => (s.kind === 'model' && s.status === 'running' ? { ...s, status, ...(turn.stepStartedAt !== undefined && { durationMs: Math.max(0, now - turn.stepStartedAt) }) } : s));
+}
+
+/**
+ * One chat event applied to a turn (a pure reducer, so the stream is tested without a store): `step.start` opens a
+ * running model step; `text.delta` grows the provisional text and `text` replaces it with the checked one; `thinking`
+ * goes to the trace and never to the reply; `tool` adds a timed step; `done` fills `meta` with the usage; `error` keeps the
+ * checkpoint to continue from. `now` is for tests.
+ */
+export function applyStreamEvent(turn: AssistantTurn, event: StreamEvent, now: number = Date.now()): AssistantTurn {
+  const steps = turn.steps ?? [];
+  const checked = turn.parts.some((p) => p.kind === 'text');
+  switch (event.type) {
+    case 'step.start':
+      // The new step's words start from nothing: the last step's provisional text went to the trace as thinking.
+      return { ...turn, text: checked ? turn.text : '', steps: [...settleModel(turn, now), { id: `model${event.step}`, label: event.label, kind: 'model', status: 'running' }], stepStartedAt: now };
+    case 'text.delta':
+      return { ...turn, text: `${turn.text ?? ''}${event.text}` };
+    case 'text': {
+      const at = turn.parts.findLastIndex((p) => p.kind === 'text');
+      const part: ReplyPart = { kind: 'text', text: event.text };
+      return { ...turn, text: event.text, parts: at >= 0 ? turn.parts.map((p, i) => (i === at ? part : p)) : [...turn.parts, part] };
+    }
+    case 'thinking':
+      return {
+        ...turn,
+        // Its deltas were provisional text: they belong to the trace now.
+        text: checked ? turn.text : '',
+        thinking: [...(turn.thinking ?? []), event.text],
+        steps: [...steps, { id: `think${event.step}`, label: 'Thought', kind: 'think', status: 'ok', detail: clip(event.text) }],
+      };
+    case 'tool':
+      return {
+        ...turn,
+        parts: [...turn.parts, { kind: 'tool', tool: { name: event.name, label: event.label, ok: event.ok } }],
+        steps: [
+          ...steps,
+          { id: `tool${event.id ?? steps.length}`, label: event.label, kind: toolKind(event.name), status: event.ok ? 'ok' : 'failed', ...(event.durationMs !== undefined && { durationMs: event.durationMs }), ...(clip(event.detail) && { detail: clip(event.detail) }) },
+        ],
+      };
+    case 'proposal': {
+      const { type: _type, ...proposal } = event;
+      return { ...turn, parts: [...turn.parts, { kind: 'proposal', proposal }] };
+    }
+    case 'done':
+      return {
+        ...turn,
+        steps: settleModel(turn, now),
+        done: { model: event.model, durationMs: event.durationMs, steps: event.steps },
+        meta: { model: event.model, durationMs: event.durationMs, steps: event.steps, ...(event.usage && { inputTokens: event.usage.inputTokens, outputTokens: event.usage.outputTokens }), ...(event.costUsd !== undefined && { costUsd: event.costUsd }), ...(event.local && { local: true }) },
+      };
+    case 'error':
+      return { ...turn, steps: settleModel(turn, now, 'failed'), error: event.message, ...(event.checkpoint && { checkpoint: event.checkpoint }) };
+  }
+}
 
 export interface SendOptions {
   /** What the user tagged with Spotlight's bubbles: node ids on the canvas, node type ids. */
@@ -372,6 +470,8 @@ interface AssistantState {
   setAgent(nodeId: string, patch: Partial<AgentProgress> & { name?: string }): void;
   workflowId?: string;
   items: ChatItem[];
+  /** The checkpoint of the last reply that failed: it can be continued from there (the buttons come with the chat's error actions). */
+  lastCheckpoint?: { replyId: string; checkpoint: string; step?: number };
   pending: boolean;
   abort?: AbortController;
   /** A test-and-fix session is running (./test-session.ts); aborting it stops the session. */
@@ -475,7 +575,7 @@ export const useAssistant = create<AssistantState>((set, get) => ({
     get().abort?.abort();
     get().testing?.abort();
     draft.request?.abort();
-    set({ workflowId, items: [], agents: [], fixNotes: {}, pending: false, drafting: false, abort: undefined, testing: undefined, testingId: undefined, fixing: undefined });
+    set({ workflowId, items: [], lastCheckpoint: undefined, agents: [], fixNotes: {}, pending: false, drafting: false, abort: undefined, testing: undefined, testingId: undefined, fixing: undefined });
     useSuggestions.getState().clear();
   },
 
@@ -485,7 +585,7 @@ export const useAssistant = create<AssistantState>((set, get) => ({
     const editor = useEditor.getState();
     const group = options.testId ? { testId: options.testId } : {};
     const user: ChatItem = { id: nanoid(8), role: 'user', text: message, ...(options.auto && { auto: true }), ...group };
-    const reply: ChatItem = { id: nanoid(8), role: 'assistant', parts: [], ...group };
+    const reply: ChatItem = { id: nanoid(8), role: 'assistant', parts: [], steps: [], text: '', thinking: [], ...group };
     const abort = new AbortController();
     const messages = historyOf(options.fresh ? [user] : [...get().items, user]);
     const pending = options.fresh ? [] : pendingProposals(get().items).slice(-20);
@@ -507,19 +607,16 @@ export const useAssistant = create<AssistantState>((set, get) => ({
         },
         (_event, data) => {
           const event = data as StreamEvent;
-          if (event.type === 'text') patch((item) => ({ parts: [...item.parts, { kind: 'text', text: event.text }] }));
-          else if (event.type === 'tool') patch((item) => ({ parts: [...item.parts, { kind: 'tool', tool: { name: event.name, label: event.label, ok: event.ok } }] }));
-          else if (event.type === 'proposal') {
-            const { type: _type, ...proposal } = event;
-            patch((item) => ({ parts: [...item.parts, { kind: 'proposal', proposal }] }));
-          } else if (event.type === 'done') patch(() => ({ done: { model: event.model, durationMs: event.durationMs, steps: event.steps } }));
-          else if (event.type === 'error') patch(() => ({ error: event.message }));
+          patch((item) => applyStreamEvent(item, event));
+          if (event.type === 'error' && event.checkpoint) set({ lastCheckpoint: { replyId: reply.id, checkpoint: event.checkpoint, ...(event.step !== undefined && { step: event.step }) } });
         },
         abort.signal,
       );
     } catch (e) {
       if ((e as Error).name !== 'AbortError') patch(() => ({ error: (e as Error).message }));
     } finally {
+      // Stopped or cut off: no row keeps spinning.
+      patch((item) => ({ steps: item.steps?.map((s) => (s.status === 'running' ? { ...s, status: 'ok' as const } : s)) }));
       if (get().abort === abort) set({ pending: false, abort: undefined });
     }
   },
@@ -539,7 +636,7 @@ export const useAssistant = create<AssistantState>((set, get) => ({
     get().abort?.abort();
     get().testing?.abort();
     draft.request?.abort();
-    set({ items: [], agents: [], fixNotes: {}, pending: false, drafting: false, abort: undefined, testing: undefined, testingId: undefined, fixing: undefined });
+    set({ items: [], lastCheckpoint: undefined, agents: [], fixNotes: {}, pending: false, drafting: false, abort: undefined, testing: undefined, testingId: undefined, fixing: undefined });
   },
 
   setProposalState(itemId, proposalId, state, skipped) {

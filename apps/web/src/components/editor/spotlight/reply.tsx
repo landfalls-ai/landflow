@@ -7,9 +7,11 @@ import { useAutonomous } from '../autonomous';
 import { LiveSteps, useLive } from '../building';
 import { applyChanges, undos, useAssistant, type AgentProgress, type ChatItem, type Need, type Outcome, type ReplyAction, type TestRun } from '../assistant';
 import { useEditor } from '../store';
-import { AssistantRow, ChatError, ChatMarkdown, ReplyMeta } from '../../ui/chat';
+import { ActivityTrace } from '../../ui/activity-trace';
+import { StatusSwap, StreamingText } from '../../ui/chat-motion';
+import { AssistantRow, ChatError, ChatMarkdown, ReplyMeta, ShortReply } from '../../ui/chat';
 import { MAX_FIXES, productionNote, publishToProduction, sendsAllowed, testUntilItRuns } from '../test-session';
-import { agentStep, firstSentence, runRow } from '../timeline';
+import { agentStep, runRow } from '../timeline';
 
 import { ProposalCard, ProposalRow } from './proposal';
 
@@ -254,24 +256,6 @@ function ActionView({ itemId, action }: { itemId: string; action: ReplyAction })
   );
 }
 
-/** A reply's text: in full in a conversation; within a test-and-fix session, its first sentence, the rest on "more". */
-function ReplyText({ text, short }: { text: string; short: boolean }) {
-  const [more, setMore] = useState(false);
-  const first = firstSentence(text);
-  const cut = short && !more && first.length < text.trim().length;
-  if (!cut) return <ChatMarkdown text={text} />;
-  return (
-    <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-t1 [overflow-wrap:anywhere]">
-      {first.replace(/\*\*|`/g, '')}
-      {cut && (
-        <button type="button" onClick={() => setMore(true)} className="ml-1 text-[12px] font-semibold text-ac hover:underline max-md:min-h-11 max-md:px-1">
-          Show more
-        </button>
-      )}
-    </div>
-  );
-}
-
 /** Try again after a failed reply: the same message, sent again in its place. */
 function retryReply(replyId: string) {
   const { items, pending } = useAssistant.getState();
@@ -282,7 +266,11 @@ function retryReply(replyId: string) {
   void useAssistant.getState().send(asked.text, useAutonomous.getState().on ? { session: 'auto' } : {});
 }
 
-/** A reply: its text, its changes, its runs and buttons. While it streams, its steps (new look) or one line of what it is doing. */
+/**
+ * A reply: the trace of what it did (live while it works, "N steps · T s" once done), its words (streamed, then the checked
+ * text cut to two sentences), then its changes, runs and buttons, and the footer (model · time · steps · tokens · cost).
+ * A reply that did not come from the chat stream (a drafted flow, a fix offered by the after-run card) keeps its parts in order.
+ */
 export function ReplyView({ item, live, status }: { item: Reply; live: boolean; status?: string }) {
   const autonomous = useAutonomous((s) => s.on);
   const spotlightBusy = useAssistant((s) => s.pending || Boolean(s.testing));
@@ -296,7 +284,7 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
   const isLast = useAssistant((s) => s.items.at(-1)?.id === item.id);
   const steps = building?.replyId === item.id ? building : undefined;
   // A test run shows its own progress; a change being built shows its steps.
-  const working = live && !steps && !item.parts.some((p) => p.kind === 'run' || p.kind === 'action');
+  const own = item.parts.some((p) => p.kind === 'run' || p.kind === 'action');
   // Rows, not cards: Spotlight applied them itself (a session's fix, autonomous mode), or is about to (autonomous mode on
   // while the reply still has changes to apply). A turn applied by hand stays a card when the switch flips later.
   const asRows = Boolean(item.testId || item.auto) || (autonomous && (live || spotlightBusy) && pending.length > 0);
@@ -305,52 +293,63 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
   const session = Boolean(item.testId) || (Boolean(item.auto) && !live && item.parts.some((p) => p.kind === 'proposal'));
   // A session's fix: its row says what it did and opens on the model's words; the prose would say it twice.
   const quietText = Boolean(item.testId) && !live && item.parts.some((p) => p.kind === 'proposal' && p.proposal.state);
-  const sessionText = session ? item.parts.flatMap((p) => (p.kind === 'text' ? [p.text] : [])).join('\n\n') : '';
+  const partsText = item.parts.flatMap((p) => (p.kind === 'text' ? [p.text] : [])).join('\n\n');
+  // From the chat stream: the words come in item.text (provisional while streaming), the trace in item.steps.
+  const streamed = item.steps !== undefined;
+  const text = streamed ? (item.text ?? partsText) : partsText;
   const firstText = item.parts.findIndex((p) => p.kind === 'text');
   const firstProposal = item.parts.findIndex((p) => p.kind === 'proposal');
+  const hasTrace = (item.steps?.length ?? 0) > 0;
+  const working = live && !steps && !own && !hasTrace;
+  const words = quietText || !text.trim() ? null : streamed && live && !item.parts.some((p) => p.kind === 'text') ? (
+    <StreamingText text={text} streaming />
+  ) : streamed ? (
+    <ShortReply text={text} sentences={session ? 1 : 2} />
+  ) : null;
   return (
-    <AssistantRow mark={working ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}>
-        {item.parts.map((part, i) =>
-          part.kind === 'text' ? (
-            quietText ? null : session ? (
-              i === firstText && <ReplyText key={i} text={sessionText} short />
-            ) : (
-              <ReplyText key={i} text={part.text} short={false} />
-            )
-          ) : part.kind === 'proposal' ? (
-            steps ? (
-              i === firstProposal && <LiveSteps key="steps" live={steps} />
-            ) : asRows && (part.proposal.state || live || spotlightBusy) ? (
-              <ProposalRow key={part.proposal.id} itemId={item.id} proposal={part.proposal} fix={Boolean(item.testId)} />
-            ) : (
-              // Not applied by Spotlight (a stopped reply, a change that no longer fits, a Fix bubble): the person decides.
-              <ProposalCard key={part.proposal.id} itemId={item.id} proposal={part.proposal} />
-            )
-          ) : part.kind === 'run' ? (
-            <RunLine key={i} run={part.run} />
-          ) : part.kind === 'action' ? (
-            <ActionView key={i} itemId={item.id} action={part} />
-          ) : part.kind === 'needs' ? (
-            <NeedRow key={i} itemId={item.id} need={part.need} />
-          ) : part.kind === 'outcome' ? (
-            <OutcomeCard key={i} itemId={item.id} outcome={part.outcome} />
-          ) : null,
-        )}
-        {steps && firstProposal < 0 && <LiveSteps live={steps} />}
-        {working && <div className="animate-pulse-soft truncate text-[12px] text-t3">{status ?? (lastTool?.kind === 'tool' ? `${lastTool.tool.label}…` : 'Thinking…')}</div>}
-        {item.error && <ChatError message={item.error} onRetry={isLast && !item.testId && !live && !spotlightBusy ? () => retryReply(item.id) : undefined} />}
-        {!live && !asRows && pending.length > 1 && (
-          <Button size="sm" variant="outline" onClick={applyAll}>
-            <Check className="size-3.5" /> Apply all ({pending.length})
-          </Button>
-        )}
-        {/* What answered and how long it took; a session's fixes are rows, which say what they did. */}
-        {item.done && !live && !item.testId && (
-          <ReplyMeta
-            parts={[item.done.model, `${(item.done.durationMs / 1000).toFixed(1)} s`, `${item.done.steps} step${item.done.steps === 1 ? '' : 's'}`]}
-            copy={item.parts.flatMap((p) => (p.kind === 'text' ? [p.text] : [])).join('\n\n') || undefined}
-          />
-        )}
+    <AssistantRow mark={live && !own ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}>
+      {streamed && steps && <LiveSteps live={steps} trace={item.steps} durationMs={item.meta?.durationMs} />}
+      {streamed && !steps && hasTrace && !quietText && <ActivityTrace steps={item.steps!} live={live} durationMs={item.meta?.durationMs} defaultOpen />}
+      {(working || words) && (
+        <StatusSwap working={working} label={status ?? (lastTool?.kind === 'tool' ? `${lastTool.tool.label}…` : 'Thinking…')}>
+          {words}
+        </StatusSwap>
+      )}
+      {item.parts.map((part, i) =>
+        part.kind === 'text' ? (
+          streamed || quietText ? null : session ? (
+            i === firstText && <ChatMarkdown key={i} text={partsText} />
+          ) : (
+            <ChatMarkdown key={i} text={part.text} />
+          )
+        ) : part.kind === 'proposal' ? (
+          steps ? (
+            !streamed && i === firstProposal && <LiveSteps key="steps" live={steps} />
+          ) : asRows && (part.proposal.state || live || spotlightBusy) ? (
+            <ProposalRow key={part.proposal.id} itemId={item.id} proposal={part.proposal} fix={Boolean(item.testId)} />
+          ) : (
+            // Not applied by Spotlight (a stopped reply, a change that no longer fits, a Fix bubble): the person decides.
+            <ProposalCard key={part.proposal.id} itemId={item.id} proposal={part.proposal} />
+          )
+        ) : part.kind === 'run' ? (
+          <RunLine key={i} run={part.run} />
+        ) : part.kind === 'action' ? (
+          <ActionView key={i} itemId={item.id} action={part} />
+        ) : part.kind === 'needs' ? (
+          <NeedRow key={i} itemId={item.id} need={part.need} />
+        ) : part.kind === 'outcome' ? (
+          <OutcomeCard key={i} itemId={item.id} outcome={part.outcome} />
+        ) : null,
+      )}
+      {!streamed && steps && firstProposal < 0 && <LiveSteps live={steps} />}
+      {item.error && <ChatError message={item.error} onRetry={isLast && !item.testId && !live && !spotlightBusy ? () => retryReply(item.id) : undefined} />}
+      {!live && !asRows && pending.length > 1 && (
+        <Button size="sm" variant="outline" onClick={applyAll}>
+          <Check className="size-3.5" /> Apply all ({pending.length})
+        </Button>
+      )}
+      {/* What answered and how: model · time · steps · tokens · cost; a session's fixes are rows, which say what they did. */}
+      {(item.meta ?? item.done) && !live && !item.testId && <ReplyMeta info={item.meta ?? item.done} copy={partsText || undefined} />}
     </AssistantRow>
   );
 }

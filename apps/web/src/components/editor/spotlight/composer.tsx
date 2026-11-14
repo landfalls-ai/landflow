@@ -1,9 +1,10 @@
 'use client';
 /** The input at the bottom of the panel, with its bubbles above it. */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, Loader2, Mic, Sparkles, Square, X } from 'lucide-react';
+import { Loader2, Mic, Sparkles, Square, X } from 'lucide-react';
 import { nanoid } from 'nanoid';
 import { cn } from '@/lib/utils';
+import { ChatComposer, ModelChip } from '../../ui/chat';
 import { completeBubbles, idleBubbles, liveMentions, TEST_BUBBLE, type Bubble, type Mention, type SpotlightContext } from '@/lib/shared/spotlight';
 import { useBuildFlow } from '../ai-builder';
 import { afterReply, testDraft, useAutonomous } from '../autonomous';
@@ -25,6 +26,12 @@ export function focusSpotlight() {
 }
 
 const latestMain = (runs: { source: string; status: string }[] | undefined) => runs?.filter((r) => r.source === 'main').at(-1);
+
+/** The model of the latest reply that says one, and whether it runs locally. */
+function lastModel(items: ChatItem[]): { name: string; local: boolean } | undefined {
+  const turn = items.findLast((i) => i.role === 'assistant' && (i.meta?.model ?? i.done?.model));
+  return turn?.role === 'assistant' ? { name: (turn.meta?.model ?? turn.done?.model)!, local: Boolean(turn.meta?.local) } : undefined;
+}
 
 /** What Spotlight knows of the canvas and the catalog, for its bubbles. */
 function useSpotlightContext(): SpotlightContext {
@@ -115,6 +122,9 @@ export function Composer() {
   const [withoutSelection, setWithoutSelection] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
   const live = pending || drafting;
+  // The model that answered last: no route says which one answers before the first reply.
+  const model = useAssistant((s) => lastModel(s.items)?.name);
+  const local = useAssistant((s) => lastModel(s.items)?.local);
   // Speech lands in the box to edit, appended to what's typed; it is never sent by voice alone.
   const dictation = useDictation((spoken) => {
     const typed = inputValue.current.trim();
@@ -141,26 +151,13 @@ export function Composer() {
 
   useEffect(() => setActive(-1), [bubbles]);
 
-  const resize = () => {
-    const el = input.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
-  };
-  useEffect(resize, [draft]);
-  // Also when the box changes width (a side panel opens, the dock wraps): the wrapped placeholder counts in scrollHeight.
+  // The caret follows the arrow keys and clicks too: the bubbles complete what is at it.
   useEffect(() => {
-    const el = input.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    let width = el.clientWidth;
-    const observer = new ResizeObserver(() => {
-      if (el.clientWidth === width) return;
-      width = el.clientWidth;
-      resize();
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const follow = () => {
+      if (document.activeElement === input.current) setCaret(input.current?.selectionStart ?? 0);
+    };
+    document.addEventListener('selectionchange', follow);
+    return () => document.removeEventListener('selectionchange', follow);
   }, []);
 
   const setText = (text: string, at = text.length) => {
@@ -305,88 +302,66 @@ export function Composer() {
         )}
       </div>
 
-      <div
-        className={cn(
-          'rounded-2xl border bg-wl px-2.5 py-1.5 transition-colors',
-          focused ? 'border-[color-mix(in_oklab,var(--viz-7)_45%,var(--bd))]' : 'border-hair',
-        )}
-      >
-        {selectedName && !withoutSelection && !empty && (
-          <span className="mb-1 flex w-fit max-w-full items-center gap-0.5 rounded-md border border-hair bg-wl py-0.5 pl-1.5 pr-0.5 text-[11.5px] text-t2" title="The selected node is part of what Spotlight sees">
-            <span className="truncate">{selectedName}</span>
-            <button onMouseDown={(e) => e.preventDefault()} onClick={() => setWithoutSelection(true)} aria-label={`Leave ${selectedName} out`} className="grid size-4 place-items-center rounded text-t3 hover:text-t1 max-md:size-9">
-              <X className="size-3" />
-            </button>
-          </span>
-        )}
-        <div className="flex items-end gap-2">
-        <Sparkles className="mb-[9px] size-4 shrink-0 text-viz-7" />
-        <textarea
-          id={INPUT_ID}
-          ref={input}
-          rows={1}
-          value={draft}
-          onChange={(e) => {
-            setDraft(e.target.value);
-            setCaret(e.target.selectionStart);
-          }}
-          onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
-          onFocus={() => {
-            clearTimeout(blurTimer.current);
-            setFocused(true);
-          }}
-          // The bubbles fold a moment after the input loses focus: folding at once moves the timeline under a tap, which
-          // then lands on nothing (a phone's first tap on a row after typing).
-          onBlur={() => {
-            if (phone) blurTimer.current = setTimeout(() => setFocused(false), 250);
-            else setFocused(false);
-          }}
-          onKeyDown={onKeyDown}
-          placeholder={placeholder}
-          aria-label="Ask Spotlight"
-          aria-autocomplete="list"
-          className="max-h-[120px] min-h-[32px] min-w-0 flex-1 resize-none bg-transparent py-1.5 text-[13.5px] leading-5 text-t1 max-md:text-base outline-none placeholder:text-t3"
-        />
-        {!focused && !draft && !hasItems && <kbd className="mb-[9px] shrink-0 max-md:hidden rounded border border-hair px-1 font-mono text-[10.5px] text-t3">⌘I</kbd>}
-        {canDictate && !live && (
-          <button
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => (dictation.state === 'recording' ? dictation.stop() : void dictation.start())}
-            disabled={dictation.state === 'transcribing'}
-            aria-label={dictation.state === 'recording' ? 'Stop recording' : 'Dictate'}
-            aria-pressed={dictation.state === 'recording'}
-            title={dictation.error || (dictation.state === 'recording' ? 'Stop and transcribe' : 'Dictate (speech goes into the box to edit)')}
-            className={cn(
-              'mb-[2px] flex h-8 shrink-0 items-center gap-1 rounded-full px-2 text-t2 transition-colors hover:bg-acdim hover:text-t1 disabled:opacity-60 max-md:h-11 max-md:min-w-11 max-md:justify-center',
-              dictation.state === 'recording' && 'bg-rd/15 text-rd hover:bg-rd/20 hover:text-rd',
-              dictation.error && 'text-rd',
+      <ChatComposer
+        value={draft}
+        onChange={(text) => {
+          setDraft(text);
+          setCaret(input.current?.selectionStart ?? text.length);
+        }}
+        onSend={(text) => void submit(text)}
+        onStop={() => useAssistant.getState().stop()}
+        busy={live}
+        placeholder={placeholder}
+        label="Ask Spotlight"
+        id={INPUT_ID}
+        inputRef={input}
+        onKeyDown={onKeyDown}
+        onFocus={() => {
+          clearTimeout(blurTimer.current);
+          setFocused(true);
+        }}
+        // The bubbles fold a moment after the input loses focus: folding at once moves the timeline under a tap, which
+        // then lands on nothing (a phone's first tap on a row after typing).
+        onBlur={() => {
+          if (phone) blurTimer.current = setTimeout(() => setFocused(false), 250);
+          else setFocused(false);
+        }}
+        top={
+          selectedName && !withoutSelection && !empty ? (
+            <span className="mb-1 flex w-fit max-w-full items-center gap-0.5 rounded-md border border-hair bg-wl py-0.5 pl-1.5 pr-0.5 text-[11.5px] text-t2" title="The selected node is part of what Spotlight sees">
+              <span className="truncate">{selectedName}</span>
+              <button onMouseDown={(e) => e.preventDefault()} onClick={() => setWithoutSelection(true)} aria-label={`Leave ${selectedName} out`} className="grid size-4 place-items-center rounded text-t3 hover:text-t1 max-md:size-9">
+                <X className="size-3" />
+              </button>
+            </span>
+          ) : undefined
+        }
+        before={<Sparkles className="mb-[9px] size-4 shrink-0 text-viz-7" />}
+        after={
+          <>
+            {!focused && !draft && !hasItems && <kbd className="mb-[9px] shrink-0 rounded border border-hair px-1 font-mono text-[10.5px] text-t3 max-md:hidden">⌘I</kbd>}
+            {canDictate && !live && (
+              <button
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => (dictation.state === 'recording' ? dictation.stop() : void dictation.start())}
+                disabled={dictation.state === 'transcribing'}
+                aria-label={dictation.state === 'recording' ? 'Stop recording' : 'Dictate'}
+                aria-pressed={dictation.state === 'recording'}
+                title={dictation.error || (dictation.state === 'recording' ? 'Stop and transcribe' : 'Dictate (speech goes into the box to edit)')}
+                className={cn(
+                  'mb-[2px] flex h-8 shrink-0 items-center gap-1 rounded-full px-2 text-t2 transition-colors hover:bg-acdim hover:text-t1 disabled:opacity-60 max-md:h-11 max-md:min-w-11 max-md:justify-center',
+                  dictation.state === 'recording' && 'bg-rd/15 text-rd hover:bg-rd/20 hover:text-rd',
+                  dictation.error && 'text-rd',
+                )}
+              >
+                {dictation.state === 'transcribing' ? <Loader2 className="size-4 animate-spin" /> : dictation.state === 'recording' ? <Square className="size-3.5 animate-pulse" fill="currentColor" /> : <Mic className="size-4" />}
+                {dictation.state === 'recording' && <span className="font-mono text-[11.5px] tabular-nums">{Math.floor(dictation.seconds / 60)}:{String(dictation.seconds % 60).padStart(2, '0')}</span>}
+              </button>
             )}
-          >
-            {dictation.state === 'transcribing' ? <Loader2 className="size-4 animate-spin" /> : dictation.state === 'recording' ? <Square className="size-3.5 animate-pulse" fill="currentColor" /> : <Mic className="size-4" />}
-            {dictation.state === 'recording' && <span className="font-mono text-[11.5px] tabular-nums">{Math.floor(dictation.seconds / 60)}:{String(dictation.seconds % 60).padStart(2, '0')}</span>}
-          </button>
-        )}
-        {live ? (
-          <button
-            onClick={() => useAssistant.getState().stop()}
-            aria-label="Stop"
-            title="Stop"
-            className="mb-[2px] grid size-8 shrink-0 place-items-center rounded-full border border-bd text-t2 transition-colors hover:border-rd hover:text-rd disabled:opacity-50 max-md:size-11"
-          >
-            <Square className="size-3" fill="currentColor" />
-          </button>
-        ) : (
-          <button
-            onClick={() => void submit(draft)}
-            disabled={!draft.trim()}
-            aria-label="Send"
-            className="mb-[2px] grid size-8 shrink-0 place-items-center rounded-full bg-ac2 text-on-ac transition-all hover:scale-105 disabled:opacity-30 disabled:hover:scale-100 max-md:size-11"
-          >
-            <ArrowUp className="size-4" />
-          </button>
-        )}
-        </div>
-      </div>
+          </>
+        }
+        chip={model ? <ModelChip model={model} local={local} /> : undefined}
+      />
     </div>
   );
 }

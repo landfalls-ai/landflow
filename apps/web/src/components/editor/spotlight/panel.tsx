@@ -91,7 +91,7 @@ function useSeconds(on: boolean): number {
  * The Spotlight panel, at the right of the editor. Desktop: a column beside the canvas (and its logs), folded to a thin
  * strip. Phone: a sheet under the canvas (which shrinks above it), folded to its header, a line and the input.
  */
-export function SpotlightPanel({ hiddenOnPhone = false }: { hiddenOnPhone?: boolean }) {
+export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hiddenOnPhone?: boolean; /** Stays mounted and keeps its conversation, but shows nothing (the Spotlight | Chat switch). */ hidden?: boolean }) {
   const collapsed = useAssistant((s) => s.collapsed);
   const items = useAssistant((s) => s.items);
   const agents = useAssistant((s) => s.agents);
@@ -170,8 +170,10 @@ export function SpotlightPanel({ hiddenOnPhone = false }: { hiddenOnPhone?: bool
     <aside
       ref={panel}
       aria-label="Spotlight"
+      hidden={hidden}
       className={cn(
         'z-30 flex flex-col border-hair bg-sf',
+        hidden && 'hidden',
         // One panel at a time under a phone's canvas.
         hiddenOnPhone && 'max-md:hidden',
         // Phone: a sheet under the canvas, which shrinks to the space above it.
