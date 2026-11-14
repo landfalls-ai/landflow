@@ -21,7 +21,8 @@ and `mcp` sources too, not only from Git host integrations.
 
 ## Who sends them
 
-- The Claude Code mod ([landflow-brain-mod.md](landflow-brain-mod.md): a held, private `work.session` you review before it is sent) and `landflow work` (a later wave).
+- The Claude Code mod ([landflow-brain-mod.md](landflow-brain-mod.md): a held, private `work.session` you review before it is sent).
+- `landflow work`, the CLI as a client for people without Claude Code: it collects the day's commits and PRs in repos the person allowed, summarises them on their machine without a model, holds them for review and sends them as private `work.session` events with `source: landflow-cli` and `sourceId: <owner>/<name>@<day>` (see [the CLI page](features/cli.md#recording-your-day-landflow-work)).
 - Any harness over MCP: `record_work` with a personal API key ([Over MCP](#over-mcp)).
 - Anything that can call `POST /api/brain/work` with an API key that has the `brain:write` scope.
 

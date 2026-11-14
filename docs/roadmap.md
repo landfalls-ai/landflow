@@ -1497,7 +1497,8 @@ setting `brain.workAutoSend`.
 - **Built (B14)**: the first slice of the Claude Code mod `landflow-brain` ([landflow-brain-mod.md](landflow-brain-mod.md)):
   capture, a held journal, `/brain today|review|status|pause|resume|forget`, the status line, yesterday at session start
   and an offline queue.
-- **Next**: the rest of the clients (`landflow work`, the mod's colleagues, pane and band), team and org visibility with related
+- **`landflow work`** (built, backbone wave 2, B15): the harness-agnostic daily offloader (collect, summarise on the machine, hold for review, send), with cron, launchd and Task Scheduler examples ([cli.md](features/cli.md#recording-your-day-landflow-work)).
+- **Next**: the rest of the clients (the mod's colleagues, pane and band), team and org visibility with related
   colleagues, repo entities, the link from a person to their user, and a Settings screen for the auto-send setting.
 
 ## Shell: nine-item rail (built 2026-11-14)
