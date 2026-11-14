@@ -737,6 +737,14 @@ export function Editor({ workflowId }: { workflowId: string }) {
     api(`/api/executions/${executionId}/debug`, { method: 'POST', json: { breakpoints } }).catch(() => {});
   }, [breakpoints, running, debugging]);
 
+  // False once this editor unmounts: a save it started that answers later must not mark the next editor's store.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   // Autosave: set by the effect below; a save that finds edits made while it was in flight asks for another.
   const savingNow = useRef(false);
   const rearm = useRef<() => void>(undefined);
@@ -775,8 +783,10 @@ export function Editor({ workflowId }: { workflowId: string }) {
         saved = await put(stored.updatedAt);
       }
       const { workflow, policyWarnings, triggerAuthWarnings } = saved;
-      // The person opened another workflow while this save was in flight: its store is not this one's to mark.
-      if (useEditor.getState().workflowId !== workflowId) return true;
+      // The person opened another workflow while this save was in flight: its store is not this one's to mark. The same
+      // workflow opened again (Back, then back in, before a leave flush answered) has loaded older content into a new
+      // editor: marking that saved against this save's `updatedAt` would let its next autosave overwrite the flushed edit.
+      if (!mounted.current || useEditor.getState().workflowId !== workflowId) return true;
       useEditor.getState().markSaved(workflow.updatedAt, workflow);
       // Edits made while the request was in flight are not in what was saved: the draft stays unsaved and saves again.
       const { active: _live, ...now } = useEditor.getState().toWorkflow();
@@ -791,7 +801,8 @@ export function Editor({ workflowId }: { workflowId: string }) {
       if (triggerAuthWarnings?.length) toast.warning('Trigger authentication isn’t available to this project', { id: 'trigger-auth-warnings', description: triggerAuthWarnings.map((w) => `${w.nodeName}: ${w.message}`).join('\n') });
       return true;
     } catch (e) {
-      toast.error(`Save failed: ${(e as Error).message}`, { id: 'save-failed' });
+      // Retry: on a phone there is no Save button or ⌘S, and autosave waits for the next edit.
+      toast.error(`Save failed: ${(e as Error).message}`, { id: 'save-failed', action: { label: 'Retry', onClick: () => void useEditor.getState().save?.() } });
       return false;
     } finally {
       savingNow.current = false;
@@ -933,7 +944,9 @@ export function Editor({ workflowId }: { workflowId: string }) {
     const unsubscribeDrafting = useAssistant.subscribe((state, prev) => {
       if (state.drafting !== prev.drafting) arm();
     });
-    // Leaving inside the 2 s wait (Back, reload, closing the tab) must not drop the last edit: save at once.
+    // Leaving inside the 2 s wait (Back, reload, closing the tab) must not drop the last edit: save at once. A flush
+    // that comes while another save is in flight is queued behind it (`save`) and is never sent if the page unloads
+    // first; the browser's leave prompt (`guard`) is the only cover then.
     const flush = () => {
       clearTimeout(timer);
       // The lock may have moved to another tab since this effect ran: ask the live state, so no read-only toast shows.

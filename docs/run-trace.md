@@ -578,8 +578,8 @@ that never ran in this run (a branch not taken) is left out, so "after" means af
   a model, it may not follow the instruction to the letter; the Story shows what it asked.
 - **Copy to editor** opens the workflow in the editor at `?execution=<id>&pin=<nodeId>`: the editor shows the run on the
   canvas as **Debug in editor** does and pins the outputs of the steps that ran before that node as test data (`pin=all`
-  pins every step). Fix the flow, then run it: pinned steps return their data instead of running. It is not saved until
-  you save.
+  pins every step). Fix the flow, then run it: pinned steps return their data instead of running. The pins are a draft
+  edit, so autosave keeps them in the draft 2 seconds after it opens (the live version changes only with Publish).
 
 ## Pause and take over
 

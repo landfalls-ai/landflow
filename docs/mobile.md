@@ -26,8 +26,9 @@ under [What's next](#whats-next), and this page grows as they land.
   search box there takes the row), and the meta line comes last. This is done in CSS only (the actions' box becomes
   `contents`, and its children order themselves), so nothing remounts.
 - **Editor header.** Two rows. The first has back, the workflow's name, the saved state (a dot, read out as Saved or
-  Unsaved), **Save** and **⋯**. The second has Editor, Executions and Evaluations, then **Publish** and version history.
-  Tags are left out on a phone.
+  Unsaved) and **⋯**. The second has Editor, Runs and Tests, then **Publish**. There is no Save (a draft saves itself;
+  a failed save's toast has **Retry**) and no "Not published" chip: **Publish** carries the state ("Publish" or
+  "Live v3"). Tags and Version history are in **⋯**, as on a desktop.
 - **Touch and type.** Text fields are 16 px on a phone, so iOS doesn't zoom into them on focus. The page runs under the
   notch and home bar (`viewport-fit=cover`), and the tab bar and headers pad for them. A **Skip to content** link is the
   first stop for the keyboard (`#main`). Toasts sit above the tab bar.

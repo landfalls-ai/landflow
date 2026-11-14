@@ -1609,7 +1609,9 @@ Built ([Building and debugging a flow](features/editor.md#the-editors-chrome)): 
 Chat**, never both, each kept mounted), the flow chat on the chat kit (CH10 for the editor: the list, the Working line,
 the reply footer, the model chip, plain errors), a top bar of seven controls with autosave and a Publish button that
 carries the state (P-ed-1), one canvas toolbar and a minimap only above 25 nodes (P-ed-2), and one **Import…** dialog
-(P-ed-3). All of CH10 (editor), CH19 and P-ed-1 to 3 are done. Open: the phone's Chat is still a sheet under the canvas
+(P-ed-3). All of CH10 (editor), CH19 and P-ed-1 to 3 are done, but for one half of P-ed-3 dropped on purpose: **Git
+history…** shows in ⋯ for every saved workflow, not only when source control is configured, because a member cannot
+read the admin-only source-control settings to know, and the dialog says when it is not set up. Open: the phone's Chat is still a sheet under the canvas
 with no Spotlight | Chat switch (the Execute bar's chat button opens and closes it), and a long editing session with
 no pause over 10 minutes between saves folds into one version (⌘S, Publish and a tab-leave save add their own).
 
