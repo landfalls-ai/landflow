@@ -5,7 +5,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { ChatError, ModelChip, ReplyMeta, chatText, firstSentences, plainError } from '@/components/ui/chat';
-import { nextPinned } from '@/components/ui/chat-motion';
+import { nextScroll } from '@/components/ui/chat-motion';
 import { ActivityTrace } from '@/components/ui/activity-trace';
 import { formatSeconds, summarizeSteps, type ActivityStep } from '@/lib/shared/activity';
 
@@ -123,13 +123,22 @@ describe('an error with actions', () => {
   });
 });
 
+it('cuts after "No." at the start of a reply', () => {
+  expect(firstSentences('No. That is wrong. Really.', 1).text).toBe('No.');
+});
+
 describe('a chat list’s pin', () => {
   it('stays pinned near the bottom and unpins when the reader scrolls up', () => {
-    expect(nextPinned({ gap: 10, prevTop: 0, top: 5, programmatic: false })).toBe(true);
-    expect(nextPinned({ gap: 300, prevTop: 500, top: 400, programmatic: false })).toBe(false);
+    expect(nextScroll({ gap: 10, prevTop: 0, top: 5, gliding: false })).toEqual({ pinned: true, gliding: false });
+    expect(nextScroll({ gap: 300, prevTop: 500, top: 400, gliding: false }).pinned).toBe(false);
   });
-  it('keeps the pin through a programmatic glide unless the list moves up', () => {
-    expect(nextPinned({ gap: 300, prevTop: 100, top: 150, programmatic: true })).toBe(true);
-    expect(nextPinned({ gap: 300, prevTop: 150, top: 100, programmatic: true })).toBe(false);
+  it('keeps the pin through a glide unless the list moves up', () => {
+    expect(nextScroll({ gap: 300, prevTop: 100, top: 150, gliding: true })).toEqual({ pinned: true, gliding: true });
+    expect(nextScroll({ gap: 300, prevTop: 150, top: 100, gliding: true })).toEqual({ pinned: false, gliding: false });
+  });
+  it('stays unpinned when the reader interrupts a glide, then scrolls down short of the bottom', () => {
+    const up = nextScroll({ gap: 300, prevTop: 150, top: 100, gliding: true });
+    const down = nextScroll({ gap: 250, prevTop: 100, top: 150, gliding: up.gliding });
+    expect(down.pinned).toBe(false);
   });
 });

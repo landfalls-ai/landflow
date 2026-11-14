@@ -36,12 +36,13 @@ function Shell({ children }: { children: ReactNode }) {
 const NEAR_BOTTOM = 48;
 
 /**
- * Whether a scroll event means the reader left the bottom. While a programmatic scroll is in flight, only a move up
- * unpins; reaching the bottom pins again.
+ * What a scroll event means: whether the reader is pinned to the bottom, and whether a programmatic glide is still in
+ * flight. Reaching the bottom pins and ends the glide; a move up unpins and ends it; a move down mid-glide keeps the pin.
  */
-export function nextPinned({ gap, prevTop, top, programmatic }: { gap: number; prevTop: number; top: number; programmatic: boolean }): boolean {
-  if (gap <= NEAR_BOTTOM) return true;
-  return programmatic ? top >= prevTop : false;
+export function nextScroll({ gap, prevTop, top, gliding }: { gap: number; prevTop: number; top: number; gliding: boolean }): { pinned: boolean; gliding: boolean } {
+  if (gap <= NEAR_BOTTOM) return { pinned: true, gliding: false };
+  if (gliding && top >= prevTop) return { pinned: true, gliding: true };
+  return { pinned: false, gliding: false };
 }
 
 /**
@@ -84,7 +85,7 @@ export function ChatList({ children, className }: { children: ReactNode; classNa
   useLayoutEffect(() => {
     if (lastKey === prevLast.current) return;
     prevLast.current = lastKey;
-    if (pinned.current) toBottom(true);
+    if (pinned.current) toBottom();
     else setAway(true);
   }, [lastKey, toBottom]);
 
@@ -93,7 +94,7 @@ export function ChatList({ children, className }: { children: ReactNode; classNa
     const node = content.current;
     if (!node || typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(() => {
-      if (pinned.current) toBottom();
+      if (pinned.current && !gliding.current) toBottom();
     });
     ro.observe(node);
     return () => ro.disconnect();
@@ -103,19 +104,18 @@ export function ChatList({ children, className }: { children: ReactNode; classNa
     const el = scroller.current;
     if (!el) return;
     const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
-    pinned.current = nextPinned({ gap, prevTop: lastTop.current, top: el.scrollTop, programmatic: gliding.current });
+    const next = nextScroll({ gap, prevTop: lastTop.current, top: el.scrollTop, gliding: gliding.current });
+    pinned.current = next.pinned;
+    gliding.current = next.gliding;
     lastTop.current = el.scrollTop;
-    if (gap <= NEAR_BOTTOM) {
-      gliding.current = false;
-      setAway(false);
-    }
+    if (gap <= NEAR_BOTTOM) setAway(false);
   };
 
   let order = 0;
   return (
     <Shell>
       <div className="relative min-h-0 flex-1">
-        <div ref={scroller} onScroll={onScroll} className={cn('h-full min-h-0 overflow-y-auto', className)}>
+        <div ref={scroller} onScroll={onScroll} onScrollEnd={() => (gliding.current = false)} className={cn('h-full min-h-0 overflow-y-auto', className)}>
           <div ref={content} className="space-y-3">
             {items.map((child, i) => (
               <m.div

@@ -87,7 +87,7 @@ export function ReplyMeta({ parts, info, copy, children }: { parts?: Array<strin
   if (!shown.length && !copy && !children) return null;
   return (
     <div className="flex min-h-7 flex-wrap items-center gap-x-2 font-mono text-[10.5px] text-t3">
-      {shown.length > 0 && <span className="min-w-0 truncate">{shown.join(' · ')}</span>}
+      {shown.length > 0 && <span className="min-w-0 break-words">{shown.join(' · ')}</span>}
       {children}
       {copy && <CopyButton text={copy} label="Copy the reply" className="-my-1 size-6 max-md:size-11" />}
     </div>
@@ -123,7 +123,7 @@ export function firstSentences(text: string, n: number): { text: string; more: b
     } else if (fence) continue;
     else if (c === '“') quoted++;
     else if (c === '”') quoted = Math.max(0, quoted - 1);
-    else if ('.!?'.includes(c) && !quoted && /\s/.test(t[i + 1] ?? '') && !/\b(?:e\.g|i\.e|etc|vs|approx|Mr|Mrs|Ms|Dr|No)\.$/i.test(t.slice(Math.max(0, i - 5), i + 1)) && !/(?:^|\n)\s*\d+\.$/.test(t.slice(Math.max(0, i - 6), i + 1))) {
+    else if ('.!?'.includes(c) && !quoted && /\s/.test(t[i + 1] ?? '') && !/\b(?:e\.g|i\.e|etc|vs|approx|Mr|Mrs|Ms|Dr)\.$/i.test(t.slice(Math.max(0, i - 5), i + 1)) && !/(?:^|\n)\s*\d+\.$/.test(t.slice(Math.max(0, i - 6), i + 1))) {
       if (++found >= n) return { text: t.slice(0, i + 1), more: t.slice(i + 1).trim().length > 0 };
     }
   }
