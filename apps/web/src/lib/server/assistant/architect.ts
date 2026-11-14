@@ -10,6 +10,7 @@ import { nanoid } from 'nanoid';
 import { defaultParameters, isPropertyVisible } from '@landflow/protocol';
 import type { AgentMessage, LanguageModel, ToolCall, ToolResult, ToolSpec } from '@landflow/engine';
 import type { AgentConfig, AgentPersona, AgentTemplate, AgentToolConfig, AnswerLength } from '@/lib/shared/agents';
+import { isNodeKnowledge } from '@/lib/shared/agents';
 import { missingSystem, type ArchitectEvent, type ArchitectMissing, type ArchitectNeed, type ArchitectTurn } from '@/lib/shared/agent-architect';
 import { randomFace } from '@/lib/shared/faces';
 import type { NodeTypeInfo } from '@/lib/shared/types';
@@ -402,7 +403,7 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
         dropped.push('a knowledge base without a collection');
         continue;
       }
-      if (tools.some((t) => t.type === 'knowledge' && t.collection === collection)) continue;
+      if (tools.some((t) => t.type === 'knowledge' && !isNodeKnowledge(t) && t.collection === collection)) continue;
       const existing = context.resources?.knowledge.find((k) => k.collection === collection);
       const embeddings = existing?.embeddings ?? context.resources?.embeddings;
       if (!embeddings) {

@@ -3,7 +3,8 @@
  * host can use, local ones first and the one Spotlight itself runs on before the rest, the knowledge bases agents already
  * have, and the embeddings model a new knowledge base gets. Read per request: Ollama's models change as they are pulled.
  */
-import type { AgentModel, KnowledgeBaseToolConfig } from '@/lib/shared/agents';
+import type { AgentModel, VectorKnowledgeBaseConfig as KnowledgeBaseToolConfig } from '@/lib/shared/agents';
+import { isNodeKnowledge } from '@/lib/shared/agents';
 import { agentStore } from '../agents/store';
 import { modelOptions } from '../agents/models';
 import { ollamaUrl } from '../config';
@@ -53,7 +54,8 @@ export async function agentResources(actor: Actor): Promise<AgentResources> {
   for (const agent of agentStore.list()) {
     if (!canResource(actor, 'agent', agent.id, 'read')) continue;
     for (const tool of agent.tools) {
-      if (tool.type !== 'knowledge') continue;
+      // A plugin's knowledge base (Clickland) has no collection to share: only vector stores are offered.
+      if (tool.type !== 'knowledge' || isNodeKnowledge(tool)) continue;
       const key = `${tool.store}:${tool.collection}`;
       const { id: _id, ...base } = tool;
       const seen = knowledge.get(key);

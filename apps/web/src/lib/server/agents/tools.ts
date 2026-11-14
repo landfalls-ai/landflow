@@ -17,6 +17,7 @@ import type {
   AgentSession,
   AgentTraceSummary,
   McpServerToolConfig,
+  NodeKnowledgeBaseConfig,
   NodeToolConfig,
   PendingCall,
   RemoteRun,
@@ -24,6 +25,7 @@ import type {
   ToolKind,
   WorkflowToolConfig,
 } from '../../shared/agents';
+import { isNodeKnowledge } from '../../shared/agents';
 import type { ExecutionRecord } from '../../shared/types';
 import {
   answerMessage,
@@ -132,7 +134,15 @@ export function buildTools(agent: Agent, config: AgentConfig, mcp: Toolset = { t
   for (const tool of config.tools) {
     if (tool.type === 'mcp' || tool.type === 'a2a') continue;
     const built =
-      tool.type === 'node' ? nodeTool(tool) : tool.type === 'workflow' ? workflowTool(tool) : tool.type === 'knowledge' ? knowledgeTool(tool) : subAgentTool(tool, agent);
+      tool.type === 'node'
+        ? nodeTool(tool)
+        : tool.type === 'workflow'
+          ? workflowTool(tool)
+          : tool.type === 'knowledge'
+            ? isNodeKnowledge(tool)
+              ? nodeKnowledgeTool(tool)
+              : knowledgeTool(tool)
+            : subAgentTool(tool, agent);
     if ('error' in built) unavailable.push(built.error);
     else tools.push(built);
   }
@@ -459,6 +469,47 @@ function nodeTool(config: NodeToolConfig): BuiltTool | { error: string } {
       // A screenshot the node attaches (item.binary) reaches the model as an image, up to four per call.
       const images = out.flatMap((item) => binaryToolImages(item.binary)).slice(0, 4);
       return { output: out.length === 1 ? out[0].json : out.map((item) => item.json), ...(images.length && { images }) };
+    },
+  };
+}
+
+/** The knowledge tool's argument: what the model asks. */
+const KNOWLEDGE_QUERY_SCHEMA: JsonObject = {
+  type: 'object',
+  properties: { query: { type: 'string', description: 'What to look for, in natural language' } },
+  required: ['query'],
+};
+
+/** A node's answer as knowledge results: `{ results }` as it is, else each item as one result. */
+export function knowledgeResults(output: unknown): { results: unknown[] } {
+  if (output && typeof output === 'object' && !Array.isArray(output) && Array.isArray((output as { results?: unknown }).results)) return { results: (output as { results: unknown[] }).results };
+  const items = Array.isArray(output) ? output : output === undefined || output === null ? [] : [output];
+  return { results: items.map((item) => (item && typeof item === 'object' && 'pageContent' in item ? item : { pageContent: typeof item === 'string' ? item : JSON.stringify(item), metadata: {} })) };
+}
+
+/**
+ * A knowledge base a plugin node answers (Clickland's knowledge search): the node runs on the same path as a node tool,
+ * with its fixed parameters and the question in `queryParameter`, and the model sees `{ query }` in, `{ results }` out.
+ * `knowledge: true`, so the grounded-answer guardrail judges answers against what it returned.
+ */
+export function nodeKnowledgeTool(config: NodeKnowledgeBaseConfig): BuiltTool | { error: string } {
+  const label = config.name || config.nodeType || 'Knowledge base';
+  if (!config.nodeType?.trim()) return { error: `${label}: no plugin node set` };
+  const queryParameter = config.queryParameter?.trim() || 'query';
+  const built = nodeTool({ id: config.id, type: 'node', name: config.name || 'search_knowledge_base', description: config.description, nodeType: config.nodeType, parameters: { ...(config.parameters as JsonObject) }, ...(config.credentials && { credentials: config.credentials }) });
+  if ('error' in built) return { error: `${label}: ${built.error.replace(/^[^:]*: /, '')}` };
+  const resolved = registry.resolve(config.nodeType);
+  if (!('error' in resolved) && !resolved.descriptor.properties.some((p) => p.name === queryParameter)) return { error: `${label}: ${config.nodeType} has no “${queryParameter}” parameter for the question` };
+  return {
+    ...built,
+    knowledge: true,
+    label,
+    description: config.description || built.description,
+    inputSchema: KNOWLEDGE_QUERY_SCHEMA,
+    requireApproval: Boolean(config.requireApproval),
+    async invoke(input, ctx) {
+      const outcome = await built.invoke({ [queryParameter]: String(input.query ?? '') }, ctx);
+      return { ...outcome, output: knowledgeResults(outcome.output) };
     },
   };
 }
