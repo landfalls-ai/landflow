@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils';
 import { languageMeta, TRANSPORT_META } from '@/lib/client/format';
 import { CATEGORY_COLOR, nodeColor, tint } from '@/lib/client/node-style';
 import type { NodeTypeInfo } from '@/lib/shared/types';
+import { DevOnly } from '@/lib/client/developer-details';
 import { describeMatcher, nodeMatches, type CompositeTypeInfo } from '@/lib/shared/composites';
 import { NodeIcon } from '../ui/icon';
 import { Kbd } from '../ui/inputs';
@@ -338,10 +339,12 @@ export function NodeCreator() {
       description: override?.description ?? t.descriptor.description,
       meta:
         t.pluginId !== 'core' ? (
-          <span className="flex items-center gap-1 font-mono text-[10px] text-t3">
-            <span className="size-1.5 rounded-full" style={{ background: lang.color }} />
-            {lang.short}
-          </span>
+          <DevOnly>
+            <span className="flex items-center gap-1 font-mono text-[10px] text-t3">
+              <span className="size-1.5 rounded-full" style={{ background: lang.color }} />
+              {lang.short}
+            </span>
+          </DevOnly>
         ) : undefined,
       disabled: !t.available,
       onSelect: () => choose(t),
@@ -365,10 +368,12 @@ export function NodeCreator() {
       ),
       description: seg.description ?? `${count} node${count === 1 ? '' : 's'}`,
       meta: (
-        <span className="flex items-center gap-1 font-mono text-[10px] text-t3">
-          <span className="size-1.5 rounded-full" style={{ background: lang.color }} />
-          {lang.short} · {TRANSPORT_META[seg.transport].label}
-        </span>
+        <DevOnly>
+          <span className="flex items-center gap-1 font-mono text-[10px] text-t3">
+            <span className="size-1.5 rounded-full" style={{ background: lang.color }} />
+            {lang.short} · {TRANSPORT_META[seg.transport].label}
+          </span>
+        </DevOnly>
       ),
       nav: true,
       onSelect: () => push({ kind: 'plugin', pluginId: seg.pluginId }),
@@ -431,8 +436,11 @@ export function NodeCreator() {
           <div className="min-w-0">
             <div className="truncate text-[17px] font-semibold text-t1">{seg.name}</div>
             <div className="flex items-center gap-1.5 font-mono text-[11px] text-t3">
-              <span className="size-1.5 rounded-full" style={{ background: lang.color }} />
-              {lang.label} · {TRANSPORT_META[seg.transport].label} · {seg.online ? 'online' : 'offline'}
+              <DevOnly>
+                <span className="size-1.5 rounded-full" style={{ background: lang.color }} />
+                {lang.label} · {TRANSPORT_META[seg.transport].label} ·{' '}
+              </DevOnly>
+              {seg.online ? 'online' : 'offline'}
             </div>
           </div>
         </div>

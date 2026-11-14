@@ -50,6 +50,7 @@ import { liveTeam } from '../editor/team-strip';
 import { AgentSessionPanel, type AgentNodeRef } from './agent-session-panel';
 import { ExecutionCanvas } from './execution-canvas';
 import { useExecutions } from './executions-shell';
+import { DevOnly, useDeveloperDetails } from '@/lib/client/developer-details';
 import { MODE_META, RERUN_LABEL, canRetry, deleteExecution, startRerun, startRetry, type RerunBody, type RetryBody } from './meta';
 import { AiUsageChip, BufferedChip, FeedbackChip, ParentChip, SubWorkflowWait, waitedChildren } from './run-extras';
 import { Segmented } from '../ui/segmented';
@@ -114,6 +115,22 @@ function Skeleton() {
   );
 }
 
+/** The run's id, trace id and mode chip: developer details. */
+export function RunIdentity({ record, traceUrl }: { record: Pick<ExecutionRecord, 'executionId' | 'traceId' | 'mode'>; traceUrl?: string }) {
+  const mode = MODE_META[record.mode] ?? MODE_META.manual;
+  const ModeIcon = mode.icon;
+  return (
+    <DevOnly>
+      <Sep />
+      <span className="font-mono text-[12px] text-t3">ID#{record.executionId}</span>
+      {record.traceId && <TraceId traceId={record.traceId} url={traceUrl} />}
+      <span className="flex items-center gap-1 rounded-full border border-hair px-2 text-[12px] text-t2" title={mode.label}>
+        <ModeIcon className="size-3" /> {record.mode}
+      </span>
+    </DevOnly>
+  );
+}
+
 export function ExecutionPreview({ workflowId, executionId }: { workflowId: string; executionId?: string }) {
   const { executions, open } = useExecutions();
   const router = useRouter();
@@ -142,6 +159,7 @@ export function ExecutionPreview({ workflowId, executionId }: { workflowId: stri
 }
 
 function ExecutionDetail({ executionId }: { executionId: string }) {
+  const developerDetails = useDeveloperDetails();
   const router = useRouter();
   const { workflowId, workflow: currentWorkflow, nodeTypes, executions, refresh, open } = useExecutions();
   const [record, setRecord] = useState<ExecutionRecord>();
@@ -341,8 +359,6 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
   const reusedCount = lastRuns.filter((r) => r?.reused).length;
   const ranCount = lastRuns.length - reusedCount;
   const name = (id?: string) => (id ? (nodes[id]?.name ?? id) : undefined);
-  const mode = MODE_META[record.mode] ?? MODE_META.manual;
-  const ModeIcon = mode.icon;
   const errorNodeId = record.error?.nodeId;
   // A checkpoint step is `<nodeId>#<runIndex>` of the last node that finished, or `start`.
   const resumedStep = record.resumedAfterRestart?.stepId;
@@ -513,12 +529,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                 {ranCount} node{ranCount === 1 ? '' : 's'}
                 {reusedCount > 0 && <span className="text-t3"> · {reusedCount} reused</span>}
               </span>
-              <Sep />
-              <span className="font-mono text-[12px] text-t3">ID#{record.executionId}</span>
-              {record.traceId && <TraceId traceId={record.traceId} url={traceUrl} />}
-              <span className="flex items-center gap-1 rounded-full border border-hair px-2 text-[12px] text-t2" title={mode.label}>
-                <ModeIcon className="size-3" /> {record.mode}
-              </span>
+              <RunIdentity record={record} traceUrl={traceUrl} />
               {record.versionNumber !== undefined && (
                 <span
                   className={cn('flex items-center gap-1 rounded-full border px-2 text-[12px]', record.versionPublished ? 'border-acbd text-ac' : 'border-hair text-t2')}
@@ -545,7 +556,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                 >
                   <RotateCcw className="size-3" />
                   {RERUN_LABEL[record.rerunOf.scope]}
-                  {record.rerunOf.nodeId && <> “{name(record.rerunOf.nodeId)}”</>} of <span className="font-mono">{record.rerunOf.executionId}</span>
+                  {record.rerunOf.nodeId && <> “{name(record.rerunOf.nodeId)}”</>} of {developerDetails ? <span className="font-mono">{record.rerunOf.executionId}</span> : 'an earlier run'}
                 </button>
               )}
               {record.retryOf && (
@@ -555,7 +566,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                   className="flex items-center gap-1 rounded-full bg-[color-mix(in_oklab,var(--viz-7)_14%,transparent)] px-2 text-[12px] text-viz-7 transition-opacity hover:opacity-80"
                 >
                   <Repeat className="size-3" />
-                  Retry #{record.retryAttempt ?? 1} of <span className="font-mono">{record.retryOf}</span>
+                  Retry #{record.retryAttempt ?? 1} of {developerDetails ? <span className="font-mono">{record.retryOf}</span> : 'an earlier run'}
                 </button>
               )}
               {record.retriedBy && (
@@ -565,7 +576,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                   className="flex items-center gap-1 rounded-full bg-[color-mix(in_oklab,var(--viz-7)_14%,transparent)] px-2 text-[12px] text-viz-7 transition-opacity hover:opacity-80"
                 >
                   <Redo2 className="size-3" />
-                  Retried by <span className="font-mono">{record.retriedBy}</span>
+                  Retried by {developerDetails ? <span className="font-mono">{record.retriedBy}</span> : 'a later run'}
                 </button>
               )}
               {record.retryAt && (

@@ -3,6 +3,7 @@
  * "Debug access" on the Run Trace page: mint, list and revoke the debug tokens of one execution
  * (docs/specs/19-debug-token.md). The token is shown once, with what to give an agent; the list never has it.
  */
+import { useDeveloperDetails } from '@/lib/client/developer-details';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { KeyRound, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -42,6 +43,8 @@ const TONE: Record<string, Tone> = { live: 'success', revoked: 'muted', expired:
 export function DebugAccessButton({ executionId }: { executionId: string }) {
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
+  const developerDetails = useDeveloperDetails();
+  if (!developerDetails) return null;
   return (
     <>
       <button

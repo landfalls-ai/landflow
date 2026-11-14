@@ -13,6 +13,7 @@ import type { ImportReport } from '@/lib/shared/types';
 import { Dialog } from '../agents/dialog';
 import { Button } from '../ui/button';
 import { SectionLabel } from '../ui/inputs';
+import { DevOnly } from '@/lib/client/developer-details';
 
 interface ReportState {
   report?: ImportReport;
@@ -104,7 +105,9 @@ export function ImportReportView({ report }: { report: ImportReport }) {
             {report.placeholders.map((p) => (
               <div key={p.name} className="flex items-center gap-2 rounded-lg border border-warnbd bg-warndim px-2.5 py-1.5 text-[12px]">
                 <span className="font-semibold text-t1">{p.name}</span>
-                <span className="ml-auto truncate font-mono text-[11px] text-t3">{p.type}</span>
+                <DevOnly>
+                  <span className="ml-auto truncate font-mono text-[11px] text-t3">{p.type}</span>
+                </DevOnly>
               </div>
             ))}
           </div>
@@ -118,7 +121,9 @@ export function ImportReportView({ report }: { report: ImportReport }) {
               <div key={b.name} className="flex items-center gap-2 rounded-lg border border-rdbd bg-rddim px-2.5 py-1.5 text-[12px]" title={b.reason}>
                 <span className="font-semibold text-t1">{b.name}</span>
                 <span className="truncate text-t3">{b.reason}</span>
-                <span className="ml-auto truncate font-mono text-[11px] text-t3">{b.type}</span>
+                <DevOnly>
+                  <span className="ml-auto truncate font-mono text-[11px] text-t3">{b.type}</span>
+                </DevOnly>
               </div>
             ))}
           </div>
@@ -133,9 +138,11 @@ export function ImportReportView({ report }: { report: ImportReport }) {
             {report.credentials!.map((c, i) => (
               <div key={`${c.node}-${i}`} className="flex items-center gap-2 rounded-lg border border-hair bg-wl px-2.5 py-1.5 text-[12px]">
                 <span className="font-semibold text-t1">{c.node}</span>
-                <span className="truncate font-mono text-[11px] text-t3">{c.flowise}</span>
-                <ArrowRight className="size-3 shrink-0 text-t3" />
-                <span className="truncate font-mono text-[11px] text-t2">{c.type}</span>
+                <DevOnly>
+                  <span className="truncate font-mono text-[11px] text-t3">{c.flowise}</span>
+                  <ArrowRight className="size-3 shrink-0 text-t3" />
+                  <span className="truncate font-mono text-[11px] text-t2">{c.type}</span>
+                </DevOnly>
                 <span className={c.status === 'assigned' ? 'ml-auto shrink-0 text-gn' : 'ml-auto shrink-0 text-warn'}>
                   {c.status === 'assigned' ? `using ${c.credential}` : c.status === 'choose' ? 'choose one' : 'create one'}
                 </span>

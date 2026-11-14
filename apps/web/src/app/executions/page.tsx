@@ -4,6 +4,7 @@
  * a table, live. A row opens the execution inside its workflow's Executions
  * tab. `?workflowId=` preselects a workflow; legacy `?id=` links redirect.
  */
+import { DevOnly, useDeveloperDetails } from '@/lib/client/developer-details';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -36,6 +37,7 @@ const LIMIT = 200;
 const POLL_MS = 8000;
 const AUTO_KEY = 'landflow-executions-autorefresh';
 // Desktop: seven columns. Phone: a card per run, name and menu, then status and run time, then when it started.
+const COLS_PLAIN = 'md:grid-cols-[minmax(180px,1.6fr)_minmax(120px,0.9fr)_minmax(150px,1fr)_96px_40px] max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-y-1';
 const COLS = 'md:grid-cols-[minmax(180px,1.6fr)_minmax(120px,0.9fr)_minmax(150px,1fr)_96px_minmax(130px,0.8fr)_44px_40px] max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-y-1';
 const NEW_ROW: CSSProperties = { animation: 'lf-slide-right 0.24s cubic-bezier(0.22, 1, 0.36, 1) both, lf-flash 1.2s ease-out' };
 
@@ -178,6 +180,7 @@ function RowMenu({ execution, onChanged }: { execution: ExecutionSummary; onChan
 }
 
 function Row({ execution, now, index, isNew, onChanged }: { execution: ExecutionSummary; now: number; index: number; isNew: boolean; onChanged: () => void }) {
+  const developerDetails = useDeveloperDetails();
   const state = runStateOf(execution);
   const live = execution.status === 'running';
   const failed = execution.status === 'error';
@@ -190,14 +193,14 @@ function Row({ execution, now, index, isNew, onChanged }: { execution: Execution
         'group relative grid items-center gap-3 border-b border-hair px-4 py-2.5 text-[13px] transition-colors duration-150 last:border-b-0',
         // A phone: each run its own rounded card, like Workflows and Search runs.
         'max-md:overflow-hidden max-md:rounded-2xl max-md:border max-md:last:border-b',
-        COLS,
+        developerDetails ? COLS : COLS_PLAIN,
         failed ? 'bg-rddim hover:bg-[color-mix(in_oklab,var(--rd)_12%,var(--sf))]' : 'hover:bg-sf2 max-md:bg-sf',
         !isNew && 'animate-fade-up',
       )}
       style={isNew ? NEW_ROW : { animationDelay: `${Math.min(index, 20) * 20}ms` }}
     >
       {/* The whole row is a link; the menu sits above it. */}
-      <Link href={hrefOf(execution)} className="absolute inset-0" aria-label={`Open the run of ${execution.workflowName}, ${execution.status} (${execution.id})`} />
+      <Link href={hrefOf(execution)} className="absolute inset-0" aria-label={`Open the run of ${execution.workflowName}, ${execution.status}${developerDetails ? ` (${execution.id})` : ''}`} />
       <span className={cn('absolute inset-y-0 left-0 w-[3px]', RUN_STATE[state].bar)} />
       <div role="cell" className="flex min-w-0 items-center gap-1.5 max-md:col-start-1 max-md:row-start-1 max-md:flex-wrap">
         <span className="truncate font-semibold text-t1">{execution.workflowName}</span>
@@ -238,12 +241,14 @@ function Row({ execution, now, index, isNew, onChanged }: { execution: Execution
       <div role="cell" className={cn('font-mono text-[12px] tabular-nums max-md:col-start-2 max-md:row-start-2 max-md:justify-self-end', live ? 'text-warn' : 'text-t2')}>
         {queued ? '—' : duration(ms)}
       </div>
-      <div role="cell" className="truncate font-mono text-[12px] text-t3 max-md:hidden">
-        {execution.id}
-      </div>
-      <div role="cell" className="flex justify-center max-md:hidden">
-        <ExecutionMarks execution={{ mode: execution.mode }} />
-      </div>
+      <DevOnly>
+        <div role="cell" className="truncate font-mono text-[12px] text-t3 max-md:hidden">
+          {execution.id}
+        </div>
+        <div role="cell" className="flex justify-center max-md:hidden">
+          <ExecutionMarks execution={{ mode: execution.mode }} />
+        </div>
+      </DevOnly>
       <div role="cell" className="flex justify-end max-md:col-start-2 max-md:row-start-1">
         <RowMenu execution={execution} onChanged={onChanged} />
       </div>
@@ -318,6 +323,7 @@ function StopAllButton({ onStopped }: { onStopped: () => void }) {
 }
 
 function ExecutionsInner() {
+  const developerDetails = useDeveloperDetails();
   // Stop all reaches every project's runs: admins only (the route enforces it; a null viewer is a host without sign-in).
   const viewer = useViewer();
   const canStopAll = !viewer || can(viewer, 'settings:manage');
@@ -473,15 +479,17 @@ function ExecutionsInner() {
         </div>
 
         <div role="table" aria-label="Executions" className="overflow-hidden rounded-2xl border border-hair bg-sf max-md:flex max-md:flex-col max-md:gap-2 max-md:overflow-visible max-md:rounded-none max-md:border-0 max-md:bg-transparent">
-          <div role="row" className={cn('grid items-center gap-3 border-b border-hair px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3 max-md:sr-only', COLS)}>
+          <div role="row" className={cn('grid items-center gap-3 border-b border-hair px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3 max-md:sr-only', developerDetails ? COLS : COLS_PLAIN)}>
             <span role="columnheader">Workflow</span>
             <span role="columnheader">Status</span>
             <span role="columnheader">Started</span>
             <span role="columnheader">Run time</span>
-            <span role="columnheader">Execution ID</span>
-            <span role="columnheader" className="text-center">
-              Mode
-            </span>
+            <DevOnly>
+              <span role="columnheader">Execution ID</span>
+              <span role="columnheader" className="text-center">
+                Mode
+              </span>
+            </DevOnly>
             <span />
           </div>
           {!executions &&

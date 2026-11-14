@@ -15,6 +15,7 @@ import { Chip } from '../ui/badge';
 import { AgentAvatar } from './avatar';
 import { faceOf } from './faces';
 import { modelLabel, type LastTeamRun } from './team-run-data';
+import { DevOnly } from '@/lib/client/developer-details';
 
 /** Where a member runs, in a few words: Claude Code on kagent, or its model. */
 export function runsOnLabel(member: TeamMember, agent?: AgentSummary): string | undefined {
@@ -93,7 +94,11 @@ export function MemberCards({ config, teamName, agents, run }: { config: AgentTe
                   <div className="flex flex-1 flex-col p-3.5">{body}</div>
                 )}
                 <div className="mt-auto flex flex-wrap gap-1.5 border-t border-hair px-3.5 py-2.5">
-                  {runsOn && <Chip tone="accent">{runsOn}</Chip>}
+                  {runsOn && (
+                    <DevOnly>
+                      <Chip tone="accent">{runsOn}</Chip>
+                    </DevOnly>
+                  )}
                   {consults.length > 0 && <Chip className="whitespace-normal border-dashed">Consults {consults.join(', ')}</Chip>}
                   {member.budgetTokens !== undefined && <Chip>{formatTokens(member.budgetTokens)} tokens a run</Chip>}
                   {turn && <Chip tone={turn.startsWith('Over') ? 'danger' : 'muted'}>{turn}</Chip>}

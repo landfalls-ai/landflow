@@ -13,6 +13,7 @@ import { api } from '@/lib/client/api';
 import { chartOrder, memberAgent, type AgentTeam, type TeamSummary } from '@/lib/shared/agent-teams';
 import type { AgentSummary } from '@/lib/shared/agents';
 import { formatTokens } from '@/lib/shared/ai-usage';
+import { DevOnly } from '@/lib/client/developer-details';
 import { approvalChoiceLabel, lastRunWords, leadAsks, teamCardLine, teamPanelFields, teamVersion } from '@/lib/shared/team-node';
 import { cn } from '@/lib/utils';
 import { AgentAvatar, type AvatarSource } from '../agents/avatar';
@@ -179,7 +180,11 @@ function MemberRows({ team, version, roster, teamId }: { team: AgentTeam; versio
               {line && <p className="mt-0.5 line-clamp-2 text-[12px] leading-snug text-t2">{line}</p>}
               {(runsOn || member.budgetTokens !== undefined || turn) && (
                 <div className="mt-1.5 flex flex-wrap gap-1">
-                  {runsOn && <Chip tone="accent">{runsOn}</Chip>}
+                  {runsOn && (
+                    <DevOnly>
+                      <Chip tone="accent">{runsOn}</Chip>
+                    </DevOnly>
+                  )}
                   {member.budgetTokens !== undefined && <Chip>{formatTokens(member.budgetTokens)} a run</Chip>}
                   {turn && <Chip tone={turn.startsWith('Over') ? 'danger' : 'muted'}>{turn}</Chip>}
                 </div>
@@ -290,7 +295,7 @@ export function TeamNodePanel({ properties, values, onChange, form }: { properti
         {teamId && !choosing ? (
           expression ? (
             <p className="rounded-2xl border border-hair bg-sf px-3 py-2.5 text-[12px] text-t2">
-              The team comes from an expression: <code className="font-mono text-[11px]">{teamId}</code>
+              The team comes from an expression<DevOnly>: <code className="font-mono text-[11px]">{teamId}</code></DevOnly>
             </p>
           ) : (
             <TeamCard team={team} teamId={teamId} version={values.version} faces={faces} onChange={() => setChoosing(true)} />

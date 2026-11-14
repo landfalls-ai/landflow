@@ -1,4 +1,5 @@
 'use client';
+import { DevOnly } from '@/lib/client/developer-details';
 /**
  * The marketplace's Explore tab: every node plugin, workflow, composite type and Claude Code plugin in one place. It
  * merges GET /api/marketplaces/explore (every added marketplace, the Landflow plugins' flows), the registry's own
@@ -214,7 +215,9 @@ function CompositeTile({ composite, onDeleted }: { composite: CompositeTypeInfo;
           {d.slots.length} slot{d.slots.length === 1 ? '' : 's'}, {required} required
         </span>
         {d.closed && <Chip>Closed</Chip>}
-        <span className="truncate font-mono">{composite.type}</span>
+        <DevOnly>
+          <span className="truncate font-mono">{composite.type}</span>
+        </DevOnly>
       </div>
     </div>
   );
