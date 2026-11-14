@@ -1486,6 +1486,25 @@ workbench in place of a page of cards, keeping Spotlight.
   its run went cold first (only with `LANDFLOW_PG_HOT_MINUTES` below the ask's 10-minute TTL); and the isolate backend
   still aborts the process on hash-table growth, so a memory bomb needs a separate evaluation process to be contained.
 
+## Company backbone: work events and the briefing (built 2026-11-14, B05)
+
+People's own tools can send a summary of their work to the brain, and each person gets their own day back
+([work-and-briefings.md](work-and-briefings.md)). This is the first part: the visibility model (a private work event
+is read by its owner alone, owners and admins included, through every reader), the `brain:read` and `brain:write` API
+key scopes, `POST` and `DELETE /api/brain/work`, `GET /api/brain/briefing`, the `work.session` kind and the admin
+setting `brain.workAutoSend`.
+
+- **Next**: the clients (the Claude Code mod, `landflow work`, MCP tools), team and org visibility with related
+  colleagues, repo entities, the link from a person to their user, and a Settings screen for the auto-send setting.
+
+## Shell: nine-item rail (built 2026-11-14)
+
+X1 (nine rail items, section tabs in Workflows, Runs and Plugins; Runs also has a Search tab until B20 merges the
+pages), X4 (theme in the user menu, the connection shown only while reconnecting), X6 (no Preview pill in the rail), X7
+(a red dot for an offline plugin instead of a count), P-dev-1 (Build a plugin out of the rail), P-rb-1 (Runbooks only
+with the Landfall plugin) and P-pr-1 (Manage projects in the switcher, no intro on /projects) are closed. The look
+switch (`look-toggle.tsx`, still imported by B07's pages) stays until B12 deletes it.
+
 ## Planned next
 
 1. **Declare event kinds in the UI**: kinds are declared over the API or by Record Event's *Declare Kind If New* only.
@@ -1520,9 +1539,39 @@ nodes it changed until you close it (or a minute passes), Spotlight's own runs m
 folds to icons ([assistant.md](assistant.md#the-spotlight-panel)). A Fable review of the old layout set the design. Next:
 resizing the column, and keeping a fix bubble's text after it closes (the timeline has it).
 
+## Backbone wave 1: one look, a plainer Home (2026-11-14)
+
+The Classic look is retired (X5): every screen draws the New look and `useLook`, `useNewLook` and `setLook` are gone
+(`look-toggle.tsx` stays as an empty shell for one wave). Home's primary is **New workflow** (P-home-1), a Needs you tile
+replaces Plugins online, the Plugins panel and the header meta are gone and an offline plugin shows one line above the
+tiles (P-home-2), a suggestion is a compact card with Show more (P-home-3), and a run of one flow is one line
+(P-home-4). The Executions page does not read `?status=waiting` yet, so the Needs you tile opens the unfiltered list.
+
 ## Specs for what comes next (2026-11-05)
 
 Fifteen specs in [specs/](specs/README.md): a code sandbox, guard enforcement, a durable pause, runbooks made and run by themselves, the brain's auto-apply, lazy loading for Postgres, durable telemetry, shared trace comments, more webhook triggers, per-rule Switch outputs, agent evals, public run-report links, composite governance rules and live integration checks. The first slice of composite governance rules is built ([composites.md](composites.md#governance-rules)); the hot run data of backend wave 6 covers part of spec 07.
+
+## The chat kit, motion and one trace (backbone wave 1)
+
+The shared pieces every chat will use, built in `components/ui/` and ready; the surfaces adopt them in wave 2.
+
+- CH5 ✅ Done: the hosted chat widget's bubbles rise in, its typing indicator is three dots, and Reduce motion turns both
+  off ([Hosted chat and widget](features/ai.md#hosted-chat-and-widget)).
+- CH1 (motion), CH6 (one activity trace), CH7 (one reply footer), CH9 (errors with actions) and CH10 (a model chip): kit
+  ready, surfaces in wave 2 ([Chat surfaces](assistant.md#chat-surfaces)).
+
+## Conversation history and personal preferences (2026-11)
+
+The first piece of the company-backbone program (wave 1, B02). Built: the `user_preferences` and `conversations` tables
+(migrations 2070 and 2071), their session-only routes, the retention service, the client hooks and the history popover
+([assistant.md](assistant.md#conversation-history)). Next: each chat mounts the history button and saves to the store,
+and the account menu gets the switches. Open: `deleteUser` should remove a person's conversations and preferences, a pin should decide whether retention spares a conversation, search wants a plain-text column, and `GET /api/conversations/:id` wants a `limit`.
+
+## Tagging with @ (B04, 2026-11-14)
+
+The foundation is built: `GET /api/mentions`, `resolveMentions` with a digest per kind, and the picker
+([assistant.md](assistant.md#tagging-with-)). Open: mount it in Spotlight and Ask the brain, and resolve the tags in
+their servers.
 
 ## Not planned
 

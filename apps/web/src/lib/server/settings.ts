@@ -12,7 +12,8 @@
  */
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
-import type { InstanceSettings, RetentionSettings } from '../shared/platform';
+import type { BrainSettings } from '../shared/brain-work';
+import type { InstanceSettings as PlatformSettings, RetentionSettings } from '../shared/platform';
 import type { ExecutionSummary } from '../shared/types';
 import { jsonRenderEnabled } from '../shared/ui-spec';
 import { envInt } from './config';
@@ -21,7 +22,9 @@ import { INSTANCE_SETTINGS } from './db/rows';
 import { singleton } from './singleton';
 import { atomicWrite, store } from './store';
 
-export type { InstanceSettings, RetentionSettings };
+/** The instance settings, with the brain's (B05: `brain.workAutoSend`, unset means allowed). */
+export type InstanceSettings = PlatformSettings & { brain?: BrainSettings };
+export type { RetentionSettings };
 
 /** The execution cap Landflow had before retention became a setting. */
 export const DEFAULT_MAX_EXECUTIONS = 300;
@@ -55,7 +58,9 @@ const retentionSchema = z.object({
 });
 
 /** A complete, valid settings document. */
-export const instanceSettingsSchema = z.object({ timezone: timezoneSchema, executions: retentionSchema, jsonRender: z.boolean().optional() });
+const brainSchema = z.object({ workAutoSend: z.enum(['allowed', 'forbidden']) });
+
+export const instanceSettingsSchema = z.object({ timezone: timezoneSchema, executions: retentionSchema, jsonRender: z.boolean().optional(), brain: brainSchema.optional() });
 
 /** PATCH /api/settings: any subset; `executions` merges field by field. */
 export const settingsPatchSchema = z.strictObject({
@@ -63,6 +68,8 @@ export const settingsPatchSchema = z.strictObject({
   executions: retentionSchema.partial().strict().optional(),
   /** true/false saves the choice; null goes back to the environment default. */
   jsonRender: z.boolean().nullable().optional(),
+  /** Whether people's tools may send their work to the brain on their own (docs/work-and-briefings.md). */
+  brain: brainSchema.partial().strict().optional(),
 });
 export type SettingsPatch = z.infer<typeof settingsPatchSchema>;
 
@@ -76,8 +83,10 @@ function withDefaults(saved: Partial<InstanceSettings>): InstanceSettings {
   const timezone = timezoneSchema.safeParse(saved.timezone);
   const maxCount = retentionSchema.shape.maxCount.safeParse(saved.executions?.maxCount);
   const maxAgeDays = retentionSchema.shape.maxAgeDays.safeParse(saved.executions?.maxAgeDays);
+  const workAutoSend = brainSchema.shape.workAutoSend.safeParse(saved.brain?.workAutoSend);
   return {
     ...(typeof saved.jsonRender === 'boolean' ? { jsonRender: saved.jsonRender } : {}),
+    ...(workAutoSend.success ? { brain: { workAutoSend: workAutoSend.data } } : {}),
     timezone: timezone.success ? timezone.data : defaults.timezone,
     executions: {
       maxCount: maxCount.success ? maxCount.data : defaults.executions.maxCount,
@@ -88,7 +97,8 @@ function withDefaults(saved: Partial<InstanceSettings>): InstanceSettings {
 
 function merged(current: InstanceSettings, patch: SettingsPatch): InstanceSettings {
   const jsonRender = patch.jsonRender === undefined ? current.jsonRender : (patch.jsonRender ?? undefined);
-  return instanceSettingsSchema.parse({ timezone: patch.timezone ?? current.timezone, executions: { ...current.executions, ...patch.executions }, ...(jsonRender === undefined ? {} : { jsonRender }) });
+  const brain = patch.brain?.workAutoSend ? { workAutoSend: patch.brain.workAutoSend } : current.brain;
+  return instanceSettingsSchema.parse({ timezone: patch.timezone ?? current.timezone, executions: { ...current.executions, ...patch.executions }, ...(jsonRender === undefined ? {} : { jsonRender }), ...(brain ? { brain } : {}) });
 }
 
 /** Settings backed by one JSON file. */
@@ -146,6 +156,11 @@ export function updateSettings(patch: SettingsPatch): InstanceSettings {
 /** Whether the json-render prototype is on: the saved setting, else the environment default. */
 export function jsonRenderOn(): boolean {
   return jsonRenderEnabled(getSettings().jsonRender);
+}
+
+/** Whether people's tools may send their work on their own (the admin's `brain.workAutoSend`; allowed unless forbidden). */
+export function workAutoSend(): 'allowed' | 'forbidden' {
+  return getSettings().brain?.workAutoSend ?? 'allowed';
 }
 
 /** The instance's default time zone (Settings → General). */

@@ -57,6 +57,8 @@ export interface UsageScopeInfo {
   sessionId?: string;
   /** Who started the run (a signed-in user), for the caps per user. */
   userId?: string;
+  /** What made the call when no execution or agent did: Spotlight, the Agent architect or the brain (`ai_usage.surface`). */
+  surface?: 'spotlight' | 'architect' | 'brain';
 }
 
 /** Thrown when a cap is reached: the call is refused (or, once over the cap, the run stops after it). */

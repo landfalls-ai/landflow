@@ -43,16 +43,16 @@ to** the member's manager first (who may pass them on to a person), or straight 
 
 ## Member cards
 
-In the new look ([the look](ui-review.md#the-look)) the team page shows one card per member above the chart: a large face,
+The team page shows one card per member above the chart: a large face,
 the team's name (small, muted) over the member's title, up to three **what I do** lines (the persona's own, else the first
 sentences of its mission or instructions; see [the persona](agents.md#the-persona)), and chips for where it runs (its model,
 or **Claude Code · kagent** for a remote member or an agent deployed on kagent), **Consults** (the members it may consult or
 hand over to), its budget and how its last turn went (tokens used, **Over budget** or **Not asked last run**, from the same
 last-run data as the Last run card). While a run goes on, the member at work is outlined in its colour with a pulsing glow
 and **Working…**. A tap opens the agent's page. On a phone the cards are a sideways scroll-snap carousel; from `sm` they wrap
-in a row. The classic look draws the page without them. Code: `components/agents/member-cards.tsx`.
+in a row. Code: `components/agents/member-cards.tsx`.
 
-Above the cards, also in the new look: the team's run as a timeline while it works, and its last run as one line (in →
+Above the cards: the team's run as a timeline while it works, and its last run as one line (in →
 who → out) once it is over ([run-trace.md](run-trace.md#a-run-as-a-timeline)).
 
 ## The chart
@@ -153,7 +153,7 @@ member's face and title above it.
 
 ### The team node in the editor
 
-In the new look ([ui-review.md](ui-review.md#the-look)) the node's panel and the node itself show the team as the team
+The node's panel and the node itself show the team as the team
 page does, so a team is set up seeing who will work (`components/editor/team-node-panel.tsx`; the words and the split of
 the fields are pure, in `lib/shared/team-node.ts`, tested in `test/team-node.test.ts`):
 
@@ -175,7 +175,7 @@ the fields are pure, in `lib/shared/team-node.ts`, tested in `test/team-node.tes
   node as before. Its slots read **Lead's model**, **Lead's memory** and **Lead's tools**, since what is connected there
   goes to the lead.
 
-The classic look keeps the generic form and the strip. Either way an options field with nothing chosen says *Choose a
+An options field with nothing chosen says *Choose a
 team…* instead of showing its first option ([protocol.md](protocol.md)): a new node used to look set to a team it hadn't
 saved.
 
@@ -221,7 +221,7 @@ saved.
    **Approval** check on the Run Trace: who decided, what for which member, and when. Outside a flow (a run that can't wait)
    the tool is refused as before and the run leaves by **Needs a person** with `Developer wanted to use Post update, which
    needs a person's approval`.
-   In the new look the approval is a decision card with the member's reasons and the evidence it looked at, and **Edit**
+   The approval is a decision card with the member's reasons and the evidence it looked at, and **Edit**
    lets the person change the input (a review's verdict and text, a command, or JSON) before approving: the tool runs with
    the edit, and the Approval check says "with changes" ([run-trace.md](run-trace.md#an-approval-with-its-evidence)).
 6. **Reviews.** A review is seen to by the nearest manager of both the reviewer and the reviewed (their own manager when

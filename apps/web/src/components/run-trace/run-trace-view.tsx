@@ -23,7 +23,6 @@ import { buildRunReport, checksLine, type RunReport } from '@/lib/shared/run-rep
 import { cut, fmtMs, foldJournal, preview, quietMs, type NeedsYouItem, type RunCheckItem, type RunModel } from '@/lib/shared/run-trace-model';
 import { turnEntryKey } from '@/lib/shared/run-headlines';
 import { RUN_STATE, useNow, type RunState } from '../run/run-status';
-import { useNewLook } from '../shell/look-toggle';
 import { Badge, executionTone } from '../ui/badge';
 import { ApprovalCard, NeedFaces } from './approval-card';
 import { ConfirmCard, isConfirm } from './confirm-card';
@@ -151,8 +150,7 @@ function NeedsYou({
   profile: RunProfile;
   onTab: (tab: Tab) => void;
 }) {
-  const newLook = useNewLook();
-  const faces = useMemo(() => (newLook ? needsFaces(model, items) : []), [newLook, model, items]);
+  const faces = useMemo(() => needsFaces(model, items), [model, items]);
   const [deciding, setDeciding] = useState<string>();
   // Send back's note: the line comments from the Artifacts tab, or what the person wrote over them.
   const store = useLineComments();
@@ -206,7 +204,7 @@ function NeedsYou({
         n.kind === 'wait' && n.attrs.wait === 'approval' && isConfirm(n.attrs.confirm) ? (
           <ConfirmCard key={`w${n.spanId}`} executionId={executionId} since={n.since} request={n.attrs.confirm} nodeName={String(n.attrs.nodeName ?? n.actor.name)} onDecided={onDecided} open={() => open({ kind: 'span', id: n.spanId })} />
         ) : // The new look: a tool approval is a decision card with the member's reasons and the evidence it looked at.
-        newLook && n.kind === 'wait' && n.attrs.wait === 'approval' ? (
+        n.kind === 'wait' && n.attrs.wait === 'approval' ? (
           <ApprovalCard key={`w${n.spanId}`} wait={n} model={model} executionId={executionId} executionHref={executionHref} changes={changes} profile={profile} open={open} onTab={(tab, member) => (member && tab === 'team' ? open({ kind: 'actor', id: model.actors.find((a) => a.actor.name.trim().toLowerCase() === member.trim().toLowerCase())?.actor.id ?? '' }) : onTab(tab))} onDecided={onDecided} />
         ) : n.kind === 'wait' ? (
           <Card key={`w${n.spanId}`} tone="warn" className="bg-warndim">

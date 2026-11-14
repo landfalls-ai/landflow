@@ -7,9 +7,11 @@
  * second); an older window reads the rollups (whole days).
  *
  * Scope: `only` lists the workflows and agents a member sees (undefined: everything, for owners and admins). Events tied
- * to neither (Spotlight asks, empty searches) are left out of a scoped report.
+ * to neither (Spotlight asks, empty searches) are left out of a scoped report. Work events someone owns follow their own
+ * rule, whatever the scope (see `scopeClause`): private ones are read by their owner alone; the daily rollups leave them out.
  */
 import { ATTR_NAME, isUsageKind, type UsageEvent, type UsageFilter, type UsageGroup, type UsageGroupRow, type UsageKind, type UsageReport } from '../../shared/brain';
+import { currentActorId } from '../auth/context';
 import { envWithAliases } from '../config';
 import { database, type Database, type SqlValue } from '../db';
 import { singleton } from '../singleton';
@@ -31,6 +33,15 @@ export interface UsageScope {
   teams?: Set<string>;
   /** Entities as `<type>/<id>` (docs/second-brain.md#entities). */
   entities?: Set<string>;
+  /**
+   * Whose work events these readers may see besides the shared ones (`org`): a member's scope names them (scopeForActor).
+   * Left out, the viewer is the signed-in caller of the request (owners and admins have no workflow restriction, so no
+   * scope to carry it), and outside a request nobody: only shared work.
+   */
+  viewerId?: string;
+  // (A caller that writes shared output from inside a request must pass `system: true`, or the signed-in caller's own work leaks into it.)
+  /** A reader that works for the instance, not for a person (the study, detectors, a flow): it never sees private work. */
+  system?: true;
 }
 
 /** An ISO time from `from`/`to` (ISO or YYYY-MM-DD), else `fallback`. */
@@ -45,8 +56,9 @@ interface Where {
   params: SqlValue[];
 }
 
-function scopeClause(scope: UsageScope | undefined, where: string[], params: SqlValue[]) {
-  if (!scope || (!scope.workflows && !scope.agents)) return;
+/** The SQL for the workflows and agents a scope covers, or undefined when it covers all of them. */
+function coverClause(scope: UsageScope | undefined, params: SqlValue[]): string | undefined {
+  if (!scope || (!scope.workflows && !scope.agents)) return undefined;
   const parts: string[] = [];
   const wf = [...(scope.workflows ?? [])];
   const ag = [...(scope.agents ?? [])];
@@ -58,7 +70,32 @@ function scopeClause(scope: UsageScope | undefined, where: string[], params: Sql
     parts.push(`(workflow_id IS NULL OR workflow_id = '') AND agent_id IN (${ag.map(() => '?').join(', ')})`);
     params.push(...ag);
   }
-  where.push(parts.length ? `(${parts.map((p) => `(${p})`).join(' OR ')})` : '1 = 0');
+  return parts.length ? `(${parts.map((p) => `(${p})`).join(' OR ')})` : '1 = 0';
+}
+
+/** Who a scope's reader is, for the work events they own (see UsageScope.viewerId). */
+const viewerOf = (scope: UsageScope | undefined): string | undefined => (scope?.system ? undefined : (scope?.viewerId ?? currentActorId()));
+
+/**
+ * The one visibility rule of the ledger (docs/work-and-briefings.md): a row with no owner is the platform's, seen by the
+ * workflows and agents the scope covers; a row someone owns is seen by its owner and, when shared with the whole
+ * organization (`org`), by everyone. `team` counts as private until teams are linked to people. Nobody else reads a
+ * private row, owners and admins included, so this holds with no scope at all.
+ */
+function scopeClause(scope: UsageScope | undefined, where: string[], params: SqlValue[], timeColumn: 'at' | 'day' = 'at') {
+  const inner: SqlValue[] = [];
+  const cover = coverClause(scope, inner);
+  // `usage_daily` rolls up only unowned and shared rows (rollupDays) and has no owner column.
+  if (timeColumn === 'day') {
+    if (cover) {
+      where.push(cover);
+      params.push(...inner);
+    }
+    return;
+  }
+  const viewer = viewerOf(scope);
+  where.push(`(owner_id IS NULL${cover ? ` AND ${cover}` : ''} OR (owner_id IS NOT NULL AND (visibility = 'org'${viewer ? ' OR owner_id = ?' : ''})))`);
+  params.push(...inner, ...(viewer ? [viewer] : []));
 }
 
 function filterClause(filter: UsageFilter, timeColumn: 'at' | 'day', scope?: UsageScope): Where {
@@ -98,7 +135,7 @@ function filterClause(filter: UsageFilter, timeColumn: 'at' | 'day', scope?: Usa
       params.push(value, ...(bool ? [bool] : []));
     }
   }
-  scopeClause(scope, where, params);
+  scopeClause(scope, where, params, timeColumn);
   return { sql: where.join(' AND '), params };
 }
 
@@ -262,7 +299,7 @@ export function rollupDays(days: string[], db: Database = database()) {
       `SELECT kind, workflow_id, node_type, signature, agent_id, MAX(project_id) AS project_id, COUNT(*) AS count, SUM(${FAILURE_SQL}) AS failures,
         COALESCE(SUM(duration_ms), 0) AS duration_sum, COALESCE(MAX(duration_ms), 0) AS duration_max, COALESCE(SUM(items), 0) AS items,
         COALESCE(SUM(tokens), 0) AS tokens, COALESCE(SUM(cost), 0) AS cost
-       FROM usage_events WHERE day = ? GROUP BY kind, workflow_id, node_type, signature, agent_id`,
+       FROM usage_events WHERE day = ? AND (owner_id IS NULL OR visibility = 'org') GROUP BY kind, workflow_id, node_type, signature, agent_id`,
       day,
     );
     db.transaction(() => {
@@ -299,7 +336,7 @@ export function rollupRecent(db: Database = database(), now = Date.now()) {
 
 /** Every day the raw events cover that has no rollup yet (after a backfill). */
 export function rollupMissing(db: Database = database()) {
-  const days = db.all<{ day: string }>(`SELECT DISTINCT day FROM usage_events WHERE day NOT IN (SELECT DISTINCT day FROM usage_daily)`).map((r) => r.day);
+  const days = db.all<{ day: string }>(`SELECT DISTINCT day FROM usage_events WHERE (owner_id IS NULL OR visibility = 'org') AND day NOT IN (SELECT DISTINCT day FROM usage_daily)`).map((r) => r.day);
   rollupDays(days, db);
   return days.length;
 }
@@ -311,9 +348,9 @@ export function pruneUsage(db: Database = database(), now = Date.now()): number 
   return removed;
 }
 
-/** How many raw events there are, and the oldest one's time. */
+/** How many raw events the instance ledger holds (people's own work left out), and the oldest one's time. */
 export function ledgerSize(db: Database = database()): { events: number; oldest?: string } {
-  const row = db.get<{ n: number; oldest: string | null }>('SELECT COUNT(*) AS n, MIN(at) AS oldest FROM usage_events');
+  const row = db.get<{ n: number; oldest: string | null }>('SELECT COUNT(*) AS n, MIN(at) AS oldest FROM usage_events WHERE owner_id IS NULL');
   return { events: Number(row?.n ?? 0), ...(row?.oldest && { oldest: row.oldest }) };
 }
 

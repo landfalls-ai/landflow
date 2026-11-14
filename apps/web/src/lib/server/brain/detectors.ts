@@ -531,7 +531,7 @@ export function copyPaste(ctx: DetectContext): Finding[] {
 export function deadWeight(ctx: DetectContext): Finding[] {
   const days = Math.ceil(60 * ctx.quiet('dead-weight'));
   const cutoff = ctx.now - days * DAY_MS;
-  const oldest = ctx.db.get<{ at: string | null }>('SELECT MIN(at) AS at FROM usage_events')?.at;
+  const oldest = ctx.db.get<{ at: string | null }>('SELECT MIN(at) AS at FROM usage_events WHERE owner_id IS NULL')?.at;
   const oldestDaily = ctx.db.get<{ day: string | null }>('SELECT MIN(day) AS day FROM usage_daily')?.day;
   const covered = [oldest, oldestDaily ? `${oldestDaily}T00:00:00Z` : null].filter(Boolean).some((t) => Date.parse(t!) <= cutoff);
   // The ledger has to look back far enough to say "nobody".

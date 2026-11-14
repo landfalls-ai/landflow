@@ -85,6 +85,35 @@ Each message sends the conversation so far, the current workflow (`toWorkflow()`
 | `get_run_data(node)` | The node's parameters, neighbours, run status, error and first items | Read run data of "Code" |
 | `propose_changes(summary, ops)` | Validates the ops and shows them as a proposal card | Proposed 2 changes |
 
+#### The stream
+
+The route streams with `trace` on. What each step sends, and where it goes in Spotlight:
+
+| Event | Fields | Goes in |
+|---|---|---|
+| `step.start` | `step`, `label` | the trace: a model call begins |
+| `text.delta` | `step`, `text` | provisional text, as tokens come (at most one event per 50 ms); the step's `text` replaces it |
+| `thinking` | `step`, `text` | the trace, never the reply: the text of a step that also called tools, or that was sent back, after the guards |
+| `text` | `text`, `step` | the reply: the checked text of the last step (empty when the guards left nothing, so the deltas clear) |
+| `tool` | `id`, `step`, `name`, `label`, `ok`, `durationMs`, `detail?` | the trace: one line per tool call, timed; `detail` (300 characters at most) is the query, a count or what was read, never a result body |
+| `proposal` | as before | a card |
+| `done` | `model`, `durationMs`, `steps`, `usage`, `costUsd?`, `local` | the end: `costUsd` is what the reply's model calls cost (absent when nothing was priced), `local` is true for an Ollama model |
+| `error` | `message`, `kind`, `checkpoint?`, `step?` | the end: `kind` is `model`, `cap` (a usage cap was reached), `stalled` (the last steps only repeated) or `internal` |
+
+Only the last step's text is the reply: narration a model writes before a tool call arrives as `thinking`. A caller that does not ask for the trace (`runChat` without `trace`) gets the older events, `text` for every step and errors thrown.
+
+**Continuing after an error.** When a model call fails, or the reply stalls, after at least one tool step, the `error` event carries a `checkpoint` (the messages so far with the tool results, and the proposals sent) and the `step` that failed. Send the same request with `resume: { checkpoint }` and the chat goes on from that step: nothing already done runs again, the step count continues, and a stalled reply gets a fresh budget of 20 steps. A checkpoint is used once, belongs to the user who made it and lives in the host's memory for 15 minutes (200 at most, the oldest dropped). An unknown, expired or another user's checkpoint answers 409 `checkpoint_expired`. A `cap` error carries none: it would stop again. Details a client should know:
+
+- A checkpoint is tagged with its surface: a Spotlight checkpoint sent to the architect route (or the reverse) answers 409 too. Each user keeps at most 10; past that their own oldest goes, so one user's stalls never evict another's.
+- It keeps the messages and the proposals the failed reply had sent, which the resume replays. The client must therefore leave those cards out of `pending` when it resumes (listing them would hold them twice). It does not keep the once-only nudges (a fix sent back once, a card announced and never made, a press to propose); a resumed reply may send each once more.
+- No checkpoint is kept when the history ends on a user message (a failure right after a "press" or "apply" prompt), nor when no tool step finished.
+- With `trace`, a stall or an error ends the stream with `error` and no `done`: the reply's usage and cost are in AI usage, not in the stream.
+- **Provisional text.** `text.delta`s of a step are provisional. A step that continues sends its checked text as `thinking`; if the guards leave nothing of it, it sends nothing, so a client must drop a step's provisional deltas at the next `tool` or `step.start`. The last step's checked text, or an empty `text`, replaces its deltas.
+
+**Metering.** Spotlight's calls write `ai_usage` rows with surface `spotlight`. The route attributes them to `workflowId` (or the body's `workflow.id`) only when the caller can read that workflow (`meteredWorkflowId`); otherwise they carry no workflow. A workflow's own per-day caps and alerts count its runs only (`workflowDay` skips rows with a surface), so chatting about a workflow never makes its runs fail on a cap; Insights' totals and the per-user caps include the surface rows. A reply that ends in an `error` event still counts as `error` in `landflow.assistant.requests`, and its span records the exception and `landflow.error.kind`.
+
+**AI usage.** Spotlight's and the architect's model calls count like any other: each writes an `ai_usage` row with `surface` (`spotlight`, `architect`; the Brain's will be `brain`), the caller's id and, for Spotlight, the saved workflow's id. They show in Insights' AI usage totals, and the caller's per-user caps (Settings → AI usage caps) apply: a reached cap ends the reply with `error { kind: 'cap' }` and the cap's message. A row with no workflow (the architect's, an unsaved workflow's) is visible to owners and admins only.
+
 Before showing a proposal, `propose_changes` makes these checks. A change it sends back to the model shows as one neutral step, *Reworked the change* (the model still gets it as an error, with the reason), not as a failure the person has to read:
 - **Nothing valid**: if none of the ops apply, the reasons go back to the model to fix.
 - **Parts failed**: if some ops apply and others don't (a type that doesn't exist, a connection to a `ref` no `addNode` gave, a number outside its field's range such as a timeout of `30` in a field measured in milliseconds, which is left out), it goes back **once** with the reasons, so a "replace X with Y" that only removed X isn't shown as is. The second attempt is shown, with what it still leaves out.
@@ -105,7 +134,7 @@ Each card has **Apply** and **Dismiss**. When a reply has two or more open propo
 
 Local models sometimes write a tool call as text (`<function=propose_changes><parameter=…>`) instead of a structured call. The chat reads those back as calls.
 
-More guards cover what local models get wrong (all in `lib/server/assistant/chat.ts`):
+More guards cover what local models get wrong (all in `lib/server/assistant/guards.ts`, re-exported by `chat.ts`):
 - **Made-up ids**: a parameter named like an id (`channelId`, `sheetId`, `id`…) whose value appears nowhere in the conversation, the workflow, its run data or the node type's own options is left out of the proposal, and the card lists it as left for the user to fill in. The prompt also says not to invent ids, channels, addresses, URLs or keys.
 - **"It has been added"**: in a reply that proposed something, sentences that say the change was made ("has been added", "I've updated…", "The workflow now has…", "is ready to…") are dropped, because nothing changes until Apply. Lists keep their lines; if nothing is left, the reply says to review the card and click Apply.
 - **Wiring and purpose warnings**: after a build, the proposal card carries warnings for (a) a connection from one If/Switch output into a node a sibling output also reaches (sent back once like other structural warnings; loops back to the branching node and Merge targets are exempt), (b) a new If/Filter/Switch, or a new Set/Code-like node that is a dead-end stub beside a sibling, that nothing reads ("has no purpose"; shown only, not sent back), and (c) a fix that hides an error: `onError: continue`, or code parameters that catch and return (shown only), (d) a new tool-capable node wired after an agent as a normal step, or a sub-node given a main connection (sent back once: `“Shell” is wired after “Agent” as a normal step; … ai_tool`), and (e) a new node whose required credential is unset, as a caution chip on the card (`“Search” needs the credential braveSearchApi and none is set: pick one in the node's panel`; shown only, and only when the credential slot is visible for the node's parameters). The prompt also covers collection shapes and `ai_*` connections, and says to tell the user what it can't set. The chat has no pin operation: the builder's test data (`cleanTestItems` in `flow-builder.ts`) drops chat-trigger junk (`chatInput`, the trigger's own parameters) and is not pinned when no node reads it.
@@ -131,13 +160,13 @@ Ids are checked like team ids: a name written where `agentId` goes becomes the i
 
 ### Building, step by step
 
-In the new look ([ui-review.md](ui-review.md#the-look)), a change Spotlight builds in the builder chat is watched taking shape instead of read afterwards. While the reply is going, and while a proposal waits for Apply, the reply in the [panel](#the-spotlight-panel) lists the steps and the canvas, beside it, shows them:
+A change Spotlight builds in the builder chat is watched taking shape instead of read afterwards. While the reply is going, and while a proposal waits for Apply, the reply in the [panel](#the-spotlight-panel) lists the steps and the canvas, beside it, shows them:
 
 - **Steps you can follow.** The reply lists the steps of the change, each ticked off with a small pop as it finishes, and names the parts of the one in progress (*Wiring the connections: Ask for approval → Approved · Ask for approval → Deny*). Tool calls are the first steps, as they stream (*Read the workflow · 4 nodes*, *Searched nodes for “slack”*). The proposal's ops are the rest, one step per added node (*Add Ask for approval · If · after Code*), one for consecutive connections (*Wire 3 connections*), and one per parameter edit, rename, removal, team and settings change. `buildSteps()` and `planOf()` in `lib/shared/build-steps.ts` derive them, pure and unit-tested (`test/build-steps.test.ts`); `planOf()` runs the ops through `applyOps()`, so a step only exists for an op that would apply. A proposal arrives whole, not as a stream, so the editor ticks its steps off one by one on a short timer (about half a second each): the steps and ghosts show the plan taking shape, not the model's progress.
 - **The canvas fills in.** The nodes the plan adds appear as dashed ghosts at the positions `applyOps()` gives them (after their source node), each when its step is reached; the one being made shimmers, and new connections are drawn as dashed violet lines when their step is reached. Ghosts are extra nodes and edges handed to React Flow beside the real ones (`GhostNodeView`, `GhostEdgeView` in `components/editor/building.tsx`); they are not in the editor's store, are not selectable or draggable and are never saved. A thin bar on top of the canvas shows how far the plan is (done steps over all; it never reaches the end while the assistant is still working). A ghost that lands outside the view (a node added after the last one is often past the right edge) brings the whole flow and its ghosts into view, without zooming in (`KeepGhostsInView` in `components/editor/editor.tsx`).
 - **Still a plan.** With autonomous mode off, nothing in the workflow changes until **Apply** under the steps (the same `applyChanges()` path, one Undo in the toast; **Dismiss** drops the plan and the ghosts). A message sent while the reply is still going stops it first, so the follow-up redirects it. With autonomous mode on, the plan is applied when the reply ends.
 
-The Agent architect (a dialog with a draft preview, not a canvas) does not show steps this way yet. The classic look draws none of this: the conversation and its proposal card work as before.
+The Agent architect (a dialog with a draft preview, not a canvas) does not show steps this way yet.
 
 ### Test and fix
 
@@ -179,6 +208,32 @@ On by default, Spotlight doesn't wait for clicks (`components/editor/autonomous.
 
 Each fix in the session is applied the same way, as before. An agent Spotlight creates is designed by the Agent architect and **published**, so the flow can run it while it's tested ([Agents and teams](#agents-and-teams)); unpublishing it is one click on its page. **Publish to production** still waits for a person. The **Autonomous** switch in the conversation's header turns it off (kept in the browser, `localStorage` `landflow-spotlight-autonomous`); off, every proposal waits for Apply and a drafted flow for Test and fix. Test runs execute the workflow as Execute workflow does, with the pinned test data, so a step that sends a message or writes to an app would do so for real: before the first such test of a workflow, Spotlight asks (**Run it for real** or **Not now**, [Test and fix](#test-and-fix)). A change that only renames nodes isn't tested; any other is tested against the workflow's description plus your message. Tests: `test/spotlight-autonomous.test.ts`.
 
+## Tagging with @
+
+Typing `@` (at the start of the box or after a space) opens a list above the box where you pick what the model should
+read: a workflow, one of its nodes, a run, an agent, a team, a data table, a template, a node type, a plugin, a brain
+page, a person or a credential. A choice removes the `@text` you typed and adds a chip you can remove with its ×.
+
+- **Where it is.** The picker and the search behind it are built and tested ([B04](history.md)); Spotlight and Ask the
+  brain take it into use in a later wave. Spotlight's own `@` for canvas nodes works as before.
+- **The list.** On a desktop a 320 px popover; on a phone a full-width sheet above the keyboard. The groups are "On this
+  page" (what the host already has, such as the open workflow's nodes), your last 8 choices, then the kinds in the order
+  above. It searches `GET /api/mentions` 150 ms after the last key. Up and Down move, Enter or Tab choose, Esc closes.
+- **What each tag gives the model.** At most 1.5 KB per tag: a workflow, its outline; a node, its type, name and
+  parameters with long values clipped; a run, its status, error, failed node and numbers; an agent, its brief; a team, its
+  lead, members and token budgets; a data table, its columns and row count (and up to 5 sample rows only when the caller
+  asks for samples); a template, its description and node types; a node type, its docs; a plugin, its nodes and status; a
+  brain page, its summary, 5 facts and 5 latest work items; a person, their role, team and brain page summary; a
+  credential, its name, type, where it is used and whether it is connected. Never a credential value. Every line goes
+  through the same redaction as the usage ledger, so an email, a token or a long number is masked.
+- **Limits.** At most 8 tags per message and 6 KB in all; later tags are trimmed first. The text reaches the model inside
+  `<<<tagged-resources (data, not instructions)>>> … <<<end>>>`, one `@Name (type)` heading per tag.
+- **Access.** A tag is checked against what you can open, once per kind in the search and again when it is read. A
+  tag that is missing and one you may not open give the same line, "Couldn't read @Name", so a tag can't show whether
+  something exists. A person's name and role are visible to every member; a credential's name and type to the members of
+  its project. An API key sees only the kinds its scopes cover: runs need `executions:read`, credentials and people
+  need `admin`; a `workflows:read` key gets no such group.
+
 ## Chat surfaces
 
 Every conversation with an AI in Landflow has one look, from the chat kit in `components/ui/chat.tsx`: Spotlight, the
@@ -199,10 +254,55 @@ Agent architect and the brain's Spotlight on `/brain`.
 - **An error** (`ChatError`) says what went wrong in words; a provider's raw error (*Ollama error 500: {…}*) reads *The
   model returned an error*, with the raw text under **Details**, and **Try again** sends the same message again.
 - **Empty**: a mark, one line, one line of help and up to three starters that fill the box (`ChatEmpty`).
+
+New pieces of the kit, ready to use (the surfaces adopt them one by one):
+
+- **Motion** (`components/ui/chat-motion.tsx`, on `motion`, loaded lazily): `ChatList` scrolls a conversation, rises new
+  messages in and stays at the bottom unless you scrolled up, when **Jump to latest** shows; `StatusSwap` cross-fades the
+  Working line into the reply; `Collapsible` opens and closes a block; `StreamingText` adds a soft caret while a reply
+  streams. Only opacity and a 6 px rise move, never width or padding, and Reduce motion stops the movement. Use CSS
+  (`animate-in`, `animate-pulse-soft`) for a thing that just appears; use these when a block changes size or swaps.
+- **The activity trace** (`ActivityTrace`): while it works, one line with the step it is on (*Searching the brain · step
+  3*); once done, *10 steps · 14.5 s ›*, which opens a list of what it read, searched, ran and wrote, each with its time
+  and a tick or a cross. A step with a detail opens it; a failed one reads in red; `traceUrl` adds **Open trace**. On a
+  phone it starts closed and the list scrolls inside itself. The steps are `ActivityStep` in `lib/shared/activity.ts`.
+- **The reply footer** (`ReplyMeta` with `info`): *model · 14.5 s · 10 steps · 1,600 tokens · ≈$0.004*, with *local* in
+  place of the cost for a local model; what is unknown is left out. `parts` still works.
+- **The model chip** (`ModelChip`, and the composer's `chip`): the model's short name in a small pill before Send.
+- **Error actions** (`ChatError` `actions`): buttons beside **Try again**, one of them filled (*Open settings*).
+- **Short replies** (`ShortReply`, `firstSentences`): the first two sentences and **Show more**.
 - **The header**: **New conversation** (✎) and close or fold (*Hide the conversation*); a session's id is in the New
   conversation button's tooltip, not the header. On a phone every button is 44 px, the Test agent chat fills the screen
   above the home bar, the editor's Chat is a sheet with a handle, the Agent architect shows **Chat | Draft** one at a time
   (Draft when one arrives), and the brain's suggestions sit on a card.
+
+## Conversation history
+
+Spotlight, Ask the brain, the Agent architect and an agent's test chat can keep what you said, so leaving a page no
+longer loses the conversation. This page describes the store; each chat gets its **history** button (a clock) as it
+mounts it.
+
+- **What is kept**: your messages and the assistant's replies, with the steps it took, its proposals (and whether you
+  applied or dismissed them), the pages it linked and its sources. **Never kept**: the store takes only those message
+  parts, so no attached files and no credentials.
+- **Only yours**: a conversation belongs to the person who had it. Nobody else can open it, an owner or an admin
+  included: another person's id answers 404. API keys are refused too (the routes need a session).
+- **The brain re-checks links**: when you reopen a brain answer, a page you can no longer open loses its link, and the
+  reply says how many were left out. A kept proposal is checked again when it is shown.
+- **90 days**: a conversation is deleted, with its messages, 90 days after its last message
+  (`LANDFLOW_CHAT_RETENTION_DAYS`; `0` keeps them). The leader checks daily.
+- **Delete is real**: **Delete** in the history popover removes the conversation and its messages from the database at
+  once. **Rename** edits the title; a new conversation is named after your first message.
+- **The switch**: **Keep my conversations** is a personal preference (on by default). With it off nothing is stored and
+  the popover says so; chats work as before. Turning it off keeps what is already stored: those conversations stay
+  listed and can be deleted one by one.
+- **A pin changes nothing yet**: `pinned` is stored, but it does not change the order, the display or retention, so a
+  pinned conversation is deleted after 90 days like the rest. Whether a pin should exempt it is open.
+- **The popover** (`components/ui/conversation-history.tsx`): a search box (titles and your own messages), the
+  conversations about this workflow or page, then everywhere. The two groups are separate requests (the subject group
+  asks for its `subjectType` and `subjectId`, with the search text), and each pages on its own with **Show more**. A sheet on a phone, with 44 px rows.
+
+The routes are `/api/conversations` and `/api/me/preferences` ([reference/api.md](reference/api.md)).
 
 ## Edit operations
 
@@ -240,7 +340,7 @@ The server runs it against the registry's available node types. The editor runs 
 | Route | Body | Response |
 |---|---|---|
 | `POST /api/assistant/suggest` | `{ workflow, workflowId?, nodeId, run: RunDigest, model? }` | `{ suggestions: [{ id, kind, title, detail, confidence, ops, dropped?, warnings? }], model, durationMs, skipped? }` · 404 for an unknown node, 502 when the model fails |
-| `POST /api/assistant/chat` | `{ messages: [{ role, content }], workflow, workflowId?, selectedNodeId?, runs?: { [nodeId]: RunDigest }, mentions?: { nodes?: string[], types?: string[] }, pending?: [{ summary, ops }], session?: fix\|review, model? }` (`session`: a [Test and fix](#test-and-fix) request) | SSE, one event per step: `text {text}`, `tool {name, label, ok}`, `proposal {id, summary, ops, dropped, warnings}`, then `done {model, durationMs, steps, usage}` or `error {message}` |
+| `POST /api/assistant/chat` | `{ messages: [{ role, content }], workflow, workflowId?, selectedNodeId?, runs?: { [nodeId]: RunDigest }, mentions?: { nodes?: string[], types?: string[] }, pending?: [{ summary, ops }], session?: fix\|review, model?, resume?: { checkpoint } }` (`session`: a [Test and fix](#test-and-fix) request; `resume`: [continue after an error](#the-stream)) | SSE: `step.start`, `text.delta`, `thinking`, `text`, `tool`, `proposal`, then `done` or `error` (events in [The stream](#the-stream)) · 409 `checkpoint_expired` |
 | `POST /api/assistant/feedback` | `{ kind: fix\|param\|data\|next\|proposal, action: applied\|dismissed }` | `{ ok: true }` (feeds the metrics below) |
 
 `RunDigest` is `{ status, durationMs, error?, inputs: [{ count, sample }], outputs: [{ count, sample }], logs? }`. `sample` holds the first 3 items' JSON, with long strings, arrays and deep objects clipped. The editor builds digests with `digestRun()`, so full run data never leaves the browser.

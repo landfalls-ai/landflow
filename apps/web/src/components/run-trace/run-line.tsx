@@ -15,6 +15,7 @@ import type { RunLine as Line } from '@/lib/shared/run-line';
 import { safeUrl } from '@/lib/shared/artifact-kinds';
 import { fmtMs } from '@/lib/shared/run-trace-model';
 import { cn } from '@/lib/utils';
+import { StatusDot } from '../ui/badge';
 import { Avatar } from './parts';
 
 const IN_ICON = { manual: Play, schedule: Calendar, webhook: Zap, form: FileText, chat: MessageSquare, pull_request: GitPullRequest, email: Mail, other: Workflow } as const;
@@ -56,8 +57,29 @@ function Faces({ by }: { by: Line['by'] }) {
   );
 }
 
+/** A run of one flow with no agent or team on it: Home draws it as one line instead of a card. */
+export function isSingleFlow(line: Line): boolean {
+  return !line.by.lead && !line.by.team && line.by.members.length === 0;
+}
+
+const DOT = { ok: 'success', live: 'running', warn: 'paused', bad: 'error' } as const;
+
+/** A single-flow run in one line: status dot, name, how long it took and when. The whole row opens the run. */
+export function RunOneLine({ line, name, href, startedAt, className }: { line: Line; name: string; href: string; startedAt?: string; className?: string }) {
+  const live = line.out.tone === 'live';
+  return (
+    <Link href={href} aria-label={`Open the run: ${name}`} className={cn('flex min-h-11 items-center gap-3 rounded-2xl border border-hair bg-sf px-3 py-2 transition-colors hover:bg-acdim/30', className)}>
+      <StatusDot status={DOT[line.out.tone]} pulse={live} />
+      <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-t1">{name}</span>
+      {!live && line.ms > 0 && <span className="shrink-0 font-mono text-[12px] text-t2">{fmtMs(line.ms)}</span>}
+      {startedAt && <span className="shrink-0 text-[12px] text-t3">{timeAgo(startedAt)}</span>}
+    </Link>
+  );
+}
+
 /** One run as in → who → out, with the time it took and when. */
 export function RunLineRow({ line, name, href, onOpen, startedAt, className }: { line: Line; name?: string; href?: string; onOpen?: () => void; startedAt?: string; className?: string }) {
+  if (name && href && isSingleFlow(line)) return <RunOneLine line={line} name={name} href={href} {...(startedAt && { startedAt })} {...(className && { className })} />;
   const InIcon = IN_ICON[line.in.kind] ?? Workflow;
   const tone = OUT_TONE[line.out.tone];
   const url = safeUrl(line.out.url);

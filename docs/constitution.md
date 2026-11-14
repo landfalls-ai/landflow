@@ -205,6 +205,11 @@ session; people read it before they start a feature too.
   configured public URL, never a request header in production); resume URLs are signed (`lib/server/resume-signing.ts`).
 - **Headers.** Pages and API responses carry the security headers and a nonce CSP from `apps/web/src/proxy.ts`
   (`LANDFLOW_CSP`, `LANDFLOW_HSTS`); a new embeddable path goes in its `EMBEDDABLE` list.
+  The production CSP has no `'unsafe-eval'`, and zod 4 probes `new Function` when it builds an object schema: a module
+  the browser loads either builds no zod schemas (keep them in a server-side `*-schema.ts`, as
+  `lib/shared/preferences-schema.ts` does) or sets `if (typeof window !== 'undefined') z.config({ jitless: true })`
+  before its first `z.object` (as `lib/shared/ui-spec.ts` does). Check a new client module with a production-profile
+  host and `LANDFLOW_CSP=enforce`: unit tests and `next dev` don't show the violation.
 - **Plugin registration** is closed outside development: announces need `LANDFLOW_REGISTRY_SECRET` in the production
   profile unless `LANDFLOW_REGISTRY_OPEN=true` (`registryOpen()` and the address and join rules in
   `lib/server/plugins/registry-policy.ts`).

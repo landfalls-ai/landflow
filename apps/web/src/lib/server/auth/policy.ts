@@ -31,6 +31,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
 
   if (under('/api/auth/me')) return { scope: 'any' };
   if (under('/api/api-keys')) return { scope: 'any', sessionOnly: true };
+  // B02: a person's own preferences and chats; an API key can't read them (the handlers answer the owner only).
+  if (under('/api/me/preferences') || under('/api/conversations')) return { scope: 'any', sessionOnly: true };
   if (path === '/api/openapi.json') return { scope: 'any' };
 
   // Stopping every run of every project is instance-wide: admins, like the other instance-wide controls (/api/settings).
@@ -94,8 +96,13 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (under('/api/usage')) return { scope: 'executions:read' };
   if (path === '/api/brain/run' || path === '/api/brain/backtest') return { scope: 'admin', action: 'settings:manage' };
   if (path === '/api/brain/analyst') return { scope: 'workflows:write' };
+  // B05: work events are the caller's own (docs/work-and-briefings.md): recording needs `brain:write`; the briefing and asking, `brain:read`.
+  if (under('/api/brain/work')) return { scope: 'brain:write' };
+  if (path === '/api/brain/briefing' || path === '/api/brain/ask') return { scope: 'brain:read' };
   if (under('/api/brain')) return { scope: 'executions:read' };
   if (under('/api/proposals')) return { scope: read ? 'workflows:read' : 'workflows:write' };
+  // B04: the @ picker's search lists only what the caller can open (lib/server/mentions/search.ts).
+  if (path === '/api/mentions') return { scope: 'workflows:read' };
   // Entities (initiatives, people, customers, systems): the routes check the entity's project, like suggestions.
   if (under('/api/entities')) return { scope: read ? 'workflows:read' : 'workflows:write' };
   return { scope: 'admin', fallback: true };

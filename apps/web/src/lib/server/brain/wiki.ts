@@ -108,6 +108,12 @@ export function workEvents(days: number, scope: UsageScope | undefined, db: Data
   return listUsageEvents({ kinds: kinds as UsageEvent['kind'][], from: new Date(now - days * DAY).toISOString() }, { limit: MAX_EVENTS, scope }, db);
 }
 
+/**
+ * The same scope read for nobody in particular: what a shared output (a stored summary, its stale check) may be written
+ * from. A person's private work never enters it, whoever asks (usage/query.ts `viewerOf`).
+ */
+const sharedScope = (scope: UsageScope | undefined): UsageScope => ({ ...scope, viewerId: undefined, system: true });
+
 const byTime = (a: WorkItem, b: WorkItem) => b.at.localeCompare(a.at);
 
 // ---------------------------------------------------------------------------
@@ -161,7 +167,7 @@ export function wikiHome(scope: UsageScope | undefined, viewer: Viewer, db: Data
     kinds: count(week.map((i) => i.kind)).map(([kind, events]) => ({ kind, events })),
     recent: items.slice(0, 30),
     proposals: listProposals({ status: 'open', scope, viewer, limit: 10 }, db),
-    health: health(entities, entries, all, db),
+    health: health(entities, entries, workEvents(PAGE_DAYS, sharedScope(scope), db, now).map((e) => workItem(e, index)), db),
     ...(brainModelName() && { model: brainModelName() }),
   };
 }
@@ -308,7 +314,9 @@ export function wikiPage(entity: BrainEntity, scope: UsageScope | undefined, vie
   }
 
   const row = db.get<PageRow>('SELECT * FROM brain_pages WHERE subject = ?', ref);
-  const summary = row ? summaryOf(row, basisOf(entity, knowledge.facts, work), index) : undefined;
+  // The stored summary is shared text: whether it is stale counts shared work only, never the viewer's private events.
+  const sharedWork = row ? workEvents(PAGE_DAYS, sharedScope(scope), db, now).map((e) => workItem(e, index)).filter((i) => i.refs.includes(ref)).sort(byTime) : [];
+  const summary = row ? summaryOf(row, basisOf(entity, knowledge.facts, sharedWork), index) : undefined;
 
   return {
     ...knowledge,
@@ -422,8 +430,10 @@ const factLine = (f: BrainFact) => `- ${f.subjectName ?? f.subjectId} (${f.kind}
 export async function writeSummary(entity: BrainEntity, scope: UsageScope | undefined, viewer: Viewer, options: { model?: LanguageModel; signal?: AbortSignal } = {}, db: Database = database()): Promise<WikiSummary> {
   const model = brainModel(options.model);
   if (!model) throw new WikiError('The brain has no model (LANDFLOW_BRAIN_MODEL is off)', 409);
-  const page = wikiPage(entity, scope, viewer, false, db);
-  const index = pageIndex(listEntities({ scope, limit: 2_000 }, db));
+  // A summary is shown to everyone who can open the page: it is written from the shared view, never the caller's private work.
+  const shared = sharedScope(scope);
+  const page = wikiPage(entity, shared, viewer, false, db);
+  const index = pageIndex(listEntities({ scope: shared, limit: 2_000 }, db));
   const prompt = [
     `Write the summary at the top of the wiki page for ${entity.name} (${entity.type}).`,
     '',

@@ -7,7 +7,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { ChevronsUpDown, FolderKanban, LayoutGrid, Plus, UserRound, Users } from 'lucide-react';
+import { ChevronsUpDown, FolderCog, FolderKanban, LayoutGrid, Plus, UserRound, Users } from 'lucide-react';
 import { can } from '@/lib/shared/auth';
 import { cn } from '@/lib/utils';
 import { useViewer } from '../auth/viewer';
@@ -69,6 +69,15 @@ export function ProjectSwitcher() {
                 {project.name}
               </ProjectLink>
             ))}
+            {(team.length > 0 || mayCreate) && <MenuSeparator />}
+            <MenuItem
+              onClick={() => {
+                close();
+                router.push('/projects');
+              }}
+            >
+              <FolderCog /> Manage projects
+            </MenuItem>
             {mayCreate && (
               <MenuItem
                 onClick={() => {

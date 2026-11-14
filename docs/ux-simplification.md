@@ -24,6 +24,12 @@ features. Size: S is about a day, M a few days.
 
 ## Navigation
 
+**Built (shell, wave 1):** the rail has nine items (Home, Workflows, Runs, Agents, Brain, Data tables, Credentials,
+Plugins, Settings) with section tabs inside Workflows, Runs (with a Search tab until B20) and Plugins
+(`components/shell/section-nav.tsx`); the theme and Build a plugin moved into the user menu; the Live dot shows only as
+"Reconnecting…"; the Preview pill and the plugin count are gone (a red dot marks an offline plugin); the project
+switcher has Manage projects. The six-item proposal below is the older plan.
+
 Today: the project switcher, 11 sidebar items (Build: Home, Workflows, Templates, Agents, Executions, Insights, Data
 tables, Credentials; Extend: Plugins, Marketplace, Build a plugin), then Settings, a Live dot, a theme switch and the
 user. Three places add capabilities: Plugins, Marketplace and Templates.
@@ -53,6 +59,10 @@ sidebar. (M, phase 4 of [spotlight.md](spotlight.md#delivery).)
 - **Change:** the Home in [spotlight.md](spotlight.md#1-home-20) (Needs you, KPIs with deltas, runs chart, rankings,
   Continue). Group runs by workflow; show plugins only when one is offline; primary action "New workflow"; demo links in
   an empty-state card for new instances.
+- **Built (2026-11-14):** the header's primary is "New workflow" (a blank one, opened in the editor); "Open polyglot
+  demo" sits in the empty state of an instance with no runs; the Plugins KPI and panel and the header meta line are
+  gone, a one-line warning shows above the tiles only when a plugin is offline; "Needs you" is the fourth tile; a run
+  of one flow is one line; a suggestion is a compact card.
 
 ### Developer details everywhere (high impact, S)
 

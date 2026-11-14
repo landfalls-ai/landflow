@@ -86,7 +86,7 @@ pull requests, issues and branches it creates.
 
 **Run trace** sits next to **Canvas** above every execution. It opens by itself when the run has agents (the choice is
 remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phone; its header goes back to **Executions** (the run
-in its workflow's Executions tab), and the side bar marks **Executions** while it is open.
+in its workflow's Executions tab), and the rail marks **Runs** while it is open.
 
 - **The header**: live or finished, the time, who is working on what right now, the outcome as reported (the last
   agent's answer) and as checked (the Run report's verdict in the profile's words, with how many checks failed). A live
@@ -140,7 +140,7 @@ and marks it (a ring and a flash): a team node's ribbon links each turn this way
 
 ### A run as a timeline
 
-In the new look ([the look](ui-review.md#the-look)) a card above the tabs shows the run as a timeline
+A card above the tabs shows the run as a timeline
 (`components/run-trace/run-timeline-card.tsx`, built by `runTimeline()` in `lib/shared/run-timeline.ts`):
 
 - **The card**: the face of who leads the run (the team's lead, else its first agent, else the flow's icon), the workflow,
@@ -162,7 +162,10 @@ In the new look ([the look](ui-review.md#the-look)) a card above the tabs shows 
 
 ### What a run did, in one line
 
-Also in the new look, a run can read as one line (`components/run-trace/run-line.tsx`, built by `runLine()` in
+On Home, a run of one flow with no agent or team (`isSingleFlow()`) is drawn as a single row instead: a status dot, the name,
+how long it took and when, the whole row opening the run; agent and team runs keep the card below.
+
+A run can read as one line (`components/run-trace/run-line.tsx`, built by `runLine()` in
 `lib/shared/run-line.ts`): **what came in** (the trigger with its icon and what it carried: a pull request's number and
 title, a chat message, an email's subject, a form, a schedule, a webhook, or "Run by you"), **who did it** (the agent's
 face, or the team's lead with the faces of the members who had a turn), and **what came out** (the best of the run's
@@ -180,7 +183,7 @@ on the result opens it (a pull request on GitHub); the rest of the row opens the
 
 ### An approval with its evidence
 
-In the new look, a run that waits for a person to approve a tool call (a team member's tool that needs approval, a
+A run that waits for a person to approve a tool call (a team member's tool that needs approval, a
 published note, a command the guard asks about) shows a **decision card** (`components/run-trace/approval-card.tsx`)
 instead of a title and two buttons, so the person decides with the reasons in front of them:
 
@@ -206,8 +209,7 @@ instead of a title and two buttons, so the person decides with the reasons in fr
 The card is the Needs you section's, and the waiting node's: from the editor, **Review** next to Approve / Deny on the node
 opens it in a sheet, and the execution view's phone card is it (both read the run's journal). Needs you also gets a row of
 **faces** across the top, a dot on each member that waits (and on the Executions page's list, one face per member with
-something for you across runs). The classic look keeps its title and buttons; the edit works through the API in both
-looks (`POST /api/executions/:id/approvals` with `input`, `POST /api/executions/:id/asks/:askId` with `command`).
+something for you across runs). The edit works through the API too (`POST /api/executions/:id/approvals` with `input`, `POST /api/executions/:id/asks/:askId` with `command`).
 
 ### Headlines
 
@@ -481,7 +483,7 @@ images are not loaded.
 
 Three routes read across runs, and two screens use them (made for a phone: one column of cards, no wide tables).
 
-- **Search** (`/runs`, **Search runs** in the side bar; `GET /api/runs/search`): words (span names, inputs and outputs,
+- **Search** (`/runs`, **Runs** → **Search** tab; `GET /api/runs/search`): words (span names, inputs and outputs,
   messages, artifacts, checks), workflow, an agent or actor by name, a tool by name, status, **has failed steps**,
   **a check failed** (by name, or any) and from/to dates. Results are cards (status, workflow, when, how long, the
   failed steps and checks, and where the words were found) that open `/runs/<id>`, 20 at a time with **Show more**.

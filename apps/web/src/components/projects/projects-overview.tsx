@@ -36,9 +36,6 @@ export function ProjectsOverview() {
       />
       <PageBody width="narrow">
         {error && <div className="mb-4 rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>}
-        <p className="mb-4 text-[12px] text-t3">
-          Every workflow, credential, data table and agent belongs to one project. Your personal project holds what you create; team projects share their items with their members as admin, editor or viewer.
-        </p>
         {projects && projects.length === 0 ? (
           <Card>
             <EmptyState title="No projects yet" />
