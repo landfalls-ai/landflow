@@ -6,9 +6,10 @@
  * - Side bar: the view; drag its edge to resize, ⌘B to hide.
  * - Editor: tabs (one click opens a preview tab in italics, which the next replaces; a double click or a second click
  *   keeps it), breadcrumbs, and each file as Preview or Source (⌘⇧V).
- * - Spotlight at the bottom of the editor asks the brain, about the open page unless its chip is removed (⌘I).
+ * - Ask (⌘I, or the Ask button in the title bar) is the one way to ask the brain: a column docked at the right of the editor
+ *   (a bottom sheet on a phone), about the open page unless its chip is removed. A link in an answer opens beside it.
  * - Panel (⌘J): Problems (pages that need a person) and Suggestions. Status bar: problems, shared pages, the model, counts.
- * - ⌘P (or ⌘K): go to a file, `>` for commands, or ask Spotlight.
+ * - ⌘P (or ⌘K): go to a file, or `>` for commands.
  * The open tabs and the side bar's width are kept in this browser. On a phone the side bar is a drawer and the activity
  * bar folds into it.
  */
@@ -28,7 +29,10 @@ import { PageDoc } from './page-doc';
 import { WikiNav } from './parts';
 import { ExplorerView, FileIcon, SearchView, TimelineView, type Opener } from './side-views';
 import { lineId, SourceView } from './source-view';
-import { BrainSpotlight, focusBrainSpotlight, type SpotlightFile } from './spotlight';
+import { useAskConversation } from './ask-panel';
+import { BrainSpotlight, focusBrainSpotlight, SPOTLIGHT_INPUT, type SpotlightFile } from './spotlight';
+import { Sheet } from '../../ui/sheet';
+import { usePhone } from '@/lib/client/use-phone';
 
 type View = 'explorer' | 'search' | 'timeline';
 type Mode = 'preview' | 'source';
@@ -54,7 +58,13 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
   const [panel, setPanel] = useState<'problems' | 'suggestions' | undefined>();
   const [width, setWidth] = useState(272);
   const [quick, setQuick] = useState(false);
-  const [askRequest, setAskRequest] = useState<{ question: string; key: number }>();
+  const [askOpen, setAskOpen] = useState(false);
+  const conversation = useAskConversation();
+  const phone = usePhone();
+  const askOpenRef = useRef(askOpen);
+  useEffect(() => {
+    askOpenRef.current = askOpen;
+  }, [askOpen]);
   const activeRef = useRef(active);
   useEffect(() => {
     activeRef.current = active;
@@ -178,7 +188,12 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
         setQuick(true);
       } else if (key === 'i') {
         e.preventDefault();
-        focusBrainSpotlight();
+        // ⌘I opens Ask with the caret in its box; pressed again from the box, it closes.
+        if (askOpenRef.current && document.activeElement?.id === SPOTLIGHT_INPUT) setAskOpen(false);
+        else {
+          setAskOpen(true);
+          setTimeout(focusBrainSpotlight, 0);
+        }
       } else if (key === 'b') {
         e.preventDefault();
         setSidebar((v) => !v);
@@ -238,8 +253,19 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
             className="mx-auto flex h-7 w-full max-w-[520px] items-center gap-2 rounded-md border border-bd bg-bg px-2.5 text-[12px] text-t3 hover:border-ac hover:text-t2"
           >
             <Search className="size-3.5 shrink-0" aria-hidden />
-            <span className="truncate">Go to a page, run a command, or ask</span>
+            <span className="truncate">Go to a page or run a command</span>
             <kbd className="ml-auto hidden rounded border border-hair px-1 text-[11px] sm:inline">⌘P</kbd>
+          </button>
+          <button
+            type="button"
+            onClick={() => setAskOpen((v) => !v)}
+            aria-pressed={askOpen}
+            title="Ask the brain (⌘I)"
+            className={cn('flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2 text-[12px] font-medium max-md:min-h-9', askOpen ? 'border-ac bg-acdim text-t1' : 'border-bd text-t2 hover:border-ac hover:text-t1')}
+          >
+            <Sparkles className="size-3.5 text-viz-7" aria-hidden />
+            Ask
+            <kbd className="hidden rounded border border-hair px-1 font-mono text-[10.5px] text-t3 lg:inline">⌘I</kbd>
           </button>
           <div className="hidden items-center gap-0.5 md:flex">
             <ToolbarButton title="Toggle side bar (⌘B)" onClick={() => setSidebar((v) => !v)} active={sidebar}>
@@ -247,9 +273,6 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
             </ToolbarButton>
             <ToolbarButton title="Toggle panel (⌘J)" onClick={() => setPanel((p) => (p ? undefined : 'problems'))} active={Boolean(panel)}>
               <PanelBottom className="size-3.5" />
-            </ToolbarButton>
-            <ToolbarButton title="Spotlight (⌘I)" onClick={focusBrainSpotlight}>
-              <Sparkles className="size-3.5" />
             </ToolbarButton>
           </div>
         </div>
@@ -364,11 +387,11 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
                 ) : homeError && !home ? (
                   <p className="p-6 text-[13px] text-rd">{homeError}</p>
                 ) : mode === 'source' && markdown ? (
-                  <div className="pb-36">
+                  <div className="pb-12">
                     <SourceView markdown={markdown} />
                   </div>
                 ) : (
-                  <div className="mx-auto w-full max-w-3xl px-4 pb-40 pt-6 sm:px-8">
+                  <div className="mx-auto w-full max-w-3xl px-4 pb-16 pt-6 sm:px-8">
                     <FileContent
                       ref_={active}
                       home={home}
@@ -380,7 +403,6 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
                   </div>
                 )}
               </div>
-              <BrainSpotlight file={spotlightFile} request={askRequest} />
             </div>
 
             {panel && home && (
@@ -394,6 +416,13 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
               />
             )}
           </div>
+
+          {/* Ask: docked at the right of the editor on a desktop (the page narrows), so a link opens the page beside the answer. */}
+          {askOpen && !phone && (
+            <aside className="hidden h-full min-h-0 w-[360px] shrink-0 flex-col border-l border-hair bg-sf md:flex" aria-label="Ask the brain">
+              <BrainSpotlight file={spotlightFile} onClose={() => setAskOpen(false)} conversation={conversation} {...(home?.model && { model: home.model })} />
+            </aside>
+          )}
         </div>
 
         {/* Status bar. */}
@@ -421,18 +450,17 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
           <span className="hidden truncate md:inline" title="LANDFLOW_BRAIN_MODEL">
             {home?.model ? `model ${home.model}` : 'no model'}
           </span>
-          <button type="button" onClick={focusBrainSpotlight} className="ml-auto flex items-center gap-1 hover:opacity-80 sm:ml-0">
-            <Sparkles className="size-3" aria-hidden />
-            Spotlight
-          </button>
         </div>
+
+        <Sheet open={askOpen && phone} onClose={() => setAskOpen(false)} title="Ask the brain" className="h-[85dvh]">
+          <BrainSpotlight file={spotlightFile} onClose={() => setAskOpen(false)} conversation={conversation} {...(home?.model && { model: home.model })} />
+        </Sheet>
 
         {quick && (
           <QuickOpen
             tree={tree}
             onClose={() => setQuick(false)}
             onOpen={(ref) => open(ref, { pin: true })}
-            onAsk={(question) => setAskRequest({ question, key: Date.now() })}
             commands={[
               { label: 'Open index.md', run: () => open(INDEX, { pin: true }) },
               { label: 'Open log.md', run: () => open(LOG, { pin: true }) },
@@ -492,7 +520,7 @@ const Skeleton = () => (
 function Welcome() {
   const rows: Array<[string, string]> = [
     ['Go to a page or command', '⌘P'],
-    ['Ask Spotlight', '⌘I'],
+    ['Ask the brain', '⌘I'],
     ['Toggle the side bar', '⌘B'],
     ['Toggle the panel', '⌘J'],
     ['Preview or Markdown', '⌘⇧V'],
@@ -624,8 +652,8 @@ function Panel({
   );
 }
 
-/** ⌘P: files by name or path; `>` for commands; anything else can also go to Spotlight as a question. */
-function QuickOpen({ tree, onClose, onOpen, onAsk, commands }: { tree?: BrainTree; onClose: () => void; onOpen: (ref: FileRef) => void; onAsk: (q: string) => void; commands: Array<{ label: string; run: () => void }> }) {
+/** ⌘P: files by name or path; `>` for commands. */
+function QuickOpen({ tree, onClose, onOpen, commands }: { tree?: BrainTree; onClose: () => void; onOpen: (ref: FileRef) => void; commands: Array<{ label: string; run: () => void }> }) {
   const [q, setQ] = useState('');
   const [at, setAt] = useState(0);
   const commandMode = q.startsWith('>');
@@ -640,7 +668,6 @@ function QuickOpen({ tree, onClose, onOpen, onAsk, commands }: { tree?: BrainTre
           .sort((a, b) => score(b.f.title, query) - score(a.f.title, query) || b.f.week - a.f.week)
           .slice(0, 12)
           .map(({ f, path }) => ({ key: f.ref, label: f.title === 'Brain' || f.title === 'Log' ? f.name : f.title, detail: path, icon: <FileIcon file={f} />, run: () => onOpen(f.ref) })),
-        ...(query ? [{ key: '?ask', label: `Ask Spotlight: “${q.trim()}”`, icon: <Sparkles className="size-3.5 text-viz-7" />, run: () => onAsk(q.trim()) }] : []),
       ];
   const choose = (item?: Item) => {
     if (!item) return;
@@ -663,7 +690,7 @@ function QuickOpen({ tree, onClose, onOpen, onAsk, commands }: { tree?: BrainTre
             else if (e.key === 'ArrowUp') (e.preventDefault(), setAt((i) => Math.max(0, i - 1)));
             else if (e.key === 'Enter') choose(items[at]);
           }}
-          placeholder="Go to a page · > for commands · or type a question"
+          placeholder="Go to a page · > for commands"
           aria-label="Go to a page or command"
           className="h-10 w-full border-b border-hair bg-transparent px-3.5 text-[13px] text-t1 outline-none placeholder:text-t3"
         />
