@@ -219,7 +219,7 @@ function TokensCard({ canManage, onToken }: { canManage: boolean; onToken: (toke
           <div className="flex items-start gap-2 text-[13px]">
             <ShieldAlert className="mt-0.5 size-4 shrink-0 text-warn" strokeWidth={1.8} />
             <span className="min-w-0 flex-1 text-t2">
-              <span className="font-semibold text-t1">Copy “{created.label}” now.</span> You won’t see this token again; Landflow keeps only a hash of it. The snippets above are filled in with it.
+              <span className="font-semibold text-t1">Copy “{created.label}” now.</span> You won’t see this token again; Landflow keeps only a hash of it. The snippets under Connected clients are filled in with it.
             </span>
             <button onClick={() => setCreated(undefined)} aria-label="Dismiss" className="text-t3 hover:text-t1">
               <X className="size-3.5" />
@@ -251,7 +251,7 @@ function TokensCard({ canManage, onToken }: { canManage: boolean; onToken: (toke
         </div>
       )}
       {error && <Alert>{error}</Alert>}
-      {tokens && tokens.length === 0 && !issuing && <EmptyState title="No MCP tokens" hint="Issue one for an agent, then paste it into the client config above." compact />}
+      {tokens && tokens.length === 0 && !issuing && <EmptyState title="No MCP tokens" hint="Issue one for an agent, then paste it into the client config under Connected clients." compact />}
       {tokens && tokens.length > 0 && (
         <Card className="overflow-hidden p-0">
           {tokens.map((t) => {
@@ -425,7 +425,7 @@ function InstanceServerCard({ origin }: { origin: string }) {
       <div className="flex items-start justify-between gap-4">
         <p className="text-[13px] leading-relaxed text-t2">
           Lets coding agents such as Claude Code build, validate and run workflows here (owners and admins). It serves <span className="font-mono text-[12px] text-t1">{url}</span> with its own access token, separate from the
-          plugin tools above.
+          plugin tools under Tools.
         </p>
         <Switch checked={access.enabled} onChange={(v) => void toggle(v)} disabled={busy === 'toggle'} label="Instance MCP server" />
       </div>
@@ -475,6 +475,7 @@ export function McpSettings() {
   const [tokens, setTokens] = useState<McpTokenView[]>([]);
   const [issued, setIssued] = useState<string>();
   const [error, setError] = useState<string>();
+  const [pending, setPending] = useState(0);
   const [origin, setOrigin] = useState('http://localhost:3000');
 
   useEffect(() => {
@@ -490,6 +491,17 @@ export function McpSettings() {
       .catch(() => {});
   }, []);
 
+  // Pending approvals: the server sends people here (Settings → MCP → Approvals), so the Tools section opens when one waits.
+  useEffect(() => {
+    const load = () =>
+      api<{ approvals: Array<{ status: string }> }>('/api/mcp/approvals', { background: true })
+        .then((r) => setPending(r.approvals.filter((a) => a.status === 'pending').length))
+        .catch(() => {});
+    void load();
+    const timer = setInterval(() => void load(), 4000);
+    return () => clearInterval(timer);
+  }, []);
+
   if (!status) return error ? <Alert>{error}</Alert> : <div className="h-36 rounded-2xl border border-hair bg-sf animate-pulse-soft" />;
 
   return (
@@ -497,6 +509,7 @@ export function McpSettings() {
       <McpSections
         canManage={status.canManage}
         gatewayMode={status.gateway.mode}
+        pendingApprovals={pending}
         access={
           <>
             {status.canManage && <InstanceServerCard origin={origin} />}

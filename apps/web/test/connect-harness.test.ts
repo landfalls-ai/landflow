@@ -178,4 +178,12 @@ describe('markup', () => {
     expect(html).toContain('Work from local tools');
     expect(page(false)).not.toContain('Work from local tools');
   });
+
+  it('a waiting approval opens Tools and says so on its header', () => {
+    const html = renderToStaticMarkup(createElement(McpSections, { canManage: true, gatewayMode: 'off', pendingApprovals: 2, access: 'ACCESS', clients: 'CLIENTS', tools: 'TOOLS', gateway: 'GATEWAY' }));
+    expect(html).toContain('2 waiting for approval');
+    expect(html.match(/aria-expanded="true"/g)).toHaveLength(1);
+    expect(html).toContain('TOOLS');
+    expect(html).not.toContain('ACCESS');
+  });
 });

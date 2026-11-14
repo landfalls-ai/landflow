@@ -19,8 +19,16 @@ import { Switch } from '@/components/ui/inputs';
 const DOCS = 'https://github.com/landfalls-ai/landflow/blob/main/docs';
 
 /** One collapsed section: a header that opens it, with the sentence and "Learn more" under the title. */
-export function McpSection({ id, icon, title, sentence, learnMore, badge, children }: { id: string; icon: ReactNode; title: string; sentence: string; learnMore: string; badge?: ReactNode; children: ReactNode }) {
-  const [open, setOpen] = useState(false);
+export function McpSection({ id, icon, title, sentence, learnMore, badge, forceOpen, children }: { id: string; icon: ReactNode; title: string; sentence: string; learnMore: string; badge?: ReactNode; forceOpen?: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(Boolean(forceOpen));
+  // Once opened the children stay mounted (hidden only), so a token shown once survives a collapse.
+  const [seen, setSeen] = useState(Boolean(forceOpen));
+  useEffect(() => {
+    if (forceOpen) setOpen(true);
+  }, [forceOpen]);
+  useEffect(() => {
+    if (open) setSeen(true);
+  }, [open]);
   return (
     <Card className="p-0">
       <div className="flex items-start gap-2 px-4 py-3 max-md:px-3">
@@ -40,7 +48,7 @@ export function McpSection({ id, icon, title, sentence, learnMore, badge, childr
         </a>
       </div>
       <div id={`${id}-panel`} role="region" aria-labelledby={`${id}-button`} hidden={!open} className="space-y-4 border-t border-hair px-4 py-4 max-md:px-3">
-        {open && children}
+        {(open || seen) && children}
       </div>
     </Card>
   );
@@ -80,11 +88,12 @@ type BrainSetting = 'allowed' | 'forbidden';
 /** "Work from local tools" (owners and admins): Allow automatic sending on or off. */
 export function WorkFromLocalTools() {
   const [setting, setSetting] = useState<BrainSetting>();
+  const [loadError, setLoadError] = useState(false);
   const [saving, setSaving] = useState(false);
   useEffect(() => {
     api<{ settings: { brain?: { workAutoSend?: BrainSetting } } }>('/api/settings')
       .then((r) => setSetting(r.settings.brain?.workAutoSend ?? 'allowed'))
-      .catch(() => setSetting('allowed'));
+      .catch(() => setLoadError(true));
   }, []);
   const change = async (allowed: boolean) => {
     const workAutoSend: BrainSetting = allowed ? 'allowed' : 'forbidden';
@@ -108,12 +117,13 @@ export function WorkFromLocalTools() {
           <p className="text-[12px] leading-relaxed text-t3">Allow automatic sending: when it is off, people’s coding tools hold their work until the person sends it themselves.</p>
         </div>
       </div>
+      {loadError && <span className="text-[12px] text-danger">Couldn’t load this setting.</span>}
       {setting && <Switch checked={setting === 'allowed'} onChange={(v) => void change(v)} disabled={saving} label="Allow automatic sending" />}
     </Card>
   );
 }
 
-export function McpSections({ canManage, gatewayMode, access, clients, tools, gateway }: { canManage: boolean; gatewayMode: string; access: ReactNode; clients: ReactNode; tools: ReactNode; gateway: ReactNode }) {
+export function McpSections({ canManage, gatewayMode, pendingApprovals = 0, access, clients, tools, gateway }: { canManage: boolean; gatewayMode: string; pendingApprovals?: number; access: ReactNode; clients: ReactNode; tools: ReactNode; gateway: ReactNode }) {
   const instanceTools = Object.keys(TOOL_SCOPES).length;
   return (
     <div className="space-y-3">
@@ -127,7 +137,12 @@ export function McpSections({ canManage, gatewayMode, access, clients, tools, ga
         </p>
         {clients}
       </McpSection>
-      <McpSection id="mcp-tools" icon={<Wrench className="size-4" strokeWidth={1.8} />} title="Tools" sentence="What agents can call, and the scope each tool needs." learnMore={`${DOCS}/features/ai.md`} badge={<Badge tone="muted">{instanceTools} tools</Badge>}>
+      <McpSection id="mcp-tools" icon={<Wrench className="size-4" strokeWidth={1.8} />} title="Tools" sentence="What agents can call, and the scope each tool needs." learnMore={`${DOCS}/features/ai.md`} forceOpen={pendingApprovals > 0} badge={
+          <>
+            <Badge tone="muted">{instanceTools} instance tools</Badge>
+            {pendingApprovals > 0 && <Badge tone="warning">{pendingApprovals} waiting for approval</Badge>}
+          </>
+        }>
         <ToolScopeList />
         {tools}
       </McpSection>
