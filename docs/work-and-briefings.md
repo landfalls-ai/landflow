@@ -59,11 +59,16 @@ Private is the default, and private means private: only the person who sent an e
 not, and neither does a project's admin. Every reader of the ledger follows the same rule: the usage routes, the Brain
 page, Find Similar, the MCP brain tools and the Landflow Usage node.
 
-- An event with an owner is read by its owner. An `org` event is read by everyone. A `team` event counts as private
-  until teams are linked to people. For now the routes accept only `private`.
+- An event with an owner is read by its owner. An `org` event is read by every signed-in user. A `team` event is read by
+  the people who share at least one project with its owner; the owner's personal project does not count, and an admin
+  who is in none of those projects does not read it. A private event is read by the owner alone. The owner changes it
+  with `PATCH /api/brain/work/:sourceId`; sending an event again without a `visibility` keeps the one it has.
 - An event with no owner (everything the platform and the flows record) keeps its project scoping.
 - When a person is deleted, their private events go with them (with their conversations and preferences); work they
   shared stays.
+- A reader that works for the instance sees `org` events always, and `team` events only where its output reaches that
+  team alone (a teammate's briefing, the overlap detector): it names the person with `teamOf` in its scope
+  (`UsageScope`). It never sees private ones.
 - Work that is the instance's own to read (the study, the detectors, a flow's Landflow Usage node, the daily rollups) sees
   no private work. The rollups in `usage_daily` count only events with no owner or shared with the organization, so
   totals never include someone's private work. A workflow does not read its creator's private work either, since its
@@ -76,13 +81,38 @@ these scopes for themselves (Settings → API keys); a key with only these scope
 
 | Route | Scope | What it does |
 |---|---|---|
-| `POST /api/brain/work` | `brain:write` | `{ events: WorkEventInput[1..50] }` records the caller's own work. Answers `{ saved: [{ sourceId, id, created }], rejected: [{ sourceId, reason }] }`: an event that fails the checks is rejected with its reason and the rest are saved. The same `source` and `sourceId` again updates the event (`created: false`; the newer values win). `team` and `org` are refused for now ("Sharing comes later"). 503 when the brain is off (`DELETE` still works while it is off) |
+| `POST /api/brain/work` | `brain:write` | `{ events: WorkEventInput[1..50] }` records the caller's own work. Answers `{ saved: [{ sourceId, id, created }], rejected: [{ sourceId, reason }] }`: an event that fails the checks is rejected with its reason and the rest are saved. The same `source` and `sourceId` again updates the event (`created: false`; the newer values win). `team` and `org` are saved as sent. 503 when the brain is off (`DELETE` still works while it is off) |
 | `DELETE /api/brain/work/:sourceId?source=<tool>` | `brain:write` | deletes the caller's own event: 204, or 404 when they have none by that source and id (someone else's is never found) |
-| `GET /api/brain/briefing?day=YYYY-MM-DD` | `brain:read` | the caller's own `today` and `yesterday` (the day before `day`), newest first, at most 50 each, in the instance time zone (today by default). `related` is empty for now; `autoSend` is the admin's setting; `brain` is `on` or `off` |
+| `PATCH /api/brain/work/:sourceId?source=<tool>` | `brain:write` | `{ visibility: private \| team \| org }` changes who reads one of the caller's own events; answers the item. 404 when they have none by that id (someone else's is never found); `source` is optional and narrows it to one tool |
+| `POST /api/brain/work/:sourceId/share?source=<tool>` | `brain:write` | Post as my update: `{ visibility?: org \| team }` (`org` by default) records one `work.self_update` event the caller owns, with `attrs.of` set to `<source>:<sourceId>` of the item. Answers `{ id, created, of, visibility }`. Posting the same item again updates that event, so there is never more than one per item. The item itself keeps its own visibility. 404 when it is not theirs; 503 when the brain is off |
+| `GET /api/brain/briefing?day=YYYY-MM-DD` | `brain:read` | the caller's own `today` and `yesterday` (the day before `day`), newest first, at most 50 each, in the instance time zone (today by default). `related` lists colleagues (below); `autoSend` is the admin's setting; `brain` is `on` or `off` |
 | `POST /api/brain/ask` | `brain:read` | as before, now with the narrower scope (a key with `executions:read` alone no longer reaches it) |
 
 The two scopes are labelled "Brain: read your briefing and ask" and "Brain: record your work". A briefing is built on
 request from the ledger (`source: "live"`); a flow may write its own later (`source: "flow"`).
+
+## Related colleagues
+
+The briefing's `related` lists the people whose shared work of the last two days overlaps yours, and says why. It reads
+only what the caller may read: a colleague's `org` items, and their `team` items when you share a project with them;
+never a private one. For each person it keeps the items that relate to your `today` and `yesterday`, and one `because`,
+the strongest reason among them, in this order:
+
+1. `repo`: the same repository.
+2. `initiative`: the same initiative hint.
+3. `customer`: the same customer hint.
+4. `area`: a directory name you both touched.
+5. `similar`: summaries that share enough words (the same floor, 0.15, that Find Similar uses).
+
+At most 5 people, 3 items each, strongest reason first and then the newest item. Code: `lib/server/brain/related.ts`
+(`rankRelated` is pure and tested on its own).
+
+## Repositories as systems
+
+The first event that names a `repo` makes a `system` entity for it (id `repo-owner-name`, `attrs.repo = owner/name`,
+source `work`); later events find it and add nothing. The entity names the repository only: it has no owner, so it
+says nothing about who works there. It lives in the default project like any entity made without one
+([second-brain.md](second-brain.md#entities)).
 
 ## Over MCP
 
@@ -91,6 +121,7 @@ Everyone can connect their harness to the instance MCP server (`/api/mcp`, [feat
 ## Where the code is
 
 `packages/protocol/src/work-events.ts` (the contract), `lib/server/brain/work.ts` (record and delete),
-`lib/server/brain/briefing.ts`, `lib/server/usage/ledger.ts` (`upsertWorkEvent`), `lib/server/usage/query.ts` (the one
+`lib/server/brain/briefing.ts`, `lib/server/brain/related.ts` (the overlap), `lib/server/usage/ledger.ts` (`upsertWorkEvent`), `lib/server/usage/query.ts` (the one
 visibility clause) and `lib/server/brain/scope.ts`; migration 2073 adds `owner_id`, `visibility`, `source` and
-`source_id` to `usage_events`, with a unique index on `(owner_id, source, source_id)`.
+`source_id` to `usage_events`, with a unique index on `(owner_id, source, source_id)`. The team clause in `query.ts` is a
+subquery over `project_members` (`scopeClause`).

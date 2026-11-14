@@ -191,7 +191,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - `/brain review` asks about one held entry at a time and needs a person at the prompt; in a run with nobody to ask it lists them instead.
 - Only the directories of files edited through Claude Code's file tools become areas; a file changed by a shell command is not. A commit or pull request is counted from the command and its output, so one made by another tool is missed.
 - The session ends with the entry held; a session that crashes is held at the next start, with no end time.
-- The key and options are set by hand; a page that creates them comes later. Colleagues, a pane, a band and sharing with a team or the organization are not built.
+- The key and options are set by hand; a page that creates them comes later. The mod's colleagues, pane and band are not built (sharing with a team or the organization is, through the API).
 - A repository is matched by two-segment `owner/name` remotes (a GitLab subgroup is not matched), and pull request links are recognised only on github.com. A quiet commit (`git commit -q`) prints nothing and is not counted.
 - Two clients on one repository send the same work twice: the mod (`claude-code`, one event per session) and
   `landflow work` (`landflow-cli`, one per repo and day) do not know of each other, so a person who runs both sees the

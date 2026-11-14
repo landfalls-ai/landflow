@@ -23,7 +23,7 @@ export interface WorkItem {
   visibility: WorkVisibility;
 }
 
-/** A colleague whose work relates to yours, and why (empty until the person link and shared visibility land). */
+/** A colleague whose work relates to yours, and why (their `team` or `org` work of the last two days, with the one reason it relates). */
 export interface RelatedColleague {
   person: { name: string; userId?: string };
   items: WorkItem[];

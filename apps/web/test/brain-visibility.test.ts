@@ -250,14 +250,19 @@ describe('old private work', () => {
 });
 
 describe('shared and unowned events', () => {
-  it('an org event is read by everyone; a team event stays private for now; an unowned one keeps project scoping', async () => {
+  it('an org event is read by everyone; a team event by people who share a project with its owner; an unowned one keeps project scoping', async () => {
     upsertWorkEvent(alice.id, { kind: 'work.session', source: 'claude-code', sourceId: 'shared', occurredAt: at, title: 'Shared with everyone', visibility: 'org' });
     upsertWorkEvent(alice.id, { kind: 'work.session', source: 'claude-code', sourceId: 'team', occurredAt: at, title: 'Team only', visibility: 'team' });
-    for (const user of [owner, admin, bob]) {
+    for (const user of [owner, admin]) {
       enableTestAuth(user);
       const titles = (await call(eventsRoute.GET, '/api/usage/events?kinds=work.session&limit=100')).body.events.map((e: any) => e.message);
-      expect(titles).toEqual(['Shared with everyone']);
+      expect(titles).toContain('Shared with everyone');
+      if (user === admin) expect(titles).not.toContain('Team only');
     }
+    // Bob shares the Platform project with Alice, so he reads her team event too.
+    enableTestAuth(bob);
+    const bobs = (await call(eventsRoute.GET, '/api/usage/events?kinds=work.session&limit=100')).body.events.map((e: any) => e.message);
+    expect(bobs.sort()).toEqual(['Shared with everyone', 'Team only']);
     // Unowned: a member outside the workflow's project doesn't see it; one inside, and an owner, do.
     const carol = await createUser({ email: 'carol@vis.test', name: 'Carol', role: 'member', password: 'carol-password-1' });
     enableTestAuth(carol);

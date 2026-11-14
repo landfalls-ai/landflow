@@ -1,16 +1,21 @@
 /**
  * Recording someone's work (docs/work-and-briefings.md): POST/DELETE /api/brain/work. The events are the caller's own and
- * private to them (nobody else reads one, not an admin); sharing with a team or the organization comes later. The
+ * private to them until they mark one `team` (people who share a project with them) or `org` (everyone); nobody else
+ * reads a private one, not an admin. PATCH changes the visibility and share posts a `work.self_update`. The
  * contract is `WorkEventInput` in packages/protocol; this file validates with it, declares the kind on first use and
  * writes through the ledger (usage/ledger.ts `upsertWorkEvent`).
  */
 import { validateWorkEvent, type WorkEventInput } from '@landflow/protocol';
 import { getUser } from '../auth/users';
+import { database, type Database } from '../db';
 import { HttpError } from '../errors';
 import type { Actor } from '../projects/access';
 import { getKind, saveKind } from '../usage/kinds';
-import { brainEnabled, deleteWorkEvent, upsertWorkEvent } from '../usage/ledger';
+import { brainEnabled, deleteWorkEvent, fromRow, upsertWorkEvent, type UsageRow } from '../usage/ledger';
 import type { UsageKindField } from '../../shared/brain';
+import type { WorkVisibility } from '../../shared/brain-work';
+import { getEntity, upsertEntity } from './entities';
+import { itemOf } from './related';
 
 /** The brain is switched off (LANDFLOW_BRAIN=false): nothing is recorded or briefed. */
 export class BrainOffError extends HttpError {
@@ -88,10 +93,6 @@ export function recordWork(actor: Actor, events: unknown[]): { saved: SavedWork[
       continue;
     }
     const event: WorkEventInput = checked.value;
-    if (event.visibility && event.visibility !== 'private') {
-      rejected.push({ sourceId: event.sourceId, reason: 'Sharing comes later: send it as private for now' });
-      continue;
-    }
     // A date far ahead would be a row no briefing shows and the prune never reaches: a day of clock skew is the most.
     if (Date.parse(event.occurredAt) > Date.now() + FUTURE_SLACK_MS) {
       rejected.push({ sourceId: event.sourceId, reason: 'occurredAt is more than a day in the future' });
@@ -103,7 +104,10 @@ export function recordWork(actor: Actor, events: unknown[]): { saved: SavedWork[
     }
     try {
       ensureKind(event.kind, actor);
-      const { id, created } = upsertWorkEvent(actor.id, { ...event, visibility: 'private' }, email);
+      // An event sent again without a visibility keeps the one its owner gave it (PATCH); a new one is private.
+      const visibility = event.visibility ?? (ownRow(actor.id, event.source, event.sourceId)?.visibility as WorkVisibility | undefined) ?? 'private';
+      const { id, created } = upsertWorkEvent(actor.id, { ...event, visibility }, email);
+      if (event.repo) recordRepo(event.repo);
       saved.push({ sourceId: event.sourceId, id, created });
     } catch (error) {
       if (error instanceof HttpError) rejected.push({ sourceId: event.sourceId, reason: error.message });
@@ -117,4 +121,71 @@ export function recordWork(actor: Actor, events: unknown[]): { saved: SavedWork[
 export function deleteWork(actor: Actor, source: string, sourceId: string): boolean {
   // Allowed while the brain is off: a person can always remove their own private events.
   return deleteWorkEvent(actor.id, source, sourceId);
+}
+
+// ---------------------------------------------------------------------------
+// Repositories as systems
+// ---------------------------------------------------------------------------
+
+/** The id of a repository's `system` entity: `repo-owner-name`, lowercase (the repository is `attrs.repo`). */
+export const repoEntityId = (repo: string): string => `repo-${repo.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}`.slice(0, 64).replace(/-+$/, '');
+
+/** One `system` entity per repository, made the first time work names it (a second event finds it and adds nothing). */
+function recordRepo(repo: string, db: Database = database()) {
+  const id = repoEntityId(repo);
+  if (getEntity('system', id, db)) return;
+  upsertEntity({ type: 'system', id, name: repo, description: 'A repository people work in', attrs: { repo }, source: 'work' }, db);
+}
+
+// ---------------------------------------------------------------------------
+// Visibility and Post as my update
+// ---------------------------------------------------------------------------
+
+function ownRow(ownerId: string, source: string | undefined, sourceId: string, db: Database = database()): UsageRow | undefined {
+  return source
+    ? db.get<UsageRow>("SELECT * FROM usage_events WHERE owner_id = ? AND source = ? AND source_id = ? AND kind LIKE 'work.%'", ownerId, source, sourceId)
+    : db.get<UsageRow>("SELECT * FROM usage_events WHERE owner_id = ? AND source_id = ? AND kind LIKE 'work.%' ORDER BY at DESC LIMIT 1", ownerId, sourceId);
+}
+
+/** Change who reads one of the caller's own work events. Undefined when they have none by that id (someone else's is never found). */
+export function setWorkVisibility(actor: Actor, sourceId: string, visibility: WorkVisibility, source?: string, db: Database = database()) {
+  const row = ownRow(actor.id, source, sourceId, db);
+  if (!row) return undefined;
+  const next = { ...row, visibility };
+  db.upsert('usage_events', next);
+  return itemOf(next);
+}
+
+/**
+ * Post as my update: one explicit call that records a `work.self_update` event the caller owns, shared `org` (default) or
+ * `team`, linking the item (`attrs.of`). Posting the same item again updates that event instead of adding another.
+ */
+export function shareWork(actor: Actor, sourceId: string, options: { source?: string; visibility?: 'team' | 'org' } = {}, db: Database = database()) {
+  if (!brainEnabled()) throw new BrainOffError();
+  const row = ownRow(actor.id, options.source, sourceId, db);
+  if (!row) return undefined;
+  const attrs = fromRow(row).attrs ?? {};
+  const text = (name: string) => (typeof attrs[name] === 'string' && attrs[name] ? String(attrs[name]) : undefined);
+  const of = `${row.source}:${row.source_id}`;
+  const visibility = options.visibility ?? 'org';
+  ensureKind('work.self_update', actor);
+  const input: WorkEventInput = {
+    kind: 'work.self_update',
+    source: 'landflow',
+    sourceId: `update:${of}`.slice(0, 200),
+    occurredAt: new Date().toISOString(),
+    title: text('title') ?? row.message ?? 'An update',
+    ...(text('summary') && { summary: text('summary') }),
+    ...(text('repo') && { repo: text('repo') }),
+    ...(text('initiative') && { initiative: text('initiative') }),
+    ...(text('customer') && { customer: text('customer') }),
+    ...(text('areas') && { areas: text('areas')!.split(',').filter(Boolean) }),
+    ...(text('url') && { url: text('url') }),
+    visibility,
+  };
+  const saved = upsertWorkEvent(actor.id, input, getUser(actor.id)?.email, db);
+  // The ledger's attrs have no link field: add `of` to the row it wrote.
+  const written = db.get<UsageRow>('SELECT * FROM usage_events WHERE id = ?', saved.id);
+  if (written) db.upsert('usage_events', { ...written, attrs: JSON.stringify({ ...(fromRow(written).attrs ?? {}), of }) });
+  return { id: saved.id, created: saved.created, of, visibility };
 }
