@@ -7,6 +7,7 @@ import { useAssistant, type ChatItem } from '../assistant';
 import { ChatList } from '../../ui/chat-motion';
 import { UserBubble } from '../../ui/chat';
 import { foldLine, sessionFold } from '../timeline';
+import { dividerBefore } from '../spotlight-history';
 import { AgentRow, ReplyView } from './reply';
 
 /** Every turn, in order, with the agents designed after the turn that created them. */
@@ -26,11 +27,19 @@ export function Timeline({ live, status }: { live: boolean; status?: string }) {
     // The kit's list: it stays at the bottom while a reply grows, and "Jump to latest" shows when you have scrolled up.
     <ChatList className="px-3 py-3">
       {/* A test-and-fix session's own requests ("Test run 2 failed at …") say what its run row says: left out. */}
-      {items.map((item) => {
+      {items.map((item, index) => {
         const hidden = (item.role === 'user' && item.auto && !agents.some((a) => a.after === item.id)) || (folded(item) && !firstOf.has(item.id));
         if (hidden) return null;
         return (
           <div key={item.id} className="space-y-3">
+            {/* Kept from an earlier visit: the conversation so far, then what is said now. */}
+            {dividerBefore(items, index) && (
+              <div role="separator" className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">
+                <span className="h-px flex-1 bg-hair" />
+                Earlier
+                <span className="h-px flex-1 bg-hair" />
+              </div>
+            )}
             {item.testId && firstOf.has(item.id) && folds.get(item.testId) && (
               <button
                 type="button"
@@ -43,10 +52,26 @@ export function Timeline({ live, status }: { live: boolean; status?: string }) {
                 <ChevronRight className={cn('size-3.5 shrink-0 text-t3 transition-transform', !folded(item) && 'rotate-90')} />
               </button>
             )}
-            {folded(item) ? null : item.role === 'user' && item.auto ? null : item.role === 'user' ? (
-              <UserBubble>{item.text}</UserBubble>
-            ) : (
-              <ReplyView item={item} live={live && item.id === lastId} status={status} />
+            {folded(item) ? null : item.role === 'user' && item.auto ? null : (
+              // Earlier turns are dimmed; a click or the keyboard on one brings it back to full strength.
+              <div className={cn(item.earlier && 'opacity-70 transition-opacity focus-within:opacity-100 hover:opacity-100 motion-reduce:transition-none')}>
+                {item.role === 'user' ? (
+                  <>
+                    <UserBubble>{item.text}</UserBubble>
+                    {item.mentions?.length ? (
+                      <ul aria-label="Tagged" className="mt-1 flex flex-wrap justify-end gap-1">
+                        {item.mentions.map((m) => (
+                          <li key={`${m.type}:${m.workflowId ?? ''}:${m.id}`} className="max-w-full truncate rounded-full border border-hair bg-sf px-2 py-0.5 text-[11.5px] text-t2">
+                            @{m.name}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </>
+                ) : (
+                  <ReplyView item={item} live={live && item.id === lastId} status={status} />
+                )}
+              </div>
             )}
             {agents
               .filter((a) => a.after === item.id)

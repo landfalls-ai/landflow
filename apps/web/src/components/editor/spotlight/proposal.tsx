@@ -25,6 +25,9 @@ export function ProposalCard({ itemId, proposal }: { itemId: string; proposal: P
           </span>
         ) : proposal.state === 'dismissed' ? (
           <span className="text-[12px] text-t3">Dismissed</span>
+        ) : proposal.state === 'stale' ? (
+          // Kept from an earlier visit, and the workflow changed since: there is nothing to apply.
+          <span className="text-[12px] text-t3">This no longer fits the workflow</span>
         ) : (
           <>
             <Button size="sm" variant="primary" onClick={() => applyChanges([{ ops: proposal.ops, kind: 'proposal' }], proposal.summary) && decide('applied')}>

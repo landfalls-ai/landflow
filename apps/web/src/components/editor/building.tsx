@@ -21,7 +21,7 @@ import { ActivityTrace } from '../ui/activity-trace';
 import { Button } from '../ui/button';
 import { NodeIcon } from '../ui/icon';
 import { edgePath, useLane } from '../canvas/edge-path';
-import { applyChanges, editorLookup, sendFeedback, useAssistant, useWorking, type Proposal } from './assistant';
+import { applyChanges, editorLookup, sendFeedback, useAssistant, useWorking, type AssistantTurn, type ChatItem, type Proposal } from './assistant';
 import { useAutonomous } from './autonomous';
 import { LeftOut } from './suggestions-card';
 import { handleId, useEditor } from './store';
@@ -45,6 +45,15 @@ export interface Live {
   progress: number;
 }
 
+/**
+ * The reply being built: the last turn when it is the assistant's own reply to this chat. A test session's turn is not one,
+ * nor is a turn brought back under "Earlier": that one keeps its ProposalCard (Apply and Dismiss) and plays no build.
+ */
+export function builtReply(items: readonly ChatItem[]): AssistantTurn | undefined {
+  const last = items.at(-1);
+  return last?.role === 'assistant' && !last.testId && !last.earlier ? last : undefined;
+}
+
 /** The change being built, if any: the last reply is still going or has proposals waiting. */
 export function useLive(): Live | undefined {
   const items = useAssistant((s) => s.items);
@@ -56,8 +65,7 @@ export function useLive(): Live | undefined {
   const reply = useRevealed((s) => s.reply);
   const revealedNow = useRevealed((s) => s.revealed);
 
-  const last = items.at(-1);
-  const asked = last?.role === 'assistant' && !last.testId ? last : undefined;
+  const asked = builtReply(items);
   const proposals = useMemo(() => (asked ? asked.parts.flatMap((p) => (p.kind === 'proposal' && !p.proposal.state && p.proposal.ops.length ? [{ itemId: asked.id, proposal: p.proposal }] : [])) : []), [asked]);
   const plan = useMemo(
     () => (asked && proposals.length ? planOf(useEditor.getState().toWorkflow(), proposals.flatMap((p) => p.proposal.ops), editorLookup()) : undefined),

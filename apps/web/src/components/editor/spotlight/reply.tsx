@@ -289,7 +289,7 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
   const own = item.parts.some((p) => p.kind === 'run' || p.kind === 'action');
   // Rows, not cards: Spotlight applied them itself (a session's fix, autonomous mode), or is about to (autonomous mode on
   // while the reply still has changes to apply). A turn applied by hand stays a card when the switch flips later.
-  const asRows = Boolean(item.testId || item.auto) || (autonomous && (live || spotlightBusy) && pending.length > 0);
+  const asRows = Boolean(item.testId || item.auto) || (autonomous && !item.earlier && (live || spotlightBusy) && pending.length > 0);
   // Within a session, the reply's texts are one: its first sentence, the rest on "Show more".
   // Autonomous replies that changed the flow too: the rows say what was done.
   const session = Boolean(item.testId) || (Boolean(item.auto) && !live && item.parts.some((p) => p.kind === 'proposal'));
