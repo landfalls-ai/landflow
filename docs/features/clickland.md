@@ -43,13 +43,18 @@ is nothing to upload. See [agents.md](../agents.md#knowledge-bases-from-a-plugin
 ## Alert triage into Slack
 
 [`clickland-alert-triage.json`](../../plugins/clickland/flows/clickland-alert-triage.json) (Templates, from the
-marketplace): **Clickland alert** (the Alert Trigger, `alert.firing`) → **Triage the alert**, an AI Agent on Claude with
+marketplace): **Clickland alert** (the Alert Trigger, `alert.firing`) → **Skip direct alerts** → **Triage the alert**, an AI Agent on Claude with
 five Clickland tools (`search_clickland_knowledge`, `log_patterns`, `search_spans`, `get_trace`, `render_view`) → **Post to
 Slack**. The agent reads the alert's samples, looks for earlier notes, the patterns and the traces, renders one view of
 what it found and writes a Slack message: *Real*, *Noise* or *Unsure* first, the evidence (counts, pattern templates,
 trace ids, the window in UTC), what earlier notes say, the next step, and `View: <url>` (the rendered view's link; never
 a `[[clickland:view:…]]` marker, which Slack does not draw). The message ends with a link to the alert page. Slots:
 Clickland (`read`, `webhooks:write`), Anthropic, Slack.
+
+**Skip direct alerts** is a Filter that keeps an item only when `{{ $json.route }}` is not `direct`. Clickland can route an alert straight to
+Landfall, which opens the room itself; it marks that alert's webhook delivery `data.route: "direct"`, and the trigger's
+item carries the field as `route`. Such a delivery stops at the Filter, so a direct alert is not triaged and announced a
+second time. A delivery without `route` (or with any other value) goes on to the agent.
 
 Alerts from Clickland also go through the triage plugin's flows: **Normalize Alert** reads Clickland's deliveries and
 both triggers' items (`format: clickland`, also auto-detected; [plugins/triage](../../plugins/triage/README.md)).

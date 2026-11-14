@@ -22,6 +22,7 @@ const { normalizeWorkflow, validateWorkflow } = await import('@/lib/server/mcp/w
 const { workflowSchema } = await import('@/lib/server/schemas');
 const { loadPlugin } = await import('@/lib/server/marketplace/plugin');
 const { readerFor } = await import('@/lib/server/marketplace/reader');
+const { runWorkflow } = await import('@/lib/server/runner');
 
 const fixtures = join(import.meta.dirname, 'fixtures', 'plugin-manifests');
 registry.registerBuiltin(corePlugin);
@@ -112,5 +113,33 @@ describe('plugin flows', () => {
       expect(entry, plugin).toBeDefined();
       expect(entry!.flows, path).toContain(`./${rest.join('/')}`);
     }
+  });
+});
+
+describe('Clickland alert triage', () => {
+  // Clickland marks a delivery for an alert it routed straight to Landfall with `route: "direct"`: Landfall has opened
+  // that room already, so the flow must stop before the triage agent and the Slack post.
+  it('drops a delivery Clickland routed straight to Landfall, before the agent', async () => {
+    const file = flows.find(([path]) => path === 'clickland/flows/clickland-alert-triage.json')![1];
+    const workflow = { ...normalizeWorkflow(structuredClone(file.template.workflow)), id: 'wf_clickland_triage' };
+    const trigger = workflow.nodes.find((n) => n.type === 'clickland.clicklandAlertTrigger')!;
+    const first = workflow.connections.filter((c) => c.type === 'main' && c.source === trigger.id);
+    expect(first).toHaveLength(1);
+    const gate = workflow.nodes.find((n) => n.id === first[0].target)!;
+    expect(gate.type).toBe('core.filter');
+    expect(workflow.connections.find((c) => c.type === 'main' && c.source === gate.id)?.target).toBe('agent');
+
+    const delivery = (route?: string) => ({
+      json: { type: 'alert.firing', id: 'evt_1', alert: { id: 'al_1', name: 'Checkout errors' }, value: 12, ...(route && { route }) },
+    });
+    const record = await runWorkflow({
+      workflow,
+      mode: 'trigger',
+      triggerOutput: { nodeId: trigger.id, items: [delivery('direct'), delivery(), delivery('flow')] },
+      destinationNodeId: gate.id,
+    });
+    expect(record.status).toBe('success');
+    const passed = record.runData[gate.id]?.at(-1)?.outputs[0] ?? [];
+    expect(passed.map((item) => item.json.route ?? null)).toEqual([null, 'flow']);
   });
 });

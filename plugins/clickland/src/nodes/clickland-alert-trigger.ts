@@ -31,8 +31,8 @@ const sameEvents = (a: unknown, b: string[]) => Array.isArray(a) && [...a].map(S
 
 /**
  * Clickland's alert webhooks: one item per `alert.firing` / `alert.resolved` delivery, with the event's `data`
- * (`alert`, `status`, `groupKey`, `value`, `fingerprint`, `window`, `url`, `searchUrl`, `samples`) plus `type`, `id`
- * and `timestamp`. The `webhook-id` header (stable across Clickland's retries) is the idempotency key.
+ * (`alert`, `status`, `groupKey`, `value`, `fingerprint`, `window`, `url`, `searchUrl`, `samples`, and `route: "direct"`
+ * when Clickland routed the alert straight to Landfall) plus `type`, `id` and `timestamp`. The `webhook-id` header (stable across Clickland's retries) is the idempotency key.
  */
 export const ClicklandAlertTrigger = defineNode({
   description: {
