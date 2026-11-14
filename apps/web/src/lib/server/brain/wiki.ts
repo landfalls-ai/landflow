@@ -389,15 +389,18 @@ function jsonText(reply: string, key: string): string | undefined {
 
 /**
  * Links to pages that don't exist (or the caller can't see) become their plain label. Any `[[…]]` counts, whatever its
- * case or shape (a model wrote `[[Support/11]]`): without a label it reads as its first word ("Support"), never as raw
- * brackets or a bare number.
+ * case or shape (a model wrote `[[Support/11]]`): without a label it reads as its id, or its first word when the id
+ * is a number ("Support"), never as raw brackets.
  */
 function keepKnownLinks(textIn: string, index: PageIndex): string {
   return textIn.replace(/\[\[([^\]|]{1,80})(?:\|([^\]]*))?\]\]/g, (whole, ref: string, label?: string) => {
     if (index.byRef.has(ref)) return whole;
     if (label?.trim()) return label.trim();
     const parts = ref.split('/').map((part) => part.trim()).filter(Boolean);
-    return parts.find((part) => /\p{L}/u.test(part) && !/\d/.test(part)) ?? parts[0] ?? '';
+    // The id when it reads as a word (`customer/globex` → "globex"), else the first part that does (`Support/11`).
+    const wordy = (part: string) => /\p{L}/u.test(part);
+    const last = parts.at(-1) ?? '';
+    return wordy(last) ? last : (parts.find(wordy) ?? last);
   });
 }
 
