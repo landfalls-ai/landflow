@@ -637,7 +637,7 @@ Signals → Propose Flows → Suggest Improvement.
 
 ## Build it with Spotlight
 
-Suggest Improvement's **Build Prompt** (up to 2,000 characters; `buildPrompt` on `POST /api/proposals` too) makes
+Suggest Improvement's **Build Prompt** (up to 2,000 characters; `POST /api/proposals` does not take it yet) makes
 the card's button **Build it**. Applying it creates an empty workflow named after the suggestion, in the caller's home
 project, records the go-ahead like any applied suggestion, and the page opens `/workflows/<id>?ask=proposal:<id>`. The
 editor loads the suggestion (`GET /api/proposals/:id`), Spotlight sends its build prompt as the person's message once

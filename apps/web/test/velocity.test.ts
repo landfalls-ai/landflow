@@ -109,6 +109,14 @@ describe('velocity signals (pure)', () => {
   });
 });
 
+describe('signalEventOf', () => {
+  it('takes the pull request number from the sourceId when there is no prNumber, and keeps no person', () => {
+    const event = velocity.signalEventOf({ id: 'e', at: '2026-11-10T10:00:00.000Z', day: '2026-11-10', kind: 'work.pr_merged', actorId: 'usr_1', attrs: { repo: 'acme/api', sourceId: 'acme/api#12:merged', actor: 'dana@example.com', title: 'Fix it' } });
+    expect(event).toMatchObject({ id: 'e', kind: 'work.pr_merged', repo: 'acme/api', prNumber: 12 });
+    expect(JSON.stringify(event)).not.toMatch(/dana|usr_1|actor/);
+  });
+});
+
 describe('Velocity Signals', () => {
   it('finds slow reviews in one repo, flaky CI in the other, with numbers and evidence', async () => {
     seed();

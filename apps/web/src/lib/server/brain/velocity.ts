@@ -135,13 +135,16 @@ const str = (attrs: UsageEvent['attrs'], name: string): string | undefined => (t
 export function signalEventOf(event: UsageEvent): SignalEvent {
   const attrs = event.attrs;
   const isSession = event.kind === 'work.session';
+  // B31's sourceId is `<repo>#<pr>:<action>…`: the pull request number for an event sent through POST /api/brain/work, which keeps no `prNumber`.
+  const fromSourceId = Number(str(attrs, 'sourceId')?.match(/#(\d+)(?::|$)/)?.[1]);
+  const prNumber = num(attrs, 'prNumber') ?? (Number.isFinite(fromSourceId) && fromSourceId > 0 ? fromSourceId : undefined);
   const phrase = isSession ? normalisePhrase(str(attrs, 'title') ?? event.message ?? '') : TOIL_USAGE_KINDS.includes(event.kind) ? event.signature : undefined;
   return {
     id: event.id,
     kind: event.kind,
     at: Date.parse(event.at),
     ...(str(attrs, 'repo') && { repo: str(attrs, 'repo') }),
-    ...(num(attrs, 'prNumber') !== undefined && { prNumber: num(attrs, 'prNumber') }),
+    ...(prNumber !== undefined && { prNumber }),
     ...(str(attrs, 'reviewState') && { reviewState: str(attrs, 'reviewState') }),
     ...(num(attrs, 'waitedMs') !== undefined && { waitedMs: num(attrs, 'waitedMs') }),
     ...((str(attrs, 'sha') ?? str(attrs, 'headSha') ?? str(attrs, 'commit')) && { commit: str(attrs, 'sha') ?? str(attrs, 'headSha') ?? str(attrs, 'commit') }),
