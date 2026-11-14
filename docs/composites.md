@@ -90,7 +90,7 @@ contract in its context and a warning for an edit that introduces a new error (`
   type; a model or tool slot takes any), its outgoing connections as outputs, its sub-node wiring and fail-open nodes as
   rules. Name it, make slots optional, lock the ones it can't lose, choose **Closed**, and **Save type and use it**
   saves `local.<name>` (a name already saved gets the next version) and types the group.
-- The Executions tab's canvas shows a composite's badge on its frame.
+- The Runs tab's canvas shows a composite's badge on its frame.
 
 ## In a run
 

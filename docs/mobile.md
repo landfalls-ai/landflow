@@ -18,7 +18,7 @@ under [What's next](#whats-next), and this page grows as they land.
   Runbooks, Insights, Search, Marketplace…) show above a list page as a row that scrolls sideways, so every page stays
   reachable. The bar pads for the home indicator (`env(safe-area-inset-bottom)`), and pages get the same room at their
   foot.
-- **Full screen.** The editor (and its Executions and Evaluations tabs), an agent's page and a run's trace have no tab bar
+- **Full screen.** The editor (and its Runs and Tests tabs), an agent's page and a run's trace have no tab bar
   (`fullScreen()`): their own header starts with a back arrow, and the editor uses the whole height for the canvas and
   Spotlight.
 - **App bar.** On a phone, each page's header (`PageHeader` in `components/shell/page-header.tsx`) shows the title

@@ -86,9 +86,9 @@ Run ids, trace ids, model and token lines and **Debug access** appear only with 
 
 ## The screens
 
-**Run trace** sits next to **Canvas** above every execution. It opens by itself when the run has agents (the choice is
-remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phone; its header goes back to **Executions** (the run
-in its workflow's Executions tab), and the rail marks **Runs** while it is open.
+A workflow's run view (the Runs tab) shows the canvas, the Logs panel and a plain header; it has no Canvas / Run trace
+switch. **Full screen ↗** opens `/runs/<executionId>`, the full Run Trace, a page made for a phone; its header goes back to
+the run in its workflow's Runs tab (`/workflows/<id>/runs/<executionId>`), and the rail marks **Runs** while it is open.
 
 - **The header**: live or finished, the time, who is working on what right now, the outcome as reported (the last
   agent's answer) and as checked (the Run report's verdict in the profile's words, with how many checks failed). A live
