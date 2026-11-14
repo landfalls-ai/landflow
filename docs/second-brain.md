@@ -45,7 +45,7 @@ attributes.
 | Kind | Recorded where |
 |---|---|
 | `run.finished`, `node.failed`, `node.slow` | `store.saveExecution`: one per run; one per failed node run (with the signature); one per node run that took 2 s or more, or half of a run of 1 s or more |
-| `ai.call` | the `ai_usage` writer: provider, model, operation, tokens and cost |
+| `ai.call` | the `ai_usage` writer: provider, model, operation, tokens and cost. `attrs`: `provider`, `model`, `operation`, `input` (the whole prompt, cached tokens included), `output`, and `cacheRead` and `cacheWrite`, the parts of `input` the provider read from or wrote to its prompt cache (0 when it reports none); `cost` already prices them at the model's cache prices |
 | `workflow.saved`, `workflow.published`, `credential.used`, `plugin.installed` | the audit writer (create, update, import; publish, rollback; credential use; marketplace install) |
 | `agent.session`, `feedback` | the bus (an agent run finished) and chat feedback (thumbs up or down) |
 | `spotlight.asked`, `assistant.applied`, `assistant.dismissed` | the assistant's chat and feedback routes; the [Agent architect](agents.md#agent-architect)'s asks are `spotlight.asked` too, with `architect: true` and `proposals` (the drafts it made) |
@@ -214,6 +214,11 @@ about that no workflow holds: `initiative`, `person`, `customer` and `system` (o
   `owner` (a user id or a free name such as "Platform team"; `ownerName` is the user's name when it is an id), `projectId`,
   flat `attrs` (text, numbers, true/false; at most 20), `source` (api, workflow, agent) and timestamps. An id is lowercase
   letters, digits, `_`, `-` and `.`; left out, it is made from the name. Code: `brain/entities.ts`.
+- **Systems from repositories, people linked to users.** The first `team` or `org` work event that names a repository makes a
+  `system` entity for it ([work-and-briefings.md](work-and-briefings.md#repositories-as-systems)). A person page whose
+  `attrs.email` is a user's email is linked to that user (column `user_id`, migration 2080, set when the page is saved);
+  `personForUser(userId)` finds the page, falling back to the email match and storing the link. The entity then carries
+  `userId` and `userName` ("This is <user>"); the screens that show it come later.
 - **Walls.** An entity lives in a project (the creator's personal project unless another is named) and the people who can
   open the project see it; owners and admins see all. The usage scope gained `entities` (`<type>/<id>`), so facts,
   suggestions, Find Similar and the MCP tools cut entities down like workflows. A workflow or agent's Entity node sees the
@@ -275,7 +280,23 @@ prose and a person keeps the facts. Spotlight asks it questions.
     says "local"). A follow-up ("and since when?") knows the last two turns of the conversation. A source is numbered
     only when the answer cites it, and a `[n]` that points at no work item is dropped. **New conversation** clears
     it. On a phone Ask is a bottom sheet; a link closes it to show the page, and the Ask button brings it back with
-    its answers.
+    the same answers.
+  - **A key's tags follow its scopes.** A tag reads a digest, so an API key tags only what its scopes cover: the scopes of each kind's own routes, one table for the search, Spotlight and Ask (`MENTION_KEY_SCOPE` in `lib/server/mentions/key-scopes.ts`): brain pages with `brain:read` or `workflows:read`; workflows, nodes, agents, teams, data tables, templates, node types and plugins with `workflows:read`; runs with `executions:read`; people and credentials with `admin`, as `/api/users` and `/api/credentials`. A `brain:read` key tags only brain pages. The rest is told as "Couldn't read @X" with no digest. Tags past the cap of 8 (the page chip counts) are told as "Left out @X". `{ question, about }` without `mentions` answers as before, with the fact list.
+  - **Ask keeps its conversations, and takes tags.** Each page has its own conversation (kept when **Keep my
+    conversations** is on): open a page and its last conversation is there under **Earlier**; new questions continue
+    it. Following a link in an answer (or in "Found N pages") to another page keeps the answers on screen: a turn still
+    streaming finishes and is stored in the page it began on, and the page's own conversation is not resumed over them.
+    They stay until you ask on the new page, press **New conversation** or open another from the history. A panel
+    with no answers of this visit resumes the page's last conversation (`subjectChange`). On a phone the link closes
+    the sheet; the Ask button brings it back with the same answers. The clock button in the panel header (in the row above the box on a
+    phone) opens the history: this page's conversations, then all of Ask's, with rename and delete
+    ([history](assistant.md#conversation-history)); **New conversation** starts a clean one. On the index and the log
+    there is no page, so nothing is resumed there. `@` in the box tags a page, a person, a workflow, a run or anything else
+    the picker lists ([tagging](assistant.md#tagging-with-)); "On this page" has the open page and the pages the last answers
+    linked to. Each tag is checked as you and read into the answer, and shows in the steps as **Read @Billing**; one you may
+    not open shows **Couldn't read @Billing** and nothing else. A kept turn holds your words, the tags' names, the answer
+    with its links and the steps, never what was read from a tag. When you reopen one, a link to a page you can no longer
+    open is dropped and the turn says **1 link hidden**. The model, time and cost footer comes back too.
   - **Quick open** (⌘P or ⌘K): go to a file by name or path, or `>` for commands (open index or log, toggle Source,
     Problems, Suggestions, run the brain). It only finds pages; it does not ask.
   - **Panel** (⌘J): **Problems** (initiatives and customers without an owner, pages quiet for 30 days, summaries behind
@@ -300,7 +321,10 @@ prose and a person keeps the facts. Spotlight asks it questions.
     in the same work, with how often), **Facts** with **Add a fact**, **Suggestions** and **Mentioned in**.
 - **Ask** (`POST /api/brain/ask`, what the Ask panel calls) finds pages by words in names, descriptions, owners and
   attributes, facts by search (by meaning too when embeddings are on), and work by words and by the pages found; then
-  the model answers from those alone, in a few sentences with page links and numbered work. Without a model it returns
+  the model answers from those alone, in a few sentences with page links and numbered work. A link to a page that does
+  not exist (or that the reader can't open) shows as a plain word, whatever its form (`[[Support/11]]` reads
+  "Support"), and a fact about something with no name is given to the model by its kind ("a workflow"), never by its
+  id. Leaving the Brain page mid-answer stops it, as **Stop** does. Without a model it returns
   what it found. A short follow-up borrows the words of the last question to find its pages. It streams when asked
   with `Accept: text/event-stream` and is one JSON body otherwise (MCP and older callers). **Ask is metered**: each
   model call writes an `ai_usage` row with surface `brain` under the asker, so the per-user caps apply and a cap shows

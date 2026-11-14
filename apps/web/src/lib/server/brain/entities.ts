@@ -12,7 +12,7 @@ import { randomBytes } from 'node:crypto';
 import { nanoid } from 'nanoid';
 import { ATTR_NAME, ENTITY_ID, entityRef, isEntityType, type BrainEntity, type BrainFact, type EntityKnowledge, type EntityType, type FactKind, type Proposal, type ProposalEvidence } from '../../shared/brain';
 import { projectRoleCan } from '../../shared/projects';
-import { getUser } from '../auth/users';
+import { findUserByEmail, getUser } from '../auth/users';
 import { database, type Database } from '../db';
 import { projectRole, visibleProjectIds, type Actor } from '../projects/access';
 import { defaultProjectId } from '../projects/store';
@@ -37,6 +37,7 @@ interface Row {
   description: string;
   owner: string;
   project_id: string | null;
+  user_id?: string | null;
   attrs: string;
   source: string;
   created_at: string;
@@ -52,7 +53,10 @@ const parse = <T>(text: string, fallback: T): T => {
   }
 };
 
-function fromRow(row: Row): BrainEntity {
+/** An entity as read: a person's page also says which user it is (`userId`, `userName`). */
+export type LinkedEntity = BrainEntity & { userId?: string; userName?: string };
+
+function fromRow(row: Row): LinkedEntity {
   const owner = row.owner || undefined;
   const user = owner ? getUser(owner) : undefined;
   return {
@@ -63,6 +67,7 @@ function fromRow(row: Row): BrainEntity {
     ...(owner && { owner }),
     ...(owner && { ownerName: user?.name || owner }),
     ...(row.project_id && { projectId: row.project_id }),
+    ...(row.user_id && { userId: row.user_id, userName: getUser(row.user_id)?.name || getUser(row.user_id)?.email }),
     attrs: parse<BrainEntity['attrs']>(row.attrs, {}),
     source: row.source,
     createdAt: row.created_at,
@@ -76,7 +81,7 @@ export const entityKey = (entity: Pick<BrainEntity, 'type' | 'id'>) => entityRef
 /** The project an entity belongs to: its own, else the default one. */
 export const entityProject = (entity: Pick<BrainEntity, 'projectId'>): string | undefined => entity.projectId ?? defaultProjectId();
 
-export function getEntity(type: string, id: string, db: Database = database()): BrainEntity | undefined {
+export function getEntity(type: string, id: string, db: Database = database()): LinkedEntity | undefined {
   const row = db.get<Row>('SELECT * FROM brain_entities WHERE type = ? AND id = ?', type, id);
   return row && fromRow(row);
 }
@@ -177,11 +182,15 @@ export function upsertEntity(input: EntityInput, db: Database = database(), now 
   // Clearing a field: an empty string removes the description or owner.
   if (!entity.description) delete entity.description;
   if (!entity.owner) delete entity.owner;
-  database_upsert(db, entity);
+  const stored = db.get<{ user_id: string | null }>('SELECT user_id FROM brain_entities WHERE type = ? AND id = ?', entity.type, entity.id)?.user_id;
+  // A person whose email is a user's is that user (an email that matches no one leaves the link it had).
+  const email = entity.type === 'person' && typeof entity.attrs.email === 'string' ? entity.attrs.email : undefined;
+  const userId = (email && findUserByEmail(email)?.id) || stored || null;
+  database_upsert(db, entity, userId);
   return { entity: getEntity(entity.type, entity.id, db)!, created: !existing };
 }
 
-function database_upsert(db: Database, e: BrainEntity) {
+function database_upsert(db: Database, e: BrainEntity, userId: string | null = null) {
   db.upsert('brain_entities', {
     type: e.type,
     id: e.id,
@@ -189,11 +198,31 @@ function database_upsert(db: Database, e: BrainEntity) {
     description: e.description ?? '',
     owner: e.owner ?? '',
     project_id: e.projectId ?? null,
+    user_id: userId,
     attrs: JSON.stringify(e.attrs),
     source: e.source,
     created_at: e.createdAt,
     updated_at: e.updatedAt,
   });
+}
+
+/**
+ * The person page of a user: the one linked to them, else the one whose `attrs.email` is theirs (the link is stored
+ * then, so the next ask is an index read). Undefined when there is none.
+ */
+export function personForUser(userId: string, db: Database = database()): LinkedEntity | undefined {
+  const linked = db.get<Row>("SELECT * FROM brain_entities WHERE type = 'person' AND user_id = ? ORDER BY created_at LIMIT 1", userId);
+  if (linked) return fromRow(linked);
+  const email = getUser(userId)?.email?.trim().toLowerCase();
+  if (!email) return undefined;
+  for (const row of db.all<Row>("SELECT * FROM brain_entities WHERE type = 'person' AND user_id IS NULL ORDER BY created_at")) {
+    const attrs = parse<BrainEntity['attrs']>(row.attrs, {});
+    if (typeof attrs.email !== 'string' || attrs.email.trim().toLowerCase() !== email) continue;
+    const linkedRow = { ...row, user_id: userId };
+    db.upsert('brain_entities', linkedRow);
+    return fromRow(linkedRow);
+  }
+  return undefined;
 }
 
 /** Delete an entity with what the brain held about it: its facts and profile go, its open suggestions expire. */

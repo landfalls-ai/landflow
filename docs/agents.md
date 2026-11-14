@@ -473,7 +473,7 @@ and footer, and keeps its answer card.
   (`{ workflowId, executionId, nodeId, nodeName }`), and a running session is saved as its timeline
   grows (at most every 1.5 s, plus the final save), so its tool calls, and the steps of a remote
   A2A agent in each tool entry's `remote`, can be read mid-run. In the execution view
-  (`/workflows/<wf>/executions/<ex>`) an **Agent session** panel sits between the canvas and the
+  (`/workflows/<wf>/runs/<ex>`) an **Agent session** panel sits between the canvas and the
   logs: it opens by itself while an agent node runs and polls every 2 s, shows the agent's own
   timeline (the one of the Sessions tab, with each remote agent's commands), and stays after the
   run, with a link to the session on the agent's page. With several Run an Agent nodes, pick the

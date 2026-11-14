@@ -1,8 +1,8 @@
 'use client';
 /**
  * "Test agent": a slide-over chat with the draft, on the chat kit (docs/agents.md#test-chat): tool calls as one activity
- * line that opens into its steps, approvals as they happen, a footer under each reply, and a history of this person's
- * earlier test sessions of the agent (they are saved under Sessions already; nothing new is stored).
+ * line that opens into its steps, approvals as they happen, a footer under each reply, and Earlier tests: the agent's
+ * earlier test sessions, whoever ran them (they are saved under Sessions already; nothing new is stored).
  */
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -22,7 +22,7 @@ import { timelineItems, type ToolEntry } from './timeline';
 import { useAgentList } from './use-agent-data';
 import { REASON_LABEL, useAgentRun } from './use-agent-run';
 
-/** This person's earlier test sessions of the agent, newest first: the sessions route, People, source test, this user. */
+/** The agent's earlier test sessions, newest first, whoever ran them: the sessions route, People, source test. */
 function TestHistory({ agentId, current, onOpen }: { agentId: string; current?: string; onOpen: (id: string) => void }) {
   const [sessions, setSessions] = useState<SessionSummary[]>();
   const [failed, setFailed] = useState(false);
@@ -37,9 +37,9 @@ function TestHistory({ agentId, current, onOpen }: { agentId: string; current?: 
   }, [agentId]);
   return (
     <div className="max-h-[50vh] overflow-y-auto p-1 max-md:max-h-none">
-      {failed && <p className="px-3 py-3 text-[12px] text-rd">Couldn’t load your earlier tests.</p>}
+      {failed && <p className="px-3 py-3 text-[12px] text-rd">Couldn’t load the earlier tests.</p>}
       {!failed && !sessions && <p className="px-3 py-3 text-[12px] text-t3">Loading…</p>}
-      {sessions && !sessions.length && <p className="px-3 py-3 text-[12px] leading-relaxed text-t3">Nothing yet. Your test conversations with this agent show up here.</p>}
+      {sessions && !sessions.length && <p className="px-3 py-3 text-[12px] leading-relaxed text-t3">Nothing yet. Test conversations with this agent show up here.</p>}
       {sessions?.map((s) => (
         <button
           key={s.id}

@@ -18,7 +18,7 @@ under [What's next](#whats-next), and this page grows as they land.
   Runbooks, Insights, Search, Marketplace…) show above a list page as a row that scrolls sideways, so every page stays
   reachable. The bar pads for the home indicator (`env(safe-area-inset-bottom)`), and pages get the same room at their
   foot.
-- **Full screen.** The editor (and its Executions and Evaluations tabs), an agent's page and a run's trace have no tab bar
+- **Full screen.** The editor (and its Runs and Tests tabs), an agent's page and a run's trace have no tab bar
   (`fullScreen()`): their own header starts with a back arrow, and the editor uses the whole height for the canvas and
   Spotlight.
 - **App bar.** On a phone, each page's header (`PageHeader` in `components/shell/page-header.tsx`) shows the title
@@ -26,8 +26,9 @@ under [What's next](#whats-next), and this page grows as they land.
   search box there takes the row), and the meta line comes last. This is done in CSS only (the actions' box becomes
   `contents`, and its children order themselves), so nothing remounts.
 - **Editor header.** Two rows. The first has back, the workflow's name, the saved state (a dot, read out as Saved or
-  Unsaved), **Save** and **⋯**. The second has Editor, Executions and Evaluations, then **Publish** and version history.
-  Tags are left out on a phone.
+  Unsaved) and **⋯**. The second has Editor, Runs and Tests, then **Publish**. There is no Save (a draft saves itself;
+  a failed save's toast has **Retry**) and no "Not published" chip: **Publish** carries the state ("Publish" or
+  "Live v3"). Tags and Version history are in **⋯**, as on a desktop.
 - **Touch and type.** Text fields are 16 px on a phone, so iOS doesn't zoom into them on focus. The page runs under the
   notch and home bar (`viewport-fit=cover`), and the tab bar and headers pad for them. A **Skip to content** link is the
   first stop for the keyboard (`#main`). Toasts sit above the tab bar.
@@ -89,7 +90,7 @@ folded bar already says what Spotlight is doing.
 
 - **Executions as cards.** On a phone each run is a card: the workflow and its menu on the first line, the status and how
   long it ran on the second, and when it started (with how long ago) on the third. The run's id, its mode and the column
-  headings are left out, and an error shows two lines. The desktop keeps its table (`app/executions/page.tsx`).
+  headings are left out, and an error shows two lines. The desktop keeps its table (`components/runs/runs-list.tsx`, at `/runs`).
 - **No sideways scrolling.** No page scrolls sideways at 390 px: a plugin card's chips wrap, the Developers page breaks
   long inline code, and pages pad 16 px instead of 24. Strips that are meant to scroll (a segment control, the Settings
   tabs) scroll inside themselves.
@@ -99,8 +100,7 @@ folded bar already says what Spotlight is doing.
 `PhoneFilters` (`components/ui/phone-filters.tsx`) leaves its children where they are on a desktop. On a phone it shows a
 **Filters** button instead, with how many filters are on, and opens them in a sheet with **Clear** and **Show results**,
 so the page's content starts on the first screen. Marketplace (source, marketplace and categories), Templates
-(categories), Agents (which agents, and how they're grouped) and Search runs (everything but the words) use it. On
-Search runs, **Show results** also runs the search.
+(categories), Agents (which agents, and how they're grouped) use it. The Runs list has its own row: the search box and the Status and Workflow chips wrap on one block, and **More filters** opens as a sheet.
 
 The sheet is `Sheet` (`components/ui/sheet.tsx`): a bottom sheet on a phone and a centred dialog on a desktop, with
 `role="dialog"`, focus kept inside (Tab wraps, Escape closes), the page's scroll locked and focus returned to the button

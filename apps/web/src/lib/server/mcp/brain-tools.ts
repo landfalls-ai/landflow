@@ -23,7 +23,7 @@ import { vectorFactHits } from '../brain/study';
 import { askBrain } from '../brain/wiki';
 import { WORK_LIMITS } from '@landflow/protocol';
 import { MAX_WORK_EVENTS, recordWork } from '../brain/work';
-import { briefingMarkdown } from './brain-prompts';
+import { briefingMarkdown, dayArgument } from './brain-prompts';
 import { HttpError } from '../errors';
 import { homeProjectId } from '../projects/store';
 import type { Actor } from '../projects/access';
@@ -226,13 +226,16 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
     {
       title: 'My briefing',
       description: 'Your own work from today and yesterday (what you or your tools recorded), as text and JSON. Nobody else’s work is in it.',
-      inputSchema: z.object({ day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('YYYY-MM-DD; default today') }),
+      inputSchema: z.object({ day: dayArgument('YYYY-MM-DD; default today') }),
       annotations: READ_ONLY,
     },
     async ({ day }) => {
       if (!actor) return failure('A briefing is a person’s own: connect with a personal API key or sign in, not the instance access token');
+      // `related` (colleagues' shared work, B18) stays out: this tool's text and JSON are the caller's own work only, and
+      // text other people wrote must not reach a harness labelled as theirs.
       const briefing = briefingFor(actor, day ? { day } : {});
-      return json({ text: briefingMarkdown(briefing), briefing });
+      const { related: _related, ...own } = briefing;
+      return json({ text: briefingMarkdown(briefing), briefing: own });
     },
   );
 
@@ -264,7 +267,7 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
               customer: z.string().optional(),
               team: z.string().optional(),
               url: z.string().optional(),
-              visibility: z.string().optional().describe('Only private is accepted for now'),
+              visibility: z.string().optional().describe('private (the default), team or org; sent again without one, the event keeps its current visibility'),
             }),
           )
           .min(1)
@@ -275,7 +278,7 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
     async ({ events }) => {
       if (!actor) return failure('Work is a person’s own: connect with a personal API key or sign in, not the instance access token');
       try {
-        // Always the caller's: the actor comes from the connection, never from the arguments. recordWork refuses a shared visibility.
+        // Always the caller's: the actor comes from the connection, never from the arguments. A visibility of team or org shares the work.
         const result = recordWork(actor, events.map((event) => ({ ...event, source: event.source ?? 'mcp' })));
         return json(result);
       } catch (caught) {

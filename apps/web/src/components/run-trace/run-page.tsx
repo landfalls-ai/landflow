@@ -1,12 +1,12 @@
 'use client';
-/** The full-screen Run Trace page: the header (back to the run in its workflow's Executions), then the trace. */
+/** The full-screen Run Trace page: the header (back to the run in its workflow's Runs), then the trace. */
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/client/api';
 import type { ExecutionRecord } from '@/lib/shared/types';
 import { RunTraceView } from './run-trace-view';
 import { JsonRenderGallery } from './ui-cards';
 import { useJsonRender } from './use-json-render';
-import { DebugAccessButton } from './debug-access';
+import { RunMenu } from './debug-access';
 import { PageHeader } from '../shell/page-header';
 
 /**
@@ -30,10 +30,10 @@ function RunPageOf({ executionId }: { executionId: string }) {
       .then((r) => setRecord(r.execution))
       .catch(() => {});
   }, [executionId]);
-  const href = record ? `/workflows/${record.workflowId}/executions/${executionId}` : '/executions';
+  const href = record ? `/workflows/${record.workflowId}/runs/${executionId}` : '/runs';
   return (
     <div className="flex h-dvh flex-col">
-      <PageHeader back={{ href, label: 'Executions' }} title="Run trace" actions={<DebugAccessButton executionId={executionId} />} />
+      <PageHeader back={{ href, label: 'Runs' }} title="Run trace" actions={<RunMenu executionId={executionId} />} />
       <div className="min-h-0 flex-1 overflow-y-auto">
         <RunTraceView executionId={executionId} executionHref={href} />
       </div>

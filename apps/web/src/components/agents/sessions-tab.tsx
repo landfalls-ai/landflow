@@ -259,7 +259,14 @@ export function SessionsTab({
   const [next, setNext] = useState<string | null>(null);
   const [error, setError] = useState<string>();
   // Who the list shows: undefined until it is known whether there are people's sessions (People opens first when there are).
-  const [audience, setAudience] = useState<Audience>();
+  const [audience, setShownAudience] = useState<Audience>();
+  // The audience shown now, for answers that arrive late: a page asked for another audience is dropped.
+  const shown = useRef<Audience>(undefined);
+  const setAudience = useCallback((a: Audience | undefined) => {
+    shown.current = a;
+    setShownAudience(a);
+  }, []);
+  const stale = (a: Audience) => shown.current !== undefined && shown.current !== a;
   const [loading, setLoading] = useState(false);
   const [more, setMore] = useState(false);
   const hovering = useRef(false);
@@ -275,11 +282,12 @@ export function SessionsTab({
       setLoading(true);
       return fetchPage(a)
         .then((r) => {
+          if (stale(a)) return;
           setSessions(r.sessions);
           setNext(r.nextCursor);
           setError(undefined);
         })
-        .catch((e: Error) => setError(e.message))
+        .catch((e: Error) => !stale(a) && setError(e.message))
         .finally(() => setLoading(false));
     },
     [fetchPage],
@@ -311,7 +319,7 @@ export function SessionsTab({
     return () => {
       live = false;
     };
-  }, [agentId, fetchPage, load]);
+  }, [agentId, fetchPage, load, setAudience]);
 
   const choose = (a: Audience) => {
     setAudience(a);
@@ -325,6 +333,7 @@ export function SessionsTab({
     setMore(true);
     fetchPage(audience, next)
       .then((r) => {
+        if (stale(audience)) return;
         setSessions((before) => [...(before ?? []), ...r.sessions.filter((x) => !before?.some((y) => y.id === x.id))]);
         setNext(r.nextCursor);
       })
@@ -340,14 +349,15 @@ export function SessionsTab({
     const timer = setInterval(() => {
       if (hovering.current || Date.now() - scrolledAt.current < 2000 || document.hidden) return;
       void fetchPage(audience)
-        .then((r) =>
+        .then((r) => {
+          if (stale(audience)) return;
           setSessions((before) => {
             if (!before) return r.sessions;
             // Keep any further pages already opened: replace only the first page's rows.
             const fresh = new Set(r.sessions.map((x) => x.id));
             return [...r.sessions, ...before.filter((x) => !fresh.has(x.id) && x.updatedAt < (r.sessions.at(-1)?.updatedAt ?? ''))];
-          }),
-        )
+          });
+        })
         .catch(() => {});
     }, 6000);
     return () => {

@@ -387,9 +387,21 @@ function jsonText(reply: string, key: string): string | undefined {
   }
 }
 
-/** Links to pages that don't exist (or the caller can't see) become their plain label. */
+/**
+ * Links to pages that don't exist (or the caller can't see) become their plain label. Any `[[…]]` counts, whatever its
+ * case or shape (a model wrote `[[Support/11]]`): without a label it reads as its id, or its first word when the id
+ * is a number ("Support"), never as raw brackets.
+ */
 function keepKnownLinks(textIn: string, index: PageIndex): string {
-  return textIn.replace(/\[\[([a-z]+\/[a-z0-9][a-z0-9_.-]{0,63})(?:\|([^\]]*))?\]\]/g, (whole, ref: string, label?: string) => (index.byRef.has(ref) ? whole : (label ?? index.byRef.get(ref)?.name ?? ref.split('/')[1])));
+  return textIn.replace(/\[\[([^\]|]{1,80})(?:\|([^\]]*))?\]\]/g, (whole, ref: string, label?: string) => {
+    if (index.byRef.has(ref)) return whole;
+    if (label?.trim()) return label.trim();
+    const parts = ref.split('/').map((part) => part.trim()).filter(Boolean);
+    // The id when it reads as a word (`customer/globex` → "globex"), else the first part that does (`Support/11`).
+    const wordy = (part: string) => /\p{L}/u.test(part);
+    const last = parts.at(-1) ?? '';
+    return wordy(last) ? last : (parts.find(wordy) ?? last);
+  });
 }
 
 /**
@@ -425,7 +437,9 @@ const workLine = (w: WorkItem, n: number, index: PageIndex) => {
   const pages = w.refs.filter((r) => !r.startsWith('person/'));
   return `[${n}] ${day(w.at)} ${w.kind}${w.source ? ` (${w.source})` : ''}: ${clip(w.title, 140)}${w.summary ? ` — ${clip(w.summary, 220)}` : ''}${by ? ` · by ${by}` : ''}${w.team ? ` · team ${w.team}` : ''}${pages.length ? ` · about ${pages.map((r) => linkOf(r, index)).join(' ')}` : ''}`;
 };
-const factLine = (f: BrainFact) => `- ${f.subjectName ?? f.subjectId} (${f.kind}): ${clip(f.statement, 240)}`;
+// A subject without a name is called by its type, so the model is never shown (and never repeats) a raw id.
+const UNNAMED: Record<BrainFact['subjectType'], string> = { workflow: 'a workflow', agent: 'an agent', nodeType: 'a node type', credential: 'a credential', instance: 'this instance', entity: 'a page' };
+const factLine = (f: BrainFact) => `- ${f.subjectName ?? UNNAMED[f.subjectType] ?? 'something'} (${f.kind}): ${clip(f.statement, 240)}`;
 
 /** Write (or rewrite) a page's summary with the brain's model and keep it. */
 export async function writeSummary(entity: BrainEntity, scope: UsageScope | undefined, viewer: Viewer, options: { model?: LanguageModel; signal?: AbortSignal } = {}, db: Database = database()): Promise<WikiSummary> {
@@ -594,7 +608,7 @@ export function askPrompt(g: Gathered, format: 'json' | 'text', db: Database = d
     facts.length ? `\nFacts:\n${facts.map(factLine).join('\n')}` : '',
     work.length ? `\nWork, most relevant first:\n${work.map((w, i) => workLine(w, i + 1, index)).join('\n')}` : '',
     '',
-    `Answer the question from the context above only, in 2 to 6 sentences or a short list. Call people and pages by the names given; link them by copying their link, as [[type/id|Name]].${work.length ? ' Cite a work item as [n], using only the numbers listed above.' : ' There is no numbered work above: write no [n] markers.'}`,
+    `Answer the question from the context above only, in 2 to 6 sentences or a short list. Call people and pages by the names given; link them by copying their link, as [[type/id|Name]], and never make up a link or write an id (such as n_2nCmERLJ).${work.length ? ' Cite a work item as [n], using only the numbers listed above.' : ' There is no numbered work above: write no [n] markers.'}`,
     format === 'json' ? 'If the context does not answer it, say so and say what is missing. Reply with JSON: {"answer": "..."}' : 'If the context does not answer it, say so and say what is missing. Reply with the answer only, no JSON.',
   ]
     .filter((line) => line !== '')

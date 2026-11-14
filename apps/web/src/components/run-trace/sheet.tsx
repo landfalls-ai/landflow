@@ -1,9 +1,9 @@
 'use client';
 /** The detail of a tapped row: a bottom sheet under 768 px, a side panel above. */
-import { DevOnly, useDeveloperDetails } from '@/lib/client/developer-details';
 import { useRef, type ReactNode } from 'react';
 import { ExternalLink, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { DevOnly, useDeveloperDetails } from '@/lib/client/developer-details';
 import { artifactShape, safeUrl } from '@/lib/shared/artifact-kinds';
 import type { FileChange, RunChanges } from '@/lib/shared/run-changes';
 import type { RunGitHub } from '@/lib/shared/run-repo';

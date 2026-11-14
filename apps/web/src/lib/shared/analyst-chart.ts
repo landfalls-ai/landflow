@@ -167,10 +167,10 @@ export function chartHeading(chart: AnalystChart): string {
   return [chart.period, chart.scope?.name ?? (chart.groupBy ? `by ${chart.groupBy}` : undefined)].filter(Boolean).join(' · ');
 }
 
-/** The link for "Open the runs": the executions list, filtered to the workflow when a result names one. */
+/** The link for "Open the runs": the Runs list, filtered to the workflow when a result names one. */
 export function runsHref(chart?: Pick<AnalystChart, 'scope'>): string {
   const id = chart?.scope?.workflowId;
-  return id ? `/executions?workflowId=${encodeURIComponent(id)}` : '/executions';
+  return id ? `/runs?workflowId=${encodeURIComponent(id)}` : '/runs';
 }
 
 const BULLET = /^\s*(?:[-*•]|\d+[.)])\s+(.*\S)\s*$/;

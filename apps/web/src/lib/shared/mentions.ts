@@ -117,13 +117,17 @@ export function mentionQueryAt(value: string, caret: number): { start: number; q
   return { start, query };
 }
 
-/** The box after choosing a hit: the `@query` text is gone (the chip says it), the caret where it was. */
-export function removeMentionText(value: string, start: number, caret: number): { value: string; caret: number } {
+/**
+ * The box after choosing a hit: the `@query` typed so far becomes `@Name` (the chip says what it points at, the text
+ * keeps the sentence readable in the box and in the conversation), followed by one space; the caret goes after it.
+ */
+export function replaceMentionText(value: string, start: number, caret: number, name: string): { value: string; caret: number } {
   const before = value.slice(0, start);
   const after = value.slice(caret);
-  // Don't leave two spaces where the tag was.
-  const glue = before.endsWith(' ') && after.startsWith(' ') ? after.slice(1) : after;
-  return { value: `${before}${glue}`, caret: start };
+  const tag = `@${name.replace(/\s+/g, ' ').trim()}`;
+  const tail = after.replace(/^[ \t]+/, '');
+  const gap = tail.startsWith('\n') || /^[.,;:!?)]/.test(tail) ? '' : ' ';
+  return { value: `${before}${tag}${gap}${tail}`, caret: before.length + tag.length + gap.length };
 }
 
 /** Add a chip: the same tag twice is one; at most `MENTION_LIMITS.refs`. */

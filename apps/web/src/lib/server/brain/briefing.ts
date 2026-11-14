@@ -1,13 +1,13 @@
 /**
  * The person's own day (docs/work-and-briefings.md): GET /api/brain/briefing. Today's and yesterday's work events they
- * recorded, newest first, in the instance time zone. Colleagues' related work comes with shared visibility (`related`
- * stays empty until then).
+ * recorded, newest first, in the instance time zone, and `related`: colleagues' shared work that overlaps it (related.ts).
  */
 import { database, type Database } from '../db';
 import type { Actor } from '../projects/access';
 import { workAutoSend } from '../settings';
-import { brainEnabled, dayOf, fromRow, type UsageRow } from '../usage/ledger';
-import type { Briefing, WorkItem, WorkVisibility } from '../../shared/brain-work';
+import { brainEnabled, dayOf, type UsageRow } from '../usage/ledger';
+import { itemOf, relatedFor } from './related';
+import type { Briefing, WorkItem } from '../../shared/brain-work';
 
 export const BRIEFING_LIMIT = 50;
 
@@ -17,45 +17,29 @@ export function dayBefore(day: string): string {
   return new Date(Date.UTC(year, month - 1, date - 1)).toISOString().slice(0, 10);
 }
 
-function itemOf(row: UsageRow): WorkItem {
-  const event = fromRow(row);
-  const attrs = event.attrs ?? {};
-  const text = (name: string) => (typeof attrs[name] === 'string' && attrs[name] ? String(attrs[name]) : undefined);
-  const areas = text('areas')?.split(',').filter(Boolean);
-  return {
-    id: event.id,
-    sourceId: row.source_id ?? '',
-    source: row.source ?? text('source') ?? '',
-    kind: event.kind,
-    title: text('title') ?? event.message ?? '',
-    ...(text('summary') && { summary: text('summary') }),
-    ...(text('repo') && { repo: text('repo') }),
-    ...(areas?.length && { areas }),
-    at: event.at,
-    ...(text('endedAt') && { endedAt: text('endedAt') }),
-    ...(text('url') && { url: text('url') }),
-    visibility: (row.visibility ?? 'private') as WorkVisibility,
-  };
+/** The ledger rows of the caller's own work events of `day`, newest first. */
+function rowsOfDay(actor: Actor, day: string, db: Database): UsageRow[] {
+  return db.all<UsageRow>(`SELECT * FROM usage_events WHERE owner_id = ? AND source_id IS NOT NULL AND kind LIKE 'work.%' AND day = ? ORDER BY at DESC LIMIT ${BRIEFING_LIMIT}`, actor.id, day);
 }
 
 /** The caller's own work events of `day`, newest first. */
 export function workOfDay(actor: Actor, day: string, db: Database = database()): WorkItem[] {
-  return db
-    .all<UsageRow>(`SELECT * FROM usage_events WHERE owner_id = ? AND source_id IS NOT NULL AND kind LIKE 'work.%' AND day = ? ORDER BY at DESC LIMIT ${BRIEFING_LIMIT}`, actor.id, day)
-    .map(itemOf);
+  return rowsOfDay(actor, day, db).map(itemOf);
 }
 
 export function briefingFor(actor: Actor, options: { day?: string; now?: number } = {}, db: Database = database()): Briefing {
   const now = options.now ?? Date.now();
   const day = options.day ?? dayOf(now);
   const on = brainEnabled();
+  const today = on ? rowsOfDay(actor, day, db) : [];
+  const yesterday = on ? rowsOfDay(actor, dayBefore(day), db) : [];
   return {
     day,
     generatedAt: new Date(now).toISOString(),
     source: 'live',
-    today: on ? workOfDay(actor, day, db) : [],
-    yesterday: on ? workOfDay(actor, dayBefore(day), db) : [],
-    related: [],
+    today: today.map(itemOf),
+    yesterday: yesterday.map(itemOf),
+    related: on ? relatedFor(actor, [...today, ...yesterday], now, db) : [],
     autoSend: workAutoSend(),
     brain: on ? 'on' : 'off',
   };

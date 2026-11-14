@@ -164,9 +164,11 @@ function isReferenced(workflowId: string, versionId: string): boolean {
 
 /**
  * Record a saved workflow as a new version, unless nothing that counts changed since the newest one.
- * An autosave (`options.autosave`) replaces the newest version (same number, a new id, the old row deleted) when that was an autosave by the same person
- * within AUTOSAVE_WINDOW_MS and nothing refers to it (a run, an open publish request, a schedule, the published one), so an editing session is one version, not one per drag. Manual
- * saves, publishes and tab-leave saves always add a version.
+ * An autosave (`options.autosave`) replaces the newest version (same number, a new id, the old row deleted) when that
+ * was an autosave by the same person within AUTOSAVE_WINDOW_MS and nothing refers to it (a run, an open publish
+ * request, a schedule, the published one), so an editing session is one version, not one per drag. Manual saves,
+ * publishes and tab-leave saves always add a version. A decided publish request or the publish log may still name a
+ * folded-away id; their readers already allow a missing version (the 50-version cap removes them too).
  * Never throws: a save must not fail because of its history.
  */
 export function recordVersion(workflow: Workflow, options: { autosave?: { by: string } } = {}): WorkflowVersionSummary | undefined {

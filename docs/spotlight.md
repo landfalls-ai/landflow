@@ -58,9 +58,18 @@ chat (⌘I), "Describe a workflow" and most jump-to buttons. Three speeds:
 | A data table | table | columns and sample rows |
 | Agent builder | agent | settings without secrets, recent session summaries |
 
-**Tagging.** `@` searches every resource type; `@Invoice sync ›` steps into a workflow's nodes and runs. A chosen result
-becomes a chip and travels as a structured reference (`{ type: "node", workflowId, nodeId }`), not as text. The server
-resolves references with the user's permissions; something the user cannot see resolves to "not found".
+**Tagging.** `@` searches every resource type (built, B16). The picker lists the canvas's nodes first ("On this page"),
+then your last choices, then workflows, runs, agents and the rest you may open. A chosen result becomes a chip above the
+box (the selected-node chip stays beside it) and travels as a structured reference (`{ type, id, workflowId? }`), not as
+text. The server reads each one as you, with your permissions, and puts its digest into the prompt as data; each read is
+a step in the trace ("Read @Invoice sync"). Something you may not open reads "Couldn't read @Name" and shows nothing
+([Tagging with @](assistant.md#tagging-with-)).
+
+**History.** Spotlight's conversation is kept per workflow (built, B16, closes CH12). Opening the editor brings back
+the last one under an "Earlier" divider, dimmed, with new turns below. The clock beside New conversation opens the
+history: this workflow's conversations first, search, rename, delete; choosing one loads it in place ([Conversation
+history](assistant.md#conversation-history)). A proposal still waiting when you left is checked against the workflow as
+it is now: it keeps its Apply button if its changes still apply, and reads "This no longer fits the workflow" if not.
 
 **Plan cards.** A proposal renders as a card: a summary, the diff (the assistant's existing diff rendering for workflow
 edits), checks (role, environment protection, four-eyes, draft vs live), outside effects ("Calls Stripe: creates up to 6

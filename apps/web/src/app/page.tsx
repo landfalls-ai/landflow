@@ -117,7 +117,7 @@ export default function Overview() {
 
         {executions && <LiveRuns executions={executions} />}
 
-        <Panel title="Recent executions" href="/executions" linkLabel="View all">
+        <Panel title="Recent runs" href="/runs" linkLabel="View all">
           {recent?.length ? (
             <div className="p-3">
               <RunLines runs={recent.map((e) => ({ id: e.id, href: `/runs/${e.id}`, name: e.workflowName, startedAt: e.startedAt }))} />
@@ -126,7 +126,7 @@ export default function Overview() {
           {executions?.length === 0 && (
             <EmptyState
               compact
-              title="No executions yet"
+              title="No runs yet"
               hint="Run a workflow and it shows up here. Or open the demo to see one run."
               action={
                 <Button size="sm" variant="outline" onClick={() => router.push('/workflows/wf_polyglot_pipeline')}>

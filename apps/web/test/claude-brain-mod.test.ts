@@ -76,6 +76,10 @@ describe('the summary', () => {
   it('reduces file paths to directories and keeps no code, URL or email', () => {
     expect(titleFrom('Fix /Users/x/repo/apps/web/src/app.ts please')).not.toMatch(/app\.ts|Users/);
     expect(titleFrom('Fix apps/web/src/app.ts today.')).toBe('Fix apps/web today.');
+    expect(titleFrom('Build with gcc -I/usr/local/include, then test.')).toBe('Build with gcc then test.');
+    expect(titleFrom('Link -L/opt/acme/lib, then test.')).toBe('Link then test.');
+    expect(titleFrom('Look at x:/Users/alice/notes, then fix.')).not.toMatch(/Users|alice/);
+    expect(titleFrom('Try @src/app/page.tsx please.')).toBe('Try src/app please.');
     expect(titleFrom('Use and/or CI/CD on 11/12 please.')).toBe('Use and/or CI/CD on 11/12 please.');
     expect(titleFrom('See https://example.com/a?b=1 and mail me@example.com now.')).toBe('See and mail now.');
     expect(titleFrom('const a = () => { return 1; }')).toBe('Coding session');

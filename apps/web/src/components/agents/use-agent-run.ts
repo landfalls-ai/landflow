@@ -53,7 +53,11 @@ export function useAgentRun(agentId: string, initial?: AgentSession, initialTrac
       at: new Date().toISOString(),
     });
 
+  // A session `load` still in flight when a message is sent (or the chat is reset) must not land over the new run.
+  const loadToken = useRef(0);
+
   const consume = async (path: string, body: unknown) => {
+    loadToken.current++;
     controller.current?.abort();
     const c = new AbortController();
     controller.current = c;
@@ -134,6 +138,7 @@ export function useAgentRun(agentId: string, initial?: AgentSession, initialTrac
   const stop = () => controller.current?.abort();
 
   const reset = () => {
+    loadToken.current++;
     controller.current?.abort();
     controller.current = undefined;
     setRunning(false);
@@ -150,7 +155,9 @@ export function useAgentRun(agentId: string, initial?: AgentSession, initialTrac
     controller.current?.abort();
     controller.current = undefined;
     setRunning(false);
+    const token = ++loadToken.current;
     const body = await api<{ session: AgentSession; traceUrls?: Record<string, string> }>(`/api/agents/${agentId}/sessions/${encodeURIComponent(id)}`);
+    if (token !== loadToken.current) return;
     setEntries(body.session.timeline);
     setSessionId(body.session.id);
     setTraceIds(body.session.traceIds);

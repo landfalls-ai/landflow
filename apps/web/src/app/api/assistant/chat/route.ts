@@ -6,7 +6,7 @@
  */
 import { z } from 'zod';
 import type { Workflow } from '@landflow/engine';
-import { runChat, type ChatEvent, type ChatState } from '@/lib/server/assistant/chat';
+import { refsOf, runChat, tagMentions, type ChatEvent, type ChatState } from '@/lib/server/assistant/chat';
 import { takeCheckpoint } from '@/lib/server/assistant/checkpoints';
 import { errorText } from '@/lib/server/assistant/model';
 import { roster } from '@/lib/server/assistant/roster';
@@ -18,6 +18,9 @@ import { runDigestSchema, workflowSchema } from '@/lib/server/schemas';
 import { withOwnership } from '@/lib/server/projects';
 import { routeActor } from '@/lib/server/projects/http';
 import { traceparentHeader } from '@/lib/server/telemetry';
+import { splitByScopes } from '@/lib/server/mentions/key-scopes';
+import { refusedRead } from '@/lib/server/mentions/resolve';
+import { MENTION_TYPES } from '@/lib/shared/mentions';
 import { recordUsage } from '@/lib/server/usage/ledger';
 
 export const dynamic = 'force-dynamic';
@@ -34,8 +37,19 @@ const Body = z.object({
   model: z.string().max(100).optional(),
   /** The saved workflow being edited: proposals then use only the node types its project and its own lists allow. */
   workflowId: z.string().max(200).optional(),
-  /** What the user tagged in the message: node ids on the canvas, node type ids. */
-  mentions: z.object({ nodes: z.array(z.string().max(200)).max(20), types: z.array(z.string().max(200)).max(20) }).partial().optional(),
+  /**
+   * What the user tagged with @: `refs` (a kind, an id, and for a node or a run its workflow; `name` only words a refusal).
+   * The older `{ nodes, types }` (node ids on the canvas, node type ids) is still read, as refs, for one release.
+   * More than 8 are not an error: the server reads the first 8.
+   */
+  mentions: z
+    .object({
+      refs: z.array(z.object({ type: z.enum(MENTION_TYPES), id: z.string().min(1).max(200), workflowId: z.string().max(200).optional(), name: z.string().max(200).optional() })).max(50),
+      nodes: z.array(z.string().max(200)).max(20),
+      types: z.array(z.string().max(200)).max(20),
+    })
+    .partial()
+    .optional(),
   /** Proposals from earlier replies still waiting for Apply: part of the workflow the model reads, never proposed again. */
   pending: z
     .array(z.object({ summary: z.string().max(300), ops: z.array(z.record(z.string(), z.unknown())).max(80) }))
@@ -50,7 +64,7 @@ const Body = z.object({
 export const POST = handler(async (request: Request) => {
   const parsed = await parseBody(request, Body);
   if (!parsed.ok) return parsed.response;
-  const { workflow, workflowId, resume, ...rest } = parsed.data;
+  const { workflow, workflowId, resume, mentions, ...rest } = parsed.data;
   const types = allowedTypes(workflowId);
   // The published agents and teams the caller can see: Spotlight runs one that fits a step, or proposes a new agent.
   const { agents, teams } = roster();
@@ -60,6 +74,11 @@ export const POST = handler(async (request: Request) => {
   // An unknown, expired or another user's checkpoint answers 409 before the stream starts.
   const resumed = resume ? takeCheckpoint<ChatState>(actorId, resume.checkpoint) : undefined;
   let proposals = 0;
+  // What was tagged, read as the caller: a tag to what they may not open reads as "Couldn't read" and reveals nothing.
+  // An API key may tag only the kinds its scopes cover (as in /api/mentions and /api/brain/ask); the rest read the same.
+  const { allowed, denied } = splitByScopes(refsOf(mentions, workflowId), currentPrincipal()?.apiKey?.scopes);
+  const tagged = await tagMentions(routeActor(), allowed, { workflow: workflow as Workflow, ...(workflowId && { workflowId }), types, ...(rest.runs && { runs: rest.runs }) });
+  if (denied.length) tagged.reads.push(...denied.map((ref) => refusedRead(ref, ref.name)));
 
   return sseResponse(
     request,
@@ -69,7 +88,7 @@ export const POST = handler(async (request: Request) => {
         write(event, { event: event.type });
       };
       try {
-        await runChat({ ...rest, types, teams, agents, workflow: { ...workflow, id: meteredWorkflowId(workflowId ?? workflow.id) ?? 'draft' } as Workflow, signal: abort.signal, onEvent: send, trace: true, ...(actorId && { userId: actorId }), ...(resumed && { resume: resumed }) });
+        await runChat({ ...rest, types, teams, agents, workflow: { ...workflow, id: meteredWorkflowId(workflowId ?? workflow.id) ?? 'draft' } as Workflow, signal: abort.signal, onEvent: send, trace: true, tagged, ...(actorId && { userId: actorId }), ...(resumed && { resume: resumed }) });
       } catch (caught) {
         if (!abort.signal.aborted) send({ type: 'error', kind: 'internal', message: errorText(caught) });
       } finally {

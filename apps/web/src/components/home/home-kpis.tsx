@@ -23,11 +23,11 @@ export interface Kpi {
   href?: string;
 }
 
-/** The four tiles: Workflows, Executions (24h), Failed (24h) and Needs you (the runs that wait for a person). */
+/** The four tiles: Workflows, Runs (24h), Failed (24h) and Needs you (the runs that wait for a person). */
 export function homeKpis(stats: HomeStats | undefined, needsYou: number | undefined): Kpi[] {
   return [
     { label: 'Workflows', icon: 'lucide:workflow', color: 'var(--viz-1)', value: stats?.workflows, ...(stats && { sub: `${stats.activeWorkflows} active` }) },
-    { label: 'Executions (24h)', icon: 'lucide:activity', color: 'var(--viz-3)', value: stats?.executions24h, ...(stats && { sub: `avg ${duration(stats.avgDurationMs)}` }) },
+    { label: 'Runs (24h)', icon: 'lucide:activity', color: 'var(--viz-3)', value: stats?.executions24h, ...(stats && { sub: `avg ${duration(stats.avgDurationMs)}` }) },
     {
       label: 'Failed (24h)',
       icon: 'lucide:triangle-alert',
@@ -43,7 +43,7 @@ export function homeKpis(stats: HomeStats | undefined, needsYou: number | undefi
       value: needsYou,
       // Waiting is not a failure: the number stays in the tile's own amber, not the Failed tile's red.
       ...(needsYou !== undefined && { sub: needsYou ? 'waiting for a decision' : 'nothing waits' }),
-      href: '/executions?status=waiting',
+      href: '/runs?status=waiting',
     },
   ];
 }

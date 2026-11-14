@@ -13,6 +13,7 @@ import { Kbd } from '../ui/inputs';
 import { descendantGroupIds, descendantNodeIds } from '@/lib/shared/groups';
 import { MenuItem, MenuLabel, MenuSeparator } from '../ui/popover';
 import { linksOf } from './groups';
+import { nodeActions } from './flow-node';
 import { useEditor } from './store';
 
 interface MenuState {
@@ -83,6 +84,8 @@ export function CanvasMenu() {
   const selectedNotes = stickies.filter((n) => n.selected);
   const memberGroups = groups.filter((g) => g.data.nodeIds.some((id) => selectedNodes.some((n) => n.id === id)));
   const single = selectedGroups.length === 1 && !selectedNodes.length && !selectedNotes.length ? selectedGroups[0] : undefined;
+  // One node alone: its toolbar's actions (Run, Disable, Delete, then what ⋯ holds), then the canvas's own.
+  const lone = selectedNodes.length === 1 && !selectedGroups.length && !selectedNotes.length ? nodeActions(selectedNodes[0]!.id) : undefined;
   const links = linksOf(groups);
   const parent = single?.data.parentId ? groups.find((g) => g.id === single.data.parentId) : undefined;
   const anything = selectedNodes.length + selectedGroups.length + selectedNotes.length > 0;
@@ -139,28 +142,52 @@ export function CanvasMenu() {
         </>
       ) : (
         <>
+          {lone && (
+            <>
+              {lone.main.map((a) => (
+                <MenuItem key={a.id} danger={a.danger} disabled={a.disabled} hint={a.id === 'run' ? undefined : a.hint} onClick={act(a.run)}>
+                  <a.icon /> {a.label}
+                </MenuItem>
+              ))}
+              <MenuSeparator />
+              {lone.more.map((a) => (
+                <MenuItem key={a.id} disabled={a.disabled} hint={a.hint} onClick={act(a.run)}>
+                  <a.icon /> {a.label}
+                </MenuItem>
+              ))}
+              <MenuSeparator />
+            </>
+          )}
           <MenuItem disabled={!selectedNodes.length && !selectedGroups.length} onClick={act(() => state.groupSelection())} hint={<Kbd>{mod}G</Kbd>}>
             <Group /> Group selection
           </MenuItem>
-          <MenuItem disabled={!selectedGroups.length && !memberGroups.length} onClick={act(() => state.ungroup())} hint={<Kbd>⇧{mod}G</Kbd>}>
-            <Ungroup /> Ungroup
-          </MenuItem>
-          <MenuSeparator />
-          <MenuItem disabled={!anything} onClick={act(() => state.duplicateSelection())} hint={<Kbd>{mod}D</Kbd>}>
-            <Copy /> Duplicate
-          </MenuItem>
+          {!lone && (
+            <>
+              <MenuItem disabled={!selectedGroups.length && !memberGroups.length} onClick={act(() => state.ungroup())} hint={<Kbd>⇧{mod}G</Kbd>}>
+                <Ungroup /> Ungroup
+              </MenuItem>
+              <MenuSeparator />
+              <MenuItem disabled={!anything} onClick={act(() => state.duplicateSelection())} hint={<Kbd>{mod}D</Kbd>}>
+                <Copy /> Duplicate
+              </MenuItem>
+            </>
+          )}
           <MenuItem onClick={act(() => state.addSticky({ x: at.flow.x, y: at.flow.y }))} hint={<Kbd>⇧S</Kbd>}>
             <StickyNote /> Add sticky note here
           </MenuItem>
-          <MenuSeparator />
-          <MenuItem
-            danger
-            disabled={!anything}
-            onClick={act(() => state.removeNodes([...selectedNodes, ...selectedNotes, ...selectedGroups].map((n) => n.id)))}
-            hint={<Kbd>⌫</Kbd>}
-          >
-            <Trash2 /> Delete
-          </MenuItem>
+          {!lone && (
+            <>
+              <MenuSeparator />
+              <MenuItem
+                danger
+                disabled={!anything}
+                onClick={act(() => state.removeNodes([...selectedNodes, ...selectedNotes, ...selectedGroups].map((n) => n.id)))}
+                hint={<Kbd>⌫</Kbd>}
+              >
+                <Trash2 /> Delete
+              </MenuItem>
+            </>
+          )}
         </>
       )}
     </div>,

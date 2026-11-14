@@ -179,7 +179,9 @@ export class AiUsageMeter implements UsageMeter {
         actorId: scope.lookup('userId'),
         tokens: (call.inputTokens ?? 0) + (call.outputTokens ?? 0),
         cost: call.cost,
-        attrs: { provider: call.provider, model: call.model, operation: call.operation, input: call.inputTokens, output: call.outputTokens },
+        // `input` is the whole prompt, cached tokens included; `cacheRead` and `cacheWrite` are the parts of it the
+        // provider read from or wrote to its prompt cache (0 when it reports none), so a ledger can price them apart.
+        attrs: { provider: call.provider, model: call.model, operation: call.operation, input: call.inputTokens, output: call.outputTokens, cacheRead: call.cacheReadTokens ?? 0, cacheWrite: call.cacheWriteTokens ?? 0 },
       });
       if (now - this.pruned > DAY_MS / 24) {
         this.pruned = now;

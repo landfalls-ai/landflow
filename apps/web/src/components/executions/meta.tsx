@@ -14,6 +14,25 @@ export const MODE_META: Record<ExecutionSummary['mode'], { label: string; icon: 
   mcp: { label: 'Started by an MCP client', icon: Plug },
 };
 
+/**
+ * The two words for starting a run again (docs/ui-review.md#words). Everything else, original or saved workflow, from the
+ * failed step or the start, is a choice under one of them. `RERUN_LABEL` below names a finished run's scope in a badge.
+ */
+export const RETRY_LABEL = 'Retry from failed step';
+export const RERUN_WORD = 'Re-run';
+export const RERUN_MENU_WORDS = [RETRY_LABEL, RERUN_WORD] as const;
+
+/** The choices under each word: the label a person reads, and what the API is sent. */
+export const RETRY_CHOICES: Array<{ label: string; body: RetryBody }> = [
+  { label: 'With the workflow as it ran', body: {} },
+  { label: 'With the saved workflow', body: { version: 'current' } },
+  { label: 'From the start', body: { from: 'start' } },
+];
+export const RERUN_CHOICES: Array<{ label: string; body: RerunBody }> = [
+  { label: 'With the saved workflow', body: { scope: 'all', version: 'current' } },
+  { label: 'With the workflow as it ran', body: { scope: 'all', version: 'original' } },
+];
+
 export const RERUN_LABEL: Record<RerunScope, string> = { all: 'Re-run', from: 'Re-run from a node', only: 'Re-run of one node' };
 
 export function rerunTitle(rerunOf: RerunOf, nodeName?: string) {

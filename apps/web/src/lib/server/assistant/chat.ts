@@ -43,6 +43,9 @@ import {
   withoutRepeats,
 } from './guards';
 import { availableTypes, catalogSummary, nodeContext, nodeDocs, searchNodes, workflowOutline } from './research';
+import { MENTION_LIMITS, mentionKey, type MentionRef } from '../../shared/mentions';
+import { BLOCK_CLOSE, BLOCK_OPEN, resolveMentions, type MentionRead, type SentMention } from '../mentions/resolve';
+import type { Actor } from '../projects/access';
 
 /** The most model calls for one message. A reply stops sooner when two steps in a row add nothing new. */
 export const MAX_STEPS = 20;
@@ -101,8 +104,8 @@ export interface ChatInput {
    * workflow the model reads, and a new proposal that repeats one is dropped.
    */
   pending?: Array<{ summary: string; ops: unknown }>;
-  /** Nodes (by id) and node types the user tagged in the message with Spotlight's bubbles. */
-  mentions?: { nodes?: string[]; types?: string[] };
+  /** What the user tagged with @, read for them on the server (`tagMentions`): the block goes into the prompt as data, each read is a step of the trace. */
+  tagged?: TaggedMentions;
   /**
    * The message comes from Spotlight's test-and-fix session, which applies proposals and runs the workflow itself:
    * `fix` asks for a fix (a reply that proposes nothing is sent back once), `review` whether a run did what was asked.
@@ -350,10 +353,10 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
 
   const nodeByName = (name: string) => working.nodes.find((n) => n.name === name) ?? working.nodes.find((n) => n.name.toLowerCase() === name.toLowerCase() || n.id === name);
   const selected = input.selectedNodeId && working.nodes.find((n) => n.id === input.selectedNodeId);
-  const tagged = [
-    ...(input.mentions?.nodes ?? []).flatMap((id) => working.nodes.filter((n) => n.id === id)).map((n) => `- the node “${n.name}” (${n.type})`),
-    ...(input.mentions?.types ?? []).flatMap((type) => types.filter((t) => t.type === type)).map((t) => `- the node type ${t.descriptor.displayName} (${t.type}): ${t.descriptor.description.slice(0, 120)}`),
-  ];
+  // What the person tagged: read and checked by the route (`tagMentions`), here only worded for the model. A tag that could
+  // not be read is named and nothing more, so the model does not make up what it holds.
+  const unread = (input.tagged?.reads ?? []).filter((r) => !r.ok).map((r) => r.label.replace(/^Couldn't read /, ''));
+  const tagged = [input.tagged?.block ?? '', unread.length ? `Not readable (tell the user if it matters): ${unread.join(', ')}` : ''].filter(Boolean);
   const system = [
     SYSTEM,
     `\nApps and plugins this workflow can use (search_nodes for the rest):\n${catalogSummary(types)}`,
@@ -362,7 +365,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
     `\nThe editor now:\n${outline()}`,
     working.groups?.some((g) => g.composite) ? `\nComposites (frames typed by a contract: fill their slots with matching nodes, keep their rules):\n${compositeOutline(working)}` : '',
     selected ? `\nThe user has “${selected.name}” selected:\n${nodeContext(working, selected.id, runs[selected.id], types)}` : '',
-    tagged.length ? `\nThe user tagged in the message:\n${tagged.join('\n')}` : '',
+    tagged.length ? `\nThe user tagged these in the message (checked against what they may open):\n${tagged.join('\n')}` : '',
     input.session === 'auto' ? `\n${AUTO}` : input.session ? `\n${SESSION}` : '',
   ].join('\n');
 
@@ -531,6 +534,15 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
   };
 
   await traceAssistant('chat', { 'landflow.workflow.id': input.workflow.id, 'gen_ai.request.model': model.model, 'landflow.assistant.turns': input.messages.length }, async (span, setOutcome) => {
+    // Each tag read is a row of the trace: a step and its tool call (a resumed reply already has them).
+    if (trace && !input.resume) {
+      const each = input.tagged?.reads.length ? Math.round((input.tagged.elapsedMs ?? 0) / input.tagged.reads.length) : 0;
+      input.tagged?.reads.forEach((read, i) => {
+        const step = -(i + 1);
+        onEvent({ type: 'step.start', step, label: read.ok ? `Reading @${read.label}` : read.label });
+        onEvent({ type: 'tool', name: 'read_mention', label: read.ok ? `Read @${read.label}` : read.label, ok: read.ok, id: `mention${i}`, step, durationMs: each, ...(read.ok && read.summary && { detail: read.summary }) });
+      });
+    }
     const history: AgentMessage[] = input.resume ? [...input.resume.history] : input.messages.map((m) => (m.role === 'user' ? { role: 'user', content: m.content } : { role: 'assistant', text: m.content, toolCalls: [] }));
     let steps = input.resume?.steps ?? 0;
     /** A resumed reply gets a fresh budget of steps; the count goes on from where it stopped. */
@@ -661,4 +673,47 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
     const costUsd = scope.tree.calls ? Math.round(scope.tree.cost * 1e8) / 1e8 : undefined;
     onEvent({ type: 'done', model: modelLabel(model), durationMs: Date.now() - started, steps, usage, ...(costUsd !== undefined && { costUsd }), local: model.provider === 'ollama' });
   });
+}
+
+/** What a message's tags became: the checked digests as one block of data, and how each tag read. */
+export interface TaggedMentions {
+  block: string;
+  reads: MentionRead[];
+  /** How long reading them all took; the trace splits it between the rows. */
+  elapsedMs?: number;
+}
+
+/** The body's tags as refs: the new `{ refs }`, or the older `{ nodes, types }` (a node of this workflow, a node type). */
+export function refsOf(mentions: { refs?: SentMention[]; nodes?: string[]; types?: string[] } | undefined, workflowId: string | undefined): SentMention[] {
+  if (!mentions) return [];
+  const legacy: SentMention[] = [
+    ...(mentions.nodes ?? []).map((id): SentMention => ({ type: 'node', id, ...(workflowId && { workflowId }) })),
+    ...(mentions.types ?? []).map((id): SentMention => ({ type: 'nodeType', id })),
+  ];
+  const seen = new Set<string>();
+  return [...(mentions.refs ?? []), ...legacy].filter((ref) => !seen.has(mentionKey(ref)) && seen.add(mentionKey(ref))).slice(0, MENTION_LIMITS.refs);
+}
+
+/**
+ * Read what the person tagged, as the caller: a tag to something they may not open reads the same as one that is not
+ * there ("Couldn't read @name") and reveals nothing. A node of the workflow on the canvas that is not saved yet is read
+ * from the canvas the caller sent (their own draft), not from the store.
+ */
+export async function tagMentions(actor: Actor, refs: readonly SentMention[], canvas: { workflow: Workflow; workflowId?: string; types: NodeTypeInfo[]; runs?: Record<string, RunDigest> }): Promise<TaggedMentions> {
+  if (!refs.length) return { block: '', reads: [] };
+  const started = Date.now();
+  const resolved = await resolveMentions(actor, refs);
+  const reads = [...resolved.read];
+  const extra: string[] = [];
+  // A read carries its own ref: a canvas node is matched on it, not paired with the sent refs by position.
+  reads.forEach((read, i) => {
+    const ref: MentionRef = read.ref;
+    if (read.ok || ref.type !== 'node' || !canvas.workflowId || ref.workflowId !== canvas.workflowId) return;
+    const node = canvas.workflow.nodes.find((n) => n.id === ref.id);
+    if (!node) return;
+    extra.push(`## @${node.name.replaceAll('<<<', '‹‹‹').replaceAll('>>>', '›››')} (node, on the canvas)\n${nodeContext(canvas.workflow, node.id, canvas.runs?.[node.id], canvas.types).replaceAll('<<<', '‹‹‹').replaceAll('>>>', '›››').slice(0, 1200)}`);
+    reads[i] = { ref, ok: true, label: node.name, summary: `${node.type} on the canvas` };
+  });
+  const sections = [...(resolved.block ? resolved.block.slice(BLOCK_OPEN.length + 1, resolved.block.length - BLOCK_CLOSE.length - 1).split('\n') : []), ...extra.flatMap((e) => e.split('\n'))];
+  return { block: sections.length ? [BLOCK_OPEN, ...sections, BLOCK_CLOSE].join('\n') : '', reads, elapsedMs: Date.now() - started };
 }

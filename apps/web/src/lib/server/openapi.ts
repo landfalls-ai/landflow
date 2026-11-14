@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { API_KEY_SCOPES } from '../shared/auth';
 import { SESSION_COOKIE } from '../shared/auth-paths';
 import { TEMPLATE_CATEGORIES } from '../shared/templates';
+import { MENTION_LIMITS, MENTION_TYPES } from '../shared/mentions';
 import { rowFilterSchema } from './datatables/http';
 import { routePolicy } from './auth/policy';
 import { workflowSchema } from './schemas';
@@ -2078,9 +2079,9 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Second brain',
     id: 'askBrain',
     summary: 'Ask the second brain',
-    description: 'Finds the pages, facts and work the question is about, among what the caller can open, and the brain’s model answers from them with [[type/id]] page links and [n] references to `work`. `about` (<type>/<id>) asks from a page; `history` (the last two turns) makes it a follow-up. Without a model `answer` is left out. With `Accept: text/event-stream` the answer streams instead: `found`, step events, `text.delta`, `text`, then `done` (with `links`, `cited`, `sources`, `model`, `durationMs`, `steps`, tokens and `local`) or `error`. An API key needs the `brain:read` scope (`executions:read` alone no longer reaches it).',
-    body: jsonBody(object({ question: { type: 'string', maxLength: 500 }, about: { type: 'string', description: '<type>/<id> of the page it is asked from' }, history: array(object({ question: { type: 'string' }, answer: { type: 'string' } }, ['question', 'answer'])) }, ['question'])),
-    responses: { 200: reply('The answer', object({ question: { type: 'string' }, answer: { type: 'string' }, links: array(object({ ref: { type: 'string' }, name: { type: 'string' } }, ['ref', 'name'])), cited: array({ type: 'integer' }), model: { type: 'string' }, pages: array({ type: 'object' }), facts: array({ type: 'object' }), work: array(workItem), note: { type: 'string' }, about: { type: 'string' } }, ['question', 'pages', 'facts', 'work'])), 400: invalid },
+    description: 'Finds the pages, facts and work the question is about, among what the caller can open, and the brain’s model answers from them with [[type/id]] page links and [n] references to `work`. `about` (<type>/<id>) asks from a page; `history` (the last two turns) makes it a follow-up; `mentions.refs` (at most 8) are what the person tagged with @, each read as the caller (an API key tags only the kinds its scopes cover). Without a model `answer` is left out. With `Accept: text/event-stream` the answer streams instead: `found`, step events, `text.delta`, `text`, then `done` (with `links`, `cited`, `sources`, `model`, `durationMs`, `steps`, tokens and `local`) or `error`. An API key needs the `brain:read` scope (`executions:read` alone no longer reaches it).',
+    body: jsonBody(object({ question: { type: 'string', maxLength: 500 }, about: { type: 'string', description: '<type>/<id> of the page it is asked from' }, history: array(object({ question: { type: 'string' }, answer: { type: 'string' } }, ['question', 'answer'])), mentions: object({ refs: { ...array(object({ type: { type: 'string', enum: [...MENTION_TYPES] }, id: { type: 'string' }, workflowId: { type: 'string' }, name: { type: 'string', description: 'Words a refusal only' } }, ['type', 'id'])), maxItems: MENTION_LIMITS.refs } }, ['refs']) }, ['question'])),
+    responses: { 200: reply('The answer', object({ question: { type: 'string' }, answer: { type: 'string' }, links: array(object({ ref: { type: 'string' }, name: { type: 'string' } }, ['ref', 'name'])), cited: array({ type: 'integer' }), model: { type: 'string' }, pages: array({ type: 'object' }), facts: array({ type: 'object' }), work: array(workItem), note: { type: 'string' }, about: { type: 'string' }, tags: { ...array(object({ ok: { type: 'boolean' }, label: { type: 'string' } }, ['ok', 'label'])), description: 'With `mentions`: each tag as read (`Read @Name`) or refused (`Couldn\'t read @Name`, `Left out @Name`); `facts` is then empty' } }, ['question', 'pages', 'facts', 'work'])), 400: invalid },
   });
   // B04: tagging with @ (docs/assistant.md#tagging-with-).
   add('get', '/api/mentions', {
@@ -2104,7 +2105,7 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Second brain',
     id: 'recordWork',
     summary: 'Record your own work',
-    description: 'Needs the `brain:write` scope (or a session). `events` holds 1 to 50 work events (packages/protocol/src/work-events.ts): kind (work.<name>), source, sourceId, occurredAt, title and optional summary, repo, branch, areas (directory names), commits, prs, turns, initiative, customer, team, url, visibility. Private to the caller: nobody else reads it, an admin included; `team` and `org` are refused for now. The same source and sourceId updates the event. An event that fails the checks comes back in `rejected` with its reason; the others are saved. 503 when the brain is off.',
+    description: 'Needs the `brain:write` scope (or a session). `events` holds 1 to 50 work events (packages/protocol/src/work-events.ts): kind (work.<name>), source, sourceId, occurredAt, title and optional summary, repo, branch, areas (directory names), commits, prs, turns, initiative, customer, team, url, visibility. Private to the caller unless sent `team` (people who share a project with them) or `org` (everyone): nobody else reads a private one, an admin included. The same source and sourceId updates the event. An event that fails the checks comes back in `rejected` with its reason; the others are saved. 503 when the brain is off.',
     body: jsonBody(object({ events: array({ type: 'object' }) }, ['events'])),
     responses: {
       200: reply('What was saved and what was rejected', object({ saved: array(object({ sourceId: { type: 'string' }, id: { type: 'string' }, created: { type: 'boolean' } }, ['sourceId', 'id', 'created'])), rejected: array(object({ sourceId: { type: 'string' }, reason: { type: 'string' } }, ['sourceId', 'reason'])) }, ['saved', 'rejected'])),
@@ -2119,6 +2120,25 @@ function paths(): Record<string, Record<string, Json>> {
     description: 'Needs the `brain:write` scope (or a session). `source` names the tool the event came from. Someone else’s event is not found.',
     query: [text('source', 'The event’s source (required)')],
     responses: { 204: { description: 'Deleted' }, 400: invalid, 404: notFound, 503: errorRef('The brain is off') },
+  });
+  // B18: team and org visibility, Post as my update (docs/work-and-briefings.md).
+  add('patch', '/api/brain/work/{sourceId}', {
+    tag: 'Second brain',
+    id: 'setWorkVisibility',
+    summary: 'Change who reads one of your own work events',
+    description: 'Needs the `brain:write` scope (or a session). `team` is the people who share a project with you, `org` everyone, `private` you alone. `source` narrows it to one tool. Someone else’s event is not found.',
+    query: [text('source', 'The event’s source')],
+    body: jsonBody(object({ visibility: { type: 'string', enum: ['private', 'team', 'org'] } }, ['visibility'])),
+    responses: { 200: reply('The item', briefingWorkItem), 400: invalid, 404: notFound },
+  });
+  add('post', '/api/brain/work/{sourceId}/share', {
+    tag: 'Second brain',
+    id: 'shareWork',
+    summary: 'Post one of your work events as an update',
+    description: 'Needs the `brain:write` scope (or a session). Records a `work.self_update` event you own, shared with the organization (`org`, the default) or your team, that links the item. Posting it again updates that event. Someone else’s event is not found. 503 when the brain is off.',
+    query: [text('source', 'The event’s source')],
+    body: jsonBody(object({ visibility: { type: 'string', enum: ['team', 'org'] } }, [])),
+    responses: { 200: reply('The update', object({ id: { type: 'string' }, created: { type: 'boolean' }, of: { type: 'string' }, visibility: { type: 'string' } }, ['id', 'created', 'of', 'visibility'])), 400: invalid, 404: notFound, 503: errorRef('The brain is off') },
   });
   add('get', '/api/brain/briefing', {
     tag: 'Second brain',

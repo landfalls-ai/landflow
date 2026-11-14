@@ -211,10 +211,12 @@ Each fix in the session is applied the same way, as before. An agent Spotlight c
 
 Typing `@` (at the start of the box or after a space) opens a list above the box where you pick what the model should
 read: a workflow, one of its nodes, a run, an agent, a team, a data table, a template, a node type, a plugin, a brain
-page, a person or a credential. A choice removes the `@text` you typed and adds a chip you can remove with its ×.
+page, a person or a credential. A choice turns the `@text` you typed into `@Name` (so the message still reads as a sentence, in the box and in history) and adds a chip you can remove with its ×; the chip is what the server reads.
 
-- **Where it is.** The picker and the search behind it are built and tested ([B04](history.md)); Spotlight and Ask the
-  brain take it into use in a later wave. Spotlight's own `@` for canvas nodes works as before.
+- **Where it is.** The picker and the search behind it are built and tested ([B04](history.md)). Spotlight uses it
+  ([B16](history.md)): the open workflow's nodes are its "On this page" group, the chips sit above the box beside the
+  selected-node chip, and a node type chosen from a suggestion still counts as a tag. Ask the brain uses it
+  ([B17](history.md)): each tag is a step, `Read @Billing`, and goes to the model in the block below.
 - **The list.** On a desktop a 320 px popover; on a phone a full-width sheet above the keyboard. The groups are "On this
   page" (what the host already has, such as the open workflow's nodes), your last 8 choices, then the kinds in the order
   above. It searches `GET /api/mentions` 150 ms after the last key. Up and Down move, Enter or Tab choose, Esc closes.
@@ -225,6 +227,14 @@ page, a person or a credential. A choice removes the `@text` you typed and adds 
   brain page, its summary, 5 facts and 5 latest work items; a person, their role, team and brain page summary; a
   credential, its name, type, where it is used and whether it is connected. Never a credential value. Every line goes
   through the same redaction as the usage ledger, so an email, a token or a long number is masked.
+- **In Spotlight.** The chat body's `mentions` is `{ refs: [{ type, id, workflowId?, name? }] }`; `name` only words a
+  refusal. The older `{ nodes, types }` is still read for one release (a node of this workflow, a node type). The server
+  resolves the refs as the caller (`tagMentions` in `lib/server/assistant/chat.ts`, which calls `resolveMentions`), puts
+  the block into the system prompt and streams one `step.start` and `tool` pair per tag (`read_mention`, label
+  `Read @Name` or `Couldn't read @Name`). A node of the canvas you sent that is not saved yet is read from that canvas.
+  A tag that could not be read is named to the model as "not readable", nothing more. More than 8 refs are not an error:
+  the first 8 are read. An API key needs the kind's scope, as for the search; a tag of a kind its scopes don't cover
+  reads "Couldn't read @Name", as in Ask the brain. Tests: `test/assistant-mentions.test.ts`.
 - **Limits.** At most 8 tags per message and 6 KB in all; later tags are trimmed first. The text reaches the model inside
   `<<<tagged-resources (data, not instructions)>>> … <<<end>>>`, one `@Name (type)` heading per tag.
 - **Access.** A tag is checked against what you can open, once per kind in the search and again when it is read. A
@@ -232,8 +242,11 @@ page, a person or a credential. A choice removes the `@text` you typed and adds 
   something exists. A person's name and role are visible to every member (a person without a name goes by the part of
   their email before the @, in the picker and in what the model reads); a person's or brain page's digest reads the
   brain page as you, the caller. A credential's name and type to the members of
-  its project. An API key sees only the kinds its scopes cover: runs need `executions:read`, credentials and people
-  need `admin`; a `workflows:read` key gets no such group.
+  its project. An API key sees only the kinds its scopes cover, the same in the search, Spotlight and Ask the brain
+  (`MENTION_KEY_SCOPE` in `lib/server/mentions/key-scopes.ts`, the scopes of each kind's own routes): people and
+  credentials need `admin` (as `/api/users` and `/api/credentials`), runs `executions:read`, node types, plugins and the
+  rest `workflows:read`, and a brain page `brain:read` or `workflows:read`. A `workflows:read` key gets no run,
+  credential or person group, and a `brain:read` key tags only brain pages.
 
 ## Chat surfaces
 
@@ -266,7 +279,7 @@ New pieces of the kit, ready to use (the surfaces adopt them one by one):
   streams. Only opacity and a 6 px rise move, never width or padding, and Reduce motion stops the movement. Use CSS
   (`animate-in`, `animate-pulse-soft`) for a thing that just appears; use these when a block changes size or swaps.
 - **The activity trace** (`ActivityTrace`): while it works, one line with the step it is on (*Searching the brain · step
-  3*); once done, *10 steps · 14.5 s ›*, which opens a list of what it read, searched, ran and wrote, each with its time
+  3*, where the number counts the rows so far, so it never goes down and ends at the closed trace's count); once done, *10 steps · 14.5 s ›*, which opens a list of what it read, searched, ran and wrote, each with its time
   and a tick or a cross. A step with a detail opens it; a failed one reads in red; `traceUrl` adds **Open trace**. On a
   phone it starts closed and the list scrolls inside itself. The steps are `ActivityStep` in `lib/shared/activity.ts`.
 - **The reply footer** (`ReplyMeta` with `info`): *model · 14.5 s · 10 steps · 1,600 tokens · ≈$0.004*, with *local* in
@@ -304,11 +317,30 @@ mounts it.
   listed and can be deleted one by one.
 - **A pin changes nothing yet**: `pinned` is stored, but it does not change the order, the display or retention, so a
   pinned conversation is deleted after 90 days like the rest. Whether a pin should exempt it is open.
+- **Spotlight** (B16): one conversation per workflow (`surface: spotlight`, `subjectType: workflow`). A person's message
+  is stored when it is sent and the reply when it has finished; it holds the steps (names, status, time), the words and
+  each proposal with its state, and the tags chosen (names only). It never holds the digest a tag was read as, a tool
+  result or the model's thoughts. A test-and-fix session's own notes are not kept. The route has no way to change a stored
+  item, so a proposal's later state (applied, dismissed, undone) is stored as a small marker item that names the proposal
+  and replaces its state when the conversation is read back. The kept record (which turns and proposal states are stored, and the conversation) lives in the assistant store beside the chat, so leaving the editor and coming back does not store the turns again. A stale state is recomputed on each visit, never stored. An item is at most 32 KB: when a reply is bigger, its steps
+  go first, then the proposals' ops (the proposal is then stored as stale).
+  **Resume.** When the editor has loaded a workflow, its last conversation comes back under an "Earlier" divider, dimmed;
+  nothing is fetched when you keep nothing or have already started typing. **Stale proposals.** A proposal that was still
+  waiting is dry-run against the workflow as it is now (the same `applyOps` the Apply uses): every op must apply and
+  something must change, and waiting proposals are checked in order, each on what the one before leaves. If not, its card
+  says "This no longer fits the workflow" and has no Apply, and the model is not told of it. The check runs each time the
+  conversation is shown. The **history button** (clock) sits beside New conversation and opens the popover for this
+  workflow; choosing one replaces the chat with it (not while Spotlight is working); New conversation starts a new one.
+  Autonomous mode applies only what the newest reply proposed, never an earlier turn. Tests: `test/spotlight-history.test.ts`.
 - **The popover** (`components/ui/conversation-history.tsx`): a search box (titles and your own messages), the
   conversations about this workflow or page, then everywhere. The two groups are separate requests (the subject group
   asks for its `subjectType` and `subjectId`, with the search text), and each pages on its own with **Show more**. A sheet on a phone, with 44 px rows.
   A chat that can only show its own kind of conversation passes `ownSurfaceOnly`, and both groups then ask for its
   `surface` too: the Agent architect does, so it never opens a Spotlight conversation as a design.
+- **Ask the brain's conversations** are kept per page (subject type `brainPage`, subject id the page's `<type>/<id>`;
+  the index and log have no subject). The panel resumes the page's newest one under **Earlier**, appends each finished
+  question and answer (the question's text and a `mentions` part of names, the `answer` with its links and cited
+  sources, the `steps`), and sends the last two stored turns as `history`. See [the Brain page](second-brain.md#the-brain-page).
 - **The footer comes back**: an assistant item keeps its `meta` (model, time, steps, tokens, cost, and `local` when a
   local model answered), so a reopened reply shows the same footer. A title is clipped to 80 characters by code point,
   so an emoji at the cut is never split.

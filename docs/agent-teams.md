@@ -385,7 +385,7 @@ team node runs again with the lead told to ask only that member the same message
 ### Turn into a team
 
 On a canvas, a selected **Run an Agent** node that has **A2A Agent** (or Run an Agent) nodes attached as tools gets a
-**Turn into a team** button in its toolbar. It saves a team (the lead is that agent; each delegating tool is a member
+**Turn into a team** item under its toolbar's ⋯ and in its right-click menu. It saves a team (the lead is that agent; each delegating tool is a member
 reporting to it, titled by the node's name, with its notes or tool description as the role, its URL, options and
 credential references, and `questionsTo: person` when the node sent questions to a person), publishes it when it can, and
 swaps the lead and those tools for one Run a Team node in the same place and under the same name, so connections and
@@ -402,7 +402,7 @@ id. A model that writes the team's name or its lead's title where the id goes ("
 builder's "Describe the workflow you want") gets the same list and the same fix (`withTeamId` in
 `lib/shared/agent-teams.ts`): before, it wrote `Release notes desk team` as the id and the run failed with *the selected
 one was deleted*. It has a `turnIntoTeam` op (`{"op":"turnIntoTeam","node":"<lead>"}`) for "turn the Tech Lead and its agents into a
-team": applying the proposal does what the toolbar button does.
+team": applying the proposal does what that menu item does.
 
 ### What is not enforced
 

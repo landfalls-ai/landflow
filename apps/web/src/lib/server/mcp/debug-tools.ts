@@ -158,7 +158,7 @@ export function registerDebugTools(server: McpServer, ctx: DebugContext) {
       const workflow: Workflow | undefined = record.workflow ?? store.getWorkflow(record.workflowId);
       const redact = redactorFor(workflow);
       if (record.status !== 'error') {
-        return json(redact({ id, status: record.status, ...(record.error && { error: record.error }), note: record.status === 'success' ? 'This execution did not fail.' : `This execution is ${record.status}, not failed.`, url: `${ctx.workflowUrl(record.workflowId)}/executions/${id}` }));
+        return json(redact({ id, status: record.status, ...(record.error && { error: record.error }), note: record.status === 'success' ? 'This execution did not fail.' : `This execution is ${record.status}, not failed.`, url: `${ctx.workflowUrl(record.workflowId)}/runs/${id}` }));
       }
       const nodeId = failingNodeId(record);
       const node = workflow?.nodes.find((n) => n.id === nodeId);
@@ -240,7 +240,7 @@ export function registerDebugTools(server: McpServer, ctx: DebugContext) {
         ...(record.retriedBy && { retriedBy: record.retriedBy }),
         executionPath: [...new Set(record.executionOrder)].map((nodeIdInOrder) => names[nodeIdInOrder] ?? nodeIdInOrder),
         whatToCheck: whatToCheck(message, { nodeName: node.name, pluginNode: Boolean(info && info.pluginId !== 'core'), hasCredential, inputItems: inputItems.length, fieldIssues }),
-        url: `${ctx.workflowUrl(record.workflowId)}/executions/${record.executionId}`,
+        url: `${ctx.workflowUrl(record.workflowId)}/runs/${record.executionId}`,
       };
       return json(redact(result));
     },
@@ -329,7 +329,7 @@ export function registerDebugTools(server: McpServer, ctx: DebugContext) {
         await promoteExecution(id);
         const newId = await context.with(trigger.context, () => startRetry(id, { from, version }));
         trigger.end();
-        const url = `${ctx.workflowUrl(found.record.workflowId)}/executions/${newId}`;
+        const url = `${ctx.workflowUrl(found.record.workflowId)}/runs/${newId}`;
         if (wait === false) return json({ executionId: newId, retryOf: id, status: 'running', url });
         const record = await settle(newId, timeoutSeconds ?? 60);
         if (!record) return json({ executionId: newId, retryOf: id, status: 'running', url });
@@ -401,7 +401,7 @@ export function registerDebugTools(server: McpServer, ctx: DebugContext) {
             outputItems: (run?.outputs ?? []).map((branch) => branch.length),
             output: (run?.outputs[0] ?? []).slice(0, 25).map((item) => item.json),
             ...(run?.logs?.length && { nodeLogs: run.logs.slice(-20) }),
-            url: `${ctx.workflowUrl(workflowId)}/executions/${record.executionId}`,
+            url: `${ctx.workflowUrl(workflowId)}/runs/${record.executionId}`,
           }),
         );
       } catch (error) {

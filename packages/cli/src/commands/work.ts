@@ -2,7 +2,7 @@
  * `landflow work …`: the daily offload for people who don't use Claude Code. `collect` reads the day's commits (and PRs
  * through `gh` when installed) in allowed repositories and summarises them on this machine, without a model and
  * without code; the entries are held for review; `review` and `send` post them to POST /api/brain/work. Nothing is sent
- * without a person's `review --send` or `send` (and `send` needs `--yes` away from a terminal).
+ * without a person's `review --send` or `send` (both need `--yes` away from a terminal).
  */
 import { statSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
@@ -12,7 +12,7 @@ import { flag, type Command, type Context, type Io } from '../command';
 import { CliError, usage } from '../errors';
 import { plural, table, time } from '../output';
 import { collectRepo, defaultRunner, originRepo, type Runner } from '../work/collect';
-import { findEntry, readHeld, readRepos, upsert, WORK_SOURCE, writeHeld, writeRepos, type AllowedRepo, type HeldEntry } from '../work/held';
+import { findEntry, HELD_MAX_DAYS, readHeld, readRepos, upsert, WORK_SOURCE, writeHeld, writeRepos, type AllowedRepo, type HeldEntry } from '../work/held';
 import { summarizeRepo } from '../work/summary';
 
 /** The CLI's Io, optionally with a command runner (tests pass a fake one; the real CLI uses child_process). */
@@ -166,7 +166,7 @@ export const collect: Command = {
     const run = runner(ctx);
     const now = new Date();
     let entries = readHeld(configFile(ctx));
-    const touched: HeldEntry[] = [];
+    let touched: HeldEntry[] = [];
     const notes: string[] = [];
     for (const repo of chosen) {
       const origin = await originRepo(run, repo.path);
@@ -182,7 +182,11 @@ export const collect: Command = {
         touched.push(result.entry);
       }
     }
-    writeHeld(configFile(ctx), entries, now);
+    // Report what was kept: a day older than the 14-day horizon is pruned in this same write.
+    const kept = new Set(writeHeld(configFile(ctx), entries, now).map((e) => e.sourceId));
+    const tooOld = touched.filter((e) => !kept.has(e.sourceId)).length;
+    if (tooOld) notes.push(`${plural(tooOld, 'day')} older than ${HELD_MAX_DAYS} days ${tooOld === 1 ? 'was' : 'were'} not kept`);
+    touched = touched.filter((e) => kept.has(e.sourceId));
     for (const note of new Set(notes)) ctx.note(note);
     return {
       data: { since, entries: touched.map(view), skipped, notes: [...new Set(notes)] },

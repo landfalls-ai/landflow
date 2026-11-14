@@ -966,6 +966,9 @@ Code runtime that write the plugin in this repository and open a draft pull requ
 Watching and reviewing what a run did, for any flow, phone first ([run-trace.md](run-trace.md)). Phases 1 to 3 of the
 approved plan:
 
+- **Quieter run screens (B21, backbone wave 3; P-trace-1 to P-trace-5, X13 for runs)**: tabs only with content (Story and
+  Trace always, Team and Artifacts when they have something), the Report merged into the Story as a summary, one status
+  line, no time slider on a short or single-participant run, Debug access in the header's ⋯ without tool names.
 - **The journal** (`execution_events`, migration 2000): actors, spans, messages, artifacts and checks per execution,
   written by the runner's translator, Landflow agent sessions, the A2A Agent node (every remote step kept, failed ones
   marked failed, `isError` results included), approvals (web, Slack, email) and the Run report gate. Redacted, cut to
@@ -975,7 +978,7 @@ approved plan:
   `ExecuteResponse.records` over every transport, the engine's `node.record` event. The GitHub plugin reports its pull
   requests, issues and branches.
 - **The screens**: Run trace next to Canvas on every execution and full screen at `/runs/<id>`. They have a header with
-  who is working now, Needs you, and the Story, Trace, Team and Report tabs. Details open in a sheet, and a time slider
+  who is working now, Needs you, and the Story, Trace, Team and Artifacts tabs (Team and Artifacts only with something in them; the Report is in the Story). Details open in a sheet, and a time slider
   replays the run. Needs you and live cards appear on Executions.
 - **Checks, profiles and the report**: the built-in checks (six since 2026-10-31: Agent notes committed), the Generic, Software delivery and Customer support
   profiles (or a custom one as JSON), the structured reply block, and the **Run Report** node. The node saves the
@@ -1500,8 +1503,13 @@ setting `brain.workAutoSend`.
   capture, a held journal, `/brain today|review|status|pause|resume|forget`, the status line, yesterday at session start
   and an offline queue.
 - **`landflow work`** (built, backbone wave 2, B15): the harness-agnostic daily offloader (collect, summarise on the machine, hold for review, send), with cron, launchd and Task Scheduler examples ([cli.md](features/cli.md#recording-your-day-landflow-work)).
-- **Next**: the rest of the clients (the mod's colleagues, pane and band), team and org visibility with related
-  colleagues, repo entities, the link from a person to their user, and a Settings screen for the auto-send setting.
+- **Built (B18)**: team and org visibility (`PATCH /api/brain/work/:sourceId`, the team clause over shared projects),
+  Post as my update (`POST /api/brain/work/:sourceId/share`), related colleagues in the briefing with the reason,
+  repositories as `system` entities and the link from a person page to its user (migration 2080)
+  ([work-and-briefings.md](work-and-briefings.md#related-colleagues)).
+- Follow-ups: `landflow work` should omit `visibility`; the briefing prompt (`briefingText`) does not render `related` yet (MOD6's clip, quote and link rules apply when it does); link a work event to its repository page and index systems by repo in the wiki; check `canEntity` before showing a person page's user link.
+- **Next**: the rest of the clients (the mod's colleagues, pane and band), the overlap detector and a Settings screen
+  for the auto-send setting.
 
 ## Shell: nine-item rail (built 2026-11-14)
 
@@ -1548,7 +1556,7 @@ resizing the column, and keeping a fix bubble's text after it closes (the timeli
 ## Backbone wave 1: one look, a plainer Home (2026-11-14)
 
 The Classic look is retired (X5): every screen draws the New look and `useLook`, `useNewLook` and `setLook` are gone
-(`look-toggle.tsx` stays as an empty shell for one wave). Home's primary is **New workflow** (P-home-1), a Needs you tile
+(`look-toggle.tsx` stayed as an empty shell for one wave; B12 deleted it). Home's primary is **New workflow** (P-home-1), a Needs you tile
 replaces Plugins online, the Plugins panel and the header meta are gone and an offline plugin shows one line above the
 tiles (P-home-2), a suggestion is a compact card with Show more (P-home-3), and a run of one flow is one line
 (P-home-4). The Executions page does not read `?status=waiting` yet, so the Needs you tile opens the unfiltered list.
@@ -1568,8 +1576,16 @@ The shared pieces every chat will use, built in `components/ui/` and ready; the 
   Agents (B10): the test chat, the Agent architect and the analyst are on the kit (CH6, CH7 done for agents); the test
   chat's raw trace id became the trace's Open trace link (CH23, the test-chat part).
 - CH13 ✅ Done (B10): the Sessions tab opens on People and has Automations and All; no Auto-refresh switch
-  ([agents.md](agents.md#test-chat)). The architect keeps its conversation and can continue a failed design from the
+  ([agents.md](agents.md#how-a-run-works)). The architect keeps its conversation and can continue a failed design from the
   failing step.
+
+## Spotlight history and @ tags (B16, backbone wave 3)
+
+- CH12 ✅ Done: Spotlight keeps its conversation per workflow, brings the last one back under "Earlier", has the history
+  button, and checks a waiting proposal against the workflow (stale ones lose Apply). Leaving the editor no longer loses
+  an unapplied proposal ([Spotlight](spotlight.md), [Conversation history](assistant.md#conversation-history)).
+- CH14 ✅ Done: `@` in Spotlight is the app-wide picker; the server resolves the refs as the caller and shows each read as
+  a step ([Tagging with @](assistant.md#tagging-with-)). The unchecked node path is gone.
 
 ## Ask the brain, docked and streamed (B09, 2026-11-14)
 
@@ -1578,7 +1594,14 @@ The shared pieces every chat will use, built in `components/ui/` and ready; the 
 - CH23 ✅ Done (brain): `[n]` appears only with a source, and a follow-up knows the last two turns.
 - CH8 (brain half) ✅ Done: Ask writes `ai_usage` rows with surface `brain`.
 - P-br-3 ✅ Done: one **Ask** button and ⌘I; the bottom bar, the toolbar and status-bar buttons and quick open's ask row are gone
-  ([second-brain.md](second-brain.md#the-brain-page)). Open: history and @ tags for Ask (B17), the app-wide panel (B35).
+  ([second-brain.md](second-brain.md#the-brain-page)). Open: the app-wide panel (B35). History and @ tags for Ask are built (B17, below).
+
+## Ask the brain keeps conversations and takes tags (B17, 2026-11-14)
+
+- CH15 ✅ Done (brain): Ask keeps a conversation for each page (the last one comes back under **Earlier**), has the history
+  button, and takes `@` tags (pages, people, workflows, runs and the rest) that are checked, read into the answer and shown
+  as steps ([second-brain.md](second-brain.md#the-brain-page), [assistant.md](assistant.md#conversation-history)).
+- Open: the index and log files keep no conversation of their own to resume (they have no page); the app-wide panel (B35).
 
 ## The editor's layout (B11, 2026-11-14)
 
@@ -1586,9 +1609,19 @@ Built ([Building and debugging a flow](features/editor.md#the-editors-chrome)): 
 Chat**, never both, each kept mounted), the flow chat on the chat kit (CH10 for the editor: the list, the Working line,
 the reply footer, the model chip, plain errors), a top bar of seven controls with autosave and a Publish button that
 carries the state (P-ed-1), one canvas toolbar and a minimap only above 25 nodes (P-ed-2), and one **Import…** dialog
-(P-ed-3). All of CH10 (editor), CH19 and P-ed-1 to 3 are done. Open: the phone's Chat is still a sheet under the canvas
+(P-ed-3). All of CH10 (editor), CH19 and P-ed-1 to 3 are done, but for one half of P-ed-3 dropped on purpose: **Git
+history…** shows in ⋯ for every saved workflow, not only when source control is configured, because a member cannot
+read the admin-only source-control settings to know, and the dialog says when it is not set up. Open: the phone's Chat is still a sheet under the canvas
 with no Spotlight | Chat switch (the Execute bar's chat button opens and closes it), and a long editing session with
 no pause over 10 minutes between saves folds into one version (⌘S, Publish and a tab-leave save add their own).
+
+## The node panel and editor details (B23, 2026-11-14)
+
+Built ([Building and debugging a flow](features/editor.md)): the node panel header is the name, a
+line of description and one Run step, with Breakpoint and Run from here in Settings (P-np-1, P-np-2); Settings shows On
+error, Retry and Notes, the rest under More (P-np-3); view switches show only with data (P-np-4); Events is a tab in
+the open logs panel (P-ed-5); workflow settings show three fields, the rest under Advanced (P-ed-6); a node's toolbar
+is Run, Disable, Delete and ⋯, and the right-click menu matches (P-ed-7). All seven are done.
 
 ## Conversation history and personal preferences (2026-11)
 
@@ -1600,14 +1633,25 @@ and the account menu gets the switches. Deleting a person removes their conversa
 ## Tagging with @ (B04, 2026-11-14)
 
 The foundation is built: `GET /api/mentions`, `resolveMentions` with a digest per kind, and the picker
-([assistant.md](assistant.md#tagging-with-)). Open: mount it in Spotlight and Ask the brain, and resolve the tags in
-their servers.
+([assistant.md](assistant.md#tagging-with-)). Closed by B16 and B17: Spotlight and Ask the brain mount the picker and
+their servers resolve the tags, with one key-scope table for all three routes.
 
 ## Test chat history per person (B10, 2026-11-14)
 
 Open: the test chat writes every session as user "you", so "Earlier tests" lists everyone's tests of that agent. The chat
 route should store the caller's id (it also affects memory and the policy role check); then the sessions route can filter
 `source=test` to the caller. Also: `source` wins over `audience` when both are given.
+
+## Workflow runs and tests (B22, 2026-11-14)
+
+Built ([the Runs tab](features/editor.md), [Run Trace](run-trace.md#the-screens)): a workflow's tabs are **Editor | Runs |
+Tests** at `/workflows/:id/runs` and `/workflows/:id/tests`, and the old `executions` and `evaluations` links redirect
+with their query. A run's view has no Canvas / Run trace switch (P-wfexec-1; **Full screen ↗** opens the trace), a plain
+header with the run id in **⋯** and **Debug in editor** in the Re-run menu (P-wfexec-2), and no Auto refresh: the list
+updates live and waits while the pointer is over it or it is scrolled down (P-wfexec-3). The Tests tab drops the yellow
+"no evaluation trigger" box and says **Add an evaluation trigger** (P-eval-1). X12 (tabs three levels deep) is closed.
+Links elsewhere in the app still name the old paths and go through the redirect; the retry and re-run words wait for
+B20's constants.
 
 ## Company backbone: left open from the wave 1 reviews (2026-11-14)
 
@@ -1626,8 +1670,57 @@ The wave 1 review notes were fixed in wave 2's carryover where they were contain
 - **All projects and Manage projects** both open `/projects` in the switcher; dropping one belongs with the projects
   page (B34).
 
+## Company backbone: left open from the wave 2 reviews (2026-11-14)
+
+The wave 2 review notes were fixed in wave 3's carryover where they were contained; these wait, each with its reason:
+
+- **Spotlight changed a flow when asked a question**: with Autonomous on, "What does this flow do? change nothing"
+  (qwen3-coder:30b) applied a change. B24's **Asks first** lets a person keep changes for review; a server guard that
+  tells a question from a request is a model-routing change, larger than a carryover.
+- **Ask the brain's answer is one paragraph**: it has no short reply with **Show more** as Spotlight has. The answer's
+  links need a cut that never splits a `[[link]]`; it belongs with the one Spotlight (B35), which takes over the panel.
+- **The streaming caret** sits on its own line under a paragraph (`StreamingText` puts it after the Markdown block);
+  moving it into the last block needs the Markdown renderer to take it. The first model step's words fading into a
+  Thought row when a second step starts is as designed; revisit with B24's motion.
+- **The reply footer wraps** "local" onto its own line at 1440 px in the test chat (`ReplyMeta` joins its parts in one
+  span); wrapping only between parts needs a look at the phone too.
+- **The architect's kept conversation** shows a retried or continued question and its error twice when reopened (a retry
+  appends again); replacing the failed item is a change to how the store keeps turns.
+- **Agent sessions at scale**: `listSessions` with a filter reads every summary of the agent (the Sessions tab's 6 s
+  refresh does this), and on Postgres the cursor's `id` tie-break follows the collation while the code compares in JS
+  (same-millisecond ties only). Filtering in SQL fixes both.
+- **The test chat's activity line** keeps only a 300-character detail of a tool row: no link to a child agent's or
+  workflow's run (the Sessions tab has the full row).
+- **Folded-away versions**: a decided publish request, the publish log or `restoredFrom` can name a version that an
+  autosave folded away; readers already allow a missing version (the 50-version cap does the same), so it is cosmetic.
+- **Tests not written**: the editor's autosave effect (re-arm, queue, leave flush) is tested only through its pure
+  helpers (moving it into `chrome.ts` would cover it); the user menu's two switches and the "Keep my conversations"
+  delete prompt have no test; `apps/web/claude-plugins/landflow-brain/hooks/register.test.ts` runs only through
+  `claude plugin test`, which the wave gate runs and `pnpm check` does not.
+- **MCP internals**: `instance-tools.ts` wraps `server.registerTool` through casts to enforce key scopes, so an SDK
+  signature change would pass silently (the tool-count assertions catch a tool missing from `TOOL_SCOPES`); a typed
+  helper would be sturdier. `openapi.ts` has no `/api/mcp` entry, so the MCP text sits on `/api/mcp/projects/{id}`.
+- **Developer details vs the reply footer**: the switch hides model lines on agent cards, the node panel and the run
+  trace, but the chat kit's footer and model chip always show model, tokens and cost. Whether one rule should cover
+  both is the person's call.
+- **Needs you after a sign-out**: the list is a module-level store; sign-out does a full page load, which clears it.
+  A sign-in as someone else without one would show the previous list until the next fetch.
+- **Ask's short follow-ups** borrow the last question's words when they have three or fewer of their own, so a short
+  question on another topic also pulls in the earlier pages; watch it in the Ollama live check.
+
+## Runs: one list (B20, 2026-11-14)
+
+Closed from the wave 1 page review: X2 (Executions, Runs and Search runs are one page, **Runs** at `/runs`, the old URLs redirect), P-ex-1 (no ID or Mode column), P-ex-2 (Stop all only while a run runs), P-ex-3 (repeated failures fold into one row), P-ex-4 (two re-run words), P-runs-1 (one search box with Status and Workflow chips, the rest under More filters) and P-cmp-1 (compare with fewer than two runs goes back to the list). See [the Runs list](run-trace.md#the-runs-list).
+
+Follow-up: the Runs list filters load only the latest 200 runs and its journal filters 100 matches; page the list server-side and bring journal word search back into the UI (see [limitations](limitations.md#runs-list-filters-b20-2026-11)).
+
+
 ## Not planned
 
 Later, maybe: an agent code sandbox, and prompt management. Not planned:
 Later, maybe: browser use, an agent code sandbox, spoken replies and realtime voice (dictation into Spotlight is built), and prompt management. Not planned:
 RPA, process mining, an app builder, and a chat hub (n8n is retiring its own).
+
+## Connect your harness
+
+Built: `/connect` (copy-paste setup and a brain key for each harness), Settings → MCP in four collapsed sections, and the admin's switch that forbids automatic sending ([connect-your-harness.md](connect-your-harness.md)). Closes V1, MOD4 and P-set-3 of the company backbone plan.

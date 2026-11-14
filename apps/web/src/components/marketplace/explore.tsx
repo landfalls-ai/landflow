@@ -1,5 +1,4 @@
 'use client';
-import { DevOnly } from '@/lib/client/developer-details';
 /**
  * The marketplace's Explore tab: every node plugin, workflow, composite type and Claude Code plugin in one place. It
  * merges GET /api/marketplaces/explore (every added marketplace, the Landflow plugins' flows), the registry's own
@@ -15,6 +14,7 @@ import { toast } from 'sonner';
 import { PhoneFilters } from '../ui/phone-filters';
 import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
+import { DevOnly } from '@/lib/client/developer-details';
 import type { ExploreFlow, ExplorePlugin, MarketplaceSummary } from '@/lib/shared/marketplace';
 import type { CompositeTypeInfo } from '@/lib/shared/composites';
 import type { NodeTypeInfo, PluginSummary } from '@/lib/shared/types';

@@ -48,11 +48,11 @@ const plugin = (status: PluginSummary['status']) => ({ id: `p-${status}`, status
 describe('Home tiles', () => {
   it('lists Needs you and no Plugins online', () => {
     const labels = homeKpis(undefined, 2).map((k) => k.label);
-    expect(labels).toEqual(['Workflows', 'Executions (24h)', 'Failed (24h)', 'Needs you']);
+    expect(labels).toEqual(['Workflows', 'Runs (24h)', 'Failed (24h)', 'Needs you']);
     expect(labels).not.toContain('Plugins online');
     const needs = homeKpis(undefined, 2)[3]!;
     expect(needs.value).toBe(2);
-    expect(needs.href).toBe('/executions?status=waiting');
+    expect(needs.href).toBe('/runs?status=waiting');
     // Waiting is not failing: only the Failed tile draws its number in red.
     expect(needs.danger).toBeFalsy();
     expect(homeKpis({ workflows: 1, activeWorkflows: 1, executions24h: 4, failed24h: 1, avgDurationMs: 10 }, 2)[2]!.danger).toBe(true);

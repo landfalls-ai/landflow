@@ -1,5 +1,4 @@
 'use client';
-import { DevOnly } from '@/lib/client/developer-details';
 /** Agents (Preview): a roster of personas, grouped by team, that use your tools, workflows and other agents. */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
@@ -8,6 +7,7 @@ import { Bot, Copy, Download, ExternalLink, MoreHorizontal, Network, Plus, Spark
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { plural, timeAgo } from '@/lib/client/format';
+import { DevOnly } from '@/lib/client/developer-details';
 import { cn } from '@/lib/utils';
 import type { Agent, AgentSummary, AgentTemplate } from '@/lib/shared/agents';
 import { AgentAvatar } from '@/components/agents/avatar';

@@ -110,7 +110,7 @@ export function errorItem(failed: ExecutionRecord, workflow: Pick<Workflow, 'id'
   return {
     execution: {
       id: failed.executionId,
-      url: `${publicUrl()}/workflows/${workflow.id}/executions/${failed.executionId}`,
+      url: `${publicUrl()}/workflows/${workflow.id}/runs/${failed.executionId}`,
       error: { message: failed.error?.message ?? 'Unknown error' },
       ...(lastNode && { lastNodeExecuted: lastNode }),
       mode: failed.mode,

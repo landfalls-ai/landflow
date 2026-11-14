@@ -1,10 +1,10 @@
 'use client';
-import { DevOnly } from '@/lib/client/developer-details';
 import { Segmented } from '@/components/ui/segmented';
 import { Fragment, useState } from 'react';
 import { Check, Copy, FileCode2, Radio, Server, Workflow } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { languageMeta } from '@/lib/client/format';
+import { DevOnly } from '@/lib/client/developer-details';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
 import { TransportBadge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';

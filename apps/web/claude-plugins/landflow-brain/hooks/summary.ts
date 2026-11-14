@@ -52,8 +52,15 @@ function pathToArea(word: string): string {
 /** An absolute or home path, a drive path or a backslash path: dropped whole, so no directory of the machine leaves it. */
 const isMachinePath = (word: string) => /^[/~]/.test(word) || /^[A-Za-z]:[\\/]/.test(word) || word.includes('\\') || /^\$\{?(?:HOME|PWD)\b/.test(word)
 
-/** A machine path after a prefix (`@/Users/x`, `--dir=/Users/x`, `path=~/x`, `file:///x`, `(/x`), or a path that climbs out with `..`. */
-const isPrefixedMachinePath = (word: string) => /(^|[=@:(])(~|\/|[A-Za-z]:[\\/])/.test(word) || /^file:/i.test(word) || word.split(/[\\/]/).includes('..')
+/** A path under a machine's own top-level directory, anywhere in a word (`-I/usr/local`, `x:/Users/a`). */
+const MACHINE_ROOT = /\/(?:Users|home|usr|opt|var|etc|tmp|private|Volumes|mnt|srv|root|Library|Applications|System)(?:\/|$)/
+
+/**
+ * A machine path after a prefix (`@/Users/x`, `--dir=/Users/x`, `path=~/x`, `file:///x`, `(/x`, a flag such as
+ * `-I/x`), one under a machine's top-level directory, or a path that climbs out with `..`.
+ */
+const isPrefixedMachinePath = (word: string) =>
+  /(^|[=@:(])(~|\/|[A-Za-z]:[\\/])/.test(word) || /^-[A-Za-z]+\//.test(word) || MACHINE_ROOT.test(word) || /^file:/i.test(word) || word.split(/[\\/]/).includes('..')
 
 /** A word without the brackets, quotes and punctuation around it. */
 const bareOf = (word: string) => word.replace(/^[("'`<\[“‘]+|[)"'`>\],.:;!?”’]+$/g, '')
@@ -91,7 +98,8 @@ function withoutPaths(text: string): string {
     const slashes = bare.split('/').length - 1
     const file = /^[\w./-]*[\w-]\.[A-Za-z][A-Za-z0-9]{0,7}$/.test(bare)
     // `and/or`, `CI/CD` and `11/12` are words; `apps/web/x` and `app.ts` are paths.
-    words.push(slashes >= 2 || (slashes === 1 && file) || (slashes === 0 && file) ? pathToArea(bare) : word)
+    // `@src/app/page.tsx` (a file tagged in the prompt) reduces like `src/app/page.tsx`.
+    words.push(slashes >= 2 || (slashes === 1 && file) || (slashes === 0 && file) ? pathToArea(bare.replace(/^@/, '')) : word)
   }
   return words.filter(Boolean).join(' ')
 }

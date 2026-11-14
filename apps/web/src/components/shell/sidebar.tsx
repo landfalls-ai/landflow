@@ -19,7 +19,7 @@ import { useDialogFocus } from '../ui/use-dialog-focus';
 const ICONS: Record<string, typeof House> = {
   '/': House,
   '/workflows': Workflow,
-  '/executions': Activity,
+  '/runs': Activity,
   '/agents': Bot,
   '/brain': Brain,
   '/data-tables': Table2,
@@ -65,7 +65,7 @@ export const fullScreen = (pathname: string) => /^\/(workflows|agents)\/[^/]+/.t
 export const TABS = [
   { href: '/', label: 'Home', icon: House, match: (p: string) => p === '/' },
   { href: '/workflows', label: 'Flows', icon: Workflow, match: (p: string) => groupOf(p) === 'workflows' },
-  { href: '/executions', label: 'Runs', icon: Activity, match: (p: string) => groupOf(p) === 'runs' },
+  { href: '/runs', label: 'Runs', icon: Activity, match: (p: string) => groupOf(p) === 'runs' },
   { href: '/agents', label: 'Agents', icon: Bot, match: (p: string) => p.startsWith('/agents') },
 ];
 
@@ -85,7 +85,7 @@ function TabBar({ pathname, more, onMore }: { pathname: string; more: boolean; o
           <Link key={href} href={href} aria-current={active ? 'page' : undefined} className={cn('relative flex h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[11px]', active ? 'font-semibold text-t1' : 'text-t3')}>
             <Icon className={cn('size-[22px]', active && 'text-ac')} strokeWidth={active ? 2 : 1.7} />
             {label}
-            {href === '/executions' && waiting > 0 && (
+            {href === '/runs' && waiting > 0 && (
               <>
                 <span aria-hidden className="absolute left-1/2 top-1.5 ml-2 min-w-[18px] rounded-full bg-warn px-1 text-center text-[10.5px] font-semibold leading-[18px] text-bg">
                   {waiting > 99 ? '99+' : waiting}

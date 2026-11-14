@@ -5,7 +5,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { run } from '../src/index';
 import type { Io } from '../src/command';
 import { execFileSync } from 'node:child_process';
@@ -118,7 +118,24 @@ function setup(options: { runner?: Fake; interactive?: boolean; answer?: string 
 
 const readHeld = (file: string) => (JSON.parse(readFileSync(file, 'utf8')) as { entries: HeldEntry[] }).entries;
 
+// The fake log's days are 2026-11-13 and 14: pin the clock (Date only) so the 14-day horizon does not prune them later.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-11-14T18:00:00Z'));
+});
+afterEach(() => vi.useRealTimers());
+
 describe('collect', () => {
+  it('reports only the days it kept: one older than 14 days is pruned and named in a note', async () => {
+    const log = ['@@ddd444\t2026-10-20T09:00:00+01:00\tmain\tOld work', 'src/a/b.ts', '', ...LOG.split('\n')].join('\n');
+    const t = setup({ runner: fakeRunner({ gh: false, log }) });
+    await t.cli(['work', 'repos', 'add', t.repo]);
+    const out = await t.cli(['work', 'collect', '--since', '2026-10-20', '--json']);
+    expect(out.json.entries.map((e: any) => e.day)).toEqual(['2026-11-13', '2026-11-14']);
+    expect(out.json.notes).toContain('1 day older than 14 days was not kept');
+    expect(readHeld(t.heldFile).map((e) => e.day).sort()).toEqual(['2026-11-13', '2026-11-14']);
+  });
+
   it('holds one entry per repo per day, built from the fake git log', async () => {
     const t = setup();
     expect((await t.cli(['work', 'repos', 'add', t.repo, '--json'])).json.added).toEqual({ path: t.repo, repo: 'acme/widgets' });
@@ -128,7 +145,7 @@ describe('collect', () => {
     const today = readHeld(t.heldFile).find((e) => e.day === '2026-11-14') as HeldEntry;
     expect(today.status).toBe('held');
     expect(today.event).toMatchObject({ kind: 'work.session', source: 'landflow-cli', repo: 'acme/widgets', branch: 'main', commits: 2 });
-    expect(today.event.title).toMatch(/^2 commits on main, feature\/docs: Fix the retry loop; Add docs for the cli/);
+    expect(today.event.title).toMatch(/^2 commits on main, feature\/docs: Fix the retry loop · Add docs for the cli/);
     expect(today.event.areas).toEqual(['packages/engine', 'docs/features']);
     expect(JSON.stringify(today)).not.toMatch(/executor\.ts|README|\.md|abcd1234efgh5678/);
     expect(validateWorkEvent(today.event).ok).toBe(true);
@@ -198,9 +215,17 @@ describe('summary', () => {
     const one = summarizeDay({ repo: 'acme/widgets', day: '2026-11-14', commits, prs: [] });
     const two = summarizeDay({ repo: 'acme/widgets', day: '2026-11-14', commits: [...commits].reverse(), prs: [] });
     expect(one).toEqual(two);
-    expect(one.title).toBe(`3 commits on main: Bearer [redacted] first; Second; ${'x'.repeat(59)}…`);
+    expect(one.title).toBe(`3 commits on main: Bearer [redacted] first · Second · ${'x'.repeat(59)}…`);
     expect(one.title.length).toBeLessThanOrEqual(200);
     expect(one.areas).toEqual(['a/b']);
+  });
+
+  it('keeps the subjects of a long title made of ordinary words', () => {
+    const subjects = ['Return early when the queue is empty', 'Let users pick the branch to deploy', 'Import the old settings file'];
+    const e = summarizeDay({ repo: 'acme/widgets', day: '2026-11-14', commits: subjects.map((s, i) => commit(String(i), `2026-11-14T0${i}:00:00Z`, s)), prs: [] });
+    expect(e.title.length).toBeGreaterThan(80);
+    expect(e.title).toContain('Return early when the queue is empty · Let users pick');
+    expect(validateWorkEvent(e).ok).toBe(true);
   });
 
   it('describes a day with only a pull request', () => {
@@ -359,7 +384,7 @@ describe('git arguments and a real repository', () => {
 
   it('finds a commit from earlier today and ignores a stash, with the real git', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'landflow-work-git-'));
-    const git = (args: string[], env: Record<string, string> = {}) => execFileSync('git', args, { cwd: dir, env: { ...process.env, ...env }, stdio: 'pipe' }).toString();
+    const git = (args: string[], env: Record<string, string> = {}) => execFileSync('git', ['-c', 'commit.gpgsign=false', ...args], { cwd: dir, env: { ...process.env, ...env }, stdio: 'pipe' }).toString();
     try {
       git(['init', '-q']);
       git(['config', 'user.email', 'dev@example.com']);
@@ -392,6 +417,12 @@ describe('a re-collect keeps the title the person edited', () => {
       expect(out.changed).toBe(false);
       expect(out.entries).toBe(before);
     }
+  });
+
+  it('keeps a dropped day dropped when it changes', () => {
+    const out = upsert([entry({ status: 'dropped', titleEdited: false })], ev({ commits: 3 }), '2026-11-14', now);
+    expect(out.changed).toBe(true);
+    expect(out.entry).toMatchObject({ status: 'dropped', event: { commits: 3 } });
   });
 
   it('updates other fields, keeps the edited title and goes back to held', () => {

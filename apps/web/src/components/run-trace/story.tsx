@@ -361,7 +361,8 @@ function Headlines({ items, model }: { items: Headline[]; model: RunModel }) {
   );
 }
 
-export function Story({ model, open }: { model: RunModel; open: (o: Open) => void }) {
+/** `top` is the run's summary and `bottom` the facts behind it (run-trace-view passes them: the Report is part of the Story). */
+export function Story({ model, open, top, bottom }: { model: RunModel; open: (o: Open) => void; top?: ReactNode; bottom?: ReactNode }) {
   const headlines = useMemo(() => (model.empty ? [] : headlinesOf(model)), [model]);
   const marked = useMemo(() => {
     const map = new Map<string, TeamMoment[]>();
@@ -371,6 +372,7 @@ export function Story({ model, open }: { model: RunModel; open: (o: Open) => voi
   if (model.empty) return <EmptyState compact title="Nothing recorded yet" hint="The story appears as the run starts." />;
   return (
     <div className="flex flex-col gap-1">
+      {top}
       <Headlines items={headlines} model={model} />
       {model.story.map((entry) => {
         const marks = marked.get(entry.key);
@@ -392,18 +394,12 @@ export function Story({ model, open }: { model: RunModel; open: (o: Open) => voi
           </div>
         );
       })}
-      <p className="mt-3 flex items-center justify-center gap-2 text-center text-[12px] text-t3">
-        {model.live ? (
-          <>
-            <span className="size-1.5 rounded-full bg-warn animate-pulse-soft" /> Live at {clock(model.foldedAt)}
-          </>
-        ) : (
-          <>
-            Run {model.status === 'success' ? 'finished' : model.status === 'waiting' ? 'is waiting' : model.status} at {clock(model.endedAt ?? model.foldedAt)}{' '}
-            · {fmtMs(model.t1 - model.t0)}
-          </>
-        )}
-      </p>
+      {model.live && (
+        <p className="mt-3 flex items-center justify-center gap-2 text-center text-[12px] text-t3">
+          <span className="size-1.5 rounded-full bg-warn animate-pulse-soft" /> Live at {clock(model.foldedAt)}
+        </p>
+      )}
+      {bottom}
     </div>
   );
 }

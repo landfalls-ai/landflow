@@ -3,7 +3,7 @@ import { currentPrincipal } from '@/lib/server/auth';
 import { handler, json, parseQuery } from '@/lib/server/http';
 import { searchMentions } from '@/lib/server/mentions/search';
 import { routeActor } from '@/lib/server/projects/http';
-import { hasScope, type ApiKeyScope } from '@/lib/shared/auth';
+import { keyMayTag } from '@/lib/server/mentions/key-scopes';
 import { MENTION_QUERY_MAX, MENTION_TYPES, type MentionType } from '@/lib/shared/mentions';
 
 export const dynamic = 'force-dynamic';
@@ -20,20 +20,17 @@ const querySchema = z.object({
   workflowId: z.string().min(1).max(200).optional(),
 });
 
-/** The key scope the routes that serve a kind need; a kind not listed needs only `workflows:read`. */
-const KIND_SCOPE: Partial<Record<MentionType, ApiKeyScope>> = { run: 'executions:read', credential: 'admin', person: 'admin' };
-
 /** The kinds an API key's scopes cover (a session may tag them all), so this route shows no more than the routes for each kind. */
 function kindsFor(requested: readonly MentionType[] | undefined): MentionType[] {
   const keyScopes = currentPrincipal()?.apiKey?.scopes;
   const all = requested ?? MENTION_TYPES;
-  return keyScopes ? all.filter((t) => !KIND_SCOPE[t] || hasScope(keyScopes, KIND_SCOPE[t])) : [...all];
+  return all.filter((t) => keyMayTag(keyScopes, t));
 }
 
 /**
  * GET /api/mentions?q=&types=&workflowId= — what the caller may tag with @, per kind (at most 8 each, a prefix match
  * first, then the newest): `{ groups: [{ type, items: [{ type, id, name, hint? }] }] }`. Only what the caller can open;
- * an API key also needs the scope of the kind's own routes (runs: `executions:read`, credentials and people: `admin`).
+ * an API key also needs the scope of the kind's own routes (`MENTION_KEY_SCOPE` in lib/server/mentions/key-scopes.ts).
  */
 export const GET = handler(async (request: Request) => {
   const query = parseQuery(request, querySchema);

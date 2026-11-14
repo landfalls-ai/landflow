@@ -56,7 +56,7 @@ export interface DetectContext {
   workflows: Workflow[];
 }
 
-const execHref = (workflowId: string, executionId?: string) => (executionId ? `/workflows/${workflowId}/executions/${executionId}` : `/workflows/${workflowId}`);
+const execHref = (workflowId: string, executionId?: string) => (executionId ? `/workflows/${workflowId}/runs/${executionId}` : `/workflows/${workflowId}`);
 const pct = (n: number) => `${Math.round(n * 1000) / 10}%`;
 const seconds = (ms: number) => `${(ms / 1000).toFixed(ms >= 10_000 ? 0 : 1)} s`;
 const clamp = (n: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, n));

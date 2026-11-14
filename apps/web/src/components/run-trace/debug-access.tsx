@@ -3,15 +3,17 @@
  * "Debug access" on the Run Trace page: mint, list and revoke the debug tokens of one execution
  * (docs/specs/19-debug-token.md). The token is shown once, with what to give an agent; the list never has it.
  */
-import { useDeveloperDetails } from '@/lib/client/developer-details';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { KeyRound, X } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { KeyRound, MoreHorizontal, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
+import { DevOnly } from '@/lib/client/developer-details';
 import { cn } from '@/lib/utils';
 import { claudeAddCommand, curlCheck, DEBUG_TTL_CHOICES, mcpConfigJson, relativeTime, tokenPrefix, tokenState } from '@/lib/shared/debug-token-snippets';
 import { Badge, type Tone } from '../ui/badge';
-import { Button, buttonClass } from '../ui/button';
+import { Button } from '../ui/button';
+import { MenuItem, Popover } from '../ui/popover';
 import { useDialogFocus } from '../ui/use-dialog-focus';
 import { CopyButton } from '../ui/copy-button';
 import { FieldLabel, Input, Select } from '../ui/inputs';
@@ -34,41 +36,56 @@ interface MintedToken {
 }
 
 const MAX_USES = 1000;
-const SCOPES: Array<{ id: Scope; name: string; hint: string }> = [
-  { id: 'executions:read', name: 'Read the execution', hint: 'get_execution, explain_failure' },
-  { id: 'trace:read', name: 'Read the trace', hint: 'get_run_trace' },
+/** `hint` is the tools the scope opens: shown only with developer details on. */
+export const SCOPES: Array<{ id: Scope; name: string; hint: string }> = [
+  { id: 'executions:read', name: 'See how the run went', hint: 'get_execution, explain_failure' },
+  { id: 'trace:read', name: 'See every step of the run', hint: 'get_run_trace' },
 ];
 const TONE: Record<string, Tone> = { live: 'success', revoked: 'muted', expired: 'muted', 'used up': 'warning' };
 
-export function DebugAccessButton({ executionId }: { executionId: string }) {
+/** The run page's ⋯ menu: "Debug access…" opens the dialog over the page, once the menu has closed. */
+export function RunMenu({ executionId }: { executionId: string }) {
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
-  const developerDetails = useDeveloperDetails();
-  if (!developerDetails) return null;
   return (
     <>
-      <button
-        ref={button}
-        type="button"
-        onClick={() => setOpen(true)}
-        className={buttonClass('outline', 'sm')}
+      <Popover
+        title="Run"
+        label="Run menu"
+        trigger={({ toggle }) => (
+          <Button ref={button} variant="ghost" size="icon-sm" onClick={toggle} aria-label="Run menu" className="text-t2">
+            <MoreHorizontal className="size-4" />
+          </Button>
+        )}
       >
-        <KeyRound className="size-3.5" /> <span>Debug access</span>
-      </button>
-      {open && (
-        <DebugAccessDialog
-          executionId={executionId}
-          onClose={() => {
-            setOpen(false);
-            button.current?.focus({ preventScroll: true });
-          }}
-        />
-      )}
+        {(close) => (
+          <MenuItem
+            onClick={() => {
+              close();
+              setOpen(true);
+            }}
+          >
+            <KeyRound /> Debug access…
+          </MenuItem>
+        )}
+      </Popover>
+      {/* In <body>, so the header's actions keep their order on a phone. */}
+      {open &&
+        createPortal(
+          <DebugAccessDialog
+            executionId={executionId}
+            onClose={() => {
+              setOpen(false);
+              button.current?.focus({ preventScroll: true });
+            }}
+          />,
+          document.body,
+        )}
     </>
   );
 }
 
-function DebugAccessDialog({ executionId, onClose }: { executionId: string; onClose: () => void }) {
+export function DebugAccessDialog({ executionId, onClose }: { executionId: string; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const [tokens, setTokens] = useState<TokenRecord[]>();
   const [scopes, setScopes] = useState<Scope[]>(['executions:read', 'trace:read']);
@@ -157,10 +174,12 @@ function DebugAccessDialog({ executionId, onClose }: { executionId: string; onCl
                 <div className="flex flex-col gap-1.5">
                   {SCOPES.map((s) => (
                     <label key={s.id} className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-hair px-3 py-2 text-[13px] has-[:checked]:border-ac">
-                      <input type="checkbox" checked={scopes.includes(s.id)} onChange={() => toggle(s.id)} className="size-4" />
+                      <input type="checkbox" checked={scopes.includes(s.id)} onChange={() => toggle(s.id)} className="size-4 shrink-0" />
                       <span className="min-w-0 flex-1">
                         <b className="block font-semibold text-t1">{s.name}</b>
-                        <span className="block font-mono text-[11px] text-t3">{s.hint}</span>
+                        <DevOnly>
+                          <span className="block font-mono text-[11px] text-t3">{s.hint}</span>
+                        </DevOnly>
                       </span>
                     </label>
                   ))}
