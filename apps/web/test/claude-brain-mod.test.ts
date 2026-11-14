@@ -5,8 +5,9 @@
  */
 import { describe, expect, it } from 'vitest';
 import { validateWorkEvent } from '../../../packages/protocol/src/work-events';
-import { BACKOFF_MAX_MS, QUEUE_MAX, backoffMs, due, emptyQueue, enqueue, serverUrl, settle } from '../claude-plugins/landflow-brain/hooks/client';
+import { BACKOFF_MAX_MS, QUEUE_MAX, backoffMs, due, emptyQueue, enqueue, keyFingerprint, liftStop, serverUrl, settle } from '../claude-plugins/landflow-brain/hooks/client';
 import { addArea, addPrs, areaOf, bashFacts, isAllowed, newEntry, parseRepos, repoSlug } from '../claude-plugins/landflow-brain/hooks/journal';
+import { redact as harnessRedact } from '../claude-plugins/landflow-harness/hooks/rules';
 import { redact, summaryOf, titleFrom, toEvent } from '../claude-plugins/landflow-brain/hooks/summary';
 
 const entry = () => ({ ...newEntry({ id: 'e-1', sourceId: 'cc-1', repo: 'acme/widgets', branch: 'feature/x', now: Date.parse('2026-11-14T09:00:00Z') }), turns: 3, title: 'Fix the login redirect' });
@@ -49,6 +50,9 @@ describe('commit and pull request detection', () => {
     expect(bashFacts('git add -A && git commit -m "x"', '[main abc] x').commits).toBe(1);
     expect(bashFacts('git commit -m "x"', 'nothing to commit, working tree clean').commits).toBe(0);
     expect(bashFacts('git commit -m "x"', 'error', true).commits).toBe(0);
+    expect(bashFacts('git -C sub commit -m "x"', '[main abc] x').commits).toBe(1);
+    expect(bashFacts('echo git commit', '[main abc] x').commits).toBe(0);
+    expect(bashFacts('git commit -m "x"', '').commits).toBe(0);
     expect(bashFacts('git push -u origin feature', '').prs).toEqual([]);
     expect(bashFacts('gh pr create --fill', 'https://github.com/acme/widgets/pull/12\n').prs).toEqual([{ url: 'https://github.com/acme/widgets/pull/12', state: 'opened' }]);
     expect(bashFacts('gh pr merge 12 --squash', '').prs).toEqual([]);
@@ -71,12 +75,33 @@ describe('the summary', () => {
 
   it('reduces file paths to directories and keeps no code, URL or email', () => {
     expect(titleFrom('Fix /Users/x/repo/apps/web/src/app.ts please')).not.toMatch(/app\.ts|Users/);
-    expect(titleFrom('Fix apps/web/src/app.ts today.')).toBe('Fix web/src today.');
+    expect(titleFrom('Fix apps/web/src/app.ts today.')).toBe('Fix apps/web today.');
+    expect(titleFrom('Use and/or CI/CD on 11/12 please.')).toBe('Use and/or CI/CD on 11/12 please.');
     expect(titleFrom('See https://example.com/a?b=1 and mail me@example.com now.')).toBe('See and mail now.');
     expect(titleFrom('const a = () => { return 1; }')).toBe('Coding session');
     expect(titleFrom('Fix this:\n```ts\nconst secret = 1\n```')).toBe('Fix this:');
     expect(titleFrom('x'.repeat(500)).length).toBeLessThanOrEqual(200);
     expect(titleFrom(undefined)).toBe('Coding session');
+  });
+
+  it('drops absolute, home and drive paths whole, and shows no directory of the machine', () => {
+    expect(titleFrom('Look at /Users/alice/notes.txt and fix it')).toBe('Look at and fix it');
+    expect(titleFrom('Read /Users/alice/secret-client/plan.md')).toBe('Read');
+    expect(titleFrom('Fix C:\\Users\\bob\\x.ts now')).toBe('Fix now');
+    expect(titleFrom('Open ~/work/acme/app.ts please')).toBe('Open please');
+    expect(titleFrom('Check "/var/log/app" and (/etc/hosts).')).toBe('Check and');
+  });
+
+  it('keeps the same secret rules as the harness mod', () => {
+    const samples = [
+      ['gh', 'p_', 'b'.repeat(36)].join(''),
+      ['sk-', 'ant-', 'c'.repeat(30)].join(''),
+      ['AK', 'IA', 'D'.repeat(16)].join(''),
+      ['lf_', 'e'.repeat(30)].join(''),
+      'authorization: bearer ' + 'f'.repeat(20),
+      'https://user:' + 'hunter22pw' + '@host.example',
+    ];
+    for (const sample of samples) expect(redact(sample)).toBe(harnessRedact(sample).text);
   });
 
   it('makes an event that validates, private, with counts and directories only', () => {
@@ -117,6 +142,19 @@ describe('the queue', () => {
     expect(queue.nextAt).toBe(now + 30_000 + 60_000);
     queue = settle(queue, due(queue, queue.nextAt), 200, queue.nextAt);
     expect(queue).toMatchObject({ items: [], failures: 0, nextAt: 0 });
+  });
+
+  it('keeps an event queued during a request, and lifts a 401 stop only for another key', () => {
+    let queue = enqueue(emptyQueue(), event('a'), now);
+    const batch = due(queue, now);
+    queue = enqueue(queue, event('b'), now + 5);
+    expect(settle(queue, batch, 200, now).items.map(item => item.event.sourceId)).toEqual(['b']);
+    const stopped = settle(queue, batch, 401, now, keyFingerprint('lf_old_key'));
+    expect(JSON.stringify(stopped)).not.toContain('lf_old_key');
+    expect(liftStop(stopped, keyFingerprint('lf_old_key'))).toBe(stopped);
+    const lifted = liftStop(stopped, keyFingerprint('lf_new_key'));
+    expect(lifted.stopped).toBeUndefined();
+    expect(due(lifted, now)).toHaveLength(2);
   });
 
   it('stops sending on a 401', () => {

@@ -4,7 +4,10 @@
  * directory names, a repository and the links of pull requests.
  */
 
-export type EntryStatus = 'open' | 'held' | 'sent' | 'dropped'
+import type { BrainWorkEvent } from './summary'
+
+/** `forgetting`: dropped here, but the delete in the brain has not been answered yet. */
+export type EntryStatus = 'open' | 'held' | 'sent' | 'dropped' | 'forgetting'
 
 export interface EntryPr {
   url: string
@@ -29,6 +32,8 @@ export interface Entry {
   prs: EntryPr[]
   status: EntryStatus
   sentAt?: string
+  /** Exactly what went to the brain. */
+  sentEvent?: BrainWorkEvent
 }
 
 export const LIMITS = { title: 200, areas: 20, area: 80, prs: 10 } as const
@@ -90,19 +95,27 @@ export interface BashFacts {
 }
 
 /**
- * What a Bash command did, as far as a work summary cares: `git commit` that worked, `gh pr create` and `gh pr merge`
- * with their URLs. `output` is read for the URL and then dropped.
+ * What a Bash command did, as far as a work summary cares: `git commit` that printed its `[branch hash]` line, `gh pr create` and
+ * `gh pr merge` with their URLs (github.com only). A push records nothing. `output` is read for the URL and then dropped.
  */
 export function bashFacts(command: string, output: string, failed = false): BashFacts {
   const facts: BashFacts = { commits: 0, prs: [] }
   if (failed) return facts
   for (const part of command.split(/&&|\|\||;|\n/)) {
     const words = part.trim().split(/\s+/)
-    const at = words.findIndex(word => word === 'git' || word === 'gh')
-    if (at < 0) continue
-    const rest = words.slice(at).filter(word => !word.startsWith('-') || word === '--')
+    // The command itself, after any `NAME=value` words: `echo git commit` is not a commit.
+    const at = words.findIndex(word => !/^\w+=/.test(word))
+    if (at < 0 || (words[at] !== 'git' && words[at] !== 'gh')) continue
+    const rest: string[] = [words[at]!]
+    for (let i = at + 1; i < words.length; i++) {
+      const word = words[i]!
+      // `git -C dir commit`: the flag's value is not the subcommand.
+      if (words[at] === 'git' && /^(-C|-c|--git-dir|--work-tree|--namespace)$/.test(word)) i += 1
+      else if (!word.startsWith('-') || word === '--') rest.push(word)
+    }
     if (words[at] === 'git' && rest[1] === 'commit') {
-      if (!/nothing to commit|no changes added|^On branch .*\n.*nothing/im.test(output)) facts.commits += 1
+      // A commit that worked prints `[branch abc1234] message`; no output, no commit.
+      if (/^\s*\[[^\]]+\]/m.test(output) && !/nothing to commit|no changes added/i.test(output)) facts.commits += 1
     } else if (words[at] === 'gh' && rest[1] === 'pr' && (rest[2] === 'create' || rest[2] === 'merge')) {
       const state = rest[2] === 'create' ? 'opened' : 'merged'
       const fromCommand = part.match(PR_URL)?.[0]

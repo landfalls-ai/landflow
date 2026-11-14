@@ -7,13 +7,13 @@ const COMPOSE = { model: 'm', promptModel: 'm', surfaces: ['terminal'], tools: [
 const BRIEFING = { yesterday: [{ title: 'Ship the billing page', repo: 'acme/widgets' }], autoSend: 'allowed', brain: 'on' }
 
 /** The engine beneath the mod: git answers, a fake Landflow, a clock and a store in memory. */
-function world(on: Parameters<Parameters<typeof test>[1]>[1], init: { remote?: string; briefing?: unknown; briefingDelayMs?: number; postStatus?: number } = {}) {
+function world(on: Parameters<Parameters<typeof test>[1]>[1], init: { remote?: string; briefing?: unknown; briefingDelayMs?: number; postStatus?: number; postDelayMs?: number; deleteStatuses?: number[]; answers?: string[]; seed?: Record<string, unknown> } = {}) {
   const posts: Array<Record<string, unknown>> = []
   const deleted: string[] = []
   const statuses: Array<string | undefined> = []
   const ran: string[] = []
   const clock = mock.clock(on, { now: Date.parse('2026-11-14T09:00:00Z') })
-  mock.store(on)
+  mock.store(on, init.seed)
   mock.env(on, {})
   on('command.register', () => ({ value: { command: 'brain' } }))
   on('ui.status', (_, e) => {
@@ -33,8 +33,10 @@ function world(on: Parameters<Parameters<typeof test>[1]>[1], init: { remote?: s
     }
     if (request.init?.method === 'DELETE') {
       deleted.push(request.url)
-      return { value: { status: 204, ok: true, headers: {}, text: '' } }
+      const status = init.deleteStatuses?.shift() ?? 204
+      return { value: { status, ok: status === 204, headers: {}, text: '' } }
     }
+    if (init.postDelayMs) await clock.sleep(init.postDelayMs)
     const events = (JSON.parse(request.init?.body ?? '{}') as { events: Array<Record<string, unknown>> }).events
     const status = init.postStatus ?? 200
     if (status === 200) posts.push(...events)
@@ -46,7 +48,7 @@ function world(on: Parameters<Parameters<typeof test>[1]>[1], init: { remote?: s
   on('tool.call', (_, e) => {
     if (e.tool === 'AskUserQuestion') {
       const questions = (e as unknown as { questions: Array<{ question: string }> }).questions
-      return { result: { questions, answers: Object.fromEntries(questions.map(q => [q.question, 'Send'])) } as never }
+      return { result: { questions, answers: Object.fromEntries(questions.map(q => [q.question, init.answers?.shift() ?? 'Send'])) } as never }
     }
     ran.push(e.tool)
     const command = (e as unknown as { command?: string }).command
@@ -74,7 +76,7 @@ test('a session in an allowed repo leaves one held entry, and nothing leaves the
   await work($)
   expect(posts).toEqual([])
   const today = (await command($, 'today')) as { text: string }
-  expect(today.text).toMatch(/\[held\].*acme\/widgets: Fix the login redirect in web\/src \(1 turns, 1 commits, 1 PRs\)/)
+  expect(today.text).toMatch(/\[held\].*acme\/widgets: Fix the login redirect in apps\/web \(1 turns, 1 commits, 1 PRs\)/)
   expect(statuses.at(-1)).toBe('brain: on · 1 held')
 })
 
@@ -82,7 +84,7 @@ test('review sends it, and status shows exactly what went', { options: OPTIONS }
   const { posts } = world(on)
   await work($)
   const reviewed = (await command($, 'review')) as { text: string }
-  expect(reviewed.text).toMatch(/queued/)
+  expect(reviewed.text).toMatch(/sent/)
   expect(posts).toHaveLength(1)
   expect(posts[0]).toMatchObject({ kind: 'work.session', source: 'claude-code', sourceId: 'sess-1', visibility: 'private', repo: 'acme/widgets', commits: 1, turns: 1, areas: ['apps/web'] })
   expect(JSON.stringify(posts[0])).not.toMatch(/login\.ts|\/work\/widgets|then add tests/i)
@@ -103,7 +105,16 @@ test('mode auto holds it when the briefing says autoSend is forbidden', { option
   expect(posts).toEqual([])
 })
 
-test('a disallowed repo, or no key, records and sends nothing', async ($, on) => {
+test('a disallowed repo records nothing, with the options set', { options: OPTIONS }, async ($, on) => {
+  const { posts } = world(on, { remote: 'git@github.com:acme/other.git' })
+  await $.session.start({ cwd: '/work/other', surface: 'terminal', isInteractive: true })
+  await $.prompt.submit({ text: 'hello' })
+  await $.session.end({ reason: 'other', sessionId: 's2', resume: { id: 's2' } } as never)
+  expect(((await command($, 'today')) as { text: string }).text).toBe('Nothing today yet.')
+  expect(posts).toEqual([])
+})
+
+test('no key records and sends nothing', async ($, on) => {
   const { posts } = world(on, { remote: 'git@github.com:acme/other.git' })
   await $.session.start({ cwd: '/work/other', surface: 'terminal', isInteractive: true })
   await $.prompt.submit({ text: 'hello' })
@@ -165,4 +176,132 @@ test('a 401 stops sending and says the key was rejected', { options: { ...OPTION
   await work($)
   await $.session.start({ cwd: '/work/widgets', surface: 'terminal', isInteractive: true })
   expect(statuses.at(-1)).toBe('brain: key rejected')
+})
+
+const start = ($: Parameters<Parameters<typeof test>[1]>[0]) => $.session.start({ cwd: '/work/widgets', surface: 'terminal', isInteractive: true })
+const say = ($: Parameters<Parameters<typeof test>[1]>[0], text: string) => $.prompt.submit({ text })
+
+test('a /clear holds the entry and the next prompt is recorded in a new one', { options: OPTIONS }, async ($, on) => {
+  world(on)
+  await start($)
+  await say($, 'First job.')
+  await $.session.end({ reason: 'clear', sessionId: 'sess-a', resume: { id: 'sess-a' } } as never)
+  await say($, 'Second job.')
+  await $.session.end({ reason: 'other', sessionId: 'sess-b', resume: { id: 'sess-b' } } as never)
+  const today = ((await command($, 'today')) as { text: string }).text
+  expect(today.match(/\[held\]/g)).toHaveLength(2)
+  expect(today).toContain('First job.')
+  expect(today).toContain('Second job.')
+})
+
+test('pause closes the running entry, and nothing after it is recorded', { options: OPTIONS }, async ($, on) => {
+  world(on)
+  await start($)
+  await say($, 'Before the pause.')
+  await command($, 'pause')
+  await say($, 'While paused.')
+  await $.tool.call({ tool: 'Edit', file_path: '/work/widgets/docs/a.md', old_string: 'a', new_string: 'b' })
+  await $.tool.call({ tool: 'Bash', command: 'git commit -am "x"' })
+  await $.session.end({ reason: 'other', sessionId: 'sess-p', resume: { id: 'sess-p' } } as never)
+  const today = ((await command($, 'today')) as { text: string }).text
+  expect(today.match(/\[held\]/g)).toHaveLength(1)
+  expect(today).toContain('Before the pause.')
+  expect(today).toContain('(1 turns, 0 commits, 0 PRs)')
+})
+
+test('mode auto with sync off still obeys a forbidden briefing, and holds when the policy is unknown', { options: { ...OPTIONS, mode: 'auto', sync: false } }, async ($, on) => {
+  const { posts } = world(on, { briefing: { ...BRIEFING, autoSend: 'forbidden' } })
+  await work($)
+  expect(posts).toEqual([])
+  expect(((await command($, 'today')) as { text: string }).text).toContain('[held]')
+})
+
+test('mode auto holds when the briefing never answered', { options: { ...OPTIONS, mode: 'auto' } }, async ($, on) => {
+  const { posts, clock } = world(on, { briefingDelayMs: 5000 })
+  const started = start($)
+  await clock.advance(2000)
+  await started
+  await say($, 'Do a thing.')
+  await $.session.end({ reason: 'other', sessionId: 's-u', resume: { id: 's-u' } } as never)
+  expect(posts).toEqual([])
+})
+
+test('a rejected key stops sending until the key is not the rejected one', { options: { ...OPTIONS, mode: 'auto' } }, async ($, on) => {
+  const { statuses } = world(on, { postStatus: 401 })
+  await work($)
+  await start($)
+  expect(statuses.at(-1)).toBe('brain: key rejected')
+})
+
+test('a stop from another key does not hold this one', { options: { ...OPTIONS, mode: 'auto' }, }, async ($, on) => {
+  const { statuses } = world(on, { seed: { queue: { items: [], failures: 0, nextAt: 0, stopped: 'key', stoppedFor: 'someotherkey' } } })
+  await start($)
+  expect(statuses.at(-1)).toMatch(/^brain: on/)
+})
+
+test('forget while the brain is unreachable keeps the entry and retries the delete', { options: OPTIONS }, async ($, on) => {
+  const { deleted, clock } = world(on, { deleteStatuses: [503] })
+  await work($)
+  await command($, 'review')
+  const id = /(e-[a-z0-9]+) \[sent\]/.exec(((await command($, 'today')) as { text: string }).text)?.[1] ?? ''
+  const first = (await command($, `forget ${id}`)) as { text: string }
+  expect(first.text).toMatch(/not deleted yet/)
+  const second = (await command($, `forget ${id}`)) as { text: string }
+  expect(second.text).toMatch(/deleted from the brain/)
+  expect(deleted).toHaveLength(2)
+  expect(((await command($, `forget ${id}`)) as { text: string }).text).toMatch(/Say which/)
+  void clock
+})
+
+test('a slow host does not hold session start past 2 seconds', { options: { ...OPTIONS, mode: 'auto' }, }, async ($, on) => {
+  const { clock } = world(on, { postDelayMs: 10_000, seed: { queue: { items: [{ event: { kind: 'work.session', source: 'claude-code', sourceId: 'q-1', occurredAt: '2026-11-13T09:00:00Z', title: 't', summary: 's', repo: 'acme/widgets', commits: 0, turns: 1, visibility: 'private' }, at: Date.parse('2026-11-14T08:00:00Z') }], failures: 0, nextAt: 0 } } })
+  let done = false
+  const started = start($).then(() => {
+    done = true
+  })
+  await clock.advance(2000)
+  await started
+  expect(done).toBe(true)
+})
+
+test('review Skip keeps the entry held', { options: OPTIONS }, async ($, on) => {
+  const { posts } = world(on, { answers: ['Skip'] })
+  await work($)
+  expect(((await command($, 'review')) as { text: string }).text).toBe('Nothing sent.')
+  expect(((await command($, 'today')) as { text: string }).text).toContain('[held]')
+  expect(posts).toEqual([])
+})
+
+test('review Drop removes the entry', { options: OPTIONS }, async ($, on) => {
+  const { posts } = world(on, { answers: ['Drop'] })
+  await work($)
+  expect(((await command($, 'review')) as { text: string }).text).toMatch(/dropped/)
+  expect(((await command($, 'today')) as { text: string }).text).toBe('Nothing today yet.')
+  expect(posts).toEqual([])
+})
+
+test('review sends under a new title', { options: OPTIONS }, async ($, on) => {
+  const { posts } = world(on, { answers: ['Billing page work', 'Send'] })
+  await work($)
+  await command($, 'review')
+  expect(posts[0]).toMatchObject({ title: 'Billing page work' })
+})
+
+test('a session that never ended is held at the next start', { options: OPTIONS }, async ($, on) => {
+  world(on)
+  await start($)
+  await say($, 'Work that crashed.')
+  await $.turn.complete({ answer: 'x', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  await start($)
+  const today = ((await command($, 'today')) as { text: string }).text
+  expect(today).toMatch(/\[held\].*Work that crashed\./)
+})
+
+test('the brain being off on the server pauses the session', { options: OPTIONS }, async ($, on) => {
+  const { statuses } = world(on, { briefing: { ...BRIEFING, brain: 'off' } })
+  await start($)
+  await say($, 'Not recorded.')
+  await $.session.end({ reason: 'other', sessionId: 's-off', resume: { id: 's-off' } } as never)
+  expect(statuses.at(-1)).toBe('brain: paused')
+  expect(((await command($, 'today')) as { text: string }).text).toBe('Nothing today yet.')
 })

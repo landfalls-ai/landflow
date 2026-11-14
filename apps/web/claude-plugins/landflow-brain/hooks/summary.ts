@@ -1,6 +1,6 @@
 /**
  * The summary of a session (docs/landflow-brain-mod.md): deterministic rules on this machine, no model call. The title is
- * the first sentence of the first prompt with secrets masked and file paths reduced to their directories. Everything
+ * the first sentence of the first prompt with secrets masked and file paths reduced to their directories (absolute paths dropped). Everything
  * else is facts: counts, directories, the repository. Never code, diffs, prompts beyond the title, tool output or the
  * environment.
  *
@@ -42,21 +42,28 @@ export function redact(text: string): string {
 const FALLBACK = 'Coding session'
 const looksLikeCode = (text: string) => [/[{}]/, /;\s*\S/, /=>/, /\(\s*\)/, /\b(?:function|const|let|var|import|return|class)\b\s*[\w({[]/].filter(re => re.test(text)).length >= 2
 
-/** A path-like word reduced to its directory (two levels at most), or nothing for a bare file or an absolute path's root. */
+/** A relative path-like word reduced to its first two directories, or nothing for a bare file. */
 function pathToArea(word: string): string {
-  const clean = word.replace(/^[("'`]+|[)"'`,.:;!?]+$/g, '')
-  const dirs = clean.replace(/\\/g, '/').split('/').filter(part => part && part !== '.' && part !== '..' && part !== '~').slice(0, -1)
-  const shown = dirs.slice(-2).join('/')
+  const dirs = word.split('/').filter(part => part && part !== '.' && part !== '..').slice(0, -1)
+  const shown = dirs.slice(0, 2).join('/')
   return shown && !shown.includes(',') ? shown : ''
 }
 
-/** The words of `text` with every file path reduced to its directory and every URL and email dropped. */
+/** An absolute or home path, a drive path or a backslash path: dropped whole, so no directory of the machine leaves it. */
+const isMachinePath = (word: string) => /^[/~]/.test(word) || /^[A-Za-z]:[\\/]/.test(word) || word.includes('\\') || /^\$\{?(?:HOME|PWD)\b/.test(word)
+
+/** The words of `text`: absolute paths and URLs and emails dropped, a relative file path reduced to its directories. */
 function withoutPaths(text: string): string {
   return text
     .split(/\s+/)
     .map(word => {
-      if (/^[("'`]*https?:\/\//i.test(word) || /@[\w-]+\.[\w.-]+/.test(word)) return ''
-      if (word.includes('/') || /^[("'`]*[\w-]+\.[A-Za-z][A-Za-z0-9]{0,7}[)"'`,.:;!?]*$/.test(word)) return pathToArea(word)
+      const bare = word.replace(/^[("'`<\[]+|[)"'`>\],.:;!?]+$/g, '')
+      if (/^https?:\/\//i.test(bare) || /@[\w-]+\.[\w.-]+/.test(bare)) return ''
+      if (isMachinePath(bare)) return ''
+      const slashes = bare.split('/').length - 1
+      const file = /^[\w./-]*[\w-]\.[A-Za-z][A-Za-z0-9]{0,7}$/.test(bare)
+      // `and/or`, `CI/CD` and `11/12` are words; `apps/web/x` and `app.ts` are paths.
+      if (slashes >= 2 || (slashes === 1 && file) || (slashes === 0 && file)) return pathToArea(bare)
       return word
     })
     .filter(Boolean)

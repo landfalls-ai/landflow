@@ -28,7 +28,8 @@ environment. With no key, no URL or no allowed repository, nothing is recorded a
 At the end of a session the entry is held in the local journal. Nothing leaves until you send it with `/brain review`,
 one entry at a time: send it, drop it, skip it, or type a new title. Mode `auto` queues it at the end instead, unless
 your admin has forbidden tools sending work on their own (`brain.workAutoSend`, which the briefing reports as
-`autoSend`); then it is held as in `review`. Mode `off` records nothing.
+`autoSend`); then it is held as in `review`. It is held too while no briefing has ever answered, because the policy is
+unknown. The briefing is read at every session start for this, whatever `sync` says. Mode `off` records nothing.
 
 Every event is private: only you read it, admins included.
 
@@ -39,15 +40,15 @@ Every event is private: only you read it, admins included.
 | `/brain today` | today's entries, held and sent, with their ids |
 | `/brain review` | asks about each held entry: send, drop, skip, or a new title |
 | `/brain status` | the state, and exactly what was sent, with ids (the event as JSON) |
-| `/brain pause`, `/brain resume` | stop and start recording and sending |
-| `/brain forget <id>` | drops the entry here; if it was sent, deletes it with `DELETE /api/brain/work/:sourceId` |
+| `/brain pause`, `/brain resume` | pause closes the running session's entry (held as it stands) and stops recording and sending; resume records the session again, as a new entry |
+| `/brain forget <id>` | drops the entry here; if it was sent, deletes it with `DELETE /api/brain/work/:sourceId`. If Landflow cannot be reached the entry stays (as waiting to be deleted) and the delete is retried every minute |
 
 If the server says the brain is off, the mod pauses for that session.
 
 ## The status line
 
 `brain: on · N held` (N entries wait for your review), `brain: paused`, or `brain: key rejected` when the server answered
-401: sending stops until you change the key.
+401: sending stops until you change the key (the mod keeps a hash of the rejected key, never the key).
 
 ## Yesterday at session start
 
@@ -55,6 +56,11 @@ At the start of a session the mod asks `GET /api/brain/briefing` for your own wo
 Landflow is slower or off, it uses the answer it cached for that day, or goes on without. What it has is added to the
 system prompt as "Yesterday, from the company brain": at most 1,200 characters, every line quoted with `>`, and marked as
 data, not instructions. The option `sync` turns it off.
+
+`/clear` and an in-process resume end the session id but not the process, and no session start follows: the mod holds the
+ending entry and opens a new one for the same repository and branch. A title never shows an absolute, home or drive
+path, and a relative file path is cut to its first two directories; a commit counts only when `git commit` printed its
+`[branch hash]` line, and `git push` records nothing.
 
 ## Offline queue
 

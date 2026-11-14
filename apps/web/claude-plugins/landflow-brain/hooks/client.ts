@@ -29,6 +29,29 @@ export interface Queue {
   nextAt: number
   /** Set by a 401: nothing more is sent until the key changes. */
   stopped?: 'key'
+  /** A hash of the key the 401 rejected (never the key); a different key lifts the stop. */
+  stoppedFor?: string
+}
+
+/** A short hash of the key, to tell a changed key from the rejected one. Not a secret store: it only compares. */
+export function keyFingerprint(key: string): string {
+  let a = 0xdeadbeef
+  let b = 0x41c6ce57
+  for (let i = 0; i < key.length; i++) {
+    const c = key.charCodeAt(i)
+    a = Math.imul(a ^ c, 2654435761)
+    b = Math.imul(b ^ c, 1597334677)
+  }
+  a = Math.imul(a ^ (a >>> 16), 2246822507) ^ Math.imul(b ^ (b >>> 13), 3266489909)
+  b = Math.imul(b ^ (b >>> 16), 2246822507) ^ Math.imul(a ^ (a >>> 13), 3266489909)
+  return (4294967296 * (2097151 & b) + (a >>> 0)).toString(36)
+}
+
+/** The queue with a 401's stop lifted when the configured key is not the one that was rejected. */
+export function liftStop(queue: Queue, fingerprint: string): Queue {
+  if (!queue.stopped || queue.stoppedFor === fingerprint) return queue
+  const { stopped: _s, stoppedFor: _f, ...rest } = queue
+  return { ...rest, nextAt: 0 }
 }
 
 export const emptyQueue = (): Queue => ({ items: [], failures: 0, nextAt: 0 })
@@ -49,12 +72,12 @@ export function due(queue: Queue, now: number): QueueItem[] {
   return queue.items.slice(0, BATCH)
 }
 
-/** After a request: 2xx drops the batch; 401 stops; anything else keeps the batch and backs off. */
-export function settle(queue: Queue, batch: readonly QueueItem[], status: number | undefined, now: number): Queue {
-  if (status === 401) return { ...queue, stopped: 'key' }
+/** After a request (the batch is matched by session and queue time, so an event queued meanwhile stays): 2xx drops the batch; 401 stops; anything else keeps the batch and backs off. */
+export function settle(queue: Queue, batch: readonly QueueItem[], status: number | undefined, now: number, fingerprint?: string): Queue {
+  if (status === 401) return { ...queue, stopped: 'key', ...(fingerprint && { stoppedFor: fingerprint }) }
   if (status !== undefined && ((status >= 200 && status < 300) || status === 400 || status === 413 || status === 422)) {
     // A refused batch (400 and the like) would be refused again: drop it rather than retry forever.
-    return { ...queue, items: queue.items.filter(item => !batch.includes(item)), failures: 0, nextAt: 0 }
+    return { ...queue, items: queue.items.filter(item => !batch.some(sent => sent.at === item.at && sent.event.sourceId === item.event.sourceId)), failures: 0, nextAt: 0 }
   }
   const failures = queue.failures + 1
   return { ...queue, failures, nextAt: now + backoffMs(failures) }

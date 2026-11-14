@@ -8,7 +8,7 @@
  * not at all. The hooks only observe: none denies a tool call or changes a result.
  */
 import type { EngineInterface, Register } from 'claude-code'
-import { QUEUE_MAX, backoffMs, deleteWork, due, emptyQueue, enqueue, getBriefing, postWork, serverUrl, settle, type Briefing, type Config, type Queue } from './client'
+import { QUEUE_MAX, backoffMs, deleteWork, due, emptyQueue, enqueue, getBriefing, keyFingerprint, liftStop, postWork, serverUrl, settle, type Briefing, type Config, type Queue } from './client'
 import { addArea, addPrs, areaOf, bashFacts, isAllowed, newEntry, parseRepos, repoSlug, type Entry } from './journal'
 import { titleFrom, toEvent } from './summary'
 
@@ -56,6 +56,10 @@ let repoRoot = '/'
 let brainOff = false
 let yesterday: string | undefined
 let flushing: Promise<void> | undefined
+/** The allowed repository this session is in, while it can still be recorded. */
+let allowed: { repo: string; branch?: string } | undefined
+let fingerprint = ''
+let seq = 0
 
 async function load($: EngineInterface): Promise<Entry[]> {
   return (((await $.store.get('journal')) as Entry[] | undefined) ?? []).filter(Boolean)
@@ -77,6 +81,33 @@ async function upsert($: EngineInterface, entry: Entry) {
 
 async function queueOf($: EngineInterface): Promise<Queue> {
   return ((await $.store.get('queue')) as Queue | undefined) ?? emptyQueue()
+}
+
+/** An entry's id and session id: the clock's millisecond, and a count so two in one millisecond differ. */
+async function openEntry($: EngineInterface, repo: string, branch?: string) {
+  const now = await $.clock.now()
+  const tag = `${now.toString(36)}${(seq++).toString(36)}`
+  current = newEntry({ id: `e-${tag}`, sourceId: `cc-${tag}`, repo, ...(branch && { branch }), now })
+  await upsert($, current)
+}
+
+/** End the running entry: held for review (dropped when it has no turn); in mode `auto` queued, unless the admin forbids it or nothing is known of the policy. */
+async function closeCurrent($: EngineInterface, sessionId: string | undefined, canSend: boolean) {
+  const entry = current
+  if (!entry) return
+  current = undefined
+  entry.endedAt = new Date(await $.clock.now()).toISOString()
+  if (sessionId) entry.sourceId = sessionId
+  if (!entry.turns) {
+    entry.status = 'dropped'
+    await upsert($, entry)
+    return
+  }
+  entry.status = 'held'
+  await upsert($, entry)
+  // Only a briefing that said `allowed` lets mode `auto` send; an unknown policy holds.
+  const policy = (await $.store.get('autoSend')) === 'allowed'
+  if (canSend && mode === 'auto' && policy && !(await paused($))) await send($, entry)
 }
 
 async function paused($: EngineInterface): Promise<boolean> {
@@ -103,25 +134,53 @@ function flush($: EngineInterface): Promise<void> {
   return flushing
 }
 
+/** Retry the deletes of entries forgotten while the brain could not be reached. */
+async function retryForgets($: EngineInterface) {
+  if (!config) return
+  const waiting = (await load($)).filter(entry => entry.status === 'forgetting')
+  const gone = new Set<string>()
+  for (const entry of waiting) {
+    const status = await deleteWork($, config, entry.sourceId)
+    if (status === 204 || status === 404) gone.add(entry.id)
+  }
+  if (!gone.size) return
+  const fresh = await load($)
+  for (const entry of fresh) if (gone.has(entry.id)) entry.status = 'dropped'
+  await save($, fresh)
+}
+
 async function flushOnce($: EngineInterface) {
   if (!config) return
-  let queue = await queueOf($)
   const now = await $.clock.now()
-  const batch = due(queue, now)
+  const stopped = (await queueOf($)).stopped
+  if (!stopped) await retryForgets($)
+  if (await paused($)) return
+  const batch = due(await queueOf($), now)
   if (!batch.length) return
   const result = await postWork($, config, batch.map(item => item.event))
-  queue = settle(queue, batch, result.status, now)
+  // Read the queue again: a send that came in during the request is kept, and only this batch leaves.
+  const queue = settle(await queueOf($), batch, result.status, now, fingerprint)
   await $.store.set('queue', queue)
-  if (result.status !== undefined && result.status >= 200 && result.status < 300) {
+  const status = result.status
+  if (status !== undefined && status >= 200 && status < 300) {
+    await $.store.set('problems', result.rejected.map(item => `${item.sourceId}: ${item.reason}`.slice(0, 200)).slice(0, 10))
     const journal = await load($)
     const sent = new Set(result.saved)
+    const marked: Entry[] = []
     for (const entry of journal) {
       if (entry.status === 'held' && sent.has(entry.sourceId)) {
         entry.status = 'sent'
         entry.sentAt = new Date(now).toISOString()
+        const event = batch.find(item => item.event.sourceId === entry.sourceId)?.event
+        if (event) entry.sentEvent = event
+        marked.push(entry)
       }
     }
+    // The same session sent again (a resumed one) replaced the earlier event there; it is one entry here too.
+    for (const entry of journal) if (entry.status === 'sent' && !marked.includes(entry) && marked.some(item => item.sourceId === entry.sourceId)) entry.status = 'dropped'
     await save($, journal)
+  } else if (status === 400 || status === 413 || status === 422) {
+    await $.store.set('problems', [`the brain refused ${batch.length} event${batch.length === 1 ? '' : 's'} (HTTP ${status}); they stay held here and are not retried`])
   }
 }
 
@@ -147,6 +206,8 @@ export const register: Register = (on, options) => {
   mode = options.mode === 'auto' || options.mode === 'off' ? options.mode : 'review'
   sync = options.sync !== false
   config = url && key ? { url, key } : undefined
+  fingerprint = keyFingerprint(key)
+  allowed = undefined
   current = undefined
   flushing = undefined
 
@@ -154,6 +215,7 @@ export const register: Register = (on, options) => {
     cwd = e.cwd || '/'
     repoRoot = cwd
     current = undefined
+    allowed = undefined
     brainOff = false
     yesterday = undefined
     await $.command.register({ name: 'brain', description: 'Your work in the company brain: today, review, status, pause, resume, forget <id>', argumentHint: 'today | review | status | pause | resume | forget <id>' })
@@ -167,24 +229,25 @@ export const register: Register = (on, options) => {
         }
       }
       await save($, journal)
-      await flush($)
-      if (sync) {
-        const briefing: Briefing | undefined = await getBriefing($, config, day(await $.clock.now()))
-        if (briefing?.brain === 'off') brainOff = true
-        if (briefing) {
-          await $.store.set('autoSend', briefing.autoSend)
-          yesterday = yesterdaySection(briefing.yesterday)
-        }
+      // A key changed since a 401 lifts the stop. The flush is not awaited: a host that hangs must not hold the first prompt.
+      const queue = await queueOf($)
+      const lifted = liftStop(queue, fingerprint)
+      if (lifted !== queue) await $.store.set('queue', lifted)
+      void flush($).then(() => showStatus($)).catch(() => undefined)
+      // The briefing is always read, for the policy (auto-send, brain off); `sync` only decides whether yesterday joins the prompt.
+      const briefing: Briefing | undefined = await getBriefing($, config, day(await $.clock.now()))
+      if (briefing?.brain === 'off') brainOff = true
+      if (briefing) {
+        await $.store.set('autoSend', briefing.autoSend)
+        if (sync) yesterday = yesterdaySection(briefing.yesterday)
       }
-      if (!(await paused($))) {
-        const slug = repoSlug((await gitOut($, ['git', 'remote', 'get-url', 'origin'])) ?? '')
-        if (isAllowed(repos, slug)) {
-          repoRoot = (await gitOut($, ['git', 'rev-parse', '--show-toplevel'])) ?? cwd
-          const branch = await gitOut($, ['git', 'rev-parse', '--abbrev-ref', 'HEAD'])
-          const now = await $.clock.now()
-          current = newEntry({ id: `e-${now.toString(36)}`, sourceId: `cc-${now.toString(36)}`, repo: slug, ...(branch && branch !== 'HEAD' && { branch }), now })
-          await upsert($, current)
-        }
+      const slug = repoSlug((await gitOut($, ['git', 'remote', 'get-url', 'origin'])) ?? '')
+      if (isAllowed(repos, slug)) {
+        repoRoot = (await gitOut($, ['git', 'rev-parse', '--show-toplevel'])) ?? cwd
+        const branch = await gitOut($, ['git', 'rev-parse', '--abbrev-ref', 'HEAD'])
+        allowed = { repo: slug, ...(branch && branch !== 'HEAD' && { branch }) }
+        // Paused or brain off: nothing is opened now; /brain resume opens it.
+        if (!(await paused($))) await openEntry($, allowed.repo, allowed.branch)
       }
       void $.clock.every(FLUSH_MS, () => flush($))
     }
@@ -199,6 +262,8 @@ export const register: Register = (on, options) => {
   }).catch(($, e, next) => next(e))
 
   on('prompt.submit', async ($, e, next) => {
+    // A session that went on without a start (after /clear) or was paused and resumed is recorded from its next prompt.
+    if (!current && allowed && config && mode !== 'off' && !e.command && !e.isMeta && !(await paused($))) await openEntry($, allowed.repo, allowed.branch).catch(() => undefined)
     if (current && !e.command && !e.isMeta) {
       current.turns += 1
       // The first prompt is read once, for the title; it is kept nowhere.
@@ -236,22 +301,12 @@ export const register: Register = (on, options) => {
 
   on('session.end', async ($, e, next) => {
     try {
-      if (current) {
-        const entry = current
-        current = undefined
-        const now = await $.clock.now()
-        entry.endedAt = new Date(now).toISOString()
-        entry.sourceId = e.sessionId || entry.sourceId
-        if (!entry.turns) {
-          entry.status = 'dropped'
-          await upsert($, entry)
-        } else {
-          entry.status = 'held'
-          await upsert($, entry)
-          const forbidden = (await $.store.get('autoSend')) === 'forbidden'
-          if (mode === 'auto' && !forbidden && !(await paused($))) await send($, entry)
-        }
-      }
+      // /clear and an in-process resume end the session id but not the process, and no session.start follows: open the next entry here.
+      const goesOn = (e.reason === 'clear' || e.reason === 'resume') && allowed
+      const where = allowed
+      await closeCurrent($, e.sessionId, true)
+      if (!goesOn) allowed = undefined
+      else if (where && !(await paused($))) await openEntry($, where.repo, where.branch)
     } catch {
       // The session still ends.
     }
@@ -276,36 +331,50 @@ export const register: Register = (on, options) => {
       case 'status': {
         const sent = journal.filter(entry => entry.status === 'sent')
         const queue = await queueOf($)
-        const lines = sent.map(entry => `${entry.id} sent ${entry.sentAt ?? ''}: ${JSON.stringify(toEvent(entry))}`)
+        const lines = sent.map(entry => `${entry.id} sent ${entry.sentAt ?? ''}: ${JSON.stringify(entry.sentEvent ?? toEvent(entry))}`)
+        const problems = ((await $.store.get('problems')) as string[] | undefined) ?? []
+        const forgetting = journal.filter(entry => entry.status === 'forgetting').length
         const waiting = queue.items.length
         return reply(
           [
             `brain: ${queue.stopped === 'key' ? 'key rejected' : (await paused($)) ? 'paused' : 'on'} · ${journal.filter(entry => entry.status === 'held').length} held · ${waiting} waiting to send (at most ${QUEUE_MAX})${waiting && queue.nextAt ? `, next try in ${Math.max(0, Math.round((queue.nextAt - (await $.clock.now())) / 1000))} s (backoff ${Math.round(backoffMs(queue.failures) / 1000)} s)` : ''}`,
             lines.length ? `Sent, exactly as it went:\n${lines.join('\n')}` : 'Nothing has been sent.',
+            ...(problems.length ? [`Not accepted by the brain: ${problems.join('; ')}`] : []),
+            ...(forgetting ? [`${forgetting} deleted here, waiting to be deleted in the brain (retried every minute; /brain forget <id> tries now)`] : []),
           ].join('\n'),
         )
       }
       case 'pause':
         await $.store.set('paused', true)
+        // The running session's entry is closed and held as it stands; nothing more is added to it or sent.
+        await closeCurrent($, undefined, false)
         await showStatus($)
-        return reply('Paused: nothing more is recorded or sent until /brain resume.')
+        return reply('Paused: the running session is closed and held as it stands, and nothing more is recorded or sent until /brain resume.')
       case 'resume':
         await $.store.set('paused', false)
+        if (!current && allowed && !brainOff) await openEntry($, allowed.repo, allowed.branch)
         await showStatus($)
-        return reply('Resumed. A session that starts from now on is recorded again.')
+        return reply('Resumed. This session is recorded again from now on, as a new entry.')
       case 'forget': {
         const entry = all.find(item => item.id === arg || item.sourceId === arg)
         if (!arg || !entry) return reply('Say which: /brain forget <id>. /brain today lists the ids.')
-        const wasSent = entry.status === 'sent' || (await queueOf($)).items.some(item => item.event.sourceId === entry.sourceId)
         const queue = await queueOf($)
+        const wasSent = entry.status === 'sent' || entry.status === 'forgetting' || queue.items.some(item => item.event.sourceId === entry.sourceId)
         await $.store.set('queue', { ...queue, items: queue.items.filter(item => item.event.sourceId !== entry.sourceId) })
-        entry.status = 'dropped'
         if (current?.id === entry.id) current = undefined
-        await save($, [...journal.filter(item => item.id !== entry.id), entry])
+        // A sent entry stays in the journal until the brain says the copy is gone (204 or 404).
+        entry.status = wasSent ? 'forgetting' : 'dropped'
+        await upsert($, entry)
         let note = 'Dropped here.'
         if (wasSent) {
           const status = await deleteWork($, config, entry.sourceId)
-          note = status === 204 || status === 404 ? 'Dropped here and deleted from the brain.' : 'Dropped here; the brain could not be reached, so delete it there with /brain forget again later.'
+          if (status === 204 || status === 404) {
+            entry.status = 'dropped'
+            await upsert($, entry)
+            note = 'Dropped here and deleted from the brain.'
+          } else {
+            note = 'Dropped here; the brain could not be reached, so the copy there is not deleted yet. It is retried every minute while a session runs, or run /brain forget again.'
+          }
         }
         await showStatus($)
         return reply(`${entry.id}: ${note}`)
@@ -321,7 +390,9 @@ export const register: Register = (on, options) => {
               const answer = await $.ui.ask(shown, ['Send', 'Drop', 'Skip'])
               if (answer === 'Send') {
                 await send($, entry)
-                done.push(`${entry.id} queued`)
+                const after = (await load($)).find(item => item.id === entry.id)
+                const waiting = (await queueOf($)).items.some(item => item.event.sourceId === entry.sourceId)
+                done.push(`${entry.id} ${after?.status === 'sent' ? 'sent' : waiting ? 'queued' : 'not accepted (/brain status says why)'}`)
                 break
               }
               if (answer === 'Drop') {
