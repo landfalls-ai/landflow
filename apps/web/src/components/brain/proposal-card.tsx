@@ -6,7 +6,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ChevronDown, ChevronRight, Clock, FilePlus2, MessageSquare, MoreHorizontal } from 'lucide-react';
+import { ChevronDown, ChevronRight, FilePlus2, MessageSquare, MoreHorizontal } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
@@ -175,104 +175,136 @@ function Changes({ proposal }: { proposal: Proposal }) {
   );
 }
 
-export function ProposalCard({ proposal, actions, compact, onFocus }: { proposal: Proposal; actions: ProposalActions; compact?: boolean; onFocus?: () => void }) {
+/** The first sentence of a suggestion's why: the one line the compact card shows. */
+export function firstSentence(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  const end = flat.search(/[.!?](\s|$)/);
+  return end === -1 ? flat : flat.slice(0, end + 1);
+}
+
+/**
+ * A suggestion as four things: the title, one line of why, the button that does it and ⋯ (Dismiss, Snooze and the
+ * flow's other buttons). Kind, subject, risk, confidence, the whole why, the evidence and what to expect are behind
+ * Show more. `expanded` opens it from the start; `href` adds an "All suggestions" link.
+ */
+export function ProposalCard({ proposal, actions, compact, onFocus, expanded, href }: { proposal: Proposal; actions: ProposalActions; compact?: boolean; onFocus?: () => void; expanded?: boolean; href?: string }) {
+  const [more, setMore] = useState(Boolean(expanded));
   const tag = proposal.detector ? detectorLabel(proposal.detector, proposal.label) : (proposal.label ?? 'Suggestion');
   const kind = proposalKind(proposal);
   const busy = actions.busy === proposal.id;
   // An entity says what kind it is: “Invoice reminders · Initiative”.
   const entityType = proposal.target.type === 'entity' ? parseEntityRef(proposal.target.id)?.type : undefined;
   const target = [proposal.target.name, entityType && ENTITY_LABELS[entityType], proposal.target.nodeName].filter(Boolean).join(' · ');
+  // The one button: Apply, or when the flow gave advice buttons of its own, the first of those; the rest go under ⋯.
+  const flowActions = proposal.actions ?? [];
+  const hasApply = kind !== 'advice' || !flowActions.length;
+  const lead = hasApply ? undefined : flowActions[0];
+  const rest = hasApply ? flowActions : flowActions.slice(1);
   return (
     <div className={cn('animate-fade-up space-y-1.5 rounded-[10px] border border-hair bg-wl', compact ? 'p-2.5' : 'p-3')}>
-      <div className="flex items-start gap-2">
-        <Badge tone="accent" className="mt-px">
-          {tag}
-        </Badge>
-        <span className="min-w-0 flex-1 text-[13px] font-semibold leading-snug text-t1">{proposal.title}</span>
-        <Badge tone={RISK_TONE[proposal.risk]} title="How risky the change is">
-          {proposal.risk.charAt(0).toUpperCase() + proposal.risk.slice(1)} risk
-        </Badge>
-        <span className="whitespace-nowrap text-[11px] text-t3" title="How sure Landflow is">
-          {Math.round(proposal.confidence * 100)}% sure
-        </span>
-      </div>
-      {target &&
-        (onFocus ? (
-          <button onClick={onFocus} className="text-[11.5px] text-t3 hover:text-ac">
-            {target}
-          </button>
-        ) : (
-          <div className="text-[11.5px] text-t3">{target}</div>
-        ))}
-      {!!proposal.audience?.length && (
-        <div className="flex items-center gap-1.5 text-[11.5px] text-t3">
-          <span>For {proposal.audience.map((m) => m.name ?? m.email ?? m.slackUserId).join(', ')}</span>
-          {!!proposal.slack?.messages.length && <MessageSquare className="size-3 text-ac" aria-label="Mirrored to Slack" />}
+      <span className="block text-[13px] font-semibold leading-snug text-t1">{proposal.title}</span>
+      {!more && <p className="truncate text-[12px] leading-relaxed text-t2">{firstSentence(proposal.why)}</p>}
+      {more && (
+        <div className="space-y-1.5" data-testid="proposal-more">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge tone="accent">{tag}</Badge>
+            <Badge tone={RISK_TONE[proposal.risk]} title="How risky the change is">
+              {proposal.risk.charAt(0).toUpperCase() + proposal.risk.slice(1)} risk
+            </Badge>
+            <span className="whitespace-nowrap text-[11px] text-t3" title="How sure Landflow is">
+              {Math.round(proposal.confidence * 100)}% sure
+            </span>
+          </div>
+          {target &&
+            (onFocus ? (
+              <button onClick={onFocus} className="text-[11.5px] text-t3 hover:text-ac">
+                {target}
+              </button>
+            ) : (
+              <div className="text-[11.5px] text-t3">{target}</div>
+            ))}
+          {!!proposal.audience?.length && (
+            <div className="flex items-center gap-1.5 text-[11.5px] text-t3">
+              <span>For {proposal.audience.map((m) => m.name ?? m.email ?? m.slackUserId).join(', ')}</span>
+              {!!proposal.slack?.messages.length && <MessageSquare className="size-3 text-ac" aria-label="Mirrored to Slack" />}
+            </div>
+          )}
+          <p className="text-[12px] leading-relaxed text-t2">{proposal.why}</p>
+          <Evidence proposal={proposal} />
+          {proposal.effect && <p className="text-[12px] leading-relaxed text-t1">Expected: {proposal.effect}</p>}
+          {proposal.metricSpec && (
+            <p className="text-[11.5px] leading-relaxed text-t3">
+              Measured by: {proposal.metricSpec.label} ({proposal.metricSpec.better} is better)
+            </p>
+          )}
+          <Changes proposal={proposal} />
+          <Warnings warnings={proposal.warnings} />
         </div>
       )}
-      <Why text={proposal.why} />
-      {!compact && <Evidence proposal={proposal} />}
-      {proposal.effect && <p className="text-[12px] leading-relaxed text-t1">Expected: {proposal.effect}</p>}
-      {proposal.metricSpec && (
-        <p className="text-[11.5px] leading-relaxed text-t3">
-          Measured by: {proposal.metricSpec.label} ({proposal.metricSpec.better} is better)
-        </p>
-      )}
-      <Changes proposal={proposal} />
-      <Warnings warnings={proposal.warnings} />
       <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-        {proposal.actions?.map((a) => (
-          <Button key={a.id} size="sm" variant={a.style === 'primary' ? 'primary' : 'outline'} onClick={() => actions.act(proposal, a)} loading={busy} disabled={!!actions.busy && !busy}>
-            {a.label}
-          </Button>
-        ))}
-        {(kind !== 'advice' || !proposal.actions?.length) && (
-          <Button size="sm" variant={proposal.actions?.length ? 'outline' : 'primary'} onClick={() => actions.apply(proposal)} loading={busy} disabled={!!actions.busy && !busy}>
+        {hasApply ? (
+          <Button size="sm" variant="primary" onClick={() => actions.apply(proposal)} loading={busy} disabled={!!actions.busy && !busy}>
             {APPLY_LABEL[kind]}
           </Button>
+        ) : (
+          lead && (
+            <Button size="sm" variant="primary" onClick={() => actions.act(proposal, lead)} loading={busy} disabled={!!actions.busy && !busy}>
+              {lead.label}
+            </Button>
+          )
         )}
         <Popover
           align="start"
           trigger={({ toggle }) => (
-            <Button size="sm" variant="ghost" onClick={toggle} disabled={!!actions.busy}>
-              Dismiss <MoreHorizontal className="size-3.5" />
+            <Button size="sm" variant="ghost" onClick={toggle} disabled={!!actions.busy} aria-label="More: dismiss, snooze" className="max-md:min-h-11">
+              <MoreHorizontal className="size-4" />
             </Button>
           )}
         >
-          {(close) =>
-            DISMISS_LABELS.map(({ reason, label }) => (
+          {(close) => (
+            <>
+              {rest.map((a) => (
+                <MenuItem
+                  key={a.id}
+                  onClick={() => {
+                    close();
+                    actions.act(proposal, a);
+                  }}
+                >
+                  {a.label}
+                </MenuItem>
+              ))}
+              {DISMISS_LABELS.map(({ reason, label }) => (
+                <MenuItem
+                  key={reason}
+                  onClick={() => {
+                    close();
+                    actions.dismiss(proposal, reason);
+                  }}
+                >
+                  Dismiss: {label}
+                </MenuItem>
+              ))}
               <MenuItem
-                key={reason}
                 onClick={() => {
                   close();
-                  actions.dismiss(proposal, reason);
+                  actions.snooze(proposal, 7);
                 }}
               >
-                {label}
+                Snooze 7 days
               </MenuItem>
-            ))
-          }
+            </>
+          )}
         </Popover>
-        <Button size="sm" variant="ghost" onClick={() => actions.snooze(proposal, 7)} disabled={!!actions.busy}>
-          <Clock className="size-3.5" /> Snooze 7 days
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-/** Why a suggestion is made: four lines, the rest on Show more (a long one would push its buttons off a phone's screen). */
-function Why({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
-  const long = text.length > 280;
-  return (
-    <div>
-      <p className={cn('text-[12px] leading-relaxed text-t2', long && !open && 'line-clamp-4')}>{text}</p>
-      {long && (
-        <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="mt-0.5 text-[12px] font-semibold text-ac hover:underline max-md:min-h-11">
-          {open ? 'Show less' : 'Show more'}
+        <button type="button" aria-expanded={more} onClick={() => setMore((m) => !m)} className="ml-auto text-[12px] font-semibold text-ac hover:underline max-md:min-h-11">
+          {more ? 'Show less' : 'Show more'}
         </button>
-      )}
+        {href && (
+          <Link href={href} className="text-[12px] text-t3 hover:text-t1 max-md:min-h-11 max-md:content-center">
+            All suggestions
+          </Link>
+        )}
+      </div>
     </div>
   );
 }

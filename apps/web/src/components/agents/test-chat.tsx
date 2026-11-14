@@ -5,7 +5,6 @@ import { Bot, SquarePen, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Badge } from '../ui/badge';
 import { AssistantRow, CHAT_ICON_BUTTON, ChatComposer, ChatEmpty, Working } from '../ui/chat';
-import { useNewLook } from '../shell/look-toggle';
 import { isAnalyst, sourcesOf } from '@/lib/shared/analyst-chart';
 import type { AgentToolConfig } from '@/lib/shared/agents';
 import { AnalystTimeline, SUGGEST_FIX_MESSAGE, SourceChips } from './analyst-view';
@@ -35,7 +34,7 @@ export function TestChat({
   /** The agent's tools: the Platform analyst is drawn with source chips and an answer card in the new look. */
   tools?: AgentToolConfig[];
 }) {
-  const analyst = useNewLook() && isAnalyst(tools);
+  const analyst = isAnalyst(tools);
   const run = useAgentRun(agentId);
   const [draft, setDraft] = useState('');
   const [deciding, setDeciding] = useState(false);

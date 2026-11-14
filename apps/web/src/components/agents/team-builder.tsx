@@ -37,7 +37,6 @@ import { MemberCards } from './member-cards';
 import { modelLabel, useLastTeamRun, type LastTeamRun } from './team-run-data';
 import { RunTimelineLive } from '../run-trace/run-timeline-card';
 import { RunLines } from '../run-trace/run-line';
-import { useNewLook } from '../shell/look-toggle';
 
 export { modelLabel };
 
@@ -57,7 +56,6 @@ function below(config: AgentTeamConfig, id: string): Set<string> {
 export function TeamBuilder({ teamId }: { teamId: string }) {
   const router = useRouter();
   const agents = useAgentList();
-  const newLook = useNewLook();
   const lastRun = useLastTeamRun(teamId);
   const [team, setTeam] = useState<AgentTeam>();
   const [draft, setDraft] = useState<AgentTeamConfig>();
@@ -301,9 +299,9 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
             <Textarea id="team-goal" rows={2} value={draft.goal ?? ''} onChange={(e) => update((c) => ({ ...c, goal: e.target.value }))} placeholder="Build approved plugins on a branch, tested and reviewed" />
           </Field>
 
-          {newLook && lastRun?.live && <RunTimelineLive executionId={lastRun.executionId} name={lastRun.workflowName} />}
-          {newLook && lastRun && !lastRun.live && <RunLines runs={[{ id: lastRun.executionId, href: `/runs/${lastRun.executionId}`, name: lastRun.workflowName, startedAt: lastRun.startedAt }]} />}
-          {newLook && <MemberCards config={draft} teamName={draft.name} agents={agents ?? []} run={lastRun} />}
+          {lastRun?.live && <RunTimelineLive executionId={lastRun.executionId} name={lastRun.workflowName} />}
+          {lastRun && !lastRun.live && <RunLines runs={[{ id: lastRun.executionId, href: `/runs/${lastRun.executionId}`, name: lastRun.workflowName, startedAt: lastRun.startedAt }]} />}
+          {<MemberCards config={draft} teamName={draft.name} agents={agents ?? []} run={lastRun} />}
 
           <section aria-label="Org chart">
             <div className="mb-1.5 flex items-center justify-between">

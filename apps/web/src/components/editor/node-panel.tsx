@@ -20,7 +20,6 @@ import { SuggestionsCard } from './suggestions-card';
 import { TriggerUrl } from './trigger-url';
 import { syncTeamName } from './turn-into-team';
 import { TeamNodePanel } from './team-node-panel';
-import { useNewLook } from '../shell/look-toggle';
 import { useDialogFocus } from '../ui/use-dialog-focus';
 import { isPhone, usePhone } from '@/lib/client/use-phone';
 
@@ -61,7 +60,6 @@ function PaneHeader({ title, children }: { title: string; children?: React.React
 }
 
 export function NodePanel() {
-  const newLook = useNewLook();
   const openNodeId = useEditor((s) => s.openNodeId);
   const node = useEditor((s) => s.nodes.find((n) => n.id === s.openNodeId));
   const info = useEditor((s) => (node ? s.nodeTypes[node.data.wf.type] : undefined));
@@ -399,7 +397,7 @@ export function NodePanel() {
                       onChange={(credentials) => update({ credentials })}
                     />
                   ) : null}
-                  {descriptor && newLook && wf.type === 'core.runTeam' ? (
+                  {descriptor && wf.type === 'core.runTeam' ? (
                     // The new look: the team as people with jobs, then the message and where approvals go (team-node-panel.tsx).
                     <TeamNodePanel
                       properties={descriptor.properties}

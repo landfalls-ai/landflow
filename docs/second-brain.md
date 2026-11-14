@@ -129,8 +129,10 @@ The first tick is 30 s after start.
 
 ### 5. Where you see it
 
-- **Home → Suggestions**: the open suggestions the viewer can see, best first. Each shows its evidence and
-  **Changes** (the diff, as in Spotlight). The buttons:
+- **Home → Suggestions**: the open suggestions the viewer can see, best first. Each card is compact: the title, one
+  line of why (its first sentence), one button and **⋯**. **Show more** adds the kind, the subject, risk and
+  confidence, the whole why, the evidence, what to expect and the **Changes** (the diff, as in Spotlight). The
+  Brain index uses the same card and can link to Home with **All suggestions**. The buttons:
   - **Apply**, which saves through governance; **Create workflow** for a draft; **Mark done** for advice.
   - **Build it** for a missing tool. It records the go-ahead (`proposal.applied`, with the detector), and published
     workflows that start from On Usage Event on `proposal.applied` with **Suggestion From: Missing tool** get the
@@ -139,7 +141,7 @@ The first tick is 30 s after start.
     (`POST /api/proposals/:id/apply` returns `started`).
   - **Your own buttons**, when a flow added [actions](#actions-decided-by-the-flow) ("Intro us"). They sit next to
     Apply, and replace **Mark done** on advice.
-  - **Dismiss** with a reason: intended, not relevant, wrong, or already done.
+  - **Dismiss** (under **⋯**) with a reason: intended, not relevant, wrong, or already done.
   - **Snooze 7 days**.
 - **The canvas**: a "N suggestions" pill at the top left of the workflow it is about. It folds out into a side card,
   and the canvas stays visible. Apply here changes the open canvas (one undo), and you save it like any edit. Clicking
@@ -446,7 +448,7 @@ were 2"); without one the detector's own current multiplier is used, and the res
 - its tools: four Landflow Usage tools (`usage_report`, `search_facts`, `workflow_knowledge`, `open_suggestions`) and
   `suggest_improvement`, with the arguments filled by the model.
 
-In its chat (Test agent), the **new look** draws the analyst differently (the classic look keeps the plain chat):
+In its chat (Test agent), the analyst draws differently from a plain chat:
 
 - **What it reads**: chips above the chat, one per source its tools read (Runs, Usage & cost, Facts, Suggestions, and
   Team notebook when it has a notebook tool). The analyst is recognised by its tools: a Landflow Usage tool named

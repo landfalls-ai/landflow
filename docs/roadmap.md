@@ -1539,6 +1539,14 @@ nodes it changed until you close it (or a minute passes), Spotlight's own runs m
 folds to icons ([assistant.md](assistant.md#the-spotlight-panel)). A Fable review of the old layout set the design. Next:
 resizing the column, and keeping a fix bubble's text after it closes (the timeline has it).
 
+## Backbone wave 1: one look, a plainer Home (2026-11-14)
+
+The Classic look is retired (X5): every screen draws the New look and `useLook`, `useNewLook` and `setLook` are gone
+(`look-toggle.tsx` stays as an empty shell for one wave). Home's primary is **New workflow** (P-home-1), a Needs you tile
+replaces Plugins online, the Plugins panel and the header meta are gone and an offline plugin shows one line above the
+tiles (P-home-2), a suggestion is a compact card with Show more (P-home-3), and a run of one flow is one line
+(P-home-4). The Executions page does not read `?status=waiting` yet, so the Needs you tile opens the unfiltered list.
+
 ## Specs for what comes next (2026-11-05)
 
 Fifteen specs in [specs/](specs/README.md): a code sandbox, guard enforcement, a durable pause, runbooks made and run by themselves, the brain's auto-apply, lazy loading for Postgres, durable telemetry, shared trace comments, more webhook triggers, per-rule Switch outputs, agent evals, public run-report links, composite governance rules and live integration checks. The first slice of composite governance rules is built ([composites.md](composites.md#governance-rules)); the hot run data of backend wave 6 covers part of spec 07.

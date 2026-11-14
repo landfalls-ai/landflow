@@ -15,7 +15,6 @@ import { runLine } from '@/lib/shared/run-line';
 import { fitSteps, runTimeline, timelineFill, type RunTimeline, type TimelineStatus, type TimelineStep } from '@/lib/shared/run-timeline';
 import { fmtMs, type RunModel } from '@/lib/shared/run-trace-model';
 import { cn } from '@/lib/utils';
-import { useNewLook } from '../shell/look-toggle';
 import { RerunFromHere } from './run-controls';
 import { Avatar, actorColor } from './parts';
 import { RunLineRow } from './run-line';
@@ -149,10 +148,9 @@ function CardHead({ timeline }: { timeline: RunTimeline }) {
  * Re-run from the failed step; a run that is done says how long it took and what it used, with a link to the Story.
  */
 export function RunTimelineCard({ model, onStory }: { model: RunModel; onStory?: () => void }) {
-  const newLook = useNewLook();
   const timeline = useMemo(() => runTimeline(model, headlinesOf(model)), [model]);
   const [steps, setSteps] = useState(false);
-  if (!newLook || model.empty || !timeline.steps.length) return null;
+  if (model.empty || !timeline.steps.length) return null;
   // Once a run is over, its timeline folds into one line: what came in, who did it, what came out.
   if (!model.live && (timeline.status === 'done' || timeline.status === 'failed' || timeline.status === 'over-budget') && !steps)
     return (
