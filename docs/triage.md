@@ -22,7 +22,9 @@ and the score rules in [threat-intel](../plugins/threat-intel/README.md).
 **Alert triage → Landfall war room** (`plugins/triage/flows/alert-triage-to-landfall.json`) is the main flow:
 
 1. **Intake.** A webhook (header secret) takes Alertmanager, Grafana, Datadog, CloudWatch (SNS), Sentry, Wazuh, Clickland or any
-   JSON. **Normalize Alert** detects the format (anything it doesn't recognise is read as Generic: `title`,
+   JSON. **Skip direct alerts** (a Filter) first drops any delivery whose `route` is `direct`, at the top of the body or
+   in its `data`: the source already sent that alert straight to Landfall (Clickland marks such deliveries
+   `data.route: "direct"`), so it can't open a second room. **Normalize Alert** detects the format (anything it doesn't recognise is read as Generic: `title`,
    `severity`, `service`…) and writes one canonical `alert` per alert, with a `dedupKey` (the source's fingerprint, or a
    hash of source, title and service). A resolved alert goes straight to **Recover** in
    Landfall, which closes the matching trigger.

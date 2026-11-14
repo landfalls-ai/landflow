@@ -57,7 +57,8 @@ item carries the field as `route`. Such a delivery stops at the Filter, so a dir
 second time. A delivery without `route` (or with any other value) goes on to the agent.
 
 Alerts from Clickland also go through the triage plugin's flows: **Normalize Alert** reads Clickland's deliveries and
-both triggers' items (`format: clickland`, also auto-detected; [plugins/triage](../../plugins/triage/README.md)).
+both triggers' items (`format: clickland`, also auto-detected; [plugins/triage](../../plugins/triage/README.md)), and
+**Alert triage → Landfall war room** skips a direct delivery the same way ([triage.md](../triage.md#the-pipeline)).
 
 ## The observability assistant
 

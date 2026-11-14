@@ -143,3 +143,42 @@ describe('Clickland alert triage', () => {
     expect(passed.map((item) => item.json.route ?? null)).toEqual([null, 'flow']);
   });
 });
+
+describe('Alert triage → Landfall', () => {
+  // Any source (Clickland among them) can send an alert straight to Landfall and mark the delivery `route: "direct"`, at
+  // the top of the body or in its `data`. Landfall has opened that room, so the generic flow stops such a delivery
+  // before Normalize alert: it can't open a second room or recover one it didn't open.
+  it('drops a delivery its source routed straight to Landfall, before Normalize alert', async () => {
+    const file = flows.find(([path]) => path === 'triage/flows/alert-triage-to-landfall.json')![1];
+    const workflow = { ...normalizeWorkflow(structuredClone(file.template.workflow)), id: 'wf_alert_triage' };
+    const trigger = workflow.nodes.find((n) => n.type === 'core.webhook')!;
+    const first = workflow.connections.filter((c) => c.type === 'main' && c.source === trigger.id);
+    expect(first).toHaveLength(1);
+    const gate = workflow.nodes.find((n) => n.id === first[0].target)!;
+    expect(gate.type).toBe('core.filter');
+    const next = workflow.connections.filter((c) => c.type === 'main' && c.source === gate.id);
+    expect(next.map((c) => workflow.nodes.find((n) => n.id === c.target)?.type)).toEqual(['triage.normalizeAlert']);
+
+    const webhook = (body: Record<string, unknown>, tag: string) => ({ json: { headers: {}, params: {}, query: {}, body: { ...body, tag } } });
+    const clickland = (route?: string) => ({ type: 'alert.firing', id: 'evt_1', data: { alert: { id: 'al_1', name: 'Checkout errors' }, value: 12, ...(route && { route }) } });
+    const record = await runWorkflow({
+      workflow,
+      mode: 'trigger',
+      triggerOutput: {
+        nodeId: trigger.id,
+        items: [
+          webhook(clickland('direct'), 'clickland-direct'),
+          webhook(clickland(), 'clickland-flow'),
+          webhook({ alertname: 'HighCPU', route: 'direct' }, 'generic-direct'),
+          webhook({ alertname: 'HighCPU', route: 'flow' }, 'generic-flow'),
+          webhook({ receiver: 'oncall', status: 'firing', alerts: [] }, 'alertmanager'),
+          { json: { type: 'alert.firing', alert: { id: 'al_2' }, route: 'direct', tag: 'trigger-item-direct' } },
+        ],
+      },
+      destinationNodeId: gate.id,
+    });
+    expect(record.status).toBe('success');
+    const passed = record.runData[gate.id]?.at(-1)?.outputs[0] ?? [];
+    expect(passed.map((item) => (item.json.body as { tag: string }).tag)).toEqual(['clickland-flow', 'generic-flow', 'alertmanager']);
+  });
+});
