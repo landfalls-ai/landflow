@@ -41,7 +41,7 @@ describe('the layer checklist', () => {
   it('points each missing layer at where it is set up', () => {
     const layers = agentLayers(normalizeConfig({ name: 'Blank' }), { evalCases: 0 });
     expect(layers.find((l) => l.id === 'router')?.fix).toEqual({ tab: 'abilities', section: 'section-router' });
-    expect(layers.find((l) => l.id === 'guardrails')?.fix).toEqual({ tab: 'safety', section: 'section-guardrails' });
-    expect(layers.find((l) => l.id === 'evals')?.fix.tab).toBe('evaluations');
+    expect(layers.find((l) => l.id === 'guardrails')?.fix).toEqual({ tab: 'abilities', section: 'section-guardrails' });
+    expect(layers.find((l) => l.id === 'evals')?.fix).toEqual({ tab: 'activity', view: 'evaluations' });
   });
 });
