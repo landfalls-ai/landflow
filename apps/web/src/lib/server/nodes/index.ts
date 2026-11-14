@@ -8,6 +8,8 @@ import { a2aAgentNode } from './a2a';
 import { runTeamNode } from './run-team';
 import { messageAgentNode, workflowTrigger } from './agents';
 import { brainEntityNode } from './entities';
+// B32:
+import { proposeFlowsNode, velocitySignalsNode } from './velocity';
 import { detectorTriggerNode, findSimilarNode, landflowUsageNode, recordEventNode, suggestImprovementNode, suggestionDecidedTriggerNode, usageTriggerNode } from './usage';
 import { aiAgentNode, anthropicChatModelNode, calculatorToolNode, ollamaChatModelNode, simpleMemoryNode } from './ai';
 import { chainLlmNode, informationExtractorNode, textClassifierNode } from './chains';
@@ -135,6 +137,9 @@ export const corePlugin = definePlugin({
     runReportNode,
     evaluationTrigger,
     evaluationNode,
+    // B32:
+    velocitySignalsNode,
+    proposeFlowsNode,
   ],
   composites: [aiStep],
   credentialTypes: [openAiApiCredential, anthropicApiCredential, typesafeApiCredential, strandsDeciderApiCredential, cohereApiCredential, httpBearerAuthCredential, httpHeaderAuthCredential, postgresCredential, oAuth2ApiCredential, mcpOAuth2ApiCredential, httpBasicAuthCredential, jwtAuthCredential, imapCredential, microsoftBotCredential, sshPrivateKeyCredential, kagentCredential],

@@ -36,6 +36,8 @@ import { HttpError } from '../errors';
 const DAY_MS = 86_400_000;
 export const STALE_DAYS = 14;
 const QUIET_DAYS = 30;
+/** The longest build prompt a suggestion keeps (Spotlight's first message). */
+export const BUILD_PROMPT_MAX = 2_000;
 
 export const weeklyCap = () => {
   const n = Number(process.env.LANDFLOW_BRAIN_WEEKLY_CAP);
@@ -280,6 +282,7 @@ export function proposeFrom(
     ops: validated?.ops ?? [],
     ...(validated && (validated.warnings.length || validated.dropped.length) && { warnings: [...validated.warnings, ...validated.dropped] }),
     ...(input.draft && { draft: input.draft }),
+    ...(input.buildPrompt?.trim() && { buildPrompt: input.buildPrompt.trim().slice(0, BUILD_PROMPT_MAX) }),
     ...(input.agentChange && agent && { agentChange: input.agentChange }),
     ...(detector && input.metricSpec && { metricSpec: input.metricSpec }),
     risk,
@@ -327,6 +330,13 @@ export function applyProposal(id: string, options: ApplyOptions = {}, db: Databa
     const draft: Workflow = { ...proposal.draft, id: draftId, active: false };
     const create = () => governedSave(draft, undefined, (w) => store.saveWorkflow(w), { by: options.actorId, source: 'brain' }).workflow;
     workflow = options.createWorkflow ? options.createWorkflow(create, draftId) : create();
+    createdWorkflowId = workflow.id;
+  } else if (proposal.buildPrompt) {
+    // "Build it" with Spotlight: an empty workflow named after the suggestion; the editor opens it and Spotlight builds from the prompt.
+    const buildId = `wf_${nanoid(10)}`;
+    const empty: Workflow = { id: buildId, name: proposal.title.slice(0, 120), active: false, nodes: [], connections: [] };
+    const create = () => governedSave(empty, undefined, (w) => store.saveWorkflow(w), { by: options.actorId, source: 'brain' }).workflow;
+    workflow = options.createWorkflow ? options.createWorkflow(create, buildId) : create();
     createdWorkflowId = workflow.id;
   } else if (proposal.ops.length && proposal.target.type === 'workflow' && proposal.target.id) {
     const existing = store.getWorkflow(proposal.target.id);

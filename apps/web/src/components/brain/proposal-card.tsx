@@ -27,7 +27,9 @@ const DISMISS_LABELS: Array<{ reason: DismissReason; label: string }> = [
 ];
 
 /** What Apply does for this suggestion. */
-export function proposalKind(p: Proposal): 'draft' | 'agent' | 'ops' | 'build' | 'advice' | 'note' {
+export function proposalKind(p: Proposal): 'draft' | 'spotlight' | 'agent' | 'ops' | 'build' | 'advice' | 'note' {
+  // A build prompt: Build it creates an empty workflow and Spotlight builds it (docs/second-brain.md#build-it-with-spotlight).
+  if (p.buildPrompt) return 'spotlight';
   if (p.draft) return 'draft';
   // A team's notebook asks to keep a note for the project (docs/team-notebook.md).
   if (p.notebook) return 'note';
@@ -37,7 +39,7 @@ export function proposalKind(p: Proposal): 'draft' | 'agent' | 'ops' | 'build' |
   return p.ops.length ? 'ops' : 'advice';
 }
 
-const APPLY_LABEL = { draft: 'Create workflow', agent: 'Apply', ops: 'Apply', build: 'Build it', advice: 'Mark done', note: 'Keep it' } as const;
+export const APPLY_LABEL = { draft: 'Create workflow', spotlight: 'Build it', agent: 'Apply', ops: 'Apply', build: 'Build it', advice: 'Mark done', note: 'Keep it' } as const;
 
 export interface ProposalActions {
   busy?: string;
@@ -106,6 +108,9 @@ export function useProposalActions({ onDone, onForbidden, localApply }: { onDone
         if (kind === 'draft' && result.workflow) {
           toast.success('Workflow created');
           router.push(`/workflows/${result.workflow.id}`);
+        } else if (kind === 'spotlight' && result.workflow) {
+          // The editor opens with Spotlight already building from the suggestion's prompt (editor/spotlight/ask-param.ts).
+          router.push(`/workflows/${result.workflow.id}?ask=proposal:${encodeURIComponent(p.id)}`);
         } else if (kind === 'build') {
           if (result.started?.length) toast.success(`Approved: ${result.started.map((w) => `“${w.name}”`).join(', ')} builds it`, { action: { label: 'Runs', onClick: () => router.push('/runs') } });
         } else {
@@ -142,7 +147,13 @@ function Evidence({ proposal }: { proposal: Proposal }) {
 
 function Changes({ proposal }: { proposal: Proposal }) {
   const [open, setOpen] = useState(false);
-  const { draft, agentChange, ops } = proposal;
+  const { draft, agentChange, ops, buildPrompt } = proposal;
+  if (buildPrompt)
+    return (
+      <p className="flex items-start gap-1.5 text-[12px] text-t2">
+        <FilePlus2 className="mt-0.5 size-3.5 shrink-0 text-ac" /> <span>Spotlight builds a new workflow from: {buildPrompt}</span>
+      </p>
+    );
   if (draft)
     return (
       <p className="flex items-center gap-1.5 text-[12px] text-t2">
