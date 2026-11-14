@@ -39,7 +39,11 @@ function workflows(actor: Actor): Found[] {
   const all = store.listWorkflows();
   const visible = seen(actor, 'workflow', all.map((w) => w.id));
   const folderName = new Map(folders.list().map((f) => [f.id, f.name]));
-  return keep(all, visible).map((w) => ({ type: 'workflow', id: w.id, name: w.name, ...(w.folderId && folderName.get(w.folderId) && { hint: folderName.get(w.folderId) }), ...(w.updatedAt && { at: w.updatedAt }) }));
+  // The folder and the last change tell apart workflows with one name (a copy, a seeded set).
+  return keep(all, visible).map((w) => {
+    const hint = [w.folderId && folderName.get(w.folderId), w.updatedAt && `changed ${when(w.updatedAt)}`].filter(Boolean).join(' · ');
+    return { type: 'workflow', id: w.id, name: w.name, ...(hint && { hint }), ...(w.updatedAt && { at: w.updatedAt }) };
+  });
 }
 
 function nodes(actor: Actor, workflowId: string | undefined): Found[] {

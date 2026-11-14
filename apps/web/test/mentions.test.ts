@@ -132,6 +132,14 @@ describe('searchMentions', () => {
     expect(items.every((h) => h.name.startsWith('Report'))).toBe(true);
   });
 
+  it('tells two workflows with one name apart by their last change', async () => {
+    workflow('wf_twin_a', 'Ticket shaper', mineProject);
+    workflow('wf_twin_b', 'Ticket shaper', mineProject);
+    const twins = hitsOf(await searchMentions(member, { q: 'ticket shaper', types: ['workflow'] }), 'workflow');
+    expect(twins).toHaveLength(2);
+    for (const hit of twins) expect(hit.hint).toMatch(/^changed \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+  });
+
   it('offers a workflow’s nodes only when it is given and the caller can open it', async () => {
     expect(hitsOf(await searchMentions(member, { types: ['node'] }), 'node')).toEqual([]);
     expect(hitsOf(await searchMentions(member, { types: ['node'], workflowId: 'wf_inv_theirs' }), 'node')).toEqual([]);

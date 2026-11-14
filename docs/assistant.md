@@ -233,6 +233,8 @@ page, a person or a credential. A choice turns the `@text` you typed into `@Name
 - **The list.** On a desktop a 320 px popover; on a phone a full-width sheet above the keyboard. The groups are "On this
   page" (what the host already has, such as the open workflow's nodes), your last 8 choices, then the kinds in the order
   above. It searches `GET /api/mentions` 150 ms after the last key. Up and Down move, Enter or Tab choose, Esc closes.
+  Each row has a short hint beside the name: a workflow its folder and when it last changed (so two with one name can
+  be told apart), a node its type, a run its status and time, a person their role.
 - **What each tag gives the model.** At most 1.5 KB per tag: a workflow, its outline; a node, its type, name and
   parameters with long values clipped; a run, its status, error, failed node and numbers; an agent, its brief; a team, its
   lead, members and token budgets; a data table, its columns and row count (and up to 5 sample rows only when the caller
