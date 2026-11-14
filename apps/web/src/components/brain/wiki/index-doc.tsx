@@ -37,8 +37,9 @@ export function IndexDoc({ home, onChanged }: { home: WikiHome; onChanged: () =>
       <header className="space-y-1.5">
         <h1 className="text-[24px] font-semibold text-t1">Brain</h1>
         <p className="text-[13px] leading-relaxed text-t2">
-          {home.entries.length} pages: {FOLDERS.map(({ type, folder }) => `${home.entries.filter((e) => e.type === type).length} ${folder}`).join(', ')}. What the work flows recorded in Slack, Drive,
-          Calendar, Notion, Linear, Attio and Fathom, read as a wiki. Open a page from the Explorer, or press Ask to ask the brain.
+          {home.entries.length
+            ? `${home.entries.length} pages: ${FOLDERS.map(({ type, folder }) => `${home.entries.filter((e) => e.type === type).length} ${folder}`).join(', ')}. What the work flows recorded in Slack, Drive, Calendar, Notion, Linear, Attio and Fathom, read as a wiki. Open a page from the Explorer, or press Ask to ask the brain.`
+            : 'No pages yet. Install a work template (Templates → work) and the pages fill in from what your work flows record.'}
         </p>
       </header>
 
