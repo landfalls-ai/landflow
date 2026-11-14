@@ -1,5 +1,5 @@
 'use client';
-/** The Teams view of the Agents page (docs/agent-teams.md): a card per team with its goal, lead, member faces and published version. */
+/** The Teams view of the Agents page (docs/agent-teams.md): a card per team with its name, goal and status. */
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -59,23 +59,19 @@ export function TeamsView({ teams }: { teams?: TeamSummary[] }) {
     );
   }
   return (
-    <>
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3">
-        {teams.map((team) => {
-          return (
-            <Link key={team.id} href={`/agents/teams/${team.id}`} className="flex flex-col gap-3 rounded-2xl border border-hair bg-sf p-4 transition-colors hover:border-bd focus-visible:outline-2 focus-visible:outline-ac">
-              <div className="min-w-0">
-                <div className="truncate text-[14px] font-semibold text-t1">{team.name}</div>
-                <p className="mt-0.5 line-clamp-2 min-h-[2.4em] text-[12px] leading-snug text-t2">{team.goal || 'No goal yet'}</p>
-              </div>
-              <div className="mt-auto flex flex-wrap items-center gap-1.5">
-                {team.published ? <Badge tone="success">Published v{team.published.version}</Badge> : <Badge tone="muted">Draft</Badge>}
-                {(team.issues ?? 0) > 0 && <Badge tone="warning">{team.issues} to fix</Badge>}
-              </div>
-            </Link>
-          );
-        })}
-      </div>
-    </>
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3">
+      {teams.map((team) => (
+        <Link key={team.id} href={`/agents/teams/${team.id}`} className="flex flex-col gap-3 rounded-2xl border border-hair bg-sf p-4 transition-colors hover:border-bd focus-visible:outline-2 focus-visible:outline-ac">
+          <div className="min-w-0">
+            <div className="truncate text-[14px] font-semibold text-t1">{team.name}</div>
+            <p className="mt-0.5 line-clamp-2 min-h-[2.4em] text-[12px] leading-snug text-t2">{team.goal || 'No goal yet'}</p>
+          </div>
+          <div className="mt-auto flex flex-wrap items-center gap-1.5">
+            {team.published ? <Badge tone="success">Published v{team.published.version}</Badge> : <Badge tone="muted">Draft</Badge>}
+            {(team.issues ?? 0) > 0 && <Badge tone="warning">{team.issues} to fix</Badge>}
+          </div>
+        </Link>
+      ))}
+    </div>
   );
 }
