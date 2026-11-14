@@ -92,6 +92,16 @@ describe('the summary', () => {
     expect(titleFrom('Check "/var/log/app" and (/etc/hosts).')).toBe('Check and');
   });
 
+  it('drops a path that climbs out of the repository or follows a prefix', () => {
+    expect(titleFrom('Open ../../alice/secret-client/plan.md now')).toBe('Open now');
+    expect(titleFrom('Read @/Users/alice/notes.txt now')).toBe('Read now');
+    expect(titleFrom('Read @~/work/acme/app.ts now')).toBe('Read now');
+    expect(titleFrom('Run with --dir=/Users/alice/x now')).toBe('Run with now');
+    expect(titleFrom('Open file:///Users/alice/x.md now')).toBe('Open now');
+    expect(titleFrom('Set path=/Users/alice/app.ts now')).toBe('Set now');
+    expect(titleFrom('Fix and/or CI/CD on 11/12 please.')).toBe('Fix and/or CI/CD on 11/12 please.');
+  });
+
   it('keeps the same secret rules as the harness mod', () => {
     const samples = [
       ['gh', 'p_', 'b'.repeat(36)].join(''),

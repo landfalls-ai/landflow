@@ -20,6 +20,11 @@ The title is the first sentence of your first prompt, made on your machine by ru
 file paths cut down to their directories, URLs and emails dropped, at most 200 characters. If the prompt reads like code
 the title is "Coding session".
 
+`/clear` and an in-process resume end the session id but not the process, and no session start follows: the mod holds the
+ending entry and opens a new one for the same repository and branch. A title never shows an absolute, home or drive
+path (also after `@`, `=` or `file:`), or a path that climbs out with `..`; a relative file path is cut to its first two
+directories. A commit counts only when `git commit` printed its `[branch hash]` line, and `git push` records nothing.
+
 It never records or sends code, diffs, prompts beyond that title, tool output, file names, absolute paths or the
 environment. With no key, no URL or no allowed repository, nothing is recorded and nothing is sent.
 
@@ -31,7 +36,7 @@ your admin has forbidden tools sending work on their own (`brain.workAutoSend`, 
 `autoSend`); then it is held as in `review`. It is held too while no briefing has ever answered, because the policy is
 unknown. The briefing is read at every session start for this, whatever `sync` says. Mode `off` records nothing.
 
-Every event is private: only you read it, admins included.
+Every event is private: not even an admin reads it.
 
 ## Commands
 
@@ -41,7 +46,7 @@ Every event is private: only you read it, admins included.
 | `/brain review` | asks about each held entry: send, drop, skip, or a new title |
 | `/brain status` | the state, and exactly what was sent, with ids (the event as JSON) |
 | `/brain pause`, `/brain resume` | pause closes the running session's entry (held as it stands) and stops recording and sending; resume records the session again, as a new entry |
-| `/brain forget <id>` | drops the entry here; if it was sent, deletes it with `DELETE /api/brain/work/:sourceId`. If Landflow cannot be reached the entry stays (as waiting to be deleted) and the delete is retried every minute |
+| `/brain forget <id>` | drops the entry here; if it was sent, deletes it with `DELETE /api/brain/work/:sourceId`. If Landflow cannot be reached the entry stays (as waiting to be deleted) and the delete is retried every minute (it is kept past the 14-day journal horizon until the brain answers). Forgetting the running session's entry does not stop recording: your next prompt opens a new entry, so use `/brain pause` to stop. A request that gets no answer in 10 seconds counts as unreachable |
 
 If the server says the brain is off, the mod pauses for that session.
 
@@ -56,11 +61,6 @@ At the start of a session the mod asks `GET /api/brain/briefing` for your own wo
 Landflow is slower or off, it uses the answer it cached for that day, or goes on without. What it has is added to the
 system prompt as "Yesterday, from the company brain": at most 1,200 characters, every line quoted with `>`, and marked as
 data, not instructions. The option `sync` turns it off.
-
-`/clear` and an in-process resume end the session id but not the process, and no session start follows: the mod holds the
-ending entry and opens a new one for the same repository and branch. A title never shows an absolute, home or drive
-path, and a relative file path is cut to its first two directories; a commit counts only when `git commit` printed its
-`[branch hash]` line, and `git push` records nothing.
 
 ## Offline queue
 

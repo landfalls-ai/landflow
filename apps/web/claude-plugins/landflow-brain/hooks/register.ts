@@ -65,19 +65,30 @@ async function load($: EngineInterface): Promise<Entry[]> {
   return (((await $.store.get('journal')) as Entry[] | undefined) ?? []).filter(Boolean)
 }
 
-async function save($: EngineInterface, journal: Entry[]) {
-  const horizon = (await $.clock.now()) - JOURNAL_DAYS * 86_400_000
-  const kept = journal.filter(entry => entry.status !== 'dropped' && Date.parse(entry.startedAt) >= horizon).slice(-JOURNAL_MAX)
-  await $.store.set('journal', kept)
+/** Every journal and queue write runs one after another, so no load-modify-save interleaves with another. */
+let lock: Promise<unknown> = Promise.resolve()
+function withJournal<T>(fn: () => Promise<T>): Promise<T> {
+  const run = lock.then(fn, fn)
+  lock = run.catch(() => undefined)
+  return run
 }
 
-async function upsert($: EngineInterface, entry: Entry) {
-  const journal = await load($)
-  const at = journal.findIndex(item => item.id === entry.id)
-  if (at >= 0) journal[at] = entry
-  else journal.push(entry)
-  await save($, journal)
+/** An entry waiting for its delete in the brain is kept past the horizon and the count: its delete must be answered. */
+async function save($: EngineInterface, journal: Entry[]) {
+  const horizon = (await $.clock.now()) - JOURNAL_DAYS * 86_400_000
+  const live = journal.filter(entry => entry.status !== 'dropped' && entry.status !== 'forgetting' && Date.parse(entry.startedAt) >= horizon).slice(-JOURNAL_MAX)
+  const keep = new Set(live)
+  await $.store.set('journal', journal.filter(entry => entry.status === 'forgetting' || keep.has(entry)))
 }
+
+const upsert = ($: EngineInterface, entry: Entry) =>
+  withJournal(async () => {
+    const journal = await load($)
+    const at = journal.findIndex(item => item.id === entry.id)
+    if (at >= 0) journal[at] = entry
+    else journal.push(entry)
+    await save($, journal)
+  })
 
 async function queueOf($: EngineInterface): Promise<Queue> {
   return ((await $.store.get('queue')) as Queue | undefined) ?? emptyQueue()
@@ -144,9 +155,11 @@ async function retryForgets($: EngineInterface) {
     if (status === 204 || status === 404) gone.add(entry.id)
   }
   if (!gone.size) return
-  const fresh = await load($)
-  for (const entry of fresh) if (gone.has(entry.id)) entry.status = 'dropped'
-  await save($, fresh)
+  await withJournal(async () => {
+    const fresh = await load($)
+    for (const entry of fresh) if (gone.has(entry.id)) entry.status = 'dropped'
+    await save($, fresh)
+  })
 }
 
 async function flushOnce($: EngineInterface) {
@@ -159,10 +172,19 @@ async function flushOnce($: EngineInterface) {
   if (!batch.length) return
   const result = await postWork($, config, batch.map(item => item.event))
   // Read the queue again: a send that came in during the request is kept, and only this batch leaves.
-  const queue = settle(await queueOf($), batch, result.status, now, fingerprint)
-  await $.store.set('queue', queue)
   const status = result.status
-  if (status !== undefined && status >= 200 && status < 300) {
+  await withJournal(async () => {
+    await $.store.set('queue', settle(await queueOf($), batch, status, now, fingerprint))
+    if (status !== undefined && status >= 200 && status < 300) await markSent($, batch, result, now)
+  })
+  if (status === 400 || status === 413 || status === 422) {
+    await $.store.set('problems', [`the brain refused ${batch.length} event${batch.length === 1 ? '' : 's'} (HTTP ${status}); they stay held here and are not retried`])
+  }
+}
+
+/** Inside the journal lock: the entries whose events the brain saved become `sent`. */
+async function markSent($: EngineInterface, batch: ReturnType<typeof due>, result: Awaited<ReturnType<typeof postWork>>, now: number) {
+  {
     await $.store.set('problems', result.rejected.map(item => `${item.sourceId}: ${item.reason}`.slice(0, 200)).slice(0, 10))
     const journal = await load($)
     const sent = new Set(result.saved)
@@ -179,20 +201,18 @@ async function flushOnce($: EngineInterface) {
     // The same session sent again (a resumed one) replaced the earlier event there; it is one entry here too.
     for (const entry of journal) if (entry.status === 'sent' && !marked.includes(entry) && marked.some(item => item.sourceId === entry.sourceId)) entry.status = 'dropped'
     await save($, journal)
-  } else if (status === 400 || status === 413 || status === 422) {
-    await $.store.set('problems', [`the brain refused ${batch.length} event${batch.length === 1 ? '' : 's'} (HTTP ${status}); they stay held here and are not retried`])
   }
 }
 
 async function send($: EngineInterface, entry: Entry) {
   const now = await $.clock.now()
-  await $.store.set('queue', enqueue(await queueOf($), toEvent(entry), now))
+  await withJournal(async () => $.store.set('queue', enqueue(await queueOf($), toEvent(entry), now)))
   await flush($)
 }
 
 async function gitOut($: EngineInterface, argv: string[]): Promise<string | undefined> {
   try {
-    const result = await $.process.run(argv, { cwd, timeoutMs: 3000 })
+    const result = await $.process.run(argv, { cwd, timeoutMs: 1500 })
     return result.exitCode === 0 ? result.stdout.trim() : undefined
   } catch {
     return undefined
@@ -210,6 +230,7 @@ export const register: Register = (on, options) => {
   allowed = undefined
   current = undefined
   flushing = undefined
+  lock = Promise.resolve()
 
   on('session.start', async ($, e, next) => {
     cwd = e.cwd || '/'
@@ -221,19 +242,23 @@ export const register: Register = (on, options) => {
     await $.command.register({ name: 'brain', description: 'Your work in the company brain: today, review, status, pause, resume, forget <id>', argumentHint: 'today | review | status | pause | resume | forget <id>' })
     if (config && mode !== 'off') {
       // An entry left open by a session that never ended is held as it stood.
-      const journal = await load($)
-      for (const entry of journal) {
-        if (entry.status === 'open') {
-          entry.status = 'held'
-          entry.endedAt ??= entry.startedAt
+      await withJournal(async () => {
+        const journal = await load($)
+        for (const entry of journal) {
+          if (entry.status === 'open') {
+            entry.status = 'held'
+            entry.endedAt ??= entry.startedAt
+          }
         }
-      }
-      await save($, journal)
-      // A key changed since a 401 lifts the stop. The flush is not awaited: a host that hangs must not hold the first prompt.
-      const queue = await queueOf($)
-      const lifted = liftStop(queue, fingerprint)
-      if (lifted !== queue) await $.store.set('queue', lifted)
+        await save($, journal)
+        // A key changed since a 401 lifts the stop. The flush is not awaited: a host that hangs must not hold the first prompt.
+        const queue = await queueOf($)
+        const lifted = liftStop(queue, fingerprint)
+        if (lifted !== queue) await $.store.set('queue', lifted)
+      })
       void flush($).then(() => showStatus($)).catch(() => undefined)
+      // Git runs beside the briefing, so the 2 s bound holds for both.
+      const gitFacts = Promise.all([gitOut($, ['git', 'remote', 'get-url', 'origin']), gitOut($, ['git', 'rev-parse', '--show-toplevel']), gitOut($, ['git', 'rev-parse', '--abbrev-ref', 'HEAD'])])
       // The briefing is always read, for the policy (auto-send, brain off); `sync` only decides whether yesterday joins the prompt.
       const briefing: Briefing | undefined = await getBriefing($, config, day(await $.clock.now()))
       if (briefing?.brain === 'off') brainOff = true
@@ -241,10 +266,10 @@ export const register: Register = (on, options) => {
         await $.store.set('autoSend', briefing.autoSend)
         if (sync) yesterday = yesterdaySection(briefing.yesterday)
       }
-      const slug = repoSlug((await gitOut($, ['git', 'remote', 'get-url', 'origin'])) ?? '')
+      const [remote, top, branch] = await gitFacts
+      const slug = repoSlug(remote ?? '')
       if (isAllowed(repos, slug)) {
-        repoRoot = (await gitOut($, ['git', 'rev-parse', '--show-toplevel'])) ?? cwd
-        const branch = await gitOut($, ['git', 'rev-parse', '--abbrev-ref', 'HEAD'])
+        repoRoot = top ?? cwd
         allowed = { repo: slug, ...(branch && branch !== 'HEAD' && { branch }) }
         // Paused or brain off: nothing is opened now; /brain resume opens it.
         if (!(await paused($))) await openEntry($, allowed.repo, allowed.branch)
@@ -333,14 +358,14 @@ export const register: Register = (on, options) => {
         const queue = await queueOf($)
         const lines = sent.map(entry => `${entry.id} sent ${entry.sentAt ?? ''}: ${JSON.stringify(entry.sentEvent ?? toEvent(entry))}`)
         const problems = ((await $.store.get('problems')) as string[] | undefined) ?? []
-        const forgetting = journal.filter(entry => entry.status === 'forgetting').length
+        const forgetting = journal.filter(entry => entry.status === 'forgetting')
         const waiting = queue.items.length
         return reply(
           [
             `brain: ${queue.stopped === 'key' ? 'key rejected' : (await paused($)) ? 'paused' : 'on'} · ${journal.filter(entry => entry.status === 'held').length} held · ${waiting} waiting to send (at most ${QUEUE_MAX})${waiting && queue.nextAt ? `, next try in ${Math.max(0, Math.round((queue.nextAt - (await $.clock.now())) / 1000))} s (backoff ${Math.round(backoffMs(queue.failures) / 1000)} s)` : ''}`,
             lines.length ? `Sent, exactly as it went:\n${lines.join('\n')}` : 'Nothing has been sent.',
             ...(problems.length ? [`Not accepted by the brain: ${problems.join('; ')}`] : []),
-            ...(forgetting ? [`${forgetting} deleted here, waiting to be deleted in the brain (retried every minute; /brain forget <id> tries now)`] : []),
+            ...(forgetting.length ? [`${forgetting.length} deleted here, waiting to be deleted in the brain (retried every minute; /brain forget <id> tries now): ${forgetting.map(entry => entry.id).join(', ')}`] : []),
           ].join('\n'),
         )
       }
@@ -351,6 +376,7 @@ export const register: Register = (on, options) => {
         await showStatus($)
         return reply('Paused: the running session is closed and held as it stands, and nothing more is recorded or sent until /brain resume.')
       case 'resume':
+        if (brainOff) return reply('The brain is off on the server, so nothing is recorded or sent, whatever /brain resume says.')
         await $.store.set('paused', false)
         if (!current && allowed && !brainOff) await openEntry($, allowed.repo, allowed.branch)
         await showStatus($)
@@ -360,12 +386,13 @@ export const register: Register = (on, options) => {
         if (!arg || !entry) return reply('Say which: /brain forget <id>. /brain today lists the ids.')
         const queue = await queueOf($)
         const wasSent = entry.status === 'sent' || entry.status === 'forgetting' || queue.items.some(item => item.event.sourceId === entry.sourceId)
-        await $.store.set('queue', { ...queue, items: queue.items.filter(item => item.event.sourceId !== entry.sourceId) })
-        if (current?.id === entry.id) current = undefined
+        await withJournal(async () => $.store.set('queue', { ...(await queueOf($)), items: (await queueOf($)).items.filter(item => item.event.sourceId !== entry.sourceId) }))
+        const wasRunning = current?.id === entry.id
+        if (wasRunning) current = undefined
         // A sent entry stays in the journal until the brain says the copy is gone (204 or 404).
         entry.status = wasSent ? 'forgetting' : 'dropped'
         await upsert($, entry)
-        let note = 'Dropped here.'
+        let note = wasRunning ? 'Dropped here. Recording goes on from your next prompt as a new entry; /brain pause stops it.' : 'Dropped here.'
         if (wasSent) {
           const status = await deleteWork($, config, entry.sourceId)
           if (status === 204 || status === 404) {
@@ -407,12 +434,14 @@ export const register: Register = (on, options) => {
             return reply(`${held.length} held; nobody to ask here. ${held.map(describe).join('\n')}`)
           }
         }
-        const fresh = await load($)
-        for (const entry of held) {
-          const at = fresh.findIndex(item => item.id === entry.id)
-          if (at >= 0) fresh[at] = { ...fresh[at]!, title: entry.title, status: entry.status === 'dropped' ? 'dropped' : fresh[at]!.status }
-        }
-        await save($, fresh)
+        await withJournal(async () => {
+          const fresh = await load($)
+          for (const entry of held) {
+            const at = fresh.findIndex(item => item.id === entry.id)
+            if (at >= 0) fresh[at] = { ...fresh[at]!, title: entry.title, status: entry.status === 'dropped' ? 'dropped' : fresh[at]!.status }
+          }
+          await save($, fresh)
+        })
         await showStatus($)
         return reply(done.length ? done.join('\n') : 'Nothing sent.')
       }

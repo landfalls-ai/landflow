@@ -233,6 +233,30 @@ test('a rejected key stops sending until the key is not the rejected one', { opt
   expect(statuses.at(-1)).toBe('brain: key rejected')
 })
 
+test('a stop from another key, with a queued event, sends it at the next start', { options: { ...OPTIONS, mode: 'auto' } }, async ($, on) => {
+  const event = { kind: 'work.session', source: 'claude-code', sourceId: 'cc-old', occurredAt: '2026-11-13T09:00:00.000Z', title: 't', summary: 's', repo: 'acme/widgets', commits: 0, turns: 1, visibility: 'private' }
+  const { posts } = world(on, { seed: { queue: { items: [{ event, at: Date.parse('2026-11-13T10:00:00Z') }], failures: 1, nextAt: 0, stopped: 'key', stoppedFor: 'someotherkey' } } })
+  await start($)
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(posts.map(post => post.sourceId)).toContain('cc-old')
+})
+
+test('a held entry sent by the start flush is marked sent, listed, and forgotten with a delete', { options: OPTIONS }, async ($, on) => {
+  const event = { kind: 'work.session', source: 'claude-code', sourceId: 'cc-old', occurredAt: '2026-11-13T09:00:00.000Z', title: 'Old work', summary: 's', repo: 'acme/widgets', commits: 0, turns: 1, visibility: 'private' }
+  const entry = { id: 'e-old', source: 'claude-code', sourceId: 'cc-old', repo: 'acme/widgets', startedAt: '2026-11-13T09:00:00.000Z', endedAt: '2026-11-13T09:30:00.000Z', turns: 1, title: 'Old work', areas: [], commits: 0, prs: [], status: 'held' }
+  const { posts, deleted } = world(on, { seed: { journal: [entry], queue: { items: [{ event, at: Date.parse('2026-11-13T10:00:00Z') }], failures: 0, nextAt: 0 } } })
+  await start($)
+  for (let i = 0; i < 20 && !posts.length; i++) await Promise.resolve()
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(posts.map(post => post.sourceId)).toEqual(['cc-old'])
+  const status = (await command($, 'status')) as { text: string }
+  expect(status.text).toContain('e-old sent')
+  expect(status.text).not.toContain('Nothing has been sent.')
+  const forgot = (await command($, 'forget e-old')) as { text: string }
+  expect(forgot.text).toMatch(/deleted from the brain/)
+  expect(deleted).toHaveLength(1)
+})
+
 test('a stop from another key does not hold this one', { options: { ...OPTIONS, mode: 'auto' }, }, async ($, on) => {
   const { statuses } = world(on, { seed: { queue: { items: [], failures: 0, nextAt: 0, stopped: 'key', stoppedFor: 'someotherkey' } } })
   await start($)

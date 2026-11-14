@@ -52,6 +52,9 @@ function pathToArea(word: string): string {
 /** An absolute or home path, a drive path or a backslash path: dropped whole, so no directory of the machine leaves it. */
 const isMachinePath = (word: string) => /^[/~]/.test(word) || /^[A-Za-z]:[\\/]/.test(word) || word.includes('\\') || /^\$\{?(?:HOME|PWD)\b/.test(word)
 
+/** A machine path after a prefix (`@/Users/x`, `--dir=/Users/x`, `path=~/x`, `file:///x`, `(/x`), or a path that climbs out with `..`. */
+const isPrefixedMachinePath = (word: string) => /(^|[=@:(])(~|\/|[A-Za-z]:[\\/])/.test(word) || /^file:/i.test(word) || word.split(/[\\/]/).includes('..')
+
 /** The words of `text`: absolute paths and URLs and emails dropped, a relative file path reduced to its directories. */
 function withoutPaths(text: string): string {
   return text
@@ -59,7 +62,7 @@ function withoutPaths(text: string): string {
     .map(word => {
       const bare = word.replace(/^[("'`<\[]+|[)"'`>\],.:;!?]+$/g, '')
       if (/^https?:\/\//i.test(bare) || /@[\w-]+\.[\w.-]+/.test(bare)) return ''
-      if (isMachinePath(bare)) return ''
+      if (isMachinePath(bare) || isPrefixedMachinePath(bare)) return ''
       const slashes = bare.split('/').length - 1
       const file = /^[\w./-]*[\w-]\.[A-Za-z][A-Za-z0-9]{0,7}$/.test(bare)
       // `and/or`, `CI/CD` and `11/12` are words; `apps/web/x` and `app.ts` are paths.

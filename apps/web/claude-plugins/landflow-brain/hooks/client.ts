@@ -12,6 +12,14 @@ export const QUEUE_DAYS = 14
 export const BACKOFF_FIRST_MS = 30_000
 export const BACKOFF_MAX_MS = 30 * 60_000
 export const BRIEFING_TIMEOUT_MS = 2000
+/** A POST or DELETE that has not answered by now counts as unreachable. */
+export const REQUEST_TIMEOUT_MS = 10_000
+
+/** `promise`, or `fallback` when the clock passes `ms` first. */
+async function within<T>($: EngineInterface, promise: Promise<T>, fallback: T, ms = REQUEST_TIMEOUT_MS): Promise<T> {
+  const timeout = $.clock.sleep(ms).then(() => fallback)
+  return Promise.race([promise, timeout])
+}
 /** POST /api/brain/work takes this many events at once. */
 const BATCH = 50
 
@@ -105,7 +113,11 @@ export interface PostResult {
   rejected: Array<{ sourceId: string; reason: string }>
 }
 
-export async function postWork($: EngineInterface, config: Config, events: readonly BrainWorkEvent[]): Promise<PostResult> {
+export function postWork($: EngineInterface, config: Config, events: readonly BrainWorkEvent[]): Promise<PostResult> {
+  return within($, postOnce($, config, events), { saved: [], rejected: [] })
+}
+
+async function postOnce($: EngineInterface, config: Config, events: readonly BrainWorkEvent[]): Promise<PostResult> {
   try {
     const response = await $.http.fetch(`${config.url}/api/brain/work`, { method: 'POST', headers: headers(config), body: JSON.stringify({ events }) })
     let saved: string[] = []
@@ -124,7 +136,11 @@ export async function postWork($: EngineInterface, config: Config, events: reado
 }
 
 /** DELETE /api/brain/work/:sourceId. 204 and 404 both mean it is gone. */
-export async function deleteWork($: EngineInterface, config: Config, sourceId: string): Promise<number | undefined> {
+export function deleteWork($: EngineInterface, config: Config, sourceId: string): Promise<number | undefined> {
+  return within($, deleteOnce($, config, sourceId), undefined)
+}
+
+async function deleteOnce($: EngineInterface, config: Config, sourceId: string): Promise<number | undefined> {
   try {
     const response = await $.http.fetch(`${config.url}/api/brain/work/${encodeURIComponent(sourceId)}?source=claude-code`, { method: 'DELETE', headers: headers(config) })
     return response.status
