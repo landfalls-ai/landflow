@@ -8,8 +8,9 @@
  * not at all. The hooks only observe: none denies a tool call or changes a result.
  */
 import type { EngineInterface, Register } from 'claude-code'
-import { QUEUE_MAX, backoffMs, deleteWork, due, emptyQueue, enqueue, getBriefing, keyFingerprint, liftStop, postWork, serverUrl, settle, type Briefing, type Config, type Queue } from './client'
-import { addArea, addPrs, areaOf, bashFacts, isAllowed, newEntry, parseRepos, repoSlug, type Entry } from './journal'
+import { QUEUE_MAX, VISIBILITIES, backoffMs, callBrain, confirmAndPost, deleteWork, due, emptyQueue, enqueue, getBriefing, keyFingerprint, liftStop, postWork, serverUrl, settle, shareRequest, visibilityRequest, type Briefing, type Config, type OutEvent, type Queue, type WorkVisibility } from './client'
+import { addArea, addPrs, areaOf, bandLine, bashFacts, canPost, effectiveMode, isAllowed, localDay, newEntry, parseRepos, repoSlug, statusLine, syncText, type Entry, type View } from './journal'
+import { PANE_ID, drawBand, drawPane } from './pane'
 import { titleFrom, toEvent } from './summary'
 
 const FLUSH_MS = 60_000
@@ -19,10 +20,7 @@ const JOURNAL_DAYS = 14
 const YESTERDAY_CHARS = 1200
 const SECTION = 'landflow-brain:yesterday'
 
-const day = (ms: number) => {
-  const d = new Date(ms)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
+const day = localDay
 
 /** "Yesterday, from the company brain": quoted, marked as data, at most 1,200 characters. */
 export function yesterdaySection(items: ReadonlyArray<{ title: string; repo?: string }>): string | undefined {
@@ -133,7 +131,40 @@ async function showStatus($: EngineInterface) {
   if (queue.stopped === 'key') return $.ui.status('brain: key rejected')
   if (await paused($)) return $.ui.status('brain: paused')
   const held = (await load($)).filter(entry => entry.status === 'held').length
-  $.ui.status(`brain: on · ${held} held`)
+  $.ui.status(statusLine(mode, await $.store.get('autoSend'), held))
+}
+
+/** The stored view, only while it is today's: an earlier day's view (an offline start, a session past midnight) counts as none. */
+async function storedView($: EngineInterface): Promise<View | undefined> {
+  const stored = (await $.store.get('view')) as View | undefined
+  return stored && stored.day === day(await $.clock.now()) ? stored : undefined
+}
+
+/** The briefing's parts the pane, /brain sync and the band draw; kept for the day. */
+async function viewOf($: EngineInterface, fresh: boolean): Promise<View | undefined> {
+  if (!config) return undefined
+  if (!fresh) {
+    const stored = await storedView($)
+    if (stored) return stored
+  }
+  const briefing = await getBriefing($, config, day(await $.clock.now()))
+  if (!briefing) return storedView($)
+  const view: View = { day: briefing.day, today: briefing.today, yesterday: briefing.yesterday, related: briefing.related }
+  await $.store.set('view', view)
+  await $.store.set('autoSend', briefing.autoSend)
+  return view
+}
+
+/** Post as my update, after a confirm: the answer in words. */
+async function postUpdate($: EngineInterface, sourceId: string, title: string, source = ''): Promise<string> {
+  if (!config) return 'not set up'
+  const cfg = config
+  const outcome = await confirmAndPost(
+    (question, options) => $.ui.ask(question, options),
+    visibility => callBrain($, cfg, shareRequest(sourceId, visibility, source)),
+    title,
+  )
+  return { posted: 'Posted as your update. The item itself keeps its own visibility.', cancelled: 'Cancelled; nothing was posted.', failed: 'The brain refused it; nothing was posted.', unreachable: 'The brain could not be reached; nothing was posted.', 'not-found': 'The brain has no such item of yours; nothing was posted.' }[outcome]
 }
 
 /** Send what is due. One at a time; a failure backs off. Entries whose events were saved become `sent`. */
@@ -248,7 +279,7 @@ async function takeOut($: EngineInterface, entry: Entry): Promise<{ wasSent: boo
 
 async function send($: EngineInterface, entry: Entry) {
   const now = await $.clock.now()
-  await withJournal(async () => $.store.set('queue', enqueue(await queueOf($), toEvent(entry), now)))
+  await withJournal(async () => $.store.set('queue', enqueue(await queueOf($), { ...toEvent(entry), visibility: entry.visibility ?? 'private' } as OutEvent, now)))
   await flush($)
 }
 
@@ -259,6 +290,36 @@ async function gitOut($: EngineInterface, argv: string[]): Promise<string | unde
   } catch {
     return undefined
   }
+}
+
+/** Set who reads an entry: here, in the queue while it waits, and with PATCH once the brain has it. */
+async function setVisibility($: EngineInterface, entry: Entry, visibility: WorkVisibility): Promise<string> {
+  await withJournal(async () => {
+    const journal = await load($)
+    const stored = journal.find(item => item.id === entry.id)
+    if (stored) stored.visibility = visibility
+    entry.visibility = visibility
+    await save($, journal)
+    const queue = await queueOf($)
+    if (queue.items.some(item => item.event.sourceId === entry.sourceId)) await $.store.set('queue', { ...queue, items: queue.items.map(item => (item.event.sourceId === entry.sourceId ? { ...item, event: { ...item.event, visibility } } : item)) })
+  })
+  // A POST still out left with the old value: wait for it, then change the copy the brain holds.
+  if (inFlight.has(entry.sourceId)) await flushing?.catch(() => undefined)
+  const now = (await load($)).find(item => item.id === entry.id)
+  if (now) entry.status = now.status
+  if (entry.status !== 'sent' || !config) return `will be sent as ${visibility}.`
+  const status = await callBrain($, config, visibilityRequest(entry.sourceId, visibility))
+  if (status !== undefined && status >= 200 && status < 300) {
+    // /brain status prints what went out: keep it current.
+    await withJournal(async () => {
+      const journal = await load($)
+      const stored = journal.find(item => item.id === entry.id)
+      if (stored?.sentEvent) stored.sentEvent = { ...stored.sentEvent, visibility }
+      await save($, journal)
+    })
+    return `now ${visibility} in the brain.`
+  }
+  return status === undefined ? 'the brain could not be reached; nothing changed there.' : `the brain refused it (HTTP ${status}); nothing changed there.`
 }
 
 export const register: Register = (on, options) => {
@@ -282,7 +343,7 @@ export const register: Register = (on, options) => {
     allowed = undefined
     brainOff = false
     yesterday = undefined
-    await $.command.register({ name: 'brain', description: 'Your work in the company brain: today, review, status, pause, resume, forget <id>', argumentHint: 'today | review | status | pause | resume | forget <id>' })
+    await $.command.register({ name: 'brain', description: 'Your work in the company brain: sync, today, review, status, pause, resume, forget <id>, visibility <id> private|team|org, post <id>', argumentHint: 'sync | today | review | status | pause | resume | forget <id> | visibility <id> <who> | post <id>' })
     if (config && mode !== 'off') {
       // An entry left open by a session that never ended is held as it stood.
       await withJournal(async () => {
@@ -307,6 +368,7 @@ export const register: Register = (on, options) => {
       if (briefing?.brain === 'off') brainOff = true
       if (briefing) {
         await $.store.set('autoSend', briefing.autoSend)
+        await $.store.set('view', { day: briefing.day, today: briefing.today, yesterday: briefing.yesterday, related: briefing.related } satisfies View)
         if (sync) yesterday = yesterdaySection(briefing.yesterday)
       }
       const [remote, top, branch] = await gitFacts
@@ -382,6 +444,24 @@ export const register: Register = (on, options) => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
+  // The pane draws only when the person opened it (`/brain`, `/brain sync`); nothing opens it on its own.
+  on('ui.render', { component: 'Pane', requestId: PANE_ID }, async ($, e) => {
+    const view = await storedView($)
+    return drawPane($, e, view, async (sourceId, source) => {
+      const item = view?.today.concat(view.yesterday).find(one => one.sourceId === sourceId)
+      $.ui.toast(await postUpdate($, sourceId, item?.title ?? sourceId, source))
+    })
+  }).catch(($, e, next) => next(e))
+
+  // The band: one line, only while a colleague touched the same thing, dismissable for the day.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (!config || mode === 'off' || e.props.hasSurvey) return next(e)
+    const view = await storedView($)
+    const line = bandLine(view, (await $.store.get('bandDismissed')) as string | undefined)
+    if (!line || !view) return next(e)
+    return drawBand($, e, line, () => $.store.set('bandDismissed', view.day))
+  }).catch(($, e, next) => next(e))
+
   const reply = (text: string) => ({ text })
 
   on('command.run', { command: 'brain' }, async ($, e, next) => {
@@ -391,6 +471,30 @@ export const register: Register = (on, options) => {
     const journal = await load($)
     const all = current ? [...journal.filter(entry => entry.id !== current?.id), current] : journal
     switch (sub) {
+      case '':
+      case 'sync': {
+        const view = await viewOf($, sub === 'sync')
+        await $.ui.open({ id: PANE_ID, title: 'Brain' })
+        return reply(sub === 'sync' ? syncText(view) : 'Brain pane opened (Esc closes it). /brain sync lists yesterday and your colleagues here.')
+      }
+      case 'post': {
+        const view = await viewOf($, false)
+        const item = (view?.today ?? []).concat(view?.yesterday ?? []).find(one => one.sourceId === arg)
+        const entry = all.find(one => one.id === arg || one.sourceId === arg)
+        if (item && !canPost(item)) return reply('That item is an update you already posted; there is nothing to post again.')
+        const sourceId = item?.sourceId ?? (entry?.status === 'sent' ? entry.sourceId : undefined)
+        if (!arg || !sourceId) return reply('Say which of your sent items: /brain post <id>. /brain today lists the ids.')
+        // The item's own source; an item only the journal knows is the mod's (`claude-code`).
+        return reply(await postUpdate($, sourceId, item?.title ?? entry?.title ?? arg, item ? (item.source ?? '') : 'claude-code'))
+      }
+      case 'visibility': {
+        const [id = '', who = ''] = arg.split(/\s+/)
+        const choice = VISIBILITIES.find(v => v === who.toLowerCase())
+        const entry = all.find(item => item.id === id || item.sourceId === id)
+        if (!entry || !choice) return reply('/brain visibility <id> private|team|org')
+        const result = await setVisibility($, entry, choice)
+        return reply(`${entry.id}: ${result}`)
+      }
       case 'today': {
         const today = day(await $.clock.now())
         const rows = all.filter(entry => (entry.status === 'held' || entry.status === 'sent' || entry.status === 'open') && day(Date.parse(entry.startedAt)) === today)
@@ -449,9 +553,16 @@ export const register: Register = (on, options) => {
         for (const entry of held) {
           try {
             for (;;) {
-              const shown = `${entry.repo}: "${entry.title}" (${entry.turns} turns, ${entry.commits} commits, ${entry.prs.length} PRs${entry.areas.length ? `; ${entry.areas.slice(0, 5).join(', ')}` : ''}). Send it to the brain, private to you? Or type a new title under Other.`
-              const answer = await $.ui.ask(shown, ['Send', 'Drop', 'Skip'])
-              if (answer === 'Send') {
+              const shown = `${entry.repo}: "${entry.title}" (${entry.turns} turns, ${entry.commits} commits, ${entry.prs.length} PRs${entry.areas.length ? `; ${entry.areas.slice(0, 5).join(', ')}` : ''}). Send it to the brain, private to you? Send wider lets you pick team or org. Or type a new title under Other.`
+              const answer = await $.ui.ask(shown, ['Send', 'Send wider', 'Drop', 'Skip'])
+              if (answer === 'Send' || answer === 'Send wider') {
+                entry.visibility = 'private'
+                if (answer === 'Send wider') {
+                  // Private stays the default: only an explicit Team or Org widens it, and Back goes to the first question.
+                  const who = await $.ui.ask('Who can read this item?', ['Team', 'Org', 'Back'])
+                  if (who === 'Back') continue
+                  entry.visibility = who === 'Team' ? 'team' : who === 'Org' ? 'org' : 'private'
+                }
                 await send($, entry)
                 const after = (await load($)).find(item => item.id === entry.id)
                 const waiting = (await queueOf($)).items.some(item => item.event.sourceId === entry.sourceId)
@@ -477,7 +588,7 @@ export const register: Register = (on, options) => {
           const fresh = await load($)
           for (const entry of held) {
             const at = fresh.findIndex(item => item.id === entry.id)
-            if (at >= 0 && entry.status !== 'dropped') fresh[at] = { ...fresh[at]!, title: entry.title }
+            if (at >= 0 && entry.status !== 'dropped') fresh[at] = { ...fresh[at]!, title: entry.title, ...(entry.visibility && { visibility: entry.visibility }) }
           }
           await save($, fresh)
         })
@@ -485,7 +596,7 @@ export const register: Register = (on, options) => {
         return reply(done.length ? done.join('\n') : 'Nothing sent.')
       }
       default:
-        return reply('/brain today | review | status | pause | resume | forget <id>')
+        return reply('/brain | sync | today | review | status | pause | resume | forget <id> | visibility <id> private|team|org | post <id>')
     }
   }).catch(($, e, next) => (next.called ? next(e) : { text: '/brain failed; nothing was sent.' }))
 }

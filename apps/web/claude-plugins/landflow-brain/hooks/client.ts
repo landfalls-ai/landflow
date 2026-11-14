@@ -4,7 +4,14 @@
  * an `https:` URL or `http://localhost`.
  */
 import type { EngineInterface } from 'claude-code'
+import { clip, cleanText, safeLink } from './journal'
 import type { BrainWorkEvent } from './summary'
+
+/** Who may read an item: the person alone (the default), the people they share a project with, or the organization. */
+export type WorkVisibility = 'private' | 'team' | 'org'
+export const VISIBILITIES: readonly WorkVisibility[] = ['private', 'team', 'org']
+/** A work event as sent: `toEvent`'s, with the visibility the person picked. */
+export type OutEvent = Omit<BrainWorkEvent, 'visibility'> & { visibility: WorkVisibility }
 
 /** At most this many events wait, and none longer than this. */
 export const QUEUE_MAX = 500
@@ -24,7 +31,7 @@ async function within<T>($: EngineInterface, promise: Promise<T>, fallback: T, m
 const BATCH = 50
 
 export interface QueueItem {
-  event: BrainWorkEvent
+  event: OutEvent
   /** When it was queued, ms. */
   at: number
 }
@@ -68,7 +75,7 @@ export const emptyQueue = (): Queue => ({ items: [], failures: 0, nextAt: 0 })
 export const backoffMs = (failures: number): number => Math.min(BACKOFF_MAX_MS, BACKOFF_FIRST_MS * 2 ** Math.max(0, failures - 1))
 
 /** Queue an event (the same session again replaces its earlier one), then drop what is over 14 days and what is over 500, oldest first. */
-export function enqueue(queue: Queue, event: BrainWorkEvent, now: number): Queue {
+export function enqueue(queue: Queue, event: OutEvent, now: number): Queue {
   const horizon = now - QUEUE_DAYS * 86_400_000
   const items = [...queue.items.filter(item => item.event.sourceId !== event.sourceId), { event, at: now }].filter(item => item.at >= horizon)
   return { ...queue, items: items.slice(-QUEUE_MAX) }
@@ -113,11 +120,11 @@ export interface PostResult {
   rejected: Array<{ sourceId: string; reason: string }>
 }
 
-export function postWork($: EngineInterface, config: Config, events: readonly BrainWorkEvent[]): Promise<PostResult> {
+export function postWork($: EngineInterface, config: Config, events: readonly OutEvent[]): Promise<PostResult> {
   return within($, postOnce($, config, events), { saved: [], rejected: [] })
 }
 
-async function postOnce($: EngineInterface, config: Config, events: readonly BrainWorkEvent[]): Promise<PostResult> {
+async function postOnce($: EngineInterface, config: Config, events: readonly OutEvent[]): Promise<PostResult> {
   try {
     const response = await $.http.fetch(`${config.url}/api/brain/work`, { method: 'POST', headers: headers(config), body: JSON.stringify({ events }) })
     let saved: string[] = []
@@ -153,16 +160,61 @@ export interface BriefingItem {
   title: string
   repo?: string
   at?: string
+  sourceId?: string
+  source?: string
+  visibility?: WorkVisibility
+  /** Only a link to the configured Landflow or github.com survives. */
+  url?: string
+}
+
+export interface RelatedPerson {
+  name: string
+  because: { type: 'repo' | 'initiative' | 'customer' | 'area' | 'similar'; name: string }
+  items: BriefingItem[]
 }
 
 export interface Briefing {
   day: string
+  today: BriefingItem[]
   yesterday: BriefingItem[]
+  related: RelatedPerson[]
   autoSend: 'allowed' | 'forbidden'
   brain: 'on' | 'off'
 }
 
 const cacheKey = (day: string) => `briefing:${day}`
+const BECAUSE = ['repo', 'initiative', 'customer', 'area', 'similar']
+
+/** One item from the server, as data: clipped, one line, its link kept only when it is safe. Nothing from the server is trusted. */
+export function cleanItem(raw: unknown, baseUrl: string): BriefingItem {
+  const item = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  const text = (value: unknown, max: number) => (typeof value === 'string' && value ? cleanText(value, max, baseUrl) || undefined : undefined)
+  const url = typeof item.url === 'string' ? safeLink(item.url, baseUrl) : undefined
+  const visibility = VISIBILITIES.find(v => v === item.visibility)
+  return {
+    title: text(item.title, 160) ?? '',
+    ...(text(item.repo, 80) && { repo: text(item.repo, 80) }),
+    ...(text(item.at, 40) && { at: text(item.at, 40) }),
+    ...(text(item.sourceId, 120) && { sourceId: text(item.sourceId, 120) }),
+    ...(text(item.source, 40) && { source: text(item.source, 40) }),
+    ...(visibility && { visibility }),
+    ...(url && { url }),
+  }
+}
+
+/** The related colleagues from the server: at most 5 people, 3 items each, names and reasons clipped. */
+export function cleanRelated(raw: unknown, baseUrl: string): RelatedPerson[] {
+  if (!Array.isArray(raw)) return []
+  const out: RelatedPerson[] = []
+  for (const entry of raw.slice(0, 5)) {
+    const row = (entry ?? {}) as { person?: { name?: unknown }; because?: { type?: unknown; name?: unknown }; items?: unknown }
+    const name = typeof row.person?.name === 'string' ? cleanText(row.person.name, 40, baseUrl) : ''
+    if (!name) continue
+    const type = BECAUSE.includes(String(row.because?.type)) ? (row.because?.type as RelatedPerson['because']['type']) : 'similar'
+    out.push({ name, because: { type, name: cleanText(typeof row.because?.name === 'string' ? row.because.name : '', 60, baseUrl) }, items: (Array.isArray(row.items) ? row.items : []).slice(0, 3).map(item => cleanItem(item, baseUrl)).filter(item => item.title) })
+  }
+  return out
+}
 
 /**
  * The person's briefing for `day`, from Landflow within 2 s, else the cache of that day, else nothing. A fresh answer
@@ -173,10 +225,13 @@ export async function getBriefing($: EngineInterface, config: Config, day: strin
   const fetched = (async (): Promise<Briefing | undefined> => {
     const response = await $.http.fetch(`${config.url}/api/brain/briefing?day=${day}`, { method: 'GET', headers: headers(config) })
     if (response.status < 200 || response.status >= 300) return undefined
-    const body = JSON.parse(response.text || '{}') as { yesterday?: BriefingItem[]; autoSend?: string; brain?: string }
+    const body = JSON.parse(response.text || '{}') as { today?: unknown[]; yesterday?: unknown[]; related?: unknown; autoSend?: string; brain?: string }
+    const list = (value: unknown[] | undefined) => (value ?? []).slice(0, 50).map(item => cleanItem(item, config.url))
     const briefing: Briefing = {
       day,
-      yesterday: (body.yesterday ?? []).slice(0, 50).map(item => ({ title: String(item.title ?? ''), ...(item.repo && { repo: String(item.repo) }), ...(item.at && { at: String(item.at) }) })),
+      today: list(body.today),
+      yesterday: list(body.yesterday),
+      related: cleanRelated(body.related, config.url),
       autoSend: body.autoSend === 'forbidden' ? 'forbidden' : 'allowed',
       brain: body.brain === 'off' ? 'off' : 'on',
     }
@@ -187,5 +242,52 @@ export async function getBriefing($: EngineInterface, config: Config, day: strin
   const timeout = $.clock.sleep(BRIEFING_TIMEOUT_MS).then(() => 'timeout' as const)
   const first = await Promise.race([fetched, timeout])
   if (first && first !== 'timeout') return first
-  return cached()
+  const old = await cached()
+  return old && { ...old, today: old.today ?? [], related: old.related ?? [] }
+}
+
+/** The request that changes who reads an item the person sent: PATCH /api/brain/work/:sourceId. */
+export function visibilityRequest(sourceId: string, visibility: WorkVisibility, source = 'claude-code') {
+  return { method: 'PATCH' as const, path: `/api/brain/work/${encodeURIComponent(sourceId)}?source=${source}`, body: { visibility } }
+}
+
+/** The request for "Post as my update": POST /api/brain/work/:sourceId/share. Only `team` or `org`; never `private`. */
+export function shareRequest(sourceId: string, visibility: 'team' | 'org' = 'org', source = 'claude-code') {
+  // An empty source leaves it out: the brain then looks the item up by its id alone.
+  return { method: 'POST' as const, path: `/api/brain/work/${encodeURIComponent(sourceId)}/share${source ? `?source=${encodeURIComponent(source)}` : ''}`, body: { visibility } }
+}
+
+type Request = { method: string; path: string; body: unknown }
+
+/** Send one of the requests above; the status, or undefined when Landflow could not be reached. */
+export function callBrain($: EngineInterface, config: Config, request: Request): Promise<number | undefined> {
+  const run = async () => {
+    try {
+      const response = await $.http.fetch(`${config.url}${request.path}`, { method: request.method, headers: headers(config), body: JSON.stringify(request.body) })
+      return response.status
+    } catch {
+      return undefined
+    }
+  }
+  return within($, run(), undefined)
+}
+
+export type PostOutcome = 'posted' | 'cancelled' | 'failed' | 'unreachable' | 'not-found'
+
+/**
+ * Post as my update, after a confirm. `ask` is the question to the person; anything but one of the two Post answers
+ * (a Cancel, an error, no one to ask) sends nothing.
+ */
+export async function confirmAndPost(ask: (question: string, options: string[]) => Promise<string>, call: (visibility: 'team' | 'org') => Promise<number | undefined>, title: string): Promise<PostOutcome> {
+  let answer: string
+  try {
+    answer = await ask(`Post "${clip(title, 100)}" as your update? Colleagues will read this title and summary.`, ['Post to org', 'Post to team', 'Cancel'])
+  } catch {
+    return 'cancelled'
+  }
+  if (answer !== 'Post to org' && answer !== 'Post to team') return 'cancelled'
+  const status = await call(answer === 'Post to team' ? 'team' : 'org')
+  if (status === undefined) return 'unreachable'
+  if (status === 404) return 'not-found'
+  return status >= 200 && status < 300 ? 'posted' : 'failed'
 }

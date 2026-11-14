@@ -1508,8 +1508,8 @@ setting `brain.workAutoSend`.
   repositories as `system` entities and the link from a person page to its user (migration 2080)
   ([work-and-briefings.md](work-and-briefings.md#related-colleagues)).
 - Follow-ups: `landflow work` should omit `visibility`; the briefing prompt (`briefingText`) does not render `related` yet (MOD6's clip, quote and link rules apply when it does); link a work event to its repository page and index systems by repo in the wiki; check `canEntity` before showing a person page's user link.
-- **Next**: the rest of the clients (the mod's colleagues, pane and band), the overlap detector and a Settings screen
-  for the auto-send setting.
+- **Built (B29)**: the mod's colleagues: `/brain sync`, the pane, the overlap band, team or org per item, Post as my update and the admin's no-auto rule ([landflow-brain-mod.md](landflow-brain-mod.md#colleagues)).
+- **Next**: the overlap detector and a Settings screen for the auto-send setting.
 
 ## Shell: nine-item rail (built 2026-11-14)
 
