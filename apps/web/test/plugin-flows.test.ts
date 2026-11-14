@@ -44,7 +44,7 @@ const flows = readdirSync(join(repo, 'plugins')).flatMap((plugin) => {
 const qualified = (nodeType: string, key: string) => (key.includes('.') ? key : `${nodeType.split('.')[0]}.${key}`);
 
 describe('plugin flows', () => {
-  it('ship with the Landfall, triage, threat-intel, Linear, Attio, Fathom and Clickland plugins', () => {
+  it('ship with the Landfall, triage, threat-intel, Linear, Attio, Fathom, Clickland and Landledger plugins', () => {
     expect(flows.map(([path]) => path).sort()).toEqual([
       'attio/flows/work-attio.json',
       'clickland/flows/clickland-alert-triage.json',
@@ -53,6 +53,9 @@ describe('plugin flows', () => {
       'landfall/flows/landflow-failures-to-landfall.json',
       'landfall/flows/landflow-heartbeat.json',
       'landfall/flows/learn-from-closed-rooms.json',
+      'landledger/flows/landledger-ai-budget.json',
+      'landledger/flows/landledger-approve-infra-change.json',
+      'landledger/flows/landledger-slack-approver.json',
       'linear/flows/work-linear.json',
       'threat-intel/flows/ioc-lookup.json',
       'triage/flows/alert-triage-to-landfall.json',

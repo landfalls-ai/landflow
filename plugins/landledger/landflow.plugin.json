@@ -1,0 +1,5 @@
+{
+  "id": "landledger",
+  "runtime": "node",
+  "start": ["tsx", "src/main.ts"]
+}

@@ -5,6 +5,8 @@
 # grafana/otel-lgtm backend in landflow-dev) stays for running without Clickland. Switching from it: apply this overlay,
 # then delete Deployment and Service landflow-lgtm and ConfigMaps landflow-otelcol-config, landflow-grafana-dashboards,
 # landflow-grafana-dashboard-provider, landflow-prometheus-rules and landflow-prometheus-config.
+# It also runs the Landledger plugin (components/landledger), with Landledger's API on the Mac reached through the
+# ExternalName Service landledger-api → host.orb.internal:4810.
 #
 #   kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-clickland
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -13,4 +15,6 @@ namespace: landflow-dev
 resources:
   - ../orbstack
 components:
+  # First, so the telemetry patches below reach its Deployment too.
+  - ../../components/landledger
   - ../../components/clickland-observability

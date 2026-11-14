@@ -1244,6 +1244,25 @@ contract up to the model.
 `search_clickland` calls and the triage Slack post); stream the assistant analysts' own steps (a node used as a tool
 would need the run's stream).
 
+## Landledger (built 2026-11-14)
+
+Landflow's side of Landledger, the land family's cost subledger ([features/landledger.md](features/landledger.md)).
+**Built:**
+
+- The [`landledger` plugin](../plugins/landledger/README.md) (TypeScript, 7120/7220): Budget → Check, Cost → Query,
+  Request → Create, Get, List, Mark Applied, Reservation → Create, Release, Period → Status, and Decision → Relay
+  (flows only: refused as an agent tool or over MCP), plus the **Landledger Trigger** (Standard Webhooks, subscribed on
+  publish or with an admin-made secret). In compose and `deploy/k8s/components/landledger` (with an ExternalName
+  `landledger-api` to the Mac), included by the `orbstack-clickland` overlay.
+- Flows: [approve an infrastructure change](features/landledger.md#approve-an-infrastructure-change),
+  [raise or hold an AI budget](features/landledger.md#raise-or-hold-an-ai-budget) and
+  [ask the approver in Slack](features/landledger.md#ask-the-approver-in-slack).
+- The Slack plugin's **Button Pressed** (`block_actions`) on the Slack Trigger and **User → Get** (`users.info`), for
+  the relay.
+
+**Next:** the live check once Landledger's wave 2 runs ([limitations](limitations.md#landledger-built-2026-11-14));
+a Teams and an email card for the relay; Mark Applied wired to a real apply step in the infra flow.
+
 ## The Brain page (built 2026-11-12)
 
 `/brain` opens the second brain as a repository of Markdown files in an editor's workbench

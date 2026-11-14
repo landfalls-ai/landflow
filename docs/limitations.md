@@ -126,6 +126,30 @@ items still open (its "Wave 6" section); this page is the short list to check be
   is set through the API. It has no documents, no passages-per-search setting (the node's own limit applies) and is not
   offered by the Agent architect, which lists only vector collections.
 
+## Landledger (built 2026-11-14)
+
+- **Not checked against a live Landledger yet.** The plugin and the three flows are built against Landledger's wave 2
+  contract (`acf95c6`) and tested against a fake of it; Landledger on this machine still runs wave 1, with no request,
+  decision, reservation or webhook routes. Once wave 2 runs: mint an `ll_` key with `requests:write` and
+  `decisions:relay` (Landledger's `docs/development.md`), store it as the Landledger credential, use the infra change
+  template, submit its form, and see the request pending in Landledger; then the Slack relay path with a signed
+  `block_actions` payload ([features/landledger.md](features/landledger.md#checked-live)).
+- **Webhooks need an admin key or a hand-made subscription.** Landledger lets only an `admin` key manage webhooks, so
+  the trigger either gets one or uses the `whsec_` secret of a webhook an admin made, and Landledger must reach
+  `LANDFLOW_PUBLIC_URL`: on the OrbStack cluster that URL is cluster-internal, so Landledger on the Mac needs a port
+  forward to deliver.
+- **The infra change flow applies nothing.** **Apply the change** is a placeholder; the flow posts the outcome to Slack
+  and leaves Request → Mark Applied to whoever fills it in.
+- **The AI budget flow holds an agent with unpublished edits.** Publishing would ship the edits with the new cap, so
+  such an agent waits for a person. Its Settings code nodes hold Landflow's own URL (the HTTP Request nodes call
+  Landflow's API with an `lf_` key), set by hand per instance.
+- **Slack identity is the Slack email.** The approver flow relays a press as the person whose Slack profile email it
+  is (`users:read.email`); Landledger decides whether that person may decide. A Slack workspace whose emails are not the
+  Landbright ones cannot relay. A card shows what Landledger showed when it was sent; if the request changed since,
+  Landledger refuses the relayed decision and the card says so.
+- **No knowledge kind.** Landledger has no explain or search route, so the plugin is not offered as an agent's knowledge
+  base.
+
 ## Integrations that report activity (built 2026-11-12)
 
 - **Activity items** ([protocol.md §16](protocol.md#16-activity-items)) are a shape, not a pipeline: a flow records them (Record Event, Entity). `kind` is a suggestion each integration makes (`work.discussion`, `work.doc_edited`, `work.meeting_*`); the hints come from names (Slack channel prefixes, Drive folders and Notion ancestors called `Customers` / `Projects`, a shared drive's name, an attendee's domain), not from the vendor's own team model.

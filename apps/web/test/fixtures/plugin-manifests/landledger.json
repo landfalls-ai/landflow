@@ -1,0 +1,1588 @@
+{
+ "protocol": "landflow.plugin/v1",
+ "plugin": {
+  "language": "typescript",
+  "sdk": {
+   "name": "landflow-sdk-typescript",
+   "version": "0.2.0"
+  },
+  "id": "landledger",
+  "name": "Landledger",
+  "version": "0.1.0",
+  "description": "Landledger cost ledger: budgets, spend, requests, reservations and periods, a person's decision relayed from Slack, Teams or email, and a webhook trigger for requests, budgets and periods; reachable over HTTP, gRPC, any installed broker and MCP",
+  "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzJGN0Q1QiIvPgogIDxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CiAgICA8cmVjdCB4PSIxMiIgeT0iMTAiIHdpZHRoPSIyNCIgaGVpZ2h0PSIyOCIgcng9IjMiLz4KICAgIDxwYXRoIGQ9Ik0xNyAxOGgxNE0xNyAyNGgxNE0xNyAzMGg4Ii8+CiAgPC9nPgogIDxjaXJjbGUgY3g9IjMzIiBjeT0iMzMiIHI9IjYiIGZpbGw9IiNGMkMxNEUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyIi8+Cjwvc3ZnPgo=",
+  "color": "#2F7D5B",
+  "author": "Landflow"
+ },
+ "nodes": [
+  {
+   "name": "landledger",
+   "displayName": "Landledger",
+   "description": "Check a cost center's budget, query spend, raise and read spend requests, reserve and release budget, read a month's status, and relay a person's approval in Landledger",
+   "version": 1,
+   "kind": "action",
+   "categories": [
+    "Finance",
+    "Productivity"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzJGN0Q1QiIvPgogIDxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CiAgICA8cmVjdCB4PSIxMiIgeT0iMTAiIHdpZHRoPSIyNCIgaGVpZ2h0PSIyOCIgcng9IjMiLz4KICAgIDxwYXRoIGQ9Ik0xNyAxOGgxNE0xNyAyNGgxNE0xNyAzMGg4Ii8+CiAgPC9nPgogIDxjaXJjbGUgY3g9IjMzIiBjeT0iMzMiIHI9IjYiIGZpbGw9IiNGMkMxNEUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyIi8+Cjwvc3ZnPgo=",
+   "color": "#2F7D5B",
+   "subtitle": "{{operation}}: {{resource}}",
+   "documentationUrl": "https://github.com/landfalls-ai/landflow/blob/main/plugins/landledger/README.md",
+   "keywords": [
+    "landledger",
+    "finance",
+    "budget",
+    "cost",
+    "spend",
+    "approval",
+    "request",
+    "reservation",
+    "finops",
+    "ledger"
+   ],
+   "usableAsTool": true,
+   "idempotent": false,
+   "toolDescription": "Landledger, the cost ledger: check what a cost center has left this month after actuals and reservations (and whether a planned amount fits), query spend grouped by cost center, team, service, agent, model…, raise a spend request (an agent always names its sponsor, the accountable person) and read its status and evidence, reserve or release budget for an approved request, and read whether a month is open, closing or locked. Agents request; people decide: no tool here approves or rejects.",
+   "inputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "credentials": [
+    {
+     "name": "landledgerApi",
+     "required": true
+    }
+   ],
+   "properties": [
+    {
+     "name": "resource",
+     "displayName": "Resource",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "budget",
+     "options": [
+      {
+       "name": "Budget",
+       "value": "budget"
+      },
+      {
+       "name": "Cost",
+       "value": "cost"
+      },
+      {
+       "name": "Decision",
+       "value": "decision",
+       "mcp": false
+      },
+      {
+       "name": "Period",
+       "value": "period"
+      },
+      {
+       "name": "Request",
+       "value": "request"
+      },
+      {
+       "name": "Reservation",
+       "value": "reservation"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "check",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "budget"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Check",
+       "value": "check",
+       "description": "What a cost center has left in a month after actuals and reservations, and whether a planned amount fits",
+       "action": "Check a budget",
+       "idempotent": true,
+       "toolAnnotations": {
+        "readOnlyHint": true
+       }
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "query",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "cost"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Query",
+       "value": "query",
+       "description": "Spend over a month or a range of days, grouped by a dimension (spend_by)",
+       "action": "Query spend",
+       "idempotent": true,
+       "toolAnnotations": {
+        "readOnlyHint": true
+       }
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "create",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "request"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Create",
+       "value": "create",
+       "description": "Raise a spend request (infra change, AI budget, tool or seat, other) for people to approve",
+       "action": "Create a request"
+      },
+      {
+       "name": "Get",
+       "value": "get",
+       "description": "A request with its steps, decisions, reservations, Landledger's evidence and the evidence hash",
+       "action": "Get a request",
+       "idempotent": true
+      },
+      {
+       "name": "List",
+       "value": "list",
+       "description": "Requests, newest first: waiting, mine, decided, open or all",
+       "action": "List requests",
+       "idempotent": true
+      },
+      {
+       "name": "Mark Applied",
+       "value": "markApplied",
+       "description": "Tell Landledger an approved change is in place (approved → applied)",
+       "action": "Mark a request applied"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "create",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "reservation"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Create",
+       "value": "create",
+       "description": "Reserve another month of an approved request's window (idempotent per month)",
+       "action": "Reserve budget"
+      },
+      {
+       "name": "Release",
+       "value": "release",
+       "description": "Release a reservation (reserved → released)",
+       "action": "Release a reservation"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "getStatus",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "period"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Status",
+       "value": "getStatus",
+       "description": "Whether a month is open, closing or locked, and who moved it",
+       "action": "Get a period's status",
+       "idempotent": true
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "relay",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "decision"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Relay",
+       "value": "relay",
+       "description": "Carry a person's approve or reject (pressed in Slack, Teams or an email) to Landledger, in their name. For flows only: refused when an agent or an MCP client calls it",
+       "action": "Relay a decision",
+       "mcp": false
+      }
+     ]
+    },
+    {
+     "name": "notice",
+     "displayName": "Decision → Relay carries a person's own decision: the key needs decisions:relay, and Landledger checks that the person is among the step's approvers and is not the requester or the sponsor. An agent never decides: this operation is refused when the node runs as an AI tool or over MCP.",
+     "type": "notice",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "decision"
+       ]
+      }
+     }
+    },
+    {
+     "name": "costCenter",
+     "displayName": "Cost Center",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "ENG-AGENTS",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "budget"
+       ],
+       "operation": [
+        "check"
+       ]
+      }
+     },
+     "description": "The cost center's code"
+    },
+    {
+     "name": "month",
+     "displayName": "Month",
+     "type": "string",
+     "default": "",
+     "placeholder": "2026-11",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "budget"
+       ],
+       "operation": [
+        "check"
+       ]
+      }
+     },
+     "description": "YYYY-MM. Empty: this month (UTC)"
+    },
+    {
+     "name": "plannedAmount",
+     "displayName": "Planned Amount",
+     "type": "string",
+     "default": "",
+     "placeholder": "1840.00",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "budget"
+       ],
+       "operation": [
+        "check"
+       ]
+      }
+     },
+     "description": "Optional, in the ledger's currency: the output says whether it fits in what is left (`fits`) and what would be left after it"
+    },
+    {
+     "name": "by",
+     "displayName": "Group By",
+     "type": "options",
+     "default": "costCenter",
+     "options": [
+      {
+       "name": "Cost Center",
+       "value": "costCenter"
+      },
+      {
+       "name": "Team",
+       "value": "team"
+      },
+      {
+       "name": "Product",
+       "value": "product"
+      },
+      {
+       "name": "Service",
+       "value": "service"
+      },
+      {
+       "name": "Namespace",
+       "value": "namespace"
+      },
+      {
+       "name": "Agent",
+       "value": "agent"
+      },
+      {
+       "name": "Model",
+       "value": "model"
+      },
+      {
+       "name": "Provider",
+       "value": "provider"
+      },
+      {
+       "name": "P&L Class",
+       "value": "plClass"
+      },
+      {
+       "name": "Category",
+       "value": "category"
+      },
+      {
+       "name": "Resource",
+       "value": "resource"
+      },
+      {
+       "name": "Workflow",
+       "value": "workflow"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "cost"
+       ],
+       "operation": [
+        "query"
+       ]
+      }
+     }
+    },
+    {
+     "name": "window",
+     "displayName": "Window",
+     "type": "options",
+     "default": "month",
+     "options": [
+      {
+       "name": "A Month",
+       "value": "month",
+       "description": "Every record booked in the month (a locked month never changes)"
+      },
+      {
+       "name": "A Range of Days",
+       "value": "range",
+       "description": "Records by the day they were charged"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "cost"
+       ],
+       "operation": [
+        "query"
+       ]
+      }
+     }
+    },
+    {
+     "name": "month",
+     "displayName": "Month",
+     "type": "string",
+     "default": "",
+     "placeholder": "2026-11",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "cost"
+       ],
+       "operation": [
+        "query"
+       ],
+       "window": [
+        "month"
+       ]
+      }
+     },
+     "description": "YYYY-MM. Empty: this month (UTC)"
+    },
+    {
+     "name": "from",
+     "displayName": "From",
+     "type": "dateTime",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "cost"
+       ],
+       "operation": [
+        "query"
+       ],
+       "window": [
+        "range"
+       ]
+      }
+     },
+     "description": "First day (UTC)"
+    },
+    {
+     "name": "to",
+     "displayName": "To",
+     "type": "dateTime",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "cost"
+       ],
+       "operation": [
+        "query"
+       ],
+       "window": [
+        "range"
+       ]
+      }
+     },
+     "description": "Last day, inclusive (UTC)"
+    },
+    {
+     "name": "filter",
+     "displayName": "Filter",
+     "type": "string",
+     "default": "",
+     "placeholder": "costCenter:ENG-PLATFORM,service:landflow-host",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "cost"
+       ],
+       "operation": [
+        "query"
+       ]
+      }
+     },
+     "description": "dimension:value pairs, comma-separated. Empty: everything"
+    },
+    {
+     "name": "layer",
+     "displayName": "Layer",
+     "type": "options",
+     "default": "direct",
+     "options": [
+      {
+       "name": "Direct (the Books' View)",
+       "value": "direct",
+       "description": "The shared pool on its own line"
+      },
+      {
+       "name": "Spread",
+       "value": "spread",
+       "description": "The shared pool shared out by the allocation rules"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "cost"
+       ],
+       "operation": [
+        "query"
+       ]
+      }
+     }
+    },
+    {
+     "name": "provisional",
+     "displayName": "Include Today",
+     "type": "boolean",
+     "default": true,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "cost"
+       ],
+       "operation": [
+        "query"
+       ]
+      }
+     },
+     "description": "Whether today's provisional figures count"
+    },
+    {
+     "name": "output",
+     "displayName": "Output",
+     "type": "options",
+     "default": "summary",
+     "options": [
+      {
+       "name": "One Item: Total and Groups",
+       "value": "summary"
+      },
+      {
+       "name": "One Item per Group",
+       "value": "groups"
+      },
+      {
+       "name": "One Item: Everything (with Daily Series)",
+       "value": "full"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "cost"
+       ],
+       "operation": [
+        "query"
+       ]
+      }
+     }
+    },
+    {
+     "name": "kind",
+     "displayName": "Kind",
+     "type": "options",
+     "default": "infra_change",
+     "options": [
+      {
+       "name": "Infrastructure Change",
+       "value": "infra_change"
+      },
+      {
+       "name": "AI Budget",
+       "value": "ai_budget"
+      },
+      {
+       "name": "Tool or Seat",
+       "value": "tool_or_seat"
+      },
+      {
+       "name": "Other",
+       "value": "other"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "request"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "title",
+     "displayName": "Title",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "Add a second Postgres replica",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "request"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "description": "3-200 characters"
+    },
+    {
+     "name": "costCenter",
+     "displayName": "Cost Center",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "ENG-PLATFORM",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "request"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "description": "The cost center that pays"
+    },
+    {
+     "name": "amount",
+     "displayName": "Amount",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "1840.00",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "request"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "description": "A decimal amount, at most six decimals: per month for a monthly request, else the one-off amount"
+    },
+    {
+     "name": "currency",
+     "displayName": "Currency",
+     "type": "string",
+     "default": "USD",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "request"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "description": "ISO 4217 code"
+    },
+    {
+     "name": "recurrence",
+     "displayName": "Recurrence",
+     "type": "options",
+     "default": "monthly",
+     "options": [
+      {
+       "name": "Monthly",
+       "value": "monthly",
+       "description": "A recurring amount per month from the start (to the end, or open-ended)"
+      },
+      {
+       "name": "Once",
+       "value": "once",
+       "description": "A one-off amount"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "request"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "requestedBy",
+     "displayName": "Requested By",
+     "type": "options",
+     "default": "person",
+     "options": [
+      {
+       "name": "A Person",
+       "value": "person",
+       "description": "Someone asked through this flow (a form, a pull request author)"
+      },
+      {
+       "name": "An Agent, With Its Sponsor",
+       "value": "agent",
+       "description": "An agent asks; its sponsor is the person who answers for it (required when an agent calls this tool)"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "request"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "requester",
+     "displayName": "Requester",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "eden.tzur@landbright.test",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "request"
+       ],
+       "operation": [
+        "create"
+       ],
+       "requestedBy": [
+        "person"
+       ]
+      }
+     },
+     "description": "Their Landbright email (or `sub`); Landledger finds the person"
+    },
+    {
+     "name": "agentId",
+     "displayName": "Agent ID",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "request"
+       ],
+       "operation": [
+        "create"
+       ],
+       "requestedBy": [
+        "agent"
+       ]
+      }
+     },
+     "description": "The agent's id where it runs (a Landflow agent id, a kagent name)"
+    },
+    {
+     "name": "agentName",
+     "displayName": "Agent Name",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "request"
+       ],
+       "operation": [
+        "create"
+       ],
+       "requestedBy": [
+        "agent"
+       ]
+      }
+     }
+    },
+    {
+     "name": "agentSystem",
+     "displayName": "Agent Runs In",
+     "type": "string",
+     "default": "landflow",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "request"
+       ],
+       "operation": [
+        "create"
+       ],
+       "requestedBy": [
+        "agent"
+       ]
+      }
+     },
+     "description": "landflow, kagent, claude, …"
+    },
+    {
+     "name": "sponsor",
+     "displayName": "Sponsor",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "amit.gal@landbright.test",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "request"
+       ],
+       "operation": [
+        "create"
+       ],
+       "requestedBy": [
+        "agent"
+       ]
+      }
+     },
+     "description": "The person accountable for the agent. Their Landbright email (or `sub`); Landledger finds the person"
+    },
+    {
+     "name": "note",
+     "displayName": "Note",
+     "type": "string",
+     "default": "",
+     "typeOptions": {
+      "rows": 3
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "request"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "description": "Why, in the requester's words (≤ 4,000 characters)"
+    },
+    {
+     "name": "evidence",
+     "displayName": "Evidence",
+     "type": "json",
+     "default": "{}",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "request"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "description": "Any JSON object (≤ 64 kB) shown beside the request. Keys Landledger's console shows: lines ([{ label, amount }], the cost change), basis (how it was sized), links ([{ label, url }]), match (which real cost consumes the reservation: namespace, workload, service, agent, workflow, provider, model…, * wildcards)"
+    },
+    {
+     "name": "requestFields",
+     "displayName": "Additional Fields",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add field",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "request"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "start",
+       "displayName": "Start",
+       "type": "dateTime",
+       "default": "",
+       "description": "First day the spend applies (default: today)"
+      },
+      {
+       "name": "end",
+       "displayName": "End",
+       "type": "dateTime",
+       "default": "",
+       "description": "Last day, inclusive. Empty: open-ended (monthly) or the start day (once)"
+      },
+      {
+       "name": "pullRequestUrl",
+       "displayName": "Pull Request URL",
+       "type": "string",
+       "default": "",
+       "description": "The pull request the change is in (kept as a related source)"
+      },
+      {
+       "name": "runUrl",
+       "displayName": "Run URL",
+       "type": "string",
+       "default": "",
+       "description": "A link back to this run, for Landledger's console"
+      },
+      {
+       "name": "originTitle",
+       "displayName": "Origin Title",
+       "type": "string",
+       "default": "",
+       "description": "What the run is, in words"
+      },
+      {
+       "name": "submit",
+       "displayName": "Submit",
+       "type": "boolean",
+       "default": true,
+       "description": "Whether to submit it now (pending, or approved at once below the policy's threshold); off keeps a draft"
+      },
+      {
+       "name": "idempotencyKey",
+       "displayName": "Idempotency Key",
+       "type": "string",
+       "default": "",
+       "description": "Retries with the same key return the first request. Empty: this step of this run (a retried step raises nothing twice)"
+      }
+     ]
+    },
+    {
+     "name": "requestId",
+     "displayName": "Request ID",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "request"
+       ],
+       "operation": [
+        "get",
+        "markApplied"
+       ]
+      }
+     },
+     "description": "The request's id (req_…)"
+    },
+    {
+     "name": "appliedNote",
+     "displayName": "Note",
+     "type": "string",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "request"
+       ],
+       "operation": [
+        "markApplied"
+       ]
+      }
+     },
+     "description": "What was done (≤ 2,000 characters)"
+    },
+    {
+     "name": "links",
+     "displayName": "Links",
+     "type": "json",
+     "default": "[]",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "request"
+       ],
+       "operation": [
+        "markApplied"
+       ]
+      }
+     },
+     "description": "Up to 10 links to what was done: [{ \"label\": \"PR #42\", \"url\": \"https://…\" }]"
+    },
+    {
+     "name": "box",
+     "displayName": "Box",
+     "type": "options",
+     "default": "all",
+     "options": [
+      {
+       "name": "All",
+       "value": "all"
+      },
+      {
+       "name": "Decided",
+       "value": "decided",
+       "description": "No longer pending"
+      },
+      {
+       "name": "Mine",
+       "value": "mine",
+       "description": "Raised or sponsored by the key's person"
+      },
+      {
+       "name": "Open",
+       "value": "open",
+       "description": "Pending"
+      },
+      {
+       "name": "Waiting",
+       "value": "waiting",
+       "description": "A step pending on the caller"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "request"
+       ],
+       "operation": [
+        "list"
+       ]
+      }
+     }
+    },
+    {
+     "name": "listFilters",
+     "displayName": "Filters",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add filter",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "request"
+       ],
+       "operation": [
+        "list"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "status",
+       "displayName": "Status",
+       "type": "options",
+       "default": "pending",
+       "options": [
+        {
+         "name": "Draft",
+         "value": "draft"
+        },
+        {
+         "name": "Pending",
+         "value": "pending"
+        },
+        {
+         "name": "Approved",
+         "value": "approved"
+        },
+        {
+         "name": "Rejected",
+         "value": "rejected"
+        },
+        {
+         "name": "Cancelled",
+         "value": "cancelled"
+        },
+        {
+         "name": "Expired",
+         "value": "expired"
+        },
+        {
+         "name": "Applied",
+         "value": "applied"
+        }
+       ]
+      },
+      {
+       "name": "kind",
+       "displayName": "Kind",
+       "type": "options",
+       "default": "infra_change",
+       "options": [
+        {
+         "name": "Infrastructure Change",
+         "value": "infra_change"
+        },
+        {
+         "name": "AI Budget",
+         "value": "ai_budget"
+        },
+        {
+         "name": "Tool or Seat",
+         "value": "tool_or_seat"
+        },
+        {
+         "name": "Other",
+         "value": "other"
+        }
+       ]
+      },
+      {
+       "name": "costCenter",
+       "displayName": "Cost Center",
+       "type": "string",
+       "default": ""
+      }
+     ]
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 50,
+     "typeOptions": {
+      "minValue": 1,
+      "maxValue": 200,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "request"
+       ],
+       "operation": [
+        "list"
+       ]
+      }
+     }
+    },
+    {
+     "name": "requestId",
+     "displayName": "Request ID",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "reservation"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "description": "The request's id (req_…)"
+    },
+    {
+     "name": "month",
+     "displayName": "Month",
+     "type": "string",
+     "default": "",
+     "placeholder": "2026-12",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "reservation"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "description": "YYYY-MM. Empty: Landledger picks the next month of the request's window"
+    },
+    {
+     "name": "reserveAmount",
+     "displayName": "Amount",
+     "type": "string",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "reservation"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "description": "At most the request's monthly (or one-off) amount. Empty: all of it"
+    },
+    {
+     "name": "reservationId",
+     "displayName": "Reservation ID",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "reservation"
+       ],
+       "operation": [
+        "release"
+       ]
+      }
+     },
+     "description": "The reservation's id"
+    },
+    {
+     "name": "reason",
+     "displayName": "Reason",
+     "type": "string",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "reservation"
+       ],
+       "operation": [
+        "release"
+       ]
+      }
+     }
+    },
+    {
+     "name": "month",
+     "displayName": "Month",
+     "type": "string",
+     "default": "",
+     "placeholder": "2026-11",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "period"
+       ],
+       "operation": [
+        "getStatus"
+       ]
+      }
+     },
+     "description": "YYYY-MM. Empty: this month (UTC)"
+    },
+    {
+     "name": "requestId",
+     "displayName": "Request ID",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "decision"
+       ],
+       "operation": [
+        "relay"
+       ]
+      }
+     },
+     "description": "The request's id (req_…)"
+    },
+    {
+     "name": "outcome",
+     "displayName": "Outcome",
+     "type": "options",
+     "default": "approve",
+     "options": [
+      {
+       "name": "Approve",
+       "value": "approve"
+      },
+      {
+       "name": "Reject",
+       "value": "reject",
+       "description": "Needs a comment of 3 characters or more"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "decision"
+       ],
+       "operation": [
+        "relay"
+       ]
+      }
+     }
+    },
+    {
+     "name": "person",
+     "displayName": "Person",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "amit.gal@landbright.test",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "decision"
+       ],
+       "operation": [
+        "relay"
+       ]
+      }
+     },
+     "description": "Who decided: the person who pressed the button. Their Landbright email (or `sub`); Landledger finds the person"
+    },
+    {
+     "name": "evidenceSha256",
+     "displayName": "Evidence SHA-256",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "decision"
+       ],
+       "operation": [
+        "relay"
+       ]
+      }
+     },
+     "description": "The evidenceSha256 of what the person was shown (request.step_pending carries it, as does Request → Get)"
+    },
+    {
+     "name": "comment",
+     "displayName": "Comment",
+     "type": "string",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "decision"
+       ],
+       "operation": [
+        "relay"
+       ]
+      }
+     },
+     "description": "Why (required to reject)"
+    },
+    {
+     "name": "step",
+     "displayName": "Step",
+     "type": "number",
+     "default": 0,
+     "typeOptions": {
+      "minValue": 0,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "decision"
+       ],
+       "operation": [
+        "relay"
+       ]
+      }
+     },
+     "description": "The step the person saw (1-based; Landledger answers 409 if the request moved on). 0: not checked"
+    },
+    {
+     "name": "channel",
+     "displayName": "Channel",
+     "type": "options",
+     "default": "slack",
+     "options": [
+      {
+       "name": "Slack",
+       "value": "slack"
+      },
+      {
+       "name": "Microsoft Teams",
+       "value": "teams"
+      },
+      {
+       "name": "Email",
+       "value": "email"
+      },
+      {
+       "name": "Landflow",
+       "value": "landflow"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "decision"
+       ],
+       "operation": [
+        "relay"
+       ]
+      }
+     },
+     "description": "Where the person decided"
+    }
+   ]
+  },
+  {
+   "name": "landledgerTrigger",
+   "displayName": "Landledger Trigger",
+   "description": "Starts the workflow when a Landledger request waits on its approvers, is decided or applied, a budget is at risk, or a month starts closing (a signed webhook)",
+   "version": 1,
+   "kind": "trigger",
+   "triggerSource": "appWebhook",
+   "categories": [
+    "Finance",
+    "Productivity"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzJGN0Q1QiIvPgogIDxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CiAgICA8cmVjdCB4PSIxMiIgeT0iMTAiIHdpZHRoPSIyNCIgaGVpZ2h0PSIyOCIgcng9IjMiLz4KICAgIDxwYXRoIGQ9Ik0xNyAxOGgxNE0xNyAyNGgxMCIvPgogIDwvZz4KICA8cGF0aCBkPSJNMzAgMjdsLTUgOGg1bC0yIDYgNy05aC01bDItNXoiIGZpbGw9IiNGMkMxNEUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIxLjIiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+Cg==",
+   "color": "#2F7D5B",
+   "subtitle": "{{events}}",
+   "documentationUrl": "https://github.com/landfalls-ai/landflow/blob/main/plugins/landledger/README.md",
+   "keywords": [
+    "landledger",
+    "approval",
+    "request",
+    "decided",
+    "budget",
+    "webhook",
+    "finance",
+    "trigger"
+   ],
+   "inputs": [],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "credentials": [
+    {
+     "name": "landledgerApi",
+     "required": true
+    }
+   ],
+   "properties": [
+    {
+     "name": "notice",
+     "displayName": "Publishing the workflow subscribes it in Landledger (POST /api/webhooks; Landledger lets only an admin key manage webhooks) and keeps the signing secret for you; unpublishing deletes the subscription. Without an admin key, have a Landledger admin add a webhook for this node's URL (Publish menu → App webhooks) with these events, and put its whsec_ secret in the credential's Webhook Signing Secret: then nothing is registered. Landledger must reach Landflow at the published URL (LANDFLOW_PUBLIC_URL). Every delivery is checked against its Standard Webhooks signature.",
+     "type": "notice",
+     "default": ""
+    },
+    {
+     "name": "events",
+     "displayName": "Trigger On",
+     "type": "multiOptions",
+     "default": [
+      "request.step_pending",
+      "request.decided",
+      "request.applied",
+      "budget.at_risk",
+      "period.closing"
+     ],
+     "options": [
+      {
+       "name": "Request Step Pending",
+       "value": "request.step_pending",
+       "description": "A step starts waiting on its approvers (or escalates): who they are, the evidence hash to relay with"
+      },
+      {
+       "name": "Request Decided",
+       "value": "request.decided",
+       "description": "A request ended: approved, rejected, cancelled or expired"
+      },
+      {
+       "name": "Request Applied",
+       "value": "request.applied",
+       "description": "The approved change is in place"
+      },
+      {
+       "name": "Budget at Risk",
+       "value": "budget.at_risk",
+       "description": "A cost center crossed into at risk or over in a month"
+      },
+      {
+       "name": "Period Closing",
+       "value": "period.closing",
+       "description": "A month starts closing"
+      },
+      {
+       "name": "Request Created",
+       "value": "request.created",
+       "description": "A request was submitted"
+      }
+     ]
+    },
+    {
+     "name": "kinds",
+     "displayName": "Request Kinds",
+     "type": "string",
+     "default": "",
+     "placeholder": "infra_change, ai_budget",
+     "description": "Only requests of these kinds (comma-separated; empty: every kind). Events without a request pass"
+    },
+    {
+     "name": "costCenters",
+     "displayName": "Cost Centers",
+     "type": "string",
+     "default": "",
+     "placeholder": "ENG-PLATFORM",
+     "description": "Only these cost centers (comma-separated codes; empty: every one)"
+    },
+    {
+     "name": "options",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add option",
+     "values": [
+      {
+       "name": "tolerance",
+       "displayName": "Signature Tolerance (s)",
+       "type": "number",
+       "default": 300,
+       "typeOptions": {
+        "minValue": 0
+       },
+       "description": "How far the signed webhook-timestamp may be from now before the call is rejected as a replay"
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "credentialTypes": [
+  {
+   "name": "landledgerApi",
+   "displayName": "Landledger API (ll_…)",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzJGN0Q1QiIvPgogIDxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CiAgICA8cmVjdCB4PSIxMiIgeT0iMTAiIHdpZHRoPSIyNCIgaGVpZ2h0PSIyOCIgcng9IjMiLz4KICAgIDxwYXRoIGQ9Ik0xNyAxOGgxNE0xNyAyNGgxNE0xNyAzMGg4Ii8+CiAgPC9nPgogIDxjaXJjbGUgY3g9IjMzIiBjeT0iMzMiIHI9IjYiIGZpbGw9IiNGMkMxNEUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyIi8+Cjwvc3ZnPgo=",
+   "documentationUrl": "https://github.com/landfalls-ai/landflow/blob/main/plugins/landledger/README.md",
+   "properties": [
+    {
+     "name": "baseUrl",
+     "displayName": "Base URL",
+     "type": "string",
+     "required": true,
+     "default": "http://landledger-api.landflow-dev.svc.cluster.local:4810",
+     "placeholder": "http://127.0.0.1:4810",
+     "description": "Landledger's API. On the OrbStack cluster the default; on this machine http://127.0.0.1:4810"
+    },
+    {
+     "name": "apiKey",
+     "displayName": "API Key",
+     "type": "string",
+     "required": true,
+     "typeOptions": {
+      "password": true
+     },
+     "default": "",
+     "placeholder": "ll_…",
+     "description": "A Landledger API key (ll_…). Scopes: read for budgets, spend, requests and periods; requests:write to raise requests; reservations:write to reserve and release; decisions:relay to relay a person's decision; admin for the trigger to register its webhook"
+    },
+    {
+     "name": "webhookSecret",
+     "displayName": "Webhook Signing Secret",
+     "type": "string",
+     "typeOptions": {
+      "password": true
+     },
+     "default": "",
+     "placeholder": "whsec_…",
+     "description": "Optional. The secret of a webhook subscription a Landledger admin made for the Landledger Trigger's URL. Set, the trigger registers nothing and checks deliveries with it; empty, the trigger subscribes itself on publish (the key needs admin)"
+    }
+   ],
+   "testable": true
+  }
+ ]
+}

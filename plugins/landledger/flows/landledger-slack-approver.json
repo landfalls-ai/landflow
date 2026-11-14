@@ -1,0 +1,370 @@
+{
+  "kind": "landflow/template",
+  "version": 1,
+  "template": {
+    "name": "Landledger: ask the approver in Slack",
+    "description": "When a Landledger request waits on its approvers, each gets a Slack card with the request, the month’s numbers and Approve / Reject buttons. A press is relayed to Landledger as that person’s decision (their Slack email is their Landbright identity), with the hash of what the card showed; the card then says what happened.",
+    "categories": [
+      "finance",
+      "communication"
+    ],
+    "credentials": [
+      {
+        "id": "landledger",
+        "type": "landledger.landledgerApi",
+        "name": "Landledger",
+        "description": "Landledger's API URL (in the cluster http://landledger-api.landflow-dev.svc.cluster.local:4810, on this machine http://127.0.0.1:4810) and an ll_ key with read and decisions:relay. Managing the webhook needs an admin key, or put the whsec_ secret of a webhook an admin made in Webhook Signing Secret."
+      },
+      {
+        "id": "slack",
+        "type": "messaging.slackApi",
+        "name": "Slack bot",
+        "description": "A bot token (xoxb-…) with chat:write, users:read and users:read.email, and the app’s signing secret (for the button presses)."
+      }
+    ],
+    "setup": [
+      "Pick or add the **Landledger** credential: an `ll_` key with `read` and `decisions:relay` (and `admin`, or the `whsec_` secret of a webhook an admin made, for **Step waits on approvers**).",
+      "Pick the **Slack bot**: a bot token with `chat:write`, `users:read` and `users:read.email`, and the signing secret.",
+      "Publish, then set **Button pressed**’s URL as the Slack app’s **Interactivity Request URL**.",
+      "An approver is found in Slack by their Landbright email; a press is relayed with the presser’s Slack email. Landledger decides whether that person may decide: never the requester or the sponsor.",
+      "A card shows what Landledger showed at that moment; if the request changed since, Landledger refuses the relayed decision and the card says so."
+    ],
+    "dataTables": [],
+    "workflow": {
+      "name": "Landledger: ask the approver in Slack",
+      "description": "Slack cards with Approve / Reject for a Landledger step; a press is relayed as the presser’s decision.",
+      "nodes": [
+        {
+          "id": "pending",
+          "name": "Step waits on approvers",
+          "type": "landledger.landledgerTrigger",
+          "typeVersion": 1,
+          "position": [
+            0,
+            0
+          ],
+          "parameters": {
+            "events": [
+              "request.step_pending"
+            ],
+            "kinds": "",
+            "costCenters": ""
+          },
+          "credentials": {
+            "landledgerApi": {
+              "id": "landledger",
+              "name": "Landledger"
+            }
+          }
+        },
+        {
+          "id": "get",
+          "name": "Get the request",
+          "type": "landledger.landledger",
+          "typeVersion": 1,
+          "position": [
+            280,
+            0
+          ],
+          "parameters": {
+            "resource": "request",
+            "operation": "get",
+            "requestId": "{{ $json.requestId }}"
+          },
+          "credentials": {
+            "landledgerApi": {
+              "id": "landledger",
+              "name": "Landledger"
+            }
+          },
+          "notes": "The request and the evidence Landledger shows, with the hash of exactly that: the card shows it and the decision names it."
+        },
+        {
+          "id": "cards",
+          "name": "One card per approver",
+          "type": "core.code",
+          "typeVersion": 1,
+          "position": [
+            560,
+            0
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "all",
+            "code": "// One Slack card per approver of the pending step, built from what Landledger shows (the request and its evidence),\n// with Approve and Reject buttons. A button's value carries the request, the step and the hash of what was shown.\nconst event = $('Step waits on approvers').first().json;\nconst detail = $input.first().json;\nconst r = detail.request;\nconst e = detail.evidence ?? {};\nconst money = (v) => (v === null || v === undefined ? '—' : `$${Number(v).toLocaleString('en-US', { maximumFractionDigits: 2 })}`);\nconst per = r.recurrence === 'monthly' ? ' a month' : '';\nconst lines = (r.evidence?.lines ?? []).map((l) => `• ${l.label}: ${money(l.amount)}`).join('\\n');\nconst links = [...(r.evidence?.links ?? []), ...(r.related ?? []).filter((x) => x.url).map((x) => ({ label: x.type === 'pull_request' ? 'Pull request' : x.type, url: x.url }))]\n  .map((l) => `<${l.url}|${l.label}>`).join(' · ');\nconst who = r.requester?.kind === 'agent' ? `${r.requester.agent.name} (agent), sponsor ${r.requester.sponsor?.name ?? r.requester.sponsor?.email}` : r.requester?.person?.name ?? r.requester?.person?.email;\nconst value = JSON.stringify({ r: r.id, n: r.number, s: event.step.position, h: detail.evidenceSha256 });\nconst text = `${r.number}: ${r.title} — ${money(r.amount.amount)}${per} for ${r.costCenter.code}`;\nconst blocks = [\n  { type: 'header', text: { type: 'plain_text', text: `${r.number} · ${r.title}`.slice(0, 150) } },\n  { type: 'section', fields: [\n    { type: 'mrkdwn', text: `*Amount*\\n${money(r.amount.amount)}${per}` },\n    { type: 'mrkdwn', text: `*Cost center*\\n${r.costCenter.code} · ${r.costCenter.name}` },\n    { type: 'mrkdwn', text: `*Asked by*\\n${who}` },\n    { type: 'mrkdwn', text: `*Step*\\n${event.step.label}${event.step.deadlineAt ? ` (by ${event.step.deadlineAt.slice(0, 10)})` : ''}` },\n  ] },\n  ...(r.note ? [{ type: 'section', text: { type: 'mrkdwn', text: `> ${r.note.slice(0, 2900)}` } }] : []),\n  { type: 'section', text: { type: 'mrkdwn', text: [\n    `*The month for ${r.costCenter.code}* (${e.month ?? ''}): spent ${money(e.actual)}, reserved ${money(e.reserved)}, budget ${money(e.budget)}; left after this ${money(e.leftAfter)}.`,\n    e.why ? `_${e.why}_` : '', lines, r.evidence?.basis ?? '', links,\n  ].filter(Boolean).join('\\n').slice(0, 2990) } },\n  { type: 'actions', block_id: 'landledger_decision', elements: [\n    { type: 'button', action_id: 'landledger_approve', style: 'primary', text: { type: 'plain_text', text: 'Approve' }, value },\n    { type: 'button', action_id: 'landledger_reject', style: 'danger', text: { type: 'plain_text', text: 'Reject' }, value,\n      confirm: { title: { type: 'plain_text', text: 'Reject?' }, text: { type: 'plain_text', text: 'The requester is told it was rejected in Slack.' }, confirm: { type: 'plain_text', text: 'Reject' }, deny: { type: 'plain_text', text: 'Back' } } },\n    { type: 'button', action_id: 'landledger_open', text: { type: 'plain_text', text: 'Open in Landledger' }, url: event.url },\n  ] },\n];\nreturn (event.approvers ?? []).filter((a) => a.email).map((a) => ({ email: a.email, name: a.name, text, blocks }));"
+          }
+        },
+        {
+          "id": "find",
+          "name": "Find them in Slack",
+          "type": "messaging.slack",
+          "typeVersion": 1,
+          "position": [
+            840,
+            0
+          ],
+          "parameters": {
+            "authentication": "accessToken",
+            "resource": "user",
+            "operation": "getByEmail",
+            "email": "{{ $json.email }}"
+          },
+          "credentials": {
+            "slackApi": {
+              "id": "slack",
+              "name": "Slack bot"
+            }
+          }
+        },
+        {
+          "id": "send",
+          "name": "Send the card",
+          "type": "messaging.slack",
+          "typeVersion": 1,
+          "position": [
+            1120,
+            0
+          ],
+          "parameters": {
+            "authentication": "accessToken",
+            "resource": "message",
+            "operation": "post",
+            "channelId": "{{ $json.id }}",
+            "text": "{{ $('One card per approver').item.json.text }}",
+            "blocksUi": "{{ $('One card per approver').item.json.blocks }}"
+          },
+          "credentials": {
+            "slackApi": {
+              "id": "slack",
+              "name": "Slack bot"
+            }
+          },
+          "notes": "A direct message to the approver (a member ID as the channel opens their DM)."
+        },
+        {
+          "id": "press",
+          "name": "Button pressed",
+          "type": "messaging.slackTrigger",
+          "typeVersion": 1,
+          "position": [
+            0,
+            360
+          ],
+          "parameters": {
+            "authentication": "accessToken",
+            "events": [
+              "block_actions"
+            ],
+            "watchWorkspace": true,
+            "channelNames": "",
+            "ignoreBots": true,
+            "ignoreEdits": true
+          },
+          "credentials": {
+            "slackApi": {
+              "id": "slack",
+              "name": "Slack bot"
+            }
+          },
+          "notes": "Set this node's URL as the Slack app's Interactivity Request URL. Slack signs every press; the signing secret is in the credential."
+        },
+        {
+          "id": "ours",
+          "name": "Approve or Reject",
+          "type": "core.filter",
+          "typeVersion": 1,
+          "position": [
+            280,
+            360
+          ],
+          "parameters": {
+            "conditions": {
+              "condition": [
+                {
+                  "left": "{{ $json.actionId }}",
+                  "operator": "equals",
+                  "right": "landledger_approve"
+                },
+                {
+                  "left": "{{ $json.actionId }}",
+                  "operator": "equals",
+                  "right": "landledger_reject"
+                }
+              ]
+            },
+            "combinator": "or"
+          }
+        },
+        {
+          "id": "who",
+          "name": "Who pressed",
+          "type": "messaging.slack",
+          "typeVersion": 1,
+          "position": [
+            560,
+            360
+          ],
+          "parameters": {
+            "authentication": "accessToken",
+            "resource": "user",
+            "operation": "get",
+            "userId": "{{ $json.user }}"
+          },
+          "credentials": {
+            "slackApi": {
+              "id": "slack",
+              "name": "Slack bot"
+            }
+          },
+          "notes": "The presser's Slack profile: their email is their Landbright identity (needs users:read.email)."
+        },
+        {
+          "id": "relay",
+          "name": "Relay the decision",
+          "type": "landledger.landledger",
+          "typeVersion": 1,
+          "position": [
+            840,
+            360
+          ],
+          "parameters": {
+            "resource": "decision",
+            "operation": "relay",
+            "requestId": "{{ JSON.parse($('Button pressed').item.json.value).r }}",
+            "outcome": "{{ $('Button pressed').item.json.actionId === 'landledger_approve' ? 'approve' : 'reject' }}",
+            "person": "{{ $json.email }}",
+            "evidenceSha256": "{{ JSON.parse($('Button pressed').item.json.value).h }}",
+            "comment": "{{ $('Button pressed').item.json.actionId === 'landledger_reject' ? 'Rejected in Slack by ' + ($json.real_name || $json.name) : '' }}",
+            "step": "{{ JSON.parse($('Button pressed').item.json.value).s }}",
+            "channel": "slack"
+          },
+          "credentials": {
+            "landledgerApi": {
+              "id": "landledger",
+              "name": "Landledger"
+            }
+          },
+          "onError": "continue",
+          "notes": "Landledger records the decision as this person's, relayed by the key; it refuses anyone who is not an approver of the step, the requester or sponsor, and a step that moved on."
+        },
+        {
+          "id": "outcome",
+          "name": "Say what happened",
+          "type": "core.code",
+          "typeVersion": 1,
+          "position": [
+            1120,
+            360
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "each",
+            "codeEach": "// The card's new text: the decision Landledger recorded, or why it refused (Relay the decision continues on an error).\nconst press = JSON.parse($('Button pressed').first().json.value);\nconst failed = $json.error ? ($json.error.message ?? String($json.error)) : '';\nconst d = $json.decision;\nconst text = failed\n  ? `\\u26a0\\ufe0f ${press.n}: Landledger did not take your answer: ${failed}`\n  : `${d.outcome === 'approve' ? '\\u2705' : '\\u274c'} ${$json.request.number} ${d.outcome === 'approve' ? 'approved' : 'rejected'} by ${d.person.name} \\u00b7 ${$json.request.title}`;\nreturn { text, blocks: [{ type: 'section', text: { type: 'mrkdwn', text } }] };"
+          }
+        },
+        {
+          "id": "update",
+          "name": "Update the card",
+          "type": "messaging.slack",
+          "typeVersion": 1,
+          "position": [
+            1400,
+            360
+          ],
+          "parameters": {
+            "authentication": "accessToken",
+            "resource": "message",
+            "operation": "update",
+            "channelId": "{{ $('Button pressed').item.json.channel }}",
+            "ts": "{{ $('Button pressed').item.json.messageTs }}",
+            "text": "{{ $json.text }}",
+            "blocksUi": "{{ $json.blocks }}"
+          },
+          "credentials": {
+            "slackApi": {
+              "id": "slack",
+              "name": "Slack bot"
+            }
+          },
+          "notes": "The buttons give way to what happened, so nobody presses twice."
+        }
+      ],
+      "connections": [
+        {
+          "id": "c1",
+          "type": "main",
+          "source": "pending",
+          "sourceIndex": 0,
+          "target": "get",
+          "targetIndex": 0
+        },
+        {
+          "id": "c2",
+          "type": "main",
+          "source": "get",
+          "sourceIndex": 0,
+          "target": "cards",
+          "targetIndex": 0
+        },
+        {
+          "id": "c3",
+          "type": "main",
+          "source": "cards",
+          "sourceIndex": 0,
+          "target": "find",
+          "targetIndex": 0
+        },
+        {
+          "id": "c4",
+          "type": "main",
+          "source": "find",
+          "sourceIndex": 0,
+          "target": "send",
+          "targetIndex": 0
+        },
+        {
+          "id": "c5",
+          "type": "main",
+          "source": "press",
+          "sourceIndex": 0,
+          "target": "ours",
+          "targetIndex": 0
+        },
+        {
+          "id": "c6",
+          "type": "main",
+          "source": "ours",
+          "sourceIndex": 0,
+          "target": "who",
+          "targetIndex": 0
+        },
+        {
+          "id": "c7",
+          "type": "main",
+          "source": "who",
+          "sourceIndex": 0,
+          "target": "relay",
+          "targetIndex": 0
+        },
+        {
+          "id": "c8",
+          "type": "main",
+          "source": "relay",
+          "sourceIndex": 0,
+          "target": "outcome",
+          "targetIndex": 0
+        },
+        {
+          "id": "c9",
+          "type": "main",
+          "source": "outcome",
+          "sourceIndex": 0,
+          "target": "update",
+          "targetIndex": 0
+        }
+      ],
+      "groups": [],
+      "stickyNotes": []
+    }
+  }
+}

@@ -74,6 +74,16 @@
       "category": "monitoring",
       "keywords": ["clickland", "observability", "logs", "traces", "metrics", "alerts", "dashboards"],
       "flows": ["./flows/clickland-alert-triage.json", "./flows/clickland-observability-assistant.json"]
+    },
+    {
+      "name": "landledger",
+      "source": "./plugins/landledger",
+      "description": "Landledger, the cost subledger: check budgets, query spend, raise and read spend requests, reserve and release budget, a month's status, relay a person's decision from Slack, and a signed webhook trigger for requests, budgets and periods. Flows: approve an infrastructure change, raise or hold an AI budget, and ask the approver in Slack.",
+      "version": "0.1.0",
+      "author": { "name": "Landflow" },
+      "category": "finance",
+      "keywords": ["landledger", "finance", "budget", "approval", "spend", "requests"],
+      "flows": ["./flows/landledger-ai-budget.json", "./flows/landledger-approve-infra-change.json", "./flows/landledger-slack-approver.json"]
     }
   ]
 }
