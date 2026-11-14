@@ -187,3 +187,18 @@ scope" for their Landledger Triggers. To finish it, a Landledger admin adds a we
 for `http://landflow-host.landflow-dev.svc.cluster.local:3000/api/webhook/app/<workflowId>/pending`, and puts its
 `whsec_` secret in a Landledger credential of its own on that trigger. The next step pending delivers it, signed.
 See [limitations](../limitations.md#landledger-built-2026-11-14).
+
+### After the review (2026-11-15)
+
+On the same cluster, against Landledger `fee9b0a` ("Review of wave 2: the fixes", contract `c3c0115`), with the
+plugin and messaging images rebuilt and rolled out:
+
+| Check | Result |
+|---|---|
+| Credentials | three replace `cred_y7J-Ss838xQT` (deleted once no workflow used it), all through the ExternalName URL: `cred__r3A-4itQ3HC` "Connected to Landledger 0.1.0 as landflow requests (key key_38RRNMBzm68Qf52nShJF): read, requests:write"; `cred_YxKARfZzGSxR` "… landflow webhooks …: webhooks:write"; `cred_RJzOergKTqUz` (Landledger Relay Key) "… landflow relay …: decisions:relay". The relay type's test with the requests key fails: "the key has no decisions:relay" |
+| Republished | `wf_Vr8xJxZfFx` (infra) and `wf_M-jYpZuZfS` (Slack) took the new templates' graphs through the API (`PUT`, then publish; their tables created; Slack team `T_LANDDEV`, app `A_LANDLEDGER`). Both triggers subscribed with the webhooks key: Landledger lists `wh_FwBpmWDdbdr6e4hgdHVN` (`request.decided`, `request.needs_confirmation`) and `wh_4Tt1jg9cPrZRXaPQbJSK` (`request.step_pending`), created by "key:landflow webhooks", no secret in the listing |
+| Infra form, naming Shira Navon | $700 a month on ENG-PLATFORM, submitted in a visible Chrome: run `ex_sunnxGgP-KtD` raised `req_nrdRQWwsfZDJQjGcY5GM` (R-3), `awaiting_confirmation` for Shira, `createdBy` the requests key, the run recorded in **Landledger infra requests**. Landledger's signed `request.needs_confirmation` (`evt_ebJH8eqy5wYAPHnYZbTH`) ran `ex_kK2hABXXr7gh`, which posted the confirm link to #infra-changes. The same URL with a forged signature: 401. R-3 is left for Shira |
+| Slack cards for R-2 | R-2 was pending at the budget owner's step. Its `step_pending` predates the subscription, so the card path ran by hand with that step pinned on the trigger (`ex_MqfqBw9VgAGQ`): cards to Amit and Shira on the Slack stand-in, recorded (hash `4103d99a5d5c…`), Approve with `ll1|req_KKKMAdhv9Vr1Vp0f3KxS|1|<hash>`, Reject and Open in Landledger, the hash prefix and the Finance and CFO line |
+| Presses (signed with Landledger's relay channel secret, team `T_LANDDEV`, app `A_LANDLEDGER`) | Tal Levi on a recorded card (`ex_x7RysiRpwSDx`): relayed raw with the relay key, Landledger answered 403 "This step is for Budget Owners; you aren't in it", the card kept Open in Landledger only. A wrong signature: 401 at the Slack Trigger, no run. A signed press on a card never sent (`ex_q7wJ_dt5JNri`): stopped at **Find the card**, nothing relayed. No press as Shira; R-2 stays pending with no decision |
+
+The Slack stand-in was stopped; the Slack credential stays, named "Slack: simulated (no real Slack)".

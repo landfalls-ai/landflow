@@ -128,10 +128,10 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 ## Landledger (built 2026-11-14)
 
-- **No live webhook delivery yet.** Against Landledger's wave 2 (`f78f8fc`) the credential, the infra change form (a
-  pending request with the run as its origin) and the Slack relay path (a non-approver refused) ran live; the trigger's
-  subscription with a `webhooks:write` key waits on Landledger's `c3c0115` contract running and its keys
-  ([features/landledger.md](features/landledger.md#checked-live)).
+- **Not yet seen live: a decision delivered and acted on.** Subscriptions with a `webhooks:write` key and a signed
+  `request.needs_confirmation` delivery ran live on 2026-11-15; a `request.decided` or `request.step_pending` delivery
+  waits on a person confirming or deciding in Landledger, and the AI budget flow is not installed on the cluster
+  ([features/landledger.md](features/landledger.md#after-the-review-2026-11-15)).
 - **A webhook secret made by an admin serves one trigger.** Without a `webhooks:write` key, each Landledger Trigger
   needs a credential of its own holding the `whsec_` secret of a webhook an admin made.
 - **The infra change flow applies nothing.** **Apply the change** is a placeholder; the flow posts the outcome to Slack

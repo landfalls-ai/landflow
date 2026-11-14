@@ -1270,8 +1270,12 @@ key's approved request from one of its runs; the AI budget flow raises by the ap
 with an hourly reconcile; the Slack flow relays only presses on cards it recorded, from its team and app, by members,
 and keeps Try again on outages; the trigger's tolerance is held to 300 s and it takes the three new events.
 
-**Next:** the live check against `c3c0115` (a `webhooks:write` subscription and a signed `request.needs_confirmation`
-delivery); Slack's reject modal (`view_submission`); a Teams and an email card for the relay; Mark Applied wired to a
+Checked live on 2026-11-15 against Landledger `fee9b0a`: the three keys, both triggers subscribed with the webhooks
+key, a form request held for its person with a signed `request.needs_confirmation` delivery, and the Slack refusals
+(not an approver, a wrong signature, a card never sent).
+
+**Next:** a decision delivered live (once a person confirms or decides); the AI budget flow on the cluster; Slack's
+reject modal (`view_submission`); a Teams and an email card for the relay; Mark Applied wired to a
 real apply step in the infra flow.
 
 ## The Brain page (built 2026-11-12)
