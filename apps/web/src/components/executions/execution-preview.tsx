@@ -703,6 +703,21 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                           Ran version {record.versionNumber} ({record.versionPublished ? 'published' : 'draft'})
                         </p>
                       )}
+                      {record.mcp && (
+                        <p className="px-3 py-1.5 text-[12px] text-t2 md:hidden">
+                          MCP tool <span className="font-mono">{record.mcp.tool}</span>, called by <span className="font-mono">{record.mcp.caller}</span>
+                        </p>
+                      )}
+                      {record.retryAt && (
+                        <p className="px-3 py-1.5 text-[12px] text-t2 md:hidden">
+                          Automatic retry at <span className="tabular-nums">{formatStamp(record.retryAt)}</span>
+                        </p>
+                      )}
+                      {record.buffered && (
+                        <div className="px-3 py-1.5 md:hidden">
+                          <BufferedChip buffered={record.buffered} />
+                        </div>
+                      )}
                       {record.parentExecutionId && (
                         <div className="md:hidden">
                           <MenuItem
