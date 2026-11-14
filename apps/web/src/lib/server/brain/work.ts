@@ -41,7 +41,7 @@ export interface RejectedWork {
   reason: string;
 }
 
-/** The fields every work kind declares (deploy/brain/work-kinds.json holds the same list for the declare script). */
+/** The fields the tools' work kinds declare (deploy/brain/work-kinds.json holds the same list for the declare script; the GitHub-only kinds list their own there). */
 export const WORK_FIELDS: UsageKindField[] = [
   { name: 'source', type: 'string', required: true, description: 'The tool the work was done in: claude-code, landflow-cli, mcp…' },
   { name: 'sourceId', type: 'string', required: true, description: 'Stable id of this item in its tool (sending it again updates it)' },

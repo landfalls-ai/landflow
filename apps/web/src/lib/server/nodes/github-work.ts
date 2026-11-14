@@ -44,7 +44,7 @@ export const githubWorkEventNode = defineNode({
       const headers = (typeof json.headers === 'object' && json.headers !== null ? json.headers : {}) as Record<string, unknown>;
       const event = String(json.event ?? headers['x-github-event'] ?? '');
       const mapped = githubToWork(event, json.body, parsePeople(ctx.getNodeParameter('people', i, {})));
-      if (mapped) out.push({ json: JSON.parse(JSON.stringify(mapped)) as JsonObject });
+      if (mapped) out.push({ json: JSON.parse(JSON.stringify(mapped)) as JsonObject, pairedItem: { item: i } });
     });
     return [out];
   },

@@ -62,7 +62,7 @@ export function githubToWork(event: string, body: unknown, people: Record<string
   const repo = str(obj(b.repository).full_name);
   if (!repo) return null;
   const login = str(obj(b.sender).login);
-  const identify = (who: string) => ({ actor: who || 'unknown', ...(people[who.toLowerCase()] && { actorEmail: people[who.toLowerCase()] }) });
+  const identify = (who: string) => ({ actor: who || 'unknown', ...(Object.hasOwn(people, who.toLowerCase()) && { actorEmail: people[who.toLowerCase()] }) });
   const base = { source: 'github' as const, repo };
 
   if (event === 'pull_request') {

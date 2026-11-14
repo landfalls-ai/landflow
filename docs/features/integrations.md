@@ -52,7 +52,7 @@ from the name, so the same customer from Slack and Drive is one entity):
 | `work-google-directory` | Schedule, daily at 6 → Google Directory → Entity | none: each person as a `person` entity keyed by email, with title, department, org unit and manager |
 
 Declare the kinds first with `pnpm brain:work-kinds` (the templates' fallback declares a kind from the first event's fields,
-all optional). The events and entities show on the [Brain page](../second-brain.md#the-brain-page): a page per person, customer and
+all optional; for `work-github` prefer the script, since the fallback drops any field the first event leaves unset). The events and entities show on the [Brain page](../second-brain.md#the-brain-page): a page per person, customer and
 initiative with its work, and what two or more teams worked on this week.
 
 The Linear, Attio and Fathom templates also ship as marketplace flows (`plugins/<name>/flows/work-<name>.json`, exported
@@ -80,7 +80,7 @@ zero or one flat item. Anything else, such as a push, a comment, a label or a pe
 | Workflow run completed (success; failure, timed out) | `work.ci_passed`, `work.ci_failed` | `<repo>#<pr>:<kind>:<run id>:<attempt>` |
 | Commit status (success; failure, error) | `work.ci_passed`, `work.ci_failed` | `<repo>@<sha7>:<kind>:<status id>:1` |
 
-The same delivery twice gives the same `sourceId`, so a redelivery updates the event. A review also carries `waitedMs`
+The `sourceId` is stable, and the trigger starts no second run for a redelivery (its `X-GitHub-Delivery` key). Record Event itself does not replace an earlier event with the same `sourceId`, so running a pinned delivery again records it again. A review also carries `waitedMs`
 (from the pull request's creation to the review) and a CI result carries its conclusion, duration and attempt, recorded as
 `ciConclusion`, `ciDurationMs` and `ciAttempt` because event attributes are flat.
 
@@ -93,7 +93,7 @@ that table sets the event's actor email, so person pages match; without it the a
 
 **Setup.** The productivity plugin must run. The token needs `admin:repo_hook` (or fine-grained Webhooks read and write) on the
 repository, and Landflow must be reachable from GitHub, because publishing registers the webhook. To try it without GitHub,
-pin a delivery on the trigger and run the flow. Declare the kinds with `pnpm brain:work-kinds`. The five GitHub-only kinds list
+pin a delivery on the trigger and run the flow. Declare the kinds with `pnpm brain:work-kinds`, not the first-event fallback (it keeps only the fields the first event sets, and `POST /api/brain/work` declares the shared fields). The five GitHub-only kinds list
 their own fields in `deploy/brain/work-kinds.json` (a kind declares at most 20), so `work.pr_opened` and `work.pr_merged`,
 which keep the shared fields for the tools that also send them, drop `prNumber`, `state` and the like.
 
