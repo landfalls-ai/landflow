@@ -28,9 +28,9 @@ const DISMISS_LABELS: Array<{ reason: DismissReason; label: string }> = [
 
 /** What Apply does for this suggestion. */
 export function proposalKind(p: Proposal): 'draft' | 'spotlight' | 'agent' | 'ops' | 'build' | 'advice' | 'note' {
-  // A build prompt: Build it creates an empty workflow and Spotlight builds it (docs/second-brain.md#build-it-with-spotlight).
-  if (p.buildPrompt) return 'spotlight';
+  // A stored draft wins (applyProposal checks it first); else a build prompt: Build it creates an empty workflow and Spotlight builds it (docs/second-brain.md#build-it-with-spotlight).
   if (p.draft) return 'draft';
+  if (p.buildPrompt) return 'spotlight';
   // A team's notebook asks to keep a note for the project (docs/team-notebook.md).
   if (p.notebook) return 'note';
   if (p.agentChange) return 'agent';

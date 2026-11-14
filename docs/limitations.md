@@ -192,9 +192,9 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 - The signals need the pull request, review and CI events in the brain (the GitHub ingest template) and work sessions
   shared with the organization; private and `team` events are never read, so a company that shares little sees few signals.
-- A flaky CI pair is matched on the commit when the event carries one (`sha`, `headSha` or `commit`), else on the pull request.
-- Build it's workflow is made in the person's home project, and only an owner or admin can apply a suggestion about the
-  instance; the apply route does not yet treat a build prompt like a stored draft.
+- A flaky CI pair is a failed attempt and a later passing attempt of the same run id (B31's events carry no commit), or a failure and a pass on the same commit when an event carries one (`sha`, `headSha` or `commit`). An event with neither is skipped, and a red run fixed by a new push is not counted.
+- Toil phrases come from work-session titles, which may contain a person's name; only structured fields are kept clear of
+  names. The Slack mirror shows no Apply button for a build-prompt suggestion.
 - Suggestions carry the evidence as event ids in their text, not as chips with links.
 
 ## The landflow-brain mod (first slice, 2026-11)

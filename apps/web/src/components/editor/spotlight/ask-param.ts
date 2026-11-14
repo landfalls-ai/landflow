@@ -33,6 +33,15 @@ export function withoutAsk(search: string): string {
 }
 
 /**
+ * The build prompt to send, or undefined. Only the workflow Build it created for this suggestion may send it: an applied
+ * suggestion whose `createdWorkflowId` is this workflow. Any other link (`?ask=` on someone else's workflow) is dropped.
+ */
+export function promptToSend(proposal: { status?: string; createdWorkflowId?: string; buildPrompt?: string }, workflowId: string): string | undefined {
+  if (proposal.status !== 'applied' || proposal.createdWorkflowId !== workflowId) return undefined;
+  return proposal.buildPrompt?.trim() || undefined;
+}
+
+/**
  * Sends the suggestion's build prompt once the editor holds its workflow. An empty canvas drafts the whole flow (as the
  * first message does); a canvas with nodes sends it as a message. `ready` is true once the workflow has loaded.
  */
@@ -50,7 +59,7 @@ export function useAskParam(ready: boolean) {
     void (async () => {
       let prompt: string | undefined;
       try {
-        prompt = (await api<{ proposal: { buildPrompt?: string } }>(`/api/proposals/${encodeURIComponent(id)}`, { background: true })).proposal.buildPrompt?.trim();
+        prompt = promptToSend((await api<{ proposal: { status?: string; createdWorkflowId?: string; buildPrompt?: string } }>(`/api/proposals/${encodeURIComponent(id)}`, { background: true })).proposal, workflowId);
       } catch {
         return;
       }

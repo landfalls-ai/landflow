@@ -48,8 +48,11 @@ export interface SignalEvent {
   reviewState?: string;
   /** For `work.pr_reviewed`: how long the review waited, when the sender knew. */
   waitedMs?: number;
-  /** The commit a CI run belongs to (`sha`, `headSha` or `commit`), else the pull request is the key. */
+  /** The commit a CI event names: a `sha`, `headSha` or `commit` attribute, else the `@sha` of B31's sourceId (only when no run id is known). */
   commit?: string;
+  /** The CI run id and attempt (B31's sourceId `…:ci_failed|ci_passed:<runId>:<attempt>`, `ciAttempt`). */
+  runId?: string;
+  attempt?: number;
   /** A normalised phrase (work session titles) or the ledger signature (usage kinds). */
   phrase?: string;
 }
@@ -136,18 +139,27 @@ export function signalEventOf(event: UsageEvent): SignalEvent {
   const attrs = event.attrs;
   const isSession = event.kind === 'work.session';
   // B31's sourceId is `<repo>#<pr>:<action>…`: the pull request number for an event sent through POST /api/brain/work, which keeps no `prNumber`.
-  const fromSourceId = Number(str(attrs, 'sourceId')?.match(/#(\d+)(?::|$)/)?.[1]);
+  const sourceId = str(attrs, 'sourceId');
+  const fromSourceId = Number(sourceId?.match(/#(\d+)(?::|$)/)?.[1]);
   const prNumber = num(attrs, 'prNumber') ?? (Number.isFinite(fromSourceId) && fromSourceId > 0 ? fromSourceId : undefined);
+  const repoAttr = str(attrs, 'repo');
+  const repo = repoAttr && /^[\w.-]+\/[\w.-]+$/.test(repoAttr) ? repoAttr : undefined;
+  // B31's CI sourceId: `<repo>#<pr>:ci_failed:<runId>:<attempt>` or `<repo>@<sha7>:ci_passed:<id>:1`.
+  const ciRun = sourceId?.match(/:ci_(?:failed|passed):([^:]+):(\d+)$/);
+  const attempt = num(attrs, 'ciAttempt');
+  const commit = str(attrs, 'sha') ?? str(attrs, 'headSha') ?? str(attrs, 'commit') ?? (ciRun ? undefined : sourceId?.match(/@([0-9a-f]{7,40})(?::|$)/i)?.[1]);
   const phrase = isSession ? normalisePhrase(str(attrs, 'title') ?? event.message ?? '') : TOIL_USAGE_KINDS.includes(event.kind) ? event.signature : undefined;
   return {
     id: event.id,
     kind: event.kind,
     at: Date.parse(event.at),
-    ...(str(attrs, 'repo') && { repo: str(attrs, 'repo') }),
+    ...(repo && { repo }),
     ...(prNumber !== undefined && { prNumber }),
     ...(str(attrs, 'reviewState') && { reviewState: str(attrs, 'reviewState') }),
     ...(num(attrs, 'waitedMs') !== undefined && { waitedMs: num(attrs, 'waitedMs') }),
-    ...((str(attrs, 'sha') ?? str(attrs, 'headSha') ?? str(attrs, 'commit')) && { commit: str(attrs, 'sha') ?? str(attrs, 'headSha') ?? str(attrs, 'commit') }),
+    ...(commit && { commit }),
+    ...(ciRun && { runId: ciRun[1] }),
+    ...((attempt ?? (ciRun ? Number(ciRun[2]) : undefined)) !== undefined && { attempt: attempt ?? Number(ciRun![2]) }),
     ...(phrase && { phrase }),
   };
 }
@@ -212,17 +224,18 @@ export function velocitySignals(events: SignalEvent[], window: Window, options: 
     }
   }
 
-  // Flaky CI: a failure and then a pass on the same commit (no pull request needed: the commit is the key).
+  // Flaky CI: a failure and then a pass on the same commit. B31 sends no commit, so a pair is a failed attempt and a later
+  // attempt that passed, of the same run id; a pull request on its own is never the key (a red run fixed by a new push is not flaky).
   const ci = groupBy(
     inWindow.filter((e) => (e.kind === 'work.ci_failed' || e.kind === 'work.ci_passed') && e.repo),
-    (e) => `${e.repo}@${e.commit ?? prKey(e) ?? ''}`,
+    (e) => (e.commit ? `${e.repo}@${e.commit}` : e.runId ? `${e.repo}@run:${e.runId}` : undefined),
   );
   const flaky = new Map<string, { pairs: number; commits: Set<string>; evidence: string[] }>();
   for (const [key, list] of ci) {
-    if (key.endsWith('@')) continue;
     const sorted = [...list].sort((a, b) => a.at - b.at);
+    const byRun = key.includes('@run:');
     const failure = sorted.find((e) => e.kind === 'work.ci_failed');
-    const pass = failure && sorted.find((e) => e.kind === 'work.ci_passed' && e.at >= failure.at);
+    const pass = failure && sorted.find((e) => e.kind === 'work.ci_passed' && e.at >= failure.at && (!byRun || (e.attempt ?? 1) > (failure.attempt ?? 1)));
     if (!failure || !pass) continue;
     const repo = key.slice(0, key.indexOf('@'));
     const f = bucket(flaky, repo, () => ({ pairs: 0, commits: new Set<string>(), evidence: [] }));

@@ -621,8 +621,8 @@ Signals → Propose Flows → Suggest Improvement.
   - *Handoffs*: pull requests with 3 or more review rounds, 2 or more of them in a repository.
   A repository needs 3 pull requests before it is judged. The thresholds are named constants (`THRESHOLDS` in
   `brain/velocity.ts`). The pull request, review and CI kinds come from the GitHub ingest template
-  ([work and briefings](work-and-briefings.md)); a flaky pair is matched on the commit (`sha`, `headSha` or `commit`),
-  else on the pull request.
+  ([work and briefings](work-and-briefings.md)); a flaky pair is a failed attempt and a later passing attempt of the same run id,
+  or a failure and a pass on the same commit when an event carries one; an event with neither is skipped.
 - **About the process, never a person.** A signal is about a repository, a kind of work or a phrase. No field names an
   author or a reviewer, nothing is ranked by person, and the node reads only what a system reader may: events shared
   with the organization and the platform's own, never a private one and never a `team` one (the suggestion reaches the
@@ -643,8 +643,11 @@ project, records the go-ahead like any applied suggestion, and the page opens `/
 editor loads the suggestion (`GET /api/proposals/:id`), Spotlight sends its build prompt as the person's message once
 (their click on Build it was the go-ahead; the parameter leaves the URL so a reload does not send it again), and builds
 the flow: on the empty canvas the whole flow at once, with the chat folded to the side card and the canvas in view. The
-flow is a draft until the person saves and publishes it. Applying needs the same access as any suggestion about the
-instance (an owner or admin), because the route treats only a stored draft as any builder's.
+flow is a draft until the person saves and publishes it. Spotlight sends the prompt only on the workflow Build it
+created for that suggestion (the suggestion is applied and its `createdWorkflowId` is this workflow); on any other
+workflow the parameter is dropped. The route treats a build prompt like a stored draft: any builder may apply it, and
+the workflow goes in `?projectId=` or the caller's home project, after the same create check as any new workflow.
+The Slack mirror shows no Apply button for it.
 
 ## API and settings
 
