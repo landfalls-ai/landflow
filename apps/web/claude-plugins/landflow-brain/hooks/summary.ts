@@ -55,14 +55,30 @@ const isMachinePath = (word: string) => /^[/~]/.test(word) || /^[A-Za-z]:[\\/]/.
 /** A machine path after a prefix (`@/Users/x`, `--dir=/Users/x`, `path=~/x`, `file:///x`, `(/x`), or a path that climbs out with `..`. */
 const isPrefixedMachinePath = (word: string) => /(^|[=@:(])(~|\/|[A-Za-z]:[\\/])/.test(word) || /^file:/i.test(word) || word.split(/[\\/]/).includes('..')
 
+/** A word without the brackets, quotes and punctuation around it. */
+const bareOf = (word: string) => word.replace(/^[("'`<\[“‘]+|[)"'`>\],.:;!?”’]+$/g, '')
+const isAnyMachinePath = (word: string) => isMachinePath(word) || isPrefixedMachinePath(word)
+
+/** A quoted span ("…", '…', `…`, “…”, ‘…’), closed or running to the end; a `'` inside a word (`don't`) neither opens nor closes one. */
+const QUOTED = /"[^"]*(?:"|$)|`[^`]*(?:`|$)|“[^”]*(?:”|$)|‘[^’]*(?:’|$)|(?<!\w)'(?:[^']|'(?=\w))*(?:'(?!\w)|$)/g
+
 /** The words of `text`: absolute paths and URLs and emails dropped, a relative file path reduced to its directories. */
 function withoutPaths(text: string): string {
+  // A machine path may hold spaces: a quoted span that holds one goes whole, `\ ` stays inside its word, and the words
+  // with a slash right after a dropped path are its rest (`~/Library/Application Support/Acme`).
+  let afterMachine = false
   return text
-    .split(/\s+/)
+    .replace(QUOTED, span => (span.split(/\s+/).some(word => isAnyMachinePath(bareOf(word))) ? ' ' : span))
+    .split(/(?<!\\)\s+/)
     .map(word => {
-      const bare = word.replace(/^[("'`<\[]+|[)"'`>\],.:;!?]+$/g, '')
+      const bare = bareOf(word)
+      const rest = afterMachine && /[\\/]/.test(bare)
+      afterMachine = false
       if (/^https?:\/\//i.test(bare) || /@[\w-]+\.[\w.-]+/.test(bare)) return ''
-      if (isMachinePath(bare) || isPrefixedMachinePath(bare)) return ''
+      if (rest || isAnyMachinePath(bare)) {
+        afterMachine = true
+        return ''
+      }
       const slashes = bare.split('/').length - 1
       const file = /^[\w./-]*[\w-]\.[A-Za-z][A-Za-z0-9]{0,7}$/.test(bare)
       // `and/or`, `CI/CD` and `11/12` are words; `apps/web/x` and `app.ts` are paths.

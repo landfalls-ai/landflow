@@ -92,6 +92,20 @@ describe('the summary', () => {
     expect(titleFrom('Check "/var/log/app" and (/etc/hosts).')).toBe('Check and');
   });
 
+  it('drops a machine path with a space in it, quoted, escaped or bare', () => {
+    expect(titleFrom('Open "/Users/alice/Client Acme/plan.md" now')).toBe('Open now');
+    expect(titleFrom('~/Library/Application Support/Acme/secret.db')).toBe('Coding session');
+    expect(titleFrom('Copy ~/Library/Application Support/Acme/secret.db here')).toBe('Copy here');
+    expect(titleFrom('Open /Users/alice/Client\\ Acme/plan.md now')).toBe('Open now');
+    expect(titleFrom('Open C:\\Program Files\\Acme\\secret.db now')).toBe('Open now');
+    expect(titleFrom('Open "C:\\Program Files\\Acme\\secret.db" now')).toBe('Open now');
+    expect(titleFrom('Open `~/work/My Client/x.md` now')).toBe('Open now');
+    expect(titleFrom('Open “/Users/alice/Client Acme/plan.md” now')).toBe('Open now');
+    expect(titleFrom("Don't open '/Users/alice/Bob's Files/x.md' it's fine")).toBe("Don't open it's fine");
+    expect(titleFrom('Open "/Users/alice/Dr. Who/x.md" now. Then go.')).toBe('Open');
+    expect(titleFrom('Fix "the login" bug, and/or the users\' tests.')).toBe('Fix "the login" bug, and/or the users\' tests.');
+  });
+
   it('drops a path that climbs out of the repository or follows a prefix', () => {
     expect(titleFrom('Open ../../alice/secret-client/plan.md now')).toBe('Open now');
     expect(titleFrom('Read @/Users/alice/notes.txt now')).toBe('Read now');

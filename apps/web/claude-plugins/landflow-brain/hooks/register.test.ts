@@ -7,7 +7,7 @@ const COMPOSE = { model: 'm', promptModel: 'm', surfaces: ['terminal'], tools: [
 const BRIEFING = { yesterday: [{ title: 'Ship the billing page', repo: 'acme/widgets' }], autoSend: 'allowed', brain: 'on' }
 
 /** The engine beneath the mod: git answers, a fake Landflow, a clock and a store in memory. */
-function world(on: Parameters<Parameters<typeof test>[1]>[1], init: { remote?: string; briefing?: unknown; briefingDelayMs?: number; postStatus?: number; postDelayMs?: number; deleteStatuses?: number[]; answers?: string[]; seed?: Record<string, unknown> } = {}) {
+function world(on: Parameters<Parameters<typeof test>[1]>[1], init: { remote?: string; briefing?: unknown; briefingDelayMs?: number; postStatus?: number; postDelayMs?: number; deleteStatuses?: number[]; answers?: string[]; seed?: Record<string, unknown>; onAsk?: () => Promise<void> } = {}) {
   const posts: Array<Record<string, unknown>> = []
   const deleted: string[] = []
   const statuses: Array<string | undefined> = []
@@ -45,8 +45,10 @@ function world(on: Parameters<Parameters<typeof test>[1]>[1], init: { remote?: s
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('prompt.submit', (_, e) => ({ text: e.text }))
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'You are Claude.', scope: 'shared' as const }] }))
-  on('tool.call', (_, e) => {
+  on('tool.call', async (_, e) => {
     if (e.tool === 'AskUserQuestion') {
+      // While the question is open, the rest of the mod (a flush on the clock) may run.
+      await init.onAsk?.()
       const questions = (e as unknown as { questions: Array<{ question: string }> }).questions
       return { result: { questions, answers: Object.fromEntries(questions.map(q => [q.question, init.answers?.shift() ?? 'Send'])) } as never }
     }
@@ -328,4 +330,47 @@ test('the brain being off on the server pauses the session', { options: OPTIONS 
   await $.session.end({ reason: 'other', sessionId: 's-off', resume: { id: 's-off' } } as never)
   expect(statuses.at(-1)).toBe('brain: paused')
   expect(((await command($, 'today')) as { text: string }).text).toBe('Nothing today yet.')
+})
+
+test('review Drop takes a queued event out, so it is never sent', { options: { ...OPTIONS, mode: 'auto' } }, async ($, on) => {
+  const init: { postStatus?: number; answers: string[] } = { postStatus: 503, answers: ['Drop'] }
+  const { posts, clock } = world(on, init)
+  await work($)
+  expect(((await command($, 'status')) as { text: string }).text).toMatch(/1 held · 1 waiting to send/)
+  expect(((await command($, 'review')) as { text: string }).text).toMatch(/^e-[a-z0-9]+ dropped$/)
+  // The host is back, and the flush runs again.
+  init.postStatus = 200
+  await clock.advance(120_000)
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(posts).toEqual([])
+  const status = ((await command($, 'status')) as { text: string }).text
+  expect(status).toMatch(/0 held · 0 waiting to send/)
+  expect(status).toContain('Nothing has been sent.')
+})
+
+test('review Drop of an entry a flush sent while the question was open deletes it there', { options: OPTIONS }, async ($, on) => {
+  const event = { kind: 'work.session', source: 'claude-code', sourceId: 'cc-old', occurredAt: '2026-11-13T09:00:00.000Z', title: 'Old work', summary: 's', repo: 'acme/widgets', commits: 0, turns: 1, visibility: 'private' }
+  const entry = { id: 'e-old', source: 'claude-code', sourceId: 'cc-old', repo: 'acme/widgets', startedAt: '2026-11-13T09:00:00.000Z', endedAt: '2026-11-13T09:30:00.000Z', turns: 1, title: 'Old work', areas: [], commits: 0, prs: [], status: 'held' }
+  const backingOff = { items: [{ event, at: Date.parse('2026-11-13T10:00:00Z') }], failures: 1, nextAt: Date.parse('2026-11-14T09:00:30Z') }
+  let clock: { advance(ms: number): Promise<void> } | undefined
+  const answered: string[] = []
+  const onAsk = async () => {
+    await clock?.advance(60_000)
+    await new Promise(resolve => setTimeout(resolve, 20))
+    answered.push(`posts: ${posts.length}`)
+  }
+  const made = world(on, { answers: ['Drop'], seed: { journal: [entry], queue: backingOff }, onAsk })
+  const { posts, deleted } = made
+  clock = made.clock
+  await start($)
+  const reviewed = ((await command($, 'review')) as { text: string }).text
+  // The flush sent it during the question; Drop then deletes the copy, once.
+  expect(answered).toEqual(['posts: 1'])
+  expect(posts.map(post => post.sourceId)).toEqual(['cc-old'])
+  expect(reviewed).toMatch(/e-old dropped; it had been sent already, so it was deleted from the brain/)
+  expect(deleted).toHaveLength(1)
+  expect(deleted[0]).toContain('/api/brain/work/cc-old?source=claude-code')
+  const status = ((await command($, 'status')) as { text: string }).text
+  expect(status).toContain('Nothing has been sent.')
+  expect(status).not.toContain('waiting to be deleted')
 })

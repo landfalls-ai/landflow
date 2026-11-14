@@ -22,7 +22,8 @@ the title is "Coding session".
 
 `/clear` and an in-process resume end the session id but not the process, and no session start follows: the mod holds the
 ending entry and opens a new one for the same repository and branch. A title never shows an absolute, home or drive
-path (also after `@`, `=` or `file:`), or a path that climbs out with `..`; a relative file path is cut to its first two
+path (also after `@`, `=` or `file:`), or a path that climbs out with `..`; such a path with a space in it goes whole
+(a quoted span that holds one, a `\ ` inside a word, and, unquoted, the words with a slash that follow it); a relative file path is cut to its first two
 directories. A commit counts only when `git commit` printed its `[branch hash]` line, and `git push` records nothing.
 
 It never records or sends code, diffs, prompts beyond that title, tool output, file names, absolute paths or the
@@ -31,7 +32,8 @@ environment. With no key, no URL or no allowed repository, nothing is recorded a
 ## Review before send
 
 At the end of a session the entry is held in the local journal. Nothing leaves until you send it with `/brain review`,
-one entry at a time: send it, drop it, skip it, or type a new title. Mode `auto` queues it at the end instead, unless
+one entry at a time: send it, drop it, skip it, or type a new title. Drop also takes its event out of the queue; if
+it was sent meanwhile (a flush while you answered), it is deleted in the brain as `/brain forget` does. Mode `auto` queues it at the end instead, unless
 your admin has forbidden tools sending work on their own (`brain.workAutoSend`, which the briefing reports as
 `autoSend`); then it is held as in `review`. It is held too while no briefing has ever answered, because the policy is
 unknown. The briefing is read at every session start for this, whatever `sync` says. Mode `off` records nothing.

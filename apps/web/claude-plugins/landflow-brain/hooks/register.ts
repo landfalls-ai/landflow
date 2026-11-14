@@ -56,6 +56,8 @@ let repoRoot = '/'
 let brainOff = false
 let yesterday: string | undefined
 let flushing: Promise<void> | undefined
+/** The sessions whose events are in a POST that has not been settled yet. */
+const inFlight = new Set<string>()
 /** The allowed repository this session is in, while it can still be recorded. */
 let allowed: { repo: string; branch?: string } | undefined
 let fingerprint = ''
@@ -170,13 +172,20 @@ async function flushOnce($: EngineInterface) {
   if (await paused($)) return
   const batch = due(await queueOf($), now)
   if (!batch.length) return
-  const result = await postWork($, config, batch.map(item => item.event))
-  // Read the queue again: a send that came in during the request is kept, and only this batch leaves.
-  const status = result.status
-  await withJournal(async () => {
-    await $.store.set('queue', settle(await queueOf($), batch, status, now, fingerprint))
-    if (status !== undefined && status >= 200 && status < 300) await markSent($, batch, result, now)
-  })
+  for (const item of batch) inFlight.add(item.event.sourceId)
+  let status: number | undefined
+  try {
+    const result = await postWork($, config, batch.map(item => item.event))
+    // Read the queue again: a send that came in during the request is kept, and only this batch leaves.
+    status = result.status
+    await withJournal(async () => {
+      for (const item of batch) inFlight.delete(item.event.sourceId)
+      await $.store.set('queue', settle(await queueOf($), batch, status, now, fingerprint))
+      if (status !== undefined && status >= 200 && status < 300) await markSent($, batch, result, now)
+    })
+  } finally {
+    for (const item of batch) inFlight.delete(item.event.sourceId)
+  }
   if (status === 400 || status === 413 || status === 422) {
     await $.store.set('problems', [`the brain refused ${batch.length} event${batch.length === 1 ? '' : 's'} (HTTP ${status}); they stay held here and are not retried`])
   }
@@ -202,6 +211,40 @@ async function markSent($: EngineInterface, batch: ReturnType<typeof due>, resul
     for (const entry of journal) if (entry.status === 'sent' && !marked.includes(entry) && marked.some(item => item.sourceId === entry.sourceId)) entry.status = 'dropped'
     await save($, journal)
   }
+}
+
+/**
+ * Take an entry out (`/brain forget`, review's Drop): its event leaves the queue, and the journal and the queue are read
+ * in one lock, so a flush cannot mark it sent in between. An entry the brain may hold (sent, or in a POST not answered
+ * yet) becomes `forgetting` and is deleted there; any other is dropped. `deleted` is the DELETE's status.
+ */
+async function takeOut($: EngineInterface, entry: Entry): Promise<{ wasSent: boolean; deleted?: number }> {
+  const { wasSent, posting } = await withJournal(async () => {
+    const queue = await queueOf($)
+    if (queue.items.some(item => item.event.sourceId === entry.sourceId)) await $.store.set('queue', { ...queue, items: queue.items.filter(item => item.event.sourceId !== entry.sourceId) })
+    const journal = await load($)
+    const at = journal.findIndex(item => item.id === entry.id)
+    const stored = at >= 0 ? journal[at]! : entry
+    const posting = inFlight.has(entry.sourceId)
+    const wasSent = stored.status === 'sent' || stored.status === 'forgetting' || posting
+    const next: Entry = { ...stored, status: wasSent ? 'forgetting' : 'dropped' }
+    if (at >= 0) journal[at] = next
+    else journal.push(next)
+    await save($, journal)
+    return { wasSent, posting }
+  })
+  if (!wasSent || !config) return { wasSent }
+  // A POST still out is answered first, so the delete cannot reach the brain before the event it deletes.
+  if (posting) await flushing?.catch(() => undefined)
+  const deleted = await deleteWork($, config, entry.sourceId)
+  if (deleted === 204 || deleted === 404) {
+    await withJournal(async () => {
+      const fresh = await load($)
+      for (const item of fresh) if (item.id === entry.id) item.status = 'dropped'
+      await save($, fresh)
+    })
+  }
+  return { wasSent, deleted }
 }
 
 async function send($: EngineInterface, entry: Entry) {
@@ -230,6 +273,7 @@ export const register: Register = (on, options) => {
   allowed = undefined
   current = undefined
   flushing = undefined
+  inFlight.clear()
   lock = Promise.resolve()
 
   on('session.start', async ($, e, next) => {
@@ -384,20 +428,13 @@ export const register: Register = (on, options) => {
       case 'forget': {
         const entry = all.find(item => item.id === arg || item.sourceId === arg)
         if (!arg || !entry) return reply('Say which: /brain forget <id>. /brain today lists the ids.')
-        const queue = await queueOf($)
-        const wasSent = entry.status === 'sent' || entry.status === 'forgetting' || queue.items.some(item => item.event.sourceId === entry.sourceId)
-        await withJournal(async () => $.store.set('queue', { ...(await queueOf($)), items: (await queueOf($)).items.filter(item => item.event.sourceId !== entry.sourceId) }))
         const wasRunning = current?.id === entry.id
         if (wasRunning) current = undefined
         // A sent entry stays in the journal until the brain says the copy is gone (204 or 404).
-        entry.status = wasSent ? 'forgetting' : 'dropped'
-        await upsert($, entry)
+        const { wasSent, deleted } = await takeOut($, entry)
         let note = wasRunning ? 'Dropped here. Recording goes on from your next prompt as a new entry; /brain pause stops it.' : 'Dropped here.'
         if (wasSent) {
-          const status = await deleteWork($, config, entry.sourceId)
-          if (status === 204 || status === 404) {
-            entry.status = 'dropped'
-            await upsert($, entry)
+          if (deleted === 204 || deleted === 404) {
             note = 'Dropped here and deleted from the brain.'
           } else {
             note = 'Dropped here; the brain could not be reached, so the copy there is not deleted yet. It is retried every minute while a session runs, or run /brain forget again.'
@@ -423,8 +460,11 @@ export const register: Register = (on, options) => {
                 break
               }
               if (answer === 'Drop') {
+                // A flush may have sent it while the question was open, or it may wait in the queue: take it out of both.
+                const { wasSent, deleted } = await takeOut($, entry)
                 entry.status = 'dropped'
-                done.push(`${entry.id} dropped`)
+                const gone = deleted === 204 || deleted === 404
+                done.push(`${entry.id} dropped${!wasSent ? '' : gone ? '; it had been sent already, so it was deleted from the brain' : '; it had been sent already and the brain could not be reached, so the copy there is deleted later (retried every minute)'}`)
                 break
               }
               if (answer === 'Skip') break
@@ -438,7 +478,7 @@ export const register: Register = (on, options) => {
           const fresh = await load($)
           for (const entry of held) {
             const at = fresh.findIndex(item => item.id === entry.id)
-            if (at >= 0) fresh[at] = { ...fresh[at]!, title: entry.title, status: entry.status === 'dropped' ? 'dropped' : fresh[at]!.status }
+            if (at >= 0 && entry.status !== 'dropped') fresh[at] = { ...fresh[at]!, title: entry.title }
           }
           await save($, fresh)
         })
