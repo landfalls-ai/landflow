@@ -1591,6 +1591,7 @@ The shared pieces every chat will use, built in `components/ui/` and ready; the 
 
 - CH3 ✅ Done: the brain's answer streams (what it found first, then the words) and shows its steps.
 - CH18 ✅ Done (brain): Ask is a column beside the page, not a card over it, so a link opens the page and the answer stays.
+- CH2, CH4, CH9, CH21, CH22 and P-ed-4 ✅ Done for Spotlight (B24): the fold eases and the canvas fits once after it, Apply folds the card into its row while the ghosts become nodes (Undo reverses it), errors have actions (Continue from step N, Open AI caps, Open the node, Ask Spotlight to fix it), the header has Asks first | Autonomous with a one-time note and an empty panel with one line (the composer's bubbles are the starters), Continue keeps the failed reply's changes, one Undo for changes applied together, the sheet's three heights ease and follow the drag, a phone's folded bar has Review and Apply, and a desktop opens Spotlight folded ([Fold, Apply and errors](assistant.md#fold-apply-and-errors)).
 - CH23 ✅ Done (brain): `[n]` appears only with a source, and a follow-up knows the last two turns.
 - CH8 (brain half) ✅ Done: Ask writes `ai_usage` rows with surface `brain`.
 - P-br-3 ✅ Done: one **Ask** button and ⌘I; the bottom bar, the toolbar and status-bar buttons and quick open's ask row are gone
