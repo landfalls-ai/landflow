@@ -8,6 +8,8 @@
 import { lazy, Suspense, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { ArrowUp, Loader2, Sparkles, Square, TriangleAlert } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { formatCost, formatTokens } from '@/lib/shared/ai-usage';
+import { formatSeconds } from '@/lib/shared/activity';
 import { CopyButton } from './copy-button';
 
 const Markdown = lazy(() => import('../run-trace/doc-markdown'));
@@ -55,15 +57,91 @@ export function AssistantRow({ mark, children, className, title }: { mark?: Reac
   );
 }
 
-/** Under a finished reply: what answered and how (model · time · tokens), and Copy for its text. */
-export function ReplyMeta({ parts, copy, children }: { parts: Array<string | false | undefined>; copy?: string; children?: ReactNode }) {
-  const shown = parts.filter(Boolean) as string[];
+/** What answered and how, for the footer under a reply. Each part is left out when unknown. */
+export interface ReplyInfo {
+  model?: string;
+  /** A local model (Ollama and the like): "local" stands in for the cost. */
+  local?: boolean;
+  durationMs?: number;
+  steps?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+}
+
+/** "model · 14.5 s · 10 steps · 1.6k tokens · ≈$0.004" (or "local" in place of the cost). */
+export function replyInfoParts(info: ReplyInfo): string[] {
+  const tokens = (info.inputTokens ?? 0) + (info.outputTokens ?? 0);
+  return [
+    info.model,
+    info.durationMs !== undefined && formatSeconds(info.durationMs),
+    info.steps ? `${info.steps} ${info.steps === 1 ? 'step' : 'steps'}` : undefined,
+    tokens > 0 && `${formatTokens(tokens)} tokens`,
+    info.local ? 'local' : info.costUsd ? `≈${formatCost(info.costUsd)}` : undefined,
+  ].filter((p): p is string => typeof p === 'string' && p !== '');
+}
+
+/** Under a finished reply: what answered and how (model · time · steps · tokens · cost), and Copy for its text. */
+export function ReplyMeta({ parts, info, copy, children }: { parts?: Array<string | false | undefined>; info?: ReplyInfo; copy?: string; children?: ReactNode }) {
+  const shown = [...((parts ?? []).filter(Boolean) as string[]), ...(info ? replyInfoParts(info) : [])];
   if (!shown.length && !copy && !children) return null;
   return (
     <div className="flex min-h-7 flex-wrap items-center gap-x-2 font-mono text-[10.5px] text-t3">
       {shown.length > 0 && <span className="min-w-0 truncate">{shown.join(' · ')}</span>}
       {children}
       {copy && <CopyButton text={copy} label="Copy the reply" className="-my-1 size-6 max-md:size-11" />}
+    </div>
+  );
+}
+
+/** A small neutral pill naming the model that will answer: its short name, "local" after it for a local one. */
+export function ModelChip({ model, local }: { model: string; local?: boolean }) {
+  const name = model.includes('/') ? model.slice(model.lastIndexOf('/') + 1) : model;
+  return (
+    <span title={model} className="inline-flex h-6 min-w-0 max-w-full items-center gap-1 rounded-full border border-hair bg-sf px-2 font-mono text-[10.5px] text-t3">
+      <span className="min-w-0 truncate">{name}</span>
+      {local && <span className="shrink-0">· local</span>}
+    </span>
+  );
+}
+
+/**
+ * The first `n` sentences of a reply, and whether there is more. Not cut after "e.g.", "i.e.", "etc." or a digit
+ * ("Step 2."), nor inside a quoted name; a list or a code block is not split, so it counts as one sentence's worth.
+ */
+export function firstSentences(text: string, n: number): { text: string; more: boolean } {
+  const t = text.trim();
+  if (n < 1) return { text: '', more: t.length > 0 };
+  let quoted = 0;
+  let fence = false;
+  let found = 0;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (t.startsWith('```', i)) {
+      fence = !fence;
+      i += 2;
+    } else if (fence) continue;
+    else if (c === '“') quoted++;
+    else if (c === '”') quoted = Math.max(0, quoted - 1);
+    else if ('.!?'.includes(c) && !quoted && /\s/.test(t[i + 1] ?? '') && !/\b(?:e\.g|i\.e|etc|vs|approx|Mr|Mrs|Ms|Dr|No)\.$/i.test(t.slice(Math.max(0, i - 5), i + 1)) && !/(?:^|\n)\s*\d+\.$/.test(t.slice(Math.max(0, i - 6), i + 1))) {
+      // A list item or table row ends at its line, not at a full stop inside a following item.
+      if (++found >= n) return { text: t.slice(0, i + 1), more: t.slice(i + 1).trim().length > 0 };
+    }
+  }
+  return { text: t, more: false };
+}
+
+/** A reply cut to its first sentences, the rest on "Show more". */
+export function ShortReply({ text, sentences = 2 }: { text: string; sentences?: number }) {
+  const [more, setMore] = useState(false);
+  const cut = firstSentences(text, sentences);
+  if (more || !cut.more) return <ChatMarkdown text={text} />;
+  return (
+    <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-t1 [overflow-wrap:anywhere]">
+      {cut.text.replace(/\*\*|`/g, '')}
+      <button type="button" onClick={() => setMore(true)} className="ml-1 text-[12px] font-semibold text-ac hover:underline max-md:min-h-11 max-md:px-1">
+        Show more
+      </button>
     </div>
   );
 }
@@ -87,8 +165,8 @@ export function plainError(message: string): { text: string; details?: string } 
   return { text, details: message };
 }
 
-/** Something went wrong with a reply: what, Try again when it can be retried, and the raw text on demand. */
-export function ChatError({ message, onRetry, className }: { message: string; onRetry?: () => void; className?: string }) {
+/** Something went wrong with a reply: what, Try again when it can be retried, other actions (Open settings), and the raw text on demand. */
+export function ChatError({ message, onRetry, actions, className }: { message: string; onRetry?: () => void; actions?: Array<{ label: string; onClick: () => void; primary?: boolean }>; className?: string }) {
   const [open, setOpen] = useState(false);
   const { text, details } = plainError(message);
   return (
@@ -97,13 +175,23 @@ export function ChatError({ message, onRetry, className }: { message: string; on
         <TriangleAlert className="mt-px size-3.5 shrink-0" />
         <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{text}</span>
       </div>
-      {(onRetry || details) && (
+      {(onRetry || details || actions?.length) && (
         <div className="flex flex-wrap items-center gap-1 pl-5">
           {onRetry && (
             <button type="button" onClick={onRetry} className="min-h-7 rounded-full border border-rdbd px-2.5 font-semibold hover:bg-rd/10 max-md:min-h-11">
               Try again
             </button>
           )}
+          {actions?.map((a) => (
+            <button
+              key={a.label}
+              type="button"
+              onClick={a.onClick}
+              className={cn('min-h-7 rounded-full border px-2.5 font-semibold max-md:min-h-11', a.primary ? 'border-rd bg-rd text-on-ac hover:opacity-90' : 'border-rdbd hover:bg-rd/10')}
+            >
+              {a.label}
+            </button>
+          ))}
           {details && (
             <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="min-h-7 rounded-full px-2 font-semibold hover:bg-rd/10 max-md:min-h-11">
               {open ? 'Hide details' : 'Details'}
@@ -159,6 +247,7 @@ export function ChatComposer({
   before,
   after,
   top,
+  chip,
   onKeyDown,
   onFocus,
   onBlur,
@@ -177,6 +266,8 @@ export function ChatComposer({
   before?: ReactNode;
   after?: ReactNode;
   top?: ReactNode;
+  /** At the left of the footer row, before Send: a ModelChip. */
+  chip?: ReactNode;
   onKeyDown?: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
   onFocus?: () => void;
   onBlur?: () => void;
@@ -211,6 +302,7 @@ export function ChatComposer({
           className="max-h-[120px] min-h-[32px] min-w-0 flex-1 resize-none bg-transparent py-1.5 text-[13.5px] leading-5 text-t1 outline-none [field-sizing:content] placeholder:text-t3 max-md:text-base"
         />
         {after}
+        {chip && <span className="mb-1.5 flex max-w-[45%] shrink-0 items-center">{chip}</span>}
         {busy && onStop ? (
           <button type="button" onClick={onStop} aria-label="Stop" title="Stop" className="mb-[2px] grid size-8 shrink-0 place-items-center rounded-full border border-bd text-t2 transition-colors hover:border-rd hover:text-rd max-md:size-11">
             <Square className="size-3" fill="currentColor" />
