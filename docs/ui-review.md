@@ -169,12 +169,12 @@ Every page is drawn the same way, from `components/shell/page-header.tsx`:
   44 px tall; a hidden file input among the actions doesn't count as the last one.
 - **The way back** (`back` on `PageHeader`, `BackLink` on a page with its own header): ← and the parent's name, a `/`,
   then the page's own title. A phone shows the arrow alone, 44 px. Templates, a marketplace flow, a data table, an agent,
-  a project, a run (back to **Runs**) and Compare runs (back to **Search runs**) use it.
+  a project, a run (back to **Runs**) and Compare runs (back to **Runs**) use it.
 - **Body** (`PageBody`): 24 px in (16 px on a phone). `width="narrow"` stops at 980 px, left-aligned, for lists of
-  records, settings and forms (Credentials, Data tables, Projects, a project, Runbooks, Developers, Search runs); the
+  records, settings and forms (Credentials, Data tables, Projects, a project, Runbooks, Developers); the
   default fills the width for grids, tables and canvases.
 - The sidebar marks the section a page belongs to: every page of Workflows, Runs and Plugins marks its group's item (a
-  run's page, Search runs and Compare are under **Runs**).
+  run's page, the Runs list and Compare are under **Runs**).
 
 ## Dialogs
 

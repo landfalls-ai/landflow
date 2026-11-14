@@ -89,7 +89,7 @@ folded bar already says what Spotlight is doing.
 
 - **Executions as cards.** On a phone each run is a card: the workflow and its menu on the first line, the status and how
   long it ran on the second, and when it started (with how long ago) on the third. The run's id, its mode and the column
-  headings are left out, and an error shows two lines. The desktop keeps its table (`app/executions/page.tsx`).
+  headings are left out, and an error shows two lines. The desktop keeps its table (`components/runs/runs-list.tsx`, at `/runs`).
 - **No sideways scrolling.** No page scrolls sideways at 390 px: a plugin card's chips wrap, the Developers page breaks
   long inline code, and pages pad 16 px instead of 24. Strips that are meant to scroll (a segment control, the Settings
   tabs) scroll inside themselves.
@@ -99,8 +99,7 @@ folded bar already says what Spotlight is doing.
 `PhoneFilters` (`components/ui/phone-filters.tsx`) leaves its children where they are on a desktop. On a phone it shows a
 **Filters** button instead, with how many filters are on, and opens them in a sheet with **Clear** and **Show results**,
 so the page's content starts on the first screen. Marketplace (source, marketplace and categories), Templates
-(categories), Agents (which agents, and how they're grouped) and Search runs (everything but the words) use it. On
-Search runs, **Show results** also runs the search.
+(categories), Agents (which agents, and how they're grouped) use it. The Runs list has its own row: the search box and the Status and Workflow chips wrap on one block, and **More filters** opens as a sheet.
 
 The sheet is `Sheet` (`components/ui/sheet.tsx`): a bottom sheet on a phone and a centred dialog on a desktop, with
 `role="dialog"`, focus kept inside (Tab wraps, Escape closes), the page's scroll locked and focus returned to the button

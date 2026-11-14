@@ -87,7 +87,7 @@ Run ids, trace ids, model and token lines and **Debug access** appear only with 
 ## The screens
 
 **Run trace** sits next to **Canvas** above every execution. It opens by itself when the run has agents (the choice is
-remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phone; its header goes back to **Executions** (the run
+remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phone; its header goes back to **Runs** (the run
 in its workflow's Executions tab), and the rail marks **Runs** while it is open.
 
 - **The header**: live or finished, the time, who is working on what right now, the outcome as reported (the last
@@ -132,7 +132,19 @@ in its workflow's Executions tab), and the rail marks **Runs** while it is open.
 - **The time slider**: scrub or replay the run. Tapping a time in the sheet moves it there. A live run follows the end
   until you move the slider.
 
-**Executions** (the list across workflows) starts with **Needs you** across every run you can see, and a card for each
+### The Runs list
+
+`/runs` is the one list of runs (**Runs** in the rail, tab **All runs**; it was Executions, Activity and Search runs). `/executions?…` redirects to it with its query, and `/executions?id=<id>` to `/runs/<id>`. The API paths are unchanged.
+
+- **Filter row.** One search box (workflow name, error text, node), a **Status** chip and a **Workflow** chip, then **More filters** in a popover (a sheet on a phone): agent or actor, tool, from and to dates, has failed steps, a check failed. The filters sit in the URL (`q`, `status`, `workflowId`, `actor`, `tool`, `from`, `to`, `failedSteps`, `failedCheck`), so a link lands filtered. Actor, tool, failed steps and check go through `GET /api/runs/search`; the rest filter the loaded list.
+- **Repeated failures fold.** Neighbouring failed runs of one workflow that stopped at the same node with the same message become one row, "Failed ×9 · Post to Slack: no credential". It opens to the runs. A success or another error ends a group (`groupFailures`, `components/runs/failure-groups.ts`).
+- **Two words for running again.** **Retry from failed step** (failed and canceled runs) and **Re-run**. The choices, the workflow as it ran or the saved one, or from the start, are one step in. The row menu also has **Copy id**; the list has no ID or Mode column.
+- **Compare from the list.** Tick two rows, then **Compare 2**. `/runs/compare` without two runs goes back to `/runs`.
+- **Stop all** shows only while a run is running.
+- A chosen workflow shows its runs over time below the list.
+- **What the filters cover.** The search box, Status, From and To filter the latest 200 runs the page loads, so a date range older than those shows "No runs match" although such runs exist. Actor, tool, failed steps and check filters take at most 100 matches from `GET /api/runs/search` and intersect them with those 200 runs. Word search over journal text (with match snippets) is API-only: `GET /api/runs/search?text=`.
+
+**Runs** (the list across workflows) starts with **Needs you** across every run you can see, and a card for each
 running execution showing who is working on what.
 
 `/runs/<executionId>?tab=team&member=<title>` opens a tab (`story`, `trace`, `team`, `artifacts`, `report`) and, once
@@ -160,7 +172,7 @@ A card above the tabs shows the run as a timeline
   saying what it does (the tool it runs, "Bash: pnpm test", else "Thinking…"). A wait for a person pulses amber with what it asks, and **Answer below** scrolls
   to Needs you; a failure is a red cross with **Re-run from here** ([run it again](#run-it-again)).
 - **Elsewhere**: the same timeline, from each run's own journal, is the card of every run going on under **Running now**
-  on Home and the Executions page, and of the team's run on its team page while it works (a tap opens its Run Trace).
+  on Home and the Runs page, and of the team's run on its team page while it works (a tap opens its Run Trace).
 
 ### What a run did, in one line
 
@@ -210,7 +222,7 @@ instead of a title and two buttons, so the person decides with the reasons in fr
 
 The card is the Needs you section's, and the waiting node's: from the editor, **Review** next to Approve / Deny on the node
 opens it in a sheet, and the execution view's phone card is it (both read the run's journal). Needs you also gets a row of
-**faces** across the top, a dot on each member that waits (and on the Executions page's list, one face per member with
+**faces** across the top, a dot on each member that waits (and on the Runs page's list, one face per member with
 something for you across runs). The edit works through the API too (`POST /api/executions/:id/approvals` with `input`, `POST /api/executions/:id/asks/:askId` with `command`).
 
 ### Headlines
@@ -485,22 +497,23 @@ images are not loaded.
 
 Three routes read across runs, and two screens use them (made for a phone: one column of cards, no wide tables).
 
-- **Search** (`/runs`, **Runs** → **Search** tab; `GET /api/runs/search`): words (span names, inputs and outputs,
-  messages, artifacts, checks), workflow, an agent or actor by name, a tool by name, status, **has failed steps**,
-  **a check failed** (by name, or any) and from/to dates. Results are cards (status, workflow, when, how long, the
-  failed steps and checks, and where the words were found) that open `/runs/<id>`, 20 at a time with **Show more**.
-  Only the runs of workflows you can see are searched. The queries are plain SQL on `execution_events` (`LIKE` and
-  `EXISTS`, the same on SQLite and Postgres, no schema change); each candidate run's events are then checked in code,
-  so a word that is only a field name of the stored event doesn't match. A run recorded before Run Trace is searched by
-  workflow, status and date only, until its journal is rebuilt by opening it.
-- **Compare** (`/runs/compare?a=&b=`; pick two cards in the search and press **Compare**; `GET /api/runs/compare`):
+- **Search** (`GET /api/runs/search`; the UI is the filter row of [the Runs list](#the-runs-list)): words (span names, inputs
+  and outputs, messages, artifacts, checks), workflow, an agent or actor by name, a tool by name, status, **has failed
+  steps**, **a check failed** and from/to dates. Word search is API-only; the list's UI filters are the ones in its
+  filter row, over the latest 200 runs (journal filters: at most 100 matches within them). The API returns the failed
+  steps and checks and where the words were found, 20 at a time. Only the runs of workflows you can see are searched.
+  The queries are plain SQL on `execution_events` (`LIKE` and `EXISTS`, the same on SQLite and Postgres, no schema
+  change); each candidate run's events are then checked in code, so a word that is only a field name of the stored
+  event doesn't match. A run recorded before Run Trace is searched by workflow, status and date only, until its journal
+  is rebuilt by opening it.
+- **Compare** (`/runs/compare?a=&b=`; tick two rows in the Runs list and press **Compare 2**; `GET /api/runs/compare`):
   each run is folded with `foldJournal` and shown as a card: duration, tokens in and out, cost, model calls, steps,
   failed steps, checks passed, failed and warned, the failed checks' names and the artifacts. The cards sit side by
   side on a wide screen and stack on a phone; the second shows what changed from the first (a rise is red). Under them,
   a card per actor of either run with its steps, failed steps, tokens and model calls in both runs and the
   difference; an actor that took part in only one says so.
-- **Measures over time** (`GET /api/runs/measures?workflowId=`; the chart appears on the search page once a workflow is
-  chosen): the workflow's last runs (30 by default) as duration, tokens in and out, cost, failed steps and failed
+- **Measures over time** (`GET /api/runs/measures?workflowId=`; the chart is below the Runs list once a Workflow chip is
+  set): the workflow's last runs (30 by default) as duration, tokens in and out, cost, failed steps and failed
   checks per run. The chart is a line with a dot per run for one measure at a time (duration, tokens or cost), the
   latest dot larger and labelled with its value, the largest value and the first and last dates on the axes; a run
   with a failed step, a failed check or an error is a red dot. A run profile can't define measures of its own yet.

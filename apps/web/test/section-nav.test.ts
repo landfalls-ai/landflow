@@ -40,7 +40,7 @@ describe('the rail', () => {
 describe('the section tabs', () => {
   it('lists each group', () => {
     expect(SECTION_GROUPS.workflows.map((t) => t.href)).toEqual(['/workflows', '/templates', '/runbooks']);
-    expect(SECTION_GROUPS.runs.map((t) => t.href)).toEqual(['/executions', '/insights', '/runs']);
+    expect(SECTION_GROUPS.runs.map((t) => t.href)).toEqual(['/runs', '/insights']);
     expect(SECTION_GROUPS.plugins.map((t) => t.href)).toEqual(['/plugins', '/marketplace', '/developers']);
   });
 
@@ -48,7 +48,6 @@ describe('the section tabs', () => {
     expect(stripGroup('/workflows')).toBe('workflows');
     expect(stripGroup('/templates')).toBe('workflows');
     expect(stripGroup('/insights')).toBe('runs');
-    expect(stripGroup('/executions')).toBe('runs');
     expect(stripGroup('/runs')).toBe('runs');
     expect(stripGroup('/developers')).toBe('plugins');
     expect(stripGroup('/marketplace/flows/a/b')).toBeUndefined();
