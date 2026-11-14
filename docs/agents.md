@@ -385,7 +385,7 @@ absent from an agent without any). Publishing needs a model, and a persona part 
   included) at the prices of Settings → AI prices. A run that reaches one stops with the reason
   `budget` and a notice saying which limit and where to change it; later runs are refused before
   any model call until the day or month turns. The Guardrails row shows today's and this month's
-  usage ([observability.md](observability.md#token-and-cost-tracking)).
+  usage ([observability.md](observability.md#8-token-and-cost-tracking)).
 
 **Publish** snapshots the draft as version N. At most 20 versions are kept, and the builder's
 "…" menu lists them. A session stays on the version it started with. Telegram conversations move

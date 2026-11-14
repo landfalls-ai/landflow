@@ -224,7 +224,7 @@ instead of a title and two buttons, so the person decides with the reasons in fr
   mono; a file write as its path; anything else as `key: value` lines, cut.
 - **What it looked at.** The evidence the run already records, only rows that have data (`approvalEvidence(model, wait)`
   in `lib/shared/approval-evidence.ts`): when it asked, its checks (and the tests the team kept as headlines), the code it
-  changed (+/- and files, from the run's [changes](#artifacts-and-code-changes)), its [fix cycles](#fix-cycles), its
+  changed (+/- and files, from the run's [changes](#artifacts-and-code-changes)), its [fix cycles](#iterations-rounds-turns-and-fix-cycles), its
   budget used against its own and the run's time. Each row opens its place in the Run Trace: a detail sheet, or a tab
   (`?tab=story&member=Reviewer`).
 - **Buttons named by the action.** *Post review & approve*, *Post review & request changes*, *Run the command*, *Publish

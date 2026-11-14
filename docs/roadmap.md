@@ -216,7 +216,7 @@ before sign-in and AI. ✅ Done; see [Durable runtime](features/engine.md#durabl
   stored; totals per model in the execution view, a cost column and total in Insights, usage on
   agent pages; caps per execution and per workflow per day (tokens or dollars, Workflow settings)
   and per agent per day or month, which stop the run with a clear error; see
-  [observability.md](observability.md#token-and-cost-tracking). Wave 6 ✅: caps per credential and
+  [observability.md](observability.md#8-token-and-cost-tracking). Wave 6 ✅: caps per credential and
   per user, cost alerts before a cap is reached, cached-token prices.
 - Evaluations, both offline (test datasets from Data Tables) and online (grading agent
   conversations). ✅ Done, after n8n's: an Evaluation Trigger runs the workflow once per Data Table
