@@ -291,7 +291,9 @@ mounts it.
 - **Only yours**: a conversation belongs to the person who had it. Nobody else can open it, an owner or an admin
   included: another person's id answers 404. API keys are refused too (the routes need a session).
 - **The brain re-checks links**: when you reopen a brain answer, a page you can no longer open loses its link, and the
-  reply says how many were left out. A kept proposal is checked again when it is shown.
+  reply says how many were left out. Tags (`mentions` parts) are checked the way the @ picker checked them: a brain
+  page by its entity, a team as an agent team, a node or a run through its workflow, a person while their account is
+  active, and a node type or plugin always. A kept proposal is checked again when it is shown.
 - **90 days**: a conversation is deleted, with its messages, 90 days after its last message
   (`LANDFLOW_CHAT_RETENTION_DAYS`; `0` keeps them). The leader checks daily.
 - **Delete is real**: **Delete** in the history popover removes the conversation and its messages from the database at
@@ -304,6 +306,11 @@ mounts it.
 - **The popover** (`components/ui/conversation-history.tsx`): a search box (titles and your own messages), the
   conversations about this workflow or page, then everywhere. The two groups are separate requests (the subject group
   asks for its `subjectType` and `subjectId`, with the search text), and each pages on its own with **Show more**. A sheet on a phone, with 44 px rows.
+  A chat that can only show its own kind of conversation passes `ownSurfaceOnly`, and both groups then ask for its
+  `surface` too: the Agent architect does, so it never opens a Spotlight conversation as a design.
+- **The footer comes back**: an assistant item keeps its `meta` (model, time, steps, tokens, cost, and `local` when a
+  local model answered), so a reopened reply shows the same footer. A title is clipped to 80 characters by code point,
+  so an emoji at the cut is never split.
 
 The routes are `/api/conversations` and `/api/me/preferences` ([reference/api.md](reference/api.md)).
 

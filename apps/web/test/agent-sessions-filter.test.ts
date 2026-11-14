@@ -214,6 +214,16 @@ describe('the Agent architect keeps its conversation', () => {
     expect(back.messages[2].error).toEqual({ message: 'Ollama error 500', kind: 'model' });
     expect(back.messages[2].error?.checkpoint).toBeUndefined();
   });
+
+  it('keeps that a local model answered, so the reopened footer still says local', async () => {
+    const { replyItem, restore } = await import('@/components/agents/architect');
+    const { conversationItemInputSchema } = await import('@/lib/shared/conversations');
+    const item = replyItem({ role: 'assistant', text: 'Done.', steps: [], info: { model: 'ollama/qwen3', durationMs: 900, local: true } });
+    expect(item.meta).toEqual({ model: 'ollama/qwen3', durationMs: 900, local: true });
+    expect(conversationItemInputSchema.parse(item).meta?.local).toBe(true);
+    const back = restore([{ seq: 1, role: 'assistant', parts: item.parts, meta: item.meta, at: at0 }]);
+    expect(back.messages[0].info).toMatchObject({ model: 'ollama/qwen3', local: true });
+  });
 });
 
 const at0 = '2026-11-14T10:00:00.000Z';

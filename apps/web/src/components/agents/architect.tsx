@@ -104,7 +104,7 @@ export function replyItem(m: Message, draft?: Draft): ConversationItemInput {
   return {
     role: 'assistant',
     parts,
-    ...(i && { meta: { ...(i.model && { model: i.model }), ...(i.durationMs !== undefined && { durationMs: i.durationMs }), ...(i.steps !== undefined && { steps: i.steps }), ...(i.inputTokens !== undefined && { inputTokens: i.inputTokens }), ...(i.outputTokens !== undefined && { outputTokens: i.outputTokens }), ...(i.costUsd !== undefined && { costUsd: i.costUsd }) } }),
+    ...(i && { meta: { ...(i.model && { model: i.model }), ...(i.durationMs !== undefined && { durationMs: i.durationMs }), ...(i.steps !== undefined && { steps: i.steps }), ...(i.inputTokens !== undefined && { inputTokens: i.inputTokens }), ...(i.outputTokens !== undefined && { outputTokens: i.outputTokens }), ...(i.costUsd !== undefined && { costUsd: i.costUsd }), ...(i.local && { local: true }) } }),
   };
 }
 
@@ -130,7 +130,7 @@ export function restore(items: ConversationItem[]): { messages: Message[]; draft
       ...(proposal?.type === 'proposal' && { proposed: proposal.summary }),
       // A kept failure cannot be continued (its checkpoint was in memory): Try again is all it offers.
       ...(failure?.type === 'error' && { error: { message: failure.message, ...(failure.kind && { kind: failure.kind }) } }),
-      ...(meta && { info: { model: meta.model, durationMs: meta.durationMs, steps: meta.steps, inputTokens: meta.inputTokens, outputTokens: meta.outputTokens, costUsd: meta.costUsd } }),
+      ...(meta && { info: { model: meta.model, durationMs: meta.durationMs, steps: meta.steps, inputTokens: meta.inputTokens, outputTokens: meta.outputTokens, costUsd: meta.costUsd, local: meta.local } }),
     };
   });
   return { messages, ...(draft && { draft }) };
@@ -530,6 +530,7 @@ export function AgentArchitect({ teams, onBack, onClose }: { teams: string[]; on
             <div className="flex h-9 shrink-0 items-center justify-end gap-0.5 border-b border-hair px-2">
               <ConversationHistory
                 {...SCOPE}
+                ownSurfaceOnly
                 subjectLabel="Agent designs"
                 onOpen={(id) => {
                   if (streaming) return;

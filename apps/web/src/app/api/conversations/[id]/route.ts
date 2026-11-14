@@ -15,7 +15,7 @@ export const GET = handler(async (_request: Request, { params }: Ctx) => {
   const actor = routeActor();
   const conversation = getConversation(actor.id, (await params).id);
   if (!conversation) return NOT_FOUND();
-  return json({ conversation, items: sanitizeItems(actor, conversation, listItems(actor.id, conversation.id)) });
+  return json({ conversation, items: await sanitizeItems(actor, conversation, listItems(actor.id, conversation.id)) });
 });
 
 /** PATCH { title?, pinned? } */

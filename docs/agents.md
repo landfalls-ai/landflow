@@ -63,7 +63,7 @@ The chat is on the chat kit ([assistant.md](assistant.md#chat-surfaces)): the to
 cost, and a model chip sits in the box. It **keeps its conversation** with the others
 ([assistant.md](assistant.md#conversation-history), surface `architect`, subject `agent` / `new`): close the dialog and
 open it again and the latest design is there under an **Earlier** divider, with its last draft on the right, and the
-clock button lists the older ones. When the model fails after some steps, the error offers **Continue from step N**
+clock button lists the older ones (architect conversations only: a Spotlight or brain conversation is not offered here). When the model fails after some steps, the error offers **Continue from step N**
 (the request carries `resume: { checkpoint }`, so no tool runs twice; the checkpoint lives 15 minutes in the host's
 memory) beside **Try again**. A failure read back from a kept conversation can only be tried again.
 
