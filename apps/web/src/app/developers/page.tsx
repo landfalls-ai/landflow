@@ -1,6 +1,6 @@
 'use client';
 import { Segmented } from '@/components/ui/segmented';
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { Check, Copy, FileCode2, Radio, Server, Workflow } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { languageMeta } from '@/lib/client/format';
@@ -293,9 +293,16 @@ export default function DevelopersPage() {
   const [copied, setCopied] = useState(false);
   const sample = SAMPLES[lang];
 
+  // A link to #api-reference (Settings used to hold it) lands with the heading at the top, after the page has laid out.
+  useEffect(() => {
+    if (window.location.hash !== '#api-reference') return;
+    const t = window.setTimeout(() => document.getElementById('api-reference')?.scrollIntoView({ block: 'start' }), 150);
+    return () => window.clearTimeout(t);
+  }, []);
+
   return (
     <>
-      <PageHeader title="Build a plugin" meta={<span>SDKs for TypeScript, Python and Go</span>} />
+      <PageHeader title="Developers" meta={<span>Build a plugin with the TypeScript, Python and Go SDKs · the API reference</span>} />
       <PageBody width="narrow" className="flex flex-col gap-8">
         <p className="max-w-[72ch] text-[13px] leading-relaxed text-t2">
           Implement one interface, serve it, and you&apos;re done. Landflow discovers your plugin, renders its parameters, runs it in workflows and lets AI agents use it as a tool.

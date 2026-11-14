@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button';
 import { confirmAction } from '@/components/ui/confirm';
 import { HelpTip } from '@/components/ui/help-tip';
 import { FieldLabel, Input, SectionLabel, Select, Switch, Textarea } from '@/components/ui/inputs';
-import { groupIssues, IssueBanner, StatusRow } from './status-rows';
+import { groupIssues, IssueBanner, listedKinds, StatusRow } from './status-rows';
 
 interface Draft {
   /** Undefined: a new connection. */
@@ -270,6 +270,7 @@ function ConnectionRow({ connection, kinds, onEdit, onChanged, onDeleted }: { co
 
 /** The kinds this host knows: direct ones always ready, brokers with or without a driver. */
 function KindsCard({ kinds, connections }: { kinds: TransportKindInfo[]; connections: TransportConnectionView[] }) {
+  const { listed, hidden } = listedKinds(kinds, connections);
   return (
     <Card className="px-5 py-4">
       <div className="mb-2 flex items-center gap-2">
@@ -285,7 +286,7 @@ function KindsCard({ kinds, connections }: { kinds: TransportKindInfo[]; connect
       </p>
       <div className="mb-3 empty:hidden"><IssueBanner noun="transports" issues={groupIssues(kinds.map((k) => ({ label: k.label, message: k.health?.ok === false ? k.health.message : undefined })))} /></div>
       <ul className="grid gap-2 sm:grid-cols-2">
-        {kinds.map((kind) => {
+        {listed.map((kind) => {
           const count = connections.filter((c) => c.kind === kind.kind).length;
           return (
             <li key={kind.kind} className="flex items-center gap-2 rounded-[10px] border border-hair bg-wl px-3 py-2">
@@ -295,7 +296,6 @@ function KindsCard({ kinds, connections }: { kinds: TransportKindInfo[]; connect
                 <span className="block text-[11px] text-t3">
                   {kind.direct ? 'direct · the host connects to the plugin' : kind.installed ? `broker · ${count} connection${count === 1 ? '' : 's'}` : `broker · driver in a later release${count ? ` · ${count} connection${count === 1 ? '' : 's'} saved` : ''}`}
                 </span>
-                {kind.health?.ok === false && <span className="block text-[11px] text-rd">not reachable</span>}
               </span>
               {kind.capabilities && (
                 <span className="font-mono text-[11px] text-t3" title={`Up to ${Math.round(kind.capabilities.maxMessageBytes / 1024 / 1024)} MiB per message · ${kind.capabilities.delivery.join(', ')}`}>
@@ -306,6 +306,7 @@ function KindsCard({ kinds, connections }: { kinds: TransportKindInfo[]; connect
           );
         })}
       </ul>
+      {hidden > 0 && <p className="mt-2 text-[12px] text-t3">{hidden} more broker{hidden === 1 ? '' : 's'} available: add a connection below to use one.</p>}
     </Card>
   );
 }
@@ -350,17 +351,14 @@ export function TransportsSettings() {
         <div data-testid="claim-store-line" className="mb-2">
           <StatusRow
             className="rounded-[10px] bg-wl px-3 py-2"
-            config={{ label: 'Claim store', configured: Boolean(data.claimStore?.configured), on: data.claimStore?.description ?? 'configured' }}
+            config={{ label: 'Claim store', configured: Boolean(data.claimStore?.configured), on: data.claimStore?.description ?? 'configured', error: data.claimStore?.error }}
           >
             {data.claimStore?.configured ? (
               <p>A request or reply too big for a broker goes by reference through it.</p>
             ) : (
-              <>
-                <p>
-                  Set <code className="font-mono text-[11px]">LANDFLOW_CLAIM_STORE</code>. Without it, a call too big for a broker fails <code className="font-mono text-[11px]">too_large</code> and may use another transport.
-                </p>
-                {data.claimStore?.error && <p>The setting was ignored: {data.claimStore.error}</p>}
-              </>
+              <p>
+                Set <code className="font-mono text-[11px]">LANDFLOW_CLAIM_STORE</code>. Without it, a call too big for a broker fails <code className="font-mono text-[11px]">too_large</code> and may use another transport.
+              </p>
             )}
           </StatusRow>
         </div>

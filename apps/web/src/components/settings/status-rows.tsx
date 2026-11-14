@@ -15,6 +15,8 @@ export interface StatusRowConfig {
   /** Words for the two states; the defaults are "configured" and "not configured". */
   on?: string;
   off?: string;
+  /** Why the setting was rejected: the row then says "setting ignored" and shows this under it. */
+  error?: string;
 }
 
 export interface StatusRowView {
@@ -22,12 +24,13 @@ export interface StatusRowView {
   state: 'on' | 'off';
   /** The link's words. */
   help: string;
+  error?: string;
 }
 
 export function statusRow(config: StatusRowConfig): StatusRowView {
   const state = config.configured ? 'on' : 'off';
-  const word = config.configured ? (config.on ?? 'configured') : (config.off ?? 'not configured');
-  return { text: `${config.label}: ${word}`, state, help: config.configured ? 'Details' : 'How to set up' };
+  const word = config.error ? 'setting ignored' : config.configured ? (config.on ?? 'configured') : (config.off ?? 'not configured');
+  return { text: `${config.label}: ${word}`, state, help: config.configured ? 'Details' : 'How to set up', ...(config.error && { error: config.error }) };
 }
 
 export function StatusRow({ config, children, helpLabel, className }: { config: StatusRowConfig; /** The variables and what they do. */ children: ReactNode; helpLabel?: string; className?: string }) {
@@ -37,14 +40,21 @@ export function StatusRow({ config, children, helpLabel, className }: { config: 
     <div className={cn('flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-2xl border border-hair bg-sf px-4 py-2.5 text-[13px]', className)} data-state={view.state}>
       <Icon className={cn('size-4 shrink-0', view.state === 'on' ? 'text-gn' : 'text-t3')} strokeWidth={1.8} aria-hidden />
       <span className="font-medium text-t1">{view.text}</span>
-      <span className="text-t3" aria-hidden>
+      <span className="text-t3 max-md:hidden" aria-hidden>
         ·
       </span>
       <HelpTip label={helpLabel ?? `${view.help}: ${config.label}`} title={config.label} text={`${view.help} ›`}>
         {children}
       </HelpTip>
+      {view.error && <p role="alert" className="basis-full break-words pl-6 text-[12px] text-rd">{view.error}</p>}
     </div>
   );
+}
+
+/** Which transport kinds the list shows: the direct ones and brokers with a connection; the rest are only counted. */
+export function listedKinds<K extends { kind: string; direct: boolean }>(kinds: readonly K[], connections: ReadonlyArray<{ kind: string }>): { listed: K[]; hidden: number } {
+  const listed = kinds.filter((k) => k.direct || connections.some((c) => c.kind === k.kind));
+  return { listed, hidden: kinds.length - listed.length };
 }
 
 export interface HealthIssue {

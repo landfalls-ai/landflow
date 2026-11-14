@@ -22,7 +22,7 @@ export function HelpTipButton({ label, open, onClick, children, className }: { l
       aria-haspopup="dialog"
       onClick={onClick}
       className={cn(
-        'inline-flex items-center gap-1 rounded-full text-t3 transition-colors hover:text-t1 focus-visible:text-t1 max-md:min-h-11 max-md:min-w-11 max-md:justify-center',
+        'inline-flex items-center gap-1 rounded-full text-t3 transition-colors hover:text-t1 focus-visible:text-t1 relative after:absolute after:-inset-3 after:content-[""]',
         children ? 'text-[12px] font-medium' : 'size-5 justify-center',
         className,
       )}
@@ -35,7 +35,7 @@ export function HelpTipButton({ label, open, onClick, children, className }: { l
 /** `label` names the button for a screen reader; `children` is the explanation; `text` makes it a visible link ("How to set up ›"). */
 export function HelpTip({ label = 'More about this', title, text, children, className }: { label?: string; title?: string; text?: string; children: ReactNode; className?: string }) {
   return (
-    <Popover align="start" title={title ?? label} label={label} className="max-w-[340px]" trigger={({ open, toggle }) => (
+    <Popover role="dialog" align="start" title={title ?? label} label={label} className="max-w-[340px]" trigger={({ open, toggle }) => (
       <HelpTipButton label={label} open={open} onClick={toggle} className={className}>
         {text}
       </HelpTipButton>

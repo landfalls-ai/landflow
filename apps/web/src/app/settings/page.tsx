@@ -85,6 +85,8 @@ export default function SettingsPage() {
       }
       setSection(target.kind === 'section' ? target.id : 'general');
       setOpened(target.kind === 'section');
+      // The query is read once: from here on the hash says where we are.
+      if (target.kind === 'section' && window.location.search) window.history.replaceState(null, '', `${window.location.pathname}#${target.id}`);
     };
     fromLocation();
     window.addEventListener('hashchange', fromLocation);
@@ -128,7 +130,7 @@ export default function SettingsPage() {
                       <Icon className={cn('mt-0.5 size-4 shrink-0', active ? 'text-t1' : 'text-t3')} strokeWidth={1.8} />
                       <span className="min-w-0 max-md:flex-1">
                         <span className={cn('block text-[13px] max-md:text-[15px] max-md:font-semibold max-md:text-t1', active ? 'font-semibold text-t1' : 'text-t2')}>{item.label}</span>
-                        <span className="block truncate text-[11px] text-t3 max-md:text-[12.5px] md:whitespace-normal">{item.hint}</span>
+                        <span className="block truncate text-[11px] text-t3 max-md:text-[12.5px] md:hidden">{item.hint}</span>
                       </span>
                       <ChevronRight className="size-4 shrink-0 text-t3 md:hidden" aria-hidden />
                     </button>

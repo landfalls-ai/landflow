@@ -18,9 +18,11 @@ interface PopoverProps {
   /** On a phone the popover is a bottom sheet (docs/mobile.md#sheets-and-dialogs): its heading, or else its name for a screen reader. */
   title?: string;
   label?: string;
+  /** The panel's role on desktop: a menu of actions (default) or a dialog of prose. */
+  role?: 'menu' | 'dialog';
 }
 
-export function Popover({ trigger, children, align = 'end', className, title, label }: PopoverProps) {
+export function Popover({ trigger, children, align = 'end', className, title, label, role = 'menu' }: PopoverProps) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; left?: number; right?: number }>();
   const anchor = useRef<HTMLSpanElement>(null);
@@ -71,7 +73,7 @@ export function Popover({ trigger, children, align = 'end', className, title, la
         createPortal(
           <div
             ref={panel}
-            role="menu"
+            role={role}
             style={pos}
             className={cn('fixed z-50 min-w-[200px] animate-in rounded-xl border border-hair bg-sf p-1 text-[13px] shadow-pop', className)}
           >

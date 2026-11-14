@@ -523,7 +523,7 @@ the call may start, then prices and records what it used.
   | Max tokens / max cost per execution | Workflow settings → AI usage limits | the execution, its earlier segments and its sub-workflows |
   | Max tokens / max cost per day | Workflow settings → AI usage limits | every execution of the workflow today |
   | Daily token limit, daily and monthly cost limit | Agent → Settings | every run of the agent (sessions, schedules, channels, Run an Agent) |
-  | Tokens or cost per day or month, per model credential | Settings → AI caps (`GET/PUT /api/settings/ai-caps`) | every call made with the credential, by any workflow or agent |
+  | Tokens or cost per day or month, per model credential | Settings → AI prices → AI usage caps (`GET/PUT /api/settings/ai-caps`) | every call made with the credential, by any workflow or agent |
   | Tokens or cost per day or month, per user, or one cap for every user | the same | every run the user started (a manual run, an agent session); runs without a user, such as triggers, aren't counted |
 
   A call is refused before it starts once a cap is reached, and a call that takes the total over a
@@ -533,7 +533,7 @@ the call may start, then prices and records what it used.
   ends with the reason `budget` and that notice. Each refusal or stop counts in
   `landflow.ai.caps_reached`. The credential and user caps read the same message form: *AI usage cap
   reached: credential “Team OpenAI” today used 2,200 tokens of its 1,500 tokens limit (Settings → AI
-  caps)*; a zero or empty limit means no cap.
+  prices → AI usage caps)*; a zero or empty limit means no cap.
 - **AI usage of plugin nodes**: a remote plugin node that returns a `model` record ([protocol.md](protocol.md), `ctx.model`) is counted like the models node: priced, one `ai_usage` row (Insights, `ExecutionRecord.aiUsage`, the per-credential and per-user caps through the credential tag on the request, the `ai.call` ledger event) and the `landflow.ai.tokens` metric (`ai-usage/plugin.ts`, `withAiUsage`). A call over a cap fails the node and run with the same `UsageCapError`; a node with `meterAiUsage` is refused before it runs once a cap is reached. Several records in one response are all counted before the error is thrown. The record's span in Run Trace has `costUsd` from the same price table (overrides included); an unpriced model is $0 with a `costNote`, and a capped call keeps its span. Ollama's cache-read tokens are provider-reported, not an artefact.
 - **Cost alerts**: an alert rule of kind *AI cost* (Settings → Alerts, a threshold percent, default
   80) sends a message through its channels when a workflow, agent, credential or user cap reaches the

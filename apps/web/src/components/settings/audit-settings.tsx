@@ -56,8 +56,6 @@ const RETENTION = [
 ];
 const CATEGORIES = [...new Set(Object.keys(AUDIT_ACTIONS).map((a) => a.split('.')[0]))];
 
-type Filters = AuditFilters;
-const query = auditQuery;
 
 function actorLabel(event: AuditEvent): string {
   const { actor } = event;
@@ -66,7 +64,7 @@ function actorLabel(event: AuditEvent): string {
   return actor.name || actor.email || actor.id || 'Unknown';
 }
 
-function EventRow({ event, onFilter, projectName }: { event: AuditEvent; onFilter: (patch: Partial<Filters>) => void; projectName: (id: string) => string }) {
+function EventRow({ event, onFilter, projectName }: { event: AuditEvent; onFilter: (patch: Partial<AuditFilters>) => void; projectName: (id: string) => string }) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -251,11 +249,11 @@ export function AuditLog({ projectId }: { projectId?: string } = {}) {
     }
   };
 
-  const load = useCallback(async (next: Filters, after?: string) => {
+  const load = useCallback(async (next: AuditFilters, after?: string) => {
     setLoading(true);
     setError(undefined);
     try {
-      const page = await api<AuditPage>(`/api/audit?${query(next, { limit: '50', ...(after && { cursor: after }) })}`);
+      const page = await api<AuditPage>(`/api/audit?${auditQuery(next, { limit: '50', ...(after && { cursor: after }) })}`);
       setEvents((current) => (after ? [...(current ?? []), ...page.events] : page.events));
       setCursor(page.nextCursor);
     } catch (e) {
@@ -268,8 +266,8 @@ export function AuditLog({ projectId }: { projectId?: string } = {}) {
   useEffect(() => void load(filters), [filters, load]);
 
   // A choice applies at once; typed text after a short pause.
-  const apply = (patch: Partial<Filters>) => dispatch({ type: 'choose', patch });
-  const set = (patch: Partial<Filters>) => dispatch({ type: 'type', patch });
+  const apply = (patch: Partial<AuditFilters>) => dispatch({ type: 'choose', patch });
+  const set = (patch: Partial<AuditFilters>) => dispatch({ type: 'type', patch });
   const pending = hasPending({ draft, applied: filters });
   useEffect(() => {
     if (!pending) return;
@@ -287,12 +285,12 @@ export function AuditLog({ projectId }: { projectId?: string } = {}) {
             <ShieldCheck className="size-3.5" /> Verify chain
           </Button>
         )}
-        <a href={`/api/audit/export?${query(filters, { format: 'csv' })}`} download>
+        <a href={`/api/audit/export?${auditQuery(filters, { format: 'csv' })}`} download>
           <Button size="sm" tabIndex={-1}>
             <Download className="size-3.5" /> CSV
           </Button>
         </a>
-        <a href={`/api/audit/export?${query(filters, { format: 'json' })}`} download>
+        <a href={`/api/audit/export?${auditQuery(filters, { format: 'json' })}`} download>
           <Button size="sm" tabIndex={-1}>
             <Download className="size-3.5" /> JSON
           </Button>
@@ -323,7 +321,7 @@ export function AuditLog({ projectId }: { projectId?: string } = {}) {
           </Select>
           <Input value={draft.targetType} onChange={(e) => set({ targetType: e.target.value })} placeholder="Target type: workflow, user…" aria-label="Target type" />
           <Input value={draft.targetId} onChange={(e) => set({ targetId: e.target.value })} placeholder="Target id" aria-label="Target id" />
-          <Select value={draft.outcome} onChange={(e) => apply({ outcome: e.target.value as Filters['outcome'] })} aria-label="Outcome">
+          <Select value={draft.outcome} onChange={(e) => apply({ outcome: e.target.value as AuditFilters['outcome'] })} aria-label="Outcome">
             <option value="">Any outcome</option>
             <option value="success">Success</option>
             <option value="failure">Failure</option>

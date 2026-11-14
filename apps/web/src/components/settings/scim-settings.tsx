@@ -14,6 +14,7 @@ import { Card } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CopyButton } from '@/components/ui/copy-button';
+import { HelpTip } from '@/components/ui/help-tip';
 import { Input, SectionLabel } from '@/components/ui/inputs';
 
 const code = (text: string) => <code className="font-mono text-[12px] text-t1">{text}</code>;
@@ -69,8 +70,10 @@ export function ScimSettings({ scim: initial }: { scim: ScimSecurityView }) {
         </span>
       </div>
       <p className="text-[13px] text-t2">
-        Okta, Entra ID and other identity providers create, update and deactivate users here, and push groups that become project memberships or roles. Give them the base URL and a SCIM token
-        (HTTP header bearer token). Deactivated users are signed out and can’t sign in.
+        Your identity provider creates, updates and deactivates users here.
+        <HelpTip label="How provisioning works" className="ml-1 align-middle">
+          Okta, Entra ID and other identity providers also push groups that become project memberships or roles. Give them the base URL and a SCIM token (HTTP header bearer token). Deactivated users are signed out and can’t sign in.
+        </HelpTip>
       </p>
       <div className="flex items-center gap-1 rounded-[10px] border border-hair bg-wl py-1 pl-3 pr-1">
         <span className="shrink-0 text-[12px] text-t3">Base URL</span>
@@ -150,7 +153,10 @@ export function ScimSettings({ scim: initial }: { scim: ScimSecurityView }) {
           </span>
         ) : (
           <span className="text-t2">
-            None: a group named like a team project makes its members editors there. Map groups with {code('Landflow Admins=role:admin,Data Team=project:Data:editor')}.
+            None.
+            <HelpTip label="How groups are mapped" className="ml-1 align-middle">
+              A group named like a team project makes its members editors there. Map groups with {code('Landflow Admins=role:admin,Data Team=project:Data:editor')}.
+            </HelpTip>
           </span>
         )}
       </div>

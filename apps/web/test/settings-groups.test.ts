@@ -8,7 +8,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { API_REFERENCE_HREF, SETTINGS_GROUPS, resolveSection, sectionFromLocation } from '../src/components/settings/settings-groups';
-import { groupIssues, statusRow } from '../src/components/settings/status-rows';
+import { groupIssues, listedKinds, statusRow } from '../src/components/settings/status-rows';
 import { NO_FILTERS, auditQuery, filtersReducer, hasPending, initialFilters } from '../src/components/settings/audit-filters';
 import { HelpTip, HelpTipBody, HelpTipButton } from '../src/components/ui/help-tip';
 
@@ -53,6 +53,22 @@ describe('status rows', () => {
   });
   it('takes its own words for a state', () => {
     expect(statusRow({ label: 'Queue mode', configured: false, off: 'off' }).text).toBe('Queue mode: off');
+  });
+
+  it('shows a rejected setting as ignored, with its error on the row', () => {
+    expect(statusRow({ label: 'Claim store', configured: false, error: 'bad url' })).toEqual({ text: 'Claim store: setting ignored', state: 'off', help: 'How to set up', error: 'bad url' });
+  });
+
+  it('lists direct transports and brokers with a connection, and counts the rest', () => {
+    const kinds = [
+      { kind: 'http', direct: true },
+      { kind: 'nats', direct: false },
+      { kind: 'kafka', direct: false },
+      { kind: 'sqs', direct: false },
+    ];
+    const { listed, hidden } = listedKinds(kinds, [{ kind: 'nats' }]);
+    expect(listed.map((k) => k.kind)).toEqual(['http', 'nats']);
+    expect(hidden).toBe(2);
   });
   it('groups identical errors into one issue', () => {
     const issues = groupIssues([

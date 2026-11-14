@@ -16,6 +16,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CopyButton } from '@/components/ui/copy-button';
 import { EmptyState } from '@/components/ui/empty-state';
+import { HelpTip } from '@/components/ui/help-tip';
 import { FieldLabel, Input, SectionLabel, Select } from '@/components/ui/inputs';
 
 const EXPIRY = [
@@ -129,8 +130,11 @@ export function ApiKeysSettings() {
   return (
     <div className="space-y-4">
       <p className="text-[13px] text-t2">
-        Keys let scripts, CI and the Landflow CLI call the API as you, limited to the scopes you pick. Send one as <code className="font-mono text-[12px] text-t1">Authorization: Bearer lf_…</code> (or{' '}
-        <code className="font-mono text-[12px] text-t1">X-Landflow-API-Key</code>).
+        Keys let scripts, CI and the Landflow CLI call the API as you, limited to the scopes you pick.
+        <HelpTip label="How to send a key" className="ml-1 align-middle">
+          Send one as <code className="font-mono text-[12px] text-t1">Authorization: Bearer lf_…</code> (or <code className="font-mono text-[12px] text-t1">X-Landflow-API-Key</code>). The endpoints are in the{' '}
+          <a href="/developers#api-reference" className="underline">API reference</a>.
+        </HelpTip>
       </p>
 
       {created && (

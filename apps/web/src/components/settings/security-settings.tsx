@@ -61,9 +61,7 @@ export function SecuritySettings() {
             <ShieldCheck className="size-4 text-t3" strokeWidth={1.8} />
             <SectionLabel>Single sign-on (OIDC)</SectionLabel>
             <span className="ml-auto">
-              {!oidc.configured ? (
-                <Status on={false} labels={['Configured', 'Not configured']} />
-              ) : oidc.reachable ? (
+              {oidc.reachable ? (
                 <Status on labels={['Connected', '']} />
               ) : (
                 <Badge tone="danger">
@@ -72,45 +70,43 @@ export function SecuritySettings() {
               )}
             </span>
           </div>
-          {oidc.configured ? (
-            <div className="divide-y divide-hair">
-              <Row label="Issuer">
-                <Env>{oidc.issuer}</Env>
-              </Row>
-              <Row label="Client ID">
-                <Env>{oidc.clientId}</Env>
-              </Row>
-              <Row label="Redirect URL">
-                <span className="flex items-center gap-1">
-                  <Env>{oidc.redirectUrl}</Env>
-                  {oidc.redirectUrl && <CopyButton text={oidc.redirectUrl} label="Copy redirect URL" />}
+          <div className="divide-y divide-hair">
+            <Row label="Issuer">
+              <Env>{oidc.issuer}</Env>
+            </Row>
+            <Row label="Client ID">
+              <Env>{oidc.clientId}</Env>
+            </Row>
+            <Row label="Redirect URL">
+              <span className="flex items-center gap-1">
+                <Env>{oidc.redirectUrl}</Env>
+                {oidc.redirectUrl && <CopyButton text={oidc.redirectUrl} label="Copy redirect URL" />}
+              </span>
+            </Row>
+            <Row label="Button">{oidc.label}</Row>
+            <Row label="Role claim">
+              <Env>{oidc.roleClaim}</Env>
+            </Row>
+            <Row label="Role mapping">
+              {roleMap.length ? (
+                <span className="flex flex-wrap gap-1">
+                  {roleMap.map(([claim, role]) => (
+                    <Badge key={claim} tone="muted" className="font-mono font-medium">
+                      {claim} → {role}
+                    </Badge>
+                  ))}
                 </span>
-              </Row>
-              <Row label="Button">{oidc.label}</Row>
-              <Row label="Role claim">
-                <Env>{oidc.roleClaim}</Env>
-              </Row>
-              <Row label="Role mapping">
-                {roleMap.length ? (
-                  <span className="flex flex-wrap gap-1">
-                    {roleMap.map(([claim, role]) => (
-                      <Badge key={claim} tone="muted" className="font-mono font-medium">
-                        {claim} → {role}
-                      </Badge>
-                    ))}
-                  </span>
-                ) : (
-                  <span className="text-t3">none (everyone gets the default role)</span>
-                )}
-              </Row>
-              <Row label="Default role">{oidc.defaultRole === 'none' ? 'none: users without a mapped role can’t sign in' : oidc.defaultRole}</Row>
-              {oidc.error && (
-                <Row label="Discovery">
-                  <span className="text-rd">{oidc.error}</span>
-                </Row>
+              ) : (
+                <span className="text-t3">none (everyone gets the default role)</span>
               )}
-            </div>
-          ) : null}
+            </Row>
+            <Row label="Default role">{oidc.defaultRole === 'none' ? 'none: users without a mapped role can’t sign in' : oidc.defaultRole}</Row>
+            {oidc.error && (
+              <Row label="Discovery">
+                <span className="text-rd">{oidc.error}</span>
+              </Row>
+            )}
+          </div>
         </Card>
       ) : (
         <StatusRow config={{ label: 'Single sign-on (OIDC)', configured: false }}>
@@ -139,19 +135,17 @@ export function SecuritySettings() {
             <Mail className="size-4 text-t3" strokeWidth={1.8} />
             <SectionLabel>Email</SectionLabel>
             <span className="ml-auto">
-              <Status on={smtp.configured} labels={['Configured', 'Not configured']} />
+              <Status on labels={['Configured', 'Not configured']} />
             </span>
           </div>
-          {smtp.configured ? (
-            <div className="divide-y divide-hair">
-              <Row label="SMTP server">
-                <Env>
-                  {smtp.host}:{smtp.port}
-                </Env>
-              </Row>
-              <Row label="From">{smtp.from}</Row>
-            </div>
-          ) : null}
+          <div className="divide-y divide-hair">
+            <Row label="SMTP server">
+              <Env>
+                {smtp.host}:{smtp.port}
+              </Env>
+            </Row>
+            <Row label="From">{smtp.from}</Row>
+          </div>
         </Card>
       ) : (
         <StatusRow config={{ label: 'Email', configured: false }}>
