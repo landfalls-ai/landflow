@@ -1559,6 +1559,11 @@ The shared pieces every chat will use, built in `components/ui/` and ready; the 
   off ([Hosted chat and widget](features/ai.md#hosted-chat-and-widget)).
 - CH1 (motion), CH6 (one activity trace), CH7 (one reply footer), CH9 (errors with actions) and CH10 (a model chip): kit
   ready, surfaces in wave 2 ([Chat surfaces](assistant.md#chat-surfaces)). Spotlight in the editor is on the kit (B08): CH1, CH6, CH7 and CH20 are closed for it, CH10 too once a route names the model before the first reply; CH3 closes with B09.
+  Agents (B10): the test chat, the Agent architect and the analyst are on the kit (CH6, CH7 done for agents); the test
+  chat's raw trace id became the trace's Open trace link (CH23, the test-chat part).
+- CH13 ✅ Done (B10): the Sessions tab opens on People and has Automations and All; no Auto-refresh switch
+  ([agents.md](agents.md#test-chat)). The architect keeps its conversation and can continue a failed design from the
+  failing step.
 
 ## Ask the brain, docked and streamed (B09, 2026-11-14)
 
@@ -1581,6 +1586,12 @@ and the account menu gets the switches. Open: `deleteUser` should remove a perso
 The foundation is built: `GET /api/mentions`, `resolveMentions` with a digest per kind, and the picker
 ([assistant.md](assistant.md#tagging-with-)). Open: mount it in Spotlight and Ask the brain, and resolve the tags in
 their servers.
+
+## Test chat history per person (B10, 2026-11-14)
+
+Open: the test chat writes every session as user "you", so "Earlier tests" lists everyone's tests of that agent. The chat
+route should store the caller's id (it also affects memory and the policy role check); then the sessions route can filter
+`source=test` to the caller. Also: `source` wins over `audience` when both are given.
 
 ## Not planned
 

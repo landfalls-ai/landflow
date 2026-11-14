@@ -42,6 +42,12 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - **Log redaction** ([observability.md](observability.md#3-logs)): the host's logger scrubs secret-shaped values (Bearer tokens (the word `Bearer` with that case; an all-letter token shorter than 24 characters is left, so prose such as "Bearer authentication" is not mangled), `lf_` keys, `sk-`, GitHub and Slack keys, URL passwords, PEM private keys) and the credential values a node was handed; a secret in free text of another shape, or a credential value shorter than twelve characters (the vault does not remember short ones, so a weak password such as `postgres` is not scrubbed), is not found. Value patterns apply to log lines only: span attributes and exception events exported over OTLP are redacted by key name. OAuth access tokens handed to a node are scrubbed from its output too, so a workflow that passes one downstream through node output gets `[redacted]`. A multi-line credential that is not a PEM block is remembered whole, not line by line. The plugin SDKs keep their own rules (key names and the current request's credential values). A `traceparent` on a read response may name a trace the sampler dropped.
 - **By design**: a Respond to Webhook reply built from a secret is not redacted: redaction covers what is kept, and the reply is sent, not kept ([External secrets](features/secrets-and-environments.md)).
 
+## Test chat history (B10, 2026-11)
+
+- "Earlier tests" in an agent's test chat is per agent, not per person: test sessions all carry the user id `you`, so on a
+  multi-user host it lists everyone's tests of that agent. The in-memory resume checkpoint lasts 15 minutes. Follow-up in
+  the roadmap.
+
 ## Production profile (2026-11)
 
 - **The production check does not run yet**: `checkConfig()` reports development secrets and a missing public URL in the

@@ -32,7 +32,7 @@ What the look draws:
   Needs you and on the waiting node, with a row of faces for who has something for you
   ([run-trace.md](run-trace.md#an-approval-with-its-evidence));
 - team members as cards above the team chart ([agent-teams.md](agent-teams.md#member-cards));
-- the analyst answering with a chart: source chips, one "Looking across N sources…" line, and an answer card whose chart
+- the analyst answering with a chart: source chips, the kit's activity line ("N steps · time", opening into the steps, with Open trace), and an answer card with the reply footer whose chart
   comes from the tool results ([second-brain.md](second-brain.md#the-analyst-agent));
 - building step by step: while Spotlight builds a change, a side card ticks off its steps, the nodes it adds appear on the
   canvas as dashed ghosts (the one being made shimmers), new connections draw dashed, and a thin bar on top of the canvas
