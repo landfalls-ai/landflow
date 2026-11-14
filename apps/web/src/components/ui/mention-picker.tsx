@@ -65,7 +65,7 @@ export function MentionListbox({
           })}
         </div>
       ))}
-      {!total && <div className="px-3 py-3 text-[12px] text-t3">{loading ? 'Looking…' : 'Nothing found'}</div>}
+      {!total && <div className="px-3 py-3 text-[12px] text-t3">Looking…</div>}
     </div>
   );
   // On a phone the sheet is portalled, so no scrolling parent clips it.

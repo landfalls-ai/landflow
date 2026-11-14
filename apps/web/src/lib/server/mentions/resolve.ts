@@ -39,7 +39,8 @@ export async function resolveMentions(actor: Actor, refs: readonly SentMention[]
   const wanted = refs.filter((r) => !seen.has(mentionKey(r)) && seen.add(mentionKey(r))).slice(0, MENTION_LIMITS.refs);
   const read: MentionRead[] = [];
   const sections: string[] = [];
-  let used = 0;
+  // The fences count against the budget: open, close and the newlines between the lines.
+  let used = Buffer.byteLength(BLOCK_OPEN) + Buffer.byteLength(BLOCK_CLOSE) + 1;
   for (const sent of wanted) {
     const ref: MentionRef = { type: sent.type, id: sent.id, ...(sent.workflowId && { workflowId: sent.workflowId }) };
     let digest;
@@ -56,14 +57,14 @@ export async function resolveMentions(actor: Actor, refs: readonly SentMention[]
     const heading = `## @${defence(digest.name)} (${MENTION_NOUNS[ref.type]})`;
     const room = MENTION_LIMITS.totalBytes - used - Buffer.byteLength(heading) - 2;
     if (room < 80) {
-      read.push({ ref, ok: false, label: `Left out @${digest.name.slice(0, 60)}: the tags together are too long`, summary: '' });
+      read.push({ ref, ok: false, label: `Left out @${digest.label.slice(0, 60)}: the tags together are too long`, summary: '' });
       continue;
     }
     const body = clipBytes(defence(digest.body), room);
     const section = `${heading}\n${body}`;
     used += Buffer.byteLength(section) + 1;
     sections.push(section);
-    read.push({ ref, ok: true, label: digest.name, summary: body.split('\n')[0] ?? '' });
+    read.push({ ref, ok: true, label: digest.label, summary: body.split('\n')[0] ?? '' });
   }
   return { block: sections.length ? [BLOCK_OPEN, ...sections, BLOCK_CLOSE].join('\n') : '', read };
 }

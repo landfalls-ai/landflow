@@ -101,9 +101,10 @@ export function useMentionPicker({
     if (wanted) setRecents(readRecents());
   }, [wanted]);
 
-  // Type-ahead: 150 ms after the last key.
+  // Type-ahead: 150 ms after the last key. The last answer is for another query, so it goes.
   useEffect(() => {
     if (!wanted || query === undefined) return;
+    setRemote([]);
     const controller = new AbortController();
     setLoading(true);
     const timer = setTimeout(() => {
@@ -144,17 +145,19 @@ export function useMentionPicker({
   useEffect(() => {
     const el = inputRef.current;
     if (!el) return;
+    if (!open) {
+      for (const name of ['role', 'aria-autocomplete', 'aria-expanded', 'aria-controls', 'aria-activedescendant']) el.removeAttribute(name);
+      return;
+    }
     el.setAttribute('role', 'combobox');
     el.setAttribute('aria-autocomplete', 'list');
-    el.setAttribute('aria-expanded', String(open));
-    if (open) {
-      el.setAttribute('aria-controls', listId);
-      if (hits.length) el.setAttribute('aria-activedescendant', optionId(listId, Math.min(active, hits.length - 1)));
-      else el.removeAttribute('aria-activedescendant');
-    } else {
-      el.removeAttribute('aria-controls');
-      el.removeAttribute('aria-activedescendant');
-    }
+    el.setAttribute('aria-expanded', 'true');
+    el.setAttribute('aria-controls', listId);
+    if (hits.length) el.setAttribute('aria-activedescendant', optionId(listId, Math.min(active, hits.length - 1)));
+    else el.removeAttribute('aria-activedescendant');
+    return () => {
+      for (const name of ['role', 'aria-autocomplete', 'aria-expanded', 'aria-controls', 'aria-activedescendant']) el.removeAttribute(name);
+    };
   }, [inputRef, open, listId, active, hits.length]);
 
   const choose = useCallback(
@@ -184,6 +187,11 @@ export function useMentionPicker({
   const onKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
       if (!open || e.nativeEvent.isComposing) return;
+      // Still looking with nothing to choose: Enter must not send the raw @text.
+      if (e.key === 'Enter' && !e.shiftKey && !hits.length && loading) {
+        e.preventDefault();
+        return;
+      }
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
         setActive((a) => stepActive(a, e.key === 'ArrowDown' ? 1 : -1, hits.length));
@@ -196,7 +204,7 @@ export function useMentionPicker({
         setDismissed(at?.start);
       }
     },
-    [open, hits, active, choose, at],
+    [open, hits, active, choose, at, loading],
   );
 
   const remove = useCallback((ref: MentionRef) => setChips((current) => removeChip(current, ref)), []);

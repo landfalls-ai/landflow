@@ -34,6 +34,9 @@ const route = await import('@/app/api/mentions/route');
 const shared = await import('@/lib/shared/mentions');
 const { MentionChips, MentionListbox } = await import('@/components/ui/mention-picker');
 const { routePolicy } = await import('@/lib/server/auth/policy');
+const { singleton } = await import('@/lib/server/singleton');
+const { upsertEntity, entityKey } = await import('@/lib/server/brain/entities');
+const { agentStore } = await import('@/lib/server/agents/store');
 
 type User = Awaited<ReturnType<typeof createUser>>;
 let member: User;
@@ -190,7 +193,7 @@ describe('resolveMentions', () => {
     // Ten big digests: a long description each.
     for (let i = 0; i < 6; i++) store.saveWorkflow({ id: `wf_big_${i}`, name: `Big ${i}`, nodes: Array.from({ length: 40 }, (_, n) => ({ id: `n${n}`, name: `Step ${n}`, type: 'core.set', typeVersion: 1, position: [0, 0], parameters: { text: 'x'.repeat(200) } })), connections: [] } as unknown as Workflow), projects.setHomeProject('workflow', `wf_big_${i}`, mineProject);
     const big = await resolveMentions(member, Array.from({ length: 6 }, (_, i) => ({ type: 'workflow' as const, id: `wf_big_${i}` })));
-    expect(Buffer.byteLength(big.block)).toBeLessThanOrEqual(6144 + BLOCK_OPEN.length + BLOCK_CLOSE.length + 8);
+    expect(Buffer.byteLength(big.block)).toBeLessThanOrEqual(6144);
     expect(big.read.filter((r) => !r.ok).length).toBeGreaterThan(0);
     expect(big.read[0].ok).toBe(true);
   });
@@ -221,6 +224,25 @@ describe('GET /api/mentions', () => {
 
   it('needs the workflows:read key scope', () => {
     expect(routePolicy('GET', '/api/mentions')).toEqual({ scope: 'workflows:read' });
+  });
+
+  it('gives a workflows:read key no run, credential or person group', async () => {
+    const state = singleton<{ principal?: unknown }>('auth-test-bypass', () => ({}));
+    const keyed = (scopes: string[]) => {
+      state.principal = { user: { ...member, role: 'owner' }, via: 'api-key', apiKey: { id: 'key_1', scopes } };
+    };
+    try {
+      keyed(['workflows:read']);
+      const body = (await (await (route.GET as (r: Request) => Promise<Response>)(new Request('http://mentions.test/api/mentions?types=workflow,run,credential,person'))).json()) as { groups: Array<{ type: string }> };
+      const kinds = body.groups.map((g) => g.type);
+      expect(kinds).toContain('workflow');
+      for (const kind of ['run', 'credential', 'person']) expect(kinds).not.toContain(kind);
+      keyed(['workflows:read', 'executions:read']);
+      const withRuns = (await (await (route.GET as (r: Request) => Promise<Response>)(new Request('http://mentions.test/api/mentions?types=run,credential'))).json()) as { groups: Array<{ type: string }> };
+      expect(withRuns.groups.map((g) => g.type)).toEqual(['run']);
+    } finally {
+      enableTestAuth();
+    }
   });
 });
 
@@ -302,5 +324,60 @@ describe('the picker’s pure parts', () => {
     expect(list).toMatch(/id="lb-opt-1"[^>]*aria-selected="true"/);
     expect(list).toContain('On this page');
     expect(list).toContain('w-[320px]');
+  });
+});
+
+describe('digests for the other kinds', () => {
+  it('refuses a remote template ref without calling fetch', async () => {
+    const original = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      throw new Error('no network');
+    }) as typeof fetch;
+    const previous = process.env.LANDFLOW_TEMPLATES_URL;
+    process.env.LANDFLOW_TEMPLATES_URL = 'http://templates.invalid';
+    try {
+      const { read } = await resolveMentions(member, [{ type: 'template', id: 'n8n-123' }]);
+      expect(read[0].ok).toBe(false);
+      expect(read[0].label).toMatch(/^Couldn't read @/);
+      expect(calls).toBe(0);
+    } finally {
+      globalThis.fetch = original;
+      if (previous === undefined) delete process.env.LANDFLOW_TEMPLATES_URL;
+      else process.env.LANDFLOW_TEMPLATES_URL = previous;
+    }
+  });
+
+  it('keeps a brain page of another project out of the search and the digest', async () => {
+    const mine = upsertEntity({ type: 'initiative', id: 'inv-mine', name: 'Invoice rollout', projectId: mineProject }).entity;
+    const theirs = upsertEntity({ type: 'initiative', id: 'inv-theirs', name: 'Invoice takeover', projectId: theirProject }).entity;
+    const items = hitsOf(await searchMentions(member, { q: 'invoice', types: ['brainPage'] }), 'brainPage');
+    expect(items.map((h) => h.id)).toEqual([entityKey(mine)]);
+    const own = await resolveMentions(member, [{ type: 'brainPage', id: entityKey(mine) }]);
+    expect(own.read[0].ok).toBe(true);
+    const other = await resolveMentions(member, [{ type: 'brainPage', id: entityKey(theirs), name: 'Invoice takeover' }]);
+    expect(other.read[0].ok).toBe(false);
+    expect(other.block).toBe('');
+  });
+
+  it('reads a person, an agent, a node type and a plugin', async () => {
+    const person = await resolveMentions(member, [{ type: 'person', id: member.id }]);
+    expect(person.block).toContain('role member');
+    expect(person.block).not.toContain('mia-password');
+    const nodeType = await resolveMentions(member, [{ type: 'nodeType', id: 'core.httpRequest' }]);
+    expect(nodeType.read[0].ok).toBe(true);
+    const missingAgent = await resolveMentions(member, [{ type: 'agent', id: 'agent_missing' }]);
+    expect(missingAgent.read[0].ok).toBe(false);
+    expect(typeof agentStore.get).toBe('function');
+  });
+
+  it('hides a nested secret in a node’s parameters and keeps the plain name on the chip', async () => {
+    store.saveWorkflow({ id: 'wf_nested', name: 'Report 2026', nodes: [{ id: 'n1', name: 'Call', type: 'core.httpRequest', typeVersion: 1, position: [0, 0], parameters: { headers: { 'X-Api-Key': 'short', accept: 'json' } } }], connections: [] } as unknown as Workflow);
+    projects.setHomeProject('workflow', 'wf_nested', mineProject);
+    const { block } = await resolveMentions(member, [{ type: 'node', id: 'n1', workflowId: 'wf_nested' }]);
+    expect(block).not.toContain('short');
+    const { read } = await resolveMentions(member, [{ type: 'workflow', id: 'wf_nested' }]);
+    expect(read[0].label).toBe('Report 2026');
   });
 });

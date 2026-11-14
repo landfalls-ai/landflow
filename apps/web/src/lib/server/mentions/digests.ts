@@ -21,11 +21,15 @@ import { registry } from '../plugins/registry';
 import { visibleIds, type Actor } from '../projects/access';
 import { store } from '../store';
 import { getTemplate, templateAccess } from '../templates';
+import { REMOTE_PREFIX } from '../templates/remote';
 import { redact } from '../usage/ledger';
 
 /** What a digest is called and says. */
 export interface Digest {
+  /** The name as redacted, for the block's heading. */
   name: string;
+  /** The caller's own resource name as it is, for the "read" chip. */
+  label: string;
   body: string;
 }
 
@@ -66,6 +70,7 @@ export function redactLines(text: string): string {
 
 const finish = (name: string, lines: Array<string | number | undefined | false | null>): Digest => ({
   name: redact(name) ?? name.slice(0, 80),
+  label: name.replace(/\s+/g, ' ').trim().slice(0, 80),
   body: clipBytes(redactLines(lines.filter((l): l is string => typeof l === 'string' && l !== '').join('\n')), MENTION_LIMITS.perRefBytes),
 });
 
@@ -76,11 +81,18 @@ const clip = (value: unknown, max: number) => {
 
 const SECRET_KEY = /pass(word)?|secret|token|api.?key|authorization|credential|private/i;
 
+/** `value` with every nested key that looks like a secret (and its header-style name) hidden. */
+function maskSecrets(value: unknown, depth = 0): unknown {
+  if (depth > 6 || value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map((v) => maskSecrets(v, depth + 1));
+  return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, SECRET_KEY.test(k) ? '<hidden>' : maskSecrets(v, depth + 1)]));
+}
+
 /** A node's parameters with long values clipped and anything that looks like a secret left out. */
 export function parameterLines(parameters: Record<string, unknown>, limit = 12): string[] {
   return Object.entries(parameters)
     .slice(0, limit)
-    .map(([key, value]) => `  ${key}: ${SECRET_KEY.test(key) ? '<hidden>' : clip(value, 90)}`);
+    .map(([key, value]) => `  ${key}: ${SECRET_KEY.test(key) ? '<hidden>' : clip(maskSecrets(value), 90)}`);
 }
 
 const when = (iso: string | undefined) => (iso ? `${iso.slice(0, 10).slice(5)} ${iso.slice(11, 16)} UTC` : '');
@@ -172,8 +184,8 @@ function dataTable(actor: Actor, ref: MentionRef, options: DigestOptions): Diges
 }
 
 async function template(actor: Actor, ref: MentionRef): Promise<Digest | undefined> {
-  // Saved and built-in templates only, like the search.
-  if (!ref.id.startsWith('tpl_') && !/^[\w-]+$/.test(ref.id)) return undefined;
+  // Saved and built-in templates only, like the search: a remote id is refused before any lookup (no outbound request).
+  if (ref.id.startsWith(REMOTE_PREFIX)) return undefined;
   const found = await getTemplate(ref.id, actor);
   if (!found || found.source === 'remote' || !templateAccess(actor, found).read) return undefined;
   return finish(found.name, [
@@ -222,7 +234,10 @@ function person(actor: Actor, ref: MentionRef): Digest | undefined {
   if (!user) return undefined;
   // Their brain page (matched by email, else name), when there is one the caller may read.
   const email = user.email.toLowerCase();
-  const entity = listEntities({ type: 'person' }).find((e) => String(e.attrs.email ?? '').toLowerCase() === email || e.name.toLowerCase() === user.name.toLowerCase());
+  const entity = (() => {
+    const people = listEntities({ type: 'person', limit: 5000 });
+    return people.find((e) => String(e.attrs.email ?? '').toLowerCase() === email) ?? people.find((e) => e.name.toLowerCase() === user.name.toLowerCase());
+  })();
   const readable = entity && canEntity(actor, entity, 'read') ? entity : undefined;
   const summary = readable ? wikiPage(readable, scopeForActor(actor), { id: actor.id }, false).summary?.text : undefined;
   const team = readable?.attrs.team ? String(readable.attrs.team) : undefined;
