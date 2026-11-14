@@ -216,9 +216,9 @@ function Row({ execution, now, index, isNew, onChanged, picked, onPick, nested }
       <Link href={hrefOf(execution)} className="absolute inset-0" aria-label={`Open the run of ${execution.workflowName}, ${execution.status}`} />
       <span className={cn('absolute inset-y-0 left-0 w-[3px]', RUN_STATE[state].bar)} />
       <div role="cell" className="flex min-w-0 items-center gap-1.5 max-md:col-start-1 max-md:row-start-1 max-md:flex-wrap">
-        <span className="relative z-10 flex max-md:size-11 max-md:-my-2 max-md:-ml-2 max-md:items-center max-md:justify-center">
+        <label className="relative z-10 flex cursor-pointer max-md:size-11 max-md:-my-2 max-md:-ml-2 max-md:items-center max-md:justify-center">
           <Checkbox checked={picked} onChange={onPick} ariaLabel={`Pick the run of ${execution.workflowName} ${timeAgo(execution.startedAt)} to compare`} />
-        </span>
+        </label>
         <span className="truncate font-semibold text-t1">{execution.workflowName}</span>
         {execution.rerunOf && <span className="shrink-0 rounded-full bg-[color-mix(in_oklab,var(--viz-1)_14%,transparent)] px-2 text-[11px] text-viz-1">{RERUN_LABEL[execution.rerunOf.scope].toLowerCase()}</span>}
         {execution.debug && <span className="shrink-0 rounded-full bg-[color-mix(in_oklab,var(--viz-2)_14%,transparent)] px-2 text-[11px] text-viz-2">debug</span>}
@@ -519,13 +519,6 @@ export function RunsList() {
             Open in workflow →
           </Link>
         )}
-        {trend && trend.length > 0 && (
-          <section aria-label="Over time">
-            <h2 className="mb-1.5 px-0.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Over time · {trend.length} runs</h2>
-            <TrendChart runs={trend} />
-          </section>
-        )}
-
         <div role="table" aria-label="Runs" className="overflow-hidden rounded-2xl border border-hair bg-sf max-md:flex max-md:flex-col max-md:gap-2 max-md:overflow-visible max-md:rounded-none max-md:border-0 max-md:bg-transparent">
           <div role="row" className={cn('grid items-center gap-3 border-b border-hair px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3 max-md:sr-only', COLS)}>
             <span role="columnheader">Workflow</span>
@@ -553,6 +546,13 @@ export function RunsList() {
             <EmptyState compact className="py-10" title={list.length ? 'No runs match' : 'No runs yet'} hint={list.length ? 'Loosen a filter or clear the search.' : 'Run a workflow and it shows up here.'} />
           )}
         </div>
+        {trend && trend.length > 0 && (
+          <section aria-label="Over time">
+            <h2 className="mb-1.5 px-0.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Over time · {trend.length} runs</h2>
+            <TrendChart runs={trend} />
+          </section>
+        )}
+
         {list.length >= LIMIT && <p className="text-center text-[12px] text-t3">Showing the latest {LIMIT} runs</p>}
       </PageBody>
     </div>

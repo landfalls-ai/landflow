@@ -87,7 +87,7 @@ Run ids, trace ids, model and token lines and **Debug access** appear only with 
 ## The screens
 
 **Run trace** sits next to **Canvas** above every execution. It opens by itself when the run has agents (the choice is
-remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phone; its header goes back to **Executions** (the run
+remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phone; its header goes back to **Runs** (the run
 in its workflow's Executions tab), and the rail marks **Runs** while it is open.
 
 - **The header**: live or finished, the time, who is working on what right now, the outcome as reported (the last
@@ -132,7 +132,18 @@ in its workflow's Executions tab), and the rail marks **Runs** while it is open.
 - **The time slider**: scrub or replay the run. Tapping a time in the sheet moves it there. A live run follows the end
   until you move the slider.
 
-**Executions** (the list across workflows) starts with **Needs you** across every run you can see, and a card for each
+### The Runs list
+
+`/runs` is the one list of runs (**Runs** in the rail, tab **All runs**; it was Executions, Activity and Search runs). `/executions?…` redirects to it with its query, and `/executions?id=<id>` to `/runs/<id>`. The API paths are unchanged.
+
+- **Filter row.** One search box (workflow name, error text, node), a **Status** chip and a **Workflow** chip, then **More filters** in a popover (a sheet on a phone): agent or actor, tool, from and to dates, has failed steps, a check failed. The filters sit in the URL (`q`, `status`, `workflowId`, `actor`, `tool`, `from`, `to`, `failedSteps`, `failedCheck`), so a link lands filtered. Actor, tool, failed steps and check go through `GET /api/runs/search`; the rest filter the loaded list.
+- **Repeated failures fold.** Neighbouring failed runs of one workflow that stopped at the same node with the same message become one row, "Failed ×9 · Post to Slack: no credential". It opens to the runs. A success or another error ends a group (`groupFailures`, `components/runs/failure-groups.ts`).
+- **Two words for running again.** **Retry from failed step** (failed and canceled runs) and **Re-run**. The choices, the workflow as it ran or the saved one, or from the start, are one step in. The row menu also has **Copy id**; the list has no ID or Mode column.
+- **Compare from the list.** Tick two rows, then **Compare 2**. `/runs/compare` without two runs goes back to `/runs`.
+- **Stop all** shows only while a run is running.
+- A chosen workflow shows its runs over time above the list.
+
+**Runs** (the list across workflows) starts with **Needs you** across every run you can see, and a card for each
 running execution showing who is working on what.
 
 `/runs/<executionId>?tab=team&member=<title>` opens a tab (`story`, `trace`, `team`, `artifacts`, `report`) and, once
@@ -160,7 +171,7 @@ A card above the tabs shows the run as a timeline
   saying what it does (the tool it runs, "Bash: pnpm test", else "Thinking…"). A wait for a person pulses amber with what it asks, and **Answer below** scrolls
   to Needs you; a failure is a red cross with **Re-run from here** ([run it again](#run-it-again)).
 - **Elsewhere**: the same timeline, from each run's own journal, is the card of every run going on under **Running now**
-  on Home and the Executions page, and of the team's run on its team page while it works (a tap opens its Run Trace).
+  on Home and the Runs page, and of the team's run on its team page while it works (a tap opens its Run Trace).
 
 ### What a run did, in one line
 
@@ -210,7 +221,7 @@ instead of a title and two buttons, so the person decides with the reasons in fr
 
 The card is the Needs you section's, and the waiting node's: from the editor, **Review** next to Approve / Deny on the node
 opens it in a sheet, and the execution view's phone card is it (both read the run's journal). Needs you also gets a row of
-**faces** across the top, a dot on each member that waits (and on the Executions page's list, one face per member with
+**faces** across the top, a dot on each member that waits (and on the Runs page's list, one face per member with
 something for you across runs). The edit works through the API too (`POST /api/executions/:id/approvals` with `input`, `POST /api/executions/:id/asks/:askId` with `command`).
 
 ### Headlines
