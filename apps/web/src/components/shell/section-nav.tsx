@@ -26,12 +26,9 @@ export const SECTION_GROUPS: Record<SectionGroup, SectionTab[]> = {
     { href: '/templates', label: 'Templates' },
     { href: '/runbooks', label: 'Runbooks', plugin: 'landfall' },
   ],
-  // B20 changes Activity to /runs.
   runs: [
-    { href: '/executions', label: 'Activity' },
+    { href: '/runs', label: 'All runs' },
     { href: '/insights', label: 'Insights' },
-    // B20 removes this: until the pages merge, Search runs has no other entry point.
-    { href: '/runs', label: 'Search' },
   ],
   plugins: [
     { href: '/plugins', label: 'Installed' },
@@ -44,7 +41,7 @@ export const SECTION_GROUPS: Record<SectionGroup, SectionTab[]> = {
 export const RAIL_ITEMS: Array<{ href: string; label: string }> = [
   { href: '/', label: 'Home' },
   { href: '/workflows', label: 'Workflows' },
-  { href: '/executions', label: 'Runs' },
+  { href: '/runs', label: 'Runs' },
   { href: '/agents', label: 'Agents' },
   { href: '/brain', label: 'Brain' },
   { href: '/data-tables', label: 'Data tables' },
@@ -58,7 +55,7 @@ const under = (pathname: string, base: string) => pathname === base || pathname.
 /** The section a path belongs to, if any (the rail highlights its item). */
 export function groupOf(pathname: string): SectionGroup | undefined {
   if (['/workflows', '/templates', '/runbooks'].some((b) => under(pathname, b))) return 'workflows';
-  if (['/executions', '/runs', '/insights'].some((b) => under(pathname, b))) return 'runs';
+  if (['/runs', '/insights', '/executions'].some((b) => under(pathname, b))) return 'runs';
   if (['/plugins', '/marketplace', '/developers'].some((b) => under(pathname, b))) return 'plugins';
   return undefined;
 }
@@ -68,7 +65,7 @@ export function railActive(href: string, pathname: string): boolean {
   if (href === '/') return pathname === '/';
   const group = groupOf(pathname);
   if (href === '/workflows') return group === 'workflows';
-  if (href === '/executions') return group === 'runs';
+  if (href === '/runs') return group === 'runs';
   if (href === '/plugins') return group === 'plugins';
   return under(pathname, href);
 }
