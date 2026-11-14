@@ -116,6 +116,17 @@ describe('POST /api/brain/work', () => {
     expect(database().get<{ kind: string }>("SELECT kind FROM usage_kinds WHERE kind = 'work.session'")).toBeTruthy();
   });
 
+  it('declares only listed kinds itself: an unknown one is rejected, an already declared custom one is accepted', async () => {
+    const body = (await (await post([event('k1', { kind: 'work.junk_one' })])).json()) as { saved: unknown[]; rejected: Array<{ reason: string }> };
+    expect(body.saved).toHaveLength(0);
+    expect(body.rejected.map((r) => r.reason)).toEqual(['Unknown work kind; an admin can declare it']);
+    expect(database().get("SELECT kind FROM usage_kinds WHERE kind = 'work.junk_one'")).toBeUndefined();
+    const at = new Date().toISOString();
+    database().upsert('usage_kinds', { kind: 'work.custom_thing', description: '', fields: '[]', project_id: null, created_by: null, created_at: at, updated_at: at });
+    const again = (await (await post([event('k2', { kind: 'work.custom_thing' })])).json()) as { saved: unknown[] };
+    expect(again.saved).toHaveLength(1);
+  });
+
   it('answers 400 for no events or more than 50', async () => {
     expect((await post([])).status).toBe(400);
     expect((await post(Array.from({ length: 51 }, (_, i) => event(`s${i}`)))).status).toBe(400);

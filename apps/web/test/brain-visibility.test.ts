@@ -146,6 +146,35 @@ describe('a private work event', () => {
     }
   });
 
+  it('does not reach a stored summary, or make it stale', async () => {
+    const person = entities.getEntity('person', 'alice-vis.test')!;
+    const prompts: string[] = [];
+    const model = {
+      provider: 'fake',
+      model: 'wiki',
+      async generate(input: { messages: Array<{ content: unknown }> }) {
+        prompts.push(String(input.messages[0].content));
+        return { text: JSON.stringify({ summary: 'Alice keeps the flow going.' }), toolCalls: [], stopReason: 'end' as const };
+      },
+    };
+    await wiki.writeSummary(person, scopeForActor(actorOf(alice)), actorOf(alice), { model: model as never });
+    expect(prompts[0]).not.toContain('billing retry');
+    expect(prompts[0]).toContain('Flow-made event');
+    expect(JSON.stringify(database().all('SELECT * FROM brain_pages'))).not.toContain('billing retry');
+    const staleOf = () => wiki.wikiPage(person, scopeForActor(actorOf(alice)), actorOf(alice), false).summary!.stale;
+    expect(staleOf()).toBe(false);
+    expect(recordWork(actorOf(alice), [sessionOf('s9', { title: 'Another private session' })]).saved).toHaveLength(1);
+    expect(staleOf()).toBe(false);
+    // The owner reads the same, and the Brain's health pass does not list it as stale.
+    expect(wiki.wikiHome(scopeForActor(actorOf(alice)), actorOf(alice)).health.staleSummaries).toEqual([]);
+  });
+
+  it('leaves Find Similar for a flow an owner made reading everything it did before', async () => {
+    store.saveWorkflow({ id: 'wf_owner_made', name: 'Billing retry sweeper', active: false, nodes: [], connections: [], createdBy: owner.id } as unknown as Workflow);
+    const found = await findSimilar('Billing retry sweeper', { scope: scopeForWorkflow('wf_owner_made') });
+    expect(JSON.stringify(found)).toContain('wf_owner_made');
+  });
+
   it('is not in the MCP brain tools for anyone else', async () => {
     const { Client, InMemoryTransport } = await import('@modelcontextprotocol/client');
     const report = async (user: typeof alice) => {

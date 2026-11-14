@@ -42,12 +42,12 @@ The contract is `WorkEventInput` in `packages/protocol/src/work-events.ts`, with
 | `title` | 1 to 200 characters, one line, not code: a title over 80 characters that reads like code is refused |
 | `summary` | up to 500 characters (the host keeps 200) |
 | `repo` | `owner/name` |
-| `branch` | up to 120 characters |
-| `areas` | up to 20 directory names of up to 80 characters. An absolute path, `..` or a file name with an extension (`src/app.ts`) is refused |
+| `branch` | up to 120 characters (the redaction also reads a long branch name with a digit as a token, so `feature/brain-work-api-b05` may be stored as `feature/<token>`) |
+| `areas` | up to 20 directory names of up to 80 characters. An absolute path, `..` or a file name with an extension (`src/app.ts`) is refused; a comma in a name is refused too, and only the names that fit 200 characters in all are kept |
 | `commits`, `turns` | whole numbers |
 | `prs` | up to 10 of `{ url, state: opened \| merged }` |
 | `initiative`, `customer`, `team` | up to 120 characters each, hints the brain uses to relate the work to pages |
-| `url` | `http(s)` link to the item; the query and fragment are dropped |
+| `url` | up to 200 characters, `http(s)` link to the item; the query and fragment are dropped |
 | `visibility` | `private` (the default), `team` or `org` |
 
 ## Who sees it

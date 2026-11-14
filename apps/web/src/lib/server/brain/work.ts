@@ -59,7 +59,10 @@ const KIND_NOTES: Record<string, string> = {
   'work.session': 'A working session in a coding tool or another harness',
 };
 
-/** Declare a work kind the first time a tool sends it (the Record Event declare path, usage/kinds.ts). */
+/** The kinds the route may declare itself (the `kinds` of deploy/brain/work-kinds.json). Any other needs an admin to declare it. */
+const DECLARABLE_KINDS = new Set(['work.discussion', 'work.decision', 'work.bug_reported', 'work.release', 'work.deal_won', 'work.deal_moved', 'work.meeting_scheduled', 'work.meeting_held', 'work.meeting_cancelled', 'work.meeting_notes', 'work.action_item', 'work.doc_edited', 'work.ticket_moved', 'work.feature_request', 'work.pr_opened', 'work.pr_merged', 'work.self_update', 'work.session']);
+
+/** Declare a listed work kind the first time a tool sends it (the Record Event declare path, usage/kinds.ts). */
 function ensureKind(kind: string, actor: Actor) {
   if (getKind(kind)) return;
   saveKind({ kind, description: KIND_NOTES[kind] ?? 'Work sent by a person’s tools', fields: WORK_FIELDS, createdBy: actor.id });
@@ -85,6 +88,10 @@ export function recordWork(actor: Actor, events: unknown[]): { saved: SavedWork[
     const event: WorkEventInput = checked.value;
     if (event.visibility && event.visibility !== 'private') {
       rejected.push({ sourceId: event.sourceId, reason: 'Sharing comes later: send it as private for now' });
+      continue;
+    }
+    if (!DECLARABLE_KINDS.has(event.kind) && !getKind(event.kind)) {
+      rejected.push({ sourceId: event.sourceId, reason: 'Unknown work kind; an admin can declare it' });
       continue;
     }
     try {

@@ -105,6 +105,18 @@ function safeTimezone(): string {
 
 const finite = (n: unknown) => (typeof n === 'number' && Number.isFinite(n) ? n : undefined);
 
+/** Comma-join names, keeping only whole ones within the 200 characters an attribute holds. */
+function wholeNames(names: string[]): string {
+  const kept: string[] = [];
+  let length = 0;
+  for (const name of names) {
+    length += name.length + (kept.length ? 1 : 0);
+    if (length > 200) break;
+    kept.push(name);
+  }
+  return kept.join(',');
+}
+
 function cleanAttrs(attrs: Record<string, UsageAttr | undefined> | undefined): Record<string, UsageAttr> | undefined {
   if (!attrs) return undefined;
   const out: Record<string, UsageAttr> = {};
@@ -262,7 +274,7 @@ function workAttrs(input: WorkEventInput, ownerEmail: string | undefined): Recor
     summary: redact(input.summary),
     repo: input.repo,
     branch: redact(input.branch),
-    areas: input.areas?.map((area) => redact(area) ?? '').filter(Boolean).join(','),
+    areas: wholeNames(input.areas?.map((area) => redact(area) ?? '').filter(Boolean) ?? []),
     commits: input.commits,
     turns: input.turns,
     ...(input.prs?.length && { prs: input.prs.length, prUrl: bareUrl(first?.url) }),

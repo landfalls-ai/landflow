@@ -84,7 +84,7 @@ export async function findSimilar(text: string, options: FindSimilarOptions = {}
   const kinds = new Set(options.kinds?.length ? options.kinds : SIMILAR_KINDS);
   const limit = Math.max(1, Math.min(100, options.limit ?? 10));
   const minScore = options.minScore ?? 0.15;
-  const sees = (kind: 'workflow' | 'agent' | 'entity', id: string) => !scope || Boolean((kind === 'workflow' ? scope.workflows : kind === 'agent' ? scope.agents : scope.entities)?.has(id));
+  const sees = (kind: 'workflow' | 'agent' | 'entity', id: string) => !scope || (!scope.workflows && !scope.agents) || Boolean((kind === 'workflow' ? scope.workflows : kind === 'agent' ? scope.agents : scope.entities)?.has(id));
 
   // The vector search, over every project when others are wanted (only to rank: nothing of a fact is shown from there).
   const hits = (await vectorFactScores(text, options.includeOthers ? undefined : projectsOf(scope))).filter((hit) => vectorBonus(hit.similarity) > 0);

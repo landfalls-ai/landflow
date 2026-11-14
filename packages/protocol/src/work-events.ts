@@ -52,7 +52,7 @@ export const WORK_LIMITS = {
   area: 80,
   prs: 10,
   hint: 120,
-  url: 500,
+  url: 200,
   count: 1_000_000,
   /** A title longer than this that reads like code is refused. */
   codeTitle: 80,
@@ -148,6 +148,7 @@ export function validateWorkEvent(input: unknown): WorkEventResult {
         if (typeof area !== 'string' || !area.trim()) errors.push('each area is a directory name');
         else if (area.length > WORK_LIMITS.area) errors.push(`each area is at most ${WORK_LIMITS.area} characters`);
         else if (isAbsolutePath(area.trim())) errors.push(`area “${area.slice(0, 40)}” is an absolute path; send directory names only`);
+        else if (area.includes(',')) errors.push('an area name holds no comma');
         else if (area.includes('..')) errors.push(`area “${area.slice(0, 40)}” climbs out of the repository`);
         else if (hasFileExtension(area.trim())) errors.push(`area “${area.slice(0, 40)}” is a file name; send directory names only`);
         else areas.push(area.trim());

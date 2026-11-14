@@ -2025,7 +2025,7 @@ function paths(): Record<string, Record<string, Json>> {
     responses: { 200: reply('The answer', object({ question: { type: 'string' }, answer: { type: 'string' }, model: { type: 'string' }, pages: array({ type: 'object' }), facts: array({ type: 'object' }), work: array(workItem), note: { type: 'string' }, about: { type: 'string' } }, ['question', 'pages', 'facts', 'work'])), 400: invalid },
   });
   // B05: the person's own work and day (docs/work-and-briefings.md).
-  const workItem2 = { type: 'object', description: 'A WorkItem (lib/shared/brain-work.ts): id, sourceId, source, kind, title, summary, repo, areas, at, endedAt, url, visibility' };
+  const briefingWorkItem = { type: 'object', description: 'A WorkItem (lib/shared/brain-work.ts): id, sourceId, source, kind, title, summary, repo, areas, at, endedAt, url, visibility' };
   add('post', '/api/brain/work', {
     tag: 'Second brain',
     id: 'recordWork',
@@ -2052,7 +2052,7 @@ function paths(): Record<string, Record<string, Json>> {
     summary: 'Your own day',
     description: 'Needs the `brain:read` scope (`brain:write` includes it) or a session. The caller’s own work of `day` (today in the instance time zone by default) and the day before, newest first, at most 50 each; `autoSend` is the admin’s setting for tools sending work on their own.',
     query: [text('day', 'YYYY-MM-DD')],
-    responses: { 200: reply('The briefing', object({ day: { type: 'string' }, generatedAt: { type: 'string' }, source: { type: 'string', enum: ['live', 'flow'] }, today: array(workItem2), yesterday: array(workItem2), related: array({ type: 'object' }), summary: { type: 'string' }, autoSend: { type: 'string', enum: ['allowed', 'forbidden'] }, brain: { type: 'string', enum: ['on', 'off'] } }, ['day', 'generatedAt', 'source', 'today', 'yesterday', 'related', 'autoSend', 'brain'])), 400: invalid },
+    responses: { 200: reply('The briefing', object({ day: { type: 'string' }, generatedAt: { type: 'string' }, source: { type: 'string', enum: ['live', 'flow'] }, today: array(briefingWorkItem), yesterday: array(briefingWorkItem), related: array({ type: 'object' }), summary: { type: 'string' }, autoSend: { type: 'string', enum: ['allowed', 'forbidden'] }, brain: { type: 'string', enum: ['on', 'off'] } }, ['day', 'generatedAt', 'source', 'today', 'yesterday', 'related', 'autoSend', 'brain'])), 400: invalid },
   });
   return out;
 }

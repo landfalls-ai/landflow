@@ -79,6 +79,16 @@
       "description": "Turns of the conversation with the assistant"
     },
     {
+      "name": "prs",
+      "type": "number",
+      "description": "Pull requests opened or merged"
+    },
+    {
+      "name": "prUrl",
+      "type": "string",
+      "description": "The first pull request"
+    },
+    {
       "name": "endedAt",
       "type": "string",
       "description": "When it ended (ISO 8601)"
