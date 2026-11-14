@@ -2104,7 +2104,7 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Second brain',
     id: 'recordWork',
     summary: 'Record your own work',
-    description: 'Needs the `brain:write` scope (or a session). `events` holds 1 to 50 work events (packages/protocol/src/work-events.ts): kind (work.<name>), source, sourceId, occurredAt, title and optional summary, repo, branch, areas (directory names), commits, prs, turns, initiative, customer, team, url, visibility. Private to the caller: nobody else reads it, an admin included; `team` and `org` are refused for now. The same source and sourceId updates the event. An event that fails the checks comes back in `rejected` with its reason; the others are saved. 503 when the brain is off.',
+    description: 'Needs the `brain:write` scope (or a session). `events` holds 1 to 50 work events (packages/protocol/src/work-events.ts): kind (work.<name>), source, sourceId, occurredAt, title and optional summary, repo, branch, areas (directory names), commits, prs, turns, initiative, customer, team, url, visibility. Private to the caller unless sent `team` (people who share a project with them) or `org` (everyone): nobody else reads a private one, an admin included. The same source and sourceId updates the event. An event that fails the checks comes back in `rejected` with its reason; the others are saved. 503 when the brain is off.',
     body: jsonBody(object({ events: array({ type: 'object' }) }, ['events'])),
     responses: {
       200: reply('What was saved and what was rejected', object({ saved: array(object({ sourceId: { type: 'string' }, id: { type: 'string' }, created: { type: 'boolean' } }, ['sourceId', 'id', 'created'])), rejected: array(object({ sourceId: { type: 'string' }, reason: { type: 'string' } }, ['sourceId', 'reason'])) }, ['saved', 'rejected'])),
@@ -2119,6 +2119,25 @@ function paths(): Record<string, Record<string, Json>> {
     description: 'Needs the `brain:write` scope (or a session). `source` names the tool the event came from. Someone else’s event is not found.',
     query: [text('source', 'The event’s source (required)')],
     responses: { 204: { description: 'Deleted' }, 400: invalid, 404: notFound, 503: errorRef('The brain is off') },
+  });
+  // B18: team and org visibility, Post as my update (docs/work-and-briefings.md).
+  add('patch', '/api/brain/work/{sourceId}', {
+    tag: 'Second brain',
+    id: 'setWorkVisibility',
+    summary: 'Change who reads one of your own work events',
+    description: 'Needs the `brain:write` scope (or a session). `team` is the people who share a project with you, `org` everyone, `private` you alone. `source` narrows it to one tool. Someone else’s event is not found.',
+    query: [text('source', 'The event’s source')],
+    body: jsonBody(object({ visibility: { type: 'string', enum: ['private', 'team', 'org'] } }, ['visibility'])),
+    responses: { 200: reply('The item', briefingWorkItem), 400: invalid, 404: notFound },
+  });
+  add('post', '/api/brain/work/{sourceId}/share', {
+    tag: 'Second brain',
+    id: 'shareWork',
+    summary: 'Post one of your work events as an update',
+    description: 'Needs the `brain:write` scope (or a session). Records a `work.self_update` event you own, shared with the organization (`org`, the default) or your team, that links the item. Posting it again updates that event. Someone else’s event is not found. 503 when the brain is off.',
+    query: [text('source', 'The event’s source')],
+    body: jsonBody(object({ visibility: { type: 'string', enum: ['team', 'org'] } }, [])),
+    responses: { 200: reply('The update', object({ id: { type: 'string' }, created: { type: 'boolean' }, of: { type: 'string' }, visibility: { type: 'string' } }, ['id', 'created', 'of', 'visibility'])), 400: invalid, 404: notFound, 503: errorRef('The brain is off') },
   });
   add('get', '/api/brain/briefing', {
     tag: 'Second brain',

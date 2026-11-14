@@ -264,7 +264,7 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
               customer: z.string().optional(),
               team: z.string().optional(),
               url: z.string().optional(),
-              visibility: z.string().optional().describe('Only private is accepted for now'),
+              visibility: z.string().optional().describe('private (the default), team or org; sent again without one, the event keeps its current visibility'),
             }),
           )
           .min(1)
@@ -275,7 +275,7 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
     async ({ events }) => {
       if (!actor) return failure('Work is a person’s own: connect with a personal API key or sign in, not the instance access token');
       try {
-        // Always the caller's: the actor comes from the connection, never from the arguments. recordWork refuses a shared visibility.
+        // Always the caller's: the actor comes from the connection, never from the arguments. A visibility of team or org shares the work.
         const result = recordWork(actor, events.map((event) => ({ ...event, source: event.source ?? 'mcp' })));
         return json(result);
       } catch (caught) {

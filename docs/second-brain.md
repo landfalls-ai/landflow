@@ -214,6 +214,11 @@ about that no workflow holds: `initiative`, `person`, `customer` and `system` (o
   `owner` (a user id or a free name such as "Platform team"; `ownerName` is the user's name when it is an id), `projectId`,
   flat `attrs` (text, numbers, true/false; at most 20), `source` (api, workflow, agent) and timestamps. An id is lowercase
   letters, digits, `_`, `-` and `.`; left out, it is made from the name. Code: `brain/entities.ts`.
+- **Systems from repositories, people linked to users.** The first work event that names a repository makes a `system`
+  entity for it ([work-and-briefings.md](work-and-briefings.md#repositories-as-systems)). A person page whose
+  `attrs.email` is a user's email is linked to that user (column `user_id`, migration 2080, set when the page is saved);
+  `personForUser(userId)` finds the page, falling back to the email match and storing the link. The entity then carries
+  `userId` and `userName` ("This is <user>"); the screens that show it come later.
 - **Walls.** An entity lives in a project (the creator's personal project unless another is named) and the people who can
   open the project see it; owners and admins see all. The usage scope gained `entities` (`<type>/<id>`), so facts,
   suggestions, Find Similar and the MCP tools cut entities down like workflows. A workflow or agent's Entity node sees the

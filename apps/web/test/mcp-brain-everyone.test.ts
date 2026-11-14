@@ -120,11 +120,11 @@ describe('record_work, my_briefing and the prompt', () => {
     expect(JSON.stringify(prompt)).not.toContain('Fixed the retry loop');
   });
 
-  it('saves an event without a visibility as private, and rejects a shared one while saving the rest', async () => {
+  it('saves an event without a visibility as private, saves a team one, and rejects an invalid one while saving the rest', async () => {
     const a = await connect(alice, ['brain:write']);
     const saved = JSON.parse(textOf(await a.callTool({ name: 'record_work', arguments: { events: [event('a-2', 'Another'), event('a-3', 'Shared', { visibility: 'team' }), event('a-4', 'x'.repeat(300))] } })));
-    expect(saved.saved.map((s: { sourceId: string }) => s.sourceId)).toEqual(['a-2']);
-    expect(saved.rejected.map((r: { sourceId: string }) => r.sourceId).sort()).toEqual(['a-3', 'a-4']);
+    expect(saved.saved.map((s: { sourceId: string }) => s.sourceId)).toEqual(['a-2', 'a-3']);
+    expect(saved.rejected.map((r: { sourceId: string }) => r.sourceId)).toEqual(['a-4']);
     expect(briefingFor(actorOf(alice)).today.find((i) => i.sourceId === 'a-2')?.visibility).toBe('private');
   });
 

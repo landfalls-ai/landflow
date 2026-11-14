@@ -109,10 +109,10 @@ describe('POST /api/brain/work', () => {
     expect(rows()).toHaveLength(2);
   });
 
-  it('refuses team and org visibility for now, and declares the kind on first use', async () => {
+  it('accepts team and org visibility, and declares the kind on first use', async () => {
     const body = (await (await post([event('s1', { visibility: 'team' }), event('s2', { visibility: 'org' }), event('s3', { visibility: 'private' })])).json()) as { saved: unknown[]; rejected: Array<{ reason: string }> };
-    expect(body.saved).toHaveLength(1);
-    expect(body.rejected.map((r) => r.reason)).toEqual(['Sharing comes later: send it as private for now', 'Sharing comes later: send it as private for now']);
+    expect(body.saved).toHaveLength(3);
+    expect(body.rejected).toEqual([]);
     expect(database().get<{ kind: string }>("SELECT kind FROM usage_kinds WHERE kind = 'work.session'")).toBeTruthy();
   });
 
