@@ -51,7 +51,8 @@ export function ActivityTrace({ steps, live, durationMs, traceUrl, defaultOpen }
       <div role="status" className="flex min-w-0 items-center gap-1.5 text-[12px] text-t3">
         <Loader2 className="size-3.5 shrink-0 animate-spin text-viz-7" />
         <span className="min-w-0 truncate animate-pulse-soft">{step ? step.label : 'Thinking…'}</span>
-        {step && <span className="shrink-0 font-mono text-[10.5px]">· step {i + 1}</span>}
+        {/* The number of rows so far, so it never goes down when a running row sits above finished ones. */}
+        {step && <span className="shrink-0 font-mono text-[10.5px]">· step {steps.length}</span>}
       </div>
     );
   }

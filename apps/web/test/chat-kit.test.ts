@@ -69,6 +69,11 @@ describe('activity steps', () => {
     expect(html).toContain('Step b');
     expect(html).toContain('step 2');
   });
+  it('numbers the live line by the rows so far, so the number never goes down', () => {
+    const html = renderToStaticMarkup(createElement(ActivityTrace, { steps: [step('a'), step('b', 'running'), step('c'), step('d')], live: true }));
+    expect(html).toContain('Step b');
+    expect(html).toContain('step 4');
+  });
 });
 
 describe('short replies', () => {

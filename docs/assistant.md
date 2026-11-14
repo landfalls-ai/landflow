@@ -275,7 +275,7 @@ New pieces of the kit, ready to use (the surfaces adopt them one by one):
   streams. Only opacity and a 6 px rise move, never width or padding, and Reduce motion stops the movement. Use CSS
   (`animate-in`, `animate-pulse-soft`) for a thing that just appears; use these when a block changes size or swaps.
 - **The activity trace** (`ActivityTrace`): while it works, one line with the step it is on (*Searching the brain · step
-  3*); once done, *10 steps · 14.5 s ›*, which opens a list of what it read, searched, ran and wrote, each with its time
+  3*, where the number counts the rows so far, so it never goes down and ends at the closed trace's count); once done, *10 steps · 14.5 s ›*, which opens a list of what it read, searched, ran and wrote, each with its time
   and a tick or a cross. A step with a detail opens it; a failed one reads in red; `traceUrl` adds **Open trace**. On a
   phone it starts closed and the list scrolls inside itself. The steps are `ActivityStep` in `lib/shared/activity.ts`.
 - **The reply footer** (`ReplyMeta` with `info`): *model · 14.5 s · 10 steps · 1,600 tokens · ≈$0.004*, with *local* in
