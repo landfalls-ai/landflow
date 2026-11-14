@@ -2024,6 +2024,22 @@ function paths(): Record<string, Record<string, Json>> {
     body: jsonBody(object({ question: { type: 'string', maxLength: 500 }, about: { type: 'string', description: '<type>/<id> of the page it is asked from' } }, ['question'])),
     responses: { 200: reply('The answer', object({ question: { type: 'string' }, answer: { type: 'string' }, model: { type: 'string' }, pages: array({ type: 'object' }), facts: array({ type: 'object' }), work: array(workItem), note: { type: 'string' }, about: { type: 'string' } }, ['question', 'pages', 'facts', 'work'])), 400: invalid },
   });
+  // B04: tagging with @ (docs/assistant.md#tagging-with-).
+  add('get', '/api/mentions', {
+    tag: 'Workflows',
+    id: 'searchMentions',
+    summary: 'Find what can be tagged with @',
+    description: 'Per kind, at most 8 hits, a prefix match first and then the newest, among what the caller can open. Credentials and people give a name and a type or role only. `workflowId` adds that workflow’s nodes and puts its runs first.',
+    query: [
+      { name: 'q', description: 'Words in the name (at most 80 characters)', schema: { type: 'string', maxLength: 80 } },
+      { name: 'types', description: 'A comma list of kinds: workflow, node, run, agent, team, dataTable, template, nodeType, plugin, brainPage, person, credential', schema: { type: 'string' } },
+      { name: 'workflowId', description: 'The workflow being edited', schema: { type: 'string' } },
+    ],
+    responses: {
+      200: reply('The groups', object({ groups: array(object({ type: { type: 'string' }, items: array(object({ type: { type: 'string' }, id: { type: 'string' }, name: { type: 'string' }, hint: { type: 'string' }, workflowId: { type: 'string' } }, ['type', 'id', 'name'])) }, ['type', 'items'])) }, ['groups'])),
+      400: invalid,
+    },
+  });
   return out;
 }
 

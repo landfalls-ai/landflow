@@ -96,6 +96,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (path === '/api/brain/analyst') return { scope: 'workflows:write' };
   if (under('/api/brain')) return { scope: 'executions:read' };
   if (under('/api/proposals')) return { scope: read ? 'workflows:read' : 'workflows:write' };
+  // B04: the @ picker's search lists only what the caller can open (lib/server/mentions/search.ts).
+  if (path === '/api/mentions') return { scope: 'workflows:read' };
   // Entities (initiatives, people, customers, systems): the routes check the entity's project, like suggestions.
   if (under('/api/entities')) return { scope: read ? 'workflows:read' : 'workflows:write' };
   return { scope: 'admin', fallback: true };
