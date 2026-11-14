@@ -16,20 +16,23 @@ separate from the **AI Agent** node, which runs inside a workflow.
 
 ## The roster
 
-**Agents** in the sidebar lists your agents as cards: the avatar, name, role, description, tone words, whether it's
-published (and has unpublished changes), where the published version runs (Landflow, kagent, its channels and
-schedules), the model, the number of tools and skills, sessions and when it last changed. Cards are grouped by
-[team](#teams) (**Group by** → **None** shows one list), and the filters show all agents, published ones, drafts, those
-on kagent, or those **From marketplace**: agents a [marketplace plugin](marketplace.md#how-a-plugin-maps-to-an-agent)
-installed carry a "From <plugin>" link. Search matches the name, role, description, team and tones. Each card's **⋯**
-menu opens it, saves it as a template or exports its JSON.
+**Agents** in the sidebar lists your agents as plain cards: the avatar, the name, what it does (the description, or the
+role when there is none) and whether it's published (and has unpublished changes). The model, tools, sessions, channels
+and tone words live on the agent's own page. Cards are grouped by [team](#teams) (**Group by** → **None** shows one
+list; the control only shows once an agent has a team). One row of filters shows all agents, published ones, drafts,
+those on kagent, or those **From marketplace**, and a filter with no agents behind it is hidden (the row goes when only
+**All** is left). Search matches the name, role, description, team and tones. Each card's **⋯** menu opens it, saves it
+as a template or exports its JSON. The Teams view's cards follow the same rule: the name, the goal and the status.
 
-Above the cards, **Start from a persona** shows the first built-in templates; **All templates** and **New agent** open
-the New agent dialog, and **Ask the Agent architect** opens [the architect](#agent-architect).
+With no agents yet, **Start from a persona** shows the first built-in templates above the empty state; **All templates**
+and **New agent** open the New agent dialog, and **Ask the Agent architect** opens [the architect](#agent-architect).
+Once there are agents the strip is gone.
 
 ### Templates
 
-The **New agent** dialog starts an agent from a persona template, grouped by category: the built-in ones (Support lead,
+The **New agent** dialog has three ways in at its top: **From a persona** (the gallery below), **Design with AI** (the
+[Agent architect](#agent-architect)) and **From a file**, which imports an agent exported as JSON and opens it (this was
+**Import JSON** in the page header). The gallery starts an agent from a persona template, grouped by category: the built-in ones (Support lead,
 Researcher, Incident responder, Release notes writer, Data analyst, Onboarding guide, Account researcher, and a blank
 persona) and **Your templates**. Each card shows the face, description, tone words and how many rules and examples it
 has. Below them you set the name, the [team](#teams) and the [avatar](#avatars), then **Create agent**: a draft with the
@@ -156,7 +159,7 @@ with its own Teams view on this page.
 
 ### Taking an agent elsewhere
 
-The builder's **…** menu has **Export JSON** (the config, for **Import JSON**), **Save as template** (a persona to start
+The builder's **…** menu has **Export JSON** (the config, for **From a file** in New agent), **Save as template** (a persona to start
 from, never tools) and **Export as Claude Code plugin…**, which downloads the agent as a plugin in Anthropic's format
 that Claude Code installs as it is and Landflow installs back whole ([marketplace.md](marketplace.md#export-agents-as-plugins)).
 `GET /api/agents/:id/export?format=claude-plugin` is the same zip.
@@ -178,10 +181,11 @@ Older links still work: `?tab=build` opens Persona and `?tab=settings` opens Saf
 
 ### The persona
 
-The Persona tab builds the system prompt from parts, instead of one instructions box:
+The Persona tab builds the system prompt from parts, instead of one instructions box. The prompt itself stays closed
+beside it until you press **View prompt** (a read-only preview; **Edit** jumps to the instructions):
 
-- **Who it is**: the name, a role, who it helps, what it does, and the description (shown in the agent list and to
-  agents that delegate to this one), and **What I do**: up to three short lines (120 characters each) for the agent's
+- **Who it is**: the name, a role, who it helps and one **What it does** field. Folded under **Card text (optional)** are
+  the description (shown in the agent list and to agents that delegate to this one) and **What I do**: up to three short lines (120 characters each) for the agent's
   card on a team page ([member cards](agent-teams.md#member-cards)). Left empty, the card takes the first sentences of
   the mission, then of the instructions (`whatIDoLines()` in `persona.ts`; the roster summary carries them as
   `whatIDo`). They are display only: `personaPrompt()` never reads them, so editing them leaves the prompt, and the

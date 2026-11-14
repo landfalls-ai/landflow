@@ -63,7 +63,7 @@ phone, two from `sm`, three from `lg`. A card has a header (face, title, where i
 kagent** or **Remote agent over A2A**), what it does in up to three lines, and a footer with **Reviews**, **Reviewed by**,
 **May consult** (a dashed chip, for a standing line between peers that is not a reporting line), the budget and where questions go (**Reports to** only outside the chart), so cards in a row line up. A remote member
 that calls a Landflow agent on kagent (its address is that agent's on kagent's controller, `…/agents/<namespace>/<name>`)
-wears that agent's face, here, on the Teams cards, above the Run a Team node and in Run Trace; any other remote member
+wears that agent's face, here, above the Run a Team node and in Run Trace; any other remote member
 gets the A2A radio icon.
 Tap a card to edit it in a sheet; **+ Add a report** on a manager adds a member under it. A new member reports to the lead
 unless asked otherwise (the first one becomes the lead). Removing a member hands its reports to its manager and drops it
