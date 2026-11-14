@@ -59,6 +59,7 @@ export type LinkedEntity = BrainEntity & { userId?: string; userName?: string };
 function fromRow(row: Row): LinkedEntity {
   const owner = row.owner || undefined;
   const user = owner ? getUser(owner) : undefined;
+  const linked = row.user_id ? (row.user_id === owner ? user : getUser(row.user_id)) : undefined;
   return {
     type: row.type as EntityType,
     id: row.id,
@@ -67,7 +68,7 @@ function fromRow(row: Row): LinkedEntity {
     ...(owner && { owner }),
     ...(owner && { ownerName: user?.name || owner }),
     ...(row.project_id && { projectId: row.project_id }),
-    ...(row.user_id && { userId: row.user_id, userName: getUser(row.user_id)?.name || getUser(row.user_id)?.email }),
+    ...(row.user_id && { userId: row.user_id, userName: linked?.name || linked?.email }),
     attrs: parse<BrainEntity['attrs']>(row.attrs, {}),
     source: row.source,
     createdAt: row.created_at,

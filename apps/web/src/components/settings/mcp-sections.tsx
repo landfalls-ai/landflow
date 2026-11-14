@@ -137,7 +137,7 @@ export function McpSections({ canManage, gatewayMode, pendingApprovals = 0, acce
         </p>
         {clients}
       </McpSection>
-      <McpSection id="mcp-tools" icon={<Wrench className="size-4" strokeWidth={1.8} />} title="Tools" sentence="What agents can call, and the scope each tool needs." learnMore={`${DOCS}/features/ai.md`} forceOpen={pendingApprovals > 0} badge={
+      <McpSection id="mcp-tools" icon={<Wrench className="size-4" strokeWidth={1.8} />} title="Tools" sentence="What agents can call, the scope each tool needs, and calls waiting for your approval." learnMore={`${DOCS}/features/ai.md`} forceOpen={pendingApprovals > 0} badge={
           <>
             <Badge tone="muted">{instanceTools} instance tools</Badge>
             {pendingApprovals > 0 && <Badge tone="warning">{pendingApprovals} waiting for approval</Badge>}
