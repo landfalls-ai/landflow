@@ -1494,7 +1494,10 @@ is read by its owner alone, owners and admins included, through every reader), t
 key scopes, `POST` and `DELETE /api/brain/work`, `GET /api/brain/briefing`, the `work.session` kind and the admin
 setting `brain.workAutoSend`.
 
-- **Next**: the clients (the Claude Code mod, `landflow work`, MCP tools), team and org visibility with related
+- **Built (B14)**: the first slice of the Claude Code mod `landflow-brain` ([landflow-brain-mod.md](landflow-brain-mod.md)):
+  capture, a held journal, `/brain today|review|status|pause|resume|forget`, the status line, yesterday at session start
+  and an offline queue.
+- **Next**: the rest of the clients (`landflow work`, MCP tools, the mod's colleagues, pane and band), team and org visibility with related
   colleagues, repo entities, the link from a person to their user, and a Settings screen for the auto-send setting.
 
 ## Shell: nine-item rail (built 2026-11-14)

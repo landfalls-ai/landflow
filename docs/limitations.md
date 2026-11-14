@@ -169,3 +169,11 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 - Local accounts have no second factor (no TOTP or passkeys); `LANDFLOW_LOCAL_SIGN_IN=off` makes an instance SSO-only so the identity provider's MFA applies. Passwords have a fixed minimum of 8 characters and no breached-password check (local-only, no external calls). Password reset is refused for users the mode excludes (Settings → Users still offers to make a link for them; the link is then refused); first-run setup and invite acceptance still sign in once with the password they set.
 - The idle limit (`LANDFLOW_SESSION_IDLE_HOURS`) tells background requests from use only by the `X-Landflow-Background` header the browser's own timers send (and `GET /api/events` by its path). A client timer added without `background: true` keeps an open tab's session alive, a plugin's or extension's own polling with the session cookie counts as use, and use is recorded at most once a minute, so the limit is accurate to about a minute.
+
+## The landflow-brain mod (first slice, 2026-11)
+
+- `/brain review` asks about one held entry at a time and needs a person at the prompt; in a run with nobody to ask it lists them instead.
+- Only the directories of files edited through Claude Code's file tools become areas; a file changed by a shell command is not. A commit or pull request is counted from the command and its output, so one made by another tool is missed.
+- The session ends with the entry held; a session that crashes is held at the next start, with no end time.
+- The key and options are set by hand; a page that creates them comes later. Colleagues, a pane, a band and sharing with a team or the organization are not built.
+- The hook names were checked against Claude Code 2.1.322's types only; run the live check in [landflow-brain-mod.md](landflow-brain-mod.md) after an update.

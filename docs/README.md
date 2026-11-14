@@ -23,6 +23,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | Editor assistant: suggestions after a run, Spotlight (the builder chat) | [assistant.md](assistant.md) | |
 | Landflow on a phone: the tab bar, full-screen pages, the app bar, the editor's header, touch and type | [mobile.md](mobile.md) | |
 | Second brain: the usage ledger, detectors and the Suggestions inbox, facts, the Platform analyst, your own conclusions, flow detectors (Detector Trigger), custom event kinds (Record Event), entities, flow buttons (On Suggestion Decided), audiences and Slack DMs, Find Similar and `check_overlap`, declared metrics, backtests | [second-brain.md](second-brain.md) | [observability.md](observability.md) |
+| The landflow-brain Claude Code mod: your own session as a held, private `work.session`, reviewed before it is sent, with yesterday back at the next session | [landflow-brain-mod.md](landflow-brain-mod.md) | [work-and-briefings.md](work-and-briefings.md) |
 | Work events and the daily briefing: what people's tools tell the brain about their work, private to the person (even from admins), the `brain:read` and `brain:write` API key scopes, `POST/DELETE /api/brain/work`, `GET /api/brain/briefing` | [work-and-briefings.md](work-and-briefings.md) | [second-brain.md](second-brain.md#1-the-usage-ledger) |
 | The Brain page: the second brain as Markdown files in an editor's workbench (Explorer, tabs, Preview and Source, quick open, Problems), a file per person, customer and initiative with a summary the model writes, Spotlight to ask it, and work shared across teams | [second-brain.md](second-brain.md#the-brain-page) | [research/brain-ui-research.md](research/brain-ui-research.md) |
 | Composite nodes: groups typed by a contract (slots, rules, ports), checked in the editor, run as one step | [composites.md](composites.md) | [protocol.md](protocol.md) §3 |
@@ -79,7 +80,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 
 **Features**: the twelve pages under [features/](#feature-map), plus [plugins.md](plugins.md),
 [assistant.md](assistant.md), [second-brain.md](second-brain.md), [composites.md](composites.md), [agents.md](agents.md), [agent-teams.md](agent-teams.md), [team-notebook.md](team-notebook.md), [a2a.md](a2a.md),
-[run-trace.md](run-trace.md), [web-search.md](web-search.md) and [marketplace.md](marketplace.md).
+[landflow-brain-mod.md](landflow-brain-mod.md), [run-trace.md](run-trace.md), [web-search.md](web-search.md) and [marketplace.md](marketplace.md).
 
 **Reference**: [reference/api.md](reference/api.md) (every route), [reference/configuration.md](reference/configuration.md)
 (every host environment variable).

@@ -21,7 +21,7 @@ and `mcp` sources too, not only from Git host integrations.
 
 ## Who sends them
 
-- The Claude Code mod and `landflow work` (a later wave).
+- The Claude Code mod ([landflow-brain-mod.md](landflow-brain-mod.md): a held, private `work.session` you review before it is sent) and `landflow work` (a later wave).
 - Any harness over MCP (a later wave).
 - Anything that can call `POST /api/brain/work` with an API key that has the `brain:write` scope.
 
