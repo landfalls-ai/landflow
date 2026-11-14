@@ -37,7 +37,9 @@ function itemLine(item: WorkItem): string {
   const link = safeLink(item.url);
   const head = oneLine(item.title) || item.kind;
   const rest = [item.repo && oneLine(item.repo), item.summary && oneLine(item.summary)].filter(Boolean).join(' · ');
-  return `- ${clip(head, 120)}${rest ? ` (${clip(rest, 160)})` : ''}${link ? ` ${link}` : ''}`;
+  const text = `- ${clip(head, 120)}${rest ? ` (${clip(rest, 160)})` : ''}`;
+  // A link is whole or absent: briefingText clips a line at 300 characters, which would cut it in half.
+  return link && text.length + 1 + link.length <= 300 ? `${text} ${link}` : text;
 }
 
 function section(title: string, items: WorkItem[]): string[] {
@@ -47,7 +49,7 @@ function section(title: string, items: WorkItem[]): string[] {
 /** The briefing as Markdown (unquoted): headings and one line per item, each clipped. */
 export function briefingMarkdown(briefing: Briefing): string {
   if (briefing.brain === 'off') return `# Briefing for ${briefing.day}\n\nThe second brain is off on this instance.`;
-  return [`# Briefing for ${briefing.day}`, '', ...section('Today', briefing.today), '', ...section('Yesterday', briefing.yesterday)].join('\n');
+  return [`# Briefing for ${briefing.day}`, '', ...section(`Today (${briefing.day})`, briefing.today), '', ...section(`Yesterday (${dayBefore(briefing.day)})`, briefing.yesterday)].join('\n');
 }
 
 /** What the prompt carries: the briefing as quoted data (`> ` lines), at most BRIEFING_PROMPT_LIMIT characters, then one instruction line. B30 reads the stored nightly briefing and passes it here. */

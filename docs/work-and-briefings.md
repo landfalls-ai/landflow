@@ -2,8 +2,8 @@
 
 What people's own tools tell the [second brain](second-brain.md) about their work, and the briefing each person gets back.
 Part of the [Landflow docs](README.md). This is the first part of the company backbone: the visibility rule, the two API
-key scopes, the routes to record work and the person's own day. The clients that send work (the Claude Code mod, the
-`landflow work` command, any harness over MCP) come after it.
+key scopes, the routes to record work and the person's own day, and any harness over MCP ([Over MCP](#over-mcp)). The
+other clients that send work (the Claude Code mod, the `landflow work` command) come after it.
 
 ## What a work event is
 
@@ -22,7 +22,7 @@ and `mcp` sources too, not only from Git host integrations.
 ## Who sends them
 
 - The Claude Code mod and `landflow work` (a later wave).
-- Any harness over MCP (a later wave).
+- Any harness over MCP: `record_work` with a personal API key ([Over MCP](#over-mcp)).
 - Anything that can call `POST /api/brain/work` with an API key that has the `brain:write` scope.
 
 An admin can say tools may not send work on their own: the setting `brain.workAutoSend` (`allowed` by default,

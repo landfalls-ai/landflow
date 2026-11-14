@@ -21,6 +21,7 @@ import { canProposal, covers, projectsOf, scopeForActor } from '../brain/scope';
 import { findSimilar } from '../brain/similar';
 import { vectorFactHits } from '../brain/study';
 import { askBrain } from '../brain/wiki';
+import { WORK_LIMITS } from '@landflow/protocol';
 import { MAX_WORK_EVENTS, recordWork } from '../brain/work';
 import { briefingMarkdown } from './brain-prompts';
 import { HttpError } from '../errors';
@@ -240,27 +241,30 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
     {
       title: 'Record my work',
       description:
-        'Save what you did as your own work events: private to you, shown in your briefing. Sending the same sourceId again updates it. Each event: kind (work.session, work.pr_opened…), title, occurredAt (ISO 8601), a sourceId of your own, and optionally summary, repo, areas (directory names only), commits, branch, url. Never put secrets, file contents or absolute paths in it.',
+        'Save what you did as your own work events: private to you, shown in your briefing. Sending the same sourceId again updates it. Each event: kind (work.session, work.pr_opened…), title, occurredAt (ISO 8601), a sourceId of your own, and optionally summary, repo, areas (directory names only), commits, prs ([{ url, state: opened|merged }]), branch, url. Never put secrets, file contents or absolute paths in it.',
       inputSchema: z.object({
         events: z
           .array(
+            // Limits are checked per event by recordWork (the REST route's rules), so one bad event is rejected and the rest are saved.
             z.object({
               kind: z.string().describe('work.<name>, e.g. work.session'),
               source: z.string().optional().describe('The tool sending it; default mcp'),
-              sourceId: z.string().min(1).max(200),
+              sourceId: z.string(),
               occurredAt: z.string(),
               endedAt: z.string().optional(),
-              title: z.string().min(1).max(200),
-              summary: z.string().max(500).optional(),
+              title: z.string(),
+              summary: z.string().optional(),
               repo: z.string().optional().describe('owner/name'),
               branch: z.string().optional(),
-              areas: z.array(z.string()).max(20).optional(),
-              commits: z.number().int().min(0).optional(),
-              turns: z.number().int().min(0).optional(),
+              areas: z.array(z.string()).optional(),
+              commits: z.number().int().optional(),
+              prs: z.array(z.object({ url: z.string(), state: z.enum(['opened', 'merged']) })).max(WORK_LIMITS.prs).optional(),
+              turns: z.number().int().optional(),
               initiative: z.string().optional(),
               customer: z.string().optional(),
               team: z.string().optional(),
               url: z.string().optional(),
+              visibility: z.string().optional().describe('Only private is accepted for now'),
             }),
           )
           .min(1)
@@ -271,8 +275,8 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
     async ({ events }) => {
       if (!actor) return failure('Work is a person’s own: connect with a personal API key or sign in, not the instance access token');
       try {
-        // Always private, always the caller's: the actor comes from the connection, never from the arguments.
-        const result = recordWork(actor, events.map((event) => ({ ...event, source: event.source ?? 'mcp', visibility: 'private' })));
+        // Always the caller's: the actor comes from the connection, never from the arguments. recordWork refuses a shared visibility.
+        const result = recordWork(actor, events.map((event) => ({ ...event, source: event.source ?? 'mcp' })));
         return json(result);
       } catch (caught) {
         if (caught instanceof HttpError) return failure(caught.message);

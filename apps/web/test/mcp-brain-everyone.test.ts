@@ -23,6 +23,12 @@ const { enableTestAuth } = await import('@/lib/server/auth/test-bypass');
 const { instanceServer } = await import('@/lib/server/mcp/instance-tools');
 const { briefingText, BRIEFING_PROMPT_LIMIT, safeLink } = await import('@/lib/server/mcp/brain-prompts');
 const { briefingFor } = await import('@/lib/server/brain/briefing');
+const { database } = await import('@/lib/server/db');
+const { createApiKey } = await import('@/lib/server/auth/api-keys');
+const { setMcpEnabled } = await import('@/lib/server/mcp/instance');
+const { authenticateMcpRequest } = await import('@/lib/server/mcp/identity');
+const { issueMcpToken } = await import('@/lib/server/mcp/tokens');
+const mcpRoute = await import('@/app/api/mcp/route');
 
 const alice = await createUser({ email: 'alice@mcp-everyone.test', name: 'Alice', role: 'member', password: 'alice-password-1' });
 const bob = await createUser({ email: 'bob@mcp-everyone.test', name: 'Bob', role: 'member', password: 'bob-password-1' });
@@ -114,11 +120,41 @@ describe('record_work, my_briefing and the prompt', () => {
     expect(JSON.stringify(prompt)).not.toContain('Fixed the retry loop');
   });
 
-  it('turns a shared visibility down: always private', async () => {
+  it('saves an event without a visibility as private, and rejects a shared one while saving the rest', async () => {
     const a = await connect(alice, ['brain:write']);
-    const saved = JSON.parse(textOf(await a.callTool({ name: 'record_work', arguments: { events: [event('a-2', 'Another')] } })));
-    expect(saved.saved).toHaveLength(1);
+    const saved = JSON.parse(textOf(await a.callTool({ name: 'record_work', arguments: { events: [event('a-2', 'Another'), event('a-3', 'Shared', { visibility: 'team' }), event('a-4', 'x'.repeat(300))] } })));
+    expect(saved.saved.map((s: { sourceId: string }) => s.sourceId)).toEqual(['a-2']);
+    expect(saved.rejected.map((r: { sourceId: string }) => r.sourceId).sort()).toEqual(['a-3', 'a-4']);
     expect(briefingFor(actorOf(alice)).today.find((i) => i.sourceId === 'a-2')?.visibility).toBe('private');
+  });
+
+  it('keeps prs on a work.pr_opened event', async () => {
+    const a = await connect(alice, ['brain:write']);
+    const prs = [{ url: 'https://github.com/acme/billing/pull/7', state: 'opened' }];
+    const saved = JSON.parse(textOf(await a.callTool({ name: 'record_work', arguments: { events: [event('a-pr', 'Retry fix', { kind: 'work.pr_opened', prs })] } })));
+    expect(saved.rejected).toEqual([]);
+    expect(saved.saved).toHaveLength(1);
+    const row = database().all<{ attrs: string }>("SELECT attrs FROM usage_events WHERE source_id = 'a-pr'")[0]!;
+    expect(JSON.parse(row.attrs)).toMatchObject({ prs: 1, prUrl: 'https://github.com/acme/billing/pull/7' });
+  });
+
+  it('refuses my_briefing and record_work for the instance access token (no person)', async () => {
+    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+    await instanceServer().connect(serverSide);
+    const client = new Client({ name: 'instance-test', version: '1.0.0' });
+    await client.connect(clientSide);
+    for (const [name, args] of [['my_briefing', {}], ['record_work', { events: [event('x', 'X')] }]] as const) {
+      const result = (await client.callTool({ name, arguments: args })) as { isError?: boolean };
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain('not the instance access token');
+    }
+  });
+
+  it('brain_ask answers (without a model: what it found)', async () => {
+    const a = await connect(alice, ['brain:read']);
+    const result = (await a.callTool({ name: 'brain_ask', arguments: { question: 'What did I do on the retry loop?' } })) as { isError?: boolean };
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result).length).toBeGreaterThan(0);
   });
 
   it('the prompt quotes the caller’s briefing, then the instruction, and the resources read it', async () => {
@@ -133,8 +169,46 @@ describe('record_work, my_briefing and the prompt', () => {
     const read = await a.readResource({ uri: 'brain://briefing/today' });
     expect(read.contents[0]).toMatchObject({ mimeType: 'text/markdown' });
     expect((read.contents[0] as { text: string }).text).toContain('Fixed the retry loop');
+    const yesterday = await a.readResource({ uri: 'brain://briefing/yesterday' });
+    expect((yesterday.contents[0] as { text: string }).text).toMatch(/^# Briefing for \d{4}-\d{2}-\d{2}/);
+    expect((yesterday.contents[0] as { text: string }).text).not.toContain('Fixed the retry loop');
+    const dated = await a.getPrompt({ name: 'morning-briefing', arguments: { day: '2020-01-02' } });
+    expect((dated.messages[0]!.content as { text: string }).text).toContain('Briefing for 2020-01-02');
     const work = await a.readResource({ uri: 'brain://work/today' });
     expect((work.contents[0] as { text: string }).text).toContain('Fixed the retry loop');
+  });
+});
+
+describe('the key reaches the server over HTTP', () => {
+  const post = (bearer: string, body: unknown) =>
+    mcpRoute.POST(new Request('http://localhost/api/mcp', { method: 'POST', headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: JSON.stringify(body) }));
+  const rpc = async (bearer: string, method: string, params?: unknown) => {
+    const response = await post(bearer, { jsonrpc: '2.0', id: 1, method, params });
+    return { status: response.status, body: (await response.json()) as { result?: { tools?: Array<{ name: string }>; isError?: boolean }; error?: unknown } };
+  };
+
+  it('authenticateMcpRequest carries a key’s scopes, and an MCP token has none', async () => {
+    const { token } = createApiKey(alice, { label: 'scoped', scopes: ['brain:read'] });
+    const keyed = await authenticateMcpRequest(new Request('http://localhost/api/mcp', { headers: { authorization: `Bearer ${token}` } }), { pluginId: '' });
+    expect(keyed.keyScopes).toEqual(['brain:read']);
+    const { token: mcpToken } = await issueMcpToken(alice as never, { label: 'plain' });
+    const plain = await authenticateMcpRequest(new Request('http://localhost/api/mcp', { headers: { authorization: `Bearer ${mcpToken}` } }), { pluginId: '' });
+    expect(plain.keyScopes).toBeUndefined();
+  });
+
+  it('a brain:read key lists only the brain read tools and cannot call record_work', async () => {
+    setMcpEnabled(true);
+    const { token } = createApiKey(alice, { label: 'http', scopes: ['brain:read'] });
+    const listed = await rpc(token, 'tools/list');
+    expect(listed.status).toBe(200);
+    expect(listed.body.result!.tools!.map((t) => t.name).sort()).toEqual(BRAIN_READ);
+    const called = await rpc(token, 'tools/call', { name: 'record_work', arguments: { events: [event('http-refused', 'Nope')] } });
+    expect(called.body.error !== undefined || called.body.result?.isError === true).toBe(true);
+    expect(briefingFor(actorOf(alice)).today.map((i) => i.sourceId)).not.toContain('http-refused');
+
+    const { token: mcpToken } = await issueMcpToken(alice as never, { label: 'all' });
+    const all = await rpc(mcpToken, 'tools/list');
+    expect(all.body.result!.tools).toHaveLength(Object.keys(TOOL_SCOPES).length);
   });
 });
 
@@ -156,5 +230,12 @@ describe('briefingText', () => {
     expect(text).not.toContain('evil.example');
     expect(text).toContain('https://github.com/acme/billing/pull/1');
     expect(safeLink('http://github.com/a')).toBeUndefined();
+  });
+
+  it('never cuts a link in half: a long line loses the link instead', () => {
+    const link = `https://github.com/acme/billing/pull/${'1'.repeat(20)}`;
+    const text = briefingText(briefing([item(1, { title: 'T'.repeat(200), repo: 'r'.repeat(100), summary: 's'.repeat(300), url: link })]));
+    expect(text).not.toContain('github.com/acme/billing/pull/1'.slice(0, 20) + '…');
+    for (const line of text.split('\n')) if (line.includes('https://')) expect(line).toContain(link);
   });
 });

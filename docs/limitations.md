@@ -169,3 +169,9 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 - Local accounts have no second factor (no TOTP or passkeys); `LANDFLOW_LOCAL_SIGN_IN=off` makes an instance SSO-only so the identity provider's MFA applies. Passwords have a fixed minimum of 8 characters and no breached-password check (local-only, no external calls). Password reset is refused for users the mode excludes (Settings → Users still offers to make a link for them; the link is then refused); first-run setup and invite acceptance still sign in once with the password they set.
 - The idle limit (`LANDFLOW_SESSION_IDLE_HOURS`) tells background requests from use only by the `X-Landflow-Background` header the browser's own timers send (and `GET /api/events` by its path). A client timer added without `background: true` keeps an open tab's session alive, a plugin's or extension's own polling with the session cookie counts as use, and use is recorded at most once a minute, so the limit is accurate to about a minute.
+
+## MCP key scopes (company backbone, B13)
+
+- An API key now sees and calls only the instance MCP tools its scopes cover (`lib/shared/mcp.ts` `TOOL_SCOPES`). A key with narrow scopes loses tools it had before: add `workflows:read`, `workflows:write`, `run`, `executions:read` or `brain:read` as needed, or use an MCP token.
+- Over MCP a `brain:read` key reaches `brain_search_facts`, `brain_usage_report` and `brain_list_suggestions`, and a `brain:write` key also `brain_suggest`, which over REST need `executions:read` or `workflows:read`/`workflows:write`. Each tool is still limited to what the user can open.
+- An API key sent through the bundled gateway carries no scopes there (the gateway cannot validate it), so it is not scoped per tool; use it directly at `/api/mcp`.
