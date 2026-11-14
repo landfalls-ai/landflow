@@ -37,6 +37,7 @@
     "plugin:linear": "pnpm --filter @landflow/plugin-linear start",
     "plugin:attio": "pnpm --filter @landflow/plugin-attio start",
     "plugin:fathom": "pnpm --filter @landflow/plugin-fathom start",
+    "plugin:clickland": "pnpm --filter @landflow/plugin-clickland start",
     "fake-landfall": "pnpm --filter @landflow/plugin-landfall fake-landfall",
     "dev:all": "concurrently -k -n web,ts,py,go,msg,prod,google,db,linear,attio,fathom -c magenta,blue,yellow,cyan,green,red,white,gray,blue,green,yellow \"pnpm dev\" \"pnpm plugin:ts\" \"pnpm plugin:py\" \"pnpm plugin:go\" \"pnpm plugin:messaging\" \"pnpm plugin:productivity\" \"pnpm plugin:google\" \"pnpm plugin:databases\" \"pnpm plugin:linear\" \"pnpm plugin:attio\" \"pnpm plugin:fathom\"",
     "dev:all:browser": "concurrently -k -n web,ts,py,go,msg,prod,google,db,browser -c magenta,blue,yellow,cyan,green,red,white,gray,black \"pnpm dev\" \"pnpm plugin:ts\" \"pnpm plugin:py\" \"pnpm plugin:go\" \"pnpm plugin:messaging\" \"pnpm plugin:productivity\" \"pnpm plugin:google\" \"pnpm plugin:databases\" \"pnpm plugin:browser\"",
