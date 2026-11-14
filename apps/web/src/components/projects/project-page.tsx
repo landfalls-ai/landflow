@@ -27,6 +27,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { FieldLabel, Input, Select, Switch, Textarea } from '@/components/ui/inputs';
 import { CredentialDialog } from '@/components/credentials/credential-dialog';
 import { CreateTableDialog } from '@/components/data-tables/create-table-dialog';
+import { useWorkflowsReadOnly } from '@/lib/client/environment';
 import { MenuItem, Popover } from '@/components/ui/popover';
 import { MoveToProjectDialog, RESOURCE_PATH } from './share-dialog';
 import { DeleteProjectDialog, describeCounts } from './project-dialogs';
@@ -125,6 +126,14 @@ function NewInProject({ project, onChanged }: { project: ProjectDetail; onChange
   const router = useRouter();
   const [dialog, setDialog] = useState<'credential' | 'table'>();
   const [busy, setBusy] = useState(false);
+  const readOnly = useWorkflowsReadOnly();
+  const [tableNames, setTableNames] = useState<string[]>([]);
+  const openTable = () => {
+    api<{ tables: { name: string }[] }>(`/api/data-tables?projectId=${encodeURIComponent(project.id)}`)
+      .then((r) => setTableNames((r.tables ?? []).map((t) => t.name)))
+      .catch(() => undefined)
+      .finally(() => setDialog('table'));
+  };
   const make = async (kind: 'workflow' | 'agent') => {
     setBusy(true);
     try {
@@ -152,15 +161,15 @@ function NewInProject({ project, onChanged }: { project: ProjectDetail; onChange
       >
         {(close) => (
           <>
-            <MenuItem onClick={() => { close(); void make('workflow'); }}><WorkflowIcon /> Workflow</MenuItem>
+            <MenuItem disabled={!!readOnly} hint={readOnly} onClick={() => { close(); void make('workflow'); }}><WorkflowIcon /> Workflow</MenuItem>
             <MenuItem onClick={() => { close(); setDialog('credential'); }}><KeyRound /> Credential</MenuItem>
-            <MenuItem onClick={() => { close(); setDialog('table'); }}><Table2 /> Data table</MenuItem>
+            <MenuItem onClick={() => { close(); openTable(); }}><Table2 /> Data table</MenuItem>
             <MenuItem onClick={() => { close(); void make('agent'); }}><Bot /> Agent</MenuItem>
           </>
         )}
       </Popover>
       {dialog === 'credential' && <CredentialDialog projectId={project.id} onClose={() => setDialog(undefined)} onSaved={onChanged} />}
-      {dialog === 'table' && <CreateTableDialog projectId={project.id} existingNames={[]} onClose={() => { setDialog(undefined); onChanged(); }} />}
+      {dialog === 'table' && <CreateTableDialog projectId={project.id} existingNames={tableNames} onClose={() => { setDialog(undefined); onChanged(); }} />}
     </>
   );
 }

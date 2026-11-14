@@ -821,7 +821,7 @@ export function WorkflowsList() {
               title="No workflows yet"
               hint="Chain built-in nodes with plugins written in any language. Every node, local or remote, implements the same interface. Start from a template, or import a workflow from n8n or Flowise."
               action={
-                <div className="flex gap-2">
+                <div className="flex flex-wrap justify-center gap-2">
                   <ProtectedGate reason={readOnly}>
                     <Button size="sm" onClick={() => picker.current?.click()} disabled={locked}>
                       <FileUp className="size-3.5" /> Import
@@ -852,7 +852,7 @@ export function WorkflowsList() {
               title="This folder is empty"
               hint="Create a workflow or a folder here, or drag workflows onto it from another folder."
               action={
-                <div className="flex gap-2">
+                <div className="flex flex-wrap justify-center gap-2">
                   <ProtectedGate reason={readOnly}>
                     <Button size="sm" onClick={() => setDialog({ kind: 'new-folder' })} disabled={locked}>
                       <FolderPlus className="size-3.5" /> New folder

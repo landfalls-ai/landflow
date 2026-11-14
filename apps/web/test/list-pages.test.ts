@@ -73,6 +73,9 @@ describe('workflows: last run', () => {
     const folder = page.slice(page.indexOf('emptyHere && current'));
     for (const label of ['Import', 'Folder', 'Browse templates', 'New workflow']) expect(root).toContain(label);
     for (const label of ['Import', 'New folder', 'From a template', 'New workflow']) expect(folder).toContain(label);
+    // Four buttons must wrap on a phone, or the row overflows the card.
+    expect(root).toContain('flex flex-wrap justify-center gap-2');
+    expect(folder).toContain('flex flex-wrap justify-center gap-2');
   });
 });
 
