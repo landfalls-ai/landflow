@@ -581,7 +581,7 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
       while (steps < stepLimit && !finished) {
         steps++;
         currentStep = steps;
-        if (trace) onEvent({ type: 'step.start', step: steps, label: steps === 1 ? 'Reading your request' : 'Working on it' });
+        if (trace) onEvent({ type: 'step.start', step: steps, label: steps === 1 ? 'Reading your request' : 'Thinking' });
         const generate = () => model.generate({ system, messages: history, tools, ...(input.signal && { signal: input.signal }) });
         let turn: Awaited<ReturnType<typeof generate>>;
         try {

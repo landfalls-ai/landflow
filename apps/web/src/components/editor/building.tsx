@@ -11,11 +11,13 @@
  */
 import { useEffect, useMemo } from 'react';
 import { BaseEdge, Handle, Position, type Edge, type EdgeProps, type Node, type NodeProps } from '@xyflow/react';
-import { Check, Loader2, TriangleAlert } from 'lucide-react';
+import { TriangleAlert } from 'lucide-react';
 import { create } from 'zustand';
-import { buildSteps, planOf, stepProgress, visibleGhosts, type BuildStep, type GhostNode, type Plan } from '@/lib/shared/build-steps';
+import { buildSteps, planOf, stepProgress, mergeTrace, visibleGhosts, type BuildStep, type GhostNode, type Plan } from '@/lib/shared/build-steps';
 import { nodeColor } from '@/lib/client/node-style';
+import type { ActivityStep } from '@/lib/shared/activity';
 import { cn } from '@/lib/utils';
+import { ActivityTrace } from '../ui/activity-trace';
 import { Button } from '../ui/button';
 import { NodeIcon } from '../ui/icon';
 import { edgePath, useLane } from '../canvas/edge-path';
@@ -116,37 +118,11 @@ export function BuildProgressBar() {
   );
 }
 
-function Mark({ step }: { step: BuildStep }) {
-  if (step.state === 'done')
-    return (
-      <span className={cn('mt-px grid size-4 shrink-0 animate-pop place-items-center rounded-full text-bg', step.failed ? 'bg-rd' : 'bg-gn')}>
-        {step.failed ? <TriangleAlert className="size-2.5" strokeWidth={3} /> : <Check className="size-2.5" strokeWidth={3.5} />}
-      </span>
-    );
-  if (step.state === 'active') return <Loader2 className="mt-px size-4 shrink-0 animate-spin text-viz-7" />;
-  return <span className="mt-px size-4 shrink-0 rounded-full border-[1.5px] border-bd" />;
-}
-
-function StepRow({ step }: { step: BuildStep }) {
-  const active = step.state === 'active';
-  // The step in progress names its parts: "Wiring the connections — Ask → Approved · Ask → Deny".
-  const parts = active ? step.parts.join(' · ') : step.kind === 'read' ? step.parts.join(' · ') : '';
-  return (
-    <li className="flex animate-in items-start gap-2 text-[12.5px] leading-snug">
-      <Mark step={step} />
-      <span className={cn('min-w-0 [overflow-wrap:anywhere]', active ? 'font-semibold text-t1' : step.state === 'done' ? 'text-t2' : 'text-t3')}>
-        {active ? step.doing : step.title}
-        {parts && <span className={cn('font-normal', active ? 'text-t2' : 'text-t3')}>{active ? ` — ${parts}` : ` · ${parts}`}</span>}
-      </span>
-    </li>
-  );
-}
-
 /**
  * A change being built, as the steps of its reply in the Spotlight panel's timeline: each ticks off as the ghosts appear
  * on the canvas. Apply and Dismiss when autonomous mode is off; on, Spotlight applies it as the reply ends.
  */
-export function LiveSteps({ live }: { live: Live }) {
+export function LiveSteps({ live, trace, durationMs }: { live: Live; trace?: ActivityStep[]; durationMs?: number }) {
   const autonomous = useAutonomous((s) => s.on);
   const { streaming, plan, revealed, steps } = live;
   const ready = !streaming && live.proposals.length > 0;
@@ -165,11 +141,8 @@ export function LiveSteps({ live }: { live: Live }) {
 
   return (
     <div className="space-y-2">
-      <ol className="space-y-2">
-        {steps.map((step) => (
-          <StepRow key={step.id} step={step} />
-        ))}
-      </ol>
+      {/* The plan's steps once there are some, else what the chat stream says it did (with times): one trace line while it works. */}
+      <ActivityTrace steps={mergeTrace(trace, steps)} live={streaming || !all} durationMs={durationMs} />
       {ready && warnings.length > 0 && (
         <p className="flex items-start gap-1.5 text-[11px] leading-snug text-warn">
           <TriangleAlert className="mt-px size-3 shrink-0" /> Leaves {warnings.join('; ')}.

@@ -4,6 +4,7 @@
  * ops of its proposals go in, steps come out. A proposal arrives whole, so the editor reveals its steps one by one
  * (`revealed`); nothing here touches the workflow.
  */
+import type { ActivityKind, ActivityStep } from './activity';
 import { applyOps, type AssistantOp, type DescriptorLookup } from './assistant-ops';
 import type { ConnectionType, Workflow } from './types';
 
@@ -241,4 +242,35 @@ export function visibleGhosts(plan: Plan, revealed: number): { nodes: Array<Ghos
     nodes: plan.nodes.filter((n) => n.step <= revealed).map((n) => ({ ...n, active: n.step === revealed })),
     links: plan.links.filter((l) => l.step <= revealed),
   };
+}
+
+const ACTIVITY_KIND: Record<StepKind, ActivityKind> = { read: 'read', add: 'write', wire: 'write', set: 'write', remove: 'write', rename: 'write', team: 'write', settings: 'write', think: 'think' };
+
+/**
+ * The build steps as the activity trace's rows (docs/assistant.md#chat-surfaces), so a change being built reads like every
+ * other trace: done steps tick, the active one runs. Steps still to do are left out (the trace says what happened).
+ */
+export function toActivitySteps(steps: BuildStep[]): ActivityStep[] {
+  return steps
+    .filter((s) => s.state !== 'todo')
+    .map((s) => {
+      const detail = s.parts.join(' · ').slice(0, 300);
+      return {
+        id: s.id,
+        label: s.state === 'active' ? s.doing : s.title,
+        kind: ACTIVITY_KIND[s.kind],
+        status: s.state === 'active' ? ('running' as const) : s.failed ? ('failed' as const) : ('ok' as const),
+        ...(detail && { detail }),
+      };
+    });
+}
+
+/**
+ * The rows for a change being built once the chat stream has its own trace: the stream's rows keep their times and icons,
+ * and the plan adds only its changes (the plan's read rows say what the stream's tool rows already do).
+ */
+export function mergeTrace(stream: ActivityStep[] | undefined, steps: BuildStep[]): ActivityStep[] {
+  const plan = toActivitySteps(steps);
+  if (!stream?.length) return plan;
+  return [...stream, ...plan.filter((s) => s.kind !== 'read' && s.kind !== 'think')];
 }

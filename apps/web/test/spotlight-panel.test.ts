@@ -1,5 +1,5 @@
 /**
- * The Spotlight panel (components/editor/spotlight.tsx, ./timeline.ts, the store in ./assistant.ts): its header and steps
+ * The Spotlight panel (components/editor/spotlight/, ./timeline.ts, the store in ./assistant.ts): its header and steps
  * come from the conversation, an agent being designed is a row after the turn that created it, and nothing but the person
  * folds or unfolds it: a reply, a drafted flow, a test-and-fix session and autonomous mode leave `collapsed` alone. The runs
  * it starts are rows of its timeline, not toasts.
