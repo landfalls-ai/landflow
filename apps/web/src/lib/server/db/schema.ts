@@ -1548,6 +1548,49 @@ export const MIGRATIONS: Migration[] = [
       )`,
     ],
   },
+  // B02: personal preferences and the conversations store (docs/assistant.md#conversation-history).
+  {
+    version: 2070,
+    name: 'user_preferences',
+    statements: [
+      // One row per person: their settings as JSON (lib/shared/preferences.ts names the keys and defaults).
+      `CREATE TABLE IF NOT EXISTS user_preferences (
+        user_id TEXT PRIMARY KEY,
+        data TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+    ],
+  },
+  {
+    version: 2071,
+    name: 'conversations',
+    statements: [
+      // A person's own chats with Spotlight, the brain, the Agent architect and an agent's test chat; owner-only.
+      `CREATE TABLE IF NOT EXISTS conversations (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        surface TEXT NOT NULL,
+        project_id TEXT,
+        subject_type TEXT,
+        subject_id TEXT,
+        title TEXT NOT NULL,
+        pinned INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS conversations_user ON conversations (user_id, updated_at)`,
+      `CREATE INDEX IF NOT EXISTS conversations_subject ON conversations (user_id, surface, subject_type, subject_id, updated_at)`,
+      `CREATE TABLE IF NOT EXISTS conversation_items (
+        conversation_id TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        role TEXT NOT NULL,
+        parts TEXT NOT NULL,
+        meta TEXT,
+        at TEXT NOT NULL,
+        PRIMARY KEY (conversation_id, seq)
+      )`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -1650,6 +1693,10 @@ export const TABLES = {
   agent_semantic_cache: ['id'],
   brain_backtests: ['id'],
   brain_pages: ['subject'],
+  // B02:
+  user_preferences: ['user_id'],
+  conversations: ['id'],
+  conversation_items: ['conversation_id', 'seq'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;
