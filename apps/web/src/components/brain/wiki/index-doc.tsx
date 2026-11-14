@@ -5,45 +5,73 @@
  * team's week and the pages that need a person. The log is the latest work, a heading per day. Their Source views are
  * `indexMarkdown` and `logMarkdown` (lib/shared/brain-files.ts).
  */
+import Link from 'next/link';
 import { useMemo } from 'react';
 import { AlertTriangle, Users } from 'lucide-react';
 import { timeAgo } from '@/lib/client/format';
-import { byDay, FOLDERS } from '@/lib/shared/brain-files';
+import { byDay, FOLDERS, SETTINGS, urlOf } from '@/lib/shared/brain-files';
 import type { SharedWork, WikiHome } from '@/lib/shared/brain-wiki';
 import { Card } from '../../shell/page-header';
 import { Chip } from '../../ui/badge';
 import { ProposalCard, useProposalActions } from '../proposal-card';
 import { kindLabel, PageLink, Section, TYPE_ICON, WorkList } from './parts';
 
+/** Which cards the index shows: only those with something in them. */
+export function indexCards(home: Pick<WikiHome, 'shared' | 'proposals' | 'teams' | 'health'>): Array<'shared' | 'suggestions' | 'teams' | 'needs'> {
+  const { noOwner, quiet, staleSummaries } = home.health;
+  const cards: Array<'shared' | 'suggestions' | 'teams' | 'needs'> = [];
+  if (home.shared.length) cards.push('shared');
+  if (home.proposals.length) cards.push('suggestions');
+  if (home.teams.length) cards.push('teams');
+  if (noOwner.length + quiet.length + staleSummaries.length) cards.push('needs');
+  return cards;
+}
+
+/** The headings of `indexMarkdown` that the index shows as cards: a hidden card has no outline entry. */
+export function indexOutline<T extends { title: string }>(outline: T[], home: Pick<WikiHome, 'shared' | 'proposals' | 'teams' | 'health'>): T[] {
+  const titles: Record<string, 'shared' | 'suggestions' | 'teams' | 'needs'> = { 'Shared across teams': 'shared', Suggestions: 'suggestions', 'Teams this week': 'teams', 'Needs a person': 'needs' };
+  const shown = indexCards(home);
+  return outline.filter((o) => !(o.title in titles) || shown.includes(titles[o.title]!));
+}
+
 const namesOf = (home: WikiHome) => new Map(home.entries.map((e) => [`${e.type}/${e.id}`, e.name]));
 
 export function IndexDoc({ home, onChanged }: { home: WikiHome; onChanged: () => void }) {
   const names = useMemo(() => namesOf(home), [home]);
   const actions = useProposalActions({ onDone: onChanged });
+  const cards = indexCards(home);
   return (
     <article className="space-y-7">
       <header className="space-y-1.5">
         <h1 className="text-[24px] font-semibold text-t1">Brain</h1>
         <p className="text-[13px] leading-relaxed text-t2">
-          {home.entries.length} pages: {FOLDERS.map(({ type, folder }) => `${home.entries.filter((e) => e.type === type).length} ${folder}`).join(', ')}. What the work flows recorded in Slack, Drive,
-          Calendar, Notion, Linear, Attio and Fathom, read as a wiki. Open a page from the Explorer, or press Ask to ask the brain.
+          {home.entries.length
+            ? `${home.entries.length} pages: ${FOLDERS.map(({ type, folder }) => `${home.entries.filter((e) => e.type === type).length} ${folder}`).join(', ')}. What the work flows recorded in Slack, Drive, Calendar, Notion, Linear, Attio and Fathom, read as a wiki. Open a page from the Explorer, or press Ask to ask the brain.`
+            : 'No pages yet. Install a work template (Templates → work) and the pages fill in from what your work flows record.'}
+          {!home.entries.length && (
+            <>
+              {' '}
+              <Link href={urlOf(SETTINGS)} className="text-ac hover:underline">
+                What Landflow knows
+              </Link>
+              : run the brain now, facts and detectors.
+            </>
+          )}
         </p>
       </header>
 
-      <Section title="Shared across teams" count={home.shared.length}>
-        <p className="-mt-1 text-[12px] text-t3">Customers and initiatives more than one team worked on in the last {home.days} days. Worth a look: the same work twice, or a chance to talk.</p>
-        {home.shared.length ? (
+      {cards.includes('shared') && (
+        <Section title="Shared across teams" count={home.shared.length}>
+          <p className="-mt-1 text-[12px] text-t3">Customers and initiatives more than one team worked on in the last {home.days} days. Worth a look: the same work twice, or a chance to talk.</p>
           <div className="space-y-2.5">
             {home.shared.slice(0, 8).map((s) => (
               <SharedCard key={s.ref} shared={s} names={names} />
             ))}
           </div>
-        ) : (
-          <p className="text-[12px] text-t3">Nothing this week: every page was worked on by one team.</p>
-        )}
-      </Section>
+        </Section>
+      )}
 
-      {home.proposals.length > 0 && (
+      {cards.includes('suggestions') && (
         <Section title="Suggestions" count={home.proposals.length}>
           <div className="space-y-2">
             {home.proposals.slice(0, 5).map((p) => (
@@ -53,7 +81,7 @@ export function IndexDoc({ home, onChanged }: { home: WikiHome; onChanged: () =>
         </Section>
       )}
 
-      {home.teams.length > 0 && (
+      {cards.includes('teams') && (
         <Section title="Teams this week" count={home.teams.length}>
           <div className="grid gap-2.5 sm:grid-cols-2">
             {home.teams.map((t) => (

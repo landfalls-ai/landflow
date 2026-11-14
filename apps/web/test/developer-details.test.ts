@@ -1,6 +1,6 @@
 /**
  * "Show developer details" (docs/ui-review.md#developer-details): DevOnly draws nothing until the person turns the
- * switch on; the node panel's type line, the run's id line and a plugin card hide ids, hashes and transports and show
+ * switch on; the node panel's type line and a plugin card hide ids, hashes and transports and show
  * them again when it is on; the retired look toggle is imported nowhere. The preference hook is replaced by a flag,
  * since a server render always reads the defaults.
  */
@@ -17,7 +17,6 @@ vi.mock('../src/lib/client/preferences', () => ({ usePreference: () => flag.on }
 
 const { DevOnly } = await import('../src/lib/client/developer-details');
 const { NodeTypeLine } = await import('../src/components/editor/node-panel');
-const { RunIdentity } = await import('../src/components/executions/execution-preview');
 const { NodeTile } = await import('../src/components/canvas/node-tile');
 const { PluginCard } = await import('../src/components/plugins/plugin-card');
 
@@ -57,19 +56,6 @@ describe('what the switch hides', () => {
     const on = html(createElement(NodeTypeLine, { type: 'go-crypto.hash', info }));
     expect(on).toContain('go-crypto.hash');
     expect(on.toLowerCase()).toContain('grpc');
-  });
-
-  it('the run preview header: run id, trace id and mode chip', () => {
-    const record = { executionId: 'ex_demo123', traceId: 'abcdef0123456789', mode: 'manual' } as const;
-    const off = html(createElement(RunIdentity, { record }));
-    expect(off).not.toContain('ex_demo123');
-    expect(off).not.toContain('abcdef0123456789');
-    expect(off).not.toContain('manual');
-    flag.on = true;
-    const on = html(createElement(RunIdentity, { record }));
-    expect(on).toContain('ID#ex_demo123');
-    expect(on).toContain('abcdef0123456789');
-    expect(on).toContain('manual');
   });
 
   it('a plugin card: language and transport badges', () => {

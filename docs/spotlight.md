@@ -7,6 +7,8 @@ still a plan. Spotlight in the editor knows the published [agent teams](agent-te
 mockups is the artifact <https://claude.ai/artifact/3FPJ1Ci3Jb8K3oJfjcvV8F> (private to the owner). The screen-by-screen
 simplification review that goes with it is [ux-simplification.md](ux-simplification.md).
 
+Spotlight in the editor now opens folded, eases its fold, folds an applied change into a row, offers actions on errors and has an Asks first | Autonomous switch ([Fold, Apply and errors](assistant.md#fold-apply-and-errors)).
+
 Three parts:
 
 1. **Home 2.0**: the first screen answers "what needs me?" before "how are we doing?".

@@ -16,20 +16,23 @@ separate from the **AI Agent** node, which runs inside a workflow.
 
 ## The roster
 
-**Agents** in the sidebar lists your agents as cards: the avatar, name, role, description, tone words, whether it's
-published (and has unpublished changes), where the published version runs (Landflow, kagent, its channels and
-schedules), the model, the number of tools and skills, sessions and when it last changed. Cards are grouped by
-[team](#teams) (**Group by** → **None** shows one list), and the filters show all agents, published ones, drafts, those
-on kagent, or those **From marketplace**: agents a [marketplace plugin](marketplace.md#how-a-plugin-maps-to-an-agent)
-installed carry a "From <plugin>" link. Search matches the name, role, description, team and tones. Each card's **⋯**
-menu opens it, saves it as a template or exports its JSON.
+**Agents** in the sidebar lists your agents as plain cards: the avatar, the name, what it does (the description, or the
+role when there is none) and whether it's published (and has unpublished changes). The model, tools, sessions, channels
+and tone words live on the agent's own page. Cards are grouped by [team](#teams) (**Group by** → **None** shows one
+list; the control only shows once an agent has a team). One row of filters shows all agents, published ones, drafts,
+those on kagent, or those **From marketplace**, and a filter with no agents behind it is hidden (the row goes when only
+**All** is left). Search matches the name, role, description, team and tones. Each card's **⋯** menu opens it, saves it
+as a template or exports its JSON. The Teams view's cards follow the same rule: the name, the goal and the status.
 
-Above the cards, **Start from a persona** shows the first built-in templates; **All templates** and **New agent** open
-the New agent dialog, and **Ask the Agent architect** opens [the architect](#agent-architect).
+With no agents yet, **Start from a persona** shows the first built-in templates above the empty state; **All templates**
+and **New agent** open the New agent dialog, and **Ask the Agent architect** opens [the architect](#agent-architect).
+Once there are agents the strip is gone.
 
 ### Templates
 
-The **New agent** dialog starts an agent from a persona template, grouped by category: the built-in ones (Support lead,
+The **New agent** dialog has three ways in at its top: **From a persona** (the gallery below), **Design with AI** (the
+[Agent architect](#agent-architect)) and **From a file**, which imports an agent exported as JSON and opens it (this was
+**Import JSON** in the page header). The gallery starts an agent from a persona template, grouped by category: the built-in ones (Support lead,
 Researcher, Incident responder, Release notes writer, Data analyst, Onboarding guide, Account researcher, and a blank
 persona) and **Your templates**. Each card shows the face, description, tone words and how many rules and examples it
 has. Below them you set the name, the [team](#teams) and the [avatar](#avatars), then **Create agent**: a draft with the
@@ -156,7 +159,7 @@ with its own Teams view on this page.
 
 ### Taking an agent elsewhere
 
-The builder's **…** menu has **Export JSON** (the config, for **Import JSON**), **Save as template** (a persona to start
+The builder's **…** menu has **Export JSON** (the config, for **From a file** in New agent), **Save as template** (a persona to start
 from, never tools) and **Export as Claude Code plugin…**, which downloads the agent as a plugin in Anthropic's format
 that Claude Code installs as it is and Landflow installs back whole ([marketplace.md](marketplace.md#export-agents-as-plugins)).
 `GET /api/agents/:id/export?format=claude-plugin` is the same zip.
@@ -165,23 +168,33 @@ that Claude Code installs as it is and Landflow installs back whole ([marketplac
 
 **Agents** in the sidebar → **New agent** creates a draft from a [template](#templates) or the
 [Agent architect](#agent-architect) and opens the builder. Everything autosaves to the
-*draft*; the test chat always runs the draft. Under the agent's icon and name, **Runs on** shows where the published
-version runs (Landflow, kagent, its channels and schedules) and opens the Deploy tab. The tabs:
+*draft*; the test chat always runs the draft. The publish state is said once, on the header button: **Publish** for a
+draft, **Publish v4** when the draft has changes, **Live v3 ▾** when the live version matches it (the ▾ lists versions, Unpublish and
+Restore). Under the agent's icon and name, **Runs on** lists kagent, channels and schedules when there are any, and opens
+the Triggers row. The three tabs:
 
 - **Persona**: who the agent is and how it talks ([below](#the-persona)), beside the system prompt that makes.
-- **Abilities**: the model, skills, capabilities and memory.
-- **Deploy**: triggers and kagent.
-- **Safety**: guardrails and limits.
-- **Sessions** and **Evaluations**.
+- **Abilities**: the layers around the model as a list of rows (Model, Capabilities, Triggers, Guardrails, Deploy, Advanced).
+  Each row says what is set; click it to open its card in place. **Capabilities** holds tools, knowledge bases, skills,
+  plugins and memory behind one **Add capability ▾** (tool, workflow, sub-agent, MCP server, GitHub MCP, A2A agent, knowledge
+  base, plugin, skill). **Triggers** has one **Add trigger ▾** (schedule, Telegram, Slack, Teams). **Guardrails** holds the
+  guardrails and the limits. **Advanced** holds the router, the cache and tool access. On a phone the Add menus are sheets.
+- **Activity**: **Sessions** and **Evaluations**, switched at the top (`?tab=activity&view=evaluations`).
 
-Older links still work: `?tab=build` opens Persona and `?tab=settings` opens Safety.
+**Deploy** is a row only when there is a kagent cluster credential to deploy to (or the agent already runs on kagent):
+the kagent card does not show without one.
+
+Older links still work (`mapLegacyTab` in `components/agents/tabs.ts`): `?tab=build` opens Persona, `?tab=deploy` opens
+Abilities with Deploy open, `?tab=safety` and `?tab=settings` open Abilities with Guardrails open, `?tab=sessions` and
+`?tab=evaluations` open Activity on that view, and a `session=` id alone opens Activity on Sessions.
 
 ### The persona
 
-The Persona tab builds the system prompt from parts, instead of one instructions box:
+The Persona tab builds the system prompt from parts, instead of one instructions box. The prompt itself stays closed
+beside it until you press **View prompt** (a read-only preview; **Edit** jumps to the instructions):
 
-- **Who it is**: the name, a role, who it helps, what it does, and the description (shown in the agent list and to
-  agents that delegate to this one), and **What I do**: up to three short lines (120 characters each) for the agent's
+- **Who it is**: the name, a role, who it helps and one **What it does** field. Folded under **Card text (optional)** are
+  the description (shown in the agent list and to agents that delegate to this one) and **What I do**: up to three short lines (120 characters each) for the agent's
   card on a team page ([member cards](agent-teams.md#member-cards)). Left empty, the card takes the first sentences of
   the mission, then of the instructions (`whatIDoLines()` in `persona.ts`; the roster summary carries them as
   `whatIDo`). They are display only: `personaPrompt()` never reads them, so editing them leaves the prompt, and the
@@ -371,7 +384,7 @@ absent from an agent without any). Publishing needs a model, and a persona part 
   The usage limits count every model call the agent makes (sub-agents and tools that call models
   included) at the prices of Settings → AI prices. A run that reaches one stops with the reason
   `budget` and a notice saying which limit and where to change it; later runs are refused before
-  any model call until the day or month turns. The Safety tab shows today's and this month's
+  any model call until the day or month turns. The Guardrails row shows today's and this month's
   usage ([observability.md](observability.md#token-and-cost-tracking)).
 
 **Publish** snapshots the draft as version N. At most 20 versions are kept, and the builder's
@@ -380,7 +393,7 @@ to the newest version on their next message. **Unpublish** stops schedules and c
 **Export / Import** writes or reads the config as JSON. Import gives schedules and channels new
 ids and leaves them disabled.
 
-**kagent** (Deploy tab): **Deploy to kagent** writes the published version to a
+**kagent** (Abilities → Deploy): **Deploy to kagent** writes the published version to a
 kagent cluster (a *kagent cluster* credential) with this persona: the system prompt the runtime
 builds from the persona, instructions, skills, name and description, the model, and the agent's tools,
 served to kagent by Landflow. Every publish writes the new version there too. The card shows
@@ -495,13 +508,17 @@ can read it, test it and publish it as a new version. `POST /api/agents/:id/rest
 
 ## Layers
 
-The top of **Abilities** is a checklist of the layers around the agent's model, in the order a request passes through
-them: **system prompt**, **knowledge**, **tools**, **tool access**, **guardrails**, **model router**, **cache**,
-**evals** and **traces**. Each shows what is set (or why it matters), and **Set up** opens the tab and scrolls to the
-setting. A layer that cannot apply is greyed out (no tools means nothing to restrict; the response cache skips agents with
-tools or memory; the prompt cache is on by default for Anthropic). The score ("6 of 8") counts the layers that apply.
-It reads the draft's config and the number of eval test cases, so it needs no component of its own
-(`lib/shared/agent-layers.ts`).
+**Abilities** is a list of rows, one per layer around the agent's model: **Model**, **Capabilities**, **Triggers**,
+**Guardrails**, **Deploy** (only with a kagent cluster or an existing deployment) and **Advanced**. Each row's line says
+what is set: the model, the counts of tools, knowledge bases, skills and plugins (only the non-zero ones), schedules and
+channels, what the guardrails check, "On kagent · name" or "Not deployed", and which of router, cache and tool access
+are on. Clicking a row opens its card in place. The line above the rows ("2 of 5 set up") counts the rows shown that are
+set up.
+
+Older layers fold into the rows: knowledge and tools into Capabilities; the model router, the cache and tool access into
+Advanced; evals live in **Activity → Evaluations**, and the system prompt in the Persona tab. The Insights "Agent
+layers" card still scores the nine layers of `lib/shared/agent-layers.ts` (system prompt, knowledge, tools, tool access,
+guardrails, model router, cache, evals, traces), which are no longer rows here.
 
 ## Model router
 

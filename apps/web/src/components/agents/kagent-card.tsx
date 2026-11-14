@@ -1,6 +1,6 @@
 'use client';
 /**
- * Deploy tab → kagent: deploy the published agent to a kagent cluster with the persona built here (instructions, skills,
+ * Abilities → Deploy → kagent (only with a kagent cluster credential): deploy the published agent to a kagent cluster with the persona built here (instructions, skills,
  * name and description as the system prompt, the model, the tools), and see whether kagent still holds exactly that. The
  * runtime is the Harness it runs on: kagent's own, or Claude Code, which also loads the agent's Claude Code plugins.
  */

@@ -109,7 +109,7 @@ before sign-in and AI. ✅ Done; see [Durable runtime](features/engine.md#durabl
   and password resets by email (Mailpit) or as links to copy, an edit lock with take-over, and
   `createdBy` / `updatedBy` / `startedBy`; see [Authentication](features/authentication.md).
 - Scoped API keys and a documented public API. ✅ Done: `lf_…` keys with scopes and expiry,
-  stored hashed; OpenAPI 3.1 at `/api/openapi.json` and Settings → API docs.
+  stored hashed; OpenAPI 3.1 at `/api/openapi.json` and the API reference on the Developers page.
 - Free OIDC login (Keycloak in Docker). n8n charges for it. ✅ Done: authorization code + PKCE,
   just-in-time users, role mapping from a claim, tested against the infra stack's Keycloak.
 - A sandboxed Code node running out of process in a locked-down container, with JavaScript and
@@ -969,6 +969,11 @@ approved plan:
 - **Quieter run screens (B21, backbone wave 3; P-trace-1 to P-trace-5, X13 for runs)**: tabs only with content (Story and
   Trace always, Team and Artifacts when they have something), the Report merged into the Story as a summary, one status
   line, no time slider on a short or single-participant run, Debug access in the header's ⋯ without tool names.
+- **Plainer agents list and persona (B25, backbone wave 4; P-ag-1 to P-ag-3, P-ag-8)**: the persona strip only with no
+  agents, filter chips with no agents hidden (one row), cards with a name, description and status, **Import JSON** inside
+  New agent as **From a file**, one **What it does** field with the card text folded, and the system prompt behind **View
+  prompt**. Team cards follow the same rule.
+- **Agent detail in three tabs (B26, backbone wave 4; P-ag-4 to P-ag-7, P-ag-9)**: Persona, Abilities, Activity; the layers are the Abilities navigation (rows that open their card in place, router, cache and tool access under Advanced); one Add capability and one Add trigger menu; the kagent card only with a kagent cluster credential; the publish state in the header button alone. Old `?tab=` links map to the new places ([agents](agents.md#building-an-agent)).
 - **The journal** (`execution_events`, migration 2000): actors, spans, messages, artifacts and checks per execution,
   written by the runner's translator, Landflow agent sessions, the A2A Agent node (every remote step kept, failed ones
   marked failed, `isError` results included), approvals (web, Slack, email) and the Run report gate. Redacted, cut to
@@ -1508,8 +1513,8 @@ setting `brain.workAutoSend`.
   repositories as `system` entities and the link from a person page to its user (migration 2080)
   ([work-and-briefings.md](work-and-briefings.md#related-colleagues)).
 - Follow-ups: `landflow work` should omit `visibility`; the briefing prompt (`briefingText`) does not render `related` yet (MOD6's clip, quote and link rules apply when it does); link a work event to its repository page and index systems by repo in the wiki; check `canEntity` before showing a person page's user link.
-- **Next**: the rest of the clients (the mod's colleagues, pane and band), the overlap detector and a Settings screen
-  for the auto-send setting.
+- **Built (B29)**: the mod's colleagues: `/brain sync`, the pane, the overlap band, team or org per item, Post as my update and the admin's no-auto rule ([landflow-brain-mod.md](landflow-brain-mod.md#colleagues)).
+- **Next**: the overlap detector and a Settings screen for the auto-send setting.
 
 ## Shell: nine-item rail (built 2026-11-14)
 
@@ -1591,6 +1596,7 @@ The shared pieces every chat will use, built in `components/ui/` and ready; the 
 
 - CH3 ✅ Done: the brain's answer streams (what it found first, then the words) and shows its steps.
 - CH18 ✅ Done (brain): Ask is a column beside the page, not a card over it, so a link opens the page and the answer stays.
+- CH2, CH4, CH9, CH21, CH22 and P-ed-4 ✅ Done for Spotlight (B24): the fold eases and the canvas fits once after it, Apply folds the card into its row while the ghosts become nodes (Undo reverses it), errors have actions (Continue from step N, Open AI caps, Open the node, Ask Spotlight to fix it), the header has Asks first | Autonomous with a one-time note and an empty panel with one line (the composer's bubbles are the starters), Continue keeps the failed reply's changes, one Undo for changes applied together, the sheet's three heights ease and follow the drag, a phone's folded bar has Review and Apply, and a desktop opens Spotlight folded ([Fold, Apply and errors](assistant.md#fold-apply-and-errors)).
 - CH23 ✅ Done (brain): `[n]` appears only with a source, and a follow-up knows the last two turns.
 - CH8 (brain half) ✅ Done: Ask writes `ai_usage` rows with surface `brain`.
 - P-br-3 ✅ Done: one **Ask** button and ⌘I; the bottom bar, the toolbar and status-bar buttons and quick open's ask row are gone
@@ -1708,12 +1714,50 @@ The wave 2 review notes were fixed in wave 3's carryover where they were contain
 - **Ask's short follow-ups** borrow the last question's words when they have three or fewer of their own, so a short
   question on another topic also pulls in the earlier pages; watch it in the Ollama live check.
 
+## Company backbone: left open from the wave 3 reviews (2026-11-14)
+
+The wave 3 review notes were fixed in wave 4's carryover where they were contained; these wait, each with its reason:
+
+- **Two trace rows per tag**: Spotlight streams a `step.start` and a `tool` event per tag (C3), so the trace shows
+  "Reading @X" and "Read @X" for the same 0.0 s read. Folding the pair into one row changes the stream contract the
+  timeline and the stored steps read; it belongs with the one Spotlight (B35).
+- **A stale proposal mid-visit**: whether a Spotlight proposal is stale is decided when the conversation is shown, so a
+  card does not get its Apply back if the workflow changes again during the same visit (docs/assistant.md says so).
+  Re-deciding on every canvas change needs a subscription the panel does not have yet.
+- **Ask the brain after A → B → A**: following a link and coming back starts a new conversation for A, so the history
+  splits (nothing is lost). Reopening the began-in conversation when the subject returns fits B35, which takes over
+  `ask-panel.tsx`; the hook's wiring (`storeElsewhere`, the began-at and began-in refs) has no test until then.
+- **A new `team` event on the live stream**: `notify` in `usage/ledger.ts` sends only `org` events to everyone, so a
+  teammate sees a new `team` item at the next fetch, not live (the safe direction). Sending it live needs the stream to
+  know each listener's projects.
+- **Repository page ids can collide**: `repoEntityId` turns `acme/api-x` and `acme-api/x` into the same id, so the second
+  repository gets no page of its own. A collision-free id would orphan the pages made so far; it needs a migration.
+- **A viewer-style role**: `/connect` offers every workflow scope to every role because owner, admin and member all hold
+  them; a role without them would need `can()` per scope on that page.
+- **Run trace checkboxes** (P-trace-5): Debug access still shows its two checkboxes (both on); the review also asked to
+  hide them behind the defaults. B21's brief asked only for plain words, so this waits for the person's call.
+- **A paused Runs list goes stale**: while the list waits (pointer over it, scrolled down), a row that was running keeps
+  saying Running until the list resumes. Applying status changes to shown rows and holding back only new rows would fix it.
+- **Tests on a phone**: the Tests page's fixed 300 px sidebar squeezes the main pane to a word per line and the centred
+  tabs cover the workflow name; it needs the phone layout the Runs page has.
+- **Canvas details from B23**: right-click on one node no longer offers Ungroup (Shift+Cmd+G or the group's menu still
+  do; the menu follows the toolbar, so adding it back is the person's call); the toolbar's Run button has no disabled
+  look while a run is going on (a click does nothing); the node toolbar's ⋯ menu stays where it opened when the canvas
+  pans under it.
+
 ## Runs: one list (B20, 2026-11-14)
 
 Closed from the wave 1 page review: X2 (Executions, Runs and Search runs are one page, **Runs** at `/runs`, the old URLs redirect), P-ex-1 (no ID or Mode column), P-ex-2 (Stop all only while a run runs), P-ex-3 (repeated failures fold into one row), P-ex-4 (two re-run words), P-runs-1 (one search box with Status and Workflow chips, the rest under More filters) and P-cmp-1 (compare with fewer than two runs goes back to the list). See [the Runs list](run-trace.md#the-runs-list).
 
-Follow-up: the Runs list filters load only the latest 200 runs and its journal filters 100 matches; page the list server-side and bring journal word search back into the UI (see [limitations](limitations.md#runs-list-filters-b20-2026-11)).
+Follow-up: the Runs list filters load only the latest 200 runs and its journal filters 100 matches; page the list server-side and bring journal word search back into the UI (see [limitations](limitations.md#runs-list-filters-b20-2026-11-14)).
 
+
+## Quieter Brain and Insights (B28, 2026-11-14)
+
+- **Quieter Brain and Insights (B28, backbone wave 4; P-br-1, P-br-2, P-in-1, P-in-2, X13 for the brain and Insights)**: an empty
+  brain shows the index alone, Open editors is gone, the status bar has the page count and problems, empty index cards are
+  hidden; Insights drops the migration banner, shows the Agent layers card only when the cache or router was used, hides
+  "no change" deltas and puts its footer behind a help line.
 
 ## Not planned
 
@@ -1724,3 +1768,7 @@ RPA, process mining, an app builder, and a chat hub (n8n is retiring its own).
 ## Connect your harness
 
 Built: `/connect` (copy-paste setup and a brain key for each harness), Settings → MCP in four collapsed sections, and the admin's switch that forbids automatic sending ([connect-your-harness.md](connect-your-harness.md)). Closes V1, MOD4 and P-set-3 of the company backbone plan.
+
+## Settings in five groups
+
+Built: Settings in five groups, API docs moved to Developers, the built-in price table folded and AI caps their own section, status rows with a help-tip instead of environment-variable paragraphs, an Audit Log and Configuration split with filters that apply on change, json-render under Advanced and "Prune now" in the ⋯ menu, and one sentence of help with a "?" popover in the settings intros (carry-over: the configured SAML card's key-management notes, the External secrets intro and its "Allow in node parameters" note, and the Users invite and removal notes still run longer than one sentence; the cap-reached error in `lib/server/ai-usage/index.ts`, the cost-alert text and link in `alerts.ts` and `test/ai-caps-cache.test.ts` still say "AI prices"; header comments in `api/settings/ai-caps/route.ts`, `api/openapi.json/route.ts` and `lib/server/openapi.ts` still say "AI prices" and "Settings → API") ([settings-and-data.md](features/settings-and-data.md)). Closes P-set-1, P-set-2, P-set-4, P-set-5, P-set-6, P-set-7 and X9 of the company backbone plan.

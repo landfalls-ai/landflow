@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, BookOpen, ChevronLeft, ChevronRight, CircleDot, Pause, PencilLine, Pin, PinOff, Play, SkipForward, X } from 'lucide-react';
+import { ArrowLeft, BookOpen, ChevronLeft, ChevronRight, Pause, PencilLine, Pin, PinOff, Play, X } from 'lucide-react';
 import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import { cn } from '@/lib/utils';
 import { duration, languageMeta } from '@/lib/client/format';
@@ -10,7 +10,7 @@ import { Badge, LanguageBadge, TransportBadge, executionTone } from '../ui/badge
 import { RUN_STATE, type RunState } from '../run/run-status';
 import { Button } from '../ui/button';
 import { NodeIcon } from '../ui/icon';
-import { FieldLabel, Input, SectionLabel, Select, Switch, Textarea } from '../ui/inputs';
+import { Input, SectionLabel } from '../ui/inputs';
 import { DataView } from '../run/data-view';
 import { NodeCredentials } from '../credentials/node-credentials';
 import { ParamForm } from './param-form';

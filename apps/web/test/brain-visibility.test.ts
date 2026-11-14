@@ -272,6 +272,21 @@ describe('shared and unowned events', () => {
       expect((await call(eventsRoute.GET, '/api/usage/events?kinds=work.discussion&limit=100')).body.events).toHaveLength(1);
     }
   });
+
+  it('a team event is on its owner’s person page for a teammate only, never for an admin or a member outside the team', async () => {
+    expect(recordWork(actorOf(alice), [sessionOf('team-page', { title: 'Team page item', visibility: 'team' })]).saved).toHaveLength(1);
+    const page = async () => JSON.stringify((await call(pageRoute.GET, '/api/brain/wiki/person/alice-vis.test', { type: 'person', id: 'alice-vis.test' })).body);
+    enableTestAuth(bob);
+    expect(await page()).toContain('Team page item');
+    expect(JSON.stringify(wiki.wikiPage(entities.getEntity('person', 'alice-vis.test')!, scopeForActor(actorOf(bob)), actorOf(bob), false))).toContain('Team page item');
+    // The admin opens every page but is not in the Platform project; Erin is a member outside it.
+    enableTestAuth(admin);
+    expect((await call(pageRoute.GET, '/api/brain/wiki/person/alice-vis.test', { type: 'person', id: 'alice-vis.test' })).status).toBe(200);
+    expect(await page()).not.toContain('Team page item');
+    const erin = await createUser({ email: 'erin@vis.test', name: 'Erin', role: 'member', password: 'erin-password-1' });
+    enableTestAuth(erin);
+    expect(await page()).not.toContain('Team page item');
+  });
 });
 
 /** Today in the instance time zone, as the briefing counts it. */

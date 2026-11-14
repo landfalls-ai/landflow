@@ -88,8 +88,8 @@ const viewerOf = (scope: UsageScope | undefined): string | undefined => (scope?.
  * its owner. Nobody else reads a private row, owners and admins included, so this holds with no scope at all.
  */
 /** The owners whose `team` work `userId` reads: the members of every non-personal project `userId` is in. */
-// Personal projects are told apart by the id prefix `personal_` (see `personalProjectId`); team ids are `prj_…`.
-const TEAMMATES_SQL = `SELECT m2.user_id FROM project_members m1 JOIN project_members m2 ON m1.project_id = m2.project_id WHERE m1.user_id = ? AND substr(m1.project_id, 1, 9) <> 'personal_'`;
+// Personal projects are told apart by `projects.type`, not by their id, so the rule does not depend on how ids are made.
+const TEAMMATES_SQL = `SELECT m2.user_id FROM project_members m1 JOIN projects p ON p.id = m1.project_id JOIN project_members m2 ON m1.project_id = m2.project_id WHERE m1.user_id = ? AND p.type <> 'personal'`;
 
 export function scopeClause(scope: UsageScope | undefined, where: string[], params: SqlValue[], timeColumn: 'at' | 'day' = 'at') {
   const inner: SqlValue[] = [];

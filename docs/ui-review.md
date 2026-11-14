@@ -52,7 +52,7 @@ What the look draws:
 | Edges after a run | Green, "N items" label | Green with an "N items" pill that pops in, dots travelling along the edge while items flow; AI edges violet with "N calls" | ➕ |
 | Toolbar | Zoom, fit, tidy up, add | "+", AI builder, Tidy up (⇧⌥T), Fit view; zoom controls; minimap | ✅ |
 | Execute button | Bottom centre "Execute workflow" | Bottom centre "Execute workflow" plus "Debug" with a breakpoint count, Stop, Open chat | ➕ |
-| Sticky notes | Yes | Markdown notes behind the nodes (`⇧S` or the toolbar): double-click to edit, resize from the corners, seven colours that follow the theme; read-only in the Executions tab | ✅ |
+| Sticky notes | Yes | Markdown notes behind the nodes (`⇧S` or the toolbar): double-click to edit, resize from the corners, seven colours that follow the theme; read-only in the Runs tab | ✅ |
 | Copy/paste between workflows | JSON on the clipboard | ⌘C / ⌘X / ⌘V / ⌘D through the system clipboard with connections, notes and pinned data; taken names become `Name1`, `$('Name')` between pasted nodes follows the rename; n8n clipboard JSON is converted on paste | ✅ |
 | Undo / redo | ⌘Z / ⇧⌘Z | ⌘Z / ⇧⌘Z and canvas buttons; drags, deletes, pastes and parameter typing (coalesced) | ✅ |
 | Workflow menu | Settings, download, import, version history | `…` menu: Settings (error workflow, time zone, timeout, callers, saved executions), Version history (diff summary, read-only preview, restore), Download JSON, one Import… (paste or file; Landflow, n8n or Flowise), Tags… | ✅ |
@@ -99,7 +99,7 @@ What the look draws:
 
 | | n8n | Landflow | |
 |---|---|---|---|
-| Per-workflow tab | Editor \| Executions \| Evaluations | Editor \| Executions in the top bar; the run list stays in place as you move between executions | ◐ no Evaluations |
+| Per-workflow tab | Editor \| Executions \| Evaluations | Editor \| Runs \| Tests in the top bar; the run list stays in place as you move between runs | ✅ |
 | Run list | Cards with date, "Error in 126ms", coloured left border, mode icon, auto refresh, filter | Same, plus the error message on failed cards, re-run badges and new runs flashing into the list | ✅ |
 | Preview header | Date, status and duration, size, ID; Debug in editor; Retry menu; delete | Date, status and duration, node count, ID, mode; Debug in editor; Retry/Re-run menu (currently saved or original workflow, whole run or from the failed node); delete with an in-app confirm | ✅ |
 | Read-only canvas | Hatched background, run states on nodes | Same; nodes that didn't run are dimmed; a banner names the failing node with "Show node" | ✅ |
@@ -198,10 +198,10 @@ The same control looks and works the same on every page. Use these from `compone
 
 | Control | Use | Where it lives |
 |---|---|---|
-| Pill switch | One of a few views or filters (a period, a status, Editor / Executions / Evaluations). A tab list to a screen reader; ← → move between options; scrolls sideways on a phone. `size="sm"` in a dense panel (the logs, a data view); `SegmentedCount` for a count beside a label | `segmented.tsx` (`Segmented`) |
+| Pill switch | One of a few views or filters (a period, a status, Editor / Runs / Tests). A tab list to a screen reader; ← → move between options; scrolls sideways on a phone. `size="sm"` in a dense panel (the logs, a data view); `SegmentedCount` for a count beside a label | `segmented.tsx` (`Segmented`) |
 | Search field | Above a list: a pill with the magnifier and × to clear; Escape clears (and only then lets Escape close a dialog). 32 px, 44 px on a phone, full width there | `inputs.tsx` (`SearchInput`) |
 | Filter chip | A category or a source you turn on and off, in a row of them; `size="sm"` for a long row. 40 px on a phone, where they sit in the Filters sheet | `badge.tsx` (`FilterChip`) |
-| Switch | A setting that takes effect at once (Auto refresh) | `inputs.tsx` (`Switch`) |
+| Switch | A setting that takes effect at once (Notify on failure) | `inputs.tsx` (`Switch`) |
 | Stat card | A number that sums something up (Home's and Insights' KPIs): the label, an icon tile, the number at 28 px, one line under it that wraps rather than cuts | `stat-card.tsx` (`StatCard`) |
 | Checkbox | Choosing items or narrowing a list (*Changed only*); every checkbox and radio takes the accent colour from `globals.css` | `inputs.tsx` (`Checkbox`) |
 | Focus ring | Every button, link, tab, menu item and switch shows the same 2 px accent ring when reached with Tab, none when clicked (`globals.css`) | — |
@@ -214,7 +214,7 @@ Underline tabs (a detail page's sections) and the Run Trace's stretched grid of 
 2. ~~**Sticky notes** on the canvas.~~ Done.
 3. **Form trigger and Execute Workflow (sub-workflow) trigger.**
 4. ~~**Copy and paste nodes as JSON** across workflows.~~ Done, including n8n clipboard JSON.
-5. **Evaluations tab** (n8n's test datasets for AI flows); the Editor | Executions switch leaves room for it.
+5. ~~**Evaluations tab** (n8n's test datasets for AI flows).~~ Done: the **Tests** tab beside Editor and Runs.
 6. **OAuth2 connect buttons.** Credentials take tokens and keys directly; there is no in-app consent flow ("Connect with Google").
 7. **Debugger edits.** Parameter edits made while paused don't change the running debug session; they apply to the next run.
 8. ~~**Expression editor.**~~ Done: highlighting and autocomplete for `$json` fields, other nodes' output, variables and methods. n8n's full-screen expression editor with a live result pane is still missing; the result shows under the field.

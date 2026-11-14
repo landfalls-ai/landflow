@@ -152,6 +152,7 @@ export function BasicWorkflowSettings({
   workflowId,
   showAdvanced,
   onToggleAdvanced,
+  held = false,
 }: {
   draft: WorkflowSettings;
   patch: (change: Partial<WorkflowSettings>) => void;
@@ -159,6 +160,8 @@ export function BasicWorkflowSettings({
   workflowId?: string;
   showAdvanced: boolean;
   onToggleAdvanced: () => void;
+  /** An invalid field in Advanced holds it open: the button says so instead of seeming to do nothing. */
+  held?: boolean;
 }) {
   const zones = useMemo(timeZones, []);
   const browserZone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
@@ -215,7 +218,11 @@ export function BasicWorkflowSettings({
         className="flex w-full flex-wrap items-center gap-x-1.5 border-t border-hair pt-3 text-left text-[13px] font-semibold text-t2 hover:text-t1"
       >
         <ChevronRight className={cn('size-4 transition-transform', showAdvanced && 'rotate-90')} /> Advanced
-        <span className="basis-full pl-[22px] text-[12px] font-normal text-t3">Timeout, who can call it, runs to keep, concurrency, retries, AI limits, Run Trace, governance</span>
+        {held ? (
+          <span className="basis-full pl-[22px] text-[12px] font-normal text-warn">Fix the marked field below to close Advanced</span>
+        ) : (
+          <span className="basis-full pl-[22px] text-[12px] font-normal text-t3">Timeout, who can call it, runs to keep, concurrency, retries, AI limits, Run Trace, governance</span>
+        )}
       </button>
     </>
   );
@@ -338,7 +345,7 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
       }
     >
       <div className="space-y-4">
-        <BasicWorkflowSettings draft={draft} patch={patch} workflows={workflows} workflowId={workflowId} showAdvanced={showAdvanced} onToggleAdvanced={() => setAdvanced((v) => !v)} />
+        <BasicWorkflowSettings draft={draft} patch={patch} workflows={workflows} workflowId={workflowId} showAdvanced={showAdvanced} onToggleAdvanced={() => setAdvanced((v) => !v)} held={invalid} />
         <div id="wf-advanced" hidden={!showAdvanced} className="space-y-4">
           <Field
             id="wf-timeout"

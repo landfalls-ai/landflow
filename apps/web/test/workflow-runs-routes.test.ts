@@ -39,6 +39,10 @@ describe('old links redirect', () => {
     expect(await target(() => legacyTests({ params: Promise.resolve({ id: 'w' }), searchParams: Promise.resolve({ a: 'b' }) }))).toBe('/workflows/w/tests?a=b');
     expect(await target(() => legacyTests({ params: Promise.resolve({ id: 'w' }), searchParams: Promise.resolve({}) }))).toBe('/workflows/w/tests');
   });
+  it('encodes the workflow id as it encodes the run id', async () => {
+    expect(await target(() => legacyRuns({ params: Promise.resolve({ id: 'a/b?c', executionId: ['e/1'] }), searchParams: Promise.resolve({}) }))).toBe('/workflows/a%2Fb%3Fc/runs/e%2F1');
+    expect(await target(() => legacyTests({ params: Promise.resolve({ id: 'a/b?c' }), searchParams: Promise.resolve({}) }))).toBe('/workflows/a%2Fb%3Fc/tests');
+  });
 });
 
 describe('WorkflowTabs', () => {

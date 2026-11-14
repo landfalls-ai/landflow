@@ -115,8 +115,9 @@ the run in its workflow's Runs tab (`/workflows/<id>/runs/<executionId>`, no red
 - **The time slider** shows only when the run took 5 seconds or more and more than one took part
   (`showScrubber()`); otherwise there is nothing to replay.
 - **One status line**: the header says it once, as *Succeeded · 9 ms · 1d ago*. A run going on or waiting also has the
-  timeline card above the tabs; a finished run's line and **steps** are in the Story, which no longer ends with a second
-  status line.
+  timeline card above the tabs (decided from the whole run, so replaying a finished run does not bring it in); a finished
+  run's line and **steps** are in the Story, which no longer ends with a second status line. A passing run with no checks
+  and nothing reported has no summary cards at all.
 - **Debug access** is in the header's **⋯** menu. Its dialog says what the key can read in plain words (*See how the
   run went*, *See every step of the run*); the tool names behind them show only with **Show developer details** on.
 - **Trace**: the span tree with timing bars, down to a remote agent's single tool calls. A request shows why it was
@@ -151,7 +152,7 @@ the run in its workflow's Runs tab (`/workflows/<id>/runs/<executionId>`, no red
 `/runs` is the one list of runs (**Runs** in the rail, tab **All runs**; it was Executions, Activity and Search runs). `/executions?…` redirects to it with its query, and `/executions?id=<id>` to `/runs/<id>`. The API paths are unchanged.
 
 - **Filter row.** One search box (workflow name, error text, node), a **Status** chip and a **Workflow** chip, then **More filters** in a popover (a sheet on a phone): agent or actor, tool, from and to dates, has failed steps, a check failed. The filters sit in the URL (`q`, `status`, `workflowId`, `actor`, `tool`, `from`, `to`, `failedSteps`, `failedCheck`), so a link lands filtered. Actor, tool, failed steps and check go through `GET /api/runs/search`; the rest filter the loaded list.
-- **Repeated failures fold.** Neighbouring failed runs of one workflow that stopped at the same node with the same message become one row, "Failed ×9 · Post to Slack: no credential". It opens to the runs. A success or another error ends a group (`groupFailures`, `components/runs/failure-groups.ts`).
+- **Repeated failures fold.** Neighbouring failed runs of one workflow that stopped at the same node with the same message become one row, "Failed ×9 · Post to Slack: no credential". It opens to the runs, and stays open while the list updates, even when its oldest run is deleted, leaves the loaded window or is filtered out (the list holds the open groups by failure, not by row). A success or another error ends a group (`groupFailures`, `components/runs/failure-groups.ts`).
 - **Two words for running again.** **Retry from failed step** (failed and canceled runs) and **Re-run**. The choices, the workflow as it ran or the saved one, or from the start, are one step in. The row menu also has **Copy id**; the list has no ID or Mode column.
 - **Compare from the list.** Tick two rows, then **Compare 2**. `/runs/compare` without two runs goes back to `/runs`.
 - **Stop all** shows only while a run is running.

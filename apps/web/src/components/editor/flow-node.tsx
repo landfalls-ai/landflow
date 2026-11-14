@@ -4,6 +4,7 @@ import { NodeToolbar, Position, type NodeProps } from '@xyflow/react';
 import { useShallow } from 'zustand/react/shallow';
 import { CircleDot, Copy, Hand, Loader2, MoreHorizontal, Play, Power, Settings2, SkipForward, Trash2, UsersRound, Wrench, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Kbd } from '../ui/inputs';
 import { MenuItem, Popover } from '../ui/popover';
 import type { ExecutionEvent } from '@/lib/shared/types';
 import { progressDetail, progressLine } from '@/lib/client/node-progress';
@@ -21,12 +22,17 @@ import { useEditor, type FlowNode } from './store';
 /** What a team node's slots feed: the lead, not every member. */
 const LEAD_SLOTS = { ai_languageModel: "Lead's model", ai_memory: "Lead's memory", ai_tool: "Lead's tools" } as const;
 
+/** The platform's modifier key as the menus show it: ⌘ on a Mac, Ctrl+ elsewhere. */
+export const MOD_KEY = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl+';
+
 /** One thing a node can do, shared by its hover toolbar and the right-click menu. */
 export interface NodeAction {
   id: 'run' | 'disable' | 'delete' | 'open' | 'runFrom' | 'breakpoint' | 'team' | 'duplicate';
   label: string;
   icon: typeof Play;
   hint?: string;
+  /** Its shortcut, shown as a key (`<Kbd>`) in place of `hint`. */
+  keys?: string;
   danger?: boolean;
   disabled?: boolean;
   run: () => void;
@@ -61,10 +67,10 @@ export function nodeActions(id: string): { main: NodeAction[]; more: NodeAction[
       ? []
       : [
           { id: 'runFrom' as const, label: 'Run from this node', icon: SkipForward, disabled: state.running, run: run('from') },
-          { id: 'breakpoint' as const, label: breakpoint ? 'Remove breakpoint' : 'Add breakpoint', icon: CircleDot, hint: 'F9', run: () => state.toggleBreakpoint(id) },
+          { id: 'breakpoint' as const, label: breakpoint ? 'Remove breakpoint' : 'Add breakpoint', icon: CircleDot, keys: 'F9', run: () => state.toggleBreakpoint(id) },
         ]),
     ...(canTeam ? [{ id: 'team' as const, label: 'Turn into a team', icon: UsersRound, run: () => void turnIntoTeam(id) }] : []),
-    { id: 'duplicate', label: 'Duplicate', icon: Copy, hint: '⌘D', run: () => state.duplicateNode(id) },
+    { id: 'duplicate', label: 'Duplicate', icon: Copy, keys: `${MOD_KEY}D`, run: () => state.duplicateNode(id) },
   ];
   return { main, more };
 }
@@ -226,7 +232,7 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
                   <MenuItem
                     key={a.id}
                     disabled={a.disabled}
-                    hint={a.hint}
+                    hint={a.keys ? <Kbd>{a.keys}</Kbd> : a.hint}
                     onClick={() => {
                       close();
                       a.run();

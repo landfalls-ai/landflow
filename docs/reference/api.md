@@ -3,7 +3,7 @@
 Every route under `/api`, grouped by area. Routes need a signed-in user or an API key (`Authorization: Bearer lf_…`)
 unless [Authentication](../features/authentication.md) lists them as public; what each needs beyond that (an API key
 scope, an admin role) is set in `apps/web/src/lib/server/auth/policy.ts`. The public API is also published as OpenAPI
-3.1 at `GET /api/openapi.json` (Settings → API). Part of the [Landflow docs](../README.md).
+3.1 at `GET /api/openapi.json` (the API reference section of the Developers page, `/developers#api-reference`; the old Settings → API docs link goes there). Part of the [Landflow docs](../README.md).
 
 **Background requests.** A request sent with `X-Landflow-Background: 1` (the browser's polls and the editor's edit-lock
 heartbeat send it) does not mark its session as used, so it does not hold off `LANDFLOW_SESSION_IDLE_HOURS`;

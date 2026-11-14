@@ -20,6 +20,7 @@ import { useCredentials } from '@/components/credentials/use-credentials';
 import { Card } from '@/components/shell/page-header';
 import { Badge, type Tone } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { HelpTip } from '@/components/ui/help-tip';
 import { FieldLabel, Input, SectionLabel, Select, Switch } from '@/components/ui/inputs';
 import { plural } from '@/lib/client/format';
 
@@ -520,9 +521,12 @@ export function EnvironmentsSettings() {
           <SectionLabel>No environment</SectionLabel>
         </div>
         <p>
-          This instance isn’t an environment. Start it with <code className="font-mono text-[12px]">LANDFLOW_ENVIRONMENT=development</code> (or staging, production, …) and give each environment its own
-          branch in Settings → Source control; then promote workflows from one environment’s branch to the next and pull them there, with that environment’s credentials, variables and
-          external secrets. <code className="font-mono text-[12px]">LANDFLOW_ENVIRONMENT_PROTECTED=true</code> makes workflows read-only there.
+          This instance isn’t an environment.
+          <HelpTip label="How to make this an environment" className="ml-1 align-middle">
+            Start it with <code className="font-mono text-[12px]">LANDFLOW_ENVIRONMENT=development</code> (or staging, production, …) and give each environment its own branch in Settings → Source control; then promote
+            workflows from one environment’s branch to the next and pull them there, with that environment’s credentials, variables and external secrets.{' '}
+            <code className="font-mono text-[12px]">LANDFLOW_ENVIRONMENT_PROTECTED=true</code> makes workflows read-only there.
+          </HelpTip>
         </p>
       </Card>
     );

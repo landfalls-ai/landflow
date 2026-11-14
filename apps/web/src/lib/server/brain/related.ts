@@ -137,8 +137,11 @@ export function relatedFor(actor: Actor, mine: UsageRow[], now: number, db: Data
   const rows = colleagueRows(actor, now, db);
   // An item its owner also posted as an update (`work.self_update`, `attrs.of`) is listed once, as the update.
   const posted = new Set(rows.filter((row) => row.kind === 'work.self_update').map((row) => `${row.owner_id}|${hintOf(row, 'of') ?? ''}`));
+  // One user lookup per colleague, not per row (up to 500 rows).
+  const users = new Map<string, ReturnType<typeof getUser>>();
+  const userOf = (id: string) => (users.has(id) ? users.get(id) : users.set(id, getUser(id)).get(id));
   const colleagues: ColleagueItem[] = rows.filter((row) => !posted.has(`${row.owner_id}|${row.source}:${row.source_id}`)).map((row) => {
-    const user = row.owner_id ? getUser(row.owner_id) : undefined;
+    const user = row.owner_id ? userOf(row.owner_id) : undefined;
     return { ...overlappable(row), person: { name: user?.name?.trim() || user?.email || 'Someone', ...(row.owner_id && { userId: row.owner_id }) } };
   });
   return rankRelated(mine.map(overlappable), colleagues);

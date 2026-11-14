@@ -5,7 +5,7 @@
  * each to the commit it is at then. Other runtimes don't use them; their skills come in through the Skills card.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { Plus, Puzzle, Search, Trash2 } from 'lucide-react';
+import { Puzzle, Search, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 import { api } from '@/lib/client/api';
 import type { AgentConfig } from '@/lib/shared/agents';
@@ -103,21 +103,34 @@ function PluginPicker({ chosen, onPick, onClose }: { chosen: string[]; onPick: (
   );
 }
 
-export function PluginsCard({ config, update }: { config: AgentConfig; update: UpdateConfig }) {
+/** Claude Code plugins under Capabilities. `adding` opens the picker (the Add capability menu asks for it). */
+export function PluginsCard({ config, update, adding, onAdded }: { config: AgentConfig; update: UpdateConfig; adding?: boolean; onAdded?: () => void }) {
   const [picking, setPicking] = useState(false);
+  useEffect(() => {
+    if (!adding) return;
+    setPicking(true);
+    onAdded?.();
+  }, [adding, onAdded]);
   const plugins = config.plugins ?? [];
   const set = (next: string[]) => update((c) => ({ ...c, plugins: next.length ? next : undefined }));
+
+  const pickerEl = picking && (
+    <PluginPicker
+      chosen={plugins}
+      onPick={(id) => {
+        set([...plugins, id]);
+        setPicking(false);
+      }}
+      onClose={() => setPicking(false)}
+    />
+  );
+  if (!plugins.length) return <>{pickerEl}</>;
 
   return (
     <Section
       icon={<Puzzle className="size-4" />}
       title="Claude Code plugins"
       description="On kagent’s Claude Code runtime, Claude Code loads these whole: their agents, skills, commands and hooks. Deploying pins each to its current commit."
-      actions={
-        <Button size="sm" variant="outline" onClick={() => setPicking(true)}>
-          <Plus className="size-3.5" /> Add plugin
-        </Button>
-      }
     >
       {plugins.length ? (
         <div className="space-y-1.5">
@@ -145,19 +158,8 @@ export function PluginsCard({ config, update }: { config: AgentConfig; update: U
             );
           })}
         </div>
-      ) : (
-        <EmptyState compact title="No plugins" hint="Only the Claude Code runtime uses them. Choose one on the Deploy tab’s kagent card." />
-      )}
-      {picking && (
-        <PluginPicker
-          chosen={plugins}
-          onPick={(id) => {
-            set([...plugins, id]);
-            setPicking(false);
-          }}
-          onClose={() => setPicking(false)}
-        />
-      )}
+      ) : null}
+      {pickerEl}
     </Section>
   );
 }

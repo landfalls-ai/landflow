@@ -1,7 +1,7 @@
 /**
  * The Run report (docs/run-trace.md#the-run-report): the six built-in checks over a folded journal, and the report
  * built from it — outcome as reported and as checked, who called whom, cycles, problems, claims against evidence, each
- * actor, artifacts, a timeline and what should happen next. Pure: the Report tab computes it live, the Run report node
+ * actor, artifacts, a timeline and what should happen next. Pure: the Story tab computes it live, the Run report node
  * (lib/server/nodes/run-report.ts) at the end of a flow, where it also records the checks and saves the report.
  * Every fact points at the span it came from.
  */

@@ -3,15 +3,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
-  BookOpen,
   Bot,
   Brain,
+  ChevronDown,
   ExternalLink,
   Loader2,
   Pencil,
-  Plug,
   Plus,
-  RadioTower,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -36,6 +34,10 @@ import { PluginIcon } from '../editor/node-creator';
 import { ProtectedGate } from '../shell/protected-gate';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
+import { MenuItem, Popover } from '../ui/popover';
+import { PluginsCard } from './plugins-card';
+import { SkillsCard } from './skills-card';
+import { CAPABILITY_MENU } from './tabs';
 import { EmptyState } from '../ui/empty-state';
 import { NodeIcon } from '../ui/icon';
 import { AgentAvatar } from './avatar';
@@ -635,6 +637,8 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
   const nodeTypes = useNodeTypes();
   const agents = useAgentList();
   const [dialog, setDialog] = useState<DialogState | null>(null);
+  /** The skill or plugin picked in the Add menu: their cards open the dialog. */
+  const [side, setSide] = useState<'skill' | 'plugin' | null>(null);
 
   const save = (tool: AgentToolConfig) => {
     const exists = config.tools.some((t) => t.id === tool.id);
@@ -758,29 +762,30 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
         title="Capabilities"
         description="What the agent can do: nodes as tools, workflows, other agents (here or remote, over A2A), MCP servers and knowledge bases."
         actions={
-          <>
-            <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'pick-node' })}>
-              <Plus className="size-3.5" /> Add tool
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'workflow' })}>
-              <Workflow className="size-3.5" /> Add workflow
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'agent' })}>
-              <Bot className="size-3.5" /> Add sub-agent
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'mcp' })}>
-              <Plug className="size-3.5" /> Add MCP server
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'github' })}>
-              <GithubTile size={14} /> Add GitHub MCP
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'a2a' })}>
-              <RadioTower className="size-3.5" /> Add A2A agent
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'knowledge' })}>
-              <BookOpen className="size-3.5" /> Add knowledge base
-            </Button>
-          </>
+          <Popover
+            title="Add capability"
+            trigger={({ toggle, open }) => (
+              <Button size="sm" variant="outline" onClick={toggle} aria-expanded={open} aria-haspopup="menu">
+                <Plus className="size-3.5" /> Add capability <ChevronDown className="size-3.5" />
+              </Button>
+            )}
+            className="w-[220px]"
+          >
+            {(close) =>
+              CAPABILITY_MENU.map((item) => (
+                <MenuItem
+                  key={item.kind}
+                  onClick={() => {
+                    close();
+                    if (item.kind === 'skill' || item.kind === 'plugin') setSide(item.kind);
+                    else setDialog({ kind: item.kind });
+                  }}
+                >
+                  {item.label}
+                </MenuItem>
+              ))
+            }
+          </Popover>
         }
       >
         {config.tools.length ? (
@@ -807,6 +812,9 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
           />
         </div>
       </Section>
+
+      <SkillsCard config={config} update={update} adding={side === 'skill'} onAdded={() => setSide(null)} />
+      <PluginsCard config={config} update={update} adding={side === 'plugin'} onAdded={() => setSide(null)} />
 
       {dialog?.kind === 'pick-node' && <NodePicker onPick={pickNode} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'node' && (

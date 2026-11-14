@@ -1,5 +1,5 @@
 'use client';
-/** The Safety tab, under the guardrails: limits of the agent loop, and usage limits (tokens and estimated cost) with what the agent used so far. */
+/** Abilities → Guardrails, under the guardrails: limits of the agent loop, and usage limits (tokens and estimated cost) with what the agent used so far. */
 import { useEffect, useState } from 'react';
 import { CircleDollarSign, Gauge, Mail } from 'lucide-react';
 import { DEFAULT_AGENT_SETTINGS, type AgentConfig, type AgentSettings } from '@/lib/shared/agents';

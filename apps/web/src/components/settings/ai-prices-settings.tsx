@@ -5,7 +5,7 @@
  * overrides, which win per model. USD per million tokens; a model id also prices ids that start with it.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { CircleDollarSign, Plus, Save, Search, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, CircleDollarSign, Plus, Save, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { can } from '@/lib/shared/auth';
@@ -13,6 +13,7 @@ import type { ModelPrice, PriceTable } from '@/lib/shared/ai-usage';
 import { useViewer } from '@/components/auth/viewer';
 import { Card } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
+import { HelpTip } from '@/components/ui/help-tip';
 import { Input, SectionLabel } from '@/components/ui/inputs';
 
 /** An override row as typed (numbers kept as text until saved). */
@@ -68,6 +69,7 @@ function parse(rows: Row[]): { prices: ModelPrice[] } | { error: string } {
 export function AiPricesSettings() {
   const viewer = useViewer();
   const admin = can(viewer, 'settings:manage');
+  const [showBuiltIn, setShowBuiltIn] = useState(false);
   const [table, setTable] = useState<PriceTable>();
   const [rows, setRows] = useState<Row[]>([]);
   const [filter, setFilter] = useState('');
@@ -127,10 +129,13 @@ export function AiPricesSettings() {
           )}
         </div>
         <p className="mb-3 text-[12px] leading-relaxed text-t3">
-          USD per million tokens. Your prices win over the built-in ones. A model id also prices the ids that start with it (<code className="font-mono">claude-sonnet-5-5</code>{' '}
-          prices <code className="font-mono">claude-sonnet-5-5-20261001</code>). Cache read and write prices apply to the cached part of the prompt (Anthropic cache reads and
-          writes, OpenAI cached input); empty means the input price. Ollama and other local models cost $0 unless you price them here — e.g. to count electricity or hardware. Costs
-          are estimates; your provider’s bill is what counts.
+          Your prices win over the built-in ones, in USD per million tokens.
+          <HelpTip label="How prices are matched" className="ml-1 align-middle">
+            A model id also prices the ids that start with it (<code className="font-mono">claude-sonnet-5-5</code> prices <code className="font-mono">claude-sonnet-5-5-20261001</code>). Cache read and write prices apply to
+            the cached part of the prompt; empty means the input price. Ollama and other local models cost $0 unless you price them here. Costs are estimates; your provider’s bill is what counts.
+          </HelpTip>
+          {' '}
+          <a href="/settings#ai-caps" className="whitespace-nowrap text-t2 underline-offset-2 hover:underline">Usage caps are in AI caps ›</a>
         </p>
         {rows.length ? (
           <div className="overflow-x-auto">
@@ -209,59 +214,66 @@ export function AiPricesSettings() {
       </Card>
 
       <Card className="px-5 py-4">
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          <SectionLabel>Built-in prices</SectionLabel>
-          <span className="text-[12px] text-t3">List prices, USD per million tokens</span>
-          <div className="relative ml-auto">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-t3" />
-            <Input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter models" aria-label="Filter models" className="h-8 w-48 pl-8 text-[12px]" />
-          </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" aria-expanded={showBuiltIn} aria-controls="ai-builtin-prices" onClick={() => setShowBuiltIn((v) => !v)} className="flex min-h-8 items-center gap-1.5 text-[13px] font-semibold text-t1 max-md:min-h-11">
+            {showBuiltIn ? <ChevronDown className="size-4 text-t3" /> : <ChevronRight className="size-4 text-t3" />}
+            {showBuiltIn ? 'Hide built-in prices' : 'Show built-in prices'}
+            <span className="font-normal text-t3">({defaults.length})</span>
+          </button>
+          {showBuiltIn && (
+            <div className="relative ml-auto">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-t3" />
+              <Input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter models" aria-label="Filter models" className="h-8 w-48 pl-8 text-[12px]" />
+            </div>
+          )}
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[640px] border-collapse text-[13px]">
-            <thead>
-              <tr className="border-b border-hair text-left text-[12px] text-t2">
-                <th className="h-8 pr-2 font-semibold">Provider</th>
-                <th className="h-8 pr-2 font-semibold">Model</th>
-                <th className="h-8 pr-2 text-right font-semibold">Input</th>
-                <th className="h-8 pr-2 text-right font-semibold">Output</th>
-                <th className="h-8 pr-2 text-right font-semibold">Cache read</th>
-                <th className="h-8 pr-2 text-right font-semibold">Cache write</th>
-                <th className="w-24" />
-              </tr>
-            </thead>
-            <tbody>
-              {defaults.map((price) => {
-                const replaced = overridden.has(`${price.provider}/${price.model.toLowerCase()}`);
-                return (
-                  <tr key={`${price.provider}/${price.model}`} className="border-b border-hair last:border-b-0">
-                    <td className="py-1.5 pr-2 text-t2">{price.provider}</td>
-                    <td className={`py-1.5 pr-2 font-mono text-[12px] ${replaced ? 'text-t3 line-through' : 'text-t1'}`}>{price.model}</td>
-                    <td className="py-1.5 pr-2 text-right font-mono text-[12px] tabular-nums text-t2">{usd(price.input)}</td>
-                    <td className="py-1.5 pr-2 text-right font-mono text-[12px] tabular-nums text-t2">{usd(price.output)}</td>
-                    <td className="py-1.5 pr-2 text-right font-mono text-[12px] tabular-nums text-t2">{price.cacheRead === undefined ? '—' : usd(price.cacheRead)}</td>
-                    <td className="py-1.5 pr-2 text-right font-mono text-[12px] tabular-nums text-t2">{price.cacheWrite === undefined ? '—' : usd(price.cacheWrite)}</td>
-                    <td className="py-1 text-right">
-                      {admin && !replaced && (
-                        <Button size="sm" variant="ghost" onClick={() => add(price)} title="Copy into your prices to change it">
-                          Override
-                        </Button>
-                      )}
-                      {replaced && <span className="text-[11px] text-t3">overridden</span>}
+        {showBuiltIn && (
+          <div id="ai-builtin-prices" className="mt-3 overflow-x-auto">
+            <table className="w-full min-w-[640px] border-collapse text-[13px]">
+              <thead>
+                <tr className="border-b border-hair text-left text-[12px] text-t2">
+                  <th className="h-8 pr-2 font-semibold">Provider</th>
+                  <th className="h-8 pr-2 font-semibold">Model</th>
+                  <th className="h-8 pr-2 text-right font-semibold">Input</th>
+                  <th className="h-8 pr-2 text-right font-semibold">Output</th>
+                  <th className="h-8 pr-2 text-right font-semibold">Cache read</th>
+                  <th className="h-8 pr-2 text-right font-semibold">Cache write</th>
+                  <th className="w-24" />
+                </tr>
+              </thead>
+              <tbody>
+                {defaults.map((price) => {
+                  const replaced = overridden.has(`${price.provider}/${price.model.toLowerCase()}`);
+                  return (
+                    <tr key={`${price.provider}/${price.model}`} className="border-b border-hair last:border-b-0">
+                      <td className="py-1.5 pr-2 text-t2">{price.provider}</td>
+                      <td className={`py-1.5 pr-2 font-mono text-[12px] ${replaced ? 'text-t3 line-through' : 'text-t1'}`}>{price.model}</td>
+                      <td className="py-1.5 pr-2 text-right font-mono text-[12px] tabular-nums text-t2">{usd(price.input)}</td>
+                      <td className="py-1.5 pr-2 text-right font-mono text-[12px] tabular-nums text-t2">{usd(price.output)}</td>
+                      <td className="py-1.5 pr-2 text-right font-mono text-[12px] tabular-nums text-t2">{price.cacheRead === undefined ? '—' : usd(price.cacheRead)}</td>
+                      <td className="py-1.5 pr-2 text-right font-mono text-[12px] tabular-nums text-t2">{price.cacheWrite === undefined ? '—' : usd(price.cacheWrite)}</td>
+                      <td className="py-1 text-right">
+                        {admin && !replaced && (
+                          <Button size="sm" variant="ghost" onClick={() => add(price)} title="Copy into your prices to change it">
+                            Override
+                          </Button>
+                        )}
+                        {replaced && <span className="text-[11px] text-t3">overridden</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {!defaults.length && (
+                  <tr>
+                    <td colSpan={7} className="py-4 text-center text-[12px] text-t3">
+                      No built-in price matches “{filter}”.
                     </td>
                   </tr>
-                );
-              })}
-              {!defaults.length && (
-                <tr>
-                  <td colSpan={7} className="py-4 text-center text-[12px] text-t3">
-                    No built-in price matches “{filter}”.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
     </div>
   );

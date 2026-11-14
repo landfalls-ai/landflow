@@ -1,7 +1,7 @@
 'use client';
 /**
  * The Brain workbench's side bar (docs/second-brain.md#the-brain-page), one view per activity:
- * - Explorer: open editors, the repository tree (folders per type, people per department; each file with its work this
+ * - Explorer: the repository tree (folders per type, people per department; each file with its work this
  *   week, an S when two or more teams shared it, and amber when it needs a person), the open file's outline and its
  *   backlinks;
  * - Search: pages by name, description, owner and team, the brain's facts, and the latest work;
@@ -9,12 +9,12 @@
  * One click opens a file in the preview tab (replaced by the next one), a double click keeps it open.
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ChevronDown, ChevronRight, ChevronsDownUp, FileText, Folder, FolderOpen, GitCommitHorizontal, Link2, ListTree, RefreshCw, Search as SearchIcon, Settings2, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, ChevronsDownUp, FileText, Folder, FolderOpen, GitCommitHorizontal, Link2, ListTree, RefreshCw, Search as SearchIcon } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
 import { cn } from '@/lib/utils';
 import type { BrainFact } from '@/lib/shared/brain';
-import { byDay, SETTINGS, type BrainTree, type FileRef, type OutlineItem, type TreeFile, type TreeNode } from '@/lib/shared/brain-files';
+import { byDay, type BrainTree, type FileRef, type OutlineItem, type TreeFile, type TreeNode } from '@/lib/shared/brain-files';
 import type { WikiHome, WikiPage } from '@/lib/shared/brain-wiki';
 import { kindLabel, sourceLabel, TYPE_ICON } from './parts';
 
@@ -91,25 +91,21 @@ function Row({ depth, active, onClick, onDoubleClick, title, children }: { depth
 export function ExplorerView({
   tree,
   active,
-  openTabs,
   outline,
   page,
   opener,
-  onCloseTab,
   onOutline,
   onRefresh,
 }: {
   tree: BrainTree;
   active?: FileRef;
-  openTabs: Array<{ ref: FileRef; pinned: boolean }>;
   outline: OutlineItem[];
   page?: WikiPage;
   opener: Opener;
-  onCloseTab: (ref: FileRef) => void;
   onOutline: (item: OutlineItem) => void;
   onRefresh: () => void;
 }) {
-  const [panes, setPanes] = useState({ editors: true, files: true, outline: true, backlinks: true });
+  const [panes, setPanes] = useState({ files: true, outline: true, backlinks: true });
   const toggle = (key: keyof typeof panes) => setPanes((p) => ({ ...p, [key]: !p[key] }));
   const allFolders = useMemo(() => folderPaths(tree.nodes), [tree]);
   const [closed, setClosed] = useState<Set<string>>(new Set());
@@ -151,24 +147,6 @@ export function ExplorerView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <Pane title="Open editors" open={panes.editors} onToggle={() => toggle('editors')}>
-        {openTabs.map((t) => {
-          const file = tree.files.get(t.ref);
-          return (
-            <div key={t.ref} className="group/tab relative">
-              <Row depth={0} active={t.ref === active} onClick={() => opener.open(t.ref, { pin: t.pinned })}>
-                <span className="w-3.5 shrink-0" />
-                {t.ref === SETTINGS ? <Settings2 className="size-3.5 shrink-0 text-t3" /> : <FileIcon file={file} />}
-                <span className={cn('truncate', !t.pinned && 'italic')}>{file?.name ?? (t.ref === SETTINGS ? 'What Landflow knows' : t.ref)}</span>
-                <span className="ml-1 truncate text-[11px] text-t3">{tree.paths.get(t.ref)?.slice(0, -1).join('/')}</span>
-              </Row>
-              <button type="button" onClick={() => onCloseTab(t.ref)} className="absolute right-1.5 top-1 hidden size-4 place-items-center rounded text-t3 hover:bg-acdim hover:text-t1 group-hover/tab:grid" aria-label={`Close ${file?.name ?? t.ref}`}>
-                <X className="size-3" />
-              </button>
-            </div>
-          );
-        })}
-      </Pane>
       <Pane
         title="Brain"
         open={panes.files}

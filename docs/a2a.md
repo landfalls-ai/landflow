@@ -503,7 +503,7 @@ every Claude Code agent Landflow deploys gets Landflow's own mod, **landflow-har
   | `upload` | `nc`, `socat`, `telnet`; `curl`/`wget` sending a file (`-T`, `-d @file`, `-F x=@file`) |
   | `write-outside-workspace` | Write, Edit, MultiEdit and NotebookEdit outside the working directory, `/tmp` and `~/.claude` (the same idea as Claude Code 2.1.314's `permissions.blockWritesOutsideWorkingDirectories`) |
 
-  **The guard per agent.** The Deploy tab's kagent card picks one of three for a Claude Code agent (`guard` on
+  **The guard per agent.** The kagent card (Abilities → Deploy) picks one of three for a Claude Code agent (`guard` on
   `PUT /api/agents/:id/kagent`, kept across redeploys and publishes):
 
   | Guard | What it does |
@@ -566,7 +566,7 @@ stops posting there), and uses what it reported:
   → AI prices; Ollama's are free unless priced there). A team member's usage counts against its budget as real usage,
   not an estimate;
 - the Team tab's card and the actor sheet show each member's model calls, tokens in (and cached), out, cost and model;
-  the Report tab has **What each agent used** and the run's cost next to its tokens;
+  the report in the Story tab has **What each agent used** and the run's cost next to its tokens;
 - each model request is a `model` span under the member's request in Run Trace ([run-trace.md](run-trace.md#who-writes-it)),
   with its tokens, cost, model and time; the request keeps the totals;
 - each tool call the guardrails stopped is a **Guardrail** check on the request (warn: "Stopped Bash: git push origin

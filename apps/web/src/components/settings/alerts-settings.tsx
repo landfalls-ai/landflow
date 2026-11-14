@@ -38,6 +38,7 @@ import { Card } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
+import { HelpTip } from '@/components/ui/help-tip';
 import { FieldLabel, Input, SectionLabel, Select, Switch } from '@/components/ui/inputs';
 
 const KIND_ICON: Record<AlertChannelKind, typeof Mail> = { email: Mail, slack: MessageSquare, webhook: Webhook, telegram: Send, teams: Users, discord: MessageCircle };
@@ -498,7 +499,7 @@ function RuleEditor({
             Alert when usage reaches
             <Input value={threshold} onChange={(e) => setThreshold(e.target.value)} inputMode="decimal" className="h-7 w-16 text-center" aria-label="Threshold percent" />% of any cap, once per day or month
           </div>
-          <p className="text-[11px] text-t3">Caps watched: a workflow’s daily limits (Workflow settings), an agent’s daily and monthly limits, and the caps per credential and per user (Settings → AI prices). The alert goes out before the cap stops runs.</p>
+          <p className="text-[11px] text-t3">Caps watched: a workflow’s daily limits (Workflow settings), an agent’s daily and monthly limits, and the caps per credential and per user (Settings → AI caps). The alert goes out before the cap stops runs.</p>
         </div>
       )}
       {kind === 'evaluation' && (
@@ -689,8 +690,10 @@ export function AlertsSettings() {
   return (
     <div className="space-y-6">
       <p className="text-[13px] text-t2">
-        Hear about failed runs without building an error workflow: pick where alerts go, then which workflows and events send them. Each alert names the workflow, the failing node and the
-        error, and links to the execution. A workflow’s own Settings has a quick <span className="font-semibold text-t1">Notify on failure</span> switch too.
+        Hear about failed runs without building an error workflow: pick where alerts go, then which workflows and events send them.
+        <HelpTip label="What an alert says" className="ml-1 align-middle">
+          Each alert names the workflow, the failing node and the error, and links to the execution. A workflow’s own Settings has a quick <span className="font-semibold text-t1">Notify on failure</span> switch too.
+        </HelpTip>
         {!admin && ' Only admins can change alerts.'}
       </p>
 

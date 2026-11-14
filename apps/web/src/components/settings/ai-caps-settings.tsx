@@ -1,6 +1,6 @@
 'use client';
 /**
- * Settings → AI prices → AI usage caps: limits per model credential and per user (who started the run), per day or month,
+ * Settings → AI caps: limits per model credential and per user (who started the run), per day or month,
  * in tokens or US dollars. A call over a cap stops with a clear error, like the caps in workflow and agent settings; an
  * alert rule of kind “AI cost” (Settings → Alerts) warns before one is reached. A user’s cap counts the runs that user
  * started (the editor’s Execute, the API, chat); runs started by a schedule or webhook have no user.
@@ -16,6 +16,7 @@ import { useViewer } from '@/components/auth/viewer';
 import { useCredentials } from '@/components/credentials/use-credentials';
 import { Card } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
+import { HelpTip } from '@/components/ui/help-tip';
 import { Input, SectionLabel, Select } from '@/components/ui/inputs';
 
 /** Credential types that call models. */
@@ -130,9 +131,11 @@ export function AiCapsSettings() {
         <SectionLabel>AI usage caps</SectionLabel>
       </div>
       <p className="mb-3 text-[12px] leading-relaxed text-t3">
-        Limits per model credential (every call made with it, by any workflow or agent) and per user (the runs that user started: Execute in the editor, the API, chat). Per day or month, in tokens or
-        dollars; empty means no cap. A call over a cap stops with a clear error, like the limits in workflow and agent settings. Add an <span className="font-semibold text-t2">AI cost</span> rule in
-        Settings → Alerts to be warned at 80% of a cap.
+        Limits per model credential and per user, per day or month; empty means no cap.
+        <HelpTip label="How caps work" className="ml-1 align-middle">
+          A credential cap counts every call made with it, by any workflow or agent. A user cap counts the runs that user started (Execute in the editor, the API, chat). A call over a cap stops with a clear error, like the
+          limits in workflow and agent settings. Add an <span className="font-semibold text-t2">AI cost</span> rule in Settings → Alerts to be warned at 80% of a cap.
+        </HelpTip>
       </p>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[820px] border-collapse text-[13px]">

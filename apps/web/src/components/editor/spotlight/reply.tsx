@@ -1,11 +1,12 @@
 'use client';
 /** One reply of the timeline: its text, changes, runs, needs and buttons (docs/assistant.md#the-spotlight-panel). */
 import { useState } from 'react';
+import { cn } from '@/lib/utils';
 import { Bot, Check, CircleCheck, CircleStop, CircleX, ExternalLink, Hand, Loader2, Play, Rocket, Sparkles } from 'lucide-react';
 import { Button } from '../../ui/button';
-import { useAutonomous } from '../autonomous';
+import { afterReply, useAutonomous } from '../autonomous';
 import { LiveSteps, useLive } from '../building';
-import { applyChanges, undos, useAssistant, type AgentProgress, type ChatItem, type Need, type Outcome, type ReplyAction, type TestRun } from '../assistant';
+import { applyChanges, prefillSpotlight, undos, useAssistant, type AgentProgress, type ChatItem, type Need, type Outcome, type ReplyAction, type TestRun } from '../assistant';
 import { useEditor } from '../store';
 import { ActivityTrace } from '../../ui/activity-trace';
 import { StatusSwap, StreamingText } from '../../ui/chat-motion';
@@ -16,6 +17,9 @@ import { agentStep, runRow } from '../timeline';
 import { ProposalCard, ProposalRow } from './proposal';
 import { provisionalText } from '@/lib/shared/leaked-markup';
 import { swapState } from './swap';
+import { OPEN_CAPS_HREF, errorActions, type ErrorAction } from './states';
+import { can } from '@/lib/shared/auth';
+import { useViewer } from '../../auth/viewer';
 
 export type Reply = Extract<ChatItem, { role: 'assistant' }>;
 
@@ -142,6 +146,8 @@ function RunLine({ run }: { run: TestRun }) {
   const full = (run.summary ?? '').replace(/^failed at “[^”]+”:?\s*/, '');
   const cut = run.state === 'failed' && full.length > row.reason.length + 1;
   const [more, setMore] = useState(false);
+  // The newest failed run while nothing is working: the person can open the node or ask Spotlight to fix it.
+  const failedHere = useAssistant((s) => !s.pending && !s.testing && s.items.flatMap((i) => (i.role === 'assistant' ? i.parts.flatMap((p) => (p.kind === 'run' ? [p.run] : [])) : [])).at(-1) === run) && run.state === 'failed';
   const body = (
     <>
       {run.state === 'running' ? (
@@ -178,6 +184,20 @@ function RunLine({ run }: { run: TestRun }) {
         )}
       </div>
       {more && <p className="mt-1 pl-5 text-[12px] leading-snug text-t2 [overflow-wrap:anywhere]">{full}</p>}
+      {failedHere && at && (
+        <div className="mt-1 flex flex-wrap gap-1 pl-5">
+          {errorActions({ message: full || row.reason, node: { id: at, name: `“${at}”` } }, { admin: false, canRetry: false }).map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              onClick={() => (a.id === 'open-node' ? openNodeNamed(at) : a.id === 'fix-node' && prefillSpotlight(a.prefill))}
+              className={cn('min-h-7 rounded-full border px-2.5 text-[11.5px] font-semibold max-md:min-h-11', a.id === 'fix-node' ? 'border-ac text-ac hover:bg-acdim' : 'border-hair text-t2 hover:bg-acdim')}
+            >
+              {a.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -258,14 +278,31 @@ function ActionView({ itemId, action }: { itemId: string; action: ReplyAction })
   );
 }
 
-/** Try again after a failed reply: the same message, sent again in its place. */
-function retryReply(replyId: string) {
+/** Try again after a failed reply: the same message, sent again in its place; `resume` carries on from the step it stopped at. */
+function retryReply(replyId: string, resume?: { checkpoint: string }) {
   const { items, pending } = useAssistant.getState();
   const at = items.findIndex((i) => i.id === replyId);
   const asked = items[at - 1];
   if (pending || at < 1 || asked?.role !== 'user') return;
   useAssistant.setState({ items: items.filter((_, i) => i !== at && i !== at - 1) });
-  void useAssistant.getState().send(asked.text, useAutonomous.getState().on ? { session: 'auto' } : {});
+  void useAssistant
+    .getState()
+    // Continue keeps what the failed reply had proposed: they are not in `pending` (the reply left the items), the server holds them.
+    .send(asked.text, { ...(useAutonomous.getState().on && { session: 'auto' as const }), ...(resume && { resume, carry: items[at] }) })
+    .then(() => afterReply(asked.text));
+}
+
+/** The error under a failed reply, with the buttons its kind offers (`errorActions`). */
+function ReplyError({ item, canRetry }: { item: Reply; canRetry: boolean }) {
+  const admin = can(useViewer(), 'settings:manage');
+  const list = errorActions({ message: item.error ?? '', kind: item.errorKind, step: item.errorStep, checkpoint: item.checkpoint }, { admin, canRetry });
+  const run = (a: ErrorAction) => {
+    if (a.id === 'retry') retryReply(item.id);
+    else if (a.id === 'continue' && item.checkpoint) retryReply(item.id, { checkpoint: item.checkpoint });
+    else if (a.id === 'open-caps') window.open(OPEN_CAPS_HREF, '_blank', 'noopener');
+  };
+  const extra = list.filter((a) => a.id !== 'retry').map((a) => ({ label: a.label, primary: 'primary' in a && a.primary, onClick: () => run(a) }));
+  return <ChatError message={item.error!} onRetry={list.some((a) => a.id === 'retry') ? () => run({ id: 'retry', label: 'Try again' }) : undefined} actions={extra} />;
 }
 
 /**
@@ -280,7 +317,10 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
   const pending = item.parts.flatMap((p) => (p.kind === 'proposal' && !p.proposal.state ? [p.proposal] : []));
   const lastTool = item.parts.findLast((p) => p.kind === 'tool');
   const applyAll = () => {
-    if (!applyChanges(pending.map((p) => ({ ops: p.ops, kind: 'proposal' as const })), `Applied ${pending.length} changes`)) return;
+    const onApplied = ({ undo }: { undo: () => void }) => {
+      for (const p of pending) undos.set(p.id, undo);
+    };
+    if (!applyChanges(pending.map((p) => ({ ops: p.ops, kind: 'proposal' as const })), `Applied ${pending.length} changes`, { onApplied })) return;
     for (const p of pending) useAssistant.getState().setProposalState(item.id, p.id, 'applied');
   };
   const isLast = useAssistant((s) => s.items.at(-1)?.id === item.id);
@@ -347,7 +387,7 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
         ) : null,
       )}
       {!streamed && steps && firstProposal < 0 && <LiveSteps live={steps} />}
-      {item.error && <ChatError message={item.error} onRetry={isLast && !item.testId && !live && !spotlightBusy ? () => retryReply(item.id) : undefined} />}
+      {item.error && <ReplyError item={item} canRetry={isLast && !item.testId && !live && !spotlightBusy} />}
       {!live && !asRows && pending.length > 1 && (
         <Button size="sm" variant="outline" onClick={applyAll}>
           <Check className="size-3.5" /> Apply all ({pending.length})
