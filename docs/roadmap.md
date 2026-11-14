@@ -892,6 +892,15 @@ agents on the roster ([agents.md](agents.md#the-roster)).
 - **Tests**: `agent-workspace.test.ts` (8: faces, avatars, teams, summaries, templates) and `agent-architect.test.ts`
   (13: drafts, the chat with a scripted model, missing tools, marketplace agents), and a `brain.test.ts` case for the
   Missing tool detector and its plugin sketch.
+- **Plainer agents list and persona (B25, backbone wave 4; P-ag-1 to P-ag-3, P-ag-8)**: the persona strip only with no
+  agents, filter chips with no agents hidden (one row), cards with a name, description and status, **Import JSON** inside
+  New agent as **From a file**, one **What it does** field with the card text folded, and the system prompt behind **View
+  prompt**. Team cards follow the same rule.
+- **Agent detail in three tabs (B26, backbone wave 4; P-ag-4 to P-ag-7, P-ag-9)**: Persona, Abilities, Activity; the
+  layers are the Abilities navigation (rows that open their card in place, router, cache and tool access under
+  Advanced); one Add capability and one Add trigger menu; the kagent card only with a kagent cluster credential; the
+  publish state in the header button alone. Old `?tab=` links map to the new places
+  ([agents](agents.md#building-an-agent)).
 - What remains:
   - exporting agents as Claude Code plugins (`agents/<name>.md`, `skills/<name>/SKILL.md`, `.claude-plugin/plugin.json`
     and a `marketplace.json`), so they can be placed in a marketplace as well as installed from one;
@@ -969,11 +978,6 @@ approved plan:
 - **Quieter run screens (B21, backbone wave 3; P-trace-1 to P-trace-5, X13 for runs)**: tabs only with content (Story and
   Trace always, Team and Artifacts when they have something), the Report merged into the Story as a summary, one status
   line, no time slider on a short or single-participant run, Debug access in the header's ⋯ without tool names.
-- **Plainer agents list and persona (B25, backbone wave 4; P-ag-1 to P-ag-3, P-ag-8)**: the persona strip only with no
-  agents, filter chips with no agents hidden (one row), cards with a name, description and status, **Import JSON** inside
-  New agent as **From a file**, one **What it does** field with the card text folded, and the system prompt behind **View
-  prompt**. Team cards follow the same rule.
-- **Agent detail in three tabs (B26, backbone wave 4; P-ag-4 to P-ag-7, P-ag-9)**: Persona, Abilities, Activity; the layers are the Abilities navigation (rows that open their card in place, router, cache and tool access under Advanced); one Add capability and one Add trigger menu; the kagent card only with a kagent cluster credential; the publish state in the header button alone. Old `?tab=` links map to the new places ([agents](agents.md#building-an-agent)).
 - **The journal** (`execution_events`, migration 2000): actors, spans, messages, artifacts and checks per execution,
   written by the runner's translator, Landflow agent sessions, the A2A Agent node (every remote step kept, failed ones
   marked failed, `isError` results included), approvals (web, Slack, email) and the Run report gate. Redacted, cut to
@@ -1750,6 +1754,24 @@ The wave 3 review notes were fixed in wave 4's carryover where they were contain
   do; the menu follows the toolbar, so adding it back is the person's call); the toolbar's Run button has no disabled
   look while a run is going on (a click does nothing); the node toolbar's ⋯ menu stays where it opened when the canvas
   pans under it.
+
+## Company backbone: left open from the wave 4 reviews (2026-11-15)
+
+The wave 4 review notes were fixed in wave 5's carryover where they were contained; these wait, each with its reason:
+
+- **Auto-sent events queued before the admin's rule**: the landflow-brain mod's mode `auto` queues an event at session
+  end; if the admin then forbids sending on its own, an event already queued is still flushed later. Dropping it needs
+  the queue to re-check the policy at flush (or the server to refuse it), a change to the queue's contract.
+- **Review resets a widened item**: `/brain visibility <id> team` on a held item, then a plain Send in `/brain review`,
+  sends it private (the safe direction, and what the prompt says). Showing the current visibility in the review question
+  is a wording change in `register.ts`, which B38 owns in wave 6.
+- **No test renders a Teams card**: the card (name, goal, status) is inline in `TeamsView` behind `useRouter`; testing
+  it needs it extracted into a component of its own.
+- **Live checks still open from wave 4**: Spotlight's continue-from-step with a real model stopped mid-run; importing an
+  agent JSON through **From a file**, the zero-agent persona strip and a Teams card with real data; a real kagent deploy
+  from Abilities → Deploy, and dark mode and Reduce motion on the new Abilities rows; the Brain with pages and Insights
+  with cache or router traffic in a browser; and fresh screenshots for B24, B26, B27 and B28 at 1440×900 and 390×844
+  (the review's were taken before their fix commits). They need a host and a browser, which the carryover does not run.
 
 ## Runs: one list (B20, 2026-11-14)
 
