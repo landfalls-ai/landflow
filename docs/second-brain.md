@@ -45,7 +45,7 @@ attributes.
 | Kind | Recorded where |
 |---|---|
 | `run.finished`, `node.failed`, `node.slow` | `store.saveExecution`: one per run; one per failed node run (with the signature); one per node run that took 2 s or more, or half of a run of 1 s or more |
-| `ai.call` | the `ai_usage` writer: provider, model, operation, tokens and cost |
+| `ai.call` | the `ai_usage` writer: provider, model, operation, tokens and cost. `attrs`: `provider`, `model`, `operation`, `input` (the whole prompt, cached tokens included), `output`, and `cacheRead` and `cacheWrite`, the parts of `input` the provider read from or wrote to its prompt cache (0 when it reports none); `cost` already prices them at the model's cache prices |
 | `workflow.saved`, `workflow.published`, `credential.used`, `plugin.installed` | the audit writer (create, update, import; publish, rollback; credential use; marketplace install) |
 | `agent.session`, `feedback` | the bus (an agent run finished) and chat feedback (thumbs up or down) |
 | `spotlight.asked`, `assistant.applied`, `assistant.dismissed` | the assistant's chat and feedback routes; the [Agent architect](agents.md#agent-architect)'s asks are `spotlight.asked` too, with `architect: true` and `proposals` (the drafts it made) |
