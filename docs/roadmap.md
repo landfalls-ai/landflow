@@ -966,6 +966,9 @@ Code runtime that write the plugin in this repository and open a draft pull requ
 Watching and reviewing what a run did, for any flow, phone first ([run-trace.md](run-trace.md)). Phases 1 to 3 of the
 approved plan:
 
+- **Quieter run screens (B21, backbone wave 3; P-trace-1 to P-trace-5, X13 for runs)**: tabs only with content (Story and
+  Trace always, Team and Artifacts when they have something), the Report merged into the Story as a summary, one status
+  line, no time slider on a short or single-participant run, Debug access in the header's ⋯ without tool names.
 - **The journal** (`execution_events`, migration 2000): actors, spans, messages, artifacts and checks per execution,
   written by the runner's translator, Landflow agent sessions, the A2A Agent node (every remote step kept, failed ones
   marked failed, `isError` results included), approvals (web, Slack, email) and the Run report gate. Redacted, cut to

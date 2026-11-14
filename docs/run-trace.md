@@ -82,7 +82,7 @@ them with the response (`ExecuteResponse.records`, [protocol.md](protocol.md)) o
 way the engine emits a `node.record` event and the journal keeps it in the node's span. The GitHub plugin reports the
 pull requests, issues and branches it creates.
 
-Run ids, trace ids, model and token lines and **Debug access** appear only with **Show developer details** on (user menu; [Developer details](ui-review.md#developer-details)).
+Run ids, trace ids, and model and token lines appear only with **Show developer details** on (user menu; [Developer details](ui-review.md#developer-details)).
 
 ## The screens
 
@@ -108,6 +108,17 @@ in its workflow's Executions tab), and the rail marks **Runs** while it is open.
   is journaled for the tool call, for the member's request and for the run, and the Story keeps the request's (who waits,
   for what), while **Needs you** keeps the run's (its buttons answer the execution); `waitEchoes` in
   `lib/shared/run-trace-model.ts` picks them. A team run opens with its [headlines](#headlines).
+- **Tabs only with something in them.** **Story** and **Trace** are always there. **Team** shows when more than one
+  person or agent took part, **Artifacts** when the run made something (files agents wrote count), and a run with
+  nothing else (a short single-flow run) has just the two, with no tab bar to speak of. A saved or linked tab that is
+  not shown falls back to the Story. `visibleTabs()` in `components/run-trace/run-trace-tabs.ts`.
+- **The time slider** shows only when the run took 5 seconds or more and more than one took part
+  (`showScrubber()`); otherwise there is nothing to replay.
+- **One status line**: the header says it once, as *Succeeded · 9 ms · 1d ago*. A run going on or waiting also has the
+  timeline card above the tabs; a finished run's line and **steps** are in the Story, which no longer ends with a second
+  status line.
+- **Debug access** is in the header's **⋯** menu. Its dialog says what the key can read in plain words (*See how the
+  run went*, *See every step of the run*); the tool names behind them show only with **Show developer details** on.
 - **Trace**: the span tree with timing bars, down to a remote agent's single tool calls. A request shows why it was
   asked.
 - **Team**: who called whom, with ×n counts (laid out top to bottom, no sideways scrolling), plus a card per actor with
@@ -118,11 +129,14 @@ in its workflow's Executions tab), and the rail marks **Runs** while it is open.
   way where a span reports them: a Claude Code agent on kagent reports its real usage through the landflow-harness mod
   ([a2a.md](a2a.md#the-landflow-harness-mod)), so its card says "4 model calls · 52,310 in (48,000 cached) · 1,204 out
   · $0.0213 · claude-sonnet-5-5" and its guardrail stops are checks on its request.
-- **Report**: the run report, computed live with the run's profile, plus the counts (tokens with the run's cost when
-  some was priced), failed steps, who called whom, each request's result, what each agent used (time, model calls,
-  tokens, cost, model with its provider's logo), cycles, waits and artifacts. **Checked** can pick another profile to look at the run through
-  (a flow without one through Software delivery, say) without changing the flow; the header follows it. **Copy as Markdown** copies it. When a Run report node saved one,
-  **Saved report** opens it.
+- **The summary** at the top of the Story (the Run report, which used to be a tab): what was reported, **Checked**
+  (the run report, computed live with the run's profile) and tiles for run time, who took part, requests, tokens (with
+  the run's cost when some was priced), failed steps and artifacts. A tile that would read 0 is left out, and **What
+  should happen next** shows only when the report found something to do. **Checked** can pick another profile to look at
+  the run through (a flow without one through Software delivery, say) without changing the flow; the header follows it.
+  **Copy as Markdown** copies it; when a Run report node saved one, **Saved report** opens it. **The report in full**
+  at the bottom of the Story folds the rest: failed steps, checks, claims, problems, who called whom, each request's
+  result, what each agent used, cycles and waits; it is not drawn when none of them has anything.
 - **Artifacts**: what the run made (below). Code changes first when agents changed files, then documents, links and data.
 - **The detail sheet**: tap anything to open it. It is a bottom sheet on a phone and a side panel on a wide screen,
   showing the actor and caller, times, input, output or error, and the artifacts and checks inside.
@@ -135,7 +149,7 @@ in its workflow's Executions tab), and the rail marks **Runs** while it is open.
 **Executions** (the list across workflows) starts with **Needs you** across every run you can see, and a card for each
 running execution showing who is working on what.
 
-`/runs/<executionId>?tab=team&member=<title>` opens a tab (`story`, `trace`, `team`, `artifacts`, `report`) and, once
+`/runs/<executionId>?tab=team&member=<title>` opens a tab (`story`, `trace`, `team`, `artifacts`; `report` opens the Story, where the report is now) and, once
 the run loads, that member's sheet. With `tab=story&turn=<n>` instead it scrolls the Story to the member's `n`th turn
 and marks it (a ring and a flash): a team node's ribbon links each turn this way (`turnEntryKey` in
 `shared/run-headlines.ts`).
@@ -175,8 +189,8 @@ artifacts, delivered ones first, then pull requests, reviews, published notes, c
 as "Answered"), green when done, amber with what it asks when it waits for you, red with the error when it failed. A tap
 on the result opens it (a pull request on GitHub); the rest of the row opens the run.
 
-- **Run Trace**: once a run is over, the [timeline](#a-run-as-a-timeline) above the tabs folds into its line (**Show the
-  steps** opens it again; a tap on the line opens the Story).
+- **Run Trace**: once a run is over, the [timeline](#a-run-as-a-timeline) card is not drawn above the tabs: the Story has
+  the steps.
 - **Home**: the recent runs are lines; runs going on show as timelines under Running now.
 - **The team page**: the team's last run as a line (its timeline while it runs); **the agent page**: the last three runs
   the agent took part in, at the top of its Sessions tab.
@@ -382,7 +396,7 @@ report's facts only. The report's sections are the same for every flow:
 - each actor;
 - artifacts;
 - files written: every file an agent's Write or Edit step changed, with who and how many lines, as the Artifacts tab's
-  code changes show them (the Report tab counts them as artifacts too);
+  code changes show them (the Story's summary counts them as artifacts too);
 - a timeline;
 - what should happen next.
 

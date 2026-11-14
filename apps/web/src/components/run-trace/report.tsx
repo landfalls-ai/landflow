@@ -1,5 +1,5 @@
 'use client';
-/** The Report tab: the generic run report, plain facts from the model. */
+/** The run report inside the Story: a summary on top (StorySummary) and the facts behind it, folded (ReportDetails). */
 import { DevOnly } from '@/lib/client/developer-details';
 import type { ReactNode } from 'react';
 import { Copy } from 'lucide-react';
@@ -7,14 +7,14 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { RUN_PROFILES } from '@/lib/shared/run-profiles';
 import { checksLine, type RunReport } from '@/lib/shared/run-report';
-import { formatCost } from '@/lib/shared/ai-usage';
+import type { RunChanges } from '@/lib/shared/run-changes';
 import { cut, edgeParts, fmtMs, preview, resultOf, spendLine, textOf, type RunModel } from '@/lib/shared/run-trace-model';
-import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
 import { Select } from '../ui/inputs';
 import { ModelMark } from './connections';
-import { Card, SectionTitle, Tap, ToneBadge, who } from './parts';
+import { Card, SectionTitle, Tap, who } from './parts';
+import { nextSteps, summaryTiles, participantsOf } from './run-trace-tabs';
 import type { Open } from './sheet';
 
 function List({ children }: { children: ReactNode }) {
@@ -52,8 +52,7 @@ function Item({ onOpen, mark, children, tone }: { onOpen?: () => void; mark: str
 const Small = ({ children }: { children: ReactNode }) => <small className="block text-[12px] text-t3">{children}</small>;
 
 /** One sentence per fact, no interpretation. */
-/** Who took part: everyone but models and the flow itself. */
-const teamOf = (model: RunModel) => model.actors.filter((a) => a.actor.type !== 'model' && a.actor.type !== 'system');
+const teamOf = participantsOf;
 
 /** The name of the profile the run started with. */
 function resolvedName(model: RunModel): string {
@@ -61,12 +60,12 @@ function resolvedName(model: RunModel): string {
   return typeof setting === 'string' && setting in RUN_PROFILES ? RUN_PROFILES[setting as keyof typeof RUN_PROFILES].name : setting && typeof setting === 'object' ? 'custom' : RUN_PROFILES.generic.name;
 }
 
-function summary(model: RunModel, report: RunReport): string {
-  const team = teamOf(model);
+/** Requests and failed steps in a sentence or two; nothing when there were none. */
+function summary(model: RunModel): string {
   const requests = model.order.filter((s) => s.kind === 'delegate' || s.kind === 'handoff');
   const results = requests.map((s) => resultOf(s)[0]);
   const count = (l: string) => results.filter((r) => r === l).length;
-  const parts = [`${team.length} took part${model.status === 'success' || model.status === 'error' ? `, over ${fmtMs(model.t1 - model.t0)}` : ''}.`];
+  const parts: string[] = [];
   if (requests.length)
     parts.push(
       `${requests.length} request${requests.length > 1 ? 's' : ''} to other agents: ${count('Delivered')} delivered, ${count('Answered')} answered, ${count('Left undelivered')} left undelivered.`,
@@ -75,52 +74,38 @@ function summary(model: RunModel, report: RunReport): string {
     parts.push(
       `${model.failedSteps.length} step${model.failedSteps.length > 1 ? 's' : ''} failed${model.failedSteps.some((f) => f.hidden) ? `, ${model.failedSteps.filter((f) => f.hidden).length} of them inside a call that still ended well` : ''}.`,
     );
-  const line = checksLine(report);
-  parts.push(`${line[0].toUpperCase()}${line.slice(1)}.`);
   return parts.join(' ');
 }
 
 /**
- * `report`: the Run report node's checks over the journal, live, with the profile the run started with (Settings → Run
- * Trace), or the one picked here (`profile`, `onProfile`: look at a run through another profile without changing the flow).
+ * The top of the Story: what was reported, how it was checked, the numbers that are not zero, a line in short, and what
+ * should happen next when there is something. `profile`, `onProfile`: look at a run through another profile without
+ * changing the flow (Settings → Run Trace sets the default).
  */
-export function Report({ model, report, open, profile, onProfile }: { model: RunModel; report?: RunReport; open: (o: Open) => void; profile?: string; onProfile?: (id: string | undefined) => void }) {
-  if (model.empty || !report) return <EmptyState compact title="Nothing recorded yet" hint="The report builds from the facts as the run goes." />;
+export function StorySummary({ model, report, changes, open, profile, onProfile }: { model: RunModel; report?: RunReport; changes?: RunChanges; open: (o: Open) => void; profile?: string; onProfile?: (id: string | undefined) => void }) {
+  if (model.empty || !report) return null;
   const { outcome } = model;
-  // Files agents wrote count as made, as the Artifacts tab shows them.
-  const made = model.artifacts.length + report.files.length;
   const saved = model.artifacts.filter((a) => a.artifact.kind === 'report').at(-1);
-  const recorded = (spanId: string | undefined, name: string) => model.checks.find((c) => c.spanId === spanId && c.check.name === name);
-  const openCheck = (spanId: string | undefined, name: string) => {
-    const item = recorded(spanId, name);
-    if (item) open({ kind: 'check', id: item.id });
-    else if (spanId) open({ kind: 'span', id: spanId });
-  };
   const copy = () => {
     navigator.clipboard.writeText(saved?.artifact.text ?? report.markdown).then(
       () => toast.success('Report copied as Markdown'),
       () => toast.error('Could not copy'),
     );
   };
-  const failedReport = report.checks.filter((c) => (c.status === 'fail' || c.status === 'warn') && c.resolution?.decision !== 'accepted');
-  const otherReport = report.checks.filter((c) => !failedReport.includes(c));
-  const requests = model.order.filter((s) => s.kind === 'delegate' || s.kind === 'handoff');
-  const waits = model.order.filter((s) => s.kind === 'wait');
-  const failedChecks = model.checks.filter((c) => c.check.status === 'fail' || c.check.status === 'warn');
-  const okChecks = model.checks.filter((c) => c.check.status === 'pass' || c.check.status === 'skip');
-  const team = teamOf(model);
-  const spenders = team.filter((a) => a.tokensIn + a.tokensOut > 0);
-  const name = (id: string) => model.actors.find((a) => a.actor.id === id)?.actor;
+  const next = nextSteps(report);
+  const tiles = summaryTiles(model, changes);
   return (
-    <div>
-      {model.live && <p className="mb-3 rounded-xl bg-warndim px-3 py-2 text-[12.5px] text-warn">The run is still going: this is the report so far.</p>}
+    <section aria-label="Summary" data-testid="story-summary" className="mb-3 flex flex-col gap-2">
+      {model.live && <p className="rounded-xl bg-warndim px-3 py-2 text-[12.5px] text-warn">The run is still going: this is the summary so far.</p>}
       <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
-        <Card>
-          <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Reported</div>
-          <div className="mt-1 line-clamp-4 text-[13.5px] text-t1">{outcome.reported ? preview(outcome.reported.text, 220) : 'Nothing reported'}</div>
-          {outcome.reported && <div className="mt-1 text-[12px] text-t3">by {outcome.reported.by}</div>}
-        </Card>
-        <Card tone={report.verdict === 'fail' ? 'bad' : report.verdict === 'warn' ? 'warn' : 'ok'}>
+        {outcome.reported && (
+          <Card>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Reported</div>
+            <div className="mt-1 line-clamp-4 text-[13.5px] text-t1">{preview(outcome.reported.text, 220)}</div>
+            <div className="mt-1 text-[12px] text-t3">by {outcome.reported.by}</div>
+          </Card>
+        )}
+        <Card tone={report.verdict === 'fail' ? 'bad' : report.verdict === 'warn' ? 'warn' : 'ok'} className={outcome.reported ? undefined : 'min-[420px]:col-span-2'}>
           <div className="flex items-center justify-between gap-2">
             <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Checked</span>
             {onProfile ? (
@@ -140,27 +125,73 @@ export function Report({ model, report, open, profile, onProfile }: { model: Run
           <div className="mt-1 text-[12px] text-t3">{checksLine(report)[0].toUpperCase() + checksLine(report).slice(1)}</div>
         </Card>
       </div>
-      <div className="mt-2 grid grid-cols-3 gap-2 text-center">
-        {[
-          [fmtMs(model.t1 - model.t0), 'run time'],
-          [String(team.length), 'taking part'],
-          [String(requests.length), 'requests'],
-          [(model.tokens.inputTokens + model.tokens.outputTokens).toLocaleString(), model.tokens.costUsd !== undefined ? `tokens · ${formatCost(model.tokens.costUsd)}` : 'tokens'],
-          [String(model.failedSteps.length), 'failed steps'],
-          [String(made), 'artifacts'],
-        ].map(([v, l]) => (
+      <div className={cn('grid gap-2 text-center', tiles.length === 1 ? 'grid-cols-1' : tiles.length === 2 ? 'grid-cols-2' : 'grid-cols-3')} data-testid="summary-tiles">
+        {tiles.map(([v, l]) => (
           <div key={l} className="rounded-xl border border-hair bg-sf px-1 py-2">
             <b className="block text-[15px] font-semibold text-t1">{v}</b>
             <span className="text-[11px] text-t3">{l}</span>
           </div>
         ))}
       </div>
+      {summary(model) && (
+        <Card>
+          <p className="text-[13.5px] leading-snug text-t1">{summary(model)}</p>
+        </Card>
+      )}
+      {next.length > 0 && (
+        <div data-testid="summary-next">
+          <SectionTitle>What should happen next</SectionTitle>
+          <List>
+            {next.map((n, i) => (
+              <Item key={i} mark="→">
+                {n}
+              </Item>
+            ))}
+          </List>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="outline" size="sm" onClick={copy}>
+          <Copy className="size-3.5" /> Copy as Markdown
+        </Button>
+        {saved && (
+          <Button variant="ghost" size="sm" onClick={() => open({ kind: 'artifact', id: saved.id })}>
+            Saved report · {saved.actor?.name ?? 'Run report'}
+          </Button>
+        )}
+      </div>
+    </section>
+  );
+}
 
-      <SectionTitle>In short · from the facts below</SectionTitle>
-      <Card>
-        <p className="text-[13.5px] leading-snug text-t1">{summary(model, report)}</p>
-      </Card>
+/** Whether the facts behind the summary have anything to show. */
+export function hasDetails(model: RunModel, report?: RunReport): boolean {
+  if (model.empty || !report) return false;
+  const kinds = new Set(model.order.map((s) => s.kind));
+  return (
+    model.failedSteps.length > 0 || report.checks.length > 0 || report.claims.length > 0 || report.problems.length > 0 || model.edges.length > 0 || model.cycles.length > 0 ||
+    kinds.has('delegate') || kinds.has('handoff') || kinds.has('wait') || participantsOf(model).some((a) => a.tokensIn + a.tokensOut > 0)
+  );
+}
 
+/** The facts behind the summary: failed steps, checks, claims, who called whom. Sections with nothing in them are not drawn. */
+export function ReportDetails({ model, report, open }: { model: RunModel; report?: RunReport; open: (o: Open) => void }) {
+  if (model.empty || !report) return null;
+  const recorded = (spanId: string | undefined, name: string) => model.checks.find((c) => c.spanId === spanId && c.check.name === name);
+  const openCheck = (spanId: string | undefined, name: string) => {
+    const item = recorded(spanId, name);
+    if (item) open({ kind: 'check', id: item.id });
+    else if (spanId) open({ kind: 'span', id: spanId });
+  };
+  const failedReport = report.checks.filter((c) => (c.status === 'fail' || c.status === 'warn') && c.resolution?.decision !== 'accepted');
+  const otherReport = report.checks.filter((c) => !failedReport.includes(c));
+  const requests = model.order.filter((s) => s.kind === 'delegate' || s.kind === 'handoff');
+  const waits = model.order.filter((s) => s.kind === 'wait');
+  const team = teamOf(model);
+  const spenders = team.filter((a) => a.tokensIn + a.tokensOut > 0);
+  const name = (id: string) => model.actors.find((a) => a.actor.id === id)?.actor;
+  return (
+    <div>
       {model.failedSteps.length > 0 && (
         <>
           <SectionTitle>Failed steps · {model.failedSteps.length}</SectionTitle>
@@ -242,25 +273,6 @@ export function Report({ model, report, open, profile, onProfile }: { model: Run
           </List>
         </>
       )}
-
-      <SectionTitle>What should happen next</SectionTitle>
-      <List>
-        {report.next.map((n, i) => (
-          <Item key={i} mark={report.verdict === 'pass' ? '✓' : '→'} tone={report.verdict === 'pass' ? 'ok' : undefined}>
-            {n}
-          </Item>
-        ))}
-      </List>
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <Button variant="outline" size="sm" onClick={copy}>
-          <Copy className="size-3.5" /> Copy as Markdown
-        </Button>
-        {saved && (
-          <Button variant="ghost" size="sm" onClick={() => open({ kind: 'artifact', id: saved.id })}>
-            Saved report · {saved.actor?.name ?? 'Run report'}
-          </Button>
-        )}
-      </div>
 
       {model.edges.length > 0 && (
         <>
@@ -363,35 +375,6 @@ export function Report({ model, report, open, profile, onProfile }: { model: Run
         </>
       )}
 
-      <SectionTitle>Artifacts · {made}</SectionTitle>
-      {made ? (
-        <List>
-          {model.artifacts.map((a) => (
-            <Item key={a.id} mark="◆" tone="ok" onOpen={() => open({ kind: 'artifact', id: a.id })}>
-              {a.artifact.name}
-              <Small>
-                {a.artifact.kind ?? 'artifact'}
-                {a.actor ? ` · ${a.actor.name}` : ''}
-              </Small>
-            </Item>
-          ))}
-          {report.files.map((file) => (
-            <Item key={file.path} mark="◆" tone="ok" onOpen={() => open({ kind: 'span', id: file.spanId })}>
-              <span className="break-all font-mono text-[12.5px]">{file.path}</span>
-              <Small>
-                {file.created ? 'file written' : 'file changed'}
-                {file.by.length ? ` · ${file.by.join(', ')}` : ''} · +{file.additions} −{file.deletions}
-              </Small>
-            </Item>
-          ))}
-        </List>
-      ) : (
-        <p className="px-1 text-[13px] text-t3">Nothing was made.</p>
-      )}
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        <ToneBadge tone="">{model.status}</ToneBadge>
-        <Badge tone="muted">{model.order.length} spans</Badge>
-      </div>
     </div>
   );
 }
