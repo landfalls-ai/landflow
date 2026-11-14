@@ -5,7 +5,8 @@
  * project is the rail's (`?project=`, else the project worked in last): its saved templates and the instance-wide
  * ones; there is no project menu here. Templates that can be used come first; the rest are dimmed and say what they
  * need. `?folder=` and the project carry through to "Use template", so a template picked from an empty folder lands in
- * it. Import lives in Workflows' New menu; `useTemplateImport` is its hook.
+ * it. "Show all projects" in the scope note clears the project (and the remembered one). Import lives in Workflows' New
+ * menu; `useTemplateImport` is its hook.
  */
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
@@ -14,7 +15,7 @@ import { api } from '@/lib/client/api';
 import { TEMPLATE_CATEGORIES, type TemplateDetail, type TemplateSource } from '@/lib/shared/templates';
 import { PhoneFilters } from '../ui/phone-filters';
 import { useViewer } from '@/components/auth/viewer';
-import { rememberedProject } from '@/components/projects/current-project';
+import { rememberedProject, rememberProject } from '@/components/projects/current-project';
 import { projectLabel, useProjects } from '@/components/projects/use-projects';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
 import { FilterChip } from '@/components/ui/badge';
@@ -53,6 +54,18 @@ export function useTemplateImport(onImported: (template: TemplateDetail) => void
   };
   const input = <input ref={picker} type="file" accept=".json,application/json" className="hidden" onChange={(e) => void importFile(e.target.files?.[0] ?? undefined)} />;
   return { input, importing, open: () => picker.current?.click() };
+}
+
+/** The note under the filters when a project scopes the list; "Show all projects" is the way back to the unscoped list. */
+export function ProjectScopeNote({ label, onClear }: { label: string; onClear: () => void }) {
+  return (
+    <p className="text-[12px] text-t3">
+      Saved templates of {label} and the instance-wide ones; built-in and remote templates show the nodes this project allows. Workflows you create go into this project.{' '}
+      <button type="button" className="text-ac underline" onClick={onClear}>
+        Show all projects
+      </button>
+    </p>
+  );
 }
 
 export function TemplateLibrary() {
@@ -103,9 +116,13 @@ export function TemplateLibrary() {
         </PhoneFilters>
 
         {current && (
-          <p className="text-[12px] text-t3">
-            Saved templates of {projectLabel(current, viewer?.id)} and the instance-wide ones; built-in and remote templates show the nodes this project allows. Workflows you create go into this project.
-          </p>
+          <ProjectScopeNote
+            label={projectLabel(current, viewer?.id)}
+            onClear={() => {
+              rememberProject(undefined);
+              setProject(undefined);
+            }}
+          />
         )}
         {folder && <p className="text-[12px] text-t3">The workflow you create goes into the folder you came from.</p>}
         {error && <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>}
@@ -136,7 +153,7 @@ export function TemplateLibrary() {
             <EmptyState
               compact
               title={source === 'local' && !query.trim() && !category ? 'No saved templates yet' : 'No template matches'}
-              hint={source === 'local' ? 'Save a workflow as a template from its … menu in the editor, or import a template file.' : 'Try another search or category.'}
+              hint={source === 'local' ? 'Save a workflow as a template from its … menu in the editor.' : 'Try another search or category.'}
             />
           </Card>
         )}
