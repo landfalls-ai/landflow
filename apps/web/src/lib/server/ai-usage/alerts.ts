@@ -1,7 +1,7 @@
 /**
  * Cost alerts: a rule of kind `cost` alerts once per period (day or month) when AI usage reaches its threshold (default
  * 80%) of any cap that has a period: a workflow's daily caps (Workflow settings), an agent's daily and monthly caps
- * (Agent → Settings), and the caps per credential and per user (Settings → AI prices). The alert goes out before the
+ * (Agent → Abilities → Guardrails), and the caps per credential and per user (Settings → AI caps). The alert goes out before the
  * cap stops anything, through the rule's channels. Per-execution caps have no period and are not watched.
  *
  * The alert service's ticker calls `checkCosts` (on the leader in queue mode, where the model calls happen on workers);
@@ -60,22 +60,22 @@ export function watchedCaps(meter: AiUsageMeter = aiUsageMeter()): WatchedCap[] 
   for (const agent of agentStore.list()) {
     const settings = agent.published?.config.settings ?? agent.settings;
     const set: UsageCapSet = { dayTokens: positive(settings?.dailyTokenLimit), dayCost: positive(settings?.dailyCostLimit), monthCost: positive(settings?.monthlyCostLimit) };
-    caps.push(...fromSet(set, `agent:${agent.id}`, `agent “${agent.name}”`, `Agent “${agent.name}” → Settings → Usage limits`, `${base}/agents/${agent.id}`, (period) => (period === 'day' ? meter.agentDay(agent.id) : meter.agentMonth(agent.id))));
+    caps.push(...fromSet(set, `agent:${agent.id}`, `agent “${agent.name}”`, `Agent “${agent.name}” → Abilities → Guardrails`, `${base}/agents/${agent.id}?tab=settings`, (period) => (period === 'day' ? meter.agentDay(agent.id) : meter.agentMonth(agent.id))));
   }
   const configured = meter.caps();
-  const settingsLink = `${base}/settings#ai-prices`;
+  const settingsLink = `${base}/settings#ai-caps`;
   for (const [id, set] of Object.entries(configured.credentials)) {
-    caps.push(...fromSet(set, `credential:${id}`, `credential “${set.name || id}”`, 'Settings → AI prices → AI usage caps', settingsLink, (period) => meter.sinceTotals('credential_id', id, period)));
+    caps.push(...fromSet(set, `credential:${id}`, `credential “${set.name || id}”`, 'Settings → AI caps', settingsLink, (period) => meter.sinceTotals('credential_id', id, period)));
   }
   for (const [id, set] of Object.entries(configured.users)) {
-    caps.push(...fromSet(set, `user:${id}`, `user “${set.name || id}”`, 'Settings → AI prices → AI usage caps', settingsLink, (period) => meter.sinceTotals('user_id', id, period)));
+    caps.push(...fromSet(set, `user:${id}`, `user “${set.name || id}”`, 'Settings → AI caps', settingsLink, (period) => meter.sinceTotals('user_id', id, period)));
   }
   if (configured.allUsers) {
     // The default for every user without a set of their own: one cap per user who has used AI this month.
     const first = `${meter.today().slice(0, 7)}-01`;
     for (const id of meter.usersSince(first)) {
       if (configured.users[id]) continue;
-      caps.push(...fromSet(configured.allUsers, `user:${id}`, `user “${userName(id)}” (the cap for every user)`, 'Settings → AI prices → AI usage caps', settingsLink, (period) => meter.sinceTotals('user_id', id, period)));
+      caps.push(...fromSet(configured.allUsers, `user:${id}`, `user “${userName(id)}” (the cap for every user)`, 'Settings → AI caps', settingsLink, (period) => meter.sinceTotals('user_id', id, period)));
     }
   }
   return caps;
