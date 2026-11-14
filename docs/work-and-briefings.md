@@ -142,7 +142,7 @@ open it. The gathered lists and the text live in `brain_briefings` (migration 20
 lists: the reads use the ledger's one visibility rule. Gather Work, Write Briefing, Save Briefing and Deliver Briefing run only in a
 workflow that an owner or an admin created and last saved (or one nobody created): a member's workflow could otherwise feed any
 `userId` through them, read or replace that person's briefing, or deliver it through a Slack credential of the member's own.
-In any other workflow they fail with a message saying so. A person's choice of Slack is consent to the instance's Slack, not to a colleague's.
+They also check the run: one a member started (a manual or chat run) fails, so a member cannot post an unsaved graph or start from Gather Work with their own items under an admin's saved workflow; a run an owner or admin started, or a schedule's, works. An unsaved draft and an evaluation run need an owner or admin as starter. In any other case they fail with a message saying so. A person's choice of Slack is consent to the instance's Slack, not to a colleague's.
 A manual re-run delivers again: nothing records that a day's briefing was sent.
 
 **Serving.** `briefingFor(actor, { day })` returns the stored `ready` briefing of the day when there is one (`source: 'flow'`,

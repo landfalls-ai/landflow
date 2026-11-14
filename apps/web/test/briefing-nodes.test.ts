@@ -80,15 +80,33 @@ afterAll(() => {
 const minutesAgo = (n: number) => new Date(Date.now() - n * 60_000).toISOString();
 const work = (sourceId: string, patch: Record<string, unknown> = {}) => ({ kind: 'work.session', source: 'claude-code', sourceId, occurredAt: minutesAgo(1), title: `Work ${sourceId}`, ...patch });
 
-async function sync(options: { credentials?: Record<string, unknown>; workflowId?: string } = {}) {
+/** Runs the template as the runner would: the execution is saved as running first, by `startedBy` (the owner by default; none: a schedule). */
+async function sync(options: { credentials?: Record<string, unknown>; workflowId?: string; startedBy?: string | null; unsaved?: boolean; startNodeId?: string; triggerItems?: ReturnType<typeof items> } = {}) {
   const workflow = { ...template.workflow, id: options.workflowId ?? 'wf_sync', nodes: template.workflow.nodes.map((n) => (n.id === 'deliver' && options.credentials ? { ...n, credentials: {} } : n)) };
+  const executionId = `ex_${Math.random().toString(36).slice(2)}`;
+  const startedBy = options.startedBy === undefined ? owner.id : options.startedBy;
+  const scheduled = startedBy === null;
+  store.saveExecution({
+    executionId,
+    workflowId: workflow.id,
+    workflowName: workflow.name,
+    mode: scheduled ? 'trigger' : 'manual',
+    status: 'running',
+    startedAt: new Date().toISOString(),
+    finishedAt: '',
+    durationMs: 0,
+    runData: {},
+    executionOrder: [],
+    ...(options.unsaved ? { workflow } : { versionId: 'v_1' }),
+    ...(startedBy && { startedBy }),
+  } as never);
   return executeWorkflow({
     workflow,
     resolver,
-    executionId: `ex_${Math.random().toString(36).slice(2)}`,
-    mode: 'manual',
-    startNodeId: 'nightly',
-    triggerItems: items({}),
+    executionId,
+    mode: scheduled ? 'trigger' : 'manual',
+    startNodeId: options.startNodeId ?? 'nightly',
+    triggerItems: options.triggerItems ?? items({}),
     resolveCredentials: (node) => (node.id === 'deliver' ? (options.credentials as never) : undefined),
   });
 }
@@ -208,6 +226,31 @@ describe('who may run the nodes', () => {
     expect(rowsFor(alice.id)).toHaveLength(0);
     expect(rowsFor(bob.id)).toHaveLength(0);
     expect(slackCalls).toEqual([]);
+  });
+});
+
+describe('who started the run', () => {
+  const credentials = { 'messaging.slackApi': { accessToken: 'xoxb-dev-only', baseUrl: '' } };
+  it('a member’s run of an unsaved graph under an admin-saved id gathers, saves and delivers nothing', async () => {
+    recordWork(actorOf(bob), [work('b1')]);
+    setPreferences(bob.id, { briefingDelivery: 'slack' });
+    const result = await sync({ startedBy: alice.id, unsaved: true, credentials: { 'messaging.slackApi': { ...credentials['messaging.slackApi'], baseUrl: slackUrl } } });
+    expect(result.status).not.toBe('success');
+    expect(rowsFor(bob.id)).toHaveLength(0);
+    expect(slackCalls).toEqual([]);
+  });
+
+  it('a member’s run from Gather Work with their own items does the same', async () => {
+    recordWork(actorOf(bob), [work('b1')]);
+    const result = await sync({ startedBy: alice.id, startNodeId: 'gather', triggerItems: items({ userId: bob.id, day: '2026-11-14' }) });
+    expect(result.status).not.toBe('success');
+    expect(rowsFor(bob.id)).toHaveLength(0);
+  });
+
+  it('an admin’s run and a schedule still work', async () => {
+    recordWork(actorOf(bob), [work('b1')]);
+    expect((await sync({ startedBy: null })).status).toBe('success');
+    expect(rowsFor(bob.id, 'ready').length).toBeGreaterThan(0);
   });
 });
 

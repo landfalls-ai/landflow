@@ -22,18 +22,29 @@ const icon = { icon: 'lucide:sunrise', color: '#8b5cf6', categories: ['AI', 'Cor
 
 /**
  * Who may run the nodes that read or write a person's private briefing: a workflow made and last saved by an owner or an
- * admin, or one nobody made (seeded). A member's workflow could otherwise feed any `userId` through them and read or
- * send someone else's work (docs/work-and-briefings.md#privacy).
+ * admin, or one nobody made (seeded), and a run that an owner or admin started or nobody did (a schedule or trigger). A
+ * member's workflow could otherwise feed any `userId` through them, and a member's run could post an unsaved graph or
+ * their own items under an admin's saved workflow id, and read or send someone else's work
+ * (docs/work-and-briefings.md#privacy).
  */
 function requireInstanceFlow(ctx: IExecuteContext): void {
-  const workflow = store.getWorkflow(ctx.getWorkflowId() ?? '');
   const trusted = (id: string | undefined) => {
     if (!id) return true;
     const user = getUser(id);
     return Boolean(user && !user.disabledAt && (user.role === 'owner' || user.role === 'admin'));
   };
-  if (!workflow || !trusted(workflow.createdBy) || !trusted(workflow.updatedBy)) {
-    throw new NodeOperationError('Only an owner’s or admin’s workflow may handle people’s briefings', { description: 'A person’s briefing is private to them: save this workflow as an owner or admin.' });
+  const workflow = store.getWorkflow(ctx.getWorkflowId() ?? '');
+  const record = store.getExecution(ctx.getExecutionId());
+  // A run started by a person (the editor, the API, chat) counts as that person's; an unsaved graph or an evaluation's
+  // cases are the caller's own input. No saved record of the run: refused.
+  const byPerson = record && (record.mode === 'manual' || record.mode === 'chat');
+  const runOk =
+    Boolean(record) &&
+    !record!.evaluation &&
+    (byPerson ? Boolean(record!.startedBy) && trusted(record!.startedBy) : !record!.startedBy || trusted(record!.startedBy)) &&
+    (!record!.workflow || record!.versionId || trusted(record!.startedBy) && Boolean(record!.startedBy));
+  if (!workflow || !trusted(workflow.createdBy) || !trusted(workflow.updatedBy) || !runOk) {
+    throw new NodeOperationError('Only an owner’s or admin’s workflow, run by an owner or admin or on a schedule, may handle people’s briefings', { description: 'A person’s briefing is private to them: save this workflow as an owner or admin and run it as one.' });
   }
 }
 
