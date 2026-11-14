@@ -26,6 +26,9 @@ export type ErrorAction =
   | { id: 'open-node'; label: string }
   | { id: 'fix-node'; label: string; primary: true; prefill: string };
 
+/** Where Open AI caps goes: the AI caps section of Settings (a section of `SETTINGS_GROUPS`, checked by spotlight-states.test.ts). */
+export const OPEN_CAPS_HREF = '/settings#ai-caps';
+
 /** The buttons under an error, by what failed. Try again is one of them whenever sending the message again can help. */
 export function errorActions(error: ErrorInfo, ctx: ErrorContext): ErrorAction[] {
   const actions: ErrorAction[] = [];

@@ -17,7 +17,7 @@ import { agentStep, runRow } from '../timeline';
 import { ProposalCard, ProposalRow } from './proposal';
 import { provisionalText } from '@/lib/shared/leaked-markup';
 import { swapState } from './swap';
-import { errorActions, type ErrorAction } from './states';
+import { OPEN_CAPS_HREF, errorActions, type ErrorAction } from './states';
 import { can } from '@/lib/shared/auth';
 import { useViewer } from '../../auth/viewer';
 
@@ -299,7 +299,7 @@ function ReplyError({ item, canRetry }: { item: Reply; canRetry: boolean }) {
   const run = (a: ErrorAction) => {
     if (a.id === 'retry') retryReply(item.id);
     else if (a.id === 'continue' && item.checkpoint) retryReply(item.id, { checkpoint: item.checkpoint });
-    else if (a.id === 'open-caps') window.open('/settings#ai-prices', '_blank', 'noopener');
+    else if (a.id === 'open-caps') window.open(OPEN_CAPS_HREF, '_blank', 'noopener');
   };
   const extra = list.filter((a) => a.id !== 'retry').map((a) => ({ label: a.label, primary: 'primary' in a && a.primary, onClick: () => run(a) }));
   return <ChatError message={item.error!} onRetry={list.some((a) => a.id === 'retry') ? () => run({ id: 'retry', label: 'Try again' }) : undefined} actions={extra} />;

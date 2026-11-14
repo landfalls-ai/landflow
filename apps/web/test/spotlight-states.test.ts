@@ -4,9 +4,10 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { EXPLAINER_KEY, cardFolded, defaultCollapsed, errorActions, explainerDue, foldedBar, ghostFade, isNewestUndo, undoGroup } from '../src/components/editor/spotlight/states';
+import { EXPLAINER_KEY, OPEN_CAPS_HREF, cardFolded, defaultCollapsed, errorActions, explainerDue, foldedBar, ghostFade, isNewestUndo, undoGroup } from '../src/components/editor/spotlight/states';
 import { applyStreamEvent, carriedFrom, useAssistant, type AssistantTurn, type ChatItem } from '../src/components/editor/assistant';
 import { ChatEmpty } from '../src/components/ui/chat';
+import { SETTINGS_GROUPS } from '../src/components/settings/settings-groups';
 
 const streamed = vi.hoisted(() => ({ body: undefined as Record<string, unknown> | undefined }));
 vi.mock('@/lib/client/api', async (orig) => ({
@@ -34,6 +35,11 @@ describe('errorActions', () => {
   it('a cap offers Open AI caps to admins only', () => {
     expect(ids(errorActions({ message: 'cap', kind: 'cap' }, admin))).toEqual(['open-caps']);
     expect(ids(errorActions({ message: 'cap', kind: 'cap' }, { admin: false, canRetry: true }))).toEqual([]);
+  });
+  it('Open AI caps lands on the AI caps section of Settings', () => {
+    expect(OPEN_CAPS_HREF).toBe('/settings#ai-caps');
+    const section = OPEN_CAPS_HREF.slice('/settings#'.length);
+    expect(SETTINGS_GROUPS.flatMap((g) => g.sections)).toContain(section);
   });
   it('a failed node opens the node or asks Spotlight to fix it, prefilled', () => {
     const list = errorActions({ message: 'No credential', node: { id: 'n1', name: 'Post to Slack' } }, { admin: false, canRetry: false });
