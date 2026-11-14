@@ -149,6 +149,57 @@ export interface WikiAnswer {
   about?: string;
   /** The pages the answer links to, with their names. */
   links?: WikiLink[];
+  /** The numbers of the work items the answer cites, in order. Empty or absent: no source is numbered. */
+  cited?: number[];
+}
+
+/** An earlier turn of the conversation, sent with a follow-up question. At most 2, each part 1,500 characters. */
+export interface AskTurn {
+  question: string;
+  answer: string;
+}
+export const ASK_HISTORY_TURNS = 2;
+export const ASK_HISTORY_CHARS = 1_500;
+
+/** Why a streamed ask ended in an error. */
+export type AskErrorKind = 'invalid' | 'model' | 'cap' | 'internal';
+
+/** The events of the streamed form of POST /api/brain/ask (`Accept: text/event-stream`), in the order they come. */
+export type AskEvent =
+  /** What it found, before any word: the page refs (`type/id`) with names, and how many facts and work items. */
+  | { type: 'found'; pages: Array<{ id: string; name: string }>; facts: number; work: number }
+  | { type: 'step.start'; step: number; label: string }
+  | { type: 'tool'; name: 'read_pages' | 'search_facts' | 'read_work'; label: string; ok: boolean; id: string; step: number; durationMs: number; detail?: string }
+  /** Words as they come: provisional, replaced by the checked `text`. */
+  | { type: 'text.delta'; step: number; text: string }
+  | { type: 'text'; text: string }
+  | {
+      type: 'done';
+      links: WikiLink[];
+      /** The work items the answer was written from, in the order `[n]` counts them. */
+      sources: WorkItem[];
+      cited: number[];
+      model?: string;
+      local: boolean;
+      durationMs: number;
+      steps: number;
+      inputTokens: number;
+      outputTokens: number;
+      costUsd?: number;
+      note?: string;
+    }
+  | { type: 'error'; kind: AskErrorKind; message: string };
+
+/**
+ * An answer while it is still being written, as plain words: `[[type/id|Name]]` shows as Name, a link not closed yet is
+ * left out, so no half a link flashes on screen. The checked text replaces it at the end.
+ */
+export function streamingPreview(text: string): string {
+  return text
+    .replace(/\[\[[a-z]+\/[a-z0-9_.-]+\|([^\]]*)\]\]/g, '$1')
+    .replace(/\[\[[a-z]+\/([a-z0-9_.-]+)\]\]/g, '$1')
+    .replace(/\[\[[^\]]*$/, '')
+    .replace(/\[\d{0,3}$/, '');
 }
 
 /** `[[type/id]]` links in a text, in order, without repeats. */

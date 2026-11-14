@@ -147,7 +147,7 @@ The first tick is 30 s after start.
   and the canvas stays visible. Apply here changes the open canvas (one undo), and you save it like any edit. Clicking
   the node name selects the node.
 - **[The Brain page](#the-brain-page)** (`/brain`): the brain as a repository of Markdown files in an editor's workbench,
-  a file per entity, Spotlight to ask it, and what more than one team worked on.
+  a file per entity, Ask to ask it, and what more than one team worked on.
 - **Brain → What Landflow knows** (the gear at the foot of the Brain page's activity bar; it was on Insights, which now
   links to it):
   - the ledger's size, the facts, the model, and when the brain last studied and detected;
@@ -267,16 +267,22 @@ prose and a person keeps the facts. Spotlight asks it questions.
     the summary with its `[[type/id|Name]]` links and `[n]` references, then the work, people, related pages, facts,
     suggestions and mentions. In the Source, a link opens its page and a reference jumps to its work line. **Copy**
     takes the Markdown. The Source is read-only.
-  - **Spotlight** at the bottom of the editor, as in the workflow editor (⌘I): one bar, bubbles with questions about the
-    open file, and the conversation above the bar. With a page open, the question is about that page (the `@` chip)
-    until the chip is removed. Each answer has page links, which open tabs, and its numbered sources, folded.
-  - **Quick open** (⌘P or ⌘K): go to a file by name or path, `>` for commands (open index or log, toggle Source,
-    Problems, Suggestions, run the brain), or send what was typed to Spotlight.
+  - **Ask** (the **Ask** button in the title bar, or ⌘I): the one way to ask the brain. On a desktop it is a 360 px
+    column docked at the right of the editor: the page narrows and nothing overlaps, and a link in an answer opens
+    that page in the editor beside it while the answer stays. With a page open, the question is about that page (the
+    `@` chip) until the chip is removed. The answer streams: first **Found 3 pages · 2 facts · 5 work items** (with
+    the pages as links), then its steps and its words, then the model, time, tokens and cost under it (a local model
+    says "local"). A follow-up ("and since when?") knows the last two turns of the conversation. A source is numbered
+    only when the answer cites it, and a `[n]` that points at no work item is dropped. **New conversation** clears
+    it. On a phone Ask is a bottom sheet; a link closes it to show the page, and the Ask button brings it back with
+    its answers.
+  - **Quick open** (⌘P or ⌘K): go to a file by name or path, or `>` for commands (open index or log, toggle Source,
+    Problems, Suggestions, run the brain). It only finds pages; it does not ask.
   - **Panel** (⌘J): **Problems** (initiatives and customers without an owner, pages quiet for 30 days, summaries behind
     their work) and **Suggestions** with their buttons. **Status bar**: problems, shared pages, open suggestions, pages
     and facts, the last study, the model.
-  - **On a phone**: the side bar is a drawer behind the Files button, with the views at its top; tabs scroll; Spotlight
-    and the status bar stay at the bottom.
+  - **On a phone**: the side bar is a drawer behind the Files button, with the views at its top; tabs scroll; the Ask
+    button stays in the title bar and the status bar at the bottom.
 - **index.md**: **Shared across teams** (customers and initiatives two or more teams worked on in the last 7 days, most
   teams first, with their teams, people and latest items: no other product flags this, and it is what the Company
   Brain is for), **Suggestions**, **Teams this week** and **Needs a person**.
@@ -292,10 +298,13 @@ prose and a person keeps the facts. Spotlight asks it questions.
     is linked on its first mention.
   - **Work** (90 days, numbered), **People** (or **Works with** on a person's page), **Related pages** (the pages named
     in the same work, with how often), **Facts** with **Add a fact**, **Suggestions** and **Mentioned in**.
-- **Ask** (`POST /api/brain/ask`, what Spotlight calls) finds pages by words in names, descriptions, owners and
+- **Ask** (`POST /api/brain/ask`, what the Ask panel calls) finds pages by words in names, descriptions, owners and
   attributes, facts by search (by meaning too when embeddings are on), and work by words and by the pages found; then
   the model answers from those alone, in a few sentences with page links and numbered work. Without a model it returns
-  what it found.
+  what it found. A short follow-up borrows the words of the last question to find its pages. It streams when asked
+  with `Accept: text/event-stream` and is one JSON body otherwise (MCP and older callers). **Ask is metered**: each
+  model call writes an `ai_usage` row with surface `brain` under the asker, so the per-user caps apply and a cap shows
+  as an error in the panel ([observability.md](observability.md)).
 - **Walls.** Everything goes through the reader's scope: a page, a link, a person or a work item from a project the reader
   can't open is not shown, not linked and not sent to the model.
 - Code: `brain/wiki.ts`, `lib/shared/brain-wiki.ts`, `lib/shared/brain-files.ts` (the tree and the Markdown),

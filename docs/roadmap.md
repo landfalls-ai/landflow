@@ -1560,6 +1560,15 @@ The shared pieces every chat will use, built in `components/ui/` and ready; the 
 - CH1 (motion), CH6 (one activity trace), CH7 (one reply footer), CH9 (errors with actions) and CH10 (a model chip): kit
   ready, surfaces in wave 2 ([Chat surfaces](assistant.md#chat-surfaces)). Spotlight in the editor is on the kit (B08): CH1, CH6, CH7 and CH20 are closed for it, CH10 too once a route names the model before the first reply; CH3 closes with B09.
 
+## Ask the brain, docked and streamed (B09, 2026-11-14)
+
+- CH3 ✅ Done: the brain's answer streams (what it found first, then the words) and shows its steps.
+- CH18 ✅ Done (brain): Ask is a column beside the page, not a card over it, so a link opens the page and the answer stays.
+- CH23 ✅ Done (brain): `[n]` appears only with a source, and a follow-up knows the last two turns.
+- CH8 (brain half) ✅ Done: Ask writes `ai_usage` rows with surface `brain`.
+- P-br-3 ✅ Done: one **Ask** button and ⌘I; the bottom bar, the toolbar and status-bar buttons and quick open's ask row are gone
+  ([second-brain.md](second-brain.md#the-brain-page)). Open: history and @ tags for Ask (B17), the app-wide panel (B35).
+
 ## Conversation history and personal preferences (2026-11)
 
 The first piece of the company-backbone program (wave 1, B02). Built: the `user_preferences` and `conversations` tables
