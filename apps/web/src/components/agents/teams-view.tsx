@@ -3,19 +3,14 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Network, Plus, RadioTower } from 'lucide-react';
+import { Network, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
-import { timeAgo } from '@/lib/client/format';
-import type { AgentSummary } from '@/lib/shared/agents';
 import type { TeamSummary } from '@/lib/shared/agent-teams';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
 import { Card } from '../shell/page-header';
-import { AgentAvatar } from './avatar';
-
-const FACES = 5;
 
 /** New team: makes an untitled team and opens it. The Agents page's header shows it on the Teams tab. */
 export function useNewTeam() {
@@ -43,9 +38,8 @@ export function NewTeamButton({ className }: { className?: string }) {
   );
 }
 
-export function TeamsView({ teams, agents }: { teams?: TeamSummary[]; agents: AgentSummary[] }) {
+export function TeamsView({ teams }: { teams?: TeamSummary[] }) {
   const { create, creating } = useNewTeam();
-  const byId = new Map(agents.map((a) => [a.id, a]));
 
   if (!teams) return <div className="h-[150px] animate-pulse-soft rounded-2xl border border-hair bg-sf" />;
   if (!teams.length) {
@@ -68,33 +62,15 @@ export function TeamsView({ teams, agents }: { teams?: TeamSummary[]; agents: Ag
     <>
       <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3">
         {teams.map((team) => {
-          const members = (team.agentIds ?? []).map((id) => byId.get(id)).filter((a): a is AgentSummary => Boolean(a));
           return (
             <Link key={team.id} href={`/agents/teams/${team.id}`} className="flex flex-col gap-3 rounded-2xl border border-hair bg-sf p-4 transition-colors hover:border-bd focus-visible:outline-2 focus-visible:outline-ac">
               <div className="min-w-0">
                 <div className="truncate text-[14px] font-semibold text-t1">{team.name}</div>
                 <p className="mt-0.5 line-clamp-2 min-h-[2.4em] text-[12px] leading-snug text-t2">{team.goal || 'No goal yet'}</p>
               </div>
-              <div className="flex items-center gap-2">
-                <div className="flex -space-x-2">
-                  {members.slice(0, FACES).map((a) => (
-                    <AgentAvatar key={a.id} agent={a} size={28} round className="ring-2 ring-[var(--sf,transparent)]" />
-                  ))}
-                  {(team.remote ?? 0) > 0 && (
-                    <span title="Remote agents" className="grid size-7 place-items-center rounded-full border border-hair bg-wl text-t3">
-                      <RadioTower className="size-3.5" />
-                    </span>
-                  )}
-                </div>
-                <span className="text-[12px] text-t3">
-                  {team.members} {team.members === 1 ? 'member' : 'members'}
-                  {team.lead && <> · Lead: {team.lead}</>}
-                </span>
-              </div>
-              <div className="mt-auto flex flex-wrap items-center gap-1.5 border-t border-hair pt-2">
+              <div className="mt-auto flex flex-wrap items-center gap-1.5">
                 {team.published ? <Badge tone="success">Published v{team.published.version}</Badge> : <Badge tone="muted">Draft</Badge>}
                 {(team.issues ?? 0) > 0 && <Badge tone="warning">{team.issues} to fix</Badge>}
-                <span className="ml-auto text-[11px] tabular-nums text-t3">{timeAgo(team.updatedAt)}</span>
               </div>
             </Link>
           );
