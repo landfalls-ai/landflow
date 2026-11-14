@@ -9,7 +9,7 @@ import { NodeHeaderActions } from '../src/components/editor/node-panel';
 import { NodeSettingsPane } from '../src/components/editor/node-settings';
 import { showViewSwitch } from '../src/components/run/data-view';
 import { BasicWorkflowSettings } from '../src/components/editor/settings-dialog';
-import { nodeActions } from '../src/components/editor/flow-node';
+import { MOD_KEY, nodeActions } from '../src/components/editor/flow-node';
 import { useEditor, type FlowNode } from '../src/components/editor/store';
 
 const noop = () => {};
@@ -72,6 +72,13 @@ describe('workflow settings', () => {
     for (const label of ['Timeout', 'Concurrency', 'Retries', 'Governance']) expect(before).not.toContain(label);
     expect(html).toContain('aria-expanded="false"');
   });
+
+  it('says why Advanced stays open while a field in it is invalid', () => {
+    const held = renderToStaticMarkup(createElement(BasicWorkflowSettings, { draft: {}, patch: noop, showAdvanced: true, onToggleAdvanced: noop, held: true }));
+    expect(held).toContain('Fix the marked field below to close Advanced');
+    const open = renderToStaticMarkup(createElement(BasicWorkflowSettings, { draft: {}, patch: noop, showAdvanced: true, onToggleAdvanced: noop }));
+    expect(open).not.toContain('Fix the marked field');
+  });
 });
 
 describe('node toolbar and right-click menu', () => {
@@ -84,6 +91,9 @@ describe('node toolbar and right-click menu', () => {
     const actions = nodeActions('n1')!;
     expect(actions.main.map((a) => a.id)).toEqual(['run', 'disable', 'delete']);
     expect(actions.more.map((a) => a.id)).toEqual(['open', 'runFrom', 'breakpoint', 'duplicate']);
+    // Shortcuts are keys with the platform's modifier (Ctrl+ off a Mac), as the rest of the canvas menu shows them.
+    expect(actions.more.find((a) => a.id === 'duplicate')!.keys).toBe(`${MOD_KEY}D`);
+    expect(actions.more.find((a) => a.id === 'breakpoint')!.keys).toBe('F9');
   });
   it('names Enable for a disabled node and Remove breakpoint for one with a breakpoint', () => {
     put('x.step');

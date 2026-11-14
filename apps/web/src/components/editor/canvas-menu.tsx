@@ -13,7 +13,7 @@ import { Kbd } from '../ui/inputs';
 import { descendantGroupIds, descendantNodeIds } from '@/lib/shared/groups';
 import { MenuItem, MenuLabel, MenuSeparator } from '../ui/popover';
 import { linksOf } from './groups';
-import { nodeActions } from './flow-node';
+import { MOD_KEY, nodeActions } from './flow-node';
 import { useEditor } from './store';
 
 interface MenuState {
@@ -36,7 +36,7 @@ export function selectForMenu(id: string) {
   state.onNodesChange(all.flatMap((n) => (n.id === id || n.selected ? [{ type: 'select' as const, id: n.id, selected: n.id === id }] : [])));
 }
 
-const mod = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl+';
+const mod = MOD_KEY;
 
 export function CanvasMenu() {
   const at = useCanvasMenu((s) => s.at);
@@ -145,13 +145,13 @@ export function CanvasMenu() {
           {lone && (
             <>
               {lone.main.map((a) => (
-                <MenuItem key={a.id} danger={a.danger} disabled={a.disabled} hint={a.id === 'run' ? undefined : a.hint} onClick={act(a.run)}>
+                <MenuItem key={a.id} danger={a.danger} disabled={a.disabled} hint={a.id === 'run' ? undefined : a.keys ? <Kbd>{a.keys}</Kbd> : a.hint} onClick={act(a.run)}>
                   <a.icon /> {a.label}
                 </MenuItem>
               ))}
               <MenuSeparator />
               {lone.more.map((a) => (
-                <MenuItem key={a.id} disabled={a.disabled} hint={a.hint} onClick={act(a.run)}>
+                <MenuItem key={a.id} disabled={a.disabled} hint={a.keys ? <Kbd>{a.keys}</Kbd> : a.hint} onClick={act(a.run)}>
                   <a.icon /> {a.label}
                 </MenuItem>
               ))}
