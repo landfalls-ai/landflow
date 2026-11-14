@@ -1574,6 +1574,16 @@ The shared pieces every chat will use, built in `components/ui/` and ready; the 
 - P-br-3 ✅ Done: one **Ask** button and ⌘I; the bottom bar, the toolbar and status-bar buttons and quick open's ask row are gone
   ([second-brain.md](second-brain.md#the-brain-page)). Open: history and @ tags for Ask (B17), the app-wide panel (B35).
 
+## The editor's layout (B11, 2026-11-14)
+
+Built ([Building and debugging a flow](features/editor.md#the-editors-chrome)): one right column (CH19: **Spotlight |
+Chat**, never both, each kept mounted), the flow chat on the chat kit (CH10 for the editor: the list, the Working line,
+the reply footer, the model chip, plain errors), a top bar of seven controls with autosave and a Publish button that
+carries the state (P-ed-1), one canvas toolbar and a minimap only above 25 nodes (P-ed-2), and one **Import…** dialog
+(P-ed-3). All of CH10 (editor), CH19 and P-ed-1 to 3 are done. Open: the phone's Chat is still a sheet under the canvas
+with no Spotlight | Chat switch (the Execute bar's chat button opens and closes it), and a long editing session with
+no pause over 10 minutes between saves folds into one version (⌘S, Publish and a tab-leave save add their own).
+
 ## Conversation history and personal preferences (2026-11)
 
 The first piece of the company-backbone program (wave 1, B02). Built: the `user_preferences` and `conversations` tables
