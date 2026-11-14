@@ -247,9 +247,11 @@ function SpanSheet({
         </>
       )}
       {attrs.length > 0 && (
-        <div className="mt-3">
-          <ValueBlock label="Details" value={Object.fromEntries(attrs)} />
-        </div>
+        <DevOnly>
+          <div className="mt-3">
+            <ValueBlock label="Details" value={Object.fromEntries(attrs)} />
+          </div>
+        </DevOnly>
       )}
     </>
   );

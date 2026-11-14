@@ -2,6 +2,7 @@
 /** The user menu at the bottom of the sidebar: who is signed in (name, email, role), the theme, Build a plugin, API keys, Users and sign out. */
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { toast } from 'sonner';
 import { BookOpenText, ChevronsUpDown, KeyRound, LogOut, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { can, ROLE_LABELS } from '@/lib/shared/auth';
@@ -22,15 +23,22 @@ export function UserMenu({ defaultOpen = false }: { defaultOpen?: boolean } = {}
   const [busy, setBusy] = useState(false);
 
   const change = (key: 'developerDetails' | 'keepConversations', value: boolean) => {
-    void setPreference(key, value).catch(() => {});
+    return setPreference(key, value).then(
+      () => true,
+      () => {
+        toast.error('Could not save that setting. Try again.');
+        return false;
+      },
+    );
   };
-  const toggleKeep = (value: boolean) => {
-    change('keepConversations', value);
-    setAskDelete(!value);
+  const toggleKeep = async (value: boolean) => {
+    const saved = await change('keepConversations', value);
+    setAskDelete(saved && !value);
   };
   /** Delete every conversation of the person, one DELETE each. */
   const deleteConversations = async () => {
     setBusy(true);
+    let failed = false;
     try {
       for (let round = 0; round < 50; round++) {
         const { conversations } = await api<{ conversations: { id: string }[] }>('/api/conversations?limit=100', { background: true });
@@ -38,10 +46,11 @@ export function UserMenu({ defaultOpen = false }: { defaultOpen?: boolean } = {}
         for (const c of conversations) await api(`/api/conversations/${c.id}`, { method: 'DELETE' });
       }
     } catch {
-      // What could not be deleted stays; the person can delete it from the history.
+      failed = true;
+      toast.error('Some conversations could not be deleted. Try again, or delete them from the history.');
     } finally {
       setBusy(false);
-      setAskDelete(false);
+      if (!failed) setAskDelete(false);
     }
   };
 
@@ -81,7 +90,7 @@ export function UserMenu({ defaultOpen = false }: { defaultOpen?: boolean } = {}
           </div>
           <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 text-[13px] text-t2 max-md:min-h-11">
             Keep my conversations
-            <Switch checked={keepConversations} onChange={toggleKeep} label="Keep my conversations" />
+            <Switch checked={keepConversations} onChange={(v) => void toggleKeep(v)} label="Keep my conversations" />
           </div>
           {askDelete && (
             <div role="alertdialog" aria-label="Delete conversations" className="mx-1 mb-1 rounded-lg border border-hair bg-wl p-2.5 text-[12px] text-t2">

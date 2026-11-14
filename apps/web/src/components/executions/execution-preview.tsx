@@ -576,7 +576,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                   className="flex items-center gap-1 rounded-full bg-[color-mix(in_oklab,var(--viz-7)_14%,transparent)] px-2 text-[12px] text-viz-7 transition-opacity hover:opacity-80"
                 >
                   <Redo2 className="size-3" />
-                  Retried by <span className="font-mono">{record.retriedBy}</span>
+                  Retried by {developerDetails ? <span className="font-mono">{record.retriedBy}</span> : 'a later run'}
                 </button>
               )}
               {record.retryAt && (
