@@ -112,7 +112,7 @@ export function EvaluationsTab({ agentId }: { agentId: string }) {
           report={report}
           onSave={save}
           actions={<GradeSession agentId={agentId} onGraded={load} />}
-          linkOf={(score) => (score.sessionId ? { href: `/agents/${agentId}?tab=sessions&session=${score.sessionId}`, label: 'Open session' } : undefined)}
+          linkOf={(score) => (score.sessionId ? { href: `/agents/${agentId}?tab=activity&session=${score.sessionId}`, label: 'Open session' } : undefined)}
         />
       )}
     </Section>

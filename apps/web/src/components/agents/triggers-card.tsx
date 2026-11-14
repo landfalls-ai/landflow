@@ -1,7 +1,7 @@
 'use client';
 /** Build tab → Triggers: schedules that message the agent, and chat channels it answers in (Telegram, Slack). */
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
-import { Clock, Hash, Info, MessagesSquare, Pencil, Plus, Send, Trash2, X, Zap } from 'lucide-react';
+import { ChevronDown, Clock, Hash, Info, MessagesSquare, Pencil, Plus, Send, Trash2, X, Zap } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { AgentChannel, AgentConfig, AgentSchedule, ScheduleFrequency } from '@/lib/shared/agents';
 import { CredentialDialog } from '../credentials/credential-dialog';
@@ -9,8 +9,11 @@ import { useCredentials } from '../credentials/use-credentials';
 import { Badge, Chip } from '../ui/badge';
 import { Button } from '../ui/button';
 import { CopyButton } from '../ui/copy-button';
+import { EmptyState } from '../ui/empty-state';
+import { MenuItem, Popover } from '../ui/popover';
 import { Input, Select, Switch, Textarea } from '../ui/inputs';
 import { Dialog, Field, ItemRow, Section, ToggleRow } from './dialog';
+import { TRIGGER_MENU } from './tabs';
 import { describeSchedule, localTimezone, newId, timezones, WEEKDAYS, type UpdateConfig } from './util';
 
 const TELEGRAM = 'messaging.telegramApi';
@@ -539,20 +542,30 @@ export function TriggersCard({ config, update, published, agentId }: { config: A
       title="Triggers"
       description="Run the agent on a schedule or let people message it."
       actions={
-        <>
-          <Button size="sm" variant="outline" onClick={() => setSchedule({})}>
-            <Clock className="size-3.5" /> Add schedule
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setChannel({ type: 'telegram' })}>
-            <Send className="size-3.5" /> Add Telegram
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setChannel({ type: 'slack' })}>
-            <Hash className="size-3.5" /> Add Slack
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setChannel({ type: 'teams' })}>
-            <MessagesSquare className="size-3.5" /> Add Teams
-          </Button>
-        </>
+        <Popover
+          title="Add trigger"
+          trigger={({ toggle, open }) => (
+            <Button size="sm" variant="outline" onClick={toggle} aria-expanded={open} aria-haspopup="menu">
+              <Plus className="size-3.5" /> Add trigger <ChevronDown className="size-3.5" />
+            </Button>
+          )}
+          className="w-[200px]"
+        >
+          {(close) =>
+            TRIGGER_MENU.map((item) => (
+              <MenuItem
+                key={item.kind}
+                onClick={() => {
+                  close();
+                  if (item.kind === 'schedule') setSchedule({});
+                  else setChannel({ type: item.kind });
+                }}
+              >
+                {item.kind === 'schedule' ? <Clock /> : item.kind === 'telegram' ? <Send /> : item.kind === 'slack' ? <Hash /> : <MessagesSquare />} {item.label}
+              </MenuItem>
+            ))
+          }
+        </Popover>
       }
     >
       <div className="space-y-3">
@@ -632,28 +645,7 @@ export function TriggersCard({ config, update, published, agentId }: { config: A
             }
           />
         ))}
-        {empty && (
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => setSchedule({})}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-[10px] border border-dashed border-bd py-2.5 text-[12px] text-t2 transition-colors hover:border-ac hover:text-ac"
-            >
-              <Plus className="size-3.5" /> Run on a schedule
-            </button>
-            <button
-              onClick={() => setChannel({ type: 'telegram' })}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-[10px] border border-dashed border-bd py-2.5 text-[12px] text-t2 transition-colors hover:border-ac hover:text-ac"
-            >
-              <Plus className="size-3.5" /> Chat on Telegram
-            </button>
-            <button
-              onClick={() => setChannel({ type: 'slack' })}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-[10px] border border-dashed border-bd py-2.5 text-[12px] text-t2 transition-colors hover:border-ac hover:text-ac"
-            >
-              <Plus className="size-3.5" /> Chat in Slack
-            </button>
-          </div>
-        )}
+        {empty && <EmptyState compact title="No triggers yet" hint="Add a schedule, or let people message the agent on Telegram, Slack or Teams." />}
       </div>
       {schedule && (
         <ScheduleDialog
