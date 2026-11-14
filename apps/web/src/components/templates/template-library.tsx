@@ -2,26 +2,26 @@
 /**
  * /templates — the templates library: search, categories, and where templates come from (built in, saved on this
  * instance, and a remote n8n-compatible library when LANDFLOW_TEMPLATES_URL is set; 30 at a time, "Load more"). The
- * project picker (`?project=`, else the project worked in last) shows that project's saved templates and the
- * instance-wide ones; "All my projects" every one the viewer sees. `?folder=` and the project carry through to "Use
- * template", so a template picked from an empty folder lands in it. Import adds a template file someone exported.
+ * project is the rail's (`?project=`, else the project worked in last): its saved templates and the instance-wide
+ * ones; there is no project menu here. Templates that can be used come first; the rest are dimmed and say what they
+ * need. `?folder=` and the project carry through to "Use template", so a template picked from an empty folder lands in
+ * it. Import lives in Workflows' New menu; `useTemplateImport` is its hook.
  */
 import { useEffect, useRef, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { FileUp } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { TEMPLATE_CATEGORIES, type TemplateDetail, type TemplateSource } from '@/lib/shared/templates';
 import { PhoneFilters } from '../ui/phone-filters';
 import { useViewer } from '@/components/auth/viewer';
-import { rememberedProject, rememberProject } from '@/components/projects/current-project';
+import { rememberedProject } from '@/components/projects/current-project';
 import { projectLabel, useProjects } from '@/components/projects/use-projects';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
 import { FilterChip } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { SearchInput, Select } from '@/components/ui/inputs';
-import { TemplateCard } from './template-card';
+import { SearchInput } from '@/components/ui/inputs';
+import { sortTemplates, TemplateCard } from './template-card';
 import { useNodeTypeMap, useTemplateList } from './use-templates';
 import { Segmented } from '../ui/segmented';
 import { plural } from '@/lib/client/format';
@@ -56,7 +56,6 @@ export function useTemplateImport(onImported: (template: TemplateDetail) => void
 }
 
 export function TemplateLibrary() {
-  const router = useRouter();
   const params = useSearchParams();
   const viewer = useViewer();
   const { projects } = useProjects();
@@ -72,18 +71,9 @@ export function TemplateLibrary() {
     if (last && projects.some((p) => p.id === last)) setProject(last);
   }, [projects, project, params]);
   const known = project && projects && !projects.some((p) => p.id === project) ? undefined : project;
-  const { listing, error, loading, reload, loadMore, loadingMore } = useTemplateList(query, category, source, known);
+  const { listing, error, loading, loadMore, loadingMore } = useTemplateList(query, category, source, known);
   const types = useNodeTypeMap();
-  const importer = useTemplateImport((t) => {
-    reload();
-    router.push(`/templates/${t.id}`);
-  }, known);
-  const pick = (id: string) => {
-    setProject(id || undefined);
-    rememberProject(id || undefined);
-  };
-
-  const templates = listing?.templates ?? [];
+  const templates = sortTemplates(listing?.templates ?? []);
   const remote = listing?.remote;
   const sources = SOURCES.filter((s) => s.id !== 'remote' || remote?.enabled);
   const carried = new URLSearchParams({ ...(folder && { folder }), ...(known && { project: known }) }).toString();
@@ -95,30 +85,10 @@ export function TemplateLibrary() {
       <PageHeader
         title="Templates"
         meta={listing && <span>{plural(templates.length, 'template')}</span>}
-        actions={
-          <>
-            <Button size="sm" variant="ghost" onClick={importer.open} loading={importer.importing} title="Add a template file exported from Landflow">
-              {!importer.importing && <FileUp className="size-3.5" />} Import
-            </Button>
-            {importer.input}
-          </>
-        }
       />
       <PageBody className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-2">
           <SearchInput value={query} onChange={setQuery} placeholder="Search templates, apps, nodes…" label="Search templates" className="w-full max-w-[360px] max-md:max-w-none" />
-          {(projects?.length ?? 0) > 0 && (
-            <div className="w-[200px]">
-              <Select value={known ?? ''} onChange={(e) => pick(e.target.value)} aria-label="Project" className="h-9">
-                <option value="">All my projects</option>
-                {projects?.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {projectLabel(p, viewer?.id)}
-                  </option>
-                ))}
-              </Select>
-            </div>
-          )}
           <Segmented label="Source" value={source ?? 'all'} onChange={(v) => setSource(v === 'all' ? undefined : (v as TemplateSource))} options={sources.map((s) => ({ value: s.id ?? 'all', label: s.label }))} />
         </div>
         {/* A phone: the categories in a Filters sheet (desktop: in place). */}

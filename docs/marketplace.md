@@ -18,23 +18,24 @@ templates that installing adds to Templates, each with a read-only [share page](
 
 ## Using it
 
-**Plugins** → **Marketplace** tab has three tabs.
+**Plugins** → **Marketplace** tab has two tabs.
 
-- **Explore.** Everything in one place: the plugins of every added marketplace, the flows of its Landflow plugins,
-  the registry's own plugins and the Templates library. One search covers names, descriptions, authors, keywords and
-  node types. The kind switch has five views:
+- **Explore.** Plugins, agents and skills in one place: the plugins of every added marketplace, the registry's own
+  plugins and the composite types. Workflows are not here: workflow templates live in
+  [Templates](features/editor.md#templates-library) (a one-line link on the page). One filter row: a search that covers
+  names, descriptions, authors, keywords and node types, a kind switch, one **category** dropdown (a sheet on a phone;
+  `incident-response` reads *Incident response*) and, only with more than one marketplace, a **source** dropdown. The
+  kind switch has four views:
   - **All**: a section per kind, each with its first 8 and **Show all**.
   - **Node plugins**: entries with a `landflow` field or a `landflow.plugin.json`. Once installed, a tile shows the
     registry's icon, status and node count. The registry's own plugins that no marketplace installed show as
     **This instance**, and open their card on the Plugins page.
-  - **Workflows**: marketplace flows (opening the share page) and built-in and saved templates. A flow already
-    installed is shown once, as its flow.
   - **Composites**: the [composite types](composites.md) this instance knows: the plugins' (they come with the plugin)
     and the ones saved here, which whoever saved them, or an owner or admin, can delete from their tile.
   - **Agents & skills**: the other Claude Code plugins, with their agent and skill counts once read.
 
-  The source chips narrow it to one marketplace, which shows its card with **Refresh** and **Remove**, or to
-  **This instance**. Category chips use readable names (`incident-response` reads *Incident response*). Explore
+  The source dropdown narrows it to one marketplace, which shows its card with **Refresh** and **Remove**, or to
+  **This instance**. Explore
   reads every plugin of a marketplace with at most 25 entries (`EXPLORE_READ_ALL`). In a larger one it reads only the
   Landflow plugins and the entries that list flows. A marketplace or plugin that can't be read is named in a notice,
   and the rest still shows. **Anthropic official** (`anthropics/claude-plugins-official`) is built in and is fetched
@@ -54,13 +55,13 @@ templates that installing adds to Templates, each with a read-only [share page](
   - the flows, each with its node icons, **View** (its share page) and a copy-link button;
   - unsupported components, notes, the README;
   - **Install**.
-- **Installed.** What each install created: links to its agents, its skills, its flows' templates,
+- **Installed.** Plugins and skills in one list, with a **type** filter (All, Plugins, Skills). A plugin shows what its install created: links to its agents, its skills, its flows' templates,
   and for node plugins the process state, port, restarts, **Logs** and **Restart**. **Uninstall** asks first,
   then deletes exactly what the install created. That includes agents you edited since; other
   agents are never touched. The installed agents are ordinary draft agents in the default project: they show under
   **Agents** (the **From marketplace** filter, in a team named after the plugin), where you add tools, pick a model and
   publish them.
-- **Skill library.** Every installed skill with its *when to use* line, references and full
+  The skills (the old **Skill library** tab) follow the plugins, each with its *when to use* line, references and full
   instructions.
 
 ## How a plugin maps to an agent
