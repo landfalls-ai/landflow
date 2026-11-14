@@ -184,6 +184,7 @@ Seven nodes make the brain something workflows can use (and On Suggestion Decide
 - **Detector Trigger** (`core.detectorTrigger`) makes the workflow one of the brain's detectors (below).
 - **Find Similar** (`core.findSimilar`, usable as a tool) asks whether something like this already exists ([below](#find-similar)).
 - **Entity** (`core.brainEntity`, usable as a tool) keeps initiatives, people, customers and systems ([below](#entities)).
+- **List People**, **Gather Work**, **Write Briefing**, **Save Briefing** and **Deliver Briefing** (`core.brainListPeople`, `core.brainGatherWork`, `core.brainWriteBriefing`, `core.brainSaveBriefing`, `core.brainDeliverBriefing`) are the tomorrow sync's steps: they prepare a briefing for each person, items carrying ids and counts only ([work-and-briefings.md](work-and-briefings.md#the-nightly-sync)).
 
 #### Find Similar
 
