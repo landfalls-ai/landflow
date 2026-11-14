@@ -62,39 +62,47 @@ const isAnyMachinePath = (word: string) => isMachinePath(word) || isPrefixedMach
 /** A quoted span ("…", '…', `…`, “…”, ‘…’), closed or running to the end; a `'` inside a word (`don't`) neither opens nor closes one. */
 const QUOTED = /"[^"]*(?:"|$)|`[^`]*(?:`|$)|“[^”]*(?:”|$)|‘[^’]*(?:’|$)|(?<!\w)'(?:[^']|'(?=\w))*(?:'(?!\w)|$)/g
 
+/** A path whose last part is a file name (`notes.txt`): it ends there. */
+const endsInFile = (path: string) => /[^./\\]\.[A-Za-z][A-Za-z0-9]{0,7}$/.test(path.split(/[\\/]/).pop() ?? '')
+
 /** The words of `text`: absolute paths and URLs and emails dropped, a relative file path reduced to its directories. */
 function withoutPaths(text: string): string {
-  // A machine path may hold spaces: a quoted span that holds one goes whole, `\ ` stays inside its word, and the words
-  // with a slash right after a dropped path are its rest (`~/Library/Application Support/Acme`).
-  let afterMachine = false
-  return text
-    .replace(QUOTED, span => (span.split(/\s+/).some(word => isAnyMachinePath(bareOf(word))) ? ' ' : span))
-    .split(/(?<!\\)\s+/)
-    .map(word => {
-      const bare = bareOf(word)
-      const rest = afterMachine && /[\\/]/.test(bare)
-      afterMachine = false
-      if (/^https?:\/\//i.test(bare) || /@[\w-]+\.[\w.-]+/.test(bare)) return ''
-      if (rest || isAnyMachinePath(bare)) {
-        afterMachine = true
-        return ''
-      }
-      const slashes = bare.split('/').length - 1
-      const file = /^[\w./-]*[\w-]\.[A-Za-z][A-Za-z0-9]{0,7}$/.test(bare)
-      // `and/or`, `CI/CD` and `11/12` are words; `apps/web/x` and `app.ts` are paths.
-      if (slashes >= 2 || (slashes === 1 && file) || (slashes === 0 && file)) return pathToArea(bare)
-      return word
-    })
-    .filter(Boolean)
-    .join(' ')
+  // A machine path may hold spaces. A quoted span that holds one goes whole, and `\ ` stays inside its word. A bare one
+  // that does not end in a file name may go on (`~/a/My Big Project/x`), so the rest of its clause goes with it, up to a
+  // `.`, `,`, `;`, `:`, `!` or `?` that ends a word, or a new line; after one that ends in a file name, the words with a
+  // slash that follow still go (`/Users/a/Acme.com Files/x`).
+  let after: 'clause' | 'slashes' | undefined
+  const parts = text.replace(QUOTED, span => (span.split(/\s+/).some(word => isAnyMachinePath(bareOf(word))) ? ' ' : span)).split(/((?<!\\)\s+)/)
+  const words: string[] = []
+  for (let i = 0; i < parts.length; i += 2) {
+    const word = parts[i] ?? ''
+    const bare = bareOf(word)
+    const clauseEnds = /[.,;:!?][)"'`>\]”’]*$/.test(word) || (parts[i + 1] ?? '').includes('\n')
+    if (after === 'clause' || (after === 'slashes' && /[\\/]/.test(bare))) {
+      if (after === 'clause' && clauseEnds) after = undefined
+      continue
+    }
+    after = undefined
+    if (/^https?:\/\//i.test(bare) || /@[\w-]+\.[\w.-]+/.test(bare)) continue
+    if (isAnyMachinePath(bare)) {
+      after = !endsInFile(bare) ? (clauseEnds ? undefined : 'clause') : 'slashes'
+      continue
+    }
+    const slashes = bare.split('/').length - 1
+    const file = /^[\w./-]*[\w-]\.[A-Za-z][A-Za-z0-9]{0,7}$/.test(bare)
+    // `and/or`, `CI/CD` and `11/12` are words; `apps/web/x` and `app.ts` are paths.
+    words.push(slashes >= 2 || (slashes === 1 && file) || (slashes === 0 && file) ? pathToArea(bare) : word)
+  }
+  return words.filter(Boolean).join(' ')
 }
 
 /** The title of a session from its first prompt: the first sentence, masked, paths as directories, at most 200 characters. */
 export function titleFrom(prompt: string | undefined): string {
   if (!prompt) return FALLBACK
   // Code a person pasted is not a title: keep what comes before the first fence.
-  const text = redact(prompt.split('```')[0] ?? '').replace(/\s+/g, ' ').trim()
-  const sentence = /^(.+?[.!?])(\s|$)/.exec(text)?.[1] ?? text
+  // New lines stay until the words are split: a line break ends a clause.
+  const text = redact(prompt.split('```')[0] ?? '').replace(/[^\S\n]*\n\s*/g, '\n').replace(/[^\S\n]+/g, ' ').trim()
+  const sentence = /^(.+?[.!?])(\s|$)/s.exec(text)?.[1] ?? text
   const title = withoutPaths(sentence).replace(/\s+/g, ' ').trim()
   if (!title || looksLikeCode(title)) return FALLBACK
   return title.length > LIMITS.title ? `${title.slice(0, LIMITS.title - 1).trimEnd()}…` : title

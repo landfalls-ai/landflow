@@ -23,7 +23,9 @@ the title is "Coding session".
 `/clear` and an in-process resume end the session id but not the process, and no session start follows: the mod holds the
 ending entry and opens a new one for the same repository and branch. A title never shows an absolute, home or drive
 path (also after `@`, `=` or `file:`), or a path that climbs out with `..`; such a path with a space in it goes whole
-(a quoted span that holds one, a `\ ` inside a word, and, unquoted, the words with a slash that follow it); a relative file path is cut to its first two
+(a quoted span that holds one, and a `\ ` inside a word). After an unquoted one that does not end in a file name, the
+rest of its clause goes too, up to a `.`, `,`, `;`, `:`, `!` or `?` or a new line (`~/a/My Big Project/x` leaves nothing);
+after one that ends in a file name, the words with a slash that follow it go; a relative file path is cut to its first two
 directories. A commit counts only when `git commit` printed its `[branch hash]` line, and `git push` records nothing.
 
 It never records or sends code, diffs, prompts beyond that title, tool output, file names, absolute paths or the

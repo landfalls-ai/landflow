@@ -95,9 +95,9 @@ describe('the summary', () => {
   it('drops a machine path with a space in it, quoted, escaped or bare', () => {
     expect(titleFrom('Open "/Users/alice/Client Acme/plan.md" now')).toBe('Open now');
     expect(titleFrom('~/Library/Application Support/Acme/secret.db')).toBe('Coding session');
-    expect(titleFrom('Copy ~/Library/Application Support/Acme/secret.db here')).toBe('Copy here');
+    expect(titleFrom('Copy ~/Library/Application Support/Acme/secret.db here')).toBe('Copy');
     expect(titleFrom('Open /Users/alice/Client\\ Acme/plan.md now')).toBe('Open now');
-    expect(titleFrom('Open C:\\Program Files\\Acme\\secret.db now')).toBe('Open now');
+    expect(titleFrom('Open C:\\Program Files\\Acme\\secret.db now')).toBe('Open');
     expect(titleFrom('Open "C:\\Program Files\\Acme\\secret.db" now')).toBe('Open now');
     expect(titleFrom('Open `~/work/My Client/x.md` now')).toBe('Open now');
     expect(titleFrom('Open “/Users/alice/Client Acme/plan.md” now')).toBe('Open now');
@@ -106,11 +106,22 @@ describe('the summary', () => {
     expect(titleFrom('Fix "the login" bug, and/or the users\' tests.')).toBe('Fix "the login" bug, and/or the users\' tests.');
   });
 
+  it('drops the rest of the clause after a bare machine path that does not end in a file name', () => {
+    expect(titleFrom('Open ~/a/My Big Project/x')).toBe('Open');
+    expect(titleFrom('~/a/My Big Project/x')).toBe('Coding session');
+    expect(titleFrom('fix ~/a/b then apps/web/x')).toBe('fix');
+    expect(titleFrom('Open ~/a/My Big/x, then write tests')).toBe('Open then write tests');
+    expect(titleFrom('Open ~/a/My Big/x\nthen write tests')).toBe('Open then write tests');
+    expect(titleFrom('Open /Users/alice/Acme.com Files/x now')).toBe('Open now');
+    expect(titleFrom('Look at /Users/alice/notes.txt and fix it')).toBe('Look at and fix it');
+  });
+
   it('drops a path that climbs out of the repository or follows a prefix', () => {
     expect(titleFrom('Open ../../alice/secret-client/plan.md now')).toBe('Open now');
     expect(titleFrom('Read @/Users/alice/notes.txt now')).toBe('Read now');
     expect(titleFrom('Read @~/work/acme/app.ts now')).toBe('Read now');
-    expect(titleFrom('Run with --dir=/Users/alice/x now')).toBe('Run with now');
+    // No file name ends the path, so it may go on past the space: the rest of the clause goes with it.
+    expect(titleFrom('Run with --dir=/Users/alice/x now')).toBe('Run with');
     expect(titleFrom('Open file:///Users/alice/x.md now')).toBe('Open now');
     expect(titleFrom('Set path=/Users/alice/app.ts now')).toBe('Set now');
     expect(titleFrom('Fix and/or CI/CD on 11/12 please.')).toBe('Fix and/or CI/CD on 11/12 please.');
