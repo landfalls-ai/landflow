@@ -136,7 +136,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 - **The cap can be exceeded between passes**: a finished run prunes only every `LANDFLOW_RETENTION_EVERY` runs (default
   50), so up to that many minus one finished executions above the saved maximum can be stored until the next pass (the
-  hourly timer and **Prune now** prune regardless).
+  hourly timer and **Prune now** (Settings → General, in the ⋯ menu) prune regardless).
 
 ## Encryption key ring (backend hardening, 2026-11)
 
