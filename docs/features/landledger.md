@@ -145,6 +145,8 @@ On 2026-11-14, on the OrbStack cluster (`orbstack-clickland`):
 | Plugin registered | `GET /api/plugins`: `landledger` online from `kubernetes` with its 2 nodes; `GET /api/health`: 14 plugins, 14 online |
 | Landledger from the cluster | `GET http://landledger-api.landflow-dev.svc.cluster.local:4810/api/health` from the plugin's pod answered Landledger's health (through the ExternalName) |
 
-Not run live yet: the requests, the Slack relay and the trigger. Landledger on this machine still runs wave 1 (no
-request routes); wave 2's contract is on its main (`acf95c6`) but not its implementation. See
-[limitations](../limitations.md#landledger-built-2026-11-14) for the steps once it runs.
+Not run live yet: the requests, the Slack relay and the trigger. Wave 2's contract is on Landledger's main (`acf95c6`);
+its implementation was still being built in Landledger's checkout (the API on this machine answered version 0.1.0 with
+the requests migration applied, nothing committed), and an `ll_` key is minted only by an admin (`POST /api/keys`, a
+Landbright sign-in), so no key was made. See [limitations](../limitations.md#landledger-built-2026-11-14) for the steps
+once it runs.

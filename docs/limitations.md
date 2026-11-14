@@ -129,8 +129,8 @@ items still open (its "Wave 6" section); this page is the short list to check be
 ## Landledger (built 2026-11-14)
 
 - **Not checked against a live Landledger yet.** The plugin and the three flows are built against Landledger's wave 2
-  contract (`acf95c6`) and tested against a fake of it; Landledger on this machine still runs wave 1, with no request,
-  decision, reservation or webhook routes. Once wave 2 runs: mint an `ll_` key with `requests:write` and
+  contract (`acf95c6`) and tested against a fake of it; on 2026-11-14 Landledger's wave 2 was still being built (not
+  committed), and minting an `ll_` key needs a Landledger admin (a Landbright sign-in). Once wave 2 runs: mint an `ll_` key with `requests:write` and
   `decisions:relay` (Landledger's `docs/development.md`), store it as the Landledger credential, use the infra change
   template, submit its form, and see the request pending in Landledger; then the Slack relay path with a signed
   `block_actions` payload ([features/landledger.md](features/landledger.md#checked-live)).
