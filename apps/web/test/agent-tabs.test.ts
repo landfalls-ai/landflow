@@ -5,7 +5,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { normalizeConfig } from '../src/lib/server/agents/store';
-import { LayersCard } from '../src/components/agents/layers-card';
+import { LayersCard, rowSummary } from '../src/components/agents/layers-card';
 import {
   abilityRows,
   BUILDER_TABS,
@@ -105,5 +105,20 @@ describe('agent tabs', () => {
     expect(publishLabel({ version: 3 }, false, 4)).toBe('Live v3');
     const builder = source('builder.tsx');
     for (const gone of ['Changes not published', '<Badge', 'Published v{', 'The draft has changes not published yet', 'Nowhere yet']) expect(builder).not.toContain(gone);
+  });
+
+  it('summarizes rows truthfully', () => {
+    const cfg = (extra: object) => normalizeConfig({ name: 'H', model: { provider: 'ollama', model: 'llama3' }, ...extra });
+    const plugin = cfg({ plugins: ['x@y'] });
+    expect(rowSummary('capabilities', plugin, [], false)).toEqual({ state: 'done', detail: '1 plugin' });
+    expect(rowSummary('capabilities', cfg({}), [], false).state).toBe('todo');
+    const pub = rowSummary('deploy', plugin, [], true);
+    expect(pub.state).toBe('todo');
+    expect(pub.detail).toContain('Not deployed');
+    expect(rowSummary('deploy', plugin, [], true, { name: 'helper' })).toEqual({ state: 'done', detail: 'On kagent · helper' });
+    const html = renderToStaticMarkup(
+      createElement(LayersCard, { agentId: 'a1', config: cfg({}), published: false, rows: abilityRows(false), open: new Set() as never, onToggle: () => undefined, children: () => null }),
+    );
+    expect(html).toContain('1 of 5 set up');
   });
 });

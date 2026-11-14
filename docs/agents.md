@@ -504,13 +504,17 @@ can read it, test it and publish it as a new version. `POST /api/agents/:id/rest
 
 ## Layers
 
-The top of **Abilities** is a checklist of the layers around the agent's model, in the order a request passes through
-them: **system prompt**, **knowledge**, **tools**, **tool access**, **guardrails**, **model router**, **cache**,
-**evals** and **traces**. Each shows what is set (or why it matters), and **Set up** opens the tab and scrolls to the
-setting. A layer that cannot apply is greyed out (no tools means nothing to restrict; the response cache skips agents with
-tools or memory; the prompt cache is on by default for Anthropic). The score ("6 of 8") counts the layers that apply.
-It reads the draft's config and the number of eval test cases, so it needs no component of its own
-(`lib/shared/agent-layers.ts`).
+**Abilities** is a list of rows, one per layer around the agent's model: **Model**, **Capabilities**, **Triggers**,
+**Guardrails**, **Deploy** (only with a kagent cluster or an existing deployment) and **Advanced**. Each row's line says
+what is set: the model, the counts of tools, knowledge bases, skills and plugins (only the non-zero ones), schedules and
+channels, what the guardrails check, "On kagent · name" or "Not deployed", and which of router, cache and tool access
+are on. Clicking a row opens its card in place. The line above the rows ("2 of 5 set up") counts the rows shown that are
+set up.
+
+Older layers fold into the rows: knowledge and tools into Capabilities; the model router, the cache and tool access into
+Advanced; evals live in **Activity → Evaluations**, and the system prompt in the Persona tab. The Insights "Agent
+layers" card still scores the nine layers of `lib/shared/agent-layers.ts` (system prompt, knowledge, tools, tool access,
+guardrails, model router, cache, evals, traces), which are no longer rows here.
 
 ## Model router
 

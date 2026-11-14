@@ -755,6 +755,7 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
                 agentId={agentId}
                 config={draft}
                 published={Boolean(published)}
+                kagent={agent.kagent}
                 rows={abilityRows(kagentShown)}
                 open={open}
                 onToggle={(row) => openRow(row, !open.has(row))}
