@@ -13,7 +13,7 @@ import { UserMenu } from '../auth/user-menu';
 import { useViewer } from '../auth/viewer';
 import { ProjectSwitcher } from '../projects/project-switcher';
 import { EnvironmentBadge } from './environment-badge';
-import { offlineDot, railActive, RAIL_ITEMS } from './section-nav';
+import { groupOf, offlineDot, railActive, RAIL_ITEMS } from './section-nav';
 import { useDialogFocus } from '../ui/use-dialog-focus';
 
 const ICONS: Record<string, typeof House> = {
@@ -32,16 +32,16 @@ const NAV = RAIL_ITEMS.filter((i) => i.href !== '/settings').map((i) => ({ ...i,
 
 const RAIL_KEY = 'landflow-rail-collapsed';
 
-/**
- * The left rail: product mark, navigation (nine places, the section tabs inside Workflows, Runs and Plugins), the user menu. Not on sign-in and public pages. On a desktop
- * it folds to its icons (the button beside the mark), so the editor's canvas and Spotlight get the room; the choice is kept
- * in the browser. On a phone (below `md`) a tab bar at the bottom takes its place (Home, Flows, Runs, Agents, More), and
- * More opens the rail as a drawer with everything else. Full-screen pages (the editor, a run's trace) have neither: their
- * own header has a back arrow.
- */
 /** Whether a sidebar item is the current page: a group's item (Workflows, Runs, Plugins) holds for every page of its group. */
 export const navActive = railActive;
 
+/**
+ * The left rail: product mark, navigation (nine places, the section tabs inside Workflows, Runs and Plugins), the user
+ * menu. Not on sign-in and public pages. On a desktop it folds to its icons (the button beside the mark), so the editor's
+ * canvas and Spotlight get the room; the choice is kept in the browser. On a phone (below `md`) a tab bar at the bottom
+ * takes its place (Home, Flows, Runs, Agents, More), and More opens the rail as a drawer with everything else.
+ * Full-screen pages (the editor, a run's trace) have neither: their own header has a back arrow.
+ */
 export function Sidebar() {
   const pathname = usePathname();
   const viewer = useViewer();
@@ -61,18 +61,22 @@ export function Sidebar() {
 /** Pages that take the whole phone screen, with a back arrow of their own: the editor and its tabs, an agent, a run's trace. */
 export const fullScreen = (pathname: string) => /^\/(workflows|agents)\/[^/]+/.test(pathname) || (/^\/runs\/[^/]+/.test(pathname) && pathname !== '/runs/compare');
 
-const TABS = [
+/** The tab bar's places; Flows and Runs hold for every page of their group, as the rail's items do. */
+export const TABS = [
   { href: '/', label: 'Home', icon: House, match: (p: string) => p === '/' },
-  { href: '/workflows', label: 'Flows', icon: Workflow, match: (p: string) => p.startsWith('/workflows') || p.startsWith('/templates') },
-  { href: '/executions', label: 'Runs', icon: Activity, match: (p: string) => p.startsWith('/executions') || p.startsWith('/runs') },
+  { href: '/workflows', label: 'Flows', icon: Workflow, match: (p: string) => groupOf(p) === 'workflows' },
+  { href: '/executions', label: 'Runs', icon: Activity, match: (p: string) => groupOf(p) === 'runs' },
   { href: '/agents', label: 'Agents', icon: Bot, match: (p: string) => p.startsWith('/agents') },
 ];
+
+/** The tab a path lights on the phone, if any (else More does). */
+export const tabFor = (pathname: string) => TABS.find((t) => t.match(pathname))?.label;
 
 /** The phone's tab bar: four places and More (the rest, in the rail's drawer). Runs counts what waits for a person. */
 function TabBar({ pathname, more, onMore }: { pathname: string; more: boolean; onMore: () => void }) {
   const { items } = useNeedsYou();
   const waiting = items?.length ?? 0;
-  const inTabs = TABS.some((t) => t.match(pathname));
+  const inTabs = tabFor(pathname) !== undefined;
   return (
     <nav data-tabbar aria-label="Main" className="fixed inset-x-0 bottom-0 z-40 flex border-t border-hair bg-sf2/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
       {TABS.map(({ href, label, icon: Icon, match }) => {

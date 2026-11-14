@@ -2,7 +2,8 @@
 /**
  * The section tabs under the rail's Workflows, Runs and Plugins items (docs/ux-simplification.md#navigation): the pages
  * that used to be rail items of their own, one click away from their group. The strip sits above a list page and not
- * above a page of its own (the editor, a run's trace, a compare), and on a phone the row scrolls sideways. The logic is plain functions, so a test can read it without a browser.
+ * above a page of its own (the editor, a run's trace, a compare), and on a phone the row scrolls sideways. The logic is
+ * plain functions, so a test can read it without a browser.
  */
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
@@ -76,7 +77,6 @@ export function railActive(href: string, pathname: string): boolean {
 export function stripGroup(pathname: string): SectionGroup | undefined {
   const group = groupOf(pathname);
   if (!group) return undefined;
-  if (pathname === '/marketplace' || pathname.startsWith('/marketplace/')) return group;
   return SECTION_GROUPS[group].some((t) => t.href === pathname) || pathname === '/runs' ? group : undefined;
 }
 
@@ -103,7 +103,7 @@ export function SectionNav({ group }: { group: SectionGroup }) {
     <nav aria-label="Section" className="border-b border-hair bg-sf2/50 px-6 max-md:overflow-x-auto max-md:px-4 max-md:[scrollbar-width:none] max-md:[&::-webkit-scrollbar]:hidden">
       <div role="tablist" aria-label="Section" className="flex items-center gap-1 max-md:w-max">
         {visibleTabs(group, plugins).map((tab) => {
-          const current = pathname === tab.href || (tab.href === '/marketplace' && pathname.startsWith('/marketplace/'));
+          const current = pathname === tab.href;
           return (
             <Link
               key={tab.href}

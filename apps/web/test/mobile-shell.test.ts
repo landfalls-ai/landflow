@@ -2,7 +2,7 @@
  * Landflow on a phone (docs/mobile.md#the-shell): which pages take the whole screen (no tab bar, a back arrow of their own).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fullScreen } from '@/components/shell/sidebar';
+import { fullScreen, tabFor } from '@/components/shell/sidebar';
 
 describe('full-screen pages on a phone', () => {
   it('are the editor and its tabs, an agent or team, and a run’s trace', () => {
@@ -61,5 +61,18 @@ describe('“Are you sure?” before a step that can’t be taken back', () => {
     const third = confirmAction('Delete it?');
     answerConfirm(false);
     await expect(third).resolves.toBe(false);
+  });
+});
+
+describe('the phone tab bar', () => {
+  it('lights a tab for every page of its group, and More for the rest', () => {
+    expect(tabFor('/')).toBe('Home');
+    expect(tabFor('/templates')).toBe('Flows');
+    expect(tabFor('/runbooks')).toBe('Flows');
+    expect(tabFor('/executions')).toBe('Runs');
+    expect(tabFor('/insights')).toBe('Runs');
+    expect(tabFor('/runs')).toBe('Runs');
+    expect(tabFor('/agents')).toBe('Agents');
+    expect(tabFor('/brain')).toBeUndefined();
   });
 });

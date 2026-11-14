@@ -8,6 +8,7 @@ import { can, ROLE_LABELS } from '@/lib/shared/auth';
 import { ThemeChoice } from '../shell/theme-toggle';
 import { initials, signOut, useViewer } from './viewer';
 
+/** `defaultOpen` lets a test render the open menu on the server. */
 export function UserMenu({ defaultOpen = false }: { defaultOpen?: boolean } = {}) {
   const viewer = useViewer();
   const [open, setOpen] = useState(defaultOpen);

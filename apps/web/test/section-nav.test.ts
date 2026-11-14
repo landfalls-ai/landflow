@@ -51,7 +51,7 @@ describe('the section tabs', () => {
     expect(stripGroup('/executions')).toBe('runs');
     expect(stripGroup('/runs')).toBe('runs');
     expect(stripGroup('/developers')).toBe('plugins');
-    expect(stripGroup('/marketplace/flows')).toBe('plugins');
+    expect(stripGroup('/marketplace/flows/a/b')).toBeUndefined();
     expect(stripGroup('/workflows/wf_1')).toBeUndefined();
     expect(stripGroup('/runs/ex_1')).toBeUndefined();
     expect(stripGroup('/runs/compare')).toBeUndefined();
