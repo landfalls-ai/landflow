@@ -54,7 +54,9 @@ async function connect(user: typeof alice, keyScopes?: ApiKeyScope[]) {
 const toolNames = async (client: Client) => (await client.listTools()).tools.map((t) => t.name).sort();
 const textOf = (result: unknown) => ((result as { content: Array<{ text: string }> }).content[0]?.text ?? '');
 const BRAIN_READ = ['brain_ask', 'brain_list_suggestions', 'brain_search_facts', 'brain_usage_report', 'brain_workflow_knowledge', 'check_overlap', 'my_briefing'];
-const at = new Date(Date.now() - 3_600_000).toISOString();
+// A second ago, not an hour: an hour ago falls on yesterday during the first hour after local midnight, and the
+// briefing reads today's events by the instance's day.
+const at = new Date(Date.now() - 1_000).toISOString();
 const event = (sourceId: string, title: string, extra: Record<string, unknown> = {}) => ({ kind: 'work.session', sourceId, occurredAt: at, title, ...extra });
 
 describe('tool scopes', () => {
