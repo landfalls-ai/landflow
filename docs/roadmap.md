@@ -1670,6 +1670,44 @@ The wave 1 review notes were fixed in wave 2's carryover where they were contain
 - **All projects and Manage projects** both open `/projects` in the switcher; dropping one belongs with the projects
   page (B34).
 
+## Company backbone: left open from the wave 2 reviews (2026-11-14)
+
+The wave 2 review notes were fixed in wave 3's carryover where they were contained; these wait, each with its reason:
+
+- **Spotlight changed a flow when asked a question**: with Autonomous on, "What does this flow do? change nothing"
+  (qwen3-coder:30b) applied a change. B24's **Asks first** lets a person keep changes for review; a server guard that
+  tells a question from a request is a model-routing change, larger than a carryover.
+- **Ask the brain's answer is one paragraph**: it has no short reply with **Show more** as Spotlight has. The answer's
+  links need a cut that never splits a `[[link]]`; it belongs with the one Spotlight (B35), which takes over the panel.
+- **The streaming caret** sits on its own line under a paragraph (`StreamingText` puts it after the Markdown block);
+  moving it into the last block needs the Markdown renderer to take it. The first model step's words fading into a
+  Thought row when a second step starts is as designed; revisit with B24's motion.
+- **The reply footer wraps** "local" onto its own line at 1440 px in the test chat (`ReplyMeta` joins its parts in one
+  span); wrapping only between parts needs a look at the phone too.
+- **The architect's kept conversation** shows a retried or continued question and its error twice when reopened (a retry
+  appends again); replacing the failed item is a change to how the store keeps turns.
+- **Agent sessions at scale**: `listSessions` with a filter reads every summary of the agent (the Sessions tab's 6 s
+  refresh does this), and on Postgres the cursor's `id` tie-break follows the collation while the code compares in JS
+  (same-millisecond ties only). Filtering in SQL fixes both.
+- **The test chat's activity line** keeps only a 300-character detail of a tool row: no link to a child agent's or
+  workflow's run (the Sessions tab has the full row).
+- **Folded-away versions**: a decided publish request, the publish log or `restoredFrom` can name a version that an
+  autosave folded away; readers already allow a missing version (the 50-version cap does the same), so it is cosmetic.
+- **Tests not written**: the editor's autosave effect (re-arm, queue, leave flush) is tested only through its pure
+  helpers (moving it into `chrome.ts` would cover it); the user menu's two switches and the "Keep my conversations"
+  delete prompt have no test; `apps/web/claude-plugins/landflow-brain/hooks/register.test.ts` runs only through
+  `claude plugin test`, which the wave gate runs and `pnpm check` does not.
+- **MCP internals**: `instance-tools.ts` wraps `server.registerTool` through casts to enforce key scopes, so an SDK
+  signature change would pass silently (the tool-count assertions catch a tool missing from `TOOL_SCOPES`); a typed
+  helper would be sturdier. `openapi.ts` has no `/api/mcp` entry, so the MCP text sits on `/api/mcp/projects/{id}`.
+- **Developer details vs the reply footer**: the switch hides model lines on agent cards, the node panel and the run
+  trace, but the chat kit's footer and model chip always show model, tokens and cost. Whether one rule should cover
+  both is the person's call.
+- **Needs you after a sign-out**: the list is a module-level store; sign-out does a full page load, which clears it.
+  A sign-in as someone else without one would show the previous list until the next fetch.
+- **Ask's short follow-ups** borrow the last question's words when they have three or fewer of their own, so a short
+  question on another topic also pulls in the earlier pages; watch it in the Ollama live check.
+
 ## Runs: one list (B20, 2026-11-14)
 
 Closed from the wave 1 page review: X2 (Executions, Runs and Search runs are one page, **Runs** at `/runs`, the old URLs redirect), P-ex-1 (no ID or Mode column), P-ex-2 (Stop all only while a run runs), P-ex-3 (repeated failures fold into one row), P-ex-4 (two re-run words), P-runs-1 (one search box with Status and Workflow chips, the rest under More filters) and P-cmp-1 (compare with fewer than two runs goes back to the list). See [the Runs list](run-trace.md#the-runs-list).
