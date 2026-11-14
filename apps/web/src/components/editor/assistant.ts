@@ -19,9 +19,10 @@ import type { ReplyInfo } from '../ui/chat';
 import { useEditor } from './store';
 import { emptyStored, withEarlier, type Stored } from './spotlight-history';
 
-const freshKept = (): { id?: string; stored: Stored } => ({ stored: emptyStored() });
 import { saveAgentFor, type AgentPlace } from './new-agent';
 import { saveTeamFor } from './turn-into-team';
+
+const freshKept = (): { id?: string; stored: Stored } => ({ stored: emptyStored() });
 
 export type SuggestionKind = 'fix' | 'param' | 'data' | 'next';
 export type ChangeKind = SuggestionKind | 'proposal';

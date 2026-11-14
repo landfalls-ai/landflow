@@ -110,6 +110,21 @@ describe('planning what to store', () => {
     }
   });
 
+  it('never stores a stale verdict, and still stores a later applied or dismissed', () => {
+    const kept: ConversationItem[] = [
+      { seq: 1, role: 'user', parts: [{ type: 'text', text: 'Rename Code' }], at: '2026-11-14T08:00:00.000Z' },
+      { seq: 2, role: 'assistant', parts: [{ type: 'proposal', id: 'pr_1', summary: 'Rename Code', ops: [rename], state: 'pending' }], at: '2026-11-14T08:00:00.000Z' },
+    ];
+    const back = restore(kept);
+    const marked = markStale(back.items, workflow(['Start', 'Formatter']), lookup);
+    expect((marked[1] as AssistantTurn).parts.find((p) => p.kind === 'proposal')).toMatchObject({ proposal: { state: 'stale' } });
+    expect(planKeeping(marked, back.stored, { keeping: true, live: false }).inputs).toEqual([]);
+    for (const state of ['applied', 'dismissed'] as const) {
+      const turns = back.items.map((i) => (i.role === 'assistant' ? { ...i, parts: i.parts.map((p) => (p.kind === 'proposal' ? { ...p, proposal: { ...p.proposal, state } } : p)) } : i));
+      expect(planKeeping(turns, back.stored, { keeping: true, live: false }).inputs).toHaveLength(1);
+    }
+  });
+
   it('stores a marker when a stored reply becomes auto and applied', () => {
     const stored = emptyStored();
     const first = [user('u1', 'Rename Code'), withState('a1', undefined)];

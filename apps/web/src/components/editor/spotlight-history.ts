@@ -116,7 +116,8 @@ export function planKeeping(items: readonly ChatItem[], stored: Stored, options:
       if (part.kind !== 'proposal') continue;
       const now = keptState(part.proposal.state);
       const before = plan.proposals.findLast(([id]) => id === part.proposal.id)?.[1] ?? stored.proposals.get(part.proposal.id);
-      if (before === undefined || before === now) continue;
+      // A stale verdict is computed on each visit (`markStale`), never stored: the stored state stays as it was.
+      if (before === undefined || before === now || now === 'stale') continue;
       plan.inputs.push(markerInput(part.proposal, now));
       plan.proposals.push([part.proposal.id, now]);
     }
