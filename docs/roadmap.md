@@ -1651,3 +1651,7 @@ The wave 1 review notes were fixed in wave 2's carryover where they were contain
 Later, maybe: an agent code sandbox, and prompt management. Not planned:
 Later, maybe: browser use, an agent code sandbox, spoken replies and realtime voice (dictation into Spotlight is built), and prompt management. Not planned:
 RPA, process mining, an app builder, and a chat hub (n8n is retiring its own).
+
+## Connect your harness
+
+Built: `/connect` (copy-paste setup and a brain key for each harness), Settings → MCP in four collapsed sections, and the admin's switch that forbids automatic sending ([connect-your-harness.md](connect-your-harness.md)). Closes V1, MOD4 and P-set-3 of the company backbone plan.

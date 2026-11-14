@@ -1,11 +1,13 @@
 /**
  * Your API keys (session only: an API key can't make keys). GET lists them; POST { label, scopes, expiresInDays? }
  * creates one and returns it once as `token` (`lf_…`, sent as `Authorization: Bearer lf_…`). Only owners and admins
- * create keys with the `admin` scope, and SCIM tokens (the `scim` scope alone, made in Settings → Security).
+ * create keys with the `admin` scope, and SCIM tokens (the `scim` scope alone, made in Settings → Security); every
+ * other scope (the brain's and the workflow ones) is open to every role, as the role's own routes still apply (`scopeRefusal`).
  */
 import { z } from 'zod';
-import { API_KEY_SCOPES, can } from '@/lib/shared/auth';
+import { API_KEY_SCOPES } from '@/lib/shared/auth';
 import { apiKeyView, createApiKey, listApiKeys, requireUser } from '@/lib/server/auth';
+import { scopeRefusal } from '@/lib/server/auth/api-keys';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { auditedTransaction, recordAudit } from '@/lib/server/audit';
 
@@ -27,10 +29,9 @@ export const POST = handler(async (request: Request) => {
   const me = await requireUser();
   const body = await parseBody(request, schema);
   if (!body.ok) return body.response;
-  if (body.data.scopes.includes('admin') && !can(me, 'apiKeys:admin')) return error('Only owners and admins can create keys with the admin scope', 403);
-  // SCIM tokens (Settings → Security): owners and admins only, and the scope stands alone.
-  if (body.data.scopes.includes('scim') && !can(me, 'scim:manage')) return error('Only owners and admins can create SCIM tokens', 403);
-  if (body.data.scopes.includes('scim') && body.data.scopes.length > 1) return error('A SCIM token has the scim scope only', 400);
+  // The admin scope and SCIM tokens (Settings → Security) are for owners and admins; everything else is the role's own.
+  const refusal = scopeRefusal(me, body.data.scopes);
+  if (refusal) return error(refusal.reason, refusal.status);
   const expiresAt = body.data.expiresInDays ? new Date(Date.now() + body.data.expiresInDays * 86_400_000).toISOString() : undefined;
   // One transaction with its event: with LANDFLOW_AUDIT_FAIL_CLOSED a key whose event can't be stored is not created.
   const { key, token } = auditedTransaction(() => {

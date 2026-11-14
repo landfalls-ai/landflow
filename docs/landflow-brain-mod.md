@@ -89,7 +89,7 @@ It asks for five options (`userConfig`):
 | `mode` | `review` (the default), `auto` or `off` |
 | `sync` | `true` (the default): bring yesterday in at session start |
 
-A page that makes the key and the options for you comes later.
+[Connect your harness](connect-your-harness.md) (`/connect`) makes the key and shows these options.
 
 ## Check it
 
