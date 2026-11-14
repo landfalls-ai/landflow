@@ -311,7 +311,7 @@ prose and a person keeps the facts. Spotlight asks it questions.
     button stays in the title bar and the status bar at the bottom.
 - **index.md**: **Shared across teams** (customers and initiatives two or more teams worked on in the last 7 days, most
   teams first, with their teams, people and latest items: no other product flags this, and it is what the Company
-  Brain is for), **Suggestions**, **Teams this week** and **Needs a person**. A card with nothing in it is not shown.
+  Brain is for), **Suggestions**, **Teams this week** and **Needs a person**. A card with nothing in it is not shown, and the Source view leaves out its heading too.
 - **A page**:
   - **Kept by people**: name, what it is and owner, editable by editors of its project (`PATCH /api/entities/…`), and
     chips for owner (amber when none, not on people), teams, sources and last work.
