@@ -15,6 +15,7 @@ import {
   CircleDashed,
   CircleX,
   Copy,
+  CornerLeftUp,
   ExternalLink,
   History,
   ListRestart,
@@ -569,7 +570,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
               <span className="contents max-md:hidden">
               {record.versionNumber !== undefined && (
                 <span
-                  className={cn('flex items-center gap-1 rounded-full border px-2 text-[12px] max-md:hidden', record.versionPublished ? 'border-acbd text-ac' : 'border-hair text-t2')}
+                  className={cn('flex items-center gap-1 rounded-full border px-2 text-[12px]', record.versionPublished ? 'border-acbd text-ac' : 'border-hair text-t2')}
                   title={record.versionPublished ? 'The published version when the run started (draft and publish)' : 'A draft: not the published version when the run started'}
                 >
                   Ran version {record.versionNumber} ({record.versionPublished ? 'published' : 'draft'})
@@ -701,6 +702,24 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                         <p className="px-3 py-1.5 text-[12px] text-t2 md:hidden">
                           Ran version {record.versionNumber} ({record.versionPublished ? 'published' : 'draft'})
                         </p>
+                      )}
+                      {record.parentExecutionId && (
+                        <div className="md:hidden">
+                          <MenuItem
+                            onClick={() => {
+                              close();
+                              open(record.parentExecutionId!);
+                            }}
+                          >
+                            <CornerLeftUp /> Open the parent run
+                          </MenuItem>
+                        </div>
+                      )}
+                      {(record.aiUsage || record.chatFeedback) && (
+                        <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 md:hidden">
+                          <AiUsageChip usage={record.aiUsage} />
+                          <FeedbackChip key={record.executionId} executionId={record.executionId} feedback={record.chatFeedback} />
+                        </div>
                       )}
                       {record.rerunOf && (
                         <div className="md:hidden">
