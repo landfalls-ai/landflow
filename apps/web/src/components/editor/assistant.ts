@@ -453,7 +453,10 @@ export interface SendOptions {
 /** The parts and trace of a failed reply that a resumed reply keeps: its proposals and tool calls, its steps (the failed one marked). */
 export function carriedFrom(failed: ChatItem | undefined): { parts: ReplyPart[]; steps: ActivityStep[] } {
   if (failed?.role !== 'assistant') return { parts: [], steps: [] };
-  return { parts: failed.parts.filter((p) => p.kind === 'proposal' || p.kind === 'tool'), steps: failed.steps ?? [] };
+  return { parts: failed.parts.filter((p) => p.kind === 'proposal' || p.kind === 'tool'),
+    // The resumed stream restarts at the failed step's number: the kept row gets its own id, so trace rows stay unique.
+    steps: (failed.steps ?? []).map((s) => (s.kind === 'model' && s.status === 'failed' ? { ...s, id: `${s.id}-failed` } : s)),
+  };
 }
 
 /** An agent Spotlight is having the Agent architect design (./new-agent.ts), shown as a row of its timeline. */

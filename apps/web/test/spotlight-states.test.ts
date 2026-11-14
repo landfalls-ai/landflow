@@ -1,7 +1,5 @@
 /**
- * Spotlight's states as pure functions (components/editor/spotlight/states.ts): the buttons of an error, the starters of
- * an empty panel, the folded bar with a waiting change, the first-visit fold, the one-time explainer, and Apply and Undo
- * as a sequence.
+ * Spotlight's states as pure functions (components/editor/spotlight/states.ts): the buttons of an error, the folded bar with a waiting change, the first-visit fold, the one-time explainer, and Apply and Undo.
  */
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -124,6 +122,13 @@ describe('Continue from a failed reply', () => {
   it('keeps the proposals and tool calls, not the words', () => {
     expect(carriedFrom(failed).parts.map((p) => p.kind)).toEqual(['proposal', 'tool']);
     expect(carriedFrom(undefined).parts).toEqual([]);
+  });
+  it('keeps step ids unique when the resumed stream restarts at the failed step', () => {
+    const carried = carriedFrom({ ...failed, steps: [{ id: 'model3', label: 'Thinking', kind: 'model', status: 'failed' }] });
+    const turn = applyStreamEvent({ parts: carried.parts, steps: carried.steps } as AssistantTurn, { type: 'step.start', step: 3, label: 'Thinking' } as never, 1);
+    const all = (turn.steps ?? []).map((s) => s.id);
+    expect(new Set(all).size).toBe(all.length);
+    expect(all).toHaveLength(2);
   });
   it('the resumed reply still has the proposal, and does not send it back as pending', async () => {
     useAssistant.setState({ items: [], pending: false });

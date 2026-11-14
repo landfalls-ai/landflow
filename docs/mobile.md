@@ -86,7 +86,7 @@ Drag its header up or down for the next height (`setDock` in `components/editor/
 the bar and half. As on a desktop, only you move it: a reply, a draft or a test session leaves it where it is, and the
 folded bar already says what Spotlight is doing. When a change waits, the folded bar also shows the amber needs-you icon with
 **Review** (opens the sheet to half) and **Apply**, both 44 px, so a change can be applied without opening the sheet. The sheet's
-height eases between peek and half (240 ms); under Reduce motion it switches.
+height eases between its three heights (the bar as measured, peek, half) over 240 ms, follows the header drag and settles on the nearest height; on a first visit a note card explains how Spotlight works; under Reduce motion it switches.
 
 ## Lists and filters
 
