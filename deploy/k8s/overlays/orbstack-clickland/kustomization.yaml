@@ -1,0 +1,16 @@
+# The OrbStack overlay with Landflow's telemetry going to Clickland (components/clickland-observability): traces, metrics
+# and logs of every Landflow process to Clickland's collector in clickland-dev, run journals as traces there, and the
+# host's trace links to Clickland's console. kagent in the kind cluster exports there too (deploy/scripts/kagent-up.sh).
+# Clickland itself is deployed from its own repository. The default telemetry overlay; orbstack-observability (the
+# grafana/otel-lgtm backend in landflow-dev) stays for running without Clickland. Switching from it: apply this overlay,
+# then delete Deployment and Service landflow-lgtm and ConfigMaps landflow-otelcol-config, landflow-grafana-dashboards,
+# landflow-grafana-dashboard-provider, landflow-prometheus-rules and landflow-prometheus-config.
+#
+#   kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-clickland
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: landflow-dev
+resources:
+  - ../orbstack
+components:
+  - ../../components/clickland-observability

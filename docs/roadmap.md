@@ -1224,6 +1224,9 @@ Landflow's side of Clickland, the land family's observability system ([features/
   [observability assistant](features/clickland.md#the-observability-assistant) behind Clickland's Assistant panel (a
   lead with logs, traces and metrics analysts, views and dashboards), with its
   [chat contract](features/clickland.md#the-assistant-chat-contract); Normalize Alert reads Clickland alerts.
+- [Telemetry to Clickland](deployment.md#telemetry-on-kubernetes), the default: the `orbstack-clickland` overlay
+  (component `clickland-observability`) sends every process's OTLP, the run journals and the trace links to Clickland;
+  `kagent-up.sh` bridges kagent to whichever backend the host uses. The lgtm overlay stays.
 
 **Next:** a live check against a running Clickland (the plugin was built against the contract and a fake); stream the
 assistant analysts' own steps (a node used as a tool would need the run's stream).

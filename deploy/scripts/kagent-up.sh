@@ -3,7 +3,8 @@
 #
 #   1. the kind cluster landflow-kagent (Kubernetes 1.37, which Agent Substrate needs) on the OrbStack Docker engine;
 #   2. kagent 1.0 and Agent Substrate in it (the kagent CLI, deploy/kind/kagent-config.yaml), with their traces, metrics and
-#      logs going to Landflow's telemetry backend when it runs (the orbstack-observability overlay);
+#      logs going where Landflow's go: Clickland's collector (the orbstack-clickland overlay) or the grafana/otel-lgtm
+#      backend (the orbstack-observability overlay), whichever landflow-host exports to;
 #   3. the bridge both ways (deploy/kind/bridge.yaml, bridge-otel.yaml);
 #   4. the Harnesses Landflow's agents run on (deploy/kind/harness.yaml, kagent's own runtime, and harness-claude.yaml, Claude
 #      Code), the package cache their sandboxes may reach (deploy/kind/egress-dev.yaml) and a ServiceAccount that may
@@ -46,8 +47,22 @@ step() { printf '\n== %s\n' "$*"; }
 HOST_IP=$(orb -n "$NS" get svc landflow-host -o jsonpath='{.spec.clusterIP}')
 # The package cache (deploy/k8s/components/package-cache, in the orbstack overlay): the sandboxes' only way to a registry.
 CACHE_IP=$(orb -n "$NS" get svc landflow-cache -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
-[ -n "$CACHE_IP" ] || { echo "no landflow-cache in $NS: apply the orbstack overlay (kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-observability)" >&2; exit 1; }
-OTEL_IP=$(orb -n "$NS" get svc landflow-lgtm -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
+[ -n "$CACHE_IP" ] || { echo "no landflow-cache in $NS: apply the orbstack overlay (kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-clickland, or orbstack-observability)" >&2; exit 1; }
+# kagent's telemetry goes where the host's does (OTEL_EXPORTER_OTLP_ENDPOINT on landflow-host): Clickland's collector in
+# its namespace (overlay orbstack-clickland) or landflow-lgtm (overlay orbstack-observability). Either takes OTLP gRPC on
+# 4317 and HTTP on 4318; the bridge (deploy/kind/bridge-otel.yaml) points kind's landflow-otel name at its ClusterIP.
+CLICKLAND_NS=${CLICKLAND_NS:-clickland-dev}
+HOST_OTLP=$(orb -n "$NS" get deploy landflow-host -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="OTEL_EXPORTER_OTLP_ENDPOINT")].value}' 2>/dev/null || true)
+case "$HOST_OTLP" in
+  *clickland-collector*)
+    OTEL_NAME="clickland-collector ($CLICKLAND_NS)"
+    OTEL_IP=$(orb -n "$CLICKLAND_NS" get svc clickland-collector -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
+    ;;
+  *)
+    OTEL_NAME=landflow-lgtm
+    OTEL_IP=$(orb -n "$NS" get svc landflow-lgtm -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
+    ;;
+esac
 
 step "kind cluster $CLUSTER"
 if kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then
@@ -61,12 +76,12 @@ docker exec "$CLUSTER-control-plane" sysctl -qw net.ipv4.conf.all.proxy_arp=1
 
 bridge() { sed -e "s/LANDFLOW_HOST_IP/$HOST_IP/" -e "s/LANDFLOW_CACHE_IP/$CACHE_IP/" deploy/kind/bridge.yaml; }
 
-step "bridge to Landflow (landflow-host $HOST_IP, landflow-cache $CACHE_IP${OTEL_IP:+, landflow-lgtm $OTEL_IP})"
+step "bridge to Landflow (landflow-host $HOST_IP, landflow-cache $CACHE_IP${OTEL_IP:+, $OTEL_NAME $OTEL_IP})"
 k apply -f <(bridge) 2>/dev/null || true # the kagent namespace may not exist yet
 if [ -n "$OTEL_IP" ]; then
   k apply -f <(sed "s/LANDFLOW_OTEL_IP/$OTEL_IP/" deploy/kind/bridge-otel.yaml)
 else
-  echo "no landflow-lgtm in $NS (overlay orbstack-observability): kagent's telemetry endpoint won't answer"
+  echo "no $OTEL_NAME (overlay orbstack-clickland with Clickland running, or orbstack-observability): kagent's telemetry endpoint won't answer"
 fi
 
 step "kagent $KAGENT_VERSION and Agent Substrate"
@@ -176,4 +191,9 @@ kagent is up.
   kagent UI      http://127.0.0.1:58082
   kind kubectl   kubectl --kubeconfig $KIND_KUBECONFIG ...
 EOF
-[ -z "$OTEL_IP" ] || echo "  Grafana        http://landflow-lgtm.$NS.svc.cluster.local:3000  (traces, metrics and logs of Landflow and kagent)"
+if [ -n "$OTEL_IP" ]; then
+  case "$OTEL_NAME" in
+    clickland-collector*) echo "  Clickland      http://clickland-console.$CLICKLAND_NS.svc.cluster.local:4711  (traces, metrics and logs of Landflow and kagent)" ;;
+    *) echo "  Grafana        http://landflow-lgtm.$NS.svc.cluster.local:3000  (traces, metrics and logs of Landflow and kagent)" ;;
+  esac
+fi

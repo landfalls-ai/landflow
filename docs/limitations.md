@@ -103,6 +103,10 @@ items still open (its "Wave 6" section); this page is the short list to check be
   stay inside the cluster (plain HTTP there). Rotating it means changing the trigger and Clickland together.
 - **Triage's Clickland severity is the default.** Clickland's alerts carry no severity, so Normalize Alert gives them
   Default Severity unless the alert has a `severity` field or label.
+- **Telemetry to Clickland assumes its Services.** The `orbstack-clickland` overlay expects `clickland-collector`
+  (OTLP 4317 and 4318) and `clickland-console` (4711) in `clickland-dev`, as Clickland's deployment names them; it was
+  rendered, not applied. Landflow's Grafana dashboard ("Landflow · agent runs") is not in Clickland: it comes only with
+  the lgtm overlay.
 - **Plugin knowledge bases: presets only in the dialog.** The knowledge dialog offers Clickland; another plugin node
   is set through the API. It has no documents, no passages-per-search setting (the node's own limit applies) and is not
   offered by the Agent architect, which lists only vector collections.
