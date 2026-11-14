@@ -15,11 +15,23 @@ import { Chip } from '../../ui/badge';
 import { ProposalCard, useProposalActions } from '../proposal-card';
 import { kindLabel, PageLink, Section, TYPE_ICON, WorkList } from './parts';
 
+/** Which cards the index shows: only those with something in them. */
+export function indexCards(home: Pick<WikiHome, 'shared' | 'proposals' | 'teams' | 'health'>): Array<'shared' | 'suggestions' | 'teams' | 'needs'> {
+  const { noOwner, quiet, staleSummaries } = home.health;
+  const cards: Array<'shared' | 'suggestions' | 'teams' | 'needs'> = [];
+  if (home.shared.length) cards.push('shared');
+  if (home.proposals.length) cards.push('suggestions');
+  if (home.teams.length) cards.push('teams');
+  if (noOwner.length + quiet.length + staleSummaries.length) cards.push('needs');
+  return cards;
+}
+
 const namesOf = (home: WikiHome) => new Map(home.entries.map((e) => [`${e.type}/${e.id}`, e.name]));
 
 export function IndexDoc({ home, onChanged }: { home: WikiHome; onChanged: () => void }) {
   const names = useMemo(() => namesOf(home), [home]);
   const actions = useProposalActions({ onDone: onChanged });
+  const cards = indexCards(home);
   return (
     <article className="space-y-7">
       <header className="space-y-1.5">
@@ -30,20 +42,18 @@ export function IndexDoc({ home, onChanged }: { home: WikiHome; onChanged: () =>
         </p>
       </header>
 
-      <Section title="Shared across teams" count={home.shared.length}>
-        <p className="-mt-1 text-[12px] text-t3">Customers and initiatives more than one team worked on in the last {home.days} days. Worth a look: the same work twice, or a chance to talk.</p>
-        {home.shared.length ? (
+      {cards.includes('shared') && (
+        <Section title="Shared across teams" count={home.shared.length}>
+          <p className="-mt-1 text-[12px] text-t3">Customers and initiatives more than one team worked on in the last {home.days} days. Worth a look: the same work twice, or a chance to talk.</p>
           <div className="space-y-2.5">
             {home.shared.slice(0, 8).map((s) => (
               <SharedCard key={s.ref} shared={s} names={names} />
             ))}
           </div>
-        ) : (
-          <p className="text-[12px] text-t3">Nothing this week: every page was worked on by one team.</p>
-        )}
-      </Section>
+        </Section>
+      )}
 
-      {home.proposals.length > 0 && (
+      {cards.includes('suggestions') && (
         <Section title="Suggestions" count={home.proposals.length}>
           <div className="space-y-2">
             {home.proposals.slice(0, 5).map((p) => (
@@ -53,7 +63,7 @@ export function IndexDoc({ home, onChanged }: { home: WikiHome; onChanged: () =>
         </Section>
       )}
 
-      {home.teams.length > 0 && (
+      {cards.includes('teams') && (
         <Section title="Teams this week" count={home.teams.length}>
           <div className="grid gap-2.5 sm:grid-cols-2">
             {home.teams.map((t) => (

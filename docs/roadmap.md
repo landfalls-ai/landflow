@@ -966,6 +966,10 @@ Code runtime that write the plugin in this repository and open a draft pull requ
 Watching and reviewing what a run did, for any flow, phone first ([run-trace.md](run-trace.md)). Phases 1 to 3 of the
 approved plan:
 
+- **Quieter Brain and Insights (B28, backbone wave 4; P-br-1, P-br-2, P-in-1, P-in-2, X13 for the brain and Insights)**: an empty
+  brain shows the index alone, Open editors is gone, the status bar has the page count and problems, empty index cards are
+  hidden; Insights drops the migration banner, shows the Agent layers card only when the cache or router was used, hides
+  "no change" deltas and puts its footer behind a help line.
 - **Quieter run screens (B21, backbone wave 3; P-trace-1 to P-trace-5, X13 for runs)**: tabs only with content (Story and
   Trace always, Team and Artifacts when they have something), the Report merged into the Story as a summary, one status
   line, no time slider on a short or single-participant run, Debug access in the header's ⋯ without tool names.

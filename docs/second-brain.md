@@ -300,13 +300,14 @@ prose and a person keeps the facts. Spotlight asks it questions.
   - **Quick open** (⌘P or ⌘K): go to a file by name or path, or `>` for commands (open index or log, toggle Source,
     Problems, Suggestions, run the brain). It only finds pages; it does not ask.
   - **Panel** (⌘J): **Problems** (initiatives and customers without an owner, pages quiet for 30 days, summaries behind
-    their work) and **Suggestions** with their buttons. **Status bar**: problems, shared pages, open suggestions, pages
-    and facts, the last study, the model.
+    their work) and **Suggestions** with their buttons. **Status bar**: two items, the page count and the problems
+    ("12 pages · 0 problems"). The Explorer has no Open editors list; the tabs are the open files.
+  - **An empty brain** shows the index alone: no Explorer, activity bar or tabs, until the first page exists.
   - **On a phone**: the side bar is a drawer behind the Files button, with the views at its top; tabs scroll; the Ask
     button stays in the title bar and the status bar at the bottom.
 - **index.md**: **Shared across teams** (customers and initiatives two or more teams worked on in the last 7 days, most
   teams first, with their teams, people and latest items: no other product flags this, and it is what the Company
-  Brain is for), **Suggestions**, **Teams this week** and **Needs a person**.
+  Brain is for), **Suggestions**, **Teams this week** and **Needs a person**. A card with nothing in it is not shown.
 - **A page**:
   - **Kept by people**: name, what it is and owner, editable by editors of its project (`PATCH /api/entities/…`), and
     chips for owner (amber when none, not on people), teams, sources and last work.

@@ -91,25 +91,21 @@ function Row({ depth, active, onClick, onDoubleClick, title, children }: { depth
 export function ExplorerView({
   tree,
   active,
-  openTabs,
   outline,
   page,
   opener,
-  onCloseTab,
   onOutline,
   onRefresh,
 }: {
   tree: BrainTree;
   active?: FileRef;
-  openTabs: Array<{ ref: FileRef; pinned: boolean }>;
   outline: OutlineItem[];
   page?: WikiPage;
   opener: Opener;
-  onCloseTab: (ref: FileRef) => void;
   onOutline: (item: OutlineItem) => void;
   onRefresh: () => void;
 }) {
-  const [panes, setPanes] = useState({ editors: true, files: true, outline: true, backlinks: true });
+  const [panes, setPanes] = useState({ files: true, outline: true, backlinks: true });
   const toggle = (key: keyof typeof panes) => setPanes((p) => ({ ...p, [key]: !p[key] }));
   const allFolders = useMemo(() => folderPaths(tree.nodes), [tree]);
   const [closed, setClosed] = useState<Set<string>>(new Set());
@@ -151,24 +147,6 @@ export function ExplorerView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <Pane title="Open editors" open={panes.editors} onToggle={() => toggle('editors')}>
-        {openTabs.map((t) => {
-          const file = tree.files.get(t.ref);
-          return (
-            <div key={t.ref} className="group/tab relative">
-              <Row depth={0} active={t.ref === active} onClick={() => opener.open(t.ref, { pin: t.pinned })}>
-                <span className="w-3.5 shrink-0" />
-                {t.ref === SETTINGS ? <Settings2 className="size-3.5 shrink-0 text-t3" /> : <FileIcon file={file} />}
-                <span className={cn('truncate', !t.pinned && 'italic')}>{file?.name ?? (t.ref === SETTINGS ? 'What Landflow knows' : t.ref)}</span>
-                <span className="ml-1 truncate text-[11px] text-t3">{tree.paths.get(t.ref)?.slice(0, -1).join('/')}</span>
-              </Row>
-              <button type="button" onClick={() => onCloseTab(t.ref)} className="absolute right-1.5 top-1 hidden size-4 place-items-center rounded text-t3 hover:bg-acdim hover:text-t1 group-hover/tab:grid" aria-label={`Close ${file?.name ?? t.ref}`}>
-                <X className="size-3" />
-              </button>
-            </div>
-          );
-        })}
-      </Pane>
       <Pane
         title="Brain"
         open={panes.files}
