@@ -2,8 +2,9 @@
 import { memo, useEffect } from 'react';
 import { NodeToolbar, Position, type NodeProps } from '@xyflow/react';
 import { useShallow } from 'zustand/react/shallow';
-import { CircleDot, Copy, Hand, Loader2, Play, Power, Settings2, SkipForward, Trash2, UsersRound, Wrench, X } from 'lucide-react';
+import { CircleDot, Copy, Hand, Loader2, MoreHorizontal, Play, Power, Settings2, SkipForward, Trash2, UsersRound, Wrench, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { MenuItem, Popover } from '../ui/popover';
 import type { ExecutionEvent } from '@/lib/shared/types';
 import { progressDetail, progressLine } from '@/lib/client/node-progress';
 import { decideToolApprovals } from '@/lib/client/run-trace';
@@ -19,6 +20,52 @@ import { useEditor, type FlowNode } from './store';
 
 /** What a team node's slots feed: the lead, not every member. */
 const LEAD_SLOTS = { ai_languageModel: "Lead's model", ai_memory: "Lead's memory", ai_tool: "Lead's tools" } as const;
+
+/** One thing a node can do, shared by its hover toolbar and the right-click menu. */
+export interface NodeAction {
+  id: 'run' | 'disable' | 'delete' | 'open' | 'runFrom' | 'breakpoint' | 'team' | 'duplicate';
+  label: string;
+  icon: typeof Play;
+  hint?: string;
+  danger?: boolean;
+  disabled?: boolean;
+  run: () => void;
+}
+
+/**
+ * A node's actions: Run, Disable and Delete are buttons on the hover toolbar (and the first items of the right-click
+ * menu); ⋯ (and the rest of the menu) holds the others. A compact node (a tool, a model) has no Run.
+ */
+export function nodeActions(id: string): { main: NodeAction[]; more: NodeAction[] } | undefined {
+  const state = useEditor.getState();
+  const node = state.nodes.find((n) => n.id === id);
+  if (!node) return undefined;
+  const wf = node.data.wf;
+  const descriptor = state.nodeTypes[wf.type]?.descriptor;
+  const asTool = state.edges.some((e) => e.source === id && e.data?.connectionType === 'ai_tool');
+  const compact = isCompact(descriptor, wf.parameters, asTool);
+  const breakpoint = state.breakpoints.includes(id);
+  const canTeam =
+    state.nodeTypes[wf.type] !== undefined && wf.type === 'core.messageAgent' && state.edges.some((e) => e.target === id && e.data?.connectionType === 'ai_tool') && canTurnNodeIntoTeam(id);
+  const run = (scope: 'from' | 'only') => () => !state.running && void state.run?.({ kind: 'node', nodeId: id, scope });
+  const main: NodeAction[] = [
+    ...(compact ? [] : [{ id: 'run' as const, label: 'Run this node', icon: Play, hint: 'and what it needs', disabled: state.running, run: run('only') }]),
+    { id: 'disable', label: wf.disabled ? 'Enable' : 'Disable', icon: Power, run: () => state.updateNode(id, { disabled: !wf.disabled }) },
+    { id: 'delete', label: 'Delete', icon: Trash2, danger: true, run: () => state.removeNodes([id]) },
+  ];
+  const more: NodeAction[] = [
+    { id: 'open', label: 'Open', icon: Settings2, hint: 'double-click', run: () => state.openNode(id) },
+    ...(compact
+      ? []
+      : [
+          { id: 'runFrom' as const, label: 'Run from this node', icon: SkipForward, disabled: state.running, run: run('from') },
+          { id: 'breakpoint' as const, label: breakpoint ? 'Remove breakpoint' : 'Add breakpoint', icon: CircleDot, hint: 'F9', run: () => state.toggleBreakpoint(id) },
+        ]),
+    ...(canTeam ? [{ id: 'team' as const, label: 'Turn into a team', icon: UsersRound, run: () => void turnIntoTeam(id) }] : []),
+    { id: 'duplicate', label: 'Duplicate', icon: Copy, hint: '⌘D', run: () => state.duplicateNode(id) },
+  ];
+  return { main, more };
+}
 
 function ToolbarButton({
   onClick,
@@ -74,9 +121,7 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
     useShallow((s) => s.edges.filter((e) => e.source === id && e.data?.connectionType === 'main').map((e) => e.sourceHandle ?? 'main:0')),
   );
   const subConnections = useEditor(useShallow((s) => s.edges.filter((e) => e.target === id && e.data?.connectionType !== 'main').map((e) => e.targetHandle)));
-  // A Run an Agent node with agents hanging under it as tools can become a team.
-  const canTeam = useEditor((s) => selected && s.nodeTypes[wf.type] !== undefined && wf.type === 'core.messageAgent' && s.edges.some((e) => e.target === id && e.data?.connectionType === 'ai_tool') && canTurnNodeIntoTeam(id));
-  const { openNode, openPalette, removeNodes, duplicateNode, updateNode, toggleBreakpoint } = useEditor.getState();
+  const { openPalette, toggleBreakpoint } = useEditor.getState();
 
   const face = useNodeFace(wf.type, wf.parameters);
   const shown = useShownParameters(wf.type, wf.parameters);
@@ -105,7 +150,8 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
   };
   const team = useTeamTile(teamId, live, teamId && !live && !running ? activityOfRuns(runs) : undefined, { ...(executionId && { executionId }), ...(asked && { waiting: asked }), ...(asked?.approval && { onDecide: decideInEditor }), newTab: true, idleRoster: true });
   const compact = isCompact(info?.descriptor, wf.parameters, asTool);
-  const runNode = (scope: 'from' | 'only') => useEditor.getState().run?.({ kind: 'node', nodeId: id, scope });
+  // Only a selected node shows its toolbar; its actions are read when it renders (they follow disabled, breakpoint, running).
+  const actions = selected ? nodeActions(id) : undefined;
 
   return (
     <NodeTile
@@ -162,37 +208,34 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
       )}
       <NodeToolbar isVisible={selected} position={Position.Top} offset={compact ? 12 : 14}>
         <div className="flex animate-in items-center gap-0.5 rounded-full border border-hair bg-sf p-0.5 shadow-pop">
-          <ToolbarButton title="Open (double-click)" onClick={() => openNode(id)}>
-            <Settings2 className="size-3.5" />
-          </ToolbarButton>
-          {!compact && (
-            <>
-              <ToolbarButton title="Run this node (and what it needs)" onClick={() => !running && runNode('only')}>
-                <Play className="size-3.5" />
-              </ToolbarButton>
-              <ToolbarButton title="Run from this node" onClick={() => !running && runNode('from')}>
-                <SkipForward className="size-3.5" />
-              </ToolbarButton>
-              <ToolbarButton title={breakpoint ? 'Remove breakpoint (F9)' : 'Add breakpoint (F9)'} active={breakpoint} onClick={() => toggleBreakpoint(id)}>
-                <CircleDot className="size-3.5" />
-              </ToolbarButton>
-            </>
-          )}
-          <span className="mx-0.5 h-4 w-px bg-hair" />
-          <ToolbarButton title={wf.disabled ? 'Enable' : 'Disable'} onClick={() => updateNode(id, { disabled: !wf.disabled })}>
-            <Power className="size-3.5" />
-          </ToolbarButton>
-          {canTeam && (
-            <ToolbarButton title="Turn into a team" onClick={() => void turnIntoTeam(id)}>
-              <UsersRound className="size-3.5" />
+          {actions?.main.map((a) => (
+            <ToolbarButton key={a.id} title={a.label} danger={a.danger} onClick={() => !a.disabled && a.run()}>
+              <a.icon className="size-3.5" />
             </ToolbarButton>
+          ))}
+          {actions && (
+            <Popover title="Node actions" label="More node actions" trigger={({ toggle }) => (
+              <ToolbarButton title="More" onClick={toggle}>
+                <MoreHorizontal className="size-3.5" />
+              </ToolbarButton>
+            )}>
+              {(close) =>
+                actions.more.map((a) => (
+                  <MenuItem
+                    key={a.id}
+                    disabled={a.disabled}
+                    hint={a.hint}
+                    onClick={() => {
+                      close();
+                      a.run();
+                    }}
+                  >
+                    <a.icon /> {a.label}
+                  </MenuItem>
+                ))
+              }
+            </Popover>
           )}
-          <ToolbarButton title="Duplicate (⌘D)" onClick={() => duplicateNode(id)}>
-            <Copy className="size-3.5" />
-          </ToolbarButton>
-          <ToolbarButton title="Delete" danger onClick={() => removeNodes([id])}>
-            <Trash2 className="size-3.5" />
-          </ToolbarButton>
         </div>
       </NodeToolbar>
     </NodeTile>

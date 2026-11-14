@@ -7,7 +7,7 @@
  * is the workflow's policy, saved on its own route first (./workflow-governance.tsx).
  */
 import { useEffect, useMemo, useState } from 'react';
-import { Settings2 } from 'lucide-react';
+import { ChevronRight, Settings2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { RUN_PROFILES, type RunProfile } from '@/lib/shared/run-profiles';
@@ -30,6 +30,9 @@ const AI_LIMITS = [
   { key: 'aiMaxCostPerDay', label: 'Cost per day', unit: 'USD', cost: true },
 ] as const;
 type AiLimitKey = (typeof AI_LIMITS)[number]['key'];
+
+/** The fields shown at first, in order; every other setting is under Advanced. */
+export const BASIC_SETTINGS = ['Error workflow', 'Notify on failure', 'Time zone'] as const;
 
 /** The runner's cap on the wait before an automatic retry: six hours. */
 const MAX_RETRY_WAIT_SECONDS = 6 * 3600;
@@ -133,6 +136,7 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
   const [plugins, setPlugins] = useState<PluginSummary[]>();
   const nodeTypes = useEditor((s) => s.nodes.map((n) => n.data.wf.type).join('\n'));
   const [saving, setSaving] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
   const governance = useWorkflowGovernance(workflowId);
   const zones = useMemo(timeZones, []);
   const browserZone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
@@ -184,6 +188,8 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
   };
   const aiLimitsInvalid = AI_LIMITS.some(({ key, cost }) => aiLimitInvalid(key, cost));
   const invalid = timeoutInvalid || minutesInvalid || limitInvalid || queueSizeInvalid || attemptsInvalid || retryDelayInvalid || aiLimitsInvalid;
+  // An invalid field in Advanced opens it, so Save never stays disabled for a reason that is out of sight.
+  const showAdvanced = advanced || invalid;
   const patch = (next: Partial<WorkflowSettings>) => setDraft((d) => ({ ...d, ...next }));
   const policy = draft.callerPolicy ?? 'any';
   const callers = new Set(draft.callerIds ?? []);
@@ -265,7 +271,7 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
         </Field>
         <NotifyOnFailure workflowId={workflowId} />
 
-        <div className="grid grid-cols-2 gap-3">
+        <div>
           <Field id="wf-timezone" label="Time zone" hint="For schedules and $now in this workflow.">
             <Select id="wf-timezone" value={draft.timezone ?? ''} onChange={(e) => patch({ timezone: e.target.value || undefined })}>
               <option value="">Instance default (Settings)</option>
@@ -278,6 +284,19 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
               ))}
             </Select>
           </Field>
+        </div>
+
+        <button
+          type="button"
+          aria-expanded={showAdvanced}
+          aria-controls="wf-advanced"
+          onClick={() => setAdvanced((v) => !v)}
+          className="flex w-full flex-wrap items-center gap-x-1.5 border-t border-hair pt-3 text-left text-[13px] font-semibold text-t2 hover:text-t1"
+        >
+          <ChevronRight className={cn('size-4 transition-transform', showAdvanced && 'rotate-90')} /> Advanced
+          <span className="basis-full pl-[22px] text-[12px] font-normal text-t3">Timeout, who can call it, executions to keep, concurrency, retries, AI limits, Run Trace, governance</span>
+        </button>
+        <div id="wf-advanced" hidden={!showAdvanced} className="space-y-4">
           <Field
             id="wf-timeout"
             label="Timeout"
@@ -295,7 +314,6 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
               <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[12px] text-t3">seconds</span>
             </div>
           </Field>
-        </div>
 
         <Field
           id="wf-time-saved"
@@ -545,6 +563,7 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
         {transportPlugins.length > 0 && <TransportOverrides plugins={transportPlugins} value={draft.transports} onChange={(transports) => patch({ transports })} />}
 
         <WorkflowGovernanceSection state={governance} />
+        </div>
       </div>
     </Dialog>
   );

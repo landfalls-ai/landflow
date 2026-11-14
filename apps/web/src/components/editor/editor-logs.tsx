@@ -1,15 +1,16 @@
 'use client';
 /**
  * The editor's docked Logs panel: the shared n8n-style LogsPanel fed from the
- * live run (or the execution loaded on the canvas), with re-run actions, the
- * raw event stream for debugging, and a draggable height.
+ * live run (or the execution loaded on the canvas), with re-run actions, an
+ * Events tab (the raw event stream) when it is open, and a draggable height.
  */
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
-import { PanelBottomOpen, Play, SkipForward, Terminal } from 'lucide-react';
+import { PanelBottomOpen, Play, SkipForward } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { LogsPanel, type LogsNode, type LogsPending } from '../run/logs-panel';
 import type { RunState } from '../run/run-status';
 import { Button } from '../ui/button';
+import { Segmented } from '../ui/segmented';
 import { useEditor } from './store';
 
 const HEIGHT_KEY = 'landflow-logs-height';
@@ -128,18 +129,20 @@ export function EditorLogs() {
           onSelect={({ nodeId }) => select(nodeId)}
           className={cn(events && open ? 'h-auto flex-none' : 'min-h-0 flex-1')}
           emptyHint="Execute the workflow to see every node's input and output here, in the order they ran."
+          // Events is a tab inside the open panel, not a button on the closed bar.
           headerActions={
-            <Button
-              size="sm"
-              variant={events ? 'outline' : 'ghost'}
-              onClick={() => {
-                setOpen(true);
-                setEvents((v) => !v);
-              }}
-              title="Raw event stream: starts, finishes, debugger pauses, plugin logs"
-            >
-              <Terminal className="size-3.5" /> Events
-            </Button>
+            open && (
+              <Segmented
+                label="Logs view"
+                size="sm"
+                value={events ? 'events' : 'tasks'}
+                onChange={(v) => setEvents(v === 'events')}
+                options={[
+                  { value: 'tasks', label: 'Tasks' },
+                  { value: 'events', label: 'Events', title: 'Raw event stream: starts, finishes, debugger pauses, plugin logs' },
+                ]}
+              />
+            )
           }
           actions={(entry) =>
             entry.run.source === 'main' && (

@@ -296,6 +296,11 @@ const MODES: Array<{ mode: DataMode; label: string; icon: typeof Table2 }> = [
   { mode: 'binary', label: 'Binary', icon: Paperclip },
 ];
 
+/** The Schema / Table / JSON switch shows only when there is something to switch. */
+export function showViewSwitch(items: unknown[] | undefined): boolean {
+  return Boolean(items && items.length > 0);
+}
+
 export function DataView({ items, emptyLabel = 'No data', draggable, toolbar, notice, className }: DataViewProps) {
   const chosen = useDataMode();
   const list = items ?? [];
@@ -317,7 +322,7 @@ export function DataView({ items, emptyLabel = 'No data', draggable, toolbar, no
             </>
           )}
         </span>
-        <Segmented
+        {showViewSwitch(items) && <Segmented
           label="Display mode"
           size="sm"
           className="ml-auto"
@@ -334,7 +339,7 @@ export function DataView({ items, emptyLabel = 'No data', draggable, toolbar, no
               </>
             ),
           }))}
-        />
+        />}
       </div>
       {notice && <div className="shrink-0 px-3 pb-2">{notice}</div>}
       <div className="min-h-0 flex-1 overflow-auto border-t border-hair">

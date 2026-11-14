@@ -60,6 +60,24 @@ function PaneHeader({ title, children }: { title: string; children?: React.React
   );
 }
 
+/** The three settings shown first, and what sits under More (triggers add Debounce and Batch). */
+export const VISIBLE_SETTINGS = ['On error', 'Retry on fail', 'Notes'] as const;
+export function visibleSettings(): readonly string[] {
+  return VISIBLE_SETTINGS;
+}
+export function moreSettings(trigger: boolean): string[] {
+  return ['Disabled', 'Timeout', 'Rate limit', ...(trigger ? ['Debounce', 'Batch'] : []), 'Always output data', 'Execute once'];
+}
+
+/** The panel header's one Run button: Run from here and Breakpoint are in Settings. */
+export function RunStepButton({ running, onRun }: { running: boolean; onRun: () => void }) {
+  return (
+    <Button variant="primary" size="sm" onClick={onRun} disabled={running} title="Run just this step with its last input">
+      <Play className="size-3.5" fill="currentColor" /> Run step
+    </Button>
+  );
+}
+
 /** The node's type id and how it runs (language, transport): developer details. */
 export function NodeTypeLine({ type, info }: { type: string; info?: Pick<NodeTypeInfo, 'pluginId' | 'language' | 'transport'> }) {
   return (
@@ -94,6 +112,8 @@ export function NodePanel() {
   // Saved but not published yet: the trigger URL still serves the published version.
   const unpublished = usePublication((s) => (s.workflowId === workflowId ? (s.status?.unpublishedChanges ?? false) : false));
   const [tab, setTab] = useState<'parameters' | 'settings'>('parameters');
+  // Settings past the three that matter are under More.
+  const [more, setMore] = useState(false);
   const pinned = useEditor((s) => (openNodeId ? s.pinData[openNodeId] : undefined));
   const nodes = useEditor((s) => s.nodes);
   /** JSON being edited as the node's pinned output (test data), or null. */
@@ -275,6 +295,7 @@ export function NodePanel() {
           <div className="min-w-0 max-md:flex-1">
             <NodeNameInput nodeId={openNodeId} name={wf.name} />
             <NodeTypeLine type={wf.type} info={info} />
+            {descriptor?.description && <p className="max-w-[560px] truncate text-[12px] text-t3 max-md:hidden" title={descriptor.description}>{descriptor.description}</p>}
           </div>
           {/* A phone: running and moving between steps are in the bar at the foot. */}
           <div className="ml-auto flex items-center gap-2 max-md:hidden">
@@ -283,30 +304,7 @@ export function NodePanel() {
                 <BookOpen className="size-3.5" /> Docs
               </a>
             )}
-            {!isSubnode && (
-              <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => useEditor.getState().toggleBreakpoint(openNodeId)}
-                  title="Pause here when debugging (F9)"
-                  className={cn(breakpoint && 'text-rd hover:text-rd')}
-                >
-                  <CircleDot className="size-3.5" /> {breakpoint ? 'Breakpoint on' : 'Breakpoint'}
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={() => runNode('from')}
-                  disabled={running}
-                  title="Re-run this step and everything after it, reusing the data before it"
-                >
-                  <SkipForward className="size-3.5" /> Run from here
-                </Button>
-                <Button variant="primary" size="sm" onClick={() => runNode('only')} disabled={running} title="Run just this step with its last input">
-                  <Play className="size-3.5" fill="currentColor" /> Run step
-                </Button>
-              </>
-            )}
+            {!isSubnode && <RunStepButton running={running} onRun={() => runNode('only')} />}
             <Button variant="ghost" size="icon-sm" onClick={close} aria-label="Close">
               <X className="size-4" />
             </Button>
@@ -393,7 +391,7 @@ export function NodePanel() {
             <div className="min-h-0 flex-1 overflow-y-auto p-5 max-md:p-4">
               {tab === 'parameters' ? (
                 <>
-                  {descriptor?.description && <p className="mb-4 text-[13px] text-t2">{descriptor.description}</p>}
+                  {descriptor?.description && <p className="mb-4 text-[13px] text-t2 md:hidden">{descriptor.description}</p>}
                   {descriptor?.triggerSource === 'poll' && (
                     <PollStatus workflowId={workflowId} nodeId={openNodeId} active={workflowActive} dirty={dirty} interval={Number(wf.parameters.pollInterval ?? 60)} />
                   )}
@@ -439,27 +437,25 @@ export function NodePanel() {
                 </>
               ) : (
                 <div className="space-y-2">
-                  {phone && !isSubnode && (
-                    // A phone's header has no room for these: they lead the Settings pane.
+                  {!isSubnode && (
+                    // Breakpoint and Run from here lead the Settings pane, on a phone and at a desk.
                     <div className="flex flex-wrap gap-2 pb-2">
-                      <Button className={cn('h-11', breakpoint && 'text-rd')} onClick={() => useEditor.getState().toggleBreakpoint(openNodeId)}>
+                      <Button className={cn('max-md:h-11', breakpoint && 'text-rd')} title="Pause here when debugging (F9)" onClick={() => useEditor.getState().toggleBreakpoint(openNodeId)}>
                         <CircleDot className="size-4" /> {breakpoint ? 'Breakpoint on' : 'Breakpoint'}
                       </Button>
                       <Button
-                        className="h-11"
+                        className="max-md:h-11"
                         disabled={running}
+                        title="Re-run this step and everything after it, reusing the data before it"
                         onClick={() => {
                           runNode('from');
-                          setPane('output');
+                          if (phone) setPane('output');
                         }}
                       >
                         <SkipForward className="size-4" /> Run from here
                       </Button>
                     </div>
                   )}
-                  <SettingRow label="Disabled" hint="Pass input straight through without running">
-                    <Switch checked={Boolean(wf.disabled)} onChange={(v) => update({ disabled: v })} />
-                  </SettingRow>
                   <SettingRow label="On error" hint="Stop the workflow or continue with the error attached to items">
                     <Select value={wf.onError ?? 'stop'} onChange={(e) => update({ onError: e.target.value as 'stop' | 'continue' })} className="w-40">
                       <option value="stop">Stop workflow</option>
@@ -470,65 +466,29 @@ export function NodePanel() {
                     <Switch checked={Boolean(wf.retryOnFail)} onChange={(v) => update({ retryOnFail: v })} />
                   </SettingRow>
                   {wf.retryOnFail && (
-                    <SettingRow label="Max tries">
-                      <Input
-                        type="number"
-                        min={1}
-                        max={10}
-                        value={wf.maxTries ?? 3}
-                        onChange={(e) => update({ maxTries: Number(e.target.value) })}
-                        className="w-24"
-                      />
-                    </SettingRow>
+                    <>
+                      <SettingRow label="Max tries">
+                        <Input type="number" min={1} max={10} value={wf.maxTries ?? 3} onChange={(e) => update({ maxTries: Number(e.target.value) })} className="w-24" />
+                      </SettingRow>
+                      <SettingRow label="Wait between tries (ms)" hint="Before the first retry; the most is a minute">
+                        <Input
+                          type="number"
+                          min={0}
+                          max={60_000}
+                          value={wf.waitBetweenTriesMs ?? 1000}
+                          onChange={(e) => update({ waitBetweenTriesMs: Math.max(0, Math.min(60_000, Math.round(Number(e.target.value) || 0))) })}
+                          aria-label="Wait between tries (ms)"
+                          className="w-24"
+                        />
+                      </SettingRow>
+                      <SettingRow label="Backoff" hint="Exponential doubles the wait after each failed try, up to a minute">
+                        <Select value={wf.retryBackoff ?? 'fixed'} onChange={(e) => update({ retryBackoff: e.target.value as 'fixed' | 'exponential' })} className="w-40">
+                          <option value="fixed">Fixed</option>
+                          <option value="exponential">Exponential</option>
+                        </Select>
+                      </SettingRow>
+                    </>
                   )}
-                  {wf.retryOnFail && (
-                    <SettingRow label="Wait between tries (ms)" hint="Before the first retry; the most is a minute">
-                      <Input
-                        type="number"
-                        min={0}
-                        max={60_000}
-                        value={wf.waitBetweenTriesMs ?? 1000}
-                        onChange={(e) => update({ waitBetweenTriesMs: Math.max(0, Math.min(60_000, Math.round(Number(e.target.value) || 0))) })}
-                        aria-label="Wait between tries (ms)"
-                        className="w-24"
-                      />
-                    </SettingRow>
-                  )}
-                  {wf.retryOnFail && (
-                    <SettingRow label="Backoff" hint="Exponential doubles the wait after each failed try, up to a minute">
-                      <Select value={wf.retryBackoff ?? 'fixed'} onChange={(e) => update({ retryBackoff: e.target.value as 'fixed' | 'exponential' })} className="w-40">
-                        <option value="fixed">Fixed</option>
-                        <option value="exponential">Exponential</option>
-                      </Select>
-                    </SettingRow>
-                  )}
-                  <SettingRow label="Timeout (seconds)" hint="Fail a try that takes longer; retries and On error apply. Empty: no timeout">
-                    <Input
-                      type="number"
-                      min={0.1}
-                      max={86_400}
-                      step="any"
-                      value={wf.timeoutSeconds ?? ''}
-                      onChange={(e) => update({ timeoutSeconds: e.target.value === '' ? undefined : Number(e.target.value) })}
-                      // Out of range once typing is done: 0 or less is no timeout, the most is a day.
-                      onBlur={() => {
-                        const seconds = wf.timeoutSeconds;
-                        if (seconds !== undefined && !(seconds >= 0.1)) update({ timeoutSeconds: undefined });
-                        else if (seconds !== undefined && seconds > 86_400) update({ timeoutSeconds: 86_400 });
-                      }}
-                      placeholder="None"
-                      aria-label="Timeout (seconds)"
-                      className="w-24"
-                    />
-                  </SettingRow>
-                  <RateLimitSetting value={wf.rateLimit} onChange={(rateLimit) => update({ rateLimit })} />
-                  {isTrigger && <TriggerBufferSettings debounce={wf.debounce} batch={wf.batch} onChange={(patch) => update(patch)} />}
-                  <SettingRow label="Always output data" hint="Continue down the branch even with zero items">
-                    <Switch checked={Boolean(wf.alwaysOutputData)} onChange={(v) => update({ alwaysOutputData: v })} />
-                  </SettingRow>
-                  <SettingRow label="Execute once" hint="Only process the first item">
-                    <Switch checked={Boolean(wf.executeOnce)} onChange={(v) => update({ executeOnce: v })} />
-                  </SettingRow>
                   <div className="pt-2">
                     <FieldLabel>Notes</FieldLabel>
                     <Textarea
@@ -538,6 +498,48 @@ export function NodePanel() {
                       placeholder={descriptor?.usableAsTool ? 'Also used as the tool description for AI agents' : 'Notes for your team'}
                     />
                   </div>
+                  <button
+                    type="button"
+                    aria-expanded={more}
+                    onClick={() => setMore((v) => !v)}
+                    className="flex w-full items-center gap-1.5 pt-2 text-[13px] font-semibold text-t2 hover:text-t1 max-md:h-11"
+                  >
+                    <ChevronRight className={cn('size-4 transition-transform', more && 'rotate-90')} /> More
+                  </button>
+                  {more && (
+                    <div className="space-y-2">
+                      <SettingRow label="Disabled" hint="Pass input straight through without running">
+                        <Switch checked={Boolean(wf.disabled)} onChange={(v) => update({ disabled: v })} />
+                      </SettingRow>
+                      <SettingRow label="Timeout (seconds)" hint="Fail a try that takes longer; retries and On error apply. Empty: no timeout">
+                        <Input
+                          type="number"
+                          min={0.1}
+                          max={86_400}
+                          step="any"
+                          value={wf.timeoutSeconds ?? ''}
+                          onChange={(e) => update({ timeoutSeconds: e.target.value === '' ? undefined : Number(e.target.value) })}
+                          // Out of range once typing is done: 0 or less is no timeout, the most is a day.
+                          onBlur={() => {
+                            const seconds = wf.timeoutSeconds;
+                            if (seconds !== undefined && !(seconds >= 0.1)) update({ timeoutSeconds: undefined });
+                            else if (seconds !== undefined && seconds > 86_400) update({ timeoutSeconds: 86_400 });
+                          }}
+                          placeholder="None"
+                          aria-label="Timeout (seconds)"
+                          className="w-24"
+                        />
+                      </SettingRow>
+                      <RateLimitSetting value={wf.rateLimit} onChange={(rateLimit) => update({ rateLimit })} />
+                      {isTrigger && <TriggerBufferSettings debounce={wf.debounce} batch={wf.batch} onChange={(patch) => update(patch)} />}
+                      <SettingRow label="Always output data" hint="Continue down the branch even with zero items">
+                        <Switch checked={Boolean(wf.alwaysOutputData)} onChange={(v) => update({ alwaysOutputData: v })} />
+                      </SettingRow>
+                      <SettingRow label="Execute once" hint="Only process the first item">
+                        <Switch checked={Boolean(wf.executeOnce)} onChange={(v) => update({ executeOnce: v })} />
+                      </SettingRow>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -676,18 +678,13 @@ export function NodePanel() {
                 items={run && !run.error ? run.outputs[branch] : pinned}
                 emptyLabel={
                   <div className="flex flex-col items-center gap-3">
-                    <div>No output yet.</div>
+                    <div>No output yet.{!isSubnode && ' Use Run step.'}</div>
                     {info && info.pluginId !== 'core' && (
                       <DevOnly>
                         <div className="max-w-xs text-[12px]">
                           This step runs in a {languageMeta(info.language).label} process and is called over {info.transport.toUpperCase()}.
                         </div>
                       </DevOnly>
-                    )}
-                    {!isSubnode && (
-                      <Button size="sm" onClick={() => runNode('only')} disabled={running}>
-                        <Play className="size-3.5" /> Run step
-                      </Button>
                     )}
                   </div>
                 }
@@ -852,9 +849,13 @@ function TriggerBufferSettings({ debounce, batch, onChange }: { debounce: NodeSe
 function SettingRow({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-4 rounded-[10px] border border-hair bg-wl px-3 py-2.5">
-      <div>
+      <div className="min-w-0">
         <div className="text-[13px] font-semibold text-t1">{label}</div>
-        {hint && <div className="text-[12px] text-t3">{hint}</div>}
+        {hint && (
+          <div className="truncate text-[12px] text-t3 max-md:whitespace-normal" title={hint}>
+            {hint}
+          </div>
+        )}
       </div>
       {children}
     </div>
