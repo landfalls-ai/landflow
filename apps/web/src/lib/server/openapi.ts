@@ -2024,6 +2024,36 @@ function paths(): Record<string, Record<string, Json>> {
     body: jsonBody(object({ question: { type: 'string', maxLength: 500 }, about: { type: 'string', description: '<type>/<id> of the page it is asked from' } }, ['question'])),
     responses: { 200: reply('The answer', object({ question: { type: 'string' }, answer: { type: 'string' }, model: { type: 'string' }, pages: array({ type: 'object' }), facts: array({ type: 'object' }), work: array(workItem), note: { type: 'string' }, about: { type: 'string' } }, ['question', 'pages', 'facts', 'work'])), 400: invalid },
   });
+  // B05: the person's own work and day (docs/work-and-briefings.md).
+  const workItem2 = { type: 'object', description: 'A WorkItem (lib/shared/brain-work.ts): id, sourceId, source, kind, title, summary, repo, areas, at, endedAt, url, visibility' };
+  add('post', '/api/brain/work', {
+    tag: 'Second brain',
+    id: 'recordWork',
+    summary: 'Record your own work',
+    description: 'Needs the `brain:write` scope (or a session). `events` holds 1 to 50 work events (packages/protocol/src/work-events.ts): kind (work.<name>), source, sourceId, occurredAt, title and optional summary, repo, branch, areas (directory names), commits, prs, turns, initiative, customer, team, url, visibility. Private to the caller: nobody else reads it, an admin included; `team` and `org` are refused for now. The same source and sourceId updates the event. An event that fails the checks comes back in `rejected` with its reason; the others are saved. 503 when the brain is off.',
+    body: jsonBody(object({ events: array({ type: 'object' }) }, ['events'])),
+    responses: {
+      200: reply('What was saved and what was rejected', object({ saved: array(object({ sourceId: { type: 'string' }, id: { type: 'string' }, created: { type: 'boolean' } }, ['sourceId', 'id', 'created'])), rejected: array(object({ sourceId: { type: 'string' }, reason: { type: 'string' } }, ['sourceId', 'reason'])) }, ['saved', 'rejected'])),
+      400: invalid,
+      503: errorRef('The brain is off'),
+    },
+  });
+  add('delete', '/api/brain/work/{sourceId}', {
+    tag: 'Second brain',
+    id: 'deleteWork',
+    summary: 'Delete one of your own work events',
+    description: 'Needs the `brain:write` scope (or a session). `source` names the tool the event came from. Someone else’s event is not found.',
+    query: [text('source', 'The event’s source (required)')],
+    responses: { 204: { description: 'Deleted' }, 400: invalid, 404: notFound, 503: errorRef('The brain is off') },
+  });
+  add('get', '/api/brain/briefing', {
+    tag: 'Second brain',
+    id: 'getBriefing',
+    summary: 'Your own day',
+    description: 'Needs the `brain:read` scope (`brain:write` includes it) or a session. The caller’s own work of `day` (today in the instance time zone by default) and the day before, newest first, at most 50 each; `autoSend` is the admin’s setting for tools sending work on their own.',
+    query: [text('day', 'YYYY-MM-DD')],
+    responses: { 200: reply('The briefing', object({ day: { type: 'string' }, generatedAt: { type: 'string' }, source: { type: 'string', enum: ['live', 'flow'] }, today: array(workItem2), yesterday: array(workItem2), related: array({ type: 'object' }), summary: { type: 'string' }, autoSend: { type: 'string', enum: ['allowed', 'forbidden'] }, brain: { type: 'string', enum: ['on', 'off'] } }, ['day', 'generatedAt', 'source', 'today', 'yesterday', 'related', 'autoSend', 'brain'])), 400: invalid },
+  });
   return out;
 }
 

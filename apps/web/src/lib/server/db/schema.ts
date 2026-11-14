@@ -1548,6 +1548,21 @@ export const MIGRATIONS: Migration[] = [
       )`,
     ],
   },
+  // B05: work events (docs/work-and-briefings.md): who owns a ledger row, who may see it, and where it came from.
+  {
+    version: 2073,
+    name: 'usage_events_work_owner',
+    addColumns: [
+      { table: 'usage_events', column: 'owner_id', definition: 'TEXT' },
+      { table: 'usage_events', column: 'visibility', definition: 'TEXT' },
+      { table: 'usage_events', column: 'source', definition: 'TEXT' },
+      { table: 'usage_events', column: 'source_id', definition: 'TEXT' },
+    ],
+    statements: [
+      `CREATE UNIQUE INDEX IF NOT EXISTS usage_events_owner_source ON usage_events (owner_id, source, source_id) WHERE source_id IS NOT NULL`,
+      `CREATE INDEX IF NOT EXISTS usage_events_owner_at ON usage_events (owner_id, at)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */

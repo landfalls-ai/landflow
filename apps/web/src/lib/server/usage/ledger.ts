@@ -12,6 +12,7 @@
 import { createHash } from 'node:crypto';
 import { nanoid } from 'nanoid';
 import type { Workflow } from '@landflow/engine';
+import type { WorkEventInput } from '@landflow/protocol';
 import type { AuditEvent } from '../../shared/audit';
 import type { UsageAttr, UsageEvent, UsageKind } from '../../shared/brain';
 import type { ExecutionRecord } from '../../shared/types';
@@ -65,7 +66,16 @@ export function signatureOf(nodeType: string | undefined, message: string | unde
 // Recording
 // ---------------------------------------------------------------------------
 
-export type UsageInput = Omit<UsageEvent, 'id' | 'at' | 'day'> & { id?: string; at?: string };
+/** Who owns a row and who may read it (docs/work-and-briefings.md): work events carry both; every other row has neither. */
+export interface UsageOwnership {
+  ownerId?: string;
+  visibility?: 'private' | 'team' | 'org';
+  /** The tool a work event came from, and its id there: (owner, source, sourceId) is unique. */
+  source?: string;
+  sourceId?: string;
+}
+
+export type UsageInput = Omit<UsageEvent, 'id' | 'at' | 'day'> & UsageOwnership & { id?: string; at?: string };
 type Listener = (event: UsageEvent) => void;
 
 const listeners = () => singleton('usage-listeners', () => new Set<Listener>());
@@ -105,6 +115,18 @@ function cleanAttrs(attrs: Record<string, UsageAttr | undefined> | undefined): R
   return Object.keys(out).length ? out : undefined;
 }
 
+/** Tell the listeners. A work event someone keeps to themselves reaches none: a flow's trigger could pass it on. */
+function notify(event: UsageEvent, reach: 'private' | 'shared') {
+  if (reach === 'private') return;
+  for (const listener of listeners()) {
+    try {
+      listener(event);
+    } catch (error) {
+      logger.warn('a usage listener failed', { error });
+    }
+  }
+}
+
 /** Record one event. Returns it, or undefined when the ledger is off or the write failed. */
 export function recordUsage(input: UsageInput, db: Database = database()): UsageEvent | undefined {
   if (!brainEnabled()) return undefined;
@@ -132,15 +154,9 @@ export function recordUsage(input: UsageInput, db: Database = database()): Usage
       ...(finite(input.cost) !== undefined && { cost: input.cost }),
       ...(cleanAttrs(input.attrs) && { attrs: cleanAttrs(input.attrs) }),
     };
-    const inserted = db.insertNew('usage_events', toRow(event));
+    const inserted = db.insertNew('usage_events', toRow(event, input));
     if (!inserted) return undefined;
-    for (const listener of listeners()) {
-      try {
-        listener(event);
-      } catch (error) {
-        logger.warn('a usage listener failed', { error });
-      }
-    }
+    notify(event, input.ownerId && input.visibility !== 'org' ? 'private' : 'shared');
     return event;
   } catch (error) {
     logger.warn('could not record a usage event', { error, 'landflow.usage.kind': input.kind });
@@ -167,9 +183,13 @@ export interface UsageRow {
   tokens: number | null;
   cost: number | null;
   attrs: string | null;
+  owner_id?: string | null;
+  visibility?: string | null;
+  source?: string | null;
+  source_id?: string | null;
 }
 
-const toRow = (e: UsageEvent) => ({
+const toRow = (e: UsageEvent, owned: UsageOwnership = {}) => ({
   id: e.id,
   at: e.at,
   day: e.day,
@@ -188,6 +208,10 @@ const toRow = (e: UsageEvent) => ({
   tokens: e.tokens ?? null,
   cost: e.cost ?? null,
   attrs: e.attrs ? JSON.stringify(e.attrs) : null,
+  owner_id: owned.ownerId ?? null,
+  visibility: owned.ownerId ? (owned.visibility ?? 'private') : null,
+  source: owned.source ?? null,
+  source_id: owned.sourceId ?? null,
 });
 
 export function fromRow(row: UsageRow): UsageEvent {
@@ -217,6 +241,73 @@ export function fromRow(row: UsageRow): UsageEvent {
     ...(row.cost !== null && { cost: Number(row.cost) }),
     ...(attrs && { attrs }),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Work events
+// ---------------------------------------------------------------------------
+
+/** A URL without its query and fragment (they carry tokens and ids). */
+const bareUrl = (url: string | undefined) => url?.replace(/[?#].*$/, '');
+
+/** The ledger row of a work event (the contract in packages/protocol/src/work-events.ts), redacted again on this side. */
+function workAttrs(input: WorkEventInput, ownerEmail: string | undefined): Record<string, UsageAttr | undefined> {
+  const first = input.prs?.[0];
+  return {
+    source: input.source,
+    sourceId: input.sourceId,
+    url: bareUrl(input.url),
+    ...(ownerEmail && { actor: ownerEmail }),
+    title: redact(input.title),
+    summary: redact(input.summary),
+    repo: input.repo,
+    branch: redact(input.branch),
+    areas: input.areas?.map((area) => redact(area) ?? '').filter(Boolean).join(','),
+    commits: input.commits,
+    turns: input.turns,
+    ...(input.prs?.length && { prs: input.prs.length, prUrl: bareUrl(first?.url) }),
+    initiative: redact(input.initiative),
+    customer: redact(input.customer),
+    team: redact(input.team),
+    endedAt: input.endedAt,
+  };
+}
+
+/**
+ * Record someone's work event, or update the one they already sent with the same `source` and `sourceId` (the newer values
+ * win, the row and its id stay). It is theirs: private unless they chose another visibility. Listeners hear of a new
+ * shared event only. `created` says whether a row was added.
+ */
+export function upsertWorkEvent(ownerId: string, input: WorkEventInput, ownerEmail?: string, db: Database = database()): { id: string; created: boolean } {
+  const atMs = Date.parse(input.occurredAt);
+  const at = new Date(Number.isFinite(atMs) ? atMs : Date.now());
+  const visibility = input.visibility ?? 'private';
+  const owned: UsageOwnership = { ownerId, visibility, source: input.source, sourceId: input.sourceId };
+  return db.transaction(() => {
+    const existing = db.get<{ id: string }>('SELECT id FROM usage_events WHERE owner_id = ? AND source = ? AND source_id = ?', ownerId, input.source, input.sourceId);
+    const attrs = cleanAttrs(workAttrs(input, ownerEmail));
+    const event: UsageEvent = {
+      id: existing?.id ?? `ue_${nanoid(14)}`,
+      at: at.toISOString(),
+      day: dayOf(at.getTime()),
+      kind: input.kind as UsageKind,
+      actorId: ownerId,
+      ...(redact(input.title) && { message: redact(input.title) }),
+      ...(attrs && { attrs }),
+    };
+    if (existing) {
+      db.upsert('usage_events', toRow(event, owned));
+      return { id: event.id, created: false };
+    }
+    db.insertNew('usage_events', toRow(event, owned));
+    notify(event, visibility === 'org' ? 'shared' : 'private');
+    return { id: event.id, created: true };
+  });
+}
+
+/** Delete someone's own work event. Returns whether there was one. */
+export function deleteWorkEvent(ownerId: string, source: string, sourceId: string, db: Database = database()): boolean {
+  return db.delete('usage_events', { owner_id: ownerId, source, source_id: sourceId }) > 0;
 }
 
 // ---------------------------------------------------------------------------
