@@ -13,8 +13,8 @@ under [What's next](#whats-next), and this page grows as they land.
 - **Tab bar.** A bar at the bottom with **Home**, **Flows** (Workflows and Templates), **Runs** (Executions and Search
   runs), **Agents** and **More** (`TabBar` in `components/shell/sidebar.tsx`). It replaces the old top bar and its menu
   button. **Runs** carries the number of things waiting for a person (`GET /api/runs/needs-you`, refreshed when a run
-  waits or ends). **More** opens the rail as a drawer, grouped as on a desktop (Build, Extend, Settings, live status,
-  theme, the look and the user menu). The bar pads for the home indicator (`env(safe-area-inset-bottom)`), and pages get
+  waits or ends). **More** opens the rail as a drawer, with the same nine places as on a desktop (Home, Workflows, Runs, Agents, Brain,
+  Data tables, Credentials, Plugins, Settings) and the user menu; no theme or look switch, no section tabs (the bar and More reach every page). The bar pads for the home indicator (`env(safe-area-inset-bottom)`), and pages get
   the same room at their foot.
 - **Full screen.** The editor (and its Executions and Evaluations tabs), an agent's page and a run's trace have no tab bar
   (`fullScreen()`): their own header starts with a back arrow, and the editor uses the whole height for the canvas and

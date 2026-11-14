@@ -1486,6 +1486,10 @@ workbench in place of a page of cards, keeping Spotlight.
   its run went cold first (only with `LANDFLOW_PG_HOT_MINUTES` below the ask's 10-minute TTL); and the isolate backend
   still aborts the process on hash-table growth, so a memory bomb needs a separate evaluation process to be contained.
 
+## Shell: nine-item rail (built 2026-11-14)
+
+X1 (nine rail items, section tabs in Workflows, Runs and Plugins), X4 (theme in the user menu, the connection shown only while reconnecting), X6 (no Preview pill in the rail), X7 (a red dot for an offline plugin instead of a count), P-dev-1 (Build a plugin out of the rail), P-rb-1 (Runbooks only with the Landfall plugin) and P-pr-1 (Manage projects in the switcher, no intro on /projects) are closed. The look switch stays in the tree until it is deleted.
+
 ## Planned next
 
 1. **Declare event kinds in the UI**: kinds are declared over the API or by Record Event's *Declare Kind If New* only.

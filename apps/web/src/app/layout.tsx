@@ -6,7 +6,6 @@ import { Toaster } from 'sonner';
 import { ViewerProvider } from '@/components/auth/viewer';
 import { ConfirmHost } from '@/components/ui/confirm';
 import { Sidebar } from '@/components/shell/sidebar';
-import { lookScript } from '@/components/shell/look-toggle';
 import { themeScript } from '@/components/shell/theme-toggle';
 import { pageViewer } from '@/lib/server/auth/pages';
 import './globals.css';
@@ -28,7 +27,6 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`} suppressHydrationWarning>
       <head>
         <script nonce={nonce} dangerouslySetInnerHTML={{ __html: themeScript }} />
-        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: lookScript }} />
       </head>
       <body className="min-h-screen">
         <a href="#main" className="sr-only rounded-lg bg-ac2 px-3 py-2 text-[13px] font-semibold text-on-ac focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[100]">
