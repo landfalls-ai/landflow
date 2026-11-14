@@ -165,16 +165,25 @@ that Claude Code installs as it is and Landflow installs back whole ([marketplac
 
 **Agents** in the sidebar → **New agent** creates a draft from a [template](#templates) or the
 [Agent architect](#agent-architect) and opens the builder. Everything autosaves to the
-*draft*; the test chat always runs the draft. Under the agent's icon and name, **Runs on** shows where the published
-version runs (Landflow, kagent, its channels and schedules) and opens the Deploy tab. The tabs:
+*draft*; the test chat always runs the draft. The publish state is said once, on the header button: **Publish** for a
+draft, **Publish v4** when the draft has changes, **Live v3 ▾** when the live version matches it (the ▾ lists versions, Unpublish and
+Restore). Under the agent's icon and name, **Runs on** lists kagent, channels and schedules when there are any, and opens
+the Triggers row. The three tabs:
 
 - **Persona**: who the agent is and how it talks ([below](#the-persona)), beside the system prompt that makes.
-- **Abilities**: the model, skills, capabilities and memory.
-- **Deploy**: triggers and kagent.
-- **Safety**: guardrails and limits.
-- **Sessions** and **Evaluations**.
+- **Abilities**: the layers around the model as a list of rows (Model, Capabilities, Triggers, Guardrails, Deploy, Advanced).
+  Each row says what is set; click it to open its card in place. **Capabilities** holds tools, knowledge bases, skills,
+  plugins and memory behind one **Add capability ▾** (tool, workflow, sub-agent, MCP server, GitHub MCP, A2A agent, knowledge
+  base, plugin, skill). **Triggers** has one **Add trigger ▾** (schedule, Telegram, Slack, Teams). **Guardrails** holds the
+  guardrails and the limits. **Advanced** holds the router, the cache and tool access. On a phone the Add menus are sheets.
+- **Activity**: **Sessions** and **Evaluations**, switched at the top (`?tab=activity&view=evaluations`).
 
-Older links still work: `?tab=build` opens Persona and `?tab=settings` opens Safety.
+**Deploy** is a row only when there is a kagent cluster credential to deploy to (or the agent already runs on kagent):
+the kagent card does not show without one.
+
+Older links still work (`mapLegacyTab` in `components/agents/tabs.ts`): `?tab=build` opens Persona, `?tab=deploy` opens
+Abilities with Deploy open, `?tab=safety` and `?tab=settings` open Abilities with Guardrails open, `?tab=sessions` and
+`?tab=evaluations` open Activity on that view, and a `session=` id alone opens Activity on Sessions.
 
 ### The persona
 
@@ -371,7 +380,7 @@ absent from an agent without any). Publishing needs a model, and a persona part 
   The usage limits count every model call the agent makes (sub-agents and tools that call models
   included) at the prices of Settings → AI prices. A run that reaches one stops with the reason
   `budget` and a notice saying which limit and where to change it; later runs are refused before
-  any model call until the day or month turns. The Safety tab shows today's and this month's
+  any model call until the day or month turns. The Guardrails row shows today's and this month's
   usage ([observability.md](observability.md#token-and-cost-tracking)).
 
 **Publish** snapshots the draft as version N. At most 20 versions are kept, and the builder's
@@ -380,7 +389,7 @@ to the newest version on their next message. **Unpublish** stops schedules and c
 **Export / Import** writes or reads the config as JSON. Import gives schedules and channels new
 ids and leaves them disabled.
 
-**kagent** (Deploy tab): **Deploy to kagent** writes the published version to a
+**kagent** (Abilities → Deploy): **Deploy to kagent** writes the published version to a
 kagent cluster (a *kagent cluster* credential) with this persona: the system prompt the runtime
 builds from the persona, instructions, skills, name and description, the model, and the agent's tools,
 served to kagent by Landflow. Every publish writes the new version there too. The card shows

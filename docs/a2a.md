@@ -503,7 +503,7 @@ every Claude Code agent Landflow deploys gets Landflow's own mod, **landflow-har
   | `upload` | `nc`, `socat`, `telnet`; `curl`/`wget` sending a file (`-T`, `-d @file`, `-F x=@file`) |
   | `write-outside-workspace` | Write, Edit, MultiEdit and NotebookEdit outside the working directory, `/tmp` and `~/.claude` (the same idea as Claude Code 2.1.314's `permissions.blockWritesOutsideWorkingDirectories`) |
 
-  **The guard per agent.** The Deploy tab's kagent card picks one of three for a Claude Code agent (`guard` on
+  **The guard per agent.** The kagent card (Abilities → Deploy) picks one of three for a Claude Code agent (`guard` on
   `PUT /api/agents/:id/kagent`, kept across redeploys and publishes):
 
   | Guard | What it does |
