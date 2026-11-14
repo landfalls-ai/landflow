@@ -174,7 +174,7 @@ function HistoryList({ surface, subjectType, subjectId, subjectLabel, ownSurface
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13px] text-t1 max-md:text-[15px]">{c.title}</span>
                 <span className="flex items-center gap-1.5 text-[11px] text-t3">
-                  {c.subjectType && <span className="rounded bg-wl px-1 py-px">{c.subjectType === 'workflow' ? 'Workflow' : c.subjectType}</span>}
+                  {c.subjectType && <span className="rounded bg-wl px-1 py-px">{c.subjectType === 'workflow' ? 'Workflow' : c.subjectType === 'brainPage' ? 'Page' : c.subjectType}</span>}
                   <span>{timeAgo(c.updatedAt)}</span>
                 </span>
               </span>

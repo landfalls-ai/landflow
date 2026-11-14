@@ -214,8 +214,9 @@ read: a workflow, one of its nodes, a run, an agent, a team, a data table, a tem
 page, a person or a credential. A choice removes the `@text` you typed and adds a chip you can remove with its ×.
 
 - **Where it is.** The picker and the search behind it are built and tested ([B04](history.md)). Spotlight uses it
-  (B16): the open workflow's nodes are its "On this page" group, the chips sit above the box beside the selected-node
-  chip, and a node type chosen from a suggestion still counts as a tag. Ask the brain takes it into use in a later wave.
+  ([B16](history.md)): the open workflow's nodes are its "On this page" group, the chips sit above the box beside the
+  selected-node chip, and a node type chosen from a suggestion still counts as a tag. Ask the brain uses it
+  ([B17](history.md)): each tag is a step, `Read @Billing`, and goes to the model in the block below.
 - **The list.** On a desktop a 320 px popover; on a phone a full-width sheet above the keyboard. The groups are "On this
   page" (what the host already has, such as the open workflow's nodes), your last 8 choices, then the kinds in the order
   above. It searches `GET /api/mentions` 150 ms after the last key. Up and Down move, Enter or Tab choose, Esc closes.
@@ -332,6 +333,10 @@ mounts it.
   asks for its `subjectType` and `subjectId`, with the search text), and each pages on its own with **Show more**. A sheet on a phone, with 44 px rows.
   A chat that can only show its own kind of conversation passes `ownSurfaceOnly`, and both groups then ask for its
   `surface` too: the Agent architect does, so it never opens a Spotlight conversation as a design.
+- **Ask the brain's conversations** are kept per page (subject type `brainPage`, subject id the page's `<type>/<id>`;
+  the index and log have no subject). The panel resumes the page's newest one under **Earlier**, appends each finished
+  question and answer (the question's text and a `mentions` part of names, the `answer` with its links and cited
+  sources, the `steps`), and sends the last two stored turns as `history`. See [the Brain page](second-brain.md#the-brain-page).
 - **The footer comes back**: an assistant item keeps its `meta` (model, time, steps, tokens, cost, and `local` when a
   local model answered), so a reopened reply shows the same footer. A title is clipped to 80 characters by code point,
   so an emoji at the cut is never split.

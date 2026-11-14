@@ -1586,7 +1586,14 @@ The shared pieces every chat will use, built in `components/ui/` and ready; the 
 - CH23 ✅ Done (brain): `[n]` appears only with a source, and a follow-up knows the last two turns.
 - CH8 (brain half) ✅ Done: Ask writes `ai_usage` rows with surface `brain`.
 - P-br-3 ✅ Done: one **Ask** button and ⌘I; the bottom bar, the toolbar and status-bar buttons and quick open's ask row are gone
-  ([second-brain.md](second-brain.md#the-brain-page)). Open: history and @ tags for Ask (B17), the app-wide panel (B35).
+  ([second-brain.md](second-brain.md#the-brain-page)). Open: the app-wide panel (B35). History and @ tags for Ask are built (B17, below).
+
+## Ask the brain keeps conversations and takes tags (B17, 2026-11-14)
+
+- CH15 ✅ Done (brain): Ask keeps a conversation for each page (the last one comes back under **Earlier**), has the history
+  button, and takes `@` tags (pages, people, workflows, runs and the rest) that are checked, read into the answer and shown
+  as steps ([second-brain.md](second-brain.md#the-brain-page), [assistant.md](assistant.md#conversation-history)).
+- Open: the index and log files keep no conversation of their own to resume (they have no page); the app-wide panel (B35).
 
 ## The editor's layout (B11, 2026-11-14)
 
