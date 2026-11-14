@@ -712,6 +712,8 @@ diff, and overlays for the differences between clusters. A Helm chart would add 
 | `k8s/overlays/orbstack-queue` | the OrbStack overlay plus `postgres`, `valkey`, `minio` and `queue-mode`: "Queue mode on Kubernetes" below |
 | `k8s/examples/keda/` | KEDA `ScaledObject`s per broker, and `queue-workers.yaml` for the queue workers (not in any overlay): "Autoscaling with KEDA" below |
 | `k8s/examples/envoy-gateway/` | a `BackendTrafficPolicy` with long timeouts for the HTTPRoute, for Envoy Gateway |
+| `k8s/components/clickland-observability` | optional, the default for telemetry: OTLP export from every Landflow Deployment to Clickland's collector (`clickland-collector.clickland-dev:4318`), run journals as traces there, and trace links to Clickland's console; deploys nothing (Clickland runs from its own repository): "Telemetry on Kubernetes" below |
+| `k8s/overlays/orbstack-clickland` | the OrbStack overlay plus `clickland-observability` |
 | `k8s/components/observability` | optional: a local telemetry backend (`grafana/otel-lgtm`: Collector, Tempo, Prometheus, Loki, Grafana) as `landflow-lgtm`, OTLP export from every Landflow Deployment to it, and the "Landflow · agent runs" dashboard: "Telemetry on Kubernetes" below |
 | `k8s/overlays/orbstack-observability` | the OrbStack overlay plus `observability` |
 
@@ -1040,6 +1042,27 @@ kubectl --context orbstack create namespace landflow-dev    # once (or apply the
 
 ### Telemetry on Kubernetes
 
+Landflow's traces, metrics and logs go to [Clickland](features/clickland.md), the land family's observability system,
+when it runs on the same cluster (the default), or to a `grafana/otel-lgtm` backend of its own.
+
+**To Clickland** (Clickland deployed from its repository into `clickland-dev`, its collector and console up):
+
+```bash
+kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-clickland
+```
+
+Every Landflow Deployment gets `OTEL_EXPORTER_OTLP_ENDPOINT=http://clickland-collector.clickland-dev.svc.cluster.local:4318`
+and `OTEL_RESOURCE_ATTRIBUTES=deployment.environment=landflow-dev`; the host also gets
+`LANDFLOW_OTLP_TRACES_URL=http://clickland-collector.clickland-dev.svc.cluster.local:4318/v1/traces` (each run's journal
+as one trace) and `LANDFLOW_TRACE_URL=http://clickland-console.clickland-dev.svc.cluster.local:4711/traces/{traceId}`
+(the run page's trace link opens Clickland's console). Nothing runs in `landflow-dev` for it; while Clickland is down
+the exporters drop what they can't send. kagent in the kind cluster follows: `deploy/scripts/kagent-up.sh` reads the
+host's endpoint and bridges kind's `landflow-otel` name to `clickland-collector`'s ClusterIP (OTLP gRPC 4317, HTTP 4318;
+`CLICKLAND_NS` changes the namespace). Coming from the lgtm overlay: apply `orbstack-clickland`, then delete Deployment
+and Service `landflow-lgtm` and its ConfigMaps (below), and run `kagent-up.sh` again to move kagent's bridge.
+
+**Without Clickland**, the bundled backend:
+
 ```bash
 kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-observability
 kubectl --context orbstack -n landflow-dev rollout status deploy/landflow-lgtm
@@ -1078,8 +1101,9 @@ Harness (`landflow-claude`), the package registries agents' sandboxes may reach 
 credential's Egress Policies), and sets the credential's plugin registry to the Landflow Service's ClusterIP, where
 kagent's nodes pull agents' Claude Code plugins ([a2a.md](a2a.md#on-claude-code)). `deploy/scripts/claude-harness-dev.sh`
 then adds `landflow-claude-dev`, Claude Code on an image with the common toolchains, served from Landflow's registry
-([a2a.md](a2a.md#a-toolchain-image-for-claude-code)). With the observability overlay
-running, kagent and Substrate send their telemetry to `landflow-lgtm`. What it does, the files in `deploy/kind/` and the
+([a2a.md](a2a.md#a-toolchain-image-for-claude-code)). With a telemetry overlay
+running (`orbstack-clickland` or `orbstack-observability`), kagent and Substrate send their telemetry where the host
+sends its own: `clickland-collector` or `landflow-lgtm`. What it does, the files in `deploy/kind/` and the
 endpoints are in [a2a.md](a2a.md#kagent-next-to-landflow). Run it again after the host's data was reset (a new PVC):
 the credential and the agent are gone with it.
 

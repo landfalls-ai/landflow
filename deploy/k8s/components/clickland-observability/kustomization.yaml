@@ -1,0 +1,33 @@
+# Optional: Landflow's telemetry to Clickland, the land family's observability system, running in its own namespace
+# (clickland-dev) on the same OrbStack cluster: OTLP export from the host and every plugin to Clickland's collector, each
+# run's journal as one trace there, and the host's trace links to Clickland's console (docs/deployment.md, "Telemetry on
+# Kubernetes"; docs/features/clickland.md). Nothing is deployed here: Clickland brings its own collector and console.
+# kagent in the kind cluster exports to the same collector (deploy/scripts/kagent-up.sh, deploy/kind/bridge-otel.yaml).
+#
+#   kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-clickland
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  # Every Landflow process exports OTLP/HTTP to Clickland's collector (the host and the TypeScript SDK send JSON, the Go
+  # and Python SDKs protobuf: the collector takes both on 4318; 4317 is OTLP gRPC).
+  - target: { kind: Deployment, labelSelector: app.kubernetes.io/part-of=landflow }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://clickland-collector.clickland-dev.svc.cluster.local:4318" }
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: OTEL_RESOURCE_ATTRIBUTES, value: "deployment.environment=landflow-dev" }
+  # The host links each run's trace to Clickland's console (LANDFLOW_TRACE_URL, {traceId} is filled in).
+  - target: { kind: Deployment, name: landflow-host }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: LANDFLOW_TRACE_URL, value: "http://clickland-console.clickland-dev.svc.cluster.local:4711/traces/{traceId}" }
+  # Each finished run's journal goes to the same collector as one trace with OpenInference attributes (docs/run-trace.md,
+  # "Export over OTLP"); it carries the run's own trace id, so it joins the host's spans for that run in Clickland.
+  - target: { kind: Deployment, name: landflow-host }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: LANDFLOW_OTLP_TRACES_URL, value: "http://clickland-collector.clickland-dev.svc.cluster.local:4318/v1/traces" }

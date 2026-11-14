@@ -185,7 +185,8 @@ before Landflow deploys the new one) or to upgrade kagent. It leaves your kubect
    published on the Mac's loopback) and turns on proxy ARP on its node, which Substrate's per-actor networking needs;
 2. applies the bridges: `deploy/kind/bridge.yaml` (a `landflow-host` Service in kind's namespace `landflow` whose
    endpoint is the host's ClusterIP, which OrbStack routes to every container on its engine) and
-   `deploy/kind/bridge-otel.yaml` (the same for `landflow-lgtm`, when the observability overlay runs);
+   `deploy/kind/bridge-otel.yaml` (the same for the telemetry backend the host exports to: Clickland's
+   `clickland-collector` with the `orbstack-clickland` overlay, or `landflow-lgtm` with `orbstack-observability`);
 3. installs kagent 1.0.0-alpha17 and Agent Substrate 0.6.0-alpha3 with `deploy/kind/kagent-config.yaml` (Ollama on the
    Mac as the model provider, `qwen3-coder:30b`), or upgrades them with `deploy/kind/kagent-values.yaml` (telemetry to
    Landflow's backend). Substrate's own telemetry is set on its release (`otel.endpoint`, sampling 1.0);

@@ -1,6 +1,8 @@
-# kagent's and Agent Substrate's telemetry to Landflow's backend (grafana/otel-lgtm, deploy/k8s/components/observability) in
-# the OrbStack cluster: a name in kind's DNS, landflow-otel.landflow.svc.cluster.local:4317 (OTLP gRPC) and :4318 (HTTP),
-# whose endpoint is the ClusterIP of landflow-lgtm (LANDFLOW_OTEL_IP, filled in by deploy/scripts/kagent-up.sh). kagent's
+# kagent's and Agent Substrate's telemetry to where Landflow's goes in the OrbStack cluster: Clickland's collector
+# (clickland-collector in clickland-dev, deploy/k8s/components/clickland-observability) or the grafana/otel-lgtm backend
+# (landflow-lgtm, deploy/k8s/components/observability). A name in kind's DNS, landflow-otel.landflow.svc.cluster.local:4317
+# (OTLP gRPC) and :4318 (HTTP), whose endpoint is that Service's ClusterIP (LANDFLOW_OTEL_IP, filled in by
+# deploy/scripts/kagent-up.sh from landflow-host's OTEL_EXPORTER_OTLP_ENDPOINT). Both take OTLP on 4317 and 4318. kagent's
 # Helm values point at it (deploy/kind/kagent-values.yaml), and the controller adds it to each agent's egress allowlist.
 apiVersion: v1
 kind: Service
