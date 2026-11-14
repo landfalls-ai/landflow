@@ -1,0 +1,42 @@
+{
+  "name": "landflow-brain",
+  "version": "0.1.0",
+  "description": "Your own Claude Code work in the Landflow company brain: a local journal, a summary held for your review, and your yesterday back at the next session",
+  "author": {
+    "name": "Landflow"
+  },
+  "userConfig": {
+    "url": {
+      "type": "string",
+      "title": "Landflow URL",
+      "description": "Where your Landflow runs: https://, or http://localhost. Empty: nothing is recorded or sent.",
+      "default": ""
+    },
+    "key": {
+      "type": "string",
+      "title": "API key",
+      "description": "A Landflow API key with the brain:write scope (Settings, API keys). Empty: nothing is recorded or sent.",
+      "sensitive": true,
+      "default": ""
+    },
+    "repos": {
+      "type": "string",
+      "title": "Repositories",
+      "description": "The repositories whose sessions are recorded, owner/name, separated by commas or spaces. Empty: none.",
+      "default": ""
+    },
+    "mode": {
+      "type": "string",
+      "title": "Mode",
+      "description": "review: hold each session until you send it; auto: send it at the end (unless your admin forbids it); off: record nothing.",
+      "options": ["review", "auto", "off"],
+      "default": "review"
+    },
+    "sync": {
+      "type": "boolean",
+      "title": "Load yesterday",
+      "description": "At the start of a session, bring in your own work from yesterday.",
+      "default": true
+    }
+  }
+}
