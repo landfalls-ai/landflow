@@ -1,5 +1,5 @@
 'use client';
-/** Build tab → Skills: Agent Skills (SKILL.md) uploaded as a file or folder, picked from the marketplace library, or written by hand. */
+/** Abilities → Capabilities → Skills: Agent Skills (SKILL.md) uploaded as a file or folder, picked from the marketplace library, or written by hand. */
 import { useEffect, useRef, useState } from 'react';
 import { BookOpen, FileText, FolderOpen, Library, Loader2, PenLine, Pencil, Trash2, X } from 'lucide-react';
 import Link from 'next/link';

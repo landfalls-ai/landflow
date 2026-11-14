@@ -1,5 +1,5 @@
 'use client';
-/** An agent's card on the Agents list: its name, what it does and whether it is published. Nothing else (docs/agents.md#the-list). */
+/** An agent's card on the Agents list: its name, what it does and whether it is published. Nothing else (docs/agents.md#the-roster). */
 import Link from 'next/link';
 import { Copy, Download, ExternalLink, MoreHorizontal } from 'lucide-react';
 import type { AgentSummary } from '@/lib/shared/agents';

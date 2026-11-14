@@ -206,7 +206,7 @@ on the result opens it (a pull request on GitHub); the rest of the row opens the
   the steps.
 - **Home**: the recent runs are lines; runs going on show as timelines under Running now.
 - **The team page**: the team's last run as a line (its timeline while it runs); **the agent page**: the last three runs
-  the agent took part in, at the top of its Sessions tab.
+  the agent took part in, at the top of its Activity → Sessions.
 - The lines come from `GET /api/runs/lines?ids=…` (at most 20 runs), folded on the server from each run's journal and
   cached by its last event like the run digests.
 

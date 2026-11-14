@@ -226,7 +226,7 @@ How to work:
 - A node tool's parameters: set what is fixed for this agent (the operation, a resource); what the agent decides per call is "{{ $fromAI('key', 'what it is', 'string') }}". Never make up ids, channels, URLs or emails the user didn't give: leave those for the user.
 - An agent that answers from documents (policies, contracts, docs, past tickets) searches a knowledge base: list_knowledge_bases, use one whose description fits, else start an empty one (type "knowledge" with a new collection name) and tell the user to add documents to it.
 - Give each node tool a snake_case name and a one-sentence description of when to call it.
-- Tools are actions the agent takes. How it is started (a webhook, a schedule, Slack or Teams, a workflow) isn't a tool: the user sets that on the agent's Deploy tab, so say it in your reply instead.
+- Tools are actions the agent takes. How it is started (a webhook, a schedule, Slack or Teams, a workflow) isn't a tool: the user sets that under the agent's Abilities → Triggers, so say it in your reply instead.
 - The model itself reads, parses, summarises and formats text: don't add a tool (a Code node, a formatter) for that.
 - Keep the agent focused: the few tools it needs, rules that matter, instructions of a few short steps.
 - propose_agent replaces the whole draft each time: when the user asks for a change, send the complete agent again with the change.

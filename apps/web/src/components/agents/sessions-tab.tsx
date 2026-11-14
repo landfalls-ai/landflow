@@ -1,5 +1,5 @@
 'use client';
-/** The Sessions tab: every conversation the agent had (test chat, schedules, channels, workflows, other agents) and its timeline. */
+/** Activity → Sessions: every conversation the agent had (test chat, schedules, channels, workflows, other agents) and its timeline. */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Bot, Clock, Code, FlaskConical, Loader2, MessagesSquare, RefreshCw, Send, Trash2, Workflow } from 'lucide-react';

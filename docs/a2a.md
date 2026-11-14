@@ -213,8 +213,8 @@ removed).
 
 ## Landflow agents on kagent
 
-An agent built in Landflow can run on kagent with the persona built here. Deploying it (the **kagent** card at the
-bottom of the agent's Build tab, or `PUT /api/agents/<id>/kagent`) writes the published version to kagent as five
+An agent built in Landflow can run on kagent with the persona built here. Deploying it (the **kagent** card under the
+agent's Abilities → Deploy, or `PUT /api/agents/<id>/kagent`) writes the published version to kagent as five
 resources, all named after the deployment (default: the agent's name as a DNS label) and labelled
 `landflow.dev/agent-id`:
 
@@ -662,4 +662,4 @@ gone, a push to main asked of a person and run or refused by the answer, read-on
 - Watching a Tech Lead that calls remote agents: a Run an Agent node's session shows live in the execution view's Agent
   session panel, with each A2A tool entry's `remote.steps` ([agents.md](agents.md#from-workflows)).
 - Sessions on kagent aren't Landflow sessions: their tool calls are traced (`execute_tool`) but don't show in the
-  agent's Sessions tab.
+  agent's Activity → Sessions.

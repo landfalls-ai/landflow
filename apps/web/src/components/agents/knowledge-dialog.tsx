@@ -1,6 +1,6 @@
 'use client';
 /**
- * Build tab → Capabilities → Add knowledge base: a vector store collection the agent searches with a
+ * Abilities → Capabilities → Add knowledge base: a vector store collection the agent searches with a
  * tool. Documents get in through a workflow (a vector store node in “Insert Documents” mode with the
  * same store, collection and embeddings model), or are uploaded here (PDF, DOCX, text, Markdown, HTML, CSV,
  * JSON): they go through the loader, a splitter and the embeddings model into the collection.

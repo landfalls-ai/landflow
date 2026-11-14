@@ -266,7 +266,7 @@ page, a person or a credential. A choice turns the `@text` you typed into `@Name
 ## Chat surfaces
 
 Every conversation with an AI in Landflow has one look, from the chat kit in `components/ui/chat.tsx`: Spotlight, the
-editor's **Chat** (a workflow with a Chat Message trigger), an agent's **Test agent** chat and its Sessions tab, the
+editor's **Chat** (a workflow with a Chat Message trigger), an agent's **Test agent** chat and its Activity → Sessions, the
 Agent architect and **Ask the brain** on `/brain`.
 
 - **Your message** is a bubble on the right (`UserBubble`); a **reply** is text beside a small mark (Spotlight's

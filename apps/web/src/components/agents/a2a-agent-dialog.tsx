@@ -1,6 +1,6 @@
 'use client';
 /**
- * Build tab → Capabilities → Add A2A agent: a remote agent (kagent, Google ADK, any A2A 1.0 server) the agent asks with an
+ * Abilities → Capabilities → Add A2A agent: a remote agent (kagent, Google ADK, any A2A 1.0 server) the agent asks with an
  * `ask_…` tool. The settings are the A2A Agent node's (agent URL, auth credential, timeout, human in the loop).
  */
 import { useState } from 'react';

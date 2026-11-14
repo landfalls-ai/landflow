@@ -185,7 +185,7 @@ the Triggers row. The three tabs:
 the kagent card does not show without one.
 
 Older links still work (`mapLegacyTab` in `components/agents/tabs.ts`): `?tab=build` opens Persona, `?tab=deploy` opens
-Abilities with Deploy open, `?tab=safety` and `?tab=settings` open Abilities with Guardrails open, `?tab=sessions` and
+Abilities with Deploy open (or with nothing open on a host with no kagent credential, where there is no Deploy row), `?tab=safety` and `?tab=settings` open Abilities with Guardrails open, `?tab=sessions` and
 `?tab=evaluations` open Activity on that view, and a `session=` id alone opens Activity on Sessions.
 
 ### The persona
@@ -205,7 +205,7 @@ beside it until you press **View prompt** (a read-only preview; **Edit** jumps t
 - **Examples**: a message and the answer you'd want, up to 10. Only examples with both sides go into the prompt.
 - **Instructions**: anything the parts don't cover, in your own words.
 
-**What the model reads** shows the system prompt as you type. It comes from `personaPrompt()` in
+**What the model reads** shows the system prompt once opened, kept up to date as you type. It comes from `personaPrompt()` in
 `apps/web/src/lib/shared/persona.ts`, the function the runtime and kagent's AgentTemplate also use, so the text you see
 is the text that runs here and on kagent. Each run adds the date and time and, with cross-session memory, the facts
 it remembers. The parts become sections in this order:
@@ -462,7 +462,7 @@ and footer, and keeps its answer card.
   All Data*. **Run** in the editor starts from it too, with empty example values for each argument.
 - **Run an Agent** (`core.messageAgent`, formerly "Message an Agent"; the type is unchanged) runs
   a published agent as a step of the flow. The agent brings its persona, skills, capabilities,
-  guardrails and usage limits. Used as a tool, the node (like Run a Team) takes `message` and a required `reason`. Tool images: the node's **Tool Images to Keep** option, else the agent's **Tool images to keep** (Settings tab), else `LANDFLOW_TOOL_IMAGES_KEPT`, else 2; Run Trace shows each image as a thumbnail ([features/ai.md](features/ai.md)). Like the AI Agent, the node has three optional sub-node ports:
+  guardrails and usage limits. Used as a tool, the node (like Run a Team) takes `message` and a required `reason`. Tool images: the node's **Tool Images to Keep** option, else the agent's **Tool images to keep** (Abilities → Guardrails), else `LANDFLOW_TOOL_IMAGES_KEPT`, else 2; Run Trace shows each image as a thumbnail ([features/ai.md](features/ai.md)). Like the AI Agent, the node has three optional sub-node ports:
   - **Chat Model**: a chat model node (Ollama, Anthropic, OpenAI…) that replaces the agent's own
     model for this run.
   - **Tool**: any `usableAsTool` node, an MCP Client Tool, or a vector store in *Retrieve
@@ -488,7 +488,7 @@ and footer, and keeps its answer card.
   A2A agent in each tool entry's `remote`, can be read mid-run. In the execution view
   (`/workflows/<wf>/runs/<ex>`) an **Agent session** panel sits between the canvas and the
   logs: it opens by itself while an agent node runs and polls every 2 s, shows the agent's own
-  timeline (the one of the Sessions tab, with each remote agent's commands), and stays after the
+  timeline (the one of Activity → Sessions, with each remote agent's commands), and stays after the
   run, with a link to the session on the agent's page. With several Run an Agent nodes, pick the
   node in the panel's header. Executions from before this change have no linked session.
 
@@ -810,7 +810,7 @@ through the infra Mailpit (`apps/web/test/approval-email-mailpit.test.ts`, skipp
 | `GET /api/insights/ai-usage?agentId=` | the agent's tokens and estimated cost: totals, per model, per day, `today` and `month` |
 | `GET /api/agents/:id/sessions`, `GET/DELETE /api/agents/:id/sessions/:sid` | session list / full session (`feedback`: the thumbs up / down per reply) |
 | `GET /api/agents/:id/sessions?executionId=&nodeId=` | `{ sessions }`: the full sessions (timeline included, oldest first) that a workflow run started with Run an Agent nodes, optionally of one node; the execution view's Agent session panel polls it |
-| `GET /api/agents/:id/sessions/:sid/feedback`, `PUT` `{ entryId, rating: 'up' \| 'down' \| null, comment? }` | read / set the rating of one assistant reply (the Sessions tab's thumbs). A thumbs down on an agent with online grading enabled grades that reply ([Hosted chat and widget](features/ai.md#hosted-chat-and-widget)) |
+| `GET /api/agents/:id/sessions/:sid/feedback`, `PUT` `{ entryId, rating: 'up' \| 'down' \| null, comment? }` | read / set the rating of one assistant reply (the thumbs in Activity → Sessions). A thumbs down on an agent with online grading enabled grades that reply ([Hosted chat and widget](features/ai.md#hosted-chat-and-widget)) |
 | `GET /api/agents/models?provider&credentialId&baseUrl` | `{ options: ModelOption[], error? }` |
 | `GET /api/agents/workflow-tools` | workflows with `eligible` and the `reason` when they aren't |
 | `GET/PUT /api/agents/:id/evaluations` | online grading: `{ report: OnlineEvalReport }` (settings, scores, trend); `PUT` changes the settings |
