@@ -139,6 +139,11 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - Files outside the data directory's `agents/` and `audit-anchoring.json` that hold a value sealed with `sealSecret` are not
   re-sealed (the stores are listed in `credentials/rotate.ts`).
 
+## Assistant checkpoints (2026-11)
+
+- **A checkpoint lives on the host that made it, for 15 minutes.** Spotlight and the Agent architect keep the messages of a failed or stalled reply in the host's memory (200 at most, the oldest dropped) so `resume` can continue it. After a restart, on another host of a cluster or after 15 minutes, `resume` answers 409 `checkpoint_expired` and the person sends the message again.
+- The Agent architect's stream has the step, timed tool and error events but not token deltas, and its `resume` and extra events are typed in `assistant/architect.ts`, not in the shared `ArchitectRequest`.
+
 ## Access scope of AI usage and files (2026-11)
 
 - **Files with no execution** aren't project-scoped: an editor upload that no run has used yet, an agent's knowledge file,
