@@ -1,6 +1,7 @@
 'use client';
 /**
- * Version history: every save is a version (lib/server/versions.ts). The list
+ * Version history: every save is a version, except that one person's autosaves within 10 minutes share one
+ * (lib/server/versions.ts). The list
  * shows when, how many nodes and what changed against the version before; the
  * selected version is previewed on a read-only canvas, and Restore saves it as
  * a new version (the current state stays in the history). The published version

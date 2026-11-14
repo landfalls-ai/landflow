@@ -60,7 +60,8 @@ If the server says the brain is off, the mod pauses for that session.
 At the start of a session the mod asks `GET /api/brain/briefing` for your own work from yesterday. It waits 2 seconds; if
 Landflow is slower or off, it uses the answer it cached for that day, or goes on without. What it has is added to the
 system prompt as "Yesterday, from the company brain": at most 1,200 characters, every line quoted with `>`, and marked as
-data, not instructions. The option `sync` turns it off.
+data, not instructions. The option `sync` turns it off; turn it off if the instance MCP server's `morning-briefing`
+prompt is also connected, or yesterday comes in twice.
 
 ## Offline queue
 

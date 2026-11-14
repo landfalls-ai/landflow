@@ -193,5 +193,9 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - The session ends with the entry held; a session that crashes is held at the next start, with no end time.
 - The key and options are set by hand; a page that creates them comes later. Colleagues, a pane, a band and sharing with a team or the organization are not built.
 - A repository is matched by two-segment `owner/name` remotes (a GitLab subgroup is not matched), and pull request links are recognised only on github.com. A quiet commit (`git commit -q`) prints nothing and is not counted.
+- Two clients on one repository send the same work twice: the mod (`claude-code`, one event per session) and
+  `landflow work` (`landflow-cli`, one per repo and day) do not know of each other, so a person who runs both sees the
+  same commits twice in their briefing. Likewise, with both the mod's yesterday-at-start and the MCP `morning-briefing`
+  prompt connected, yesterday can enter a session twice. Run one of each, or turn the mod's `sync` off.
 - A send the brain refuses (400, 413, 422) or an event it rejects stays held and is not retried; `/brain status` says why.
 - The hook names were checked against Claude Code 2.1.322's types only; run the live check in [landflow-brain-mod.md](landflow-brain-mod.md) after an update.

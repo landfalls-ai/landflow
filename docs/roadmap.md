@@ -1494,6 +1494,8 @@ is read by its owner alone, owners and admins included, through every reader), t
 key scopes, `POST` and `DELETE /api/brain/work`, `GET /api/brain/briefing`, the `work.session` kind and the admin
 setting `brain.workAutoSend`.
 
+- **Built (B13)**: MCP for everyone: the instance MCP server's brain tools (`brain_ask`, `record_work`, `my_briefing`), the
+  `morning-briefing` prompt and `brain://` resources, with API-key scopes checked per tool ([work-and-briefings.md](work-and-briefings.md#over-mcp)).
 - **Built (B14)**: the first slice of the Claude Code mod `landflow-brain` ([landflow-brain-mod.md](landflow-brain-mod.md)):
   capture, a held journal, `/brain today|review|status|pause|resume|forget`, the status line, yesterday at session start
   and an offline queue.
@@ -1562,7 +1564,7 @@ The shared pieces every chat will use, built in `components/ui/` and ready; the 
 - CH5 ✅ Done: the hosted chat widget's bubbles rise in, its typing indicator is three dots, and Reduce motion turns both
   off ([Hosted chat and widget](features/ai.md#hosted-chat-and-widget)).
 - CH1 (motion), CH6 (one activity trace), CH7 (one reply footer), CH9 (errors with actions) and CH10 (a model chip): kit
-  ready, surfaces in wave 2 ([Chat surfaces](assistant.md#chat-surfaces)). Spotlight in the editor is on the kit (B08): CH1, CH6, CH7 and CH20 are closed for it, CH10 too once a route names the model before the first reply; CH3 closes with B09.
+  ready, surfaces in wave 2 ([Chat surfaces](assistant.md#chat-surfaces)). Spotlight in the editor is on the kit (B08): CH1, CH6, CH7 and CH20 are closed for it, CH10 too once a route names the model before the first reply; CH3 is closed by B09.
   Agents (B10): the test chat, the Agent architect and the analyst are on the kit (CH6, CH7 done for agents); the test
   chat's raw trace id became the trace's Open trace link (CH23, the test-chat part).
 - CH13 ✅ Done (B10): the Sessions tab opens on People and has Automations and All; no Auto-refresh switch

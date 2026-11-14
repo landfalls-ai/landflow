@@ -129,7 +129,11 @@ function NodePluginTile({ plugin, onOpen }: { plugin: ExplorePlugin; onOpen: () 
             <StatusDot status={live.status as PluginSummary['status']} /> {live.status} · {live.nodes} nodes
           </span>
         )}
-        {plugin.read?.nodePlugin && <Badge tone="muted">{plugin.read.nodePlugin.runtime}</Badge>}
+        {plugin.read?.nodePlugin && (
+          <DevOnly>
+            <Badge tone="muted">{plugin.read.nodePlugin.runtime}</Badge>
+          </DevOnly>
+        )}
         {plugin.flows > 0 && <Badge tone="accent">Flows {plugin.flows}</Badge>}
         {plugin.category && <Chip>{categoryLabel(plugin.category)}</Chip>}
       </div>
@@ -146,7 +150,9 @@ function LocalPluginTile({ plugin }: { plugin: PluginSummary }) {
         <span className="inline-flex items-center gap-1.5">
           <StatusDot status={plugin.status} /> {plugin.status} · {plugin.nodes.length} nodes
         </span>
-        <LanguageBadge language={plugin.info.language} />
+        <DevOnly>
+          <LanguageBadge language={plugin.info.language} />
+        </DevOnly>
       </div>
     </Link>
   );

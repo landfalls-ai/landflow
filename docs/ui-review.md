@@ -55,7 +55,7 @@ What the look draws:
 | Sticky notes | Yes | Markdown notes behind the nodes (`⇧S` or the toolbar): double-click to edit, resize from the corners, seven colours that follow the theme; read-only in the Executions tab | ✅ |
 | Copy/paste between workflows | JSON on the clipboard | ⌘C / ⌘X / ⌘V / ⌘D through the system clipboard with connections, notes and pinned data; taken names become `Name1`, `$('Name')` between pasted nodes follows the rename; n8n clipboard JSON is converted on paste | ✅ |
 | Undo / redo | ⌘Z / ⇧⌘Z | ⌘Z / ⇧⌘Z and canvas buttons; drags, deletes, pastes and parameter typing (coalesced) | ✅ |
-| Workflow menu | Settings, download, import, version history | `…` menu: Settings (error workflow, time zone, timeout, callers, saved executions), Version history (diff summary, read-only preview, restore), Download JSON, Import from file or pasted JSON (Landflow or n8n); tags in the top bar | ✅ |
+| Workflow menu | Settings, download, import, version history | `…` menu: Settings (error workflow, time zone, timeout, callers, saved executions), Version history (diff summary, read-only preview, restore), Download JSON, one Import… (paste or file; Landflow, n8n or Flowise), Tags… | ✅ |
 
 ## Node creator (the side menu)
 
@@ -117,7 +117,7 @@ One per-person switch, **Show developer details** in the user menu (off by defau
 you to another browser). With it off, a screen shows what a builder acts on and none of what only developers and
 operators act on: the node panel's type id, language and transport; node tiles' and the node creator's language and
 transport; import report type ids; the team node's runs-on chips and tool commands; a run's id, trace id and mode chip,
-and the run list's Execution ID and Mode columns; plugin cards' language, SDK and endpoints; an agent card's model, tool
+and the run list's Execution ID and Mode columns; plugin cards' language, SDK and endpoints, and the Marketplace Explore tiles' language and runtime badges; an agent card's model, tool
 and skill counts; and the run trace's token, model and cost lines and Debug access. With it on, everything shows as it
 did. Code gates a detail with `<DevOnly>` or `useDeveloperDetails()` from `lib/client/developer-details.tsx`.
 

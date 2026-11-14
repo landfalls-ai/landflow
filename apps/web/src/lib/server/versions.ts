@@ -155,7 +155,8 @@ function isReferenced(workflowId: string, versionId: string): boolean {
   const hit = (sql: string, ...params: string[]) => !!db.get<{ n: number }>(sql, ...params);
   return (
     publishedVersionId(workflowId) === versionId ||
-    hit('SELECT 1 AS n FROM executions WHERE version_id = ? LIMIT 1', versionId) ||
+    // By workflow too, so it uses the executions_workflow index: autosave runs this on every save.
+    hit('SELECT 1 AS n FROM executions WHERE workflow_id = ? AND version_id = ? LIMIT 1', workflowId, versionId) ||
     hit("SELECT 1 AS n FROM publish_requests WHERE (version_id = ? OR draft_version_id = ?) AND status = 'pending' LIMIT 1", versionId, versionId) ||
     hit("SELECT 1 AS n FROM scheduled_publishes WHERE version_id = ? AND status IN ('pending', 'awaiting_approval') LIMIT 1", versionId)
   );

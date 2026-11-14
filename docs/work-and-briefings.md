@@ -3,7 +3,7 @@
 What people's own tools tell the [second brain](second-brain.md) about their work, and the briefing each person gets back.
 Part of the [Landflow docs](README.md). This is the first part of the company backbone: the visibility rule, the two API
 key scopes, the routes to record work and the person's own day, and any harness over MCP ([Over MCP](#over-mcp)). The
-other clients that send work (the Claude Code mod, the `landflow work` command) come after it.
+Claude Code mod and the `landflow work` command send work through the same routes ([Who sends them](#who-sends-them)).
 
 ## What a work event is
 
