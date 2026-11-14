@@ -490,48 +490,48 @@ function PluginDetail({ plugin, onChange, onToggle }: { plugin: PluginSummary; o
       {plugin.info.description && <p className="-mt-1 px-4 pb-3 text-[13px] text-t2">{plugin.info.description}</p>}
 
       <DevOnly>
-      {/* endpoints */}
-      <div className="divide-y divide-hair border-t border-hair">
-        {builtin ? (
-          <div className="flex items-center gap-2 px-4 py-2 text-[12px] text-t3">
-            <TransportBadge transport="in-process" /> loaded into the host: same INodeType interface, zero network hops
-          </div>
-        ) : (
-          plugin.endpoints.map((endpoint) => {
-            const active = endpoint.endpoint === plugin.activeEndpoint;
-            return (
-              <div key={endpoint.endpoint} title={endpoint.lastError} className={cn('flex items-center gap-2 px-4 py-2', active && 'bg-sf2')}>
-                <StatusDot status={endpoint.status} />
-                <TransportBadge transport={endpoint.transport} />
-                <span className="truncate font-mono text-[12px] text-t1">{endpoint.endpoint}</span>
-                {active && <Badge tone="accent">active</Badge>}
-                {endpoint.origin && (
-                  <span className="shrink-0 truncate font-mono text-[11px] text-t3" title={`Kubernetes Service ${endpoint.origin.service} in namespace ${endpoint.origin.namespace}`}>
-                    {endpoint.origin.namespace}/{endpoint.origin.service}
-                  </span>
-                )}
-                <span className="ml-auto flex shrink-0 items-center gap-3">
-                  {endpoint.auto && endpoint.auto.breaker !== 'closed' && (
-                    <Badge tone="muted" className={cn(endpoint.auto.breaker === 'open' ? 'text-rd' : 'text-warn')} title={BREAKER_TITLE[endpoint.auto.breaker]}>
-                      breaker {endpoint.auto.breaker}
-                    </Badge>
-                  )}
-                  {endpoint.auto && endpoint.auto.inflight > 0 && (
-                    <span className="font-mono text-[11px] tabular-nums text-t3" title="Calls in flight on this endpoint">
-                      {endpoint.auto.inflight} in flight
+        {/* endpoints */}
+        <div className="divide-y divide-hair border-t border-hair">
+          {builtin ? (
+            <div className="flex items-center gap-2 px-4 py-2 text-[12px] text-t3">
+              <TransportBadge transport="in-process" /> loaded into the host: same INodeType interface, zero network hops
+            </div>
+          ) : (
+            plugin.endpoints.map((endpoint) => {
+              const active = endpoint.endpoint === plugin.activeEndpoint;
+              return (
+                <div key={endpoint.endpoint} title={endpoint.lastError} className={cn('flex items-center gap-2 px-4 py-2', active && 'bg-sf2')}>
+                  <StatusDot status={endpoint.status} />
+                  <TransportBadge transport={endpoint.transport} />
+                  <span className="truncate font-mono text-[12px] text-t1">{endpoint.endpoint}</span>
+                  {active && <Badge tone="accent">active</Badge>}
+                  {endpoint.origin && (
+                    <span className="shrink-0 truncate font-mono text-[11px] text-t3" title={`Kubernetes Service ${endpoint.origin.service} in namespace ${endpoint.origin.namespace}`}>
+                      {endpoint.origin.namespace}/{endpoint.origin.service}
                     </span>
                   )}
-                  <QueueNumbers stats={endpoint.queue} />
-                  {endpoint.latencyMs !== undefined && <span className="font-mono text-[11px] tabular-nums text-t3">{endpoint.latencyMs}ms</span>}
-                  {endpoint.source === 'announce' && endpoint.status === 'online' ? <LeaseBar expiresAt={endpoint.leaseExpiresAt} /> : <span className="text-[12px] text-t3">{timeAgo(endpoint.lastSeen)}</span>}
-                </span>
-              </div>
-            );
-          })
-        )}
-      </div>
+                  <span className="ml-auto flex shrink-0 items-center gap-3">
+                    {endpoint.auto && endpoint.auto.breaker !== 'closed' && (
+                      <Badge tone="muted" className={cn(endpoint.auto.breaker === 'open' ? 'text-rd' : 'text-warn')} title={BREAKER_TITLE[endpoint.auto.breaker]}>
+                        breaker {endpoint.auto.breaker}
+                      </Badge>
+                    )}
+                    {endpoint.auto && endpoint.auto.inflight > 0 && (
+                      <span className="font-mono text-[11px] tabular-nums text-t3" title="Calls in flight on this endpoint">
+                        {endpoint.auto.inflight} in flight
+                      </span>
+                    )}
+                    <QueueNumbers stats={endpoint.queue} />
+                    {endpoint.latencyMs !== undefined && <span className="font-mono text-[11px] tabular-nums text-t3">{endpoint.latencyMs}ms</span>}
+                    {endpoint.source === 'announce' && endpoint.status === 'online' ? <LeaseBar expiresAt={endpoint.leaseExpiresAt} /> : <span className="text-[12px] text-t3">{timeAgo(endpoint.lastSeen)}</span>}
+                  </span>
+                </div>
+              );
+            })
+          )}
+        </div>
 
-      {!builtin && plugin.transports && plugin.transports.length > 0 && <TransportPolicyPicker plugin={plugin} onChange={onChange} />}
+        {!builtin && plugin.transports && plugin.transports.length > 0 && <TransportPolicyPicker plugin={plugin} onChange={onChange} />}
       </DevOnly>
 
       <McpExposure plugin={plugin} onChange={onChange} />

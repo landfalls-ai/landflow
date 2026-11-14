@@ -8,6 +8,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { ReactFlowProvider } from '@xyflow/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PluginSummary } from '../src/lib/shared/types';
 
@@ -17,6 +18,7 @@ vi.mock('../src/lib/client/preferences', () => ({ usePreference: () => flag.on }
 const { DevOnly } = await import('../src/lib/client/developer-details');
 const { NodeTypeLine } = await import('../src/components/editor/node-panel');
 const { RunIdentity } = await import('../src/components/executions/execution-preview');
+const { NodeTile } = await import('../src/components/canvas/node-tile');
 const { PluginCard } = await import('../src/components/plugins/plugin-card');
 
 const plugin = {
@@ -95,5 +97,26 @@ describe('the look toggle is gone', () => {
     };
     walk(join(import.meta.dirname, '..', 'src'));
     expect(hits).toEqual([]);
+  });
+});
+
+describe('the node tile meta line', () => {
+  const info = {
+    type: 'go-crypto.hash',
+    pluginId: 'go-crypto',
+    language: 'go',
+    transport: 'grpc',
+    available: true,
+    descriptor: { kind: 'action', inputs: [{ type: 'main' }], outputs: [{ type: 'main' }], displayName: 'Hash' },
+  } as never;
+  const tile = (status?: object) => html(createElement(ReactFlowProvider, null, createElement(NodeTile, { name: 'Hash', info, parameters: {}, status: status as never })));
+
+  it('has no dangling separator or empty row with the switch off, and the language with it on', () => {
+    const ran = { state: 'success', durationMs: 12 };
+    expect(tile(ran)).not.toContain('· ');
+    expect(tile(ran)).toContain('12 ms');
+    expect(tile()).not.toContain('mt-0.5');
+    flag.on = true;
+    expect(tile(ran)).toContain('· ');
   });
 });
