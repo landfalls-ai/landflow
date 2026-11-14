@@ -1494,7 +1494,8 @@ is read by its owner alone, owners and admins included, through every reader), t
 key scopes, `POST` and `DELETE /api/brain/work`, `GET /api/brain/briefing`, the `work.session` kind and the admin
 setting `brain.workAutoSend`.
 
-- **Next**: the clients (the Claude Code mod, `landflow work`, MCP tools), team and org visibility with related
+- **`landflow work`** (built, backbone wave 2, B15): the harness-agnostic daily offloader (collect, summarise on the machine, hold for review, send), with cron, launchd and Task Scheduler examples ([cli.md](features/cli.md#recording-your-day-landflow-work)).
+- **Next**: the other clients (the Claude Code mod, MCP tools), team and org visibility with related
   colleagues, repo entities, the link from a person to their user, and a Settings screen for the auto-send setting.
 
 ## Shell: nine-item rail (built 2026-11-14)
