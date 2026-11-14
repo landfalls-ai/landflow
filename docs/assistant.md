@@ -204,6 +204,30 @@ Agent architect and the brain's Spotlight on `/brain`.
   above the home bar, the editor's Chat is a sheet with a handle, the Agent architect shows **Chat | Draft** one at a time
   (Draft when one arrives), and the brain's suggestions sit on a card.
 
+## Conversation history
+
+Spotlight, Ask the brain, the Agent architect and an agent's test chat can keep what you said, so leaving a page no
+longer loses the conversation. This page describes the store; each chat gets its **history** button (a clock) as it
+mounts it.
+
+- **What is kept**: your messages and the assistant's replies, with the steps it took, its proposals (and whether you
+  applied or dismissed them), the pages it linked and its sources. **Never kept**: the store takes only those message
+  parts, so no attached files and no credentials.
+- **Only yours**: a conversation belongs to the person who had it. Nobody else can open it, an owner or an admin
+  included: another person's id answers 404. API keys are refused too (the routes need a session).
+- **The brain re-checks links**: when you reopen a brain answer, a page you can no longer open loses its link, and the
+  reply says how many were left out. A kept proposal is checked again when it is shown.
+- **90 days**: a conversation is deleted, with its messages, 90 days after its last message
+  (`LANDFLOW_CHAT_RETENTION_DAYS`; `0` keeps them). The leader checks daily.
+- **Delete is real**: **Delete** in the history popover removes the conversation and its messages from the database at
+  once. **Rename** edits the title; a new conversation is named after your first message.
+- **The switch**: **Keep my conversations** is a personal preference (on by default). With it off nothing is stored and
+  the popover says so; chats work as before.
+- **The popover** (`components/ui/conversation-history.tsx`): a search box (titles and your own messages), the
+  conversations about this workflow or page, then everywhere. A sheet on a phone, with 44 px rows.
+
+The routes are `/api/conversations` and `/api/me/preferences` ([reference/api.md](reference/api.md)).
+
 ## Edit operations
 
 Proposals use `lib/shared/assistant-ops.ts`. A node reference is a node **name**, an id, or the `ref` of a node added earlier in the same list.

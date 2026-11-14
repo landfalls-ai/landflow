@@ -42,6 +42,7 @@ still works.
 | Variable | Default | What it does |
 |---|---|---|
 | `LANDFLOW_DATA_DIR` | `apps/web/.data` | data directory: the SQLite database (`landflow.db`), credentials, binary files, the Claude Code plugin images packed for kagent (`oci/`) and the other host files |
+| `LANDFLOW_CHAT_RETENTION_DAYS` | `90` | days a conversation (Spotlight, the brain, the Agent architect, an agent's test chat) is kept after its last message; older ones are deleted daily (`0` keeps them) ([assistant.md](../assistant.md#conversation-history)) |
 | `LANDFLOW_DB_STATEMENT_CACHE` | `500` | most prepared SQL statements one database connection keeps (least recently used go first) |
 | `LANDFLOW_CLAUDE_PLUGINS_DIR` | `<cwd>/claude-plugins` (`apps/web/claude-plugins`) | where Landflow's own Claude Code plugins are (the landflow-harness mod), packed into images for kagent's Claude Code agents ([a2a.md](../a2a.md#the-landflow-harness-mod)) |
 | `LANDFLOW_DB` | `sqlite` | `postgres` keeps the store in Postgres (`DATABASE_URL`); one host per database |

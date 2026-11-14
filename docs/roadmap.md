@@ -1524,6 +1524,13 @@ resizing the column, and keeping a fix bubble's text after it closes (the timeli
 
 Fifteen specs in [specs/](specs/README.md): a code sandbox, guard enforcement, a durable pause, runbooks made and run by themselves, the brain's auto-apply, lazy loading for Postgres, durable telemetry, shared trace comments, more webhook triggers, per-rule Switch outputs, agent evals, public run-report links, composite governance rules and live integration checks. The first slice of composite governance rules is built ([composites.md](composites.md#governance-rules)); the hot run data of backend wave 6 covers part of spec 07.
 
+## Conversation history and personal preferences (2026-11)
+
+The first piece of the company-backbone program (wave 1, B02). Built: the `user_preferences` and `conversations` tables
+(migrations 2070 and 2071), their session-only routes, the retention service, the client hooks and the history popover
+([assistant.md](assistant.md#conversation-history)). Next: each chat mounts the history button and saves to the store,
+and the account menu gets the switches.
+
 ## Not planned
 
 Later, maybe: an agent code sandbox, and prompt management. Not planned:
