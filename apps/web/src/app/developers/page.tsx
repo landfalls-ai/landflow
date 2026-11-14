@@ -1,4 +1,5 @@
 'use client';
+import { DevOnly } from '@/lib/client/developer-details';
 import { Segmented } from '@/components/ui/segmented';
 import { Fragment, useState } from 'react';
 import { Check, Copy, FileCode2, Radio, Server, Workflow } from 'lucide-react';
@@ -319,7 +320,9 @@ export default function DevelopersPage() {
         <Section title="Implement a node">
           <div className="mb-2.5 flex flex-wrap items-center gap-3">
             <Segmented label="SDK language" value={lang} onChange={setLang} options={(Object.keys(SAMPLES) as Lang[]).map((key) => ({ value: key, label: languageMeta(key).label }))} />
-            <span className="truncate font-mono text-[12px] text-t3">{sample.file}</span>
+            <DevOnly>
+              <span className="truncate font-mono text-[12px] text-t3">{sample.file}</span>
+            </DevOnly>
             <Button
               variant="ghost"
               size="icon-sm"

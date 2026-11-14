@@ -23,6 +23,7 @@ import { lastRunWords, rosterText } from '@/lib/shared/team-node';
 import { chartOrder, memberAgent, type TeamMember } from '@/lib/shared/agent-teams';
 import type { AgentSummary } from '@/lib/shared/agents';
 import type { TeamActivity, TeamApprovalWait, TeamMoment, TeamProgress, TeamStep, TeamTurn, TeamUsage } from '@/lib/shared/team-progress';
+import { DevOnly } from '@/lib/client/developer-details';
 import { cn } from '@/lib/utils';
 import { AgentAvatar, type AvatarSource } from '../agents/avatar';
 import { faceOf as agentFace, loadRoster, loadTeam } from '../agents/faces';
@@ -181,9 +182,11 @@ function WorkerHead({ live, faces, elapsed, paused }: { live: TeamProgress; face
           {words}
         </div>
         {live.command && (
-          <div className="truncate font-mono text-[10px] leading-4 text-t3" title={live.command}>
-            {live.command}
-          </div>
+          <DevOnly>
+            <div className="truncate font-mono text-[10px] leading-4 text-t3" title={live.command}>
+              {live.command}
+            </div>
+          </DevOnly>
         )}
         <div className="font-mono text-[10px] leading-4 tabular-nums text-t3">
           {clock(elapsed)}
@@ -741,7 +744,11 @@ export function TeamNowCard({ teamId, live, nodeName, onOpenTrace, executionId }
             {paused ? `${worker.title} is paused` : consulting && live.consulting ? `${consulting.title} ${live.consulting.kind === 'handoff' ? 'handed over to the' : 'is consulting the'} ${worker.title}` : `${worker.title} is ${lowerFirst(words)}`}
           </div>
           {consulting && <div className="text-[12.5px] leading-4 text-t2">{words}</div>}
-          {live.command && <div className="truncate font-mono text-[10.5px] text-t3">{live.command}</div>}
+          {live.command && (
+            <DevOnly>
+              <div className="truncate font-mono text-[10.5px] text-t3">{live.command}</div>
+            </DevOnly>
+          )}
         </div>
       </div>
       <TeamTicker steps={live.steps} className="mt-2.5" />

@@ -111,6 +111,16 @@ What the look draws:
 
 The registry page shows each plugin with its published icon and colour, language, SDK and endpoints (gRPC and HTTP) with lease bars and latency. You can choose the transport per plugin, scan the network or add an endpoint. Node chips are tinted with each node's colour. n8n's nearest equivalent is community nodes, which are npm packages installed into the n8n process. Landflow's plugins are separate processes in any language, discovered over HTTP or gRPC.
 
+## Developer details
+
+One per-person switch, **Show developer details** in the user menu (off by default, kept on the server, so it follows
+you to another browser). With it off, a screen shows what a builder acts on and none of what only developers and
+operators act on: the node panel's type id, language and transport; node tiles' and the node creator's language and
+transport; import report type ids; the team node's runs-on chips and tool commands; a run's id, trace id and mode chip,
+and the run list's Execution ID and Mode columns; plugin cards' language, SDK and endpoints; an agent card's model, tool
+and skill counts; and the run trace's token, model and cost lines and Debug access. With it on, everything shows as it
+did. Code gates a detail with `<DevOnly>` or `useDeveloperDetails()` from `lib/client/developer-details.tsx`.
+
 ## Words
 
 The same thing has the same name everywhere. When adding a button or a state, use these:

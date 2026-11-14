@@ -11,6 +11,7 @@ import { indexedPorts } from '@landflow/protocol';
 import { Check, Hourglass, Pause, Pin, Plus, X, Zap } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { duration, languageMeta, TRANSPORT_META } from '@/lib/client/format';
+import { DevOnly } from '@/lib/client/developer-details';
 import { nodeColor, tint } from '@/lib/client/node-style';
 import type { NodeStatus } from '@/lib/client/run-data';
 import type { ConnectionType, NodeTypeInfo, PortDescriptor } from '@/lib/shared/types';
@@ -209,10 +210,10 @@ export function NodeTile(props: NodeTileProps) {
   const meta = (lang || unavailable || ran) && (
     <div className="mt-0.5 flex items-center justify-center gap-1 whitespace-nowrap font-mono text-[10px] text-t3">
       {lang && (
-        <>
+        <DevOnly>
           <span className="size-1.5 rounded-full" style={{ background: lang.color }} />
           {lang.short} · {TRANSPORT_META[info!.transport].label}
-        </>
+        </DevOnly>
       )}
       {unavailable && <span className="text-warn">{info ? 'offline' : 'unknown type'}</span>}
       {ran && (

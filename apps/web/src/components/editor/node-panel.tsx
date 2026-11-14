@@ -4,7 +4,8 @@ import { ArrowLeft, BookOpen, ChevronLeft, ChevronRight, CircleDot, Pause, Penci
 import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import { cn } from '@/lib/utils';
 import { duration, languageMeta } from '@/lib/client/format';
-import type { NodeItem, NodeRun } from '@/lib/shared/types';
+import { DevOnly } from '@/lib/client/developer-details';
+import type { NodeItem, NodeRun, NodeTypeInfo } from '@/lib/shared/types';
 import { Badge, LanguageBadge, TransportBadge, executionTone } from '../ui/badge';
 import { RUN_STATE, type RunState } from '../run/run-status';
 import { Button } from '../ui/button';
@@ -56,6 +57,24 @@ function PaneHeader({ title, children }: { title: string; children?: React.React
       <SectionLabel>{title}</SectionLabel>
       <div className="ml-auto flex items-center gap-2">{children}</div>
     </div>
+  );
+}
+
+/** The node's type id and how it runs (language, transport): developer details. */
+export function NodeTypeLine({ type, info }: { type: string; info?: Pick<NodeTypeInfo, 'pluginId' | 'language' | 'transport'> }) {
+  return (
+    <DevOnly>
+      <div className="flex items-center gap-2 text-[12px] text-t3 max-md:hidden">
+        <span className="font-mono">{type}</span>
+        {info && info.pluginId !== 'core' && (
+          <>
+            <LanguageBadge language={info.language} />
+            <TransportBadge transport={info.transport} />
+          </>
+        )}
+        {info?.pluginId === 'core' && <TransportBadge transport="in-process" />}
+      </div>
+    </DevOnly>
   );
 }
 
@@ -255,16 +274,7 @@ export function NodePanel() {
           </div>
           <div className="min-w-0 max-md:flex-1">
             <NodeNameInput nodeId={openNodeId} name={wf.name} />
-            <div className="flex items-center gap-2 text-[12px] text-t3 max-md:hidden">
-              <span className="font-mono">{wf.type}</span>
-              {info && info.pluginId !== 'core' && (
-                <>
-                  <LanguageBadge language={info.language} />
-                  <TransportBadge transport={info.transport} />
-                </>
-              )}
-              {info?.pluginId === 'core' && <TransportBadge transport="in-process" />}
-            </div>
+            <NodeTypeLine type={wf.type} info={info} />
           </div>
           {/* A phone: running and moving between steps are in the bar at the foot. */}
           <div className="ml-auto flex items-center gap-2 max-md:hidden">
@@ -668,9 +678,11 @@ export function NodePanel() {
                   <div className="flex flex-col items-center gap-3">
                     <div>No output yet.</div>
                     {info && info.pluginId !== 'core' && (
-                      <div className="max-w-xs text-[12px]">
-                        This step runs in a {languageMeta(info.language).label} process and is called over {info.transport.toUpperCase()}.
-                      </div>
+                      <DevOnly>
+                        <div className="max-w-xs text-[12px]">
+                          This step runs in a {languageMeta(info.language).label} process and is called over {info.transport.toUpperCase()}.
+                        </div>
+                      </DevOnly>
                     )}
                     {!isSubnode && (
                       <Button size="sm" onClick={() => runNode('only')} disabled={running}>

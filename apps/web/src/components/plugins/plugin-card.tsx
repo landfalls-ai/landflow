@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { timeAgo, transportLabel } from '@/lib/client/format';
+import { DevOnly } from '@/lib/client/developer-details';
 import type { McpToolsResponse, McpToolView } from '@/lib/shared/mcp';
 import type { PluginSummary } from '@/lib/shared/types';
 import type { BrokerQueueStats, TransportAutoSummary, TransportObjective, TransportPolicy, TransportReason } from '@/lib/shared/transports';
@@ -389,10 +390,12 @@ function PluginTile({ plugin, onToggle }: { plugin: PluginSummary; onToggle: () 
           );
         })}
         {more > 0 && <span className="pl-0.5 font-mono text-[11px] text-t3">+{more}</span>}
-        <span className="ml-auto flex shrink-0 items-center gap-1">
-          <LanguageBadge language={plugin.info.language} />
-          <TransportBadge transport={builtin ? 'in-process' : plugin.transport} />
-        </span>
+        <DevOnly>
+          <span className="ml-auto flex shrink-0 items-center gap-1">
+            <LanguageBadge language={plugin.info.language} />
+            <TransportBadge transport={builtin ? 'in-process' : plugin.transport} />
+          </span>
+        </DevOnly>
       </div>
     </button>
   );
@@ -445,7 +448,9 @@ function PluginDetail({ plugin, onChange, onToggle }: { plugin: PluginSummary; o
             </span>
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-            <LanguageBadge language={plugin.info.language} />
+            <DevOnly>
+              <LanguageBadge language={plugin.info.language} />
+            </DevOnly>
             <Badge tone="muted">{plugin.source}</Badge>
             {otherSources.map((source) => (
               <Badge key={source} tone="muted">
@@ -457,7 +462,11 @@ function PluginDetail({ plugin, onChange, onToggle }: { plugin: PluginSummary; o
                 ns/{namespace}
               </Badge>
             ))}
-            {plugin.info.sdk && <span className="font-mono text-[11px] text-t3">{plugin.info.sdk.name}</span>}
+            {plugin.info.sdk && (
+              <DevOnly>
+                <span className="font-mono text-[11px] text-t3">{plugin.info.sdk.name}</span>
+              </DevOnly>
+            )}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
@@ -480,6 +489,7 @@ function PluginDetail({ plugin, onChange, onToggle }: { plugin: PluginSummary; o
       </div>
       {plugin.info.description && <p className="-mt-1 px-4 pb-3 text-[13px] text-t2">{plugin.info.description}</p>}
 
+      <DevOnly>
       {/* endpoints */}
       <div className="divide-y divide-hair border-t border-hair">
         {builtin ? (
@@ -522,6 +532,7 @@ function PluginDetail({ plugin, onChange, onToggle }: { plugin: PluginSummary; o
       </div>
 
       {!builtin && plugin.transports && plugin.transports.length > 0 && <TransportPolicyPicker plugin={plugin} onChange={onChange} />}
+      </DevOnly>
 
       <McpExposure plugin={plugin} onChange={onChange} />
 

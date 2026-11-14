@@ -1,5 +1,6 @@
 'use client';
 /** The Team tab: who called whom (a vertical layout, no sideways scroll) and a card per actor. */
+import { useDeveloperDetails } from '@/lib/client/developer-details';
 import { useRef, useState } from 'react';
 import { ArrowRight, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -191,6 +192,7 @@ function FixChips({ cycles, open }: { cycles: FixCycle[]; open: (o: Open) => voi
 }
 
 export function ActorCard({ s, open, turns = [], cycles = [], rounds = [] }: { s: RunActorStats; open: (o: Open) => void; turns?: RunTurn[]; cycles?: FixCycle[]; rounds?: RunRound[] }) {
+  const developerDetails = useDeveloperDetails();
   const li: Array<{ text: React.ReactNode; bad?: boolean }> = [];
   if (s.asked)
     li.push({
@@ -223,7 +225,7 @@ export function ActorCard({ s, open, turns = [], cycles = [], rounds = [] }: { s
         </>
       ),
     });
-  const spent = spendLine(s);
+  const spent = developerDetails ? spendLine(s) : undefined;
   if (spent) li.push({ text: spent });
   if (s.toolCalls && !s.asked)
     li.push({
