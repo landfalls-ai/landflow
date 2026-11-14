@@ -3,7 +3,7 @@
   "version": 1,
   "template": {
     "name": "Clickland alert triage → Slack",
-    "description": "When a Clickland alert fires, an AI agent reads its samples, searches Clickland’s knowledge, the log patterns and the traces, renders a view of what it found and posts a verdict with the evidence and the view’s link to Slack.",
+    "description": "When a Clickland alert fires (and Clickland did not already route it straight to Landfall), an AI agent reads its samples, searches Clickland’s knowledge, the log patterns and the traces, renders a view of what it found and posts a verdict with the evidence and the view’s link to Slack.",
     "categories": [
       "ai",
       "devops",
@@ -33,6 +33,7 @@
       "Pick or add the **Clickland** credential: the API URL and a `ck_` key with `read` and `webhooks:write`.",
       "Pick the **Anthropic account** for the triage agent and the **Slack bot** for **Post to Slack** (set its channel).",
       "Optional: on **Clickland alert**, set an **Alert ID** to triage one alert only, or add **Resolved**.",
+      "**Skip direct alerts** drops a delivery Clickland marks `route: \"direct\"`: Clickland already opened a Landfall room for that alert itself, so this flow does not triage it a second time.",
       "Publish: Landflow registers a webhook in Clickland (Clickland must reach `LANDFLOW_PUBLIC_URL`). Every delivery is signed and checked; a retry of the same event starts no second run."
     ],
     "dataTables": [],
@@ -63,12 +64,35 @@
           }
         },
         {
+          "id": "notDirect",
+          "name": "Skip direct alerts",
+          "type": "core.filter",
+          "typeVersion": 1,
+          "position": [
+            160,
+            0
+          ],
+          "parameters": {
+            "conditions": {
+              "condition": [
+                {
+                  "left": "{{ $json.route }}",
+                  "operator": "notEquals",
+                  "right": "direct"
+                }
+              ]
+            },
+            "combinator": "and"
+          },
+          "notes": "Clickland marks an alert it routed straight to Landfall with route: \"direct\" (Landfall opened the room already). Only the others go on to triage."
+        },
+        {
           "id": "agent",
           "name": "Triage the alert",
           "type": "core.aiAgent",
           "typeVersion": 1,
           "position": [
-            300,
+            360,
             -6
           ],
           "parameters": {
@@ -216,7 +240,7 @@
           "type": "messaging.slack",
           "typeVersion": 1,
           "position": [
-            700,
+            760,
             0
           ],
           "parameters": {
@@ -238,6 +262,14 @@
           "id": "c1",
           "type": "main",
           "source": "trigger",
+          "sourceIndex": 0,
+          "target": "notDirect",
+          "targetIndex": 0
+        },
+        {
+          "id": "c9",
+          "type": "main",
+          "source": "notDirect",
           "sourceIndex": 0,
           "target": "agent",
           "targetIndex": 0

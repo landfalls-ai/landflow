@@ -106,7 +106,8 @@ to 5 recent items and stores nothing. Use the Alert Trigger for instant delivery
 
 ## Flows
 
-- [`clickland-alert-triage.json`](flows/clickland-alert-triage.json): Clickland Alert Trigger → an AI Agent that reads
+- [`clickland-alert-triage.json`](flows/clickland-alert-triage.json): Clickland Alert Trigger → a Filter that drops
+  alerts Clickland routed straight to Landfall (`data.route: "direct"`) → an AI Agent that reads
   the alert's samples, searches Clickland's knowledge, the patterns and the traces → a Slack message with the verdict
   and a link to a rendered view.
 - [`clickland-observability-assistant.json`](flows/clickland-observability-assistant.json): the chat Clickland's
