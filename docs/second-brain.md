@@ -322,7 +322,7 @@ only what the workflow's creator can see. The brain itself writes them and searc
 #### The brain over MCP
 
 What a person's tools send the brain about their work, and the briefing that comes back, are in
-[work-and-briefings.md](work-and-briefings.md); over MCP they arrive in a later wave.
+[work-and-briefings.md](work-and-briefings.md#over-mcp): `record_work`, `my_briefing`, the `morning-briefing` prompt and the `brain://` resources.
 
 The instance MCP server ([reference/api.md](reference/api.md), `POST /api/mcp`) serves the brain, so a coding agent needs
 no hand-built MCP Server Trigger workflow:
@@ -335,8 +335,11 @@ no hand-built MCP Server Trigger workflow:
 | `brain_usage_report` | the usage report (`groupBy`, `kinds`, `days`, `workflowId`) |
 | `check_overlap` | Find Similar for a title and a goal; other projects as the projection above (`includeOthers`, default true) |
 | `brain_suggest` | post a suggestion (source `analyst`, like `POST /api/proposals`) |
+| `brain_ask` | ask the brain a question (`question`, `about`), like `POST /api/brain/ask` |
+| `my_briefing` | the caller's own briefing (`day`) |
+| `record_work` | save the caller's own work events, private |
 
-Each tool sees what the token's user sees (an instance access token sees everything), cut down to the project on a
+An API key sees only the tools its scopes cover (`brain:read`, `brain:write`; [features/ai.md](features/ai.md#mcp)). Each tool sees what the token's user sees (an instance access token sees everything), cut down to the project on a
 project server (`/api/mcp/projects/<id>`, a project token), where `brain_suggest` must name a workflow or agent of it.
 A workflow the user can't open is "not found". `brain_suggest` needs edit access to the workflow or agent. Code:
 `mcp/brain-tools.ts`.

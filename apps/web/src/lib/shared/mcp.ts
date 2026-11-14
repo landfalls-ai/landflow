@@ -1,4 +1,5 @@
 /** Settings → MCP (the instance MCP server at /api/mcp): types shared by the API route and the client. */
+import { hasScope, type ApiKeyScope } from './auth';
 import type { McpApprovalMode } from './mcp-approval';
 
 export interface McpAccessView {
@@ -190,4 +191,46 @@ export interface ProjectMcpView {
   gateway: boolean;
   gatewayPath?: string;
   canEdit: boolean;
+}
+
+// ---- B13: API-key scopes per tool of the instance MCP server (/api/mcp; docs/features/ai.md "MCP") ----
+
+/**
+ * The API-key scope each tool of the instance server needs. A key sees (tools/list) and calls only the tools its scopes
+ * cover; sessions, Landflow MCP tokens, identity-provider tokens and the instance access token keep every tool.
+ * `retry_execution` and `run_node` start work, so they are `run`; the debug reads are `executions:read`.
+ */
+export const TOOL_SCOPES = {
+  list_workflows: 'workflows:read',
+  get_workflow: 'workflows:read',
+  validate_workflow: 'workflows:read',
+  list_node_types: 'workflows:read',
+  search_node_types: 'workflows:read',
+  get_node_type: 'workflows:read',
+  create_workflow: 'workflows:write',
+  update_workflow: 'workflows:write',
+  execute_workflow: 'run',
+  retry_execution: 'run',
+  run_node: 'run',
+  list_executions: 'executions:read',
+  get_execution: 'executions:read',
+  explain_failure: 'executions:read',
+  get_run_trace: 'executions:read',
+  get_plugin_logs: 'executions:read',
+  brain_search_facts: 'brain:read',
+  brain_list_suggestions: 'brain:read',
+  brain_workflow_knowledge: 'brain:read',
+  brain_usage_report: 'brain:read',
+  check_overlap: 'brain:read',
+  brain_ask: 'brain:read',
+  my_briefing: 'brain:read',
+  brain_suggest: 'brain:write',
+  record_work: 'brain:write',
+} as const satisfies Record<string, ApiKeyScope>;
+
+/** Whether a caller with `keyScopes` (an API key's; undefined for every other caller) may see and call `tool`. A tool not in the map needs `admin`. */
+export function toolAllowed(keyScopes: readonly ApiKeyScope[] | undefined, tool: string): boolean {
+  if (!keyScopes) return true;
+  const needed = (TOOL_SCOPES as Record<string, ApiKeyScope>)[tool];
+  return hasScope(keyScopes, needed ?? 'admin');
 }
