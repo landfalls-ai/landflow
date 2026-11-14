@@ -1548,6 +1548,13 @@ export const MIGRATIONS: Migration[] = [
       )`,
     ],
   },
+  // B03: which surface made a model call (spotlight, architect, brain), so Insights counts the assistant's spend.
+  {
+    version: 2072,
+    name: 'ai_usage_surface',
+    statements: [],
+    addColumns: [{ table: 'ai_usage', column: 'surface', definition: 'TEXT' }],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
