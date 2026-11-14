@@ -1,0 +1,306 @@
+{
+  "kind": "landflow/template",
+  "version": 1,
+  "template": {
+    "name": "Clickland alert triage → Slack",
+    "description": "When a Clickland alert fires, an AI agent reads its samples, searches Clickland’s knowledge, the log patterns and the traces, renders a view of what it found and posts a verdict with the evidence and the view’s link to Slack.",
+    "categories": [
+      "ai",
+      "devops",
+      "incident-response"
+    ],
+    "credentials": [
+      {
+        "id": "clickland",
+        "type": "clickland.clicklandApi",
+        "name": "Clickland",
+        "description": "Clickland’s API URL (in the cluster http://clickland-api.clickland-dev.svc.cluster.local:4710, on this machine http://127.0.0.1:4710) and a ck_ API key."
+      },
+      {
+        "id": "anthropic",
+        "type": "core.anthropicApi",
+        "name": "Anthropic account",
+        "description": "An API key from console.anthropic.com."
+      },
+      {
+        "id": "slack",
+        "type": "messaging.slackApi",
+        "name": "Slack bot",
+        "description": "A bot token (xoxb-…) with chat:write, invited to the alerts channel."
+      }
+    ],
+    "setup": [
+      "Pick or add the **Clickland** credential: the API URL and a `ck_` key with `read` and `webhooks:write`.",
+      "Pick the **Anthropic account** for the triage agent and the **Slack bot** for **Post to Slack** (set its channel).",
+      "Optional: on **Clickland alert**, set an **Alert ID** to triage one alert only, or add **Resolved**.",
+      "Publish: Landflow registers a webhook in Clickland (Clickland must reach `LANDFLOW_PUBLIC_URL`). Every delivery is signed and checked; a retry of the same event starts no second run."
+    ],
+    "dataTables": [],
+    "workflow": {
+      "name": "Clickland alert triage → Slack",
+      "description": "A Clickland alert, triaged by an AI agent with Clickland’s knowledge, patterns and traces, posted to Slack with a view link.",
+      "nodes": [
+        {
+          "id": "trigger",
+          "name": "Clickland alert",
+          "type": "clickland.clicklandAlertTrigger",
+          "typeVersion": 1,
+          "position": [
+            0,
+            0
+          ],
+          "parameters": {
+            "events": [
+              "alert.firing"
+            ],
+            "alertId": ""
+          },
+          "credentials": {
+            "clicklandApi": {
+              "id": "clickland",
+              "name": "Clickland"
+            }
+          }
+        },
+        {
+          "id": "agent",
+          "name": "Triage the alert",
+          "type": "core.aiAgent",
+          "typeVersion": 1,
+          "position": [
+            300,
+            -6
+          ],
+          "parameters": {
+            "prompt": "Alert: {{ $json.alert.name }} ({{ $json.alert.signal }} `{{ $json.alert.query }}`: {{ $json.value }} {{ $json.alert.thresholdType }} {{ $json.alert.threshold }} in {{ $json.alert.windowMinutes }} min)\nGroup: {{ $json.groupKey || \"(none)\" }}\nWindow (UTC): {{ $json.window.from }} to {{ $json.window.to }}\nAlert page: {{ $json.url }}\nSamples:\n{{ JSON.stringify($json.samples ?? []).slice(0, 4000) }}",
+            "systemMessage": "You triage Clickland alerts for the on-call engineer, in Slack. Decide whether this alert is a real problem and say what to look at.\n\nInvestigate before you answer: search_clickland_knowledge for earlier notes on this service or alert, log_patterns on the alert’s query in its window to see what the matching lines are, and search_spans / get_trace when the alert is about requests or the samples carry trace ids.\n\nThen render one view with render_view (the alert’s query as a timeseries, its log patterns, and the slowest or failing trace if you found one; range: the alert’s window widened to the last 60 minutes).\n\nWrite the Slack message in Slack mrkdwn, at most 12 lines:\n1. First line: *Real*, *Noise* or *Unsure*, a dash, and the alert in a few words.\n2. What is happening, with evidence: counts, the top pattern templates with their counts, trace ids, the time range in UTC.\n3. What earlier notes say, if any.\n4. The next step for the engineer.\n5. Last line: View: <the url render_view returned>. Links to traces as <http://127.0.0.1:4711/traces/<traceId>|trace>.\n\nNever put [[clickland:view:…]] markers in this message (Slack does not draw them): use the url. Never invent numbers or ids."
+          }
+        },
+        {
+          "id": "model",
+          "name": "Anthropic Chat Model",
+          "type": "core.anthropicChatModel",
+          "typeVersion": 1,
+          "position": [
+            140,
+            220
+          ],
+          "parameters": {
+            "model": "claude-sonnet-5-5"
+          },
+          "credentials": {
+            "anthropicApi": {
+              "id": "anthropic",
+              "name": "Anthropic account"
+            }
+          }
+        },
+        {
+          "id": "knowledge",
+          "name": "search_clickland_knowledge",
+          "type": "clickland.clickland",
+          "typeVersion": 1,
+          "position": [
+            280,
+            220
+          ],
+          "parameters": {
+            "resource": "knowledge",
+            "operation": "search",
+            "query": "{{ $fromAI('query', \"What to look for, in natural language\", 'string') }}"
+          },
+          "credentials": {
+            "clicklandApi": {
+              "id": "clickland",
+              "name": "Clickland"
+            }
+          },
+          "notes": "Search Clickland’s knowledge: notes from earlier incidents, recent alert events, log patterns and services matching the question."
+        },
+        {
+          "id": "patterns",
+          "name": "log_patterns",
+          "type": "clickland.clickland",
+          "typeVersion": 1,
+          "position": [
+            420,
+            220
+          ],
+          "parameters": {
+            "resource": "logs",
+            "operation": "getPatterns",
+            "query": "{{ $fromAI('query', \"Clickland search: field:value terms, free text, quotes for phrases, comparisons like duration:>500 (e.g. service:api level:error). Empty matches everything\", 'string') }}",
+            "lastMinutes": "{{ $fromAI('lastMinutes', \"How many minutes back to look, ending now (60 if unsure)\", 'number') }}"
+          },
+          "credentials": {
+            "clicklandApi": {
+              "id": "clickland",
+              "name": "Clickland"
+            }
+          },
+          "notes": "Group matching log lines into templates (Drain) with counts and shares: the fastest way to see what a flood of errors is made of."
+        },
+        {
+          "id": "spans",
+          "name": "search_spans",
+          "type": "clickland.clickland",
+          "typeVersion": 1,
+          "position": [
+            560,
+            220
+          ],
+          "parameters": {
+            "resource": "traces",
+            "operation": "search",
+            "query": "{{ $fromAI('query', \"Clickland search: field:value terms, free text, quotes for phrases, comparisons like duration:>500 (e.g. service:api level:error). Empty matches everything\", 'string') }}",
+            "lastMinutes": "{{ $fromAI('lastMinutes', \"How many minutes back to look, ending now (60 if unsure)\", 'number') }}",
+            "limit": 50,
+            "output": "response"
+          },
+          "credentials": {
+            "clicklandApi": {
+              "id": "clickland",
+              "name": "Clickland"
+            }
+          },
+          "notes": "Search spans (traces), newest first: trace id, service, name, duration, status. Use duration:>500 for slow ones and status:error for failures."
+        },
+        {
+          "id": "trace",
+          "name": "get_trace",
+          "type": "clickland.clickland",
+          "typeVersion": 1,
+          "position": [
+            700,
+            220
+          ],
+          "parameters": {
+            "resource": "traces",
+            "operation": "get",
+            "traceId": "{{ $fromAI('traceId', \"The trace id (32 hex characters)\", 'string') }}"
+          },
+          "credentials": {
+            "clicklandApi": {
+              "id": "clickland",
+              "name": "Clickland"
+            }
+          },
+          "notes": "One whole trace by id: its spans, services, duration, error count and start."
+        },
+        {
+          "id": "render",
+          "name": "render_view",
+          "type": "clickland.clickland",
+          "typeVersion": 1,
+          "position": [
+            840,
+            220
+          ],
+          "parameters": {
+            "resource": "views",
+            "operation": "render",
+            "spec": "{{ $fromAI('spec', \"The view: title, range and panels\", 'json') }}",
+            "pinned": false
+          },
+          "credentials": {
+            "clicklandApi": {
+              "id": "clickland",
+              "name": "Clickland"
+            }
+          },
+          "notes": "Render a Clickland view (charts, tables, a trace, log patterns) and get its id, url and marker [[clickland:view:<id>]]. The view as JSON: { title, description?, range: { lastMinutes } or { from, to }, panels: [...] } with 1 to 12 panels. Panel types: timeseries { signal: logs|traces, query, groupBy? }, metric { metric, metricType: gauge|sum|histogram, aggregation: avg|min|max|sum|rate|p50|p95|p99, service?, groupBy? }, stat { signal, query }, logs { query, limit? }, spans { query, limit? }, trace { traceId }, services {}, patterns { query }, markdown { text }. Each panel has a title and width half (default) or full."
+        },
+        {
+          "id": "slack",
+          "name": "Post to Slack",
+          "type": "messaging.slack",
+          "typeVersion": 1,
+          "position": [
+            700,
+            0
+          ],
+          "parameters": {
+            "resource": "message",
+            "operation": "post",
+            "channelId": "#alerts",
+            "text": "{{ $json.output }}\n<{{ $('Clickland alert').item.json.url }}|Open the alert in Clickland>"
+          },
+          "credentials": {
+            "slackApi": {
+              "id": "slack",
+              "name": "Slack bot"
+            }
+          }
+        }
+      ],
+      "connections": [
+        {
+          "id": "c1",
+          "type": "main",
+          "source": "trigger",
+          "sourceIndex": 0,
+          "target": "agent",
+          "targetIndex": 0
+        },
+        {
+          "id": "c2",
+          "type": "ai_languageModel",
+          "source": "model",
+          "sourceIndex": 0,
+          "target": "agent",
+          "targetIndex": 0
+        },
+        {
+          "id": "c3",
+          "type": "ai_tool",
+          "source": "knowledge",
+          "sourceIndex": 0,
+          "target": "agent",
+          "targetIndex": 0
+        },
+        {
+          "id": "c4",
+          "type": "ai_tool",
+          "source": "patterns",
+          "sourceIndex": 0,
+          "target": "agent",
+          "targetIndex": 0
+        },
+        {
+          "id": "c5",
+          "type": "ai_tool",
+          "source": "spans",
+          "sourceIndex": 0,
+          "target": "agent",
+          "targetIndex": 0
+        },
+        {
+          "id": "c6",
+          "type": "ai_tool",
+          "source": "trace",
+          "sourceIndex": 0,
+          "target": "agent",
+          "targetIndex": 0
+        },
+        {
+          "id": "c7",
+          "type": "ai_tool",
+          "source": "render",
+          "sourceIndex": 0,
+          "target": "agent",
+          "targetIndex": 0
+        },
+        {
+          "id": "c8",
+          "type": "main",
+          "source": "agent",
+          "sourceIndex": 0,
+          "target": "slack",
+          "targetIndex": 0
+        }
+      ],
+      "groups": [],
+      "stickyNotes": []
+    }
+  }
+}

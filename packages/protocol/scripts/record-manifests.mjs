@@ -28,6 +28,7 @@ const plugins = {
   landfall: 'http://127.0.0.1:7108',
   triage: 'http://127.0.0.1:7109',
   'threat-intel': 'http://127.0.0.1:7110',
+  clickland: 'http://127.0.0.1:7119',
 };
 for (const arg of process.argv.slice(2)) {
   const [name, url] = arg.split('=');

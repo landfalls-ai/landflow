@@ -64,6 +64,16 @@
       "category": "productivity",
       "keywords": ["fathom", "meetings", "notes", "action items", "second brain"],
       "flows": ["./flows/work-fathom.json"]
+    },
+    {
+      "name": "clickland",
+      "source": "./plugins/clickland",
+      "description": "Clickland observability: search logs and traces, services, metrics, log patterns, alerts, notes, knowledge search and views (dashboards included), a signed alert webhook trigger and a polling trigger. Flows: Clickland alert triage to Slack, and the observability assistant behind Clickland's Assistant panel.",
+      "version": "0.1.0",
+      "author": { "name": "Landflow" },
+      "category": "monitoring",
+      "keywords": ["clickland", "observability", "logs", "traces", "metrics", "alerts", "dashboards"],
+      "flows": ["./flows/clickland-alert-triage.json", "./flows/clickland-observability-assistant.json"]
     }
   ]
 }

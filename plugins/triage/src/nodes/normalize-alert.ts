@@ -35,6 +35,7 @@ export const NormalizeAlert = defineNode({
           { name: 'AWS CloudWatch (SNS)', value: 'cloudwatch', description: 'Alarm delivered through SNS, Message as a JSON string' },
           { name: 'Sentry', value: 'sentry', description: 'Issue alert / issue webhook' },
           { name: 'Wazuh', value: 'wazuh', description: 'Integration alert JSON' },
+          { name: 'Clickland', value: 'clickland', description: 'An alert.firing / alert.resolved delivery, or an item of the Clickland Alert Trigger or Clickland Trigger' },
           { name: 'Generic', value: 'generic', description: 'Map the fields yourself with dot paths' },
         ],
       },
