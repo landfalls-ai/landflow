@@ -35,7 +35,7 @@ export function WhatItSaw({ mode, text, persona, practices = [], bare }: WhatItS
   const practiceLines = (heading ? s.practices.slice(1) : s.practices).map((l) => l.trim()).filter(Boolean);
   const who = persona && (persona.role || persona.mission || persona.whatIDo) ? persona : undefined;
   return (
-    <section aria-label="What it saw" data-testid="what-it-saw">
+    <section aria-label="What it saw" data-testid="what-it-saw" className={bare ? undefined : 'mt-4'}>
       {!bare && <SectionTitle>What it saw</SectionTitle>}
       <div className="flex flex-col gap-2.5 rounded-xl border border-hair bg-sf2 px-3 py-2.5">
         {mode === 'off' && !text && <p className="text-[13px] text-t3">Project context off for this agent</p>}
