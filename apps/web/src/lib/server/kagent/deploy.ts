@@ -27,6 +27,8 @@ import { applyObject, deleteObject, getObject, listObjects, type KubeObject } fr
 import { BUILTIN_URL, builtinPin, imageRef, packPlugin } from './oci';
 import { AGENT_ID_LABEL, approvalServerName, kagentManifests, kagentName, landflowEgressName, secretName, validKagentName, type ExposedTool, type ModelSettings } from './manifests';
 import { HttpError } from '../errors';
+import { homeProjectId } from '../projects/store';
+import { blockRuntimeKeys, ensureRuntimeKey, existingRuntimeKey, routeThroughGateway, runtimeKeyBudget } from '../llm-gateway/runtime-keys';
 
 export class KagentError extends HttpError {
   static readonly errorName: string = 'KagentError';
@@ -121,14 +123,49 @@ export async function kagentTools(agent: Agent, config: AgentConfig) {
 
 const LOOPBACK = /^(localhost|127\.\d+\.\d+\.\d+|\[?::1\]?)$/i;
 
+/** Who an agent's model call goes through, and what that needs: the agent, and whether to mint or only read the key. */
+interface GatewayContext {
+  agent: Agent;
+  /** Deploying mints (or updates) the agent's key; reading the status only looks the minted one up. */
+  mint: boolean;
+  /** Why the agent calls its model directly (the deploy result lists it), when a gateway is configured but cannot be used. */
+  unavailable?: string[];
+}
+
+/**
+ * Through the LLM gateway (docs/llm-gateway.md, "Agents outside Landflow"): the agent's own virtual key and the gateway as
+ * the cluster reaches it. Undefined when the agent calls its model directly (no gateway, no cluster URL, no admin key, or a
+ * model the gateway does not serve): everything stays as without a gateway.
+ */
+async function gatewayModelSettings(config: AgentConfig, runtime: KagentRuntime, context: GatewayContext): Promise<ModelSettings | undefined> {
+  const model = config.model;
+  if (!model?.model) return undefined;
+  const route = await routeThroughGateway(model.model);
+  if (!('connection' in route)) {
+    if (!route.silent) context.unavailable?.push(`Calls the model directly: ${route.reason}`);
+    return undefined;
+  }
+  const keyRuntime = runtime === 'claude' ? 'claude' : 'kagent';
+  const projectId = homeProjectId('agent', context.agent.id);
+  const minted = context.mint
+    ? await ensureRuntimeKey({ agentId: context.agent.id, runtime: keyRuntime, model: model.model, ...(projectId && { projectId }), ...(runtimeKeyBudget(config.settings) && { budget: runtimeKeyBudget(config.settings) }) })
+    : existingRuntimeKey(keyRuntime, context.agent.id);
+  if (!minted) return undefined;
+  const root = route.connection.clusterUrl!;
+  const provider = runtime === 'claude' || model.provider === 'anthropic' ? 'Anthropic' : 'OpenAI';
+  return { apiKey: minted.key, baseUrl: provider === 'OpenAI' ? `${root}/v1` : root, gateway: { provider, alias: minted.alias } };
+}
+
 /**
  * What the ModelConfig needs beyond the agent's config: the Ollama server as kagent reaches it, an API key. Claude Code
  * speaks only Anthropic's API, which Ollama serves too: kagent needs a key for it, which Ollama ignores.
  */
-async function modelSettings(config: AgentConfig, runtime: KagentRuntime): Promise<ModelSettings> {
+async function modelSettings(config: AgentConfig, runtime: KagentRuntime, context: GatewayContext): Promise<ModelSettings> {
   const model = config.model;
   if (!model) return {};
   if (runtime === 'claude' && model.provider === 'openai') throw new KagentError('Claude Code runs Anthropic models, or Ollama ones: change the agent’s model, or choose a Harness with kagent’s own runtime');
+  const gateway = await gatewayModelSettings(config, runtime, context);
+  if (gateway) return gateway;
   if (model.provider === 'ollama') {
     const host = (model.baseUrl?.trim() || ollamaUrl()).replace(/\/+$/, '');
     let hostname = '';
@@ -157,11 +194,13 @@ interface Target {
   egressPolicies?: string[];
 }
 
-async function compile(agent: Agent, config: AgentConfig, version: number, name: string, cluster: KagentCluster, token: string, target: Target) {
+async function compile(agent: Agent, config: AgentConfig, version: number, name: string, cluster: KagentCluster, token: string, target: Target, mint = false) {
   const { tools, unavailable } = await kagentTools(agent, config);
   const exposed: ExposedTool[] = tools.map((tool) => ({ name: tool.name, requireApproval: tool.requireApproval }));
   const { harness, plugins, egressPolicies } = target;
+  const model = await modelSettings(config, harness.runtime, { agent, mint, unavailable });
   return {
+    gateway: model.gateway ? (harness.runtime === 'claude' ? ('claude' as const) : ('kagent' as const)) : undefined,
     objects: kagentManifests({
       agentId: agent.id,
       config,
@@ -169,7 +208,7 @@ async function compile(agent: Agent, config: AgentConfig, version: number, name:
       name,
       cluster,
       tools: exposed,
-      model: await modelSettings(config, harness.runtime),
+      model,
       token,
       tokenHash: sha256(token),
       harness: harness.name,
@@ -263,7 +302,7 @@ export async function deployToKagent(agentId: string, input: { credential?: Cred
   }
   token ??= `lfk_${randomBytes(24).toString('base64url')}`;
   const version = agent.published.version;
-  const { objects, unavailable } = await compile(agent, agent.published.config, version, name, cluster, token, { harness, plugins, egressPolicies });
+  const { objects, unavailable, gateway } = await compile(agent, agent.published.config, version, name, cluster, token, { harness, plugins, egressPolicies }, true);
   const deployment: KagentDeployment = {
     credential,
     name,
@@ -292,7 +331,7 @@ export async function deployToKagent(agentId: string, input: { credential?: Cred
         // An access Role from before Landflow wrote EgressPolicies (deploy/kind/landflow-access.yaml) only reads them: the agent
         // runs without it, and its mod's reports can't reach Landflow.
         logger.warn('kagent: Landflow’s EgressPolicy could not be written; the agent’s mod can’t report to Landflow', { agentId, name: object.metadata.name, error: (error as Error).message });
-        unavailable.push('its run reports (Landflow may not write EgressPolicies in this cluster: apply deploy/kind/landflow-access.yaml again)');
+        unavailable.push('its run reports and its calls through the gateway (Landflow may not write EgressPolicies in this cluster: apply deploy/kind/landflow-access.yaml again)');
         const spec = objects.find((o) => o.kind === 'Agent')?.spec as { egressPolicyRefs?: Array<{ name: string }> } | undefined;
         if (spec?.egressPolicyRefs) {
           spec.egressPolicyRefs = spec.egressPolicyRefs.filter((ref) => ref.name !== object.metadata.name);
@@ -305,6 +344,8 @@ export async function deployToKagent(agentId: string, input: { credential?: Cred
     agentStore.setKagent(agent.id, previous);
     throw error;
   }
+  // A key of the runtime the agent left (or of both, when it calls its model directly now) stops; none is ever deleted.
+  await blockRuntimeKeys(agent.id, gateway).catch(() => undefined);
   // An approval server from an earlier deploy goes once nothing needs it (no tool waits for approval, or another runtime).
   const approval = approvalServerName(name);
   if (!objects.some((o) => o.metadata.name === approval)) await deleteOurs(cluster, 'RemoteMCPServer', approval, agent.id);
@@ -358,6 +399,8 @@ const saveLeftovers = (list: Leftover[]) => database().upsert('settings', { key:
 
 /** A deleted agent's resources kagent couldn't take: kept to remove the next time Landflow reaches that cluster. */
 export function rememberLeftover(deployment: KagentDeployment, agentId: string) {
+  // The cluster can't be reached, the gateway may be: the agent's keys stop now.
+  void blockRuntimeKeys(agentId).catch(() => undefined);
   const list = leftovers().filter((l) => !(l.agentId === agentId && l.name === deployment.name && l.credential.id === deployment.credential.id));
   saveLeftovers([...list, { credential: deployment.credential, name: deployment.name, agentId, since: new Date().toISOString() }]);
 }
@@ -390,6 +433,8 @@ export async function removeFromKagent(agentId: string): Promise<Agent> {
   const agent = agentStore.get(agentId);
   if (!agent) throw new KagentError('Agent not found', 404);
   if (!agent.kagent) return agent;
+  // Before the cluster is asked: the keys stop even when kagent can't be reached.
+  await blockRuntimeKeys(agent.id).catch(() => undefined);
   await removeResources(agent.kagent, agent.id);
   logger.info('kagent: agent removed', { agentId, name: agent.kagent.name });
   return agentStore.setKagent(agent.id, undefined) ?? agent;

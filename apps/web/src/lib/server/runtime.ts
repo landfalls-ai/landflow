@@ -33,6 +33,7 @@ import { clusterActive, leaderService, startCluster, stopCluster, stopLeaderServ
 import { clusterState } from './cluster/state';
 import { checkConfig, ConfigError, profile } from './config';
 import { conversationRetention } from './conversations/retention';
+import { llmGatewayIngest } from './llm-gateway/ingest';
 import { closeDatabase, openDatabase } from './db';
 import { startOnlineEvaluations } from './evaluations/online';
 import { ensureExecutionReactions } from './execution-reactions';
@@ -140,6 +141,8 @@ export const SERVICES: ServiceSpec[] = [
   { name: 'data maintenance', roles: MAIN, leader: true, start: startDataMaintenance },
   // B02: kept conversations older than LANDFLOW_CHAT_RETENTION_DAYS are deleted daily (lib/server/conversations/retention.ts).
   { name: 'conversation retention', roles: MAIN, leader: true, start: () => conversationRetention.start(), stop: () => conversationRetention.stop() },
+  // LL03: copies the model calls of keys that are not Landflow's own (agents on kagent) from LiteLLM's spend log into ai_usage (lib/server/llm-gateway/ingest.ts).
+  { name: 'LLM gateway spend import', roles: MAIN, leader: true, start: () => llmGatewayIngest.start(), stop: () => llmGatewayIngest.stop() },
   // Audit log: publish/plugin listeners, SIEM outbox delivery and hourly retention (lib/server/audit).
   { name: 'audit', roles: MAIN, start: startAudit },
   // Signed chain heads (lib/server/audit/anchoring.ts): the leader signs the head on a schedule and anchors it (S3, webhook).

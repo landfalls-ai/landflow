@@ -258,7 +258,14 @@ on the tools whose binding needs approval, so a call that arrives was approved; 
 span with the agent's id and name.
 
 What stays in Landflow: cross-session memory (the `remember` tool and the notes need the person the agent talks to, so
-kagent doesn't get them), the run's date and time in the prompt, guardrails, usage limits, schedules and channels.
+kagent doesn't get them), the run's date and time in the prompt, guardrails, schedules and channels. Usage limits stay in
+Landflow too, with one exception: when the instance has an LLM gateway with a cluster URL and the server has its admin
+key, a deployed agent gets a virtual key of its own, kagent's ModelConfig (and the Claude Code harness) call the gateway
+with it, and the spend import copies the agent's calls into `ai_usage`, so they count toward its limits. The key's budget
+is the agent's dollar limit and stops the agent at the gateway; the key is blocked when the agent is removed from kagent
+or moves to the other runtime. The model, key, egress and import are in
+[llm-gateway.md](llm-gateway.md#agents-outside-landflow). The Run Trace's reported tokens stay for reading; the import
+counts the agent's calls from LiteLLM's log, never from the trace, so nothing is counted twice.
 
 ### On Claude Code
 
@@ -634,8 +641,8 @@ gone, a push to main asked of a person and run or refused by the answer, read-on
 - GitHub MCP tools hold no per-repository scope of their own (the token's is the limit), cannot be narrowed to single tools
   beyond the read / review levels, and a review comment is written when it is called: there is no draft of it for a person to
   read first except the tool's approval switch. The bundled server is not deployed by the compose files.
-- Remote agents' tokens are recorded (timeline, span, `landflow.a2a.tokens`) but don't count toward an agent's daily or
-  monthly AI limits, which count Landflow's own model calls.
+- Remote agents' tokens are recorded (timeline, span, `landflow.a2a.tokens`) but count toward an agent's daily or
+  monthly AI limits only when the agent runs on kagent through the LLM gateway ([llm-gateway.md](llm-gateway.md#agents-outside-landflow)).
 - The landflow-harness mod's trace lives in the memory of the host that made the call. In queue mode its id starts with
   that process (`<instance>.<random>`, base64url), and the main the mod posts to passes a batch it doesn't hold on to
   that process's inbox over Valkey (`202`), so a worker's call gets its real usage; a batch for a worker that has gone is
