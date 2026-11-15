@@ -4,6 +4,7 @@
  */
 import { database, type Database } from '../db';
 import type { Actor } from '../projects/access';
+import { withCallPurpose } from '../ai-usage/call-context';
 import { envInt } from '../config';
 import { workAutoSend } from '../settings';
 import type { LanguageModel } from '@landflow/engine';
@@ -129,7 +130,8 @@ export async function writeBriefingText(gathered: GatheredWork, model: LanguageM
   if (model && (gathered.own.length || gathered.related.length || gathered.finished.length || gathered.goalsMoved?.length)) {
     try {
       const { system, prompt } = briefingPrompt(gathered, max);
-      const turn = await model.generate({ system, messages: [{ role: 'user', content: prompt }], tools: [], responseFormat: 'text', ...(signal && { signal }) });
+      // SP02: the briefing's words are a summary call.
+      const turn = await withCallPurpose('summary', () => model.generate({ system, messages: [{ role: 'user', content: prompt }], tools: [], responseFormat: 'text', ...(signal && { signal }) }));
       const text = (turn.text ?? '').trim();
       if (text) return { text: clipText(text, max), model: `${model.provider}/${model.model}` };
     } catch {

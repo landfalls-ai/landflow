@@ -21,6 +21,7 @@ import { entityRef } from '../../shared/brain';
 import type { AskTurn, SharedWork, TeamActivity, WikiAnswer, WikiEntry, WikiHealth, WikiHome, WikiLink, WikiPage, WikiPerson, WikiSummary, WorkItem } from '../../shared/brain-wiki';
 import { ASK_HISTORY_CHARS, ASK_HISTORY_TURNS, hintId, wikiLinks } from '../../shared/brain-wiki';
 import { assistantScope, runInUsageScope } from '../ai-usage';
+import { withCallPurpose } from '../ai-usage/call-context';
 import { database, type Database } from '../db';
 import { listKinds } from '../usage/kinds';
 import { listUsageEvents, type UsageScope } from '../usage/query';
@@ -469,7 +470,8 @@ export async function writeSummary(entity: BrainEntity, scope: UsageScope | unde
     .join('\n');
   let reply: string;
   try {
-    const turn = await model.generate({ system: 'You keep a company wiki written from its work tools. You are accurate and brief. Reply with JSON only.', messages: [{ role: 'user', content: prompt }], tools: [], responseFormat: 'json', ...(options.signal && { signal: options.signal }) });
+    // SP02: a page's summary is a summary call.
+    const turn = await withCallPurpose('summary', () => model.generate({ system: 'You keep a company wiki written from its work tools. You are accurate and brief. Reply with JSON only.', messages: [{ role: 'user', content: prompt }], tools: [], responseFormat: 'json', ...(options.signal && { signal: options.signal }) }));
     reply = turn.text ?? '';
   } catch (caught) {
     logger.warn('brain wiki: summary failed', { 'landflow.entity': entityKey(entity), error: (caught as Error).message });

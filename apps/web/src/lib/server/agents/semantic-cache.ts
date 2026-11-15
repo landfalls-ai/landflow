@@ -6,6 +6,7 @@
 import { createHash } from 'node:crypto';
 import type { AgentConfig } from '../../shared/agents';
 import { cosine, normalizeQuestion, type SemanticCache as SemanticSettings } from '../../shared/agent-cache';
+import { withCallPurpose } from '../ai-usage/call-context';
 import { database } from '../db';
 import { ollamaEmbeddings } from '../rag/embeddings';
 import { singleton } from '../singleton';
@@ -30,7 +31,8 @@ export function configHash(agentId: string, config: AgentConfig, contextHash = '
 /** The embedder the settings name: an Ollama embedding model. */
 export function embedderFor(settings: SemanticSettings): Embedder {
   const embeddings = ollamaEmbeddings({ baseUrl: settings.baseUrl?.trim() || ollamaUrl(), model: settings.model });
-  return (text, signal) => embeddings.embedQuery(normalizeQuestion(text), signal);
+  // SP02: the question's embedding is cache bookkeeping, not an answer.
+  return (text, signal) => withCallPurpose('cache-embed', () => embeddings.embedQuery(normalizeQuestion(text), signal));
 }
 
 const db = () => database();
