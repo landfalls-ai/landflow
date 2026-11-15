@@ -158,6 +158,19 @@ describe('budgets sync', () => {
     expect(fake.keys.get(key.key)?.blocked).toBeFalsy();
   });
 
+  it('never touches a key that a credential names, and keeps its budget', async () => {
+    const held = fake.addKey({ max_budget: 5, budget_duration: '30d' });
+    const cred = credentials.create({ name: 'Gateway', type: 'core.anthropicApi', data: { apiKey: held.key, baseUrl: fake.origin, gateway: 'litellm' } });
+    saveGatewaySettings({ credentialId: cred.id });
+    const before = fake.requests.length;
+    const report = await syncBudgets({ trigger: 'manual' });
+    expect(report.errors).toEqual([]);
+    const calls = fake.requests.slice(before);
+    expect(calls.filter((r) => r.path === '/key/info' || r.path === '/key/update')).toEqual([]);
+    expect(fake.keys.get(held.key)).toMatchObject({ max_budget: 5, budget_duration: '30d' });
+    saveGatewaySettings({ credentialId: '' });
+  });
+
   it('lists a deleted user and a deleted project as orphans and deletes nothing', async () => {
     deleteUser(cy.id);
     removeProjectRows(beta.id);

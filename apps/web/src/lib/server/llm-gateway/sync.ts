@@ -18,7 +18,7 @@ import { singleton } from '../singleton';
 import { logger } from '../telemetry/logger';
 import type { Fetcher, LiteLlmClient } from './client';
 import { onCapsChanged, onRuntimeKeyChanged } from './events';
-import { adminClient, gatewayConnection, gatewaySettings, saveSyncReport, type GatewayConnection } from './settings';
+import { adminClient, gatewayConnection, gatewaySettings, lastSyncReport, saveSyncReport, type GatewayConnection } from './settings';
 
 const ORPHAN_NOTE = "Remove it in LiteLLM's UI if it is no longer needed";
 const NEEDS_ADMIN = 'The budgets sync needs LANDFLOW_LLM_GATEWAY_URL and LANDFLOW_LLM_GATEWAY_ADMIN_KEY on the server';
@@ -66,21 +66,32 @@ const same = (budget: GatewayBudget | undefined, maxBudget: number | null | unde
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error)).slice(0, 300);
 
-/** One run at a time: the running sync, shared by whoever asks meanwhile. */
-const running = () => singleton<{ current?: Promise<SyncReport> }>('llm-gateway-sync-running', () => ({}));
+/** One run at a time. A caller with the same scope joins the running one only if it started after the call. */
+const running = () => singleton<{ current?: Promise<SyncReport>; key?: string }>('llm-gateway-sync-running', () => ({}));
 
 export async function syncBudgets(input: SyncInput): Promise<SyncReport> {
   const state = running();
-  if (state.current) return state.current;
+  const key = input.capIds ? [...input.capIds].sort().join(',') : '*';
+  // Something is running: it may have read the caps already, so wait for it and run again (the callers that
+  // wait together share that next run when their scope is the same).
+  while (state.current) {
+    const previous = state.current;
+    await previous.catch(() => undefined);
+    if (state.current && state.current !== previous && state.key === key) return state.current;
+  }
   const run = runSync(input)
     .catch((error) => {
       logger.warn('llm gateway: the budgets sync failed', { error: message(error) });
       return emptyReport(input.trigger, [message(error)]);
     })
     .finally(() => {
-      state.current = undefined;
+      if (state.current === run) {
+        state.current = undefined;
+        state.key = undefined;
+      }
     });
   state.current = run;
+  state.key = key;
   return run;
 }
 
@@ -187,7 +198,9 @@ async function runSync(input: SyncInput): Promise<SyncReport> {
   }
 
   // ---- keys -------------------------------------------------------------------------------------------------
-  await syncGatewayKey(connection, client, caps.credentials, headroom, scoped ? scope.credentials : undefined, report, link, fail);
+  // A key named by a credential is not mirrored: a credential's data can be edited by project editors, and the admin
+  // key must not change a budget on a key that data picked. Only server configuration names the gateway key.
+  if (connection.source !== 'credential') await syncGatewayKey(connection, client, caps.credentials, headroom, scoped ? scope.credentials : undefined, report, link, fail);
   const runtimeKeys = db.all<KeyRow>('SELECT * FROM llm_gateway_keys WHERE blocked = 0 ORDER BY created_at');
   for (const row of runtimeKeys) {
     if (scoped && !scope.agents.has(row.agent_id)) continue;
@@ -195,7 +208,9 @@ async function runSync(input: SyncInput): Promise<SyncReport> {
   }
 
   // ---- orphans: never deleted, blocked or changed -------------------------------------------------------------
-  if (!scoped) {
+  // A scoped run does not look for orphans: it keeps the last full run's list.
+  if (scoped) report.orphans = lastSyncReport(db)?.orphans ?? [];
+  else {
     for (const row of [...linked('team'), ...linked('customer'), ...linked('key')]) {
       const gone = row.kind === 'team' ? !getProject(row.landflow_id) : row.kind === 'customer' ? !getUser(row.landflow_id) : orphanKey(row.landflow_id);
       if (gone) report.orphans.push({ kind: row.kind, litellmId: row.litellm_id, note: ORPHAN_NOTE });
@@ -281,10 +296,10 @@ async function syncRuntimeKey(row: KeyRow, client: LiteLlmClient, ensureTeam: (p
       await client.updateKey({ key, max_budget: budget?.maxBudget ?? null, budget_duration: budget?.duration ?? null, ...(teamDiffers && { team_id: teamId }) });
       report.keys.updated += 1;
     }
-    const mirrored = { max_budget: budget?.maxBudget ?? null, budget_duration: budget?.duration ?? null, team_id: teamId ?? row.team_id };
     // Re-read just before writing (no await between): another writer may have blocked, moved or re-minted the key
     // while the network calls ran, and the stale snapshot must not undo that.
     const fresh = db.get<KeyRow>('SELECT * FROM llm_gateway_keys WHERE id = ?', row.id);
+    const mirrored = { max_budget: budget?.maxBudget ?? null, budget_duration: budget?.duration ?? null, team_id: teamId ?? fresh?.team_id ?? null };
     if (fresh && !fresh.blocked && (mirrored.max_budget !== fresh.max_budget || mirrored.budget_duration !== fresh.budget_duration || mirrored.team_id !== fresh.team_id)) {
       db.upsert('llm_gateway_keys', { ...fresh, ...mirrored, updated_at: new Date().toISOString() });
     }
