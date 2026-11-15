@@ -49,9 +49,9 @@ items still open (its "Wave 6" section); this page is the short list to check be
 ## Call attribution (wave 11)
 
 - The new `ai_usage` columns (node, span, purpose, iteration, caller, duration, stop reason) show on no screen until wave 12.
-- Rows imported from the gateway's spend log and failed calls have none of them; neither has a call a plugin node reports in its `model` record, except `node_id`.
+- Rows imported from the gateway's spend log have none of them; neither has a call a plugin node reports in its `model` record, except `node_id`. A failed call writes no row.
 - `node_id` is the innermost node, so a model sub-node's call names the sub-node, not the Agent node it belongs to. A per-node spend view must roll sub-nodes up to their root.
-- `landflow.ai.usage_id` is set on the span only when OpenTelemetry's context manager is on.
+- `landflow.ai.usage_id` is set on the call's own span only when OpenTelemetry's context manager is on; a plugin node's model record has no span of its own, so it is set on none. A plugin node's tokens carry the purpose `none` and it adds no `landflow.ai.cost` point.
 
 ## Projects and goals
 

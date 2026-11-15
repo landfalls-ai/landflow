@@ -46,8 +46,10 @@ export function withAiUsage(resolved: ResolvedNodeType): ResolvedNodeType {
         if (call.type !== 'model') continue;
         const model = call as ModelRecord;
         const base = { 'gen_ai.system': model.provider, 'gen_ai.request.model': model.model };
-        if (model.inputTokens) instruments.aiTokens.add(model.inputTokens, { ...base, 'gen_ai.token.type': 'input' });
-        if (model.outputTokens) instruments.aiTokens.add(model.outputTokens, { ...base, 'gen_ai.token.type': 'output' });
+        // A model record carries no purpose: 'none', as the traced calls say it, so no panel has an unlabelled series.
+        const labelled = { ...base, 'landflow.ai.purpose': 'none' };
+        if (model.inputTokens) instruments.aiTokens.add(model.inputTokens, { ...labelled, 'gen_ai.token.type': 'input' });
+        if (model.outputTokens) instruments.aiTokens.add(model.outputTokens, { ...labelled, 'gen_ai.token.type': 'output' });
         try {
           afterModelCall({
             provider: model.provider,

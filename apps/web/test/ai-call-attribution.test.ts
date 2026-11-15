@@ -31,6 +31,7 @@ const spans = new InMemorySpanExporter();
 const { aiUsageMeter, UsageScope, runInUsageScope, savePriceOverrides } = await import('@/lib/server/ai-usage');
 const { traceChat, traceEmbeddings } = await import('@/lib/server/telemetry/ai');
 const { withCallNote, withCallPurpose, setRecordedCallListener } = await import('@/lib/server/ai-usage/call-context');
+const { writeParts } = await import('@/lib/server/ai-usage/parts');
 const { runInNode } = await import('@/lib/server/ai-usage/node-context');
 const { afterModelCall } = await import('@/lib/server/ai-usage/scope');
 const { listUsageEvents } = await import('@/lib/server/usage/query');
@@ -94,6 +95,18 @@ describe('what each call was for', () => {
     );
     const [row] = rows('execution_id = ?', 'ex_attr_plugin');
     expect(row).toMatchObject({ node_id: 'n_plug', span_id: null, purpose: null });
+    // A plugin node's own span is not the call's span: the row's id is set on none.
+    const nodeSpan = trace.getTracer('test').startSpan('node n_plug2');
+    await context.with(trace.setSpan(context.active(), nodeSpan), () =>
+      runInUsageScope(new UsageScope({ executionId: 'ex_attr_plugin2' }, [], undefined, aiUsageMeter()), () =>
+        runInNode({ id: 'n_plug2', name: 'Plugin', type: 'x.y' }, async () => {
+          afterModelCall({ provider: 'anthropic', model: 'claude-test', operation: 'chat', inputTokens: 5, outputTokens: 1 });
+        }),
+      ),
+    );
+    nodeSpan.end();
+    expect(rows('execution_id = ?', 'ex_attr_plugin2')).toHaveLength(1);
+    expect(spans.getFinishedSpans().find((sp) => sp.name === 'node n_plug2')!.attributes['landflow.ai.usage_id']).toBeUndefined();
   });
 
   it('gives an embeddings call embed, an explicit purpose its own, and leaves a call outside any run unset', async () => {
@@ -129,7 +142,28 @@ describe('what each call was for', () => {
     expect(row).toMatchObject({ cost: 5, node_id: 'n_take', purpose: 'answer', stop_reason: 'end_turn', execution_id: 'ex_attr_4' });
     expect(rows("gateway_request_id = 'req_attr_1'")).toHaveLength(1);
     expect(heard.map((c) => c.usageId)).toEqual(['au_imported_attr']);
+    expect(heard[0]!.gatewayRequestId).toBe('req_attr_1');
+    // The call's span names the imported row it took over.
+    expect(spans.getFinishedSpans().some((sp) => sp.spanContext().spanId === row.span_id && sp.attributes['landflow.ai.usage_id'] === 'au_imported_attr')).toBe(true);
     setRecordedCallListener(undefined);
+  });
+
+  it('tells the listener only the request id the row kept, so a repeated gateway request id writes both splits', async () => {
+    setRecordedCallListener(writeParts);
+    const scope = new UsageScope({ executionId: 'ex_attr_dup' }, [], undefined, aiUsageMeter());
+    const draft = { segments: [{ part: 'userMessage' as const, where: 'messages' as const, text: 'hello there' }] };
+    await runInUsageScope(scope, async () => {
+      await withCallNote({ draft }, () => chat({ gatewayRequestId: 'req_attr_dup' }));
+      await withCallNote({ draft }, () => chat({ gatewayRequestId: 'req_attr_dup' }));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    setRecordedCallListener(undefined);
+    const usage = rows('execution_id = ?', 'ex_attr_dup');
+    expect(usage).toHaveLength(2);
+    expect(usage.filter((r) => r.gateway_request_id === 'req_attr_dup')).toHaveLength(1);
+    const parts = database().all<{ usage_id: string; gateway_request_id: string | null }>('SELECT usage_id, gateway_request_id FROM ai_call_parts WHERE usage_id IN (?, ?)', usage[0]!.id, usage[1]!.id);
+    expect(parts).toHaveLength(2);
+    expect(parts.filter((r) => r.gateway_request_id === 'req_attr_dup')).toHaveLength(1);
   });
 
   it('adds the new keys to the ai.call event and keeps the seven Landledger reads', async () => {

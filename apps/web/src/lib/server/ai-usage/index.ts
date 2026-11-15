@@ -196,8 +196,15 @@ export class AiUsageMeter implements UsageMeter {
       // SP01: the agent that asked: the nearest scope up the chain whose agent is not the row's own.
       const rowAgent = scope.lookup('agentId');
       const callerAgentId = [...scope.chain()].find((s) => s.info.agentId && s.info.agentId !== rowAgent)?.info.agentId ?? (call.callerAgentId !== rowAgent ? call.callerAgentId : undefined);
+      // A plugin node's model record has no telemetry note: the active node still names it. Once, for the row and the event.
+      const nodeId = call.nodeId ?? activeNode()?.id;
+      // SP01: the gen_ai span names its row, never a plugin node's span (the active span is the call's own only when its id is the call's span id).
+      const nameSpan = (usageId: string) => {
+        const span = call.spanId ? trace.getActiveSpan() : undefined;
+        if (span && span.spanContext().spanId === call.spanId) span.setAttribute('landflow.ai.usage_id', usageId);
+      };
       const counted = {
-        node_id: call.nodeId ?? activeNode()?.id, // a plugin node's model record has no telemetry note: the active node still names it
+        node_id: nodeId,
         span_id: call.spanId,
         purpose: call.purpose,
         iteration: call.iteration,
@@ -239,7 +246,8 @@ export class AiUsageMeter implements UsageMeter {
         const importedCost = typeof imported.cost === 'number' ? imported.cost : 0;
         db.upsert('ai_usage', { ...imported, ...counted, cost: Math.max(importedCost, counted.cost ?? 0) });
         noteUsage();
-        this.notify(String(imported.id), call, scope, now);
+        nameSpan(String(imported.id));
+        this.notify(String(imported.id), typeof imported.gateway_request_id === 'string' ? imported.gateway_request_id : undefined, call, scope, now);
         return;
       }
       // call_id and gateway_request_id are unique: a repeated one must not lose the row or its event.
@@ -282,15 +290,14 @@ export class AiUsageMeter implements UsageMeter {
           ...(call.gatewayCost !== undefined && { gatewayCost: call.gatewayCost }),
           // SP01: AiCallEventAttribution, each only when set.
           ...(call.purpose && { purpose: call.purpose }),
-          ...(call.nodeId && { nodeId: call.nodeId }),
+          ...(nodeId && { nodeId }),
           ...(scope.lookup('sessionId') && { sessionId: scope.lookup('sessionId') }),
           ...(call.iteration !== undefined && { iteration: call.iteration }),
           usageId,
         },
       });
-      // SP01: the span names its row (a no-op without a recording span).
-      trace.getActiveSpan()?.setAttribute('landflow.ai.usage_id', usageId);
-      this.notify(usageId, call, scope, now);
+      nameSpan(usageId);
+      this.notify(usageId, requestId, call, scope, now);
       if (now - this.pruned > DAY_MS / 24) {
         this.pruned = now;
         this.db().deleteBefore('ai_usage', 'at', new Date(now - this.retentionDays * DAY_MS).toISOString());
@@ -302,8 +309,11 @@ export class AiUsageMeter implements UsageMeter {
     }
   }
 
-  /** SP01: tell the recorded-call listener (wave 11's prompt parts) about a written row; it never fails the call. */
-  private notify(usageId: string, call: MeteredCall, scope: UsageScope, now: number) {
+  /**
+   * SP01: tell the recorded-call listener (wave 11's prompt parts) about a written row; it never fails the call.
+   * `requestId` is the gateway request id the row keeps (a repeated one is not stored, so the split must not claim it).
+   */
+  private notify(usageId: string, requestId: string | undefined, call: MeteredCall, scope: UsageScope, now: number) {
     try {
       notifyRecorded(
         {
@@ -316,7 +326,7 @@ export class AiUsageMeter implements UsageMeter {
           outputTokens: call.outputTokens,
           cacheReadTokens: call.cacheReadTokens,
           cacheWriteTokens: call.cacheWriteTokens,
-          ...(call.gatewayRequestId && { gatewayRequestId: call.gatewayRequestId }),
+          ...(requestId && { gatewayRequestId: requestId }),
           ...(scope.lookup('executionId') && { executionId: scope.lookup('executionId') }),
           ...(scope.lookup('agentId') && { agentId: scope.lookup('agentId') }),
           ...(scope.lookup('sessionId') && { sessionId: scope.lookup('sessionId') }),

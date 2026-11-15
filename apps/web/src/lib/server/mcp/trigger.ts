@@ -24,6 +24,7 @@ import { executeWorkflow, type ToolSpec, type Workflow, type WorkflowNode } from
 import type { ExecutionRecord } from '../../shared/types';
 import { credentials } from '../credentials/vault';
 import { resolveWorkflowCredentials } from '../projects/credentials';
+import { runInNode } from '../ai-usage/node-context';
 import { registry } from '../plugins/registry';
 import { parameterSecretOptions } from '../secrets/runtime';
 import { runWorkflow } from '../runner';
@@ -98,6 +99,7 @@ export async function listTriggerTools(workflow: Workflow, node: WorkflowNode, t
     resolveCredentials: (target, descriptor) => resolveWorkflowCredentials(workflow.id, target, descriptor),
     ...parameterSecretOptions,
     variables: variables.forWorkflow(workflow.id),
+    aroundNode: runInNode, // SP01: the node a model call runs under, as in runner/run.ts
     spanAttributes: { 'landflow.mcp.method': 'tools/list', ...(test && { 'landflow.trigger.test': true }) },
   });
   if (result.status !== 'success') throw new Error(result.error?.message ?? 'Could not list the tools');
