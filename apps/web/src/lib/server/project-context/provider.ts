@@ -3,16 +3,14 @@
  * goals store's seam and builds the block. It sets itself on import (lib/server/runtime.ts imports it).
  */
 import { createHash } from 'node:crypto';
+import { emptyContext } from './empty';
 import { envFlag } from '../config';
 import type { ContextMode, RunContext, RunContextProvider, RunContextRef } from '../../shared/project-context';
 import { contextLine, projectContext, type ProjectContextInput } from './build';
 import { refFromSession, resolveRun, runLine } from './resolve';
 import { contextDataSource, setRunContextProvider } from './seam';
 
-export { refFromSession };
-
-/** A context with nothing in it (no provider, or the switch is off). */
-export const emptyContext = (at: string = new Date().toISOString()): RunContext => ({ mode: 'off', text: '', compact: '', line: '', hash: '', at, practices: [] });
+export { emptyContext };
 
 const hashOf = (text: string) => (text ? createHash('sha256').update(text).digest('hex').slice(0, 16) : '');
 

@@ -588,7 +588,9 @@ the remembered facts, then "You are X. Current date and time: …". The date is 
 for every model call of that run (and for a resume after an approval), so the prompt up to the date line is the same on
 every turn and the provider's [prompt cache](#prompt-cache) keeps working. A new run gets a new date.
 
-**Which project.** The caller's project, not the agent's home, so one agent can work for several projects:
+### Which project a run is in
+
+The caller's project, not the agent's home, so one agent can work for several projects:
 
 1. the project the caller chose (the test chat's `projectId`, after Landflow checks the person has a role in it);
 2. the home project of the workflow the agent runs in (not for an agent's own `agent:` runs, which have no workflow);

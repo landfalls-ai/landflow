@@ -47,6 +47,10 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 - An agent has no project wall yet: any agent may be used in any project's run. Availability (which agents a project can
   use) comes in wave 8. Until then the block only tells the agent where it works.
+- A session stores the block it was given (`session.context`), so anyone who can read the agent's sessions can read the
+  brief of a project the run was called from. Wave 8's availability rule closes this.
+- The builder drops the brief entirely, then cuts the mission to 120 characters, when the usual drop order still leaves
+  the block over its cap.
 - Whether Anthropic's prompt cache hits more with the pinned date is not measured on this machine: the prompt up to the
   date line is stable by construction, and no run here talks to Anthropic.
 - A kagent agent called over MCP gets no block and falls back to its own home project. Remote agents and a team's

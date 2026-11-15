@@ -6,6 +6,7 @@ import type { ContextDataSource, ContextGoalData, ContextProjectData } from '@/l
 type Step = (input: { system?: string; messages: AgentMessage[]; tools: ToolSpec[] }) => Partial<ModelTurn>;
 const script: Step[] = [];
 const systems: string[] = [];
+const scopeSeen: Array<string | undefined> = [];
 
 vi.mock('@/lib/server/agents/models', () => ({
   OLLAMA_URL: 'http://127.0.0.1:11434',
@@ -28,19 +29,24 @@ vi.mock('@/lib/server/projects/access', async (importOriginal) => {
   return { ...real, projectRole: (actor: never, projectId: string | undefined) => (projectId === 'p_none' ? undefined : real.projectRole(actor, projectId)) };
 });
 
+vi.mock('@/lib/server/ai-usage', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/lib/server/ai-usage')>();
+  return { ...real, agentScope: (...args: Parameters<typeof real.agentScope>) => (scopeSeen.push(currentRunContext()?.projectId), real.agentScope(...args)) };
+});
+
 const { registry } = await import('@/lib/server/plugins/registry');
 const { corePlugin } = await import('@/lib/server/nodes');
 const { store } = await import('@/lib/server/store');
 const { agentStore, configOf } = await import('@/lib/server/agents/store');
 const { agentTeamStore } = await import('@/lib/server/agent-teams/store');
-const { setHomeProject } = await import('@/lib/server/projects/store');
+const { setHomeProject, createTeamProject } = await import('@/lib/server/projects/store');
 const { decide, newSession, runAgent } = await import('@/lib/server/agents/runtime');
 const { cacheKey } = await import('@/lib/server/agents/response-cache');
 const { configHash } = await import('@/lib/server/agents/semantic-cache');
 const { personaPrompt } = await import('@/lib/shared/persona');
 const { refFromSession, resolveRun, runLine } = await import('@/lib/server/project-context/resolve');
 const { emptyContext, projectContextProvider } = await import('@/lib/server/project-context/provider');
-const { setContextDataSource } = await import('@/lib/server/project-context/seam');
+const { setContextDataSource, currentRunContext } = await import('@/lib/server/project-context/seam');
 const { POST: chat } = await import('@/app/api/agents/[id]/chat/route');
 
 const goals: Record<string, ContextGoalData> = {
@@ -74,6 +80,7 @@ beforeAll(() => registry.registerBuiltin(corePlugin));
 beforeEach(() => {
   script.length = 0;
   systems.length = 0;
+  scopeSeen.length = 0;
   setContextDataSource(source);
 });
 afterEach(() => {
@@ -227,6 +234,32 @@ describe('the block in a run', () => {
     expect(childSystem).toContain('This run: a task from another agent.');
   });
 
+  it('opens each run\'s usage scope inside that run\'s own context', async () => {
+    const child = makeAgent({ name: 'Child', instructions: 'Child work.' });
+    setHomeProject('agent', child.id, 'p_home');
+    const parent = withProject({ tools: [{ id: 'd1', type: 'agent', agentId: child.id }] });
+    script.push(() => ({ toolCalls: [{ id: 'c1', name: 'ask_Child', input: { task: 'do it' } }] }), reply('child done'), reply('parent done'));
+    await runAgent({ agent: parent, session: testSession(parent), message: 'go' });
+    // The parent's own project first, then the child's: the child is in the parent's project (it inherits), never an outer run's by accident.
+    expect(scopeSeen).toEqual(['p_wf', 'p_wf']);
+    const solo = makeAgent();
+    setHomeProject('agent', solo.id, 'p_home');
+    scopeSeen.length = 0;
+    script.push(reply('ok'));
+    await runAgent({ agent: solo, session: testSession(solo), message: 'hi' });
+    expect(scopeSeen).toEqual(['p_home']);
+  });
+
+  it('runs on with the old prompt when the block cannot be built, and frees the session', async () => {
+    const agent = withProject();
+    setContextDataSource({ ...source, project: () => { throw new Error('database is locked'); } });
+    const session = testSession(agent);
+    script.push(reply('first'), reply('second'));
+    expect((await runAgent({ agent, session, message: 'hi' })).reply).toBe('first');
+    expect(systems[0]).not.toContain('## Where this work fits');
+    expect((await runAgent({ agent, session, message: 'again' })).reply).toBe('second');
+  });
+
   it('keeps the cache key as it was without a block, and separates contexts with one', () => {
     const agent = makeAgent();
     const config = configOf(agent);
@@ -253,6 +286,22 @@ describe('the block in a run', () => {
   });
 });
 
+describe('a team run', () => {
+  it('gives the lead the team\'s project, goal and run line', async () => {
+    const lead = makeAgent({ name: 'Lead' });
+    setHomeProject('agent', lead.id, 'p_home');
+    const team = agentTeamStore.create({ name: 'Desk', goalId: 'goal_team', members: [{ id: 'm_lead', title: 'Lead', kind: 'agent', agentId: lead.id }] } as never);
+    setHomeProject('agentTeam', team.id, 'p_team');
+    agentTeamStore.publish(team.id);
+    const { runTeam } = await import('@/lib/server/agent-teams/runtime');
+    script.push(reply('done'));
+    await runTeam({ team: { id: team.id, name: 'Desk' }, config: agentTeamStore.get(team.id)!.published!, message: 'Go', userId: 'test' });
+    expect(systems[0]).toContain('(from project “Team project”)');
+    expect(systems[0]).toContain('Answer faster');
+    expect(systems[0]).toContain('team “Desk”');
+  });
+});
+
 describe('the test chat', () => {
   const post = (id: string, body: unknown) =>
     chat(new Request(`http://localhost/api/agents/${id}/chat`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }), { params: Promise.resolve({ id }) });
@@ -264,11 +313,18 @@ describe('the test chat', () => {
     expect(denied.status).toBe(404);
     expect(await denied.json()).toMatchObject({ error: 'Project not found' });
     expect(agentStore.listSessions(agent.id)).toHaveLength(0);
-    const allowed = await post(agent.id, { message: 'hi', projectId: 'p_caller' });
+    expect((await post(agent.id, { message: 'hi', projectId: 'p_made_up' })).status).toBe(404);
+    const real = createTeamProject({ name: 'Caller project' });
+    projects[real.id] = { id: real.id, name: 'Caller project', brief: 'Caller brief.', goalIds: [] };
+    const allowed = await post(agent.id, { message: 'hi', projectId: real.id });
     expect(allowed.status).toBe(200);
     await allowed.text();
     const session = agentStore.getSession(agentStore.listSessions(agent.id)[0].id)!;
-    expect(session.context).toMatchObject({ projectId: 'p_caller', projectName: 'Caller project' });
+    expect(session.context).toMatchObject({ projectId: real.id, projectName: 'Caller project' });
     expect(systems[0]).toContain('(from project “Caller project”)');
+    // A follow-up without the projectId stays in the project the chat began in.
+    script.push(reply('again'));
+    await (await post(agent.id, { message: 'more', sessionId: session.id })).text();
+    expect(systems[1]).toContain('(from project “Caller project”)');
   });
 });

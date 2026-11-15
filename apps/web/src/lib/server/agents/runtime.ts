@@ -19,7 +19,7 @@ import type {
   TokenUsage,
 } from '../../shared/agents';
 import type { RunContext, RunContextRef } from '../../shared/project-context';
-import { emptyContext } from '../project-context/provider';
+import { emptyContext } from '../project-context/empty';
 import { refFromSession } from '../project-context/resolve';
 import { runContextProvider, withRunContext } from '../project-context/seam';
 import { agentScope, isUsageCapError, runInUsageScope } from '../ai-usage';
@@ -284,15 +284,21 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
   // The project block and the pinned date are settled before the usage scope opens: the scope reads the run's project and goal.
   // A resume after approval keeps what the run began with, date included.
   const provider = runContextProvider();
-  const runCtx: RunContext =
-    request.message === undefined && session.pending && session.context
-      ? session.context
-      : provider
-        ? provider.build(request.context ?? refFromSession(session, agent.id), config.projectContext ?? 'full')
-        : emptyContext();
+  let runCtx: RunContext;
+  if (request.message === undefined && session.pending && session.context) runCtx = session.context;
+  else {
+    // The block is background data: if it cannot be built, the run goes on with the old prompt.
+    try {
+      runCtx = provider ? provider.build(request.context ?? refFromSession(session, agent.id), config.projectContext ?? 'full') : emptyContext();
+    } catch (error) {
+      logger.warn(`could not build the project context: ${(error as Error).message}`);
+      runCtx = emptyContext();
+    }
+  }
   session.context = runCtx;
   const userId = currentActorId();
-  const usage = agentScope({ agentId: agent.id, agentName: config.name, sessionId: session.id, settings: config.settings, ...(userId && { userId }) });
+  // The scope is created inside the run's context: it reads the run's own project and goal (not an outer run's).
+  const usage = withRunContext(runCtx, () => agentScope({ agentId: agent.id, agentName: config.name, sessionId: session.id, settings: config.settings, ...(userId && { userId }) }));
   try {
     return await withRunContext(runCtx, () => runInUsageScope(usage, () => traceAgentRun(
       {
