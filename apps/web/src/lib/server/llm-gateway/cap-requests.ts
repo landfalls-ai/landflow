@@ -291,8 +291,8 @@ export interface RecordedDecision {
  * nodes), never from the item the Apply node received: an expression or a Code node could write that. Undefined when
  * the run has no such decision.
  */
-export function recordedDecision(executionId: string): RecordedDecision | undefined {
-  const record = liveExecution(executionId) ?? store.getExecution(executionId);
+export async function recordedDecision(executionId: string): Promise<RecordedDecision | undefined> {
+  const record = liveExecution(executionId) ?? (await store.loadExecution(executionId));
   if (!record) return undefined;
   const workflow = record.workflow ?? store.getWorkflow(record.workflowId);
   const asks = (workflow?.nodes ?? []).filter((n) => n.type === 'core.confirmDraft');
@@ -401,7 +401,7 @@ export async function applyCapRequest(requestId: string, executionId: string, ou
   if (!row) throw new CapRequestError('Request not found', 404);
   if (row.status !== 'asking') throw new CapRequestError(`This request is ${row.status}, not waiting for an answer`, 409);
   if (row.execution_id !== executionId) throw new CapRequestError('A request is applied only by the run it started', 409);
-  const decision = recordedDecision(executionId);
+  const decision = await recordedDecision(executionId);
   const fail = (note: string): AppliedCapRequest => {
     update(requestId, { status: 'failed', note });
     return { requestId, status: 'failed' };
@@ -420,7 +420,7 @@ export async function applyCapRequest(requestId: string, executionId: string, ou
   if (!cap) return fail('The cap is not one Landflow knows');
   // Only the installed flow may raise a cap, and only for a request it started.
   const installed = setupWorkflowId();
-  const ran = (liveExecution(executionId) ?? store.getExecution(executionId))?.workflowId;
+  const ran = (liveExecution(executionId) ?? (await store.loadExecution(executionId)))?.workflowId;
   if (!installed || row.workflow_id !== installed || ran !== installed) return fail('The run is not the installed cap-raise flow, so nothing changed');
 
   try {
