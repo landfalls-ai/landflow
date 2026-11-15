@@ -11,6 +11,7 @@ import { sendMail, mailConfigured } from '../auth/mail';
 import { gatherFor, writeBriefingText } from '../brain/briefing';
 import { createDraft, getBriefing, getDraft, markReady, pruneBriefings, writeText, type StoredBriefing } from '../brain/briefings-store';
 import { brainModel } from '../brain/writer';
+import { credentials as vault } from '../credentials/vault';
 import { database } from '../db';
 import { getPreferences } from '../preferences';
 import { postMessage, SLACK_CREDENTIAL, SLACK_OAUTH2_CREDENTIAL, slackCredential, type SlackCredential } from '../slack';
@@ -19,7 +20,7 @@ import { logger } from '../telemetry/logger';
 import { brainEnabled, dayOf } from '../usage/ledger';
 import { store } from '../store';
 import { getPublication } from '../publications';
-import { versionAuthor, versionFor } from '../versions';
+import { getVersion, versionAuthor, versionFor } from '../versions';
 import type { ExecutionRecord } from '../../shared/types';
 
 const main = [{ type: 'main' as const }];
@@ -95,16 +96,24 @@ async function runRefusal(record: ExecutionRecord | undefined, depth = 0): Promi
   return SYSTEM_MODES.has(record.mode) ? undefined : RUN_REFUSED;
 }
 
+/** The graph a run ran: its own copy (an unsaved draft), else the saved version it started on. */
+function ranWorkflow(record: ExecutionRecord | undefined): Workflow | undefined {
+  if (!record) return undefined;
+  return record.workflow ?? (record.versionId ? getVersion(record.workflowId, record.versionId)?.workflow : undefined);
+}
+
 /**
  * Who may run the nodes that read or write a person's private briefing (docs/work-and-briefings.md#the-nightly-sync, Privacy): a workflow
  * no member made, in a run an owner or admin started, or a schedule's run of a version an owner or admin saved (and, if
  * it is the published one, published) (`runRefusal`). A member could otherwise feed any `userId` through them (an MCP
  * call from Gather Work, a re-run of the nightly run with an older graph, a version of their own published or pinned)
- * and read or send someone else's work.
+ * and read or send someone else's work. Returns the run's record.
  */
-async function requireInstanceFlow(ctx: IExecuteContext): Promise<void> {
-  const refused = workflowRefusal(store.getWorkflow(ctx.getWorkflowId() ?? '')) ?? (await runRefusal(await runRecord(ctx.getExecutionId())));
+async function requireInstanceFlow(ctx: IExecuteContext): Promise<ExecutionRecord | undefined> {
+  const record = await runRecord(ctx.getExecutionId());
+  const refused = workflowRefusal(store.getWorkflow(ctx.getWorkflowId() ?? '')) ?? (await runRefusal(record));
   if (refused) throw new NodeOperationError(refused, { description: 'A person’s briefing is private to them: an owner or admin saves and publishes this workflow, and it runs on its schedule or as theirs.' });
+  return record;
 }
 
 const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
@@ -264,17 +273,29 @@ export const brainSaveBriefingNode = defineNode({
   },
 });
 
-const slackCredentialOf = (ctx: IExecuteContext): SlackCredential | undefined => {
+const SLACK_UNTRUSTED = 'Slack delivery skipped: a member, or nobody, last changed the Slack credential of Deliver Briefing. An owner or admin saves the credential again to deliver by Slack; email delivery goes on.';
+
+/**
+ * The Slack credential the node may deliver with: `untrusted` when its data was last changed by anyone but an active
+ * owner or admin (`updatedBy`, lib/server/credentials/vault.ts). An editor of its project could otherwise point its base
+ * URL or token at a server or workspace of their own, and the nightly run would send everyone's email address and
+ * briefing there without any version changing. The credential is the one the node references in the graph that ran.
+ */
+function slackCredentialOf(ctx: IExecuteContext, record: ExecutionRecord | undefined): { slack?: SlackCredential; untrusted?: boolean } {
+  const refs = ranWorkflow(record)?.nodes.find((node) => node.id === ctx.getNode().id)?.credentials ?? {};
   for (const type of [SLACK_CREDENTIAL, SLACK_OAUTH2_CREDENTIAL]) {
+    let data: JsonObject | undefined;
     try {
-      const data = ctx.getCredentials<JsonObject>(type);
-      if (data) return slackCredential(data);
+      data = ctx.getCredentials<JsonObject>(type);
     } catch {
       // Not set: the other type, or no Slack delivery.
     }
+    if (!data) continue;
+    const id = refs[type]?.id;
+    return id && trusted(vault.lastChangedBy(id)) ? { slack: slackCredential(data) } : { untrusted: true };
   }
-  return undefined;
-};
+  return {};
+}
 
 /** The Slack member behind an email, if Slack knows it (a GET: users.lookupByEmail takes no JSON). */
 async function slackMemberOf(credential: SlackCredential, email: string): Promise<string | undefined> {
@@ -307,9 +328,13 @@ export const brainDeliverBriefingNode = defineNode({
   },
   async execute(ctx) {
     if (!brainEnabled()) return [[]];
-    await requireInstanceFlow(ctx);
+    const record = await requireInstanceFlow(ctx);
     const out: NodeItem[] = [];
-    const slack = slackCredentialOf(ctx);
+    const { slack, untrusted } = slackCredentialOf(ctx, record);
+    if (untrusted) {
+      ctx.logger.warn(SLACK_UNTRUSTED);
+      logger.warn('briefing: Slack delivery skipped, the credential was last changed by a member or nobody', { 'landflow.workflow.id': ctx.getWorkflowId(), 'landflow.execution.id': ctx.getExecutionId() });
+    }
     for (const [index, item] of ctx.getInputData().entries()) {
       const person = personOf(item, index);
       if (!person) continue;
@@ -334,7 +359,8 @@ export const brainDeliverBriefingNode = defineNode({
           logger.warn('briefing delivery failed', { 'landflow.user.id': user.id, error: String(error) });
         }
       }
-      out.push({ json: { ...(item.json as JsonObject), delivered: Boolean(channel), ...(channel && { channel }) }, pairedItem: { item: index } });
+      const warning = untrusted && choice === 'slack' ? SLACK_UNTRUSTED : undefined;
+      out.push({ json: { ...(item.json as JsonObject), delivered: Boolean(channel), ...(channel && { channel }), ...(warning && { warning }) }, pairedItem: { item: index } });
     }
     return [out];
   },

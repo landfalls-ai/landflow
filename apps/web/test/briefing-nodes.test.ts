@@ -47,6 +47,8 @@ const { getPublication } = await import('@/lib/server/publications');
 const { listVersions, versionAuthor } = await import('@/lib/server/versions');
 const { upsertProposal, applyProposal } = await import('@/lib/server/brain/proposals');
 const { planRetry } = await import('@/lib/server/runner/rerun');
+const credentialRoute = await import('@/app/api/credentials/[id]/route');
+const { enableTestAuth } = await import('@/lib/server/auth/test-bypass');
 
 const { defineCredentialType, definePlugin } = await import('@landflow/sdk');
 registry.registerBuiltin(corePlugin);
@@ -99,6 +101,9 @@ const slackUrl = await new Promise<string>((resolve) => {
   }).listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${(slack.address() as { port: number }).port}`));
 });
 
+// The Slack credential the delivery tests reference: an owner made it (Deliver Briefing uses no other).
+const ownerSlack = vault.create({ name: 'Owner’s Slack', type: 'messaging.slackApi', data: { accessToken: 'xoxb-dev-only', baseUrl: slackUrl } }, { actor: owner.id });
+
 afterAll(() => {
   slack.close();
   setMailTransport(undefined);
@@ -116,7 +121,7 @@ const work = (sourceId: string, patch: Record<string, unknown> = {}) => ({ kind:
  * manual run (the execution row the runner would save). Who may run the nodes is tested through the real runner below.
  */
 async function sync(options: { credentials?: Record<string, unknown>; workflowId?: string } = {}) {
-  const workflow = { ...template.workflow, id: options.workflowId ?? 'wf_sync', nodes: template.workflow.nodes.map((n) => (n.id === 'deliver' && options.credentials ? { ...n, credentials: {} } : n)) };
+  const workflow = { ...template.workflow, id: options.workflowId ?? 'wf_sync', nodes: template.workflow.nodes.map((n) => (n.id === 'deliver' && options.credentials ? { ...n, credentials: { 'messaging.slackApi': { id: ownerSlack.id, name: ownerSlack.name } } } : n)) };
   const executionId = `ex_${Math.random().toString(36).slice(2)}`;
   store.saveExecution({ executionId, workflowId: workflow.id, workflowName: workflow.name, mode: 'manual', status: 'running', startedAt: new Date().toISOString(), finishedAt: '', durationMs: 0, runData: {}, executionOrder: [], workflow, startedBy: owner.id } as never);
   return executeWorkflow({
@@ -251,7 +256,7 @@ describe('who may run the nodes', () => {
 describe('who started the run (through the runner)', () => {
   type AnyUser = typeof owner;
   const as = <T,>(user: AnyUser, fn: () => T): T => withAuth({ principal: { user, via: 'test' } }, fn);
-  const slackKey = vault.create({ name: 'Slack for briefings', type: 'messaging.slackApi', data: { accessToken: 'xoxb-dev-only', baseUrl: slackUrl } });
+  const slackKey = vault.create({ name: 'Slack for briefings', type: 'messaging.slackApi', data: { accessToken: 'xoxb-dev-only', baseUrl: slackUrl } }, { actor: owner.id });
   const graph = (id: string, withinDays: number) => ({
     ...template.workflow,
     id,
@@ -627,6 +632,106 @@ describe('delivery', () => {
     const result = await sync();
     expect(result.runData.deliver.at(-1)!.outputs[0][0].json.delivered).toBe(false);
     expect(slackCalls).toEqual([]);
+  });
+});
+
+describe('the Slack credential: who last changed it (through the credential route)', () => {
+  type AnyUser = typeof owner;
+  const as = <T,>(user: AnyUser, fn: () => T): T => withAuth({ principal: { user, via: 'test' } }, fn);
+  // A credential in the team (Alice is an editor there, so the route lets her change it), and an owner-saved, owner-published sync using it.
+  const key = vault.create({ name: 'Team Slack', type: 'messaging.slackApi', data: { accessToken: 'xoxb-dev-only', baseUrl: slackUrl } }, { actor: owner.id });
+  setHomeProject('credential', key.id, team.id);
+  // One from before migration 2092: nobody recorded.
+  const legacy = vault.create({ name: 'Old Slack', type: 'messaging.slackApi', data: { accessToken: 'xoxb-dev-only', baseUrl: slackUrl } });
+  setHomeProject('credential', legacy.id, team.id);
+  const graph = (id: string, credentialId: string) => ({ ...template.workflow, id, nodes: template.workflow.nodes.map((n) => (n.id === 'deliver' ? { ...n, credentials: { 'messaging.slackApi': { id: credentialId, name: 'Slack' } } } : n)) });
+  const ready = async (id: string, credentialId: string) => {
+    as(owner, () => store.saveWorkflow(graph(id, credentialId)));
+    setHomeProject('workflow', id, team.id);
+    await as(owner, () => publishOrRequest({ workflowId: id, action: 'publish', by: owner.id }));
+  };
+  const production = (id: string) => runWorkflow({ workflow: productionWorkflowById(id)!, mode: 'trigger', startNodeId: 'nightly', triggerItems: items({}) });
+  const patch = async (user: AnyUser, body: Record<string, unknown>) => {
+    enableTestAuth(user);
+    try {
+      return await credentialRoute.PATCH(new Request(`http://landflow.test/api/credentials/${key.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }), { params: Promise.resolve({ id: key.id }) });
+    } finally {
+      enableTestAuth();
+    }
+  };
+  const mail: Array<{ to: string; text: string }> = [];
+  const deliverOut = (run: { executionId: string }) => store.loadExecution(run.executionId).then((r) => r!.runData.deliver.at(-1)!);
+  beforeEach(() => {
+    mail.length = 0;
+    setMailTransport({ send: async (m) => void mail.push(m) });
+    recordWork(actorOf(bob), [work('b1', { title: 'PRIVATE-BOB diary' })]);
+    recordWork(actorOf(alice), [work('a1', { title: 'Alice’s own work' })]);
+    setPreferences(bob.id, { briefingDelivery: 'slack' });
+    setPreferences(alice.id, { briefingDelivery: 'email' });
+  });
+  afterAll(() => {
+    setMailTransport(undefined);
+    setPreferences(alice.id, { briefingDelivery: 'none' });
+    setPreferences(bob.id, { briefingDelivery: 'none' });
+  });
+
+  it('R1: a member editor points the credential at her server: nothing reaches it, Slack is skipped with a warning, email still goes', async () => {
+    await ready('wf_slack_r1', key.id);
+    const got: string[] = [];
+    const evil = createServer((request, response) => {
+      got.push(request.url ?? '');
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({ ok: true, user: { id: 'UEVIL' } }));
+    });
+    const evilUrl = await new Promise<string>((resolve) => evil.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${(evil.address() as { port: number }).port}`)));
+    try {
+      const response = await patch(alice, { data: { baseUrl: evilUrl } });
+      expect(response.status).toBe(200);
+      expect(vault.lastChangedBy(key.id)).toBe(alice.id);
+      expect(((await response.json()) as { credential: { updatedBy?: string } }).credential.updatedBy).toBe(alice.id);
+      const run = await production('wf_slack_r1');
+      expect(run.error?.message).toBeUndefined();
+      expect(run.status).toBe('success');
+      expect(got).toEqual([]);
+      expect(slackCalls).toEqual([]);
+      expect(rowsFor(bob.id, 'ready')).toHaveLength(1);
+      const out = await deliverOut(run);
+      const bobs = out.outputs![0].find((i) => i.json.userId === bob.id)!.json;
+      expect(bobs).toMatchObject({ delivered: false, warning: expect.stringMatching(/^Slack delivery skipped/) });
+      expect(String(bobs.warning)).not.toMatch(/@|PRIVATE/);
+      expect(JSON.stringify(out.logs)).toContain('Slack delivery skipped');
+      expect(mail.map((m) => m.to)).toEqual(['alice@sync.test']);
+    } finally {
+      evil.close();
+    }
+  });
+
+  it('an owner saving the credential again makes it trusted; a rename alone or a key rotation keeps who changed it', async () => {
+    await ready('wf_slack_owner', key.id);
+    expect((await patch(owner, { data: { baseUrl: slackUrl } })).status).toBe(200);
+    expect(vault.lastChangedBy(key.id)).toBe(owner.id);
+    expect((await patch(alice, { name: 'Team Slack (renamed)' })).status).toBe(200);
+    expect(vault.rotateCredentials().failed).toEqual([]);
+    expect(vault.lastChangedBy(key.id)).toBe(owner.id);
+    const run = await production('wf_slack_owner');
+    expect(run.status).toBe('success');
+    expect(slackCalls.map((c) => c.url)).toEqual(['/users.lookupByEmail?email=bob%40sync.test', '/chat.postMessage']);
+    expect(mail.map((m) => m.to)).toEqual(['alice@sync.test']);
+  });
+
+  it('a credential with no recorded changer (from before 2092, or changed with no person behind it) is not used', async () => {
+    await ready('wf_slack_legacy', legacy.id);
+    expect(vault.lastChangedBy(legacy.id)).toBeUndefined();
+    const run = await production('wf_slack_legacy');
+    expect(run.error?.message).toBeUndefined();
+    expect(run.status).toBe('success');
+    expect(slackCalls).toEqual([]);
+    expect((await deliverOut(run)).outputs![0].find((i) => i.json.userId === bob.id)!.json.delivered).toBe(false);
+    expect(mail.map((m) => m.to)).toEqual(['alice@sync.test']);
+    // A change with no person behind it records nobody, even on an owner's credential.
+    vault.update(key.id, { data: { baseUrl: slackUrl } });
+    expect(vault.lastChangedBy(key.id)).toBeUndefined();
+    vault.update(key.id, { data: { baseUrl: slackUrl } }, { actor: owner.id });
   });
 });
 

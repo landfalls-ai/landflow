@@ -126,6 +126,17 @@ describe('key ring', () => {
     expect(moved).toEqual({ resealed: 1, current: 0, failed: ['cred_b'] });
   });
 
+  it('rotation keeps who last changed a credential: re-sealing changes no data', () => {
+    const { rows, backend } = memoryBackend([{ ...stored('cred_o', { token: 'ooo' }), createdBy: 'usr_owner', updatedBy: 'usr_owner' }, stored('cred_n', { token: 'nnn' })]);
+    const vault = new CredentialVault({ dir: dataDir, backend });
+    expect(vault.rotateCredentials()).toEqual({ resealed: 2, current: 0, failed: [] });
+    expect(rows.get('cred_o')).toMatchObject({ createdBy: 'usr_owner', updatedBy: 'usr_owner', data: { v: 2 } });
+    expect(vault.lastChangedBy('cred_o')).toBe('usr_owner');
+    // Nobody stays nobody: a rotation (run by an admin) claims no credential.
+    expect(rows.get('cred_n')!.updatedBy).toBeUndefined();
+    expect(vault.lastChangedBy('cred_n')).toBeUndefined();
+  });
+
   it('a credential whose write fails during rotation is reported and keeps its stored seal in memory', () => {
     const { rows, backend } = memoryBackend([stored('cred_w', { token: 'www' })]);
     const before = rows.get('cred_w')!.data;

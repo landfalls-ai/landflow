@@ -180,6 +180,22 @@ lists: the reads use the ledger's one visibility rule. All five nodes read or wr
   that says why.
 - **The brain off** (`LANDFLOW_BRAIN=false`): every node returns no items, from whichever node a run starts.
 
+**Where the text goes.** Deliver Briefing sends people's email addresses (to look them up in Slack) and briefings to the
+base URL and token its Slack credential holds, and an editor of the credential's project may change those without any
+version changing. So every credential records who created it (`createdBy`) and who last changed its data (`updatedBy`,
+migration 2092; the same fields in `credentials.json` in files mode): a save in the form, a Connect or Get token (the
+person who started it, carried in the signed OAuth state), a Disconnect, a Git or environment pull (the person who
+pulled). A change with no person behind it records nobody; a token refresh, an error note and an encryption key rotation
+change no settings and keep the last changer; a rename or a rate limit alone keeps it too. Deliver Briefing uses the Slack
+credential its node references only when that changer is an active owner or admin. Otherwise it sends nothing by Slack,
+for everyone: each person who chose Slack is passed on with `delivered: false` and a `warning`, and the run log says
+"Slack delivery skipped: a member, or nobody, last changed the Slack credential …" (no names, addresses or text). An
+owner or admin saves the credential to trust it again. Credentials from before migration 2092 have no recorded changer,
+so they need that save once. Email goes through the host's SMTP settings (`LANDFLOW_SMTP_*`, environment only, which no
+member can change) and is sent as before. Write Briefing's model comes from server settings only (`LANDFLOW_BRAIN_MODEL`
+with `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` / `OPENAI_BASE_URL` or `OLLAMA_URL`), never from a credential, so no member
+can point it elsewhere either.
+
 A person's choice of Slack is consent to the instance's Slack, not to a colleague's. A webhook or form trigger in front
 of these nodes lets whoever calls it choose the items, so keep the template's Schedule. An owner's or admin's re-run
 delivers again: nothing records that a day's briefing was sent.

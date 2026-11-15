@@ -76,6 +76,19 @@ export interface StoredCredential {
   rateLimit?: CredentialRateLimitSetting;
   createdAt: string;
   updatedAt: string;
+  /** The person who created it (absent: nobody, or a credential from before migration 2092). */
+  createdBy?: string;
+  /**
+   * The person who last changed its data (creating it counts): a form save, a Connect, a Git or environment pull. A change
+   * with no person behind it clears it; a token refresh, an error note and a key rotation keep it. Absent: nobody, or a
+   * credential from before migration 2092. The briefing nodes use a credential only when this is an active owner or admin.
+   */
+  updatedBy?: string;
+}
+
+/** Who makes a change to a credential's data: the person, or undefined for nobody (never the request around it). */
+export interface CredentialChange {
+  actor: string | undefined;
 }
 
 /** A rate limit as saved: a whole number of calls, an interval of 0.1 s to a day; anything else is no limit. */
@@ -85,6 +98,12 @@ export function cleanRateLimit(value: unknown): CredentialRateLimitSetting | und
   const intervalSeconds = Number(v?.intervalSeconds);
   if (!(limit >= 1) || !(intervalSeconds >= 0.1)) return undefined;
   return { limit: Math.min(limit, 100_000), intervalSeconds: Math.min(intervalSeconds, 86_400) };
+}
+
+/** Record who changed a credential's data: the person, or nobody (the field is removed). */
+function changedBy(credential: StoredCredential, change: CredentialChange) {
+  if (change.actor) credential.updatedBy = change.actor;
+  else delete credential.updatedBy;
 }
 
 /** `v2.<kid>.<iv>.<tag>.<ciphertext>` or the older `v1.<iv>.<tag>.<ciphertext>` as a sealed value; undefined for anything else. */
@@ -207,6 +226,8 @@ type CredentialRow = {
   rate_limit?: string | null;
   created_at: string;
   updated_at: string;
+  created_by?: string | null;
+  updated_by?: string | null;
 };
 
 const credentialRow = (credential: StoredCredential): CredentialRow => ({
@@ -218,6 +239,8 @@ const credentialRow = (credential: StoredCredential): CredentialRow => ({
   rate_limit: credential.rateLimit ? JSON.stringify(credential.rateLimit) : null,
   created_at: credential.createdAt,
   updated_at: credential.updatedAt,
+  created_by: credential.createdBy ?? null,
+  updated_by: credential.updatedBy ?? null,
 });
 
 /** The `credentials` table (database mode, migration 1300): one row per credential; `file` is imported once. */
@@ -243,7 +266,7 @@ export class CredentialTable implements CredentialBackend {
     this.dirty = false;
     return db.all<CredentialRow>('SELECT * FROM credentials').flatMap((row) => {
       try {
-        return [{ id: row.id, name: row.name, type: row.type, secretFields: JSON.parse(row.secret_fields) as string[], data: JSON.parse(row.data) as Sealed, ...(cleanRateLimit(row.rate_limit && JSON.parse(row.rate_limit)) && { rateLimit: cleanRateLimit(JSON.parse(row.rate_limit!)) }), createdAt: row.created_at, updatedAt: row.updated_at }];
+        return [{ id: row.id, name: row.name, type: row.type, secretFields: JSON.parse(row.secret_fields) as string[], data: JSON.parse(row.data) as Sealed, ...(cleanRateLimit(row.rate_limit && JSON.parse(row.rate_limit)) && { rateLimit: cleanRateLimit(JSON.parse(row.rate_limit!)) }), createdAt: row.created_at, updatedAt: row.updated_at, ...(row.created_by && { createdBy: row.created_by }), ...(row.updated_by && { updatedBy: row.updated_by }) }];
       } catch {
         return [];
       }
@@ -422,8 +445,8 @@ export class CredentialVault {
   }
 
   private summary(credential: StoredCredential, usedBy: Map<string, CredentialSummary['usedBy']>): CredentialSummary {
-    const { id, name, type, createdAt, updatedAt, rateLimit } = credential;
-    return { id, name, type, createdAt, updatedAt, usedBy: usedBy.get(id) ?? [], ...(rateLimit && { rateLimit }), ...this.oauth2StatusOf(credential) };
+    const { id, name, type, createdAt, updatedAt, createdBy, updatedBy, rateLimit } = credential;
+    return { id, name, type, createdAt, updatedAt, ...(createdBy && { createdBy }), ...(updatedBy && { updatedBy }), usedBy: usedBy.get(id) ?? [], ...(rateLimit && { rateLimit }), ...this.oauth2StatusOf(credential) };
   }
 
   /** core.oAuth2Api, a type extending it, or (its plugin offline) a credential that holds a token. */
@@ -489,8 +512,9 @@ export class CredentialVault {
   /**
    * `options.id` keeps a given id (a promoted definition, planned before it is created); `options.partial` skips the
    * required-field check (a promoted definition comes without its secrets, which are filled in on this instance).
+   * `options.actor`: who creates it (createdBy and updatedBy); undefined records nobody.
    */
-  create(input: { name: string; type: string; data: JsonObject; rateLimit?: CredentialRateLimitSetting | null }, options: { id?: string; partial?: boolean } = {}): CredentialDetail {
+  create(input: { name: string; type: string; data: JsonObject; rateLimit?: CredentialRateLimitSetting | null }, options: { id?: string; partial?: boolean } & Partial<CredentialChange> = {}): CredentialDetail {
     const info = registry.credentialType(input.type);
     if (!info) throw new CredentialError(`Unknown credential type "${input.type}" — is its plugin running?`);
     if (options.id && this.credentials.has(options.id)) throw new CredentialError(`A credential with id ${options.id} exists already`, 409);
@@ -507,6 +531,7 @@ export class CredentialVault {
       ...(cleanRateLimit(input.rateLimit) && { rateLimit: cleanRateLimit(input.rateLimit) }),
       createdAt: now,
       updatedAt: now,
+      ...(options.actor && { createdBy: options.actor, updatedBy: options.actor }),
     };
     this.credentials.set(credential.id, credential);
     this.persist({ saved: credential });
@@ -538,9 +563,10 @@ export class CredentialVault {
 
   /**
    * Fields in `data` replace the saved ones. A secret left empty keeps its saved
-   * value (the form never receives it); `null` clears a field.
+   * value (the form never receives it); `null` clears a field. With `data`, `change.actor` becomes `updatedBy` (none:
+   * nobody); a rename or a rate limit alone leaves it.
    */
-  update(id: string, input: { name?: string; data?: Record<string, unknown>; rateLimit?: CredentialRateLimitSetting | null }): CredentialDetail {
+  update(id: string, input: { name?: string; data?: Record<string, unknown>; rateLimit?: CredentialRateLimitSetting | null }, change: CredentialChange = { actor: undefined }): CredentialDetail {
     const credential = this.credentials.get(id);
     if (!credential) throw new CredentialError('Credential not found', 404);
     const descriptor = registry.credentialType(credential.type)?.descriptor;
@@ -549,6 +575,7 @@ export class CredentialVault {
       if (descriptor) this.validate(descriptor, merged);
       credential.data = this.seal(merged, credential.id);
       credential.secretFields = [...new Set([...credential.secretFields, ...secretNames(descriptor)])];
+      changedBy(credential, change);
     }
     if (input.name?.trim()) credential.name = input.name.trim();
     // null (or a limit of 0) takes the rate limit off.
@@ -575,6 +602,11 @@ export class CredentialVault {
       seen.add(ref.id);
       return credential?.rateLimit ? [{ key: `credential:${credential.id}`, name: credential.name, limit: credential.rateLimit }] : [];
     });
+  }
+
+  /** Who last changed a credential's data (see StoredCredential.updatedBy), or undefined: nobody, or no such credential. */
+  lastChangedBy(id: string): string | undefined {
+    return this.credentials.get(id)?.updatedBy;
   }
 
   delete(id: string): boolean {
@@ -707,22 +739,28 @@ export class CredentialVault {
     return oauthOrigins.get(data);
   }
 
-  private writeOAuth2(credential: StoredCredential, change: (data: JsonObject) => void) {
+  /** `by`: a person's change (Connect, Disconnect, Get token) records them; without it (a refresh, an error note) the changer stays. */
+  private writeOAuth2(credential: StoredCredential, change: (data: JsonObject) => void, by?: CredentialChange) {
     const data = this.open(credential);
     change(data);
     credential.data = this.seal(data, credential.id);
+    if (by) changedBy(credential, by);
     credential.updatedAt = new Date().toISOString();
     this.persist({ saved: credential });
   }
 
-  /** Store a token (after Connect, a refresh or a client credentials grant); `account` replaces the shown account when given. */
-  saveOAuth2Token(id: string, token: StoredToken, account?: string): CredentialDetail {
+  /** Store a token: `by` names the person who asked for it (Connect, Get token; without it the changer stays); `account` replaces the shown account when given. */
+  saveOAuth2Token(id: string, token: StoredToken, account?: string, by?: CredentialChange): CredentialDetail {
     const { credential } = this.oauth2Credential(id);
-    this.writeOAuth2(credential, (data) => {
-      data[TOKEN_FIELD] = token;
-      if (account) data[ACCOUNT_FIELD] = account;
-      delete data[ERROR_FIELD];
-    });
+    this.writeOAuth2(
+      credential,
+      (data) => {
+        data[TOKEN_FIELD] = token;
+        if (account) data[ACCOUNT_FIELD] = account;
+        delete data[ERROR_FIELD];
+      },
+      by,
+    );
     return this.get(id)!;
   }
 
@@ -738,11 +776,15 @@ export class CredentialVault {
   }
 
   /** Forget the token (Disconnect). The client settings stay. */
-  disconnectOAuth2(id: string): CredentialDetail {
+  disconnectOAuth2(id: string, by?: CredentialChange): CredentialDetail {
     const { credential } = this.oauth2Credential(id);
-    this.writeOAuth2(credential, (data) => {
-      for (const field of RESERVED_FIELDS) if (field !== META_FIELD) delete data[field];
-    });
+    this.writeOAuth2(
+      credential,
+      (data) => {
+        for (const field of RESERVED_FIELDS) if (field !== META_FIELD) delete data[field];
+      },
+      by,
+    );
     return this.get(id)!;
   }
 

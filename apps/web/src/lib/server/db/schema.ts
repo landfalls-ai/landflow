@@ -1652,6 +1652,18 @@ export const MIGRATIONS: Migration[] = [
     addColumns: [{ table: 'workflow_versions', column: 'author', definition: 'TEXT' }],
     statements: [],
   },
+  // Who created a credential and who last changed its data (lib/server/credentials/vault.ts; files mode keeps the same
+  // fields in credentials.json). NULL is nobody, and every credential from before this; the briefing nodes trust a
+  // credential only when an owner or admin last changed it.
+  {
+    version: 2092,
+    name: 'credentials_changed_by',
+    addColumns: [
+      { table: 'credentials', column: 'created_by', definition: 'TEXT' },
+      { table: 'credentials', column: 'updated_by', definition: 'TEXT' },
+    ],
+    statements: [],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */

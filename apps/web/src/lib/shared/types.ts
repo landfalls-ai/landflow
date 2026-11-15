@@ -119,6 +119,10 @@ export interface CredentialSummary {
   type: string;
   createdAt: string;
   updatedAt: string;
+  /** Who created it (absent: nobody recorded). */
+  createdBy?: string;
+  /** Who last changed its data (absent: nobody recorded, or a change with no person behind it). */
+  updatedBy?: string;
   /** Workflows with a node that references this credential. */
   usedBy: Array<{ workflowId: string; workflowName: string }>;
   /** At most `limit` calls per `intervalSeconds` across every node and run that uses it (lib/server/credentials/vault.ts). */

@@ -54,6 +54,8 @@ external secrets providers, transport connections) use AES-256-GCM with a key ri
   3. As the owner, `POST /api/settings/encryption/rotate` (session only; audit event `encryption.rotate`), or stop the host and run
      `pnpm --filter @landflow/web rotate-key` with the same environment. It re-seals credentials and the stores listed in
      `credentials/rotate.ts` one value at a time, skips what is on the primary key, and can be run again after an interruption.
+     Re-sealing changes no data: each credential keeps who last changed it (`updatedBy`), so the rotation neither trusts nor
+     untrusts a credential for the briefing nodes ([work-and-briefings.md](../work-and-briefings.md#the-nightly-sync)).
   4. The answer has `resealed`, `current`, `failed` (what no key opened) and `done`. **Never remove a key before rotate reports
      `done: true`.** Then drop it from the ring and restart.
      A value sealed under a key that is no longer anywhere (a lost key, or data copied from another instance) stays in
