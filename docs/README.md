@@ -32,6 +32,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | Engine: data model, durable runtime, queue mode and HA, triggers and flow nodes (Ask a Person), debounce and rate limits, Code node | [features/engine.md](features/engine.md) | [architecture.md](architecture.md) |
 | Plugins: the node interface in each SDK, autodiscovery, branding | [plugins.md](plugins.md) | [protocol.md](protocol.md) |
 | Transports: HTTP, gRPC, ten brokers, Auto, the claim check, MCP faces | [transports.md](transports.md) | [protocol.md](protocol.md) §14–15 |
+| LLM gateway (LiteLLM): run it, image pin, models, Kubernetes example | [llm-gateway.md](llm-gateway.md) | [deployment.md](deployment.md#the-llm-gateway) |
 | MCP gateway (agentgateway): sync, identity, tokens | [mcp-gateway.md](mcp-gateway.md) | [transports.md](transports.md) |
 | AI: AI Agent and sub-nodes, hosted chat and widget, RAG, guardrails, evaluations, MCP | [features/ai.md](features/ai.md) | |
 | Standalone agents: personas, skills, capabilities, channels (Telegram, Slack, Teams), schedules, memory | [agents.md](agents.md) | |
@@ -76,6 +77,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
   webhooks, messaging and MCP mapping.
 - [transports.md](transports.md): the transport plan as built: generic brokers, Auto, the bridge, MCP faces and the
   bundled gateway.
+- [llm-gateway.md](llm-gateway.md): LiteLLM as the one door for model calls: the profile, the pinned image, models, the Kubernetes example.
 - [mcp-gateway.md](mcp-gateway.md): agentgateway in Landflow, what was verified and how to rerun the spike.
 - [observability.md](observability.md): the OpenTelemetry contract: span names, attributes, metrics, logs.
 
