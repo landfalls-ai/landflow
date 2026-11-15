@@ -112,6 +112,9 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (path === '/api/mentions') return { scope: 'workflows:read' };
   // Entities (initiatives, people, customers, systems): the routes check the entity's project, like suggestions.
   if (under('/api/entities')) return { scope: read ? 'workflows:read' : 'workflows:write' };
+  // PR01: practices (docs/practices.md). Approving, rejecting, retiring and waiving are a person's (the handler checks the role).
+  if (/^\/api\/practices\/[^/]+\/(approve|retire|waivers)$/.test(path) || /^\/api\/practices\/[^/]+\/versions\/[^/]+\/reject$/.test(path)) return { scope: 'admin', sessionOnly: true };
+  if (under('/api/practices')) return { scope: read ? 'brain:read' : 'brain:write' };
   return { scope: 'admin', fallback: true };
 }
 
