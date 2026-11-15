@@ -203,8 +203,7 @@ describe('An A2A capability', () => {
     await withRunContext(context(), () => t.invoke({ message: 'next' }, ctx));
     const [one, two] = sends().map(textOf);
     expect(one).toContain(INDEX);
-    expect(one.indexOf(BLOCK)).toBeLessThan(one.indexOf(INDEX));
-    expect(one.indexOf(INDEX)).toBeLessThan(one.indexOf('Practices followed: [helm'));
+    expect(one).toBe(`${BLOCK}\n\n${INDEX}\n\n${PRACTICES_INDEX_LINE}\n\nPractices followed: [helm/chart-location@1]`);
     expect(two).toBe('next');
     expect(rows.filter((r) => r.kind === 'cited')).toHaveLength(1);
     expect(rows[0]).toMatchObject({ executionId: 'exec_cap' });
@@ -248,7 +247,8 @@ describe('A team', () => {
     expect(record.error?.message ?? record.status).toBe('success');
     const [first, second] = sends().map(textOf);
     expect(first.split(PRACTICES_INDEX_LINE)).toHaveLength(2);
-    expect(first.indexOf(BLOCK)).toBeLessThan(first.indexOf(INDEX));
+    expect(first.split(BLOCK)).toHaveLength(2);
+    expect(first.startsWith(`${BLOCK}\n\n${INDEX}\n\n${PRACTICES_INDEX_LINE}\n\n`)).toBe(true);
     expect(first.indexOf(INDEX)).toBeLessThan(first.indexOf('Practices followed: [helm'));
     expect(second).not.toContain(PRACTICES_INDEX_LINE);
     const cited = rows.filter((r) => r.kind === 'cited');

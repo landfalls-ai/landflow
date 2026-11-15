@@ -51,9 +51,6 @@ export function withPracticesIndex(text: string, index: string, block?: string):
   return `${added}\n\n${text}`;
 }
 
-/** Whether a request already carries an index (a team put it there): the capability under it adds none and records nothing. */
-export const carriesPracticesIndex = (text: string): boolean => text.includes(PRACTICES_INDEX_LINE);
-
 /** Records the indexed practices a remote answer cites, against the run. Never throws. */
 export function recordRemoteCitations(index: PracticesIndex | undefined, answer: string, executionId?: string): void {
   if (!index) return;

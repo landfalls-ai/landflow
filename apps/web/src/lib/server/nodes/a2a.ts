@@ -213,6 +213,8 @@ interface Remembered {
   contextId: string;
   taskId?: string;
   question?: { id: string; questions: string[] };
+  /** The practices indexed to this conversation, kept until the answer that completes it. */
+  practices?: PracticesIndex;
 }
 
 /** The question a calling agent has to answer, as its tool result. */
@@ -404,6 +406,7 @@ export const a2aAgentNode = defineNode({
             // The remote agent asked a question last time: this call answers it, on the same task.
             const request: Extract<HitlRequest, { type: 'ask_user_request' }> = { type: 'ask_user_request', id: remembered.question.id, questions: remembered.question.questions };
             const answer = answerMessage({ id: remembered.taskId, contextId: remembered.contextId }, request, [text]);
+            practiceIndex = remembered.practices;
             result = await callAgent(endpoint, card, { ...answer, metadata: { ...metadata, ...answer.metadata } }, send);
           } else {
             // A Landflow agent on kagent with the landflow-harness mod reports its real usage, cost and tool calls here.
@@ -453,20 +456,20 @@ export const a2aAgentNode = defineNode({
         }
         if (operation !== 'cancelTask') assertNotFailed(card, result, i);
         const item = withTraced(resultItem(card, result), traced);
-        // PR07: the practices the answer cites, among those indexed, are recorded against the run.
-        if (practiceIndex) recordRemoteCitations(practiceIndex, String(item.reply ?? ''), ctx.getExecutionId());
         if (asTool && operation === 'sendMessage') {
           const contextId = result.kind === 'message' ? result.message.contextId : result.task.contextId;
           const request = result.kind === 'task' ? hitlRequestOf(result.task) : undefined;
           const waiting = result.kind === 'task' && result.task.status.state === 'TASK_STATE_INPUT_REQUIRED' && request?.type !== 'tool_approval_request';
           if (waiting && questionsToCaller && result.kind === 'task') {
             const questions = request?.type === 'ask_user_request' ? questionTexts(request) : [statusText(result.task) ?? 'The agent needs more input'];
-            ctx.setNodeState!({ contextId: result.task.contextId, taskId: result.task.id, ...(request?.type === 'ask_user_request' && { question: { id: request.id, questions } }) });
+            ctx.setNodeState!({ contextId: result.task.contextId, taskId: result.task.id, ...(practiceIndex && { practices: practiceIndex as unknown as JsonObject }), ...(request?.type === 'ask_user_request' && { question: { id: request.id, questions } }) });
             delete item.pause;
             item.reply = questionText(card, questions, toolName);
             item.asksCaller = true;
           } else if (contextId) ctx.setNodeState!({ contextId });
         }
+        // PR07: the practices the answer cites, among those indexed, are recorded against the run, on the answer that completes the conversation (not the question to the caller).
+        if (practiceIndex && !item.asksCaller) recordRemoteCitations(practiceIndex, String(item.reply ?? ''), ctx.getExecutionId());
         out.push({ json: item, pairedItem: { item: i } });
       } catch (error) {
         const failure = error instanceof A2aError ? new NodeOperationError(error.message, { itemIndex: i }) : error;

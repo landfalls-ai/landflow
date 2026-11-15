@@ -11,7 +11,7 @@ import { binaryAccessFor } from '../binary/access';
 import { withProjectContext } from '../nodes/a2a';
 import { binaryToolImages } from '../nodes/tool-images';
 import { currentRunContext } from '../project-context/seam';
-import { carriesPracticesIndex, practicesIndexFor, recordRemoteCitations, withPracticesIndex } from '../practices/remote';
+import { practicesIndexFor, recordRemoteCitations, withPracticesIndex, type PracticesIndex } from '../practices/remote';
 import { holdSessionImages } from './session-images';
 import type {
   A2aAgentToolConfig,
@@ -315,6 +315,17 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
    * landflow-harness mod reports what it does to a trace for this call (a2a/agent-trace.ts): its real usage, cost, tool
    * calls and guardrail stops replace the estimate.
    */
+  /** The practices indexed to a session's conversation, kept until the answer that completes it (a pause or a question comes first). In memory: a restart in between loses them, and `practice_cite` still records. */
+  const indexed = new Map<string, PracticesIndex>();
+  /** Records the citations of an answer that completes the conversation; a pause or a question to the caller keeps the index for the answer to come. */
+  function settle(outcome: ToolOutcome, ctx: ToolContext): ToolOutcome {
+    const index = indexed.get(ctx.session.id);
+    if (!index || outcome.pause || ctx.session.remoteContexts?.[config.id]?.question) return outcome;
+    indexed.delete(ctx.session.id);
+    recordRemoteCitations(index, typeof outcome.output === 'string' ? outcome.output : JSON.stringify(outcome.output ?? ''), ctx.session.execution?.executionId);
+    return outcome;
+  }
+
   async function run(message: OutgoingMessage, ctx: ToolContext, rejections = 0): Promise<ToolOutcome> {
     const metadata = { ...landflowTags({ 'agent.id': ctx.agent.id, 'session.id': ctx.session.id, 'run.id': ctx.runId }), ...message.metadata };
     // In a run the member's asks (a push to main its guard puts to a person) show under this request.
@@ -407,27 +418,28 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
       const known = ctx.session.remoteContexts?.[config.id];
       if (known?.taskId && known.question) {
         const request: Extract<HitlRequest, { type: 'ask_user_request' }> = { type: 'ask_user_request', id: known.question.id, questions: known.question.questions };
-        return run(answerMessage({ id: known.taskId, contextId: known.contextId }, request, [text]), ctx);
+        return settle(await run(answerMessage({ id: known.taskId, contextId: known.contextId }, request, [text]), ctx), ctx);
       }
       // The first message of a conversation carries the project's compact block (docs/a2a.md); follow-ups go as they are, and the capability's option Project context: Off sends nothing.
       const fresh = !known?.contextId && !known?.taskId && options.projectContext !== 'off';
-      // PR07: a Landflow agent on kagent also gets the index of the practices that apply (a team's request already carries it).
+      // PR07: a Landflow agent on kagent also gets the index of the practices that apply, after the project block the text may already begin with (a team's runtime puts it there).
       const brandNew = !known?.contextId && !known?.taskId;
-      const index = brandNew && !carriesPracticesIndex(text) ? practicesIndexFor(config.parameters.agentUrl as string, options.practices, text) : undefined;
-      const { text: sent, tags } = withProjectContext(withPracticesIndex(text, index?.text ?? ''), fresh ? currentRunContext() : undefined);
+      const index = brandNew ? practicesIndexFor(config.parameters.agentUrl as string, options.practices, text) : undefined;
+      const block = currentRunContext()?.compact;
+      const { text: sent, tags } = withProjectContext(withPracticesIndex(text, index?.text ?? '', block), fresh ? currentRunContext() : undefined);
+      if (index) indexed.set(ctx.session.id, index);
       const outcome = await run({ text: sent, ...(Object.keys(tags).length > 0 && { metadata: tags }), ...(known?.contextId && { contextId: known.contextId }), ...(known?.taskId && { taskId: known.taskId }) }, ctx);
-      if (index && !outcome.pause) recordRemoteCitations(index, typeof outcome.output === 'string' ? outcome.output : JSON.stringify(outcome.output ?? ''), ctx.session.execution?.executionId);
-      return outcome;
+      return settle(outcome, ctx);
     },
     async resume(state, approved, ctx, answer) {
       const { taskId, contextId, request, question } = state as { taskId: string; contextId: string; request?: Extract<HitlRequest, { type: 'tool_approval_request' }>; question?: { id: string; questions: string[] } };
       // A question a person answered: the answer goes to the same task (as a plain reply when the agent asked without the extension).
       if (question) {
         const text = answer?.trim() || 'No one answered: carry on with what you have and say what is still open.';
-        if (!question.id) return run({ text, contextId, taskId }, ctx);
-        return run(answerMessage({ id: taskId, contextId }, { type: 'ask_user_request', id: question.id, questions: question.questions }, [text]), ctx);
+        if (!question.id) return settle(await run({ text, contextId, taskId }, ctx), ctx);
+        return settle(await run(answerMessage({ id: taskId, contextId }, { type: 'ask_user_request', id: question.id, questions: question.questions }, [text]), ctx), ctx);
       }
-      return run(approvalMessage({ id: taskId, contextId }, request!, approved, approved ? undefined : 'A person rejected this tool call.'), ctx);
+      return settle(await run(approvalMessage({ id: taskId, contextId }, request!, approved, approved ? undefined : 'A person rejected this tool call.'), ctx), ctx);
     },
   };
 }

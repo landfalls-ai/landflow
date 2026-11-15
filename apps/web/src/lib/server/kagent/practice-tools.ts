@@ -17,6 +17,8 @@ import { runContextProvider } from '../project-context/seam';
 export const PRACTICE_TOOL_NAMES = ['practices_for', 'practice_cite'] as const;
 export const isPracticeTool = (name: string): boolean => (PRACTICE_TOOL_NAMES as readonly string[]).includes(name);
 
+/** The most topics one `practices_for` call takes (as the instance MCP tools do). */
+const TOPICS_MAX = 5;
 const RUN = { type: 'string', description: 'The run key from your request, only when several runs are asking you at once' };
 
 export const practiceToolSpecs = [
@@ -61,8 +63,11 @@ function bind(agent: Agent, key: unknown): Bound | { error: string } {
     const projectId = runContextProvider()?.resolve({ caller: 'agent', agentId: agent.id }).projectId;
     return projectId ? { projectId } : {};
   }
+  const open = openCallsFor(agent);
+  if (named && !open.some((call) => call.key === named.trim())) return { error: `The run key ${named.trim()} is not open on this agent: use the one in the request you were given` };
+  if (!named && open.length > 1) return { error: `${open.length} team runs are asking this agent at once: pass "run" with the run key from your request (${open.map((call) => call.key).join(', ')})` };
   const found = resolveCall(agent, named);
-  if ('error' in found) return { error: found.error.replace(/notebook run key/g, 'run key').replace(/ so the note lands on the right run/, '') };
+  if ('error' in found) return { error: found.error };
   return { ...(found.call.binding.projectId && { projectId: found.call.binding.projectId }), executionId: found.call.binding.runId };
 }
 
@@ -92,7 +97,7 @@ export function practiceToolCall(agent: Agent, name: string, args: Record<string
       const handle = typeof args.handle === 'string' ? args.handle.trim() : '';
       const repo = typeof args.repo === 'string' && args.repo.trim() ? args.repo.trim() : undefined;
       const paths = strings(args.paths, PRACTICE_LIMITS.paths);
-      const topics = strings(args.topics, 5);
+      const topics = strings(args.topics, TOPICS_MAX);
       const given = runPractices(undefined, { ...(projectId && { projectId }), agentId: agent.id, ...(repo && { repo }), ...(paths && { paths }), ...(topics && { topics }), size: 'full' }).practices;
       const chosen = handle ? given.filter((p) => p.handle === handle) : given;
       if (!chosen.length) return { text: handle ? `No approved practice ${handle} applies here` : 'No approved practice applies here' };

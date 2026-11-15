@@ -59,8 +59,15 @@ function agentMcpServer(agent: Agent, config: AgentConfig, version: number, sign
   }));
   server.server.setRequestHandler('tools/call', async (request) => {
     if (isPracticeTool(request.params.name) && part !== 'approval') {
-      const answer = practiceToolCall(agent, request.params.name, (request.params.arguments ?? {}) as Record<string, unknown>);
-      return textResult(answer.text, answer.isError);
+      const named = request.params.name;
+      const args = (request.params.arguments ?? {}) as Record<string, unknown>;
+      let failed: boolean | undefined;
+      const outcome = await traceToolCall({ agentId: agent.id, agentName: agent.name, tool: named, callId: `kagent_${nanoid(10)}`, kind: 'notebook' }, async () => {
+        const answer = practiceToolCall(agent, named, args);
+        failed = answer.isError;
+        return { output: answer.text };
+      });
+      return textResult(outcome.output, failed);
     }
     const tool = (await tools()).find((t) => t.name === request.params.name);
     if (!tool) return textResult(`The agent “${config.name}” has no tool ${request.params.name}`, true);

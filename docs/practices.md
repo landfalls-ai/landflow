@@ -179,7 +179,13 @@ resource: an approval or a retirement takes effect with the next request.
   asking the agent, as the notebook tools are: one open team call, the one the `run` key names when several are open, or
   the agent's home project when none is. Neither grants or denies a tool.
 - **Citations in answers.** When a remote answer comes back, the practices from the index it cites in its trailing
-  `Practices followed:` line are recorded as `cited` against the run.
+  `Practices followed:` line are recorded as `cited` against the run, on the answer that completes the conversation: an
+  answer that comes after a tool approval, a person's answer or a question to the caller is scanned too (kept in memory,
+  or in the node's state for an A2A node used as a tool). An agent that both calls `practice_cite` and ends with the line
+  gets two `cited` rows for the same practice and run; count distinct practices. `practice_cite` takes any approved
+  practice of the project or organization, not only what `practices_for` would give this agent.
+- **Order on a team.** A team's remote member gets the project block, then the index, then the team's ancestry line, goal
+  and the task.
 
 Wave P1 reaches only the Claude Code mod and MCP clients. Wave P2 adds Landflow agents (the block after "Where this
 work fits"), kagent agents (an index line with each request and the `practices_for` tool), and Check Practices.
