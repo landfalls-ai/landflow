@@ -2206,5 +2206,5 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
 ## Token spend wave 11: telemetry out (SP04, with SP16)
 
 - The overview dashboard gains an "AI" row (tokens by type, Anthropic cache hit rate, cost by purpose) and
-  `prometheus-rules.yml` the 14th alert, `LandflowAiCacheHitRateDropped` (volume-guarded, promtool-tested). A test
+  `prometheus-rules.yml` the 14th alert, `LandflowAiCacheHitRateDropped` (volume-guarded, promtool-tested, and a full cache loss still fires). A test
   pins the `ai.call` event's keys that Landledger reads. SP16 (the cache alert and panels) is folded into SP04.
