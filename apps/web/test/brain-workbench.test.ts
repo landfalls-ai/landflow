@@ -1,10 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { statusItems, workbenchLayout } from '@/components/brain/wiki/workbench';
+import { sideBarClass, statusItems, workbenchLayout } from '@/components/brain/wiki/workbench';
 import { indexCards, indexOutline } from '@/components/brain/wiki/index-doc';
 import { deltaText, change, showLayersCard } from '@/components/insights/format';
 import type { InsightsTotals } from '@/lib/shared/platform';
 
 const health = { noOwner: [], quiet: [], staleSummaries: [] };
+
+describe('side bar classes', () => {
+  it('hides a closed side bar on a desktop even with a stale drawer', () => {
+    expect(sideBarClass(true, false)).toContain('md:hidden');
+    expect(sideBarClass(false, false)).toContain('md:hidden');
+  });
+  it('puts an open side bar in place on a desktop and keeps the drawer for a phone', () => {
+    const open = sideBarClass(true, true);
+    expect(open).toContain('md:static');
+    expect(open).not.toContain('md:hidden');
+    expect(open).toContain('fixed');
+    expect(sideBarClass(false, true)).toContain('hidden');
+  });
+});
 
 describe('workbench layout', () => {
   it('shows the index alone while the brain is empty', () => {

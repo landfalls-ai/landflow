@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { AlertTriangle, Brain, ChevronRight, Code2, Eye, Files, GitCommitHorizontal, PanelBottom, PanelLeft, ScrollText, Search, Settings2, Sparkles, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
+import { isPhone } from '@/lib/client/use-phone';
 import { cn } from '@/lib/utils';
 import { brainTree, INDEX, indexMarkdown, isPageRef, isPracticeRef, LOG, logMarkdown, outlineOf, pageMarkdown, practiceRef, SETTINGS, urlOf, type BrainTree, type FileRef, type OutlineItem } from '@/lib/shared/brain-files';
 import type { WikiHome, WikiPage, WikiSummary } from '@/lib/shared/brain-wiki';
@@ -45,6 +46,18 @@ type Loaded = WikiPage | { error: string };
 
 const STORE = 'landflow.brain.workbench';
 const isPage = isPageRef;
+
+/**
+ * The side bar's classes: a drawer on a phone (only while the drawer is open), in place on a desktop. A closed side bar
+ * is hidden on a desktop whatever the drawer state, so a stale drawer never floats over the app nav.
+ */
+export function sideBarClass(drawer: boolean, sidebar: boolean): string {
+  return cn(
+    'min-h-0 shrink-0 flex-col border-r border-hair bg-sf2',
+    drawer ? 'fixed inset-y-0 left-0 z-40 flex w-[86vw] max-w-[340px] shadow-pop' : 'hidden',
+    sidebar ? 'md:static md:z-auto md:flex md:w-[var(--sb)] md:max-w-none md:shadow-none' : 'md:hidden',
+  );
+}
 
 /**
  * What chrome the workbench shows: with no pages and the index open, the index alone (no Explorer, no tabs), unless
@@ -324,11 +337,7 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
           {layout.explorer && drawer && <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={() => setDrawer(false)} aria-hidden />}
           {layout.explorer && (
           <aside
-            className={cn(
-              'min-h-0 shrink-0 flex-col border-r border-hair bg-sf2',
-              drawer ? 'fixed inset-y-0 left-0 z-40 flex w-[86vw] max-w-[340px] shadow-pop' : 'hidden',
-              sidebar && 'md:static md:z-auto md:flex md:w-[var(--sb)] md:max-w-none md:shadow-none',
-            )}
+            className={sideBarClass(drawer, sidebar)}
             style={{ width: drawer ? undefined : width, ['--sb' as string]: `${width}px` }}
           >
             <div className="flex h-9 shrink-0 items-center gap-1 px-3 text-[11px] font-semibold uppercase tracking-wide text-t3">
@@ -479,10 +488,10 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
               { label: 'What Landflow knows', run: () => open(SETTINGS, { pin: true }) },
               { label: 'Toggle Preview and Source', run: toggleMode },
               ...(layout.explorer ? [{ label: 'Toggle the side bar', run: () => setSidebar((v) => !v) }] : []),
-              { label: 'Show Practices', run: () => (setAskedForPractices(true), setView('practices'), setSidebar(true), setDrawer(true)) },
+              { label: 'Show Practices', run: () => (setAskedForPractices(true), setView('practices'), setSidebar(true), setDrawer(isPhone())) },
               { label: 'Show Problems', run: () => setPanel('problems') },
               { label: 'Show Suggestions', run: () => setPanel('suggestions') },
-              ...(layout.explorer ? [{ label: 'Search the brain', run: () => (setView('search'), setSidebar(true), setDrawer(true)) }] : []),
+              ...(layout.explorer ? [{ label: 'Search the brain', run: () => (setView('search'), setSidebar(true), setDrawer(isPhone())) }] : []),
               { label: 'Refresh', run: loadHome },
               {
                 label: 'Run the brain now (study and detect)',
