@@ -479,7 +479,7 @@ collector was down). Check the rules with
 | `LandflowAuditOutboxOld` | oldest undelivered SIEM event over 15 min | the destination, Settings -> Audit log -> SIEM streaming |
 | `LandflowEventLoopDelay` | event-loop delay p99 over 200 ms for 10 min | a CPU-heavy node or a blocking call; GC panel |
 | `LandflowProcessErrors` | any unhandled rejection, uncaught exception or service start failure | the error line (`kind`) and its fingerprint |
-| `LandflowAiCacheHitRateDropped` | the Anthropic prompt-cache hit rate (`cache_read` / `input`) over 1 h is under half its 7-day average, for 30 min, and only while Anthropic input is over 100,000 tokens an hour | the dashboard's "AI" row; a prompt prefix that changed (a timestamp or an id near the top), a cache lifetime, a model or provider switch |
+| `LandflowAiCacheHitRateDropped` | the Anthropic prompt-cache hit rate (`cache_read` / `input`) over 1 h is under half its 7-day average, for 30 min, and only while Anthropic input is over 100,000 tokens an hour; a cache that is lost completely (a restart whose new process has no `cache_read` series) counts as a 0% rate and fires; the 7-day average includes the dropped period, so a sustained drop lifts its own baseline and the alert clears itself after a few days | the dashboard's "AI" row; a prompt prefix that changed (a timestamp or an id near the top), a cache lifetime, a model or provider switch |
 
 The "AI" row has three panels: tokens a second by `gen_ai_token_type` (`input`, `output`, `cache_read`, `cache_write`),
 the Anthropic cache hit rate over 1 hour, and estimated cost over the last day by `landflow_ai_purpose`. Through the

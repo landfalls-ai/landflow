@@ -2,7 +2,7 @@
  * The `ai.call` usage event keeps the keys the ledgers read, with the meaning they have today, and grows only by the
  * keys of `AiCallEventAttribution` (lib/shared/ai-call.ts, wave 11).
  *
- * Landledger parses this event (read-only, /Users/pickjonathan/WorkSpace/landledger):
+ * Landledger parses this event (read-only, github.com/landfalls-ai/landledger):
  *   libs/contracts/src/sources.ts 25-50 (`LandflowAiEvent`: `attrs` is loose; reads provider, model, operation, input,
  *   output, cacheRead, cacheWrite) and apps/api/src/ingest/build.ts 179-188 (`input` is the whole prompt, the cache
  *   counts are parts of it). The keys below are literals on purpose: renaming one must fail here before it breaks a ledger.

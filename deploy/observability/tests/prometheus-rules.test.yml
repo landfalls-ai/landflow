@@ -48,6 +48,9 @@ tests:
       - eval_time: 1400m
         alertname: LandflowAiCacheHitRateDropped
         exp_alerts: []
+      - eval_time: 1490m
+        alertname: LandflowAiCacheHitRateDropped
+        exp_alerts: []
 # Quiet, low volume: the same drop at 1,000 input tokens a minute (60,000 an hour, under the 100,000 guard).
   - interval: 1m
     input_series:
@@ -70,3 +73,28 @@ tests:
       - eval_time: 1620m
         alertname: LandflowAiCacheHitRateDropped
         exp_alerts: []
+# Firing after a restart: the old pod's series end (stale) and the new pod emits input only, so the cache_read series
+# does not exist at all; the 1 h hit rate is then 0 and must still fire.
+  - interval: 1m
+    input_series:
+      - series: 'landflow_ai_tokens_total{gen_ai_system="anthropic",gen_ai_token_type="input",pod="old"}'
+        values: '0+20000x1440 stale'
+      - series: 'landflow_ai_tokens_total{gen_ai_system="anthropic",gen_ai_token_type="cache_read",pod="old"}'
+        values: '0+16000x1440 stale'
+      - series: 'landflow_ai_tokens_total{gen_ai_system="anthropic",gen_ai_token_type="input",pod="new"}'
+        values: '_x1441 0+20000x400'
+    alert_rule_test:
+      - eval_time: 1560m
+        alertname: LandflowAiCacheHitRateDropped
+        exp_alerts:
+          - exp_labels: { severity: warn }
+            exp_annotations:
+              summary: The Anthropic prompt-cache hit rate over 1 hour is under half its 7-day average (at over 100,000 input tokens an hour)
+              runbook: docs/observability.md#alerts-and-dashboard
+      - eval_time: 1840m
+        alertname: LandflowAiCacheHitRateDropped
+        exp_alerts:
+          - exp_labels: { severity: warn }
+            exp_annotations:
+              summary: The Anthropic prompt-cache hit rate over 1 hour is under half its 7-day average (at over 100,000 input tokens an hour)
+              runbook: docs/observability.md#alerts-and-dashboard

@@ -842,7 +842,7 @@
       "type": "prometheus",
       "uid": "prometheus"
      },
-     "expr": "sum(rate(landflow_ai_tokens_total{gen_ai_token_type=\"cache_read\"}[1h])) / sum(rate(landflow_ai_tokens_total{gen_ai_token_type=\"input\",gen_ai_system=\"anthropic\"}[1h]))",
+     "expr": "(sum(rate(landflow_ai_tokens_total{gen_ai_token_type=\"cache_read\",gen_ai_system=\"anthropic\"}[1h])) or vector(0)) / sum(rate(landflow_ai_tokens_total{gen_ai_token_type=\"input\",gen_ai_system=\"anthropic\"}[1h]))",
      "legendFormat": "hit rate"
     }
    ]

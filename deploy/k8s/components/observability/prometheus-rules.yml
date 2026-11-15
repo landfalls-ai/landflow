@@ -112,7 +112,7 @@ groups:
       - alert: LandflowAiCacheHitRateDropped
         expr: |
           (
-            sum(rate(landflow_ai_tokens_total{gen_ai_token_type="cache_read",gen_ai_system="anthropic"}[1h]))
+            (sum(rate(landflow_ai_tokens_total{gen_ai_token_type="cache_read",gen_ai_system="anthropic"}[1h])) or vector(0))
               / clamp_min(sum(rate(landflow_ai_tokens_total{gen_ai_token_type="input",gen_ai_system="anthropic"}[1h])), 1e-9)
             < 0.5 * (
               sum(rate(landflow_ai_tokens_total{gen_ai_token_type="cache_read",gen_ai_system="anthropic"}[7d]))
