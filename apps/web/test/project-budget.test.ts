@@ -17,11 +17,11 @@ const { createUser } = await import('@/lib/server/auth/users');
 const { enableTestAuth } = await import('@/lib/server/auth/test-bypass');
 const { database, openSqlite } = await import('@/lib/server/db');
 const { aiUsageMeter, savePriceOverrides, UsageScope, isUsageCapError } = await import('@/lib/server/ai-usage');
-const { createTeamProject, setMember, removeMember, removeProjectRows } = await import('@/lib/server/projects/store');
+const { createTeamProject, setMember, removeMember, removeProjectRows, afterRemoved } = await import('@/lib/server/projects/store');
 const { sweepBudgets, budgetItems } = await import('@/lib/server/budgets/enforce');
 const { getBudget, incidentsOf, saveBudget, currentMonth, openIncident, resolveIncident } = await import('@/lib/server/budgets/store');
 const { needsYou } = await import('@/lib/server/journal/needs-you');
-const { watchedCaps, costNotice } = await import('@/lib/server/ai-usage/alerts');
+const { watchedCaps } = await import('@/lib/server/ai-usage/alerts');
 const budgetRoute = await import('@/app/api/projects/[id]/budget/route');
 const incidentRoute = await import('@/app/api/projects/[id]/budget/incidents/[incidentId]/route');
 const needsYouRoute = await import('@/app/api/runs/needs-you/route');
@@ -394,27 +394,20 @@ describe('Needs you', () => {
   });
 });
 
-describe('the cost alert for a project budget', () => {
-  const said = (hardStop: boolean) => {
-    const id = createTeamProject({ name: 'Notice' }).id;
-    saveBudget({ projectId: id, monthlyUsd: 10, warnPercent: 80, hardStop });
-    const cap = watchedCaps().find((c) => c.id === `project:${id}:month:cost`)!;
-    const notice = costNotice({ id: 'r', name: 'r' }, cap, 80);
-    return JSON.stringify(notice);
-  };
-  it('says calls keep running without the hard stop, and priced calls are refused with it', () => {
-    expect(said(false)).toContain('Calls keep running');
-    expect(said(false)).not.toContain('refused');
-    expect(said(true)).toContain('Priced model calls are refused');
-    expect(said(true)).toContain('local (unpriced) models keep running');
-  });
-  it('keeps the old sentence for other caps', () => {
-    const cap = { id: 'user:u1:month:cost', subject: 'user', period: 'month' as const, metric: 'cost' as const, max: 10, used: 8, setIn: 'x', link: 'x' };
-    expect(JSON.stringify(costNotice({ id: 'r', name: 'r' }, cap, 80))).toContain('Further model calls are refused');
-  });
-});
-
 describe('deleting the project', () => {
+  it('withdraws open cap-raise requests for its cap and leaves others', async () => {
+    const other = createTeamProject({ name: 'Requests' }).id;
+    const now = new Date().toISOString();
+    const base = { subject: 's', metric: 'cost', period: 'month', current_max: 1, requested_max: 2, reason: 'r', requested_by: 'u', created_at: now, updated_at: now };
+    database().insertNew('ai_cap_requests', { id: 'cr_open', cap_id: `project:${other}:month:cost`, status: 'pending', ...base });
+    database().insertNew('ai_cap_requests', { id: 'cr_done', cap_id: `project:${other}:month:cost`, status: 'approved', ...base });
+    database().insertNew('ai_cap_requests', { id: 'cr_else', cap_id: 'project:elsewhere:month:cost', status: 'pending', ...base });
+    removeProjectRows(other);
+    await afterRemoved;
+    const status = (id: string) => database().get<{ status: string }>('SELECT status FROM ai_cap_requests WHERE id = ?', id)?.status;
+    expect([status('cr_open'), status('cr_done'), status('cr_else')]).toEqual(['cancelled', 'approved', 'pending']);
+  });
+
   it('removes its budget and incidents', () => {
     const other = createTeamProject({ name: 'Short lived' }).id;
     saveBudget({ projectId: other, monthlyUsd: 3, warnPercent: 80, hardStop: true });

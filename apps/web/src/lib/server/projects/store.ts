@@ -347,6 +347,7 @@ function hasRoleIn(project: ProjectRecord, userId: string): boolean {
 export function removeProjectRows(id: string): string[] {
   const database = db();
   const retired: string[] = [];
+  const waiting: string[] = [];
   database.transaction(() => {
     const own = database.all<{ id: string; parent_id: string | null }>('SELECT id, parent_id FROM goals WHERE project_id = ?', id);
     const gone = new Map(own.map((g) => [g.id, g.parent_id]));
@@ -378,6 +379,12 @@ export function removeProjectRows(id: string): string[] {
     // into http.ts's import closure: test/runtime.test.ts).
     database.delete('project_budgets', { project_id: id });
     for (const row of database.all<{ id: string }>('SELECT id FROM project_budget_incidents WHERE project_id = ?', id)) database.delete('project_budget_incidents', { id: row.id });
+    // Open requests to raise its cap are withdrawn (the same status `cancelCapRequest` sets); their waiting runs are stopped below.
+    const capId = `project:${id}:month:cost`;
+    for (const row of database.all<Record<string, string | number | null>>("SELECT * FROM ai_cap_requests WHERE cap_id = ? AND status IN ('pending', 'asking')", capId)) {
+      database.upsert('ai_cap_requests', { ...row, status: 'cancelled', updated_at: new Date().toISOString() });
+      if (typeof row.execution_id === 'string') waiting.push(row.execution_id);
+    }
     database.delete('project_workspaces', { project_id: id }); // PC16: the workspace for harness runs
     database.delete('project_members', { project_id: id });
     for (const share of database.all<ShareRow>('SELECT * FROM resource_shares WHERE project_id = ?', id)) {
@@ -385,8 +392,20 @@ export function removeProjectRows(id: string): string[] {
     }
     database.delete('projects', { id });
   });
+  // After the transaction, and lazily (these modules would grow http.ts's import closure: test/runtime.test.ts): the meter forgets
+  // the cached budget, and the runs that waited on a cap-raise answer stop waiting. Settled by the next tick.
+  afterRemoved = import('../ai-usage').then(async ({ aiUsageMeter }) => {
+    aiUsageMeter().invalidateBudgets();
+    if (waiting.length) {
+      const { cancelWaitingExecution } = await import('../runner');
+      for (const executionId of waiting) cancelWaitingExecution(executionId);
+    }
+  }).catch(() => undefined);
   return retired;
 }
+
+/** The last lazy clean-up `removeProjectRows` started (tests await it). */
+export let afterRemoved: Promise<void> = Promise.resolve();
 
 /** Keep a personal project's name in step with its user's. */
 export function renamePersonalProject(userId: string, name: string) {
