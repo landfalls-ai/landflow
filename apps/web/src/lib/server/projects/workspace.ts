@@ -2,7 +2,8 @@
  * A project's workspace for harness runs (docs/projects-and-goals.md#workspace; migration 2701, `project_workspaces`): for each
  * repository the project lists, the branch to start from and the setup commands, whether a run gets its own worktree, and the
  * branch name template. Landflow stores and serves it; it never runs a setup command. Setup lines are for the project's editors
- * and admins. A repository the project no longer lists is dropped when the workspace is read.
+ * and admins. A repository the project no longer lists is dropped when the workspace is read, and `setProjectRepos` prunes it
+ * from the stored row.
  */
 import {
   BRANCH_TEMPLATE_MAX,
@@ -138,7 +139,9 @@ export function saveWorkspace(actor: Actor, projectId: string, input: ProjectWor
   if (!project || !role) throw new WorkspaceError('Project not found', 404);
   if (!projectRoleCan.manage(role)) throw new WorkspaceError('Only the project’s admins change its workspace', 403);
   const next = validateWorkspace(input, project.repos ?? []);
-  const before = stored(projectId, project.repos ?? []).workspace;
+  const { workspace: before, row } = stored(projectId, project.repos ?? []);
+  // Nothing changed: no write and no audit event (as `setProjectRepos` does).
+  if (row && row.data === JSON.stringify(next)) return workspaceView(actor, projectId);
   const now = new Date().toISOString();
   projectsDb().upsert('project_workspaces', { project_id: projectId, data: JSON.stringify(next), updated_at: now, updated_by: actor.id });
   const details: Record<string, unknown> = {};

@@ -351,7 +351,8 @@ tab, under the project's settings and above Variables. Landflow stores and serve
 never makes a worktree.
 
 - **Repositories:** the list from [above](#repositories-and-harnesses). Admins add (`owner/name`) and remove them on the
-  card; each change saves at once. A repository removed here (or through the API) drops out of the workspace.
+  card; each change saves at once. A repository removed here (or through the API) drops out of the workspace, and its stored branch and setup lines are
+  deleted, so adding it again starts empty.
 - **Default branch**, per repository: the branch a run starts from. Empty means the repository's own default.
 - **Setup commands**, per repository: one per line, at most 10 lines of 300 characters, run once in a fresh worktree. Only
   the project's editors and admins see them (viewers see the repositories and branches). **Landflow never runs these. A
@@ -363,7 +364,7 @@ never makes a worktree.
 
 Admins edit with one **Save workspace**; everyone else reads. `GET /api/projects/:id/workspace` and `PUT` are in the
 [API reference](reference/api.md); every change is audited as `project.workspace.update` (repository names, worktree and
-template; the count of setup lines, never their text).
+template; the count of setup lines, never their text). Saving the same workspace again writes nothing and audits nothing.
 
 A harness reads it from the project's context ([connect-your-harness.md](connect-your-harness.md#project-context)): the
 answer has `workspace` when the project saved one, with `branchPattern` (the template with `{project}` filled in;

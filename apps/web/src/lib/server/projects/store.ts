@@ -291,6 +291,25 @@ export function updateProject(id: string, patch: { name?: string; description?: 
   return next;
 }
 
+/**
+ * A repository the project no longer lists loses its stored workspace entry (branch and setup lines), so re-adding it later
+ * starts empty instead of bringing old setup lines back. A raw read and upsert of `project_workspaces` (PC16's table): this
+ * module must not import `./workspace` (the `http.ts` import closure). A row that doesn't parse is left for the reader.
+ */
+function pruneWorkspaceRepos(id: string, repos: string[]): void {
+  const row = db().get<{ project_id: string; data: string; updated_at: string; updated_by: string | null }>('SELECT * FROM project_workspaces WHERE project_id = ?', id);
+  if (!row) return;
+  let data: { repos?: Record<string, unknown> };
+  try {
+    data = JSON.parse(row.data) as { repos?: Record<string, unknown> };
+  } catch {
+    return;
+  }
+  const kept = Object.fromEntries(Object.entries(data.repos ?? {}).filter(([name]) => repos.includes(name)));
+  if (Object.keys(kept).length === Object.keys(data.repos ?? {}).length) return;
+  db().upsert('project_workspaces', { ...row, data: JSON.stringify({ ...data, repos: kept }) });
+}
+
 /** PC10: set the repositories a project lists (already validated and lowercased; [] clears). Audited. */
 export function setProjectRepos(id: string, repos: string[]): ProjectRecord {
   const project = getProject(id);
@@ -300,6 +319,7 @@ export function setProjectRepos(id: string, repos: string[]): ProjectRecord {
   else delete next.repos;
   if (JSON.stringify(project.repos ?? []) === JSON.stringify(repos)) return project;
   db().upsert('projects', projectRow(next));
+  pruneWorkspaceRepos(id, repos);
   recordAudit({ action: 'project.update', target: { type: 'project', id, name: next.name }, project: id, summary: `Changed the repositories of ${next.name}`, details: { reposFrom: (project.repos ?? []).join(', ') || null, reposTo: repos.join(', ') || null } });
   return next;
 }
