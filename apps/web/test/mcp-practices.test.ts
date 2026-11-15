@@ -193,9 +193,11 @@ describe('who sees what', () => {
       const client = await connect();
       const got = await dataOf(client, 'practices_for', { repo: 'acme/web' });
       expect(got.practices.map((p: { handle: string }) => p.handle)).toContain('p1/repo');
-      expect(await dataOf(client, 'practice_get', { handle: 'p1/repo' })).toMatchObject({ body: 'Project body', scope: { level: 'project', projectId: p1.id } });
+      expect(await dataOf(client, 'practice_get', { handle: 'p1/repo', repo: 'acme/web' })).toMatchObject({ body: 'Project body', scope: { level: 'project', projectId: p1.id } });
+      // Without the repository delivery would not have given it, so neither does practice_get.
+      expect((await client.callTool({ name: 'practice_get', arguments: { handle: 'p1/repo' } })).isError).toBe(true);
       const other = await connect({ user: bob });
-      const refused = await other.callTool({ name: 'practice_get', arguments: { handle: 'p1/repo' } });
+      const refused = await other.callTool({ name: 'practice_get', arguments: { handle: 'p1/repo', repo: 'acme/web' } });
       expect(refused.isError).toBe(true);
     } finally {
       all.pop();

@@ -146,10 +146,12 @@ Reject. On a phone it is one column of cards behind `md`; desktop is unchanged.
   ```
 
   Agents cite what they followed with that trailing line, or a commit's `Practice: handle@version`.
-- `GET /api/practices/applicable?repo=&path=&topic=` returns the practices and the block. `GET /api/practices/resolve?handle=&repo=&projectId=&level=`
-  returns one practice in full (rules and machine checks), chosen the way delivery and MCP `practice_get` choose it (the
-  `projectId` match, else the selector's winner for `repo`, else the project's practice, then the organization's), after
-  the hash check and redacted; it answers 404 while practices are off. `POST /api/practices/cite` records that an answer
+- `GET /api/practices/applicable?repo=&path=&topic=` returns the practices and the block. `GET /api/practices/resolve?handle=&repo=&path=&projectId=&level=`
+  returns one practice in full (rules and machine checks): exactly the one `applicable` delivered for the same `repo`,
+  `path`s (repeat, at most 20) and `projectId`, by the same filter and ranking, so a project practice that does not cover the
+  path never stands in for the organization's, and two projects sharing a handle give the one delivery gave; `level` keeps a
+  winner of that level. It is hash-checked and redacted, and answers 404 while practices are off, when delivery gave none,
+  and for a project the caller has no role in. `POST /api/practices/cite` records that an answer
   cited some. What agents and the shell read for rules goes through these routes, never through `GET /api/practices`
   (the Brain page's list for people reviewing practices, which shows drafts and bodies whatever the switch says).
 - MCP tools `practices_for`, `practice_get`, `practice_cite`, `practice_draft` and resources `practices://applicable` and

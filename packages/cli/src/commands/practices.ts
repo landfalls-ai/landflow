@@ -61,7 +61,7 @@ async function applicable(ctx: Context, query: Record<string, string | string[] 
  * One approved practice in full, read the way delivery gives it (`GET /api/practices/resolve`): nothing while practices are
  * off, and the level (and project) of the one asked for, so an org practice never stands in for the project's.
  */
-async function resolved(ctx: Context, handle: string, query: { repo?: string; projectId?: string; level?: string }): Promise<FullPractice | undefined> {
+async function resolved(ctx: Context, handle: string, query: { repo?: string; path?: string[]; projectId?: string; level?: string }): Promise<FullPractice | undefined> {
   try {
     const body = await ctx.client.get<{ practice?: FullPractice }>('/api/practices/resolve', { handle, ...query });
     return body.practice;
@@ -147,7 +147,10 @@ export const check: Command = {
     const repo = await repoOf(ctx);
     const touched = change.files.map((f) => f.path);
     // The route takes at most 20 paths a call: ask in groups and join the answers by handle.
+    // Keyed by level too: an org and a project practice of one handle and version are two practices.
     const byHandle = new Map<string, ApplicablePractice>();
+    // The paths each was delivered for, so the read of its rules gives exactly the practice that was delivered.
+    const pathsOf = new Map<string, string[]>();
     const chunks: string[][] = [];
     for (let i = 0; i < touched.length; i += APPLICABLE_PATHS) chunks.push(touched.slice(i, i + APPLICABLE_PATHS));
     // The host lists only what fits its block and counts the rest as omitted. Ask again in smaller groups until nothing
@@ -157,7 +160,12 @@ export const check: Command = {
     const ask = async (paths: string[]): Promise<void> => {
       calls += 1;
       const got = await applicable(ctx, { repo, path: paths.length ? paths : undefined });
-      for (const p of got.practices) byHandle.set(`${p.handle}@${p.version}`, p);
+      for (const p of got.practices) {
+        const key = `${p.level}:${p.handle}@${p.version}`;
+        // The first call that delivered it: its paths alone reproduce that delivery (a union could pick another winner).
+        if (!byHandle.has(key)) pathsOf.set(key, paths);
+        byHandle.set(key, p);
+      }
       const missed = got.omitted ?? 0;
       if (!missed) return;
       if (paths.length > 1 && calls < MAX_CHECK_CALLS) {
@@ -169,9 +177,9 @@ export const check: Command = {
     for (const paths of chunks.length ? chunks : [[]]) await ask(paths);
     const verdicts: Verdict[] = [];
     let moved = 0;
-    for (const p of [...byHandle.values()].sort((a, b) => a.handle.localeCompare(b.handle))) {
+    for (const p of [...byHandle.values()].sort((a, b) => a.handle.localeCompare(b.handle) || a.level.localeCompare(b.level))) {
       // The same level the delivery gave: an org practice never stands in for the project's of the same handle and version.
-      const found = await resolved(ctx, p.handle, { repo, level: p.level });
+      const found = await resolved(ctx, p.handle, { repo, level: p.level, path: (pathsOf.get(`${p.level}:${p.handle}@${p.version}`) ?? []).slice(0, APPLICABLE_PATHS) });
       const row = found && found.version === p.version && found.scope.level === p.level ? found : undefined;
       if (!row) moved += 1;
       const checks = row?.checks ?? [];

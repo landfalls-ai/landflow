@@ -98,9 +98,9 @@ export function applicableFor(caller: PracticeCaller, q: PracticeQuery, options:
  * What delivery gives for a repository: the ids that apply, and the selector's winner per handle. Throws 404 for a project
  * the caller has no role in.
  */
-export function deliveredFor(caller: PracticeCaller, repo?: string): { applies: Set<string>; winners: Map<string, ApprovedPractice> } {
+export function deliveredFor(caller: PracticeCaller, repo?: string, paths?: string[]): { applies: Set<string>; winners: Map<string, ApprovedPractice> } {
   const delivered = practicesFor(caller, { repo });
-  return { applies: new Set(delivered.map((p) => p.id)), winners: new Map(selectPractices(delivered, { repo }).map((p) => [p.handle, p])) };
+  return { applies: new Set(delivered.map((p) => p.id)), winners: new Map(selectPractices(delivered, { repo, paths }).map((p) => [p.handle, p])) };
 }
 
 /** One approved practice in full, as every route and tool that gives its rules shows it: redacted, with its scope and machine checks. */
@@ -116,14 +116,16 @@ export const toFull = (p: ApprovedPractice) => ({
 });
 
 /**
- * The one practice a handle means for this caller, the way delivery picks: the `projectId` match if sent; else the
- * selector's winner for `repo`; else the project practice, then the organization's. Undefined if the caller may get none.
+ * The one practice a handle means for this caller, exactly the one delivery gave for the same `repo`, `paths` and project: the
+ * `projectId` match if one is asked for (a named project practice); else the selector's winner (the same filter and ranking
+ * `applicableFor` uses). `level` keeps a winner of that level only. Undefined when delivery gave none: never an arbitrary
+ * practice of another project or level. Throws 404 for a project the caller has no role in (set `caller.projectId`).
  */
-export function resolvePractice(caller: PracticeCaller, handle: string, options: { repo?: string; projectId?: string; level?: PracticeLevel } = {}): ApprovedPractice | undefined {
+export function resolvePractice(caller: PracticeCaller, handle: string, options: { repo?: string; paths?: string[]; projectId?: string; level?: PracticeLevel } = {}): ApprovedPractice | undefined {
   const matches = practicesCitable(caller).filter((p) => p.handle === handle && (!options.level || p.level === options.level));
   if (!matches.length) return undefined;
   const byProject = options.projectId ? matches.find((p) => p.projectId === options.projectId) : undefined;
   if (byProject) return byProject;
-  const winner = deliveredFor(caller, options.repo).winners.get(handle);
-  return (winner && matches.find((p) => p.id === winner.id)) ?? matches.find((p) => p.level === 'project') ?? matches[0];
+  const winner = deliveredFor(caller, options.repo, options.paths).winners.get(handle);
+  return winner && matches.find((p) => p.id === winner.id);
 }

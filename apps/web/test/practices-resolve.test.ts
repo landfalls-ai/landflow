@@ -24,6 +24,8 @@ const { authDb } = await import('@/lib/server/auth/db');
 await import('@/lib/server/practices/register');
 const { setPracticesPort } = await import('@/lib/server/practices/port');
 const resolveRoute = await import('@/app/api/practices/resolve/route');
+const applicableRoute = await import('@/app/api/practices/applicable/route');
+const { withAuth } = await import('@/lib/server/auth/context');
 
 const alice = await createUser({ email: 'alice@practices-resolve.test', name: 'Alice', role: 'member', password: 'alice-password-1' });
 const bob = await createUser({ email: 'bob@practices-resolve.test', name: 'Bob', role: 'member', password: 'bob-password-1' });
@@ -31,9 +33,11 @@ const p1 = createTeamProject({ name: 'Billing', createdBy: alice.id });
 const p2 = createTeamProject({ name: 'Search', createdBy: bob.id });
 setMember(p1.id, alice.id, 'editor');
 setMember(p2.id, bob.id, 'editor');
+const p3 = createTeamProject({ name: 'Ledger', createdBy: alice.id });
+setMember(p3.id, alice.id, 'editor');
 
 const practice = (handle: string, extra: Partial<ApprovedPractice> = {}): ApprovedPractice => ({
-  id: `prc_${handle.replace('/', '_')}_${extra.level ?? 'org'}`,
+  id: `prc_${handle.replace('/', '_')}_${extra.level ?? 'org'}_${extra.projectId ?? ''}`,
   handle,
   title: handle,
   level: 'org',
@@ -54,6 +58,12 @@ const all = [
   practice('shared/rule', { level: 'project', projectId: p1.id, body: 'The project rule', repos: ['acme/billing'] }),
   practice('org/secret', { body: 'Use token sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789 never', checks: [{ kind: 'pathExists', glob: 'README.md' }] }),
   practice('p2/only', { level: 'project', projectId: p2.id }),
+  // Case: the organization's practice has no paths; the project's applies to charts/ only.
+  practice('helm/values', { body: 'The org helm rule' }),
+  practice('helm/values', { level: 'project', projectId: p1.id, body: 'The charts rule', repos: ['acme/billing'], paths: ['charts/**'] }),
+  // Case: two projects the caller is in share a handle for one repository, with different paths and versions.
+  practice('x/y', { level: 'project', projectId: p1.id, body: 'In billing', version: 2, repos: ['acme/billing'], paths: ['a/**'] }),
+  practice('x/y', { level: 'project', projectId: p3.id, body: 'In ledger', version: 3, repos: ['acme/billing'], paths: ['b/**'] }),
 ];
 let enabled = true;
 setPracticesPort({
@@ -112,9 +122,48 @@ describe('GET /api/practices/resolve', () => {
     // Delivery without a repository gives the organization's practice only; with the repository, the project's stands in for it.
     expect((await get('?handle=shared/rule')).body.practice.body).toBe('The org rule');
     expect((await get('?handle=shared/rule&repo=acme/billing')).body.practice.body).toBe('The project rule');
-    expect((await get(`?handle=shared/rule&projectId=${p1.id}`)).body.practice.scope.level).toBe('project');
+    // With a project named, delivery narrows to that project and the organization's, and the repository still decides.
+    expect((await get(`?handle=shared/rule&projectId=${p1.id}&repo=acme/billing`)).body.practice.scope.level).toBe('project');
     expect((await get('?handle=shared/rule&level=org')).body.practice.body).toBe('The org rule');
-    expect((await get('?handle=shared/rule&level=project')).body.practice.body).toBe('The project rule');
+    expect((await get('?handle=shared/rule&level=project')).status).toBe(404);
+    expect((await get('?handle=shared/rule&repo=acme/billing&level=project')).body.practice.body).toBe('The project rule');
+    expect((await get('?handle=shared/rule&repo=acme/billing&level=org')).status).toBe(404);
+  });
+
+  it('a path decides like delivery does: the project practice that does not cover the path never stands in for the organization’s', async () => {
+    enableTestAuth(alice);
+    expect((await get('?handle=helm/values&repo=acme/billing&path=src/a.ts')).body.practice.body).toBe('The org helm rule');
+    expect((await get('?handle=helm/values&repo=acme/billing&path=charts/web/Chart.yaml')).body.practice.body).toBe('The charts rule');
+    expect((await get('?handle=helm/values&repo=acme/billing&path=src/a.ts&level=project')).status).toBe(404);
+  });
+
+  it('two projects sharing a handle: the one applicable delivered is the one resolve gives', async () => {
+    enableTestAuth(alice);
+    const delivered = async (query: string) => {
+      const response = await applicableRoute.GET(new Request(`http://localhost/api/practices/applicable?${query}&preview=1`));
+      return ((await response.json()) as { practices: Array<{ handle: string; version: number }> }).practices.find((p) => p.handle === 'x/y');
+    };
+    for (const path of ['a/f.ts', 'b/f.ts', 'a/f.ts&path=b/g.ts']) {
+      const query = `repo=acme/billing&path=${path}`;
+      const one = await delivered(query);
+      expect(one, path).toBeDefined();
+      expect((await get(`?handle=x/y&${query}&level=project`)).body.practice.version, path).toBe(one!.version);
+    }
+    expect((await get('?handle=x/y&repo=acme/billing&path=b/f.ts')).body.practice.body).toBe('In ledger');
+    expect((await get('?handle=x/y&repo=acme/billing&path=zzz/f.ts')).status).toBe(404);
+  });
+
+  it('works for an API key’s principal and an owner, and the same projectId rule as applicable', async () => {
+    const response = await withAuth({ principal: { user: alice, via: 'api-key', apiKey: { id: 'key_1', scopes: ['brain:read'] } } }, () => resolveRoute.GET(new Request('http://localhost/api/practices/resolve?handle=x/y&repo=acme/billing&path=a/f.ts')));
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as Full).practice.body).toBe('In billing');
+    enableTestAuth(TEST_OWNER);
+    expect((await get('?handle=p2/only')).status).toBe(404);
+    expect((await get(`?handle=p2/only&projectId=${p2.id}`)).body.practice.scope.level).toBe('project');
+    enableTestAuth(alice);
+    const notIn = await get(`?handle=p2/only&projectId=${p2.id}`);
+    expect(notIn.status).toBe(404);
+    expect((await get('?handle=org/secret&projectId=nope')).status).toBe(404);
   });
 
   it('never gives another project’s practice', async () => {

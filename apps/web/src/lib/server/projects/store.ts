@@ -337,6 +337,7 @@ export function removeProjectRows(id: string) {
       database.delete('goals', { id: goalId });
     }
     for (const row of database.all<{ goal_id: string }>('SELECT goal_id FROM project_goals WHERE project_id = ?', id)) database.delete('project_goals', { project_id: id, goal_id: row.goal_id });
+    // The same change as `markRetired` in ../practices/store.ts (status `retired`, updated_at), here in this transaction and without importing the practices store.
     for (const practice of database.all<{ id: string; handle: string }>("SELECT id, handle FROM practices WHERE project_id = ? AND status <> 'retired'", id)) {
       const row = database.get<Record<string, unknown>>('SELECT * FROM practices WHERE id = ?', practice.id);
       if (row) database.upsert('practices', { ...row, status: 'retired', updated_at: new Date().toISOString() });

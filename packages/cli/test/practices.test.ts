@@ -208,6 +208,18 @@ describe('check', () => {
     expect(asOrg.json.practices[0].result).toBe('none');
   });
 
+  it('an org and a project practice of one handle and version are both checked, each with its own level and paths', async () => {
+    const dir = repoWith({ 'README.md': 'hello again\n' });
+    const orgRow = row({ ...REQUIRED, level: 'org' }, [{ kind: 'pathExists', glob: 'no/such/file' }]);
+    const projectRow = row({ ...REQUIRED, level: 'project', handle: 'helm/other' }, []);
+    const host = fakeHost({ applicable: [{ ...REQUIRED, level: 'org' }, { ...REQUIRED, level: 'project' }], approved: [orgRow, row({ ...REQUIRED, level: 'project' }, CHART_CHECK), projectRow] });
+    const out = await cli(host, dir, ['practices', 'check', '--json']);
+    expect(out.json.practices).toHaveLength(2);
+    const asks = host.calls.filter((c) => c.url.pathname === '/api/practices/resolve');
+    expect(asks.map((c) => c.url.searchParams.get('level')).sort()).toEqual(['org', 'project']);
+    expect(asks.every((c) => c.url.searchParams.getAll('path').includes('README.md'))).toBe(true);
+  });
+
   it('does not pass quietly when practices were omitted: it narrows the ask, then says what is left', async () => {
     const files: Record<string, string> = {};
     for (let i = 0; i < 3; i++) files[`src/f${i}.ts`] = `export const v${i} = ${i};\n`;

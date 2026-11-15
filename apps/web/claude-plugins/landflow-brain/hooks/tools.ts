@@ -180,8 +180,8 @@ export async function practicesApplicable($: EngineInterface, config: Config, qu
 export async function practicesTool($: EngineInterface, config: Config, input: { path?: string; topic?: string; handle?: string }, repo: string | undefined): Promise<Answer> {
   if (input.handle) {
     // The route delivery's own rules sit behind: nothing while practices are off, the hash checked, the text redacted, and
-    // the project's practice before the organization's one of the same handle.
-    const got = await call($, config, 'GET', `/api/practices/resolve?${new URLSearchParams({ handle: input.handle, ...(repo && { repo }) }).toString()}`)
+    // the practice delivery gave for this repository and path.
+    const got = await call($, config, 'GET', `/api/practices/resolve?${new URLSearchParams({ handle: input.handle, ...(repo && { repo }), ...(input.path && { path: input.path }) }).toString()}`)
     if (typeof got === 'string') return failure(got)
     if (got.status === 404) return failure(`No approved practice has the handle ${input.handle}.`)
     const no = refused(got.status)
