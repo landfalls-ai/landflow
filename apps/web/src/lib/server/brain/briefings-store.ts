@@ -44,7 +44,7 @@ const EMPTY: GatheredWork = { own: [], related: [], finished: [] };
 function parse(value: string | null): GatheredWork {
   try {
     const data = value ? (JSON.parse(value) as Partial<GatheredWork>) : {};
-    return { own: data.own ?? [], related: data.related ?? [], finished: data.finished ?? [] };
+    return { own: data.own ?? [], related: data.related ?? [], finished: data.finished ?? [], ...(Array.isArray(data.goalsMoved) && { goalsMoved: data.goalsMoved }) };
   } catch {
     return { ...EMPTY };
   }
