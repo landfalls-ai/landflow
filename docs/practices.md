@@ -161,6 +161,30 @@ Reject. On a phone it is one column of cards behind `md`; desktop is unchanged. 
   `handle` reads `resolve`. `landflow practices show` reads `resolve` too.
 - `landflow practices check` runs a practice's [checks](#checks) over the changed files of a branch, on your machine.
 
+Wave P1 reached the Claude Code mod and MCP clients. Wave P2 adds Landflow agents (the block after "Where this work
+fits"), kagent agents (an index line with each request and the `practices_for` tool), and [Check Practices](#checks).
+
+### Landflow agents
+
+*Built by PR06.*
+
+A Landflow agent runs in-process, so it gets the full block (up to 3,000 characters) in its system prompt, right after the
+"Where this work fits" block with one blank line between; a run whose project context is Off still gets it. The run's own
+project decides which project practices it may get (the same one the project block uses); nothing a caller sends adds one.
+An in-process run knows no repository, so practices scoped to repositories do not reach it.
+
+- `AgentConfig.practices` is `on` or `off`; absent is on (`PUT /api/agents/:id`, `practices`). Off, `LANDFLOW_PRACTICES=off`
+  or no practices source leaves the prompt and the cache keys exactly as they were. The block's hash joins the run
+  context's hash, so a change of practices changes the cache key.
+- The block is built once, when a run starts. A resume after an approval keeps the context it began with and writes
+  nothing new.
+- Each practice given is recorded as a `delivered` row (with the agent and its execution); each practice the final reply
+  cites ("Practices followed: [handle@version]") that the run was given is recorded as `cited`. A citation of any other
+  practice records nothing.
+- Practices are text and grant nothing: an agent's tool calls are never denied because of one. Only flows block.
+- The code is `lib/server/project-context/practices.ts` (`runPractices`, `withPractices`, `recordRunPractices`, `citedIn`)
+  and `lib/server/practices/context-source.ts`, which sets the seam's practices slot.
+
 ### kagent agents and A2A
 
 *Built by PR07.*
@@ -188,30 +212,6 @@ resource: an approval or a retirement takes effect with the next request.
   practice of the project or organization, not only what `practices_for` would give this agent.
 - **Order on a team.** A team's remote member gets the project block, then the index, then the team's ancestry line, goal
   and the task.
-
-Wave P1 reaches only the Claude Code mod and MCP clients. Wave P2 adds Landflow agents (the block after "Where this
-work fits"), kagent agents (an index line with each request and the `practices_for` tool), and Check Practices.
-
-### Landflow agents
-
-*Built by PR06.*
-
-A Landflow agent runs in-process, so it gets the full block (up to 3,000 characters) in its system prompt, right after the
-"Where this work fits" block with one blank line between; a run whose project context is Off still gets it. The run's own
-project decides which project practices it may get (the same one the project block uses); nothing a caller sends adds one.
-An in-process run knows no repository, so practices scoped to repositories do not reach it.
-
-- `AgentConfig.practices` is `on` or `off`; absent is on (`PUT /api/agents/:id`, `practices`). Off, `LANDFLOW_PRACTICES=off`
-  or no practices source leaves the prompt and the cache keys exactly as they were. The block's hash joins the run
-  context's hash, so a change of practices changes the cache key.
-- The block is built once, when a run starts. A resume after an approval keeps the context it began with and writes
-  nothing new.
-- Each practice given is recorded as a `delivered` row (with the agent and its execution); each practice the final reply
-  cites ("Practices followed: [handle@version]") that the run was given is recorded as `cited`. A citation of any other
-  practice records nothing.
-- Practices are text and grant nothing: an agent's tool calls are never denied because of one. Only flows block.
-- The code is `lib/server/project-context/practices.ts` (`runPractices`, `withPractices`, `recordRunPractices`, `citedIn`)
-  and `lib/server/practices/context-source.ts`, which sets the seam's practices slot.
 
 ## Globs
 

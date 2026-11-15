@@ -78,8 +78,9 @@ items still open (its "Wave 6" section); this page is the short list to check be
   the block over its cap.
 - Whether Anthropic's prompt cache hits more with the pinned date is not measured on this machine: the prompt up to the
   date line is stable by construction, and no run here talks to Anthropic.
-- A kagent agent called over MCP gets no block and falls back to its own home project. Remote agents and a team's
-  requests carry the block in their message in a later package.
+- A kagent agent called over MCP outside a team gets no block and falls back to its own home project (remote agents and
+  a team's requests carry the block in their message: [below](#project-context-for-remote-agents-2026-11)). A run
+  binding for kagent over MCP outside a team is deferred; practices bind the same way (PR07).
 
 ## Test chat history (B10, 2026-11)
 
@@ -435,13 +436,13 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 - Only `ai.call` usage events carry a goal (`goalId`); `run.finished`, `node.failed`, `node.slow` and `agent.session` do not, and calls that come in through the spend import (kagent) have none, so they show under "No goal" on the AI page.
 
-## Practices (wave P1)
+## Practices (waves P1 and P2)
 
-- Practices reach the Claude Code mod, MCP clients and Landflow agents (PR06). kagent agents and the Check
-  Practices step do not get them yet, and `required` stops nothing: a failed check blocks a flow only from wave P2
-  ([practices.md](practices.md)).
-- A draft does not file an inbox suggestion yet (wave P2). Find waiting drafts in `/brain` → Practices, or in the links the
-  API, the mod and the CLI return.
+- Practices reach the Claude Code mod, MCP clients, Landflow agents (PR06) and Landflow agents on kagent through the
+  index and `practices_for` (PR07). A `required` practice blocks only in a flow, through the Check Practices step (PR08);
+  an agent's tool calls are never blocked by one ([practices.md](practices.md)).
+- A saved draft files a suggestion in the inbox (PR09); a draft from a repository, an agent, the mod, MCP or an API key
+  has no Apply there and is approved on `/brain` by a person who read it against its sources.
 - There is no four-eyes setting: the drafter of a practice may approve their own, if they are allowed to approve at
   that level.
 - A practice grants nothing: no tool, approval or guard changes. It is text an agent is asked to follow.
