@@ -46,6 +46,8 @@ import { describeLastRun, importTarget, lastRunByWorkflow, NEW_MENU_ITEMS, type 
 type WorkflowSummary = Summary & { ownership?: ResourceOwnership };
 
 const MAX_ICONS = 6;
+/** On a phone the strip shares the line with the badges: fewer icons, and no description beside them. */
+const MAX_PHONE_ICONS = 3;
 const SORT_KEY = 'landflow-workflows-sort';
 const DRAG_TYPE = 'application/x-landflow-workflow';
 
@@ -271,6 +273,13 @@ function WorkflowRow({
   readOnly?: string;
 }) {
   const [confirming, setConfirming] = useState(false);
+  // Shown in the right block on a desktop and under the name on a phone.
+  const shared = (className?: string) =>
+    workflow.ownership?.shared ? (
+      <Badge tone="muted" className={className} title={`Shared from ${workflow.ownership.projectName}`}>
+        {workflow.ownership.access.role === 'viewer' ? 'Shared · view' : 'Shared'}
+      </Badge>
+    ) : undefined;
   const download = async () => {
     try {
       const { workflow: full } = await api<{ workflow: Workflow }>(`/api/workflows/${workflow.id}`);
@@ -305,26 +314,35 @@ function WorkflowRow({
             )}
           </div>
           <div className="mt-1.5 flex min-w-0 items-center gap-2.5">
+            {/* On a phone the badges sit here, under the name, and the icon strip gives way to them (clipped). */}
+            {(workflow.ownership?.shared || workflow.active || lastRun || !lastRunsUnknown) && (
+              <span className="flex shrink-0 items-center gap-1.5 md:hidden">
+                {shared()}
+                {workflow.active && <Badge tone="success">Published</Badge>}
+                <LastRunPhone run={lastRun} unknown={lastRunsUnknown} />
+              </span>
+            )}
             {workflow.nodeTypes.length > 0 && (
-              <div className="flex shrink-0 items-center gap-1">
-                {workflow.nodeTypes.slice(0, MAX_ICONS).map((type) => {
+              <div className="flex shrink-0 items-center gap-1 max-md:min-w-0 max-md:shrink max-md:overflow-hidden">
+                {workflow.nodeTypes.slice(0, MAX_ICONS).map((type, index) => {
                   const info = types[type];
                   const color = nodeColor(info);
                   return (
                     <span
                       key={type}
                       title={info?.descriptor.displayName ?? type}
-                      className="grid size-6 place-items-center rounded-lg border border-hair transition-transform duration-150 group-hover:scale-105"
+                      className={cn('grid size-6 shrink-0 place-items-center rounded-lg border border-hair transition-transform duration-150 group-hover:scale-105', index >= MAX_PHONE_ICONS && 'max-md:hidden')}
                       style={{ background: tint(color, 12) }}
                     >
                       <NodeIcon icon={info?.descriptor.icon} size={13} strokeWidth={1.9} style={{ color }} />
                     </span>
                   );
                 })}
-                {workflow.nodeTypes.length > MAX_ICONS && <span className="pl-0.5 text-[12px] text-t3">+{workflow.nodeTypes.length - MAX_ICONS}</span>}
+                {workflow.nodeTypes.length > MAX_ICONS && <span className="pl-0.5 text-[12px] text-t3 max-md:hidden">+{workflow.nodeTypes.length - MAX_ICONS}</span>}
+                {workflow.nodeTypes.length > MAX_PHONE_ICONS && <span className="shrink-0 pl-0.5 text-[12px] text-t3 md:hidden">+{workflow.nodeTypes.length - MAX_PHONE_ICONS}</span>}
               </div>
             )}
-            <span className="truncate text-[12px] text-t3">{workflow.description || 'No description'}</span>
+            <span className={cn('truncate text-[12px] text-t3', workflow.nodeTypes.length > 0 && 'max-md:hidden')}>{workflow.description || 'No description'}</span>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -333,8 +351,12 @@ function WorkflowRow({
               {tag}
             </Badge>
           ))}
-          {workflow.ownership?.shared && <Badge tone="muted" title={`Shared from ${workflow.ownership.projectName}`}>{workflow.ownership.access.role === 'viewer' ? 'Shared · view' : 'Shared'}</Badge>}
-          {workflow.active && <Badge tone="success">Published</Badge>}
+          {shared('max-md:hidden')}
+          {workflow.active && (
+            <Badge tone="success" className="max-md:hidden">
+              Published
+            </Badge>
+          )}
           <LastRun run={lastRun} unknown={lastRunsUnknown} />
           <span className="w-16 text-right text-[12px] tabular-nums text-t2" title={`Updated ${new Date(workflow.updatedAt).toLocaleString()}`}>
             {timeAgo(workflow.updatedAt)}
@@ -446,10 +468,18 @@ export function LastRun({ run, unknown }: { run?: ExecutionSummary; unknown?: bo
         <Badge tone={last.tone}>{last.label}</Badge>
         {last.startedAt && <span className="text-[11px] tabular-nums text-t3">{timeAgo(last.startedAt)}</span>}
       </span>
-      <span className="shrink-0 md:hidden" data-testid="last-run-phone" title={title}>
-        <Badge tone={last.tone}>{last.label}</Badge>
-      </span>
     </>
+  );
+}
+
+/** The last run on a phone: the badge alone, on the row's second line (`WorkflowRow`). */
+function LastRunPhone({ run, unknown }: { run?: ExecutionSummary; unknown?: boolean }) {
+  if (!run && unknown) return null;
+  const last = describeLastRun(run);
+  return (
+    <span className="shrink-0" data-testid="last-run-phone" title={last.startedAt ? `Last run ${new Date(last.startedAt).toLocaleString()}` : undefined}>
+      <Badge tone={last.tone}>{last.label}</Badge>
+    </span>
   );
 }
 

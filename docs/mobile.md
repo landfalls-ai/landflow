@@ -93,6 +93,10 @@ height eases between its three heights (the bar as measured, peek, half) over 24
 - **Executions as cards.** On a phone each run is a card: the workflow and its menu on the first line, the status and how
   long it ran on the second, and when it started (with how long ago) on the third. The run's id, its mode and the column
   headings are left out, and an error shows two lines. The desktop keeps its table (`components/runs/runs-list.tsx`, at `/runs`).
+- **Workflow rows.** On a phone a row of the Workflows list keeps only the name and when it changed on its first line;
+  Shared, Published and the last run's badge move to the second line, in front of at most three node icons (the strip
+  clips when the badges need the room) and without the description (`WorkflowRow` in
+  `components/workflows/workflows-list.tsx`). The desktop row is unchanged.
 - **No sideways scrolling.** No page scrolls sideways at 390 px: a plugin card's chips wrap, the Developers page breaks
   long inline code, and pages pad 16 px instead of 24. Strips that are meant to scroll (a segment control, the Settings
   tabs) scroll inside themselves.
