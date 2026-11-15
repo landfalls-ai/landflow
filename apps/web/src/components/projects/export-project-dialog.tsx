@@ -87,7 +87,7 @@ export function ExportProjectDialog({ projectId, title, onClose }: { projectId: 
     >
       <div className="flex flex-col gap-3">
         <p className="text-[12px] leading-snug text-t2">
-          A Claude Code plugin: <code className="font-mono">PROJECT.md</code> with the brief and the goals, next to the agents whose home is this project and their skills. People, ids, settings, the workspace and secrets are not included.
+          A Claude Code plugin: <code className="font-mono">PROJECT.md</code> with the brief and the goals, next to the agents whose home is this project and their skills. People, ids, project settings, the workspace and secrets are not included.
         </p>
         <label className="flex items-center gap-2 text-[13px] text-t1">
           <input type="checkbox" checked={marketplace} onChange={(e) => setMarketplace(e.target.checked)} />

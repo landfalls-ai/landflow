@@ -98,6 +98,9 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - No import yet: a project's plugin installs in Claude Code and its agents install in Landflow, but `PROJECT.md` and
   `.landflow/project.json` are not read back into a project.
 - Agents only shared to the project are not included, and neither are its tasks, workflows or workspace.
+- The plain agent and team exports ([marketplace.md](marketplace.md#export-agents-as-plugins)) still keep the guardrail
+  judges' and the cheap model's credential references (and an agent's approval emails); only the project export drops
+  them. Closing it changes those exports' bytes, so it waits for a decision.
 
 ## Test chat history (B10, 2026-11)
 

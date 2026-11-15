@@ -85,7 +85,8 @@ export function portableConfig(config: AgentConfig): Partial<AgentConfig> {
 /**
  * The project export's tools: a sub-agent tool pointing at another agent of the export keeps no id but its slug
  * (`agentSlug`, which the install maps to the new agent); sub-agent tools pointing elsewhere and workflow tools are
- * dropped, since their ids belong to this instance; so are the access rules that name one user.
+ * dropped, since their ids belong to this instance; so are the access rules that name one user, the approval emails
+ * and the judge and cheap-model credential references.
  */
 function localTools(config: Partial<AgentConfig>, slugById: Map<string, string>): Partial<AgentConfig> {
   const tools = (config.tools ?? []).flatMap((tool): AgentToolConfig[] => {
@@ -99,7 +100,26 @@ function localTools(config: Partial<AgentConfig>, slugById: Map<string, string>)
   // Access rules naming one user carry that user's id: drop the whole rule (without `who.user` it would match everyone).
   const rules = (config.access?.rules ?? []).filter((rule) => !rule.who.user);
   const { access: _access, ...rest } = config;
-  return { ...rest, tools, ...(rules.length && { access: { ...config.access, rules } }) };
+  // Approval addresses are people's emails; judge and cheap-model credential references name this instance's secrets.
+  const settings = config.settings && { ...config.settings };
+  if (settings) delete settings.approvalEmails;
+  let guardrails = config.guardrails;
+  if (guardrails) {
+    guardrails = { ...guardrails };
+    for (const key of ['input', 'output', 'toolResult'] as const) {
+      const guard = guardrails[key];
+      if (guard?.judge) {
+        const { credential: _credential, ...judge } = guard.judge;
+        guardrails[key] = { ...guard, judge };
+      }
+    }
+  }
+  let router = config.router;
+  if (router?.cheapModel) {
+    const { credential: _credential, ...cheapModel } = router.cheapModel;
+    router = { ...router, cheapModel };
+  }
+  return { ...rest, ...(settings && { settings }), ...(guardrails && { guardrails }), ...(router && { router }), tools, ...(rules.length && { access: { ...config.access, rules } }) };
 }
 
 interface SkillFolder {

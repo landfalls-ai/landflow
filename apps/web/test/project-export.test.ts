@@ -231,6 +231,32 @@ describe('access rules', () => {
   });
 });
 
+describe('settings and credentials', () => {
+  it('drops approval emails and the judge and cheap-model credential references, in the project export only', async () => {
+    const secretProject = projects.createTeamProject({ name: 'Secret Settings', createdBy: lead.id });
+    projects.setMember(secretProject.id, lead.id, 'editor');
+    const judge = { provider: 'typesafe', credential: { id: 'cred_judge777', name: 'Judge key' } };
+    const guard = { enabled: true, action: 'block', reply: 'No.', judge, checks: {} };
+    const guarded = agentStore.create({
+      name: 'Careful Clerk',
+      instructions: 'Careful.',
+      settings: { approvalEmails: ['ottoline@gannet.test'] },
+      guardrails: { input: guard, output: guard, toolResult: guard },
+      router: { mode: 'auto', cheapModel: { provider: 'ollama', model: 'small', credential: { id: 'cred_cheap555', name: 'Cheap key' } } },
+    } as never);
+    projects.setHomeProject('agent', guarded.id, secretProject.id);
+    // Guard the premise: the plain agent export still keeps them (out of scope here).
+    const plain = JSON.stringify(exportAgentPlugin(agentStore.get(guarded.id)!).files);
+    expect(plain).toContain('cred_cheap555');
+    const all = await files(secretProject.id, '?marketplace=1');
+    const text = [...all.entries()].map(([path, content]) => `${path}\n${content}`).join('\n');
+    for (const needle of ['ottoline@gannet.test', 'cred_judge777', 'Judge key', 'cred_cheap555', 'Cheap key']) expect(text, needle).not.toContain(needle);
+    const config = JSON.parse(all.get('.landflow/agents/careful-clerk.json')!).config;
+    expect(config.router.cheapModel.model).toBe('small');
+    expect(config.guardrails.input.judge).toEqual({ provider: 'typesafe' });
+  });
+});
+
 describe('a personal project', () => {
   it('exports under a neutral name, for its owner and for the instance owner', async () => {
     const personalId = projects.ensurePersonalProject(stranger.id)!;
@@ -252,7 +278,7 @@ describe('what never leaves', () => {
     const text = [...all.entries()].map(([path, content]) => `${path}\n${content}`).join('\n');
     for (const needle of [LEAD, DECIDER, GOAL_OWNER, 'Zelda', 'quill.test', 'nightjar.test', 'gannet.test', lead.id, decider.id, goalOwner.id, project.id, company.id, sub.id, hidden.id, agent.id, 'sk-ant-api03']) expect(text, needle).not.toContain(needle);
     expect(all.get('.landflow/project.json')).toContain('[redacted]');
-    expect(text).not.toMatch(/\b(usr|goal|proj|agent)_[A-Za-z0-9]{6,}/);
+    expect(text).not.toMatch(/\b(usr|goal|prj|ag|cred)_[A-Za-z0-9]{6,}/);
   });
 });
 

@@ -150,12 +150,14 @@ serves and their parents up to the root, each once, in the wording of the "Where
 Never in the zip: people (lead, decision owner, goal owners, members, who made or changed anything, the exporting person
 as author), emails, any id, the workspace and its setup commands, the budget, project settings, variables, credentials,
 repositories, tasks and sessions. Every free text (brief, constraints, done when, glossary, goal titles and reasons)
-goes through the secret redaction first. The agent and team exports are unchanged.
+goes through the secret redaction first; that covers the project's own text. The agents' free text (instructions,
+persona, skills) is exported as the agent export writes it. The agent and team exports are unchanged.
 
 A sub-agent tool pointing at another home agent of the export is written with that agent's file slug (`agentSlug`) and no
 id, and the install maps the slug to the new agent, so the link survives a reinstall. Sub-agent tools pointing at an
-agent outside the export, workflow tools, and tool-access rules that name one user are dropped from the zip. A personal project is named after its user, so
-it exports as "Personal project" (`personal-project.zip`): the person's name is nowhere in it.
+agent outside the export, workflow tools, tool-access rules that name one user, the agents' approval emails, and the
+guardrail judges' and the cheap model's credential references are dropped from the zip. A personal project is named
+after its user, so it exports as "Personal project" (`personal-project.zip`): the person's name is nowhere in it.
 
 ## Flows
 
