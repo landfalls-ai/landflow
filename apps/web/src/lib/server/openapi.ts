@@ -41,7 +41,7 @@ function fromZod(schema: z.ZodType): Json {
 const samplePath = (path: string) => path.replace(/\{[^}]+\}/g, 'sample');
 
 interface Operation {
-  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Settings' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks' | 'Conversations';
+  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Settings' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks' | 'Conversations' | 'Practices';
   id: string;
   summary: string;
   description?: string;
@@ -2148,6 +2148,31 @@ function paths(): Record<string, Record<string, Json>> {
     query: [text('day', 'YYYY-MM-DD')],
     responses: { 200: reply('The briefing', object({ day: { type: 'string' }, generatedAt: { type: 'string' }, source: { type: 'string', enum: ['live', 'flow'] }, today: array(briefingWorkItem), yesterday: array(briefingWorkItem), related: array({ type: 'object' }), summary: { type: 'string' }, autoSend: { type: 'string', enum: ['allowed', 'forbidden'] }, brain: { type: 'string', enum: ['on', 'off'] } }, ['day', 'generatedAt', 'source', 'today', 'yesterday', 'related', 'autoSend', 'brain'])), 400: invalid },
   });
+  // PR03:
+  add('post', '/api/practices/learn', {
+    tag: 'Practices',
+    id: 'learnPractices',
+    summary: 'Draft practices from files',
+    description: 'Needs the `brain:write` scope (or a session). The brain’s model reads up to 20 files of one repository at one commit and drafts at most 10 practices. Every draft is tainted and none of its citations is verified, because the files came from the caller; a citation whose excerpt is not in a sent file is dropped. A person approves on Brain → Practices. 503 when the brain’s model is off or practices are not loaded.',
+    body: jsonBody(
+      object(
+        {
+          repo: { type: 'string', description: 'owner/name' },
+          sha: { type: 'string', description: 'The commit the files are from' },
+          files: array(object({ path: { type: 'string' }, content: { type: 'string', maxLength: 20000 } }, ['path', 'content'])),
+          topics: array({ type: 'string' }),
+          level: { type: 'string', enum: ['org', 'project'] },
+          projectId: { type: 'string' },
+        },
+        ['repo', 'sha', 'files'],
+      ),
+    ),
+    responses: {
+      200: reply('The drafts and what was skipped', object({ drafts: array(object({ practiceId: { type: 'string' }, handle: { type: 'string' }, version: { type: 'integer' }, url: { type: 'string' } }, ['practiceId', 'handle', 'version', 'url'])), skipped: array(object({ handle: { type: 'string' }, reason: { type: 'string' } }, ['reason'])) }, ['drafts', 'skipped'])),
+      400: invalid,
+      503: errorRef('The brain’s model is off, or practices are not loaded'),
+    },
+  });
   return out;
 }
 
@@ -2180,6 +2205,7 @@ export function openApiDocument(origin?: string): Record<string, unknown> {
       { name: 'Agents', description: 'Agents that run elsewhere (kagent) reporting what they did back to the run that asked them (docs/a2a.md)' },
       { name: 'Agent teams', description: 'Teams of agents with standing relations: who leads, who reports to whom, who reviews (docs/agent-teams.md)' },
       { name: 'Conversations', description: 'A person’s own chats with Spotlight, the brain and the Agent architect, and their personal preferences: session only, owner only (docs/assistant.md#conversation-history)' },
+      { name: 'Practices', description: 'The rules your company follows, read from its repositories and approved by people (docs/practices.md)' }, // PR03:
       { name: 'MCP', description: 'Agents and MCP (docs/transports.md): Landflow-issued MCP tokens, tool grants, the JWKS, the plugin catalog (server.json, the registry API) and protected resource metadata' },
     ],
     security: [{ bearerAuth: [] }, { apiKeyHeader: [] }, { sessionCookie: [] }],
