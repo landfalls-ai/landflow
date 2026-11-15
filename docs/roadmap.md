@@ -1940,6 +1940,19 @@ Closes P-wf-1, P-wf-2, P-cr-1, P-cr-2, P-dt-1, P-pr-2 and P-auth-1; X10 closed i
   they fire `landflow:ask-about` with the resource and three starters ([spotlight.md](spotlight.md#ask-about-it)). The chat
   panel that listens for it is built (B35).
 
+## Projects with goals (Paperclip program, waves 7-10)
+
+Projects get a mission to serve, goals and a brief, and agents learn where their work fits. See
+[projects-and-goals.md](projects-and-goals.md).
+
+- **PC01, built:** the data and API. The company mission in Settings (`company`), the goal tree (levels, status, owner,
+  target date, parent, four levels deep), the goals a project serves in order (its first planned or active one is primary),
+  linked brain initiatives, the project brief (brief, constraints, done-when, words we use, status, target date, lead,
+  decision owner) and the context data source for the "Where this work fits" block. Closes the server side of P1.
+- **PC02, open:** the screens (Goals page, goal dialog, the brief on the project Overview, Settings → Company).
+- **PC03, open:** the block and its injection into agent runs.
+- **Open:** goal progress.
+
 ## Not planned
 
 Later, maybe: an agent code sandbox, and prompt management. Not planned:
