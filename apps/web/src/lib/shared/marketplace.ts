@@ -179,6 +179,18 @@ export interface LandflowTeamData {
   team: { name: string; goal?: string; description?: string; members: Array<Record<string, unknown>> };
 }
 
+/** `.landflow/project.json`: an exported project (docs/marketplace.md#export-a-project): its brief and the goals it serves, without people or ids. */
+export const LANDFLOW_PROJECT_KIND = 'landflow/project';
+export interface LandflowProjectData {
+  kind: typeof LANDFLOW_PROJECT_KIND;
+  version: 1;
+  project: { name: string; brief?: string; constraints?: string; doneWhen?: string; glossary?: string; status?: string; targetDate?: string };
+  /** The goals the project serves and their parents up to the root; `parent` is an index in this array. */
+  goals: Array<{ title: string; level: string; status: string; targetDate?: string; why?: string; parent?: number }>;
+  /** The slugs of the agent files whose home is the project. */
+  agents: string[];
+}
+
 export interface ClaudeSkillFile {
   /** Directory of the skill inside the plugin. */
   dir: string;

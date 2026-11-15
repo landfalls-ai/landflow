@@ -2043,10 +2043,17 @@ Projects get a mission to serve, goals and a brief, and agents learn where their
   days, read only through the visibility rule for the person they are for, `GET /api/goals/:id/progress` and
   `GET /api/goals?progress=1`, and the nightly sync's "Goals that moved" ([projects-and-goals.md](projects-and-goals.md#progress)).
   Closes P7-1 on the server; the screens are PC18.
+- **PC18, built (wave 10, screens):** one quiet progress line under each goal on the Goals page, in the goal's sheet (7 or
+  30 days) and on the project Overview's goal rows ([projects-and-goals.md](projects-and-goals.md#on-the-goals-page-and-the-overview)).
 - **PC19, built (wave 10, server; P7-2):** tasks, the server: tasks with agent or person assignees, atomic checkout,
   wake-ups that only ask, approved runs through the project's limits, Needs you items
   ([Tasks](projects-and-goals.md#tasks)); the Tasks tab is PC20.
-- **Open:** goal progress screens, the Tasks tab and the PROJECT.md export (wave 10).
+- **PC20, built (wave 10, screens):** the project's **Tasks** tab, the task dialog with assignee and wake-up schedule,
+  **Approve** and **Deny** for a task run in Needs you, and **Delete this project** last in Settings
+  ([projects-and-goals.md](projects-and-goals.md#the-tasks-tab-and-needs-you)).
+- **PC21, built (wave 10; P7-3):** **Export** in a project's header downloads the project as a Claude Code plugin: `PROJECT.md`
+  with its brief and the goals it serves, its home agents and their skills, `.landflow/project.json`, no people or ids
+  ([marketplace.md](marketplace.md#export-a-project)). The agent and team exports are byte-identical (a test holds their bytes).
 
 ## Not planned
 

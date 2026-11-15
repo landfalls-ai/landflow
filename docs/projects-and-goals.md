@@ -474,6 +474,10 @@ in Home's tile and the rail's badge like any other. Its title opens the task (ne
 
 The red **Delete this project** card is the last card of the Settings tab: settings, Agents in this project, AI budget,
 Workspace, Variables, then it.
+## Export
+
+**Export** in the project's header downloads the project as a Claude Code plugin: `PROJECT.md` with its brief and goals
+next to its home agents and their skills, without people or ids ([marketplace.md](marketplace.md#export-a-project)).
 
 ## How it is built
 

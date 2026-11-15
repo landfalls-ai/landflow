@@ -2663,6 +2663,16 @@ function paths(): Record<string, Record<string, Json>> {
   add('post', '/api/projects/{id}/tasks/{taskId}/runs', { tag: 'Projects', id: 'askProjectTaskRun', summary: 'Ask an agent task to run now', description: 'Editors and admins. Agent tasks only (400 `Only an agent task runs`; 400 `Reopen the task first` for a done or cancelled one). Creates a `requested` run (201) or answers the run the task has open (200, `merged: true`). Nothing runs until a person approves it. Audited as `project.task.run_requested`.', pathParams: { id: 'The project id', taskId: 'The task id' }, responses: { 200: reply('The run it merged into', object({ run: taskRunDoc, merged: { type: 'boolean' } }, ['run', 'merged'])), 201: reply('The new run', object({ run: taskRunDoc, merged: { type: 'boolean' } }, ['run', 'merged'])), 400: invalid, 403: errorRef('Not an editor of the project'), 404: notFound } });
   add('get', '/api/task-runs/{runId}', { tag: 'Projects', id: 'getProjectTaskRun', summary: 'A project task’s run', description: 'Any role in the run’s project. A running or waiting run is settled against its agent session first.', pathParams: { runId: 'The run id' }, responses: { 200: reply('The run', object({ run: taskRunDoc }, ['run'])), 404: notFound } });
   add('post', '/api/task-runs/{runId}', { tag: 'Projects', id: 'decideProjectTaskRun', summary: 'Approve or deny a task run', description: 'Editors and admins of the run’s project, signed in (an API key or MCP client gets 403 `session_only`). Only a `requested` run is decided (409 `Already <status>`). Approve re-checks the agent (published, available in the project, allowed by its rules; 409 and the run stays requested), answers 202 and runs the agent in the background through the same runner and limits as every agent run in the project. Deny answers 200. Audited as `project.task.run_decided`.', pathParams: { runId: 'The run id' }, body: jsonBody(object({ decision: { type: 'string', enum: ['approve', 'deny'] } }, ['decision'])), responses: { 200: reply('Denied', object({ run: taskRunDoc }, ['run'])), 202: reply('Approved, starting', object({ run: taskRunDoc }, ['run'])), 403: errorRef('Not an editor of the project, or an API key'), 404: notFound, 409: errorRef('Already decided, or the agent may not run here') } });
+  // PC21: a project as a Claude Code plugin
+  add('get', '/api/projects/{id}/export', {
+    tag: 'Projects',
+    id: 'exportProjectPlugin',
+    summary: 'Export a project as a Claude Code plugin',
+    description: 'Any role in the project (owners and admins: any); none is 404 `Project not found`. The zip is `<project-slug>.zip`: `PROJECT.md` (the brief, constraints, done-when, glossary, the goals it serves and the agents), `.claude-plugin/plugin.json`, `.landflow/project.json`, and `agents/`, `skills/` and `.landflow/agents/` for the agents whose home is the project (agents only shared to it are left out). People, ids, the workspace, budget, settings, variables, credentials, repositories, tasks and sessions are never included; free text is redacted for secrets. Goals the caller cannot see are left out.',
+    pathParams: { id: 'The project id' },
+    query: exportQuery,
+    responses: { 200: zipReply, 400: invalid, 404: notFound },
+  });
   return out;
 }
 

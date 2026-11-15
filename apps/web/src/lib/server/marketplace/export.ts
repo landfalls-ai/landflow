@@ -4,7 +4,7 @@
  * `skills/<slug>/SKILL.md`; what only Landflow has (persona parts, tools, avatar, model provider, the team's relations)
  * goes in `.landflow/`, which Claude Code never opens, and the import reads it back.
  */
-import type { Agent, AgentConfig, AgentSkill, VectorKnowledgeBaseConfig } from '../../shared/agents';
+import type { Agent, AgentConfig, AgentSkill, AgentToolConfig, VectorKnowledgeBaseConfig } from '../../shared/agents';
 import { isNodeKnowledge } from '../../shared/agents';
 import type { AgentTeamConfig } from '../../shared/agent-teams';
 import { LANDFLOW_AGENT_KIND, LANDFLOW_TEAM_KIND, type LandflowAgentData, type LandflowTeamData } from '../../shared/marketplace';
@@ -37,7 +37,7 @@ export const slugOf = (text: string, fallback = 'agent') =>
     .replace(/-+$/, '') || fallback;
 
 /** A YAML double-quoted scalar the frontmatter reader (./frontmatter.ts) and Claude Code both read. */
-const quote = (text: string) =>
+export const quote = (text: string) =>
   `"${text
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '')
     .replace(/\\/g, '\\\\')
@@ -82,6 +82,26 @@ export function portableConfig(config: AgentConfig): Partial<AgentConfig> {
   return rest;
 }
 
+/**
+ * The project export's tools: a sub-agent tool pointing at another agent of the export keeps no id but its slug
+ * (`agentSlug`, which the install maps to the new agent); sub-agent tools pointing elsewhere and workflow tools are
+ * dropped, since their ids belong to this instance; so are the access rules that name one user.
+ */
+function localTools(config: Partial<AgentConfig>, slugById: Map<string, string>): Partial<AgentConfig> {
+  const tools = (config.tools ?? []).flatMap((tool): AgentToolConfig[] => {
+    if (tool.type === 'workflow') return [];
+    if (tool.type !== 'agent') return [tool];
+    const slug = slugById.get(tool.agentId);
+    if (!slug) return [];
+    const { agentId: _id, ...rest } = tool;
+    return [{ ...rest, agentId: '', agentSlug: slug } as AgentToolConfig];
+  });
+  // Access rules naming one user carry that user's id: drop the whole rule (without `who.user` it would match everyone).
+  const rules = (config.access?.rules ?? []).filter((rule) => !rule.who.user);
+  const { access: _access, ...rest } = config;
+  return { ...rest, tools, ...(rules.length && { access: { ...config.access, rules } }) };
+}
+
 interface SkillFolder {
   slug: string;
   skill: AgentSkill;
@@ -100,7 +120,7 @@ function skillFiles(folders: SkillFolder[]): ExportFile[] {
 /** The agent file's body: the prompt the agent runs with (persona parts, instructions, skills list), without a run's memory or time. */
 export const agentBody = (config: AgentConfig) => personaPrompt(config).trim();
 
-function agentFile(slug: string, config: AgentConfig, sourceId: string | undefined): ExportFile[] {
+function agentFile(slug: string, config: AgentConfig, sourceId: string | undefined, slugById?: Map<string, string>): ExportFile[] {
   const model = claudeModel(config);
   const color = claudeColor(config.color);
   const tools = [...new Set(config.skills.flatMap((s) => s.allowedTools ?? []))];
@@ -112,12 +132,24 @@ function agentFile(slug: string, config: AgentConfig, sourceId: string | undefin
     `model: ${model ?? 'inherit'}`,
     ...(color ? [`color: ${color}`] : []),
   ];
-  const data: LandflowAgentData = { kind: LANDFLOW_AGENT_KIND, version: 1, ...(sourceId && { sourceId }), config: portableConfig(config), body };
+  const data: LandflowAgentData = { kind: LANDFLOW_AGENT_KIND, version: 1, ...(sourceId && { sourceId }), config: slugById ? localTools(portableConfig(config), slugById) : portableConfig(config), body };
   return [{ path: `agents/${slug}.md`, content: `---\n${front.join('\n')}\n---\n\n${body}\n` }, jsonFile(`.landflow/agents/${slug}.json`, data)];
 }
 
+/** What a plugin built on `pluginFiles` adds to the agent and team exports (the project export). */
+export interface PluginExtra {
+  /** plugin.json's keywords (default: `landflow` and `team` or `agent`). */
+  keywords?: string[];
+  /** The README's second paragraph (default: where the agents and skills are). */
+  readme?: string;
+  /** Write no ids: the agents point at each other by slug (the project export). */
+  localIds?: boolean;
+  /** More files, given the slug of each agent (in the order they were passed). */
+  files?: (slugs: string[]) => ExportFile[];
+}
+
 /** The plugin's files for these agents (and the team that relates them). */
-function build(name: string, description: string, agents: Array<{ id?: string; config: AgentConfig; slug?: string }>, team: AgentTeamConfig | undefined, options: ExportOptions): PluginExport {
+export function pluginFiles(name: string, description: string, agents: Array<{ id?: string; config: AgentConfig; slug?: string }>, team: AgentTeamConfig | undefined, options: ExportOptions, extra: PluginExtra = {}): PluginExport {
   const author = options.author?.trim() || 'Landflow';
   const version = options.version ?? '1.0.0';
   const taken = new Set<string>();
@@ -147,13 +179,14 @@ function build(name: string, description: string, agents: Array<{ id?: string; c
       version,
       description,
       author: { name: author },
-      keywords: ['landflow', ...(team ? ['team'] : ['agent'])],
+      keywords: extra.keywords ?? ['landflow', ...(team ? ['team'] : ['agent'])],
       agents: named.map((a) => `./agents/${a.slug}.md`),
       ...(folders.length && { skills: folders.map((f) => `./skills/${f.slug}`) }),
     }),
     ...(options.marketplace ? [jsonFile('.claude-plugin/marketplace.json', { name: `${name}-marketplace`, owner: { name: author }, metadata: { description }, plugins: [{ name, source: './', description, version, category: 'agents' }] })] : []),
-    ...named.flatMap((a) => agentFile(a.slug, a.config, a.id)),
+    ...named.flatMap((a) => agentFile(a.slug, a.config, extra.localIds ? undefined : a.id, extra.localIds ? new Map(named.flatMap((n) => (n.id ? [[n.id, n.slug] as const] : []))) : undefined)),
     ...skillFiles(folders),
+    ...(extra.files?.(named.map((a) => a.slug)) ?? []),
   ];
   if (team) {
     const byAgent = new Map(named.flatMap((a) => (a.id ? [[a.id, a.slug] as const] : [])));
@@ -175,9 +208,10 @@ function build(name: string, description: string, agents: Array<{ id?: string; c
       '',
       description,
       '',
-      `Exported from Landflow as a Claude Code plugin. ${team ? 'Its agents are in `agents/`' : 'The agent is in `agents/`'}${folders.length ? ' and its skills in `skills/`' : ''}.`,
+      extra.readme ??
+        `Exported from Landflow as a Claude Code plugin. ${team ? 'Its agents are in `agents/`' : 'The agent is in `agents/`'}${folders.length ? ' and its skills in `skills/`' : ''}.`,
       '',
-      '`.landflow/` holds what only Landflow uses (persona parts, tools, avatar, model provider' + (team ? ', the team’s relations' : '') + '). Claude Code ignores it; installing the plugin in Landflow restores it.',
+      '`.landflow/` holds what only Landflow uses (persona parts, tools, avatar, model provider' + (team ? ', the team’s relations' : '') + '). Claude Code ignores it; installing the plugin in Landflow restores it' + (extra.localIds ? ' (the agents, not the project).' : '.'),
       '',
     ].join('\n'),
   });
@@ -188,7 +222,7 @@ function build(name: string, description: string, agents: Array<{ id?: string; c
 export function exportAgentPlugin(agent: Agent | AgentConfig, options: ExportOptions = {}): PluginExport {
   const config = configOf(agent);
   const id = 'id' in agent ? agent.id : undefined;
-  return build(slugOf(config.name), config.description.trim() || `${config.name}, a Landflow agent.`, [{ id, config }], undefined, options);
+  return pluginFiles(slugOf(config.name), config.description.trim() || `${config.name}, a Landflow agent.`, [{ id, config }], undefined, options);
 }
 
 /** A team as a plugin: its Landflow agents' files, the skills they share, and the team's relations. */
@@ -198,5 +232,5 @@ export function exportTeamPlugin(team: AgentTeamConfig, options: ExportOptions =
     const agent = agentStore.get(id);
     return agent ? [{ id, config: configOf(agent) }] : [];
   });
-  return build(slugOf(team.name, 'team'), team.goal?.trim() || team.description?.trim() || `${team.name}, a Landflow agent team.`, agents, team, options);
+  return pluginFiles(slugOf(team.name, 'team'), team.goal?.trim() || team.description?.trim() || `${team.name}, a Landflow agent team.`, agents, team, options);
 }
