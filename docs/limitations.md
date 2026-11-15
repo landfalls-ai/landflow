@@ -349,3 +349,11 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - An agent's raised cap is written into its published version in place (and its history entry), not as a new version.
 - Apply Cap Raise tells the budgets sync and records whether it updated LiteLLM; a workflow's cap has no LiteLLM backstop,
   so its `gateway` is `skipped`.
+
+## Following practices over MCP and citing (PR04, 2026-11)
+
+- A Landflow MCP project token is an instance token with a scope and has no actor, so it gets organization practices only; a project server gets its project's practices only for a personal API key on `/api/mcp/projects/<id>`.
+- An unscoped caller gets a project practice only when it lists the repository asked for. A project practice with no `repos` is reachable over the unscoped server through `practice_get { projectId }` and the resources, not through `practices_for`.
+- Citing accepts any version from 1 to the current approved one, so a version that was rejected and never approved can be recorded as `cited`. Tighten it in the practices store later.
+- `practice_cite` records at most 20 citations; the rest are neither recorded nor listed as unknown. `practices_for` appends one pointer line after the block is fitted to its budget.
+- Two project practices with the same handle in different projects are not ordered by the selector; the store's order decides.

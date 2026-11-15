@@ -6,7 +6,8 @@
 import { PRACTICE_HANDLE, PRACTICE_LIMITS, PRACTICES_TRAILER, type ApprovedPractice } from '../../shared/practices';
 import { canResource, executionWorkflowId } from '../projects/access';
 import { HttpError } from '../errors';
-import { practicesCitable, type PracticeCaller } from './applicable';
+import { practicesCitable, practicesFor, type PracticeCaller } from './applicable';
+import { selectPractices } from './select';
 import { practicesPort } from './port';
 
 const ITEM = /^([^\s@]+)@(\d{1,6})$/;
@@ -44,16 +45,32 @@ export function recordCitations(caller: PracticeCaller, input: CiteInput): { rec
     if (!workflowId || (caller.actor && !canResource(caller.actor, 'workflow', workflowId, 'read'))) throw new HttpError('Execution not found', 404);
   }
   const port = practicesPort();
-  const allowed = new Map<string, ApprovedPractice>();
-  // The project's practice stands in for the organization's with the same handle, as in selection.
-  for (const p of practicesCitable(caller)) if (!allowed.has(p.handle) || p.level === 'project') allowed.set(p.handle, p);
+  // Every candidate per handle, since an organization and a project practice (or two projects') may share one.
+  const candidates = new Map<string, ApprovedPractice[]>();
+  for (const p of practicesCitable(caller)) candidates.set(p.handle, [...(candidates.get(p.handle) ?? []), p]);
+  // The ones delivery would have given: the selector's winner for the repository, else any that applies without one.
+  let applies = new Set<string>();
+  let winners = new Map<string, ApprovedPractice>();
+  try {
+    const delivered = practicesFor(caller, { repo: input.repo });
+    applies = new Set(delivered.map((p) => p.id));
+    if (input.repo) winners = new Map(selectPractices(delivered, { repo: input.repo }).map((p) => [p.handle, p]));
+  } catch {
+    // A project the caller has no role in: nothing applies, and citable gave the same refusal.
+  }
+  const resolve = (handle: string, version: number): ApprovedPractice | undefined => {
+    const winner = winners.get(handle);
+    if (winner && version <= winner.version) return winner;
+    const rank = (p: ApprovedPractice) => (applies.has(p.id) ? 0 : 2) + (p.level === 'project' ? 0 : 1);
+    return (candidates.get(handle) ?? []).filter((p) => version <= p.version).sort((x, y) => rank(x) - rank(y))[0];
+  };
   const recorded: string[] = [];
   const unknown: string[] = [];
   for (const citation of wanted) {
     const m = ITEM.exec(citation);
-    const practice = m && PRACTICE_HANDLE.test(m[1]!) ? allowed.get(m[1]!) : undefined;
     const version = m ? Number(m[2]) : 0;
-    if (!port || !practice || version < 1 || version > practice.version) {
+    const practice = m && PRACTICE_HANDLE.test(m[1]!) && version >= 1 ? resolve(m[1]!, version) : undefined;
+    if (!port || !practice) {
       unknown.push(citation);
       continue;
     }

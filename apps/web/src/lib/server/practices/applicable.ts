@@ -7,7 +7,8 @@ import { PRACTICE_BUDGETS, type ApprovedPractice, type ApplicablePractice, type 
 import { HttpError } from '../errors';
 import { isInstanceAdmin, projectRole, visibleProjectIds, type Actor } from '../projects/access';
 import { getProject, listProjects } from '../projects/store';
-import { practicesBlock } from './block';
+import { cleanSummary, practicesBlock } from './block';
+import { redactPatterns, redactText } from '../secrets/redact';
 import { practicesPort } from './port';
 import { selectPractices, type PracticeQuery } from './select';
 
@@ -57,13 +58,16 @@ export function practicesCitable(caller: PracticeCaller): ApprovedPractice[] {
   return port.approved({ projectIds: visible ? [...visible] : listProjects().map((p) => p.id) });
 }
 
+/** A title as one safe line. */
+export const cleanTitle = (title: string): string => cleanSummary(redactPatterns(redactText(title)));
+
 export const toApplicable = (p: ApprovedPractice): ApplicablePractice => ({
   handle: p.handle,
   version: p.version,
-  title: p.title,
+  title: cleanTitle(p.title),
   level: p.level,
   strength: p.strength,
-  summary: p.summary,
+  summary: cleanSummary(p.summary),
   topics: p.topics,
   repos: p.repos,
   paths: p.paths,

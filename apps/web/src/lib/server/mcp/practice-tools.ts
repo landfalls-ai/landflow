@@ -12,7 +12,7 @@ import { toolAllowed } from '../../shared/mcp';
 import type { ApiKeyScope } from '../../shared/auth';
 import { publicUrl } from '../config';
 import { HttpError } from '../errors';
-import { applicableFor, practicesFor } from '../practices/applicable';
+import { applicableFor, cleanTitle, practicesCitable, practicesFor } from '../practices/applicable';
 import { recordCitations } from '../practices/cite';
 import { practicesPort } from '../practices/port';
 import { redactPatterns, redactText } from '../secrets/redact';
@@ -84,7 +84,7 @@ export function registerPracticeTools(server: McpServer, ctx: PracticeContext) {
       if (projectId && ctx.scope && ctx.scope.projectId !== projectId) return failure(`Practice ${handle} not found`);
       let list: ApprovedPractice[];
       try {
-        list = practicesFor({ actor, projectId: projectId ?? caller.projectId });
+        list = practicesCitable(caller);
       } catch (caught) {
         if (caught instanceof HttpError) return failure(`Practice ${handle} not found`);
         throw caught;
@@ -95,7 +95,7 @@ export function registerPracticeTools(server: McpServer, ctx: PracticeContext) {
       return json({
         handle: practice.handle,
         version: practice.version,
-        title: practice.title,
+        title: cleanTitle(practice.title),
         strength: practice.strength,
         scope: { level: practice.level, ...(practice.projectId && { projectId: practice.projectId }), topics: practice.topics, repos: practice.repos, paths: practice.paths },
         summary: clean(practice.summary),
@@ -183,7 +183,7 @@ export function registerPracticeTools(server: McpServer, ctx: PracticeContext) {
   );
   let listed: ApprovedPractice[] = [];
   try {
-    listed = practicesFor(caller).slice(0, RESOURCE_LIMIT);
+    listed = practicesCitable(caller).slice(0, RESOURCE_LIMIT);
   } catch {
     listed = [];
   }
@@ -195,9 +195,9 @@ export function registerPracticeTools(server: McpServer, ctx: PracticeContext) {
     server.registerResource(
       `practice:${practice.handle}`,
       uri,
-      { title: practice.title, description: `${practice.strength} practice, version ${practice.version}`, mimeType: 'text/markdown' },
+      { title: cleanTitle(practice.title), description: `${practice.strength} practice, version ${practice.version}`, mimeType: 'text/markdown' },
       asResource(uri, () => {
-        const current = practicesFor(caller).find((p) => p.handle === practice.handle) ?? practice;
+        const current = practicesCitable(caller).find((p) => p.id === practice.id) ?? practice;
         return `# ${clean(current.title)}\n\n${current.strength}, version ${current.version}\n\n${clean(current.body)}`;
       }),
     );

@@ -208,6 +208,18 @@ describe('citing', () => {
     ]);
   });
 
+  it('a handle shared by an organization and a project practice is credited to the one that was delivered', async () => {
+    all.push(practice('helm/chart', { version: 5 }), practice('helm/chart', { id: 'prc_helm_chart_p1', level: 'project', projectId: p1.id, repos: ['acme/other'], version: 1 }));
+    try {
+      asUser(alice);
+      const { body } = await post({ citations: ['helm/chart@5', 'helm/chart@1'], repo: 'acme/billing' });
+      expect(body.recorded.sort()).toEqual(['helm/chart@1', 'helm/chart@5']);
+      expect(recorded.map((r) => [r.practiceId, r.version])).toEqual([['prc_helm_chart', 5], ['prc_helm_chart', 1]]);
+    } finally {
+      all.splice(-2);
+    }
+  });
+
   it('records nothing when practices are off', async () => {
     enabled = false;
     asUser(alice);

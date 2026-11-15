@@ -18,7 +18,7 @@ function stripControl(text: string): string {
   let out = '';
   for (const ch of text) {
     const c = ch.codePointAt(0)!;
-    if (ch === '\n' || ch === '\r' || ch === '\t' || (c >= 0x20 && c !== 0x7f && !(c >= 0x80 && c <= 0x9f) && c !== 0x2028 && c !== 0x2029)) out += ch;
+    if (ch === '\n' || ch === '\r' || ch === '\t' || (c >= 0x20 && c !== 0x7f && !(c >= 0x80 && c <= 0x9f) && c !== 0x2028 && c !== 0x2029 && !(c >= 0x200b && c <= 0x200f) && !(c >= 0x202a && c <= 0x202e) && !(c >= 0x2060 && c <= 0x2069) && c !== 0xfeff)) out += ch;
   }
   return out;
 }
