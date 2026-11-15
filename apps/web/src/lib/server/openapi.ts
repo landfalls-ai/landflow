@@ -2561,6 +2561,16 @@ function paths(): Record<string, Record<string, Json>> {
   const workspaceView = object({ workspace: workspaceDoc, repos: array({ type: 'string' }), saved: { type: 'boolean' }, canEdit: { type: 'boolean' }, setupShown: { type: 'boolean' }, updatedAt: { type: 'string' }, updatedBy: { type: 'string' } }, ['workspace', 'repos', 'saved', 'canEdit', 'setupShown']);
   add('get', '/api/projects/{id}/workspace', { tag: 'Projects', id: 'getProjectWorkspace', summary: 'A project’s workspace for harness runs', description: 'Any role. Setup commands only for editors and admins (`setupShown`). The default when nothing is saved (`saved: false`). Repositories the project no longer lists are left out.', pathParams: { id: 'The project id' }, responses: { 200: reply('The workspace', workspaceView), 404: notFound } });
   add('put', '/api/projects/{id}/workspace', { tag: 'Projects', id: 'putProjectWorkspace', summary: 'Save a project’s workspace', description: 'The project’s admins (and instance owners and admins). Each repository key must be one the project lists. Landflow never runs a setup command. Audited as `project.workspace.update` with what changed, never the setup text.', pathParams: { id: 'The project id' }, body: jsonBody(workspaceDoc), responses: { 200: reply('The workspace', workspaceView), 400: invalid, 403: errorRef('Not a project admin'), 404: notFound } });
+  // PC21: a project as a Claude Code plugin
+  add('get', '/api/projects/{id}/export', {
+    tag: 'Projects',
+    id: 'exportProjectPlugin',
+    summary: 'Export a project as a Claude Code plugin',
+    description: 'Any role in the project (owners and admins: any); none is 404 `Project not found`. The zip is `<project-slug>.zip`: `PROJECT.md` (the brief, constraints, done-when, glossary, the goals it serves and the agents), `.claude-plugin/plugin.json`, `.landflow/project.json`, and `agents/`, `skills/` and `.landflow/agents/` for the agents whose home is the project (agents only shared to it are left out). People, ids, the workspace, budget, settings, variables, credentials, repositories, tasks and sessions are never included; free text is redacted for secrets. Goals the caller cannot see are left out.',
+    pathParams: { id: 'The project id' },
+    query: exportQuery,
+    responses: { 200: zipReply, 400: invalid, 404: notFound },
+  });
   return out;
 }
 
