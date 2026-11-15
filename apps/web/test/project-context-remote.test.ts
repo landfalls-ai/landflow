@@ -104,6 +104,7 @@ describe('The A2A node', () => {
     built = context({ compact: '' });
     await run(a2aAgentNode, params({ operation: 'sendMessage', message: 'plain too' }));
     expect(sends().map(textOf)).toEqual(['plain', 'plain too']);
+    expect(sends()[0].params.message?.metadata).not.toHaveProperty(['landflow.project.id']);
   });
 });
 
@@ -124,6 +125,15 @@ describe('An A2A capability', () => {
     expect(textOf(one)).toBe(`${BLOCK}\n\nslug One`);
     expect(one.params.message?.metadata).toMatchObject({ 'landflow.project.id': 'prj_1' });
     expect(textOf(two)).toBe('slug Two');
+    expect(two.params.message?.metadata).not.toHaveProperty(['landflow.project.id']);
+  });
+
+  it('sends nothing with the capability option Project context: Off', async () => {
+    const built = await a2aAgentTool({ id: 'cap_2', name: 'Quiet', parameters: { agentUrl: a2a.url, authentication: 'none', options: { timeout: 5_000, projectContext: 'off' } } } as never);
+    if ('error' in built) throw new Error(built.error);
+    await withRunContext(context(), () => built.invoke({ message: 'slug Quiet' }, toolContext()));
+    expect(textOf(sends()[0])).toBe('slug Quiet');
+    expect(sends()[0].params.message?.metadata).not.toHaveProperty(['landflow.project.id']);
   });
 
   it('sends nothing for an agent whose mode is off', async () => {
@@ -172,5 +182,29 @@ describe('A team', () => {
     const spans = read(record.executionId).filter((e) => e.type === 'span.updated');
     expect(JSON.stringify(spans)).toContain('"project":{"id":"prj_1","name":"Garden"}');
     expect(JSON.stringify(spans)).toContain('"goal":{"id":"goal_1","title":"Grow herbs"}');
+  });
+
+  it('sends a remote member nothing of the project block with its option Project context: Off', async () => {
+    const members: TeamMember[] = [
+      { id: 'm_lead', title: 'Lead', kind: 'agent', agentId: lead.id },
+      { id: 'm_plan', title: 'Planner', kind: 'a2a', reportsTo: 'm_lead', role: 'Plans', parameters: { agentUrl: a2a.url, options: { projectContext: 'off' } } } as TeamMember,
+    ];
+    const team = agentTeamStore.create({ name: 'Quiet team', goal: 'Ship it', members });
+    agentTeamStore.publish(team.id);
+    scripts.set('pcr-lead', (turn, body) => (turn === 1 ? { toolCalls: [{ id: 'q1', name: 'ask_planner', arguments: { message: 'slug One', reason: 'Plan' } }] } : { text: `done ${body.messages.length}` }));
+    turns.clear();
+    const wf: Workflow = {
+      id: 'wf_pcr_off',
+      name: 'team off',
+      nodes: [node('Start', 'core.manualTrigger'), node('Team', 'core.runTeam', { teamId: team.id, message: 'Do it' })],
+      connections: [{ id: 'a', type: 'main', source: 'Start', target: 'Team', sourceIndex: 0, targetIndex: 0 }],
+    };
+    store.saveWorkflow(wf);
+    const record = await runWorkflow({ workflow: wf, mode: 'manual', startNodeId: 'Start' });
+    resetJournals();
+    expect(record.error?.message ?? record.status).toBe('success');
+    const [first] = sends();
+    expect(textOf(first)).not.toContain('## Where this work fits');
+    expect(first.params.message?.metadata).not.toHaveProperty(['landflow.project.id']);
   });
 });

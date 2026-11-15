@@ -353,6 +353,6 @@ items still open (its "Wave 6" section); this page is the short list to check be
 ## Project context for remote agents (2026-11)
 
 - Remote, kagent and A2A agents and a team's remote members receive the compact block by default with the first message
-  of a conversation: goal titles and a 200-character brief. Turn it off per A2A node (**Project context: Off**) or per
-  agent (context mode Off). Nothing is sent where no project has goals.
+  of a conversation: goal titles and a 200-character brief. Turn it off per A2A node, per A2A capability or per team remote member (**Project context: Off** in
+  its options; the team's project line stays) or per agent (context mode Off). Nothing is sent where no project has goals.
 - The block is not repeated in follow-ups, so an agent that forgets it has to be asked again in a new conversation.

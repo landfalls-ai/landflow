@@ -116,13 +116,15 @@ A remote agent, a kagent agent included, bakes its prompt at deploy, so what a r
 run is in a project with goals, the **first message of a new conversation** starts with the compact "Where this work fits"
 block (the goal titles and a brief cut to 200 characters), then a blank line, then the message. A follow-up with a
 `contextId`, an answer to a question and a resumed task go as they are, and so does a run where no project has goals. The
-message's metadata also carries `landflow.project.id` and `landflow.goal.id`.
+message's metadata carries `landflow.project.id` and `landflow.goal.id` on that same first message only (not on follow-ups,
+answers or resumed tasks, and not when the block is off).
 
 - **The A2A Agent node:** the option **Project context** (Compact, the default, or Off). Used as an agent's tool it sends
   that agent's block; in a workflow it builds the block for the workflow's project.
 - **An A2A capability:** the first message to it in a session carries the calling agent's compact block, unless that
-  agent's context mode is Off.
-- **A team's remote member:** see [agent-teams.md](agent-teams.md).
+  agent's context mode is Off or the capability's own **Project context** option (in its Options, as on the node) is Off.
+- **A team's remote member:** see [agent-teams.md](agent-teams.md). Its **Project context: Off** option drops the compact
+  block and the project tags; the project line in the request's ancestry stays.
 
 ## The protocol, as built
 

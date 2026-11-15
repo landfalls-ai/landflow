@@ -44,8 +44,8 @@ import { currentRunContext, runContextProvider } from '../project-context/seam';
 export function withProjectContext(text: string, context: Pick<RunContext, 'mode' | 'compact' | 'projectId' | 'goalId'> | undefined): { text: string; tags: Record<string, string> } {
   if (!context || context.mode === 'off') return { text, tags: {} };
   // A team already put the block in front of its member's request.
-  if (text.startsWith(CONTEXT_HEADING)) return { text, tags: landflowTags({ 'project.id': context.projectId, 'goal.id': context.goalId }) };
   const tags = landflowTags({ 'project.id': context.projectId, 'goal.id': context.goalId });
+  if (text.startsWith(CONTEXT_HEADING)) return { text, tags };
   return { text: context.compact ? `${context.compact}\n\n${text}` : text, tags };
 }
 

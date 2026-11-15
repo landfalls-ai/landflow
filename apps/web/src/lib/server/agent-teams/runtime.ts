@@ -908,9 +908,10 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
           const open = openNotebookFor(report, ctx);
           try {
             const first = !known?.contextId && !known?.taskId;
-            const message = known?.question ? text : [first && teamCtx?.compact, withAncestry(manager, text), open && NOTEBOOK_KEY(open.key)].filter(Boolean).join('\n\n');
+            const projectOff = (report.parameters as { options?: { projectContext?: string } }).options?.projectContext === 'off';
+            const message = known?.question ? text : [first && !projectOff && teamCtx?.compact, withAncestry(manager, text), open && NOTEBOOK_KEY(open.key)].filter(Boolean).join('\n\n');
             // The team's context is the run's for this call, so the remote request carries the project and goal tags.
-            return await (teamCtx ? withRunContext(teamCtx, () => redirectable(ctx, input, message, open)) : redirectable(ctx, input, message, open));
+            return await (teamCtx ? withRunContext(projectOff ? { ...teamCtx, mode: 'off' } : teamCtx, () => redirectable(ctx, input, message, open)) : redirectable(ctx, input, message, open));
           } finally {
             open?.close();
           }

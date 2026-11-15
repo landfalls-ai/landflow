@@ -305,7 +305,7 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
   } catch (error) {
     return { error: `${config.name}: ${(error as Error).message}` };
   }
-  const options = (config.parameters.options ?? {}) as { humanInTheLoop?: boolean };
+  const options = (config.parameters.options ?? {}) as { humanInTheLoop?: boolean; projectContext?: string };
   const extensions = options.humanInTheLoop !== false && supportsExtension(card, KAGENT_HITL_EXTENSION) ? [KAGENT_HITL_EXTENSION] : [];
   const name = toToolName(`ask_${config.name}`);
 
@@ -408,8 +408,8 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
         const request: Extract<HitlRequest, { type: 'ask_user_request' }> = { type: 'ask_user_request', id: known.question.id, questions: known.question.questions };
         return run(answerMessage({ id: known.taskId, contextId: known.contextId }, request, [text]), ctx);
       }
-      // The first message of a conversation carries the project's compact block (docs/a2a.md); follow-ups go as they are.
-      const fresh = !known?.contextId && !known?.taskId;
+      // The first message of a conversation carries the project's compact block (docs/a2a.md); follow-ups go as they are, and the capability's option Project context: Off sends nothing.
+      const fresh = !known?.contextId && !known?.taskId && options.projectContext !== 'off';
       const { text: sent, tags } = withProjectContext(text, fresh ? currentRunContext() : undefined);
       return run({ text: sent, ...(Object.keys(tags).length > 0 && { metadata: tags }), ...(known?.contextId && { contextId: known.contextId }), ...(known?.taskId && { taskId: known.taskId }) }, ctx);
     },
