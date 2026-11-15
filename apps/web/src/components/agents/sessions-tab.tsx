@@ -63,7 +63,9 @@ const tokens = (u: { inputTokens: number; outputTokens: number }) => (u.inputTok
 /** What the agent got at the start of this session: its project block, practices and a summary of its persona now. */
 function SawFold({ session, agentId }: { session: AgentSession; agentId: string }) {
   const [persona, setPersona] = useState<ReturnType<typeof sawPersona>>();
+  const has = Boolean(session.context);
   useEffect(() => {
+    if (!has) return;
     let live = true;
     api<{ agent: Agent }>(`/api/agents/${agentId}`, { background: true })
       .then((r) => live && setPersona(sawPersona(cleanPersona(r.agent.persona))))
@@ -71,7 +73,7 @@ function SawFold({ session, agentId }: { session: AgentSession; agentId: string 
     return () => {
       live = false;
     };
-  }, [agentId]);
+  }, [agentId, has]);
   const context = session.context;
   if (!context) return null;
   return (

@@ -67,7 +67,9 @@ once when a run finishes or starts waiting, and never fail the run. Each flushed
 
 - **Content kept** (workflow setting `traceContent`, else `LANDFLOW_TRACE_CONTENT`): `full` (the default) keeps
   everything redacted, cut to 32 KB per event. `summaries` keeps the first 400 characters of each text. `off` keeps only
-  who did what and when: no inputs, outputs or message text, and error messages cut to 400 characters.
+  who did what and when: no inputs, outputs or message text, and error messages cut to 400 characters. An agent's
+  `attrs.saw` follows the setting: `summaries` cuts its `text` to 400 characters, `off` keeps no `text` and no persona
+  (the mode, project and goal ids, time and practice handles stay).
 - **Retention**: events older than `LANDFLOW_TRACE_RETENTION_DAYS` (default 30, `0` keeps them) are pruned at boot and
   daily. Deleting an execution deletes its journal.
 
@@ -292,7 +294,8 @@ cut to 300 characters; never the instructions) and `practices` (handle and versi
 
 - **In the sheet.** Tapping an agent's span shows **What it saw**: Goal chain, Mission, Brief, Words, Status, This run,
   Practices and Persona. Empty parts are left out. **Show the exact text** folds out the raw block. With the project
-  context off it says "Project context off for this agent". `saw` is not repeated in the developer's raw **Details**.
+  context off it says "Project context off for this agent" (also when practices were given). When the run's trace content
+  was `off`, it says the text was not kept; a run with nothing to show draws no section. `saw` is not repeated in the developer's raw **Details**.
 - **On the run.** The root span's sheet shows **Project** and **Goal** chips from `attrs.project` and `attrs.goal`.
 - **In sessions.** An agent's **Sessions** tab has the same section as a fold, built from the session's saved context
   and the agent's persona now.

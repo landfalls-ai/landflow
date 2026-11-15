@@ -16,6 +16,8 @@ export interface WhatItSawProps {
   text: string;
   persona?: SawPersona;
   practices?: RunPractice[];
+  /** The journal's content setting kept the text and persona out (`off`). */
+  withheld?: boolean;
   /** Without its own title (a fold names it). */
   bare?: boolean;
 }
@@ -29,16 +31,19 @@ function Part({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-export function WhatItSaw({ mode, text, persona, practices = [], bare }: WhatItSawProps) {
+export function WhatItSaw({ mode, text, persona, practices = [], withheld, bare }: WhatItSawProps) {
   const s = sawSections(text);
   const heading = s.practices[0]?.trim() === PRACTICES_HEADING;
   const practiceLines = (heading ? s.practices.slice(1) : s.practices).map((l) => l.trim()).filter(Boolean);
   const who = persona && (persona.role || persona.mission || persona.whatIDo) ? persona : undefined;
+  const nothing = !withheld && mode !== 'off' && !text.trim() && !who && practices.length === 0;
+  if (nothing) return null;
   return (
     <section aria-label="What it saw" data-testid="what-it-saw" className={bare ? undefined : 'mt-4'}>
       {!bare && <SectionTitle>What it saw</SectionTitle>}
       <div className="flex flex-col gap-2.5 rounded-xl border border-hair bg-sf2 px-3 py-2.5">
-        {mode === 'off' && !text && <p className="text-[13px] text-t3">Project context off for this agent</p>}
+        {mode === 'off' && <p className="text-[13px] text-t3">Project context off for this agent</p>}
+        {withheld && <p className="text-[13px] text-t3">The text was not kept (this run's trace content is off).</p>}
         {s.goals.length > 0 && (
           <Part label="Goal chain">
             <ol className="flex flex-col gap-0.5">
@@ -114,6 +119,7 @@ export function sawOf(value: unknown): (WhatItSawProps & { at?: string }) | unde
     text: v.text,
     persona: v.persona && typeof v.persona === 'object' ? (v.persona as SawPersona) : undefined,
     practices: Array.isArray(v.practices) ? (v.practices as RunPractice[]) : [],
+    ...(v.withheld === true && { withheld: true }),
     ...(typeof v.at === 'string' && { at: v.at }),
   };
 }

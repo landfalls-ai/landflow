@@ -75,6 +75,19 @@ export function applyContent(event: JournalEvent, mode: TraceContent): JournalEv
   }
   const short = JOURNAL_SUMMARY_CHARS;
   const e = copy as unknown as Record<string, unknown> & { type: JournalEvent['type'] };
+  // What an agent saw (`attrs.saw`, docs/run-trace.md#what-it-saw): the block and persona are prompt content, so they follow the mode.
+  const saw = e.attrs && typeof e.attrs === 'object' ? (e.attrs as Record<string, unknown>).saw : undefined;
+  if (saw && typeof saw === 'object' && mode !== 'full') {
+    const s = saw as Record<string, unknown>;
+    if (mode === 'off') {
+      s.text = '';
+      s.persona = {};
+      s.withheld = true;
+    } else {
+      if (typeof s.text === 'string') s.text = cutText(s.text, short);
+      if (s.persona !== undefined) s.persona = cutStrings(s.persona, short);
+    }
+  }
   if (mode === 'off') {
     delete e.input;
     delete e.output;

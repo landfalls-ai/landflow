@@ -286,7 +286,8 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
   // A resume after approval keeps what the run began with, date included.
   const provider = runContextProvider();
   let runCtx: RunContext;
-  if (request.message === undefined && session.pending && session.context) runCtx = session.context;
+  const resumed = request.message === undefined && Boolean(session.pending) && Boolean(session.context);
+  if (resumed) runCtx = session.context!;
   else {
     // The block is background data: if it cannot be built, the run goes on with the old prompt.
     try {
@@ -298,7 +299,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
   }
   session.context = runCtx;
   // PC08: what the agent saw, once per run (a resume reuses the first run's block and records nothing).
-  if (request.message !== undefined || !session.pending) {
+  if (!resumed) {
     journalEntry.saw({
       mode: runCtx.mode,
       text: runCtx.text,

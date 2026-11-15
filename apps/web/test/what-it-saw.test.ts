@@ -15,6 +15,7 @@ import { PRACTICES_HEADING } from '@/lib/shared/practices';
 import { SAW_PERSONA_MAX } from '@/lib/shared/what-it-saw';
 import { sawPersona, sawSections } from '@/lib/shared/what-it-saw-sections';
 import { projectContext } from '@/lib/server/project-context/build';
+import { applyContent } from '@/lib/server/journal/content';
 import { RunScopeChips, WhatItSaw } from '@/components/run-trace/what-it-saw';
 
 type Step = (input: { system?: string; messages: AgentMessage[]; tools: ToolSpec[] }) => Partial<ModelTurn>;
@@ -177,7 +178,30 @@ describe('the saw attribute', () => {
   });
 });
 
+describe('the saw attribute and the content setting', () => {
+  const event = () => ({ type: 'span.updated', spanId: 'node:n1:0', attrs: { saw: { mode: 'full', text: 'x'.repeat(1_200), at: 't', projectId: 'p_saw', persona: { role: 'R', mission: 'm'.repeat(300) }, practices: [{ handle: 'h', version: 1 }] } } }) as never;
+  const sawOf = (e: unknown) => (e as { attrs: { saw: Record<string, unknown> } }).attrs.saw;
+  it('keeps the text and persona whole in full', () => {
+    expect((sawOf(applyContent(event(), 'full')).text as string).length).toBe(1_200);
+  });
+  it('cuts the text to a summary in summaries', () => {
+    const saw = sawOf(applyContent(event(), 'summaries'));
+    expect((saw.text as string).length).toBeLessThan(500);
+    expect(saw.projectId).toBe('p_saw');
+  });
+  it('drops the text and persona in off, keeping ids and practice handles', () => {
+    const saw = sawOf(applyContent(event(), 'off'));
+    expect(saw).toMatchObject({ text: '', persona: {}, withheld: true, projectId: 'p_saw', practices: [{ handle: 'h', version: 1 }] });
+  });
+});
+
 describe('the section', () => {
+  it('says the text was not kept, says context is off even with practices, and draws nothing when empty', () => {
+    expect(renderToStaticMarkup(createElement(WhatItSaw, { mode: 'full', text: '', withheld: true }))).toContain('was not kept');
+    expect(renderToStaticMarkup(createElement(WhatItSaw, { mode: 'off', text: `${PRACTICES_HEADING}\n- a` }))).toContain('Project context off');
+    expect(renderToStaticMarkup(createElement(WhatItSaw, { mode: 'full', text: '' }))).toBe('');
+  });
+
   const html = (props: Partial<Parameters<typeof WhatItSaw>[0]> = {}) => renderToStaticMarkup(createElement(WhatItSaw, { mode: 'full', text: full, persona: { role: 'Invoice checker' }, ...props }));
 
   it('shows the goal chain, brief, words, status, run, persona and the exact text, and leaves out the slot comment', () => {
