@@ -673,6 +673,10 @@ human-in-the-loop approvals; AX is a sandboxed task runner with none of those ye
   kagent didn't get, and the Agent's Ready condition. A **kagent cluster** credential (`core.kagentApi`) holds the
   Kubernetes API, token, namespace, harness and the two URLs; the example agent is now created in Landflow and deployed
   from there, and the hand-written AgentTemplate is gone.
+- **Agents outside Landflow through the LLM gateway** ([llm-gateway.md](llm-gateway.md#agents-outside-landflow)): with a
+  gateway cluster URL and the server's admin key, a deployed kagent agent gets a virtual key of its own (budget = its
+  dollar limit, blocked when removed, never deleted), kagent's ModelConfig and the Claude Code harness call the gateway
+  with it, and the leader's spend import copies the calls into `ai_usage` once each, so caps and Insights count them.
 - **Telemetry on Kubernetes**: the `observability` component and `orbstack-observability` overlay (Grafana, Tempo,
   Prometheus, Loki), the Collector stanzas kagent's runtime needs, and the "Landflow · agent runs" dashboard; kagent
   and Substrate export there too.
