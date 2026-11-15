@@ -241,7 +241,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 ## Plugins, Marketplace and Templates (B33)
 
-- With one marketplace (the default, the built-in Anthropic official one) the source menu is hidden, and with it that marketplace's Refresh card and the "This instance" source filter. Listings re-read after the 10-minute cache.
+- With one marketplace (the default, the built-in Anthropic official one) the source menu is hidden, and with it that marketplace's Refresh card and the "This instance" source filter. So when the only marketplace is one someone added, it has no Remove button until a second one is added (`DELETE /api/marketplaces/:id` still works); showing the card for a single marketplace would put a card above every Explore page, so it waits for a design pass. Listings re-read after the 10-minute cache.
 
 ## Asking for a higher cap (LiteLLM wave, LL05)
 

@@ -295,6 +295,10 @@ export function Explore({ marketplaces, version, onOpen, onChanged }: { marketpl
     for (const item of inSource) for (const c of item.categories) byLabel.set(categoryLabel(c), byLabel.get(categoryLabel(c)) ?? c);
     return [...byLabel.keys()].sort((a, b) => a.localeCompare(b));
   }, [inSource]);
+  // A category the source no longer has would still filter while the menu reads "All categories" (or is hidden).
+  useEffect(() => {
+    if (category && explore && !categories.includes(category)) setCategory(undefined);
+  }, [categories, category, explore]);
   const matching = useMemo(() => {
     const q = query.trim().toLowerCase();
     return inSource.filter((i) => (!category || i.categories.some((c) => categoryLabel(c) === category)) && (!q || i.text.includes(q)));
@@ -396,7 +400,6 @@ export function Explore({ marketplaces, version, onOpen, onChanged }: { marketpl
           )}
         </Card>
       )}
-
 
       {error && <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>}
       {explore && explore.errors.length > 0 && (
