@@ -160,7 +160,10 @@ export class AiUsageMeter implements UsageMeter {
       const projectId = scopeProjectId(scope);
       // A goal is the scope's own, else the run context's; never paired with another project's row.
       const run = currentRunContext();
-      const goalId = scope.lookup('goalId') ?? (run?.goalId && run.projectId === projectId ? run.goalId : undefined);
+      // The goal comes from the same scope level that named the project, so it is that project's.
+      const named = [...scope.chain()].find((s) => s.info.projectId);
+      const scopeGoal = named ? named.info.goalId : scope.lookup('goalId');
+      const goalId = scopeGoal ?? (run?.goalId && run.projectId === projectId ? run.goalId : undefined);
       const counted = {
         execution_id: scope.lookup('executionId'),
         workflow_id: scope.lookup('workflowId'),

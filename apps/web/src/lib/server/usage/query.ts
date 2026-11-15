@@ -376,7 +376,7 @@ export function ledgerSize(db: Database = database()): { events: number; oldest?
 }
 
 /** The filter of GET /api/usage and /api/usage/events, from the query string. */
-export function usageFilter(url: URL): UsageQueryFilter {
+export function usageFilter(url: URL): UsageFilter {
   const param = (name: string) => url.searchParams.get(name)?.trim() || undefined;
   const kinds = (param('kinds') ?? '')
     .split(',')
@@ -395,7 +395,5 @@ export function usageFilter(url: URL): UsageQueryFilter {
     agentId: param('agentId'),
     nodeType: param('nodeType'),
     signature: param('signature'),
-    projectId: param('projectId'),
-    goalId: param('goalId'),
   };
 }

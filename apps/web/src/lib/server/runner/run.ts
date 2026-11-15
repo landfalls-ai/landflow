@@ -214,7 +214,14 @@ export async function runSegment(segment: Segment): Promise<ExecutionRecord> {
   // Caps per user count the runs a signed-in user started (record.startedBy: the editor's Execute, the API, chat), also after a Wait.
   const scopes = workflowScopes(workflow);
   // The run's project and goal (PC05): the provider's resolution, on every model call and usage event of the run.
-  const runRef = runContextProvider()?.resolve({ caller: 'workflow', workflowId: workflow.id, executionId }) ?? {};
+  // A provider that throws never decides a run: the run goes on in its home project.
+  const runRef = (() => {
+    try {
+      return runContextProvider()?.resolve({ caller: 'workflow', workflowId: workflow.id, executionId }) ?? {};
+    } catch {
+      return {};
+    }
+  })();
   const usage = executionScope({ executionId, workflowId: workflow.id, ...runRef, settings: workflow.settings, previous: record.aiUsage, ...((record.startedBy ?? currentActorId()) && { userId: (record.startedBy ?? currentActorId())! }) });
   try {
     // $secrets in node parameters (Settings → External secrets): an engine-made text (an expression error) may quote a value.

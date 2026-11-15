@@ -349,3 +349,5 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - An agent's raised cap is written into its published version in place (and its history entry), not as a new version.
 - Apply Cap Raise tells the budgets sync and records whether it updated LiteLLM; a workflow's cap has no LiteLLM backstop,
   so its `gateway` is `skipped`.
+
+- Only `ai.call` usage events carry a goal (`goalId`); `run.finished`, `node.failed`, `node.slow` and `agent.session` do not, and calls that come in through the spend import (kagent) have none.

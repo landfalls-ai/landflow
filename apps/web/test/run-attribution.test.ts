@@ -21,7 +21,7 @@ const { database } = await import('@/lib/server/db');
 const { store } = await import('@/lib/server/store');
 const { runWorkflow } = await import('@/lib/server/runner');
 const { aiUsageMeter, agentScope, assistantScope, executionScope } = await import('@/lib/server/ai-usage');
-const { UsageScope } = await import('@/lib/server/ai-usage/scope');
+const { UsageScope, runInUsageScope } = await import('@/lib/server/ai-usage/scope');
 const { gatewayHeaders } = await import('@/lib/server/llm-gateway/call');
 const { createTeamProject, setHomeProject } = await import('@/lib/server/projects/store');
 const { setContextDataSource, setRunContextProvider, withRunContext } = await import('@/lib/server/project-context/seam');
@@ -84,6 +84,15 @@ describe('the usage scope', () => {
     expect(usageRow('session_id = ?', 's_4')).toMatchObject({ project_id: projectA.id, goal_id: null });
   });
 
+  it('a goal from an outer scope is not paired with an inner scope that names another project', () => {
+    const outer = executionScope({ executionId: 'ex_6', workflowId: 'wf_home_a', projectId: projectB.id, goalId: 'g_6' }, meter);
+    meter.record(call() as never, new UsageScope({ agentId: 'ag_x', sessionId: 's_6', projectId: projectA.id }, [], outer));
+    expect(usageRow('session_id = ?', 's_6')).toMatchObject({ project_id: projectA.id, goal_id: null });
+    const parent = executionScope({ executionId: 'ex_7', workflowId: 'wf_home_a', projectId: projectB.id, goalId: 'g_7' }, meter);
+    runInUsageScope(parent, () => meter.record(call() as never, executionScope({ executionId: 'ex_8', workflowId: 'wf_home_a', projectId: projectA.id }, meter)));
+    expect(usageRow('execution_id = ?', 'ex_8')).toMatchObject({ project_id: projectA.id, goal_id: null });
+  });
+
   it('assistantScope with a workflowId gets the workflow home project', () => {
     const scope = assistantScope({ surface: 'spotlight', workflowId: 'wf_home_a' }, meter);
     expect(scope.lookup('projectId')).toBe(projectA.id);
@@ -133,8 +142,9 @@ describe('the run', () => {
     const workflow: Workflow = { id: 'wf_span', name: 'Span', nodes: [{ id: 't', name: 't', type: 'core.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} }], connections: [], settings: {} } as never;
     store.saveWorkflow(workflow);
     const record = await runWorkflow({ workflow, mode: 'manual', startNodeId: 't' });
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    const updated = spanEvents(record.executionId).find((e) => e.type === 'span.updated' && e.spanId === 'run' && e.attrs?.project);
+    const find = () => spanEvents(record.executionId).find((e) => e.type === 'span.updated' && e.spanId === 'run' && e.attrs?.project);
+    for (let i = 0; i < 100 && !find(); i++) await new Promise((resolve) => setTimeout(resolve, 50));
+    const updated = find();
     expect(updated).toMatchObject({ attrs: { project: { id: projectB.id, name: 'Project B' }, goal: { id: 'g_run', title: 'Ship it' } } });
   });
 });
