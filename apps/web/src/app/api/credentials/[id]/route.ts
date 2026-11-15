@@ -39,7 +39,7 @@ export const PATCH = handler(async (request: Request, { params }: Ctx) => {
   const body = await parseBody(request, z.object({ name: z.string().max(120).optional(), data: z.record(z.string(), z.unknown()).optional(), rateLimit: credentialRateLimitSchema.nullable().optional() }));
   if (!body.ok) return body.response;
   const id = (await params).id;
-  // Who changes its data is recorded (the briefing nodes trust a credential an owner or admin last changed).
+  // Who changes its data is recorded ("Last changed by" in the credential dialog).
   const actor = routeActor().id;
   const before = credentials.get(id);
   // Which fields changed, never their values. Fail-closed audit records it first (the credentials file is no transaction).

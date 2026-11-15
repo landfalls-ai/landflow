@@ -28,7 +28,7 @@ export function brainTemplates({ template, node, main, daily }: TemplateHelpers)
       setup: [
         'An owner or admin publishes it (a schedule handles briefings only from the published version, saved and published by an owner or admin): it runs every night at 02:00 in the instance time zone (Settings), for everyone with work in the second brain in the last three days.',
         'The briefing is written by the second brain’s model (LANDFLOW_BRAIN_MODEL); with the model off, it is a plain summary of the same lists.',
-        'Nothing is sent unless a person chooses Slack or email in their preferences. For Slack, add the Slack credential to **Deliver Briefing**; for email, the host needs SMTP.',
+        'Nothing is sent unless a person chooses Slack or email in their preferences. Delivery uses the server’s settings only, no credential: for Slack, an admin sets LANDFLOW_BRIEFING_SLACK_TOKEN (a Slack bot token) on the server; for email, the host needs SMTP (LANDFLOW_SMTP_*).',
       ],
       nodes: [
         node('nightly', 'Every night', 'schedule', [0, 0], daily(2)),

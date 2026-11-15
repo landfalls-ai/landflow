@@ -9,7 +9,6 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { executeWorkflow, inProcessNodeType, type NodeTypeResolver } from '@landflow/engine';
 import type { GatheredWork } from '@/lib/shared/brain-work';
-import { startFakeOAuth2 } from './fake-oauth2';
 
 vi.setConfig({ testTimeout: 20_000 });
 
@@ -49,18 +48,12 @@ const { listVersions, versionAuthor } = await import('@/lib/server/versions');
 const { upsertProposal, applyProposal } = await import('@/lib/server/brain/proposals');
 const { planRetry } = await import('@/lib/server/runner/rerun');
 const credentialRoute = await import('@/app/api/credentials/[id]/route');
-const tokenRoute = await import('@/app/api/credentials/[id]/oauth2/token/route');
-const authorizeRoute = await import('@/app/api/credentials/[id]/oauth2/authorize/route');
-const callbackRoute = await import('@/app/api/oauth2/callback/route');
 const { enableTestAuth } = await import('@/lib/server/auth/test-bypass');
 
 const { defineCredentialType, definePlugin } = await import('@landflow/sdk');
-// The OAuth2 provider of the Slack OAuth2 type below (Slack's own in the real plugin).
-const provider = await startFakeOAuth2({ expiresIn: 3600 });
-const fixed = (name: string, displayName: string, value: string) => ({ name, displayName, type: 'hidden' as const, default: value });
 registry.registerBuiltin(corePlugin);
-// The Slack credential types Deliver Briefing reads (the messaging plugin isn't loaded here): the OAuth2 one fixes its
-// grant and URLs in hidden fields, as plugins/messaging/src/nodes/slack.ts does.
+// The Slack credential types (the messaging plugin isn't loaded here): Deliver Briefing reads neither, but a saved graph
+// may still reference one on it (it had credential slots before).
 registry.registerBuiltin(
   definePlugin({
     info: { id: 'messaging', name: 'Messaging', version: '1.0.0', language: 'typescript' },
@@ -78,10 +71,6 @@ registry.registerBuiltin(
         displayName: 'Slack OAuth2 API',
         extends: ['oAuth2Api'],
         properties: [
-          fixed('grantType', 'Grant Type', 'authorizationCode'),
-          fixed('authUrl', 'Authorization URL', `${provider.url}/authorize`),
-          fixed('accessTokenUrl', 'Access Token URL', `${provider.url}/token`),
-          fixed('authentication', 'Client Authentication', 'body'),
           { name: 'baseUrl', displayName: 'Base URL', type: 'string', default: 'https://slack.com/api' },
         ],
       }),
@@ -108,28 +97,34 @@ const resolver: NodeTypeResolver = {
 };
 
 let slack: Server;
-const slackCalls: Array<{ url: string; body: string }> = [];
+const slackCalls: Array<{ url: string; body: string; auth: string }> = [];
 const slackUrl = await new Promise<string>((resolve) => {
   slack = createServer((request, response) => {
     let body = '';
     request.on('data', (chunk) => (body += chunk));
     request.on('end', () => {
-      slackCalls.push({ url: request.url ?? '', body });
+      slackCalls.push({ url: request.url ?? '', body, auth: String(request.headers.authorization) });
       response.setHeader('content-type', 'application/json');
       response.end(JSON.stringify(request.url?.startsWith('/users.lookupByEmail') ? { ok: true, user: { id: 'U0ALICE1' } } : { ok: true, ts: '1.1' }));
     });
   }).listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${(slack.address() as { port: number }).port}`));
 });
-// Deliver Briefing calls only Slack's API, or the instance's LANDFLOW_BRIEFING_SLACK_URL: here, the fake.
-const ENV_SLACK = { LANDFLOW_BRIEFING_SLACK_URL: slackUrl };
+// Deliver Briefing sends with the server's Slack bot only: its token and API base URL (here, the fake) are server settings.
+const SERVER_TOKEN = 'xoxb-dev-only-server-bot';
+const ENV_SLACK = { LANDFLOW_BRIEFING_SLACK_URL: slackUrl, LANDFLOW_BRIEFING_SLACK_TOKEN: SERVER_TOKEN };
 Object.assign(process.env, ENV_SLACK);
-
-// The Slack credential the delivery tests reference: an owner made it (Deliver Briefing uses no other).
-const ownerSlack = vault.create({ name: 'Owner’s Slack', type: 'messaging.slackApi', data: { accessToken: 'xoxb-dev-only', baseUrl: slackUrl } }, { actor: owner.id });
+/** Run `fn` with no Slack token on the server. */
+const withoutSlackToken = async <T,>(fn: () => Promise<T>): Promise<T> => {
+  delete process.env.LANDFLOW_BRIEFING_SLACK_TOKEN;
+  try {
+    return await fn();
+  } finally {
+    Object.assign(process.env, ENV_SLACK);
+  }
+};
 
 afterAll(async () => {
   slack.close();
-  await provider.close();
   setMailTransport(undefined);
   for (const key of [...Object.keys(ENV), ...Object.keys(ENV_SLACK)]) {
     if (previousEnv[key] === undefined) delete process.env[key];
@@ -141,11 +136,11 @@ const minutesAgo = (n: number) => new Date(Date.now() - n * 60_000).toISOString(
 const work = (sourceId: string, patch: Record<string, unknown> = {}) => ({ kind: 'work.session', source: 'claude-code', sourceId, occurredAt: minutesAgo(1), title: `Work ${sourceId}`, ...patch });
 
 /**
- * The template's content and delivery, run in the engine with credentials handed straight to Deliver Briefing: an owner's
- * manual run (the execution row the runner would save). Who may run the nodes is tested through the real runner below.
+ * The template's content and delivery, run in the engine: an owner's manual run (the execution row the runner would
+ * save). Who may run the nodes is tested through the real runner below.
  */
-async function sync(options: { credentials?: Record<string, unknown>; workflowId?: string } = {}) {
-  const workflow = { ...template.workflow, id: options.workflowId ?? 'wf_sync', nodes: template.workflow.nodes.map((n) => (n.id === 'deliver' && options.credentials ? { ...n, credentials: { 'messaging.slackApi': { id: ownerSlack.id, name: ownerSlack.name } } } : n)) };
+async function sync(options: { workflowId?: string } = {}) {
+  const workflow = { ...template.workflow, id: options.workflowId ?? 'wf_sync' };
   const executionId = `ex_${Math.random().toString(36).slice(2)}`;
   store.saveExecution({ executionId, workflowId: workflow.id, workflowName: workflow.name, mode: 'manual', status: 'running', startedAt: new Date().toISOString(), finishedAt: '', durationMs: 0, runData: {}, executionOrder: [], workflow, startedBy: owner.id } as never);
   return executeWorkflow({
@@ -155,7 +150,6 @@ async function sync(options: { credentials?: Record<string, unknown>; workflowId
     mode: 'manual',
     startNodeId: 'nightly',
     triggerItems: items({}),
-    resolveCredentials: (node) => (node.id === 'deliver' ? (options.credentials as never) : undefined),
   });
 }
 
@@ -265,11 +259,11 @@ describe('the day', () => {
 });
 
 describe('who may run the nodes', () => {
-  it('a member’s workflow gathers, saves and delivers nothing, even with their own Slack credential', async () => {
+  it('a member’s workflow gathers, saves and delivers nothing', async () => {
     recordWork(actorOf(alice), [work('a1')]);
     recordWork(actorOf(bob), [work('b1')]);
     setPreferences(bob.id, { briefingDelivery: 'slack' });
-    const result = await sync({ workflowId: 'wf_member', credentials: { 'messaging.slackApi': { accessToken: 'xoxb-dev-only', baseUrl: slackUrl } } });
+    const result = await sync({ workflowId: 'wf_member' });
     expect(result.status).not.toBe('success');
     expect(rowsFor(alice.id)).toHaveLength(0);
     expect(rowsFor(bob.id)).toHaveLength(0);
@@ -280,11 +274,10 @@ describe('who may run the nodes', () => {
 describe('who started the run (through the runner)', () => {
   type AnyUser = typeof owner;
   const as = <T,>(user: AnyUser, fn: () => T): T => withAuth({ principal: { user, via: 'test' } }, fn);
-  const slackKey = vault.create({ name: 'Slack for briefings', type: 'messaging.slackApi', data: { accessToken: 'xoxb-dev-only', baseUrl: slackUrl } }, { actor: owner.id });
   const graph = (id: string, withinDays: number) => ({
     ...template.workflow,
     id,
-    nodes: template.workflow.nodes.map((n) => (n.id === 'deliver' ? { ...n, credentials: { 'messaging.slackApi': { id: slackKey.id, name: slackKey.name } } } : n.id === 'people' ? { ...n, parameters: { ...n.parameters, withinDays } } : n)),
+    nodes: template.workflow.nodes.map((n) => (n.id === 'people' ? { ...n, parameters: { ...n.parameters, withinDays } } : n)),
   });
   // The nightly workflow, in the team Alice and Bob are editors of (Alice may run it): first saved by the owner, then by
   // Alice with her own graph, then by the owner again, so Alice's graph is an older version in its history.
@@ -292,7 +285,6 @@ describe('who started the run (through the runner)', () => {
   const aliceGraph = graph('wf_nightly', 0);
   as(owner, () => store.saveWorkflow(ownerGraph));
   setHomeProject('workflow', 'wf_nightly', team.id);
-  setHomeProject('credential', slackKey.id, team.id);
   as(alice, () => store.saveWorkflow(aliceGraph));
   as(owner, () => store.saveWorkflow(ownerGraph));
   const saved = () => store.getWorkflow('wf_nightly')!;
@@ -677,93 +669,92 @@ describe('what MCP carries of a stored briefing', () => {
 });
 
 describe('delivery', () => {
-  const credentials = { 'messaging.slackApi': { accessToken: 'xoxb-dev-only', baseUrl: slackUrl } };
-
   it('sends nothing when the person chose none', async () => {
     recordWork(actorOf(alice), [work('a1')]);
     const sent: unknown[] = [];
     setMailTransport({ send: async (m) => void sent.push(m) });
-    await sync({ credentials });
+    await sync();
     expect(slackCalls).toEqual([]);
     expect(sent).toEqual([]);
   });
 
-  it('sends a Slack message to someone who chose Slack, and an email to someone who chose email', async () => {
+  it('with LANDFLOW_BRIEFING_SLACK_TOKEN set, looks up and DMs someone who chose Slack with that token, and emails someone who chose email', async () => {
     recordWork(actorOf(alice), [work('a1', { title: 'Fix the invoice export' })]);
     recordWork(actorOf(bob), [work('b1', { title: 'Billing retries' })]);
     setPreferences(alice.id, { briefingDelivery: 'slack' });
     setPreferences(bob.id, { briefingDelivery: 'email' });
     const sent: Array<{ to: string; text: string }> = [];
     setMailTransport({ send: async (m) => void sent.push(m) });
-    const result = await sync({ credentials });
+    const result = await sync();
     expect(slackCalls.map((c) => c.url)).toEqual(['/users.lookupByEmail?email=alice%40sync.test', '/chat.postMessage']);
+    expect(slackCalls.map((c) => c.auth)).toEqual([`Bearer ${SERVER_TOKEN}`, `Bearer ${SERVER_TOKEN}`]);
     expect(slackCalls[1].body).toContain('U0ALICE1');
     expect(sent.map((m) => m.to)).toEqual(['bob@sync.test']);
-    const out = result.runData.deliver.at(-1)!.outputs[0].map((i) => i.json.channel).sort();
-    expect(out).toEqual(['email', 'slack']);
+    const out = result.runData.deliver.at(-1)!.outputs[0].map((i) => i.json);
+    expect(out.map((j) => j.channel).sort()).toEqual(['email', 'slack']);
+    expect(out.every((j) => j.warning === undefined)).toBe(true);
+    // The token never reaches the run data or its log.
+    expect(JSON.stringify(result.runData)).not.toContain(SERVER_TOKEN);
   });
 
-  it('passes the item on undelivered when the chosen channel is not set up', async () => {
+  it('with no token, Slack is skipped with a warning naming the server setting, and email still goes', async () => {
     recordWork(actorOf(alice), [work('a1')]);
+    recordWork(actorOf(bob), [work('b1')]);
     setPreferences(alice.id, { briefingDelivery: 'slack' });
-    const result = await sync();
-    expect(result.runData.deliver.at(-1)!.outputs[0][0].json.delivered).toBe(false);
+    setPreferences(bob.id, { briefingDelivery: 'email' });
+    const sent: Array<{ to: string }> = [];
+    setMailTransport({ send: async (m) => void sent.push(m) });
+    const result = await withoutSlackToken(() => sync());
+    expect(result.status).toBe('success');
     expect(slackCalls).toEqual([]);
+    expect(sent.map((m) => m.to)).toEqual(['bob@sync.test']);
+    const deliver = result.runData.deliver.at(-1)!;
+    const alices = deliver.outputs[0].find((i) => i.json.userId === alice.id)!.json;
+    expect(alices).toMatchObject({ delivered: false, warning: expect.stringMatching(/^Slack delivery skipped: .*An admin sets LANDFLOW_BRIEFING_SLACK_TOKEN .*on the server.*email delivery goes on/) });
+    expect(deliver.outputs[0].find((i) => i.json.userId === bob.id)!.json).toMatchObject({ delivered: true, channel: 'email' });
+    expect(JSON.stringify(deliver.logs)).toContain('Slack delivery skipped');
+  });
+
+  it('with no token and nobody choosing Slack, nothing warns', async () => {
+    recordWork(actorOf(alice), [work('a1')]);
+    const result = await withoutSlackToken(() => sync());
+    const deliver = result.runData.deliver.at(-1)!;
+    expect(deliver.outputs[0][0].json.warning).toBeUndefined();
+    expect(JSON.stringify(deliver.logs ?? [])).not.toContain('Slack delivery skipped');
   });
 });
 
-describe('the Slack credential: who last changed it (through the credential route)', () => {
+describe('a Slack credential on Deliver Briefing in a saved graph is ignored', () => {
   type AnyUser = typeof owner;
   const as = <T,>(user: AnyUser, fn: () => T): T => withAuth({ principal: { user, via: 'test' } }, fn);
-  // A credential in the team (Alice is an editor there, so the route lets her change it), and an owner-saved, owner-published sync using it.
-  const key = vault.create({ name: 'Team Slack', type: 'messaging.slackApi', data: { accessToken: 'xoxb-dev-only', baseUrl: slackUrl } }, { actor: owner.id });
-  setHomeProject('credential', key.id, team.id);
-  // One from before migration 2092: nobody recorded.
-  const legacy = vault.create({ name: 'Old Slack', type: 'messaging.slackApi', data: { accessToken: 'xoxb-dev-only', baseUrl: slackUrl } });
-  setHomeProject('credential', legacy.id, team.id);
-  const graph = (id: string, credentialId: string, type: string) => ({ ...template.workflow, id, nodes: template.workflow.nodes.map((n) => (n.id === 'deliver' ? { ...n, credentials: { [type]: { id: credentialId, name: 'Slack' } } } : n)) });
-  const ready = async (id: string, credentialId: string, type = 'messaging.slackApi') => {
-    as(owner, () => store.saveWorkflow(graph(id, credentialId, type)));
-    setHomeProject('workflow', id, team.id);
-    await as(owner, () => publishOrRequest({ workflowId: id, action: 'publish', by: owner.id }));
-  };
-  const production = (id: string) => runWorkflow({ workflow: productionWorkflowById(id)!, mode: 'trigger', startNodeId: 'nightly', triggerItems: items({}) });
   /** Call a route as `user` (the suite's synthetic owner again afterwards). */
-  const asUser = async <T,>(user: AnyUser, fn: () => Promise<T>): Promise<T> => {
+  const patch = async (user: AnyUser, id: string, body: Record<string, unknown>) => {
     enableTestAuth(user);
     try {
-      return await fn();
+      return await credentialRoute.PATCH(new Request(`http://landflow.test/api/credentials/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }), { params: Promise.resolve({ id }) });
     } finally {
       enableTestAuth();
     }
-  };
-  const patch = (user: AnyUser, body: Record<string, unknown>, id = key.id) =>
-    asUser(user, () => credentialRoute.PATCH(new Request(`http://landflow.test/api/credentials/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }), { params: Promise.resolve({ id }) }));
-  /** Get token / Refresh now (POST) or Disconnect (DELETE), through the route. */
-  const token = (user: AnyUser, method: 'POST' | 'DELETE', id: string) =>
-    asUser(user, () => tokenRoute[method](new Request(`http://landflow.test/api/credentials/${id}/oauth2/token`, { method }), { params: Promise.resolve({ id }) }));
-  /** Connect through the routes, as a browser would: authorize (as `user`) → the provider's consent → the public callback. */
-  const connect = async (user: AnyUser, id: string) => {
-    const start = await asUser(user, () => authorizeRoute.GET(new Request(`http://landflow.test/api/credentials/${id}/oauth2/authorize`), { params: Promise.resolve({ id }) }));
-    expect(start.status).toBe(302);
-    const consent = await fetch(new URL(start.headers.get('location')!), { redirect: 'manual' });
-    const page = await callbackRoute.GET(new Request(new URL(consent.headers.get('location')!), { headers: { cookie: start.headers.get('set-cookie')!.split(';')[0] } }));
-    expect(page.status).toBe(200);
   };
   /** A server of a member's own that records what reaches it. */
   const memberServer = async () => {
     const got: string[] = [];
     const server = createServer((request, response) => {
-      got.push(request.url ?? '');
+      got.push(`${request.url} ${request.headers.authorization}`);
       response.setHeader('content-type', 'application/json');
-      response.end(JSON.stringify({ ok: true, user: { id: 'UEVIL' } }));
+      response.end(JSON.stringify({ ok: true, user: { id: 'UEVIL' }, ts: '1.1' }));
     });
     const url = await new Promise<string>((resolve) => server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${(server.address() as { port: number }).port}`)));
     return { got, url, close: () => server.close() };
   };
-  const bobsWarning = async (run: { executionId: string }) => String((await deliverOut(run)).outputs![0].find((i) => i.json.userId === bob.id)!.json.warning ?? '');
-  const mail: Array<{ to: string; text: string }> = [];
-  const deliverOut = (run: { executionId: string }) => store.loadExecution(run.executionId).then((r) => r!.runData.deliver.at(-1)!);
+  /** The nightly workflow with `refs` on Deliver Briefing, saved and published by the owner in the team. */
+  const ready = async (id: string, refs: Record<string, { id: string; name: string }>) => {
+    as(owner, () => store.saveWorkflow({ ...template.workflow, id, nodes: template.workflow.nodes.map((n) => (n.id === 'deliver' ? { ...n, credentials: refs } : n)) }));
+    setHomeProject('workflow', id, team.id);
+    await as(owner, () => publishOrRequest({ workflowId: id, action: 'publish', by: owner.id }));
+  };
+  const production = (id: string) => runWorkflow({ workflow: productionWorkflowById(id)!, mode: 'trigger', startNodeId: 'nightly', triggerItems: items({}) });
+  const mail: Array<{ to: string }> = [];
   beforeEach(() => {
     mail.length = 0;
     setMailTransport({ send: async (m) => void mail.push(m) });
@@ -772,216 +763,62 @@ describe('the Slack credential: who last changed it (through the credential rout
     setPreferences(bob.id, { briefingDelivery: 'slack' });
     setPreferences(alice.id, { briefingDelivery: 'email' });
   });
-  afterAll(() => {
-    setMailTransport(undefined);
-    setPreferences(alice.id, { briefingDelivery: 'none' });
-    setPreferences(bob.id, { briefingDelivery: 'none' });
-  });
 
-  it('R1: a member editor points the credential at her server: nothing reaches it, Slack is skipped with a warning, email still goes', async () => {
-    await ready('wf_slack_r1', key.id);
-    const got: string[] = [];
-    const evil = createServer((request, response) => {
-      got.push(request.url ?? '');
-      response.setHeader('content-type', 'application/json');
-      response.end(JSON.stringify({ ok: true, user: { id: 'UEVIL' } }));
-    });
-    const evilUrl = await new Promise<string>((resolve) => evil.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${(evil.address() as { port: number }).port}`)));
-    try {
-      const response = await patch(alice, { data: { baseUrl: evilUrl } });
-      expect(response.status).toBe(200);
-      expect(vault.lastChangedBy(key.id)).toBe(alice.id);
-      expect(((await response.json()) as { credential: { updatedBy?: string } }).credential.updatedBy).toBe(alice.id);
-      const run = await production('wf_slack_r1');
-      expect(run.error?.message).toBeUndefined();
-      expect(run.status).toBe('success');
-      expect(got).toEqual([]);
-      expect(slackCalls).toEqual([]);
-      expect(rowsFor(bob.id, 'ready')).toHaveLength(1);
-      const out = await deliverOut(run);
-      const bobs = out.outputs![0].find((i) => i.json.userId === bob.id)!.json;
-      expect(bobs).toMatchObject({ delivered: false, warning: expect.stringMatching(/^Slack delivery skipped/) });
-      expect(String(bobs.warning)).not.toMatch(/@|PRIVATE/);
-      expect(JSON.stringify(out.logs)).toContain('Slack delivery skipped');
-      expect(mail.map((m) => m.to)).toEqual(['alice@sync.test']);
-    } finally {
-      evil.close();
-    }
-  });
-
-  it('an owner saving the credential again makes it trusted; a rename alone or a key rotation keeps who changed it', async () => {
-    await ready('wf_slack_owner', key.id);
-    expect((await patch(owner, { data: { baseUrl: slackUrl } })).status).toBe(200);
+  it('N1: a member puts her own workspace’s token in the credential and an owner then changes another field: her token is never used; the server’s bot delivers', async () => {
+    const key = vault.create({ name: 'Team Slack', type: 'messaging.slackApi', data: { accessToken: 'xoxb-dev-only-owner', baseUrl: slackUrl } }, { actor: owner.id });
+    setHomeProject('credential', key.id, team.id);
+    await ready('wf_ignored_n1', { 'messaging.slackApi': { id: key.id, name: key.name } });
+    expect((await patch(alice, key.id, { data: { accessToken: 'xoxb-dev-only-alice' } })).status).toBe(200);
+    // The owner edits a different field: the vault now names the owner as the last changer.
+    expect((await patch(owner, key.id, { data: { baseUrl: `${slackUrl}/` } })).status).toBe(200);
     expect(vault.lastChangedBy(key.id)).toBe(owner.id);
-    expect((await patch(alice, { name: 'Team Slack (renamed)' })).status).toBe(200);
-    expect(vault.rotateCredentials().failed).toEqual([]);
-    expect(vault.lastChangedBy(key.id)).toBe(owner.id);
-    const run = await production('wf_slack_owner');
-    expect(run.status).toBe('success');
-    expect(slackCalls.map((c) => c.url)).toEqual(['/users.lookupByEmail?email=bob%40sync.test', '/chat.postMessage']);
-    expect(mail.map((m) => m.to)).toEqual(['alice@sync.test']);
-  });
-
-  it('a credential with no recorded changer (from before 2092, or changed with no person behind it) is not used', async () => {
-    await ready('wf_slack_legacy', legacy.id);
-    expect(vault.lastChangedBy(legacy.id)).toBeUndefined();
-    const run = await production('wf_slack_legacy');
+    const run = await production('wf_ignored_n1');
     expect(run.error?.message).toBeUndefined();
     expect(run.status).toBe('success');
-    expect(slackCalls).toEqual([]);
-    expect((await deliverOut(run)).outputs![0].find((i) => i.json.userId === bob.id)!.json.delivered).toBe(false);
+    expect(slackCalls.map((c) => [c.url, c.auth])).toEqual([
+      ['/users.lookupByEmail?email=bob%40sync.test', `Bearer ${SERVER_TOKEN}`],
+      ['/chat.postMessage', `Bearer ${SERVER_TOKEN}`],
+    ]);
     expect(mail.map((m) => m.to)).toEqual(['alice@sync.test']);
-    // A change with no person behind it records nobody, even on an owner's credential.
-    vault.update(key.id, { data: { accessToken: 'xoxb-dev-only-2' } });
-    expect(vault.lastChangedBy(key.id)).toBeUndefined();
-    vault.update(key.id, { data: { accessToken: 'xoxb-dev-only' } }, { actor: owner.id });
-    expect(vault.lastChangedBy(key.id)).toBe(owner.id);
+    // With no server token, the credential is no fallback: Slack is skipped and email goes on.
+    slackCalls.length = 0;
+    mail.length = 0;
+    const skipped = await withoutSlackToken(() => production('wf_ignored_n1'));
+    expect(skipped.status).toBe('success');
+    expect(slackCalls).toEqual([]);
+    expect(mail.map((m) => m.to)).toEqual(['alice@sync.test']);
   });
 
-  it('T1: after a member repoints it, an owner’s empty save, unchanged form or rename vouches for nothing; a real change does', async () => {
-    await ready('wf_slack_t1', key.id);
+  it('N2: an OAuth2 credential a member pointed at her own server and connected to her app, then an owner edited: nothing reaches her server', async () => {
     const evil = await memberServer();
     try {
-      expect((await patch(alice, { data: { baseUrl: evil.url } })).status).toBe(200);
-      expect(vault.lastChangedBy(key.id)).toBe(alice.id);
-      // An empty data, the form as it was (the secret left empty keeps its value), a rename and a rate limit: no value changes.
-      for (const body of [{ data: {} }, { name: 'Team Slack', data: { baseUrl: evil.url, accessToken: '' }, rateLimit: null }, { name: 'Team Slack (renamed)' }, { rateLimit: { limit: 5, intervalSeconds: 1 } }]) {
-        expect((await patch(owner, body)).status).toBe(200);
-        expect(vault.lastChangedBy(key.id)).toBe(alice.id);
-      }
-      const run = await production('wf_slack_t1');
+      const oauth = vault.create({ name: 'Team Slack OAuth2', type: 'messaging.slackOAuth2Api', data: { grantType: 'clientCredentials', clientId: 'client-1', clientSecret: 'secret-1', accessTokenUrl: `${evil.url}/token`, baseUrl: slackUrl } }, { actor: owner.id });
+      setHomeProject('credential', oauth.id, team.id);
+      await ready('wf_ignored_n2', { 'messaging.slackOAuth2Api': { id: oauth.id, name: oauth.name } });
+      expect((await patch(alice, oauth.id, { data: { clientId: 'ALICEAPP', baseUrl: evil.url } })).status).toBe(200);
+      vault.saveOAuth2Token(oauth.id, { access_token: 'xoxb-dev-only-alice-oauth', token_type: 'bearer' } as never, undefined, { actor: alice.id });
+      expect((await patch(owner, oauth.id, { data: { scope: 'chat:write' } })).status).toBe(200);
+      expect(vault.lastChangedBy(oauth.id)).toBe(owner.id);
+      const run = await production('wf_ignored_n2');
+      expect(run.error?.message).toBeUndefined();
       expect(run.status).toBe('success');
       expect(evil.got).toEqual([]);
-      expect(slackCalls).toEqual([]);
-      expect(await bobsWarning(run)).toMatch(/^Slack delivery skipped: a member or an automatic process changed the Slack credential .* last\. An owner or admin must check its Base URL and token and save a change/);
-      // An owner's change of a value vouches for the credential; a member's save that changes nothing then leaves it so.
-      const saved = await patch(owner, { data: { baseUrl: slackUrl } });
-      expect(vault.lastChangedBy(key.id)).toBe(owner.id);
-      expect(((await saved.json()) as { credential: { updatedByName?: string } }).credential.updatedByName).toBe('Owner');
-      expect((await patch(alice, { data: { baseUrl: slackUrl, accessToken: '' } })).status).toBe(200);
-      expect(vault.lastChangedBy(key.id)).toBe(owner.id);
-      await production('wf_slack_t1');
-      expect(slackCalls.map((c) => c.url)).toEqual(['/users.lookupByEmail?email=bob%40sync.test', '/chat.postMessage']);
+      expect(slackCalls.map((c) => c.auth)).toEqual([`Bearer ${SERVER_TOKEN}`, `Bearer ${SERVER_TOKEN}`]);
+      // Nor with no server token.
+      await withoutSlackToken(() => production('wf_ignored_n2'));
+      expect(evil.got).toEqual([]);
     } finally {
       evil.close();
     }
   });
 
-  describe('Slack OAuth2: token operations never vouch', () => {
-    const oauth = vault.create({ name: 'Team Slack OAuth2', type: 'messaging.slackOAuth2Api', data: { clientId: 'client-1', clientSecret: 'secret-1', baseUrl: slackUrl } }, { actor: owner.id });
-    setHomeProject('credential', oauth.id, team.id);
-
-    it('T2: after a member repoints it, an owner’s Refresh now, Disconnect and Connect leave her the last changer, and nothing reaches her server', async () => {
-      await connect(owner, oauth.id);
-      expect(vault.oauth2(oauth.id).token?.access_token).toBeTruthy();
-      expect(vault.lastChangedBy(oauth.id)).toBe(owner.id);
-      await ready('wf_slack_t2', oauth.id, 'messaging.slackOAuth2Api');
-      const evil = await memberServer();
-      try {
-        expect((await patch(alice, { data: { baseUrl: evil.url } }, oauth.id)).status).toBe(200);
-        expect(vault.lastChangedBy(oauth.id)).toBe(alice.id);
-        expect((await token(owner, 'POST', oauth.id)).status).toBe(200);
-        expect(vault.lastChangedBy(oauth.id)).toBe(alice.id);
-        expect((await token(owner, 'DELETE', oauth.id)).status).toBe(200);
-        expect(vault.lastChangedBy(oauth.id)).toBe(alice.id);
-        await connect(owner, oauth.id);
-        expect(vault.lastChangedBy(oauth.id)).toBe(alice.id);
-        const run = await production('wf_slack_t2');
-        expect(run.status).toBe('success');
-        expect(evil.got).toEqual([]);
-        expect(slackCalls).toEqual([]);
-        expect(await bobsWarning(run)).toMatch(/^Slack delivery skipped: a member or an automatic process/);
-        // An owner's real change vouches again, and the nightly run delivers through Slack's API (here the fake).
-        expect((await patch(owner, { data: { baseUrl: slackUrl } }, oauth.id)).status).toBe(200);
-        expect(vault.lastChangedBy(oauth.id)).toBe(owner.id);
-        await production('wf_slack_t2');
-        expect(slackCalls.map((c) => c.url)).toEqual(['/users.lookupByEmail?email=bob%40sync.test', '/chat.postMessage']);
-      } finally {
-        evil.close();
-      }
-    });
-
-    it('a trusted credential with no token skips Slack and the run still succeeds', async () => {
-      await connect(owner, oauth.id);
-      await ready('wf_slack_disconnected', oauth.id, 'messaging.slackOAuth2Api');
-      expect((await token(owner, 'DELETE', oauth.id)).status).toBe(200);
-      expect(vault.lastChangedBy(oauth.id)).toBe(owner.id);
-      const run = await production('wf_slack_disconnected');
-      expect(run.status).toBe('success');
-      expect(slackCalls).toEqual([]);
-      expect(await bobsWarning(run)).toMatch(/^Slack delivery skipped: .*has no token/);
-      await connect(owner, oauth.id);
-    });
-
-    it('a member’s Refresh now, Connect or Disconnect makes her the last changer', async () => {
-      const vouch = async (scope: string) => {
-        expect((await patch(owner, { data: { scope } }, oauth.id)).status).toBe(200);
-        expect(vault.lastChangedBy(oauth.id)).toBe(owner.id);
-      };
-      await vouch('chat:write');
-      expect((await token(alice, 'POST', oauth.id)).status).toBe(200);
-      expect(vault.lastChangedBy(oauth.id)).toBe(alice.id);
-      await vouch('chat:write,users:read.email');
-      await connect(alice, oauth.id);
-      expect(vault.lastChangedBy(oauth.id)).toBe(alice.id);
-      await vouch('chat:write');
-      expect((await token(alice, 'DELETE', oauth.id)).status).toBe(200);
-      expect(vault.lastChangedBy(oauth.id)).toBe(alice.id);
-      // An automatic refresh changes no setting and keeps the last changer.
-      await vouch('chat:write,users:read.email');
-      await connect(owner, oauth.id);
-      expect(await vault.refreshOAuth2(oauth.id, { force: true })).toBe(true);
-      expect(vault.lastChangedBy(oauth.id)).toBe(owner.id);
-    });
-
-    it('the fields the type fixes (grant, authorization and token URLs) cannot be set through the API', async () => {
-      const evil = await memberServer();
-      try {
-        expect(vault.lastChangedBy(oauth.id)).toBe(owner.id);
-        const response = await patch(alice, { data: { grantType: 'clientCredentials', authUrl: `${evil.url}/authorize`, accessTokenUrl: `${evil.url}/token`, authentication: 'header' } }, oauth.id);
-        expect(response.status).toBe(200);
-        // Nothing changed: the type's values stand, and the owner is still the last changer.
-        expect(vault.oauth2(oauth.id).config).toMatchObject({ grantType: 'authorizationCode', authUrl: `${provider.url}/authorize`, accessTokenUrl: `${provider.url}/token` });
-        expect(vault.lastChangedBy(oauth.id)).toBe(owner.id);
-        expect(vault.get(oauth.id)!.data).not.toHaveProperty('accessTokenUrl');
-        // Nor when it is created.
-        const made = vault.create({ name: 'Made', type: 'messaging.slackOAuth2Api', data: { clientId: 'c', accessTokenUrl: `${evil.url}/token`, baseUrl: slackUrl } }, { actor: alice.id });
-        expect(vault.oauth2(made.id).config.accessTokenUrl).toBe(`${provider.url}/token`);
-        vault.delete(made.id);
-        expect(evil.got).toEqual([]);
-      } finally {
-        evil.close();
-      }
-    });
-  });
-
-  it('a Base URL other than Slack’s API (or LANDFLOW_BRIEFING_SLACK_URL) is skipped, even when an owner set it', async () => {
-    await ready('wf_slack_origin', key.id);
-    const evil = await memberServer();
-    try {
-      expect((await patch(owner, { data: { baseUrl: evil.url } })).status).toBe(200);
-      expect(vault.lastChangedBy(key.id)).toBe(owner.id);
-      let run = await production('wf_slack_origin');
-      expect(run.status).toBe('success');
-      expect(evil.got).toEqual([]);
-      expect(await bobsWarning(run)).toMatch(/^Slack delivery skipped: the Slack credential of Deliver Briefing points at another server than Slack’s API/);
-      expect(mail.map((m) => m.to)).toEqual(['alice@sync.test']);
-      // Without the instance setting, only https://slack.com/api is allowed: the fake is skipped too.
-      expect((await patch(owner, { data: { baseUrl: `${slackUrl}/` } })).status).toBe(200);
-      delete process.env.LANDFLOW_BRIEFING_SLACK_URL;
-      try {
-        run = await production('wf_slack_origin');
-      } finally {
-        Object.assign(process.env, ENV_SLACK);
-      }
-      expect(slackCalls).toEqual([]);
-      expect(await bobsWarning(run)).toMatch(/points at another server/);
-      // With it, a trailing slash is the same base URL.
-      await production('wf_slack_origin');
-      expect(slackCalls.map((c) => c.url)).toEqual(['/users.lookupByEmail?email=bob%40sync.test', '/chat.postMessage']);
-    } finally {
-      evil.close();
-    }
+  it('a reference to a deleted credential, or one the project can’t use, does not fail the run', async () => {
+    const elsewhere = vault.create({ name: 'Someone else’s Slack', type: 'messaging.slackApi', data: { accessToken: 'xoxb-dev-only-x', baseUrl: slackUrl } }, { actor: owner.id });
+    await ready('wf_ignored_gone', { 'messaging.slackApi': { id: 'cred_deleted', name: 'Gone' }, 'messaging.slackOAuth2Api': { id: elsewhere.id, name: elsewhere.name } });
+    const run = await production('wf_ignored_gone');
+    expect(run.error?.message).toBeUndefined();
+    expect(run.status).toBe('success');
+    expect(slackCalls.filter((c) => c.url === '/chat.postMessage')).toHaveLength(1);
   });
 });
 

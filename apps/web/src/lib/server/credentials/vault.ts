@@ -85,7 +85,7 @@ export interface StoredCredential {
    * pull. A change with no person behind it clears it; a save that changes nothing, a token refresh, an error note and a
    * key rotation keep it. A token operation (Connect, Get token, Refresh now, Disconnect) never raises it: an owner's or
    * admin's keeps it, anyone else's (or nobody's) records them. Absent: nobody, or a credential from before migration
-   * 2092. The briefing nodes use a credential only when this is an active owner or admin.
+   * 2092. Shown as "Last changed by" in the credential dialog; nothing trusts a credential because of it.
    */
   updatedBy?: string;
 }
@@ -607,7 +607,7 @@ export class CredentialVault {
       const merged = this.merge(credential, input.data, stored);
       if (descriptor) this.validate(descriptor, merged);
       credential.secretFields = [...new Set([...credential.secretFields, ...secretNames(descriptor)])];
-      // Decrypted values, secrets included: a save that changes none of them vouches for nothing.
+      // Decrypted values, secrets included: a save that changes none of them keeps the last changer.
       if (!isDeepStrictEqual(merged, stored)) {
         credential.data = this.seal(merged, credential.id);
         changedBy(credential, change);

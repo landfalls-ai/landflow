@@ -141,7 +141,7 @@ prepares what happened that is relevant to them, stores it for that person only 
 | **Gather Work** (`core.brainGatherWork`) | Reads that person's own work of the day and the day before, colleagues' `team` and `org` work that overlaps it (the same rule as related colleagues), and what finished on their repositories (merged PRs and releases that people's own tools recorded; the GitHub template's rows have no owner and are not read). Keeps it in a `draft` row. Outputs `{ userId, day, briefingId, counts: { own, related, finished } }`. |
 | **Write Briefing** (`core.brainWriteBriefing`) | Asks the brain's model (`LANDFLOW_BRAIN_MODEL`) for at most `LANDFLOW_BRIEFING_MAX_CHARS` (1,200) characters. The model gets redacted lines inside a block it is told is data, not instructions. With the model off or failing, the text is built from the lists (`deterministicBriefing`: "Recently you merged 2 PRs in acme/billing. …"). Same output shape. |
 | **Save Briefing** (`core.brainSaveBriefing`) | Marks the draft `ready`; the day's older `ready` one becomes `superseded`. Briefings older than 30 days are deleted. |
-| **Deliver Briefing** (`core.brainDeliverBriefing`) | Only for a person whose preference `briefingDelivery` is `slack` or `email` and whose channel is set up (a Slack credential on the node; the host's SMTP): sends the text by Slack DM or email. Everyone else is passed on with `delivered: false`. Nothing is sent by default. |
+| **Deliver Briefing** (`core.brainDeliverBriefing`) | Only for a person whose preference `briefingDelivery` is `slack` or `email` and whose channel is set up on the server (`LANDFLOW_BRIEFING_SLACK_TOKEN`; the host's SMTP), never through a credential: sends the text by Slack DM or email. Everyone else is passed on with `delivered: false`. Nothing is sent by default. |
 
 **Privacy.** Items carry ids and counts, never content, because the run data of a workflow is visible to everyone who can
 open it. The gathered lists and the text live in `brain_briefings` (migration 2090), which only the person's own reads
@@ -151,7 +151,7 @@ lists: the reads use the ledger's one visibility rule. All five nodes read or wr
 
 - **The workflow** must not be one a member made (`createdBy`, which comes only from the person whose save created it,
   never from the saved body). A member's workflow could otherwise feed any `userId` through them, read or replace that
-  person's briefing, or deliver it through a Slack credential of the member's own.
+  person's briefing, or deliver it somewhere of the member's own choosing.
 - **The run.** The runner records who started a run (`startedBy`) for every run a person starts: a manual or chat run, an
   MCP call (`execute_workflow`, `run_node`), a re-run, a retry someone asked for, and a sub-workflow of any of these
   (its parent's starter). An agent's tool call runs for the agent's caller, never for the person whose request happens
@@ -192,37 +192,24 @@ lists: the reads use the ledger's one visibility rule. All five nodes read or wr
   and runs as usual.
 - **The brain off** (`LANDFLOW_BRAIN=false`): every node returns no items, from whichever node a run starts.
 
-**Where the text goes.** Deliver Briefing sends people's email addresses (to look them up in Slack) and briefings to the
-base URL and token its Slack credential holds, and an editor of the credential's project may change those without any
-version changing. So every credential records who created it (`createdBy`) and who last changed its data (`updatedBy`,
-migration 2092; the same fields in `credentials.json` in files mode), and Deliver Briefing uses the Slack credential its
-node references only when that changer is an active owner or admin and its Base URL is Slack's API:
+**Where the text goes (delivery setup).** Deliver Briefing sends people's email addresses (to look them up in Slack) and briefings, so
+it uses no credential from the vault: anyone who can edit a project's credential could otherwise point its token or
+base URL at a workspace or server of their own without any version changing, and the nightly run would send everyone's
+briefing there. Like email, Slack delivery takes only server configuration, which no member can change:
 
-- **A save that changes a value** records the person who saved it: the form, `PATCH /api/credentials/:id`, a Git or
-  environment pull (the person who pulled). The decrypted values are compared, secrets included; a save that changes
-  none of them (an empty `data`, the form saved as it was, a secret left empty, which keeps its value) records nobody
-  new, and a rename or a rate limit alone keeps the changer too. The form sends only the fields that were edited.
-- **A token operation** (Connect, Get token, Refresh now, Disconnect) never makes a credential trusted: an owner's or
-  admin's keeps the last changer, and anyone else's records them (Connect: the person who started it, carried in the
-  signed OAuth state; nobody when no person started it). So after a member repoints the credential, an owner clicking
-  Disconnect, Get token or Connect does not vouch for the member's Base URL.
-- **No person behind it** (a background change) records nobody. A token refresh, an error note and an encryption key
-  rotation change no settings and keep the last changer.
-- **Fixed fields.** A field a credential type marks hidden and gives a default (Slack OAuth2's grant type, authorization
-  and token URLs) is never stored: the type's default always applies, whatever the API is sent.
-- **Slack's origin.** Deliver Briefing calls only `https://slack.com/api`, or the base URL the instance sets in
-  `LANDFLOW_BRIEFING_SLACK_URL` (server-side, for a proxy or a local test double). A credential whose Base URL is
-  anything else is skipped the same way, even when an owner set it.
+- **Slack**: the instance's Slack bot token in `LANDFLOW_BRIEFING_SLACK_TOKEN` (a secret; `xoxb-…` with `chat:write`
+  and `users:read.email`), sent to `https://slack.com/api`, or the base URL in `LANDFLOW_BRIEFING_SLACK_URL` (a proxy
+  or a local test double). The node looks each person up by their email (`users.lookupByEmail`) and sends the text as a
+  DM from that bot.
+- **Email**: the host's SMTP settings (`LANDFLOW_SMTP_*`).
 
-When the credential is skipped, nothing goes by Slack, for everyone: each person who chose Slack is passed on with
-`delivered: false` and a `warning`, and the run log says "Slack delivery skipped: a member or an automatic process
-changed the Slack credential of Deliver Briefing last. An owner or admin must check its Base URL and token and save a
-change …" (or that it points at another server than Slack's API), with no names, addresses or text. Credentials from
-before migration 2092 have no recorded changer, so they need that save once. The credential dialog shows who changed it
-last. Email goes through the host's SMTP settings (`LANDFLOW_SMTP_*`, environment only, which no member can change) and
-is sent as before. Write Briefing's model comes from server settings only (`LANDFLOW_BRAIN_MODEL` with
-`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` / `OPENAI_BASE_URL` or `OLLAMA_URL`), never from a credential, so no member can
-point it elsewhere either.
+With no token set, each person who chose Slack is passed on with `delivered: false` and a `warning`, and the run log
+says once "Slack delivery skipped: Slack is not set up on this server. An admin sets LANDFLOW_BRIEFING_SLACK_TOKEN (a
+Slack bot token) on the server to deliver by Slack; email delivery goes on.", with no names, addresses or text. Nothing
+warns when nobody chose Slack. The node has no credential slots: a Slack credential that a saved workflow still
+references on it (it had them before) is ignored, and the run neither fails nor reads it. Write Briefing's model comes
+from server settings only too (`LANDFLOW_BRAIN_MODEL` with `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` / `OPENAI_BASE_URL` or
+`OLLAMA_URL`), never from a credential.
 
 A person's choice of Slack is consent to the instance's Slack, not to a colleague's. A webhook or form trigger in front
 of these nodes lets whoever calls it choose the items, so keep the template's Schedule. An owner's or admin's re-run

@@ -38,7 +38,7 @@ function defaultsOf(info: CredentialTypeInfo) {
 
 /**
  * The fields edited since the credential was loaded or saved (a field emptied out is sent as null), or undefined when
- * none was: a save sends only these, so saving the form unchanged changes no value and vouches for nothing.
+ * none was: a save sends only these, so saving the form unchanged changes no value and keeps the last changer.
  */
 function editedFields(values: Record<string, unknown>, saved: Record<string, unknown>): Record<string, unknown> | undefined {
   const edited: Record<string, unknown> = {};

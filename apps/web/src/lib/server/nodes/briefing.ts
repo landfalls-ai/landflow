@@ -11,11 +11,10 @@ import { sendMail, mailConfigured } from '../auth/mail';
 import { gatherFor, writeBriefingText } from '../brain/briefing';
 import { createDraft, getBriefing, getDraft, markReady, pruneBriefings, writeText, type StoredBriefing } from '../brain/briefings-store';
 import { brainModel } from '../brain/writer';
-import { credentials as vault } from '../credentials/vault';
 import { database } from '../db';
 import { getPreferences } from '../preferences';
-import { postMessage, SLACK_API, SLACK_CREDENTIAL, SLACK_OAUTH2_CREDENTIAL, slackCredential, type SlackCredential } from '../slack';
-import { envUrl } from '../config';
+import { postMessage, SLACK_API, type SlackCredential } from '../slack';
+import { envString, envUrl } from '../config';
 import { safeFetch } from '../net/safe-fetch';
 import { logger } from '../telemetry/logger';
 import { brainEnabled, dayOf } from '../usage/ledger';
@@ -306,45 +305,18 @@ export const brainSaveBriefingNode = defineNode({
   },
 });
 
-const SLACK_NOT_CONNECTED =
-  'Slack delivery skipped: the Slack credential of Deliver Briefing has no token. Connect it again to deliver by Slack; email delivery goes on.';
-const SLACK_UNTRUSTED =
-  'Slack delivery skipped: a member or an automatic process changed the Slack credential of Deliver Briefing last. An owner or admin must check its Base URL and token and save a change to deliver by Slack; email delivery goes on.';
-const SLACK_ELSEWHERE =
-  'Slack delivery skipped: the Slack credential of Deliver Briefing points at another server than Slack’s API. An owner or admin must set its Base URL back to Slack’s to deliver by Slack; email delivery goes on.';
-
-/** Where Deliver Briefing may call Slack: Slack's API, or the instance's LANDFLOW_BRIEFING_SLACK_URL (a local fake in tests). */
-const briefingSlackUrl = () => (envUrl('LANDFLOW_BRIEFING_SLACK_URL') ?? SLACK_API).replace(/\/+$/, '');
+const SLACK_NOT_CONFIGURED =
+  'Slack delivery skipped: Slack is not set up on this server. An admin sets LANDFLOW_BRIEFING_SLACK_TOKEN (a Slack bot token) on the server to deliver by Slack; email delivery goes on.';
 
 /**
- * The Slack credential the node may deliver with, or why it may not (`skipped`): its data was last changed by anyone but
- * an active owner or admin (`updatedBy`, lib/server/credentials/vault.ts), or its base URL is not Slack's API (nor the
- * instance's LANDFLOW_BRIEFING_SLACK_URL). An editor of its project could otherwise point its base URL or token at a
- * server or workspace of their own, and the nightly run would send everyone's email address and briefing there without
- * any version changing. The credential is the one the node references in the graph that ran.
+ * The Slack Deliver Briefing sends with: server configuration only, a bot token in LANDFLOW_BRIEFING_SLACK_TOKEN and Slack's
+ * API (or LANDFLOW_BRIEFING_SLACK_URL, a proxy or a local fake), like email's LANDFLOW_SMTP_* settings. Never a credential
+ * from the vault: anyone who can edit a project's credential could point its token or base URL at a workspace or server
+ * of their own, and the nightly run would send everyone's email address and briefing there. Undefined: no token set.
  */
-function slackCredentialOf(ctx: IExecuteContext, record: ExecutionRecord | undefined): { slack?: SlackCredential; skipped?: string } {
-  const refs = ranWorkflow(record)?.nodes.find((node) => node.id === ctx.getNode().id)?.credentials ?? {};
-  for (const type of [SLACK_CREDENTIAL, SLACK_OAUTH2_CREDENTIAL]) {
-    let data: JsonObject | undefined;
-    try {
-      data = ctx.getCredentials<JsonObject>(type);
-    } catch {
-      // Not set: the other type, or no Slack delivery.
-    }
-    if (!data) continue;
-    const id = refs[type]?.id;
-    if (!id || !trusted(vault.lastChangedBy(id))) return { skipped: SLACK_UNTRUSTED };
-    let slack: SlackCredential;
-    try {
-      slack = slackCredential(data);
-    } catch {
-      // A trusted credential with no token yet (never connected, or disconnected): skip Slack, keep email.
-      return { skipped: SLACK_NOT_CONNECTED };
-    }
-    return slack.baseUrl === briefingSlackUrl() ? { slack } : { skipped: SLACK_ELSEWHERE };
-  }
-  return {};
+function briefingSlack(): SlackCredential | undefined {
+  const accessToken = envString('LANDFLOW_BRIEFING_SLACK_TOKEN');
+  return accessToken ? { accessToken, baseUrl: (envUrl('LANDFLOW_BRIEFING_SLACK_URL') ?? SLACK_API).replace(/\/+$/, '') } : undefined;
 }
 
 /** The Slack member behind an email, if Slack knows it (a GET: users.lookupByEmail takes no JSON). */
@@ -362,7 +334,7 @@ export const brainDeliverBriefingNode = defineNode({
   description: {
     name: 'brainDeliverBriefing',
     displayName: 'Deliver Briefing',
-    description: 'Send a person’s briefing by Slack or email, only when they chose that in their preferences. Everyone else gets it where they start their day.',
+    description: 'Send a person’s briefing by Slack or email, only when they chose that in their preferences, with the server’s own Slack bot and mail settings. Everyone else gets it where they start their day.',
     version: 1,
     kind: 'action',
     ...icon,
@@ -370,21 +342,14 @@ export const brainDeliverBriefingNode = defineNode({
     keywords: ['briefing', 'deliver', 'slack', 'email', 'tomorrow sync', 'second brain'],
     inputs: main,
     outputs: main,
-    credentials: [
-      { name: SLACK_CREDENTIAL, required: false },
-      { name: SLACK_OAUTH2_CREDENTIAL, required: false },
-    ],
     properties: [],
   },
   async execute(ctx) {
     if (!brainEnabled()) return [[]];
-    const record = await requireInstanceFlow(ctx);
+    await requireInstanceFlow(ctx);
     const out: NodeItem[] = [];
-    const { slack, skipped } = slackCredentialOf(ctx, record);
-    if (skipped) {
-      ctx.logger.warn(skipped);
-      logger.warn('briefing: Slack delivery skipped', { 'landflow.briefing.skip_reason': skipped === SLACK_UNTRUSTED ? 'untrusted_credential' : skipped === SLACK_NOT_CONNECTED ? 'not_connected' : 'not_slack_api', 'landflow.workflow.id': ctx.getWorkflowId(), 'landflow.execution.id': ctx.getExecutionId() });
-    }
+    const slack = briefingSlack();
+    let warned = false;
     for (const [index, item] of ctx.getInputData().entries()) {
       const person = personOf(item, index);
       if (!person) continue;
@@ -409,7 +374,12 @@ export const brainDeliverBriefingNode = defineNode({
           logger.warn('briefing delivery failed', { 'landflow.user.id': user.id, error: String(error) });
         }
       }
-      const warning = choice === 'slack' ? skipped : undefined;
+      const warning = choice === 'slack' && !slack ? SLACK_NOT_CONFIGURED : undefined;
+      if (warning && !warned) {
+        warned = true;
+        ctx.logger.warn(warning);
+        logger.warn('briefing: Slack delivery skipped', { 'landflow.briefing.skip_reason': 'not_configured', 'landflow.workflow.id': ctx.getWorkflowId(), 'landflow.execution.id': ctx.getExecutionId() });
+      }
       out.push({ json: { ...(item.json as JsonObject), delivered: Boolean(channel), ...(channel && { channel }), ...(warning && { warning }) }, pairedItem: { item: index } });
     }
     return [out];
