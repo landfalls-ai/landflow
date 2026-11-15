@@ -1,7 +1,9 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { listenAskAbout, takeAskAbout, ASK_ABOUT_EVENT } from '../src/components/spotlight/ask-about-listener';
+import { listenAskAbout, startsNew, takeAskAbout, ASK_ABOUT_EVENT, type AskAboutConversation } from '../src/components/spotlight/ask-about-listener';
+import { AskPanel, historyOf, type AskConversation, type AskItem } from '../src/components/brain/wiki/ask-panel';
+import { askAbout, askDetail } from '../src/lib/client/ask-about';
 import {
   builderFolds,
   columnRule,
@@ -72,6 +74,53 @@ describe('the ask-about event', () => {
     listenAskAbout(target, spy)();
     target.dispatchEvent(event);
     expect(spy).not.toHaveBeenCalled();
+  });
+  describe('a new subject starts a new conversation (B35 x B36)', () => {
+    const turn = (question: string) => ({ id: question, question, status: 'done', steps: [], answer: `About ${question}` }) as unknown as AskItem;
+    // The shell's conversation as the panel reads it: clear() empties it, as useAskConversation's does.
+    const fakeConversation = (items: AskItem[], busy = false) => {
+      const c = { items, busy, clear: vi.fn(() => void (c.items = [])), ask: vi.fn(), stop: vi.fn(), retry: vi.fn(), open: vi.fn(), setSubject: vi.fn() };
+      return c;
+    };
+    const fire = (target: EventTarget, conversation: AskAboutConversation) => {
+      const stop = listenAskAbout(target, (d) => takeAskAbout(d, conversation));
+      askAbout(askDetail({ type: 'run', id: 'r9', name: 'Nightly sync', workflowId: 'w1' }, { failed: true }), target);
+      stop();
+    };
+    it('clears an earlier, unrelated conversation: the starters show and no history goes with the first question', () => {
+      const conversation = fakeConversation([turn('What is our refund policy?'), turn('And for annual plans?')]);
+      expect(historyOf(conversation.items)).not.toHaveLength(0);
+      fire(new EventTarget(), conversation);
+      expect(conversation.clear).toHaveBeenCalledOnce();
+      expect(historyOf(conversation.items)).toEqual([]);
+      const state = getSpotlightState();
+      expect(state.about?.ref.id).toBe('r9');
+      const html = renderToStaticMarkup(
+        createElement(AskPanel, { conversation: conversation as unknown as AskConversation, onClose: () => {}, subject: { type: 'run', id: 'r9', name: 'Nightly sync' }, starters: state.about!.starters }),
+      );
+      expect(html).toContain('Why did this fail?');
+      expect(html).toContain('Has this happened before?');
+      expect(html).not.toContain('refund policy');
+    });
+    it('keeps the conversation when the panel is already about the same thing, or an answer is still coming', () => {
+      const same = fakeConversation([turn('Why did this fail?')]);
+      setSpotlightState((s) => withAbout(s, askDetail({ type: 'run', id: 'r9', name: 'Nightly sync' })));
+      fire(new EventTarget(), same);
+      expect(same.clear).not.toHaveBeenCalled();
+      resetSpotlightState();
+      const busy = fakeConversation([turn('What is our refund policy?')], true);
+      fire(new EventTarget(), busy);
+      expect(busy.clear).not.toHaveBeenCalled();
+    });
+    it('startsNew: only a non-empty, idle conversation about something else', () => {
+      const next = askDetail({ type: 'run', id: 'r9', name: 'N' });
+      expect(startsNew(undefined, next, { items: [], busy: false })).toBe(false);
+      expect(startsNew(undefined, next, { items: [1], busy: false })).toBe(true);
+      expect(startsNew(askDetail({ type: 'run', id: 'r1', name: 'O' }), next, { items: [1], busy: false })).toBe(true);
+      expect(startsNew(askDetail({ type: 'workflow', id: 'r9', name: 'O' }), next, { items: [1], busy: false })).toBe(true);
+      expect(startsNew(next, next, { items: [1], busy: false })).toBe(false);
+      expect(startsNew(undefined, next, { items: [1], busy: true })).toBe(false);
+    });
   });
   it('ignores a malformed detail', () => {
     const target = new EventTarget();

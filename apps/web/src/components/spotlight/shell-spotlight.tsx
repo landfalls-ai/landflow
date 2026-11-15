@@ -106,7 +106,10 @@ export function ShellSpotlight() {
     return () => window.removeEventListener('keydown', onKey);
   }, [chromeless]);
 
-  useEffect(() => listenAskAbout(window, takeAskAbout), []);
+  // An ask-about about something else starts a new conversation (its starters show, and no unrelated history goes with it).
+  const conversationRef = useRef(conversation);
+  conversationRef.current = conversation;
+  useEffect(() => listenAskAbout(window, (detail) => takeAskAbout(detail, conversationRef.current)), []);
 
   // Leaving the editor drops "ask the brain instead": the next editor starts as the builder.
   useEffect(() => {

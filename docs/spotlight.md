@@ -116,8 +116,11 @@ failed**, on its list row, its one-line row, its page and its preview. Each fire
 `landflow:ask-about`, whose detail is `{ ref: { type, id, name, workflowId? }, starters }` (`lib/client/ask-about.ts`).
 The chat panel listens for it, sets the resource as the chip and offers the three starter questions for its type
 (`lib/shared/ask-starters.ts`; a failed run's first is "Why did this fail?"). A credential's item says **Ask about where
-it's used** and sends only its name and id, never a value. Until the panel listens for the event, the click does nothing
-visible.
+it's used** and sends only its name and id, never a value. The shell panel's conversation outlives the panel, so an
+ask-about about another thing than the panel is already about starts a new conversation (`startsNew` in
+`components/spotlight/ask-about-listener.ts`): the starters show and the first question carries no history from the earlier
+talk, which stays under the history button. Asking about the same thing again keeps the conversation, and so does an
+answer still coming (it finishes first).
 
 ## 3. The action layer
 
