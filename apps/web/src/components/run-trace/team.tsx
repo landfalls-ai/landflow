@@ -3,7 +3,6 @@
 import { useRef, useState } from 'react';
 import { ArrowRight, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useDeveloperDetails } from '@/lib/client/developer-details';
 import { teamSnapshotOf, type TeamSnapshot, type TeamSnapshotMember } from '@/lib/shared/agent-teams';
 import { fixCyclesOf, type FixCycle } from '@/lib/shared/fix-cycles';
 import { resolveRunProfile } from '@/lib/shared/run-profiles';
@@ -192,7 +191,6 @@ function FixChips({ cycles, open }: { cycles: FixCycle[]; open: (o: Open) => voi
 }
 
 export function ActorCard({ s, open, turns = [], cycles = [], rounds = [] }: { s: RunActorStats; open: (o: Open) => void; turns?: RunTurn[]; cycles?: FixCycle[]; rounds?: RunRound[] }) {
-  const developerDetails = useDeveloperDetails();
   const li: Array<{ text: React.ReactNode; bad?: boolean }> = [];
   if (s.asked)
     li.push({
@@ -225,7 +223,7 @@ export function ActorCard({ s, open, turns = [], cycles = [], rounds = [] }: { s
         </>
       ),
     });
-  const spent = developerDetails ? spendLine(s) : undefined;
+  const spent = spendLine(s);
   if (spent) li.push({ text: spent });
   if (s.toolCalls && !s.asked)
     li.push({

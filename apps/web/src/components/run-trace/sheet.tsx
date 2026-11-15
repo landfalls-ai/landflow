@@ -3,7 +3,6 @@
 import { useRef, type ReactNode } from 'react';
 import { ExternalLink, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { DevOnly, useDeveloperDetails } from '@/lib/client/developer-details';
 import { artifactShape, safeUrl } from '@/lib/shared/artifact-kinds';
 import type { FileChange, RunChanges } from '@/lib/shared/run-changes';
 import type { RunGitHub } from '@/lib/shared/run-repo';
@@ -164,7 +163,6 @@ function SpanSheet({
   changes?: RunChanges;
   repo?: RunGitHub;
 }) {
-  const developerDetails = useDeveloperDetails();
   const edits = span.kind === 'tool' ? changes?.files.flatMap((f) => f.changes.filter((c) => c.spanId === span.id).map((c) => ({ file: f.path, c }))) : undefined;
   const kids = span.children.map((id) => model.spans[id]).filter((s) => s && !s.hidden);
   const saw = sawOf(span.attrs.saw);
@@ -198,7 +196,7 @@ function SpanSheet({
           ['Started', <TimeButton key="s" iso={span.startedAt} onJump={onJump} />],
           ['Ended', span.endedAt ? <TimeButton key="e" iso={span.endedAt} onJump={onJump} /> : span.status === 'running' ? 'still going' : undefined],
           ['Took', fmtMs(span.ms)],
-          ['Tokens', developerDetails && span.usage ? `${span.usage.inputTokens.toLocaleString()} in · ${span.usage.outputTokens.toLocaleString()} out` : undefined],
+          ['Tokens', span.usage ? `${span.usage.inputTokens.toLocaleString()} in · ${span.usage.outputTokens.toLocaleString()} out` : undefined],
           ['Now', span.note],
         ]}
       />
@@ -251,11 +249,9 @@ function SpanSheet({
         </>
       )}
       {attrs.length > 0 && (
-        <DevOnly>
-          <div className="mt-3">
-            <ValueBlock label="Details" value={Object.fromEntries(attrs)} />
-          </div>
-        </DevOnly>
+        <div className="mt-3">
+          <ValueBlock label="Details" value={Object.fromEntries(attrs)} />
+        </div>
       )}
     </>
   );
@@ -351,7 +347,6 @@ function CheckSheet({
 
 function ActorSheet({ id, model, open }: { id: string; model: RunModel; open: (o: Open) => void }) {
   const controls = useRunControls();
-  const developerDetails = useDeveloperDetails();
   const s = model.actors.find((a) => a.actor.id === id);
   if (!s) return <p className="text-[13px] text-t3">Not involved yet.</p>;
   const spans = model.order.filter((x) => x.actor.id === id && !x.hidden && x.id !== 'run' && x.kind !== 'model');
@@ -364,7 +359,7 @@ function ActorSheet({ id, model, open }: { id: string; model: RunModel; open: (o
           ['Worked', s.workMs ? fmtMs(s.workMs) : undefined],
           ['Asked', s.asked ? `${s.asked} time${s.asked > 1 ? 's' : ''}` : undefined],
           ['Asked others', s.calls ? `${s.calls} time${s.calls > 1 ? 's' : ''}` : undefined],
-          ['Model', developerDetails ? spendLine(s) : undefined],
+          ['Model', spendLine(s)],
           ['Tools', s.toolCalls ? `${s.toolCalls} calls` : undefined],
           ['Messages', s.messages ? `${s.messages} sent` : undefined],
         ]}
