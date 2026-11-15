@@ -178,6 +178,11 @@ lists: the reads use the ledger's one visibility rule. All five nodes read or wr
   of their own or an older one, publish a version of their own (or have it published), pin List People to someone, or
   re-run it to send everyone's briefing again. An evaluation run never may. Each refusal fails the run with a message
   that says why.
+- **Pins.** Runs a person starts (manual, chat, MCP, a re-run) use pin data, and a member can pin List People with a
+  save that makes no version. So in such a run each node refuses when it, or any node before it, has pin data in the
+  graph that ran or in the saved workflow ("Pin data on this node or a node before it would choose whose briefing this
+  run handles …"), even when an owner or admin started it. Remove the pins to run it by hand; the schedule ignores pins
+  and runs as usual.
 - **The brain off** (`LANDFLOW_BRAIN=false`): every node returns no items, from whichever node a run starts.
 
 **Where the text goes.** Deliver Briefing sends people's email addresses (to look them up in Slack) and briefings to the

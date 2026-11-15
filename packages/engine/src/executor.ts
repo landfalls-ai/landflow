@@ -173,6 +173,9 @@ interface NodeTelemetry {
  */
 const PINLESS_MODES: ReadonlySet<string> = new Set(['trigger', 'poll', 'webhook', 'tool']);
 
+/** Whether a run in `mode` uses pin data (a run a person starts: manual, chat, MCP, a re-run) or runs every node. */
+export const pinsApply = (mode: string): boolean => !PINLESS_MODES.has(mode);
+
 const now = () => new Date().toISOString();
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -956,7 +959,7 @@ class WorkflowRun {
     }
 
     // Pin data is test data for runs a person starts: a trigger, poll, webhook or an agent's tool call runs the node.
-    const pinned = PINLESS_MODES.has(this.options.mode) ? undefined : this.options.workflow.pinData?.[node.id];
+    const pinned = pinsApply(this.options.mode) ? this.options.workflow.pinData?.[node.id] : undefined;
     if (pinned) {
       telemetry.span.setAttribute('landflow.node.pinned', true);
       const outputs = [pinned];

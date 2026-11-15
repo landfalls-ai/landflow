@@ -4,7 +4,7 @@
  * (`{ userId, day, briefingId, counts }`): each person's gathered work and text live in their own row (brain/briefings-store.ts),
  * which only they read, because the run data of a workflow is visible to everyone who can open it.
  */
-import type { Workflow } from '@landflow/engine';
+import { pinsApply, type Workflow } from '@landflow/engine';
 import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type NodeItem } from '@landflow/sdk';
 import { getUser, listUsers, type UserRecord } from '../auth/users';
 import { sendMail, mailConfigured } from '../auth/mail';
@@ -102,16 +102,50 @@ function ranWorkflow(record: ExecutionRecord | undefined): Workflow | undefined 
   return record.workflow ?? (record.versionId ? getVersion(record.workflowId, record.versionId)?.workflow : undefined);
 }
 
+/** `nodeId` and every node that feeds it in `workflow`. */
+function upstreamOf(workflow: Workflow, nodeId: string): Set<string> {
+  const seen = new Set([nodeId]);
+  const queue = [nodeId];
+  while (queue.length) {
+    const id = queue.pop()!;
+    for (const connection of workflow.connections ?? []) {
+      if (connection.target !== id || seen.has(connection.source)) continue;
+      seen.add(connection.source);
+      queue.push(connection.source);
+    }
+  }
+  return seen;
+}
+
+const PIN_REFUSED = 'Pin data on this node or a node before it would choose whose briefing this run handles: remove the pins (they are test data) and run it again';
+
+/**
+ * Why pin data could decide what this node handles, or undefined. Runs a person starts use pins (the engine's
+ * `pinsApply`), and pins are no part of a version: a member's pin-only save on List People would make an owner's manual
+ * run write a briefing for the person and day the member chose. So such a run refuses when this node or one upstream
+ * has pins, in the graph that ran or in the saved workflow.
+ */
+function pinRefusal(ctx: IExecuteContext, record: ExecutionRecord | undefined): string | undefined {
+  if (!pinsApply(ctx.getMode())) return undefined;
+  const nodeId = ctx.getNode().id;
+  for (const workflow of [ranWorkflow(record), store.getWorkflow(ctx.getWorkflowId() ?? '')]) {
+    const pins = workflow?.pinData;
+    if (!pins) continue;
+    for (const id of upstreamOf(workflow, nodeId)) if (pins[id]?.length) return PIN_REFUSED;
+  }
+  return undefined;
+}
+
 /**
  * Who may run the nodes that read or write a person's private briefing (docs/work-and-briefings.md#the-nightly-sync, Privacy): a workflow
  * no member made, in a run an owner or admin started, or a schedule's run of a version an owner or admin saved (and, if
- * it is the published one, published) (`runRefusal`). A member could otherwise feed any `userId` through them (an MCP
- * call from Gather Work, a re-run of the nightly run with an older graph, a version of their own published or pinned)
- * and read or send someone else's work. Returns the run's record.
+ * it is the published one, published) (`runRefusal`), with no pin data deciding the items (`pinRefusal`). A member could
+ * otherwise feed any `userId` through them (an MCP call from Gather Work, a re-run of the nightly run with an older graph,
+ * a version of their own published, a pin) and read or send someone else's work. Returns the run's record.
  */
 async function requireInstanceFlow(ctx: IExecuteContext): Promise<ExecutionRecord | undefined> {
   const record = await runRecord(ctx.getExecutionId());
-  const refused = workflowRefusal(store.getWorkflow(ctx.getWorkflowId() ?? '')) ?? (await runRefusal(record));
+  const refused = workflowRefusal(store.getWorkflow(ctx.getWorkflowId() ?? '')) ?? (await runRefusal(record)) ?? pinRefusal(ctx, record);
   if (refused) throw new NodeOperationError(refused, { description: 'A person’s briefing is private to them: an owner or admin saves and publishes this workflow, and it runs on its schedule or as theirs.' });
   return record;
 }

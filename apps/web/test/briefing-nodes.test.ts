@@ -543,6 +543,27 @@ describe('who started the run (through the runner)', () => {
       expect(rowsFor(bob.id, 'ready')).toHaveLength(1);
     });
 
+    it('a member’s pin upstream refuses an owner’s manual run (pins apply there), and the schedule still runs', async () => {
+      const id = await fresh('wf_v_pin_manual');
+      // A pin-only save: no version, so the version check alone would pass.
+      as(alice, () => store.saveWorkflow({ ...store.getWorkflow(id)!, pinData: { people: [{ json: { userId: idle.id, day: '2020-01-07' } }] } }));
+      expect(listVersions(id)).toHaveLength(1);
+      const manual = await as(owner, () => runWorkflow({ workflow: store.getWorkflow(id)!, mode: 'manual', startNodeId: 'nightly', triggerItems: items({}) }));
+      expect(manual.startedBy).toBe(owner.id);
+      expect(manual.status).toBe('error');
+      expect(manual.error?.message).toMatch(/^Pin data on this node or a node before it/);
+      // Pins the owner's own editor run carries (an unsaved draft) refuse too: pins are test data.
+      const draft = { ...store.getWorkflow(id)!, pinData: undefined };
+      const own = await as(owner, () => runWorkflow({ workflow: { ...draft, pinData: { gather: [{ json: { userId: idle.id, day: '2020-01-08', briefingId: 'x' } }] } }, mode: 'manual', startNodeId: 'nightly', triggerItems: items({}) }));
+      expect(own.status).toBe('error');
+      expect(idleRows()).toHaveLength(0);
+      // The schedule ignores pins (no denial of the nightly run by pinning).
+      expect((await draftRun(id)).status).toBe('success');
+      // Pins removed, the owner's manual run works.
+      as(owner, () => store.saveWorkflow({ ...store.getWorkflow(id)!, pinData: undefined }));
+      expect((await as(owner, () => runWorkflow({ workflow: store.getWorkflow(id)!, mode: 'manual', startNodeId: 'nightly', triggerItems: items({}) }))).status).toBe('success');
+    });
+
     it('an agent’s tool call runs for its caller: not for the owner whose request is around it', async () => {
       const id = await fresh('wf_v_tool', false);
       const tool = (extra: Record<string, unknown> = {}) => runWorkflow({ workflow: store.getWorkflow(id)!, mode: 'tool', startNodeId: 'gather', triggerItems: items({ userId: bob.id, day: today() }), ...extra });
