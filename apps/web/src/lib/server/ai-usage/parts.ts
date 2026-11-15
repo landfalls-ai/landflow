@@ -25,19 +25,20 @@ export const aiCallPartsRetentionDays = (): number => Number(envWithAliases('LAN
 /**
  * The parts of `inputTokens`, an estimate: each part's characters ÷ 4 (images a fixed 1,600 each), scaled so the
  * parts sum to `inputTokens` exactly. Integers; the rounding remainder goes to the largest part. `formatting` is 0
- * (only an exact count can tell it apart). A draft with nothing in it puts the whole input in `formatting`.
+ * (only an exact count can tell it apart), and a segment of the `formatting` part (the date stamp) is not counted.
+ * A draft with nothing to count gives `{}` (no part is invented for the input).
  */
 export function estimateParts(draft: PromptDraft, inputTokens: number): Partial<Record<PromptPart, number>> {
   const total = Math.max(0, Math.floor(inputTokens));
   if (total === 0) return {};
   const weights: Partial<Record<PromptPart, number>> = {};
   for (const segment of draft.segments) {
-    if (segment.text.length) weights[segment.part] = (weights[segment.part] ?? 0) + segment.text.length / 4;
+    if (segment.text.length && segment.part !== 'formatting') weights[segment.part] = (weights[segment.part] ?? 0) + segment.text.length / 4;
   }
   if (draft.images && draft.images > 0) weights.images = (weights.images ?? 0) + draft.images * ESTIMATED_IMAGE_TOKENS;
   const entries = PROMPT_PARTS.filter((part) => (weights[part] ?? 0) > 0).map((part) => [part, weights[part] as number] as const);
   const sum = entries.reduce((n, [, w]) => n + w, 0);
-  if (!entries.length || sum <= 0) return { formatting: total };
+  if (!entries.length || sum <= 0) return {};
   const parts: Partial<Record<PromptPart, number>> = {};
   let assigned = 0;
   let largest: PromptPart = entries[0]![0];
@@ -68,8 +69,10 @@ export interface PartHashes {
 
 /**
  * Keyed hashes of a draft: `promptHash` over every segment in order with its `where`; `prefixHash` over the segments
- * up to the last one marked `breakpoint` (else the tools and the system prompt); `partHashes` per part (the
- * concatenated segments of that part; `formatting` and `images` have no text).
+ * up to the last one marked `breakpoint` (else the tools and the system prompt); `partHashes` per part, over the
+ * texts of that part's segments joined in order as one string (so a counter that holds the part whole, as the gateway's
+ * callback does, gets the same hash); `formatting` and `images` have none: a prompt's date stamp is a `formatting`
+ * segment, so it changes `promptHash` and `prefixHash` (it is in the prompt) but never the instructions' hash.
  */
 export function hashParts(draft: PromptDraft, key: Buffer): PartHashes {
   const field = (s: { where: string; part: string; text: string }) => [s.where, s.part, s.text];
@@ -83,7 +86,7 @@ export function hashParts(draft: PromptDraft, key: Buffer): PartHashes {
   const partHashes: Partial<Record<PromptPart, string>> = {};
   for (const part of PROMPT_PARTS) {
     const texts = byPart.get(part);
-    if (texts) partHashes[part] = digest(key, texts);
+    if (texts) partHashes[part] = digest(key, [texts.join('')]);
   }
   return {
     prefixHash: digest(key, prefix.flatMap(field)),
@@ -122,10 +125,11 @@ export function writeParts(recorded: RecordedCall): void {
   let draft: PromptDraft | undefined = recorded.note.draft;
   if (recorded.operation !== 'chat' || !draft || !(recorded.inputTokens > 0)) return;
   const call = { usageId: recorded.usageId, at: recorded.at, inputTokens: recorded.inputTokens, ...(recorded.gatewayRequestId && { gatewayRequestId: recorded.gatewayRequestId }) };
+  // The handle is the one in force now, not whatever the singleton is when the callback runs (a test or a restart may swap it).
+  const db = database();
   setImmediate(() => {
     try {
       const parts = splitCall(call, draft as PromptDraft, hashKey());
-      const db = database();
       const existing = db.get<{ id: string }>('SELECT id FROM ai_call_parts WHERE usage_id = ?', call.usageId);
       db.upsert('ai_call_parts', {
         id: existing?.id ?? `acp_${nanoid(14)}`,

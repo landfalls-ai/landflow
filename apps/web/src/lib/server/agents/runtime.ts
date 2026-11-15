@@ -163,7 +163,9 @@ function systemPrompt(agent: Agent, config: AgentConfig, session: AgentSession, 
   return systemPromptParts(agent, config, session, runCtx, extra).text;
 }
 
-// SP03: the same prompt with its segments (persona, instructions and skills, the intro and date line → instructions; the project block; the practices; memory; the team's tool note), for the call's draft.
+// SP03: the same prompt with its segments, for the call's draft: persona, instructions, skills and the intro line are
+// `instructions`; then the project block, the practices, memory and the team's tool note, each its own part. The date
+// stamp is a `formatting` segment, which no part hash covers, so a new run's date doesn't change the instructions' hash.
 export function systemPromptParts(agent: Agent, config: AgentConfig, session: AgentSession, runCtx: RunContext, extra?: string): { text: string; segments: SystemSegment[] } {
   let memory: string | undefined;
   if (config.memory.crossSession) {
@@ -188,6 +190,9 @@ export function systemPromptParts(agent: Agent, config: AgentConfig, session: Ag
   if (memory) marks.push({ at: probe.indexOf(MEMORY_MARK), mark: MEMORY_MARK, text: memory, parts: [{ part: 'memory', text: memory }] });
   marks.sort((a, b) => a.at - b.at);
   const segments: SystemSegment[] = [];
+  // The date stamp ends the prompt (see personaPrompt): its own segment, the one thing that differs between two runs of a prompt.
+  const stamp = ` Current date and time: ${now.toISOString()}.`;
+  const body = prompt.endsWith(stamp) ? prompt.slice(0, prompt.length - stamp.length) : prompt;
   let probeAt = 0;
   let textAt = 0;
   for (const m of marks) {
@@ -197,7 +202,8 @@ export function systemPromptParts(agent: Agent, config: AgentConfig, session: Ag
     textAt += gap + m.text.length;
     probeAt = m.at + m.mark.length;
   }
-  if (textAt < prompt.length) segments.push({ part: 'instructions', text: prompt.slice(textAt) });
+  if (textAt < body.length) segments.push({ part: 'instructions', text: body.slice(textAt) });
+  if (body !== prompt) segments.push({ part: 'formatting', text: stamp });
   if (extra) segments.push({ part: 'toolNote', text: `\n\n${extra}` });
   return { text: extra ? `${prompt}\n\n${extra}` : prompt, segments };
 }

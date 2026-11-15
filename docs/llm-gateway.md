@@ -325,11 +325,15 @@ keyed by the call's `ai_usage` row. It holds token counts, hashes and tool names
 
 - **An estimate in this wave.** Each part's characters divided by 4 (an image counts 1,600), scaled so the parts add up to
   the call's input tokens, the rounding remainder going to the largest part. `method` says `estimate`; `formatting` is
-  always 0 because only an exact count can tell what the provider added. Wave 12 makes the numbers exact with the same row.
+  always 0 because only an exact count can tell what the provider added (a draft with nothing to count has no parts).
+  Wave 12 makes the numbers exact with the same row.
 - **Hashes.** Keyed hashes (HMAC-SHA-256 under a key derived from the instance's encryption key, 16 hex characters):
   `promptHash` for the whole prompt (the same prompt sent again), `prefixHash` for everything up to the last cache
   breakpoint (two calls with the same prefix could have shared a cache entry) and one hash per part (the instructions
-  changed between two runs). They are comparable inside one instance only and cannot be turned back into text.
+  changed between two runs). A part's hash is over its segments' texts joined in order into one string, so a counter that
+  holds the part whole (the gateway's callback, wave 12) gets the same hash. The prompt's date line (`Current date and
+  time: …`) is a `formatting` segment: it is in `promptHash` and `prefixHash` (a new run is a new prefix) and in no part
+  hash, so the instructions' hash only changes when the instructions do. They are comparable inside one instance only and cannot be turned back into text.
 - **Who writes it.** Agent runs (the system prompt is split where it is built), the AI Agent node, Spotlight, the Agent
   architect and Ask the brain. The text of a prompt is held in memory for the length of one call and is never stored,
   logged or put on a span.
@@ -380,7 +384,7 @@ refreshes every minute while the tab is visible.
 ## What each call was for
 
 Each model call's `ai_usage` row says, besides the run, model and tokens, where the call ran and why (migration 2900;
-rows from before it, rows imported from the gateway's spend log, failed calls and calls outside a run have none of these; a call a plugin node reports in its `model` record has only `node_id`, no purpose, duration, stop reason or cache token types in its metrics yet):
+rows from before it, rows imported from the gateway's spend log and calls outside a run have none of these (a failed call writes no row); a call a plugin node reports in its `model` record has only `node_id`, no purpose, duration, stop reason or cache token types in its metrics yet):
 
 | Column | What it holds |
 |---|---|

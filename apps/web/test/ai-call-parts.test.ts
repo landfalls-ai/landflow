@@ -7,7 +7,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentMessage, LanguageModel, ModelTurn, ToolSpec } from '@landflow/engine';
 import type { Agent, AgentConfig } from '@/lib/shared/agents';
 import type { RunContext } from '@/lib/shared/project-context';
@@ -102,10 +102,12 @@ describe('estimateParts', () => {
     expect(estimateParts(d, 0)).toEqual({});
   });
 
-  it('counts an image as 1,600 before scaling, and an empty draft as formatting', () => {
+  it('counts an image as 1,600 before scaling; an empty draft has no parts, and a formatting segment is not counted', () => {
     const d = { segments: [{ part: 'userMessage' as const, where: 'messages' as const, text: 'x'.repeat(1600 * 4) }], images: 1 };
     expect(estimateParts(d, 1000)).toEqual({ userMessage: 500, images: 500 });
-    expect(estimateParts({ segments: [] }, 40)).toEqual({ formatting: 40 });
+    expect(estimateParts({ segments: [] }, 40)).toEqual({});
+    const stamped = { segments: [{ part: 'instructions' as const, where: 'system' as const, text: 'x'.repeat(80) }, { part: 'formatting' as const, where: 'system' as const, text: ' Current date and time: 2026-01-02T03:04:05.000Z.' }] };
+    expect(estimateParts(stamped, 100)).toEqual({ instructions: 100 });
   });
 });
 
@@ -121,6 +123,35 @@ describe('hashParts', () => {
     expect(changed.partHashes.toolDefinitions).toBe(base.partHashes.toolDefinitions);
     expect(changed.promptHash).not.toBe(base.promptHash);
     expect(base.toolNames).toEqual(['echo']);
+  });
+
+  it('hashes a part over its texts joined, so one string and the same text in pieces give one hash', () => {
+    const seg = (part: 'instructions' | 'memory', text: string) => ({ part, where: 'system' as const, text });
+    const whole = hashParts({ segments: [seg('instructions', 'You are helpful. Be brief.')] }, key);
+    const pieces = hashParts({ segments: [seg('instructions', 'You are helpful. '), seg('memory', 'tea'), seg('instructions', 'Be brief.')] }, key);
+    expect(pieces.partHashes.instructions).toBe(whole.partHashes.instructions);
+    expect(pieces.partHashes.memory).toBeDefined();
+  });
+
+  it('never lets a formatting segment (the date stamp) into a part hash, but keeps it in the prompt and prefix hashes', () => {
+    const stamped = (at: string) => ({ segments: [{ part: 'instructions' as const, where: 'system' as const, text: 'Be brief.' }, { part: 'formatting' as const, where: 'system' as const, text: ` Current date and time: ${at}.` }] });
+    const a = hashParts(stamped('2026-01-02T03:04:05.000Z'), key);
+    const b = hashParts(stamped('2026-01-03T03:04:05.000Z'), key);
+    expect(a.partHashes).toEqual(b.partHashes);
+    expect(Object.keys(a.partHashes)).toEqual(['instructions']);
+    expect(a.prefixHash).not.toBe(b.prefixHash);
+    expect(a.promptHash).not.toBe(b.promptHash);
+  });
+
+  it('cuts the prefix at the last breakpoint even when it sits in the middle of the messages', () => {
+    const seg = (part: 'toolDefinitions' | 'instructions' | 'history' | 'userMessage', where: 'tools' | 'system' | 'messages', text: string, breakpoint?: boolean) => ({ part, where, text, ...(breakpoint && { breakpoint }) });
+    const make = (tail: string, middle = 'earlier answer') => ({
+      segments: [seg('toolDefinitions', 'tools', '{"name":"echo"}'), seg('instructions', 'system', 'Be brief.'), seg('history', 'messages', 'first question'), seg('history', 'messages', middle, true), seg('userMessage', 'messages', tail)],
+    });
+    // The last message follows the breakpoint: it is not in the prefix. A message before it is.
+    expect(hashParts(make('one'), key).prefixHash).toBe(hashParts(make('two'), key).prefixHash);
+    expect(hashParts(make('one'), key).promptHash).not.toBe(hashParts(make('two'), key).promptHash);
+    expect(hashParts(make('one', 'a different answer'), key).prefixHash).not.toBe(hashParts(make('one'), key).prefixHash);
   });
 
   it('keeps the prefix hash over the tools and system up to the last breakpoint, whatever the messages say', () => {
@@ -149,7 +180,8 @@ describe('the system prompt and its segments', () => {
     const out = systemPromptParts(agent, configFor(agent, 'draft'), sessionOf(agent), ctx());
     expect(out.text).toBe(`Be brief.\n\nYou are “Helper”. Current date and time: ${AT}.`);
     expect(join(out.segments)).toBe(out.text);
-    expect(out.segments.every((s) => s.part === 'instructions')).toBe(true);
+    expect(out.segments.map((s) => s.part)).toEqual(['instructions', 'formatting']);
+    expect(out.segments.at(-1)!.text).toBe(` Current date and time: ${AT}.`);
   });
 
   it('is the same string with skills, a project block, practices and memory, and splits them by part', () => {
@@ -169,7 +201,7 @@ describe('the system prompt and its segments', () => {
     ].join('\n\n');
     expect(out.text).toBe(expected);
     expect(join(out.segments)).toBe(expected);
-    expect(out.segments.map((s) => s.part)).toEqual(['instructions', 'projectBlock', 'practices', 'instructions', 'memory', 'instructions']);
+    expect(out.segments.map((s) => s.part)).toEqual(['instructions', 'projectBlock', 'practices', 'instructions', 'memory', 'instructions', 'formatting']);
     expect(out.segments.find((s) => s.part === 'practices')!.text).toBe('## Practices\n- use helm');
     expect(out.segments.find((s) => s.part === 'memory')!.text).toContain('likes tea');
   });
@@ -178,10 +210,21 @@ describe('the system prompt and its segments', () => {
     const agent = agentOf({ persona: { role: 'Reviewer' } as AgentConfig['persona'] });
     const config = configFor(agent, 'draft');
     const plain = systemPromptParts(agent, config, sessionOf(agent), ctx());
+    expect(plain.text).toBe(`## Who you are\nRole: Reviewer.\n\n## Instructions\nBe brief.\n\nYou are “Helper”. Current date and time: ${AT}.`);
     const out = systemPromptParts(agent, config, sessionOf(agent), ctx(), 'Tools in this run:\n- echo');
     expect(out.text).toBe(`${plain.text}\n\nTools in this run:\n- echo`);
     expect(join(out.segments)).toBe(out.text);
     expect(out.segments.at(-1)).toMatchObject({ part: 'toolNote' });
+  });
+
+  it('leaves the instructions hash alone when only the run date changes', () => {
+    const agent = agentOf({ description: 'Helps' });
+    const config = configFor(agent, 'draft');
+    const hashOf = (at: string) => hashParts(agentDraft({ systemSegments: systemPromptParts(agent, config, sessionOf(agent), ctx({ at })).segments, tools: [], messages: [{ role: 'user', content: 'hi' }], cache: true }), key);
+    const a = hashOf('2026-01-02T03:04:05.000Z');
+    const b = hashOf('2026-02-02T03:04:05.000Z');
+    expect(a.partHashes.instructions).toBe(b.partHashes.instructions);
+    expect(a.prefixHash).not.toBe(b.prefixHash);
   });
 });
 
@@ -267,7 +310,6 @@ describe('retention', () => {
   });
 });
 
-import { afterAll } from 'vitest';
 afterAll(() => {
   for (const k of ['LANDFLOW_DATA_DIR', 'LANDFLOW_REGISTRY_GRPC_PORT', 'LANDFLOW_SCAN_ON_START', 'LANDFLOW_PLUGINS']) {
     if (previousEnv[k] === undefined) delete process.env[k];
