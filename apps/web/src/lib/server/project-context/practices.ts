@@ -43,7 +43,7 @@ export const runTextHash = (text: string): string => (text ? createHash('sha256'
 export function withPractices(ctx: RunContext, selection: PracticesSelection): RunContext {
   if (!selection.text) return ctx;
   const text = ctx.text ? `${ctx.text}\n\n${selection.text}` : selection.text;
-  return { ...ctx, text, hash: runTextHash(text), practices: selection.practices };
+  return { ...ctx, text, hash: runTextHash(text), practices: selection.practices, practicesText: selection.text }; // SP03:
 }
 
 /** Who a recorded row belongs to. `projectId` is the run's (the server resolved it), never a caller's. */

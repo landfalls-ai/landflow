@@ -2179,6 +2179,10 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
 - **Left on purpose:** autonomous task runs, a progress history chart, and importing `PROJECT.md`
   ([limitations.md](limitations.md#project-tasks-wave-10)).
 
+## Token spend wave 11: prompt parts (SP03)
+
+- Each chat call Landflow builds a prompt for gets a split into parts (instructions, project block, practices, memory, tool notes, tool definitions, history, tool results, message, images) as an estimate, with keyed prompt, prefix and per-part hashes, kept 30 days; an agent session's usage keeps its cache numbers ([llm-gateway.md](llm-gateway.md#what-a-prompt-was-made-of)). Exact counts, the gateway's split and the screens come in wave 12.
+
 ## Practices (waves P1 and P2)
 
 Rules in the brain that connected agents follow, each approved by a person ([practices.md](practices.md)). Decided

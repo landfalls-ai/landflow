@@ -4,6 +4,8 @@
  * checked `text` and `done` with its sources, model, time, tokens and cost. Metered like the other chats (surface `brain`).
  */
 import { nanoid } from 'nanoid';
+import { withCallNote } from '../ai-usage/call-context'; // SP03:
+import { plainDraft } from '../ai-usage/drafts'; // SP03:
 import type { AskEvent, AskTurn } from '../../shared/brain-wiki';
 import { MENTION_LIMITS, type MentionRef } from '../../shared/mentions';
 import { assistantScope, isUsageCapError, runInUsageScope } from '../ai-usage';
@@ -134,7 +136,7 @@ export async function askBrainStream(actor: AskActor | undefined, input: AskStre
     const writing = step;
     const modelStarted = Date.now();
     try {
-      const turn = await model.generate({
+      const request: Parameters<typeof model.generate>[0] = {
         system: ASK_SYSTEM,
         messages: [
           {
@@ -148,7 +150,8 @@ export async function askBrainStream(actor: AskActor | undefined, input: AskStre
         responseFormat: 'text',
         onToken: (delta) => emit({ type: 'text.delta', step: writing, text: delta }),
         ...(input.signal && { signal: input.signal }),
-      });
+      };
+      const turn = await withCallNote({ purpose: 'answer', draft: plainDraft({ system: ASK_SYSTEM, messages: request.messages }) }, () => model.generate(request)); // SP03:
       emit({ type: 'tool', name: 'write_answer', label: 'Wrote the answer', ok: true, id: `t_${nanoid(8)}`, step: writing, durationMs: Date.now() - modelStarted });
       const finished = finishAnswer(turn.text ?? '', g);
       if (!finished) {

@@ -6,6 +6,8 @@
  * workflow itself. Events stream to the caller as they happen.
  */
 import { nanoid } from 'nanoid';
+import { withCallNote } from '../ai-usage/call-context'; // SP03:
+import { plainDraft } from '../ai-usage/drafts'; // SP03:
 import type { AgentMessage, LanguageModel, ToolCall, ToolResult, ToolSpec } from '@landflow/engine';
 import type { AssistantOp, RunDigest } from '@/lib/shared/assistant-ops';
 import { describeAgents, type AgentBrief } from '@/lib/shared/agent-brief';
@@ -577,7 +579,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         const batch = trace ? coalesced((delta) => onEvent({ type: 'text.delta', step: currentStep, text: delta })) : undefined;
         let turn: Awaited<ReturnType<typeof model.generate>>;
         try {
-          turn = await model.generate({ system, messages: history, tools: TOOLS, ...(input.signal && { signal: input.signal }), ...(batch && { onToken: batch.push }) });
+          turn = await withCallNote({ purpose: 'answer', draft: plainDraft({ system, tools: TOOLS, messages: history }) }, () => model.generate({ system, messages: history, tools: TOOLS, ...(input.signal && { signal: input.signal }), ...(batch && { onToken: batch.push }) })); // SP03:
         } catch (caught) {
           batch?.flush();
           // The failed step is not in the history: a checkpoint continues at it.
