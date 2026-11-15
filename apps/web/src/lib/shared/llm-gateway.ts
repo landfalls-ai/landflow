@@ -91,10 +91,12 @@ export function userIdOfCustomer(customerId: string | null | undefined): string 
 
 /**
  * `x-litellm-spend-logs-metadata` on Landflow's own calls (`landflow: 'in-process'`), and the key metadata of a runtime
- * key (`landflow: 'runtime'`). The spend import skips every row marked `in-process`: Landflow's meter counted it.
+ * key (`landflow: 'runtime'`). The spend import skips every row marked `in-process`: Landflow's meter counted it. A call
+ * Landflow made outside any usage scope (a background job) is not metered in process, so it is marked `unmetered` and
+ * the spend import counts it, even on Landflow's own gateway key.
  */
 export interface LandflowSpendMetadata {
-  landflow: 'in-process' | 'runtime';
+  landflow: 'in-process' | 'runtime' | 'unmetered';
   runtime?: AiRuntime;
   project?: string;
   agent?: string;

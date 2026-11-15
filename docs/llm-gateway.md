@@ -188,6 +188,9 @@ A call is counted in one place only:
 - **Calls Landflow makes itself** are counted by Landflow's meter, as before, when they return. Through the gateway they
   also carry LiteLLM's call id (`x-litellm-call-id`) and its cost, so the gateway's log can be matched to them. They are
   marked `in-process` in LiteLLM's spend log, and the spend import skips them.
+- **Calls Landflow makes outside a run, chat or agent** (a background job, such as the second brain's detectors, has no
+  usage scope, so Landflow's meter does not count it) are marked `unmetered` instead. The spend import counts them, even on
+  Landflow's own gateway key, as source LiteLLM and runtime Landflow.
 - **Calls made outside Landflow** (an agent on kagent, Claude Code on kagent, any other client of the gateway) are
   counted from LiteLLM's spend log by the spend import, once per call id. LiteLLM files each row under the response's id (`chatcmpl-…`) and keeps
   the call id in `litellm_call_id`; Landflow matches and counts by the call id.

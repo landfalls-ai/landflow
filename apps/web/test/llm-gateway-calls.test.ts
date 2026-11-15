@@ -65,7 +65,8 @@ beforeEach(() => {
 });
 
 describe('gatewayHeaders', () => {
-  const scope = new UsageScope({ userId: 'u1', workflowId: 'wf_h', executionId: 'ex_h', surface: 'spotlight', projectId: 'p_h' });
+  // A scope with a meter: its calls are counted in process, so they are marked `in-process`.
+  const scope = new UsageScope({ userId: 'u1', workflowId: 'wf_h', executionId: 'ex_h', surface: 'spotlight', projectId: 'p_h' }, [], undefined, {} as never);
 
   it('names the person, the tags, the metadata and the trace', () => {
     const headers = gatewayHeaders(scope, { portalHeaders: false });
@@ -85,6 +86,11 @@ describe('gatewayHeaders', () => {
     expect(anonymous['x-litellm-end-user-id']).toBeUndefined();
     expect(anonymous['x-litellm-customer-member-id']).toBeUndefined();
     expect(gatewayHeaders(undefined, { portalHeaders: false })['x-litellm-tags']).toBe('landflow,landflow-runtime:landflow');
+  });
+
+  it('marks a call outside any metered scope `unmetered`, so the spend import counts it', () => {
+    expect(JSON.parse(gatewayHeaders(undefined, { portalHeaders: false })['x-litellm-spend-logs-metadata'])).toMatchObject({ landflow: 'unmetered' });
+    expect(JSON.parse(gatewayHeaders(new UsageScope({ workflowId: 'wf_h' }), { portalHeaders: false })['x-litellm-spend-logs-metadata'])).toMatchObject({ landflow: 'unmetered' });
   });
 
   it('drops what is not ASCII and uses the home project of a workflow', () => {

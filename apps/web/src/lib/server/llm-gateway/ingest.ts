@@ -171,7 +171,8 @@ function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<
   const minted = row.api_key ? db.get<KeyRow>('SELECT runtime, agent_id, project_id FROM llm_gateway_keys WHERE key_hash = ?', row.api_key) : undefined;
   const runtimeKey = minted !== undefined && RUNTIMES.has(minted.runtime as AiRuntime);
   if (!runtimeKey && (row.metadata?.spend_logs_metadata as Record<string, unknown> | null | undefined)?.landflow === 'in-process') return false;
-  if (ctx.ownKeyHash && row.api_key === ctx.ownKeyHash) return false;
+  // Landflow's own key: its calls were metered in process, except those it marked `unmetered` (outside a usage scope).
+  if (ctx.ownKeyHash && row.api_key === ctx.ownKeyHash && (row.metadata?.spend_logs_metadata as Record<string, unknown> | null | undefined)?.landflow !== 'unmetered') return false;
   const input = count(row.prompt_tokens) || (row.prompt_tokens === undefined ? count(row.total_tokens) - count(row.completion_tokens) : 0);
   const output = count(row.completion_tokens);
   const spend = typeof row.spend === 'number' && Number.isFinite(row.spend) && row.spend > 0 ? row.spend : 0;
@@ -180,6 +181,8 @@ function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<
 
   const at = timeOf(row.startTime) ?? timeOf(row.endTime) ?? ctx.now;
   const who = attribute(row, db);
+  // An `unmetered` call on Landflow's own key is Landflow's (a background job), not another client's.
+  if (ctx.ownKeyHash && row.api_key === ctx.ownKeyHash) who.runtime = 'landflow';
   const model = text(row.model_group) ?? text(row.model) ?? 'unknown';
   const cache = cacheTokens(row);
   const priced = meter.price({ provider: text(row.custom_llm_provider) ?? 'litellm', model, inputTokens: input, outputTokens: output, cacheReadTokens: cache.read, cacheWriteTokens: cache.write });

@@ -13,7 +13,7 @@ import { gatewayRoot } from './settings';
 /** The request header a caller sets to find the reply of its own call again (removed before the request is sent). */
 export const GATEWAY_CALL_HEADER = 'x-landflow-gateway-call';
 
-type Lookup = Pick<UsageScope, 'lookup'>;
+type Lookup = Pick<UsageScope, 'lookup'> & { meter?: unknown };
 
 /** The Landflow project a call belongs to: the scope's own, else its agent's or workflow's home project. */
 export function scopeProjectId(scope: Lookup | undefined): string | undefined {
@@ -31,7 +31,8 @@ const ascii = (value: string) => value.replace(/[^\x20-\x7e]/g, '').trim();
 
 /**
  * The headers LiteLLM reads to tell who is calling: the end user (a person), tags (project, agent, workflow, surface,
- * runtime), the spend-log metadata (marked `in-process`, so the spend import skips what Landflow's meter counted), and
+ * runtime), the spend-log metadata (marked `in-process`, so the spend import skips what Landflow's meter counted, or
+ * `unmetered` outside a usage scope, so the import counts it), and
  * the trace id. Ids only, never names or emails. The Customer Portal headers only with `portalHeaders`.
  */
 export function gatewayHeaders(scope: Lookup | undefined, settings: Pick<LlmGatewaySettings, 'portalHeaders'>, runtime: AiRuntime = 'landflow'): Record<string, string> {
@@ -51,7 +52,8 @@ export function gatewayHeaders(scope: Lookup | undefined, settings: Pick<LlmGate
     LITELLM_TAGS.runtime(runtime),
   ];
   const metadata: LandflowSpendMetadata = {
-    landflow: 'in-process',
+    // Only a call in a usage scope with a meter is counted in process (afterModelCall); any other is left to the import.
+    landflow: scope?.meter ? 'in-process' : 'unmetered',
     runtime,
     ...(projectId && { project: projectId }),
     ...(agentId && { agent: agentId }),
