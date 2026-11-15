@@ -32,6 +32,7 @@ import { getEntity, entityKey, entityProject } from './entities';
 import { upsertFact } from './facts';
 import { listFlowDetectors } from './flow-detectors';
 import { HttpError } from '../errors';
+import { singleton } from '../singleton';
 
 const DAY_MS = 86_400_000;
 export const STALE_DAYS = 14;
@@ -53,6 +54,16 @@ export class ProposalError extends HttpError {
     super(message, status, { expose: true });
   }
 }
+
+/**
+ * PR09: what applying a suggestion of a source does, set by the module that owns the source (practices/inbox.ts sets
+ * 'practice'). This file must not import it: practices approve through here and the store files suggestions, so importing
+ * would close the loop store -> inbox -> proposals -> approve -> store. A test that fakes an applier imports its module
+ * (practices/inbox) first, so the fake wins.
+ */
+export type ProposalApplier = (proposal: Proposal, options: ApplyOptions, db: Database) => void;
+const appliers = singleton('proposal-appliers', () => new Map<ProposalSource, ProposalApplier>());
+export const setProposalApplier = (source: ProposalSource, applier: ProposalApplier | undefined): void => void (applier ? appliers.set(source, applier) : appliers.delete(source));
 
 export const fingerprintOf = (...parts: Array<string | number | undefined>) =>
   createHash('sha1')
@@ -363,6 +374,17 @@ export function applyProposal(id: string, options: ApplyOptions = {}, db: Databa
       if (caught instanceof NoteError) throw new ProposalError(caught.message, caught.status);
       throw caught;
     }
+  } else if (proposal.practice) {
+    // PR09: a draft practice waits for a person (docs/practices.md#the-inbox); the practices module decides what Apply does.
+    const apply = appliers.get('practice');
+    if (!apply) throw new ProposalError('Practices are not loaded on this host', 503);
+    apply(proposal, options, db);
+    // Approving settles the suggestion itself (markApplied, once); only the flows listening are left to start here.
+    const settled = getProposal(proposal.id, db);
+    if (settled?.status === 'applied' && settled.decision) {
+      const started = startedBy(settled, settled.decision, options.viaWorkflowId);
+      return { proposal: settled, ...(workflow && { workflow }), warnings, ...(started.length && { started }) };
+    }
   } else if (proposal.detector === 'missing-tool') {
     // "Build it": a published workflow that starts from On Usage Event on proposal.applied builds the tool (an agentic
     // flow that writes the plugin, docs/second-brain.md). Applying only records the go-ahead.
@@ -428,9 +450,13 @@ export function finishApplied(
   // markApplied returns an already-applied suggestion as it is, without a new decision.
   const decision = next.decision;
   if (!decision || next === proposal) return { proposal: next, started: [] };
-  const usage = usageBuilders(proposal.detector);
-  const decided = dispatchDecision(next, decision, options.viaWorkflowId);
-  return { proposal: next, started: [...new Map([...usage, ...decided].map((w) => [w.id, w])).values()] };
+  return { proposal: next, started: startedBy(next, decision, options.viaWorkflowId) };
+}
+
+function startedBy(next: Proposal, decision: ProposalDecision, viaWorkflowId?: string): Array<{ id: string; name: string }> {
+  const usage = usageBuilders(next.detector);
+  const decided = dispatchDecision(next, decision, viaWorkflowId);
+  return [...new Map([...usage, ...decided].map((w) => [w.id, w])).values()];
 }
 
 /** Published workflows with On Usage Event on proposal.applied that take suggestions from this detector (unset: any). */

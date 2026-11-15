@@ -2310,6 +2310,22 @@ function paths(): Record<string, Record<string, Json>> {
     query: [text('limit', '1 to 100'), text('cursor', 'From the previous page’s `nextCursor`')],
     responses: { 200: reply('A page', object({ applications: array({ type: 'object' }), nextCursor: { type: 'string' } }, ['applications'])), 404: notFound },
   });
+  // PR09:
+  add('get', '/api/practices/{id}/compliance', {
+    tag: 'Practices',
+    id: 'getPracticeCompliance',
+    summary: 'How a practice is followed',
+    description: 'Needs the `brain:read` scope (or a session). Over the last `days` (1 to 90, default 30): how often it was given (`delivered`), cited, passed or failed its checks and waived, the agents that cited it most (`followedBy`, at most 10, only those the caller may read; the rest are counted in `otherAgents`), `lastApplied` and the same counts per version. 404 for a practice the caller may not see.',
+    query: [text('days', '1 to 90, default 30')],
+    responses: { 200: reply('The counts', object({ compliance: { type: 'object', description: 'A PracticeCompliance (lib/shared/practice-compliance.ts)' } }, ['compliance'])), 400: invalid, 404: notFound },
+  });
+  add('get', '/api/executions/{id}/practices', {
+    tag: 'Practices',
+    id: 'getExecutionPractices',
+    summary: 'The practices a run was given',
+    description: 'Needs the `executions:read` scope (or a session). Each practice the run was given or checked as `{ handle, version, delivered, cited, check? }` (`check`: pass, fail or waived), only practices the caller may see. 404 for a run the caller may not read.',
+    responses: { 200: reply('The practices', object({ practices: array({ type: 'object' }) }, ['practices'])), 404: notFound },
+  });
   // PR03:
   add('post', '/api/practices/learn', {
     tag: 'Practices',

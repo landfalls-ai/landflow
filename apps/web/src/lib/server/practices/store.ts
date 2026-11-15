@@ -37,6 +37,7 @@ import { projectRoleCan } from '../../shared/projects';
 import { redactPatterns, redactText } from '../secrets/redact';
 import { logger } from '../telemetry/logger';
 import { verifyCitations } from './citations';
+import { fileDraftSuggestion } from './inbox'; // PR09:
 import { PracticeError, PracticeHandleTaken } from './errors';
 import type { PracticeDraftOrigin } from './port';
 
@@ -583,6 +584,7 @@ export function draftPractice(input: PracticeDraftInput, origin: PracticeDraftOr
     details: { version: saved.version.version, source, tainted, level },
     project: saved.practice.projectId ?? null,
   });
+  fileDraftSuggestion(saved.practice, saved.version); // PR09: the draft waits in the inbox
   return saved;
 }
 

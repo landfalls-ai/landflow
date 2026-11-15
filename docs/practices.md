@@ -114,7 +114,8 @@ A practice you cannot see answers 404.
 card: a strength pill, scope chips with the repository's logo, the rule lines, and citations that open as file excerpts
 with a "verified at `abc123`" tick. Files with a draft waiting are marked amber with **!**, like pages that need a
 person. The review dialog shows the draft against the approved version, its citations and its conflicts, with Approve and
-Reject. On a phone it is one column of cards behind `md`; desktop is unchanged.
+Reject. On a phone it is one column of cards behind `md`; desktop is unchanged. *PR09:* a practice with a loaded count also shows
+**How it is followed**: the compliance bar, the counts, **Followed by** and **Last applied** ([Compliance](#compliance)).
 
 ## Learning
 
@@ -302,10 +303,53 @@ writes a warning check so the gap is visible.
   run) and **Change the practice** (its page on `/brain`). To use it, open the first flow's **Settings → Error workflow**
   and pick it; error workflows start only for runs a trigger started, not a manual Run.
 
+## Compliance
+
+*Built by PR09.* A practice's page says how it is followed, from the `practice_applications` rows of the last 30 days
+(1 to 90, `?days=`):
+
+- **Given** (delivered to an agent), **Cited** (and the share of times given), **checks passed** (pass ÷ pass + fail),
+  **waived**. Rates never divide by zero: with nothing to divide they show "–".
+- **Followed by**: the agents that cited it most, at most 10 and only those you may read; the rest are counted, never
+  named ("2 other agents").
+- **Last applied** with a Run Trace link. The route also returns the counts per version; the page does not draw them yet.
+- The **compliance bar** is the checks: green passed, red failed, amber waived.
+
+`GET /api/practices/:id/compliance` answers it for a practice you may see (404 otherwise). A run shows its own side in
+"What it saw": `GET /api/executions/:id/practices` lists each `handle@version` the run was given or checked, whether it
+cited it and how its check went, and `SawPracticesRow` (`components/run-trace/saw-practices.tsx`) draws that as "Cited" or
+"Not cited" and the check. Only practices you may see are listed; it draws nothing when the run was given none.
+
+The **practice-drift** detector ([second-brain.md](second-brain.md#4-detectors-and-suggestions)) files a suggestion for
+an approved practice that was given 10 times or more in 14 days and cited under 20% of them, or whose checks failed more
+than half the time: "Review <title>: rarely followed", with the numbers and a link to the page. It is advice only.
+
+## The inbox
+
+*Built by PR09.* A waiting draft is no longer seen only on /brain → Practices: **every saved draft version files one
+suggestion** in the second brain's inbox (`source: practice`, `practice: { practiceId, version, tainted }`), one per
+practice and version. A newer version replaces the open suggestion of the older one. Its audience is the people who may
+approve it: owners and admins, and for a project practice the project's admins. Its text is the practice's cleaned title
+and summary, never its body.
+
+- **A draft read from outside** (an agent's or a repository's, so tainted): the card says "Read it against its sources on
+  /brain" and links there. It has no Apply, for anyone; Apply on it answers 403.
+- **A draft a person wrote**: Apply approves that version with the applying person as approver (the same `approvePractice`).
+  Only instance owners and admins may, and only in a session: an API key's Apply answers 403 ("API keys can't approve a
+  practice"), even an owner's. Project admins and others in the audience see the link only. An overlap with an
+  approved practice has no answer in the inbox, so Apply says to approve it on /brain.
+- **A version that is no longer waiting** (approved, rejected, replaced, or its practice retired) answers 409 and settles
+  the suggestion as dismissed. A deleted project's practices are retired without telling the inbox, so Apply on one of
+  their suggestions finds it retired, answers 409 and dismisses it; a person may also dismiss it.
+- **Approving, rejecting or retiring on /brain settles it**: approved is applied, rejected is dismissed with the reason,
+  retired dismisses the practice's open suggestions.
+- **Slack**: a practice suggestion is never mirrored with buttons. A message carries the title and a link to /brain only,
+  and a forged Apply click is refused.
+
 ## The API
 
 All routes are under `/api/practices`; reads need `brain:read`, writes `brain:write` (API keys), and approving,
-rejecting, retiring and waiving need a session. See [reference/api.md](reference/api.md) and the OpenAPI document.
+rejecting, retiring and waiving need a session. Compliance and a run's practices are two more reads (below). See [reference/api.md](reference/api.md) and the OpenAPI document.
 
 | Route | What it does |
 |---|---|
@@ -318,6 +362,8 @@ rejecting, retiring and waiving need a session. See [reference/api.md](reference
 | `POST /api/practices/:id/retire` | retire |
 | `POST /api/practices/:id/waivers` | `{ executionId, version, reason }` (201 `{ application }`) |
 | `GET /api/practices/resolve?handle=` or `?id=prc_…` | one approved practice in full, exactly the one delivery gave: by `handle`, the selector's winner; by `id`, that practice only when its id is in the listing for the same `repo`, `path`s and `topic`s, else 404 (the same 404 as another project's practice). `handle` and `id` together, or neither, are 400. `GET /api/practices/applicable` names each practice's `id` (and `projectId` for a project practice) so a reader resolves the one it listed |
+| `GET /api/practices/:id/compliance?days=` | how it is followed over 1 to 90 days (30 by default): counts, `followedBy`, `otherAgents`, `lastApplied`, `byVersion` |
+| `GET /api/executions/:id/practices` | the practices one run was given or checked: `{ handle, version, delivered, cited, check? }` |
 | `GET /api/practices/:id/applications?cursor=` | delivered, cited, checked and waived rows, newest first, keyset-paged |
 
 Version states: `approved` (what agents get), `replaced` (an older version), `pending` (waiting for a person) and
