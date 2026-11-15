@@ -8,7 +8,9 @@
 import { defaultVersionOf, PROTOCOL_VERSION, type ExecuteRequest, type JsonObject, type NodeItem } from '@landflow/protocol';
 import { ExpressionResolver, isToolOutputWithImages, type ToolImage, REASON_DESCRIPTION, deriveToolSchema, toToolName, withReason, type AgentTool, type ToolSpec } from '@landflow/engine';
 import { binaryAccessFor } from '../binary/access';
+import { withProjectContext } from '../nodes/a2a';
 import { binaryToolImages } from '../nodes/tool-images';
+import { currentRunContext } from '../project-context/seam';
 import { holdSessionImages } from './session-images';
 import type {
   A2aAgentToolConfig,
@@ -406,7 +408,10 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
         const request: Extract<HitlRequest, { type: 'ask_user_request' }> = { type: 'ask_user_request', id: known.question.id, questions: known.question.questions };
         return run(answerMessage({ id: known.taskId, contextId: known.contextId }, request, [text]), ctx);
       }
-      return run({ text, ...(known?.contextId && { contextId: known.contextId }), ...(known?.taskId && { taskId: known.taskId }) }, ctx);
+      // The first message of a conversation carries the project's compact block (docs/a2a.md); follow-ups go as they are.
+      const fresh = !known?.contextId && !known?.taskId;
+      const { text: sent, tags } = withProjectContext(text, fresh ? currentRunContext() : undefined);
+      return run({ text: sent, ...(Object.keys(tags).length > 0 && { metadata: tags }), ...(known?.contextId && { contextId: known.contextId }), ...(known?.taskId && { taskId: known.taskId }) }, ctx);
     },
     async resume(state, approved, ctx, answer) {
       const { taskId, contextId, request, question } = state as { taskId: string; contextId: string; request?: Extract<HitlRequest, { type: 'tool_approval_request' }>; question?: { id: string; questions: string[] } };

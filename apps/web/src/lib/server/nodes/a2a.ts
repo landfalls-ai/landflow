@@ -34,6 +34,20 @@ import type { AgentTraceSummary } from '../../shared/agents';
 import { traceFor, usageOfTrace, withMarker } from '../a2a/agent-trace';
 import { callAgent, landflowTags, taskCall, throttled } from '../a2a/traced';
 import { CUT } from '../journal/content';
+import { CONTEXT_HEADING, type RunContext } from '../../shared/project-context';
+import { currentRunContext, runContextProvider } from '../project-context/seam';
+
+/**
+ * A new remote conversation's first message with the project's compact block in front (docs/a2a.md). `context` is
+ * undefined for a follow-up, an answer or a resumed task, and a mode `off` run gives nothing: the text is then unchanged.
+ */
+export function withProjectContext(text: string, context: Pick<RunContext, 'mode' | 'compact' | 'projectId' | 'goalId'> | undefined): { text: string; tags: Record<string, string> } {
+  if (!context || context.mode === 'off') return { text, tags: {} };
+  // A team already put the block in front of its member's request.
+  if (text.startsWith(CONTEXT_HEADING)) return { text, tags: landflowTags({ 'project.id': context.projectId, 'goal.id': context.goalId }) };
+  const tags = landflowTags({ 'project.id': context.projectId, 'goal.id': context.goalId });
+  return { text: context.compact ? `${context.compact}\n\n${text}` : text, tags };
+}
 
 const main = [{ type: 'main' as const }];
 
@@ -307,6 +321,17 @@ export const a2aAgentNode = defineNode({
         values: [
           a2aTimeoutOption,
           {
+            name: 'projectContext',
+            displayName: 'Project context',
+            type: 'options',
+            default: 'compact',
+            options: [
+              { name: 'Compact', value: 'compact' },
+              { name: 'Off', value: 'off' },
+            ],
+            description: "Send the project's goals and brief (short) with the first message",
+          },
+          {
             name: 'humanInTheLoop',
             displayName: 'Human in the Loop',
             type: 'boolean',
@@ -342,7 +367,7 @@ export const a2aAgentNode = defineNode({
         const endpoint = endpointOf(ctx, i);
         const operation = String(ctx.getNodeParameter('operation', i, 'sendMessage') ?? 'sendMessage');
         const card = await getAgentCard(endpoint, { signal: ctx.signal });
-        const options = ctx.getNodeParameter<{ humanInTheLoop?: boolean; questionsGoTo?: string }>('options', i, {}) ?? {};
+        const options = ctx.getNodeParameter<{ humanInTheLoop?: boolean; questionsGoTo?: string; projectContext?: string }>('options', i, {}) ?? {};
         // As an agent's tool the node keeps the conversation for the run and hands the agent the remote agent's questions.
         const asTool = ctx.getMode() === 'tool' && Boolean(ctx.getNodeState && ctx.setNodeState);
         const questionsToCaller = asTool && options.questionsGoTo !== 'person';
@@ -353,6 +378,8 @@ export const a2aAgentNode = defineNode({
         const send = { signal: ctx.signal, extensions, caller: 'node' as const, onUpdate: progressReporter(ctx, card, { questionsToCaller }) };
         // Tags for finding this run from the agent's side (kagent documents copying them onto its spans; see lib/server/a2a/traced.ts).
         const metadata = landflowTags({ 'workflow.id': ctx.getWorkflowId(), 'execution.id': ctx.getExecutionId(), 'node.name': ctx.getNode().name });
+        // The project's compact block goes with a new conversation's first message only (not an answer, a follow-up or a resumed task).
+        let contextBlock: RunContext | undefined;
         let result: A2aResult;
         let traced: AgentTraceSummary | undefined;
         if (operation === 'sendMessage') {
@@ -366,7 +393,13 @@ export const a2aAgentNode = defineNode({
             result = await callAgent(endpoint, card, { ...answer, metadata: { ...metadata, ...answer.metadata } }, send);
           } else {
             // A Landflow agent on kagent with the landflow-harness mod reports its real usage, cost and tool calls here.
-            const message = { text, metadata, ...(contextId && { contextId }), ...(remembered?.taskId && { taskId: remembered.taskId }) };
+            if (!contextId && !remembered?.taskId && options.projectContext !== 'off') {
+              contextBlock = asTool
+                ? currentRunContext()
+                : runContextProvider()?.build({ caller: 'workflow', workflowId: ctx.getWorkflowId(), executionId: ctx.getExecutionId(), nodeName: ctx.getNode().name }, 'compact');
+            }
+            const framed = withProjectContext(text, contextBlock);
+            const message = { text: framed.text, metadata: { ...metadata, ...framed.tags }, ...(contextId && { contextId }), ...(remembered?.taskId && { taskId: remembered.taskId }) };
             const trace = message.taskId ? undefined : traceFor(endpoint.url, ctx.getExecutionId() && ctx.getWorkflowId() ? { executionId: ctx.getExecutionId()!, workflowId: ctx.getWorkflowId()!, nodeId: ctx.getNode().id, member: ctx.getNode().name } : undefined);
             try {
               result = await callAgent(endpoint, card, withMarker(message, trace), send);
