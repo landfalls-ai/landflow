@@ -145,8 +145,7 @@ const CONTEXT_HINTS: Record<ContextMode, string> = {
 
 function ContextSwitches({ config, update }: { config: AgentConfig; update: UpdateConfig }) {
   const mode = config.projectContext ?? 'full';
-  // PC07: AgentConfig.practices comes from PR06.
-  const practices = (config as AgentConfig & { practices?: 'on' | 'off' }).practices ?? 'on';
+  const practices = config.practices ?? 'on';
   return (
     <Section icon={<Target className="size-4" />} title="Project context" description="What the agent is told about the project it works in, and the practices it follows there. “What it will be given” in Test agent shows the text.">
       <div className="space-y-5">
@@ -159,7 +158,7 @@ function ContextSwitches({ config, update }: { config: AgentConfig; update: Upda
             stretch
             className="sm:w-fit"
             value={practices}
-            onChange={(v) => update((c) => ({ ...c, practices: v }) as AgentConfig)}
+            onChange={(v) => update((c) => ({ ...c, practices: v }))}
             options={[
               { value: 'on', label: 'On' },
               { value: 'off', label: 'Off' },
