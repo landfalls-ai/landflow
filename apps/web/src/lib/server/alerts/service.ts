@@ -16,7 +16,7 @@ import type { ExecutionRecord } from '../../shared/types';
 import { singleton } from '../singleton';
 import { store } from '../store';
 import { logger } from '../telemetry';
-import { checkCosts } from '../ai-usage/alerts';
+import { checkCosts, sweepProjectBudgets } from '../ai-usage/alerts';
 import { onUsageRecorded } from '../ai-usage/notify';
 import { bus } from '../bus';
 import { sendThrough } from './channels';
@@ -141,6 +141,8 @@ export const alerts = singleton('alerts', () => {
         ['failure rates', () => checkFailureRates(now, send)],
         ['plugins', () => checkPlugins(now, send)],
         ['AI cost', () => checkCosts(now, send)],
+        // PC14: the project budgets' warnings and stops (their alerts are the cost alerts above)
+        ['project budgets', () => sweepProjectBudgets(now)],
       ];
       try {
         for (const [what, check] of checks) {

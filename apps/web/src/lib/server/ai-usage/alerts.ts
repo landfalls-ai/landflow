@@ -16,6 +16,10 @@ import { getUser } from '../auth/users';
 import { customNotice, publicUrl, type AlertNotice } from '../alerts/message';
 import { alertStore } from '../alerts/store';
 import { store } from '../store';
+import { sweepBudgets } from '../budgets/enforce';
+import { listBudgets } from '../budgets/store';
+import { getProject } from '../projects/store';
+import { projectCapId } from '../../shared/project-budget';
 import { aiUsageMeter, type AiUsageMeter } from './index';
 
 /** One cap with a period, and what it has used in the current one. */
@@ -78,6 +82,13 @@ export function watchedCaps(meter: AiUsageMeter = aiUsageMeter()): WatchedCap[] 
       caps.push(...fromSet(configured.allUsers, `user:${id}`, `user “${userName(id)}” (the cap for every user)`, 'Settings → AI caps', settingsLink, (period) => meter.sinceTotals('user_id', id, period)));
     }
   }
+  // PC14: a project's monthly budget is one more cap, so the cost alerts, Insights → AI and "Ask for more" see it like the others.
+  for (const budget of listBudgets()) {
+    const project = getProject(budget.projectId);
+    if (!project) continue;
+    const link = `${base}/projects/${encodeURIComponent(project.id)}?tab=settings#budget`;
+    caps.push({ id: projectCapId(project.id), subject: `project “${project.name}”`, period: 'month', metric: 'cost', max: budget.monthlyUsd, used: meter.sinceTotals('project_id', project.id, 'month').cost, setIn: `Project “${project.name}” → Settings → AI budget`, link });
+  }
   return caps;
 }
 
@@ -132,3 +143,6 @@ export async function checkCosts(now: number, send: Send, meter: AiUsageMeter = 
     }
   }
 }
+
+/** PC14: open the warnings and stops the month's spend of each project budget calls for (the alert service's ticker calls it; ../budgets/enforce.ts). */
+export const sweepProjectBudgets = (now: number, meter: AiUsageMeter = aiUsageMeter()): Promise<void> => sweepBudgets(now, meter);
