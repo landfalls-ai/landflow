@@ -168,7 +168,7 @@ function personOf(item: NodeItem, index: number): { user: UserRecord; day: strin
   return { user, day };
 }
 
-const countsOf = (briefing: StoredBriefing) => ({ own: briefing.gathered.own.length, related: briefing.gathered.related.length, finished: briefing.gathered.finished.length });
+const countsOf = (briefing: StoredBriefing) => ({ own: briefing.gathered.own.length, related: briefing.gathered.related.length, finished: briefing.gathered.finished.length, goalsMoved: briefing.gathered.goalsMoved?.length ?? 0 });
 const outOf = (briefing: StoredBriefing, index: number, extra: JsonObject = {}): NodeItem => ({ json: { userId: briefing.userId, day: briefing.day, briefingId: briefing.id, counts: countsOf(briefing), ...extra }, pairedItem: { item: index } });
 
 /** The item's draft, or undefined (skipped with a warning) when its person or draft is gone, e.g. replaced by a concurrent run. */

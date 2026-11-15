@@ -143,6 +143,15 @@ prepares what happened that is relevant to them, stores it for that person only 
 | **Save Briefing** (`core.brainSaveBriefing`) | Marks the draft `ready`; the day's older `ready` one becomes `superseded`. Briefings older than 30 days are deleted. |
 | **Deliver Briefing** (`core.brainDeliverBriefing`) | Only for a person whose preference `briefingDelivery` is `slack` or `email` and whose channel is set up on the server (`LANDFLOW_BRIEFING_SLACK_TOKEN`; the host's SMTP), never through a credential: sends the text by Slack DM or email. Everyone else is passed on with `delivered: false`. Nothing is sent by default. |
 
+**Goals that moved.** Gather Work also adds, for each person, up to five of the goals of the projects they have a role in
+(and the company goals those projects serve) that moved in the same two days, as that person sees them: the busiest first,
+each with a count-only reason such as `4 runs ok, 2 updates`, `1 failed run` or `$0.12 spent`
+([progress](projects-and-goals.md#progress)). It is computed for that person with their own visibility, never for the run's
+starter, an admin or a system reader, so another person's private work does not move their goals. The plain text adds
+`Goals that moved: A (4 runs ok), B (2 updates).` (three named, then `and N more`); the model gets one redacted line per
+goal inside the `<work>` block. The run data carries only the count (`counts.goalsMoved`). A person with no role in any
+project with goals gets no line.
+
 **Privacy.** Items carry ids and counts, never content, because the run data of a workflow is visible to everyone who can
 open it. The gathered lists and the text live in `brain_briefings` (migration 2090), which only the person's own reads
 (`lib/server/brain/briefings-store.ts` takes the user id on every read). A colleague's private item never reaches anyone's

@@ -2,6 +2,7 @@
  * Work items and the daily briefing (docs/work-and-briefings.md): what GET /api/brain/briefing answers and what the
  * clients (the Claude Code mod, `landflow work`, the Brain page) show. No runtime imports.
  */
+import type { GoalMoved } from './goal-progress';
 
 export type WorkVisibility = 'private' | 'team' | 'org';
 
@@ -60,4 +61,6 @@ export interface GatheredWork {
   related: RelatedColleague[];
   /** Work that finished on their repos (merged PRs, releases) which they may be waiting on. */
   finished: WorkItem[];
+  /** PC17: the person's goals that moved in the same two days, as they see them (counts only). */
+  goalsMoved?: GoalMoved[];
 }

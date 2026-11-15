@@ -1158,8 +1158,10 @@ function paths(): Record<string, Record<string, Json>> {
     query: [
       { name: 'projectId', description: 'Only the goals this project serves', schema: { type: 'string' } },
       { name: 'status', description: 'Only goals in this status', schema: { type: 'string', enum: ['planned', 'active', 'achieved', 'cancelled'] } },
+      { name: 'progress', description: 'PC17: `1` adds `progress`, one entry per goal in the tree', schema: { type: 'string', enum: ['1'] } },
+      { name: 'window', description: 'PC17: with `progress=1`, the days counted back (default 7)', schema: { type: 'string', enum: ['7', '30'] } },
     ],
-    responses: { 200: reply('The goal tree', object({ mission: { type: 'string' }, goals: array({ type: 'object', additionalProperties: true }), canCreateCompanyGoals: { type: 'boolean' } }, ['goals', 'canCreateCompanyGoals'])), 400: invalid },
+    responses: { 200: reply('The goal tree', object({ mission: { type: 'string' }, goals: array({ type: 'object', additionalProperties: true }), canCreateCompanyGoals: { type: 'boolean' }, progress: array({ type: 'object', additionalProperties: true }) }, ['goals', 'canCreateCompanyGoals'])), 400: invalid },
   });
   add('post', '/api/goals', {
     tag: 'Goals',
@@ -2561,6 +2563,16 @@ function paths(): Record<string, Record<string, Json>> {
   const workspaceView = object({ workspace: workspaceDoc, repos: array({ type: 'string' }), saved: { type: 'boolean' }, canEdit: { type: 'boolean' }, setupShown: { type: 'boolean' }, updatedAt: { type: 'string' }, updatedBy: { type: 'string' } }, ['workspace', 'repos', 'saved', 'canEdit', 'setupShown']);
   add('get', '/api/projects/{id}/workspace', { tag: 'Projects', id: 'getProjectWorkspace', summary: 'A project’s workspace for harness runs', description: 'Any role. Setup commands only for editors and admins (`setupShown`). The default when nothing is saved (`saved: false`). Repositories the project no longer lists are left out.', pathParams: { id: 'The project id' }, responses: { 200: reply('The workspace', workspaceView), 404: notFound } });
   add('put', '/api/projects/{id}/workspace', { tag: 'Projects', id: 'putProjectWorkspace', summary: 'Save a project’s workspace', description: 'The project’s admins (and instance owners and admins). Each repository key must be one the project lists. Landflow never runs a setup command. Audited as `project.workspace.update` with what changed, never the setup text.', pathParams: { id: 'The project id' }, body: jsonBody(workspaceDoc), responses: { 200: reply('The workspace', workspaceView), 400: invalid, 403: errorRef('Not a project admin'), 404: notFound } });
+  // PC17: goal progress
+  add('get', '/api/goals/{id}/progress', {
+    tag: 'Goals',
+    id: 'getGoalProgress',
+    summary: 'What moved a goal',
+    description: 'Finished runs of the workflows homed in the projects that serve the goal or its sub-goals, AI spend attributed to them, and work updates linked to them, in the last 7 or 30 days. Counted only from what the caller may see: a person’s private work counts for that person alone, owners and admins included. 404 for a goal the caller cannot see.',
+    pathParams: { id: 'The goal id' },
+    query: [{ name: 'window', description: 'Days counted back (default 7)', schema: { type: 'string', enum: ['7', '30'] } }],
+    responses: { 200: reply('The progress', object({ progress: array({ type: 'object', additionalProperties: true }) }, ['progress'])), 400: invalid, 404: notFound },
+  });
   return out;
 }
 

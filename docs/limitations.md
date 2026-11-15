@@ -515,3 +515,12 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - A flow-written or analyst suggestion about a practice still mirrors to Slack as any suggestion does; only `source: practice` ones are link-only.
 - An agent's session that no workflow run started (a test chat, a channel) lists the practices it was given in "What it
   saw" without "Cited" or the check: it has no run id to ask `GET /api/executions/:id/practices` with.
+
+## Goal progress (wave 10)
+
+- Runs count only finished runs of workflows whose home is a project serving the goal; a run of a workflow shared in from
+  another project is not counted.
+- kagent and harness spend counts only when it carries a goal.
+- There is no history chart: progress is a count over the last 7 or 30 days.
+- The nightly "Goals that moved" covers the goals of the projects a person has a role in, five at most; an owner or admin
+  gets the goals of their own projects, not every goal.

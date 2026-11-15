@@ -368,6 +368,31 @@ A harness reads it from the project's context ([connect-your-harness.md](connect
 answer has `workspace` when the project saved one, with `branchPattern` (the template with `{project}` filled in;
 `{run}`, `{date}` and `{task}` are the harness's to fill) and setup lines only for editors and admins.
 
+## Progress
+
+A goal shows what moved it: runs, AI spend and work updates in the last 7 or 30 days. Each number counts the goal and every
+sub-goal below it (the sub-goals you can see), and counts only what you may see. Two people can see different numbers for the
+same goal.
+
+- **Runs:** finished runs (status `success`, or `error` as a failed run) of the workflows whose home is a project that serves
+  the goal or a sub-goal, or a project goal's own project, among the projects you may see. A running, waiting or cancelled
+  run is not counted. One run is one `executions` row. A run of a workflow shared into the project from another home is not
+  counted.
+- **Spend:** the AI cost attributed to the goal or a sub-goal (`ai_usage.goal_id`), from projects you may see. It can be 0
+  while runs are not (local models are unpriced).
+- **Updates:** work events (`work.*`) linked to the goal or a sub-goal: by its goal, by a serving project, or by a linked
+  initiative (an initiative you can read, by its id or its name, in any case). They are read by the ledger's one
+  visibility rule, as you: your own, `team` ones of people who share a project with you, and `org` ones. Another person's
+  private work never counts for you, whatever your role; owners and admins are no exception. An answer carries counts and a
+  time, never a title.
+- **Moved:** something happened in the window (a run, an update, or spend). `lastActivityAt` is the newest of them.
+
+`GET /api/goals/:id/progress?window=7|30` answers one goal (404 for a goal you cannot see, 400 for another window; 7 by
+default). `GET /api/goals?progress=1&window=` adds `progress`, one entry per goal in the tree; without `progress=1` the
+answer is as before. Every goal in an answer is counted in one query per source, never one per goal. The nightly sync uses
+the same numbers for its "Goals that moved" line ([work-and-briefings.md](work-and-briefings.md#the-nightly-sync)). Code:
+`lib/server/goals/progress.ts`; the answer's shape is `lib/shared/goal-progress.ts`.
+
 ## How it is built
 
 - Data: migration 2300 makes `goals`, `project_goals` (a project's goals and their order) and `goal_links` (initiatives);

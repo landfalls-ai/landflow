@@ -2038,7 +2038,11 @@ Projects get a mission to serve, goals and a brief, and agents learn where their
   project** and **AI budget** cards and the budget rows in Needs you (PC15); and the project workspace for harness runs
   with the repositories screen (PC16) ([projects-and-goals.md](projects-and-goals.md#project-settings-for-agents),
   [below](#paperclip-wave-9-project-settings-for-agents-pc13)).
-- **Open:** goal progress, tasks and the PROJECT.md export (wave 10).
+- **PC17, built (wave 10, server):** goal progress: runs, spend and work updates per goal and its sub-goals over 7 or 30
+  days, read only through the visibility rule for the person they are for, `GET /api/goals/:id/progress` and
+  `GET /api/goals?progress=1`, and the nightly sync's "Goals that moved" ([projects-and-goals.md](projects-and-goals.md#progress)).
+  Closes P7-1 on the server; the screens are PC18.
+- **Open:** goal progress screens, tasks and the PROJECT.md export (wave 10).
 
 ## Not planned
 
