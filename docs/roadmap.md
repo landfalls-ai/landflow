@@ -1976,6 +1976,11 @@ Projects get a mission to serve, goals and a brief, and agents learn where their
   target date, parent, four levels deep), the goals a project serves in order (its first planned or active one is primary),
   linked brain initiatives, the project brief (brief, constraints, done-when, words we use, status, target date, lead,
   decision owner) and the context data source for the "Where this work fits" block. Closes the server side of P1.
+- **PC06, built:** agents across projects: shared to projects or to all of them (`GET|PUT /api/agents/:id/shares`),
+  `agentAvailableIn` and `availableAgentIds`, `GET /api/agents?availableIn=`, the Run an Agent picker listing only
+  available agents, the test chat's 403 for an unavailable project, and sessions read only from the home project
+  ([projects-and-goals.md](projects-and-goals.md#agents-across-projects)). Closes P3-1 and P3-2 on the server; the
+  screens are PC07.
 - **PC02, open:** the screens (Goals page, goal dialog, the brief on the project Overview, Settings → Company).
 - **PC03, open:** the block and its injection into agent runs.
 - **Open:** goal progress.

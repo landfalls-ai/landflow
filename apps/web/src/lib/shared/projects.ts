@@ -28,13 +28,23 @@ export type ResourceKind = (typeof RESOURCE_KINDS)[number];
 export const RESOURCE_LABELS: Record<ResourceKind, string> = { workflow: 'workflow', credential: 'credential', dataTable: 'data table', agent: 'agent', agentTeam: 'agent team' };
 
 /** Kinds that can be shared with other projects. */
-export const SHAREABLE_KINDS = ['workflow', 'credential'] as const satisfies readonly ResourceKind[];
+export const SHAREABLE_KINDS = ['workflow', 'credential', 'agent'] as const satisfies readonly ResourceKind[];
 export type ShareableKind = (typeof SHAREABLE_KINDS)[number];
 
 /** A share's role: workflows are shared to edit or to view, credentials to use. */
 export type ShareRole = 'editor' | 'viewer' | 'user';
-export const SHARE_ROLES: Record<ShareableKind, readonly ShareRole[]> = { workflow: ['editor', 'viewer'], credential: ['user'] };
+export const SHARE_ROLES: Record<ShareableKind, readonly ShareRole[]> = { workflow: ['editor', 'viewer'], credential: ['user'], agent: ['user'] }; // PC06: agent
 export const SHARE_ROLE_LABELS: Record<ShareRole, string> = { editor: 'Can edit', viewer: 'Can view', user: 'Can use' };
+
+/** PC06: the share row's project id for "All projects" (agents only). */
+export const ALL_PROJECTS = '*';
+
+/** PC06: where an agent is available: its home, the projects it is shared with, or all of them. */
+export interface AgentAvailability {
+  home: { id: string; name: string };
+  all: boolean;
+  projects: Array<{ id: string; name: string }>;
+}
 
 /** What someone does with one resource. */
 export type ResourceAction = 'read' | 'use' | 'run' | 'update' | 'delete' | 'share' | 'move';

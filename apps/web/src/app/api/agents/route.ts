@@ -6,7 +6,8 @@ import { agentStore } from '@/lib/server/agents/store';
 import { agentTemplateAccess, agentTemplates, configFromTemplate } from '@/lib/server/agents/templates';
 import { marketplaceStore } from '@/lib/server/marketplace/store';
 import { error, handler, json, parseBody } from '@/lib/server/http';
-import { withOwnership } from '@/lib/server/projects';
+import { projectRole, withOwnership } from '@/lib/server/projects';
+import { getProject } from '@/lib/server/projects/store';
 import { createInProject, projectParam, routeActor } from '@/lib/server/projects/http';
 
 export const dynamic = 'force-dynamic';
@@ -18,6 +19,12 @@ export const GET = handler(async (request: Request) => {
     const marketplace = installedBy.get(a.id);
     return marketplace ? { ...a, marketplace } : a;
   });
+  // PC06: ?availableIn= lists the agents a project can use (home, shared to it, or to all); the caller needs a role there.
+  const availableIn = new URL(request.url).searchParams.get('availableIn');
+  if (availableIn) {
+    if (!getProject(availableIn) || !projectRole(routeActor(), availableIn)) return error('Project not found', 404);
+    return json({ agents: withOwnership(routeActor(), 'agent', summaries, availableIn) });
+  }
   return json({ agents: withOwnership(routeActor(), 'agent', summaries, projectParam(request)) });
 });
 

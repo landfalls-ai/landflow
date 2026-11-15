@@ -10,7 +10,7 @@
  * transaction (./transfer).
  */
 import { nanoid } from 'nanoid';
-import { personalProjectId, PROJECT_ROLES, type ProjectRole, type ProjectType, type ResourceKind, type ShareRole } from '../../shared/projects';
+import { ALL_PROJECTS, personalProjectId, PROJECT_ROLES, type ProjectRole, type ProjectType, type ResourceKind, type ShareRole } from '../../shared/projects';
 import { recordAudit } from '../audit';
 import { can } from '../../shared/auth';
 import { authDb } from '../auth/db';
@@ -541,7 +541,7 @@ export function putShare(kind: ResourceKind, id: string, projectId: string, role
 
 /** `resource.share` (new, or its role moved) and `resource.unshare`: the kind, the resource, with whom and the role from → to. */
 export function auditShare(kind: ResourceKind, id: string, projectId: string, from: ShareRole | undefined, to: ShareRole | undefined) {
-  const withName = getProject(projectId)?.name ?? projectId;
+  const withName = projectId === ALL_PROJECTS ? 'all projects' : (getProject(projectId)?.name ?? projectId); // PC06: the '*' share
   recordAudit({
     action: to ? 'resource.share' : 'resource.unshare',
     target: { type: kind, id },

@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { agentStore, audienceSources } from '@/lib/server/agents/store';
+import { resourceAccess } from '@/lib/server/projects/access';
+import { routeActor } from '@/lib/server/projects/http';
 import { error, handler, json, parseQuery } from '@/lib/server/http';
 import { decodeCursor, encodeCursor, limitParam } from '@/lib/server/pagination';
 
@@ -27,6 +29,8 @@ const Query = z.object({
 export const GET = handler(async (request: Request, { params }: Ctx) => {
   const id = (await params).id;
   if (!agentStore.get(id)) return error('Agent not found', 404);
+  // PC06: a project that only uses an agent never reads its sessions (they hold other projects' briefs).
+  if (!resourceAccess(routeActor(), 'agent', id)?.home) return error('Agent not found', 404);
   const parsed = parseQuery(request, Query);
   if (!parsed.ok) return parsed.response;
   const { limit, cursor, audience, source, executionId, nodeId } = parsed.data;
