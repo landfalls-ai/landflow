@@ -1664,6 +1664,99 @@ export const MIGRATIONS: Migration[] = [
     ],
     statements: [],
   },
+  // LL: the LiteLLM wave (docs/llm-gateway.md). One block, pasted byte for byte by LL02–LL06.
+  // 2200: where a model call went and what ran it: the gateway's call id and its reported cost, the runtime, the source
+  // (Landflow's meter or LiteLLM's spend log) and the project. A call id is counted once (the unique index).
+  {
+    version: 2200,
+    name: 'ai_usage_gateway',
+    addColumns: [
+      { table: 'ai_usage', column: 'call_id', definition: 'TEXT' },
+      { table: 'ai_usage', column: 'source', definition: 'TEXT' },
+      { table: 'ai_usage', column: 'runtime', definition: 'TEXT' },
+      { table: 'ai_usage', column: 'project_id', definition: 'TEXT' },
+      { table: 'ai_usage', column: 'gateway_cost', definition: 'DOUBLE PRECISION' },
+    ],
+    statements: [
+      `CREATE UNIQUE INDEX IF NOT EXISTS ai_usage_call ON ai_usage (call_id) WHERE call_id IS NOT NULL`,
+      `CREATE INDEX IF NOT EXISTS ai_usage_project ON ai_usage (project_id, day)`,
+      `CREATE INDEX IF NOT EXISTS ai_usage_source ON ai_usage (source, day)`,
+    ],
+  },
+  // 2201: the virtual keys Landflow minted for agents on runtimes outside it (kagent, Claude Code on kagent). The key is
+  // sealed with the credential vault; LiteLLM's spend log names it by its SHA-256. Never deleted: a removed agent's key
+  // is blocked.
+  {
+    version: 2201,
+    name: 'llm_gateway_keys',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS llm_gateway_keys (
+        id TEXT PRIMARY KEY,
+        runtime TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        project_id TEXT,
+        key_alias TEXT NOT NULL,
+        key_hash TEXT NOT NULL,
+        key_sealed TEXT NOT NULL,
+        team_id TEXT,
+        max_budget DOUBLE PRECISION,
+        budget_duration TEXT,
+        blocked INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS llm_gateway_keys_agent ON llm_gateway_keys (runtime, agent_id)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS llm_gateway_keys_hash ON llm_gateway_keys (key_hash)`,
+    ],
+  },
+  // 2202: what the budgets sync last wrote to LiteLLM for each project (team), person (customer) and key.
+  {
+    version: 2202,
+    name: 'llm_gateway_links',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS llm_gateway_links (
+        kind TEXT NOT NULL,
+        landflow_id TEXT NOT NULL,
+        litellm_id TEXT NOT NULL,
+        state TEXT NOT NULL,
+        budget TEXT,
+        error TEXT,
+        synced_at TEXT NOT NULL,
+        PRIMARY KEY (kind, landflow_id)
+      )`,
+    ],
+  },
+  // 2203: requests for a higher AI cap; a person decides each one through Ask a Person in the cap-raise flow.
+  {
+    version: 2203,
+    name: 'ai_cap_requests',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS ai_cap_requests (
+        id TEXT PRIMARY KEY,
+        cap_id TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        metric TEXT NOT NULL,
+        period TEXT NOT NULL,
+        current_max DOUBLE PRECISION NOT NULL,
+        requested_max DOUBLE PRECISION NOT NULL,
+        reason TEXT NOT NULL,
+        requested_by TEXT NOT NULL,
+        status TEXT NOT NULL,
+        workflow_id TEXT,
+        execution_id TEXT,
+        decided_by TEXT,
+        decided_at TEXT,
+        note TEXT,
+        gateway TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS ai_cap_requests_status ON ai_cap_requests (status, created_at)`,
+      `CREATE INDEX IF NOT EXISTS ai_cap_requests_by ON ai_cap_requests (requested_by, created_at)`,
+      `CREATE INDEX IF NOT EXISTS ai_cap_requests_cap ON ai_cap_requests (cap_id, status)`,
+      `CREATE INDEX IF NOT EXISTS ai_cap_requests_execution ON ai_cap_requests (execution_id)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -1772,6 +1865,10 @@ export const TABLES = {
   conversation_items: ['conversation_id', 'seq'],
   // B30:
   brain_briefings: ['id'],
+  // LL: the LiteLLM wave.
+  llm_gateway_keys: ['id'],
+  llm_gateway_links: ['kind', 'landflow_id'],
+  ai_cap_requests: ['id'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;
