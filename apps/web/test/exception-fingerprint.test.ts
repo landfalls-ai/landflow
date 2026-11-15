@@ -100,7 +100,7 @@ function instrumentNames(): Set<string> {
 
 /** `landflow.x.y` + unit + type -> the name the Prometheus exporter writes; checked by prefix so unit/type suffixes may vary. */
 function known(prom: string, names: Set<string>) {
-  const base = prom.replace(/_(bucket|sum|count|total)$/, '').replace(/_(seconds|milliseconds|bytes|ratio)$/, '');
+  const base = prom.replace(/_(bucket|sum|count|total)$/, '').replace(/_(seconds|milliseconds|bytes|ratio|USD)$/, '');
   return [...names].some((n) => n.replace(/\./g, '_') === base);
 }
 
@@ -115,7 +115,7 @@ describe('shipped alert rules and dashboard', () => {
       .replace(/by \([^)]*\)/g, '')
       .replace(/"legendFormat":\s*"[^"]*"/g, '')
       .replace(/\{\{[^}]*\}\}/g, '');
-    return [...new Set([...exprs.matchAll(/\b((?:landflow|http_server)_[a-z0-9_]+)\b(?!\s*=)/g)].map((m) => m[1]))].filter((m) => !m.startsWith('landflow_alert'));
+    return [...new Set([...exprs.matchAll(/\b((?:landflow|http_server)_[A-Za-z0-9_]+)\b(?!\s*=)/g)].map((m) => m[1]))].filter((m) => !m.startsWith('landflow_alert'));
   }
 
   it('the rules file parses, and each alert has a runbook and an expression', () => {
