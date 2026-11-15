@@ -149,6 +149,10 @@ On a phone, what floats on a desktop rises from the bottom or takes the screen:
   Off step has a dashed border instead of being faded, so its text keeps its contrast.
 - Motion: everything that animates stops under *Reduce motion* (`app/globals.css`).
 
+### Home
+
+Home starts with the **Your morning** card ([work-and-briefings.md](work-and-briefings.md#on-the-web)): one column, lists folded to three items, and **Change**, **Show more** and **Set up tomorrow sync** are 44 px tall.
+
 ## Settings and agents
 
 - **Settings** is five group cards on a phone (Workspace, People & access, Governance, AI, Infrastructure), each

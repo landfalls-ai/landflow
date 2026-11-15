@@ -129,6 +129,7 @@ The first tick is 30 s after start.
 
 ### 5. Where you see it
 
+- **Home → Your morning** and the top of the Brain index: your own briefing, with its delivery choice and, for an admin, **Set up tomorrow sync** ([work-and-briefings.md](work-and-briefings.md#on-the-web)).
 - **Home → Suggestions**: the open suggestions the viewer can see, best first. Each card is compact: the title, one
   line of why (its first sentence), one button and **⋯**. **Show more** adds the kind, the subject, risk and
   confidence, the whole why, the evidence, what to expect and the **Changes** (the diff, as in Spotlight). What the
