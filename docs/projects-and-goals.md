@@ -300,7 +300,9 @@ budget adds: a warning, an optional hard stop, incidents and Needs you items.
   agents). `0` means no budget, and nothing is watched or stopped.
 - **The warning.** Once spend reaches the warning share (80% by default, 1 to 100) a warning opens, once for each budget
   amount. Dismiss it, or raise the budget. A raise lets a new warning open at the new amount. The cost alerts of
-  Insights → AI send the message; the warning itself is a Needs you item.
+  Insights → AI send the message; the warning itself is a Needs you item. That message says what happens at 100%: with
+  no hard stop, calls keep running and the project's admins are told; with it, priced calls are refused and local models
+  keep running.
 - **The hard stop.** Off by default. When it is on and spend reaches the budget, the project's **priced** AI calls are
   refused with "AI usage cap reached: project “Name” this month used … of its … limit", and a stop opens in Needs you.
   It never stops a local model (Ollama and others without a price), and never a model only the gateway prices. Calls

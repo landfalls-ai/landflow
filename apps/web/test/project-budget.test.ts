@@ -21,7 +21,7 @@ const { createTeamProject, setMember, removeMember, removeProjectRows } = await 
 const { sweepBudgets, budgetItems } = await import('@/lib/server/budgets/enforce');
 const { getBudget, incidentsOf, saveBudget, currentMonth, openIncident, resolveIncident } = await import('@/lib/server/budgets/store');
 const { needsYou } = await import('@/lib/server/journal/needs-you');
-const { watchedCaps } = await import('@/lib/server/ai-usage/alerts');
+const { watchedCaps, costNotice } = await import('@/lib/server/ai-usage/alerts');
 const budgetRoute = await import('@/app/api/projects/[id]/budget/route');
 const incidentRoute = await import('@/app/api/projects/[id]/budget/incidents/[incidentId]/route');
 const needsYouRoute = await import('@/app/api/runs/needs-you/route');
@@ -391,6 +391,26 @@ describe('Needs you', () => {
     tryCall(priced);
     vi.setSystemTime(new Date('2026-11-02T10:00:00Z'));
     expect(budgetItems(admin, meter)).toHaveLength(0);
+  });
+});
+
+describe('the cost alert for a project budget', () => {
+  const said = (hardStop: boolean) => {
+    const id = createTeamProject({ name: 'Notice' }).id;
+    saveBudget({ projectId: id, monthlyUsd: 10, warnPercent: 80, hardStop });
+    const cap = watchedCaps().find((c) => c.id === `project:${id}:month:cost`)!;
+    const notice = costNotice({ id: 'r', name: 'r' }, cap, 80);
+    return JSON.stringify(notice);
+  };
+  it('says calls keep running without the hard stop, and priced calls are refused with it', () => {
+    expect(said(false)).toContain('Calls keep running');
+    expect(said(false)).not.toContain('refused');
+    expect(said(true)).toContain('Priced model calls are refused');
+    expect(said(true)).toContain('local (unpriced) models keep running');
+  });
+  it('keeps the old sentence for other caps', () => {
+    const cap = { id: 'user:u1:month:cost', subject: 'user', period: 'month' as const, metric: 'cost' as const, max: 10, used: 8, setIn: 'x', link: 'x' };
+    expect(JSON.stringify(costNotice({ id: 'r', name: 'r' }, cap, 80))).toContain('Further model calls are refused');
   });
 });
 

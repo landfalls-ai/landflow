@@ -18,7 +18,7 @@ import { alertStore } from '../alerts/store';
 import { store } from '../store';
 // Load-bearing: importing budgets/enforce registers the stop's audit and log (onStopOpened) as a side effect.
 import { sweepBudgets } from '../budgets/enforce';
-import { listBudgets } from '../budgets/store';
+import { getBudget, listBudgets } from '../budgets/store';
 import { getProject } from '../projects/store';
 import { projectCapId } from '../../shared/project-budget';
 import { aiUsageMeter, type AiUsageMeter } from './index';
@@ -102,6 +102,15 @@ const amount = (cap: WatchedCap, value: number) => (cap.metric === 'cost' ? form
 /** The period a cap's usage belongs to now (`2026-10-27` or `2026-10`), so an alert is sent once for each. */
 export const periodKey = (period: 'day' | 'month', today: string) => (period === 'day' ? today : today.slice(0, 7));
 
+/** What happens when a cap is reached: a project's budget only refuses priced calls, and only with its hard stop on. */
+function atFull(cap: WatchedCap): string {
+  if (!/^project:[^:]+:month:cost$/.test(cap.id)) return 'Further model calls are refused with a clear error until the period ends or the cap is raised';
+  const budget = getBudget(cap.id.split(':')[1]);
+  return budget?.hardStop
+    ? 'Priced model calls are refused until the month ends or the budget is raised or resumed; local (unpriced) models keep running'
+    : 'Calls keep running; the project’s admins are told';
+}
+
 /** What the alert says about one cap. */
 export function costNotice(rule: Pick<AlertRule, 'id' | 'name'>, cap: WatchedCap, threshold: number): AlertNotice {
   const percent = Math.floor((cap.used / cap.max) * 100);
@@ -115,7 +124,7 @@ export function costNotice(rule: Pick<AlertRule, 'id' | 'name'>, cap: WatchedCap
       { label: 'Used', value: `${amount(cap, cap.used)} of ${amount(cap, cap.max)} (${percent}%)` },
       { label: 'Alert at', value: `${threshold}% of a cap, once per ${cap.period}` },
       { label: 'Set in', value: cap.setIn },
-      { label: 'What happens at 100%', value: 'Further model calls are refused with a clear error until the period ends or the cap is raised' },
+      { label: 'What happens at 100%', value: atFull(cap) },
     ],
     link: cap.link,
   });
