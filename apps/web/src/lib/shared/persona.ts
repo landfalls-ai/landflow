@@ -99,7 +99,7 @@ function personaSections(persona: AgentPersona): string[] {
   return sections;
 }
 
-export function personaPrompt(config: AgentConfig, run: { memory?: string; now?: Date } = {}): string {
+export function personaPrompt(config: AgentConfig, run: { memory?: string; now?: Date; context?: string } = {}): string {
   const persona = cleanPersona(config.persona);
   const instructions = config.instructions.trim();
   // Without persona parts the prompt opens with the instructions as it always did, so agents written before stay the same.
@@ -115,6 +115,8 @@ export function personaPrompt(config: AgentConfig, run: { memory?: string; now?:
       ].join('\n'),
     );
   }
+  // The project block sits after the skills and before the memory, ahead of the date line, so the prompt up to there stays stable.
+  if (run.context) parts.push(run.context);
   if (run.memory) parts.push(run.memory);
   const intro = `You are “${config.name}”${config.description ? `: ${config.description.trim()}` : ''}`;
   // A description that already ends a sentence doesn't get a second full stop.

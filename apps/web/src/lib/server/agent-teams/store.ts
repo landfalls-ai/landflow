@@ -97,6 +97,7 @@ export function cleanConfig(input: Partial<AgentTeamConfig> | undefined): AgentT
   return {
     name: text(input?.name, 200),
     ...(goal && { goal }),
+    ...(typeof input?.goalId === 'string' && /^goal_[\w-]{1,40}$/.test(input.goalId) && { goalId: input.goalId }),
     ...(description && { description }),
     members: (Array.isArray(input?.members) ? input.members : []).map(cleanMember).filter((m): m is TeamMember => Boolean(m)).slice(0, 50),
   };

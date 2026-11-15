@@ -30,6 +30,7 @@ import { cleanAccess } from '../../shared/agent-access';
 import { cleanCache } from '../../shared/agent-cache';
 import { cleanRouter } from '../../shared/agent-router';
 import { cleanAvatar } from '../../shared/faces';
+import { CONTEXT_MODES, type ContextMode } from '../../shared/project-context';
 import { cleanPersona, whatIDoLines } from '../../shared/persona';
 import { deleteAgentSessionFeedback } from '../chat-feedback';
 import { ConfigFile, configStoreKind, importOnce } from '../config-store';
@@ -95,6 +96,7 @@ export function normalizeConfig(input: Partial<AgentConfig>): AgentConfig {
     ...(cache && { cache }),
     ...(access && { access }),
     ...(plugins && { plugins }),
+    ...(CONTEXT_MODES.includes(input.projectContext as ContextMode) && { projectContext: input.projectContext }),
   };
 }
 

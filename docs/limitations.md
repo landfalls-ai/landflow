@@ -43,6 +43,15 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - **Log redaction** ([observability.md](observability.md#3-logs)): the host's logger scrubs secret-shaped values (Bearer tokens (the word `Bearer` with that case; an all-letter token shorter than 24 characters is left, so prose such as "Bearer authentication" is not mangled), `lf_` keys, `sk-`, GitHub and Slack keys, URL passwords, PEM private keys) and the credential values a node was handed; a secret in free text of another shape, or a credential value shorter than twelve characters (the vault does not remember short ones, so a weak password such as `postgres` is not scrubbed), is not found. Value patterns apply to log lines only: span attributes and exception events exported over OTLP are redacted by key name. OAuth access tokens handed to a node are scrubbed from its output too, so a workflow that passes one downstream through node output gets `[redacted]`. A multi-line credential that is not a PEM block is remembered whole, not line by line. The plugin SDKs keep their own rules (key names and the current request's credential values). A `traceparent` on a read response may name a trace the sampler dropped.
 - **By design**: a Respond to Webhook reply built from a secret is not redacted: redaction covers what is kept, and the reply is sent, not kept ([External secrets](features/secrets-and-environments.md)).
 
+## Project context (wave 7)
+
+- An agent has no project wall yet: any agent may be used in any project's run. Availability (which agents a project can
+  use) comes in wave 8. Until then the block only tells the agent where it works.
+- Whether Anthropic's prompt cache hits more with the pinned date is not measured on this machine: the prompt up to the
+  date line is stable by construction, and no run here talks to Anthropic.
+- A kagent agent called over MCP gets no block and falls back to its own home project. Remote agents and a team's
+  requests carry the block in their message in a later package.
+
 ## Test chat history (B10, 2026-11)
 
 - "Earlier tests" in an agent's test chat is per agent, not per person: test sessions all carry the user id `you`, so on a

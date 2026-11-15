@@ -20,6 +20,8 @@
  */
 // Registers the composite governance rules with workflowViolations() (governance/policy.ts), in both roles.
 import './governance/composite-rules';
+// PC03: sets the run-context provider (the project block agents get).
+import './project-context/provider';
 import { agentTriggers } from './agents/triggers';
 import { alerts } from './alerts/service';
 import { auditHeads } from './audit/anchoring';

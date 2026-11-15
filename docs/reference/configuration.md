@@ -159,6 +159,7 @@ still works.
 | `LANDFLOW_BRAIN_INTERVAL_MINUTES` | `60` | how often the leader rolls up, checks effects and runs the detectors (it studies once a day) |
 | `LANDFLOW_BRAIN_WEEKLY_CAP` | `3` | suggestions per workflow per week |
 | `LANDFLOW_TEAM_PAUSE_MINUTES` | `30` | how long a paused team member waits for a person's instruction before it carries on without one ([run-trace.md](../run-trace.md#pause-and-take-over)) |
+| `LANDFLOW_PROJECT_CONTEXT` | on | `off` stops the "Where this work fits" block (mission, goals, project brief) from being added to the system prompt of every agent Landflow runs; an agent's own setting (`projectContext`: full, compact or off) applies while this is on ([agents.md](../agents.md#project-context)) |
 | `LANDFLOW_NOTEBOOK_EMBEDDINGS` | on | `off` stops the team notebook from asking Ollama for embeddings; search then matches words ([team-notebook.md](../team-notebook.md#search-by-meaning)) |
 | `LANDFLOW_NOTEBOOK_EMBED_MODEL` | `nomic-embed-text` | the Ollama model that embeds team notes |
 | `LANDFLOW_JSON_RENDER` | off | `1` is the default for the json-render spec cards in Run Trace (`NEXT_PUBLIC_LANDFLOW_JSON_RENDER=1` does the same). The owner's switch in Settings → General (`jsonRender`, `PATCH /api/settings`) wins once saved and needs no rebuild; `null` goes back to this default. Dev page: `/runs/json-render-gallery`, shown only while it is on ([json-render verdict](../research/json-render-verdict.md)) |
