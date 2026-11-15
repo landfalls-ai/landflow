@@ -628,6 +628,10 @@ cut to 200 characters, the run line; at most 600 characters) or `off`. Set it th
 switches the whole feature off. A full block is at most 2,400 characters; to fit, the builder drops the words, the
 status, the why, the constraints and the done-when, in that order, then cuts the brief, then the oldest goals.
 
+**Practices.** Each agent also has `practices`: `on` (the default) or `off`. On, a run in a project gets that project's
+and the organization's approved practices in its prompt after this block, and records which it was given and which its
+answer cited ([practices.md](practices.md#landflow-agents)). The same `LANDFLOW_PRACTICES=off` switches them all off.
+
 **Caches.** A short hash of the block joins the [response cache](#response-cache) key and the semantic cache's config
 hash, so an answer given in one project is not served in another, or after the goals change. With no block the keys are the
 same as before. The session keeps the block it got (`session.context`, with the project and goal ids).

@@ -97,6 +97,7 @@ export function normalizeConfig(input: Partial<AgentConfig>): AgentConfig {
     ...(access && { access }),
     ...(plugins && { plugins }),
     ...(CONTEXT_MODES.includes(input.projectContext as ContextMode) && { projectContext: input.projectContext }),
+    ...((input.practices === 'on' || input.practices === 'off') && { practices: input.practices }),
   };
 }
 
