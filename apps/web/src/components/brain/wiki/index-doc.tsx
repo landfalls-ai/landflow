@@ -13,6 +13,7 @@ import { byDay, FOLDERS, INDEX_HEADINGS, SETTINGS, urlOf, type IndexCard } from 
 import type { SharedWork, WikiHome } from '@/lib/shared/brain-wiki';
 import { Card } from '../../shell/page-header';
 import { Chip } from '../../ui/badge';
+import { BriefingCard } from '../briefing-card';
 import { ProposalCard, useProposalActions } from '../proposal-card';
 import { kindLabel, PageLink, Section, TYPE_ICON, WorkList } from './parts';
 
@@ -59,6 +60,8 @@ export function IndexDoc({ home, onChanged }: { home: WikiHome; onChanged: () =>
           )}
         </p>
       </header>
+
+      <BriefingCard />
 
       {cards.includes('shared') && (
         <Section title={INDEX_HEADINGS.shared} count={home.shared.length}>
