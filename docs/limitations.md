@@ -414,6 +414,15 @@ items still open (its "Wave 6" section); this page is the short list to check be
   event lists them all.
 - No practices ship with Landflow; each instance learns or writes its own.
 
+## Practices for remote agents (wave P2)
+
+- Only a Landflow agent on kagent gets the practices index; any other A2A agent gets nothing new.
+- An A2A node outside a team binds `practices_for` to the agent's home project, not the run's: only a team's open call
+  carries the run's project to the agent's MCP server.
+- The index is not recorded as delivered; only what `practices_for` gives in full is. An agent that follows the index
+  without reading a practice shows only as a citation.
+- A change in practices reaches a conversation that has started only through `practices_for`: the index is sent once.
+
 ## Following practices over MCP and citing (PR04, 2026-11)
 
 - A Landflow MCP project token is an instance token with a scope and has no actor, so it gets organization practices only; a project server gets its project's practices only for a personal API key on `/api/mcp/projects/<id>`.

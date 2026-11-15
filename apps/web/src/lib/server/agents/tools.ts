@@ -11,6 +11,7 @@ import { binaryAccessFor } from '../binary/access';
 import { withProjectContext } from '../nodes/a2a';
 import { binaryToolImages } from '../nodes/tool-images';
 import { currentRunContext } from '../project-context/seam';
+import { carriesPracticesIndex, practicesIndexFor, recordRemoteCitations, withPracticesIndex } from '../practices/remote';
 import { holdSessionImages } from './session-images';
 import type {
   A2aAgentToolConfig,
@@ -305,7 +306,7 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
   } catch (error) {
     return { error: `${config.name}: ${(error as Error).message}` };
   }
-  const options = (config.parameters.options ?? {}) as { humanInTheLoop?: boolean; projectContext?: string };
+  const options = (config.parameters.options ?? {}) as { humanInTheLoop?: boolean; projectContext?: string; practices?: 'on' | 'off' };
   const extensions = options.humanInTheLoop !== false && supportsExtension(card, KAGENT_HITL_EXTENSION) ? [KAGENT_HITL_EXTENSION] : [];
   const name = toToolName(`ask_${config.name}`);
 
@@ -410,8 +411,13 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
       }
       // The first message of a conversation carries the project's compact block (docs/a2a.md); follow-ups go as they are, and the capability's option Project context: Off sends nothing.
       const fresh = !known?.contextId && !known?.taskId && options.projectContext !== 'off';
-      const { text: sent, tags } = withProjectContext(text, fresh ? currentRunContext() : undefined);
-      return run({ text: sent, ...(Object.keys(tags).length > 0 && { metadata: tags }), ...(known?.contextId && { contextId: known.contextId }), ...(known?.taskId && { taskId: known.taskId }) }, ctx);
+      // PR07: a Landflow agent on kagent also gets the index of the practices that apply (a team's request already carries it).
+      const brandNew = !known?.contextId && !known?.taskId;
+      const index = brandNew && !carriesPracticesIndex(text) ? practicesIndexFor(config.parameters.agentUrl as string, options.practices, text) : undefined;
+      const { text: sent, tags } = withProjectContext(withPracticesIndex(text, index?.text ?? ''), fresh ? currentRunContext() : undefined);
+      const outcome = await run({ text: sent, ...(Object.keys(tags).length > 0 && { metadata: tags }), ...(known?.contextId && { contextId: known.contextId }), ...(known?.taskId && { taskId: known.taskId }) }, ctx);
+      if (index && !outcome.pause) recordRemoteCitations(index, typeof outcome.output === 'string' ? outcome.output : JSON.stringify(outcome.output ?? ''), ctx.session.execution?.executionId);
+      return outcome;
     },
     async resume(state, approved, ctx, answer) {
       const { taskId, contextId, request, question } = state as { taskId: string; contextId: string; request?: Extract<HitlRequest, { type: 'tool_approval_request' }>; question?: { id: string; questions: string[] } };

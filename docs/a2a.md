@@ -126,6 +126,19 @@ answers or resumed tasks, and not when the block is off).
 - **A team's remote member:** see [agent-teams.md](agent-teams.md). Its **Project context: Off** option drops the compact
   block and the project tags; the project line in the request's ancestry stays.
 
+### Practices
+
+A Landflow agent on kagent also gets an index of the approved practices that apply with the first message of a new
+conversation, after the project block ([practices.md](practices.md#kagent-agents-and-a2a)). It ends with the line `Call
+practices_for for a practice's full rules, and end your answer with "Practices followed: [handle@version]" for those you
+followed.` The node, the capability and a team's remote member each have a **Practices** option (On, the default, or Off).
+Any other A2A agent gets nothing new.
+
+On the agent's kagent MCP server (`/api/mcp/agents/<id>`) there are two more tools, listed whatever the run: `practices_for`
+(the full rules of what applies, or of one `handle`) and `practice_cite` (up to 20 `handle@version`). They are bound to
+the run that is asking the agent as the notebook tools are (the `run` key when several team runs ask at once, the agent's
+home project when none does). Their calls and the citations in the answer are recorded against the run's project.
+
 ## The protocol, as built
 
 `apps/web/src/lib/server/a2a/client.ts`: A2A 1.0 over JSON-RPC 2.0 with the `A2A-Version: 1.0` header; the methods

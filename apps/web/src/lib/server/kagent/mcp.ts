@@ -23,6 +23,7 @@ import { traceToolCall } from '../telemetry';
 import { resolveCall } from '../notebook/binding';
 import { callNotebookTool, sawOutside } from '../notebook/tools';
 import { deployedConfig, kagentTools } from './deploy';
+import { isPracticeTool, practiceToolCall, practiceToolSpecs } from './practice-tools';
 
 export async function handleAgentMcpRequest(request: Request, agentId: string): Promise<Response> {
   const agent = agentStore.get(agentId);
@@ -50,9 +51,17 @@ function agentMcpServer(agent: Agent, config: AgentConfig, version: number, sign
     (listed ??= kagentTools(agent, config)).then((set) => (part ? set.tools.filter((tool) => tool.requireApproval === (part === 'approval')) : set.tools));
   // Raw JSON schemas, so the low-level handlers rather than registerTool (which takes zod).
   server.server.setRequestHandler('tools/list', async () => ({
-    tools: (await tools()).map((tool) => ({ name: tool.name, description: tool.description, inputSchema: { ...tool.inputSchema, type: 'object' as const } })),
+    tools: [
+      ...(await tools()).map((tool) => ({ name: tool.name, description: tool.description, inputSchema: { ...tool.inputSchema, type: 'object' as const } })),
+      // PR07: the two practice tools, listed whatever the run; they never pause, so not on the approval part.
+      ...(part === 'approval' ? [] : practiceToolSpecs.map((spec) => ({ ...spec, inputSchema: { ...spec.inputSchema } }))),
+    ],
   }));
   server.server.setRequestHandler('tools/call', async (request) => {
+    if (isPracticeTool(request.params.name) && part !== 'approval') {
+      const answer = practiceToolCall(agent, request.params.name, (request.params.arguments ?? {}) as Record<string, unknown>);
+      return textResult(answer.text, answer.isError);
+    }
     const tool = (await tools()).find((t) => t.name === request.params.name);
     if (!tool) return textResult(`The agent “${config.name}” has no tool ${request.params.name}`, true);
     const args = (request.params.arguments ?? {}) as Record<string, unknown>;

@@ -396,7 +396,7 @@ describe('the agent’s MCP endpoint', () => {
     expect((await rpc(agent.id, 'tools/list', {}, 'lfk_wrong')).status).toBe(401);
 
     const listed = await rpc(agent.id, 'tools/list', {}, token);
-    expect(listed.body.result?.tools?.map((t) => t.name)).toEqual(['Echo', 'Shout', 'load_skill']);
+    expect(listed.body.result?.tools?.map((t) => t.name)).toEqual(['Echo', 'Shout', 'load_skill', 'practices_for', 'practice_cite']);
     const skill = await rpc(agent.id, 'tools/call', { name: 'load_skill', arguments: { name: 'Headlines' } }, token);
     expect(skill.body.result?.content?.[0].text).toContain('Slugify the headline, then answer with it.');
     // kagent paused on Shout already (its binding has requireApproval), so the call runs.
@@ -412,7 +412,7 @@ describe('the agent’s MCP endpoint', () => {
     await call(kagentRoute.PUT, agent.id, 'PUT', { credentialId: cluster.id, name: 'split', harness: 'landflow-claude' });
     const token = credentials.openSecret(agentStore.get(agent.id)!.kagent!.token!);
     const names = async (query: string) => (await rpc(agent.id, 'tools/list', {}, token, query)).body.result?.tools?.map((t) => t.name);
-    expect(await names('?tools=free')).toEqual(['Echo', 'load_skill']);
+    expect(await names('?tools=free')).toEqual(['Echo', 'load_skill', 'practices_for', 'practice_cite']);
     expect(await names('?tools=approval')).toEqual(['Shout']);
     const past = await rpc(agent.id, 'tools/call', { name: 'Shout', arguments: { text: 'hi' } }, token, '?tools=free');
     expect(past.body.result).toMatchObject({ isError: true, content: [{ text: 'The agent “Text formatter” has no tool Shout' }] });
@@ -429,7 +429,7 @@ describe('the agent’s MCP endpoint', () => {
     agentStore.saveDraft(agent.id, { tools: [{ id: 't9', type: 'node', name: 'Whisper', description: 'Quietly', nodeType: 'core.noOp', parameters: {} }], skills: [] });
     await call(publishRoute.POST, agent.id, 'POST');
     credentials.update(cluster.id, { data: { server } });
-    expect((await rpc(agent.id, 'tools/list', {}, token)).body.result?.tools?.map((t) => t.name)).toEqual(['Echo', 'Shout', 'load_skill']);
+    expect((await rpc(agent.id, 'tools/list', {}, token)).body.result?.tools?.map((t) => t.name)).toEqual(['Echo', 'Shout', 'load_skill', 'practices_for', 'practice_cite']);
   });
 });
 
