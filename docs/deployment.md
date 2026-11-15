@@ -229,7 +229,7 @@ All credentials are **for local development and tests only**.
 | Azure Service Bus emulator 2.0 (`servicebus`) | AMQP `localhost:55675`, management + `/health` http://localhost:55300 | `servicebus:5672`, `servicebus:5300` | `Endpoint=sb://localhost:55675;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;`; static entities from [`infra/servicebus/Config.json`](../deploy/infra/servicebus/Config.json); SQL backend `servicebus-sql` (Azure SQL Edge, `sa` / `Landflow-dev-only1`, not published) |
 | agentgateway 1.6 (`mcp-gateway`) | MCP http://localhost:54000/mcp, admin API + UI http://localhost:55000 (`/ui`) | `mcp-gateway:4000`, `mcp-gateway:15000` | none (the admin API has no authentication: loopback only); targets in SQLite in `mcp-gateway-data` |
 | **Landflow host** (app) | http://localhost:53000 | `web:3000`, gRPC registry `web:7070` | owner `owner@landflow.test` / `landflow-dev-only` (`LANDFLOW_OWNER_EMAIL` / `LANDFLOW_OWNER_PASSWORD`) |
-| Plugins (app) | not published | `text-toolkit:7101/7201`, `py-insights:7102/7202`, `go-crypto:7103/7203`, `messaging:7104/7204`, `productivity:7105/7205`, `google-workspace:7106/7206`, `databases:7107/7207`, `github:7111/7211`, `browser:7112/7212` (profile `browser`), `web-search:7113/7213` (profile `web-search`), `agent-shell:7114/7214` (profile `agent-shell`), `linear:7116/7216`, `attio:7117/7217`, `fathom:7118/7218` (HTTP/gRPC) | |
+| Plugins (app) | not published | `text-toolkit:7101/7201`, `py-insights:7102/7202`, `go-crypto:7103/7203`, `messaging:7104/7204`, `productivity:7105/7205`, `google-workspace:7106/7206`, `databases:7107/7207`, `github:7111/7211`, `browser:7112/7212` (profile `browser`), `web-search:7113/7213` (profile `web-search`), `agent-shell:7114/7214` (profile `agent-shell`), `linear:7116/7216`, `attio:7117/7217`, `fathom:7118/7218`, `clickland:7119/7219`, `landledger:7120/7220` (HTTP/gRPC) | |
 | Code runner (app) | http://127.0.0.1:53300 (through `code-runner-port`) | `code-runner:7300`, on the internal `landflow-code` network only | header `x-landflow-runner-secret: landflow-code-runner-dev-only` |
 | **Queue mode** load balancer | http://localhost:53080 | `lb:3000` | owner `owner@landflow.test` / `landflow-dev-only` |
 | Queue mode mains | http://localhost:53081, http://localhost:53082 | `main-1:3000`, `main-2:3000` | same |
@@ -742,6 +742,9 @@ diff, and overlays for the differences between clusters. A Helm chart would add 
 | `k8s/overlays/orbstack-queue` | the OrbStack overlay plus `postgres`, `valkey`, `minio` and `queue-mode`: "Queue mode on Kubernetes" below |
 | `k8s/examples/keda/` | KEDA `ScaledObject`s per broker, and `queue-workers.yaml` for the queue workers (not in any overlay): "Autoscaling with KEDA" below |
 | `k8s/examples/envoy-gateway/` | a `BackendTrafficPolicy` with long timeouts for the HTTPRoute, for Envoy Gateway |
+| `k8s/components/clickland-observability` | optional, the default for telemetry: OTLP export from every Landflow Deployment to Clickland's collector (`clickland-collector.clickland-dev:4318`), run journals as traces there, and trace links to Clickland's console; deploys nothing (Clickland runs from its own repository): "Telemetry on Kubernetes" below |
+| `k8s/components/landledger` | the Landledger plugin (`landflow/plugin-landledger:k8s-dev`) and `landledger-api`, an ExternalName Service to Landledger's API on the Mac (`host.orb.internal:4810`): [features/landledger.md](features/landledger.md#deploying) |
+| `k8s/overlays/orbstack-clickland` | the OrbStack overlay plus `landledger` and `clickland-observability` |
 | `k8s/components/observability` | optional: a local telemetry backend (`grafana/otel-lgtm`: Collector, Tempo, Prometheus, Loki, Grafana) as `landflow-lgtm`, OTLP export from every Landflow Deployment to it, and the "Landflow · agent runs" dashboard: "Telemetry on Kubernetes" below |
 | `k8s/overlays/orbstack-observability` | the OrbStack overlay plus `observability` |
 
@@ -1070,6 +1073,31 @@ kubectl --context orbstack create namespace landflow-dev    # once (or apply the
 
 ### Telemetry on Kubernetes
 
+Landflow's traces, metrics and logs go to [Clickland](features/clickland.md), the land family's observability system,
+when it runs on the same cluster (the default), or to a `grafana/otel-lgtm` backend of its own.
+
+**To Clickland** (Clickland deployed from its repository into `clickland-dev`, its collector and console up):
+
+```bash
+kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-clickland
+```
+
+Every Landflow Deployment gets `OTEL_EXPORTER_OTLP_ENDPOINT=http://clickland-collector.clickland-dev.svc.cluster.local:4318`
+and `OTEL_RESOURCE_ATTRIBUTES=deployment.environment=landflow-dev`; the host also gets
+`LANDFLOW_OTLP_TRACES_URL=http://clickland-collector.clickland-dev.svc.cluster.local:4318/v1/traces` (each run's journal
+as one trace) and `LANDFLOW_TRACE_URL=http://clickland-console.clickland-dev.svc.cluster.local:4711/traces/{traceId}`
+(the run page's trace link opens Clickland's console). Nothing runs in `landflow-dev` for it; while Clickland is down
+the exporters drop what they can't send. kagent in the kind cluster follows: `deploy/scripts/kagent-up.sh` reads the
+host's endpoint and bridges kind's `landflow-otel` name to `clickland-collector`'s ClusterIP (OTLP gRPC 4317, HTTP 4318;
+`CLICKLAND_NS` changes the namespace). When Clickland runs on the Mac and `clickland-collector` is the ExternalName
+Service of Clickland's `deploy/k8s/bridge` (pointing at `host.orb.internal`), there is no ClusterIP: the script uses the
+address the external name has from the kind node instead. The overlay needs only Clickland's three bridge Services
+(`clickland-collector`, `clickland-console` for trace links, `clickland-api` for the plugin's default Base URL), so it
+works the same against the Mac or an in-cluster Clickland. Coming from the lgtm overlay: apply `orbstack-clickland`, then delete Deployment
+and Service `landflow-lgtm` and its ConfigMaps (below), and run `kagent-up.sh` again to move kagent's bridge.
+
+**Without Clickland**, the bundled backend:
+
 ```bash
 kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-observability
 kubectl --context orbstack -n landflow-dev rollout status deploy/landflow-lgtm
@@ -1108,8 +1136,9 @@ Harness (`landflow-claude`), the package registries agents' sandboxes may reach 
 credential's Egress Policies), and sets the credential's plugin registry to the Landflow Service's ClusterIP, where
 kagent's nodes pull agents' Claude Code plugins ([a2a.md](a2a.md#on-claude-code)). `deploy/scripts/claude-harness-dev.sh`
 then adds `landflow-claude-dev`, Claude Code on an image with the common toolchains, served from Landflow's registry
-([a2a.md](a2a.md#a-toolchain-image-for-claude-code)). With the observability overlay
-running, kagent and Substrate send their telemetry to `landflow-lgtm`. What it does, the files in `deploy/kind/` and the
+([a2a.md](a2a.md#a-toolchain-image-for-claude-code)). With a telemetry overlay
+running (`orbstack-clickland` or `orbstack-observability`), kagent and Substrate send their telemetry where the host
+sends its own: `clickland-collector` or `landflow-lgtm`. What it does, the files in `deploy/kind/` and the
 endpoints are in [a2a.md](a2a.md#kagent-next-to-landflow). Run it again after the host's data was reset (a new PVC):
 the credential and the agent are gone with it.
 

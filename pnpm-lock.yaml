@@ -406,7 +406,7 @@ importers:
         version: 3.0.5
       vitest:
         specifier: ^5.0.5
-        version: 5.0.5(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+        version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
 
   plugins/agent-shell:
     dependencies:
@@ -553,6 +553,25 @@ importers:
         specifier: ^5.0.5
         version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
 
+  plugins/clickland:
+    dependencies:
+      '@landflow/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+    devDependencies:
+      '@landflow/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@types/node':
+        specifier: ^22.20.5
+        version: 22.20.5
+      tsx:
+        specifier: ^4.23.15
+        version: 4.23.15
+      vitest:
+        specifier: ^5.0.5
+        version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+
   plugins/fathom:
     dependencies:
       '@aws-sdk/client-sqs':
@@ -683,6 +702,25 @@ importers:
         version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
 
   plugins/landfall:
+    dependencies:
+      '@landflow/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+    devDependencies:
+      '@landflow/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@types/node':
+        specifier: ^22.20.5
+        version: 22.20.5
+      tsx:
+        specifier: ^4.23.15
+        version: 4.23.15
+      vitest:
+        specifier: ^5.0.5
+        version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+
+  plugins/landledger:
     dependencies:
       '@landflow/sdk':
         specifier: workspace:*

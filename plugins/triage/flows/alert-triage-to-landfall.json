@@ -59,7 +59,7 @@
     "setup": [
       "Add **Triage decisions** (created with the template) and keep it: the digest and the shadow-mode review read it.",
       "Pick or add the **Landfall** credential: base URL, org slug, an `lf_key_` API key, and the ingest token and connection ID of a *remote source* connection in Landfall (it must be healthy, or Landfall answers 422).",
-      "Pick the **Webhook secret** and send alerts to the **Alert webhook** URL with that header: Alertmanager, Grafana, Datadog, CloudWatch (SNS), Sentry, Wazuh or any JSON (**Normalize alert** detects which).",
+      "Pick the **Webhook secret** and send alerts to the **Alert webhook** URL with that header: Alertmanager, Grafana, Datadog, CloudWatch (SNS), Sentry, Wazuh or any JSON (**Normalize alert** detects which). **Skip direct alerts** drops a delivery whose `route` is `direct` (top level or in its `data`): the source already sent that alert straight to Landfall, which opened the room.",
       "Pick the **Anthropic account** for **Claude**, and the **Slack bot** for **Ask on-call** (set its channel).",
       "Optional: add VirusTotal, AbuseIPDB or GreyNoise keys to **Enrich IOCs**; with none, threat intel says *unknown*.",
       "Optional: **Find the runbook** looks for a runbook made from a closed war room for this kind of alert (see **Runbooks** in the sidebar) and **Link the runbook in the room** posts its link in the room. Set the base URL on **Find the runbook** to this Landflow instance's address.",
@@ -164,7 +164,7 @@
           "type": "core.webhook",
           "typeVersion": 1,
           "position": [
-            0,
+            -280,
             0
           ],
           "parameters": {
@@ -179,6 +179,29 @@
               "name": "Webhook secret"
             }
           }
+        },
+        {
+          "id": "notDirect",
+          "name": "Skip direct alerts",
+          "type": "core.filter",
+          "typeVersion": 1,
+          "position": [
+            0,
+            0
+          ],
+          "parameters": {
+            "conditions": {
+              "condition": [
+                {
+                  "left": "{{ $json.body?.data?.route ?? $json.body?.route ?? $json.data?.route ?? $json.route ?? '' }}",
+                  "operator": "notEquals",
+                  "right": "direct"
+                }
+              ]
+            },
+            "combinator": "and"
+          },
+          "notes": "A source that already sent this alert straight to Landfall marks the delivery route: \"direct\" (at the top of the body or in its data, as Clickland does). Landfall opened that room itself, so the delivery stops here and cannot open a second one."
         },
         {
           "id": "normalize",
@@ -767,6 +790,14 @@
           "id": "c1",
           "type": "main",
           "source": "hook",
+          "sourceIndex": 0,
+          "target": "notDirect",
+          "targetIndex": 0
+        },
+        {
+          "id": "c1b",
+          "type": "main",
+          "source": "notDirect",
           "sourceIndex": 0,
           "target": "normalize",
           "targetIndex": 0

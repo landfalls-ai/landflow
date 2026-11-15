@@ -22,6 +22,7 @@ const { normalizeWorkflow, validateWorkflow } = await import('@/lib/server/mcp/w
 const { workflowSchema } = await import('@/lib/server/schemas');
 const { loadPlugin } = await import('@/lib/server/marketplace/plugin');
 const { readerFor } = await import('@/lib/server/marketplace/reader');
+const { runWorkflow } = await import('@/lib/server/runner');
 
 const fixtures = join(import.meta.dirname, 'fixtures', 'plugin-manifests');
 registry.registerBuiltin(corePlugin);
@@ -43,13 +44,21 @@ const flows = readdirSync(join(repo, 'plugins')).flatMap((plugin) => {
 const qualified = (nodeType: string, key: string) => (key.includes('.') ? key : `${nodeType.split('.')[0]}.${key}`);
 
 describe('plugin flows', () => {
-  it('ship with the Landfall, triage, threat-intel, Linear, Attio and Fathom plugins', () => {
+  it('ship with the Landfall, triage, threat-intel, Linear, Attio, Fathom, Clickland and Landledger plugins', () => {
     expect(flows.map(([path]) => path).sort()).toEqual([
       'attio/flows/work-attio.json',
+      'clickland/flows/clickland-alert-triage.json',
+      'clickland/flows/clickland-observability-assistant.json',
       'fathom/flows/work-fathom.json',
       'landfall/flows/landflow-failures-to-landfall.json',
       'landfall/flows/landflow-heartbeat.json',
       'landfall/flows/learn-from-closed-rooms.json',
+      'landledger/flows/landledger-ai-budget.json',
+      'landledger/flows/landledger-approve-infra-change.json',
+      'landledger/flows/landledger-incident-cost.json',
+      'landledger/flows/landledger-slack-approver.json',
+      'landledger/flows/landledger-tool-or-seat.json',
+      'landledger/flows/landledger-variance-notes.json',
       'linear/flows/work-linear.json',
       'threat-intel/flows/ioc-lookup.json',
       'triage/flows/alert-triage-to-landfall.json',
@@ -120,5 +129,72 @@ describe('plugin flows', () => {
       expect(entry, plugin).toBeDefined();
       expect(entry!.flows, path).toContain(`./${rest.join('/')}`);
     }
+  });
+});
+
+describe('Clickland alert triage', () => {
+  // Clickland marks a delivery for an alert it routed straight to Landfall with `route: "direct"`: Landfall has opened
+  // that room already, so the flow must stop before the triage agent and the Slack post.
+  it('drops a delivery Clickland routed straight to Landfall, before the agent', async () => {
+    const file = flows.find(([path]) => path === 'clickland/flows/clickland-alert-triage.json')![1];
+    const workflow = { ...normalizeWorkflow(structuredClone(file.template.workflow)), id: 'wf_clickland_triage' };
+    const trigger = workflow.nodes.find((n) => n.type === 'clickland.clicklandAlertTrigger')!;
+    const first = workflow.connections.filter((c) => c.type === 'main' && c.source === trigger.id);
+    expect(first).toHaveLength(1);
+    const gate = workflow.nodes.find((n) => n.id === first[0].target)!;
+    expect(gate.type).toBe('core.filter');
+    expect(workflow.connections.find((c) => c.type === 'main' && c.source === gate.id)?.target).toBe('agent');
+
+    const delivery = (route?: string) => ({
+      json: { type: 'alert.firing', id: 'evt_1', alert: { id: 'al_1', name: 'Checkout errors' }, value: 12, ...(route && { route }) },
+    });
+    const record = await runWorkflow({
+      workflow,
+      mode: 'trigger',
+      triggerOutput: { nodeId: trigger.id, items: [delivery('direct'), delivery(), delivery('flow')] },
+      destinationNodeId: gate.id,
+    });
+    expect(record.status).toBe('success');
+    const passed = record.runData[gate.id]?.at(-1)?.outputs[0] ?? [];
+    expect(passed.map((item) => item.json.route ?? null)).toEqual([null, 'flow']);
+  });
+});
+
+describe('Alert triage → Landfall', () => {
+  // Any source (Clickland among them) can send an alert straight to Landfall and mark the delivery `route: "direct"`, at
+  // the top of the body or in its `data`. Landfall has opened that room, so the generic flow stops such a delivery
+  // before Normalize alert: it can't open a second room or recover one it didn't open.
+  it('drops a delivery its source routed straight to Landfall, before Normalize alert', async () => {
+    const file = flows.find(([path]) => path === 'triage/flows/alert-triage-to-landfall.json')![1];
+    const workflow = { ...normalizeWorkflow(structuredClone(file.template.workflow)), id: 'wf_alert_triage' };
+    const trigger = workflow.nodes.find((n) => n.type === 'core.webhook')!;
+    const first = workflow.connections.filter((c) => c.type === 'main' && c.source === trigger.id);
+    expect(first).toHaveLength(1);
+    const gate = workflow.nodes.find((n) => n.id === first[0].target)!;
+    expect(gate.type).toBe('core.filter');
+    const next = workflow.connections.filter((c) => c.type === 'main' && c.source === gate.id);
+    expect(next.map((c) => workflow.nodes.find((n) => n.id === c.target)?.type)).toEqual(['triage.normalizeAlert']);
+
+    const webhook = (body: Record<string, unknown>, tag: string) => ({ json: { headers: {}, params: {}, query: {}, body: { ...body, tag } } });
+    const clickland = (route?: string) => ({ type: 'alert.firing', id: 'evt_1', data: { alert: { id: 'al_1', name: 'Checkout errors' }, value: 12, ...(route && { route }) } });
+    const record = await runWorkflow({
+      workflow,
+      mode: 'trigger',
+      triggerOutput: {
+        nodeId: trigger.id,
+        items: [
+          webhook(clickland('direct'), 'clickland-direct'),
+          webhook(clickland(), 'clickland-flow'),
+          webhook({ alertname: 'HighCPU', route: 'direct' }, 'generic-direct'),
+          webhook({ alertname: 'HighCPU', route: 'flow' }, 'generic-flow'),
+          webhook({ receiver: 'oncall', status: 'firing', alerts: [] }, 'alertmanager'),
+          { json: { type: 'alert.firing', alert: { id: 'al_2' }, route: 'direct', tag: 'trigger-item-direct' } },
+        ],
+      },
+      destinationNodeId: gate.id,
+    });
+    expect(record.status).toBe('success');
+    const passed = record.runData[gate.id]?.at(-1)?.outputs[0] ?? [];
+    expect(passed.map((item) => (item.json.body as { tag: string }).tag)).toEqual(['clickland-flow', 'generic-flow', 'alertmanager']);
   });
 });

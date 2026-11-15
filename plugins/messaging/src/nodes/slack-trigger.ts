@@ -8,6 +8,11 @@ const EVENTS: Array<{ name: string; value: string; description?: string }> = [
   { name: 'Any Event', value: '*', description: 'Every event the Slack app is subscribed to' },
   { name: 'App Home Opened', value: 'app_home_opened', description: 'A user opened the app\'s Home or Messages tab' },
   { name: 'App Mention', value: 'app_mention', description: 'The app was @mentioned in a channel it is in' },
+  {
+    name: 'Button Pressed',
+    value: 'block_actions',
+    description: 'Someone pressed a button in a message the app posted (Interactivity: point the app\'s Interactivity Request URL at this node; not part of Any Event)',
+  },
   { name: 'Channel Created', value: 'channel_created' },
   { name: 'Channel Renamed', value: 'channel_rename' },
   { name: 'File Public', value: 'file_public' },
@@ -28,7 +33,8 @@ export const DEFAULT_TOLERANCE_SECONDS = 300;
 export const NOTICE =
   'Slack has no API to register an Events subscription. Publish the workflow, copy this node\'s Request URL from the editor\'s Publish menu (App webhooks) into the Slack app\'s ' +
   'Event Subscriptions page (Enable Events), and subscribe to the bot events you picked below. The credential\'s Signing Secret ("Basic Information" page) is required: Landflow ' +
-  'verifies every call with it and answers Slack\'s URL verification.';
+  'verifies every call with it and answers Slack\'s URL verification. For Button Pressed, paste the same URL as the app\'s Interactivity Request URL (a Slack app has one, so use an app of its own ' +
+  'when Landflow\'s own approval buttons need /api/slack/interactions).';
 
 export const asObject = (value: unknown): JsonObject | undefined => (value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonObject) : undefined);
 export const asString = (value: unknown): string | undefined => (typeof value === 'string' && value ? value : undefined);
@@ -227,12 +233,26 @@ export const SlackTrigger = defineNode({
 
     const body = ctx.getBody<JsonObject>();
     if (body?.type === 'url_verification') return { response: { status: 200, json: { challenge: String(body.challenge ?? '') } } };
+    const selected = ctx.getNodeParameter<string[]>('events', ['app_mention']) ?? [];
+    const ignored = (reason: string) => ({ response: { status: 200, json: { ignored: reason } } });
+    // Interactivity: a button press arrives as a form field `payload` (getBody unwraps it), signed like events.
+    if (body?.type === 'block_actions') {
+      if (!selected.includes('block_actions')) return ignored('block_actions');
+      // The press exactly as Slack signed it (the form body and the two headers), so a service that verifies Slack
+      // itself (Landledger's relays) can check it again rather than trust this item.
+      const item = buttonPress(body, {
+        rawBody: ctx.getRawBody().toString('utf8'),
+        signature: ctx.getHeader('x-slack-signature') ?? '',
+        timestamp: ctx.getHeader('x-slack-request-timestamp') ?? '',
+      });
+      if (!(await channelAllowed(ctx, credentials, (item.channel as string | null) ?? undefined))) return ignored('channel');
+      // trigger_id is unique per press: a repeated delivery of the same press starts one run.
+      return { items: [item], ...(typeof body.trigger_id === 'string' && { idempotencyKey: `block_actions:${body.trigger_id}` }) };
+    }
     const event = asObject(body?.event);
     if (body?.type !== 'event_callback' || !event) return { response: { status: 200, json: { ignored: String(body?.type ?? 'unknown') } } };
 
     const type = String(event.type ?? '');
-    const selected = ctx.getNodeParameter<string[]>('events', ['app_mention']) ?? [];
-    const ignored = (reason: string) => ({ response: { status: 200, json: { ignored: reason } } });
     if (!selected.includes('*') && !selected.includes(type)) return ignored(type);
     if (ctx.getNodeParameter<boolean>('ignoreEdits', true) !== false && type === 'message' && EDIT_SUBTYPES.has(String(event.subtype ?? ''))) return ignored(String(event.subtype));
 
@@ -248,19 +268,7 @@ export const SlackTrigger = defineNode({
     }
 
     const channel = channelOf(event);
-    if (ctx.getNodeParameter<boolean>('watchWorkspace', true) === false) {
-      const wanted = channelList(ctx.getNodeParameter('channelIds', ''));
-      if (!channel || !wanted.includes(channel)) return ignored('channel');
-    }
-    const names = channelPatterns(ctx.getNodeParameter('channelNames', ''));
-    if (names.length) {
-      if (!channel) return ignored('channel');
-      const stored = ctx.getStaticData<TriggerStatic>();
-      const lookup = new SlackLookup({ http: ctx.http, metrics: ctx.metrics }, credentials, (m) => ctx.logger.warn(m), storedLookups(stored));
-      const info = await lookup.channel(channel);
-      if (lookup.changed) ctx.setStaticData({ ...stored, lookups: lookup.cache });
-      if (!info || !matchesAny(info.name, names)) return ignored('channel');
-    }
+    if (!(await channelAllowed(ctx, credentials, channel))) return ignored('channel');
 
     const message = asObject(event.message);
     const item = {
@@ -283,3 +291,64 @@ export const SlackTrigger = defineNode({
     return { items: [item], ...(typeof body.event_id === 'string' && { idempotencyKey: body.event_id }) };
   },
 });
+
+/** Whether the trigger's channel filters (Watch Whole Workspace off, Channel Name Filter) let a call about `channel` through. */
+async function channelAllowed(ctx: IWebhookContext, credentials: SlackCredentials, channel: string | undefined): Promise<boolean> {
+  if (ctx.getNodeParameter<boolean>('watchWorkspace', true) === false) {
+    const wanted = channelList(ctx.getNodeParameter('channelIds', ''));
+    if (!channel || !wanted.includes(channel)) return false;
+  }
+  const names = channelPatterns(ctx.getNodeParameter('channelNames', ''));
+  if (names.length) {
+    if (!channel) return false;
+    const stored = ctx.getStaticData<TriggerStatic>();
+    const lookup = new SlackLookup({ http: ctx.http, metrics: ctx.metrics }, credentials, (m) => ctx.logger.warn(m), storedLookups(stored));
+    const info = await lookup.channel(channel);
+    if (lookup.changed) ctx.setStaticData({ ...stored, lookups: lookup.cache });
+    if (!info || !matchesAny(info.name, names)) return false;
+  }
+  return true;
+}
+
+/** A press as Slack sent it: the raw (form-encoded) body and its signature headers. */
+export interface SignedPress {
+  rawBody: string;
+  signature: string;
+  timestamp: string;
+}
+
+/**
+ * A `block_actions` payload as one item: who pressed (`user`, the member ID; `userName`; `userTeamId`, their home
+ * team), the first action's `actionId` and `value` (the button's value, as the app set it), every action, where the
+ * message is (`channel`, `messageTs`) and the `responseUrl` to answer through, with the whole payload in `raw`. Given
+ * the signed request, `rawBody` and `headers` (`x-slack-signature`, `x-slack-request-timestamp`) keep it as received.
+ */
+export function buttonPress(body: JsonObject, signed?: SignedPress): JsonObject {
+  const user = asObject(body.user);
+  const container = asObject(body.container);
+  const message = asObject(body.message);
+  const actions = Array.isArray(body.actions) ? body.actions.map(asObject).filter((a): a is JsonObject => Boolean(a)) : [];
+  const first = actions[0];
+  return {
+    type: 'block_actions',
+    teamId: idOf(body.team) ?? null,
+    apiAppId: asString(body.api_app_id) ?? null,
+    user: idOf(user) ?? null,
+    userName: asString(user?.username) ?? asString(user?.name) ?? null,
+    userTeamId: asString(user?.team_id) ?? null,
+    channel: asString(container?.channel_id) ?? idOf(body.channel) ?? null,
+    messageTs: asString(container?.message_ts) ?? asString(message?.ts) ?? null,
+    actionId: asString(first?.action_id) ?? null,
+    blockId: asString(first?.block_id) ?? null,
+    value: asString(first?.value) ?? asString(asObject(first?.selected_option)?.value) ?? null,
+    actions,
+    responseUrl: asString(body.response_url) ?? null,
+    triggerId: asString(body.trigger_id) ?? null,
+    text: asString(message?.text) ?? '',
+    raw: body,
+    ...(signed && {
+      rawBody: signed.rawBody,
+      headers: { 'x-slack-signature': signed.signature, 'x-slack-request-timestamp': signed.timestamp },
+    }),
+  };
+}

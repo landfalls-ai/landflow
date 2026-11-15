@@ -57,8 +57,16 @@ function slack(req: FakeRequest) {
       const next = start + page.length < CHANNELS.length ? String(start + page.length) : '';
       return { body: { ok: true, channels: page, response_metadata: { next_cursor: next } } };
     }
+    case 'users.info':
+      if (req.query.get('user') === 'U_GUEST') {
+        return { body: { ok: true, user: { id: 'U_GUEST', name: 'gus', team_id: 'T1', is_restricted: true, is_ultra_restricted: false, deleted: false, profile: { email: 'gus@partner.example' } } } };
+      }
+      if (req.query.get('user') === 'U_EXT') {
+        return { body: { ok: true, user: { id: 'U_EXT', name: 'ext', team_id: 'T_OTHER', is_stranger: true, deleted: true, profile: {} } } };
+      }
+    // falls through
     case 'users.lookupByEmail':
-      if (req.query.get('email') !== 'ann@example.com') return { body: { ok: false, error: 'users_not_found' } };
+      if (method === 'users.info' ? req.query.get('user') !== 'U9' : req.query.get('email') !== 'ann@example.com') return { body: { ok: false, error: method === 'users.info' ? 'user_not_found' : 'users_not_found' } };
       return {
         body: {
           ok: true,
@@ -70,6 +78,7 @@ function slack(req: FakeRequest) {
             is_bot: false,
             is_admin: true,
             deleted: false,
+            team_id: 'T1',
             profile: { email: 'ann@example.com', display_name: 'ann', title: 'CTO', image_72: 'x' },
           },
         },
@@ -218,10 +227,31 @@ describe('Slack user and reaction', () => {
         is_bot: false,
         is_admin: true,
         deleted: false,
+        team_id: 'T1',
+        is_restricted: false,
+        is_ultra_restricted: false,
+        is_guest: false,
+        is_stranger: false,
+        is_app_user: false,
       },
     ]);
     const missing = await call({ resource: 'user', operation: 'getByEmail', email: 'nobody@example.com' });
     expect(missing.error?.message).toBe('Slack API error: users_not_found');
+  });
+
+  it('gets a user by member ID, with their email (users.info)', async () => {
+    const response = await call({ resource: 'user', operation: 'get', userId: 'U9' });
+    expect(api.requests[0]).toMatchObject({ method: 'GET', path: '/users.info' });
+    expect(api.requests[0].query.get('user')).toBe('U9');
+    expect(jsonOf(response)[0]).toMatchObject({ id: 'U9', email: 'ann@example.com', real_name: 'Ann Lee' });
+    expect((await call({ resource: 'user', operation: 'get', userId: 'U404' })).error?.message).toBe('Slack API error: user_not_found');
+  });
+
+  it('says whether a user is a guest, from another organization or deactivated', async () => {
+    const guest = jsonOf(await call({ resource: 'user', operation: 'get', userId: 'U_GUEST' }))[0];
+    expect(guest).toMatchObject({ id: 'U_GUEST', team_id: 'T1', is_restricted: true, is_ultra_restricted: false, is_guest: true, is_stranger: false, deleted: false });
+    const external = jsonOf(await call({ resource: 'user', operation: 'get', userId: 'U_EXT' }))[0];
+    expect(external).toMatchObject({ team_id: 'T_OTHER', is_guest: false, is_stranger: true, deleted: true, email: null });
   });
 
   it('adds a reaction, stripping colons from the emoji', async () => {

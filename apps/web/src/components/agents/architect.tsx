@@ -14,6 +14,7 @@ import type { ConversationItem, ConversationItemInput, ConversationPart } from '
 import { nodeColor, tint } from '@/lib/client/node-style';
 import { cn } from '@/lib/utils';
 import type { AgentConfig, AgentToolConfig } from '@/lib/shared/agents';
+import { isNodeKnowledge } from '@/lib/shared/agents';
 import { ARCHITECT, type ArchitectMissing, type ArchitectNeed, type ArchitectRequest, type ArchitectTurn } from '@/lib/shared/agent-architect';
 import { randomFace } from '@/lib/shared/faces';
 import type { NodeTypeInfo } from '@/lib/shared/types';
@@ -186,7 +187,7 @@ function ToolRow({ tool }: { tool: AgentToolConfig }) {
     subtitle = `A2A agent · ${tool.useWhen || String(tool.parameters.agentUrl ?? '') || 'No URL'}`;
   } else if (tool.type === 'knowledge') {
     icon = <KindTile icon={<BookOpen className="size-3.5" />} />;
-    subtitle = `Knowledge base · “${tool.collection}”`;
+    subtitle = isNodeKnowledge(tool) ? `Knowledge base · ${tool.nodeType}` : `Knowledge base · “${tool.collection}”`;
   } else {
     const agent = agents?.find((a) => a.id === tool.agentId);
     icon = <AgentAvatar agent={agent ?? {}} size={32} />;

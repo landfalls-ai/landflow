@@ -96,6 +96,99 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - **Agent Shell's isolation is in-process**: just-bash is a library inside the plugin's Node process (beta by its own README), not a VM. Run the plugin in a container, not on a host that holds secrets. It has no image or deploy entry yet.
 - **Dropped: a capped deepsec scan** (W5d): the user dropped it, since there is no API key (local Ollama only).
 
+## Clickland (built 2026-11-14)
+
+- **The agents' answers are not checked live yet.** On 2026-11-14 the plugin, both triggers, the webhook registration and
+  its signatures, plugin knowledge search, the credential test, telemetry and the assistant's chat contract (Clickland's
+  API → the published chat with Basic Auth → the lead) all ran against a live Clickland on this machine. The Landflow on
+  the OrbStack cluster has no Anthropic credential, so the assistant's lead and the triage agent stopped at their model
+  ("Could not resolve authentication method"): no answer, view marker, `search_clickland` call inside a conversation or
+  Slack post has been seen live. Add an Anthropic credential, pick it on both flows' Anthropic Chat Model and the three
+  analysts, and run the checks in [features/clickland.md](features/clickland.md#checked-live).
+- **The triage flow takes every alert.** The template's Alert Trigger has no Alert ID, so every alert that fires in
+  Clickland starts a triage run (and, while no Anthropic credential is picked, a failed one).
+- **Alert events have no fixed shape in the contract.** The Clickland Trigger reads an event's time from the first of
+  `createdAt`, `at`, `timestamp`, `changedAt`, `firedAt`, `time`, and an event without any of them is never emitted. It
+  reads events for at most 25 alerts per poll (those whose states changed), so a burst across more alerts takes several
+  polls. The Alert Trigger has no such limit.
+- **Alert → Update reads, then writes the whole alert** (Clickland's `PUT` takes all fields), so a change made in
+  Clickland between the two calls is overwritten.
+- **The assistant's analysts don't stream their steps.** In the observability assistant the analysts are Run an
+  Agent nodes used as the lead's tools: Clickland sees the lead's calls to them (with the `reason`) and their answers,
+  not the queries each analyst runs inside its call. A node used as a tool gets no stream to write to.
+- **The assistant's auth is a shared secret over Basic Auth.** The hosted chat has no token or HMAC scheme: Clickland
+  sends the trigger's user and password on every call, so the password must be long and random, and the call should
+  stay inside the cluster (plain HTTP there). Rotating it means changing the trigger and Clickland together.
+- **Triage's Clickland severity is the default.** Clickland's alerts carry no severity, so Normalize Alert gives them
+  Default Severity unless the alert has a `severity` field or label.
+- **Telemetry to Clickland assumes its Services.** The `orbstack-clickland` overlay expects `clickland-collector`
+  (OTLP 4317 and 4318) and `clickland-console` (4711) in `clickland-dev`, as Clickland's deployment names them (applied
+  2026-11-14 against Clickland on the Mac through its ExternalName bridge Services). Landflow's Grafana dashboard ("Landflow · agent runs") is not in Clickland: it comes only with
+  the lgtm overlay.
+- **Plugin knowledge bases: presets only in the dialog.** The knowledge dialog offers Clickland; another plugin node
+  is set through the API. It has no documents, no passages-per-search setting (the node's own limit applies) and is not
+  offered by the Agent architect, which lists only vector collections.
+
+## Landledger (built 2026-11-14)
+
+- **Not yet seen live: a decision delivered and acted on.** Subscriptions with a `webhooks:write` key and a signed
+  `request.needs_confirmation` delivery ran live on 2026-11-15; a `request.decided` or `request.step_pending` delivery
+  waits on a person confirming or deciding in Landledger, and the AI budget flow is not installed on the cluster
+  ([features/landledger.md](features/landledger.md#after-the-review-2026-11-15)).
+- **A webhook secret made by an admin serves one trigger.** Without a `webhooks:write` key, each Landledger Trigger
+  needs a credential of its own holding the `whsec_` secret of a webhook an admin made.
+- **The infra change flow applies nothing.** **Apply the change** is a placeholder; the flow posts the outcome to Slack
+  and leaves Request → Mark Applied to whoever fills it in.
+- **The infra form's requester is a claim.** Landflow's form trigger has no signed-in user, so the form names the
+  person who asks and Landledger holds the request until that person confirms it; a flow can't raise a request in a
+  person's name on its own.
+- **The AI budget flow raises automatically once per agent a month,** and holds an agent with unpublished edits
+  (publishing would ship them); a publish that fails three times is held for a person. Its Settings code nodes hold
+  Landflow's own URL, set by hand per instance.
+- **Slack decides only the budget owner's step, and only approves.** Landledger relays only that step, and a reject
+  needs a comment, which a button can't carry: the card's Reject opens Landledger (Slack's modal is not built). The
+  flow's Slack team and app ids (`SLACK_TEAM_ID`, `SLACK_APP_ID` in **Check the press**) are set by hand, and
+  Landledger's Slack relay channel must hold the same signing secret as the Slack credential.
+- **No knowledge kind.** Landledger has no explain or search route, so the plugin is not offered as an agent's knowledge
+  base.
+- **Tool or seat cost: Landbright's cost gate isn't settled yet.** The settle call follows Landbright's spec 008 (PR #5,
+  not merged) and was checked only against a stand-in, not the dev Landbright; `SETTLE_IN_LANDBRIGHT` is off until the
+  PR merges. Off, a request behind a gate expires at the gate's deadline (the flow then cancels the cost request or
+  releases the seat), and Landbright's approvers see Landledger's decision only as an annotation. A 409 from the settle
+  route is reported with its status only (the engine keeps the error's message, not Landbright's text). One seat per
+  request.
+- **Landflow can't revoke a Landbright grant.** Landbright's machine API (spec 008) has no revoke route, so a seat
+  granted first (break-glass, or an extension approved after its grant ended) whose cost Landledger doesn't approve gets
+  a revoke task for the request's approvers (the `landflow.seat_revoke` annotation) and a row in **Landledger unpaid
+  seats**, in use until the grant ends. The task is only an annotation: nobody is notified, and the approvers are
+  Landbright's people steps (the request's ref when it has none). Landledger has no reservation for a rejected request,
+  so the unpaid seat is counted in Landflow's table, not in Landledger's seat count.
+- **Extensions ride only inside the contract term.** An extension rides (its gate settled citing the first request,
+  once the setting is on) only while the first request's seat is held on the same contract, its grant is live and the
+  new end comes before the contract's renewal; otherwise it raises a request of its own, so a seat that went back or a
+  term that renews is costed again. The renewal is the contract's own date: an extension isn't split across terms.
+  With the setting off, a riding extension's gate still waits until its deadline.
+- **The seat reconcile looks back 35 days and stops on one unreadable request.** **Every hour** checks seat requests
+  raised in the last 35 days (and every unpaid seat); older ones with no row stay unrecorded. Landbright is read for
+  all of them in one HTTP node, so one request it can't answer skips the hour's reconcile, logged, until it can.
+- **A missed `notes.draft_requested` isn't sent again.** Landledger sends it once per snapshot; a flow subscribed later
+  (as on 2026-11-15) drafts only when run by hand with the event pinned
+  ([features/landledger.md](features/landledger.md#month-end-seats-and-incidents-2026-11-15)).
+- **Variance notes need a model that keeps to the figures.** The flow drafts with a local Ollama model; a draft that
+  misquotes a figure is redrafted once with Landledger's refusal, then left to Landledger's template draft, which a
+  controller creates. A model too small for the prompt gives up more often than it drafts. The agent never accepts a
+  note.
+- **Incident cost goes into a room note, not the postmortem.** The landfall plugin has no postmortem operation (and
+  Landfall's code stays unchanged), so the estimate is a Timeline note in the room, saying so. The services are what the
+  room names (the alert's entity and hints, attached context), mapped to Explore's names by hand in `SERVICE_NAMES`;
+  the window ends at the room's last move to an ended state, and Landledger's cost is daily, so the figure is the
+  services' pro-rated spend while the room was open, labelled as an estimate and not the incident's extra cost. Spend on
+  the 1st of a month may include invoice lines Landledger charges whole that day: the note says how much, but it is not
+  taken out. A room open longer than a year (12 parts of 31 days) gets no figure. The trigger polls (60 s).
+- **`$('Node').item` follows position, not lineage.** After a Switch or a step that drops items, a later node reading
+  an earlier one by `.item` can get the wrong item; the variance-notes flow works around it with a pass-through node
+  (**Notes to redraft**) before the redraft.
+
 ## Integrations that report activity (built 2026-11-12)
 
 - **Activity items** ([protocol.md §16](protocol.md#16-activity-items)) are a shape, not a pipeline: a flow records them (Record Event, Entity). `kind` is a suggestion each integration makes (`work.discussion`, `work.doc_edited`, `work.meeting_*`); the hints come from names (Slack channel prefixes, Drive folders and Notion ancestors called `Customers` / `Projects`, a shared drive's name, an attendee's domain), not from the vendor's own team model.

@@ -1225,6 +1225,88 @@ Calendar, Notion and the Directory, then for Linear, Attio and Fathom.
 the same customer named by a channel or folder. Open from Phase A: a Notion webhook trigger once Notion can create subscriptions over its API; push channels for Drive and Calendar
 once app webhooks can renew themselves; Slack message edits and deletions; the Directory's groups and org units.
 
+## Clickland (built 2026-11-14)
+
+Landflow's side of Clickland, the land family's observability system ([features/clickland.md](features/clickland.md)).
+**Built:**
+
+- The [`clickland` plugin](../plugins/clickland/README.md) (TypeScript, 7119/7219): logs, traces, services, metrics,
+  patterns, alerts, notes, knowledge search and views (dashboards included) as one node usable as an agent tool and
+  over MCP, the **Clickland Alert Trigger** (a Standard Webhooks subscription made on publish) and the **Clickland
+  Trigger** (poll). In compose, the Kubernetes base and the OrbStack overlay.
+- [Knowledge bases from a plugin](agents.md#knowledge-bases-from-a-plugin): a standalone agent takes Clickland as a
+  knowledge base (`source: 'node'`), searched like a vector collection and judged by the grounded guardrail.
+- Flows: [Clickland alert triage into Slack](features/clickland.md#alert-triage-into-slack) and the
+  [observability assistant](features/clickland.md#the-observability-assistant) behind Clickland's Assistant panel (a
+  lead with logs, traces and metrics analysts, views and dashboards), with its
+  [chat contract](features/clickland.md#the-assistant-chat-contract); Normalize Alert reads Clickland alerts.
+- [Telemetry to Clickland](deployment.md#telemetry-on-kubernetes), the default: the `orbstack-clickland` overlay
+  (component `clickland-observability`) sends every process's OTLP, the run journals and the trace links to Clickland;
+  `kagent-up.sh` bridges kagent to whichever backend the host uses. The lgtm overlay stays.
+
+Checked live on 2026-11-14 against Clickland on this machine ([features/clickland.md](features/clickland.md#checked-live)):
+the plugin, both triggers, webhook registration and signatures, knowledge search, telemetry and the assistant's chat
+contract up to the model.
+
+**Next:** the agents' answers live (the cluster's Landflow needs an Anthropic credential: the lead's view markers, its
+`search_clickland` calls and the triage Slack post); stream the assistant analysts' own steps (a node used as a tool
+would need the run's stream).
+
+## Landledger (built 2026-11-14)
+
+Landflow's side of Landledger, the land family's cost subledger ([features/landledger.md](features/landledger.md)).
+**Built:**
+
+- The [`landledger` plugin](../plugins/landledger/README.md) (TypeScript, 7120/7220): Budget → Check, Cost → Query,
+  Request → Create, Get, List, Mark Applied, Reservation → Create, Release, Period → Status, and Decision → Relay
+  (flows only: refused as an agent tool or over MCP), plus the **Landledger Trigger** (Standard Webhooks, subscribed on
+  publish or with an admin-made secret). In compose and `deploy/k8s/components/landledger` (with an ExternalName
+  `landledger-api` to the Mac), included by the `orbstack-clickland` overlay.
+- Flows: [approve an infrastructure change](features/landledger.md#approve-an-infrastructure-change),
+  [raise or hold an AI budget](features/landledger.md#raise-or-hold-an-ai-budget) and
+  [ask the approver in Slack](features/landledger.md#ask-the-approver-in-slack).
+- The Slack plugin's **Button Pressed** (`block_actions`) on the Slack Trigger and **User → Get** (`users.info`), for
+  the relay.
+
+Checked live on 2026-11-14 against Landledger's wave 2 ([features/landledger.md](features/landledger.md#checked-live)):
+the credential, the infra change form and the Slack relay path's refusal.
+
+**Review (2026-11-15), against Landledger's contract `c3c0115`:** keys split per use (requests, webhooks, a relay key
+with `decisions:relay` only) with scope-reporting credential tests; Decision → Relay sends the raw signed Slack press so
+Landledger verifies the presser; the infra flow's requester confirms in Landledger and the flow acts only on its own
+key's approved request from one of its runs; the AI budget flow raises by the approved amount, once per agent a month,
+with an hourly reconcile; the Slack flow relays only presses on cards it recorded, from its team and app, by members,
+and keeps Try again on outages; the trigger's tolerance is held to 300 s and it takes the three new events.
+
+Checked live on 2026-11-15 against Landledger `fee9b0a`: the three keys, both triggers subscribed with the webhooks
+key, a form request held for its person with a signed `request.needs_confirmation` delivery, and the Slack refusals
+(not an approver, a wrong signature, a card never sent).
+
+**Month end, seats and incidents (2026-11-15), against Landledger's wave 4 contract `2ed51f3`:** Request → Release
+Seats, Contract → Seats, the seat terms and a Landbright request on Request → Create; Close → Snapshot; Note →
+Figures and Submit Draft with a **Landledger Notes Key** (`notes:draft` only); Cost → Window; the trigger's
+`seat.released`, `notes.draft_requested`, `note.accepted`, `accrual.accepted`, `period.locked`, `period.reopened`
+and `datarails.uploaded`. Three flows: [a tool or seat cost](features/landledger.md#tool-or-seat-cost) with
+Landbright (raise at the contract's seat price, tell Landbright the decision, mark applied or release with the grant),
+[draft variance notes](features/landledger.md#draft-variance-notes) (a local Ollama model drafts each note citing only
+the snapshot's figures, one redraft on a refusal) and [an incident's cost to the room](features/landledger.md#incident-cost-to-the-room)
+(Landfall's ended room → Cost → Window → an estimated note in the room).
+
+**Review fixes (2026-11-15):** tool or seat cost recovers a Create that answered 409 (the request it names, or the
+key's own request by origin) and an **Every hour** reconcile records seat requests with no row, tells Landbright a
+decision it missed, cancels a cost request whose Landbright request ended first, and uses, releases or closes what the
+seat needs; a granted-first seat whose cost isn't approved gets a revoke task and an unpaid-seat row (Landbright has no
+revoke route); an extension inside the contract term settles citing the first request, otherwise raises its own. The
+incident note says "pro-rated spend … not the incident's extra cost", "no matching services: cost unknown" instead of
+$0.00, labels spend on the 1st, and asks windows over 31 days in parts; amounts in variance notes round as Landledger
+does.
+
+**Next:** a decision delivered live (once a person confirms or decides); the AI budget flow on the cluster; Slack's
+reject modal (`view_submission`); a Teams and an email card for the relay; Mark Applied wired to a
+real apply step in the infra flow; `SETTLE_IN_LANDBRIGHT` on once Landbright's spec 008 (PR #5) merges, checked live;
+a revoke route in Landbright (for the revoke task to become a call); a postmortem operation in the landfall plugin, for the incident cost to
+land in the postmortem; the incident flow run live once the cluster has a Landfall credential.
+
 ## The Brain page (built 2026-11-12)
 
 `/brain` opens the second brain as a repository of Markdown files in an editor's workbench

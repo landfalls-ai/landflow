@@ -66,6 +66,26 @@
       "flows": ["./flows/work-fathom.json"]
     },
     {
+      "name": "clickland",
+      "source": "./plugins/clickland",
+      "description": "Clickland observability: search logs and traces, services, metrics, log patterns, alerts, notes, knowledge search and views (dashboards included), a signed alert webhook trigger and a polling trigger. Flows: Clickland alert triage to Slack, and the observability assistant behind Clickland's Assistant panel.",
+      "version": "0.1.0",
+      "author": { "name": "Landflow" },
+      "category": "monitoring",
+      "keywords": ["clickland", "observability", "logs", "traces", "metrics", "alerts", "dashboards"],
+      "flows": ["./flows/clickland-alert-triage.json", "./flows/clickland-observability-assistant.json"]
+    },
+    {
+      "name": "landledger",
+      "source": "./plugins/landledger",
+      "description": "Landledger, the cost subledger: check budgets, query spend, raise and read spend requests, reserve and release budget, a month's status, relay a person's decision from Slack, tool-or-seat seats, a month's close snapshot and variance-note drafts, the estimated cost of a time window, and a signed webhook trigger for requests, budgets, periods and notes. Flows: approve an infrastructure change, raise or hold an AI budget, ask the approver in Slack, a tool or seat cost with Landbright, draft variance notes, and an incident's cost to the Landfall room.",
+      "version": "0.1.0",
+      "author": { "name": "Landflow" },
+      "category": "finance",
+      "keywords": ["landledger", "finance", "budget", "approval", "spend", "requests"],
+      "flows": ["./flows/landledger-ai-budget.json", "./flows/landledger-approve-infra-change.json", "./flows/landledger-incident-cost.json", "./flows/landledger-slack-approver.json", "./flows/landledger-tool-or-seat.json", "./flows/landledger-variance-notes.json"]
+    },
+    {
       "name": "landflow-brain",
       "source": "./apps/web/claude-plugins/landflow-brain",
       "description": "A Claude Code mod: your own work in the Landflow company brain (a local journal, a summary held for your review, your yesterday back at the next session, the colleagues whose work overlaps yours) and a brain_ask tool for the model.",

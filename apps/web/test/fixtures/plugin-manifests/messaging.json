@@ -926,6 +926,13 @@
      },
      "options": [
       {
+       "name": "Get",
+       "value": "get",
+       "description": "A user by member ID, with their email (users.info; the email needs users:read.email) and whether they are a guest, from another organization or deactivated",
+       "action": "Get a user",
+       "idempotent": true
+      },
+      {
        "name": "Get by Email",
        "value": "getByEmail",
        "description": "Find a user by email address",
@@ -1653,6 +1660,25 @@
      }
     },
     {
+     "name": "userId",
+     "displayName": "User ID",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "U0123456789",
+     "description": "The member ID (a message's or a button press's `user`)",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "user"
+       ],
+       "operation": [
+        "get"
+       ]
+      }
+     }
+    },
+    {
      "name": "returnAll",
      "displayName": "Return All",
      "type": "boolean",
@@ -1879,7 +1905,7 @@
     },
     {
      "name": "notice",
-     "displayName": "Slack has no API to register an Events subscription. Publish the workflow, copy this node's Request URL from the editor's Publish menu (App webhooks) into the Slack app's Event Subscriptions page (Enable Events), and subscribe to the bot events you picked below. The credential's Signing Secret (\"Basic Information\" page) is required: Landflow verifies every call with it and answers Slack's URL verification.",
+     "displayName": "Slack has no API to register an Events subscription. Publish the workflow, copy this node's Request URL from the editor's Publish menu (App webhooks) into the Slack app's Event Subscriptions page (Enable Events), and subscribe to the bot events you picked below. The credential's Signing Secret (\"Basic Information\" page) is required: Landflow verifies every call with it and answers Slack's URL verification. For Button Pressed, paste the same URL as the app's Interactivity Request URL (a Slack app has one, so use an app of its own when Landflow's own approval buttons need /api/slack/interactions).",
      "type": "notice",
      "default": ""
     },
@@ -1907,6 +1933,11 @@
        "name": "App Mention",
        "value": "app_mention",
        "description": "The app was @mentioned in a channel it is in"
+      },
+      {
+       "name": "Button Pressed",
+       "value": "block_actions",
+       "description": "Someone pressed a button in a message the app posted (Interactivity: point the app's Interactivity Request URL at this node; not part of Any Event)"
       },
       {
        "name": "Channel Created",
@@ -5099,11 +5130,5 @@
    ],
    "testable": true
   }
- ],
- "transports": [
-  "http",
-  "grpc",
-  "mcp"
- ],
- "maxConcurrency": 16
+ ]
 }
