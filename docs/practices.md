@@ -322,7 +322,9 @@ writes a warning check so the gap is visible.
 `GET /api/practices/:id/compliance` answers it for a practice you may see (404 otherwise). A run shows its own side in
 "What it saw": `GET /api/executions/:id/practices` lists each `handle@version` the run was given or checked, whether it
 cited it and how its check went, and `SawPracticesRow` (`components/run-trace/saw-practices.tsx`) draws that as "Cited" or
-"Not cited" and the check. Only practices you may see are listed; it draws nothing when the run was given none.
+"Not cited" and the check. Only practices you may see are listed; it draws nothing when the run was given none. A retry that passed on a waiver
+wrote no row of its own, so its list takes the waiver from the run it retried (through the retry chain) and shows
+"waived", unless the retry has a check of its own for that practice.
 
 The **practice-drift** detector ([second-brain.md](second-brain.md#4-detectors-and-suggestions)) files a suggestion for
 an approved practice that was given 10 times or more in 14 days and cited under 20% of them, or whose checks failed more

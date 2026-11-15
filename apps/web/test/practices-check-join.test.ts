@@ -30,6 +30,7 @@ const { storePort } = await import('@/lib/server/practices/register');
 const { approvePractice } = await import('@/lib/server/practices/approve');
 const complianceRoute = await import('@/app/api/practices/[id]/compliance/route');
 const waiversRoute = await import('@/app/api/practices/[id]/waivers/route');
+const runPracticesRoute = await import('@/app/api/executions/[id]/practices/route');
 const applicableRoute = await import('@/app/api/practices/applicable/route');
 const resolveRoute = await import('@/app/api/practices/resolve/route');
 
@@ -121,6 +122,10 @@ describe('Check Practices, compliance and the waiver', () => {
     expect(await compliance(required)).toMatchObject({ checkFail: 1, waived: 1 });
     // A practice of another project was never checked here.
     expect(await compliance(elsewhere)).toMatchObject({ checkFail: 0, checkPass: 0, waived: 0 });
+    // The retry wrote no row of its own, yet its run lists the practice as waived (the waiver of the run it retried).
+    const listed = async (id: string) => ((await (await runPracticesRoute.GET(new Request(`http://localhost/api/executions/${id}/practices`), { params: Promise.resolve({ id }) })).json()) as { practices: Array<{ handle: string; check?: string }> }).practices;
+    expect(await listed(retried!.executionId)).toEqual(expect.arrayContaining([expect.objectContaining({ handle: 'sec/no-secrets', check: 'waived' })]));
+    expect(await listed(first.executionId)).toEqual(expect.arrayContaining([expect.objectContaining({ handle: 'sec/no-secrets', check: 'waived' })]));
   });
 });
 

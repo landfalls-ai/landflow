@@ -6,6 +6,7 @@ import { COMPLIANCE_DAYS, emptyCounts, FOLLOWED_BY_MAX, type ComplianceCounts, t
 import { agentStore } from '../agents/store';
 import { database, type Database } from '../db';
 import { canResource, type Actor } from '../projects/access';
+import { waiverChain } from '../nodes/practice-check';
 import { getPractice } from './store';
 import { visiblePractice } from './views';
 
@@ -103,9 +104,11 @@ export function complianceOf(viewer: Actor, practiceId: string, days?: number, n
 
 /**
  * The practices one run was given or checked, as `handle@version`, only those the viewer may see. A check's outcome is the
- * newest of pass, fail and waived the run has for that practice (a waiver settles a failed check).
+ * newest of pass, fail and waived the run has for that practice (a waiver settles a failed check). A retry that passed on
+ * a waiver wrote no row of its own: the waiver of the run it retried (through the chain, as Check Practices reads it) shows
+ * as `waived` unless the retry has a check of its own for that practice.
  */
-export function runPractices(viewer: Actor, executionId: string): RunPracticeRow[] {
+export async function runPractices(viewer: Actor, executionId: string): Promise<RunPracticeRow[]> {
   const rows = database().all<{ practice_id: string; version: number; kind: string }>(
     'SELECT practice_id, version, kind FROM practice_applications WHERE execution_id = ? ORDER BY at, id',
     executionId,
@@ -133,6 +136,28 @@ export function runPractices(viewer: Actor, executionId: string): RunPracticeRow
     else if (row.kind === 'check-pass') entry.check = 'pass';
     else if (row.kind === 'check-fail') entry.check = 'fail';
     else if (row.kind === 'waived') entry.check = 'waived';
+  }
+  const earlier = (await waiverChain(executionId)).slice(1);
+  if (earlier.length) {
+    const marks = earlier.map(() => '?').join(', ');
+    const inherited = database().all<{ practice_id: string; version: number }>(
+      `SELECT practice_id, version FROM practice_applications WHERE execution_id IN (${marks}) AND kind = 'waived' ORDER BY at, id`,
+      ...earlier,
+    );
+    const own = new Set([...out.values()].filter((e) => e.check).map((e) => e.practiceId));
+    for (const row of inherited) {
+      if (own.has(row.practice_id) || !visiblePractice(viewer, row.practice_id)) continue;
+      const version = Number(row.version);
+      const key = `${row.practice_id}@${version}`;
+      let entry = out.get(key);
+      if (!entry) {
+        const practice = getPractice(row.practice_id);
+        if (!practice) continue;
+        entry = { practiceId: row.practice_id, handle: practice.handle, version, delivered: false, cited: false };
+        out.set(key, entry);
+      }
+      entry.check = 'waived';
+    }
   }
   return [...out.values()].map(({ practiceId: _id, ...rest }) => rest).sort((a, b) => a.handle.localeCompare(b.handle) || a.version - b.version);
 }

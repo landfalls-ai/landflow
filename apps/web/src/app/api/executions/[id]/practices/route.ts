@@ -12,5 +12,5 @@ export const GET = handler(async (_request: Request, { params }: Ctx) => {
   const actor = routeActor();
   const workflowId = executionWorkflowId(id);
   if (!workflowId || !canResource(actor, 'workflow', workflowId, 'read')) return error('Execution not found', 404);
-  return json({ practices: runPractices(actor, id) });
+  return json({ practices: await runPractices(actor, id) });
 });
