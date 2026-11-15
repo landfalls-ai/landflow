@@ -9,14 +9,15 @@ import type { ExecutionSummary } from '@/lib/shared/types';
 import { Badge } from '../ui/badge';
 import { RunTimelineLive } from './run-timeline-card';
 import { SectionTitle } from './parts';
+import { BudgetActions } from './needs-you-actions';
 import { NeedFaces } from './approval-card';
 import { listFaces } from '@/lib/shared/approval-evidence';
 
-const KIND: Record<NeedsYouRow['kind'], string> = { approval: 'Approval', form: 'Form', question: 'Question', gate: 'Checks failed', check: 'Check failed' };
+const KIND: Record<NeedsYouRow['kind'], string> = { approval: 'Approval', form: 'Form', question: 'Question', gate: 'Checks failed', check: 'Check failed', budget: 'AI budget' };
 
 /** Waits for a person and failed checks nobody settled, newest first; each opens the run. */
 export function NeedsYouList() {
-  const { items } = useNeedsYou();
+  const { items, refresh } = useNeedsYou();
   if (!items?.length) return null;
   // Who has something for you, across the runs (a dot on each member that waits).
   const faces = listFaces(items.filter((i) => i.member || i.actor?.type === 'agent'));
@@ -25,7 +26,10 @@ export function NeedsYouList() {
       <SectionTitle>Needs you · {items.length}</SectionTitle>
       {faces.length > 0 && <NeedFaces faces={faces} className="mb-2 px-1" />}
       <ul className="divide-y divide-hair overflow-hidden rounded-2xl border border-warnbd bg-warndim">
-        {items.map((item) => (
+        {items.map((item) =>
+          item.kind === 'budget' ? (
+            <BudgetRow key={`budget:${item.incidentId ?? item.title}`} item={item} onDone={refresh} />
+          ) : (
           <li key={`${item.executionId}:${item.spanId ?? item.title}`}>
             <Link href={`/runs/${item.executionId}`} className="flex min-h-[56px] items-center gap-3 px-4 py-2.5 hover:bg-acdim/60">
               <div className="min-w-0 flex-1">
@@ -41,9 +45,30 @@ export function NeedsYouList() {
               <ChevronRight className="size-4 shrink-0 text-t3" />
             </Link>
           </li>
-        ))}
+          ),
+        )}
       </ul>
     </section>
+  );
+}
+
+/** A project's AI budget item: it opens the project, and carries its own buttons. */
+export function BudgetRow({ item, onDone }: { item: NeedsYouRow; onDone: () => void }) {
+  return (
+    <li className="px-4 py-2.5">
+      <Link href={item.href ?? '/projects'} className="-mx-2 flex min-h-[56px] items-center gap-3 rounded-xl px-2 hover:bg-acdim/60">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <Badge tone="warning">{KIND.budget}</Badge>
+            <span className="truncate text-[12px] text-t3">{timeAgo(item.since)}</span>
+          </div>
+          <p className="mt-1 text-[14px] font-medium text-t1">{item.title}</p>
+          {item.detail && <p className="text-[12.5px] text-t2">{cut(item.detail, 160)}</p>}
+        </div>
+        <ChevronRight className="size-4 shrink-0 text-t3" />
+      </Link>
+      <BudgetActions row={item} onDone={onDone} className="mt-2" />
+    </li>
   );
 }
 
