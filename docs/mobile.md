@@ -171,6 +171,15 @@ The cards **Agents in this project** and **AI budget** in a project's Settings t
 The **Workspace** card after them is one column too: the default branch and branch template fields, the add field and its button,
 and **Save** are 44 px tall on a phone, and each repository's **Remove** is a 44 px target. Desktop is as it was apart from the card.
 
+### Project tasks
+
+The **Tasks** tab of a project is one column at 390 px. The five tabs scroll sideways inside their switch rather than
+overflowing the page. The status filter scrolls the same way, and **Mine**, **New task** and **Load more** are 44 px tall.
+Each task is a card (title with its priority, assignee, next wake-up, last run) instead of a row, the whole card a 44 px
+target. The task dialog rises as a bottom sheet with 44 px fields, wake-up choice, **Check out**, **Ask to run now**,
+**Approve**, **Deny**, **Open session** and **Delete**. A task row in **Needs you** has its title as the link and **Approve**,
+**Deny** and **Open task** below it, 44 px each. Desktop is as it was apart from the tab and the rows.
+
 ## Settings and agents
 
 - **Settings** is five group cards on a phone (Workspace, People & access, Governance, AI, Infrastructure), each

@@ -163,6 +163,14 @@ the run in its workflow's Runs tab (`/workflows/<id>/runs/<executionId>`, no red
 - A chosen workflow shows its runs over time below the list.
 - **What the filters cover.** The search box, Status, From and To filter the latest 200 runs the page loads, so a date range older than those shows "No runs match" although such runs exist. Actor, tool, failed steps and check filters take at most 100 matches from `GET /api/runs/search` and intersect them with those 200 runs. Word search over journal text (with match snippets) is API-only: `GET /api/runs/search?text=`.
 
+**Runs** (the list across workflows) starts with **Needs you** across every run you can see, and a card for each
+running execution showing who is working on what.
+
+`/runs/<executionId>?tab=team&member=<title>` opens a tab (`story`, `trace`, `team`, `artifacts`; `report` opens the Story, where the report is now) and, once
+the run loads, that member's sheet. With `tab=story&turn=<n>` instead it scrolls the Story to the member's `n`th turn
+and marks it (a ring and a flash): a team node's ribbon links each turn this way (`turnEntryKey` in
+`shared/run-headlines.ts`).
+
 ### Needs you for a project budget
 
 An open incident of a project's AI budget is an item in **Needs you** (kind **AI budget**) for the project's admins, the
@@ -173,13 +181,16 @@ current budget) and **Open project**; a warning has **Dismiss** and **Open proje
 `POST /api/projects/:id/budget/incidents/:incidentId` and reloads the list. See
 [projects-and-goals.md](projects-and-goals.md#ai-budget).
 
-**Runs** (the list across workflows) starts with **Needs you** across every run you can see, and a card for each
-running execution showing who is working on what.
+### Needs you for a project task
 
-`/runs/<executionId>?tab=team&member=<title>` opens a tab (`story`, `trace`, `team`, `artifacts`; `report` opens the Story, where the report is now) and, once
-the run loads, that member's sheet. With `tab=story&turn=<n>` instead it scrolls the Story to the member's `n`th turn
-and marks it (a ring and a flash): a team node's ribbon links each turn this way (`turnEntryKey` in
-`shared/run-headlines.ts`).
+A project task's run that waits for a person is an item in **Needs you** (kind **Task**) for the project's editors and admins
+and instance owners and admins: a `requested` run (a wake-up or someone's "Ask to run now") or a `waiting` one (a tool call
+waits for approval in the agent's session). It counts in Home's tile and the rail's badge. Its title opens the task
+(`/projects/<id>?tab=tasks&task=<taskId>`) or, while waiting, the agent's session; it never links to `/runs/`. A requested
+run has **Approve** (primary), **Deny** and **Open task** for one who may decide, else **Open task**; a waiting run has
+**Open session**. Approve and Deny post to `POST /api/task-runs/:runId` (session only), then the list reloads; a 409 shows
+its message under the buttons. Phone buttons are 44 px. See
+[projects-and-goals.md](projects-and-goals.md#the-tasks-tab-and-needs-you).
 
 ### A run as a timeline
 
