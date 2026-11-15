@@ -8,6 +8,7 @@ import type { AgentAccess } from './agent-access';
 import type { AgentCache } from './agent-cache';
 import type { AgentRouter } from './agent-router';
 import type { AgentFace } from './faces';
+import type { ContextMode, RunContext } from './project-context';
 
 export type { AgentMessage };
 
@@ -382,6 +383,8 @@ export interface AgentConfig {
    * Code loads each whole (its agents, skills, commands, hooks and MCP servers). Other runtimes don't use them.
    */
   plugins?: string[];
+  /** How much of the project's goals and brief the agent gets in each run (docs/agents.md#project-context). Absent = full. */
+  projectContext?: ContextMode;
 }
 
 export interface AgentVersion {
@@ -840,6 +843,8 @@ export interface AgentSession {
   conversationKey?: string;
   /** The workflow run and Run an Agent node that started this session (the execution view shows it live). */
   execution?: SessionExecution;
+  /** The project block this session's run got, and the date it pinned (a resume after approval reuses both). */
+  context?: RunContext;
   createdAt: string;
   updatedAt: string;
 }

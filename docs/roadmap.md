@@ -1988,3 +1988,14 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   Person, and Apply Cap Raise, which changes the Landflow cap and tells the budgets sync only after an admin other than
   the requester approved ([llm-gateway.md](llm-gateway.md#asking-for-a-higher-cap)). The Insights → AI "Ask for more" dialog
   (LL06) is built.
+
+## Paperclip wave 7: project context (PC03)
+
+- **PC03, built:** the "Where this work fits" block for every agent Landflow runs: the run resolves its project and goal
+  (caller, workflow, team, agent home), the builder writes the block (mission, goal chain, brief, run line; full or
+  compact, redacted and capped), it sits after the skills and before the date line, the date is pinned for the run,
+  the block's hash is part of the cache keys, and each agent has a `projectContext` switch. The test chat takes
+  `projectId`. Teams and workflows can name a goal (`goalId`). `LANDFLOW_PROJECT_CONTEXT=off` turns it off
+  ([agents.md](agents.md#project-context)). Left: the remote paths (PC04), usage attribution (PC05), the
+  availability rule (PC06) and the switch and preview in the UI (PC07).
+

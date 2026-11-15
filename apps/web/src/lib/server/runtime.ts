@@ -22,6 +22,8 @@
 import './governance/composite-rules';
 // PC01: hands the goals store to the project-context seam (lib/server/project-context/seam.ts), in both roles.
 import './goals/context-source';
+// PC03: sets the run-context provider (the project block agents get).
+import './project-context/provider';
 import { agentTriggers } from './agents/triggers';
 import { alerts } from './alerts/service';
 import { auditHeads } from './audit/anchoring';

@@ -102,6 +102,7 @@ export const workflowSchema = z
     settings: z
       .object({
         timeoutSeconds: z.number().int().min(1).max(86_400).optional(),
+        goalId: z.string().regex(/^goal_[\w-]{1,40}$/).optional(),
         errorWorkflowId: z.string().optional(),
         timezone: z.string().max(64).optional(),
         callerPolicy: z.enum(['any', 'none', 'list']).optional(),

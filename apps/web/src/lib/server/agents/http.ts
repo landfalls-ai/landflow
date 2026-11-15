@@ -1,5 +1,6 @@
 /** Request schemas and the SSE response shared by the agent routes. */
 import { z } from 'zod';
+import { CONTEXT_MODES } from '../../shared/project-context';
 import { PLUGIN_ID, type AgentConfig, type AgentStreamEvent } from '../../shared/agents';
 import { sseHeaders } from '../http';
 import { logger } from '../telemetry';
@@ -84,6 +85,7 @@ export const agentConfigSchema = z
         allowTools: z.boolean(),
       })
       .optional(),
+    projectContext: z.enum(CONTEXT_MODES).optional(),
     plugins: z.array(z.string().max(200).regex(PLUGIN_ID, 'A plugin is <plugin>@<marketplace>')).max(20).optional(),
     settings: z
       .object({

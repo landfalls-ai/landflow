@@ -14,6 +14,7 @@ Microsoft Teams channel of an agent (`/api/teams/...`). This resource is `agent-
 | Field | |
 |---|---|
 | `name`, `goal`, `description` | the goal is what the team is for; every request inside the team carries it |
+| `goalId` | a goal in the goals tree (`goal_…`) the team works for: the project context of its members names it ([agents.md](agents.md#project-context)); a value that is not a goal id is dropped |
 | `members[]` | `kind: 'agent'` (`agentId`) or `kind: 'a2a'` (`parameters` of the A2A Agent node: `agentUrl`, `authentication`, `options`; `credentials`) |
 | per member | `id`, `title` (how its manager calls it), `role` (a sentence: when to ask it), `reportsTo`, `reviews[]`, `consults[]` (peers it **may consult**), `budgetTokens`, `questionsTo` (`manager`, the default, or `person`); a Landflow agent member may have `model` (provider, model, credential: the model it runs on in this team instead of its agent's) |
 

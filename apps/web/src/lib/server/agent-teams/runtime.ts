@@ -1000,6 +1000,8 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
   const result = await runAgent({
     agent: leadAgent,
     session,
+    // The lead's session is a workflow's, so say it is the team's run: the team's project and goal, and the run line.
+    context: { caller: 'team', teamId: request.team.id, agentId: leadAgent.id, ...(request.execution && { workflowId: request.execution.workflowId, executionId: request.execution.executionId, nodeName: request.execution.nodeName }) },
     ...(request.toolImages && { toolImages: request.toolImages }),
     ...(!request.resume && { message: [config.goal ? `Team goal: ${config.goal}` : '', notebookBlock(notebookFor(root)), request.message, reportsOf(config, root.id).length ? REPORT_RULE : ''].filter(Boolean).join('\n\n') }),
     approvals,

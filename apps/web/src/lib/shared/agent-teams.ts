@@ -59,6 +59,8 @@ export interface AgentTeamConfig {
   name: string;
   /** What the team is for: every request inside it carries this (goal ancestry). */
   goal?: string;
+  /** A goal in the goals tree this team works for (`goal_…`); its project context names it (docs/agent-teams.md#goal). */
+  goalId?: string;
   description?: string;
   members: TeamMember[];
 }

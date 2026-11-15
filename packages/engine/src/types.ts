@@ -96,6 +96,8 @@ export interface WorkflowConnection {
 export interface WorkflowSettings {
   /** Stop a run after this many seconds. */
   timeoutSeconds?: number;
+  /** The goal (`goal_…`) this workflow works for: its agents' project context names it. */
+  goalId?: string;
   /** Workflow whose Error Trigger runs when an execution of this one fails. */
   errorWorkflowId?: string;
   /** IANA time zone for schedules and `$now` (default: the host's). */
