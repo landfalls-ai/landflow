@@ -148,11 +148,23 @@ export function openSpotlight(path: string) {
   setSpotlightState((s) => (isEditorRoute(path) && !s.askInstead && !s.about ? { ...s, buildFocus: s.buildFocus + 1 } : withOpen(s, true)));
 }
 /** Closing also drops an ask-about: the next ⌘K starts from the page again. */
-export const closeSpotlight = () => setSpotlightState((s) => withOpen(withoutAbout(s), false));
+export const closeSpotlight = () => setSpotlightState((s) => ({ ...withOpen(withoutAbout(s), false), askInstead: false }));
 /** Drop the brain panel on the editor without asking the builder for focus (the caller focuses it). */
 export const dropShell = (s: SpotlightState): SpotlightState => ({ ...withoutAbout(s), open: false, askInstead: false });
 /** The editor shows one column at a time: while the brain panel shows there, the builder column folds to its strip. */
 export const builderFolds = (path: string, state: Pick<SpotlightState, 'open' | 'askInstead' | 'about'>) => isEditorRoute(path) && shellPanelShows(path, state);
+/**
+ * The editor's right column holds one panel (docs/spotlight.md#one-spotlight). What to do when the brain panel, the builder
+ * column or the flow chat changes: fold the builder (and close the flow chat) when the brain panel first shows; drop the
+ * brain panel again when the builder unfolds or the flow chat opens beside it; else nothing.
+ */
+export type ColumnRule = { fold: boolean; closeChat: boolean; dropShell: boolean };
+export function columnRule(input: { brainPanelShows: boolean; wasShowing: boolean; builderFolded: boolean; column: string | null }): ColumnRule {
+  const none = { fold: false, closeChat: false, dropShell: false };
+  if (!input.brainPanelShows) return none;
+  if (!input.wasShowing) return { fold: true, closeChat: input.column === 'chat', dropShell: false };
+  return { ...none, dropShell: !input.builderFolded || input.column === 'chat' };
+}
 export const isMac = () => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 export const setBrainOpener = (openBrainPage: ((ref: string) => void) | undefined) =>
   setSpotlightState((s) => {

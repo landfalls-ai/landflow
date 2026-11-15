@@ -71,7 +71,7 @@ import { EditLockBanner, editorTabHeaders, useEditLock, useEditLockSync } from '
 import { followable, useFollowRun } from './follow-run';
 import { pinFromRun } from './pin-from-run';
 import { useFollowWaiting } from './waiting';
-import { builderFolds, dropShell, isMac, keyAction, setSpotlightState, useSpotlightState } from '../spotlight/context';
+import { builderFolds, columnRule, dropShell, isMac, keyAction, setSpotlightState, useSpotlightState } from '../spotlight/context';
 
 const nodeTypesMap = { lf: FlowNodeView, sticky: StickyNodeView, frame: GroupNodeView, ghost: GhostNodeView };
 const edgeTypesMap = { lf: FlowEdgeView, groupProxy: GroupProxyEdgeView, ghost: GhostEdgeView };
@@ -691,12 +691,12 @@ export function Editor({ workflowId }: { workflowId: string }) {
   const spotlightFolded = useAssistant((s) => s.collapsed);
   const brainShownBefore = useRef(false);
   useEffect(() => {
-    if (!brainPanelShows) brainShownBefore.current = false;
-    else if (!brainShownBefore.current) {
-      brainShownBefore.current = true;
-      useAssistant.getState().setCollapsed(true);
-    } else if (!spotlightFolded) setSpotlightState(dropShell); // the strip unfolded the builder: the brain panel goes
-  }, [brainPanelShows, spotlightFolded]);
+    const rule = columnRule({ brainPanelShows, wasShowing: brainShownBefore.current, builderFolded: spotlightFolded, column });
+    brainShownBefore.current = brainPanelShows;
+    if (rule.fold) useAssistant.getState().setCollapsed(true);
+    if (rule.closeChat) useChatColumn.getState().apply('close-chat');
+    if (rule.dropShell) setSpotlightState(dropShell); // the strip or the flow chat took the column: the brain panel goes
+  }, [brainPanelShows, spotlightFolded, column]);
   const spotlightOpen = !spotlightFolded;
   const spotlightVisible = column !== 'chat' && spotlightOpen;
   // On a phone, Spotlight's own runs take the canvas: the Execute bar steps aside while it drafts or tests.

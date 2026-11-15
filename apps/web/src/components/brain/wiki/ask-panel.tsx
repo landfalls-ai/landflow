@@ -309,8 +309,8 @@ export function useAskConversation() {
     itemsRef.current = items;
     keptRef.current = kept;
   });
-  // Leaving /brain mid-answer stops the request, so the server stops the model (and its metering) too; the turn is kept
-  // as stopped, as the Stop button keeps it.
+  // Closing the panel mid-answer stops the request, so the server stops the model (and its metering) too; the turn is kept
+  // as stopped, as the Stop button keeps it. The conversation lives in the layout, so changing page with the panel open goes on.
   useEffect(() => () => reading.current?.abort(), []);
 
   const awaitItems = (force: boolean) => {
@@ -582,7 +582,10 @@ export function AskPanel({
                         <span className="truncate">@{chip.name}</span>
                         <button
                           type="button"
-                          onClick={() => setAboutOff(true)}
+                          onClick={() => {
+                            setAboutOff(true);
+                            onSubjectOff?.();
+                          }}
                           aria-label="Ask about everything"
                           title="Ask about everything, not this page"
                           className="grid place-items-center hover:text-t1 max-md:size-9"

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { listenAskAbout, takeAskAbout, ASK_ABOUT_EVENT } from '../src/components/spotlight/ask-about-listener';
 import {
   builderFolds,
+  columnRule,
   closeSpotlight,
   dropShell,
   editorWorkflowId,
@@ -176,5 +177,22 @@ describe('one column at a time on the editor', () => {
     expect(parseAskAbout({ ref: { type: 'execution', id: 'x', name: 'x' }, starters: [] })).toBeUndefined();
     expect(keyAction(key('k', { metaKey: false, ctrlKey: true }), { brain: false, mac: true })).toBe('none');
     expect(keyAction(key('k', { metaKey: false, ctrlKey: true }), { brain: false })).toBe('toggle');
+  });
+});
+
+describe('columnRule: one right column on the editor', () => {
+  const base = { brainPanelShows: true, wasShowing: false, builderFolded: false, column: null };
+  it('does nothing while the brain panel is away', () => {
+    expect(columnRule({ ...base, brainPanelShows: false })).toEqual({ fold: false, closeChat: false, dropShell: false });
+  });
+  it('folds the builder when the panel first shows, closing an open flow chat', () => {
+    expect(columnRule(base)).toEqual({ fold: true, closeChat: false, dropShell: false });
+    expect(columnRule({ ...base, column: 'chat' })).toEqual({ fold: true, closeChat: true, dropShell: false });
+  });
+  it('drops the panel when the builder unfolds or the flow chat opens beside it', () => {
+    const was = { ...base, wasShowing: true, builderFolded: true };
+    expect(columnRule(was).dropShell).toBe(false);
+    expect(columnRule({ ...was, builderFolded: false }).dropShell).toBe(true);
+    expect(columnRule({ ...was, column: 'chat' }).dropShell).toBe(true);
   });
 });

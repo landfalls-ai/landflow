@@ -126,7 +126,8 @@ export function ShellSpotlight() {
   const switchTo = switchFor(mode, editor);
   const panel = <PanelBody mode={mode} conversation={conversation} file={state.brainFile} about={state.about?.starters} />;
   // On the Brain page a link in an answer opens in the workbench (a route change would remount it).
-  const body = state.openBrainPage ? <WikiNav.Provider value={state.openBrainPage}>{panel}</WikiNav.Provider> : panel;
+  // (Always the Provider: entering or leaving /brain must not remount the panel and lose a half-typed question.)
+  const body = <WikiNav.Provider value={state.openBrainPage}>{panel}</WikiNav.Provider>;
 
   if (phone) {
     const sheet = SHEET_HEIGHTS[height]!;
@@ -137,7 +138,7 @@ export function ShellSpotlight() {
         className={sheet.className}
         title={
           <span className="flex min-w-0 items-center gap-2">
-            <ModeChip mode={mode} {...(switchTo && { switchTo })} className="min-w-0" />
+            <ModeChip mode={mode} className="min-w-0" />
             <button
               type="button"
               onClick={() => setHeight((h) => (h + 1) % SHEET_HEIGHTS.length)}
@@ -150,7 +151,15 @@ export function ShellSpotlight() {
           </span>
         }
       >
-        <div className="-mx-4 -mb-4 h-full">{body}</div>
+        <div className="-mx-4 -mb-4 flex h-full flex-col">
+          {/* The chip sits in a clipped heading, so its offer is a plain button here. */}
+          {switchTo && (
+            <button type="button" onClick={switchTo.run} className="flex min-h-11 w-full shrink-0 items-center border-b border-hair px-4 text-left text-[13px] text-ac">
+              {switchTo.label}
+            </button>
+          )}
+          <div className="min-h-0 flex-1">{body}</div>
+        </div>
       </Sheet>
     );
   }
