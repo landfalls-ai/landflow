@@ -12,6 +12,8 @@ import { database } from '../db';
 import { productionWorkflowById } from '../publish';
 import { canResource, isInstanceAdmin, visibleIds, visibleProjectIds } from '../projects/access';
 import type { Actor } from '../projects/access';
+import { getGoal } from '../goals/store';
+import { visibleGoal } from '../goals/views';
 import { getProject, homeProjectId } from '../projects/store';
 import { aiUsageMeter } from '../ai-usage';
 import { store } from '../store';
@@ -37,6 +39,7 @@ const PERIOD_DAYS: Record<AiConsolePeriod, number> = { '24h': 1, '7d': 7, '30d':
 
 interface UsageRow {
   project_id: string | null;
+  goal_id: string | null;
   agent_id: string | null;
   user_id: string | null;
   workflow_id: string | null;
@@ -96,12 +99,12 @@ function periodRange(period: AiConsolePeriod, now: number): { from: string; to: 
 function usageRows(period: AiConsolePeriod, now: number): { rows: UsageRow[]; from: string; to: string } {
   const range = periodRange(period, now);
   const rows = database().all<UsageRow>(
-    `SELECT project_id, agent_id, user_id, workflow_id, provider, model, source, runtime,
+    `SELECT project_id, goal_id, agent_id, user_id, workflow_id, provider, model, source, runtime,
        COALESCE(SUM(input_tokens), 0) AS input, COALESCE(SUM(output_tokens), 0) AS output,
        COALESCE(SUM(cache_read_tokens), 0) AS cache_read, COALESCE(SUM(cache_write_tokens), 0) AS cache_write,
        COALESCE(SUM(cost), 0) AS cost, COUNT(*) AS calls
      FROM ai_usage WHERE ${range.clause}
-     GROUP BY project_id, agent_id, user_id, workflow_id, provider, model, source, runtime`,
+     GROUP BY project_id, goal_id, agent_id, user_id, workflow_id, provider, model, source, runtime`,
     ...range.params,
   );
   return { rows, from: range.from, to: range.to };
@@ -270,8 +273,18 @@ export function aiConsoleReport(actor: Actor, period: AiConsolePeriod, now = Dat
     ? rows
     : rows.filter((row) => row.user_id === actor.id || Boolean(row.workflow_id && workflows?.has(row.workflow_id)) || Boolean(row.agent_id && agents?.has(row.agent_id)));
 
+  // One lookup per distinct goal: the goal if the viewer sees it, null if not, undefined if it is gone.
+  const goals = new Map<string, { id: string; title: string } | null | undefined>();
+  const goalFor = (id: string) => {
+    if (!goals.has(id)) {
+      const goal = getGoal(id);
+      goals.set(id, goal && ((admin ? goal : visibleGoal(actor, id)) ?? null));
+    }
+    return goals.get(id);
+  };
+
   const totals = emptyTotals();
-  const groups: Record<AiConsoleGroup, Map<string, AiConsoleRow>> = { project: new Map(), agent: new Map(), person: new Map(), model: new Map(), source: new Map() };
+  const groups: Record<AiConsoleGroup, Map<string, AiConsoleRow>> = { project: new Map(), goal: new Map(), agent: new Map(), person: new Map(), model: new Map(), source: new Map() };
   for (const row of visibleRows) {
     add(totals, row);
     const projectId = row.project_id || (row.workflow_id ? homeProjectId('workflow', row.workflow_id) : row.agent_id ? homeProjectId('agent', row.agent_id) : undefined);
@@ -279,6 +292,14 @@ export function aiConsoleReport(actor: Actor, period: AiConsolePeriod, now = Dat
     if (!project) bump(groups.project, 'none', 'No project', row);
     else if (projects && !projects.has(project.id)) bump(groups.project, 'shared', 'Another project', row);
     else bump(groups.project, project.id, project.name, row);
+
+    if (!row.goal_id) bump(groups.goal, 'none', 'No goal', row);
+    else {
+      const goal = goalFor(row.goal_id);
+      if (goal === undefined) bump(groups.goal, row.goal_id, 'Deleted goal', row);
+      else if (goal === null) bump(groups.goal, 'other', 'Another goal', row);
+      else bump(groups.goal, goal.id, goal.title, row);
+    }
 
     const agent = row.agent_id ? agentStore.get(row.agent_id) : undefined;
     if (!row.agent_id) bump(groups.agent, 'none', 'No agent', row);
@@ -306,6 +327,7 @@ export function aiConsoleReport(actor: Actor, period: AiConsolePeriod, now = Dat
     totals,
     groups: {
       project: finish(groups.project, totals),
+      goal: finish(groups.goal, totals),
       agent: finish(groups.agent, totals),
       person: finish(groups.person, totals),
       model: finish(groups.model, totals),

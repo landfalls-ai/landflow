@@ -110,6 +110,19 @@ An agent's run gets a short "Where this work fits" block: the mission, the proje
 chain above it. How the block is built, how big it gets and how to turn it off are in
 [agents.md](agents.md#project-context).
 
+## What a goal costs
+
+Each AI call a run makes is stamped with the goal that run served. The AI page (Insights → AI) has a Goal option in
+"Spend by", after Project. Each row is a goal's title with its cost, tokens and calls.
+
+- Calls with no goal are "No goal".
+- A goal you can't see (a project goal of a project you aren't in) is "Another goal", never its title. Owners and
+  admins see every goal.
+- A goal that has been deleted is "Deleted goal".
+- The calls counted are the same ones the rest of the page counts: your own, and those of workflows and agents you can
+  read. Grouping by goal never adds calls, so the goal rows add up to the totals.
+- On a phone the six options share the width of the control.
+
 ## How it is built
 
 - Data: migration 2300 makes `goals`, `project_goals` (a project's goals and their order) and `goal_links` (initiatives);

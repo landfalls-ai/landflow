@@ -10,6 +10,7 @@ export const AI_PERIODS: Array<{ value: AiConsolePeriod; label: string }> = [
 
 export const AI_GROUPS: Array<{ value: AiConsoleGroup; label: string }> = [
   { value: 'project', label: 'Project' },
+  { value: 'goal', label: 'Goal' },
   { value: 'agent', label: 'Agent' },
   { value: 'person', label: 'Person' },
   { value: 'model', label: 'Model' },
