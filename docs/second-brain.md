@@ -113,7 +113,9 @@ The first tick is 30 s after start.
 | Missing tool | something the Agent architect needed and no node online does, grouped by the app (or the first telling word, with spellings like "Text Toolkit" and "TextToolkit" as one); one need is enough, the same person asking again the same day counts once | "Build a tool for Grafana", with a sketch of the node plugin the model writes (nodes, parameters, credential) and a link to **Build a plugin**. Its button is **Build it**: approving it starts the workflows that build one (below) |
 | Work overlap | two people whose `org` work of the last 3 days shares an initiative, a customer, a directory of the same repository, or similar words, and who were not introduced in the last 14 days ([below](#work-overlap)) | one suggestion addressed to both: "Ana and Ben are both on billing", with the `org` titles |
 | No safety net | an active workflow with 3+ failed production runs in 14 days and no error workflow | `setWorkflowSettings` with the error workflow you have, or a draft "Failure alerts" workflow when there is none |
+| Practice drift | an approved practice given 10+ times in 14 days and cited under 20% of them, or whose checks failed more than half the time ([practices.md](practices.md#compliance)) | advice: "Review <title>: rarely followed", with the numbers and a link to the practice; nothing is applied |
 
+- **Practice suggestions** (`source: practice`): every draft practice files one for the people who may approve it, and an approval, rejection or retirement on /brain settles it. A draft read from outside only links to /brain; one a person wrote is applied (approved) from the inbox by owners and admins only. Slack gets a link and no buttons ([practices.md](practices.md#the-inbox)).
 - **What a suggestion holds** (`proposals`): a title; why, with evidence; the expected effect; its changes (ops, a
   draft or persona rules); a risk tier and confidence; and its target. Its status is open, applied, dismissed (with a
   reason), snoozed or expired.
@@ -392,6 +394,7 @@ no hand-built MCP Server Trigger workflow:
 | `brain_ask` | ask the brain a question (`question`, `about`), like `POST /api/brain/ask` |
 | `my_briefing` | the caller's own briefing (`day`) |
 | `record_work` | save the caller's own work events, private |
+| `project_context` | the "Where this work fits" block of the project that lists a repository, or of a project you name (`repo`, `projectId`, `size`); the resource `project://{id}/context` is the full block ([connect-your-harness.md](connect-your-harness.md#project-context)) |
 
 Practices: see [practices.md](practices.md#following) (`practices_for`, `practice_get`, `practice_cite`,
 `practice_draft` and the `practices://` resources).

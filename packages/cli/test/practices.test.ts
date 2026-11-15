@@ -37,9 +37,9 @@ function repoWith(files: Record<string, string | null>, start: Record<string, st
   return dir;
 }
 
-const REQUIRED = { handle: 'helm/chart-location', version: 3, title: 'Chart location', level: 'org', strength: 'required', summary: 'Charts live in deploy/helm/<service>/', topics: ['helm'], repos: [], paths: [] };
-const RECOMMENDED = { handle: 'docs/readme-mentions', version: 1, title: 'README', level: 'org', strength: 'recommended', summary: 'The README names the service', topics: ['docs'], repos: [], paths: [] };
-const NOCHECK = { handle: 'config/loader', version: 2, title: 'Config loader', level: 'org', strength: 'required', summary: 'Load config in one place', topics: ['config'], repos: [], paths: [] };
+const REQUIRED = { id: 'prc_required', handle: 'helm/chart-location', version: 3, title: 'Chart location', level: 'org', strength: 'required', summary: 'Charts live in deploy/helm/<service>/', topics: ['helm'], repos: [], paths: [] as string[] };
+const RECOMMENDED = { id: 'prc_recommended', handle: 'docs/readme-mentions', version: 1, title: 'README', level: 'org', strength: 'recommended', summary: 'The README names the service', topics: ['docs'], repos: [], paths: [] };
+const NOCHECK = { id: 'prc_nocheck', handle: 'config/loader', version: 2, title: 'Config loader', level: 'org', strength: 'required', summary: 'Load config in one place', topics: ['config'], repos: [], paths: [] };
 
 interface Fake {
   calls: Array<{ method: string; url: URL; body?: any }>;
@@ -60,8 +60,9 @@ function fakeHost(options: { applicable?: unknown[]; approved?: unknown[]; learn
       // The route that gives a practice's rules the way delivery does (`GET /api/practices` is the Brain page's list and is never read for a body).
       if (method === 'GET' && url.pathname === '/api/practices/resolve') {
         const handle = url.searchParams.get('handle');
+        const id = url.searchParams.get('id');
         const level = url.searchParams.get('level');
-        const found = approved.filter((p) => p.handle === handle && (!level || p.level === level)).sort((a, b) => (a.level === 'project' ? -1 : 0) - (b.level === 'project' ? -1 : 0))[0];
+        const found = approved.filter((p) => (id ? p.id === id : p.handle === handle && (!level || p.level === level))).sort((a, b) => (a.level === 'project' ? -1 : 0) - (b.level === 'project' ? -1 : 0))[0];
         if (!found?.approved) return reply({ error: 'No approved practice' }, 404);
         const { version, body, checks } = found.approved;
         return reply({ practice: { handle: found.handle, version, title: found.title, strength: found.strength, scope: { level: found.level, topics: [], repos: [], paths: [] }, summary: '', body, checks } });
@@ -195,36 +196,38 @@ describe('check', () => {
     expect(out.json.practices[0].result).toBe('none');
   });
 
-  it('an org and a project practice of one handle and version: the check runs the one that was delivered', async () => {
+  it('an org and a project practice of one handle and version: the check reads the one that was listed, by its id', async () => {
     const dir = repoWith({ 'README.md': 'hello again\n' });
-    const orgRow = row({ ...REQUIRED, level: 'org' }, []);
-    const projectRow = row({ ...REQUIRED, level: 'project' }, CHART_CHECK);
-    const host = fakeHost({ applicable: [{ ...REQUIRED, level: 'project' }], approved: [orgRow, projectRow] });
+    const org = { ...REQUIRED, id: 'prc_org', level: 'org' };
+    const project = { ...REQUIRED, id: 'prc_project', level: 'project' };
+    const host = fakeHost({ applicable: [project], approved: [row(org, []), row(project, CHART_CHECK)] });
     const out = await cli(host, dir, ['practices', 'check', '--json']);
     expect(out.json.practices[0].checks.length).toBeGreaterThan(0);
-    expect(host.calls.find((c) => c.url.pathname === '/api/practices/resolve')?.url.searchParams.get('level')).toBe('project');
-    const orgOnly = fakeHost({ applicable: [{ ...REQUIRED, level: 'org' }], approved: [projectRow, orgRow] });
+    const ask = host.calls.find((c) => c.url.pathname === '/api/practices/resolve');
+    expect(ask?.url.searchParams.get('id')).toBe('prc_project');
+    expect(ask?.url.searchParams.get('handle')).toBeNull();
+    const orgOnly = fakeHost({ applicable: [org], approved: [row(project, CHART_CHECK), row(org, [])] });
     const asOrg = await cli(orgOnly, dir, ['practices', 'check', '--json']);
     expect(asOrg.json.practices[0].result).toBe('none');
   });
 
-  it('an org and a project practice of one handle and version are both checked, each with its own level and paths', async () => {
+  it('an org and a project practice of one handle and version are both checked, each by its own id and paths', async () => {
     const dir = repoWith({ 'README.md': 'hello again\n' });
-    const orgRow = row({ ...REQUIRED, level: 'org' }, [{ kind: 'pathExists', glob: 'no/such/file' }]);
-    const projectRow = row({ ...REQUIRED, level: 'project', handle: 'helm/other' }, []);
-    const host = fakeHost({ applicable: [{ ...REQUIRED, level: 'org' }, { ...REQUIRED, level: 'project' }], approved: [orgRow, row({ ...REQUIRED, level: 'project' }, CHART_CHECK), projectRow] });
+    const org = { ...REQUIRED, id: 'prc_org', level: 'org' };
+    const project = { ...REQUIRED, id: 'prc_project', level: 'project' };
+    const host = fakeHost({ applicable: [org, project], approved: [row(org, [{ kind: 'pathExists', glob: 'no/such/file' }]), row(project, CHART_CHECK)] });
     const out = await cli(host, dir, ['practices', 'check', '--json']);
     expect(out.json.practices).toHaveLength(2);
     const asks = host.calls.filter((c) => c.url.pathname === '/api/practices/resolve');
-    expect(asks.map((c) => c.url.searchParams.get('level')).sort()).toEqual(['org', 'project']);
+    expect(asks.map((c) => c.url.searchParams.get('id')).sort()).toEqual(['prc_org', 'prc_project']);
     expect(asks.every((c) => c.url.searchParams.getAll('path').includes('README.md'))).toBe(true);
   });
 
   it('two project practices of one handle and version with different paths are not merged', async () => {
     const dir = repoWith({ 'README.md': 'hello again\n' });
-    const a = { ...REQUIRED, level: 'project', paths: ['a/**'] };
-    const b = { ...REQUIRED, level: 'project', paths: ['b/**'] };
-    const host = fakeHost({ applicable: [a, b], approved: [row({ ...REQUIRED, level: 'project' }, CHART_CHECK)] });
+    const a = { ...REQUIRED, id: 'prc_a', level: 'project', paths: ['a/**'] };
+    const b = { ...REQUIRED, id: 'prc_b', level: 'project', paths: ['b/**'] };
+    const host = fakeHost({ applicable: [a, b], approved: [row(a, CHART_CHECK), row(b, CHART_CHECK)] });
     const out = await cli(host, dir, ['practices', 'check', '--json']);
     expect(out.json.practices).toHaveLength(2);
   });

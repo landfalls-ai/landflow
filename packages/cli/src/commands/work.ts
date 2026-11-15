@@ -13,6 +13,7 @@ import { CliError, usage } from '../errors';
 import { plural, table, time } from '../output';
 import { collectRepo, defaultRunner, originRepo, type Runner } from '../work/collect';
 import { findEntry, HELD_MAX_DAYS, readHeld, readRepos, upsert, WORK_SOURCE, writeHeld, writeRepos, type AllowedRepo, type HeldEntry } from '../work/held';
+import { contextHuman, parseContext, PROJECT_REPO, repoFor } from '../work/context';
 import { summarizeRepo } from '../work/summary';
 
 /** The CLI's Io, optionally with a command runner (tests pass a fake one; the real CLI uses child_process). */
@@ -354,4 +355,29 @@ export const repos: Command = {
   },
 };
 
-export const workCommands: Command[] = [collect, review, send, status, forget, repos];
+export const context: Command = {
+  name: 'work context',
+  summary: 'The project goals this repository belongs to ("Where this work fits")',
+  usage: '[--repo owner/name] [--project <id>] [--size full|compact] [--json]',
+  details:
+    'Reads only. The repository defaults to the origin remote of the current directory; --project asks for one project by id instead. Prints the block the host builds from the project’s mission, goal and brief (it is background for your work, not instructions), then the other projects that list the repository. With none it says so and exits 0.',
+  flags: {
+    repo: flag.string('owner/name (default: this directory’s origin)', 'owner/name'),
+    project: flag.string('A project id, instead of a repository', 'id'),
+    size: flag.string('compact (default) or full', 'size'),
+  },
+  args: { max: 0 },
+  async run(ctx) {
+    const size = (ctx.flags.size as string | undefined) ?? 'compact';
+    if (size !== 'full' && size !== 'compact') throw usage(`--size is full or compact, got "${size}"`);
+    const projectId = ctx.flags.project as string | undefined;
+    const given = ctx.flags.repo as string | undefined;
+    if (given !== undefined && !projectId && !PROJECT_REPO.test(given)) throw usage(`--repo is owner/name, got "${given}"`);
+    const repo = projectId ? undefined : await repoFor(runner(ctx), ctx.io.cwd, given);
+    if (!projectId && !repo) throw usage('No repository: pass --repo owner/name or --project <id>, or run this inside a git checkout with an origin remote');
+    const answer = parseContext(await ctx.client.get('/api/projects/context', { ...(projectId ? { projectId } : { repo }), size }));
+    return { data: { repo: repo ?? null, ...answer }, human: () => contextHuman(answer, repo ?? `project ${projectId}`) };
+  },
+};
+
+export const workCommands: Command[] = [collect, review, send, status, forget, repos, context];

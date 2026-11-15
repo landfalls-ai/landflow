@@ -13,7 +13,7 @@ import { allowedTypes } from '@/lib/server/assistant/scope';
 import { currentPrincipal } from '@/lib/server/auth/guard';
 import { handler, parseBody } from '@/lib/server/http';
 import { sseResponse } from '@/lib/server/sse';
-import { routeActor } from '@/lib/server/projects/http';
+import { requireProject, routeActor } from '@/lib/server/projects/http';
 import { traceparentHeader } from '@/lib/server/telemetry';
 import { recordUsage } from '@/lib/server/usage/ledger';
 
@@ -27,6 +27,8 @@ const Body = z.object({
     .refine((messages) => messages.at(-1)?.role === 'user', 'The last message must be from the user'),
   draft: z.record(z.string(), z.unknown()).optional(),
   model: z.string().max(100).optional(),
+  /** The project the agent is built for (PC10): its goals reach the architect as data. */
+  projectId: z.string().max(200).optional(),
   /** Continue a reply that failed after some steps, from the checkpoint its `error` event gave. */
   resume: z.object({ checkpoint: z.string().max(64) }).optional(),
 });
@@ -34,9 +36,10 @@ const Body = z.object({
 export const POST = handler(async (request: Request) => {
   const parsed = await parseBody(request, Body);
   if (!parsed.ok) return parsed.response;
-  const { messages, model, resume } = parsed.data;
+  const { messages, model, resume, projectId } = parsed.data;
   const draft = parsed.data.draft as Partial<AgentConfig> | undefined;
   const actor = routeActor();
+  if (projectId) requireProject(actor, projectId, 'read'); // PC10: 404 without a role
   const types = allowedTypes(undefined, actor);
   // The models and knowledge bases the draft can use: a local model by default (docs/agents.md#agent-architect).
   const resources = await agentResources(actor);
@@ -55,7 +58,7 @@ export const POST = handler(async (request: Request) => {
         write(event, { event: event.type });
       };
       try {
-        await runArchitect({ messages, ...(draft && { draft }), ...(model && { model }), types, actor, resources, signal: abort.signal, onEvent: send, trace: true, ...(resumed && { resume: resumed }) });
+        await runArchitect({ messages, ...(draft && { draft }), ...(model && { model }), types, actor, resources, ...(projectId && { projectId }), signal: abort.signal, onEvent: send, trace: true, ...(resumed && { resume: resumed }) });
       } catch (caught) {
         if (!abort.signal.aborted) send({ type: 'error', kind: 'internal', message: errorText(caught) });
       } finally {

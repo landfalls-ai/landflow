@@ -88,7 +88,7 @@ export const POST = handler(async (request: Request) => {
         write(event, { event: event.type });
       };
       try {
-        await runChat({ ...rest, types, teams, agents, workflow: { ...workflow, id: meteredWorkflowId(workflowId ?? workflow.id) ?? 'draft' } as Workflow, signal: abort.signal, onEvent: send, trace: true, tagged, ...(actorId && { userId: actorId }), ...(resumed && { resume: resumed }) });
+        await runChat({ ...rest, types, teams, agents, workflow: { ...workflow, id: meteredWorkflowId(workflowId ?? workflow.id) ?? 'draft' } as Workflow, signal: abort.signal, onEvent: send, trace: true, tagged, actor: routeActor(), ...(actorId && { userId: actorId }), ...(resumed && { resume: resumed }) });
       } catch (caught) {
         if (!abort.signal.aborted) send({ type: 'error', kind: 'internal', message: errorText(caught) });
       } finally {

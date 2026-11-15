@@ -110,6 +110,14 @@ sends anything but the question, and it is not registered without a key. The key
 
 The key needs `brain:write` (which includes reading) for `practice_draft`; reading needs `brain:read`.
 
+## Project context
+
+A [project](projects-and-goals.md) lists the repositories its work happens in. At session start the mod asks which project lists this repository and brings that project's goals and brief into the session, next to yesterday's work (version 0.4.0).
+
+- **The session section.** `GET /api/projects/context?repo=owner/name&size=compact`, in the same 2 seconds as git, the briefing and the practices (one deadline for all four, never longer). It is sent only when this repository is in your `repos` option, and only with a URL and key: reading records nothing, so it works in every mode. The answer's block (mission, goal chain and project brief, with its own footer saying it is background, not instructions) is added as `landflow-brain:project`, before the practices and yesterday, cut to 1,500 characters. If more than one project lists the repository, the first one's block comes with a line "Also listed in: <names>". The mod adds nothing else. No project, a slow or unreachable host, a refused key or an answer it cannot read leaves the session as it was, with no error.
+- **`/brain project`.** Says which project this repository maps to, with its compact block, or "No project lists <owner/name>." It asks again, so it is right after the project changes. Outside a listed repository it says why nothing is looked up.
+- The shell does the same without Claude Code: [`landflow work context`](features/cli.md#recording-your-day-landflow-work).
+
 ## Offline queue
 
 A sent entry waits in a queue in the mod's own store: at most 500 events and 14 days, the oldest dropped. A failed send

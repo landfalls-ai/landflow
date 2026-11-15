@@ -10,7 +10,7 @@
  * transaction (./transfer).
  */
 import { nanoid } from 'nanoid';
-import { personalProjectId, PROJECT_ROLES, type ProjectRole, type ProjectType, type ResourceKind, type ShareRole } from '../../shared/projects';
+import { ALL_PROJECTS, personalProjectId, PROJECT_ROLES, type ProjectRole, type ProjectType, type ResourceKind, type ShareRole } from '../../shared/projects';
 import { recordAudit } from '../audit';
 import { can } from '../../shared/auth';
 import { authDb } from '../auth/db';
@@ -33,6 +33,7 @@ export interface ProjectRecord {
   targetDate?: string;
   leadId?: string;
   decisionOwnerId?: string;
+  repos?: string[]; // PC10: owner/name, lowercased
   createdAt: string;
   updatedAt: string;
   createdBy?: string;
@@ -83,6 +84,7 @@ interface ProjectRow {
   target_date?: string | null;
   lead_id?: string | null;
   decision_owner_id?: string | null;
+  repos?: string | null; // PC10: JSON
   created_at: string;
   updated_at: string;
   created_by: string | null;
@@ -119,7 +121,18 @@ const db = () => authDb();
 
 const isRole = (role: string): role is ProjectRole => (PROJECT_ROLES as readonly string[]).includes(role);
 
+/** PC10: the repositories column (a JSON array of owner/name). */
+function parseRepos(raw: string | null | undefined): string[] {
+  try {
+    const value: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 function projectFrom(row: ProjectRow): ProjectRecord {
+  const repos = parseRepos(row.repos);
   return {
     id: row.id,
     name: row.name,
@@ -135,6 +148,7 @@ function projectFrom(row: ProjectRow): ProjectRecord {
     ...(row.target_date && { targetDate: row.target_date }),
     ...(row.lead_id && { leadId: row.lead_id }),
     ...(row.decision_owner_id && { decisionOwnerId: row.decision_owner_id }),
+    ...(repos.length && { repos }), // PC10
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(row.created_by && { createdBy: row.created_by }),
@@ -157,6 +171,7 @@ function projectRow(project: ProjectRecord) {
     target_date: project.targetDate ?? null,
     lead_id: project.leadId ?? null,
     decision_owner_id: project.decisionOwnerId ?? null,
+    repos: project.repos?.length ? JSON.stringify(project.repos) : null, // PC10
     created_at: project.createdAt,
     updated_at: project.updatedAt,
     created_by: project.createdBy ?? null,
@@ -276,6 +291,19 @@ export function updateProject(id: string, patch: { name?: string; description?: 
   return next;
 }
 
+/** PC10: set the repositories a project lists (already validated and lowercased; [] clears). Audited. */
+export function setProjectRepos(id: string, repos: string[]): ProjectRecord {
+  const project = getProject(id);
+  if (!project) throw new ProjectError('Project not found', 404);
+  const next: ProjectRecord = { ...project, updatedAt: new Date().toISOString() };
+  if (repos.length) next.repos = repos;
+  else delete next.repos;
+  if (JSON.stringify(project.repos ?? []) === JSON.stringify(repos)) return project;
+  db().upsert('projects', projectRow(next));
+  recordAudit({ action: 'project.update', target: { type: 'project', id, name: next.name }, project: id, summary: `Changed the repositories of ${next.name}`, details: { reposFrom: (project.repos ?? []).join(', ') || null, reposTo: repos.join(', ') || null } });
+  return next;
+}
+
 /**
  * Set or clear brief fields (`null` clears; a field left out stays). Throws a 400 for a lead or decision owner who has no role in
  * the project. Audits `project.brief_changed` with each changed field's old and new value.
@@ -314,9 +342,11 @@ function hasRoleIn(project: ProjectRecord, userId: string): boolean {
  * Remove a project row with its members, the shares made to it, its `project_goals` rows and its own project goals with their links
  * (./transfer moves its resources first). Its project-level practices are retired, not deleted: their versions and applications
  * stay for the audit trail, and no agent gets them again (a practice approved by one project's people is never handed to another's). Sub-goals of a removed goal go up to its nearest remaining ancestor, or become roots.
+ * Returns the ids of the practices it retired, so the caller can settle their inbox suggestions once the transaction holds.
  */
-export function removeProjectRows(id: string) {
+export function removeProjectRows(id: string): string[] {
   const database = db();
+  const retired: string[] = [];
   database.transaction(() => {
     const own = database.all<{ id: string; parent_id: string | null }>('SELECT id, parent_id FROM goals WHERE project_id = ?', id);
     const gone = new Map(own.map((g) => [g.id, g.parent_id]));
@@ -341,6 +371,7 @@ export function removeProjectRows(id: string) {
     for (const practice of database.all<{ id: string; handle: string }>("SELECT id, handle FROM practices WHERE project_id = ? AND status <> 'retired'", id)) {
       const row = database.get<Record<string, unknown>>('SELECT * FROM practices WHERE id = ?', practice.id);
       if (row) database.upsert('practices', { ...row, status: 'retired', updated_at: new Date().toISOString() });
+      retired.push(practice.id);
       recordAudit({ action: 'practice.retired', target: { type: 'practice', id: practice.id, name: practice.handle }, project: id, summary: `Retired ${practice.handle}: its project was deleted` });
     }
     database.delete('project_members', { project_id: id });
@@ -349,6 +380,7 @@ export function removeProjectRows(id: string) {
     }
     database.delete('projects', { id });
   });
+  return retired;
 }
 
 /** Keep a personal project's name in step with its user's. */
@@ -541,7 +573,7 @@ export function putShare(kind: ResourceKind, id: string, projectId: string, role
 
 /** `resource.share` (new, or its role moved) and `resource.unshare`: the kind, the resource, with whom and the role from → to. */
 export function auditShare(kind: ResourceKind, id: string, projectId: string, from: ShareRole | undefined, to: ShareRole | undefined) {
-  const withName = getProject(projectId)?.name ?? projectId;
+  const withName = projectId === ALL_PROJECTS ? 'all projects' : (getProject(projectId)?.name ?? projectId); // PC06: the '*' share
   recordAudit({
     action: to ? 'resource.share' : 'resource.unshare',
     target: { type: kind, id },

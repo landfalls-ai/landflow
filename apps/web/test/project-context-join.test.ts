@@ -48,6 +48,7 @@ await import('@/lib/server/runtime');
 const { contextDataSource, runContextProvider, practicesSource } = await import('@/lib/server/project-context/seam');
 const { goalsContextSource } = await import('@/lib/server/goals/context-source');
 const { projectContextProvider } = await import('@/lib/server/project-context/provider');
+const { selectForRun } = await import('@/lib/server/practices/context-source');
 const { database } = await import('@/lib/server/db');
 const { createUser } = await import('@/lib/server/auth/users');
 const { createTeamProject, setHomeProject, setMember, updateProjectBrief } = await import('@/lib/server/projects/store');
@@ -68,10 +69,10 @@ afterAll(() => {
 });
 
 describe('the project-context join', () => {
-  it('runtime.ts sets the goals store as the data source and the real provider; no practices source in wave 7', () => {
+  it('runtime.ts sets the goals store as the data source, the real provider and (PR06) the practices source', () => {
     expect(contextDataSource()).toBe(goalsContextSource);
     expect(runContextProvider()).toBe(projectContextProvider);
-    expect(practicesSource()).toBeUndefined();
+    expect(practicesSource()?.select).toBe(selectForRun);
   });
 
   it('an agent run in a project with a goal gets the block, and its ai_usage row names the project and the goal', async () => {

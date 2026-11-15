@@ -16,6 +16,7 @@ import { ChangeDiff } from './diff-view';
 import { ConnectionList } from './connections';
 import { Avatar, ResultChip, SectionTitle, Tap, ValueBlock, clock, who } from './parts';
 import { Doc, TextBlock } from './rich-text';
+import { RunScopeChips, WhatItSaw, sawOf } from './what-it-saw';
 import { imagesOf, ToolImages, withoutImages } from './tool-images';
 import { RerunPanel, useRunControls } from './run-controls';
 import { TeamPauseBar } from '../editor/team-pause';
@@ -166,7 +167,8 @@ function SpanSheet({
   const developerDetails = useDeveloperDetails();
   const edits = span.kind === 'tool' ? changes?.files.flatMap((f) => f.changes.filter((c) => c.spanId === span.id).map((c) => ({ file: f.path, c }))) : undefined;
   const kids = span.children.map((id) => model.spans[id]).filter((s) => s && !s.hidden);
-  const attrs = Object.entries(span.attrs).filter(([k]) => k !== 'hidden');
+  const saw = sawOf(span.attrs.saw);
+  const attrs = Object.entries(span.attrs).filter(([k]) => k !== 'hidden' && k !== 'saw');
   return (
     <>
       <div className="flex flex-wrap items-center gap-1.5 pb-3">
@@ -181,6 +183,7 @@ function SpanSheet({
           </Badge>
         )}
       </div>
+      {span.id === 'run' && <RunScopeChips project={span.attrs.project} goal={span.attrs.goal} />}
       <Facts
         rows={[
           [
@@ -209,6 +212,7 @@ function SpanSheet({
         <Value label="Came back" value={withoutImages(span.output)} repo={repo} />
         <Value label="Error" value={span.error} tone="error" repo={repo} />
       </div>
+      {saw && <WhatItSaw mode={saw.mode} text={saw.text} persona={saw.persona} practices={saw.practices} executionId={model.executionId} withheld={saw.withheld} />}
       {span.id !== 'run' && span.kind !== 'wait' && span.kind !== 'model' && <RerunPanel model={model} spanId={span.id} />}
       {span.checks.length > 0 && (
         <>

@@ -41,7 +41,7 @@ function fromZod(schema: z.ZodType): Json {
 const samplePath = (path: string) => path.replace(/\{[^}]+\}/g, 'sample');
 
 interface Operation {
-  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Settings' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks' | 'Conversations' | 'Goals' | 'Practices';
+  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Settings' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks' | 'Conversations' | 'Goals' | 'Practices' | 'Projects';
   id: string;
   summary: string;
   description?: string;
@@ -845,6 +845,15 @@ function paths(): Record<string, Record<string, Json>> {
     query: exportQuery,
     responses: { 200: zipReply, 400: invalid, 404: notFound },
   });
+  // PC07:
+  add('get', '/api/agents/{id}/context-preview', {
+    tag: 'Agents',
+    id: 'previewAgentContext',
+    summary: 'What a chat with the agent in a project would be given',
+    description: 'The project block in the agent’s Project context mode (`text`, and the `compact` block) and the approved practices the agent would follow (`practices.text`, `practices.list` of `{ handle, version }`), built as a chat in that project would build them. Reads only: no delivery is recorded. Without `projectId`, the agent’s home project. For editors of the agent; a project the agent is not available in, or you have no role in, is 404.',
+    query: [{ name: 'projectId', description: 'The project to preview (default: the agent’s home project)', schema: { type: 'string' } }],
+    responses: { 200: reply('The preview', object({ projectId: { type: 'string' }, mode: { type: 'string', enum: ['full', 'compact', 'off'] }, text: { type: 'string' }, compact: { type: 'string' }, practices: object({ text: { type: 'string' }, list: array(object({ handle: { type: 'string' }, version: { type: 'integer' } }, ['handle', 'version'])) }, ['text', 'list']) }, ['mode', 'text', 'compact', 'practices'])), 404: notFound },
+  });
   add('get', '/api/agent-teams/{id}/export', {
     tag: 'Agent teams',
     id: 'exportAgentTeamPlugin',
@@ -1194,7 +1203,7 @@ function paths(): Record<string, Record<string, Json>> {
     summary: 'Rename a project or change its brief',
     description: 'The project’s admins. `brief` sets the brief, constraints, done-when, words we use, status, target date, lead and decision owner (`null` clears one); the lead and decision owner must have a role in the project. `GET /api/projects/{id}` returns the brief as `project.brief`.',
     pathParams: { id: 'The project id' },
-    body: jsonBody(object({ name: { type: 'string', maxLength: 120 }, description: { type: ['string', 'null'], maxLength: 500 }, icon: { type: ['string', 'null'] }, brief: object({ brief: { type: ['string', 'null'], maxLength: 1500 }, constraints: { type: ['string', 'null'], maxLength: 1000 }, doneWhen: { type: ['string', 'null'], maxLength: 600 }, glossary: { type: ['string', 'null'], maxLength: 800 }, status: { type: ['string', 'null'], enum: ['planned', 'active', 'paused', 'done', null] }, targetDate: { type: ['string', 'null'] }, leadId: { type: ['string', 'null'] }, decisionOwnerId: { type: ['string', 'null'] } }) })),
+    body: jsonBody(object({ name: { type: 'string', maxLength: 120 }, description: { type: ['string', 'null'], maxLength: 500 }, icon: { type: ['string', 'null'] }, repos: { type: 'array', items: { type: 'string' }, maxItems: 20, description: 'owner/name, lowercased (PC10)' }, brief: object({ brief: { type: ['string', 'null'], maxLength: 1500 }, constraints: { type: ['string', 'null'], maxLength: 1000 }, doneWhen: { type: ['string', 'null'], maxLength: 600 }, glossary: { type: ['string', 'null'], maxLength: 800 }, status: { type: ['string', 'null'], enum: ['planned', 'active', 'paused', 'done', null] }, targetDate: { type: ['string', 'null'] }, leadId: { type: ['string', 'null'] }, decisionOwnerId: { type: ['string', 'null'] } }) })),
     responses: { 200: reply('The project', object({ project: { type: 'object', additionalProperties: true } }, ['project'])), 400: invalid, 403: errorRef('Not a project admin'), 404: notFound },
   });
 
@@ -2301,6 +2310,22 @@ function paths(): Record<string, Record<string, Json>> {
     query: [text('limit', '1 to 100'), text('cursor', 'From the previous page’s `nextCursor`')],
     responses: { 200: reply('A page', object({ applications: array({ type: 'object' }), nextCursor: { type: 'string' } }, ['applications'])), 404: notFound },
   });
+  // PR09:
+  add('get', '/api/practices/{id}/compliance', {
+    tag: 'Practices',
+    id: 'getPracticeCompliance',
+    summary: 'How a practice is followed',
+    description: 'Needs the `brain:read` scope (or a session). Over the last `days` (1 to 90, default 30): how often it was given (`delivered`), cited, passed or failed its checks and waived, the agents that cited it most (`followedBy`, at most 10, only those the caller may read; the rest are counted in `otherAgents`), `lastApplied` and the same counts per version. 404 for a practice the caller may not see.',
+    query: [text('days', '1 to 90, default 30')],
+    responses: { 200: reply('The counts', object({ compliance: { type: 'object', description: 'A PracticeCompliance (lib/shared/practice-compliance.ts)' } }, ['compliance'])), 400: invalid, 404: notFound },
+  });
+  add('get', '/api/executions/{id}/practices', {
+    tag: 'Practices',
+    id: 'getExecutionPractices',
+    summary: 'The practices a run was given',
+    description: 'Needs the `executions:read` scope (or a session). Each practice the run was given or checked as `{ handle, version, delivered, cited, check? }` (`check`: pass, fail or waived), only practices the caller may see. 404 for a run the caller may not read.',
+    responses: { 200: reply('The practices', object({ practices: array({ type: 'object' }) }, ['practices'])), 404: notFound },
+  });
   // PR03:
   add('post', '/api/practices/learn', {
     tag: 'Practices',
@@ -2366,7 +2391,8 @@ function paths(): Record<string, Record<string, Json>> {
     description:
       'Needs the `brain:read` scope or a session. The approved version of one practice: its rules, scope and machine checks, redacted, exactly the one `applicable` delivered for the same `repo`, `path`s, `topic`s and `projectId` (the same filter and ranking; `level` keeps a winner of that level). 404 when practices are off, when delivery gave none, or for a project the caller has no role in. Unlike the Brain page’s list, this never gives a body while practices are off.',
     query: [
-      { name: 'handle', description: 'The practice’s handle', required: true, schema: { type: 'string' } },
+      { name: 'handle', description: 'The practice’s handle. Give this or `id`, not both.', schema: { type: 'string' } },
+      { name: 'id', description: 'The practice’s id (`prc_…`, as `applicable` lists it). Given, it is found only when delivery gives it for the same `repo`, `path`s and `topic`s; 404 otherwise. Give this or `handle`, not both.', schema: { type: 'string' } },
       { name: 'repo', description: 'owner/name, as given to `applicable`', schema: { type: 'string' } },
       { name: 'path', description: 'A repository-relative path, as given to `applicable`; repeat for more (at most 20)', schema: { type: 'string' } },
       { name: 'topic', description: 'A topic, as given to `applicable`; repeat for more (at most 5)', schema: { type: 'string' } },
@@ -2387,6 +2413,55 @@ function paths(): Record<string, Record<string, Json>> {
       'Needs the `brain:write` scope or a session. Reads the “Practices followed: [handle@version], …” line of `text` and any `Practice: handle@version` lines (a commit’s), plus `citations`, at most 20 in all, and records a `cited` row for each version of a practice the caller may get. The rest come back in `unknown`. An `executionId` the caller cannot read is 404.',
     body: jsonBody(object({ text: { type: 'string', maxLength: 20000 }, citations: { type: 'array', items: { type: 'string' }, maxItems: 20 }, executionId: { type: 'string' }, repo: { type: 'string' } })),
     responses: { 200: reply('What was recorded', object({ recorded: array({ type: 'string' }), unknown: array({ type: 'string' }) }, ['recorded', 'unknown'])), 400: invalid, 404: notFound },
+  });
+  // PC06: agents across projects.
+  const availabilityDoc = object({ home: object({ id: { type: 'string' }, name: { type: 'string' } }, ['id', 'name']), all: { type: 'boolean' }, projects: array(object({ id: { type: 'string' }, name: { type: 'string' } }, ['id', 'name'])) }, ['home', 'all', 'projects']);
+  const agentSharesDoc = object({ availability: availabilityDoc, shares: array({ type: 'object', description: 'projectId, projectName, projectType, role (`user`), createdAt, createdBy' }) }, ['availability', 'shares']);
+  add('get', '/api/agents/{id}/shares', {
+    tag: 'Agents',
+    id: 'getAgentShares',
+    summary: 'Where an agent is available',
+    description: 'Its home project, the projects it is shared with (only those the caller has a role in; `[]` when `all` is true) and whether it is shared with all projects. The “All projects” row is not in `shares`.',
+    pathParams: { id: 'The agent id' },
+    responses: { 200: reply('The availability', agentSharesDoc), 404: notFound },
+  });
+  add('put', '/api/agents/{id}/shares', {
+    tag: 'Agents',
+    id: 'setAgentShares',
+    summary: 'Make an agent available to projects',
+    description: 'Admins of the agent’s home project, owners and admins. Replaces every share; the home project in `projectIds` is ignored and an unknown project is 404. `all: true` shares it with every project. Each change is audited.',
+    pathParams: { id: 'The agent id' },
+    body: jsonBody(object({ projectIds: { type: 'array', items: { type: 'string' }, maxItems: 100, uniqueItems: true }, all: { type: 'boolean' } }, ['projectIds', 'all'])),
+    responses: { 200: reply('The availability', agentSharesDoc), 400: invalid, 403: errorRef('Not an admin of the agent’s project'), 404: notFound },
+  });
+  add('get', '/api/agents', {
+    tag: 'Agents',
+    id: 'listAgents',
+    summary: 'List the agents the caller sees',
+    description: 'Each agent has its `ownership`. `availableIn` lists only the agents available in that project (its own, shared to it, or shared with all); the caller needs a role there, else 404 “Project not found”. For a shared agent `ownership.shared` is true and `ownership.projectName` is its home.',
+    query: [
+      { name: 'projectId', description: 'Only the agents this project owns or has been shared', schema: { type: 'string' } },
+      { name: 'availableIn', description: 'Only the agents available in this project', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('The agents', object({ agents: array({ type: 'object', additionalProperties: true }) }, ['agents'])), 404: notFound },
+  });
+  // PC10: project context for a harness
+  add('get', '/api/projects/context', {
+    tag: 'Projects',
+    id: 'projectContext',
+    summary: 'A project’s context block for a harness',
+    description:
+      'Needs the `brain:read` scope or a session. By `repo`: the projects the caller has a role in that list the repository (owners and admins: every one), sorted by name, and the first one’s block; never a 404. By `projectId`: that project, 404 without a role. `context.text` is the “Where this work fits” block: data, not instructions; \'\' when the project has nothing to say.',
+    query: [
+      { name: 'repo', description: 'owner/name, lowercased by the server', schema: { type: 'string' } },
+      { name: 'projectId', description: 'A project the caller has a role in', schema: { type: 'string' } },
+      { name: 'size', description: 'The block’s size', schema: { type: 'string', enum: ['full', 'compact'], default: 'compact' } },
+    ],
+    responses: {
+      200: reply('The projects and the first one’s block', object({ projects: array(object({ id: { type: 'string' }, name: { type: 'string' } }, ['id', 'name'])), context: { type: ['object', 'null'], additionalProperties: true } }, ['projects', 'context'])),
+      400: invalid,
+      404: notFound,
+    },
   });
   return out;
 }
@@ -2422,6 +2497,7 @@ export function openApiDocument(origin?: string): Record<string, unknown> {
       { name: 'Agent teams', description: 'Teams of agents with standing relations: who leads, who reports to whom, who reviews (docs/agent-teams.md)' },
       { name: 'Conversations', description: 'A person’s own chats with Spotlight, the brain and the Agent architect, and their personal preferences: session only, owner only (docs/assistant.md#conversation-history)' },
       { name: 'Practices', description: 'Rules in the brain that connected agents follow: drafts, versions, approval by a person, waivers (docs/practices.md)' },
+      { name: 'Projects', description: 'A project’s context block for a harness, found by repository or id (docs/connect-your-harness.md#project-context)' },
       { name: 'MCP', description: 'Agents and MCP (docs/transports.md): Landflow-issued MCP tokens, tool grants, the JWKS, the plugin catalog (server.json, the registry API) and protected resource metadata' },
     ],
     security: [{ bearerAuth: [] }, { apiKeyHeader: [] }, { sessionCookie: [] }],

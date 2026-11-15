@@ -19,7 +19,7 @@ export interface ApplicableAnswer {
 }
 
 /** Control and invisible characters (not the line break or tab), which a rule has no use for. */
-const hidden = (c: number) => (c < 32 && c !== 10 && c !== 9) || (c >= 127 && c <= 159) || c === 0x2028 || c === 0x2029 || (c >= 0x200b && c <= 0x200f) || (c >= 0x202a && c <= 0x202e) || (c >= 0x2060 && c <= 0x2064) || (c >= 0x2066 && c <= 0x2069) || c === 0xfeff
+export const hidden = (c: number) => (c < 32 && c !== 10 && c !== 9) || (c >= 127 && c <= 159) || c === 0x2028 || c === 0x2029 || (c >= 0x200b && c <= 0x200f) || (c >= 0x202a && c <= 0x202e) || (c >= 0x2060 && c <= 0x2064) || (c >= 0x2066 && c <= 0x2069) || c === 0xfeff
 
 /** Control characters out, line breaks kept; cut at a line when over the budget. */
 export function sectionText(answer: ApplicableAnswer | undefined, budget = PRACTICE_BUDGET_MOD): string | undefined {

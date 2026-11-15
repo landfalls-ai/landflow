@@ -2,7 +2,9 @@
 
 Rules in the brain that every connected agent follows, each approved by a person. Part of the [Landflow docs](README.md).
 Written for wave P1; what the Brain page, learning and selection add (packages PR02 to PR05) is described here too, and
-marked as it lands. Delivery to Landflow agents, kagent agents and the Check Practices step arrive in wave P2.
+marked as it lands. Landflow agents (PR06), kagent agents and A2A agents (PR07) are given the practices that apply
+([Following](#following)), the Check Practices step is built (PR08), and the compliance bar and the inbox (PR09) show how
+they are followed.
 
 ## What a practice is
 
@@ -54,7 +56,7 @@ pattern must be a regular expression, or the request answers 400 and names it.
 
 ## Strength
 
-- `required`: in a flow, a failed check of the practice stops the flow at Check Practices (wave P2), so nothing after it
+- `required`: in a flow, a failed check of the practice stops the flow at Check Practices ([below](#the-check-practices-step)), so nothing after it
   runs (no draft pull request), until the change is fixed or someone waives the practice for that run.
 - `recommended`: a failed check is reported and never stops a step.
 
@@ -80,8 +82,8 @@ for what overlaps ("topic helm; repo acme/web").
 - **Retire** a practice: agents stop getting it. Its versions stay; approving a newer version brings it back.
 - **Waive** a practice for one run: someone who may approve it records, with a reason, that a failed check does not
   count for that run. The run must exist and the person must be able to read its workflow; the version must have been
-  approved at some point. A second waiver of the same practice and run returns the first. Wave P2's Check Practices
-  reads waivers; wave P1 only stores them.
+  approved at some point. A second waiver of the same practice and run returns the first. Check Practices reads waivers
+  ([waiving from a flow](#waiving-from-a-flow)).
 
 - **Delete a project**: its project-level practices (approved, draft or waiting) are retired in the same transaction, each
   with a `practice.retired` audit event, and their versions and applications stay for the audit trail. Moving the project's
@@ -114,7 +116,8 @@ A practice you cannot see answers 404.
 card: a strength pill, scope chips with the repository's logo, the rule lines, and citations that open as file excerpts
 with a "verified at `abc123`" tick. Files with a draft waiting are marked amber with **!**, like pages that need a
 person. The review dialog shows the draft against the approved version, its citations and its conflicts, with Approve and
-Reject. On a phone it is one column of cards behind `md`; desktop is unchanged.
+Reject. On a phone it is one column of cards behind `md`; desktop is unchanged. *PR09:* a practice with a loaded count also shows
+**How it is followed**: the compliance bar, the counts, **Followed by** and **Last applied** ([Compliance](#compliance)).
 
 ## Learning
 
@@ -160,8 +163,57 @@ Reject. On a phone it is one column of cards behind `md`; desktop is unchanged.
   `handle` reads `resolve`. `landflow practices show` reads `resolve` too.
 - `landflow practices check` runs a practice's [checks](#checks) over the changed files of a branch, on your machine.
 
-Wave P1 reaches only the Claude Code mod and MCP clients. Wave P2 adds Landflow agents (the block after "Where this
-work fits"), kagent agents (an index line with each request and the `practices_for` tool), and Check Practices.
+Wave P1 reached the Claude Code mod and MCP clients. Wave P2 adds Landflow agents (the block after "Where this work
+fits"), kagent agents (an index line with each request and the `practices_for` tool), and [Check Practices](#checks).
+
+### Landflow agents
+
+*Built by PR06.*
+
+A Landflow agent runs in-process, so it gets the full block (up to 3,000 characters) in its system prompt, right after the
+"Where this work fits" block with one blank line between; a run whose project context is Off still gets it. The run's own
+project decides which project practices it may get (the same one the project block uses); nothing a caller sends adds one.
+An in-process run knows no repository, so practices scoped to repositories do not reach it.
+
+- `AgentConfig.practices` is `on` or `off`; absent is on (`PUT /api/agents/:id`, `practices`). Off, `LANDFLOW_PRACTICES=off`
+  or no practices source leaves the prompt and the cache keys exactly as they were. The block's hash joins the run
+  context's hash, so a change of practices changes the cache key.
+- The block is built once, when a run starts. A resume after an approval keeps the context it began with and writes
+  nothing new.
+- Each practice given is recorded as a `delivered` row (with the agent and its execution); each practice the final reply
+  cites ("Practices followed: [handle@version]") that the run was given is recorded as `cited`. A citation of any other
+  practice records nothing.
+- Practices are text and grant nothing: an agent's tool calls are never denied because of one. Only flows block.
+- The code is `lib/server/project-context/practices.ts` (`runPractices`, `withPractices`, `recordRunPractices`, `citedIn`)
+  and `lib/server/practices/context-source.ts`, which sets the seam's practices slot.
+
+### kagent agents and A2A
+
+*Built by PR07.*
+
+A Landflow agent on kagent has its prompt baked at deploy, so nothing about practices goes into its prompt or its kagent
+resource: an approval or a retirement takes effect with the next request.
+
+- **The index.** The first message of a new conversation to such an agent (an A2A node, an A2A capability, or a team's
+  remote member) carries a short index of the practices that apply, after the project block and before the task, then the
+  line `Call practices_for for a practice's full rules, and end your answer with "Practices followed: [handle@version]" for
+  those you followed.` The index is the 800-character block of the project the run is in, ranked by the first 500
+  characters of the request. A follow-up, an answer and a resumed task go as they are. Any other A2A agent gets nothing new.
+  Turn it off with the option **Practices: Off** on the node, the capability or the team member.
+- **`practices_for { handle?, repo?, paths?, topics?, run? }`** on the agent's kagent MCP server gives the full rules of
+  what applies, or of one practice by `handle`, and records them as `delivered` for the run. **`practice_cite { cited, run? }`**
+  records up to 20 `handle@version` it followed, only those that apply in that project. Both are bound to the run that is
+  asking the agent, as the notebook tools are: one open team call, the one the `run` key names when several are open, or
+  the agent's home project when none is. Neither grants or denies a tool.
+- **Citations in answers.** When a remote answer comes back, the practices from the index it cites in its trailing
+  `Practices followed:` line are recorded as `cited` against the run, on the answer that completes the conversation: an
+  answer that comes after a tool approval or a person's answer is scanned too (the index travels in the pause's saved
+  state, so the resumed run finds it); so is an answer to a question to the caller, within the same run (kept in memory,
+  or in the node's state for an A2A node used as a tool). An agent that both calls `practice_cite` and ends with the line
+  gets two `cited` rows for the same practice and run; count distinct practices. `practice_cite` takes any approved
+  practice of the project or organization, not only what `practices_for` would give this agent.
+- **Order on a team.** A team's remote member gets the project block, then the index, then the team's ancestry line, goal
+  and the task.
 
 ## Globs
 
@@ -197,13 +249,120 @@ A version may carry machine checks, run with no model over the files a change ad
 - `fileMatches { glob, pattern, absent? }`: every changed file matching `glob` has `pattern` (a regular expression) in
   its added lines, or never has it with `absent: true`.
 
-At most 20 checks. In wave P1 they are stored and checked for shape; they run in `landflow practices check` and, in wave
-P2, in Check Practices.
+At most 20 checks. They run in `landflow practices check` and in the Check Practices step. Both use one implementation
+(`@landflow/protocol`, `practice-checks.ts`), so a change passes in one exactly when it passes in the other; the host's
+selector keeps its own copy of the glob, and a test runs both over one table.
+
+### The Check Practices step
+
+**Check Practices** (`core.practiceCheck`, category Flow) checks a change against the practices that apply and is the one
+place a practice blocks. It is for flows: an agent's tool call is never denied.
+
+- **Parameters**: **Repository** (`owner/name`, optional: it narrows to practices that list it or list none), **Changed
+  files** (an expression giving a list of `{ path, status: 'A' | 'M' | 'D', added?: [lines] }`), **Reviewer verdicts**
+  (optional, an expression giving `[{ handle, pass, note? }]` from a model or a person). Options: **Reviewer fails block**
+  (off by default), **Practices** (handles to check; empty means all that apply) and **Link to the change** (a pull
+  request, shown in the failure).
+- **Which practices**: the approved practices of the flow's home project and the organization's, never a project a
+  parameter names, selected for the repository and the changed paths as delivery does.
+- **Each practice** gets its machine checks run, and its reviewer verdict read. The step reports a check named
+  `practice:<handle>@<version>` (`pass`, `warn`, `fail`, or `skip` for a practice with neither a machine check nor a
+  verdict) and writes a `check-pass` or `check-fail` row for the run. A waived practice writes no row: the waiver is its
+  record, so compliance counts the failure and the waiver once each, however many retries pass on it.
+- **The output** is one item: `{ ok, repository?, changed, checked, failed, warned, waived, changeUrl?, practices }`. Each
+  entry of `practices` has `id`, `handle`, `version`, `title`, `strength`, `result` (`pass`, `fail`, `waived` or
+  `no-checks`), `blocks`, `files` (the failing paths), `messages`, `checks`, `reviewer?`, `waiver?` and `waiveUrl`
+  (`/practices/waive?practice=<id>&execution=<run>`).
+- **A required practice whose machine check failed makes the step throw**: the run fails there and nothing after it runs.
+  The error names the practices and, in its details, says what failed for each. A reviewer's fail of a required practice
+  blocks only with **Reviewer fails block** on; otherwise it warns. A **recommended** failure never throws.
+- **Fix** the change and run the flow again, or **waive** it (below). With **On error: continue** set on the step, the
+  engine carries on past the failure and the block is gone: leave that setting off.
+
+### Waiving from a flow
+
+The failed step's error carries the waive link. `/practices/waive?practice=<id>&execution=<run>` shows the practice, its
+strength, what failed in that run, a reason (10 to 500 characters) and **Waive for this run**; it posts to
+`POST /api/practices/:id/waivers`. Someone who may not approve the practice is told why and gets no button. After the
+waiver the page offers **Retry the run** (`POST /api/executions/:id/retry`): a retry is a new run linked to the failed one,
+and the step finds the waiver by following that link, so the waiver counts for the retry and for later retries of it. It
+never counts for another run of the flow, which is checked again. It holds only for the failure the approver saw: the
+step compares the practice's failure line (practice, message and files) with the one in the waived run's failed step, so
+a retry (even from the start) that breaks the practice on other files fails again.
+
+The error text and the waive link are absolute (from `LANDFLOW_PUBLIC_URL`). The generic **Accept as is** button on the
+failed `practice:` check in the run trace only journals a decision; it is not a waiver, and a retry fails again. Use the
+waive link. A step that checks nothing (practices off, or a handle named in **Practices** that is not approved here)
+writes a warning check so the gap is visible.
+
+### Templates
+
+- **Check a pull request against the practices** (`practices-check-pr`): a GitHub pull request's files, mapped to changed
+  files, then Check Practices, then a comment on the pull request with the results, then **Ready to merge?** in Ask a
+  Person. It never merges. A pull request whose practices fail stops at the step, so no comment is posted: the error
+  workflow tells people.
+- **When a required practice blocks a flow** (`practices-blocked`): an error workflow (Error Trigger, then Ask a Person)
+  whose message names each failed practice with three links: **Fix** (the pull request), **Waive** (the waive page for that
+  run) and **Change the practice** (its page on `/brain`). To use it, open the first flow's **Settings → Error workflow**
+  and pick it; error workflows start only for runs a trigger started, not a manual Run.
+
+## Compliance
+
+*Built by PR09.* A practice's page says how it is followed, from the `practice_applications` rows of the last 30 days
+(1 to 90, `?days=`):
+
+- **Given** (delivered to an agent), **Cited** (and the share of times given), **checks passed** (pass ÷ pass + fail),
+  **waived**. Rates never divide by zero: with nothing to divide they show "–".
+- **Followed by**: the agents that cited it most, at most 10 and only those you may read; the rest are counted, never
+  named ("2 other agents").
+- **Last applied** with a Run Trace link. The route also returns the counts per version; the page does not draw them yet.
+- The **compliance bar** is the checks: green passed, red failed, amber waived.
+- **Given** and **Cited** count distinct runs: a run that cites a practice in its answer and through `practice_cite`
+  has two `cited` rows and is one run, and the rate never exceeds 100%. A row with no run (a `practices_for` call from a
+  shell) counts alone. Checks and waivers count per row.
+
+`GET /api/practices/:id/compliance` answers it for a practice you may see (404 otherwise). A run shows its own side in
+"What it saw": `GET /api/executions/:id/practices` lists each `handle@version` the run was given or checked, whether it
+cited it and how its check went, and `SawPracticesRow` (`components/run-trace/saw-practices.tsx`) draws that as "Cited" or
+"Not cited" and the check. Only practices you may see are listed; it draws nothing when the run was given none. A retry that passed on a waiver
+wrote no row of its own, so its list takes the waiver from the run it retried (through the retry chain) and shows
+"waived", unless the retry has a check of its own for that practice.
+
+The **practice-drift** detector ([second-brain.md](second-brain.md#4-detectors-and-suggestions)) files a suggestion for
+an approved practice that was given 10 times or more in 14 days and cited under 20% of them, or whose checks failed more
+than half the time: "Review <title>: rarely followed", with the numbers and a link to the page. It is advice only.
+
+A Landflow agent's block gives it every practice that applies to its project, and the row does not say whether the work
+concerned that practice. So the detector counts runs, counts a block's in-process deliveries (a run's `delivered` row with
+no repository) a third each, and counts a delivery that named a repository in full: a practice given only by blocks needs
+30 runs in 14 days to be looked at, not 10. See [limitations](limitations.md#practices-in-claude-code-and-the-shell).
+
+## The inbox
+
+*Built by PR09.* A waiting draft is no longer seen only on /brain → Practices: **every saved draft version files one
+suggestion** in the second brain's inbox (`source: practice`, `practice: { practiceId, version, tainted }`), one per
+practice and version. A newer version replaces the open suggestion of the older one. Its audience is the people who may
+approve it: owners and admins, and for a project practice the project's admins. Its text is the practice's cleaned title
+and summary, never its body.
+
+- **A draft read from outside** (an agent's or a repository's, so tainted): the card says "Read it against its sources on
+  /brain" and links there. It has no Apply, for anyone; Apply on it answers 403.
+- **A draft a person wrote**: Apply approves that version with the applying person as approver (the same `approvePractice`).
+  Only instance owners and admins may, and only in a session: an API key's Apply answers 403 ("API keys can't approve a
+  practice"), even an owner's. Project admins and others in the audience see the link only. An overlap with an
+  approved practice has no answer in the inbox, so Apply says to approve it on /brain.
+- **A version that is no longer waiting** (approved, rejected, replaced, or its practice retired) answers 409 and settles
+  the suggestion as dismissed. Deleting a project (or removing the user whose personal project it was) retires its
+  practices and dismisses their open suggestions ("The practice was retired").
+- **Approving, rejecting or retiring on /brain settles it**: approved is applied, rejected is dismissed with the reason,
+  retired dismisses the practice's open suggestions.
+- **Slack**: a practice suggestion is never mirrored with buttons. A message carries the title and a link to /brain only,
+  and a forged Apply click is refused.
 
 ## The API
 
 All routes are under `/api/practices`; reads need `brain:read`, writes `brain:write` (API keys), and approving,
-rejecting, retiring and waiving need a session. See [reference/api.md](reference/api.md) and the OpenAPI document.
+rejecting, retiring and waiving need a session. Compliance and a run's practices are two more reads (below). See [reference/api.md](reference/api.md) and the OpenAPI document.
 
 | Route | What it does |
 |---|---|
@@ -215,6 +374,9 @@ rejecting, retiring and waiving need a session. See [reference/api.md](reference
 | `POST /api/practices/:id/versions/:version/reject` | `{ reason }` |
 | `POST /api/practices/:id/retire` | retire |
 | `POST /api/practices/:id/waivers` | `{ executionId, version, reason }` (201 `{ application }`) |
+| `GET /api/practices/resolve?handle=` or `?id=prc_…` | one approved practice in full, exactly the one delivery gave: by `handle`, the selector's winner; by `id`, that practice only when its id is in the listing for the same `repo`, `path`s and `topic`s, else 404 (the same 404 as another project's practice). `handle` and `id` together, or neither, are 400. `GET /api/practices/applicable` names each practice's `id` (and `projectId` for a project practice) so a reader resolves the one it listed |
+| `GET /api/practices/:id/compliance?days=` | how it is followed over 1 to 90 days (30 by default): counts, `followedBy`, `otherAgents`, `lastApplied`, `byVersion` |
+| `GET /api/executions/:id/practices` | the practices one run was given or checked: `{ handle, version, delivered, cited, check? }` |
 | `GET /api/practices/:id/applications?cursor=` | delivered, cited, checked and waived rows, newest first, keyset-paged |
 
 Version states: `approved` (what agents get), `replaced` (an older version), `pending` (waiting for a person) and

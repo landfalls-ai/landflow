@@ -88,8 +88,8 @@
     {
       "name": "landflow-brain",
       "source": "./apps/web/claude-plugins/landflow-brain",
-      "description": "A Claude Code mod: your own work in the Landflow company brain (a local journal, a summary held for your review, your yesterday back at the next session, the colleagues whose work overlaps yours), a brain_ask tool for the model, and the practices your admins approved for the repository (a practices section, practices and practice_draft tools, /brain practices and /brain learn).",
-      "version": "0.3.0",
+      "description": "A Claude Code mod: your own work in the Landflow company brain (a local journal, a summary held for your review, your yesterday back at the next session, the colleagues whose work overlaps yours), a brain_ask tool for the model, the project that lists the repository (its goals and brief as a project section at session start, and /brain project), and the practices your admins approved for the repository (a practices section, practices and practice_draft tools, /brain practices and /brain learn).",
+      "version": "0.4.0",
       "author": { "name": "Landflow" },
       "category": "productivity",
       "keywords": ["second brain", "journal", "work", "colleagues", "brain_ask"]

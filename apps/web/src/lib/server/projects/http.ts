@@ -5,7 +5,7 @@
  * route guard (lib/server/auth/policy.ts `resourceRule`) before these handlers.
  */
 import { z } from 'zod';
-import { SHARE_ROLES, personalProjectId, projectRoleCan, type ProjectRole, type ResourceKind, type ShareableKind, type ShareView } from '../../shared/projects';
+import { ALL_PROJECTS, SHARE_ROLES, personalProjectId, projectRoleCan, type ProjectRole, type ResourceKind, type ShareableKind, type ShareView } from '../../shared/projects';
 import { AuthError } from '../auth/errors';
 import { currentPrincipal } from '../auth/guard';
 import { getUser, type UserRecord } from '../auth/users';
@@ -101,6 +101,7 @@ export function forgetDeleted(kind: ResourceKind, id: string) {
 
 export function shareViews(kind: ShareableKind, id: string): ShareView[] {
   return shares(kind, id).flatMap((share) => {
+    if (share.projectId === ALL_PROJECTS) return []; // PC06: the "All projects" row shows only as `availability.all`
     const project = getProject(share.projectId);
     if (!project) return [];
     return [{ projectId: project.id, projectName: project.name, projectType: project.type, ...(project.ownerId && { userId: project.ownerId }), role: share.role, createdAt: share.createdAt, ...(share.createdBy && { createdBy: share.createdBy }) }];
@@ -116,7 +117,7 @@ const shareSchema = z.object({
 /** GET/PUT `/api/<kind>/<id>/shares` (the guard checked read for GET, share for PUT). */
 export function shareRoutes(kind: ShareableKind, exists: (id: string) => boolean) {
   type Ctx = { params: Promise<{ id: string }> };
-  const notFound = kind === 'workflow' ? 'Workflow not found' : 'Credential not found';
+  const notFound = kind === 'workflow' ? 'Workflow not found' : kind === 'credential' ? 'Credential not found' : 'Agent not found';
   return {
     GET: projectRoute(async (_request: Request, { params }: Ctx) => {
       const { id } = await params;
@@ -141,6 +142,7 @@ export function shareRoutes(kind: ShareableKind, exists: (id: string) => boolean
           projectId = ensurePersonalProject(user.id) ?? personalProjectId(user.id);
         } else {
           projectId = entry.projectId;
+          if (projectId === ALL_PROJECTS && kind !== 'agent') return error('Only agents can be shared with all projects'); // PC06
           if (!getProject(projectId)) return error('Project not found', 404);
         }
         if (projectId === home) continue;

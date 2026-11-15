@@ -165,7 +165,7 @@ describe('the card', () => {
   it('links an application to its Run Trace and shows the version timeline', () => {
     const app: PracticeApplication = { id: 'a1', practiceId: 'prc_a', version: 1, kind: 'check-fail', executionId: 'ex_1', agentId: 'ag_1', at: NOW };
     const html = renderToStaticMarkup(createElement(PracticeCard, { detail: detail({}, { applications: [app] }) }));
-    expect(html).toContain('href="/executions/ex_1"');
+    expect(html).toContain('href="/runs/ex_1"');
     expect(html).toContain('Check failed');
     expect(html).toContain('Version 1');
   });

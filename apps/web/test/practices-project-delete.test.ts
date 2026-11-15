@@ -69,6 +69,13 @@ describe('deleting a project', () => {
     expect(getPractice(org)?.status).toBe('approved');
     expect(storePort.approved({ projectIds: [doomed, kept] }).map((p) => p.id).sort()).toEqual([org, theirs].sort());
     expect(database().all("SELECT 1 FROM audit_events WHERE action = 'practice.retired' AND target_id = ?", mine)).toHaveLength(1);
+    // The draft's inbox suggestion does not wait on a project that is gone: it is dismissed with the retirement.
+    const suggestions = database()
+      .all<{ data: string }>("SELECT data FROM proposals WHERE source = 'practice'")
+      .map((r) => JSON.parse(r.data) as { status: string; practice?: { practiceId: string }; note?: string })
+      .filter((p) => p.practice?.practiceId === draft);
+    expect(suggestions).toHaveLength(1);
+    expect(suggestions[0]).toMatchObject({ status: 'dismissed', note: 'The practice was retired' });
   });
 
   it('retires them when the project’s resources are transferred too, and does not move them', () => {

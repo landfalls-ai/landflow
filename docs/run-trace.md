@@ -67,7 +67,9 @@ once when a run finishes or starts waiting, and never fail the run. Each flushed
 
 - **Content kept** (workflow setting `traceContent`, else `LANDFLOW_TRACE_CONTENT`): `full` (the default) keeps
   everything redacted, cut to 32 KB per event. `summaries` keeps the first 400 characters of each text. `off` keeps only
-  who did what and when: no inputs, outputs or message text, and error messages cut to 400 characters.
+  who did what and when: no inputs, outputs or message text, and error messages cut to 400 characters. An agent's
+  `attrs.saw` follows the setting: `summaries` cuts its `text` to 400 characters, `off` keeps no `text` and no persona
+  (the mode, project and goal ids and names, time and practice handles stay; the section says the text was not kept, and for `summaries` that it was cut).
 - **Retention**: events older than `LANDFLOW_TRACE_RETENTION_DAYS` (default 30, `0` keeps them) are pruned at boot and
   daily. Deleting an execution deletes its journal.
 
@@ -281,6 +283,24 @@ deployment (the gateway adds the token) and is never shown as an ordinary MCP se
 
 A team node's usage names the lead's model, and an agent session counts each of its model calls, so the lead's card and
 the report say "3 model calls · 5,443 in · 714 out · $0 · qwen3-coder:30b" beside a member's reported usage.
+
+## What it saw
+
+An agent's span (a Run an Agent step, or a team member's request) carries `attrs.saw`, written once per run, never on a
+resume: `mode`, `text` (exactly what the system prompt got: the "Where this work fits" block, then the practices block),
+`projectId`/`projectName`, `goalId`/`goalTitle`, `at` (the run's pinned time), `persona` (role, mission and what-I-do, each
+cut to 300 characters; never the instructions) and `practices` (handle and version). The type is `SawAttrs` in
+`lib/shared/what-it-saw.ts`; `lib/shared/what-it-saw-sections.ts` splits the text by its line prefixes.
+
+- **In the sheet.** Tapping an agent's span shows **What it saw**: Goal chain, Mission, Brief, Words, Status, This run,
+  Practices and Persona. Empty parts are left out. **Show the exact text** folds out the raw block. With the project
+  context off it says "Project context off for this agent" (also when practices were given). When the run's trace content
+  was `off`, it says the text was not kept; a run with nothing to show draws no section. `saw` is not repeated in the developer's raw **Details**.
+- **On the run.** The root span's sheet shows **Project** and **Goal** chips from `attrs.project` and `attrs.goal`.
+- **In sessions.** An agent's **Sessions** tab has the same section as a fold, built from the session's saved context
+  and the agent's persona now.
+
+The goal chain and the project are explained in [projects-and-goals.md](projects-and-goals.md#what-an-agent-saw).
 
 ## Iterations: rounds, turns and fix cycles
 
@@ -622,6 +642,8 @@ only reach the process that runs the execution.
 | `POST /api/executions/:id/approvals` | `{ callId, approved, input? }`: decide a waiting tool call; `input` (a JSON object, with `approved: true`) is the tool's input as a person edited it, and the tool runs with it ([an approval with its evidence](#an-approval-with-its-evidence)). SSE: `decision`, then the resumed run. |
 | `GET /api/runs/needs-you` | Across the runs you can see: waits for a person (`approval`, `form`, `question`, `gate`) and failed checks of the last 7 days nobody decided on. |
 | `GET /api/runs/search`, `/api/runs/compare?a=&b=`, `/api/runs/measures?workflowId=` | Search, compare and measures across runs ("Search, compare and measures" below). |
+
+**What it saw, practices row** (PR09): `SawPracticesRow` lists each practice the run was given as `handle@version` with "Cited" or "Not cited" and how its check went (`GET /api/executions/:id/practices`), inside the span's "What it saw" section and in an agent's session that a workflow run started (other sessions list the practices alone); see [practices.md](practices.md#compliance).
 
 ## Not built
 

@@ -13,6 +13,7 @@ import { canProposal } from './scope';
 import type { JsonObject } from '@landflow/protocol';
 import type { AudienceMember, Proposal, ProposalSlackMirror } from '../../shared/brain';
 import { MAX_AUDIENCE } from '../../shared/brain';
+import { publicUrl } from '../config';
 import { findUserByEmail, getUser, userNames, type UserRecord } from '../auth/users';
 import { type Actor } from '../projects/access';
 import { escape, postResponseUrl, slackCall, slackCredentialFor, type SlackCredential } from '../slack';
@@ -86,7 +87,7 @@ export function inAudience(person: { id: string; email?: string } | undefined, p
 }
 
 /** What a suggestion changes when applied: the target workflow or agent, a new workflow, or a kept note. Advice changes nothing. */
-export const changesSomething = (p: Pick<Proposal, 'ops' | 'draft' | 'agentChange' | 'notebook' | 'buildPrompt'>) => Boolean(p.ops.length || p.draft || p.agentChange || p.notebook || p.buildPrompt);
+export const changesSomething = (p: Pick<Proposal, 'ops' | 'draft' | 'agentChange' | 'notebook' | 'buildPrompt' | 'practice'>) => Boolean(p.ops.length || p.draft || p.agentChange || p.notebook || p.buildPrompt || p.practice); // PR09: practice
 
 /** A build prompt with no draft: Build it creates the workflow and Spotlight builds it, so only the web can apply it. */
 const buildsInSpotlight = (p: Proposal) => Boolean(p.buildPrompt && !p.draft);
@@ -95,7 +96,7 @@ const buildsInSpotlight = (p: Proposal) => Boolean(p.buildPrompt && !p.draft);
  * Whether Slack's Apply makes sense: something to change Slack can apply, or the missing tool's go-ahead. A build prompt with
  * no draft never is, whatever its detector: its Apply is refused below, so Slack must not offer it.
  */
-export const applyable = (p: Proposal) => !buildsInSpotlight(p) && (changesSomething(p) || p.detector === 'missing-tool');
+export const applyable = (p: Proposal) => !p.practice && !buildsInSpotlight(p) && (changesSomething(p) || p.detector === 'missing-tool'); // PR09: a practice is never applied from Slack
 
 /** Whoever can open the target (scope.ts `canProposal`: workflows, agents, teams, entities; admins for the instance's). */
 const canRead = canProposal;
@@ -158,6 +159,8 @@ const button = (id: string, label: string, value: JsonObject, extra: JsonObject 
 
 /** The suggestion's buttons: its own actions, Apply (when there is something to apply), Dismiss and Snooze 7 days. */
 export function mirrorButtons(p: Proposal): JsonObject[] {
+  // PR09: a practice suggestion links to /brain and has no buttons: reading and approving it is a person's, on the page.
+  if (p.practice) return [];
   const at = { t: 'pr', p: p.id };
   const out: JsonObject[] = (p.actions ?? []).map((a) =>
     button(`act:${a.id}`, a.label, { ...at, a: a.id }, {
@@ -187,7 +190,8 @@ export function mirrorBlocks(p: Proposal): JsonObject[] {
     const detail = [d.reason && `reason: ${d.reason}`, d.note].filter(Boolean).join(', ');
     blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `${icon} ${escape(d.label)} by ${whoIs(d.by)}${detail ? ` (${escape(detail)})` : ''}` }] });
   }
-  if (!decided || p.status === 'snoozed') blocks.push({ type: 'actions', block_id: 'landflow_suggestion', elements: mirrorButtons(p) });
+  if (p.practice) blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `<${publicUrl()}/brain/practices/${p.practice.practiceId}|Open it on /brain>` }] }); // PR09
+  else if (!decided || p.status === 'snoozed') blocks.push({ type: 'actions', block_id: 'landflow_suggestion', elements: mirrorButtons(p) });
   return blocks;
 }
 
@@ -322,6 +326,11 @@ export async function handleProposalClick(click: { actionId: string; value: stri
     else if (kind === 'snooze') snoozeProposal(proposal.id, 7, undefined, { actorId });
     else if (kind.startsWith('act:')) actOnProposal(proposal.id, value.a ?? kind.slice(4), { actorId });
     else if (kind === 'apply') {
+      // PR09: a practice is read and approved on /brain; a forged click must not approve one from Slack.
+      if (proposal.practice) {
+        await say(click.responseUrl, 'A practice is read and approved on /brain: open it there.');
+        return;
+      }
       // Slack shows no Apply for a build prompt; a forged click must not create a workflow outside the editor's Build it.
       if (buildsInSpotlight(proposal)) {
         await say(click.responseUrl, 'Build it opens Spotlight in Landflow: open the suggestion there to build it.');

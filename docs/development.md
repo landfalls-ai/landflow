@@ -173,6 +173,12 @@ plugins/py-insights/.venv/bin/python -m unittest discover -s sdks/python/tests
 deploy/scripts/smoke.sh code                       # the dockerised code runner: health + network/file-system isolation
 ```
 
+The Claude Code mods' own hook tests (`apps/web/claude-plugins/landflow-brain/hooks/*.test.ts`) import
+`claude-code/testing`, an engine module that only the Claude Code CLI provides, so neither vitest nor `pnpm check` can run
+them. Run them with `claude plugin validate apps/web/claude-plugins/landflow-brain && claude plugin test
+apps/web/claude-plugins/landflow-brain`, and with the same pair for `landflow-harness`, whenever a hook changes. The
+mods' pure rules are also tested in the host's suite (`apps/web/test/claude-brain-mod.test.ts`), which `pnpm check` runs.
+
 The host's suite runs its files in parallel, so `apps/web/vitest.config.ts` gives each test 20 s and each hook 30 s:
 the marketplace, cluster runtime and MCP file-approval tests timed out at the defaults under that load.
 

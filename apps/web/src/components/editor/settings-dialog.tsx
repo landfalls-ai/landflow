@@ -14,6 +14,7 @@ import { RUN_PROFILES, type RunProfile } from '@/lib/shared/run-profiles';
 import type { PluginSummary, WorkflowSettings, WorkflowSummary } from '@/lib/shared/types';
 import { transportLabel, type TransportObjective, type TransportPolicy, type WorkflowTransportOverride } from '@/lib/shared/transports';
 import { Dialog, Field, ToggleRow } from '../agents/dialog';
+import { GoalPicker } from '../goals/goal-picker';
 import { Button } from '../ui/button';
 import { Input, Select, Textarea } from '../ui/inputs';
 import { NotifyOnFailure } from './notify-on-failure';
@@ -141,6 +142,15 @@ function TransportOverrides({ plugins, value, onChange }: { plugins: PluginSumma
   );
 }
 
+/** The goal this workflow works for; empty: its project's goal (docs/projects-and-goals.md). */
+export function WorkflowGoalField({ value, projectId, onChange, goals }: { value?: string; projectId?: string; onChange: (id: string | undefined) => void; goals?: Parameters<typeof GoalPicker>[0]['goals'] }) {
+  return (
+    <Field label="Goal" hint="Which goal this workflow works for. Empty: the project’s goal.">
+      <GoalPicker value={value} onChange={onChange} projectId={projectId} allowNone noneLabel="The project's goal" goals={goals} ariaLabel="Goal" />
+    </Field>
+  );
+}
+
 /**
  * The first part of Workflow settings: the three fields most workflows need, then the Advanced button that opens
  * the rest. Props only, so a test can render it.
@@ -239,6 +249,7 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
   const [retryDelay, setRetryDelayText] = useState(() => (draft.retryBaseDelaySeconds !== undefined ? String(draft.retryBaseDelaySeconds) : ''));
   const [aiLimits, setAiLimits] = useState<Record<AiLimitKey, string>>(() => Object.fromEntries(AI_LIMITS.map(({ key }) => [key, draft[key] ? String(draft[key]) : ''])) as Record<AiLimitKey, string>);
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>();
+  const [homeProject, setHomeProject] = useState<string>();
   const [plugins, setPlugins] = useState<PluginSummary[]>();
   const nodeTypes = useEditor((s) => s.nodes.map((n) => n.data.wf.type).join('\n'));
   const [saving, setSaving] = useState(false);
@@ -247,7 +258,10 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
 
   useEffect(() => {
     api<{ workflows: WorkflowSummary[] }>('/api/workflows')
-      .then(({ workflows: list }) => setWorkflows(list.filter((w) => w.id !== workflowId)))
+      .then(({ workflows: list }) => {
+        setHomeProject((list.find((w) => w.id === workflowId) as { ownership?: { projectId: string } } | undefined)?.ownership?.projectId);
+        setWorkflows(list.filter((w) => w.id !== workflowId));
+      })
       .catch(() => setWorkflows([]));
   }, [workflowId]);
 
@@ -347,6 +361,8 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
       <div className="space-y-4">
         <BasicWorkflowSettings draft={draft} patch={patch} workflows={workflows} workflowId={workflowId} showAdvanced={showAdvanced} onToggleAdvanced={() => setAdvanced((v) => !v)} held={invalid} />
         <div id="wf-advanced" hidden={!showAdvanced} className="space-y-4">
+          {/* The goal is for workflows that serve one; most inherit the project's, so it sits first under Advanced. */}
+          <WorkflowGoalField value={draft.goalId} projectId={homeProject} onChange={(goalId) => patch({ goalId })} />
           <Field
             id="wf-timeout"
             label="Timeout"

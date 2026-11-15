@@ -273,7 +273,7 @@ export interface CapRaiseSetup {
 // ---------------------------------------------------------------------------
 
 export type AiConsolePeriod = '24h' | '7d' | '30d';
-export type AiConsoleGroup = 'project' | 'agent' | 'person' | 'model' | 'source';
+export type AiConsoleGroup = 'project' | 'goal' | 'agent' | 'person' | 'model' | 'source'; // PC09: goal
 
 /** Tokens, estimated cost and calls (the same shape as lib/shared/ai-usage.ts AiUsageTotals, repeated so this file has no imports). */
 export interface AiConsoleTotals {

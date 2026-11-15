@@ -26,6 +26,8 @@ import './goals/context-source';
 import './project-context/provider';
 // PR01: sets the practices port, so the nodes, routes and MCP tools reach the store (docs/practices.md).
 import './practices/register';
+// PR06: sets the seam's practices slot, so agent runs get approved practices (docs/practices.md).
+import './practices/context-source';
 import { agentTriggers } from './agents/triggers';
 import { alerts } from './alerts/service';
 import { auditHeads } from './audit/anchoring';

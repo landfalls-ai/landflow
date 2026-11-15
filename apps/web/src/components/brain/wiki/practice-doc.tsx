@@ -9,7 +9,9 @@ import { Fragment, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Pencil, ScrollText } from 'lucide-react';
 import { toast } from 'sonner';
+import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
+import { citeRate, complianceSegments, otherAgentsText, passRate, percent, type ComplianceSegmentKind, type PracticeCompliance } from '@/lib/shared/practice-compliance';
 import { PRACTICE_LEVEL_LABELS, PRACTICE_STATUS_LABELS, PRACTICE_STRENGTH_LABELS, type PracticeApplication, type PracticeDetailResponse, type PracticeVersion, type PracticeView } from '@/lib/shared/practices';
 import { Badge, Chip, type Tone } from '../../ui/badge';
 import { Button } from '../../ui/button';
@@ -17,6 +19,7 @@ import { confirmAction } from '../../ui/confirm';
 import { BrandGlyph } from '../../ui/icon';
 import { Doc } from '../../run-trace/rich-text';
 import { projectLabel, useProjects } from '../../projects/use-projects';
+import { cn } from '@/lib/utils';
 import { Section } from './parts';
 import { getPractice, retirePractice } from './practices-api';
 import { actorWords, checkSentence, SOURCE_WORDS, VERSION_STATE_LABELS } from './practices-logic';
@@ -66,13 +69,89 @@ function Applications({ items }: { items: PracticeApplication[] }) {
           </span>
           {a.reason && <span className="basis-full text-t2">{a.reason}</span>}
           {a.executionId && (
-            <Link href={`/executions/${encodeURIComponent(a.executionId)}`} className="ml-auto text-ac hover:underline">
+            <Link href={`/runs/${encodeURIComponent(a.executionId)}`} className="ml-auto text-ac hover:underline">
               Run Trace
             </Link>
           )}
         </li>
       ))}
     </ul>
+  );
+}
+
+const SEGMENT_STYLE: Record<ComplianceSegmentKind, { bar: string; word: string }> = {
+  pass: { bar: 'bg-gn', word: 'passed' },
+  fail: { bar: 'bg-rd', word: 'failed' },
+  waived: { bar: 'bg-warn', word: 'waived' },
+};
+
+/** How the practice is followed (docs/practices.md#compliance): the checks' bar, the counts, who follows it and when it was last applied. */
+export function ComplianceView({ compliance }: { compliance: PracticeCompliance }) {
+  const segments = complianceSegments(compliance);
+  const nothing = !compliance.delivered && !compliance.cited && !segments.length;
+  if (nothing) return <p className="text-[12.5px] text-t3">Nothing used it in the last {compliance.days} days.</p>;
+  const stats: Array<[string, string]> = [
+    ['Given', String(compliance.delivered)],
+    ['Cited', compliance.delivered ? `${compliance.cited} (${percent(citeRate(compliance))})` : String(compliance.cited)],
+    ['Checks passed', passRate(compliance) === undefined ? '–' : percent(passRate(compliance))],
+    ['Waived', String(compliance.waived)],
+  ];
+  return (
+    <div className="space-y-3" data-testid="compliance">
+      {segments.length > 0 && (
+        <div className="space-y-1.5">
+          <div
+            role="img"
+            aria-label={segments.map((s) => `${s.count} ${SEGMENT_STYLE[s.kind].word}`).join(', ')}
+            className="flex h-2.5 w-full overflow-hidden rounded-full bg-sf2"
+          >
+            {segments.map((s) => (
+              <span key={s.kind} className={SEGMENT_STYLE[s.kind].bar} style={{ width: `${s.share * 100}%` }} />
+            ))}
+          </div>
+          <p className="flex flex-wrap gap-x-3 text-[12px] text-t2">
+            {segments.map((s) => (
+              <span key={s.kind} className="inline-flex items-center gap-1.5">
+                <span className={cn('size-2 rounded-full', SEGMENT_STYLE[s.kind].bar)} aria-hidden />
+                {s.count} {SEGMENT_STYLE[s.kind].word}
+              </span>
+            ))}
+          </p>
+        </div>
+      )}
+      <dl className="grid grid-cols-2 gap-2 md:grid-cols-4">
+        {stats.map(([label, value]) => (
+          <div key={label} className="rounded-xl border border-hair bg-sf px-3 py-2">
+            <dt className="text-[11.5px] text-t3">{label}</dt>
+            <dd className="text-[15px] font-semibold tabular-nums text-t1">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      <div className="space-y-1.5 text-[12.5px]">
+        <p className="flex flex-wrap items-center gap-1.5">
+          <span className="text-t3">Followed by</span>
+          {compliance.followedBy.map((a) => (
+            <Link key={a.agentId} href={`/agents/${encodeURIComponent(a.agentId)}`}>
+              <Chip className="hover:text-ac">{a.name}</Chip>
+            </Link>
+          ))}
+          {compliance.otherAgents > 0 && <span className="text-t2">{compliance.followedBy.length ? `and ${otherAgentsText(compliance.otherAgents)}` : otherAgentsText(compliance.otherAgents)}</span>}
+          {!compliance.followedBy.length && !compliance.otherAgents && <span className="text-t2">no agent yet</span>}
+        </p>
+        <p className="text-t2">
+          <span className="text-t3">Last applied</span> {compliance.lastApplied ? timeAgo(compliance.lastApplied) : 'never'}
+          {compliance.lastRunId && (
+            <>
+              {' · '}
+              <Link href={`/runs/${encodeURIComponent(compliance.lastRunId)}`} className="text-ac hover:underline">
+                Run Trace
+              </Link>
+            </>
+          )}
+          <span className="text-t3"> · last {compliance.days} days</span>
+        </p>
+      </div>
+    </div>
   );
 }
 
@@ -106,9 +185,11 @@ export interface PracticeCardProps {
   onReview?: (version: PracticeVersion) => void;
   onEdit?: () => void;
   onRetire?: () => void;
+  /** How it is followed (GET …/compliance); left out while it loads or fails. */
+  compliance?: PracticeCompliance;
 }
 
-export function PracticeCard({ detail, projectName, onReview, onEdit, onRetire }: PracticeCardProps) {
+export function PracticeCard({ detail, projectName, onReview, onEdit, onRetire, compliance }: PracticeCardProps) {
   const { practice, versions, applications } = detail;
   const approved = practice.approved;
   const waiting = practice.canApprove ? practice.drafts[0] : undefined;
@@ -225,6 +306,12 @@ export function PracticeCard({ detail, projectName, onReview, onEdit, onRetire }
         </Section>
       )}
 
+      {compliance && (
+        <Section title="How it is followed">
+          <ComplianceView compliance={compliance} />
+        </Section>
+      )}
+
       <Section title="Applications" count={applications.length}>
         <Applications items={applications} />
       </Section>
@@ -244,14 +331,22 @@ export function PracticeCard({ detail, projectName, onReview, onEdit, onRetire }
 export function PracticeDoc({ id, onChanged }: { id: string; onChanged: () => void }) {
   const [detail, setDetail] = useState<PracticeDetailResponse>();
   const [error, setError] = useState<string>();
+  const [compliance, setCompliance] = useState<PracticeCompliance>();
   const [dialog, setDialog] = useState<{ kind: 'review'; version: PracticeVersion } | { kind: 'edit' }>();
   const { projects } = useProjects();
   const load = useCallback(() => {
     getPractice(id)
       .then((d) => (setDetail(d), setError(undefined)))
       .catch((e: Error) => setError(e.message));
+    // The bar is an extra: a failed read leaves the page without it.
+    api<{ compliance: PracticeCompliance }>(`/api/practices/${encodeURIComponent(id)}/compliance`, { background: true })
+      .then((r) => setCompliance(r.compliance))
+      .catch(() => setCompliance(undefined));
   }, [id]);
-  useEffect(load, [load]);
+  useEffect(() => {
+    setCompliance(undefined); // not the previous practice's bar under this one
+    load();
+  }, [load]);
   const after = () => {
     setDialog(undefined);
     load();
@@ -277,6 +372,7 @@ export function PracticeDoc({ id, onChanged }: { id: string; onChanged: () => vo
     <>
       <PracticeCard
         detail={detail}
+        compliance={compliance}
         projectName={project ? projectLabel(project) : undefined}
         onReview={(version) => setDialog({ kind: 'review', version })}
         onEdit={() => setDialog({ kind: 'edit' })}

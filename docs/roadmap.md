@@ -1914,7 +1914,7 @@ before the new sync workflow opens, and no Slack Apply on a build prompt). These
   detector reads `org` work only until `canProposal` (`brain/scope.ts`) refuses non-audience readers for it
   ([limitations](limitations.md)).
 - **The mod's nightly text and the review prompt's visibility**: still the open items above; PR05 changed the mod's
-  session start for practices only.
+  session start for practices only, and PC11 (wave 8) for the project section only.
 - **Install lines in the node-plugin READMEs**: `claude plugin validate .` advises a `/plugin install <name>` line for
   each `plugins/*` bundle. They are Landflow node plugins with flows, not Claude Code plugins, so a Claude Code install
   line would mislead; the README's install text waits for Explore's own install wording.
@@ -1922,7 +1922,26 @@ before the new sync workflow opens, and no Slack Apply on a build prompt). These
   here instead" in about mode at 390×844; the credentials menu and the brain page's Ask button with real data; B37's
   base-build and flow-briefing shots; ⌘K on Home, `/brain` and the editor; "Ask why it failed" from a phone-width ⋯ sheet
   (the sheet closing, scroll lock, focus); Your morning with the shell panel open at 390 px and at desktop width. They
-  need a host and a headed browser, with wave 7's live pass.
+  need a host and a headed browser, with wave 7's live pass, and are carried to wave 8's.
+
+## Company backbone: left open from the wave 7 reviews (2026-11-15)
+
+Wave 8 closed the wave 7 notes it could: `ApplicablePractice` names its id and practices resolve by id (PR08), the
+pickers and the test chat follow availability and shared-only members cannot read an agent's sessions (PC06), the
+practices row is in "What it saw", and a deleted project's practice suggestions are dismissed with its practices. These
+wait, each with its reason:
+
+- **Home readers see other projects' briefs**: members of an agent's home project still read the `session.context` of
+  its runs in other projects; per-project session walls are PC13's allow-list (wave 9)
+  ([limitations](limitations.md#project-context-wave-7)).
+- **kagent over MCP outside a team**: a kagent agent called over MCP gets no project block and its `practices_for`
+  binds to its home project; only a team's open call carries the run's project. A run binding for it is its own package.
+- **Model verdicts in `landflow practices check`**: the CLI runs machine checks only; a model's verdict reaches a flow
+  through Check Practices (PR08).
+- **A reminder after Write or Edit on a matching path**: the mod never denies a tool call, so a reminder hook is its own
+  package.
+- **Live checks owed from wave 7**: the team's goal line and the A2A compact block, and Practices Act 1; carried to wave
+  8's live pass with PC12's goal picker and PR07's index line.
 
 ## Runs: one list (B20, 2026-11-14)
 
@@ -1976,9 +1995,25 @@ Projects get a mission to serve, goals and a brief, and agents learn where their
   target date, parent, four levels deep), the goals a project serves in order (its first planned or active one is primary),
   linked brain initiatives, the project brief (brief, constraints, done-when, words we use, status, target date, lead,
   decision owner) and the context data source for the "Where this work fits" block. Closes the server side of P1.
-- **PC02, open:** the screens (Goals page, goal dialog, the brief on the project Overview, Settings → Company).
-- **PC03, open:** the block and its injection into agent runs.
-- **Open:** goal progress.
+- **PC06, built:** agents across projects: shared to projects or to all of them (`GET|PUT /api/agents/:id/shares`),
+  `agentAvailableIn` and `availableAgentIds`, `GET /api/agents?availableIn=`, the Run an Agent picker listing only
+  available agents, the test chat's 403 for an unavailable project, and sessions read only from the home project
+  ([projects-and-goals.md](projects-and-goals.md#agents-across-projects)). Closes P3-1 and P3-2 on the server; the
+  screens are PC07.
+- **PC02, built (wave 7):** the screens (Goals page, goal dialog, the brief on the project Overview, Settings → Company).
+- **PC03, PC04 and PC05, built (wave 7):** the block and its injection into agent runs, the compact block for remote
+  agents and teams, and usage by project and goal ([below](#paperclip-wave-7-project-context-pc03)).
+- **PC07, built (wave 8):** the agent screens: Make available…, "Available in", Test in project with the preview, the
+  Project context and Practices switches and View prompt
+  ([projects-and-goals.md](projects-and-goals.md#testing-an-agent-in-a-project)).
+- **PC08, PC10 and PC12, built (wave 8):** what the agent saw, project context for harnesses and builders, and the goal
+  pickers ([below](#paperclip-wave-8-what-the-agent-saw-pc08)).
+- **PC09, built:** cost per goal. A Goal grouping on the AI page, after Project, limited to the goals the viewer may see. Closes P4-2.
+- **PC11, built (wave 8):** the landflow-brain mod 0.4.0 starts a session with the project section for the repository and
+  adds `/brain project`; `landflow work context` prints the same block in the shell
+  ([projects-and-goals.md](projects-and-goals.md#in-claude-code-and-the-shell)).
+- **Open:** per-project settings for agents, the budget and the workspace (wave 9); goal progress, tasks and the
+  PROJECT.md export (wave 10).
 
 ## Not planned
 
@@ -2023,8 +2058,27 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   compact, redacted and capped), it sits after the skills and before the date line, the date is pinned for the run,
   the block's hash is part of the cache keys, and each agent has a `projectContext` switch. The test chat takes
   `projectId`. Teams and workflows can name a goal (`goalId`). `LANDFLOW_PROJECT_CONTEXT=off` turns it off
-  ([agents.md](agents.md#project-context)). Left: the remote paths (PC04), usage attribution (PC05), the
-  availability rule (PC06) and the switch and preview in the UI (PC07).
+  ([agents.md](agents.md#project-context)). The remote paths (PC04) and usage attribution (PC05) were built in wave 7,
+  the availability rule (PC06) and its screens (PC07) in wave 8.
+
+## Paperclip wave 8: what the agent saw (PC08)
+
+- **PC08, built:** each agent run writes `attrs.saw` once per run (the block as the model got it, mode, project and goal,
+  pinned time, a persona summary, practice handles). Run Trace and the agent's Sessions tab show it as **What it saw**,
+  and the run's root span shows Project and Goal chips. It follows **Content kept** (`summaries` cuts the text, `off`
+  keeps none and says so). Closes D7 and P4-1 ([run-trace.md](run-trace.md#what-it-saw)). PR09's practices row sits in
+  it (cited and check per practice for a run). Left: the session fold shows the persona as it is now, not as the run had it.
+- **PC10, built (wave 8):** project repositories (`PATCH /api/projects/:id { repos }`, migration 2500), `GET
+  /api/projects/context` by repository or id, the MCP `project_context` tool and `project://{id}/context` resource,
+  "Your goals" in the morning briefing, and the project's compact block in Spotlight and the Agent architect (P5-1 to
+  P5-3, D8). The mod and the CLI use the route (PC11, built). Left: a screen for a project's repositories
+  ([projects-and-goals.md](projects-and-goals.md#repositories-and-harnesses)).
+
+## Paperclip wave 8: goal pickers (PC12)
+
+- **PC12, built:** a workflow's settings and a team's page have a goal field (empty: the project's goal), and the team's
+  member picker lists the agents available in the team's project, keeping current members
+  ([projects-and-goals.md](projects-and-goals.md#picking-a-goal-for-a-workflow-or-team)).
 
 ## Practices (waves P1 and P2)
 
@@ -2036,11 +2090,16 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   waivers, the `/api/practices` routes, `LANDFLOW_PRACTICES` and the port other packages read.
 - **PR02 to PR05 (wave P1):** the Brain page, learning (Draft Practice, the Learn practices template, `/brain learn`),
   selection and the block, MCP tools, the mod and `landflow practices`.
-- **Wave P2, next:** `ApplicablePractice` gets the practice id and project id (a change to `lib/shared/practices.ts`), so `landflow practices check` asks `resolve` by id instead of by handle and level; delivery to Landflow agents through the seam's practices slot (PR06) and to kagent agents (PR07),
-  Check Practices with Ask a Person for Fix, Waive or Change (PR08), compliance and the inbox suggestion for a draft
-  (PR09), and the demo on a branch of the Landflow repository that ends at a draft pull request (PR10).
+- **PR08, built (wave P2):** `ApplicablePractice` names the practice id and project id, `GET /api/practices/resolve` takes `id`, and `landflow practices check` reads each listed practice by it; the Check Practices step (a failed required check fails the step until fixed or waived), the pull request and blocked templates, and `/practices/waive`.
+- **PR09, built (wave P2):** compliance (how often a practice was given, cited, passed and waived, and who follows it; the run's practices row), the practice-drift detector, and an inbox suggestion for every draft, applied by owners and admins only and never for a draft read from outside ([practices.md](practices.md#compliance)). Left: citation drift.
+- **PR06 and PR07, built (wave P2):** delivery to Landflow agents through the seam's practices slot, with `delivered` and
+  `cited` rows and the agent's Practices switch (PR06), and to kagent agents: the index, `practices_for` and
+  `practice_cite` on the agent's MCP server (PR07) ([practices.md](practices.md#following)).
+- **Next:** the demo on a branch of the Landflow repository that ends at a draft pull request (PR10).
 
 ## Practices in Claude Code and the shell (PR05, wave P1)
 
 - **Built**: the landflow-brain mod 0.3.0 adds a practices section (`landflow-brain:practices`) inside the 2-second bound, the `practices` and `practice_draft` tools, `/brain practices` and `/brain learn [paths]`; the CLI adds `landflow practices list|show|check|learn`, with the machine checks run locally ([landflow-brain-mod.md](landflow-brain-mod.md#practices), [features/cli.md](features/cli.md#practices-landflow-practices)). Closes PRAC-5.
-- **Left**: model verdicts in `check` and a reminder after `Write` or `Edit` on a matching path (wave P2); the mod never denies a tool call.
+- **Left (deferred)**: model verdicts in the CLI's `check` (a model's verdict reaches a flow through Check Practices, PR08;
+  the CLI runs machine checks only) and a reminder after `Write` or `Edit` on a matching path (the mod never denies a
+  tool call, so a reminder hook is its own package).

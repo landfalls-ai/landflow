@@ -86,6 +86,7 @@ export const agentConfigSchema = z
       })
       .optional(),
     projectContext: z.enum(CONTEXT_MODES).optional(),
+    practices: z.enum(['on', 'off']).optional(),
     plugins: z.array(z.string().max(200).regex(PLUGIN_ID, 'A plugin is <plugin>@<marketplace>')).max(20).optional(),
     settings: z
       .object({

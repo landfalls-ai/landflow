@@ -473,7 +473,7 @@ Only one run can be active per session.
 
 ### Test chat
 
-The request may carry `projectId`: the chat then runs as if the agent was called from that project, and the block names it. A project you have no role in is a 404 "Project not found".
+The request may carry `projectId`: the chat then runs as if the agent was called from that project, and the block names it. A project you have no role in is a 404 "Project not found". A project the agent is not available in (not its home, not shared with it, not shared with all) is a 403.
 
 **Test agent** opens a chat with the draft on the chat kit. The tool calls of a turn are one activity line that opens
 into its steps (a call waiting for your **Approve** stays a full row); the footer under each reply gives the model, the
@@ -529,6 +529,16 @@ and footer, and keeps its answer card.
   the steps live, and under the tool call in the Agent session panel. A page opened mid-run gets the
   latest report from `GET /api/executions/:id` (`progress`) and then the live `node.progress`
   events ([a2a.md](a2a.md#the-a2a-agent-node)).
+
+## Available in
+
+An agent belongs to one project, its home, and is **available** there, in each project it is shared with and, when
+shared with **All projects**, everywhere. Run an Agent lists only the agents available in the workflow's project, and
+one from another project says "From <project>". The home's admins set it with `PUT /api/agents/:id/shares`; a project
+that only uses an agent can pick it in Run an Agent and run it from its workflows, but not change, delete or share it. The agent's **sessions are read from the
+home project only** (they hold the briefs of the projects that called it): everyone else gets 404. Availability is not
+a wall at run time ([limitations](limitations.md#project-context-wave-7)). See
+[projects-and-goals.md](projects-and-goals.md#agents-across-projects).
 
 ## Version history and restore
 
@@ -588,6 +598,14 @@ the remembered facts, then "You are X. Current date and time: …". The date is 
 for every model call of that run (and for a resume after an approval), so the prompt up to the date line is the same on
 every turn and the provider's [prompt cache](#prompt-cache) keeps working. A new run gets a new date.
 
+### The switches and the preview
+
+Settings → Guardrails has the **Project context** switch (Full, Compact, Off: what the agent is told about the project)
+and the **Practices** switch (On, Off: whether approved practices are added to each run; absent counts as On). Both
+save with the rest of the draft. **What it will be given** in the test chat, and **View prompt** in the persona tab,
+show the text the run gets with the saved switches (`GET /api/agents/:id/context-preview`). See
+[Testing an agent in a project](projects-and-goals.md#testing-an-agent-in-a-project).
+
 ### Which project a run is in
 
 The caller's project, not the agent's home, so one agent can work for several projects:
@@ -609,6 +627,10 @@ cut to 200 characters, the run line; at most 600 characters) or `off`. Set it th
 (`PUT /api/agents/:id`, `projectContext`); it is exported with the agent under `.landflow/`. `LANDFLOW_PROJECT_CONTEXT=off`
 switches the whole feature off. A full block is at most 2,400 characters; to fit, the builder drops the words, the
 status, the why, the constraints and the done-when, in that order, then cuts the brief, then the oldest goals.
+
+**Practices.** Each agent also has `practices`: `on` (the default) or `off`. On, a run in a project gets that project's
+and the organization's approved practices in its prompt after this block, and records which it was given and which its
+answer cited ([practices.md](practices.md#landflow-agents)). The same `LANDFLOW_PRACTICES=off` switches them all off.
 
 **Caches.** A short hash of the block joins the [response cache](#response-cache) key and the semantic cache's config
 hash, so an answer given in one project is not served in another, or after the goals change. With no block the keys are the

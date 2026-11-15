@@ -5,6 +5,7 @@
  */
 import type { EngineInterface } from 'claude-code'
 import { clip, cleanText, safeLink } from './journal'
+import { parseProjectContext, projectQuery, type ProjectContext } from './project'
 import type { BrainWorkEvent } from './summary'
 
 /** Who may read an item: the person alone (the default), the people they share a project with, or the organization. */
@@ -246,6 +247,20 @@ export async function getBriefing($: EngineInterface, config: Config, day: strin
   if (first && first !== 'timeout') return first
   const old = await cached()
   return old && { ...old, today: old.today ?? [], related: old.related ?? [] }
+}
+
+/** The project context of a repository: GET /api/projects/context. No project is undefined; any failure (unreachable, refused, not JSON, too slow) is 'failed'. */
+export function getProjectContext($: EngineInterface, config: Config, repo: string): Promise<ProjectContext | undefined | 'failed'> {
+  const run = async (): Promise<ProjectContext | undefined | 'failed'> => {
+    try {
+      const response = await $.http.fetch(`${config.url}/api/projects/context?${projectQuery(repo)}`, { method: 'GET', headers: headers(config) })
+      if (response.status < 200 || response.status >= 300) return 'failed'
+      return parseProjectContext(JSON.parse(response.text || '{}'))
+    } catch {
+      return 'failed'
+    }
+  }
+  return within($, run(), 'failed' as const, BRIEFING_TIMEOUT_MS)
 }
 
 /** The request that changes who reads an item the person sent: PATCH /api/brain/work/:sourceId. */

@@ -6,13 +6,13 @@
  * The builders are private to builtin.ts, so it hands them in.
  */
 import type { WorkflowConnection, WorkflowNode } from '@landflow/engine';
-import type { TemplateCredentialSlot, TemplateDetail } from '../../shared/templates';
+import type { TemplateCategory, TemplateCredentialSlot, TemplateDetail } from '../../shared/templates';
 
 type Slot = TemplateCredentialSlot & { key: string };
 type Link = [type: WorkflowConnection['type'], source: string, target: string, sourceIndex?: number, targetIndex?: number];
 
 export interface PracticesHelpers {
-  template: (def: { id: string; name: string; description: string; categories: Array<'productivity' | 'data'>; setup: string[]; nodes: WorkflowNode[]; links: Link[] }) => TemplateDetail;
+  template: (def: { id: string; name: string; description: string; categories: TemplateCategory[]; setup: string[]; nodes: WorkflowNode[]; links: Link[] }) => TemplateDetail;
   node: (id: string, name: string, type: string, position: [number, number], parameters?: Record<string, unknown>, extra?: Partial<WorkflowNode> & { uses?: Slot[] }) => WorkflowNode;
   main: (source: string, target: string, sourceIndex?: number, targetIndex?: number) => Link;
 }
@@ -24,6 +24,15 @@ const GITHUB: Slot = {
   type: 'github.githubApi',
   name: 'GitHub token',
   description: 'A token you create with read access to the repository’s contents (a fine-grained token with Contents: read is enough).',
+};
+
+/** The same plugin's token for a pull request: it reads the files and writes the comment. */
+const GITHUB_PR: Slot = {
+  id: 'github-pull-requests',
+  key: 'githubApi',
+  type: 'github.githubApi',
+  name: 'GitHub token',
+  description: 'A token you create (a fine-grained token with Pull requests: read and write on the repository). The flow comments on the pull request and never merges it.',
 };
 
 const READS = {
@@ -115,6 +124,45 @@ const DRAFTS_CODE = [
   'return out;',
 ].join('\n');
 
+/** A pull request's files (the GitHub node's List Files items) as the Check Practices step takes them: A, M or D with the added lines of each patch. */
+const CHANGED_CODE = [
+  "const pr = $('Pull request').all()[0].json;",
+  'const files = [];',
+  'for (const it of items) {',
+  '  const f = it.json;',
+  '  if (!f.path) continue;',
+  "  if (f.status === 'removed') { files.push({ path: f.path, status: 'D' }); continue; }",
+  "  const added = typeof f.patch === 'string' ? f.patch.split('\\n').filter((l) => l[0] === '+').map((l) => l.slice(1)) : [];",
+  "  if (f.status === 'renamed' && f.previousPath) files.push({ path: f.previousPath, status: 'D' });",
+  "  files.push({ path: f.path, status: f.status === 'added' || f.status === 'renamed' ? 'A' : 'M', added });",
+  '}',
+  "const repo = pr.owner + '/' + pr.repository;",
+  "return [{ json: { repo, pullNumber: pr.pullNumber, url: 'https://github.com/' + repo + '/pull/' + pr.pullNumber, files } }];",
+].join('\n');
+
+/** The comment on the pull request: each practice and what became of it. */
+const COMMENT_CODE = [
+  'const r = items[0].json;',
+  "const mark = { pass: 'pass', fail: 'warning', waived: 'waived for this run', 'no-checks': 'no machine check' };",
+  "const lines = r.practices.map((p) => '- **' + p.handle + '** (' + p.strength + '): ' + (mark[p.result] || p.result) + (p.messages.length ? ' - ' + p.messages.join('; ') : ''));",
+  "const head = r.checked ? 'Practices checked: ' + r.checked + '.' : 'No approved practice applies to this change.';",
+  "return [{ json: { text: [head, ''].concat(lines).join('\\n') } }];",
+].join('\n');
+
+/** The error workflow's message: which practices failed, and the three links for each. */
+const BLOCKED_CODE = [
+  'const r = items[0].json;',
+  "const msg = String((r.execution && r.execution.error && r.execution.error.message) || '');",
+  "const names = ((msg.match(/Required practices failed: (.*?)\\. Fix/) || [])[1] || '').split(', ').filter(Boolean);",
+  '// The waive links come in the order of the names.',
+  'const waive = [...msg.matchAll(/((?:https?:\\/\\/[^\\s\\/]+)?\\/practices\\/waive\\?practice=([\\w-]+)&execution=[\\w-]+)/g)];',
+  "const origin = (String((r.execution && r.execution.url) || '').match(/^https?:\\/\\/[^\\/]+/) || [''])[0];",
+  "const change = (msg.match(/Change: (\\S+)/) || [])[1];",
+  "const lines = names.map((name, i) => ['**' + name + '**', change ? '  Fix: ' + change : '  Fix: push a fix, then run the flow again', waive[i] ? '  Waive for this run: ' + (waive[i][1].startsWith('/') ? origin : '') + waive[i][1] : '', waive[i] ? '  Change the practice: ' + origin + '/brain/practices/' + waive[i][2] : ''].filter(Boolean).join('\\n'));",
+  "const workflow = (r.workflow && r.workflow.name) || 'A flow';",
+  "return [{ json: { title: workflow + ': a required practice failed', text: (names.length ? lines.join('\\n\\n') : msg) + '\\n\\nRun: ' + ((r.execution && r.execution.url) || '') } }];",
+].join('\n');
+
 export function practicesTemplates(h: PracticesHelpers): TemplateDetail[] {
   const { template, node, main } = h;
   const uses = { uses: [GITHUB] };
@@ -180,5 +228,59 @@ export function practicesTemplates(h: PracticesHelpers): TemplateDetail[] {
   });
   // The builder lists only the slots it owns; this one is the GitHub plugin's, so it is added here.
   const { key: _key, ...slot } = GITHUB;
-  return [{ ...detail, credentials: [{ ...slot, nodes: detail.workflow.nodes.filter((n) => n.credentials?.githubApi).map((n) => n.name) }] }];
+  const learn = { ...detail, credentials: [{ ...slot, nodes: detail.workflow.nodes.filter((n) => n.credentials?.githubApi).map((n) => n.name) }] };
+
+  const prUses = { uses: [GITHUB_PR] };
+  const check = template({
+    id: 'practices-check-pr',
+    name: 'Check a pull request against the practices',
+    description: 'Reads the files of a GitHub pull request, checks them against the approved practices that apply (the machine checks only, no model), comments the results and asks a person whether it is ready to merge. A required practice that fails stops the flow until the change is fixed or a person waives it for the run. It never merges.',
+    categories: ['engineering'],
+    setup: [
+      'Needs the **github** plugin and a token you create yourself (a fine-grained token with Pull requests: read and write on the repository). The flow reads the files and posts one comment; it never merges.',
+      'Edit **Pull request**: the owner, the repository (made-up names are in it) and the number. The practices checked are those of the project this flow is in and the organization’s that cover the repository and the changed paths.',
+      'GitHub leaves the patch out of very large files, so a fileMatches check sees no added lines there. Run `landflow practices check` in a checkout for those.',
+      'To tell people when it is blocked, import **When a required practice blocks a flow** as well, then open this flow’s **Settings → Error workflow** and pick it. Error workflows start only for runs a trigger started, not for a manual Run, so swap the Start node for a schedule or webhook trigger first.',
+      'A required practice that fails stops the run at **Check Practices**. After you fix the pull request, run the flow again. To waive it, open the waive link in the failure, then **Retry** the failed run: the waiver is for that run only.',
+    ],
+    nodes: [
+      node('start', 'Start', 'manualTrigger', [0, 0]),
+      node('pr', 'Pull request', 'set', [260, 0], { mode: 'json', json: JSON.stringify({ owner: 'your-org', repository: 'your-repo', pullNumber: 1 }, null, 2), includeOtherFields: false, splitArray: '' }),
+      node('files', 'Pull request files', 'github.github', [520, 0], { resource: 'pullRequest', operation: 'listFiles', owner: '{{ $json.owner }}', repository: '{{ $json.repository }}', pullNumber: '{{ $json.pullNumber }}', returnAll: true }, prUses),
+      node('map', 'Changed files', 'code', [780, 0], { mode: 'all', language: 'javascript', code: CHANGED_CODE }),
+      node('check', 'Check Practices', 'practiceCheck', [1040, 0], { repository: '{{ $json.repo }}', changedFiles: '{{ $json.files }}', options: { changeUrl: '{{ $json.url }}' } }),
+      node('write', 'Write the comment', 'code', [1300, 0], { mode: 'all', language: 'javascript', code: COMMENT_CODE }),
+      node('comment', 'Comment on the pull request', 'github.github', [1560, 0], { resource: 'pullRequest', operation: 'comment', owner: ref('Pull request', 'owner'), repository: ref('Pull request', 'repository'), pullNumber: ref('Pull request', 'pullNumber'), commentBody: '{{ $json.text }}' }, prUses),
+      node('ask', 'Ready to merge?', 'confirmDraft', [1820, 0], {
+        title: 'Ready to merge?',
+        draft: "{{ $('Write the comment').item.json.text }}",
+        channel: 'chat',
+        allowEdit: false,
+        timeoutMinutes: 0,
+      }),
+    ],
+    links: [main('start', 'pr'), main('pr', 'files'), main('files', 'map'), main('map', 'check'), main('check', 'write'), main('write', 'comment'), main('comment', 'ask')],
+  });
+  const { key: _prKey, ...prSlot } = GITHUB_PR;
+  const checkPr = { ...check, credentials: [{ ...prSlot, nodes: check.workflow.nodes.filter((n) => n.credentials?.githubApi).map((n) => n.name) }] };
+
+  const blocked = template({
+    id: 'practices-blocked',
+    name: 'When a required practice blocks a flow',
+    description: 'An error workflow for flows with Check Practices: when one stops on a required practice, it asks a person, naming each failed practice with three links: fix the change, waive the practice for that run, or change the practice.',
+    categories: ['engineering'],
+    setup: [
+      'In each flow that has a **Check Practices** step (for example **Check a pull request against the practices**), open **Settings → Error workflow** and pick this one.',
+      'Error workflows start only when a trigger started the failed run, not for a manual Run.',
+      'The message reads the failure Check Practices raises. **Fix** is the pull request the step was given (its “Link to the change” option); **Waive** opens the waive page for that run, where someone who may approve the practice gives a reason; **Change the practice** opens it on /brain. After a waiver, retry the failed run from its page.',
+      'It asks in chat; change **Ask a Person** to Slack or email as for any other flow. Nothing here waives or merges anything.',
+    ],
+    nodes: [
+      node('failed', 'Error Trigger', 'errorTrigger', [0, 0]),
+      node('name', 'Name the failures', 'code', [260, 0], { mode: 'all', language: 'javascript', code: BLOCKED_CODE }),
+      node('ask', 'Ask a Person', 'confirmDraft', [520, 0], { title: '{{ $json.title }}', draft: '{{ $json.text }}', channel: 'chat', allowEdit: false, timeoutMinutes: 0 }),
+    ],
+    links: [main('failed', 'name'), main('name', 'ask')],
+  });
+  return [learn, checkPr, blocked];
 }

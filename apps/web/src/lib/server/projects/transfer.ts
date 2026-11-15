@@ -15,6 +15,7 @@ import { folders } from '../folders';
 import { forgetProjectSettings } from '../governance/scopes';
 import { agentTemplateRows } from '../agents/template-rows';
 import { localTemplates } from '../templates/store';
+import { settleRetired } from '../practices/inbox';
 import { projectVariables } from './variables';
 import {
   auditShare,
@@ -157,7 +158,7 @@ export function deleteUserWithTransfer(userId: string, target?: TransferTarget, 
   if (user.role === 'owner') throw new ProjectError('The owner can’t be removed', 403);
   const personal = personalProjectId(userId);
   const db = authDb();
-  return db.transaction(() => {
+  const { retired, ...result } = db.transaction(() => {
     const owned = resourcesIn(personal);
     let to: ProjectRecord | undefined;
     let moved: Partial<Record<ResourceKind, number>> = {};
@@ -172,10 +173,12 @@ export function deleteUserWithTransfer(userId: string, target?: TransferTarget, 
     }
     db.delete('project_members', { user_id: userId });
     db.delete('scim_group_members', { user_id: userId });
-    removeProjectRows(personal);
+    const retired = removeProjectRows(personal);
     if (!deleteUser(userId)) throw new ProjectError('User not found', 404);
-    return { moved, ...(to && { to }) };
+    return { moved, retired, ...(to && { to }) };
   });
+  for (const practiceId of retired) settleRetired(practiceId, actorId);
+  return result;
 }
 
 /** Delete a team project; what it owns goes to `transferTo` (required when it owns anything). One transaction. */
@@ -196,9 +199,11 @@ export function deleteProjectWithTransfer(projectId: string, transferTo?: string
     } else {
       dropProjectData(projectId);
     }
-    removeProjectRows(projectId);
-    return { moved };
+    const retired = removeProjectRows(projectId);
+    return { moved, retired };
   });
+  // The project's practices are retired: their open inbox suggestions are dismissed, so none waits on a project that is gone.
+  for (const practiceId of result.retired) settleRetired(practiceId, actorId);
   recordAudit({
     action: 'project.delete',
     target: { type: 'project', id: projectId, name: project.name },
@@ -206,7 +211,7 @@ export function deleteProjectWithTransfer(projectId: string, transferTo?: string
     summary: `Deleted the project ${project.name}${transferTo ? ` (its items went to ${getProject(transferTo)?.name ?? transferTo})` : ''}`,
     details: { name: project.name, transferredTo: transferTo ?? null, moved: Object.entries(result.moved).map(([k, n]) => `${k}:${n}`) },
   });
-  return result;
+  return { moved: result.moved };
 }
 
 /**

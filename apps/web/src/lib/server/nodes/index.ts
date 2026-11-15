@@ -15,6 +15,7 @@ import { applyCapRaiseNode, capRaiseTriggerNode } from './cap-raise';
 import { proposeFlowsNode, velocitySignalsNode } from './velocity';
 import { detectorTriggerNode, findSimilarNode, landflowUsageNode, recordEventNode, suggestImprovementNode, suggestionDecidedTriggerNode, usageTriggerNode } from './usage';
 import { practiceDraftNode } from './practices'; // PR03:
+import { practiceCheckNode } from './practice-check'; // PR08:
 import { aiAgentNode, anthropicChatModelNode, calculatorToolNode, ollamaChatModelNode, simpleMemoryNode } from './ai';
 import { chainLlmNode, informationExtractorNode, textClassifierNode } from './chains';
 import { aiStep } from './composites';
@@ -113,6 +114,7 @@ export const corePlugin = definePlugin({
     brainEntityNode,
     githubWorkEventNode, // B31:
     practiceDraftNode, // PR03:
+    practiceCheckNode, // PR08:
     findSimilarNode,
     usageTriggerNode,
     suggestionDecidedTriggerNode,

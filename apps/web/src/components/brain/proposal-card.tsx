@@ -12,7 +12,9 @@ import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { detectorLabel, ENTITY_LABELS, parseEntityRef, type DismissReason, type Proposal, type ProposalAction } from '@/lib/shared/brain';
 import { Badge, Chip, type Tone } from '../ui/badge';
-import { Button } from '../ui/button';
+import { Button, buttonClass } from '../ui/button';
+import { useViewer } from '../auth/viewer';
+import { can } from '@/lib/shared/auth';
 import { confirmAction } from '../ui/confirm';
 import { MenuItem, Popover } from '../ui/popover';
 import { OpsDiff, Warnings } from '../editor/suggestions-card';
@@ -27,19 +29,21 @@ const DISMISS_LABELS: Array<{ reason: DismissReason; label: string }> = [
 ];
 
 /** What Apply does for this suggestion. */
-export function proposalKind(p: Proposal): 'draft' | 'spotlight' | 'agent' | 'ops' | 'build' | 'advice' | 'note' {
+export function proposalKind(p: Proposal): 'draft' | 'spotlight' | 'agent' | 'ops' | 'build' | 'advice' | 'note' | 'practice' {
   // A stored draft wins (applyProposal checks it first); else a build prompt: Build it creates an empty workflow and Spotlight builds it (docs/second-brain.md#build-it-with-spotlight).
   if (p.draft) return 'draft';
   if (p.buildPrompt) return 'spotlight';
   // A team's notebook asks to keep a note for the project (docs/team-notebook.md).
   if (p.notebook) return 'note';
+  // PR09: a draft practice waits for a person (docs/practices.md#the-inbox).
+  if (p.practice) return 'practice';
   if (p.agentChange) return 'agent';
   // A missing tool: approving it starts the workflows that build one.
   if (p.detector === 'missing-tool') return 'build';
   return p.ops.length ? 'ops' : 'advice';
 }
 
-export const APPLY_LABEL = { draft: 'Create workflow', spotlight: 'Build it', agent: 'Apply', ops: 'Apply', build: 'Build it', advice: 'Mark done', note: 'Keep it' } as const;
+export const APPLY_LABEL = { draft: 'Create workflow', spotlight: 'Build it', agent: 'Apply', ops: 'Apply', build: 'Build it', advice: 'Mark done', note: 'Keep it', practice: 'Approve' } as const;
 
 export interface ProposalActions {
   busy?: string;
@@ -114,7 +118,7 @@ export function useProposalActions({ onDone, onForbidden, localApply }: { onDone
         } else if (kind === 'build') {
           if (result.started?.length) toast.success(`Approved: ${result.started.map((w) => `“${w.name}”`).join(', ')} builds it`, { action: { label: 'Runs', onClick: () => router.push('/runs') } });
         } else {
-          toast.success(kind === 'note' ? 'Kept for the project' : 'Applied');
+          toast.success(kind === 'note' ? 'Kept for the project' : kind === 'practice' ? 'Approved: agents get it from now on' : 'Applied');
           startedToast(result.started);
         }
       });
@@ -147,7 +151,20 @@ function Evidence({ proposal }: { proposal: Proposal }) {
 
 function Changes({ proposal }: { proposal: Proposal }) {
   const [open, setOpen] = useState(false);
-  const { draft, agentChange, ops, buildPrompt } = proposal;
+  const { draft, agentChange, ops, buildPrompt, practice } = proposal;
+  // PR09: a draft practice. Its text is only the title and summary above; the rules are read on /brain.
+  if (practice)
+    return (
+      <p className="text-[12px] leading-relaxed text-t2">
+        {practice.tainted ? (
+          <>
+            Read from outside: <Link href={`/brain/practices/${encodeURIComponent(practice.practiceId)}`} className="font-semibold text-ac hover:underline">read it against its sources on /brain</Link> to approve it.
+          </>
+        ) : (
+          <>Approving version {practice.version} makes it what agents get from then on.</>
+        )}
+      </p>
+    );
   // A stored draft wins, as in proposalKind and applyProposal.
   if (draft)
     return (
@@ -199,8 +216,10 @@ export function firstSentence(text: string): string {
  * for advice whose flow gave buttons of its own, the first of those in Apply's place and the rest under ⋯. Pure, so
  * the split is tested without opening the menu.
  */
-export function cardButtons(proposal: Proposal): { hasApply: boolean; lead?: NonNullable<Proposal['actions']>[number]; rest: NonNullable<Proposal['actions']> } {
+export function cardButtons(proposal: Proposal, mayApprovePractice = true): { hasApply: boolean; lead?: NonNullable<Proposal['actions']>[number]; rest: NonNullable<Proposal['actions']> } {
   const flowActions = proposal.actions ?? [];
+  // PR09: a draft read from outside, or any draft for someone who is not an owner or admin, only links to /brain.
+  if (proposal.practice && (proposal.practice.tainted || !mayApprovePractice)) return { hasApply: false, rest: flowActions };
   const hasApply = proposalKind(proposal) !== 'advice' || !flowActions.length;
   return hasApply ? { hasApply, rest: flowActions } : { hasApply, lead: flowActions[0], rest: flowActions.slice(1) };
 }
@@ -218,7 +237,8 @@ export function ProposalCard({ proposal, actions, compact, onFocus, expanded, hr
   // An entity says what kind it is: “Invoice reminders · Initiative”.
   const entityType = proposal.target.type === 'entity' ? parseEntityRef(proposal.target.id)?.type : undefined;
   const target = [proposal.target.name, entityType && ENTITY_LABELS[entityType], proposal.target.nodeName].filter(Boolean).join(' · ');
-  const { hasApply, lead, rest } = cardButtons(proposal);
+  const viewer = useViewer();
+  const { hasApply, lead, rest } = cardButtons(proposal, can(viewer, 'projects:manage'));
   return (
     <div className={cn('animate-fade-up space-y-1.5 rounded-[10px] border border-hair bg-wl', compact ? 'p-2.5' : 'p-3')}>
       <span className="block text-[13px] font-semibold leading-snug text-t1">{proposal.title}</span>
@@ -266,6 +286,10 @@ export function ProposalCard({ proposal, actions, compact, onFocus, expanded, hr
           <Button size="sm" variant="primary" onClick={() => actions.apply(proposal)} loading={busy} disabled={!!actions.busy && !busy}>
             {APPLY_LABEL[kind]}
           </Button>
+        ) : proposal.practice ? (
+          <Link href={`/brain/practices/${encodeURIComponent(proposal.practice.practiceId)}`} className={buttonClass('primary', 'sm', 'max-md:min-h-11')}>
+            {proposal.practice.tainted ? 'Read it against its sources on /brain' : 'Open on /brain'}
+          </Link>
         ) : (
           lead && (
             <Button size="sm" variant="primary" onClick={() => actions.act(proposal, lead)} loading={busy} disabled={!!actions.busy && !busy}>

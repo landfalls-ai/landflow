@@ -2,17 +2,20 @@
 /** Activity → Sessions: every conversation the agent had (test chat, schedules, channels, workflows, other agents) and its timeline. */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Bot, Clock, Code, FlaskConical, Loader2, MessagesSquare, RefreshCw, Send, Trash2, Workflow } from 'lucide-react';
+import { ArrowLeft, Bot, ChevronRight, Clock, Code, FlaskConical, Loader2, MessagesSquare, RefreshCw, Send, Trash2, Workflow } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
-import type { AgentSession, SessionSource, SessionStatus, SessionSummary } from '@/lib/shared/agents';
+import type { Agent, AgentSession, SessionSource, SessionStatus, SessionSummary } from '@/lib/shared/agents';
 import type { ChatFeedback, FeedbackRating } from '@/lib/shared/chat-feedback';
 import { Badge, type Tone } from '../ui/badge';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
 import { Segmented } from '../ui/segmented';
+import { cleanPersona } from '@/lib/shared/persona';
+import { sawPersona } from '@/lib/shared/what-it-saw-sections';
+import { WhatItSaw } from '../run-trace/what-it-saw';
 import { TimelineView, TraceChip, type ToolEntry } from './timeline';
 import { REASON_LABEL, useAgentRun } from './use-agent-run';
 
@@ -56,6 +59,34 @@ type Audience = 'all' | 'people' | 'automations';
 const PAGE = 50;
 const versionLabel = (version: 'draft' | number) => (version === 'draft' ? 'Draft' : `v${version}`);
 const tokens = (u: { inputTokens: number; outputTokens: number }) => (u.inputTokens + u.outputTokens).toLocaleString();
+
+/** What the agent got at the start of this session: its project block, practices and a summary of its persona now. */
+function SawFold({ session, agentId }: { session: AgentSession; agentId: string }) {
+  const [persona, setPersona] = useState<ReturnType<typeof sawPersona>>();
+  const has = Boolean(session.context);
+  useEffect(() => {
+    if (!has) return;
+    let live = true;
+    api<{ agent: Agent }>(`/api/agents/${agentId}`, { background: true })
+      .then((r) => live && setPersona(sawPersona(cleanPersona(r.agent.persona))))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [agentId, has]);
+  const context = session.context;
+  if (!context) return null;
+  return (
+    <details className="group mb-4 rounded-2xl border border-hair bg-sf px-4 py-2.5" data-testid="session-saw">
+      <summary className="flex min-h-9 cursor-pointer list-none items-center gap-1.5 text-[13px] font-semibold text-t1 [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="size-3.5 text-t3 transition-transform group-open:rotate-90" /> What it saw
+      </summary>
+      <div className="pb-1.5">
+        <WhatItSaw bare mode={context.mode} text={context.text} practices={context.practices} executionId={session.execution?.executionId} persona={persona} />
+      </div>
+    </details>
+  );
+}
 
 function SessionDetail({
   agentId,
@@ -220,6 +251,7 @@ function SessionDetail({
               </div>
             )}
           </div>
+          <SawFold session={session} agentId={agentId} />
           <div className="rounded-2xl border border-hair bg-sf px-4 py-4">
             {run.entries.length ? (
               <TimelineView

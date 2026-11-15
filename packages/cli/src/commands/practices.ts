@@ -61,9 +61,9 @@ async function applicable(ctx: Context, query: Record<string, string | string[] 
  * One approved practice in full, read the way delivery gives it (`GET /api/practices/resolve`): nothing while practices are
  * off, and the level (and project) of the one asked for, so an org practice never stands in for the project's.
  */
-async function resolved(ctx: Context, handle: string, query: { repo?: string; path?: string[]; projectId?: string; level?: string }): Promise<FullPractice | undefined> {
+async function resolved(ctx: Context, by: { handle: string } | { id: string }, query: { repo?: string; path?: string[]; projectId?: string; level?: string }): Promise<FullPractice | undefined> {
   try {
-    const body = await ctx.client.get<{ practice?: FullPractice }>('/api/practices/resolve', { handle, ...query });
+    const body = await ctx.client.get<{ practice?: FullPractice }>('/api/practices/resolve', { ...by, ...query });
     return body.practice;
   } catch (caught) {
     if (caught instanceof CliError && caught.code === 'not_found') return undefined;
@@ -107,7 +107,7 @@ export const show: Command = {
   args: { min: 1, max: 1 },
   async run(ctx) {
     const handle = ctx.args[0];
-    const p = await resolved(ctx, handle, { repo: await repoOf(ctx), projectId: ctx.flags.project as string | undefined });
+    const p = await resolved(ctx, { handle }, { repo: await repoOf(ctx), projectId: ctx.flags.project as string | undefined });
     if (!p) throw new CliError('not_found', `No approved practice has the handle ${handle}`);
     return {
       data: { practices: [p] },
@@ -147,9 +147,9 @@ export const check: Command = {
     const repo = await repoOf(ctx);
     const touched = change.files.map((f) => f.path);
     // The route takes at most 20 paths a call: ask in groups and join the answers by handle.
-    // Keyed by level too: an org and a project practice of one handle and version are two practices.
-    const keyOf = (p: ApplicablePractice) => `${p.level}:${p.handle}@${p.version}:${JSON.stringify([p.repos, p.paths])}`;
-    const byHandle = new Map<string, ApplicablePractice>();
+    // Keyed by id: an org and a project practice of one handle and version are two practices.
+    const keyOf = (p: ApplicablePractice) => p.id;
+    const byId = new Map<string, ApplicablePractice>();
     // The paths each was delivered for, so the read of its rules gives exactly the practice that was delivered.
     const pathsOf = new Map<string, string[]>();
     const chunks: string[][] = [];
@@ -164,8 +164,8 @@ export const check: Command = {
       for (const p of got.practices) {
         const key = keyOf(p);
         // The first call that delivered it: its paths alone reproduce that delivery (a union could pick another winner).
-        if (!byHandle.has(key)) pathsOf.set(key, paths);
-        byHandle.set(key, p);
+        if (!byId.has(key)) pathsOf.set(key, paths);
+        byId.set(key, p);
       }
       const missed = got.omitted ?? 0;
       if (!missed) return;
@@ -178,9 +178,9 @@ export const check: Command = {
     for (const paths of chunks.length ? chunks : [[]]) await ask(paths);
     const verdicts: Verdict[] = [];
     let moved = 0;
-    for (const p of [...byHandle.values()].sort((a, b) => a.handle.localeCompare(b.handle) || a.level.localeCompare(b.level))) {
-      // The same level the delivery gave: an org practice never stands in for the project's of the same handle and version.
-      const found = await resolved(ctx, p.handle, { repo, level: p.level, path: (pathsOf.get(keyOf(p)) ?? []).slice(0, APPLICABLE_PATHS) });
+    for (const p of [...byId.values()].sort((a, b) => a.handle.localeCompare(b.handle) || a.level.localeCompare(b.level))) {
+      // By the id the listing gave, for the paths it was delivered for: exactly the practice that was listed, never another of the same handle.
+      const found = await resolved(ctx, { id: p.id }, { repo, path: (pathsOf.get(keyOf(p)) ?? []).slice(0, APPLICABLE_PATHS) });
       const row = found && found.version === p.version && found.scope.level === p.level ? found : undefined;
       if (!row) moved += 1;
       const checks = row?.checks ?? [];

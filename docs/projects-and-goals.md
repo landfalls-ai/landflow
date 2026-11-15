@@ -108,7 +108,122 @@ and `project.brief_changed`. The company profile rides on `settings.update`.
 
 An agent's run gets a short "Where this work fits" block: the mission, the project's brief, and its primary goal with the
 chain above it. How the block is built, how big it gets and how to turn it off are in
-[agents.md](agents.md#project-context).
+[agents.md](agents.md#project-context). What a past run saw is kept and shown: see
+[What an agent saw](#what-an-agent-saw).
+
+## What an agent saw
+
+Each agent run keeps the block it got. A Run an Agent step, and a team member's request, writes a `saw` attribute on its
+span once per run: the text the system prompt got, the mode (full, compact or off), the project and goal, the run's
+pinned time, a short persona summary (role, mission and what-I-do, each at most 300 characters; never the instructions)
+and the approved practices it was given. An approval that resumes the run does not write it again, since a resume reuses
+the first run's block.
+
+The Run Trace shows it as **What it saw** in the agent's sheet, and an agent's **Sessions** tab as a **What it saw** fold
+under each session. Both split the block into the goal chain, mission, brief, words, status, this run and practices,
+leave out the empty ones, and fold out the exact text. With the project context off the section says so. A run's root
+span also shows **Project** and **Goal** chips. The page is [run-trace.md](run-trace.md#what-it-saw).
+
+## Agents across projects
+
+An agent has one home project, and the home decides who edits it. It can also be **available** elsewhere: shared with
+chosen projects, or with **All projects** in one click. A project that only uses an agent can pick it in Run an
+Agent and run it from its workflows, but cannot change, delete, share or read the sessions of it.
+
+- **Sharing.** `GET|PUT /api/agents/:id/shares` (admins of the home project, owners and admins may change them). The
+  answer has `availability` (`home`, `all`, and the projects the caller has a role in) and `shares`. The "All projects"
+  row is a share with the project id `*`; it shows only as `availability.all`, and only agents can have it.
+- **Pickers.** `GET /api/agents?availableIn=<projectId>` lists the agents a project can use (404 for a project the caller
+  has no role in). The Run an Agent node lists the agents available in the workflow's project, and a shared one says
+  "From <home project>". Without a project, everything is listed as before.
+- **Test in project.** The test chat with a `projectId` the agent is not available in answers 403 "This agent isn't
+  available in that project".
+- **Sessions stay at home.** The agent's sessions and each session are read only by members of its home project (and
+  owners and admins). Others get 404 "Agent not found". A session keeps the brief of the project it ran for, so this
+  keeps one project's brief from another project that only uses the agent. Continuing a session by `sessionId` in the test
+  chat is the same read: a member who only uses the agent starts new sessions and gets 404 for an existing one.
+- **The live feed too.** `/api/events` sends an agent's `entry` and `run.finished` events (the session itself) only to
+  members of its home project and to owners and admins.
+- **Still readable by a user project.** Because a share gives `read`, a project that only uses the agent can still list
+  the file names of its knowledge base and save it as a template. Its secrets and sessions stay hidden.
+- **Evaluations stay at home too.** The online evaluation scores and the eval gate carry session inputs and outputs, so
+  they are home-only (404 for others); the Run an Agent and tool pickers scope to the agent's home project only for
+  its home members.
+- **All projects replaces single shares.** Turning **All projects** on drops the single-project rows; turning it off
+  later leaves the agent home-only. `availability.projects` lists only projects the caller has a role in, so build a
+  `PUT` from `shares`, not from it.
+- **Brain and spend.** Whoever can read an agent (a share counts) sees its brain facts, suggestions and spend, which
+  come from runs in every project.
+- **No wall at run time.** A saved workflow that runs another project's agent keeps working, even after the share is
+  removed.
+## Testing an agent in a project
+
+An agent keeps its home project, and its admins can make it available elsewhere: **Make available…** in the builder's
+⋯ menu lists the projects as checkboxes, with **All projects** (which disables the others). Only admins of the home
+project change it; everyone else sees the list read-only. The Agents list shows where each agent is available ("Available
+in Operations, Billing revamp", at most two names and "+N", or "All projects") and, for one shared into your project,
+"Shared from <project>". The routes behind it are in [reference/api.md](reference/api.md).
+
+**Test in project.** The test chat has a project picker above the conversation (home first, then the projects the agent
+is available in, by name). The chat is given that project's block, and the picker starts a new conversation when it
+changes, because the block is part of the run. A project the agent isn't available in answers 403, and the chat says
+"This agent isn't available in that project" in the conversation.
+
+**What it will be given.** The button beside the picker opens the text a chat in that project would get: the
+"Where this work fits" block in the agent's Project context mode, then the approved practices after it. It reads only
+and records no delivery. The same text appears in the persona tab's **View prompt**, in the place the run puts it (after
+the skills, before the date line), for the agent's home project. The preview is for editors of the agent: a share to use
+the agent does not show the home project's brief.
+
+## What a goal costs
+
+Each AI call a run makes is stamped with the goal that run served. The AI page (Insights → AI) has a Goal option in
+"Spend by", after Project. Each row is a goal's title with its cost, tokens and calls.
+
+- Calls with no goal are "No goal".
+- A goal you can't see (a project goal of a project you aren't in) is "Another goal", never its title. Owners and
+  admins see every goal.
+- A goal that has been deleted is "Deleted goal".
+- The calls counted are the same ones the rest of the page counts: your own, and those of workflows and agents you can
+  read. Grouping by goal never adds calls, so the goal rows add up to the totals.
+- On a phone the six options share the width of the control.
+
+## Repositories and harnesses
+
+A project lists the repositories it works in, so a harness (Claude Code with the landflow-brain mod, the CLI, any MCP
+client) finds the project of the repository it is in and loads its goals. Repositories are `owner/name`, lowercased, at
+most 20 per project, and a project's admins set them (`PATCH /api/projects/:id { repos }`; the same rule as a practice's
+repositories). There is no screen for them yet: use the API.
+
+- **By repository** (`GET /api/projects/context?repo=acme/web`): the projects you have a role in that list it, sorted by name.
+  A repository can belong to several projects; you get the first one's block and the list of all.
+- **By id:** a project you have a role in; without one it is 404.
+- **Over MCP:** the `project_context` tool and the `project://{id}/context` resource. A server scoped to one project reads
+  that project only.
+- **The block** is the one Landflow's own agents get (compact or full), built by the same provider, with the run line "a
+  request over MCP". It is data, not instructions.
+- **The morning briefing** (the `morning-briefing` MCP prompt) names your open goals, at most 5 by project.
+- **Spotlight and the Agent architect** read the compact block of the project they build in: Spotlight of the workflow's
+  home project, the architect of the project named in the request (`projectId` in the body; the Agent dialog does not send it yet). With no project,
+  they get nothing extra.
+
+Details and the routes: [connect-your-harness.md](connect-your-harness.md#project-context).
+
+### In Claude Code and the shell
+
+At session start the landflow-brain mod (0.4.0) asks `GET /api/projects/context` for the project that lists the repository you are in and adds its compact "Where this work fits" block as its own section, before the practices; `/brain project` shows it on request ([landflow-brain-mod.md](landflow-brain-mod.md#project-context)).
+In any other harness, `landflow work context` prints the same block ([cli.md](features/cli.md#recording-your-day-landflow-work)).
+
+## Picking a goal for a workflow or team
+
+A workflow or a team can name the goal it serves; with none, it works for its project's goal.
+
+- **A workflow**: the **Goal** field in the workflow's settings (first under **Advanced**, so the basic settings keep their three fields). Its first choice, **The project's goal**, means
+  inherit; the workflow's own project's goals come first. It saves `settings.goalId`, left out when inheriting.
+- **A team**: the **Project goal** field on the team page, under the team's own **Goal**. The two differ: **Goal** is
+  free text, what the team is for; **Project goal** picks one of the goals in the tree. It saves the team's `goalId`.
+
+Both use the same picker as the goal dialog and the project brief. The team's member picker is in [agent-teams.md](agent-teams.md#picking-members).
 
 ## How it is built
 

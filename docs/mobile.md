@@ -134,6 +134,10 @@ On a phone, what floats on a desktop rises from the bottom or takes the screen:
   agent dialogs use; credentials; data tables) are bottom sheets, full width, up to 92% of the screen, with a 44 px Close.
 - **Full screen:** the node picker (**What happens next?**), version history (the list above the preview), the node
   editor and a marketplace plugin's drawer. **Add marketplace** is a bottom sheet.
+- **Where an agent is available.** **Make available…** and **What it will be given** (in the test chat) are the shared
+  dialog, so on a phone they are bottom sheets with 44 px checkboxes; the project picker above the test chat is a 40 px
+  select, and the preview's text scrolls inside its sheet. The Agents list's "Available in" line is one truncated line
+  on a card. A desktop is unchanged.
 - **"Are you sure?"** Before a step that can't be taken back (deleting a transport connection or a secrets provider,
   replacing the MCP access token, letting node parameters read `$secrets`, a suggestion's action that asks first),
   `confirmAction` (`components/ui/confirm.tsx`) asks in a sheet with the question, **Cancel** and the action, both 44 px;
@@ -178,12 +182,28 @@ Home starts with the **Your morning** card ([work-and-briefings.md](work-and-bri
 - **The brief card** on a project's Overview shows its four texts (Brief, Constraints, Done when, Words we use) folded
   to three lines with **More**; a desktop shows up to six lines. The goals it serves have 44 px up, down and unlink
   buttons for admins.
+- **Goal pickers.** The workflow settings' **Goal** and the team page's **Project goal** are full-width selects, 44 px
+  tall on a phone; a desktop keeps its height.
+
+## What it saw
+
+- **In the Run Trace** the sheet is the same bottom sheet as any span's. **What it saw** is one column of labelled parts
+  (goal chain, brief, status, practices, persona) in a card; **Show the exact text** is a 44 px row that folds out the
+  raw block, which scrolls inside the sheet. The **Project** and **Goal** chips on the run wrap and cut long names.
+- **In an agent's sessions** the **What it saw** fold sits under the session's header and is closed until tapped.
+  A desktop shows the same card.
 
 ## Practices on the Brain page
 
 - **Practices** on `/brain` (the Practices view in the Files drawer) is one column of practice cards on a phone, with
   44 px controls in the review dialog and the form; a desktop is unchanged. See
   [practices.md](practices.md#the-brain-page).
+
+## The waive page
+
+- `/practices/waive` is one column on a phone: the practice card, what failed, the reason box and a full-width **Waive for
+  this run** (then **Retry the run**); a desktop keeps a narrow centred column. See
+  [practices.md](practices.md#waiving-from-a-flow).
 
 ## What's next
 

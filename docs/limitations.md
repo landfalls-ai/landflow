@@ -31,6 +31,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - **Jev and Strands Decider as guardrail judges** ([agents.md](agents.md#building-an-agent)): they only answer yes/no questions here, so they are judges and not models an agent can chat with. Their probabilities are not calibrated (TypeSafe says to pick thresholds from your own examples). If it fails, the check fails closed; there is no fallback to the agent’s model. Their calls are not yet counted in Insights’ cost, the price table has no entry for them, and they do not yet answer the model router or the Guardrails node. Both were built from the published `systemone` shape and tested against a fake server, not a live Jev key or a running Strands server (running one downloads model weights, which has not been tried). Score and choice questions (and image input) are not used.
 - **Layers checklist** ([agents.md](agents.md#layers)): it reads settings, not behaviour, so a layer shows as done when it is switched on, not when it works well (a guardrail with no checks still counts, an eval gate with one weak test case still counts). It is for standalone agents; teams and the AI Agent node have no checklist.
 - **Not yet built from the "eight layers" comparison**: The **savings** are estimates (the price table, tokens as the model reported them, an average for cache answers) and count a whole session as routed once its first run was, so a long session that went back to the agent's own model overstates routing a little. The cache and routing numbers (a line on each card, and the Insights page's **Agent layers** card) are counted from the notices in each agent's newest 200 sessions, so older traffic and deleted sessions are not in them, and the card shows nothing until the cache or the router has answered something. The cache is shared by every caller of the agent (the key is the agent's config and the question, not who asked), so keep it off for an agent whose answers depend on who is asking. The **semantic cache** needs an Ollama embedding model (no OpenAI-compatible embeddings yet), compares a question with every stored one of the agent (at most 500) in the host, not in a vector index, and a wrong reuse is possible below a high threshold: keep it at 0.9 or more for answers that must be exact. The **LLM gateway** is LiteLLM, running in the `llm-gateway` compose profile and in a Kubernetes example; models are added in its config file, and what it does not do yet is listed in [llm-gateway.md](llm-gateway.md#not-built) (a caller-named end user still spends that person's LiteLLM backstop, a plugin that meters itself and calls the gateway, or an embeddings call on a credential's own key, is counted twice, and a call logged more than about 15 minutes late can be missed); kgateway's own AI Gateway is not used because it is deprecated ([roadmap.md](roadmap.md#eight-layers-around-a-model)).
+- **Project repositories and the architect's goals** ([projects-and-goals.md](projects-and-goals.md#repositories-and-harnesses)): a project's repositories are set by the API only (no screen yet), and the Agent dialog does not send `projectId` to the architect yet, so only an API caller gets the goals there.
 - **Agent workspace and architect** ([agents.md](agents.md#agent-architect)): the Agent architect designs new agents only (not changes to an existing one), on the assistant's model with no picker, and a local model's drafts need checking (it may still pick odd tools). Agents and teams export as Claude Code plugins ([marketplace.md](marketplace.md#export-agents-as-plugins)), but schedules, channels, credentials and workflow tools stay behind, and Claude Code itself ignores Landflow's node, MCP and knowledge tools. A team template ([templates.md](templates.md)) holds one flow at most, makes a second slot for a credential the agents and the flow both use, drops a workflow tool that points outside the template, and copies a sub-agent only through the agents' tools and Run an Agent nodes (not through other flows). The built-in **Plugin builders** team template keeps its Claude Code members as A2A addresses of this machine's kagent (you point them at your own after using it) and the GitHub nodes' `your-org`/`your-repo` placeholders. Marketplace installs put their agents in the default project. A Missing tool suggestion's **Build it** starts the workflows that build the tool, but none ships yet: the agents and flow that write the plugin are in progress ([roadmap.md](roadmap.md#building-tools-from-suggestions-in-progress-2026-10-31)).
 - **Network and toolchains on kagent** ([a2a.md](a2a.md#not-built)): the package EgressPolicy grants the package cache (`landflow-cache`: npm, Go, PyPI and Alpine, with no authentication) to every agent that references it, and `landflow-github` gives every agent that references it its token's whole reach. What an agent may push (its branch only, never main, no merges) is in its instructions, not enforced: scope the token to the repository and protect `main` with a branch rule. On `landflow-claude-dev`, Go's standard library is pre-built but a project's own packages compile on every session, and its dependencies are installed on every session (from the cache, so only the first fetch goes out). The image is loaded into Landflow's store by `claude-harness-dev.sh` (a script, not a page).
 - **GitHub MCP tools for agents** ([a2a.md](a2a.md#githubs-mcp-tools-for-agents)): two access levels (read; read and review) over an allow-list of the pinned server's tools (github-mcp-server v2.0.2; a renamed tool in a later version is simply not offered until the list is updated); the token's repository scope is the only per-repository limit; a review comment is written to GitHub when the tool is called (approval is the only gate); the server runs in the OrbStack cluster only (no compose service) and takes the token from each request, which was checked against the image but not against GitHub with a real token.
@@ -57,16 +58,29 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 ## Project context (wave 7)
 
-- An agent has no project wall yet: any agent may be used in any project's run. Availability (which agents a project can
-  use) comes in wave 8. Until then the block only tells the agent where it works.
-- A session stores the block it was given (`session.context`), so anyone who can read the agent's sessions can read the
-  brief of a project the run was called from. Wave 8's availability rule closes this.
+- There is no wall at run time. Availability (home, shared projects, All projects) decides what pickers list and what
+  the test chat accepts, but a saved workflow that runs another project's agent keeps working, and an API call to an
+  agent by id is not stopped by it. This is decision 6 of the Paperclip plan.
+- A member of a project that only uses an agent gets 404 from the Run an Agent session panel on their own execution
+  (`GET /api/agents/:id/sessions?executionId=`). Per-project session reads are deferred to PC13.
+- A session stores the block it was given (`session.context`). Members of a project that only uses the agent (a share
+  or All projects) cannot read its sessions: they get 404. Members of the home project still see the briefs of the
+  other projects the agent ran in. Per-project session walls come in a later package (PC13).
+- The agent screens (wave 8): the Agents list reads each agent's availability with its own request, so a long list makes
+  one small request per card. The context preview and View prompt read the saved agent, a moment after the draft
+  autosaves; View prompt shows the agent's home project. The preview needs editor rights on the agent, so a person with
+  only a share to use it cannot see it.
+- A run's `saw` attribute keeps the block as the model got it, so anyone who can read the run's journal can read the
+  brief and practices it was given (the text is redacted like the rest of the journal, and cut or dropped by the workflow's
+  **Content kept** setting: `summaries` cuts it to 400 characters, `off` keeps none; the setting covers only the journal, so the agent's Sessions tab still shows `session.context` in full). A run recorded before wave 8 has
+  no **What it saw**; a remote A2A agent's span has none either, since it builds its own prompt.
 - The builder drops the brief entirely, then cuts the mission to 120 characters, when the usual drop order still leaves
   the block over its cap.
 - Whether Anthropic's prompt cache hits more with the pinned date is not measured on this machine: the prompt up to the
   date line is stable by construction, and no run here talks to Anthropic.
-- A kagent agent called over MCP gets no block and falls back to its own home project. Remote agents and a team's
-  requests carry the block in their message in a later package.
+- A kagent agent called over MCP outside a team gets no block and falls back to its own home project (remote agents and
+  a team's requests carry the block in their message: [below](#project-context-for-remote-agents-2026-11)). A run
+  binding for kagent over MCP outside a team is deferred; practices bind the same way (PR07).
 
 ## Test chat history (B10, 2026-11)
 
@@ -156,11 +170,37 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 ## Practices in Claude Code and the shell
 
-- `landflow practices check` asks again in smaller path groups when the host omits practices that did not fit its block; any still omitted (or whose version moved mid-check) are reported and the run says the check is incomplete instead of `Passed.`. It runs machine checks only. A practice with no machine check is reported as such; there are no model verdicts until wave P2's Check Practices.
+- `landflow practices check` asks again in smaller path groups when the host omits practices that did not fit its block; any still omitted (or whose version moved mid-check) are reported and the run says the check is incomplete instead of `Passed.`. It runs machine checks only. A practice with no machine check is reported as such; a model's verdict reaches a flow only through Check Practices ([below](#checks-in-flows-wave-p2)).
 - `/brain learn`'s citations are never verified: the host cannot read your checkout, so a draft from the mod or `landflow practices learn` stays unverified until a person approves it against the file.
 - `/brain learn` hands Claude a prompt as a turn of its own, so it waits until the session is idle, and a model that ignores the instructions can draft fewer than asked or none. `practice_draft` and the learn route always make tainted drafts.
 - The practices section is built once at session start: a practice approved later shows at the next session, or through the `practices` tool or `/brain practices`.
 - `check` reads the change as `git diff <base>...HEAD` shows it: uncommitted work is not in it, and a renamed file is read as a delete and an add.
+
+## Checks in flows (wave P2)
+
+- Check Practices runs only the machine checks and the verdicts it is given; it has no model of its own. A practice with
+  neither is `no-checks` and never blocks. A reviewer's fail blocks only with **Reviewer fails block** on.
+- **On error: continue** on the Check Practices step defeats the block, as it does for any step. The editor warns about
+  that setting; nothing here forbids it.
+- A waiver is for one run, and for the runs that retry it. A waiver of one practice does not cover another, and a flow run
+  again from the start is checked again: a waiver holds only for the failure the approver saw (the same practice failing
+  on the same files and message), so a retry that breaks the practice on other files fails again, however many files fail. The waiver binds to the file
+  names and messages, not the added lines: a `fileMatches` failure on the same file with different added lines, and a
+  `pathExists` failure (it names no files) carry over on a retry from the start. Check Practices runs
+  `fileMatches` patterns (up to 200 characters, no guard against catastrophic backtracking) inside the host process over
+  up to 20,000 added lines, so an approved practice with a bad pattern can stall the host's event loop; there is no
+  per-file cap or worker yet.
+- **Drift counts runs, and cannot tell whether a practice concerned the work.** A Landflow agent's or team's block lists
+  every practice that applies to its project, and its `delivered` row says nothing of the task or the paths touched, so an
+  org practice with no repository would look "rarely followed" fast. Compliance counts distinct runs; the practice-drift
+  detector counts a block's in-process deliveries a third each (30 runs, not 10, reach the floor) and a delivery that named
+  a repository in full. Relevance to the run is not recorded; a precise rate needs that.
+- A required practice blocks only in a flow. An agent's tool call, `landflow practices check` in a shell and the Claude
+  Code mod never deny anything.
+- The pull request template reads GitHub's patch of each file; GitHub leaves the patch out of very large files, so a
+  `fileMatches` check sees no added lines there. It has not been run against a real repository.
+- The blocked template's message is read from the failed step's error text, and its **Fix** link is the step's "Link to the
+  change" option; without it the message says to push a fix. Error workflows do not start for a manual Run.
 
 ## Landledger (built 2026-11-14)
 
@@ -362,6 +402,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
   rewritten or expire.
 - A send the brain refuses (400, 413, 422) or an event it rejects stays held and is not retried; `/brain status` says why.
 - The hook names were checked against Claude Code 2.1.322's types only; run the live check in [landflow-brain-mod.md](landflow-brain-mod.md) after an update.
+- The mod looks up a project's goals only for a repository in its `repos` option (the same rule as practices), and shows the first project's block when several list it ([landflow-brain-mod.md](landflow-brain-mod.md#project-context)).
 
 ## Runs list filters (B20, 2026-11-14)
 
@@ -398,21 +439,39 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 ## Usage by goal (wave 7)
 
-- Only `ai.call` usage events carry a goal (`goalId`); `run.finished`, `node.failed`, `node.slow` and `agent.session` do not, and calls that come in through the spend import (kagent) have none.
+- Only `ai.call` usage events carry a goal (`goalId`); `run.finished`, `node.failed`, `node.slow` and `agent.session` do not, and calls that come in through the spend import (kagent) have none, so they show under "No goal" on the AI page.
 
-## Practices (wave P1)
+## Practices (waves P1 and P2)
 
-- Practices reach only the Claude Code mod and MCP clients until wave P2. Landflow agents, kagent agents and the Check
-  Practices step do not get them yet, and `required` stops nothing: a failed check blocks a flow only from wave P2
-  ([practices.md](practices.md)).
-- A draft does not file an inbox suggestion yet (wave P2). Find waiting drafts in `/brain` → Practices, or in the links the
-  API, the mod and the CLI return.
+- Practices reach the Claude Code mod, MCP clients, Landflow agents (PR06) and Landflow agents on kagent through the
+  index and `practices_for` (PR07). A `required` practice blocks only in a flow, through the Check Practices step (PR08);
+  an agent's tool calls are never blocked by one ([practices.md](practices.md)).
+- A saved draft files a suggestion in the inbox (PR09); a draft from a repository, an agent, the mod, MCP or an API key
+  has no Apply there and is approved on `/brain` by a person who read it against its sources.
 - There is no four-eyes setting: the drafter of a practice may approve their own, if they are allowed to approve at
   that level.
 - A practice grants nothing: no tool, approval or guard changes. It is text an agent is asked to follow.
 - A practice has one `supersedes` pointer: approving a version that supersedes several records the first, and the audit
   event lists them all.
 - No practices ship with Landflow; each instance learns or writes its own.
+
+## Practices in agent runs (wave P2)
+
+- An in-process agent run knows no repository, so practices scoped to repositories (`repos`) do not reach it; only
+  organization and project practices with no repository do. Deferred.
+- Nothing is denied because of a practice: an agent's tool calls are never blocked by one. Only flows block (PR08).
+- The block is built when a run starts, so a practice approved mid-run reaches the next run, not this one.
+- A run's `cited` rows come from the final reply only; a citation in an earlier turn of the same run is not recorded.
+
+## Practices for remote agents (wave P2)
+
+- A remote agent's answer is scanned for practice citations after a tool approval or a person's answer through the pause's saved state, and after a question to the caller only while Landflow holds the index in memory (the run, or the node's state for an A2A node used as a tool; a restart in between loses it). An A2A node in a workflow that pauses and is continued with the Respond operation is not scanned. `practice_cite` still records in every case.
+- Only a Landflow agent on kagent gets the practices index; any other A2A agent gets nothing new.
+- An A2A node outside a team binds `practices_for` to the agent's home project, not the run's: only a team's open call
+  carries the run's project to the agent's MCP server.
+- The index is not recorded as delivered; only what `practices_for` gives in full is. An agent that follows the index
+  without reading a practice shows only as a citation.
+- A change in practices reaches a conversation that has started only through `practices_for`: the index is sent once.
 
 ## Following practices over MCP and citing (PR04, 2026-11)
 
@@ -421,3 +480,14 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - Citing accepts any version from 1 to the current approved one, so a version that was rejected and never approved can be recorded as `cited`. Tighten it in the practices store later.
 - `practice_cite` records at most 20 citations; the rest are neither recorded nor listed as unknown. `practices_for` appends one pointer line after the block is fitted to its budget.
 - Two project practices with the same handle in different projects are not ordered by the selector; the store's order decides.
+
+## Compliance and the inbox (wave P2)
+
+- Citation drift (a cited version that is no longer approved) is not looked at: the practice-drift detector counts how often a practice was given, cited and passed, nothing more.
+- The practice-drift suggestion is addressed to nobody: owners and admins see it, and the admins of a project do not unless they are one. It looks at the last 14 days of `practice_applications` in one scan, with no extra index.
+- An overlap with an approved practice has no answer in the inbox: Apply says to approve it on /brain.
+- Approving from the inbox (or on /brain) settles the suggestion once (one `proposal.applied` usage event). An inbox Apply starts the flows on On Suggestion Decided; an approval on /brain records the usage event but starts none.
+- "Followed by" counts an agent by its citations only; an agent that was given a practice and never cited it is not listed.
+- A flow-written or analyst suggestion about a practice still mirrors to Slack as any suggestion does; only `source: practice` ones are link-only.
+- An agent's session that no workflow run started (a test chat, a channel) lists the practices it was given in "What it
+  saw" without "Cited" or the check: it has no run id to ask `GET /api/executions/:id/practices` with.

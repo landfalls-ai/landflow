@@ -76,6 +76,8 @@ A bubble that ends in “…” fills the box to finish; a complete question or 
 
 ### The builder chat
 
+**Goals.** When the workflow lives in a project, the model also gets that project's compact "Where this work fits" block (goal chain, brief) as one more system entry marked as background data, not instruction; a workflow in no project gets nothing. The [Agent architect](agents.md#agent-architect) gets the same for the project named in its request (`projectId`; the route answers 404 when you have no role in it). See [projects-and-goals.md](projects-and-goals.md#repositories-and-harnesses).
+
 Each message sends the conversation so far, the current workflow (`toWorkflow()`, saved or not), the selected node and a digest of every node's last main run. Proposals from earlier replies that are still waiting (neither applied nor dismissed) go with it as `pending` (summary and ops, at most 20; the route validates the shape and the server checks the ops against the workflow). The server runs a tool-calling loop per message. It goes on while a step makes progress (a new proposal, or a tool result not seen before in this reply), up to **20 model calls** (`MAX_STEPS`), and stops early, with a note that the last steps only repeated, when two steps in a row add nothing. Only the ceiling gives "Stopped after 20 steps":
 
 | Tool | What it returns | Activity line |

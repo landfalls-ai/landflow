@@ -1,5 +1,5 @@
 /**
- * POST /api/practices/learn (docs/practices.md#learning-practices): a scripted model reads the files a caller sends and the
+ * POST /api/practices/learn (docs/practices.md#learning): a scripted model reads the files a caller sends and the
  * route drafts through a fake port. Drafts are `learned` with no `files` (tainted, unverified); a citation whose excerpt is not
  * in the sent file is dropped; bad practices are skipped with reasons; limits answer 400; the model off or the port unset
  * answers 503; the model's calls are metered as the brain's. No network.

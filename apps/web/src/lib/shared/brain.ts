@@ -202,6 +202,7 @@ export const DETECTORS = [
   'repeated-sequence',
   'missing-tool',
   'work-overlap',
+  'practice-drift', // PR09:
 ] as const;
 
 /** A detector built into Landflow (lib/server/brain/detectors.ts). */
@@ -242,6 +243,7 @@ export const DETECTOR_LABELS: Record<BuiltinDetectorId, string> = {
   'repeated-sequence': 'Repeated by hand',
   'missing-tool': 'Missing tool',
   'work-overlap': 'Work overlap',
+  'practice-drift': 'Practice drift', // PR09:
 };
 
 /** A detector's name: a built-in one's label, or a flow detector's workflow name (`name`, or the suggestion's label). */
@@ -249,7 +251,7 @@ export const detectorLabel = (id: DetectorId, name?: string) => (isBuiltinDetect
 
 /** Who wrote a suggestion: a built-in detector, a workflow's Suggest Improvement node, or the Platform analyst agent. */
 /** `notebook`: a team's notebook proposes keeping a note for the project (docs/team-notebook.md). */
-export type ProposalSource = 'detector' | 'workflow' | 'analyst' | 'notebook';
+export type ProposalSource = 'detector' | 'workflow' | 'analyst' | 'notebook' | 'practice'; // PR09: 'practice' (a draft practice waits for a person, docs/practices.md#the-inbox)
 export type ProposalStatus = 'open' | 'applied' | 'dismissed' | 'snoozed' | 'expired';
 export type ProposalRisk = 'low' | 'medium' | 'high';
 /** Why it was dismissed: `intended` becomes a fact so it isn't suggested again; `wrong` and `not-relevant` quiet the detector. */
@@ -427,6 +429,8 @@ export interface Proposal {
   agentChange?: AgentChange;
   /** Keep a team's note for the project: applying it moves the note to project scope (notebook/approve.ts). */
   notebook?: { teamId: string; noteId: string };
+  /** A practice draft waits for a person (docs/practices.md#the-inbox); `tainted`: read from outside, so the suggestion only links to /brain. */
+  practice?: { practiceId: string; version: number; tainted: boolean }; // PR09:
   warnings?: string[];
   risk: ProposalRisk;
   /** 0..1. */

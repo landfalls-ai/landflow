@@ -41,6 +41,25 @@ With the mod (or the `morning-briefing` prompt of the MCP server), your own work
 quoted data, and your sessions are held for your review before they are sent. Every event is private unless you share it with your team or the organization (B18).
 See [work-and-briefings.md](work-and-briefings.md).
 
+## Project context
+
+A project lists the repositories it works in (**owner/name**, lowercased; at most 20; set by the project's admins with
+`PATCH /api/projects/:id { repos }`). A harness asks which project a repository belongs to and gets that project's
+"Where this work fits" block: the goals, brief and words the agents inside Landflow get ([agents.md](agents.md#project-context)).
+It is data, not instructions.
+
+- **Route:** `GET /api/projects/context?repo=owner/name` or `?projectId=…`, `&size=compact|full` (default compact),
+  scope `brain:read`. By repository you get the projects you have a role in that list it (owners and admins: all of them),
+  sorted by name, and the first one's block; none is `{ projects: [], context: null }`, never a 404. By id without a
+  role it is 404. The answer's shape is `ProjectContextAnswer` (`lib/shared/project-context-api.ts`).
+- **MCP tool:** `project_context { repo?, projectId?, size? }` gives the same answer. On a server scoped to one project
+  (`/api/mcp/projects/<id>`) it gives that project only, whatever is asked.
+- **MCP resource:** `project://{id}/context` is the full block of a project you have a role in.
+- **Morning briefing:** the `morning-briefing` prompt ends with "Your goals": the open goals of the projects you have a
+  role in, at most 5 by project, titles only.
+
+The mod (0.4.0) and `landflow work context` also load the goals of the project that lists the repository you are in; see [projects-and-goals.md](projects-and-goals.md#in-claude-code-and-the-shell).
+
 ## The admin's switch
 
 **Settings → MCP → Work from local tools → Allow automatic sending** (owners and admins; `PATCH /api/settings
