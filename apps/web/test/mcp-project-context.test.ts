@@ -141,3 +141,21 @@ describe('the morning briefing', () => {
     expect(JSON.stringify(prompt)).toContain('Ship usage-based billing');
   });
 });
+
+// PC16: the tool's answer carries the same workspace as GET /api/projects/context
+describe('the workspace in project_context', () => {
+  it('is absent until saved, then carries the pattern and (for an editor) the setup lines', async () => {
+    const client = await connect(alice, { scopes: ['brain:read'] });
+    expect('workspace' in (JSON.parse((await call(client, { repo: 'acme/web' })).text) as ProjectContextAnswer)).toBe(false);
+    const { saveWorkspace } = await import('@/lib/server/projects/workspace');
+    saveWorkspace({ id: 'usr_goal_owner', role: 'owner' }, billing.id, { repos: { 'acme/web': { setup: ['pnpm install'] } }, worktree: 'per-run', branchTemplate: 'landflow/{project}/{run}' });
+    const answer = JSON.parse((await call(client, { repo: 'acme/web' })).text) as ProjectContextAnswer;
+    expect(answer.workspace).toEqual({
+      projectId: billing.id,
+      repos: { 'acme/web': { setup: ['pnpm install'] } },
+      worktree: 'per-run',
+      branchTemplate: 'landflow/{project}/{run}',
+      branchPattern: 'landflow/billing-revamp/{run}',
+    });
+  });
+});

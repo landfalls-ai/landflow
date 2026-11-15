@@ -2458,11 +2458,20 @@ function paths(): Record<string, Record<string, Json>> {
       { name: 'size', description: 'The block’s size', schema: { type: 'string', enum: ['full', 'compact'], default: 'compact' } },
     ],
     responses: {
-      200: reply('The projects and the first one’s block', object({ projects: array(object({ id: { type: 'string' }, name: { type: 'string' } }, ['id', 'name'])), context: { type: ['object', 'null'], additionalProperties: true } }, ['projects', 'context'])),
+      200: reply('The projects and the first one’s block', object({ projects: array(object({ id: { type: 'string' }, name: { type: 'string' } }, ['id', 'name'])), context: { type: ['object', 'null'], additionalProperties: true }, workspace: { type: 'object', additionalProperties: true, description: 'PC16: the first project’s saved workspace (`projectId`, `repos`, `worktree`, `branchTemplate`, `branchPattern`); only when one is saved. Setup lines only for editors and admins.' } }, ['projects', 'context'])),
       400: invalid,
       404: notFound,
     },
   });
+  // PC16: a project's workspace for harness runs
+  const workspaceDoc = object({
+    repos: { type: 'object', additionalProperties: object({ defaultBranch: { type: 'string' }, setup: array({ type: 'string' }) }) },
+    worktree: { type: 'string', enum: ['per-run', 'shared'] },
+    branchTemplate: { type: 'string', description: 'Tokens {project}, {run}, {date}, {task}' },
+  }, ['repos', 'worktree', 'branchTemplate']);
+  const workspaceView = object({ workspace: workspaceDoc, repos: array({ type: 'string' }), saved: { type: 'boolean' }, canEdit: { type: 'boolean' }, setupShown: { type: 'boolean' }, updatedAt: { type: 'string' }, updatedBy: { type: 'string' } }, ['workspace', 'repos', 'saved', 'canEdit', 'setupShown']);
+  add('get', '/api/projects/{id}/workspace', { tag: 'Projects', id: 'getProjectWorkspace', summary: 'A project’s workspace for harness runs', description: 'Any role. Setup commands only for editors and admins (`setupShown`). The default when nothing is saved (`saved: false`). Repositories the project no longer lists are left out.', pathParams: { id: 'The project id' }, responses: { 200: reply('The workspace', workspaceView), 404: notFound } });
+  add('put', '/api/projects/{id}/workspace', { tag: 'Projects', id: 'putProjectWorkspace', summary: 'Save a project’s workspace', description: 'The project’s admins (and instance owners and admins). Each repository key must be one the project lists. Landflow never runs a setup command. Audited as `project.workspace.update` with what changed, never the setup text.', pathParams: { id: 'The project id' }, body: jsonBody(workspaceDoc), responses: { 200: reply('The workspace', workspaceView), 400: invalid, 403: errorRef('Not a project admin'), 404: notFound } });
   return out;
 }
 

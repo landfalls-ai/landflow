@@ -193,7 +193,7 @@ Each AI call a run makes is stamped with the goal that run served. The AI page (
 A project lists the repositories it works in, so a harness (Claude Code with the landflow-brain mod, the CLI, any MCP
 client) finds the project of the repository it is in and loads its goals. Repositories are `owner/name`, lowercased, at
 most 20 per project, and a project's admins set them (`PATCH /api/projects/:id { repos }`; the same rule as a practice's
-repositories). There is no screen for them yet: use the API.
+repositories). The project's **Settings** tab has a **Workspace** card to add and remove them (see [Workspace](#workspace)).
 
 - **By repository** (`GET /api/projects/context?repo=acme/web`): the projects you have a role in that list it, sorted by name.
   A repository can belong to several projects; you get the first one's block and the list of all.
@@ -208,6 +208,7 @@ repositories). There is no screen for them yet: use the API.
   they get nothing extra.
 
 Details and the routes: [connect-your-harness.md](connect-your-harness.md#project-context).
+How a harness works in those repositories (branch, setup commands, worktree) is the project's [workspace](#workspace).
 
 ### In Claude Code and the shell
 
@@ -224,6 +225,31 @@ A workflow or a team can name the goal it serves; with none, it works for its pr
   free text, what the team is for; **Project goal** picks one of the goals in the tree. It saves the team's `goalId`.
 
 Both use the same picker as the goal dialog and the project brief. The team's member picker is in [agent-teams.md](agent-teams.md#picking-members).
+
+## Workspace
+
+A project says how agents and harnesses work in its repositories. It is the **Workspace** card on the project's **Settings**
+tab, under the project's settings and above Variables. Landflow stores and serves it. It never runs a setup command and
+never makes a worktree.
+
+- **Repositories:** the list from [above](#repositories-and-harnesses). Admins add (`owner/name`) and remove them on the
+  card; each change saves at once. A repository removed here (or through the API) drops out of the workspace.
+- **Default branch**, per repository: the branch a run starts from. Empty means the repository's own default.
+- **Setup commands**, per repository: one per line, at most 10 lines of 300 characters, run once in a fresh worktree. Only
+  the project's editors and admins see them (viewers see the repositories and branches). **Landflow never runs these. A
+  harness may, in its own sandbox.** A harness that does should show them to a person first.
+- **Worktree:** **One per run** (the default; each run gets its own git worktree) or **Shared** (runs use one checkout).
+- **Branch template:** the branch a run works on, for example `landflow/{project}/{run}`. Tokens: `{project}` (the project's
+  slug), `{run}`, `{date}`, `{task}`. The card shows an example and says why a template is not allowed (an unknown token, or
+  a result git would refuse).
+
+Admins edit with one **Save workspace**; everyone else reads. `GET /api/projects/:id/workspace` and `PUT` are in the
+[API reference](reference/api.md); every change is audited as `project.workspace.update` (repository names, worktree and
+template; the count of setup lines, never their text).
+
+A harness reads it from the project's context ([connect-your-harness.md](connect-your-harness.md#project-context)): the
+answer has `workspace` when the project saved one, with `branchPattern` (the template with `{project}` filled in;
+`{run}`, `{date}` and `{task}` are the harness's to fill) and setup lines only for editors and admins.
 
 ## How it is built
 
