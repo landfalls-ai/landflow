@@ -53,7 +53,7 @@ async function connect(user: typeof alice, keyScopes?: ApiKeyScope[]) {
 
 const toolNames = async (client: Client) => (await client.listTools()).tools.map((t) => t.name).sort();
 const textOf = (result: unknown) => ((result as { content: Array<{ text: string }> }).content[0]?.text ?? '');
-const BRAIN_READ = ['brain_ask', 'brain_list_suggestions', 'brain_search_facts', 'brain_usage_report', 'brain_workflow_knowledge', 'check_overlap', 'my_briefing'];
+const BRAIN_READ = ['brain_ask', 'brain_list_suggestions', 'brain_search_facts', 'brain_usage_report', 'brain_workflow_knowledge', 'check_overlap', 'my_briefing', 'practice_get', 'practices_for'];
 // A second ago, not an hour: an hour ago falls on yesterday during the first hour after local midnight, and the
 // briefing reads today's events by the instance's day.
 const at = new Date(Date.now() - 1_000).toISOString();
@@ -66,7 +66,7 @@ describe('tool scopes', () => {
     expect(toolAllowed(['brain:write'], 'my_briefing')).toBe(true);
     expect(toolAllowed(['admin'], 'run_node')).toBe(true);
     expect(toolAllowed(['workflows:read'], 'unknown_tool')).toBe(false);
-    expect(Object.keys(TOOL_SCOPES).length).toBe(25);
+    expect(Object.keys(TOOL_SCOPES).length).toBe(29);
   });
 });
 
@@ -75,12 +75,12 @@ describe('an API key over MCP', () => {
     const client = await connect(alice, ['brain:read']);
     expect(await toolNames(client)).toEqual(BRAIN_READ);
     expect((await client.listPrompts()).prompts.map((p) => p.name)).toEqual(['morning-briefing']);
-    expect((await client.listResources()).resources.map((r) => r.uri).sort()).toEqual(['brain://briefing/today', 'brain://briefing/yesterday', 'brain://work/today']);
+    expect((await client.listResources()).resources.map((r) => r.uri).sort()).toEqual(['brain://briefing/today', 'brain://briefing/yesterday', 'brain://work/today', 'practices://applicable']);
   });
 
   it('brain:write adds record_work and brain_suggest', async () => {
     const client = await connect(alice, ['brain:write']);
-    expect(await toolNames(client)).toEqual([...BRAIN_READ, 'brain_suggest', 'record_work'].sort());
+    expect(await toolNames(client)).toEqual([...BRAIN_READ, 'brain_suggest', 'practice_cite', 'practice_draft', 'record_work'].sort());
   });
 
   it('workflows:read lists the read tools and no brain tool', async () => {
