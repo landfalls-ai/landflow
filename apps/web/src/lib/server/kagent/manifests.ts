@@ -50,6 +50,12 @@ export interface ModelSettings {
   baseUrl?: string;
   /** OpenAI or Anthropic: the key, written to the Secret. */
   apiKey?: string;
+  /**
+   * The agent's model goes through the LLM gateway (docs/llm-gateway.md): `apiKey` is the agent's virtual key and `baseUrl`
+   * the gateway as the cluster reaches it. The provider is the API format the gateway is called in (the gateway serves
+   * Ollama's models over the OpenAI one); `alias` names the key in LiteLLM.
+   */
+  gateway?: { provider: 'Anthropic' | 'OpenAI'; alias: string };
 }
 
 export interface CompileInput {
@@ -126,7 +132,8 @@ export function claudeToolBindings(name: string, tools: ExposedTool[]) {
 export function claudeModelSpec(config: AgentConfig, settings: ModelSettings, secret: string): Record<string, unknown> | undefined {
   const model = config.model;
   if (!model?.model) return undefined;
-  const baseUrl = model.provider === 'ollama' ? settings.ollamaHost : settings.baseUrl;
+  // Through the gateway: the gateway's Anthropic Messages endpoint, called with the agent's virtual key.
+  const baseUrl = settings.gateway ? settings.baseUrl : model.provider === 'ollama' ? settings.ollamaHost : settings.baseUrl;
   return { provider: 'Anthropic', model: model.model, apiKeySecret: secret, apiKeySecretKey: 'api-key', anthropic: { ...(baseUrl && { baseUrl }) } };
 }
 
@@ -136,6 +143,14 @@ export function modelSpec(config: AgentConfig, settings: ModelSettings, secret: 
   if (!model?.model) return undefined;
   const temperature = model.temperature === undefined ? undefined : String(model.temperature);
   const key = settings.apiKey ? { apiKeySecret: secret, apiKeySecretKey: 'api-key' } : {};
+  // Through the gateway the provider is the one the gateway is called in, whatever the agent's own: an Ollama agent's
+  // `ollama.host` is not used.
+  if (settings.gateway) {
+    const { provider } = settings.gateway;
+    return provider === 'OpenAI'
+      ? { provider, model: model.model, ...key, openAI: { ...(settings.baseUrl && { baseUrl: settings.baseUrl }), ...(temperature && { temperature }) } }
+      : { provider, model: model.model, ...key, anthropic: { ...(settings.baseUrl && { baseUrl: settings.baseUrl }), ...(temperature && { temperature }) } };
+  }
   switch (model.provider) {
     case 'ollama':
       return { provider: 'Ollama', model: model.model, ollama: { host: settings.ollamaHost ?? '', ...(temperature && { options: { temperature } }) } };
@@ -191,7 +206,10 @@ export function kagentManifests(input: CompileInput): KubeObject[] {
   const model = (claude ? claudeModelSpec : modelSpec)(config, input.model ?? {}, secret);
   const plugins = claude ? (input.plugins ?? []) : [];
   const landflowOrigin = claude && input.landflowEgress ? egressOrigin(input.cluster.landflowUrl) : undefined;
-  const egress = [...(input.egressPolicies ?? []), ...(landflowOrigin ? [landflowEgressName(name)] : [])];
+  // Claude Code through the gateway: its sandbox reaches the gateway too (its key's budget bounds what it can spend there).
+  const gatewayOrigin = claude && input.model?.gateway ? egressOrigin(input.model.baseUrl) : undefined;
+  const destinations = [...new Set([landflowOrigin, gatewayOrigin].filter((origin): origin is string => Boolean(origin)))].map((origin) => ({ origin }));
+  const egress = [...(input.egressPolicies ?? []), ...(destinations.length ? [landflowEgressName(name)] : [])];
   return [
     {
       apiVersion: 'v1',
@@ -215,8 +233,8 @@ export function kagentManifests(input: CompileInput): KubeObject[] {
         ...(plugins.length && { plugins: plugins.map(pluginSource) }),
       },
     },
-    ...(landflowOrigin
-      ? [{ apiVersion: KAGENT_API, kind: 'EgressPolicy', metadata: metadata(input, landflowEgressName(name)), spec: { destinations: [{ origin: landflowOrigin }] } }]
+    ...(destinations.length
+      ? [{ apiVersion: KAGENT_API, kind: 'EgressPolicy', metadata: metadata(input, landflowEgressName(name)), spec: { destinations } }]
       : []),
     {
       apiVersion: KAGENT_API,
