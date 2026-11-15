@@ -187,6 +187,27 @@ Each AI call a run makes is stamped with the goal that run served. The AI page (
   read. Grouping by goal never adds calls, so the goal rows add up to the totals.
 - On a phone the six options share the width of the control.
 
+## Repositories and harnesses
+
+A project lists the repositories it works in, so a harness (Claude Code with the landflow-brain mod, the CLI, any MCP
+client) finds the project of the repository it is in and loads its goals. Repositories are `owner/name`, lowercased, at
+most 20 per project, and a project's admins set them (`PATCH /api/projects/:id { repos }`; the same rule as a practice's
+repositories). There is no screen for them yet: use the API.
+
+- **By repository** (`GET /api/projects/context?repo=acme/web`): the projects you have a role in that list it, sorted by name.
+  A repository can belong to several projects; you get the first one's block and the list of all.
+- **By id:** a project you have a role in; without one it is 404.
+- **Over MCP:** the `project_context` tool and the `project://{id}/context` resource. A server scoped to one project reads
+  that project only.
+- **The block** is the one Landflow's own agents get (compact or full), built by the same provider, with the run line "a
+  request over MCP". It is data, not instructions.
+- **The morning briefing** (the `morning-briefing` MCP prompt) names your open goals, at most 5 by project.
+- **Spotlight and the Agent architect** read the compact block of the project they build in: Spotlight of the workflow's
+  home project, the architect of the project named in the request (`projectId` in the body; the Agent dialog does not send it yet). With no project,
+  they get nothing extra.
+
+Details and the routes: [connect-your-harness.md](connect-your-harness.md#project-context).
+
 ## How it is built
 
 - Data: migration 2300 makes `goals`, `project_goals` (a project's goals and their order) and `goal_links` (initiatives);

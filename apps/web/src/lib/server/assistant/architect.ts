@@ -30,6 +30,7 @@ import { chooseModel, type AgentResources } from './agent-resources';
 import { saveCheckpoint } from './checkpoints';
 import { assistantModel, errorText, modelLabel } from './model';
 import { catalogSummary, nodeDocs, searchNodes } from './research';
+import { builderContextEntry } from '../project-context/by-repo';
 
 export const MAX_ARCHITECT_STEPS = 10;
 
@@ -72,6 +73,8 @@ export interface ArchitectInput {
   resume?: ArchitectState;
   /** The models, knowledge bases and embeddings this host has (agentResources): the draft gets a model and may search a knowledge base. */
   resources?: AgentResources;
+  /** The project the agent is being built for (the route checked the caller's role): its goals go to the model as data. */
+  projectId?: string;
   /** The only tools the model is offered (designAgent's short attempt offers propose_agent alone); all of them when absent. */
   only?: string[];
 }
@@ -470,6 +473,7 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
   const system = [
     SYSTEM,
     `\nPlugins online and the nodes an agent can use from them (search_nodes for details):\n${catalogSummary(types)}`,
+    input.projectId ? builderContextEntry(input.actor, { projectId: input.projectId }) : '', // PC10
     draft ? `\nThe draft so far (propose_agent replaces it):\n${JSON.stringify({ ...draft, avatar: undefined }).slice(0, 6000)}` : '',
   ].join('\n');
 

@@ -2041,7 +2041,13 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   and the run's root span shows Project and Goal chips. It follows **Content kept** (`summaries` cuts the text, `off`
   keeps none and says so). Closes D7 and P4-1 ([run-trace.md](run-trace.md#what-it-saw)). Left: the practices row and
   compliance (PR09); the session fold shows the persona as it is now, not as the run had it.
+- **PC10, built (wave 8):** project repositories (`PATCH /api/projects/:id { repos }`, migration 2500), `GET
+  /api/projects/context` by repository or id, the MCP `project_context` tool and `project://{id}/context` resource,
+  "Your goals" in the morning briefing, and the project's compact block in Spotlight and the Agent architect (P5-1 to
+  P5-3, D8). Left: a screen for a project's repositories; the mod and the CLI use the route (PC11)
+  ([projects-and-goals.md](projects-and-goals.md#repositories-and-harnesses)).
 
+## Practices (waves P1 and P2)
 
 Rules in the brain that connected agents follow, each approved by a person ([practices.md](practices.md)). Decided
 2026-11-15: org practices are approved by instance owners and admins, project practices by that project's admins; no

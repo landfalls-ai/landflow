@@ -1825,6 +1825,13 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS practice_applications_execution ON practice_applications (execution_id)`,
     ],
   },
+  // PC10: the repositories a project lists (JSON array), so a harness finds its project by repository
+  {
+    version: 2500,
+    name: 'project_repos',
+    statements: [],
+    addColumns: [{ table: 'projects', column: 'repos', definition: 'TEXT' }],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */

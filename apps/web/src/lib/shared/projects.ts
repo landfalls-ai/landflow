@@ -130,6 +130,7 @@ export interface ProjectMemberView {
 export interface ProjectDetail extends ProjectView {
   /** The brief and the goals the project serves (docs/projects-and-goals.md). */
   brief?: ProjectBriefView;
+  repos?: string[]; // PC10: owner/name, lowercased
   members: ProjectMemberView[];
 }
 
