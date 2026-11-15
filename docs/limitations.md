@@ -362,6 +362,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
   rewritten or expire.
 - A send the brain refuses (400, 413, 422) or an event it rejects stays held and is not retried; `/brain status` says why.
 - The hook names were checked against Claude Code 2.1.322's types only; run the live check in [landflow-brain-mod.md](landflow-brain-mod.md) after an update.
+- The mod looks up a project's goals only for a repository in its `repos` option (the same rule as practices), and shows the first project's block when several list it ([landflow-brain-mod.md](landflow-brain-mod.md#project-context)).
 
 ## Runs list filters (B20, 2026-11-14)
 

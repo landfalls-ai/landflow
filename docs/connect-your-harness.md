@@ -41,6 +41,8 @@ With the mod (or the `morning-briefing` prompt of the MCP server), your own work
 quoted data, and your sessions are held for your review before they are sent. Every event is private unless you share it with your team or the organization (B18).
 See [work-and-briefings.md](work-and-briefings.md).
 
+The mod (0.4.0) and `landflow work context` also load the goals of the project that lists the repository you are in; see [projects-and-goals.md](projects-and-goals.md#in-claude-code-and-the-shell).
+
 ## The admin's switch
 
 **Settings → MCP → Work from local tools → Allow automatic sending** (owners and admins; `PATCH /api/settings

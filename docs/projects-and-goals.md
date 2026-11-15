@@ -110,6 +110,11 @@ An agent's run gets a short "Where this work fits" block: the mission, the proje
 chain above it. How the block is built, how big it gets and how to turn it off are in
 [agents.md](agents.md#project-context).
 
+### In Claude Code and the shell
+
+At session start the landflow-brain mod (0.4.0) asks `GET /api/projects/context` for the project that lists the repository you are in and adds its compact "Where this work fits" block as its own section, before the practices; `/brain project` shows it on request ([landflow-brain-mod.md](landflow-brain-mod.md#project-context)).
+In any other harness, `landflow work context` prints the same block ([cli.md](features/cli.md#recording-your-day-landflow-work)).
+
 ## How it is built
 
 - Data: migration 2300 makes `goals`, `project_goals` (a project's goals and their order) and `goal_links` (initiatives);

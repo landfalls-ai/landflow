@@ -8,10 +8,11 @@
  * not at all. The hooks only observe: none denies a tool call or changes a result.
  */
 import type { EngineInterface, Register } from 'claude-code'
-import { BRIEFING_TIMEOUT_MS, QUEUE_MAX, VISIBILITIES, backoffMs, callBrain, confirmAndPost, deleteWork, due, emptyQueue, enqueue, getBriefing, keyFingerprint, liftStop, postWork, serverUrl, settle, shareRequest, visibilityRequest, type Briefing, type Config, type OutEvent, type Queue, type WorkVisibility } from './client'
+import { BRIEFING_TIMEOUT_MS, QUEUE_MAX, VISIBILITIES, backoffMs, callBrain, confirmAndPost, deleteWork, due, emptyQueue, enqueue, getBriefing, getProjectContext, keyFingerprint, liftStop, postWork, serverUrl, settle, shareRequest, visibilityRequest, type Briefing, type Config, type OutEvent, type Queue, type WorkVisibility } from './client'
 import { addArea, addPrs, areaOf, bandLine, bashFacts, canPost, isAllowed, localDay, newEntry, parseRepos, repoSlug, statusLine, syncText, type Entry, type View } from './journal'
 import { PANE_ID, drawBand, drawPane } from './pane'
 import { titleFrom, toEvent } from './summary'
+import { SECTION_PROJECT, projectReply, projectSection, type ProjectContext } from './project'
 import { LEARN_DEFAULT_PATHS, SECTION_PRACTICES, learnPrompt, practicesInput } from './practices'
 import { BRAIN_ASK_FULL, BRAIN_ASK_SPEC, PRACTICES_FULL, PRACTICES_SPEC, PRACTICE_DRAFT_FULL, PRACTICE_DRAFT_SPEC, brainAsk, practiceDraftTool, practicesApplicable, practicesTool, questionOf } from './tools'
 
@@ -58,6 +59,8 @@ let yesterday: string | undefined
 /** The practices section for this session (docs/landflow-brain-mod.md#practices), and the listed repository it is in, in any mode. */
 let practices: string | undefined
 let repoHere: string | undefined
+/** The project context section for this session (docs/landflow-brain-mod.md#project-context). */
+let project: string | undefined
 /** The prompt `/brain learn` submitted: the next prompt.submit with this text is not a turn of the person's. */
 let ownPrompt: string | undefined
 let flushing: Promise<void> | undefined
@@ -340,6 +343,24 @@ async function practicesSection($: EngineInterface, cfg: Config, gitFacts: Promi
   return Promise.race([run().catch(() => undefined), bound])
 }
 
+/** The project context for the session, within the same 2 s bound; needs `repoHere` (set by `practicesSection`, awaited first). */
+async function projectContext($: EngineInterface, cfg: Config, practicesDone: Promise<unknown>): Promise<ProjectContext | undefined> {
+  const run = async () => {
+    await practicesDone
+    return repoHere ? getProjectContext($, cfg, repoHere) : undefined
+  }
+  // The bound starts now, not after the practices: the one 2 s holds for git, the briefing, the practices and this.
+  const bound = $.clock.sleep(BRIEFING_TIMEOUT_MS).then(() => undefined)
+  return Promise.race([run().catch(() => undefined), bound])
+}
+
+/** `/brain project`: which project this repository maps to. Reads again, so it is right after a project changes. */
+async function projectCommand($: EngineInterface): Promise<string> {
+  if (!config) return 'landflow-brain is not set up.'
+  if (!repoHere) return projectReply(undefined, undefined)
+  return projectReply(repoHere, await getProjectContext($, config, repoHere))
+}
+
 /** `/brain practices`: what applies here. */
 async function practicesCommand($: EngineInterface): Promise<string> {
   if (!config) return 'landflow-brain is not set up.'
@@ -389,13 +410,16 @@ export const register: Register = (on, options) => {
     yesterday = undefined
     practices = undefined
     repoHere = undefined
+    project = undefined
     // The model's own way in: only with a key, and never failing the session.
     if (config) for (const spec of [BRAIN_ASK_SPEC, PRACTICES_SPEC, PRACTICE_DRAFT_SPEC]) await $.tool.register(spec as never).catch(() => undefined)
-    await $.command.register({ name: 'brain', description: 'Your work in the company brain: sync, today, review, status, pause, resume, forget <id>, visibility <id> private|team|org, post <id>; practices, learn [paths]', argumentHint: 'sync | today | review | status | pause | resume | forget <id> | visibility <id> <who> | post <id> | practices | learn [paths]' })
+    await $.command.register({ name: 'brain', description: 'Your work in the company brain: sync, today, review, status, pause, resume, forget <id>, visibility <id> private|team|org, post <id>; practices, learn [paths], project', argumentHint: 'sync | today | review | status | pause | resume | forget <id> | visibility <id> <who> | post <id> | practices | learn [paths] | project' })
     // Git runs beside the briefing and the practices, so one 2 s bound holds for all three.
     const gitFacts = Promise.all([gitOut($, ['git', 'remote', 'get-url', 'origin']), gitOut($, ['git', 'rev-parse', '--show-toplevel']), gitOut($, ['git', 'rev-parse', '--abbrev-ref', 'HEAD'])])
     // Practices are read in any mode (reading records nothing); the repository is sent only when the person listed it.
     const sectionP = config ? practicesSection($, config, gitFacts) : Promise.resolve(undefined)
+    // The project the repository belongs to starts once the repository is known, inside the same bound.
+    const projectP = config ? projectContext($, config, sectionP) : Promise.resolve(undefined)
     if (config && mode !== 'off') {
       // An entry left open by a session that never ended is held as it stood.
       await withJournal(async () => {
@@ -434,14 +458,16 @@ export const register: Register = (on, options) => {
       void $.clock.every(FLUSH_MS, () => flush($))
     }
     practices = await sectionP
+    project = projectSection(await projectP)
     await showStatus($)
     return next(e)
   }).catch(($, e, next) => next(e))
 
   on('prompt.compose', async ($, e, next) => {
     const result = await next(e)
+    // The project's goals come first, then practices, then yesterday. The server's heading and footer frame the project as data.
     // Practices come before yesterday. They are the admins' rules, not quoted data: the server's heading and footer frame them.
-    const sections = [...result.sections, ...(practices ? [{ id: SECTION_PRACTICES, text: practices, scope: 'session' as const }] : []), ...(yesterday ? [{ id: SECTION, text: yesterday, scope: 'session' as const }] : [])]
+    const sections = [...result.sections, ...(project ? [{ id: SECTION_PROJECT, text: project, scope: 'session' as const }] : []), ...(practices ? [{ id: SECTION_PRACTICES, text: practices, scope: 'session' as const }] : []), ...(yesterday ? [{ id: SECTION, text: yesterday, scope: 'session' as const }] : [])]
     return sections.length === result.sections.length ? result : { sections }
   }).catch(($, e, next) => next(e))
 
@@ -547,6 +573,7 @@ export const register: Register = (on, options) => {
     const arg = rest.join(' ').trim()
     // Practices need only the URL and key: reading records nothing, and learning sends nothing from the checkout but drafts.
     if (config && sub === 'practices') return reply(await practicesCommand($))
+    if (config && sub === 'project') return reply(await projectCommand($))
     if (config && sub === 'learn') return reply(await learnCommand($, rest.filter(Boolean)))
     if (!config || mode === 'off') return reply('landflow-brain is not set up: it needs the Landflow URL (https, or http://localhost), an API key with the brain:write scope, and a mode other than off. Nothing is recorded or sent.')
     const journal = await load($)
@@ -679,7 +706,7 @@ export const register: Register = (on, options) => {
         return reply(done.length ? done.join('\n') : 'Nothing sent.')
       }
       default:
-        return reply('/brain | sync | today | review | status | pause | resume | forget <id> | visibility <id> private|team|org | post <id> | practices | learn [paths]')
+        return reply('/brain | sync | today | review | status | pause | resume | forget <id> | visibility <id> private|team|org | post <id> | practices | learn [paths] | project')
     }
   }).catch(($, e, next) => (next.called ? next(e) : { text: '/brain failed; nothing was sent.' }))
 }
