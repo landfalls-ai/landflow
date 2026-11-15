@@ -1,8 +1,8 @@
 'use client';
 /**
- * /projects/<id>: four tabs. Overview counts what the project owns (workflows, credentials, data tables, agents), each
- * count opening the global page filtered to the project; Members; Settings (name, the nodes its workflows may use, who
- * approves its publish requests, MCP, variables, delete); Audit log (project admins). An earlier `?tab=` value maps
+ * /projects/<id>: five tabs. Overview counts what the project owns (workflows, credentials, data tables, agents), each
+ * count opening the global page filtered to the project; Tasks; Members; Settings (name, the nodes its workflows may use, who
+ * approves its publish requests, MCP, variables; the delete card last); Audit log (project admins). An earlier `?tab=` value maps
  * to its new tab (project-tabs.ts). Its folders are on /workflows?project=<id>.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -39,6 +39,7 @@ import { ProjectBriefCard } from './project-brief-card';
 import type { ProjectBriefView } from '@/lib/shared/goals';
 import { ProjectAgentSettings } from './project-agent-settings';
 import { ProjectBudgetCard } from './project-budget-card';
+import { TasksTab } from './tasks/tasks-tab'; // PC20
 import { OVERVIEW_KINDS, PROJECT_TABS, projectTab, type ProjectTab } from './project-tabs';
 
 const ROLE_HINT: Record<ProjectRole, string> = {
@@ -108,6 +109,7 @@ export function ProjectPage({ projectId }: { projectId: string }) {
           options={PROJECT_TABS.filter((t) => t.id !== 'audit' || projectRoleCan.manage(role)).map((t) => ({ value: t.id, label: t.label }))}
         />
         {project && tab === 'overview' && <Overview project={project} onChanged={() => void loadProject()} />}
+        {project && tab === 'tasks' && /* PC20: */ <TasksTab projectId={project.id} />}
         {project && tab === 'audit' && projectRoleCan.manage(role) && <AuditLog projectId={project.id} />}
         {project && tab === 'members' && <ProjectSettings section="members" project={project} onChanged={(next) => (next ? setProject(next) : void loadProject())} />}
         {project && tab === 'settings' && (
@@ -120,6 +122,8 @@ export function ProjectPage({ projectId }: { projectId: string }) {
               <div className="mb-3 text-[13px] font-semibold text-t1">Variables</div>
               <VariablesSettings projectId={project.id} />
             </Card>
+            {/* PC20: the red card comes last */}
+            <ProjectSettings section="danger" project={project} onChanged={(next) => (next ? setProject(next) : void loadProject())} />
           </div>
         )}
       </PageBody>
@@ -283,7 +287,7 @@ function OwnedList({ project, kind, title, href, onChanged }: { project: Project
 }
 
 /** The members tab (`section="members"`: who is in the project) or the settings tab (name, governance, MCP, delete). */
-function ProjectSettings({ project, section, onChanged }: { project: ProjectDetail; section: 'members' | 'settings'; onChanged: (next?: ProjectDetail) => void }) {
+function ProjectSettings({ project, section, onChanged }: { project: ProjectDetail; section: 'members' | 'settings' | 'danger'; onChanged: (next?: ProjectDetail) => void }) {
   const router = useRouter();
   const viewer = useViewer();
   const manage = projectRoleCan.manage(project.role);
@@ -331,6 +335,23 @@ function ProjectSettings({ project, section, onChanged }: { project: ProjectDeta
       setSaving(undefined);
     }
   };
+
+  if (section === 'danger') {
+    return manage && team ? (
+      <>
+        <Card className="flex items-center gap-3 border-rdbd">
+          <span className="min-w-0 flex-1">
+            <span className="block text-[13px] font-semibold text-t1">Delete this project</span>
+            <span className="block text-[12px] text-t3">{describeCounts(project.counts) ? `What it owns (${describeCounts(project.counts)}) moves to a project you choose.` : 'It owns nothing.'}</span>
+          </span>
+          <Button variant="danger" size="sm" onClick={() => setDeleting(true)}>
+            Delete project
+          </Button>
+        </Card>
+        {deleting && <DeleteProjectDialog project={project} onClose={() => setDeleting(false)} onDeleted={() => router.push('/projects')} />}
+      </>
+    ) : null;
+  }
 
   if (!team) {
     return section === 'members' ? (
@@ -458,19 +479,6 @@ function ProjectSettings({ project, section, onChanged }: { project: ProjectDeta
       {section === 'settings' && <GovernanceCard project={project} />}
 
       {section === 'settings' && <McpCard project={project} />}
-
-      {section === 'settings' && manage && (
-        <Card className="flex items-center gap-3 border-rdbd">
-          <span className="min-w-0 flex-1">
-            <span className="block text-[13px] font-semibold text-t1">Delete this project</span>
-            <span className="block text-[12px] text-t3">{describeCounts(project.counts) ? `What it owns (${describeCounts(project.counts)}) moves to a project you choose.` : 'It owns nothing.'}</span>
-          </span>
-          <Button variant="danger" size="sm" onClick={() => setDeleting(true)}>
-            Delete project
-          </Button>
-        </Card>
-      )}
-      {deleting && <DeleteProjectDialog project={project} onClose={() => setDeleting(false)} onDeleted={() => router.push('/projects')} />}
     </div>
   );
 }

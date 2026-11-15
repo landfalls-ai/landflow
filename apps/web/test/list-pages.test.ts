@@ -181,9 +181,9 @@ describe('data tables', () => {
   });
 });
 
-describe('projects: four tabs', () => {
-  it('has Overview, Members, Settings and Audit log', () => {
-    expect(PROJECT_TABS.map((t) => t.label)).toEqual(['Overview', 'Members', 'Settings', 'Audit log']);
+describe('projects: five tabs', () => {
+  it('has Overview, Tasks, Members, Settings and Audit log', () => {
+    expect(PROJECT_TABS.map((t) => t.label)).toEqual(['Overview', 'Tasks', 'Members', 'Settings', 'Audit log']);
   });
 
   it('maps an old ?tab= link to its new tab', () => {

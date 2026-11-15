@@ -1,13 +1,13 @@
 'use client';
 /**
  * The actions on a Needs you item that is not a run (docs/run-trace.md#needs-you): a project's AI budget today
- * (Resume, Raise, Dismiss, Open project). `actionsFor` is pure, so the card in a project's Settings tab and the Needs you
+ * (Resume, Raise, Dismiss, Open project) and a project task's run (Approve, Deny, Open task, Open session). `actionsFor` is pure, so the card in a project's Settings tab and the Needs you
  * row share one rule, and a later kind adds its actions here.
  */
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import type { NeedsYouRow } from '@/lib/client/run-trace';
+import { decideTaskRun, refreshNeedsYou, type NeedsYouRow } from '@/lib/client/run-trace';
 import { fetchBudget, formatUsd, runIncidentAction } from '@/lib/client/project-budget-api';
 import type { ProjectBudgetView } from '@/lib/shared/project-budget';
 import { Dialog } from '../ui/dialog';
@@ -15,11 +15,16 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/inputs';
 import { cn } from '@/lib/utils';
 
-export type NeedsYouActionId = 'resume' | 'raise' | 'dismiss' | 'open';
+export type NeedsYouActionId = 'resume' | 'raise' | 'dismiss' | 'open' | 'approve' | 'deny'; // PC20: approve, deny
 export type NeedsYouAction = { id: NeedsYouActionId; label: string };
 
 /** What a viewer may do from a row; [] for every kind that is not a project item. */
-export function actionsFor(row: Pick<NeedsYouRow, 'kind' | 'incidentKind' | 'canRaise' | 'canResume'>): NeedsYouAction[] {
+export function actionsFor(row: Pick<NeedsYouRow, 'kind' | 'incidentKind' | 'canRaise' | 'canResume' | 'taskRunStatus' | 'canDecide'>): NeedsYouAction[] {
+  // PC20: a task's run: Approve and Deny for one who may decide a requested run, else open the task; a waiting run opens its session.
+  if (row.kind === 'task') {
+    if (row.taskRunStatus === 'waiting') return [{ id: 'open', label: 'Open session' }];
+    return row.canDecide ? [{ id: 'approve', label: 'Approve' }, { id: 'deny', label: 'Deny' }, { id: 'open', label: 'Open task' }] : [{ id: 'open', label: 'Open task' }];
+  }
   if (row.kind !== 'budget') return [];
   const out: NeedsYouAction[] = [];
   if (row.incidentKind === 'stop') {
@@ -149,6 +154,64 @@ export function BudgetActions({
             onDone(view);
           }}
         />
+      )}
+    </div>
+  );
+}
+
+/** The buttons of one task run in Needs you (and the task dialog's last runs): Approve and Deny post the decision, then the list reloads. */
+export function TaskActions({
+  row,
+  onDone,
+  skip,
+  className,
+}: {
+  row: Pick<NeedsYouRow, 'kind' | 'taskRunId' | 'taskRunStatus' | 'canDecide' | 'href' | 'taskId' | 'projectId'>;
+  /** After a decision went through (the Needs you list reloads either way). */
+  onDone?: (decision: 'approve' | 'deny') => void;
+  skip?: NeedsYouActionId[];
+  className?: string;
+}) {
+  const [busy, setBusy] = useState<NeedsYouActionId>();
+  const [error, setError] = useState<string>();
+  const actions = actionsFor(row).filter((a) => !skip?.includes(a.id));
+  if (!actions.length) return null;
+  const decide = async (decision: 'approve' | 'deny') => {
+    if (!row.taskRunId) return;
+    setBusy(decision);
+    setError(undefined);
+    try {
+      await decideTaskRun(row.taskRunId, decision);
+      toast.success(decision === 'approve' ? 'Approved: the agent starts' : 'Denied');
+      onDone?.(decision);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(undefined);
+      refreshNeedsYou();
+    }
+  };
+  const tall = 'max-md:min-h-[44px]';
+  const href = row.href ?? (row.projectId && row.taskId ? `/projects/${encodeURIComponent(row.projectId)}?tab=tasks&task=${encodeURIComponent(row.taskId)}` : '/projects');
+  return (
+    <div className={className}>
+      <div className="flex flex-wrap gap-2">
+        {actions.map((a) =>
+          a.id === 'open' ? (
+            <Link key={a.id} href={href} className={cn('inline-flex h-7 items-center rounded-[10px] border border-hair bg-wl px-3 text-[12.5px] font-medium text-t1 hover:border-ac', tall)}>
+              {a.label}
+            </Link>
+          ) : (
+            <Button key={a.id} size="sm" variant={a.id === 'approve' ? 'primary' : 'outline'} className={tall} loading={busy === a.id} disabled={busy !== undefined} onClick={() => void decide(a.id as 'approve' | 'deny')}>
+              {a.label}
+            </Button>
+          ),
+        )}
+      </div>
+      {error && (
+        <p role="alert" className="mt-1.5 text-[12px] text-rd">
+          {error}
+        </p>
       )}
     </div>
   );

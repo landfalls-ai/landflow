@@ -445,6 +445,36 @@ project's **Tasks** tab (wave 10).
 - **Deleting.** Deleting a task deletes its runs. Deleting the project deletes its tasks and runs with it; they are never
   moved to another project.
 
+### The Tasks tab and Needs you
+
+The project page has a **Tasks** tab after **Overview** (`/projects/<id>?tab=tasks`). Its toolbar has a status filter (All,
+To do, In progress, Blocked, Done), a **Mine** toggle (tasks assigned to you or checked out by you) and **New task**
+(editors and admins; it sits in the tab, not in the page header). The tasks are one card, grouped by status in the
+server's order (In progress, To do, Blocked, Done, Cancelled), each row showing the title with a High or Low badge, the
+assignee, the goal, the next wake-up ("in 20h", the cron in a tooltip) and the last run as a status chip with its age.
+On a phone each task is a card (title and chips, assignee, last run) and the page scrolls sideways inside the tab
+switch instead of overflowing. **Load more** appends the next page of the keyset-paged list. An empty project says "No
+tasks yet", with **New task** for editors. `?tab=tasks&task=<id>` opens the tab with that task's dialog.
+
+The **task dialog** (a bottom sheet on a phone) has the title, description, status, priority, goal (a picker limited to the
+project's goals), and an assignee chosen from the agents available in the project and its members. For an agent the
+**Wake-up** choice is None, Daily 9:00, Weekdays 9:00, Weekly Monday 9:00 or Custom (a cron field), under the line "A
+wake-up only asks: the agent runs after someone approves it." and, once saved, the next wake-up. **Check out** and
+**Release** (the holder, or an admin) show "Checked out by <name>" when someone else holds it; **Ask to run now** asks
+for a run, and an open request answers "Already asked". **Last runs** lists each run's status, who asked and decided,
+the reply folded under "The reply", **Open session** and, for a run that waits, **Approve** and **Deny**. A message from the
+server about the assignee, the schedule or the goal shows under that field. **Delete** asks first. Viewers read the same
+task as text.
+
+A run that waits for a person is an item in **Needs you** (kind **Task**) for the project's editors and admins; it counts
+in Home's tile and the rail's badge like any other. Its title opens the task (never a run); **Approve**, **Deny** and
+**Open task** sit below it. A run waiting for a tool approval has **Open session** instead. Approve and Deny post to
+`POST /api/task-runs/:runId` (session only) and reload the list; a 409 ("Already approved") shows under the buttons. See
+[run-trace.md](run-trace.md#needs-you-for-a-project-task).
+
+The red **Delete this project** card is the last card of the Settings tab: settings, Agents in this project, AI budget,
+Workspace, Variables, then it.
+
 ## How it is built
 
 - Data: migration 2300 makes `goals`, `project_goals` (a project's goals and their order) and `goal_links` (initiatives);
