@@ -66,7 +66,10 @@ that carry the rule above:
   run a related source): Landledger reads break-glass only from the origin and lists the cost in its exceptions report
   until it is approved.
 - **Cost → Window** is an estimate: each day's cost by the share of the day inside the window (`basis: 'estimated'`),
-  for at most 50 services and 31 days; an unknown name is `known: false` and $0.
+  for at most 50 services; an unknown name is `known: false` and $0. Landledger answers at most 31 days a call, so the
+  node asks a longer window in 31-day parts (at most 12, a year) and adds them up to the micro-unit (`chunks`).
+- **A 409 for an idempotency key names the request** Landledger already has (its `details.requestId`): the node's error
+  ends `(request <id>)`, so a flow that lost the first answer finds the request again.
 - **No knowledge kind.** Landledger has no explain or search route that answers with passages, so the node is not
   offered as an agent's knowledge base; agents use `budget_check`, `cost_query`, `request_get` and the rest as tools.
 
@@ -186,9 +189,14 @@ not live: settling stays behind `SETTLE_IN_LANDBRIGHT`, off, until the PR merges
    Landbright** (an annotation).
 3. **Ask Landledger for the seat** (Request → Create, `tool_or_seat`, the requester as the person, the contract's seat
    price, idempotency `landbright-<REQ-n>`; the Landbright request as `related`, or, after break-glass, as the origin
-   with `breakGlass: true`) → **Asked, or already asked** (a 409 for the same key is a redelivery) → **Remember the seat
-   request** (**Landledger seat requests**) → **Note it in Landbright** (annotation `landflow.seat_cost`: `cost_asked`).
-   The requester confirms it in Landledger.
+   with `breakGlass: true`) → **Asked, or already asked** → **Seat request in hand** → **Remember the seat request**
+   (**Landledger seat requests**, an upsert) → **Note it in Landbright** (annotation `landflow.seat_cost`:
+   `cost_asked`). The requester confirms it in Landledger. A 409 for the same key is a redelivery, or a run that stopped
+   between Create and its row: **Get the request asked before** reads the request Landledger's 409 names (or, from a
+   Landledger that names none, **This key's seat requests** → **Which request was it** finds it by its origin) → **Ours
+   to record?** (this key, this workflow's run, this Landbright request) → the row, with the run Landledger's origin
+   names, so its decision is acted on. A request already decided gets no `cost_asked` note: **Every hour** tells
+   Landbright the decision.
 4. `request.decided` → **Get the request** → **Who is this flow** → **Find the run that raised it** → **Ours to act
    on?** (this key's request, kind `tool_or_seat`, raised by a run of this workflow: its origin, or for break-glass the
    related `landflow_run`) → **Tell Landbright the cost** (`cost_approved` or `cost_denied`), or **Not this flow's:
@@ -198,17 +206,45 @@ not live: settling stays behind `SETTLE_IN_LANDBRIGHT`, off, until the PR merges
    "approve" | "deny", reference: { system: "Landledger", id: <request id>, url: <its console page> }, reason }` (scope
    `steps:settle`; only the application the gate's `settledBy` names, `landflow-local` in dev) → **Settled?** (Landbright
    answers 200 for the same answer again and 409 for another, or once the request moved on: said, not retried).
-   Approve passes the request to Landbright's people; deny ends it (`step_denied`). Break-glass skipped the gate (the
-   grant is live): **Mark the seat used (break-glass)** once Landledger approves. Otherwise **Nothing to settle**, with
-   why (the setting off, no gate, settled already).
+   Approve passes the request to Landbright's people; deny ends it (`step_denied`). Granted before the cost was decided
+   (break-glass skipped the gate, or an extension's new grant): **Mark the seat used (granted first)** once Landledger
+   approves. Not approved, with the grant live: Landbright's machine API has no route to revoke a grant (only an
+   administrator or the holder can, in Landbright), so **Ask the approvers to revoke** puts a task on the Landbright
+   request (annotation `landflow.seat_revoke`: `status: open`, `assignees` the request's approvers, the reason) and
+   **Count the seat in use, unpaid** records it in **Landledger unpaid seats**: Landledger counts no seat for a request
+   it did not approve, so the flow counts it until the grant is revoked or expires, when **Close the revoke task** marks
+   the task `done` and the row `revoked`. Otherwise **Nothing to settle**, with why (the setting off, no gate, settled
+   already).
 6. Landbright's decision or a grant change → **Find its seat request** → **What the seat needs**: `grant.activated`
    (its data carries `requestId`) → **Mark the seat used** (Request → Mark Applied); access denied, or the gate run out
    (`request.decided` with `outcome: expired`, `waitedOn: Landledger`): a cost request not yet decided → **Cancel the
    cost request** (Request → Cancel), an approved one → **Release the seat** (`access_denied`); the grant revoked or
-   expired → `grant_revoked` for a used seat, `not_needed` for one never used.
+   expired → `grant_revoked` for a used seat, `not_needed` for one never used. **Pick the seat request** takes the
+   newest row; with none, a `grant.activated` goes to **Costs a seat?** (an extension's new grant, or a break-glass
+   grant whose `request.created` was missed).
+7. An extension (Landbright's `extends`: the grant and the request it came from) at the gate → **Find the first seat
+   request** → **Get the first seat request** → **Read the grant** (`GET /api/v1/grants/:id`) → **Extension or new
+   seat?**: it rides on the first request's seat when that seat request is this flow's with its seat held (reserved or
+   in use), the grant is still active and the new end (the grant's end plus the extension) is before the contract's
+   renewal date. Riding: **Link it to the first seat request** (a row for the extension naming the first seat
+   request), **Say it rides** (`cost_rides`), and, with the setting on and the gate waiting, **Settle the extension's
+   gate** at once (`approve`, citing the first request). Otherwise (the grant ended, the seat went back, the new end
+   crosses the renewal) **Ask Landledger for the seat** raises one of its own (`landbright-<REQ-n>` of the extension),
+   saying why. An extension approved after its grant ended gets a new grant from Landbright: on its `grant.activated`,
+   **What the seat needs** sees the row is the first request's and raises a seat request for the new grant, marked used
+   once Landledger approves it.
+8. **Every hour** (Schedule) → **Our seat requests** (this key's `tool_or_seat` requests) → **Which to look at** (no row,
+   or not finished, from the last 35 days; and every unpaid seat) → **Get each seat request** → **Ours, with their
+   Landbright request** → **Read each in Landbright** → **Plan the reconcile**: **Record the seat request** for one with
+   no row (with the run that raised it); **Tell Landbright the decision** for one decided whose annotation doesn't say
+   so (and settle the gate when the setting is on and it waits); then use, release or cancel the seat as step 6 would
+   (a cost request whose Landbright request ended before its row existed is cancelled: a cancel that raced the Create),
+   post the revoke task a stopped run missed, or close it once the grant has gone.
 
 With the setting off, Landbright's gate is never settled: Landbright's approvers see the annotation, and a request
 expires at the gate's deadline (24 hours by default), which the flow then answers by cancelling or releasing the seat.
+The setting stays off: the two things the review asked for before it can be turned on (a rejected break-glass seat
+and extensions at the gate) are built and tested against the stand-in, and Landbright's PR #5 is still not merged.
 
 Slots: Landledger requests, Landledger webhooks, Landbright events (JWT Auth), Landbright API (OAuth2 client
 credentials, `requests:read`, `annotations:write` and `steps:settle`). Subscribe **Landbright events**' URL in
@@ -225,6 +261,8 @@ Landbright to `request.created`, `request.decided`, `grant.activated`, `grant.re
 - **One note per cost center**: nothing when the snapshot, the figures and the event name different hashes (a newer
   close wins). Each needed note gets a prompt with its figures, one per line, each as the exact cite to copy
   (`{"figure":"variance_budget","amount":"-799.50"}: actual minus budget: under budget`), with the direction in words.
+  Each amount is rounded as Landledger checks a cite: to the cent, half away from zero, on the decimal itself (a float's
+  `toFixed(2)` said `1.00` for `1.005`, which Landledger refuses).
   A first prompt that listed names and values apart had qwen3-coder:30b cite a driver's change as the actual, twice
   (the redraft repeated it); with the cites as a menu it drafted both notes right on the first try in five runs
   (`LANDFLOW_INTEGRATION=ollama`, the fake Landledger checking every cite).
@@ -250,12 +288,18 @@ Slots: Landledger (read), Landledger webhooks, Landledger notes (`notes:draft` o
   Landfall name → the name Landledger's Explore uses) → **Read the room** (Room → Get) → **Window and services**: the
   services from the alert's entity and entity hints and the context attached to the room; the window from the room's
   opening to its last `status.changed` to an ended state.
-- **Services named?** → **Cost of the window** (Cost → Window) → **Write the note** → **Post it in the room** (Timeline
-  → Add Note): "Estimated cost during this incident: $53.25 (USD), … UTC (…)", a line per service (an unknown one: "no
-  cost in Landledger under this name"), "Estimated: each day's cost in Landledger, by the share of the day inside the
-  incident's window. Not an invoiced figure.", a link to Landledger's Explore filtered to the services and month, and
-  "Posted by Landflow as a room note: it can't write a postmortem section." No service named → **No service named:
-  nothing to cost**.
+- **Services named?** → **Cost of the window** (Cost → Window; a room open longer than 31 days is asked in 31-day
+  parts and added up) → **Write the note** → **Post it in the room** (Timeline → Add Note): "Pro-rated spend of these
+  services during the incident (estimated), not the incident's extra cost: $53.25 (USD), … UTC (…)", a line per
+  service (an unknown one: "no cost in Landledger under this name"), "Estimated: each day's cost of these services in
+  Landledger, by the share of the day inside the incident's window: what they cost while it was open, not what the
+  incident added. Not an invoiced figure.", a link to Landledger's Explore filtered to the services and month, and
+  "Posted by Landflow as a room note: it can't write a postmortem section."
+- When Landledger knows none of the services, the note opens "No matching services: cost unknown." and gives no
+  total, never $0.00. A window over the 1st of a month says how much falls on that day: Landledger charges invoice lines
+  that have no daily estimate on the 1st, whole, so that share may be part of a month's invoice rather than spend
+  during the incident. A window asked in parts says so. Amounts are rounded as Landledger posts them (half away from
+  zero). No service named → **No service named: nothing to cost**.
 - The landfall plugin has no postmortem operation, so the cost goes in as a room note rather than a postmortem section.
 
 Slots: Landfall (its API key), Landledger (read).

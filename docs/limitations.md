@@ -152,10 +152,22 @@ items still open (its "Wave 6" section); this page is the short list to check be
   not merged) and was checked only against a stand-in, not the dev Landbright; `SETTLE_IN_LANDBRIGHT` is off until the
   PR merges. Off, a request behind a gate expires at the gate's deadline (the flow then cancels the cost request or
   releases the seat), and Landbright's approvers see Landledger's decision only as an annotation. A 409 from the settle
-  route is reported with its status only (the engine keeps the error's message, not Landbright's text). Extensions are
-  not costed: Landbright sends an extension through the gate too, and the flow doesn't yet settle it citing the first
-  request's seat, so with a gate an extension expires. A break-glass seat whose cost Landledger rejects stays granted:
-  the flow notes the rejection and a person revokes. One seat per request.
+  route is reported with its status only (the engine keeps the error's message, not Landbright's text). One seat per
+  request.
+- **Landflow can't revoke a Landbright grant.** Landbright's machine API (spec 008) has no revoke route, so a seat
+  granted first (break-glass, or an extension approved after its grant ended) whose cost Landledger doesn't approve gets
+  a revoke task for the request's approvers (the `landflow.seat_revoke` annotation) and a row in **Landledger unpaid
+  seats**, in use until the grant ends. The task is only an annotation: nobody is notified, and the approvers are
+  Landbright's people steps (the request's ref when it has none). Landledger has no reservation for a rejected request,
+  so the unpaid seat is counted in Landflow's table, not in Landledger's seat count.
+- **Extensions ride only inside the contract term.** An extension rides (its gate settled citing the first request,
+  once the setting is on) only while the first request's seat is held on the same contract, its grant is live and the
+  new end comes before the contract's renewal; otherwise it raises a request of its own, so a seat that went back or a
+  term that renews is costed again. The renewal is the contract's own date: an extension isn't split across terms.
+  With the setting off, a riding extension's gate still waits until its deadline.
+- **The seat reconcile looks back 35 days and stops on one unreadable request.** **Every hour** checks seat requests
+  raised in the last 35 days (and every unpaid seat); older ones with no row stay unrecorded. Landbright is read for
+  all of them in one HTTP node, so one request it can't answer skips the hour's reconcile, logged, until it can.
 - **A missed `notes.draft_requested` isn't sent again.** Landledger sends it once per snapshot; a flow subscribed later
   (as on 2026-11-15) drafts only when run by hand with the event pinned
   ([features/landledger.md](features/landledger.md#month-end-seats-and-incidents-2026-11-15)).
@@ -166,8 +178,10 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - **Incident cost goes into a room note, not the postmortem.** The landfall plugin has no postmortem operation (and
   Landfall's code stays unchanged), so the estimate is a Timeline note in the room, saying so. The services are what the
   room names (the alert's entity and hints, attached context), mapped to Explore's names by hand in `SERVICE_NAMES`;
-  the window ends at the room's last move to an ended state, and Landledger's cost is daily, so the figure is an
-  estimate by the share of each day. The trigger polls (60 s).
+  the window ends at the room's last move to an ended state, and Landledger's cost is daily, so the figure is the
+  services' pro-rated spend while the room was open, labelled as an estimate and not the incident's extra cost. Spend on
+  the 1st of a month may include invoice lines Landledger charges whole that day: the note says how much, but it is not
+  taken out. A room open longer than a year (12 parts of 31 days) gets no figure. The trigger polls (60 s).
 - **`$('Node').item` follows position, not lineage.** After a Switch or a step that drops items, a later node reading
   an earlier one by `.item` can get the wrong item; the variance-notes flow works around it with a pass-through node
   (**Notes to redraft**) before the redraft.

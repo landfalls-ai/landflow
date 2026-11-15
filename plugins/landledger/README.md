@@ -69,7 +69,8 @@ Landledger's own message and a hint: 401 (an `ll_` key, not a Landflow `lf_` key
 its age, team or app), 403 (the scope the call needs; for a relay, the presser is not linked, not an approver of the
 step, is the requester or sponsor, or the step is not the budget owner's), 404, 409 (the request moved on, the evidence
 was served more than 30 minutes ago, an idempotency key came back with another body, no seats are held, or a note's
-snapshot is no longer the month's), 422 (USD only; for a note, the cited figures that differ from the snapshot, listed
+snapshot is no longer the month's; for an idempotency key, the message ends `(request <id>)`, the request Landledger
+already has for it, from its `details.requestId`, so a flow that lost the first answer finds it again), 422 (USD only; for a note, the cited figures that differ from the snapshot, listed
 as `mismatches`), 429, 503. A 429 waits for `Retry-After` (up to 10 s) and
 retries once. **On Error: Continue** keeps the flow going with `{ error, description }`.
 
@@ -86,7 +87,7 @@ retries once. **On Error: Continue** keeps the flow going with `{ error, descrip
 | Request → **Cancel** | `POST /api/requests/:id/cancel` (`requests:write`) | Request ID, Reason | the request, `cancelled` (Landledger sends `request.decided`). Only a request not yet decided (`draft`, `awaiting_confirmation`, `pending`); 409 after. The creating key may cancel its own |
 | Request → **Release Seats** | `POST /api/requests/:id/seats/release` (`requests:write`) | Request ID, Reason (`access_denied`, `grant_revoked`, `not_needed`), Note | the request, its seats back on the contract. 409 when it holds none; an applied seat is released only with `grant_revoked` |
 | Contract → **Seats** | `GET /api/contracts/seats?landbrightApp=` | Landbright App | `{ found, landbrightApp, contract, seatPrice, left }`; no contract for that app: `found: false` (not an error) |
-| Cost → **Window** | `GET /api/cost/window?services=&from=&to=` | Services (comma-separated, at most 50), From, To (at most 31 days) | `{ from, to, currency, basis: 'estimated', method, total, services: [{ service, known, amount, days }] }`: each day's cost by the share of the day inside the window; an unknown name is `known: false` and $0 |
+| Cost → **Window** | `GET /api/cost/window?services=&from=&to=` | Services (comma-separated, at most 50), From, To | `{ from, to, currency, basis: 'estimated', method, total, services: [{ service, known, amount, days }], chunks }`: each day's cost by the share of the day inside the window; an unknown name is `known: false` and $0 (a flow says "unknown", not $0). Landledger answers at most 31 days a call, so a longer window is asked in 31-day parts (at most 12) and added up to the micro-unit; `chunks` says how many |
 | Close → **Snapshot** | `GET /api/close/:month/snapshot` | Month | the frozen snapshot of a month whose accrual was accepted, with its `sha256` |
 | Note → **Figures** | `GET /api/notes/:month/figures` (`notes:draft`, the notes credential) | Month | `{ snapshotSha256, needed }`: per note (`TOTAL` and each cost center), the figures it may cite (actual, budget, day-10 forecast, the variances, drivers by key) |
 | Note → **Submit Draft** | `POST /api/notes/:month/drafts` (`notes:draft`, the notes credential) | Month, Cost Center, Snapshot SHA-256, Text (10–8,000), Cited Figures (JSON `[{ figure, key?, amount }]`), Agent ID, Agent Name, Agent Runs In, Sponsor | the note's new version. Every cite must equal the snapshot's to the cent, else 422 with the mismatches; another snapshot, 409. `runId` is this run. As an agent tool, the agent fields are required. An analyst accepts it in Landledger; no key does |
@@ -183,30 +184,44 @@ Each has a slot per key (requests, webhooks and, for Slack, relay) and a Data Ta
   Landbright request (`landflow.seat_cost`). On `request.decided`: only this key's request raised by this flow → the
   annotation says approved or denied, and, behind `SETTLE_IN_LANDBRIGHT` (off until the PR merges), `POST
   /api/v1/requests/:id/steps/0/settle { outcome: approve | deny, reference: { system: Landledger, id, url }, reason }`
-  while the gate waits. Break-glass skips the gate: the cost is raised afterwards with `breakGlass`, never settled, and
-  marked used once approved. `grant.activated` → Mark Applied; access denied, or the gate run out (`expired`, `waitedOn:
-  Landledger`) → Cancel an undecided cost request, or Release Seats (`access_denied`); the grant revoked or expired →
-  Release Seats (`grant_revoked` or `not_needed`).
+  while the gate waits. A 409 on Create (a redelivery, or a run that stopped before its row) reads the request
+  Landledger names, or finds it by its origin among the key's seat requests, and records it with the run that raised
+  it. Break-glass skips the gate: the cost is raised afterwards with `breakGlass`, never settled, and marked used once
+  approved; rejected, Landbright has no route for an application to revoke a grant, so the approvers get a task on the
+  Landbright request (`landflow.seat_revoke`) and **Landledger unpaid seats** counts the seat in use until the grant
+  goes. An extension rides on the first request's seat (linked, noted `cost_rides`, the gate settled at once citing it)
+  when that seat is held, the grant live and the new end before the contract's renewal; otherwise it gets a seat request
+  of its own, as does one approved after its grant ended, on its new grant's `grant.activated`. `grant.activated` → Mark
+  Applied; access denied, or the gate run out (`expired`, `waitedOn: Landledger`) → Cancel an undecided cost request,
+  or Release Seats (`access_denied`); the grant revoked or expired → Release Seats (`grant_revoked` or `not_needed`).
+  **Every hour** reconciles: a seat request with no row, a decision Landbright was never told, a cancel that raced the
+  Create, and an unpaid seat whose grant has gone.
 - **Draft variance notes** (`landledger-variance-notes.json`): `notes.draft_requested` → Close → Snapshot and Note →
   Figures (both must name the event's snapshot) → an AI Agent on a local Ollama model (`MODEL`, `OLLAMA_URL` in
   **Settings**; default `qwen3-coder:30b`) drafts one note per needed note, citing only the listed figures → Note →
-  Submit Draft. A 422 (a figure that isn't the snapshot's) is redrafted once with Landledger's refusal; a second refusal
-  is recorded and left to Landledger's template draft. Every outcome is a row in **Landledger note drafts**.
+  Submit Draft. Each figure is listed rounded as Landledger checks it (to the cent, half away from zero, on the decimal,
+  not a float's `toFixed`). A 422 (a figure that isn't the snapshot's) is redrafted once with Landledger's refusal; a
+  second refusal is recorded and left to Landledger's template draft. Every outcome is a row in **Landledger note
+  drafts**.
 - **Incident cost to the room** (`landledger-incident-cost.json`), with the landfall plugin: Landfall Trigger (room
   ended) → Room → Get → the services (the alert's entity and hints, attached context) and the window (opened to the
-  last `status.changed` to an ended state) → Cost → Window → Timeline → Add Note in the room: the estimated total and
-  each service, "Estimated: … Not an invoiced figure.", and a link to Landledger's Explore. The landfall plugin has no
-  postmortem operation, so it is a room note, and the note says so. Landfall knows nothing of Landledger.
+  last `status.changed` to an ended state) → Cost → Window → Timeline → Add Note in the room: "Pro-rated spend of these
+  services during the incident (estimated), not the incident's extra cost: $…", each service, how much falls on the
+  1st of a month (where Landledger charges invoice lines with no daily estimate), whether a window over 31 days was
+  asked in parts, and a link to Landledger's Explore; "No matching services: cost unknown" when Landledger knows none of
+  them, never $0.00. The landfall plugin has no postmortem operation, so it is a room note, and the note says so.
+  Landfall knows nothing of Landledger.
 
 ## Tests
 
 `test/landledger.test.ts` (every operation against the fake, the four credentials' tests, tool-or-seat requests,
-break-glass origins, cancels and releases, Contract → Seats, Close → Snapshot, Note → Figures and Submit Draft with its 422 and 409, Cost → Window, the relay's raw press and
+break-glass origins, cancels and releases, Contract → Seats, Close → Snapshot, Note → Figures and Submit Draft with its 422 and 409, Cost → Window and its 31-day parts, the 409 that names the request, the relay's raw press and
 its refusals: forged signature, another team, unlinked, not an approver, the requester, stale evidence, Finance's
 step, a key without the scope; the tool and MCP refusals, amounts, idempotency), `test/trigger.test.ts`
 (subscription with a `webhooks:write` key and only its own, the secret never in an item, an admin-made subscription,
 signed / forged / stale / filtered deliveries, the tolerance held to 300 s, the new events, `seat.released` and
 `notes.draft_requested`) and `test/plugin.test.ts` (the manifest over HTTP and gRPC, the credentials per resource, the
-MCP tool list and annotations): 58 tests. The fake (`test/fake-landledger.ts`) follows contract `2ed51f3`: scopes,
+MCP tool list and annotations): 60 tests. The fake (`test/fake-landledger.ts`) follows contract `2ed51f3`: scopes,
 `createdBy`, bound keys, confirmation, person-only decisions, the Slack relay's checks, the 30-minute evidence window,
-contracts and seats, the frozen snapshot, note figures and drafts checked to the cent, and the cost of a window.
+contracts and seats, the frozen snapshot, note figures and drafts checked to the cent (half away from zero, as Landledger),
+an idempotency conflict naming the request, and the cost of a window (at most 31 days a call, a row per day).

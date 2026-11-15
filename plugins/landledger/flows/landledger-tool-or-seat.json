@@ -3,7 +3,7 @@
   "version": 1,
   "template": {
     "name": "Landledger: tool or seat cost",
-    "description": "A paid seat is spend: when someone asks Landbright for access to a bundle whose app costs a seat, this flow finds the Landledger contract that grants the app and raises a tool_or_seat request for one seat at the contract's price, naming the person (who confirms it in Landledger). Landledger's approvers decide the cost and Landbright's the access; the flow tells Landbright what Landledger decided (a note on the request, and its cost gate settled, behind a setting until Landbright's spec 008 merges), marks the seat used when the grant is live, raises the cost after break-glass, and cancels the cost request or gives the seat back when access is denied, the gate runs out, or the grant is revoked.",
+    "description": "A paid seat is spend: when someone asks Landbright for access to a bundle whose app costs a seat, this flow finds the Landledger contract that grants the app and raises a tool_or_seat request for one seat at the contract's price, naming the person (who confirms it in Landledger). Landledger's approvers decide the cost and Landbright's the access; the flow tells Landbright what Landledger decided (a note on the request, and its cost gate settled, behind a setting until Landbright's spec 008 merges), marks the seat used when the grant is live, raises the cost after break-glass, lets an extension ride on the first request's seat or raises its own, asks the approvers to revoke a grant whose cost was not approved (counting the seat in use until they do), and cancels the cost request or gives the seat back when access is denied, the gate runs out, or the grant is revoked. Every hour it reconciles what a stopped run or a race left behind.",
     "categories": [
       "finance",
       "it-ops"
@@ -39,10 +39,12 @@
       "Pick or add **Landbright events** (JWT Auth against Landbright's JWKS) and **Landbright API** (the Landflow application's client credentials: `requests:read`, `annotations:write`, `steps:settle`; the bundle's cost gate names it in `settledBy`).",
       "In **Settings**, set `LANDBRIGHT_URL` and `LANDLEDGER_CONSOLE_URL`. Landbright says what a request costs (a bundle target's `cost: { kind: seat, landbrightApp }`); `SEAT_APPS` maps bundles only for a Landbright without that.",
       "Publish, then subscribe **Landbright events**' production URL in Landbright (Events) to `request.created`, `request.decided`, `grant.activated`, `grant.revoked` and `grant.expired`. Publishing subscribes **Landledger events** to `request.decided` for `tool_or_seat` requests.",
-      "A request for a seat: **Find the contract** (Contract → Seats); none → a note on the Landbright request and nothing raised; else **Ask Landledger for the seat** (one seat at the contract's price, idempotency key `landbright-<REQ-n>`), recorded in **Landledger seat requests**, and a note on the Landbright request.",
+      "A request for a seat: **Find the contract** (Contract → Seats); none → a note on the Landbright request and nothing raised; else **Ask Landledger for the seat** (one seat at the contract's price, idempotency key `landbright-<REQ-n>`), recorded in **Landledger seat requests**, and a note on the Landbright request. A 409 for that key (a redelivered event, or a run that stopped after Create) is looked up by the request Landledger names, or by its origin, and recorded.",
       "Landledger's decision: **Ours to act on?** trusts only this key's request from a run of this workflow, then **Tell Landbright the cost** notes it on the Landbright request, and **Settle the cost gate** answers the gate: `POST /api/v1/requests/:id/steps/0/settle { outcome: approve | deny, reference: { system: Landledger, id, url }, reason }`. Verified against Landbright's PR #5 (spec 008), not merged yet: `SETTLE_IN_LANDBRIGHT` stays off until it is.",
-      "Break-glass: Landbright grants at once and skips the gate, so the cost is raised afterwards with the Landbright request as its origin (`breakGlass`), never settled, and marked used once Landledger approves it.",
-      "Landbright's decision or a grant change: `grant.activated` → **Mark the seat used** (Request → Mark Applied); access denied, or the gate run out (`request.decided`, `expired`, `waitedOn: Landledger`): a cost request not yet decided → **Cancel the cost request**, an approved one → **Release the seat** (`access_denied`); the grant revoked or expired → **Release the seat** (`grant_revoked`, or `not_needed` for a seat never used)."
+      "Break-glass: Landbright grants at once and skips the gate, so the cost is raised afterwards with the Landbright request as its origin (`breakGlass`), never settled, and marked used once Landledger approves it. Rejected: Landbright has no route for an application to revoke a grant, so **Ask the approvers to revoke** puts a task on the Landbright request (`landflow.seat_revoke`, naming its approvers) and **Landledger unpaid seats** counts the seat in use until the grant is revoked or expires.",
+      "An extension (Landbright's `extends`) at the gate rides on the first request's seat, recorded and settled at once citing it, when the first seat is held, the grant is live and the new end is before the contract's renewal; otherwise it gets a seat request of its own. An extension approved after its grant ended gets a new grant, and a seat request of its own on `grant.activated`.",
+      "Landbright's decision or a grant change: `grant.activated` → **Mark the seat used** (Request → Mark Applied); access denied, or the gate run out (`request.decided`, `expired`, `waitedOn: Landledger`): a cost request not yet decided → **Cancel the cost request**, an approved one → **Release the seat** (`access_denied`); the grant revoked or expired → **Release the seat** (`grant_revoked`, or `not_needed` for a seat never used).",
+      "**Every hour** reconciles: a seat request with no row is recorded, a decision Landbright was never told is noted (and settled when the setting is on), a cost request whose Landbright request ended first is cancelled, and an unpaid seat's task is closed once its grant has gone."
     ],
     "dataTables": [
       {
@@ -81,11 +83,56 @@
             "type": "date"
           }
         ]
+      },
+      {
+        "name": "Landledger unpaid seats",
+        "columns": [
+          {
+            "name": "landledger_request_id",
+            "type": "string"
+          },
+          {
+            "name": "landbright_request_id",
+            "type": "string"
+          },
+          {
+            "name": "landbright_ref",
+            "type": "string"
+          },
+          {
+            "name": "number",
+            "type": "string"
+          },
+          {
+            "name": "app",
+            "type": "string"
+          },
+          {
+            "name": "contract_id",
+            "type": "string"
+          },
+          {
+            "name": "status",
+            "type": "string"
+          },
+          {
+            "name": "since",
+            "type": "date"
+          },
+          {
+            "name": "ended_at",
+            "type": "date"
+          },
+          {
+            "name": "note",
+            "type": "string"
+          }
+        ]
       }
     ],
     "workflow": {
       "name": "Landledger: tool or seat cost",
-      "description": "A Landbright access request for a seat raises a tool_or_seat request in Landledger on the contract that grants the app; Landledger's decision is noted on the Landbright request and settles its cost gate (behind a setting); the grant marks the seat used; a denial, an expired gate or a revocation cancels the cost request or releases the seat.",
+      "description": "A paid seat is spend: when someone asks Landbright for access to a bundle whose app costs a seat, this flow finds the Landledger contract that grants the app and raises a tool_or_seat request for one seat at the contract's price, naming the person (who confirms it in Landledger). Landledger's approvers decide the cost and Landbright's the access; the flow tells Landbright what Landledger decided (a note on the request, and its cost gate settled, behind a setting until Landbright's spec 008 merges), marks the seat used when the grant is live, raises the cost after break-glass, lets an extension ride on the first request's seat or raises its own, asks the approvers to revoke a grant whose cost was not approved (counting the seat in use until they do), and cancels the cost request or gives the seat back when access is denied, the gate runs out, or the grant is revoked. Every hour it reconciles what a stopped run or a race left behind.",
       "groups": [],
       "stickyNotes": [],
       "nodes": [
@@ -163,12 +210,12 @@
           "parameters": {
             "language": "javascript",
             "mode": "each",
-            "codeEach": "// Landbright's events arrive as a signed JWT (the event in jwtPayload.event: trust that, not the body); Landledger's\n// through the Landledger Trigger. 0: an access request was made (raise the cost); 1: Landledger decided the cost;\n// 2: Landbright decided the access, or a grant moved (apply or release the seat); 3: anything else.\nconst settings = $json.settings;\nconst e = $json.jwtPayload?.event;\nif (e) {\n  const type = String(e.type ?? '');\n  // grant.* carries the request in data.requestId; request.created says what it costs (costs) and whether a gate waits\n  // on a system (waitsOn); request.decided says outcome, and waitedOn when a gate ran out.\n  const landbrightRequestId = type.startsWith('request.') ? (e.target?.id ?? null) : (e.data?.requestId ?? null);\n  const route = !landbrightRequestId ? 3 : type === 'request.created' ? 0 : type === 'request.decided' || type.startsWith('grant.') ? 2 : 3;\n  const d = e.data ?? {};\n  return { route, source: 'landbright', eventType: type, landbrightRequestId, costs: d.costs ?? [], waitsOn: d.waitsOn ?? null, outcome: d.outcome ?? null, waitedOn: d.waitedOn ?? null, settings };\n}\nif ($json.type === 'request.decided' && $json.kind === 'tool_or_seat') {\n  return { route: 1, source: 'landledger', eventType: $json.type, requestId: $json.requestId, outcome: $json.outcome, settings };\n}\nreturn { route: 3, source: 'other', eventType: String($json.type ?? ''), settings };"
+            "codeEach": "\n// Landbright's events arrive as a signed JWT (the event in jwtPayload.event: trust that, not the body); Landledger's\n// through the Landledger Trigger; the reconcile from Every hour. 0: an access request was made (raise the cost);\n// 1: Landledger decided the cost; 2: Landbright decided the access, or a grant moved (apply or release the seat);\n// 3: the hourly reconcile. Anything else stops here.\nconst settings = $json.settings;\nconst e = $json.jwtPayload?.event;\nif (e) {\n  const type = String(e.type ?? '');\n  // grant.* carries the request in data.requestId; request.created says what it costs (costs) and whether a gate waits\n  // on a system (waitsOn); request.decided says outcome, and waitedOn when a gate ran out.\n  const landbrightRequestId = type.startsWith('request.') ? (e.target?.id ?? null) : (e.data?.requestId ?? null);\n  const route = !landbrightRequestId ? null : type === 'request.created' ? 0 : type === 'request.decided' || type.startsWith('grant.') ? 2 : null;\n  if (route === null) return [];\n  const d = e.data ?? {};\n  return { route, source: 'landbright', eventType: type, landbrightRequestId, costs: d.costs ?? [], waitsOn: d.waitsOn ?? null, outcome: d.outcome ?? null, waitedOn: d.waitedOn ?? null, settings };\n}\nif ($json.type === 'request.decided' && $json.kind === 'tool_or_seat') {\n  return { route: 1, source: 'landledger', eventType: $json.type, requestId: $json.requestId, outcome: $json.outcome, settings };\n}\nif (!$json.type && ($json.scheduledAt || $json.firedAt)) return { route: 3, source: 'schedule', eventType: 'reconcile', settings };\nreturn [];\n"
           }
         },
         {
           "id": "route",
-          "name": "Raise, cost or access",
+          "name": "Raise, cost, access or reconcile",
           "type": "core.switch",
           "typeVersion": 1,
           "position": [
@@ -217,7 +264,7 @@
           "parameters": {
             "language": "javascript",
             "mode": "all",
-            "code": "// Does this access cost a seat? Landbright's state decides, not the event: the request's costs (spec 008; the event's,\n// or SEAT_APPS for an older Landbright). A request still pending (its gate waits on Landledger), or one Landbright\n// already granted under break-glass (it skipped the gate: the cost is raised afterwards, as break-glass). Not an\n// extension: it rides on the first request's seat.\nconst event = $('What happened').first().json;\nconst settings = event.settings;\nconst r = $input.first().json;\nconst breakGlass = r.method === 'break_glass' || (r.breakGlass !== null && r.breakGlass !== undefined);\nif (r.extends) return [];\nif (breakGlass ? r.status !== 'approved' : r.status !== 'pending') return [];\nconst app = r.costs?.find((c) => c.kind === 'seat')?.landbrightApp ?? event.costs?.[0] ?? settings.seatApps[r.bundle?.name] ?? null;\nif (!app) return [];\nconst subject = r.subject ?? r.requester;\nreturn [{ json: {\n  landbrightRequestId: r.id,\n  ref: r.ref,\n  url: r.decisionUrl,\n  app,\n  bundle: r.bundle?.name ?? '',\n  breakGlass,\n  waitsOn: r.waitingOnSystem ?? event.waitsOn ?? null,\n  // Landledger finds the person by their Landbright subject; they confirm the request in their own session.\n  requester: r.requester?.id ?? r.requester?.email,\n  subject: subject?.displayName ?? subject?.email ?? 'someone',\n} }];"
+            "code": "\n// Does this access cost a seat? Landbright's state decides, not the event: the request's costs (spec 008; the event's,\n// or SEAT_APPS for an older Landbright). Raised for a request pending at the gate; one Landbright already granted under\n// break-glass (it skipped the gate: the cost is raised afterwards, as break-glass); an extension pending at the gate\n// (Extension or new seat? decides whether it rides on the first request's seat); and an extension approved after its\n// grant ended, which Landbright answers with a new grant: that grant needs a seat request of its own.\nconst event = $('What happened').first().json;\nconst settings = event.settings;\nconst r = $input.first().json;\nconst ext = r.extends ?? null;\nconst breakGlass = !ext && (r.method === 'break_glass' || (r.breakGlass !== null && r.breakGlass !== undefined));\nconst newGrant = Boolean(ext && r.status === 'approved' && r.grant?.status === 'active' && r.grant.id !== ext.grantId);\nif (ext ? r.status !== 'pending' && !newGrant : breakGlass ? r.status !== 'approved' : r.status !== 'pending') return [];\nconst app = r.costs?.find((c) => c.kind === 'seat')?.landbrightApp ?? event.costs?.[0] ?? settings.seatApps[r.bundle?.name] ?? null;\nif (!app) return [];\nconst subject = r.subject ?? r.requester;\nconst gate = r.steps?.[0];\nreturn [{ json: {\n  landbrightRequestId: r.id,\n  ref: r.ref,\n  url: r.decisionUrl,\n  app,\n  bundle: r.bundle?.name ?? '',\n  breakGlass,\n  // An extension at the gate: the grant it adds time to, the request that grant came from, and the time it adds.\n  extension: ext && !newGrant ? { grantId: ext.grantId, ref: ext.ref, durationMinutes: Number(r.durationMinutes ?? 0) } : null,\n  newGrant,\n  about: ext ? ` (an extension of ${ext.ref}${newGrant ? ', approved after its grant ended' : ''})` : '',\n  gateWaiting: gate?.kind === 'external' && gate.system === 'Landledger' && r.status === 'pending' && r.currentStep === 0 && !gate.settlement,\n  waitsOn: r.waitingOnSystem ?? event.waitsOn ?? null,\n  // Landledger finds the person by their Landbright subject; they confirm the request in their own session.\n  requester: r.requester?.id ?? r.requester?.email,\n  subject: subject?.displayName ?? subject?.email ?? 'someone',\n} }];\n"
           }
         },
         {
@@ -284,7 +331,7 @@
             "recurrence": "monthly",
             "requestedBy": "person",
             "requester": "{{ $('Costs a seat?').first().json.requester }}",
-            "note": "Access to {{ $('Costs a seat?').first().json.bundle }} in Landbright ({{ $('Costs a seat?').first().json.ref }}) takes a {{ $json.contract.vendor }} {{ $json.contract.product }} seat: {{ $json.left }} left on the contract.",
+            "note": "Access to {{ $('Costs a seat?').first().json.bundle }} in Landbright ({{ $('Costs a seat?').first().json.ref }}){{ $('Costs a seat?').first().json.about }} takes a {{ $json.contract.vendor }} {{ $json.contract.product }} seat: {{ $json.left }} left on the contract.{{ $json.why ? ' It needs a seat of its own: ' + $json.why + '.' : '' }}",
             "evidence": "{{ { lines: [{ label: $json.contract.vendor + ' ' + $json.contract.product + ' seat', amount: $json.seatPrice }], basis: 'The contract\\'s price per seat a month', links: [{ label: $('Costs a seat?').first().json.ref, url: $('Costs a seat?').first().json.url }] } }}",
             "seatContractId": "{{ $json.contract.id }}",
             "seats": 1,
@@ -318,7 +365,7 @@
           "parameters": {
             "language": "javascript",
             "mode": "all",
-            "code": "// One seat request per Landbright request (idempotency key landbright-<REQ-n>): a redelivered event starts another run,\n// whose request carries another origin, and Landledger answers 409 for the same key with another body. That means\n// \"already asked\": nothing more to do. Any other failure stops the run.\nconst item = $input.first().json;\nconst failed = item.error ? String(item.error.message ?? item.error) : '';\nif (failed && !/Landledger API error 409/.test(failed)) throw new Error(failed);\nreturn failed ? [] : [{ json: item }];"
+            "code": "\n// One seat request per Landbright request (idempotency key landbright-<REQ-n>). A redelivered event starts another run,\n// whose request carries another origin, so Landledger answers 409 for the same key, naming the request it already has\n// (its details.requestId, which the node puts in the message). The run that raised it may have stopped before recording\n// it: 1 reads the request Landledger named, 2 (a Landledger that names none) finds it by its origin among this key's\n// seat requests; either is recorded. Any other failure stops the run.\nconst item = $input.first().json;\nconst failed = item.error ? String(item.error.message ?? item.error) : '';\nif (failed && !/Landledger API error 409/.test(failed)) throw new Error(failed);\nif (!failed) return [{ json: { route: 0, request: item.request, executionId: $execution.id, recovered: false } }];\nconst named = /\\(request ([A-Za-z0-9_-]+)\\)/.exec(failed)?.[1] ?? null;\nreturn [{ json: { route: named ? 1 : 2, requestId: named, existingId: named, why: failed } }];\n"
           }
         },
         {
@@ -327,11 +374,11 @@
           "type": "core.dataTable",
           "typeVersion": 1,
           "position": [
-            2600,
+            3120,
             -100
           ],
           "parameters": {
-            "operation": "insert",
+            "operation": "upsert",
             "dataTableId": "Landledger seat requests",
             "mappingMode": "defineBelow",
             "columns": {
@@ -346,11 +393,11 @@
                 },
                 {
                   "column": "landledger_request_id",
-                  "value": "{{ $json.request.id }}"
+                  "value": "{{ $json.landledgerRequestId }}"
                 },
                 {
                   "column": "number",
-                  "value": "{{ $json.request.number }}"
+                  "value": "{{ $json.number }}"
                 },
                 {
                   "column": "app",
@@ -358,7 +405,7 @@
                 },
                 {
                   "column": "execution_id",
-                  "value": "{{ $execution.id }}"
+                  "value": "{{ $json.executionId }}"
                 },
                 {
                   "column": "workflow_id",
@@ -369,9 +416,13 @@
                   "value": "{{ new Date().toISOString() }}"
                 }
               ]
-            }
+            },
+            "matchingColumns": [
+              "landbright_request_id",
+              "landledger_request_id"
+            ]
           },
-          "notes": "Which run raised which seat request, and for which Landbright request: the decision and the grant are matched through it."
+          "notes": "Which run raised which seat request, and for which Landbright request: the decision and the grant are matched through it. The run is the one Landledger's origin names (this one, or the one a 409 found again)."
         },
         {
           "id": "noteAsked",
@@ -379,7 +430,7 @@
           "type": "core.httpRequest",
           "typeVersion": 1,
           "position": [
-            2860,
+            3640,
             -100
           ],
           "parameters": {
@@ -388,7 +439,7 @@
             "authentication": "genericCredentialType",
             "genericAuthType": "oAuth2Api",
             "bodyType": "json",
-            "body": "{{ { value: { status: 'cost_asked', landledgerRequest: $('Ask Landledger for the seat').first().json.request.number, landledgerRequestId: $('Ask Landledger for the seat').first().json.request.id, text: 'The seat\\'s cost is asked in Landledger as ' + $('Ask Landledger for the seat').first().json.request.number + ($('Costs a seat?').first().json.breakGlass ? ', after break-glass granted the access.' : '; its approvers decide the cost, Landbright\\'s the access.') } } }}"
+            "body": "{{ { value: { status: 'cost_asked', landledgerRequest: $('Seat request in hand').first().json.number, landledgerRequestId: $('Seat request in hand').first().json.landledgerRequestId, text: 'The seat\\'s cost is asked in Landledger as ' + $('Seat request in hand').first().json.number + ($('Costs a seat?').first().json.breakGlass ? ', after break-glass granted the access.' : $('Costs a seat?').first().json.newGrant ? ', after Landbright gave this extension a new grant (its grant had ended).' : '; its approvers decide the cost, Landbright\\'s the access.') } } }}"
           },
           "credentials": {
             "oAuth2Api": {
@@ -501,7 +552,7 @@
           "parameters": {
             "language": "javascript",
             "mode": "all",
-            "code": "// Trust a decision only for a seat request this flow raised: created by this flow's key, a tool_or_seat, and recorded\n// by the run of this workflow its origin names. 0: the cost is approved; 1: rejected, cancelled or expired; 2: refused.\nconst event = $('What happened').first().json;\nconst settings = event.settings;\nconst r = $('Get the request').first().json.request;\nconst me = $('Who is this flow').first().json;\nconst rows = $input.all().map((i) => i.json).filter((x) => x.landledger_request_id === r.id);\n// The run that raised it: the origin, or, for a break-glass cost (its origin is the Landbright request), a related source.\nconst breakGlass = r.origin?.type === 'landbright_request' && r.origin.breakGlass === true;\nconst run = breakGlass ? (r.related ?? []).find((x) => x.type === 'landflow_run') : r.origin;\nconst row = rows.find((x) => x.execution_id === run?.executionId);\nconst problems = [];\nif (r.createdBy?.kind !== 'key' || !me.id || r.createdBy.id !== me.id) problems.push(`raised by ${r.createdBy?.name ?? 'someone else'}, not this flow's key (${me.name ?? 'unknown'})`);\nif (r.kind !== 'tool_or_seat') problems.push(`a ${r.kind} request, not a tool_or_seat`);\nif (run?.type !== 'landflow_run' || run.workflowId !== $workflow.id) problems.push('its origin is another workflow');\nelse if (!row) problems.push(rows.length ? `its origin names run ${run.executionId}, but another run recorded it` : 'no run of this workflow raised it');\nelse if (breakGlass && row.landbright_ref !== r.origin.id) problems.push(`its origin names ${r.origin.id}, but the run recorded ${row.landbright_ref}`);\nconst approved = event.outcome === 'approved';\nif (!problems.length && approved && !['approved', 'applied'].includes(r.status)) problems.push(`Landledger says it is ${r.status} now, not approved`);\nconst decision = (r.decisions ?? []).at(-1);\nconst reason = approved ? '' : decision?.comment ? `${decision.person?.name ?? 'The approver'}: ${decision.comment}` : `the cost request was ${event.outcome ?? r.status}`;\nreturn [{ json: {\n  route: problems.length ? 2 : approved ? 0 : 1,\n  why: problems.join('; '),\n  outcome: approved ? 'approved' : 'denied',\n  landledgerRequestId: r.id,\n  number: r.number,\n  seat: r.seat ?? null,\n  landbrightRequestId: row?.landbright_request_id ?? null,\n  landbrightRef: row?.landbright_ref ?? null,\n  reason,\n  breakGlass,\n  settle: settings.settleInLandbright === true,\n  landbrightUrl: settings.landbrightUrl,\n  landledgerUrl: `${settings.landledgerConsoleUrl}/requests/${r.id}`,\n} }];"
+            "code": "// Trust a decision only for a seat request this flow raised: created by this flow's key, a tool_or_seat, and recorded\n// by the run of this workflow its origin names. 0: the cost is approved; 1: rejected, cancelled or expired; 2: refused.\nconst event = $('What happened').first().json;\nconst settings = event.settings;\nconst r = $('Get the request').first().json.request;\nconst me = $('Who is this flow').first().json;\nconst rows = $input.all().map((i) => i.json).filter((x) => x.landledger_request_id === r.id);\n// The run that raised it: the origin, or, for a break-glass cost (its origin is the Landbright request), a related source.\nconst breakGlass = r.origin?.type === 'landbright_request' && r.origin.breakGlass === true;\nconst run = breakGlass ? (r.related ?? []).find((x) => x.type === 'landflow_run') : r.origin;\nconst row = rows.find((x) => x.execution_id === run?.executionId);\nconst problems = [];\nif (r.createdBy?.kind !== 'key' || !me.id || r.createdBy.id !== me.id) problems.push(`raised by ${r.createdBy?.name ?? 'someone else'}, not this flow's key (${me.name ?? 'unknown'})`);\nif (r.kind !== 'tool_or_seat') problems.push(`a ${r.kind} request, not a tool_or_seat`);\nif (run?.type !== 'landflow_run' || run.workflowId !== $workflow.id) problems.push('its origin is another workflow');\nelse if (!row) problems.push(rows.length ? `its origin names run ${run.executionId}, but another run recorded it` : 'no run of this workflow raised it');\nelse if (breakGlass && row.landbright_ref !== r.origin.id) problems.push(`its origin names ${r.origin.id}, but the run recorded ${row.landbright_ref}`);\nconst approved = event.outcome === 'approved';\nif (!problems.length && approved && !['approved', 'applied'].includes(r.status)) problems.push(`Landledger says it is ${r.status} now, not approved`);\nconst decision = (r.decisions ?? []).at(-1);\nconst reason = approved ? '' : decision?.comment ? `${decision.person?.name ?? 'The approver'}: ${decision.comment}` : `the cost request was ${event.outcome ?? r.status}`;\nreturn [{ json: {\n  route: problems.length ? 2 : approved ? 0 : 1,\n  why: problems.join('; '),\n  outcome: approved ? 'approved' : 'denied',\n  landledgerRequestId: r.id,\n  number: r.number,\n  seat: r.seat ?? null,\n  landbrightRequestId: row?.landbright_request_id ?? null,\n  landbrightRef: row?.landbright_ref ?? null,\n  reason,\n  breakGlass,\n  app: row?.app ?? null,\n  contractId: r.seat?.contractId ?? null,\n  settle: settings.settleInLandbright === true,\n  landbrightUrl: settings.landbrightUrl,\n  landledgerUrl: `${settings.landledgerConsoleUrl}/requests/${r.id}`,\n} }];"
           }
         },
         {
@@ -581,12 +632,12 @@
           "parameters": {
             "language": "javascript",
             "mode": "all",
-            "code": "// What Landbright needs now, from its request as it stands. 0: settle the cost gate (step 0, waiting on Landledger,\n// and SETTLE_IN_LANDBRIGHT on); 1: the seat is in use already (break-glass granted it before the cost was approved):\n// mark it applied; 2: nothing to settle, and why (the setting is off, no gate, break-glass skipped it, already settled).\nconst d = $('Ours to act on?').first().json;\nconst r = $input.first().json;\nconst gate = r.steps?.[0];\nconst outcome = d.outcome === 'approved' ? 'approve' : 'deny';\nconst base = { ...d, ref: r.ref, decisionUrl: r.decisionUrl, landbrightStatus: r.status, grant: r.grant?.status ?? null };\nif (d.outcome === 'approved' && r.grant?.status === 'active') {\n  return [{ json: { ...base, route: 1, note: `Granted in Landbright as ${r.ref} under break-glass; the cost was approved after` } }];\n}\nconst waiting = gate?.kind === 'external' && gate.system === 'Landledger' && r.status === 'pending' && r.currentStep === 0 && !gate.settlement;\nif (!waiting) {\n  const why = gate?.kind !== 'external' ? `${r.ref} has no cost gate` : gate.settlement ? `${r.ref}'s gate was settled already (${gate.settlement.outcome}, ${gate.settlement.reference?.id})` : `${r.ref} is ${r.status}${r.method === 'break_glass' ? ' (break-glass skipped the gate)' : ''}, not waiting on Landledger`;\n  return [{ json: { ...base, route: 2, why } }];\n}\nif (!d.settle) return [{ json: { ...base, route: 2, why: `SETTLE_IN_LANDBRIGHT is off: ${r.ref} waits on Landledger until its gate's deadline` } }];\nconst body = {\n  outcome,\n  reference: { system: 'Landledger', id: d.landledgerRequestId, url: d.landledgerUrl },\n  ...(outcome === 'deny' && d.reason ? { reason: String(d.reason).slice(0, 1000) } : {}),\n};\nreturn [{ json: { ...base, route: 0, body } }];"
+            "code": "\n// What Landbright needs now, from its request as it stands. 0: settle the cost gate (step 0, waiting on Landledger, and\n// SETTLE_IN_LANDBRIGHT on); 1: the seat is in use already (granted before the cost was approved: break-glass, or an\n// extension's new grant): mark it applied; 2: nothing to settle, and why (the setting is off, no gate, break-glass\n// skipped it, already settled); 3: the cost was not approved but the grant is live (granted before the cost was\n// decided). Landbright has no route for an application to revoke a grant (only an administrator or the holder, in\n// Landbright), so the request's approvers get a task to revoke it, and the seat counts as in use, unpaid, until then.\nconst d = $('Ours to act on?').first().json;\nconst r = $input.first().json;\nconst gate = r.steps?.[0];\nconst outcome = d.outcome === 'approved' ? 'approve' : 'deny';\nconst base = { ...d, ref: r.ref, decisionUrl: r.decisionUrl, landbrightStatus: r.status, grant: r.grant?.status ?? null };\nconst how = r.method === 'break_glass' ? ' under break-glass' : r.extends ? ' (an extension approved after its grant ended)' : '';\nif (d.outcome === 'approved' && r.grant?.status === 'active') {\n  return [{ json: { ...base, route: 1, note: `Granted in Landbright as ${r.ref}${how}; the cost was approved after` } }];\n}\nif (d.outcome !== 'approved' && r.grant?.status === 'active') {\n  const people = new Map();\n  for (const step of r.steps ?? []) if (step.kind === 'people') for (const p of step.approvers ?? []) if (p?.email) people.set(p.email.toLowerCase(), { name: p.displayName ?? p.email, email: p.email });\n  const approvers = [...people.values()];\n  const to = approvers.length ? approvers.map((p) => p.name).join(', ') : `${r.ref}'s approvers`;\n  return [{ json: { ...base, route: 3, landbrightRequestId: r.id, approvers, since: new Date().toISOString(),\n    taskText: `For ${to}: Landledger did not approve this seat's cost (${d.number}: ${d.reason}), but Landbright granted the access${how} before the cost was decided. Landflow can't revoke a grant (Landbright has no route for it): revoke it here. Until then Landflow counts the seat as in use, unpaid.` } }];\n}\nconst waiting = gate?.kind === 'external' && gate.system === 'Landledger' && r.status === 'pending' && r.currentStep === 0 && !gate.settlement;\nif (!waiting) {\n  const why = gate?.kind !== 'external' ? `${r.ref} has no cost gate` : gate.settlement ? `${r.ref}'s gate was settled already (${gate.settlement.outcome}, ${gate.settlement.reference?.id})` : `${r.ref} is ${r.status}${r.method === 'break_glass' ? ' (break-glass skipped the gate)' : ''}, not waiting on Landledger`;\n  return [{ json: { ...base, route: 2, why } }];\n}\nif (!d.settle) return [{ json: { ...base, route: 2, why: `SETTLE_IN_LANDBRIGHT is off: ${r.ref} waits on Landledger until its gate's deadline` } }];\nconst body = {\n  outcome,\n  reference: { system: 'Landledger', id: d.landledgerRequestId, url: d.landledgerUrl },\n  ...(outcome === 'deny' && d.reason ? { reason: String(d.reason).slice(0, 1000) } : {}),\n};\nreturn [{ json: { ...base, route: 0, body } }];\n"
           }
         },
         {
           "id": "gateRoute",
-          "name": "Settle, apply or nothing",
+          "name": "Settle, apply, nothing or revoke",
           "type": "core.switch",
           "typeVersion": 1,
           "position": [
@@ -644,7 +695,7 @@
         },
         {
           "id": "bgApplied",
-          "name": "Mark the seat used (break-glass)",
+          "name": "Mark the seat used (granted first)",
           "type": "landledger.landledger",
           "typeVersion": 1,
           "position": [
@@ -664,7 +715,7 @@
               "name": "Landledger (requests)"
             }
           },
-          "notes": "Break-glass granted the access before the cost was approved: the seat is in use already."
+          "notes": "Landbright granted the access before the cost was approved (break-glass, or an extension's new grant): the seat is in use already."
         },
         {
           "id": "notSettled",
@@ -712,9 +763,14 @@
                 }
               ]
             },
-            "limit": 1
+            "limit": 1,
+            "options": {
+              "orderByColumn": "raised_at",
+              "orderByDirection": "DESC"
+            }
           },
-          "notes": "Only Landbright requests this flow raised a seat request for; anything else stops here."
+          "notes": "The newest seat request recorded for this Landbright request (an extension may have two: the first request's it rode on, then its own).",
+          "alwaysOutputData": true
         },
         {
           "id": "rereadAccess",
@@ -722,7 +778,7 @@
           "type": "core.httpRequest",
           "typeVersion": 1,
           "position": [
-            1300,
+            1820,
             720
           ],
           "parameters": {
@@ -744,13 +800,13 @@
           "type": "landledger.landledger",
           "typeVersion": 1,
           "position": [
-            1560,
+            2080,
             720
           ],
           "parameters": {
             "resource": "request",
             "operation": "get",
-            "requestId": "{{ $('Find its seat request').first().json.landledger_request_id }}"
+            "requestId": "{{ $('Pick the seat request').first().json.landledger_request_id }}"
           },
           "credentials": {
             "landledgerApi": {
@@ -765,13 +821,13 @@
           "type": "core.code",
           "typeVersion": 1,
           "position": [
-            1820,
+            2340,
             720
           ],
           "parameters": {
             "language": "javascript",
             "mode": "all",
-            "code": "// What the seat needs now, from both systems' state (not the event). 0: apply (granted, the cost approved); 1: release\n// the seat (access denied or expired with the cost approved; the grant revoked or expired); 2: cancel the cost request\n// (Landbright ended the request, its gate run out waiting on Landledger among them, while Landledger had not decided);\n// 3: nothing.\nconst event = $('What happened').first().json;\nconst lb = $('Read the access request').first().json;\nconst row = $('Find its seat request').first().json;\nconst ll = $input.first().json.request;\nconst seat = ll.seat?.status ?? 'none';\nconst grant = lb.grant?.status ?? null;\nconst ref = row.landbright_ref || lb.ref;\nconst base = { landledgerRequestId: ll.id, number: ll.number, ref, url: lb.decisionUrl, seat, grant, landbrightStatus: lb.status };\nconst ours = [ll.origin, ...(ll.related ?? [])].some((x) => x?.type === 'landbright_request' && (x.id === ref || x.id === lb.id));\nif (!ours) return [{ json: { ...base, route: 3, action: 'nothing', why: `${ll.number} does not name ${ref}` } }];\nconst ended = ['denied', 'cancelled', 'expired', 'superseded'].includes(lb.status);\nconst waited = event.waitedOn ? ` waiting on ${event.waitedOn}` : '';\nif (grant === 'active' && ll.status === 'approved') return [{ json: { ...base, route: 0, action: 'apply', note: `Granted in Landbright as ${ref}` } }];\nif (ended && ['draft', 'awaiting_confirmation', 'pending'].includes(ll.status)) {\n  return [{ json: { ...base, route: 2, action: 'cancel', reason: `Landbright's ${ref} ${lb.status}${waited}: the seat isn't needed` } }];\n}\nif (ended && seat === 'reserved') return [{ json: { ...base, route: 1, action: 'release', reason: 'access_denied', note: `Access ${lb.status}${waited} in Landbright (${ref})` } }];\nif (['revoked', 'expired'].includes(grant) && seat === 'applied') return [{ json: { ...base, route: 1, action: 'release', reason: 'grant_revoked', note: `Grant ${grant} in Landbright (${ref})` } }];\nif (['revoked', 'expired'].includes(grant) && seat === 'reserved') return [{ json: { ...base, route: 1, action: 'release', reason: 'not_needed', note: `Grant ${grant} in Landbright before the seat was used (${ref})` } }];\nreturn [{ json: { ...base, route: 3, action: 'nothing', why: `seat ${seat}, Landledger ${ll.status}, Landbright ${lb.status}, grant ${grant ?? 'none'}` } }];"
+            "code": "\n// What the seat needs now, from both systems' state (not the event). 0: apply (granted, the cost approved); 1: release\n// the seat (access denied or expired with the cost approved; the grant revoked or expired); 2: cancel the cost request\n// (Landbright ended the request, its gate run out waiting on Landledger among them, while Landledger had not decided);\n// 3, then Raise or close: raise a seat request for an extension Landbright approved after its grant ended (the row is\n// the first request's, which it rode on, and the grant it extended has gone), or close the revoke task of a seat whose\n// cost was not approved once its grant is revoked or expired; else nothing.\nconst event = $('What happened').first().json;\nconst lb = $('Read the access request').first().json;\nconst row = $('Pick the seat request').first().json;\nconst ll = $input.first().json.request;\nconst seat = ll.seat?.status ?? 'none';\nconst grant = lb.grant?.status ?? null;\nconst ref = row.landbright_ref || lb.ref;\nconst base = { landledgerRequestId: ll.id, number: ll.number, ref, url: lb.decisionUrl, seat, grant, landbrightStatus: lb.status };\nconst names = (id) => [ll.origin, ...(ll.related ?? [])].some((x) => x?.type === 'landbright_request' && (x.id === id || x.id === lb.id));\nconst ext = lb.extends ?? null;\nif (ext && grant === 'active' && lb.grant.id !== ext.grantId && !names(lb.ref) && [ll.origin, ...(ll.related ?? [])].some((x) => x?.type === 'landbright_request' && x.id === ext.ref)) {\n  return [{ json: { ...base, route: 3, action: 'raise', settings: event.settings, landbrightRequestId: lb.id, why: `${lb.ref} was approved after ${ext.ref}'s grant ended: its new grant needs a seat of its own (${ll.number} is ${ext.ref}'s)` } }];\n}\nif (!names(ref)) return [{ json: { ...base, route: 3, action: 'nothing', why: `${ll.number} does not name ${ref}` } }];\nconst task = lb.annotations?.['landflow.seat_revoke'];\nif (task?.status === 'open' && ['revoked', 'expired'].includes(grant)) {\n  return [{ json: { ...base, route: 3, action: 'close', landbrightUrl: event.settings.landbrightUrl, landbrightRequestId: lb.id, app: row.app ?? '', contractId: ll.seat?.contractId ?? null, since: task.since ?? '', endedAt: lb.grant?.closedAt ?? new Date().toISOString(), closeText: `The grant was ${grant} in Landbright: the seat Landledger did not approve (${ll.number}) is no longer in use.` } }];\n}\nconst ended = ['denied', 'cancelled', 'expired', 'superseded'].includes(lb.status);\nconst waited = event.waitedOn ? ` waiting on ${event.waitedOn}` : '';\nif (grant === 'active' && ll.status === 'approved') return [{ json: { ...base, route: 0, action: 'apply', note: `Granted in Landbright as ${ref}` } }];\nif (ended && ['draft', 'awaiting_confirmation', 'pending'].includes(ll.status)) {\n  return [{ json: { ...base, route: 2, action: 'cancel', reason: `Landbright's ${ref} ${lb.status}${waited}: the seat isn't needed` } }];\n}\nif (ended && seat === 'reserved') return [{ json: { ...base, route: 1, action: 'release', reason: 'access_denied', note: `Access ${lb.status}${waited} in Landbright (${ref})` } }];\nif (['revoked', 'expired'].includes(grant) && seat === 'applied') return [{ json: { ...base, route: 1, action: 'release', reason: 'grant_revoked', note: `Grant ${grant} in Landbright (${ref})` } }];\nif (['revoked', 'expired'].includes(grant) && seat === 'reserved') return [{ json: { ...base, route: 1, action: 'release', reason: 'not_needed', note: `Grant ${grant} in Landbright before the seat was used (${ref})` } }];\nreturn [{ json: { ...base, route: 3, action: 'nothing', why: `seat ${seat}, Landledger ${ll.status}, Landbright ${lb.status}, grant ${grant ?? 'none'}` } }];\n"
           }
         },
         {
@@ -780,7 +836,7 @@
           "type": "core.switch",
           "typeVersion": 1,
           "position": [
-            2080,
+            2600,
             720
           ],
           "parameters": {
@@ -797,7 +853,7 @@
           "type": "landledger.landledger",
           "typeVersion": 1,
           "position": [
-            2340,
+            2860,
             660
           ],
           "parameters": {
@@ -821,7 +877,7 @@
           "type": "landledger.landledger",
           "typeVersion": 1,
           "position": [
-            2340,
+            2860,
             940
           ],
           "parameters": {
@@ -844,7 +900,7 @@
           "type": "landledger.landledger",
           "typeVersion": 1,
           "position": [
-            2340,
+            2860,
             800
           ],
           "parameters": {
@@ -861,6 +917,965 @@
             }
           },
           "notes": "The seat goes back to the contract and the request's reservations are released (Landledger sends seat.released)."
+        },
+        {
+          "id": "askedRoute",
+          "type": "core.switch",
+          "typeVersion": 1,
+          "name": "New, named or to find",
+          "position": [
+            2600,
+            -100
+          ],
+          "parameters": {
+            "mode": "expression",
+            "output": "{{ $json.route }}",
+            "options": {
+              "fallbackOutput": "none"
+            }
+          }
+        },
+        {
+          "id": "listMine",
+          "type": "landledger.landledger",
+          "typeVersion": 1,
+          "name": "This key's seat requests",
+          "position": [
+            2860,
+            -260
+          ],
+          "parameters": {
+            "resource": "request",
+            "operation": "list",
+            "box": "mine",
+            "listFilters": {
+              "kind": "tool_or_seat"
+            },
+            "limit": 200
+          },
+          "credentials": {
+            "landledgerApi": {
+              "id": "landledger",
+              "name": "Landledger (requests)"
+            }
+          },
+          "alwaysOutputData": true,
+          "notes": "Only when Landledger's 409 named no request: this key's seat requests, to find the one whose origin is this Landbright request."
+        },
+        {
+          "id": "pickExisting",
+          "type": "core.code",
+          "typeVersion": 1,
+          "name": "Which request was it",
+          "position": [
+            3120,
+            -260
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "all",
+            "code": "// The request Landledger already has for this key: the one its 409 named, else the one whose origin is this Landbright\n// request (after break-glass the origin is the Landbright request; otherwise the title ends with its ref).\nconst asked = $('Asked, or already asked').first().json;\nconst s = $('Costs a seat?').first().json;\nconst mine = $input.all().map((i) => i.json).filter((r) => r.id && r.kind === 'tool_or_seat');\nconst byOrigin = mine.find((r) => (r.origin?.type === 'landbright_request' && r.origin.id === s.ref)\n  || (r.origin?.type === 'landflow_run' && r.origin.workflowId === $workflow.id && String(r.title ?? '').endsWith(`(${s.ref})`)));\nconst id = asked.existingId ?? byOrigin?.id;\nif (!id) throw new Error(`Landledger has a seat request for ${s.ref} (${asked.why}), but named none and lists none of this key's for it`);\nreturn [{ json: { requestId: id } }];"
+          }
+        },
+        {
+          "id": "getExisting",
+          "type": "landledger.landledger",
+          "typeVersion": 1,
+          "name": "Get the request asked before",
+          "position": [
+            3380,
+            -260
+          ],
+          "parameters": {
+            "resource": "request",
+            "operation": "get",
+            "requestId": "{{ $json.requestId }}"
+          },
+          "credentials": {
+            "landledgerApi": {
+              "id": "landledger",
+              "name": "Landledger (requests)"
+            }
+          }
+        },
+        {
+          "id": "adopt",
+          "type": "core.code",
+          "typeVersion": 1,
+          "name": "Ours to record?",
+          "position": [
+            3640,
+            -260
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "all",
+            "code": "// Record it only if it is this workflow's seat request for this Landbright request: raised by this key from a run of\n// this workflow (its origin, or after break-glass the related run), naming the Landbright request. The row names that\n// run, which is what Ours to act on? matches a decision against.\nconst s = $('Costs a seat?').first().json;\nconst r = $input.first().json.request;\nconst bg = r.origin?.type === 'landbright_request' && r.origin.breakGlass === true;\nconst run = bg ? (r.related ?? []).find((x) => x.type === 'landflow_run') : r.origin;\nconst names = [r.origin, ...(r.related ?? [])].some((x) => x?.type === 'landbright_request' && x.id === s.ref);\nif (r.kind !== 'tool_or_seat' || r.createdBy?.kind !== 'key' || run?.type !== 'landflow_run' || run.workflowId !== $workflow.id || !run.executionId || !names) {\n  throw new Error(`${r.number} is not this workflow's seat request for ${s.ref}`);\n}\nreturn [{ json: { request: r, executionId: run.executionId, recovered: true } }];"
+          }
+        },
+        {
+          "id": "inHand",
+          "type": "core.code",
+          "typeVersion": 1,
+          "name": "Seat request in hand",
+          "position": [
+            2860,
+            -100
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "all",
+            "code": "// The seat request, raised now or found again after a 409, with the run that raised it. One already decided gets no\n// \"cost asked\" note (Landbright would read it as undecided): the hourly reconcile tells Landbright its decision.\nconst x = $input.first().json;\nconst r = x.request;\nconst undecided = ['draft', 'awaiting_confirmation', 'pending'].includes(r.status);\nreturn [{ json: { landledgerRequestId: r.id, number: r.number, status: r.status, executionId: x.executionId, recovered: x.recovered, note: !x.recovered || undecided } }];"
+          }
+        },
+        {
+          "id": "noteIf",
+          "type": "core.if",
+          "typeVersion": 1,
+          "name": "Still undecided?",
+          "position": [
+            3380,
+            -100
+          ],
+          "parameters": {
+            "conditions": {
+              "condition": [
+                {
+                  "left": "{{ $('Seat request in hand').first().json.note }}",
+                  "operator": "isTrue",
+                  "right": ""
+                }
+              ]
+            },
+            "combinator": "and"
+          }
+        },
+        {
+          "id": "isExt",
+          "type": "core.switch",
+          "typeVersion": 1,
+          "name": "Extension?",
+          "position": [
+            2080,
+            -100
+          ],
+          "parameters": {
+            "mode": "expression",
+            "output": "{{ $('Costs a seat?').first().json.extension ? 1 : 0 }}",
+            "options": {
+              "fallbackOutput": "none"
+            }
+          }
+        },
+        {
+          "id": "firstRow",
+          "type": "core.dataTable",
+          "typeVersion": 1,
+          "name": "Find the first seat request",
+          "position": [
+            2080,
+            -520
+          ],
+          "parameters": {
+            "operation": "get",
+            "dataTableId": "Landledger seat requests",
+            "matchType": "allConditions",
+            "filters": {
+              "conditions": [
+                {
+                  "keyName": "landbright_ref",
+                  "condition": "eq",
+                  "keyValue": "{{ $('Costs a seat?').first().json.extension.ref }}"
+                }
+              ]
+            },
+            "limit": 1,
+            "options": {
+              "orderByColumn": "raised_at",
+              "orderByDirection": "DESC"
+            }
+          },
+          "alwaysOutputData": true,
+          "notes": "The seat request this flow raised for the request the extended grant came from."
+        },
+        {
+          "id": "firstSeat",
+          "type": "landledger.landledger",
+          "typeVersion": 1,
+          "name": "Get the first seat request",
+          "position": [
+            2340,
+            -520
+          ],
+          "parameters": {
+            "resource": "request",
+            "operation": "get",
+            "requestId": "{{ $json.landledger_request_id || 'none' }}"
+          },
+          "credentials": {
+            "landledgerApi": {
+              "id": "landledger",
+              "name": "Landledger (requests)"
+            }
+          },
+          "onError": "continue"
+        },
+        {
+          "id": "firstGrant",
+          "type": "core.httpRequest",
+          "typeVersion": 1,
+          "name": "Read the grant",
+          "position": [
+            2600,
+            -520
+          ],
+          "parameters": {
+            "method": "GET",
+            "url": "{{ $('What happened').first().json.settings.landbrightUrl }}/api/v1/grants/{{ $('Costs a seat?').first().json.extension.grantId }}",
+            "authentication": "genericCredentialType",
+            "genericAuthType": "oAuth2Api"
+          },
+          "credentials": {
+            "oAuth2Api": {
+              "id": "landbright",
+              "name": "Landbright API"
+            }
+          },
+          "onError": "continue",
+          "notes": "The grant the extension adds time to: still active, and when it ends now."
+        },
+        {
+          "id": "extPlan",
+          "type": "core.code",
+          "typeVersion": 1,
+          "name": "Extension or new seat?",
+          "position": [
+            2860,
+            -520
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "all",
+            "code": "// An extension adds time to a live grant, and Landbright sends it through the cost gate too. It rides on the first\n// request's seat, and the gate is settled at once citing that request, when it changes nothing Landledger approved: that\n// seat request is this flow's, its seat is held (reserved or in use), the grant is still live, and the new end comes\n// before the contract's renewal. Otherwise (the grant ended, so approving gives a new grant; the seat went back; the new\n// end crosses the renewal) the extension gets a seat request of its own, raised like any other. 0: ride; 1: raise.\nconst s = $('Costs a seat?').first().json;\nconst c = $('Find the contract').first().json;\nconst row = $('Find the first seat request').all().map((i) => i.json).find((x) => x.landledger_request_id) ?? null;\nconst ll = $('Get the first seat request').first().json.request ?? null;\nconst grant = $input.first().json;\nconst settings = $('What happened').first().json.settings;\nconst ext = s.extension;\nconst day = (ms) => new Date(ms).toISOString().slice(0, 10);\nconst end = grant.error || !grant.expiresAt ? null : Date.parse(grant.expiresAt) + ext.durationMinutes * 60000;\nconst renewal = c.contract?.renewalDate ?? null;\nconst why = [];\nif (!row || !ll) why.push(`this flow raised no seat request for ${ext.ref}`);\nelse {\n  if (![ll.origin, ...(ll.related ?? [])].some((x) => x?.type === 'landbright_request' && x.id === ext.ref)) why.push(`${ll.number} does not name ${ext.ref}`);\n  if (!['approved', 'applied'].includes(ll.status) || !['reserved', 'applied'].includes(ll.seat?.status)) why.push(`${ll.number}'s seat is ${ll.seat?.status ?? 'none'} (Landledger: ${ll.status}), so the seat count would change`);\n  if (ll.seat?.contractId && c.contract?.id && ll.seat.contractId !== c.contract.id) why.push(`another contract grants ${s.app} now`);\n}\nif (grant.error || grant.status !== 'active') why.push(`the grant is ${grant.error ? 'unreadable' : grant.status}: approving would give a new grant`);\nelse if (!end || !renewal) why.push('no end or renewal date to compare');\nelse if (day(end) >= renewal) why.push(`the new end (${day(end)}) is on or after the contract's renewal (${renewal})`);\nif (why.length) return [{ json: { ...c, route: 1, rides: false, why: why.join('; ') } }];\nconst settle = s.gateWaiting && settings.settleInLandbright === true;\nreturn [{ json: {\n  ...c,\n  route: 0,\n  rides: true,\n  landbrightRequestId: s.landbrightRequestId,\n  ref: s.ref,\n  firstRef: ext.ref,\n  landledgerRequestId: ll.id,\n  number: ll.number,\n  app: s.app,\n  newEnd: day(end),\n  renewal,\n  landbrightUrl: settings.landbrightUrl,\n  settleNow: settle,\n  body: { outcome: 'approve', reference: { system: 'Landledger', id: ll.id, url: `${settings.landledgerConsoleUrl}/requests/${ll.id}` } },\n  text: `This extension rides on ${ext.ref}'s seat (${ll.number} in Landledger): it ends ${day(end)}, before the contract's renewal on ${renewal}, and takes no seat more.`\n    + (!s.gateWaiting ? '' : settle ? ` Its cost gate is settled at once, citing ${ll.number}.` : ' SETTLE_IN_LANDBRIGHT is off: the gate waits until its deadline.'),\n} }];"
+          }
+        },
+        {
+          "id": "rideRoute",
+          "type": "core.switch",
+          "typeVersion": 1,
+          "name": "Ride, or a seat of its own",
+          "position": [
+            3120,
+            -520
+          ],
+          "parameters": {
+            "mode": "expression",
+            "output": "{{ $json.route }}",
+            "options": {
+              "fallbackOutput": "none"
+            }
+          }
+        },
+        {
+          "id": "rideLink",
+          "type": "core.dataTable",
+          "typeVersion": 1,
+          "name": "Link it to the first seat request",
+          "position": [
+            3380,
+            -640
+          ],
+          "parameters": {
+            "operation": "upsert",
+            "dataTableId": "Landledger seat requests",
+            "mappingMode": "defineBelow",
+            "columns": {
+              "column": [
+                {
+                  "column": "landbright_request_id",
+                  "value": "{{ $json.landbrightRequestId }}"
+                },
+                {
+                  "column": "landbright_ref",
+                  "value": "{{ $json.ref }}"
+                },
+                {
+                  "column": "landledger_request_id",
+                  "value": "{{ $json.landledgerRequestId }}"
+                },
+                {
+                  "column": "number",
+                  "value": "{{ $json.number }}"
+                },
+                {
+                  "column": "app",
+                  "value": "{{ $json.app }}"
+                },
+                {
+                  "column": "execution_id",
+                  "value": "{{ $execution.id }}"
+                },
+                {
+                  "column": "workflow_id",
+                  "value": "{{ $workflow.id }}"
+                },
+                {
+                  "column": "raised_at",
+                  "value": "{{ new Date().toISOString() }}"
+                }
+              ]
+            },
+            "matchingColumns": [
+              "landbright_request_id",
+              "landledger_request_id"
+            ]
+          },
+          "notes": "The extension's Landbright request, linked to the seat request it rides on: if Landbright later answers it with a new grant, What the seat needs sees the link and raises a seat request of its own."
+        },
+        {
+          "id": "rideNote",
+          "type": "core.httpRequest",
+          "typeVersion": 1,
+          "name": "Say it rides",
+          "position": [
+            3640,
+            -640
+          ],
+          "parameters": {
+            "method": "PUT",
+            "url": "{{ $('Extension or new seat?').first().json.landbrightUrl }}/api/v1/requests/{{ $('Extension or new seat?').first().json.landbrightRequestId }}/annotations/landflow.seat_cost",
+            "authentication": "genericCredentialType",
+            "genericAuthType": "oAuth2Api",
+            "bodyType": "json",
+            "body": "{{ { value: { status: 'cost_rides', landledgerRequest: $('Extension or new seat?').first().json.number, landledgerRequestId: $('Extension or new seat?').first().json.landledgerRequestId, firstRequest: $('Extension or new seat?').first().json.firstRef, newEnd: $('Extension or new seat?').first().json.newEnd, renewal: $('Extension or new seat?').first().json.renewal, text: $('Extension or new seat?').first().json.text } } }}"
+          },
+          "credentials": {
+            "oAuth2Api": {
+              "id": "landbright",
+              "name": "Landbright API"
+            }
+          }
+        },
+        {
+          "id": "rideSettleIf",
+          "type": "core.if",
+          "typeVersion": 1,
+          "name": "Settle it now?",
+          "position": [
+            3900,
+            -640
+          ],
+          "parameters": {
+            "conditions": {
+              "condition": [
+                {
+                  "left": "{{ $('Extension or new seat?').first().json.settleNow }}",
+                  "operator": "isTrue",
+                  "right": ""
+                }
+              ]
+            },
+            "combinator": "and"
+          }
+        },
+        {
+          "id": "rideSettle",
+          "type": "core.httpRequest",
+          "typeVersion": 1,
+          "name": "Settle the extension's gate",
+          "position": [
+            4160,
+            -640
+          ],
+          "parameters": {
+            "method": "POST",
+            "url": "{{ $('Extension or new seat?').first().json.landbrightUrl }}/api/v1/requests/{{ $('Extension or new seat?').first().json.landbrightRequestId }}/steps/0/settle",
+            "authentication": "genericCredentialType",
+            "genericAuthType": "oAuth2Api",
+            "bodyType": "json",
+            "body": "{{ $('Extension or new seat?').first().json.body }}"
+          },
+          "credentials": {
+            "oAuth2Api": {
+              "id": "landbright",
+              "name": "Landbright API"
+            }
+          },
+          "onError": "continue",
+          "notes": "Approve, citing the first seat request: behind SETTLE_IN_LANDBRIGHT, off until Landbright's spec 008 merges."
+        },
+        {
+          "id": "rideSettled",
+          "type": "core.code",
+          "typeVersion": 1,
+          "name": "Extension settled?",
+          "position": [
+            4420,
+            -640
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "all",
+            "code": "// Landbright's answer: 200 settled (the same answer again too); 409 the request moved on, said and not retried.\nconst item = $input.first().json;\nconst failed = item.error ? String(item.error.message ?? item.error) : '';\nconst d = $('Extension or new seat?').first().json;\nif (failed && !/\\b409\\b/.test(failed)) throw new Error(failed);\nreturn [{ json: { ref: d.ref, landledgerRequestId: d.landledgerRequestId, outcome: 'approve', settled: !failed, why: failed } }];"
+          }
+        },
+        {
+          "id": "revokeTask",
+          "type": "core.httpRequest",
+          "typeVersion": 1,
+          "name": "Ask the approvers to revoke",
+          "position": [
+            3380,
+            580
+          ],
+          "parameters": {
+            "method": "PUT",
+            "url": "{{ $json.landbrightUrl }}/api/v1/requests/{{ $json.landbrightRequestId }}/annotations/landflow.seat_revoke",
+            "authentication": "genericCredentialType",
+            "genericAuthType": "oAuth2Api",
+            "bodyType": "json",
+            "body": "{{ { value: { status: 'open', task: 'revoke_grant', assignees: $json.approvers, landledgerRequest: $json.number, landledgerRequestId: $json.landledgerRequestId, landbrightRequestId: $json.landbrightRequestId, ref: $json.ref, app: $json.app, contractId: $json.contractId, reason: $json.reason, since: $json.since, text: $json.taskText } } }}"
+          },
+          "credentials": {
+            "oAuth2Api": {
+              "id": "landbright",
+              "name": "Landbright API"
+            }
+          },
+          "notes": "A task on the Landbright request (annotation landflow.seat_revoke, status open), naming the request's approvers: Landbright's machine API has no route to revoke a grant (POST /api/access/grants/:id/revoke is for administrators and the holder), so a person revokes it. Landbright shows it on the request's page."
+        },
+        {
+          "id": "recordInUse",
+          "type": "core.dataTable",
+          "typeVersion": 1,
+          "name": "Count the seat in use, unpaid",
+          "position": [
+            3640,
+            580
+          ],
+          "parameters": {
+            "operation": "upsert",
+            "dataTableId": "Landledger unpaid seats",
+            "mappingMode": "defineBelow",
+            "columns": {
+              "column": [
+                {
+                  "column": "landledger_request_id",
+                  "value": "{{ $json.value.landledgerRequestId }}"
+                },
+                {
+                  "column": "landbright_request_id",
+                  "value": "{{ $json.value.landbrightRequestId }}"
+                },
+                {
+                  "column": "landbright_ref",
+                  "value": "{{ $json.value.ref }}"
+                },
+                {
+                  "column": "number",
+                  "value": "{{ $json.value.landledgerRequest }}"
+                },
+                {
+                  "column": "app",
+                  "value": "{{ $json.value.app ?? '' }}"
+                },
+                {
+                  "column": "contract_id",
+                  "value": "{{ $json.value.contractId ?? '' }}"
+                },
+                {
+                  "column": "status",
+                  "value": "in_use"
+                },
+                {
+                  "column": "since",
+                  "value": "{{ $json.value.since ?? '' }}"
+                },
+                {
+                  "column": "note",
+                  "value": "{{ $json.value.reason ?? '' }}"
+                }
+              ]
+            },
+            "matchingColumns": [
+              "landledger_request_id"
+            ]
+          },
+          "notes": "Landledger counts no seat for a request it did not approve, so the seat in use is counted here until its grant is revoked."
+        },
+        {
+          "id": "closeTask",
+          "type": "core.httpRequest",
+          "typeVersion": 1,
+          "name": "Close the revoke task",
+          "position": [
+            3380,
+            1100
+          ],
+          "parameters": {
+            "method": "PUT",
+            "url": "{{ $json.landbrightUrl }}/api/v1/requests/{{ $json.landbrightRequestId }}/annotations/landflow.seat_revoke",
+            "authentication": "genericCredentialType",
+            "genericAuthType": "oAuth2Api",
+            "bodyType": "json",
+            "body": "{{ { value: { status: 'done', task: 'revoke_grant', landledgerRequest: $json.number, landledgerRequestId: $json.landledgerRequestId, landbrightRequestId: $json.landbrightRequestId, ref: $json.ref, app: $json.app, contractId: $json.contractId, since: $json.since, endedAt: $json.endedAt, text: $json.closeText } } }}"
+          },
+          "credentials": {
+            "oAuth2Api": {
+              "id": "landbright",
+              "name": "Landbright API"
+            }
+          }
+        },
+        {
+          "id": "recordEnded",
+          "type": "core.dataTable",
+          "typeVersion": 1,
+          "name": "The unpaid seat ended",
+          "position": [
+            3640,
+            1100
+          ],
+          "parameters": {
+            "operation": "upsert",
+            "dataTableId": "Landledger unpaid seats",
+            "mappingMode": "defineBelow",
+            "columns": {
+              "column": [
+                {
+                  "column": "landledger_request_id",
+                  "value": "{{ $json.value.landledgerRequestId }}"
+                },
+                {
+                  "column": "landbright_request_id",
+                  "value": "{{ $json.value.landbrightRequestId }}"
+                },
+                {
+                  "column": "landbright_ref",
+                  "value": "{{ $json.value.ref }}"
+                },
+                {
+                  "column": "number",
+                  "value": "{{ $json.value.landledgerRequest }}"
+                },
+                {
+                  "column": "app",
+                  "value": "{{ $json.value.app ?? '' }}"
+                },
+                {
+                  "column": "contract_id",
+                  "value": "{{ $json.value.contractId ?? '' }}"
+                },
+                {
+                  "column": "status",
+                  "value": "revoked"
+                },
+                {
+                  "column": "since",
+                  "value": "{{ $json.value.since ?? '' }}"
+                },
+                {
+                  "column": "ended_at",
+                  "value": "{{ $json.value.endedAt ?? '' }}"
+                },
+                {
+                  "column": "note",
+                  "value": "{{ $json.value.text ?? '' }}"
+                }
+              ]
+            },
+            "matchingColumns": [
+              "landledger_request_id"
+            ]
+          }
+        },
+        {
+          "id": "pickSeat",
+          "type": "core.code",
+          "typeVersion": 1,
+          "name": "Pick the seat request",
+          "position": [
+            1300,
+            720
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "all",
+            "code": "// The seat request recorded for this Landbright request. None: stop, unless Landbright has just activated a grant, which\n// may be an extension's new grant or a break-glass grant whose request.created was missed: Costs a seat? decides.\nconst event = $('What happened').first().json;\nconst row = $input.all().map((i) => i.json).find((x) => x.landledger_request_id);\nif (row) return [{ json: { ...row, route: 0 } }];\nif (event.eventType === 'grant.activated') return [{ json: { route: 1, settings: event.settings, landbrightRequestId: event.landbrightRequestId } }];\nreturn [];"
+          }
+        },
+        {
+          "id": "pickRoute",
+          "type": "core.switch",
+          "typeVersion": 1,
+          "name": "Recorded, or a new grant",
+          "position": [
+            1560,
+            720
+          ],
+          "parameters": {
+            "mode": "expression",
+            "output": "{{ $json.route }}",
+            "options": {
+              "fallbackOutput": "none"
+            }
+          }
+        },
+        {
+          "id": "seatMore",
+          "type": "core.switch",
+          "typeVersion": 1,
+          "name": "Raise or close",
+          "position": [
+            2860,
+            1100
+          ],
+          "parameters": {
+            "mode": "expression",
+            "output": "{{ ({ raise: 0, close: 1 })[$json.action] ?? 3 }}",
+            "options": {
+              "fallbackOutput": "none"
+            }
+          }
+        },
+        {
+          "id": "hourly",
+          "type": "core.schedule",
+          "typeVersion": 1,
+          "name": "Every hour",
+          "position": [
+            0,
+            1400
+          ],
+          "parameters": {
+            "unit": "hours",
+            "every": 1
+          },
+          "notes": "Reconcile: seat requests with no row (a run that stopped after Create), decisions Landbright was never told, cancels that raced a Create, and unpaid seats whose grant has gone."
+        },
+        {
+          "id": "rcMine",
+          "type": "landledger.landledger",
+          "typeVersion": 1,
+          "name": "Our seat requests",
+          "position": [
+            1040,
+            1400
+          ],
+          "parameters": {
+            "resource": "request",
+            "operation": "list",
+            "box": "mine",
+            "listFilters": {
+              "kind": "tool_or_seat"
+            },
+            "limit": 200
+          },
+          "credentials": {
+            "landledgerApi": {
+              "id": "landledger",
+              "name": "Landledger (requests)"
+            }
+          }
+        },
+        {
+          "id": "rcRows",
+          "type": "core.dataTable",
+          "typeVersion": 1,
+          "name": "Seat requests on record",
+          "position": [
+            1300,
+            1400
+          ],
+          "parameters": {
+            "operation": "get",
+            "dataTableId": "Landledger seat requests",
+            "matchType": "allConditions",
+            "filters": {
+              "conditions": []
+            },
+            "returnAll": true
+          },
+          "executeOnce": true,
+          "alwaysOutputData": true
+        },
+        {
+          "id": "rcUnpaid",
+          "type": "core.dataTable",
+          "typeVersion": 1,
+          "name": "Unpaid seats",
+          "position": [
+            1560,
+            1400
+          ],
+          "parameters": {
+            "operation": "get",
+            "dataTableId": "Landledger unpaid seats",
+            "matchType": "allConditions",
+            "filters": {
+              "conditions": [
+                {
+                  "keyName": "status",
+                  "condition": "eq",
+                  "keyValue": "in_use"
+                }
+              ]
+            },
+            "returnAll": true
+          },
+          "executeOnce": true,
+          "alwaysOutputData": true
+        },
+        {
+          "id": "rcPick",
+          "type": "core.code",
+          "typeVersion": 1,
+          "name": "Which to look at",
+          "position": [
+            1820,
+            1400
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "all",
+            "code": "// Which of this key's seat requests to look at again: those with no row (a run that stopped between Create and the\n// row), and those not finished (undecided; approved and not yet used; decided against with Landbright perhaps not\n// told), plus every seat counted in use, unpaid, until its grant goes. Requests older than RECENT_DAYS are left, except\n// those unpaid seats.\nconst RECENT_DAYS = 35;\nconst rows = $('Seat requests on record').all().map((i) => i.json).filter((x) => x.landledger_request_id);\nconst unpaid = $input.all().map((i) => i.json).filter((x) => x.landledger_request_id && x.status === 'in_use');\nconst since = Date.now() - RECENT_DAYS * 86400000;\nreturn $('Our seat requests').all().map((i) => i.json).filter((r) => {\n  if (!r.id || r.kind !== 'tool_or_seat') return false;\n  if (unpaid.some((x) => x.landledger_request_id === r.id)) return true;\n  if (Date.parse(r.createdAt ?? 0) < since) return false;\n  return !(rows.some((x) => x.landledger_request_id === r.id) && ['applied', 'cancelled'].includes(r.status));\n}).map((r) => ({ json: { requestId: r.id } }));"
+          }
+        },
+        {
+          "id": "rcGet",
+          "type": "landledger.landledger",
+          "typeVersion": 1,
+          "name": "Get each seat request",
+          "position": [
+            2080,
+            1400
+          ],
+          "parameters": {
+            "resource": "request",
+            "operation": "get",
+            "requestId": "{{ $json.requestId }}"
+          },
+          "credentials": {
+            "landledgerApi": {
+              "id": "landledger",
+              "name": "Landledger (requests)"
+            }
+          },
+          "onError": "continue"
+        },
+        {
+          "id": "rcRefs",
+          "type": "core.code",
+          "typeVersion": 1,
+          "name": "Ours, with their Landbright request",
+          "position": [
+            2340,
+            1400
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "all",
+            "code": "// Only this workflow's seat requests (raised by this key from a run of it: the origin, or after break-glass the related\n// run), each with the Landbright request it names and the run that raised it.\nconst out = [];\nfor (const item of $input.all()) {\n  const r = item.json.request;\n  if (!r) continue;\n  const bg = r.origin?.type === 'landbright_request' && r.origin.breakGlass === true;\n  const run = bg ? (r.related ?? []).find((x) => x.type === 'landflow_run') : r.origin;\n  const ref = bg ? r.origin.id : (r.related ?? []).find((x) => x.type === 'landbright_request')?.id;\n  if (r.kind !== 'tool_or_seat' || r.createdBy?.kind !== 'key' || run?.type !== 'landflow_run' || run.workflowId !== $workflow.id || !ref) continue;\n  out.push({ json: { request: r, ref, executionId: run.executionId ?? null } });\n}\nreturn out;"
+          }
+        },
+        {
+          "id": "rcLb",
+          "type": "core.httpRequest",
+          "typeVersion": 1,
+          "name": "Read each in Landbright",
+          "position": [
+            2600,
+            1400
+          ],
+          "parameters": {
+            "method": "GET",
+            "url": "{{ $('What happened').first().json.settings.landbrightUrl }}/api/v1/requests/{{ $json.ref }}",
+            "authentication": "genericCredentialType",
+            "genericAuthType": "oAuth2Api"
+          },
+          "credentials": {
+            "oAuth2Api": {
+              "id": "landbright",
+              "name": "Landbright API"
+            }
+          },
+          "onError": "continue"
+        },
+        {
+          "id": "rcPlan",
+          "type": "core.code",
+          "typeVersion": 1,
+          "name": "Plan the reconcile",
+          "position": [
+            2860,
+            1400
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "all",
+            "code": "// For each seat request, from both systems as they stand: record it when no row does (with the run that raised it),\n// tell Landbright a decision it was never told (and settle the gate, when the setting is on and it still waits), then\n// what the seat needs, as What the seat needs decides it: use it, release it, cancel a cost request whose Landbright\n// request ended first (a cancel that raced the Create), give the approvers a revoke task for a live grant whose cost\n// was not approved, or close that task once the grant has gone. Whatever can't be read is logged and left.\nconst settings = $('What happened').first().json.settings;\nconst rows = $('Seat requests on record').all().map((i) => i.json).filter((x) => x.landledger_request_id);\nconst unpaid = $('Unpaid seats').all().map((i) => i.json).filter((x) => x.landledger_request_id && x.status === 'in_use');\nconst refs = $('Ours, with their Landbright request').all();\nconst ENDED = ['denied', 'cancelled', 'expired', 'superseded'];\nconst out = [];\nconst add = (json) => out.push({ json });\n$input.all().forEach((item, i) => {\n  const { request: r, ref, executionId } = refs[i].json;\n  const lb = item.json;\n  if (lb.error || lb.ref !== ref) {\n    console.log(`${r.number}: Landbright's ${ref} could not be read (${String(lb.error?.message ?? lb.error ?? 'another request answered')})`);\n    return;\n  }\n  const base = { landledgerRequestId: r.id, number: r.number, ref, url: lb.decisionUrl, landbrightRequestId: lb.id, landbrightUrl: settings.landbrightUrl, app: lb.costs?.find((c) => c.kind === 'seat')?.landbrightApp ?? '', contractId: r.seat?.contractId ?? null };\n  if (!rows.some((x) => x.landledger_request_id === r.id && x.landbright_request_id === lb.id)) {\n    add({ ...base, action: 'remember', executionId, raisedAt: r.createdAt ?? new Date().toISOString(), why: `${r.number} has no row: the run that raised it (${executionId}) stopped before recording it` });\n  }\n  const approved = ['approved', 'applied'].includes(r.status);\n  const denied = ['rejected', 'expired'].includes(r.status) || (r.status === 'cancelled' && lb.status === 'pending');\n  const noted = lb.annotations?.['landflow.seat_cost']?.status ?? null;\n  const decision = (r.decisions ?? []).at(-1);\n  const reason = approved ? '' : decision?.comment ? `${decision.person?.name ?? 'The approver'}: ${decision.comment}` : `the cost request was ${r.status}`;\n  if ((approved && noted !== 'cost_approved') || (denied && noted !== 'cost_denied')) {\n    const gate = lb.steps?.[0];\n    const waiting = gate?.kind === 'external' && gate.system === 'Landledger' && lb.status === 'pending' && lb.currentStep === 0 && !gate.settlement;\n    add({ ...base, action: 'note', outcome: approved ? 'approved' : 'denied', reason, settle: waiting && settings.settleInLandbright === true,\n      body: { outcome: approved ? 'approve' : 'deny', reference: { system: 'Landledger', id: r.id, url: `${settings.landledgerConsoleUrl}/requests/${r.id}` }, ...(approved ? {} : { reason: reason.slice(0, 1000) }) },\n      why: `Landledger: ${r.status}; Landbright was told ${noted ?? 'nothing'}` });\n  }\n  const seat = r.seat?.status ?? 'none';\n  const grant = lb.grant?.status ?? null;\n  const gone = ['revoked', 'expired'].includes(grant);\n  const ended = ENDED.includes(lb.status);\n  const task = lb.annotations?.['landflow.seat_revoke'];\n  if (task?.status === 'open' && gone) {\n    add({ ...base, action: 'close', since: task.since ?? '', endedAt: lb.grant?.closedAt ?? new Date().toISOString(), closeText: `The grant was ${grant} in Landbright: the seat Landledger did not approve (${r.number}) is no longer in use.` });\n  } else if (r.status === 'approved' && grant === 'active') {\n    add({ ...base, action: 'apply', note: `Granted in Landbright as ${ref} (found by the hourly reconcile)` });\n  } else if (['draft', 'awaiting_confirmation', 'pending'].includes(r.status) && ended) {\n    add({ ...base, action: 'cancel', reason: `Landbright's ${ref} ${lb.status}: the seat isn't needed` });\n  } else if (ended && seat === 'reserved') {\n    add({ ...base, action: 'release', reason: 'access_denied', note: `Access ${lb.status} in Landbright (${ref})` });\n  } else if (gone && seat === 'applied') {\n    add({ ...base, action: 'release', reason: 'grant_revoked', note: `Grant ${grant} in Landbright (${ref})` });\n  } else if (gone && seat === 'reserved') {\n    add({ ...base, action: 'release', reason: 'not_needed', note: `Grant ${grant} in Landbright before the seat was used (${ref})` });\n  } else if (denied && grant === 'active' && task?.status !== 'open' && !unpaid.some((x) => x.landledger_request_id === r.id)) {\n    const people = new Map();\n    for (const step of lb.steps ?? []) if (step.kind === 'people') for (const p of step.approvers ?? []) if (p?.email) people.set(p.email.toLowerCase(), { name: p.displayName ?? p.email, email: p.email });\n    const approvers = [...people.values()];\n    const to = approvers.length ? approvers.map((p) => p.name).join(', ') : `${ref}'s approvers`;\n    const how = lb.method === 'break_glass' ? ' under break-glass' : lb.extends ? ' (an extension approved after its grant ended)' : '';\n    add({ ...base, action: 'revoke', reason, approvers, since: new Date().toISOString(),\n      taskText: `For ${to}: Landledger did not approve this seat's cost (${r.number}: ${reason}), but Landbright granted the access${how} before the cost was decided. Landflow can't revoke a grant (Landbright has no route for it): revoke it here. Until then Landflow counts the seat as in use, unpaid.` });\n  }\n});\nreturn out;"
+          }
+        },
+        {
+          "id": "rcRoute1",
+          "type": "core.switch",
+          "typeVersion": 1,
+          "name": "Record, use or release",
+          "position": [
+            3120,
+            1400
+          ],
+          "parameters": {
+            "mode": "expression",
+            "output": "{{ ({ remember: 0, apply: 1, release: 2 })[$json.action] ?? 3 }}",
+            "options": {
+              "fallbackOutput": "none"
+            }
+          }
+        },
+        {
+          "id": "rcRemember",
+          "type": "core.dataTable",
+          "typeVersion": 1,
+          "name": "Record the seat request",
+          "position": [
+            3380,
+            1260
+          ],
+          "parameters": {
+            "operation": "upsert",
+            "dataTableId": "Landledger seat requests",
+            "mappingMode": "defineBelow",
+            "columns": {
+              "column": [
+                {
+                  "column": "landbright_request_id",
+                  "value": "{{ $json.landbrightRequestId }}"
+                },
+                {
+                  "column": "landbright_ref",
+                  "value": "{{ $json.ref }}"
+                },
+                {
+                  "column": "landledger_request_id",
+                  "value": "{{ $json.landledgerRequestId }}"
+                },
+                {
+                  "column": "number",
+                  "value": "{{ $json.number }}"
+                },
+                {
+                  "column": "app",
+                  "value": "{{ $json.app }}"
+                },
+                {
+                  "column": "execution_id",
+                  "value": "{{ $json.executionId }}"
+                },
+                {
+                  "column": "workflow_id",
+                  "value": "{{ $workflow.id }}"
+                },
+                {
+                  "column": "raised_at",
+                  "value": "{{ $json.raisedAt }}"
+                }
+              ]
+            },
+            "matchingColumns": [
+              "landbright_request_id",
+              "landledger_request_id"
+            ]
+          }
+        },
+        {
+          "id": "rcRoute2",
+          "type": "core.switch",
+          "typeVersion": 1,
+          "name": "Cancel, tell, revoke or close",
+          "position": [
+            3380,
+            1540
+          ],
+          "parameters": {
+            "mode": "expression",
+            "output": "{{ ({ cancel: 0, note: 1, revoke: 2, close: 3 })[$json.action] }}",
+            "options": {
+              "fallbackOutput": "none"
+            }
+          }
+        },
+        {
+          "id": "rcNote",
+          "type": "core.httpRequest",
+          "typeVersion": 1,
+          "name": "Tell Landbright the decision",
+          "position": [
+            3640,
+            1540
+          ],
+          "parameters": {
+            "method": "PUT",
+            "url": "{{ $json.landbrightUrl }}/api/v1/requests/{{ $json.landbrightRequestId }}/annotations/landflow.seat_cost",
+            "authentication": "genericCredentialType",
+            "genericAuthType": "oAuth2Api",
+            "bodyType": "json",
+            "body": "{{ { value: { status: $json.outcome === 'approved' ? 'cost_approved' : 'cost_denied', landledgerRequest: $json.number, landledgerRequestId: $json.landledgerRequestId, reason: $json.reason, text: $json.outcome === 'approved' ? 'Landledger approved the seat\\'s cost (' + $json.number + '); the seat is reserved. Landbright\\'s approvers still decide the access.' : 'Landledger did not approve the seat\\'s cost (' + $json.number + '): ' + $json.reason } } }}"
+          },
+          "credentials": {
+            "oAuth2Api": {
+              "id": "landbright",
+              "name": "Landbright API"
+            }
+          }
+        },
+        {
+          "id": "rcSettleIf",
+          "type": "core.if",
+          "typeVersion": 1,
+          "name": "Settle it?",
+          "position": [
+            3640,
+            1680
+          ],
+          "parameters": {
+            "conditions": {
+              "condition": [
+                {
+                  "left": "{{ $json.settle }}",
+                  "operator": "isTrue",
+                  "right": ""
+                }
+              ]
+            },
+            "combinator": "and"
+          }
+        },
+        {
+          "id": "rcSettle",
+          "type": "core.httpRequest",
+          "typeVersion": 1,
+          "name": "Settle the gate (reconcile)",
+          "position": [
+            3900,
+            1680
+          ],
+          "parameters": {
+            "method": "POST",
+            "url": "{{ $json.landbrightUrl }}/api/v1/requests/{{ $json.landbrightRequestId }}/steps/0/settle",
+            "authentication": "genericCredentialType",
+            "genericAuthType": "oAuth2Api",
+            "bodyType": "json",
+            "body": "{{ $json.body }}"
+          },
+          "credentials": {
+            "oAuth2Api": {
+              "id": "landbright",
+              "name": "Landbright API"
+            }
+          },
+          "onError": "continue",
+          "notes": "Behind SETTLE_IN_LANDBRIGHT, as Settle the cost gate. A 409 (the request moved on) is left on the item."
         }
       ],
       "connections": [
@@ -932,20 +1947,12 @@
           "id": "c9",
           "type": "main",
           "source": "found",
-          "sourceIndex": 0,
-          "target": "ask",
-          "targetIndex": 0
-        },
-        {
-          "id": "c10",
-          "type": "main",
-          "source": "found",
           "sourceIndex": 1,
           "target": "noContract",
           "targetIndex": 0
         },
         {
-          "id": "c11",
+          "id": "c10",
           "type": "main",
           "source": "ask",
           "sourceIndex": 0,
@@ -953,23 +1960,7 @@
           "targetIndex": 0
         },
         {
-          "id": "c12",
-          "type": "main",
-          "source": "asked",
-          "sourceIndex": 0,
-          "target": "remember",
-          "targetIndex": 0
-        },
-        {
-          "id": "c13",
-          "type": "main",
-          "source": "remember",
-          "sourceIndex": 0,
-          "target": "noteAsked",
-          "targetIndex": 0
-        },
-        {
-          "id": "c14",
+          "id": "c11",
           "type": "main",
           "source": "route",
           "sourceIndex": 1,
@@ -977,7 +1968,7 @@
           "targetIndex": 0
         },
         {
-          "id": "c15",
+          "id": "c12",
           "type": "main",
           "source": "get",
           "sourceIndex": 0,
@@ -985,7 +1976,7 @@
           "targetIndex": 0
         },
         {
-          "id": "c16",
+          "id": "c13",
           "type": "main",
           "source": "me",
           "sourceIndex": 0,
@@ -993,7 +1984,7 @@
           "targetIndex": 0
         },
         {
-          "id": "c17",
+          "id": "c14",
           "type": "main",
           "source": "find",
           "sourceIndex": 0,
@@ -1001,7 +1992,7 @@
           "targetIndex": 0
         },
         {
-          "id": "c18",
+          "id": "c15",
           "type": "main",
           "source": "check",
           "sourceIndex": 0,
@@ -1009,7 +2000,7 @@
           "targetIndex": 0
         },
         {
-          "id": "c19",
+          "id": "c16",
           "type": "main",
           "source": "costRoute",
           "sourceIndex": 0,
@@ -1017,7 +2008,7 @@
           "targetIndex": 0
         },
         {
-          "id": "c20",
+          "id": "c17",
           "type": "main",
           "source": "costRoute",
           "sourceIndex": 1,
@@ -1025,7 +2016,7 @@
           "targetIndex": 0
         },
         {
-          "id": "c21",
+          "id": "c18",
           "type": "main",
           "source": "noteCost",
           "sourceIndex": 0,
@@ -1033,7 +2024,7 @@
           "targetIndex": 0
         },
         {
-          "id": "c22",
+          "id": "c19",
           "type": "main",
           "source": "gateNow",
           "sourceIndex": 0,
@@ -1041,7 +2032,7 @@
           "targetIndex": 0
         },
         {
-          "id": "c23",
+          "id": "c20",
           "type": "main",
           "source": "gate",
           "sourceIndex": 0,
@@ -1049,7 +2040,7 @@
           "targetIndex": 0
         },
         {
-          "id": "c24",
+          "id": "c21",
           "type": "main",
           "source": "gateRoute",
           "sourceIndex": 0,
@@ -1057,7 +2048,7 @@
           "targetIndex": 0
         },
         {
-          "id": "c25",
+          "id": "c22",
           "type": "main",
           "source": "settle",
           "sourceIndex": 0,
@@ -1065,7 +2056,7 @@
           "targetIndex": 0
         },
         {
-          "id": "c26",
+          "id": "c23",
           "type": "main",
           "source": "gateRoute",
           "sourceIndex": 1,
@@ -1073,7 +2064,7 @@
           "targetIndex": 0
         },
         {
-          "id": "c27",
+          "id": "c24",
           "type": "main",
           "source": "gateRoute",
           "sourceIndex": 2,
@@ -1081,7 +2072,7 @@
           "targetIndex": 0
         },
         {
-          "id": "c28",
+          "id": "c25",
           "type": "main",
           "source": "route",
           "sourceIndex": 2,
@@ -1089,23 +2080,7 @@
           "targetIndex": 0
         },
         {
-          "id": "c29",
-          "type": "main",
-          "source": "findSeat",
-          "sourceIndex": 0,
-          "target": "rereadAccess",
-          "targetIndex": 0
-        },
-        {
-          "id": "c30",
-          "type": "main",
-          "source": "rereadAccess",
-          "sourceIndex": 0,
-          "target": "seatNow",
-          "targetIndex": 0
-        },
-        {
-          "id": "c31",
+          "id": "c26",
           "type": "main",
           "source": "seatNow",
           "sourceIndex": 0,
@@ -1113,7 +2088,7 @@
           "targetIndex": 0
         },
         {
-          "id": "c32",
+          "id": "c27",
           "type": "main",
           "source": "plan",
           "sourceIndex": 0,
@@ -1121,7 +2096,7 @@
           "targetIndex": 0
         },
         {
-          "id": "c33",
+          "id": "c28",
           "type": "main",
           "source": "seatRoute",
           "sourceIndex": 0,
@@ -1129,7 +2104,7 @@
           "targetIndex": 0
         },
         {
-          "id": "c34",
+          "id": "c29",
           "type": "main",
           "source": "seatRoute",
           "sourceIndex": 1,
@@ -1137,11 +2112,451 @@
           "targetIndex": 0
         },
         {
-          "id": "c35",
+          "id": "c30",
           "type": "main",
           "source": "seatRoute",
           "sourceIndex": 2,
           "target": "cancel",
+          "targetIndex": 0
+        },
+        {
+          "id": "c31",
+          "type": "main",
+          "source": "found",
+          "sourceIndex": 0,
+          "target": "isExt",
+          "targetIndex": 0
+        },
+        {
+          "id": "c32",
+          "type": "main",
+          "source": "isExt",
+          "sourceIndex": 0,
+          "target": "ask",
+          "targetIndex": 0
+        },
+        {
+          "id": "c33",
+          "type": "main",
+          "source": "isExt",
+          "sourceIndex": 1,
+          "target": "firstRow",
+          "targetIndex": 0
+        },
+        {
+          "id": "c34",
+          "type": "main",
+          "source": "firstRow",
+          "sourceIndex": 0,
+          "target": "firstSeat",
+          "targetIndex": 0
+        },
+        {
+          "id": "c35",
+          "type": "main",
+          "source": "firstSeat",
+          "sourceIndex": 0,
+          "target": "firstGrant",
+          "targetIndex": 0
+        },
+        {
+          "id": "c36",
+          "type": "main",
+          "source": "firstGrant",
+          "sourceIndex": 0,
+          "target": "extPlan",
+          "targetIndex": 0
+        },
+        {
+          "id": "c37",
+          "type": "main",
+          "source": "extPlan",
+          "sourceIndex": 0,
+          "target": "rideRoute",
+          "targetIndex": 0
+        },
+        {
+          "id": "c38",
+          "type": "main",
+          "source": "rideRoute",
+          "sourceIndex": 0,
+          "target": "rideLink",
+          "targetIndex": 0
+        },
+        {
+          "id": "c39",
+          "type": "main",
+          "source": "rideRoute",
+          "sourceIndex": 1,
+          "target": "ask",
+          "targetIndex": 0
+        },
+        {
+          "id": "c40",
+          "type": "main",
+          "source": "rideLink",
+          "sourceIndex": 0,
+          "target": "rideNote",
+          "targetIndex": 0
+        },
+        {
+          "id": "c41",
+          "type": "main",
+          "source": "rideNote",
+          "sourceIndex": 0,
+          "target": "rideSettleIf",
+          "targetIndex": 0
+        },
+        {
+          "id": "c42",
+          "type": "main",
+          "source": "rideSettleIf",
+          "sourceIndex": 0,
+          "target": "rideSettle",
+          "targetIndex": 0
+        },
+        {
+          "id": "c43",
+          "type": "main",
+          "source": "rideSettle",
+          "sourceIndex": 0,
+          "target": "rideSettled",
+          "targetIndex": 0
+        },
+        {
+          "id": "c44",
+          "type": "main",
+          "source": "asked",
+          "sourceIndex": 0,
+          "target": "askedRoute",
+          "targetIndex": 0
+        },
+        {
+          "id": "c45",
+          "type": "main",
+          "source": "askedRoute",
+          "sourceIndex": 0,
+          "target": "inHand",
+          "targetIndex": 0
+        },
+        {
+          "id": "c46",
+          "type": "main",
+          "source": "askedRoute",
+          "sourceIndex": 1,
+          "target": "getExisting",
+          "targetIndex": 0
+        },
+        {
+          "id": "c47",
+          "type": "main",
+          "source": "listMine",
+          "sourceIndex": 0,
+          "target": "pickExisting",
+          "targetIndex": 0
+        },
+        {
+          "id": "c48",
+          "type": "main",
+          "source": "pickExisting",
+          "sourceIndex": 0,
+          "target": "getExisting",
+          "targetIndex": 0
+        },
+        {
+          "id": "c49",
+          "type": "main",
+          "source": "getExisting",
+          "sourceIndex": 0,
+          "target": "adopt",
+          "targetIndex": 0
+        },
+        {
+          "id": "c50",
+          "type": "main",
+          "source": "adopt",
+          "sourceIndex": 0,
+          "target": "inHand",
+          "targetIndex": 0
+        },
+        {
+          "id": "c51",
+          "type": "main",
+          "source": "inHand",
+          "sourceIndex": 0,
+          "target": "remember",
+          "targetIndex": 0
+        },
+        {
+          "id": "c52",
+          "type": "main",
+          "source": "remember",
+          "sourceIndex": 0,
+          "target": "noteIf",
+          "targetIndex": 0
+        },
+        {
+          "id": "c53",
+          "type": "main",
+          "source": "noteIf",
+          "sourceIndex": 0,
+          "target": "noteAsked",
+          "targetIndex": 0
+        },
+        {
+          "id": "c54",
+          "type": "main",
+          "source": "gateRoute",
+          "sourceIndex": 3,
+          "target": "revokeTask",
+          "targetIndex": 0
+        },
+        {
+          "id": "c55",
+          "type": "main",
+          "source": "revokeTask",
+          "sourceIndex": 0,
+          "target": "recordInUse",
+          "targetIndex": 0
+        },
+        {
+          "id": "c56",
+          "type": "main",
+          "source": "findSeat",
+          "sourceIndex": 0,
+          "target": "pickSeat",
+          "targetIndex": 0
+        },
+        {
+          "id": "c57",
+          "type": "main",
+          "source": "pickSeat",
+          "sourceIndex": 0,
+          "target": "pickRoute",
+          "targetIndex": 0
+        },
+        {
+          "id": "c58",
+          "type": "main",
+          "source": "pickRoute",
+          "sourceIndex": 0,
+          "target": "rereadAccess",
+          "targetIndex": 0
+        },
+        {
+          "id": "c59",
+          "type": "main",
+          "source": "pickRoute",
+          "sourceIndex": 1,
+          "target": "reread",
+          "targetIndex": 0
+        },
+        {
+          "id": "c60",
+          "type": "main",
+          "source": "rereadAccess",
+          "sourceIndex": 0,
+          "target": "seatNow",
+          "targetIndex": 0
+        },
+        {
+          "id": "c61",
+          "type": "main",
+          "source": "seatRoute",
+          "sourceIndex": 3,
+          "target": "seatMore",
+          "targetIndex": 0
+        },
+        {
+          "id": "c62",
+          "type": "main",
+          "source": "seatMore",
+          "sourceIndex": 0,
+          "target": "reread",
+          "targetIndex": 0
+        },
+        {
+          "id": "c63",
+          "type": "main",
+          "source": "seatMore",
+          "sourceIndex": 1,
+          "target": "closeTask",
+          "targetIndex": 0
+        },
+        {
+          "id": "c64",
+          "type": "main",
+          "source": "closeTask",
+          "sourceIndex": 0,
+          "target": "recordEnded",
+          "targetIndex": 0
+        },
+        {
+          "id": "c65",
+          "type": "main",
+          "source": "hourly",
+          "sourceIndex": 0,
+          "target": "settings",
+          "targetIndex": 0
+        },
+        {
+          "id": "c66",
+          "type": "main",
+          "source": "route",
+          "sourceIndex": 3,
+          "target": "rcMine",
+          "targetIndex": 0
+        },
+        {
+          "id": "c67",
+          "type": "main",
+          "source": "rcMine",
+          "sourceIndex": 0,
+          "target": "rcRows",
+          "targetIndex": 0
+        },
+        {
+          "id": "c68",
+          "type": "main",
+          "source": "rcRows",
+          "sourceIndex": 0,
+          "target": "rcUnpaid",
+          "targetIndex": 0
+        },
+        {
+          "id": "c69",
+          "type": "main",
+          "source": "rcUnpaid",
+          "sourceIndex": 0,
+          "target": "rcPick",
+          "targetIndex": 0
+        },
+        {
+          "id": "c70",
+          "type": "main",
+          "source": "rcPick",
+          "sourceIndex": 0,
+          "target": "rcGet",
+          "targetIndex": 0
+        },
+        {
+          "id": "c71",
+          "type": "main",
+          "source": "rcGet",
+          "sourceIndex": 0,
+          "target": "rcRefs",
+          "targetIndex": 0
+        },
+        {
+          "id": "c72",
+          "type": "main",
+          "source": "rcRefs",
+          "sourceIndex": 0,
+          "target": "rcLb",
+          "targetIndex": 0
+        },
+        {
+          "id": "c73",
+          "type": "main",
+          "source": "rcLb",
+          "sourceIndex": 0,
+          "target": "rcPlan",
+          "targetIndex": 0
+        },
+        {
+          "id": "c74",
+          "type": "main",
+          "source": "rcPlan",
+          "sourceIndex": 0,
+          "target": "rcRoute1",
+          "targetIndex": 0
+        },
+        {
+          "id": "c75",
+          "type": "main",
+          "source": "rcRoute1",
+          "sourceIndex": 0,
+          "target": "rcRemember",
+          "targetIndex": 0
+        },
+        {
+          "id": "c76",
+          "type": "main",
+          "source": "rcRoute1",
+          "sourceIndex": 1,
+          "target": "applied",
+          "targetIndex": 0
+        },
+        {
+          "id": "c77",
+          "type": "main",
+          "source": "rcRoute1",
+          "sourceIndex": 2,
+          "target": "release",
+          "targetIndex": 0
+        },
+        {
+          "id": "c78",
+          "type": "main",
+          "source": "rcRoute1",
+          "sourceIndex": 3,
+          "target": "rcRoute2",
+          "targetIndex": 0
+        },
+        {
+          "id": "c79",
+          "type": "main",
+          "source": "rcRoute2",
+          "sourceIndex": 0,
+          "target": "cancel",
+          "targetIndex": 0
+        },
+        {
+          "id": "c80",
+          "type": "main",
+          "source": "rcRoute2",
+          "sourceIndex": 1,
+          "target": "rcNote",
+          "targetIndex": 0
+        },
+        {
+          "id": "c81",
+          "type": "main",
+          "source": "rcRoute2",
+          "sourceIndex": 2,
+          "target": "revokeTask",
+          "targetIndex": 0
+        },
+        {
+          "id": "c82",
+          "type": "main",
+          "source": "rcRoute2",
+          "sourceIndex": 3,
+          "target": "closeTask",
+          "targetIndex": 0
+        },
+        {
+          "id": "c83",
+          "type": "main",
+          "source": "rcRoute2",
+          "sourceIndex": 1,
+          "target": "rcSettleIf",
+          "targetIndex": 0
+        },
+        {
+          "id": "c84",
+          "type": "main",
+          "source": "rcSettleIf",
+          "sourceIndex": 0,
+          "target": "rcSettle",
+          "targetIndex": 0
+        },
+        {
+          "id": "c85",
+          "type": "main",
+          "source": "askedRoute",
+          "sourceIndex": 2,
+          "target": "listMine",
           "targetIndex": 0
         }
       ]

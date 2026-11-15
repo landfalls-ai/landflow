@@ -1284,10 +1284,19 @@ Landbright (raise at the contract's seat price, tell Landbright the decision, ma
 the snapshot's figures, one redraft on a refusal) and [an incident's cost to the room](features/landledger.md#incident-cost-to-the-room)
 (Landfall's ended room → Cost → Window → an estimated note in the room).
 
+**Review fixes (2026-11-15):** tool or seat cost recovers a Create that answered 409 (the request it names, or the
+key's own request by origin) and an **Every hour** reconcile records seat requests with no row, tells Landbright a
+decision it missed, cancels a cost request whose Landbright request ended first, and uses, releases or closes what the
+seat needs; a granted-first seat whose cost isn't approved gets a revoke task and an unpaid-seat row (Landbright has no
+revoke route); an extension inside the contract term settles citing the first request, otherwise raises its own. The
+incident note says "pro-rated spend … not the incident's extra cost", "no matching services: cost unknown" instead of
+$0.00, labels spend on the 1st, and asks windows over 31 days in parts; amounts in variance notes round as Landledger
+does.
+
 **Next:** a decision delivered live (once a person confirms or decides); the AI budget flow on the cluster; Slack's
 reject modal (`view_submission`); a Teams and an email card for the relay; Mark Applied wired to a
 real apply step in the infra flow; `SETTLE_IN_LANDBRIGHT` on once Landbright's spec 008 (PR #5) merges, checked live;
-extensions through the cost gate (settle citing the first request's seat); a postmortem operation in the landfall plugin, for the incident cost to
+a revoke route in Landbright (for the revoke task to become a call); a postmortem operation in the landfall plugin, for the incident cost to
 land in the postmortem; the incident flow run live once the cluster has a Landfall credential.
 
 ## The Brain page (built 2026-11-12)

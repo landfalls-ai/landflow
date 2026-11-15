@@ -184,8 +184,14 @@ describe('Request', () => {
     expect(fake.requests).toHaveLength(0);
     await call({ ...CREATE, requestFields: { idempotencyKey: 'same' } });
     const changed = await call({ ...CREATE, amount: '2000', requestFields: { idempotencyKey: 'same' } });
-    expect(changed.error?.message).toBe('Landledger API error 409: This idempotency key came with another body');
+    // Landledger names the request the key already has, so a flow that lost the first answer finds it again.
+    expect(changed.error?.message).toBe('Landledger API error 409: This idempotency key came with another body (request req_1)');
     expect(changed.error?.description).toMatch(/idempotency key came back with a different body/);
+  });
+
+  it('a 409 names the request only when Landledger gives a plain id', async () => {
+    fake.failNext(409, { error: { code: 'conflict', message: 'Taken', details: { requestId: 'req_1 (forged)' } } });
+    expect((await call(CREATE)).error?.message).toBe('Landledger API error 409: Taken');
   });
 
   it('an agent raises it as itself with its sponsor, and can\'t raise it in a person\'s name', async () => {
@@ -359,7 +365,7 @@ describe('Close, Notes and the cost of a window', () => {
   it('Note → Figures reads what each note may cite with the notes key', async () => {
     const [figures] = jsonOf(await notes({ operation: 'getFigures', month: NOTES_MONTH }));
     expect(last().headers.authorization).toBe(`Bearer ${NOTES_KEY}`);
-    expect(figures).toMatchObject({ snapshotSha256: SNAPSHOT_SHA, needed: [{ costCenter: 'TOTAL' }, { costCenter: 'ENG-AGENTS', drivers: [{ dimension: 'model', change: '150.250000' }] }] });
+    expect(figures).toMatchObject({ snapshotSha256: SNAPSHOT_SHA, needed: [{ costCenter: 'TOTAL' }, { costCenter: 'ENG-AGENTS', drivers: [{ dimension: 'model', change: '150.250000' }, { dimension: 'service', change: '1.005000' }] }] });
   });
 
   it('Note → Submit Draft sends the text, exact cites, the agent, its sponsor and this run', async () => {
@@ -406,6 +412,21 @@ describe('Close, Notes and the cost of a window', () => {
     expect((await call({ resource: 'cost', operation: 'window', services: 'checkout', windowFrom: '2026-11-14T11:00:00Z', windowTo: '2026-11-14T10:00:00Z' })).error?.message).toMatch(/From must be before To/);
     expect((await call({ resource: 'cost', operation: 'window', services: ' , ', windowFrom: '2026-11-14T10:00:00Z', windowTo: '2026-11-14T11:00:00Z' })).error?.message).toMatch(/name at least one service/);
     expect(fake.requests.length).toBe(before);
+  });
+
+  it('Cost → Window asks a window longer than 31 days in 31-day parts and adds them up', async () => {
+    const [one] = jsonOf(await call({ resource: 'cost', operation: 'window', services: 'checkout', windowFrom: '2026-10-01T00:00:00Z', windowTo: '2026-11-01T00:00:00Z' }));
+    expect(one).toMatchObject({ chunks: 1, total: '41.250000' });
+    const before = fake.requests.length;
+    const [window] = jsonOf(await call({ resource: 'cost', operation: 'window', services: 'checkout, ghost', windowFrom: '2026-09-20T12:00:00Z', windowTo: '2026-11-14T12:00:00Z' }));
+    expect(fake.requests.slice(before).map((r) => [r.query.from, r.query.to])).toEqual([
+      ['2026-09-20T12:00:00.000Z', '2026-10-21T12:00:00.000Z'],
+      ['2026-10-21T12:00:00.000Z', '2026-11-14T12:00:00.000Z'],
+    ]);
+    expect(window).toMatchObject({ from: '2026-09-20T12:00:00.000Z', to: '2026-11-14T12:00:00.000Z', basis: 'estimated', chunks: 2, total: '82.500000', services: [{ service: 'checkout', known: true, amount: '82.500000' }, { service: 'ghost', known: false, amount: '0.000000', days: [] }] });
+    expect((window.services as JsonObject[])[0].days).toHaveLength(32 + 25);
+    const year = await call({ resource: 'cost', operation: 'window', services: 'checkout', windowFrom: '2025-01-01T00:00:00Z', windowTo: '2026-11-01T00:00:00Z' });
+    expect(year.error?.message).toMatch(/at most 12 \(a year\)/);
   });
 });
 

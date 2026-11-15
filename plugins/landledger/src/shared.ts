@@ -116,6 +116,10 @@ export function errorDetail(response: ApiResponse): string {
     // A refused note draft names each cited figure that differs from the snapshot: keep them, a redraft needs them.
     const mismatches = typeof error === 'object' && error ? error.details?.mismatches : undefined;
     if (Array.isArray(mismatches) && mismatches.length) return `${message} (mismatches: ${JSON.stringify(mismatches).slice(0, 2000)})`;
+    // An idempotency key that came back with another body: Landledger names the request it already has
+    // (details.requestId), so a flow that lost the first answer finds it again.
+    const requestId = typeof error === 'object' && error ? error.details?.requestId : undefined;
+    if (typeof requestId === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(requestId)) return `${message} (request ${requestId})`;
     return message;
   }
   return response.text.slice(0, 200) || `HTTP ${response.status}`;

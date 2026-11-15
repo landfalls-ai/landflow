@@ -68,6 +68,8 @@ export interface FakeState {
   served: Map<string, Array<{ sha: string; at: number }>>;
   /** Note drafts per `month|costCenter`, every version kept. */
   notes: Map<string, any>;
+  /** False: a 409 for an idempotency key names no request, as a Landledger older than wave 2's review. */
+  conflictNamesRequest: boolean;
 }
 
 export interface FakeLandledger {
@@ -94,6 +96,7 @@ const fresh = (): FakeState => ({
   ]),
   served: new Map(),
   notes: new Map(),
+  conflictNamesRequest: true,
 });
 const RELAYABLE_KINDS = ['infra_change', 'ai_budget', 'tool_or_seat', 'other'];
 const STALE_MS = 30 * 60 * 1000;
@@ -163,7 +166,11 @@ export const NOTE_FIGURES = [
   {
     costCenter: 'ENG-AGENTS', name: 'Engineering agents', actual: '1200.500000', budget: '2000.000000', forecastDay10: '1250.000000',
     varianceBudget: '-799.500000', varianceBudgetPct: '-40.0', varianceForecast: '-49.500000',
-    drivers: [{ dimension: 'model', key: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', amount: '800.250000', previous: '650.000000', change: '150.250000' }],
+    drivers: [
+      { dimension: 'model', key: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', amount: '800.250000', previous: '650.000000', change: '150.250000' },
+      // A half cent, where a float's toFixed(2) says 1.00 and Landledger (half away from zero) 1.01.
+      { dimension: 'service', key: 'landledger-api', label: 'landledger-api', amount: '10.005000', previous: '9.000000', change: '1.005000' },
+    ],
   },
 ];
 /** The frozen snapshot's sha256. */
@@ -178,7 +185,14 @@ function citedValue(figures: any, cite: any): string | undefined {
   const dimension = String(cite.figure).replace('driver_', '');
   return figures.drivers.find((d: any) => d.dimension === dimension && d.key === cite.key)?.change;
 }
-const cents = (value: unknown) => Math.round(Number(value) * 100);
+/** As Landledger compares a cite: to the cent, half away from zero, on the decimal itself (never a float). */
+const cents = (value: unknown) => {
+  const m = /^(-)?(\d+)(?:\.(\d+))?$/.exec(String(value ?? '').trim());
+  if (!m) return NaN;
+  const frac = (m[3] ?? '').padEnd(3, '0');
+  const c = Number(m[2]) * 100 + Number(frac.slice(0, 2)) + (Number(frac[2]) >= 5 ? 1 : 0);
+  return m[1] ? -c : c;
+};
 
 export async function startFakeLandledger(): Promise<FakeLandledger> {
   let state = fresh();
@@ -287,7 +301,8 @@ export async function startFakeLandledger(): Promise<FakeLandledger> {
         const bodyText = JSON.stringify(rest);
         if (idem && state.keys.has(idem)) {
           const first = state.keys.get(idem)!;
-          if (first.body !== bodyText) return err(409, 'conflict', 'This idempotency key came with another body');
+          // As Landledger: the conflict names the request the key already has (details.requestId).
+          if (first.body !== bodyText) return { status: 409, body: { error: { code: 'conflict', message: 'This idempotency key came with another body', ...(state.conflictNamesRequest && { details: { requestId: first.id } }) } } };
           return { status: 200, body: { request: state.requests.get(first.id) } };
         }
         const reqId = next('req');
@@ -418,7 +433,19 @@ export async function startFakeLandledger(): Promise<FakeLandledger> {
         if (denied) return denied;
         const services = String(r.query.services ?? '').split(',').filter(Boolean);
         if (!services.length || !r.query.from || !r.query.to) return err(400, 'bad_request', 'services, from and to');
-        const rows = services.map((service) => ({ service, known: service in WINDOW_COST, amount: WINDOW_COST[service] ?? '0.000000', days: [] }));
+        // As Landledger: at most 31 days a call; each UTC day the window touches gets a row, the service's amount spread
+        // over them to the micro-unit (the first day takes the remainder).
+        const fromMs = Date.parse(String(r.query.from));
+        const toMs = Date.parse(String(r.query.to));
+        if (toMs - fromMs > 31 * 86_400_000) return err(400, 'bad_request', 'At most 31 days at a time');
+        const days: string[] = [];
+        for (let d = Math.floor(fromMs / 86_400_000) * 86_400_000; d < toMs; d += 86_400_000) days.push(new Date(d).toISOString().slice(0, 10));
+        const spread = (amount: string) => {
+          const micros = BigInt(Math.round(Number(amount) * 1e6));
+          const each = micros / BigInt(days.length);
+          return days.map((day, k) => ({ day, dayCost: amount, share: '1.000000', amount: (Number(k === 0 ? each + (micros - each * BigInt(days.length)) : each) / 1e6).toFixed(6) }));
+        };
+        const rows = services.map((service) => ({ service, known: service in WINDOW_COST, amount: WINDOW_COST[service] ?? '0.000000', days: service in WINDOW_COST ? spread(WINDOW_COST[service]) : [] }));
         const total = rows.reduce((sum, x) => sum + Number(x.amount), 0).toFixed(6);
         return { body: { from: r.query.from, to: r.query.to, currency: 'USD', basis: 'estimated', method: 'Each day\'s cost by the share of the day inside the window', total, services: rows } };
       }

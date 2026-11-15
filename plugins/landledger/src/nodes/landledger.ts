@@ -485,7 +485,7 @@ export const LandledgerNode = defineNode({
       // ---- Cost → Window
       { name: 'services', displayName: 'Services', type: 'string', required: true, default: '', placeholder: 'checkout, landflow-host', displayOptions: show('cost', ['window']), description: 'Service names as Landledger\'s Explore names them, comma-separated (at most 50)' },
       { name: 'windowFrom', displayName: 'From', type: 'dateTime', required: true, default: '', displayOptions: show('cost', ['window']), description: 'The start of the window (an ISO date-time)' },
-      { name: 'windowTo', displayName: 'To', type: 'dateTime', required: true, default: '', displayOptions: show('cost', ['window']), description: 'The end of the window (an ISO date-time)' },
+      { name: 'windowTo', displayName: 'To', type: 'dateTime', required: true, default: '', displayOptions: show('cost', ['window']), description: 'The end of the window (an ISO date-time). Landledger answers at most 31 days a call: a longer window is asked in 31-day parts and added up (`chunks` says how many)' },
 
       // ---- Contract → Seats
       { name: 'landbrightApp', displayName: 'Landbright App', type: 'string', required: true, default: '', placeholder: 'linear', displayOptions: show('contract', ['getSeats']), description: 'The app key a Landledger contract names (its landbrightApp)' },
@@ -960,7 +960,48 @@ async function costWindow(ctx: IExecuteContext, client: Landledger, i: number): 
   const from = instantParameter(ctx.getNodeParameter('windowFrom', i, ''), 'From', i);
   const to = instantParameter(ctx.getNodeParameter('windowTo', i, ''), 'To', i);
   if (from >= to) throw new NodeOperationError('From must be before To', { itemIndex: i });
-  return client.costWindow({ services: [...new Set(services)].join(','), from, to });
+  const names = [...new Set(services)].join(',');
+  // Landledger answers at most 31 days a call (`At most 31 days at a time`): a longer window (a room left open) is asked
+  // in 31-day parts, each day's share taken inside its own part, and added up to the micro-unit.
+  const parts: Array<{ from: string; to: string }> = [];
+  for (let start = Date.parse(from); start < Date.parse(to); start += WINDOW_MAX_MS) {
+    parts.push({ from: new Date(start).toISOString(), to: new Date(Math.min(start + WINDOW_MAX_MS, Date.parse(to))).toISOString() });
+  }
+  if (parts.length === 1) return { ...(await client.costWindow({ services: names, from, to })), chunks: 1 };
+  if (parts.length > WINDOW_MAX_PARTS) throw new NodeOperationError(`The window is ${parts.length} parts of 31 days: at most ${WINDOW_MAX_PARTS} (a year)`, { itemIndex: i });
+  const answers: JsonObject[] = [];
+  for (const part of parts) answers.push(await client.costWindow({ services: names, ...part }));
+  return mergeWindows(answers, from, to);
+}
+
+const WINDOW_MAX_MS = 31 * 86_400_000;
+const WINDOW_MAX_PARTS = 12;
+
+/** Landledger's answers for consecutive parts of one window, as one answer: amounts summed, days in order. */
+export function mergeWindows(answers: JsonObject[], from: string, to: string): JsonObject {
+  const sum = (values: unknown[]) => fromMicros(values.reduce<bigint>((total, v) => total + (toMicros(v) ?? 0n), 0n));
+  const services = new Map<string, { known: boolean; amounts: unknown[]; days: JsonObject[] }>();
+  for (const answer of answers) {
+    for (const s of (Array.isArray(answer.services) ? answer.services : []) as JsonObject[]) {
+      const name = String(s.service);
+      const entry = services.get(name) ?? { known: false, amounts: [], days: [] };
+      entry.known ||= s.known === true;
+      entry.amounts.push(s.amount);
+      entry.days.push(...((Array.isArray(s.days) ? s.days : []) as JsonObject[]));
+      services.set(name, entry);
+    }
+  }
+  const first = answers[0] ?? {};
+  return {
+    from,
+    to,
+    currency: first.currency ?? 'USD',
+    basis: first.basis ?? 'estimated',
+    method: first.method ?? null,
+    total: sum(answers.map((a) => a.total)),
+    services: [...services].map(([service, e]) => ({ service, known: e.known, amount: sum(e.amounts), days: e.days })),
+    chunks: answers.length,
+  };
 }
 
 /** `GET /api/contracts/seats`: `{ found, landbrightApp, contract, seatPrice, left }`; a 404 is `found: false`, not an error. */

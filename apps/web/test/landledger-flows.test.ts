@@ -792,6 +792,8 @@ describe('Landledger: tool or seat cost', () => {
   interface LbCall { method: string; path: string; auth: string; body: JsonObject | null }
   const lbCalls: LbCall[] = [];
   const lbRequests = new Map<string, JsonObject>();
+  /** Grants as GET /api/v1/grants/:id answers (requests:read). */
+  const lbGrants = new Map<string, JsonObject>();
   const LB_ID = '0b6c2a52-6c55-4a39-9a77-6a1c3a7e0041';
   let lbUrl = '';
   const landbright = createServer(async (req, res) => {
@@ -811,6 +813,8 @@ describe('Landledger: tool or seat cost', () => {
     const body = raw ? (JSON.parse(raw) as JsonObject) : null;
     lbCalls.push({ method: req.method ?? '', path: url.pathname, auth: String(req.headers.authorization ?? ''), body });
     if (req.headers.authorization !== 'Bearer lb_token_1') return send(401, { message: 'Unauthorized' });
+    const g = /^\/api\/v1\/grants\/([^/]+)$/.exec(url.pathname);
+    if (g && req.method === 'GET') return lbGrants.has(g[1]) ? send(200, lbGrants.get(g[1])) : send(404, { message: 'Not found' });
     const m = /^\/api\/v1\/requests\/([^/]+)(?:\/(annotations|steps)\/([^/]+)(\/settle)?)?$/.exec(url.pathname);
     const request = m ? [...lbRequests.values()].find((r) => r.id === m[1] || r.ref === m[1]) : undefined;
     if (!request) return send(404, { message: 'Not found' });
@@ -858,6 +862,27 @@ describe('Landledger: tool or seat cost', () => {
   const created = (requestId = LB_ID) => lbEvent('request.created', { ref: 'REQ-41', costs: ['linear'], waitsOn: 'Landledger' }, requestId);
   const LB_ID_2 = '0b6c2a52-6c55-4a39-9a77-6a1c3a7e0042';
   const second = { id: LB_ID_2, number: 42, ref: 'REQ-42', decisionUrl: 'http://localhost:5173/access/requests/REQ-42' };
+  /** An extension of REQ-41's grant: seven more days. */
+  const LB_ID_3 = '0b6c2a52-6c55-4a39-9a77-6a1c3a7e0043';
+  const extension = { id: LB_ID_3, number: 43, ref: 'REQ-43', decisionUrl: 'http://localhost:5173/access/requests/REQ-43', extends: { grantId: 'grant-1', ref: 'REQ-41' }, durationMinutes: 7 * 24 * 60 };
+  const createdPosts = () => fake.requests.filter((r) => r.method === 'POST' && r.path === '/api/requests');
+  /** As if the run that raised them stopped before recording them. */
+  const clearSeatRows = () => {
+    for (const name of ['Landledger seat requests', 'Landledger unpaid seats']) {
+      const table = dataTables().findTable(name);
+      if (table) dataTables().deleteRows(table.id, { type: 'and', conditions: [{ column: 'id', operator: 'isNotEmpty', value: '' }] });
+    }
+  };
+  /** REQ-41 raised, its cost approved, its grant (grant-1) live and its seat in use. */
+  async function seatInUse(workflow: Awaited<ReturnType<typeof install>>, expiresAt: string) {
+    const id = await raised(workflow);
+    await costDecided(id, 'approve');
+    lbRequest({ status: 'approved', currentStep: 1, waitingOnSystem: null, grant: { id: 'grant-1', status: 'active' } });
+    await run(workflow, 'Landbright events', [lbEvent('grant.activated', { requestId: LB_ID })]);
+    expect(fake.state.requests.get(id).seat.status).toBe('applied');
+    lbGrants.set('grant-1', { id: 'grant-1', status: 'active', expiresAt, isBreakGlass: false });
+    return id;
+  }
   const annotations = () => lbCalls.filter((c) => c.method === 'PUT').map((c) => (c.body as JsonObject).value as JsonObject);
   const settles = () => lbCalls.filter((c) => c.path.endsWith('/settle'));
 
@@ -896,8 +921,8 @@ describe('Landledger: tool or seat cost', () => {
   beforeEach(() => {
     lbCalls.length = 0;
     lbRequests.clear();
-    const table = dataTables().findTable('Landledger seat requests');
-    if (table) dataTables().deleteRows(table.id, { type: 'and', conditions: [{ column: 'id', operator: 'isNotEmpty', value: '' }] });
+    lbGrants.clear();
+    clearSeatRows();
   });
 
   it('a Landbright request whose cost is a seat raises one tool_or_seat request on the contract, naming the person, and notes it in Landbright', async () => {
@@ -927,9 +952,9 @@ describe('Landledger: tool or seat cost', () => {
     expect(annotations()[0]).toMatchObject({ status: 'cost_asked', landledgerRequestId: id, text: expect.stringContaining('asked in Landledger as R-1; its approvers decide the cost') });
   });
 
-  it('raises nothing without a seat cost, for an extension, or for a request no longer pending; no contract is said in Landbright; SEAT_APPS stands in for an older Landbright', async () => {
+  it('raises nothing without a seat cost, for a request no longer pending, or for an extension decided without a new grant; no contract is said in Landbright; SEAT_APPS stands in for an older Landbright', async () => {
     const workflow = await installSeat();
-    for (const overrides of [{ costs: [], steps: [structuredClone(peopleStep)], waitingOnSystem: null }, { extends: { grantId: 'g0', ref: 'REQ-40' } }, { status: 'approved', method: 'reviewed' }]) {
+    for (const overrides of [{ costs: [], steps: [structuredClone(peopleStep)], waitingOnSystem: null }, { status: 'approved', method: 'reviewed' }, { status: 'approved', extends: { grantId: 'g0', ref: 'REQ-40' }, grant: { id: 'g0', status: 'active' } }]) {
       lbRequest(overrides);
       expect((await run(workflow, 'Landbright events', [lbEvent('request.created')])).record.status).toBe('success');
     }
@@ -1076,14 +1101,175 @@ describe('Landledger: tool or seat cost', () => {
     expect(fake.state.requests.get(approved).seat).toMatchObject({ status: 'released', releasedReason: 'access_denied', releaseNote: 'Access expired waiting on Landledger in Landbright (REQ-42)' });
   });
 
-  it('a redelivered request.created raises nothing twice: Landledger’s 409 for the same key is "already asked"', async () => {
+  it('a redelivered request.created raises nothing twice: Landledger’s 409 names the request, which keeps its one row', async () => {
     const workflow = await installSeat();
-    await raised(workflow);
+    const id = await raised(workflow);
     const again = await run(workflow, 'Landbright events', [created()]);
     expect(again.record.status).toBe('success');
-    expect(again.ran('Remember the seat request')).toBe(false);
+    expect(again.out('Seat request in hand')[0].json).toMatchObject({ landledgerRequestId: id, recovered: true, executionId: fake.state.requests.get(id).origin.executionId });
     expect(fake.state.requests.size).toBe(1);
     expect(rowsOf('Landledger seat requests')).toHaveLength(1);
+  });
+
+  it('review 15: a run that stopped between Create and its row: the next delivery’s 409 finds the request and records it with the run that raised it, so its decision is acted on', async () => {
+    const workflow = await installSeat();
+    const id = await raised(workflow);
+    const raisedBy = String(fake.state.requests.get(id).origin.executionId);
+    clearSeatRows();
+    // Before the fix: no row, so the decision was refused as "no run of this workflow raised it".
+    await costDecided(id, 'approve');
+    expect((await run(workflow, 'Landledger events', [llDecided(id, 'approved')])).out('Ours to act on?')[0].json).toMatchObject({ route: 2, why: 'no run of this workflow raised it' });
+    fake.state.requests.get(id).status = 'awaiting_confirmation';
+    lbCalls.length = 0;
+    const again = await run(workflow, 'Landbright events', [created()]);
+    expect(again.out('Asked, or already asked')[0].json).toMatchObject({ route: 1, existingId: id });
+    expect(again.ran("This key's seat requests")).toBe(false);
+    expect(rowsOf('Landledger seat requests')).toEqual([expect.objectContaining({ landbright_request_id: LB_ID, landbright_ref: 'REQ-41', landledger_request_id: id, execution_id: raisedBy })]);
+    expect(annotations()).toEqual([expect.objectContaining({ status: 'cost_asked', landledgerRequestId: id })]);
+    await costDecided(id, 'approve');
+    expect((await run(workflow, 'Landledger events', [llDecided(id, 'approved')])).out('Ours to act on?')[0].json).toMatchObject({ route: 0, landbrightRequestId: LB_ID });
+
+    // A Landledger whose 409 names no request: found by its origin among this key's seat requests. Decided already, it
+    // gets no "cost asked" note (the reconcile tells Landbright the decision).
+    clearSeatRows();
+    fake.state.conflictNamesRequest = false;
+    lbCalls.length = 0;
+    const older = await run(workflow, 'Landbright events', [created()]);
+    expect(older.out('Asked, or already asked')[0].json).toMatchObject({ route: 2, existingId: null });
+    expect(older.out('Which request was it')[0].json).toEqual({ requestId: id });
+    expect(rowsOf('Landledger seat requests')).toEqual([expect.objectContaining({ landledger_request_id: id, execution_id: raisedBy })]);
+    expect(older.ran('Note it in Landbright')).toBe(false);
+    expect(annotations()).toHaveLength(0);
+  });
+
+  it('review 15: every hour, a seat request with no row is recorded, a decision Landbright was never told is noted and acted on, and a cost request whose Landbright request ended before its row is cancelled', async () => {
+    const workflow = await installSeat();
+    const approved = await raised(workflow);
+    const raced = await raised(workflow, second);
+    for (const id of [approved, raced]) fake.state.requests.get(id).createdAt = new Date().toISOString();
+    clearSeatRows();
+    await costDecided(approved, 'approve');
+    // Both decision events came while there was no row: refused. REQ-41 is granted; REQ-42 was cancelled in Landbright.
+    await run(workflow, 'Landledger events', [llDecided(approved, 'approved')]);
+    lbRequest({ status: 'approved', currentStep: 1, waitingOnSystem: null, grant: { id: 'grant-1', status: 'active' } });
+    lbRequest({ ...second, status: 'cancelled', closingReason: 'cancelled', decidedAt: '2026-11-15T10:00:00.000Z' });
+    expect((await run(workflow, 'Landbright events', [lbEvent('request.decided', { outcome: 'cancelled' }, LB_ID_2)])).ran('Read the access request')).toBe(false);
+    lbCalls.length = 0;
+
+    const hour = await run(workflow, 'Every hour', [{ scheduledAt: '2026-11-15T11:00:00.000Z' }]);
+    expect(hour.record.status).toBe('success');
+    expect(hour.out('Plan the reconcile').map((i) => [i.json.number, i.json.action])).toEqual([
+      [fake.state.requests.get(raced).number, 'remember'],
+      [fake.state.requests.get(raced).number, 'cancel'],
+      [fake.state.requests.get(approved).number, 'remember'],
+      [fake.state.requests.get(approved).number, 'note'],
+      [fake.state.requests.get(approved).number, 'apply'],
+    ]);
+    expect(rowsOf('Landledger seat requests').map((r) => [r.landbright_ref, r.landledger_request_id, r.execution_id]).sort()).toEqual([
+      ['REQ-41', approved, fake.state.requests.get(approved).origin.executionId],
+      ['REQ-42', raced, fake.state.requests.get(raced).origin.executionId],
+    ]);
+    expect(annotations()).toEqual([expect.objectContaining({ status: 'cost_approved', landledgerRequestId: approved })]);
+    expect(fake.state.requests.get(approved)).toMatchObject({ status: 'applied', seat: { status: 'applied' }, appliedNote: 'Granted in Landbright as REQ-41 (found by the hourly reconcile)' });
+    expect(fake.state.requests.get(raced)).toMatchObject({ status: 'cancelled' });
+    expect(settles()).toHaveLength(0);
+
+    // The next hour finds nothing left to do.
+    lbCalls.length = 0;
+    const writes = fake.requests.filter((r) => r.method === 'POST').length;
+    const next = await run(workflow, 'Every hour', [{ scheduledAt: '2026-11-15T12:00:00.000Z' }]);
+    expect(next.ran('Get each seat request')).toBe(false);
+    expect(lbCalls).toHaveLength(0);
+    expect(fake.requests.filter((r) => r.method === 'POST').length).toBe(writes);
+  });
+
+  it('review 16: a break-glass seat whose cost Landledger rejects: Landbright has no route to revoke a grant, so its approvers get a task, and the seat counts as in use, unpaid, until the grant is revoked', async () => {
+    const workflow = await installSeat(true);
+    const amit = { id: 'p-amit', kind: 'person', displayName: 'Amit Gal', email: 'amit.gal@landbright.test', status: 'active' };
+    const breakGlass = { status: 'approved', method: 'break_glass', breakGlass: { reason: 'Prod incident' }, currentStep: 0, waitingOnSystem: null, grant: { id: 'grant-1', status: 'active' }, steps: [gateStep(), { ...structuredClone(peopleStep), approvers: [amit] }] };
+    const id = await raised(workflow, breakGlass);
+    await costDecided(id, 'reject', 'No budget for Linear this quarter');
+    lbCalls.length = 0;
+    const rejected = await run(workflow, 'Landledger events', [llDecided(id, 'rejected')]);
+    expect(rejected.out('What Landbright needs')[0].json).toMatchObject({ route: 3, approvers: [{ name: 'Amit Gal', email: 'amit.gal@landbright.test' }] });
+    expect(settles()).toHaveLength(0);
+    expect(lbCalls.filter((c) => c.method !== 'GET').map((c) => c.path)).toEqual([
+      `/api/v1/requests/${LB_ID}/annotations/landflow.seat_cost`,
+      `/api/v1/requests/${LB_ID}/annotations/landflow.seat_revoke`,
+    ]);
+    const task = annotations()[1];
+    expect(task).toMatchObject({
+      status: 'open', task: 'revoke_grant', assignees: [{ name: 'Amit Gal', email: 'amit.gal@landbright.test' }], landledgerRequestId: id, ref: 'REQ-41', app: 'linear', contractId: 'con_linear',
+      text: expect.stringMatching(/^For Amit Gal: Landledger did not approve this seat's cost \(R-\d+: Amit Gal: No budget for Linear this quarter\), but Landbright granted the access under break-glass before the cost was decided\. Landflow can't revoke a grant/),
+    });
+    expect(rowsOf('Landledger unpaid seats')).toEqual([expect.objectContaining({ landledger_request_id: id, landbright_request_id: LB_ID, landbright_ref: 'REQ-41', app: 'linear', contract_id: 'con_linear', status: 'in_use' })]);
+    // The reconcile leaves an open task alone.
+    fake.state.requests.get(id).createdAt = new Date().toISOString();
+    lbRequest({ ...breakGlass, annotations: { 'landflow.seat_cost': annotations()[0], 'landflow.seat_revoke': task } });
+    lbCalls.length = 0;
+    const hour = await run(workflow, 'Every hour', [{ scheduledAt: '2026-11-15T11:00:00.000Z' }]);
+    expect(hour.out('Plan the reconcile')).toHaveLength(0);
+
+    // A person revokes the grant in Landbright: the task closes and the seat stops counting.
+    lbRequest({ ...breakGlass, grant: { id: 'grant-1', status: 'revoked', closedAt: '2026-11-15T12:00:00.000Z' }, annotations: { 'landflow.seat_revoke': task } });
+    const revoked = await run(workflow, 'Landbright events', [lbEvent('grant.revoked', { requestId: LB_ID })]);
+    expect(revoked.out('What the seat needs')[0].json).toMatchObject({ action: 'close' });
+    expect(annotations().at(-1)).toMatchObject({ status: 'done', landledgerRequestId: id, endedAt: '2026-11-15T12:00:00.000Z' });
+    expect(rowsOf('Landledger unpaid seats')).toEqual([expect.objectContaining({ landledger_request_id: id, status: 'revoked', ended_at: '2026-11-15T12:00:00.000Z' })]);
+  });
+
+  it('review 16: an extension that ends before the renewal rides on the first request\'s seat: linked, noted, and its gate settled at once citing that request', async () => {
+    const workflow = await installSeat(true);
+    const first = await seatInUse(workflow, '2026-11-22T09:00:00.000Z');
+    lbRequest(extension);
+    lbCalls.length = 0;
+    const before = createdPosts().length;
+    const ext = await run(workflow, 'Landbright events', [lbEvent('request.created', { ref: 'REQ-43', costs: ['linear'], waitsOn: 'Landledger' }, LB_ID_3)]);
+    expect(ext.record.status).toBe('success');
+    expect(ext.out('Extension or new seat?')[0].json).toMatchObject({ route: 0, rides: true, landledgerRequestId: first, newEnd: '2026-11-29', renewal: '2027-01-01', settleNow: true });
+    expect(createdPosts()).toHaveLength(before);
+    expect(rowsOf('Landledger seat requests')).toContainEqual(expect.objectContaining({ landbright_request_id: LB_ID_3, landbright_ref: 'REQ-43', landledger_request_id: first }));
+    expect(annotations().at(-1)).toMatchObject({ status: 'cost_rides', landledgerRequestId: first, firstRequest: 'REQ-41', text: expect.stringContaining("This extension rides on REQ-41's seat") });
+    expect(settles()).toEqual([expect.objectContaining({ path: `/api/v1/requests/${LB_ID_3}/steps/0/settle`, body: { outcome: 'approve', reference: { system: 'Landledger', id: first, url: `http://localhost:4811/requests/${first}` } } })]);
+    expect(ext.out('Extension settled?')[0].json).toMatchObject({ settled: true });
+    expect(lbRequests.get(LB_ID_3)).toMatchObject({ currentStep: 1, waitingOnSystem: null });
+  });
+
+  it('review 16: an extension past the contract\'s renewal gets a seat request of its own; one approved after its grant ended gets a new grant, and a seat request for it', async () => {
+    const workflow = await installSeat();
+    const first = await seatInUse(workflow, '2026-12-28T09:00:00.000Z');
+    lbRequest(extension);
+    const past = await run(workflow, 'Landbright events', [lbEvent('request.created', {}, LB_ID_3)]);
+    expect(past.out('Extension or new seat?')[0].json).toMatchObject({ route: 1, rides: false, why: "the new end (2027-01-04) is on or after the contract's renewal (2027-01-01)" });
+    const own = [...fake.state.requests.keys()].at(-1)!;
+    expect(own).not.toBe(first);
+    expect(createdPosts().at(-1)!.body).toMatchObject({ idempotencyKey: 'landbright-REQ-43', related: [{ type: 'landbright_request', id: 'REQ-43' }], note: expect.stringContaining("(an extension of REQ-41) takes a Linear Business seat: 2 left on the contract. It needs a seat of its own: the new end (2027-01-04) is on or after the contract's renewal (2027-01-01).") });
+    expect(rowsOf('Landledger seat requests')).toContainEqual(expect.objectContaining({ landbright_request_id: LB_ID_3, landledger_request_id: own }));
+  });
+
+  it('review 16: an extension that rode, approved after its grant ended, gets a seat request of its own when the new grant starts, marked used once approved', async () => {
+    const workflow = await installSeat();
+    const first = await seatInUse(workflow, '2026-11-22T09:00:00.000Z');
+    lbRequest(extension);
+    await run(workflow, 'Landbright events', [lbEvent('request.created', {}, LB_ID_3)]);
+    expect(rowsOf('Landledger seat requests')).toContainEqual(expect.objectContaining({ landbright_request_id: LB_ID_3, landledger_request_id: first }));
+    // The grant ends before Landbright's approvers decide the extension: its seat goes back.
+    lbRequest({ status: 'approved', currentStep: 1, waitingOnSystem: null, grant: { id: 'grant-1', status: 'expired' } });
+    await run(workflow, 'Landbright events', [lbEvent('grant.expired', { requestId: LB_ID })]);
+    expect(fake.state.requests.get(first).seat.status).toBe('released');
+    // Approved now, the extension gets a new grant (grant-2): it can't ride on a seat that went back.
+    const before = createdPosts().length;
+    lbRequest({ ...extension, status: 'approved', currentStep: 1, waitingOnSystem: null, grant: { id: 'grant-2', status: 'active' } });
+    const granted = await run(workflow, 'Landbright events', [lbEvent('grant.activated', { requestId: LB_ID_3 })]);
+    expect(granted.out('What the seat needs')[0].json).toMatchObject({ action: 'raise', why: "REQ-43 was approved after REQ-41's grant ended: its new grant needs a seat of its own (R-1 is REQ-41's)" });
+    expect(createdPosts()).toHaveLength(before + 1);
+    expect(createdPosts().at(-1)!.body).toMatchObject({ idempotencyKey: 'landbright-REQ-43', origin: { type: 'landflow_run' }, related: [{ type: 'landbright_request', id: 'REQ-43' }] });
+    const own = [...fake.state.requests.keys()].at(-1)!;
+    expect(annotations().at(-1)).toMatchObject({ status: 'cost_asked', landledgerRequestId: own, text: expect.stringContaining('after Landbright gave this extension a new grant (its grant had ended)') });
+    await costDecided(own, 'approve');
+    const approved = await run(workflow, 'Landledger events', [llDecided(own, 'approved')]);
+    expect(approved.out('What Landbright needs')[0].json).toMatchObject({ route: 1 });
+    expect(fake.state.requests.get(own)).toMatchObject({ status: 'applied', seat: { status: 'applied' }, appliedNote: 'Granted in Landbright as REQ-43 (an extension approved after its grant ended); the cost was approved after' });
   });
 
   it('a Landbright event for a request it never raised a seat for stops at the table', async () => {
@@ -1199,6 +1385,22 @@ describe('Landledger: draft variance notes', () => {
     expect(rows.find((r) => r.cost_center === 'TOTAL')).toMatchObject({ outcome: 'submitted', attempt: 1 });
   });
 
+  it('the rounding nit: a half cent is cited as Landledger rounds it (half away from zero), which Landledger accepts', async () => {
+    const workflow = await installNotes();
+    // 1.005 is 1.00499999… as a float: toFixed(2) said 1.00, which Landledger refuses as a mismatch.
+    reply = (prompt) => {
+      const center = /Cost center: (\S+)/.exec(prompt)![1];
+      const f = NOTE_FIGURES.find((x) => x.costCenter === center)!;
+      const cites = [{ figure: 'actual', amount: Number(f.actual).toFixed(2) }, ...(center === 'ENG-AGENTS' ? [{ figure: 'driver_service', key: 'landledger-api', amount: /"key":"landledger-api","amount":"([^"]+)"/.exec(prompt)![1] }] : [])];
+      return JSON.stringify({ text: `${center} cost ${cites[0].amount} this month.`, cites });
+    };
+    const { record } = await run(workflow, 'Notes requested', [requested()]);
+    expect(record.status).toBe('success');
+    expect(ollamaCalls[1].prompt).toContain('- {"figure":"driver_service","key":"landledger-api","amount":"1.01"}: landledger-api (service), its change on the month before: it cost more');
+    expect(drafts()).toHaveLength(2);
+    expect(rowsOf('Landledger note drafts').map((r) => [r.cost_center, r.outcome, r.attempt])).toEqual([['TOTAL', 'submitted', 1], ['ENG-AGENTS', 'submitted', 1]]);
+  });
+
   it('drafts nothing for an event whose snapshot is no longer the month’s', async () => {
     const workflow = await installNotes();
     const { record } = await run(workflow, 'Notes requested', [requested('d'.repeat(64))]);
@@ -1258,15 +1460,47 @@ describe('Landledger: incident cost to the room', () => {
     expect(note.type).toBe('chat.message');
     expect(String(note.payload.text)).toBe(
       [
-        'Estimated cost during this incident: $53.25 (USD), 2026-11-14 08:00 to 2026-11-14 09:30 UTC (1 h 30 min).',
+        "Pro-rated spend of these services during the incident (estimated), not the incident's extra cost: $53.25 (USD), 2026-11-14 08:00 to 2026-11-14 09:30 UTC (1 h 30 min).",
         '- checkout: $41.25',
         '- landflow-host: $12.00',
-        "Estimated: each day's cost in Landledger, by the share of the day inside the incident's window. Not an invoiced figure.",
+        "Estimated: each day's cost of these services in Landledger, by the share of the day inside the incident's window: what they cost while it was open, not what the incident added. Not an invoiced figure.",
         'Explore in Landledger: http://localhost:4811/explore?by=service&month=2026-11&filter=service%3Acheckout%2Cservice%3Alandflow-host',
         "Posted by Landflow as a room note: it can't write a postmortem section.",
       ].join('\n'),
     );
     expect(out('Write the note')[0].json).toMatchObject({ total: '53.250000' });
+  });
+
+  it('review 18: no matching services says the cost is unknown, never $0.00', async () => {
+    const workflow = await install('landledger-incident-cost.json');
+    const incident = landfall.seed({ title: 'Ghost errors', alertEntity: { kind: 'service', id: 'ghost' } as never, createdAt: '2026-11-14T08:00:00.000Z' });
+    landfall.append(incident, 'status.changed', { status: 'resolved', from: 'open' }).occurredAt = '2026-11-14T09:30:00.000Z';
+    const { events: _events, connectionId: _c, dedupKey: _d, ...view } = incident as unknown as JsonObject;
+    const { record, out } = await run(workflow, 'Room ended', [{ event: 'incident.ended', incident: view }]);
+    expect(record.status).toBe('success');
+    const text = String(incident.events.at(-1)!.payload.text);
+    expect(text.split('\n').slice(0, 2)).toEqual(['No matching services: cost unknown. Landledger has no cost under ghost, 2026-11-14 08:00 to 2026-11-14 09:30 UTC (1 h 30 min).', '- ghost: no cost in Landledger under this name']);
+    expect(text).not.toContain('$0.00');
+    expect(out('Write the note')[0].json).toMatchObject({ total: null, known: 0 });
+  });
+
+  it('review 18: a room open longer than 31 days is asked in parts and added up, and the share on the 1st of a month is said to be possibly invoice lines', async () => {
+    const workflow = await install('landledger-incident-cost.json');
+    const incident = landfall.seed({ title: 'Slow checkout', alertEntity: { kind: 'service', id: 'checkout' } as never, createdAt: '2026-10-20T00:00:00.000Z' });
+    landfall.append(incident, 'status.changed', { status: 'resolved', from: 'open' }).occurredAt = '2026-12-02T00:00:00.000Z';
+    const { events: _events, connectionId: _c, dedupKey: _d, ...view } = incident as unknown as JsonObject;
+    const { record, out } = await run(workflow, 'Room ended', [{ event: 'incident.ended', incident: view }]);
+    expect(record.status).toBe('success');
+    expect(fake.requests.filter((r) => r.path === '/api/cost/window').map((r) => [r.query.from, r.query.to])).toEqual([
+      ['2026-10-20T00:00:00.000Z', '2026-11-20T00:00:00.000Z'],
+      ['2026-11-20T00:00:00.000Z', '2026-12-02T00:00:00.000Z'],
+    ]);
+    expect(out('Write the note')[0].json).toMatchObject({ total: '82.500000', chunks: 2 });
+    const lines = String(incident.events.at(-1)!.payload.text).split('\n');
+    expect(lines[0]).toBe("Pro-rated spend of these services during the incident (estimated), not the incident's extra cost: $82.50 (USD), 2026-10-20 00:00 to 2026-12-02 00:00 UTC (43 d 0 h).");
+    // The fake spreads $41.25 over each part's days: 31 days ($1.330645 a day, the first $1.330660), then 12 ($3.437500 a day).
+    expect(lines).toContain("Of this, $4.77 falls on 2026-11-01 and 2026-12-01: Landledger charges invoice lines that have no daily estimate on the 1st of the month, so those days may hold part of a month's invoice rather than spend during the incident.");
+    expect(lines).toContain('The window is longer than the 31 days Landledger answers at a time: it was asked in 2 parts and added up.');
   });
 
   it('a room that names no service posts nothing and asks Landledger nothing', async () => {
