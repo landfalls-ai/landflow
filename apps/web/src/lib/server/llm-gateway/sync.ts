@@ -158,7 +158,8 @@ async function runSync(input: SyncInput): Promise<SyncReport> {
   }
   // Someone whose cap was removed keeps their customer (never deleted) with no budget.
   for (const row of linked('customer')) {
-    if (!wanted.has(row.landflow_id) && getUser(row.landflow_id) && !getUser(row.landflow_id)?.disabledAt) wanted.set(row.landflow_id, undefined);
+    const person = wanted.has(row.landflow_id) ? undefined : getUser(row.landflow_id);
+    if (person && !person.disabledAt) wanted.set(row.landflow_id, undefined);
   }
   for (const [userId, budget] of wanted) {
     if (scoped && !scope.users.has(userId)) continue;
@@ -281,8 +282,11 @@ async function syncRuntimeKey(row: KeyRow, client: LiteLlmClient, ensureTeam: (p
       report.keys.updated += 1;
     }
     const mirrored = { max_budget: budget?.maxBudget ?? null, budget_duration: budget?.duration ?? null, team_id: teamId ?? row.team_id };
-    if (mirrored.max_budget !== row.max_budget || mirrored.budget_duration !== row.budget_duration || mirrored.team_id !== row.team_id) {
-      db.upsert('llm_gateway_keys', { ...row, ...mirrored, updated_at: new Date().toISOString() });
+    // Re-read just before writing (no await between): another writer may have blocked, moved or re-minted the key
+    // while the network calls ran, and the stale snapshot must not undo that.
+    const fresh = db.get<KeyRow>('SELECT * FROM llm_gateway_keys WHERE id = ?', row.id);
+    if (fresh && !fresh.blocked && (mirrored.max_budget !== fresh.max_budget || mirrored.budget_duration !== fresh.budget_duration || mirrored.team_id !== fresh.team_id)) {
+      db.upsert('llm_gateway_keys', { ...fresh, ...mirrored, updated_at: new Date().toISOString() });
     }
     link('key', landflowId, row.key_alias, budget);
   } catch (error) {

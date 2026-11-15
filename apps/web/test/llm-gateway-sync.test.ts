@@ -122,6 +122,24 @@ describe('budgets sync', () => {
     budgetsSync.stop();
   });
 
+  it('does not undo a block made while the runtime-key mirror was in flight', async () => {
+    const agent = agentStore.create({ name: 'Racer', settings: { dailyCostLimit: 4 } } as never);
+    const key = fake.addKey({ key_alias: LITELLM_IDS.runtimeKeyAlias('kagent', agent.id) });
+    const now = new Date().toISOString();
+    database().upsert('llm_gateway_keys', { id: 'lgk_race1', runtime: 'kagent', agent_id: agent.id, project_id: alpha.id, key_alias: key.key_alias!, key_hash: key.token, key_sealed: credentials.sealSecret(key.key), team_id: null, max_budget: null, budget_duration: null, blocked: 0, created_at: now, updated_at: now });
+    const fetcher = async (input: string, init?: RequestInit) => {
+      const response = await fetch(input, init);
+      if (input.includes('/key/info')) {
+        const current = database().get<Record<string, never>>('SELECT * FROM llm_gateway_keys WHERE id = ?', 'lgk_race1')!;
+        database().upsert('llm_gateway_keys', { ...current, blocked: 1 });
+      }
+      return response;
+    };
+    await syncBudgets({ trigger: 'manual', fetcher });
+    expect(database().get<{ blocked: number }>('SELECT blocked FROM llm_gateway_keys WHERE id = ?', 'lgk_race1')?.blocked).toBe(1);
+    agentStore.delete(agent.id);
+  });
+
   it('gives a runtime key its agent daily limit with no headroom, and its team', async () => {
     const agent = agentStore.create({ name: 'Desk', settings: { dailyCostLimit: 3 } } as never);
     const key = fake.addKey({ key_alias: LITELLM_IDS.runtimeKeyAlias('kagent', agent.id) });
