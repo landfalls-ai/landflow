@@ -485,7 +485,11 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - A removed member stays the assignee of a task until someone changes it.
 - A task run is always the in-process runner's (`runAgent`), whatever else runs the agent (kagent).
 - A task has one parent at most (no deeper trees), and a run in progress when its task is deleted finishes but saves
-  nothing.
+  nothing. The same holds when its project is deleted: the task and run rows go with the project, but the agent's
+  session is not stopped; it runs to its end and stays in the agent's Sessions tab (its spend is still counted), and
+  the run's later saves do nothing.
+- A request whose agent was deleted is settled as `denied` ("The agent was deleted before this was approved") the next
+  time anything reads it, not at the moment of deletion.
 - Wake-ups use the instance time zone, not each person's; a clock change skips a wall-clock time that does not exist that
   day. They run on the leader only, so a stopped host asks for nothing until it is back (a missed wake-up is not replayed).
 - A February 29 wake-up schedule can be refused as `This schedule never fires` (the search looks 366 days ahead). A request for a run that was made before a task was reassigned stays open and answers 409 on Approve until someone denies it. With more than one host process, a run with a quiet step longer than 10 minutes can be marked failed by another process, and its later result is dropped. A run whose session was deleted settles as `Landflow restarted before the run finished`.
@@ -546,6 +550,8 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - Runs count only finished runs of workflows whose home is a project serving the goal; a run of a workflow shared in from
   another project is not counted.
 - kagent and harness spend counts only when it carries a goal.
+- A project task's run is never counted as a run: it counts toward a goal only as spend (`ai_usage.goal_id`), and only
+  while the task's goal is still one of the project's.
 - There is no history chart: progress is a count over the last 7 or 30 days.
 - The nightly "Goals that moved" covers the goals of the projects a person has a role in, five at most; an owner or admin
   gets the goals of their own projects, not every goal.

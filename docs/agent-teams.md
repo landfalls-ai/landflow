@@ -427,5 +427,5 @@ team": applying the proposal does what that menu item does.
 - A reviewer that manages the member it reviews (or reports to it) isn't held to the review; a verdict is read from a
   `VERDICT:` line only.
 - A middle manager's own budget is enforced for agents asked as members; the lead's is checked by the session limit.
-- Heartbeats and a task backlog are not built. Consults and hand-offs are made by Landflow agent members only (a remote member has no tools to ask a peer with), and the model decides when to use them: nothing forces a consult.
+- Heartbeats are not built, and a team has no backlog of its own (work with an assignee and a wake-up is a [project task](projects-and-goals.md#tasks)). Consults and hand-offs are made by Landflow agent members only (a remote member has no tools to ask a peer with), and the model decides when to use them: nothing forces a consult.
 - A tool approval is for the tools Landflow runs (an agent's, or connected to the node). A Claude Code member on kagent keeps its own guard (the landflow-harness mod) and its approvals are still refused in a flow.

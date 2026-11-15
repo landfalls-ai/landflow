@@ -2068,21 +2068,7 @@ Projects get a mission to serve, goals and a brief, and agents learn where their
   project** and **AI budget** cards and the budget rows in Needs you (PC15); and the project workspace for harness runs
   with the repositories screen (PC16) ([projects-and-goals.md](projects-and-goals.md#project-settings-for-agents),
   [below](#paperclip-wave-9-project-settings-for-agents-pc13)).
-- **PC17, built (wave 10, server):** goal progress: runs, spend and work updates per goal and its sub-goals over 7 or 30
-  days, read only through the visibility rule for the person they are for, `GET /api/goals/:id/progress` and
-  `GET /api/goals?progress=1`, and the nightly sync's "Goals that moved" ([projects-and-goals.md](projects-and-goals.md#progress)).
-  Closes P7-1 on the server; the screens are PC18.
-- **PC18, built (wave 10, screens):** one quiet progress line under each goal on the Goals page, in the goal's sheet (7 or
-  30 days) and on the project Overview's goal rows ([projects-and-goals.md](projects-and-goals.md#on-the-goals-page-and-the-overview)).
-- **PC19, built (wave 10, server; P7-2):** tasks, the server: tasks with agent or person assignees, atomic checkout,
-  wake-ups that only ask, approved runs through the project's limits, Needs you items
-  ([Tasks](projects-and-goals.md#tasks)); the Tasks tab is PC20.
-- **PC20, built (wave 10, screens):** the project's **Tasks** tab, the task dialog with assignee and wake-up schedule,
-  **Approve** and **Deny** for a task run in Needs you, and **Delete this project** last in Settings
-  ([projects-and-goals.md](projects-and-goals.md#the-tasks-tab-and-needs-you)).
-- **PC21, built (wave 10; P7-3):** **Export** in a project's header downloads the project as a Claude Code plugin: `PROJECT.md`
-  with its brief and the goals it serves, its home agents and their skills, `.landflow/project.json`, no people or ids
-  ([marketplace.md](marketplace.md#export-a-project)). The agent and team exports are byte-identical (a test holds their bytes).
+- **PC17 to PC21, built (wave 10):** goal progress, project tasks and the project export: [Paperclip wave 10](#paperclip-wave-10-progress-tasks-and-export).
 - **Open:** the Paperclip plan (PC01 to PC21) is built. What is left is in the follow-ups: [wave 10's limits](limitations.md#project-tasks-wave-10)
   (no autonomous task runs, no progress history, no PROJECT.md import) and
   [the wave 9 reviews' list](#company-backbone-left-open-from-the-wave-9-reviews-2026-11-15).
@@ -2186,7 +2172,8 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   moved" in the nightly sync ([projects-and-goals.md](projects-and-goals.md#progress)). Closes P7-1.
 - **PC19 and PC20, built:** project tasks with agent or person assignees, checkout, wake-ups that only ask, runs a person
   approves (through `runAgent` and the project's limits), the Tasks tab and Approve and Deny in Needs you
-  ([projects-and-goals.md](projects-and-goals.md#tasks)). Closes P7-2.
+  ([projects-and-goals.md](projects-and-goals.md#tasks)). A task run counts toward goal progress only as spend, never as
+  a run. Closes P7-2.
 - **PC21, built:** a project exported as a Claude Code plugin with `PROJECT.md` and its home agents, without people or ids
   ([marketplace.md](marketplace.md#export-a-project)). Closes P7-3.
 - **Left on purpose:** autonomous task runs, a progress history chart, and importing `PROJECT.md`
