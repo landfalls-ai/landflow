@@ -30,6 +30,8 @@ const agentSessionsRoute = await import('@/app/api/agents/[id]/sessions/route');
 const agentSessionRoute = await import('@/app/api/agents/[id]/sessions/[sid]/route');
 const agentEvalsRoute = await import('@/app/api/agents/[id]/evaluations/route');
 const agentGateRoute = await import('@/app/api/agents/[id]/eval-gate/route');
+const dataTablesRoute = await import('@/app/api/data-tables/route');
+const { liveEventFilter } = await import('@/lib/server/projects/events');
 const loadOptionsRoute = await import('@/app/api/node-types/load-options/route');
 const agentRoute = await import('@/app/api/agents/[id]/route');
 const workflowsRoute = await import('@/app/api/workflows/route');
@@ -225,10 +227,14 @@ describe('sharing with all projects', () => {
 
   it('withOwnership(projectId) keeps shared and "all" agents', () => {
     const items = [{ id: ids.agent }, { id: ids.allAgent }, { id: ids.billingAgent }];
-    const eveActor = { id: admin.id, role: 'admin' as const };
-    const kept = projects.withOwnership(eveActor, 'agent', items, billing).map((i) => i.id).sort();
+    const adminActor = { id: admin.id, role: 'admin' as const };
+    const kept = projects.withOwnership(adminActor, 'agent', items, billing).map((i) => i.id).sort();
     expect(kept).toEqual([ids.agent, ids.allAgent, ids.billingAgent].sort());
-    expect(projects.withOwnership(eveActor, 'agent', items, quiet).map((i) => i.id)).toEqual([ids.allAgent]);
+    expect(projects.withOwnership(adminActor, 'agent', items, quiet).map((i) => i.id)).toEqual([ids.allAgent]);
+    // A member only keeps what they see: Cat sees the shared and "all" agents and her own, not Eve's view of nothing.
+    const catActor = { id: cat.id, role: 'member' as const };
+    expect(projects.withOwnership(catActor, 'agent', items, billing).map((i) => i.id).sort()).toEqual([ids.agent, ids.allAgent, ids.billingAgent].sort());
+    expect(projects.withOwnership({ id: eve.id, role: 'member' as const }, 'agent', items, billing).map((i) => i.id)).toEqual([ids.allAgent]);
   });
 
   it('the readers of resource_shares handle "*": per-kind, per-resource and per-project', () => {
@@ -295,10 +301,23 @@ describe('sessions are read from home only', () => {
     }
   });
 
-  it('load-options with agentId gives a shared-only member no scope of the home project', async () => {
-    const options = (caller: Caller) => call(loadOptionsRoute.POST, '/api/node-types/load-options', 'POST', caller, { type: 'core.noop', method: 'x', agentId: ids.agent });
-    // Only the scope matters: the call never throws and never reads the home project's tables for a non-home member.
-    expect((await options(cat)).status).toBe(200);
-    expect((await options(dan)).status).toBe(200);
+  it('load-options with agentId offers the home project\'s data tables to home members only', async () => {
+    const table = (await call(dataTablesRoute.POST, `/api/data-tables?projectId=${home}`, 'POST', ben, { name: 'Ops private table', columns: [{ name: 'n', type: 'number' }] })).body.table.id as string;
+    const tables = async (caller: Caller, agentId: string) =>
+      ((await call(loadOptionsRoute.POST, '/api/node-types/load-options', 'POST', caller, { type: 'core.dataTable', method: 'tables', agentId })).body.options as Array<{ value: string }>).map((o) => o.value);
+    expect(await tables(dan, ids.agent)).toContain(table);
+    expect(await tables(cat, ids.agent)).not.toContain(table);
+    expect(await tables(dan, ids.allAgent)).toContain(table);
+    expect(await tables(eve, ids.allAgent)).not.toContain(table);
+  });
+
+  it('the live event feed drops an agent\'s session events for a project that only uses it', () => {
+    const entry = (agentId: string) => ({ channel: 'agent' as const, agentId, event: { type: 'entry', sessionId: 's', entry: {} } as never });
+    for (const id of [ids.agent, ids.allAgent]) {
+      expect(liveEventFilter({ id: cat.id, role: 'member' })(entry(id))).toBe(false);
+      expect(liveEventFilter({ id: eve.id, role: 'member' })(entry(id))).toBe(false);
+      expect(liveEventFilter({ id: dan.id, role: 'member' })(entry(id))).toBe(true);
+      expect(liveEventFilter({ id: admin.id, role: 'admin' })(entry(id))).toBe(true);
+    }
   });
 });

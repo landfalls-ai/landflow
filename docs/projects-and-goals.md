@@ -127,6 +127,10 @@ Agent and run it from its workflows, but cannot change, delete, share or read th
 - **Sessions stay at home.** The agent's sessions and each session are read only by members of its home project (and
   owners and admins). Others get 404 "Agent not found". A session keeps the brief of the project it ran for, so this
   keeps one project's brief from another project that only uses the agent.
+- **The live feed too.** `/api/events` sends an agent's `entry` and `run.finished` events (the session itself) only to
+  members of its home project and to owners and admins.
+- **Still readable by a user project.** Because a share gives `read`, a project that only uses the agent can still list
+  the file names of its knowledge base and save it as a template. Its secrets and sessions stay hidden.
 - **Evaluations stay at home too.** The online evaluation scores and the eval gate carry session inputs and outputs, so
   they are home-only (404 for others); the Run an Agent and tool pickers scope to the agent's home project only for
   its home members.

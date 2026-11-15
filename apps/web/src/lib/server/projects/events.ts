@@ -4,7 +4,7 @@
  * since streaming runs send many events.
  */
 import type { BusEvent } from '../bus';
-import { canResource, isInstanceAdmin, type Actor } from './access';
+import { canResource, isInstanceAdmin, resourceAccess, type Actor } from './access';
 
 const TTL_MS = 5_000;
 
@@ -15,7 +15,8 @@ export function liveEventFilter(actor: Actor): (event: BusEvent) => boolean {
     const key = `${kind}:${id}`;
     const hit = cache.get(key);
     if (hit && Date.now() - hit.at < TTL_MS) return hit.ok;
-    const ok = canResource(actor, kind, id, 'read');
+    // Agent events carry sessions (entries, replies): only home members see them, not projects that only use the agent.
+    const ok = kind === 'agent' ? Boolean(resourceAccess(actor, 'agent', id)?.home) : canResource(actor, kind, id, 'read');
     cache.set(key, { ok, at: Date.now() });
     return ok;
   };

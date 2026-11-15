@@ -60,6 +60,8 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - There is no wall at run time. Availability (home, shared projects, All projects) decides what pickers list and what
   the test chat accepts, but a saved workflow that runs another project's agent keeps working, and an API call to an
   agent by id is not stopped by it. This is decision 6 of the Paperclip plan.
+- A member of a project that only uses an agent gets 404 from the Run an Agent session panel on their own execution
+  (`GET /api/agents/:id/sessions?executionId=`). Per-project session reads are deferred to PC13.
 - A session stores the block it was given (`session.context`). Members of a project that only uses the agent (a share
   or All projects) cannot read its sessions: they get 404. Members of the home project still see the briefs of the
   other projects the agent ran in. Per-project session walls come in a later package (PC13).
