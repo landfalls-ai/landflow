@@ -21,7 +21,6 @@ import { searchTerms } from '../rag/search';
 import { instanceTimezone } from '../settings';
 import { store } from '../store';
 import { percentile } from '../usage/query';
-import { SLACK_CREDENTIAL_TYPES } from '../slack';
 import { overlapFindings } from './overlap';
 import type { NewProposal } from './proposals';
 import { fingerprintOf } from './proposals';
@@ -794,9 +793,7 @@ export function noSafetyNet(ctx: DetectContext): Finding[] {
 
 /** Two people whose shared work of the last 3 days is about the same thing, introduced once in 14 days (./overlap.ts). */
 export function workOverlap(ctx: DetectContext): Finding[] {
-  // The Slack direct message goes out only when the instance has exactly one Slack credential to send it from.
-  const slacks = credentials.list().filter((c) => (SLACK_CREDENTIAL_TYPES as readonly string[]).includes(c.type));
-  const mirror = slacks.length === 1 ? { slack: { credential: { id: slacks[0].id, name: slacks[0].name }, messages: [] } } : {};
+  // Inbox only: no Slack message is sent on its own (a mirror needs a credential someone chose).
   return overlapFindings(ctx.db, ctx.now, ctx.quiet('work-overlap')).map(({ overlap, title, why, evidence, audience }) => ({
     proposal: {
       ...base('work-overlap', overlap.pair.join('|'), { type: 'instance', name: 'Work overlap' }, {
@@ -809,7 +806,6 @@ export function workOverlap(ctx: DetectContext): Finding[] {
         impact: 2,
       }),
       audience,
-      ...mirror,
     },
   }));
 }

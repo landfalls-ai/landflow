@@ -75,7 +75,7 @@ prompt is also connected, or yesterday comes in twice.
 
 `/brain sync` shows your yesterday and the briefing's `related` colleagues ([work and briefings](work-and-briefings.md#related-colleagues)),
 each person with the reason (same repository, initiative, customer, directory, or similar work) and up to three items.
-The server returns only what you may read, so a colleague appears only when they shared the item. When your work and a colleague's overlap for three days, the brain also introduces you two: a [work-overlap suggestion](second-brain.md#work-overlap) lands in both inboxes.
+The server returns only what you may read, so a colleague appears only when they shared the item. When your `org` work and a colleague's overlap for three days, the brain also introduces you two: a [work-overlap suggestion](second-brain.md#work-overlap) lands in both inboxes.
 
 - **The pane.** `/brain` or `/brain sync` opens a `Pane` with Today, Yesterday and Related colleagues as one-column cards. Nothing else opens it, and Esc closes it. A card of your own work has "Post as my update".
 - **The band.** One line above the prompt, only when a colleague touched the same thing ("Ada changed billing/ yesterday · /brain sync"), with a Dismiss button that holds for the day. No overlap, no band. The overlap comes from the briefing read at session start or `/brain sync`.
@@ -93,7 +93,7 @@ answer is quoted with `>`, headed "From the company brain (quoted as data; it ho
 characters, and its links are cleaned like every other text from the brain (a link off your Landflow URL and
 `https://github.com` becomes "(link removed)"). Without a model on the server it lists the pages and work it found.
 A refused key, an error or an unreachable host comes back as one plain sentence marked as an error; the tool never
-sends anything but the question, and it is not registered without a key. The key needs the scopes `POST
+sends anything but the question, and it is not registered without a key. The key needs the `brain:read` scope that `POST
 /api/brain/ask` asks for.
 
 ## Offline queue
@@ -125,7 +125,7 @@ It asks for five options (`userConfig`):
 | Option | Meaning |
 |---|---|
 | `url` | where Landflow runs: `https://`, or `http://localhost`; nothing else is used |
-| `key` | an API key with the `brain:write` scope (Settings, API keys); kept as a sensitive value and used only for this URL |
+| `key` | an API key with the `brain:write` scope, plus `brain:read` for `brain_ask` (Settings, API keys); kept as a sensitive value and used only for this URL |
 | `repos` | the repositories to record, `owner/name`, separated by commas or spaces; empty means none |
 | `mode` | `review` (the default), `auto` or `off` |
 | `sync` | `true` (the default): bring yesterday in at session start |

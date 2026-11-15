@@ -1,16 +1,17 @@
 /**
  * The work-overlap detector (docs/second-brain.md#work-overlap): two people whose shared work of the last three days
  * is about the same thing get one introduction, a suggestion addressed to both. The ranking is pure (`rankOverlaps`);
- * `overlapFindings` makes the one query. Only `team` and `org` work is read, never a private item; and the suggestion
- * carries only the titles the other person may open (an `org` item, or a `team` item of someone who shares a project
- * with them), because both people read the same card.
+ * `overlapFindings` makes the one query. Only `org` work is read: never a private item, and not a `team` one, because the
+ * card's target is the instance and so instance admins can open it, and a `team` title is for the owner's project mates
+ * only (a card only its audience reads would let team work in; scope.ts `canProposal` would have to refuse the rest).
+ * Both people read the same card, so it carries only titles anyone may open. No Slack message is sent on its own.
  */
 import type { ProposalEvidence } from '../../shared/brain';
 import type { WorkItem } from '../../shared/brain-work';
 import { getUser } from '../auth/users';
 import type { Database } from '../db';
-import type { UsageRow } from '../usage/ledger';
-import { becauseOf, textOverlap, SIMILAR_MIN_SCORE, itemOf, overlappable, type Overlappable } from './related';
+import { fromRow, type UsageRow } from '../usage/ledger';
+import { textOverlap, SIMILAR_MIN_SCORE, itemOf, overlappable, type Overlappable } from './related';
 import { fingerprintOf } from './proposals';
 
 const DAY_MS = 86_400_000;
@@ -44,23 +45,32 @@ export function mayOpen(viewer: string, item: OwnedItem, teammates: ReadonlyMap<
   return item.item.visibility === 'team' && Boolean(teammates.get(viewer)?.has(item.ownerId));
 }
 
-/** What two sets of items share beyond one repository: an initiative, a customer, an area of the same repository, or similar words. */
+/**
+ * What two sets of items share: an initiative, a customer, a directory of the same repository, or similar words. A bare
+ * directory name across different repositories (or with no repository) is no lead, so `becauseOf`'s own `repo` and
+ * `area` answers are not used.
+ */
 export function sharedThing(a: OwnedItem[], b: OwnedItem[]): Overlap['thing'] | undefined {
-  const mine = a.map((i) => ({ item: i.item, initiative: i.initiative, customer: i.customer }));
+  const norm = (value: string | undefined) => value?.trim().toLowerCase() || undefined;
+  const common = (pick: (o: OwnedItem) => string | undefined) => {
+    const mine = new Set(a.map((o) => norm(pick(o))).filter(Boolean));
+    return b.map(pick).find((value) => norm(value) && mine.has(norm(value)));
+  };
+  const initiative = common((o) => o.initiative);
+  if (initiative) return { type: 'initiative', name: initiative };
+  const customer = common((o) => o.customer);
+  if (customer) return { type: 'customer', name: customer };
   for (const theirs of b) {
-    const because = becauseOf(mine, theirs);
-    if (because && because.type !== 'repo') return { type: because.type, name: because.name };
-    // The same repository counts when the directories also meet (becauseOf names the repository first).
-    const repo = theirs.item.repo?.toLowerCase();
-    if (repo) {
-      const own = a.filter((m) => m.item.repo?.toLowerCase() === repo);
-      if (own.length) {
-        const same = (theirs.item.areas ?? []).find((area) => own.some((m) => (m.item.areas ?? []).some((x) => x.toLowerCase() === area.toLowerCase())));
-        if (same) return { type: 'area', name: `${theirs.item.repo}/${same}` };
-      }
-    }
-    const similar = a.find((m) => m.item.summary && theirs.item.summary && textOverlap(`${m.item.title} ${m.item.summary}`, `${theirs.item.title} ${theirs.item.summary}`) >= SIMILAR_MIN_SCORE);
-    if (similar) return { type: 'similar', name: theirs.item.title };
+    const repo = norm(theirs.item.repo);
+    if (!repo) continue;
+    const own = a.filter((m) => norm(m.item.repo) === repo);
+    const same = (theirs.item.areas ?? []).find((area) => own.some((m) => (m.item.areas ?? []).some((x) => x.toLowerCase() === area.toLowerCase())));
+    if (same) return { type: 'area', name: `${theirs.item.repo}/${same}` };
+  }
+  for (const theirs of b) {
+    if (!theirs.item.summary) continue;
+    const text = (o: OwnedItem) => `${o.item.title} ${o.item.summary}`;
+    if (a.some((m) => m.item.summary && textOverlap(text(m), text(theirs)) >= SIMILAR_MIN_SCORE)) return { type: 'similar', name: theirs.item.title };
   }
   return undefined;
 }
@@ -71,8 +81,9 @@ export function sharedThing(a: OwnedItem[], b: OwnedItem[]): Overlap['thing'] | 
  */
 export function rankOverlaps(items: OwnedItem[], teammates: ReadonlyMap<string, ReadonlySet<string>>, skip: (a: string, b: string) => boolean = () => false): Overlap[] {
   const byOwner = new Map<string, OwnedItem[]>();
-  // Private work is never read here; a stray one is dropped as well.
-  for (const item of items) if (item.item.visibility !== 'private') byOwner.set(item.ownerId, [...(byOwner.get(item.ownerId) ?? []), item]);
+  // Only `org` work: the card is readable by instance admins (its target is the instance), who may not open a `team`
+  // item of a project they are outside, and private work is never read. Team work waits for a card only its audience reads.
+  for (const item of items) if (item.item.visibility === 'org') byOwner.set(item.ownerId, [...(byOwner.get(item.ownerId) ?? []), item]);
   const owners = [...byOwner.keys()].sort();
   const out: Overlap[] = [];
   for (let i = 0; i < owners.length; i++) {
@@ -106,13 +117,18 @@ export function teammatesOf(db: Database): Map<string, Set<string>> {
 /** The fingerprint of one pair: the same two people share it whatever the thing, so one introduction covers a fortnight. */
 export const pairFingerprint = (a: string, b: string) => fingerprintOf('work-overlap', ...[a, b].sort());
 
-/** `team` and `org` work of the last `OVERLAP_DAYS` days, newest first. Private work is not selected. */
+/** `org` work of the last `OVERLAP_DAYS` days, newest first. Private and team work is not selected. */
 function sharedRows(db: Database, now: number): UsageRow[] {
   return db.all<UsageRow>(
-    `SELECT * FROM usage_events WHERE kind LIKE 'work.%' AND source_id IS NOT NULL AND owner_id IS NOT NULL AND visibility IN ('team', 'org') AND at >= ? ORDER BY at DESC LIMIT ${MAX_ROWS}`,
+    `SELECT * FROM usage_events WHERE kind LIKE 'work.%' AND source_id IS NOT NULL AND owner_id IS NOT NULL AND visibility = 'org' AND at >= ? ORDER BY at DESC LIMIT ${MAX_ROWS}`,
     new Date(now - OVERLAP_DAYS * DAY_MS).toISOString(),
   );
 }
+
+const ofOf = (row: UsageRow): string => {
+  const value = fromRow(row).attrs?.of;
+  return typeof value === 'string' ? value : '';
+};
 
 interface Stored {
   fingerprint: string;
@@ -126,12 +142,18 @@ interface Stored {
 function skipper(db: Database, now: number): (a: string, b: string) => boolean {
   const recent = new Set<string>();
   const muted = new Set<string>();
-  const rows = db.all<Stored & { created_at: string }>("SELECT fingerprint, created_at, data FROM proposals WHERE detector = 'work-overlap'");
+  // Recent ones, and those dismissed as "intended" whatever their age: older rows hold nothing else this needs.
+  const rows = db.all<Stored & { created_at: string }>(
+    `SELECT fingerprint, created_at, data FROM proposals WHERE detector = 'work-overlap' AND (created_at >= ? OR status = 'dismissed')`,
+    new Date(now - INTRODUCED_DAYS * DAY_MS).toISOString(),
+  );
   for (const row of rows) {
     if (Date.parse(row.created_at) >= now - INTRODUCED_DAYS * DAY_MS) recent.add(row.fingerprint);
     try {
-      const p = JSON.parse(row.data) as { status?: string; reason?: string; decision?: { by?: string } };
-      if (p.status === 'dismissed' && p.reason === 'intended' && p.decision?.by) muted.add(p.decision.by);
+      const p = JSON.parse(row.data) as { status?: string; reason?: string; decision?: { by?: string }; audience?: Array<{ userId?: string }> };
+      // Only one of the two people muting counts: a Slack-side decision (`slack:<id>`) or an admin's mutes no one.
+      const by = p.decision?.by;
+      if (p.status === 'dismissed' && p.reason === 'intended' && by && p.audience?.some((m) => m.userId === by)) muted.add(by);
     } catch {
       // A row that does not parse holds nothing.
     }
@@ -144,12 +166,14 @@ const nameOf = (id: string) => {
   return user?.name?.trim() || user?.email || 'A colleague';
 };
 
-const titleOf = (thing: Overlap['thing']) => (thing.type === 'similar' ? `“${thing.name}”` : thing.name);
+const titleOf = (thing: Overlap['thing']) => (thing.type === 'similar' ? 'similar work' : thing.name);
 
 /** The introductions as suggestions' fields, for the detector (detectors.ts). */
 export function overlapFindings(db: Database, now: number, quiet = 1): Array<{ overlap: Overlap; title: string; why: string; evidence: ProposalEvidence[]; audience: Array<{ userId: string; name: string; email?: string }> }> {
   const rows = sharedRows(db, now);
-  const items: OwnedItem[] = rows.map((row) => ({ ...overlappable(row), item: itemOf(row), ownerId: row.owner_id! })).filter((i) => i.item.title);
+  // An item its owner also posted as an update (`work.self_update`, `attrs.of`) is counted once, as the update.
+  const posted = new Set(rows.filter((row) => row.kind === 'work.self_update').map((row) => `${row.owner_id}|${ofOf(row)}`));
+  const items: OwnedItem[] = rows.filter((row) => !posted.has(`${row.owner_id}|${row.source}:${row.source_id}`)).map((row) => ({ ...overlappable(row), item: itemOf(row), ownerId: row.owner_id! })).filter((i) => i.item.title);
   // A detector people mostly dismiss needs more: each side must show `quiet` items (rounded up) before it speaks.
   const min = Math.ceil(quiet);
   return rankOverlaps(items, teammatesOf(db), skipper(db, now)).filter((o) => o.pair.every((id) => o.items[id].length >= min)).map((overlap) => {

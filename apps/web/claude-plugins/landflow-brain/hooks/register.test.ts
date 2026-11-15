@@ -584,6 +584,13 @@ test('brain_ask is registered with a key, and calls the route with it and quotes
   expect(answered.result.content).not.toContain('evil.example')
 })
 
+test('brain_ask keeps an answer\'s paragraphs apart, each quoted', { options: OPTIONS }, async ($, on) => {
+  world(on, { askBody: { answer: 'First part.\n\nSecond part.', pages: [], facts: [], work: [] } })
+  await $.session.start({ cwd: '/work/widgets', surface: 'terminal', isInteractive: true })
+  const answered = (await $.tool.call({ tool: 'mcp__landflow-brain__brain_ask', question: 'x' } as never)) as unknown as { result: { content: string } }
+  expect(answered.result.content).toMatch(/\n> First part\.\n> Second part\.$/)
+})
+
 test('brain_ask says plainly when the brain refuses, and is not registered without a key', { options: OPTIONS }, async ($, on) => {
   const { tools } = world(on, { askStatus: 401 })
   await $.session.start({ cwd: '/work/widgets', surface: 'terminal', isInteractive: true })
