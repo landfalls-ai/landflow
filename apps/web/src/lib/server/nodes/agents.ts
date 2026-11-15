@@ -7,6 +7,7 @@
 import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type NodeItem, type StreamChunk } from '@landflow/sdk';
 import type { AgentMemory, AgentTool, LanguageModel } from '@landflow/engine';
 import type { AgentStreamEvent } from '../../shared/agents';
+import { agentAllowedBy } from '../../shared/project-policy';
 
 const main = [{ type: 'main' as const }];
 
@@ -280,8 +281,12 @@ export const messageAgentNode = defineNode({
         const projectId = tableScope()?.projectId;
         const all = agentStore.list();
         const available = projectId ? projects.availableAgentIds(projectId, all.map((a) => a.id)) : undefined;
+        // PC13: and allowed there (the project's allow-list of agents).
+        const { getProjectSettings } = await import('../governance/scopes');
+        const settings = projectId ? getProjectSettings(projectId) : undefined;
         return all
           .filter((agent) => !available || available.has(agent.id))
+          .filter((agent) => !settings || !projectId || agentAllowedBy(settings, agent.id, projects.homeProjectId('agent', agent.id) === projectId))
           .map((agent) => {
             const state = agent.published ? `Published v${agent.published.version}` : 'Not published yet';
             const home = projectId ? projects.homeProjectId('agent', agent.id) : undefined;

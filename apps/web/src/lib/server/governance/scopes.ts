@@ -17,6 +17,8 @@ import { z } from 'zod';
 import {
   DEFAULT_PROJECT_SETTINGS,
   DEFAULT_WORKFLOW_POLICY,
+  PROJECT_KNOWLEDGE_TOOL,
+  PROJECT_TOOL_KINDS,
   type ProjectSettings,
   type ScopedNodePolicy,
   type WorkflowPolicy,
@@ -29,6 +31,53 @@ import { singleton } from '../singleton';
 const pattern = z.string().trim().min(1).max(300);
 const list = z.array(pattern).max(500);
 
+// PC13: the settings for the agents that run in the project.
+const credentialRef = z.object({ id: z.string().min(1).max(200), name: z.string().max(300) });
+const agentModelSchema = z.strictObject({
+  provider: z.enum(['anthropic', 'openai', 'ollama']),
+  model: z.string().trim().min(1).max(200),
+  credential: credentialRef.optional(),
+  baseUrl: z.string().trim().max(500).optional(),
+  temperature: z.number().min(0).max(2).optional(),
+});
+const knowledgeBase = {
+  id: z.string().max(200).optional(),
+  type: z.literal('knowledge'),
+  name: z.string().trim().min(1).max(200),
+  description: z.string().max(2_000).default(''),
+  requireApproval: z.boolean().optional(),
+};
+/** An agent knowledge base's config (agents/tools.ts builds the tool from it): a vector collection or a plugin node. */
+export const knowledgeToolSchema = z.union([
+  z.object({
+    ...knowledgeBase,
+    source: z.literal('node'),
+    nodeType: z.string().trim().min(1).max(300),
+    parameters: z.record(z.string(), z.unknown()).default({}),
+    queryParameter: z.string().max(200).optional(),
+    credentials: z.record(z.string(), credentialRef).optional(),
+  }),
+  z.object({
+    ...knowledgeBase,
+    source: z.literal('vector').optional(),
+    store: z.enum(['memory', 'sqlite', 'pgvector']),
+    collection: z.string().trim().min(1).max(300),
+    credential: credentialRef.optional(),
+    tableName: z.string().max(200).optional(),
+    embeddings: z.object({
+      provider: z.enum(['ollama', 'openai']),
+      model: z.string().trim().min(1).max(200),
+      baseUrl: z.string().max(500).optional(),
+      credential: credentialRef.optional(),
+      queryPrefix: z.string().max(200).optional(),
+      dimensions: z.number().int().min(1).max(100_000).optional(),
+    }),
+    topK: z.number().int().min(1).max(100).optional(),
+    searchMode: z.enum(['vector', 'hybrid']).optional(),
+  }),
+]);
+const agentIdList = z.array(z.string().trim().min(1).max(200)).max(200);
+
 export const scopedNodePolicySchema = z.strictObject({ mode: z.enum(['off', 'allow']), plugins: list, types: list });
 
 export const projectSettingsPatchSchema = z.strictObject({
@@ -36,6 +85,10 @@ export const projectSettingsPatchSchema = z.strictObject({
   approvers: z.enum(['default', 'admins', 'editors', 'instance']).optional(),
   fourEyes: z.boolean().optional(),
   brainPayloads: z.boolean().optional(),
+  defaultModel: agentModelSchema.nullable().optional(),
+  knowledge: z.strictObject({ enabled: z.boolean(), tool: knowledgeToolSchema }).nullable().optional(),
+  agents: z.strictObject({ mode: z.enum(['off', 'allow']), ids: agentIdList }).optional(),
+  agentTools: z.strictObject({ mode: z.enum(['off', 'allow']), kinds: z.array(z.enum(PROJECT_TOOL_KINDS)).max(PROJECT_TOOL_KINDS.length) }).optional(),
 });
 
 export const workflowPolicyPatchSchema = z.strictObject({
@@ -88,6 +141,20 @@ function readRow(table: 'project_settings' | 'workflow_policies', column: 'proje
   }
 }
 
+/** PC13: the agent fields of a saved row; a broken value reads as absent. */
+function agentSettings(saved: Partial<Record<'defaultModel' | 'knowledge' | 'agents' | 'agentTools', unknown>> | undefined): Partial<ProjectSettings> {
+  const out: Partial<ProjectSettings> = {};
+  const model = agentModelSchema.safeParse(saved?.defaultModel);
+  if (model.success) out.defaultModel = model.data;
+  const knowledge = z.strictObject({ enabled: z.boolean(), tool: knowledgeToolSchema }).safeParse(saved?.knowledge);
+  if (knowledge.success) out.knowledge = { enabled: knowledge.data.enabled, tool: { ...knowledge.data.tool, id: PROJECT_KNOWLEDGE_TOOL } as NonNullable<ProjectSettings['knowledge']>['tool'] };
+  const agents = z.strictObject({ mode: z.enum(['off', 'allow']), ids: agentIdList }).safeParse(saved?.agents);
+  if (agents.success) out.agents = { mode: agents.data.mode, ids: tidy(agents.data.ids) };
+  const tools = projectSettingsPatchSchema.shape.agentTools.safeParse(saved?.agentTools);
+  if (tools.success && tools.data) out.agentTools = { mode: tools.data.mode, kinds: [...new Set(tools.data.kinds)] };
+  return out;
+}
+
 // ---- project settings -----------------------------------------------------------------------------------------
 
 /** A project's settings (defaults: no allow-list, the instance's approvers). */
@@ -103,6 +170,7 @@ export function getProjectSettings(projectId: string | undefined): ProjectSettin
     approvers: (approvers.success && approvers.data) || 'default',
     fourEyes: saved?.fourEyes === true,
     ...(saved?.brainPayloads === true && { brainPayloads: true }),
+    ...agentSettings(saved),
     ...(typeof saved?.updatedAt === 'string' && { updatedAt: saved.updatedAt }),
     ...(typeof saved?.updatedBy === 'string' && { updatedBy: saved.updatedBy }),
   };
@@ -118,6 +186,12 @@ export function updateProjectSettings(projectId: string, patch: z.infer<typeof p
     approvers: patch.approvers ?? current.approvers,
     fourEyes: patch.fourEyes ?? current.fourEyes,
     ...((patch.brainPayloads ?? current.brainPayloads) && { brainPayloads: true }),
+    ...agentSettings({
+      defaultModel: patch.defaultModel === undefined ? current.defaultModel : (patch.defaultModel ?? undefined),
+      knowledge: patch.knowledge === undefined ? current.knowledge : (patch.knowledge ?? undefined),
+      agents: patch.agents ?? current.agents,
+      agentTools: patch.agentTools ?? current.agentTools,
+    }),
     updatedAt: now,
     ...(by && { updatedBy: by }),
   };

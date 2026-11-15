@@ -123,6 +123,7 @@ function summarizeSession(session: AgentSession): SessionSummary {
     ...(session.traceIds.length && { traceId: session.traceIds.at(-1) }),
     ...(session.parentSessionId && { parentSessionId: session.parentSessionId }),
     ...(session.execution && { execution: session.execution }),
+    ...(session.context?.projectId && { projectId: session.context.projectId }),
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
   };
@@ -138,6 +139,10 @@ export const audienceSources = (audience?: SessionAudience): readonly SessionSou
 export interface SessionFilter {
   sources?: readonly SessionSource[];
   userId?: string;
+  /** PC13: only sessions of these projects (the caller's; undefined: all). A summary without a project counts as `homeProjectId`. */
+  projectIds?: ReadonlySet<string>;
+  /** PC13: the agent's home project now, for summaries saved without a project. */
+  homeProjectId?: string;
   cursor?: Cursor;
 }
 
@@ -146,6 +151,7 @@ function sessionMatches(s: SessionSummary, filter?: SessionFilter): boolean {
   if (!filter) return true;
   if (filter.sources && !filter.sources.includes(s.source)) return false;
   if (filter.userId && s.userId !== filter.userId) return false;
+  if (filter.projectIds && !filter.projectIds.has(s.projectId ?? filter.homeProjectId ?? '')) return false;
   const after = filter.cursor;
   return !after || s.updatedAt < after.s || (s.updatedAt === after.s && s.id < after.i);
 }
@@ -362,14 +368,19 @@ class DatabaseAgents implements AgentBackend {
     // Without a filter the database cuts the list; with one, the summaries are read newest first and cut here.
     const after = filter?.cursor;
     const rows = this.sql.all<{ summary: string }>(
-      `SELECT summary FROM agent_sessions WHERE agent_id = ?${after ? ' AND (updated_at < ? OR (updated_at = ? AND id < ?))' : ''} ORDER BY updated_at DESC, id DESC${filter?.sources || filter?.userId ? '' : ' LIMIT ?'}`,
-      ...[agentId, ...(after ? [after.s, after.s, after.i] : []), ...(filter?.sources || filter?.userId ? [] : [cap])],
+      `SELECT summary FROM agent_sessions WHERE agent_id = ?${after ? ' AND (updated_at < ? OR (updated_at = ? AND id < ?))' : ''} ORDER BY updated_at DESC, id DESC${filter?.sources || filter?.userId || filter?.projectIds ? '' : ' LIMIT ?'}`,
+      ...[agentId, ...(after ? [after.s, after.s, after.i] : []), ...(filter?.sources || filter?.userId || filter?.projectIds ? [] : [cap])],
     );
     const out: SessionSummary[] = [];
     for (const row of rows) {
       const summary = parsed<SessionSummary>(row.summary);
       if (!summary) continue;
       const settled = settleStale(summary);
+      // PC13: a summary saved before it carried its project: read it from the session itself, so an old session of another project never counts as the agent's home.
+      if (filter?.projectIds && settled.projectId === undefined) {
+        const projectId = this.getSession(settled.id)?.context?.projectId;
+        if (projectId) settled.projectId = projectId;
+      }
       if (!sessionMatches(settled, filter)) continue;
       out.push(settled);
       if (out.length >= cap) break;

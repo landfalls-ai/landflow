@@ -128,7 +128,7 @@ span also shows **Project** and **Goal** chips. The page is [run-trace.md](run-t
 
 An agent has one home project, and the home decides who edits it. It can also be **available** elsewhere: shared with
 chosen projects, or with **All projects** in one click. A project that only uses an agent can pick it in Run an
-Agent and run it from its workflows, but cannot change, delete, share or read the sessions of it.
+Agent and run it from its workflows, but cannot change, delete or share it, and reads only the sessions of its own project ([below](#sessions-belong-to-a-project)).
 
 - **Sharing.** `GET|PUT /api/agents/:id/shares` (admins of the home project, owners and admins may change them). The
   answer has `availability` (`home`, `all`, and the projects the caller has a role in) and `shares`. The "All projects"
@@ -138,17 +138,15 @@ Agent and run it from its workflows, but cannot change, delete, share or read th
   "From <home project>". Without a project, everything is listed as before.
 - **Test in project.** The test chat with a `projectId` the agent is not available in answers 403 "This agent isn't
   available in that project".
-- **Sessions stay at home.** The agent's sessions and each session are read only by members of its home project (and
-  owners and admins). Others get 404 "Agent not found". A session keeps the brief of the project it ran for, so this
-  keeps one project's brief from another project that only uses the agent. Continuing a session by `sessionId` in the test
-  chat is the same read: a member who only uses the agent starts new sessions and gets 404 for an existing one.
+- **Sessions stay in their project.** See [Sessions belong to a project](#sessions-belong-to-a-project): sharing an agent never shares its sessions.
 - **The live feed too.** `/api/events` sends an agent's `entry` and `run.finished` events (the session itself) only to
-  members of its home project and to owners and admins.
+  members of the project the session ran in who can read the agent, and to owners and admins.
 - **Still readable by a user project.** Because a share gives `read`, a project that only uses the agent can still list
   the file names of its knowledge base and save it as a template. Its secrets and sessions stay hidden.
 - **Evaluations stay at home too.** The online evaluation scores and the eval gate carry session inputs and outputs, so
-  they are home-only (404 for others); the Run an Agent and tool pickers scope to the agent's home project only for
-  its home members.
+  they are home-only (404 for others), and a home member's list of scores holds only the graded replies of sessions they
+  may read (the totals and the trend stay the agent's own counts); the Run an Agent and tool pickers scope to the agent's
+  home project only for its home members.
 - **All projects replaces single shares.** Turning **All projects** on drops the single-project rows; turning it off
   later leaves the agent home-only. `availability.projects` lists only projects the caller has a role in, so build a
   `PUT` from `shares`, not from it.
@@ -224,6 +222,59 @@ A workflow or a team can name the goal it serves; with none, it works for its pr
   free text, what the team is for; **Project goal** picks one of the goals in the tree. It saves the team's `goalId`.
 
 Both use the same picker as the goal dialog and the project brief. The team's member picker is in [agent-teams.md](agent-teams.md#picking-members).
+
+## Project settings for agents
+
+A project can set four things for the agents that run in it, next to its allowed nodes, approvers and four-eyes
+(`GET|PATCH /api/projects/:id/settings`, the project's admins). Each is off by default, each only narrows or fills a
+gap, and with none set a run, its prompt, its tools and its cache keys are what they were. The screen for them is the
+project page's **Agents in this project** card; the fields and answers are in [the API](reference/api.md).
+
+- **Default model.** An agent that runs in the project and has no model of its own uses this one. The order is: the
+  workflow node's model (Run an Agent), the model router's cheap model when it sends the run there, the agent's own
+  model, then the project's default. With none of them the run fails as before ("Choose a model for this agent first").
+  The Run Trace names the model that answered. A credential in it must be usable in the project and of the provider's
+  type.
+- **Knowledge base.** One knowledge base (a vector collection or a plugin's) every agent in the project can search, as the
+  tool `project_knowledge` ("Project knowledge" in the timeline). It is added after the kinds are filtered, so the list
+  of kinds never withholds it, and a broken one (a plugin node that is gone) is a "Tool unavailable" notice, not a failed
+  run. Its credentials must be usable in the project. The collection name is global, as an agent's own is.
+- **Allowed agents.** With **Only these**, an agent runs in the project only if it is the project's own (always) or on the
+  list; the list holds only agents available in the project. An agent that isn't allowed fails its run with "“Writer”
+  isn't allowed in project “Payments” (Project settings → Agents)", with no model call. Run an Agent nodes, team
+  members and sub-agents all reach the same check, so a sub-agent that isn't allowed is a failed tool call. The pickers
+  (Run an Agent, `GET /api/agents?availableIn=`) list only agents that are available **and** allowed; the Agents page
+  lists everything.
+- **Allowed tool kinds.** With **Only these**, an agent in the project gets only tools of the listed kinds: nodes, MCP
+  servers, knowledge bases, workflows, sub-agents, A2A agents. A withheld tool shows as a notice "Tool access: <tool>
+  withheld by project “P” settings". Skills, memory, a team's notebook and consult tools, the project's own knowledge
+  base and the tools connected to a Run an Agent node (already under the node allow-list) are never withheld.
+
+The run reads the settings once, when it starts (they are cached for a second). Each level narrows: instance, project,
+workflow, and now agents ([governance](features/audit-and-governance.md)). A2A and kagent agents run elsewhere, so the
+allow-lists do not cover them.
+
+## Sessions belong to a project
+
+A session is read and continued only from the project it ran in; sharing an agent never shares its sessions. A
+session's project is the one its run resolved (the caller's, the workflow's, the team's or the agent's home), saved as
+`projectId` in its summary. A session with no project (one saved before wave 7) follows the agent's home now: move the
+agent and those sessions move with it, while a session with a project stays where it ran.
+
+- **Who reads a session:** instance owners and admins; anyone who can read the run that started it (so a member of a
+  project that only uses the agent opens the Run an Agent panel of their own run); anyone with a role in the session's
+  project who can also read the agent. A home member with no role in project B no longer reads the sessions, ratings
+  or graded replies the agent had in B. A session of a deleted project is read by owners and admins only.
+- **Who continues one** (a message, an approval, a rating or comment, a delete): who reads it and is an editor or admin
+  in its project (owners and admins always), on top of the route's guard (`run` on the agent). Others get 404
+  "Session not found".
+- **The list.** `GET /api/agents/:id/sessions` answers 200 with only the sessions the caller may read; the store cuts by
+  project before the page, so a page is full. `?executionId=` answers with that run's sessions for whoever can read the
+  run, and 404 otherwise.
+- **The test chat** keeps a session in its project: a `projectId` that is not the session's answers 409 "This session
+  belongs to project “P”: start a new session there".
+- **Live and evaluations.** The live feed sends a session's events to members of its project; a list of an agent's
+  ratings and the online evaluation scores keep only those of sessions the viewer may read.
 
 ## How it is built
 

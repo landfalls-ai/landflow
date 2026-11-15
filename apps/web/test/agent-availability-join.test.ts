@@ -155,8 +155,11 @@ describe('the walls the screens rely on', () => {
     expect(names.NOT_AVAILABLE_MESSAGE.replace('’', "'")).toBe(denied.body.error.replace('’', "'"));
   });
 
-  it('a shared-only member gets 404 on the agent’s sessions; a home member reads them', async () => {
-    expect((await call(agentSessionsRoute.GET, `/api/agents/${ids.writer}/sessions`, 'GET', cat, undefined, { id: ids.writer })).status).toBe(404);
+  it('a shared-only member lists none of the agent’s home sessions and gets 404 on one; a home member reads them', async () => {
+    // PC13: the list is 200 and empty of the home project's sessions; the session itself is still 404.
+    const shared = await call(agentSessionsRoute.GET, `/api/agents/${ids.writer}/sessions`, 'GET', cat, undefined, { id: ids.writer });
+    expect(shared.status).toBe(200);
+    expect(shared.body.sessions).toEqual([]);
     expect((await call(agentSessionRoute.GET, `/api/agents/${ids.writer}/sessions/${ids.session}`, 'GET', cat, undefined, { id: ids.writer, sid: ids.session })).status).toBe(404);
     const home = await call(agentSessionsRoute.GET, `/api/agents/${ids.writer}/sessions`, 'GET', ann, undefined, { id: ids.writer });
     expect(home.status).toBe(200);

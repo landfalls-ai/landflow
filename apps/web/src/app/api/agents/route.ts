@@ -7,7 +7,9 @@ import { agentTemplateAccess, agentTemplates, configFromTemplate } from '@/lib/s
 import { marketplaceStore } from '@/lib/server/marketplace/store';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { projectRole, withOwnership } from '@/lib/server/projects';
-import { getProject } from '@/lib/server/projects/store';
+import { getProject, homeProjectId } from '@/lib/server/projects/store';
+import { getProjectSettings } from '@/lib/server/governance/scopes';
+import { agentAllowedBy } from '@/lib/shared/project-policy';
 import { createInProject, projectParam, routeActor } from '@/lib/server/projects/http';
 
 export const dynamic = 'force-dynamic';
@@ -23,7 +25,10 @@ export const GET = handler(async (request: Request) => {
   const availableIn = new URL(request.url).searchParams.get('availableIn');
   if (availableIn) {
     if (!getProject(availableIn) || !projectRole(routeActor(), availableIn)) return error('Project not found', 404);
-    return json({ agents: withOwnership(routeActor(), 'agent', summaries, availableIn) });
+    // PC13: and the project's allow-list of agents, when it has one.
+    const settings = getProjectSettings(availableIn);
+    const listed = withOwnership(routeActor(), 'agent', summaries, availableIn);
+    return json({ agents: settings.agents?.mode === 'allow' ? listed.filter((a) => agentAllowedBy(settings, a.id, homeProjectId('agent', a.id) === availableIn)) : listed });
   }
   return json({ agents: withOwnership(routeActor(), 'agent', summaries, projectParam(request)) });
 });

@@ -9,7 +9,8 @@ import { logger } from './telemetry';
 export type BusEvent =
   | { channel: 'registry'; event: RegistryEvent }
   | { channel: 'execution'; workflowId: string; event: ExecutionEvent }
-  | { channel: 'agent'; agentId: string; event: AgentStreamEvent }
+  /** `projectId` (PC13): the project the session ran in; the live feed shows the event only to that project's members. */
+  | { channel: 'agent'; agentId: string; projectId?: string; event: AgentStreamEvent }
   /** New entries of an execution's journal (Run Trace, lib/server/journal), in seq order, batched about twice a second. */
   | {
       channel: 'journal';
