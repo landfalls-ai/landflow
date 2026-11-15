@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
 function view() {
   const settings = getSettings();
   // Counted in SQL: the page no longer reads every stored summary to show two numbers.
-  return { settings, jsonRender: jsonRenderOn(), hostTimezone: hostTimeZone(), executions: retentionCounts(settings.executions) };
+  return { settings, company: settings.company ?? {}, jsonRender: jsonRenderOn(), hostTimezone: hostTimeZone(), executions: retentionCounts(settings.executions) };
 }
 
 export const GET = handler(async () => json(view()));

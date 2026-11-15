@@ -22,10 +22,31 @@ export interface ProjectRecord {
   ownerId?: string;
   description?: string;
   icon?: string;
+  /** The brief (docs/projects-and-goals.md#the-brief): set through `updateProjectBrief`, kept by a rename. */
+  brief?: string;
+  briefConstraints?: string;
+  doneWhen?: string;
+  glossary?: string;
+  status?: string;
+  targetDate?: string;
+  leadId?: string;
+  decisionOwnerId?: string;
   createdAt: string;
   updatedAt: string;
   createdBy?: string;
 }
+
+/** The brief fields of a project record, with the column each is stored in. */
+export const BRIEF_FIELDS = [
+  ['brief', 'brief'],
+  ['constraints', 'briefConstraints'],
+  ['doneWhen', 'doneWhen'],
+  ['glossary', 'glossary'],
+  ['status', 'status'],
+  ['targetDate', 'targetDate'],
+  ['leadId', 'leadId'],
+  ['decisionOwnerId', 'decisionOwnerId'],
+] as const;
 
 export interface MemberRecord {
   projectId: string;
@@ -52,6 +73,14 @@ interface ProjectRow {
   owner_id: string | null;
   description: string | null;
   icon: string | null;
+  brief?: string | null;
+  brief_constraints?: string | null;
+  done_when?: string | null;
+  glossary?: string | null;
+  status?: string | null;
+  target_date?: string | null;
+  lead_id?: string | null;
+  decision_owner_id?: string | null;
   created_at: string;
   updated_at: string;
   created_by: string | null;
@@ -96,6 +125,14 @@ function projectFrom(row: ProjectRow): ProjectRecord {
     ...(row.owner_id && { ownerId: row.owner_id }),
     ...(row.description && { description: row.description }),
     ...(row.icon && { icon: row.icon }),
+    ...(row.brief && { brief: row.brief }),
+    ...(row.brief_constraints && { briefConstraints: row.brief_constraints }),
+    ...(row.done_when && { doneWhen: row.done_when }),
+    ...(row.glossary && { glossary: row.glossary }),
+    ...(row.status && { status: row.status }),
+    ...(row.target_date && { targetDate: row.target_date }),
+    ...(row.lead_id && { leadId: row.lead_id }),
+    ...(row.decision_owner_id && { decisionOwnerId: row.decision_owner_id }),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(row.created_by && { createdBy: row.created_by }),
@@ -110,6 +147,14 @@ function projectRow(project: ProjectRecord) {
     owner_id: project.ownerId ?? null,
     description: project.description ?? null,
     icon: project.icon ?? null,
+    brief: project.brief ?? null,
+    brief_constraints: project.briefConstraints ?? null,
+    done_when: project.doneWhen ?? null,
+    glossary: project.glossary ?? null,
+    status: project.status ?? null,
+    target_date: project.targetDate ?? null,
+    lead_id: project.leadId ?? null,
+    decision_owner_id: project.decisionOwnerId ?? null,
     created_at: project.createdAt,
     updated_at: project.updatedAt,
     created_by: project.createdBy ?? null,
@@ -226,6 +271,33 @@ export function updateProject(id: string, patch: { name?: string; description?: 
     }
   }
   if (Object.keys(details).length) recordAudit({ action: 'project.update', target: { type: 'project', id: id, name: next.name }, project: id, summary: `Changed the project ${next.name} (${Object.keys(details).filter((k) => k.endsWith('From')).map((k) => k.replace('From', '')).join(', ')})`, details });
+  return next;
+}
+
+/**
+ * Set or clear brief fields (`null` clears; a field left out stays). Throws a 400 for a lead or decision owner who has no role in
+ * the project. Audits `project.brief_changed` with each changed field's old and new value.
+ */
+export function updateProjectBrief(id: string, patch: Partial<Record<(typeof BRIEF_FIELDS)[number][0], string | null>>): ProjectRecord {
+  const project = getProject(id);
+  if (!project) throw new ProjectError('Project not found', 404);
+  const next: ProjectRecord = { ...project, updatedAt: new Date().toISOString() };
+  const changes: Record<string, { from: string | null; to: string | null }> = {};
+  for (const [field, key] of BRIEF_FIELDS) {
+    const value = patch[field];
+    if (value === undefined) continue;
+    const clean = value?.trim() || undefined;
+    if ((field === 'leadId' || field === 'decisionOwnerId') && clean && !memberRole(id, clean) && clean !== project.ownerId) {
+      throw new ProjectError(field === 'leadId' ? 'The lead must be a member of the project' : 'The decision owner must be a member of the project');
+    }
+    if (clean === project[key]) continue;
+    changes[field] = { from: project[key] ?? null, to: clean ?? null };
+    if (clean === undefined) delete next[key];
+    else next[key] = clean;
+  }
+  if (!Object.keys(changes).length) return project;
+  db().upsert('projects', projectRow(next));
+  recordAudit({ action: 'project.brief_changed', target: { type: 'project', id, name: next.name }, project: id, summary: `Changed the brief of ${next.name} (${Object.keys(changes).join(', ')})`, details: Object.fromEntries(Object.entries(changes).flatMap(([field, change]) => [[`${field}From`, change.from], [`${field}To`, change.to]])) });
   return next;
 }
 

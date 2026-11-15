@@ -10,6 +10,7 @@
  * `resourceCan` is the one place that says which access allows which action; the server works out the access
  * (`resourceAccess` in lib/server/projects/access.ts) and the client uses the same table to hide what it can't do.
  */
+import type { ProjectBriefView } from './goals';
 
 export const PROJECT_ROLES = ['admin', 'editor', 'viewer'] as const;
 export type ProjectRole = (typeof PROJECT_ROLES)[number];
@@ -117,6 +118,8 @@ export interface ProjectMemberView {
 }
 
 export interface ProjectDetail extends ProjectView {
+  /** The brief and the goals the project serves (docs/projects-and-goals.md). */
+  brief?: ProjectBriefView;
   members: ProjectMemberView[];
 }
 
