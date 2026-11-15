@@ -8,11 +8,12 @@
  * not at all. The hooks only observe: none denies a tool call or changes a result.
  */
 import type { EngineInterface, Register } from 'claude-code'
-import { QUEUE_MAX, VISIBILITIES, backoffMs, callBrain, confirmAndPost, deleteWork, due, emptyQueue, enqueue, getBriefing, keyFingerprint, liftStop, postWork, serverUrl, settle, shareRequest, visibilityRequest, type Briefing, type Config, type OutEvent, type Queue, type WorkVisibility } from './client'
+import { BRIEFING_TIMEOUT_MS, QUEUE_MAX, VISIBILITIES, backoffMs, callBrain, confirmAndPost, deleteWork, due, emptyQueue, enqueue, getBriefing, keyFingerprint, liftStop, postWork, serverUrl, settle, shareRequest, visibilityRequest, type Briefing, type Config, type OutEvent, type Queue, type WorkVisibility } from './client'
 import { addArea, addPrs, areaOf, bandLine, bashFacts, canPost, isAllowed, localDay, newEntry, parseRepos, repoSlug, statusLine, syncText, type Entry, type View } from './journal'
 import { PANE_ID, drawBand, drawPane } from './pane'
 import { titleFrom, toEvent } from './summary'
-import { BRAIN_ASK_FULL, BRAIN_ASK_SPEC, brainAsk, questionOf } from './tools'
+import { LEARN_DEFAULT_PATHS, SECTION_PRACTICES, learnPrompt, practicesInput } from './practices'
+import { BRAIN_ASK_FULL, BRAIN_ASK_SPEC, PRACTICES_FULL, PRACTICES_SPEC, PRACTICE_DRAFT_FULL, PRACTICE_DRAFT_SPEC, brainAsk, practiceDraftTool, practicesApplicable, practicesTool, questionOf } from './tools'
 
 const FLUSH_MS = 60_000
 /** The journal keeps this many entries and this many days. */
@@ -54,6 +55,11 @@ let repoRoot = '/'
 /** Set for the session when the brain is off on the server. */
 let brainOff = false
 let yesterday: string | undefined
+/** The practices section for this session (docs/landflow-brain-mod.md#practices), and the listed repository it is in, in any mode. */
+let practices: string | undefined
+let repoHere: string | undefined
+/** The prompt `/brain learn` submitted: the next prompt.submit with this text is not a turn of the person's. */
+let ownPrompt: string | undefined
 let flushing: Promise<void> | undefined
 /** The sessions whose events are in a POST that has not been settled yet. */
 const inFlight = new Set<string>()
@@ -323,6 +329,43 @@ async function setVisibility($: EngineInterface, entry: Entry, visibility: WorkV
   return status === undefined ? 'the brain could not be reached; nothing changed there.' : `the brain refused it (HTTP ${status}); nothing changed there.`
 }
 
+/** The practices section for the session: within the one 2 s bound, or nothing. Sets `repoHere`. */
+async function practicesSection($: EngineInterface, cfg: Config, gitFacts: Promise<Array<string | undefined>>): Promise<string | undefined> {
+  const run = async () => {
+    const slug = repoSlug((await gitFacts)[0] ?? '')
+    repoHere = isAllowed(repos, slug) ? slug : undefined
+    return practicesApplicable($, cfg, { ...(repoHere && { repo: repoHere }) })
+  }
+  const bound = $.clock.sleep(BRIEFING_TIMEOUT_MS).then(() => undefined)
+  return Promise.race([run().catch(() => undefined), bound])
+}
+
+/** `/brain practices`: what applies here. */
+async function practicesCommand($: EngineInterface): Promise<string> {
+  if (!config) return 'landflow-brain is not set up.'
+  return (await practicesTool($, config, {}, repoHere)).text
+}
+
+/** `/brain learn [paths]`: only in a listed repository; hands Claude a prompt that drafts practices from the checkout. */
+async function learnCommand($: EngineInterface, paths: string[]): Promise<string> {
+  if (!repoHere) return 'Learning reads this checkout, so the repository must be listed: add owner/name to the Repositories option of landflow-brain (and run this inside that repository).'
+  const sha = await gitOut($, ['git', 'rev-parse', 'HEAD'])
+  if (!sha || !/^[0-9a-f]{7,40}$/.test(sha)) return 'Could not read this repository\'s commit (git rev-parse HEAD).'
+  const clean = paths.map(path => path.replace(/^\.?\//, '')).filter(path => path && !path.includes('..') && !path.startsWith('/')).slice(0, 20)
+  const prompt = learnPrompt(repoHere, sha, clean.length ? clean : [...LEARN_DEFAULT_PATHS])
+  ownPrompt = prompt
+  try {
+    // Not awaited: the prompt is a turn of its own, once the session is idle, and this command must not wait on it.
+    void Promise.resolve($.prompt.submit({ text: prompt } as never)).catch(() => {
+      ownPrompt = undefined
+    })
+    return `Asked Claude to read ${clean.length ? clean.join(', ') : LEARN_DEFAULT_PATHS.join(', ')} at ${sha.slice(0, 7)} and draft practices. A person approves each draft on /brain → Practices.`
+  } catch {
+    ownPrompt = undefined
+    return `This session cannot send a prompt on its own. Paste this to Claude:\n\n${prompt}`
+  }
+}
+
 export const register: Register = (on, options) => {
   const url = serverUrl(options.url)
   const key = typeof options.key === 'string' ? options.key.trim() : ''
@@ -344,9 +387,15 @@ export const register: Register = (on, options) => {
     allowed = undefined
     brainOff = false
     yesterday = undefined
+    practices = undefined
+    repoHere = undefined
     // The model's own way in: only with a key, and never failing the session.
-    if (config) await $.tool.register(BRAIN_ASK_SPEC as never).catch(() => undefined)
-    await $.command.register({ name: 'brain', description: 'Your work in the company brain: sync, today, review, status, pause, resume, forget <id>, visibility <id> private|team|org, post <id>', argumentHint: 'sync | today | review | status | pause | resume | forget <id> | visibility <id> <who> | post <id>' })
+    if (config) for (const spec of [BRAIN_ASK_SPEC, PRACTICES_SPEC, PRACTICE_DRAFT_SPEC]) await $.tool.register(spec as never).catch(() => undefined)
+    await $.command.register({ name: 'brain', description: 'Your work in the company brain: sync, today, review, status, pause, resume, forget <id>, visibility <id> private|team|org, post <id>; practices, learn [paths]', argumentHint: 'sync | today | review | status | pause | resume | forget <id> | visibility <id> <who> | post <id> | practices | learn [paths]' })
+    // Git runs beside the briefing and the practices, so one 2 s bound holds for all three.
+    const gitFacts = Promise.all([gitOut($, ['git', 'remote', 'get-url', 'origin']), gitOut($, ['git', 'rev-parse', '--show-toplevel']), gitOut($, ['git', 'rev-parse', '--abbrev-ref', 'HEAD'])])
+    // Practices are read in any mode (reading records nothing); the repository is sent only when the person listed it.
+    const sectionP = config ? practicesSection($, config, gitFacts) : Promise.resolve(undefined)
     if (config && mode !== 'off') {
       // An entry left open by a session that never ended is held as it stood.
       await withJournal(async () => {
@@ -364,8 +413,6 @@ export const register: Register = (on, options) => {
         if (lifted !== queue) await $.store.set('queue', lifted)
       })
       void flush($).then(() => showStatus($)).catch(() => undefined)
-      // Git runs beside the briefing, so the 2 s bound holds for both.
-      const gitFacts = Promise.all([gitOut($, ['git', 'remote', 'get-url', 'origin']), gitOut($, ['git', 'rev-parse', '--show-toplevel']), gitOut($, ['git', 'rev-parse', '--abbrev-ref', 'HEAD'])])
       // The briefing is always read, for the policy (auto-send, brain off); `sync` only decides whether yesterday joins the prompt.
       const briefing: Briefing | undefined = await getBriefing($, config, day(await $.clock.now()))
       if (briefing?.brain === 'off') brainOff = true
@@ -386,18 +433,24 @@ export const register: Register = (on, options) => {
       }
       void $.clock.every(FLUSH_MS, () => flush($))
     }
+    practices = await sectionP
     await showStatus($)
     return next(e)
   }).catch(($, e, next) => next(e))
 
   on('prompt.compose', async ($, e, next) => {
     const result = await next(e)
-    if (!yesterday) return result
-    return { sections: [...result.sections, { id: SECTION, text: yesterday, scope: 'session' as const }] }
+    // Practices come before yesterday. They are the admins' rules, not quoted data: the server's heading and footer frame them.
+    const sections = [...result.sections, ...(practices ? [{ id: SECTION_PRACTICES, text: practices, scope: 'session' as const }] : []), ...(yesterday ? [{ id: SECTION, text: yesterday, scope: 'session' as const }] : [])]
+    return sections.length === result.sections.length ? result : { sections }
   }).catch(($, e, next) => next(e))
 
   on('prompt.submit', async ($, e, next) => {
     // A session that went on without a start (after /clear) or was paused and resumed is recorded from its next prompt.
+    if (ownPrompt !== undefined && e.text === ownPrompt) {
+      ownPrompt = undefined
+      return next(e)
+    }
     if (!current && allowed && config && mode !== 'off' && !e.command && !e.isMeta && !(await paused($))) await openEntry($, allowed.repo, allowed.branch).catch(() => undefined)
     if (current && !e.command && !e.isMeta) {
       current.turns += 1
@@ -412,6 +465,18 @@ export const register: Register = (on, options) => {
     if (!config) return { result: { content: 'The brain is not set up: add the Landflow URL and key in the mod options.' }, isError: true } as never
     if (!question) return { result: { content: 'Give a question.' }, isError: true } as never
     const answer = await brainAsk($, config, question)
+    return { result: { content: answer.text }, ...(answer.isError && { isError: true }) } as never
+  })
+
+  on('tool.call', { tool: PRACTICES_FULL }, async ($, e) => {
+    if (!config) return { result: { content: 'The brain is not set up: add the Landflow URL and key in the mod options.' }, isError: true } as never
+    const answer = await practicesTool($, config, practicesInput(e), repoHere)
+    return { result: { content: answer.text }, ...(answer.isError && { isError: true }) } as never
+  })
+
+  on('tool.call', { tool: PRACTICE_DRAFT_FULL }, async ($, e) => {
+    if (!config) return { result: { content: 'The brain is not set up: add the Landflow URL and key in the mod options.' }, isError: true } as never
+    const answer = await practiceDraftTool($, config, e)
     return { result: { content: answer.text }, ...(answer.isError && { isError: true }) } as never
   })
 
@@ -480,6 +545,9 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'brain' }, async ($, e, next) => {
     const [sub = '', ...rest] = e.args.trim().split(/\s+/)
     const arg = rest.join(' ').trim()
+    // Practices need only the URL and key: reading records nothing, and learning sends nothing from the checkout but drafts.
+    if (config && sub === 'practices') return reply(await practicesCommand($))
+    if (config && sub === 'learn') return reply(await learnCommand($, rest.filter(Boolean)))
     if (!config || mode === 'off') return reply('landflow-brain is not set up: it needs the Landflow URL (https, or http://localhost), an API key with the brain:write scope, and a mode other than off. Nothing is recorded or sent.')
     const journal = await load($)
     const all = current ? [...journal.filter(entry => entry.id !== current?.id), current] : journal
@@ -611,7 +679,7 @@ export const register: Register = (on, options) => {
         return reply(done.length ? done.join('\n') : 'Nothing sent.')
       }
       default:
-        return reply('/brain | sync | today | review | status | pause | resume | forget <id> | visibility <id> private|team|org | post <id>')
+        return reply('/brain | sync | today | review | status | pause | resume | forget <id> | visibility <id> private|team|org | post <id> | practices | learn [paths]')
     }
   }).catch(($, e, next) => (next.called ? next(e) : { text: '/brain failed; nothing was sent.' }))
 }
