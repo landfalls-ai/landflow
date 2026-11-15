@@ -492,6 +492,8 @@ same `gen_ai.*` wrapper (`lib/server/telemetry/ai.ts`), which asks the current *
 (`lib/server/ai-usage/scope.ts`, an AsyncLocalStorage per execution segment and agent run) whether
 the call may start, then prices and records what it used.
 
+**Insights → AI** (`/insights/ai`) shows this spend by project, agent, person, model and source, with the caps and how near each is, including calls imported from the LLM gateway's spend log ([llm-gateway.md](llm-gateway.md#the-ai-page)).
+
 - **Prices** (`lib/server/ai-usage/prices.ts`): USD per million input and output tokens. Built-in
   defaults are the Anthropic and OpenAI list prices; Ollama and other local models cost $0.
   **Settings → AI prices** (`GET/PUT /api/settings/ai-prices`) overrides any model, Ollama

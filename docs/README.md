@@ -56,6 +56,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | Images in tool results: a tool can return a screenshot or other image to the AI Agent's model | [features/ai.md](features/ai.md) | [specs/18-desktop-agent-node.md](specs/18-desktop-agent-node.md) |
 | Specs: proposals written before the code (fifteen next features from 2026-11-05, chat with agents, the parallel build plan, the Desktop agent node, the debug token) | [specs/README.md](specs/README.md) | |
 | Files and binary data | [features/files.md](features/files.md) | [protocol.md](protocol.md) §11 |
+| The LLM gateway (LiteLLM) and the AI page: spend by project, agent, person, model and source, caps, requests | [llm-gateway.md](llm-gateway.md) | [observability.md §8](observability.md) |
 | Settings, variables, data tables, insights | [features/settings-and-data.md](features/settings-and-data.md) | |
 | Authentication: users, roles, projects, API keys, OIDC, SAML, SCIM | [features/authentication.md](features/authentication.md) | |
 | Audit log and governance: SIEM streaming, signed heads, approvals, four-eyes | [features/audit-and-governance.md](features/audit-and-governance.md) | |
