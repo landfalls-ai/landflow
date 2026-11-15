@@ -225,6 +225,32 @@ A workflow or a team can name the goal it serves; with none, it works for its pr
 
 Both use the same picker as the goal dialog and the project brief. The team's member picker is in [agent-teams.md](agent-teams.md#picking-members).
 
+## Project settings for agents
+
+### On the screen
+
+A project's **Settings** tab has the card **Agents in this project** (`#agents`), under the governance and MCP cards.
+It holds the **Default model** ("Used when neither the workflow's step nor the agent names a model"; pick **None** to
+clear it), the **Knowledge base** (a switch and **Choose…**, which opens the agent builder's dialog; every agent in the
+project can search it as `project_knowledge`), **Allowed agents** (**Everything available** or **Only these**, with the
+project's own agents checked and disabled) and **Allowed tools** (**Every kind** or **Only these**, one box per kind).
+Project admins edit and press one **Save**, which sends only these four fields to `PATCH /api/projects/:id/settings`; a
+400 (a credential the project can't use, an agent that isn't available) shows under the field. Everyone else reads the
+values. Without `availableAgents` in the answer the list says "No agents to list". A failed load hides the card without a toast.
+
+## AI budget
+
+### On the screen
+
+The card **AI budget** (`#budget`) follows it. It shows this month's spend as a bar (amber from the warning percent, red
+at 100 or when paused), the amounts, "N calls to local models (not counted)" and a **Paused** badge, then the month's
+incidents, newest first, each with its buttons: **Resume this month** and **Raise budget…** for a stop, **Dismiss** for a
+warning. Admins edit the monthly budget, **Warn at**, the **Hard stop** switch (off by default) and the owner (one of the
+project's members) and press **Save**; `0` asks "Remove the budget?" first. An editor who is not an admin sees **Ask for
+more…** (an amount above the budget and a reason, sent to `POST /api/ai/cap-requests`) and **See it on Insights → AI**.
+Open `/projects/<id>?tab=settings#budget` or `#agents` and the page scrolls to the card once it has loaded. The same
+incidents are items in **Needs you** ([run-trace.md](run-trace.md#needs-you-for-a-project-budget)).
+
 ## How it is built
 
 - Data: migration 2300 makes `goals`, `project_goals` (a project's goals and their order) and `goal_links` (initiatives);

@@ -36,6 +36,8 @@ import { projectLabel, useProjectStore } from './use-projects';
 import { Segmented } from '../ui/segmented';
 import { ProjectBriefCard } from './project-brief-card';
 import type { ProjectBriefView } from '@/lib/shared/goals';
+import { ProjectAgentSettings } from './project-agent-settings';
+import { ProjectBudgetCard } from './project-budget-card';
 import { OVERVIEW_KINDS, PROJECT_TABS, projectTab, type ProjectTab } from './project-tabs';
 
 const ROLE_HINT: Record<ProjectRole, string> = {
@@ -110,6 +112,8 @@ export function ProjectPage({ projectId }: { projectId: string }) {
         {project && tab === 'settings' && (
           <div className="space-y-4">
             <ProjectSettings section="settings" project={project} onChanged={(next) => (next ? setProject(next) : void loadProject())} />
+            {/* PC15: */}<ProjectAgentSettings projectId={project.id} />
+            {/* PC15: */}<ProjectBudgetCard projectId={project.id} />
             <Card>
               <div className="mb-3 text-[13px] font-semibold text-t1">Variables</div>
               <VariablesSettings projectId={project.id} />

@@ -97,7 +97,7 @@ export interface NeedsYouRow {
   workflowId: string;
   workflowName: string;
   /** `gate`: a Run report waits for someone to accept its failed checks or send the work back. */
-  kind: 'approval' | 'form' | 'question' | 'gate' | 'check';
+  kind: 'approval' | 'form' | 'question' | 'gate' | 'check' | 'budget'; // PC15: budget
   title: string;
   detail?: string;
   actor?: RunActor;
@@ -105,6 +105,14 @@ export interface NeedsYouRow {
   member?: string;
   spanId?: string;
   since: string;
+  // PC15: a project budget item (BudgetNeedsYouFields in lib/shared/project-budget.ts); its run fields are ''.
+  projectId?: string;
+  incidentId?: string;
+  incidentKind?: 'warn' | 'stop';
+  /** Where the row opens, instead of its run. */
+  href?: string;
+  canRaise?: boolean;
+  canResume?: boolean;
 }
 
 /**

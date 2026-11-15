@@ -4,7 +4,12 @@
  * when the instance doesn't ask for it, a stricter node allow-list). Each level can only narrow what the one above
  * allows. Shapes shared by the API (/api/projects/<id>/settings, /api/workflows/<id>/policy), the project's Settings
  * tab and the workflow settings dialog. No runtime imports.
+ *
+ * Amended in wave 9 by PC13 alone (docs/projects-and-goals.md#project-settings-for-agents): a project's settings for the
+ * agents that run in it (a default model, a knowledge base, which agents and which kinds of tools), each off by default
+ * and each only narrowing. PC15 copies it byte for byte (its settings card); no other wave-9 package touches it.
  */
+import type { AgentModel, KnowledgeBaseToolConfig } from './agents';
 
 /** An allow-list of plugins and node types (`off`: no list, everything the level above allows). */
 export interface ScopedNodePolicy {
@@ -29,6 +34,58 @@ export const PROJECT_APPROVER_LABELS: Record<ProjectApprovers, string> = {
   instance: 'Instance owners and admins only',
 };
 
+// ---- PC13: agents in the project -----------------------------------------------------------------------------
+
+/**
+ * The kinds of agent tools a project can allow. A tool's kind on the server (agents/tools.ts `BuiltTool`): `knowledge`
+ * when it searches a knowledge base, `mcp` when it is an MCP server's tool (`nodeType` is the MCP Client Tool), else its
+ * `kind` (`node`, `workflow`, `agent` for a sub-agent, `a2a`). Skills, memory, a team's notebook and consult tools, and a
+ * workflow's own connected tools (Run an Agent, kind `flow`, already under the node allow-list) are never withheld.
+ */
+export const PROJECT_TOOL_KINDS = ['node', 'mcp', 'knowledge', 'workflow', 'agent', 'a2a'] as const;
+export type ProjectToolKind = (typeof PROJECT_TOOL_KINDS)[number];
+export const PROJECT_TOOL_KIND_LABELS: Record<ProjectToolKind, string> = {
+  node: 'Nodes',
+  mcp: 'MCP servers',
+  knowledge: 'Knowledge bases',
+  workflow: 'Workflows',
+  agent: 'Sub-agents',
+  a2a: 'A2A agents',
+};
+
+/** `allow`: only the agents listed (and the project's own agents, always) may run in the project. */
+export interface ProjectAgentList {
+  mode: 'off' | 'allow';
+  /** Agent ids; at most 200. */
+  ids: string[];
+}
+
+/** `allow`: agents running in the project get only these kinds of tools; the rest are withheld with a notice. */
+export interface ProjectToolKinds {
+  mode: 'off' | 'allow';
+  kinds: ProjectToolKind[];
+}
+
+/** One knowledge base every agent running in the project can search, as the tool `project_knowledge`. */
+export interface ProjectKnowledge {
+  enabled: boolean;
+  /** An agent knowledge base's settings (a vector collection or a plugin node); its credentials must be usable in the project. */
+  tool: KnowledgeBaseToolConfig;
+}
+
+/** The tool name the project's knowledge base gets in every run (a name an agent's own tool already has is renamed by `dedupe`). */
+export const PROJECT_KNOWLEDGE_TOOL = 'project_knowledge';
+
+/** Whether `agentId` may run in a project with these settings: the list is off, the agent is the project's own, or it is listed. */
+export function agentAllowedBy(settings: Pick<ProjectSettings, 'agents'>, agentId: string, homeHere: boolean): boolean {
+  return settings.agents?.mode !== 'allow' || homeHere || settings.agents.ids.includes(agentId);
+}
+
+/** Whether a tool of `kind` may be offered in a project with these settings (undefined kind: never withheld). */
+export function toolKindAllowedBy(settings: Pick<ProjectSettings, 'agentTools'>, kind: ProjectToolKind | undefined): boolean {
+  return kind === undefined || settings.agentTools?.mode !== 'allow' || settings.agentTools.kinds.includes(kind);
+}
+
 export interface ProjectSettings {
   nodes: ScopedNodePolicy;
   approvers: ProjectApprovers;
@@ -42,6 +99,14 @@ export interface ProjectSettings {
    * writes a fix (docs/second-brain.md#principles). Off: metadata only.
    */
   brainPayloads?: boolean;
+  /** PC13: the model an agent running here uses when neither the workflow's node nor the agent names one. */
+  defaultModel?: AgentModel;
+  /** PC13: absent or disabled: no project knowledge base. */
+  knowledge?: ProjectKnowledge;
+  /** PC13: absent: mode off. */
+  agents?: ProjectAgentList;
+  /** PC13: absent: mode off. */
+  agentTools?: ProjectToolKinds;
   updatedAt?: string;
   updatedBy?: string;
 }
@@ -65,6 +130,8 @@ export interface ProjectSettingsView {
   canEdit: boolean;
   plugins: Array<{ id: string; name: string }>;
   nodeTypes: Array<{ type: string; displayName: string; pluginId: string }>;
+  /** PC13: the agents available in the project (its own, shared to it, or to all projects), for the allow-list. Always set from wave 9 on; optional so a client copy compiles against an older route. */
+  availableAgents?: Array<{ id: string; name: string; home: boolean }>;
 }
 
 /** GET /api/workflows/<id>/policy */
