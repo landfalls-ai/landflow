@@ -171,7 +171,7 @@ still works.
 | `LANDFLOW_LLM_GATEWAY_ADMIN_KEY` *(secret)* | – | the gateway's master or proxy-admin key: the spend import, the budgets sync and the keys Landflow mints for kagent need it (a credential's Admin key wins) |
 | `LANDFLOW_LLM_GATEWAY_CLUSTER_URL` | – | the gateway as kagent's agents and the Claude Code harness reach it (e.g. `http://host.docker.internal:54100`); unset, agents on kagent call their model directly |
 | `LANDFLOW_LLM_GATEWAY_UI_URL` | `<gateway>/ui` | LiteLLM's admin UI, linked for admins from the AI page and Settings |
-| `LANDFLOW_LLM_GATEWAY_INGEST_SECONDS` | `300` | how often the leader imports the spend of keys that are not Landflow's own from the gateway (30 to 86400) |
+| `LANDFLOW_LLM_GATEWAY_INGEST_SECONDS` | `300` | how often the leader imports from the gateway's spend log the calls Landflow did not meter itself (agents outside Landflow, other clients, and Landflow's own calls made outside a usage scope) (30 to 86400) |
 | `LANDFLOW_LLM_GATEWAY_SYNC_SECONDS` | `600` | how often the leader reconciles LiteLLM's teams, customers and key budgets with Landflow's projects, people and caps, when the sync is on (60 to 86400) |
 
 ## Observability
