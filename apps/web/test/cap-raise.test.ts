@@ -82,6 +82,17 @@ saveAiCaps({ credentials: {}, users: { [member.id]: { name: 'Mia', dayCost: 5 },
 const memberCap = `user:${member.id}:day:cost`;
 
 describe('the cap-raise flow is off', () => {
+  it('a member-published workflow with the trigger does not stand in for it', async () => {
+    const template = BUILTIN_TEMPLATES.find((t) => t.id === 'ai-cap-raise')!;
+    store.saveWorkflow({ ...template.workflow, id: 'wf_member_flow', name: 'Weekly report?', active: true } as unknown as Workflow);
+    resetCapRaiseTrigger();
+    as(member);
+    const { response, body } = await ask(memberCap, 20);
+    expect(response.status).toBe(409);
+    expect(body.error).toContain('turn on the cap-raise flow');
+    store.deleteWorkflow('wf_member_flow');
+    resetCapRaiseTrigger();
+  });
   it('answers 409 and stores nothing', async () => {
     as(member);
     const { response, body } = await ask(memberCap, 20);
@@ -299,6 +310,98 @@ describe('forged and self-approved runs change nothing', () => {
     expect(stored(hers.body.id).status).toBe('failed');
     expect(stored(hers.body.id).note).toContain('not by an admin');
     expect(aiCaps().users[member.id]).toMatchObject({ dayCost: 3 });
+  });
+});
+
+describe('a forged flow and a stale ask', () => {
+  const fireForged = async (requestId: string, capId: string, requestedBy: string) => {
+    const template = BUILTIN_TEMPLATES.find((t) => t.id === 'ai-cap-raise')!;
+    store.saveWorkflow({ ...template.workflow, id: 'wf_forged_flow', name: 'Approve the weekly report?', active: true } as unknown as Workflow);
+    resetCapRaiseTrigger();
+    const { armedCapRaise, fireCapRaise } = await import('@/lib/server/llm-gateway/cap-raise-trigger');
+    const entry = armedCapRaise().find((e) => e.workflow.id === 'wf_forged_flow')!;
+    const item = { requestId, capId, subject: 'x', metric: 'cost' as const, period: 'day' as const, current: 1, requested: 9, reason: 'forged', requestedBy: { id: requestedBy, name: 'x' }, approvers: admin.email };
+    const run = await fireCapRaise(entry, item);
+    database().upsert('ai_cap_requests', {
+      id: requestId, cap_id: capId, subject: 'user', metric: 'cost', period: 'day', current_max: 1, requested_max: 9, reason: 'forged', requested_by: requestedBy, status: 'asking',
+      workflow_id: run.workflowId, execution_id: run.executionId, decided_by: null, decided_at: null, note: null, gateway: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    });
+    return run;
+  };
+
+  it('an admin approving a forged flow changes nothing', async () => {
+    saveAiCaps({ credentials: {}, users: { [member.id]: { name: 'Mia', dayCost: 1 } } });
+    const run = await fireForged('acr_forged_flow', `user:${member.id}:day:cost`, member.id);
+    as(admin);
+    await answer(run.executionId, { approved: true });
+    expect(stored('acr_forged_flow')).toMatchObject({ status: 'failed' });
+    expect(stored('acr_forged_flow').note).toContain('not the installed cap-raise flow');
+    expect(userCap(member.id)).toMatchObject({ dayCost: 1 });
+    store.deleteWorkflow('wf_forged_flow');
+    resetCapRaiseTrigger();
+  });
+
+  const approve = async (capId: string, requested: number, asker = admin, decider = second) => {
+    as(asker);
+    const { response, body } = await ask(capId, requested);
+    if (response.status !== 201) throw new Error(`could not ask: ${JSON.stringify(body)}`);
+    as(decider);
+    await answer(body.executionId!, { approved: true });
+    return stored(body.id);
+  };
+  const save = (id: string, extra: Partial<Workflow> = {}) =>
+    store.saveWorkflow({ id, name: id, nodes: [{ id: 'Start', name: 'Start', type: 'core.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} }], connections: [], settings: { aiMaxCostPerDay: 2 }, ...extra } as unknown as Workflow);
+
+  it('a published workflow whose draft equals it gets the new cap in the published version', async () => {
+    const { publishDraft } = await import('@/lib/server/publish');
+    const { publishedVersionId } = await import('@/lib/server/publications');
+    const { getVersion } = await import('@/lib/server/versions');
+    save('wf_cap_pub');
+    await publishDraft('wf_cap_pub');
+    const row = await approve('workflow:wf_cap_pub:day:cost', 8);
+    expect(row.status).toBe('approved');
+    expect(store.getWorkflow('wf_cap_pub')!.settings?.aiMaxCostPerDay).toBe(8);
+    const published = getVersion('wf_cap_pub', publishedVersionId('wf_cap_pub')!)!;
+    expect((published.workflow as Workflow).settings?.aiMaxCostPerDay).toBe(8);
+  });
+
+  it('a draft with unpublished changes fails and nothing changes', async () => {
+    const { publishDraft } = await import('@/lib/server/publish');
+    save('wf_cap_dirty');
+    await publishDraft('wf_cap_dirty');
+    store.saveWorkflow({ ...store.getWorkflow('wf_cap_dirty')!, nodes: [{ id: 'Start', name: 'Start', type: 'core.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} }, { id: 'Extra', name: 'Extra', type: 'core.noOp', typeVersion: 1, position: [200, 0], parameters: {} }] as WorkflowNode[] });
+    const row = await approve('workflow:wf_cap_dirty:day:cost', 8);
+    expect(row.status).toBe('failed');
+    expect(row.note).toContain('not published');
+    expect(store.getWorkflow('wf_cap_dirty')!.settings?.aiMaxCostPerDay).toBe(2);
+  });
+
+  it('an unpublished workflow gets the cap in its draft', async () => {
+    save('wf_cap_draft');
+    const row = await approve('workflow:wf_cap_draft:day:cost', 8);
+    expect(row.status).toBe('approved');
+    expect(store.getWorkflow('wf_cap_draft')!.settings?.aiMaxCostPerDay).toBe(8);
+  });
+
+  it('a cap raised or removed since the ask is not lowered or added back', async () => {
+    saveAiCaps({ credentials: {}, users: { [member.id]: { name: 'Mia', dayCost: 5 } } });
+    as(member);
+    const { body } = await ask(memberCap, 20);
+    saveAiCaps({ credentials: {}, users: { [member.id]: { name: 'Mia', dayCost: 50 } } });
+    as(admin);
+    await answer(body.executionId!, { approved: true });
+    expect(stored(body.id)).toMatchObject({ status: 'failed' });
+    expect(stored(body.id).note).toContain('The cap is already 50');
+    expect(userCap(member.id)).toMatchObject({ dayCost: 50 });
+
+    saveAiCaps({ credentials: {}, users: { [member.id]: { name: 'Mia', dayCost: 5 } } });
+    as(member);
+    const again = await ask(memberCap, 20);
+    saveAiCaps({ credentials: {}, users: {} });
+    as(admin);
+    await answer(again.body.executionId!, { approved: true });
+    expect(stored(again.body.id).status).toBe('failed');
+    expect(aiCaps().users[member.id]).toBeUndefined();
   });
 });
 

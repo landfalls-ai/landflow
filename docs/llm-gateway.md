@@ -46,7 +46,7 @@ A call is counted in one place only:
 When someone reaches a cap they ask for more instead of finding an admin. Nothing changes until a person decides: the
 request is made by one person, decided by a different person who is an admin, and only then applied.
 
-**Who can ask about which cap.** Anyone signed in who can open runs may ask about:
+**Who can ask about which cap.** Anyone who can build workflows (`workflows:write`) may ask about:
 
 - their own user cap (`user:<their id>:…`);
 - a workflow cap or an agent cap of a resource they can change (an editor or admin of its project, or an admin).
@@ -60,7 +60,7 @@ monthly cost caps; users and credentials have all four.
 (`ai-cap-raise`, [templates.md](templates.md)). An admin installs it with `POST /api/ai/cap-requests/setup`, from
 Insights → AI: it lands in the admin's home project, is published and active, and its workflow id is kept in the
 settings key `ai_cap_raise`. A second click answers the existing flow. Until then asking answers 409 "An admin must turn
-on the cap-raise flow first (Insights → AI)" and stores nothing. There is one cap-raise flow per instance.
+on the cap-raise flow first (Insights → AI)" and stores nothing. There is one cap-raise flow per instance: only that flow handles a request, and Apply Cap Raise changes nothing for a run of any other workflow (a copy, or one a builder published with the same trigger).
 
 **What the flow does.** It starts from **Cap Raise Request** (`core.capRaiseTrigger`), which runs once per request with
 one item: the request id, the cap, its subject, metric and period, the current and the asked-for cap, the reason, who

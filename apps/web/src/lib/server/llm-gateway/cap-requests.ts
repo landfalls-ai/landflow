@@ -20,7 +20,7 @@ import { HttpError } from '../errors';
 import { decodeCursor, encodeCursor } from '../pagination';
 import { createIn } from '../projects/http';
 import { canResource, creationProject, isInstanceAdmin, type Actor } from '../projects/access';
-import { liveExecution } from '../runner';
+import { cancelWaitingExecution, liveExecution } from '../runner';
 import { publishDraft } from '../publish';
 import { publishedVersionId } from '../publications';
 import { store } from '../store';
@@ -179,6 +179,7 @@ export async function createCapRequest(actor: Actor, input: CapRaiseInput): Prom
   const open = database().get<{ id: string }>(`SELECT id FROM ai_cap_requests WHERE cap_id = ? AND requested_by = ? AND status IN ('pending', 'asking')`, cap.id, actor.id);
   if (open) throw new CapRequestError('You already asked for more on this cap; wait for the answer or cancel it', 409, { existingId: open.id });
   const flow = capRaiseFlow(setupWorkflowId());
+  // Only the flow an admin installed handles a request: no other workflow's Ask a Person stands in for the admin's.
   if (!flow) throw new CapRequestError('An admin must turn on the cap-raise flow first (Insights → AI)', 409);
 
   const now = new Date().toISOString();
@@ -269,6 +270,8 @@ export function cancelCapRequest(actor: Actor, id: string): CapRaiseRequest {
   if (!row || (row.requested_by !== actor.id && !isInstanceAdmin(actor))) throw new CapRequestError('Request not found', 404);
   if (!OPEN.includes(row.status as CapRaiseStatus)) throw new CapRequestError(`This request is already ${row.status}`, 409);
   update(id, { status: 'cancelled' });
+  // The run stops waiting, so the question leaves the admins' Needs you.
+  if (row.execution_id) cancelWaitingExecution(row.execution_id);
   return getCapRequest(id)!;
 }
 
@@ -315,9 +318,13 @@ const AGENT_FIELD = { 'day:tokens': 'dailyTokenLimit', 'day:cost': 'dailyCostLim
 const WORKFLOW_FIELD = { 'day:tokens': 'aiMaxTokensPerDay', 'day:cost': 'aiMaxCostPerDay' } as const;
 
 /** What changing a cap needs; a thrown message is the request's note. */
-function raiseCap(row: Row, cap: ParsedCapId, approver: UserRecord) {
+async function raiseCap(row: Row, cap: ParsedCapId, approver: UserRecord) {
   const key = `${cap.period}:${cap.metric}` as keyof typeof LIMIT_FIELD;
   const value = row.requested_max;
+  // The ask may be days old: never lower a cap, and never add one that was removed since.
+  const current = watchedCaps().find((c) => c.id === row.cap_id);
+  if (!current) throw new Error('The cap no longer exists');
+  if (current.max >= value) throw new Error(`The cap is already ${current.max}`);
   if (cap.kind === 'user' || cap.kind === 'credential') {
     const caps = aiCaps();
     const group = cap.kind === 'user' ? caps.users : caps.credentials;
@@ -343,7 +350,15 @@ function raiseCap(row: Row, cap: ParsedCapId, approver: UserRecord) {
       if (!published || versionHash(published.workflow as Workflow) !== versionHash(workflow)) throw new Error('The workflow has changes that are not published; publish it, then raise the cap in its settings');
     }
     store.saveWorkflow(raised, { actor: approver.id });
-    if (publishedId) void publishDraft(workflow.id, approver.id).catch((error: Error) => logger.warn('could not publish a workflow with its raised cap', { error: error.message }));
+    if (publishedId) {
+      try {
+        await publishDraft(workflow.id, approver.id);
+      } catch (error) {
+        // Nothing half-applied: the draft goes back to what it was.
+        store.saveWorkflow(workflow, { actor: approver.id });
+        throw new Error(`the workflow could not be published with its raised cap (${(error as Error).message})`);
+      }
+    }
     return;
   }
   const field = AGENT_FIELD[key as keyof typeof AGENT_FIELD];
@@ -403,11 +418,16 @@ export async function applyCapRequest(requestId: string, executionId: string, ou
   if (approver.id === row.requested_by) return fail('You can’t approve your own request, so nothing changed');
   const cap = parseCapId(row.cap_id);
   if (!cap) return fail('The cap is not one Landflow knows');
+  // Only the installed flow may raise a cap, and only for a request it started.
+  const installed = setupWorkflowId();
+  const ran = (liveExecution(executionId) ?? store.getExecution(executionId))?.workflowId;
+  if (!installed || row.workflow_id !== installed || ran !== installed) return fail('The run is not the installed cap-raise flow, so nothing changed');
 
   try {
-    raiseCap(row, cap, approver);
+    await raiseCap(row, cap, approver);
   } catch (error) {
-    return fail(`The approved cap could not be changed: ${(error as Error).message}`);
+    const message = (error as Error).message;
+    return fail(message.startsWith('The cap ') ? `${message}, so nothing changed` : `The approved cap could not be changed: ${message}`);
   }
   const decidedAt = new Date().toISOString();
   // The budgets sync (LL04) listens; awaited so the link row is current when it is read.
