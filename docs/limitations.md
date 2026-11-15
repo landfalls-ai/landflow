@@ -49,6 +49,10 @@ items still open (its "Wave 6" section); this page is the short list to check be
   one pair in Settings → Company. Two companies need two instances.
 - **No goal progress yet**: a goal has a status, an owner and a target date, but nothing measures how far along it is (a
   later wave of the Paperclip program).
+- **Goal lists stop at 500**: `GET /api/goals` keeps the first 500 goals the caller sees (oldest first) after filtering,
+  with no paging and no sign it was cut; children of a goal that was cut show as roots. Nothing caps how many goals exist.
+- **Removed people stay named by id**: a user removed from a project (or deleted) stays as its `leadId` or
+  `decisionOwnerId`, and as a goal's `ownerId`, until someone changes it; the view then has the id but no name.
 - A project goal can only be served by its home project; to share one across projects, make it a company goal.
 
 ## Test chat history (B10, 2026-11)

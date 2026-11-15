@@ -14,7 +14,7 @@ function view() {
 
 export const GET = handler(async () => json(view()));
 
-/** PATCH { timezone?, executions?: { maxCount?, maxAgeDays? }, jsonRender?: boolean | null } — 0 turns a retention limit off; jsonRender is the owner's (null: back to the environment default). */
+/** PATCH { timezone?, executions?: { maxCount?, maxAgeDays? }, jsonRender?: boolean | null, company?: { name?, mission? } (the company profile, docs/projects-and-goals.md#the-mission) } — 0 turns a retention limit off; jsonRender is the owner's (null: back to the environment default). */
 export const PATCH = handler(async (request: Request) => {
   const body = await parseBody(request, settingsPatchSchema);
   if (!body.ok) return body.response;

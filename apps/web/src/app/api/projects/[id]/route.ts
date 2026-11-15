@@ -34,9 +34,10 @@ export const PATCH = projectRoute(async (request: Request, { params }: Ctx) => {
   const body = await parseBody(request, patchSchema);
   if (!body.ok) return body.response;
   const { brief, ...rename } = body.data;
-  // Check the brief first (a lead who isn't a member answers 400) so a bad brief doesn't leave the rename half done.
+  // Rename first (a bad name answers 400 before anything is written), then the brief; a brief that fails (a lead with no role) leaves the rename done.
+  const renamed = Object.keys(rename).length ? updateProject(project.id, rename) : project;
   if (brief) updateProjectBrief(project.id, brief);
-  return json({ project: projectDetail(Object.keys(rename).length ? updateProject(project.id, rename) : (getProject(project.id) ?? project), actor) });
+  return json({ project: projectDetail(getProject(project.id) ?? renamed, actor) });
 });
 
 export const DELETE = projectRoute(async (request: Request, { params }: Ctx) => {

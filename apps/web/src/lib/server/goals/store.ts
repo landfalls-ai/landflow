@@ -78,7 +78,7 @@ export const flat = (changes: Record<string, { from: string | null; to: string |
 
 // ---- reads ------------------------------------------------------------------------------------------------
 
-/** Every goal, oldest first (the tree orders siblings by creation). At most `GOAL_LIMITS.list` plus the slack a caller filters out. */
+/** Every goal, oldest first (the tree orders siblings by creation). Not capped here: `goalsResponse` filters to what the viewer sees and then keeps the first `GOAL_LIMITS.list`. */
 export function listGoals(): Goal[] {
   return db().all<GoalRow>('SELECT * FROM goals ORDER BY created_at, id').map(goalFrom);
 }
@@ -141,7 +141,7 @@ export function allServing(): Map<string, string[]> {
   return map;
 }
 
-/** Linked initiative ids of a goal, by goal id (every goal when `goalId` is left out). */
+/** Linked initiative ids, by goal id (every goal with a link). */
 export function allInitiatives(): Map<string, string[]> {
   const map = new Map<string, string[]>();
   for (const row of db().all<{ goal_id: string; ref_id: string }>(`SELECT goal_id, ref_id FROM goal_links WHERE kind = 'initiative' ORDER BY created_at, ref_id`)) {

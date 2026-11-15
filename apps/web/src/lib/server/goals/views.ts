@@ -21,6 +21,7 @@ import {
   heightBelow,
   isWithin,
   listGoals,
+  projectsServing,
   projectGoalIds,
   setInitiatives,
   setProjectGoals,
@@ -54,20 +55,33 @@ function viewBuilder(actor: Actor) {
   const serving = allServing();
   const initiatives = allInitiatives();
   const names = new Map<string, string | undefined>();
+  const owners = new Map<string, string | undefined>();
+  const ownerName = (id: string) => {
+    if (!owners.has(id)) owners.set(id, getUser(id)?.name);
+    return owners.get(id);
+  };
+  const initiativeNames = new Map<string, string | undefined>();
+  const initiativeName = (id: string) => {
+    if (!initiativeNames.has(id)) {
+      const entity = getEntity('initiative', id);
+      initiativeNames.set(id, entity && canEntity(actor, entity, 'read') ? entity.name : undefined);
+    }
+    return initiativeNames.get(id);
+  };
   const projectName = (id: string) => {
     if (!names.has(id)) names.set(id, !projects || projects.has(id) ? getProject(id)?.name : undefined);
     return names.get(id);
   };
   return (goal: Goal): GoalView => ({
     ...goal,
-    ...(goal.ownerId && getUser(goal.ownerId) && { ownerName: getUser(goal.ownerId)?.name }),
+    ...(goal.ownerId && ownerName(goal.ownerId) && { ownerName: ownerName(goal.ownerId) }),
     projects: (serving.get(goal.id) ?? []).flatMap((id) => {
       const name = projectName(id);
       return name ? [{ id, name }] : [];
     }),
     initiatives: (initiatives.get(goal.id) ?? []).flatMap((id) => {
-      const entity = getEntity('initiative', id);
-      return entity && canEntity(actor, entity, 'read') ? [{ id, name: entity.name }] : [];
+      const name = initiativeName(id);
+      return name ? [{ id, name }] : [];
     }),
     canEdit: canEditGoal(actor, goal),
   });
@@ -87,7 +101,9 @@ export function buildTree(goals: GoalView[]): GoalNode[] {
 export function goalsResponse(actor: Actor, filter: { projectId?: string; status?: string } = {}): GoalsResponse {
   const view = viewBuilder(actor);
   const serving = filter.projectId ? new Set(projectGoalIds(filter.projectId)) : undefined;
-  const goals = visibleGoals(actor)
+  // A project the caller can't see answers as if it had no goals (so the filter can't probe which company goals a hidden project serves).
+  const hidden = filter.projectId !== undefined && !projectRole(actor, filter.projectId);
+  const goals = (hidden ? [] : visibleGoals(actor))
     .filter((goal) => (!filter.status || goal.status === filter.status) && (!serving || serving.has(goal.id) || goal.projectId === filter.projectId))
     .slice(0, GOAL_LIMITS.list)
     .map(view);
@@ -217,6 +233,8 @@ export function setProjectGoalsAs(actor: Actor, projectId: string, goalIds: stri
     const goal = visibleGoal(actor, id);
     if (!goal) throw new GoalError(`Goal ${id} was not found`);
     if (goal.level === 'project' && goal.projectId !== projectId) throw new GoalError(`“${goal.title}” belongs to another project`);
+    const serving = projectsServing(id);
+    if (!serving.includes(projectId) && serving.length >= GOAL_LIMITS.projectsPerGoal) throw new GoalError(`“${goal.title}” is served by ${GOAL_LIMITS.projectsPerGoal} projects already`);
   }
   setProjectGoals(projectId, goalIds);
 }

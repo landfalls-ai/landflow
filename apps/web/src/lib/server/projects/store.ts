@@ -12,7 +12,9 @@
 import { nanoid } from 'nanoid';
 import { personalProjectId, PROJECT_ROLES, type ProjectRole, type ProjectType, type ResourceKind, type ShareRole } from '../../shared/projects';
 import { recordAudit } from '../audit';
+import { can } from '../../shared/auth';
 import { authDb } from '../auth/db';
+import { getUser } from '../auth/users';
 import { HttpError } from '../errors';
 
 export interface ProjectRecord {
@@ -36,7 +38,7 @@ export interface ProjectRecord {
   createdBy?: string;
 }
 
-/** The brief fields of a project record, with the column each is stored in. */
+/** The brief fields of a project record, with the project record field each is stored in. */
 export const BRIEF_FIELDS = [
   ['brief', 'brief'],
   ['constraints', 'briefConstraints'],
@@ -287,7 +289,7 @@ export function updateProjectBrief(id: string, patch: Partial<Record<(typeof BRI
     const value = patch[field];
     if (value === undefined) continue;
     const clean = value?.trim() || undefined;
-    if ((field === 'leadId' || field === 'decisionOwnerId') && clean && !memberRole(id, clean) && clean !== project.ownerId) {
+    if ((field === 'leadId' || field === 'decisionOwnerId') && clean && !hasRoleIn(project, clean)) {
       throw new ProjectError(field === 'leadId' ? 'The lead must be a member of the project' : 'The decision owner must be a member of the project');
     }
     if (clean === project[key]) continue;
@@ -301,10 +303,39 @@ export function updateProjectBrief(id: string, patch: Partial<Record<(typeof BRI
   return next;
 }
 
-/** Remove a project row with its members and the shares made to it (./transfer moves its resources first). */
+/** Whether `userId` is an existing user with a role in the project (as `projectRole` defines it: a member, the personal project's owner, an instance owner or admin). */
+function hasRoleIn(project: ProjectRecord, userId: string): boolean {
+  const user = getUser(userId);
+  if (!user) return false;
+  return can(user, 'projects:manage') || project.ownerId === userId || !!memberRole(project.id, userId);
+}
+
+/**
+ * Remove a project row with its members, the shares made to it, its `project_goals` rows and its own project goals with their links
+ * (./transfer moves its resources first). Sub-goals of a removed goal go up to its nearest remaining ancestor, or become roots.
+ */
 export function removeProjectRows(id: string) {
   const database = db();
   database.transaction(() => {
+    const own = database.all<{ id: string; parent_id: string | null }>('SELECT id, parent_id FROM goals WHERE project_id = ?', id);
+    const gone = new Map(own.map((g) => [g.id, g.parent_id]));
+    const survivor = (parent: string | null): string | null => {
+      for (let hops = 0; parent && gone.has(parent) && hops < 100; hops++) parent = gone.get(parent) ?? null;
+      return parent && gone.has(parent) ? null : parent;
+    };
+    for (const goalId of gone.keys()) {
+      for (const child of database.all<{ id: string }>('SELECT id FROM goals WHERE parent_id = ?', goalId)) {
+        if (gone.has(child.id)) continue;
+        const row = database.get<Record<string, string | null>>('SELECT * FROM goals WHERE id = ?', child.id);
+        if (row) database.upsert('goals', { ...row, parent_id: survivor(gone.get(goalId) ?? null) });
+      }
+    }
+    for (const goalId of gone.keys()) {
+      for (const row of database.all<{ project_id: string }>('SELECT project_id FROM project_goals WHERE goal_id = ?', goalId)) database.delete('project_goals', { project_id: row.project_id, goal_id: goalId });
+      for (const row of database.all<{ kind: string; ref_id: string }>('SELECT kind, ref_id FROM goal_links WHERE goal_id = ?', goalId)) database.delete('goal_links', { goal_id: goalId, kind: row.kind, ref_id: row.ref_id });
+      database.delete('goals', { id: goalId });
+    }
+    for (const row of database.all<{ goal_id: string }>('SELECT goal_id FROM project_goals WHERE project_id = ?', id)) database.delete('project_goals', { project_id: id, goal_id: row.goal_id });
     database.delete('project_members', { project_id: id });
     for (const share of database.all<ShareRow>('SELECT * FROM resource_shares WHERE project_id = ?', id)) {
       database.delete('resource_shares', { kind: share.kind, resource_id: share.resource_id, project_id: id });

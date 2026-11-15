@@ -127,6 +127,13 @@ describe('goals', () => {
     // The tree: Alpha's goal sits under the company goal; a viewer who can't see a parent gets the child as a root.
     const tree = (await call(goalsRoute.GET, '/api/goals', 'GET', alice)).body.goals as Array<{ id: string; children: Array<{ id: string }> }>;
     expect(tree.find((n) => n.id === root)?.children.map((c) => c.id)).toEqual([alphaGoal]);
+    // A project goal of Beta under a goal Alice can't see is a root for her, and for Dave it hangs under its parent.
+    const under = (await createGoal(owner, { title: 'Beta child of secret', level: 'project', projectId: beta, parentId: betaGoal })).body.goal.id;
+    const sees = (nodes: Array<{ id: string; children: any[] }>) => nodes.some((n) => n.id === under);
+    expect(sees((await call(goalsRoute.GET, '/api/goals', 'GET', alice)).body.goals)).toBe(false);
+    expect(flat((await call(goalsRoute.GET, '/api/goals', 'GET', dave)).body.goals)).toContain(under);
+    // ?projectId= for a project Alice can't see answers nothing.
+    expect(flat((await call(goalsRoute.GET, `/api/goals?projectId=${beta}`, 'GET', alice)).body.goals)).toEqual([]);
     // ?projectId= keeps the goals that project serves or owns.
     const forAlpha = flat((await call(goalsRoute.GET, `/api/goals?projectId=${alpha}`, 'GET', owner)).body.goals);
     expect(forAlpha).toContain(alphaGoal);
@@ -164,6 +171,26 @@ describe('goals', () => {
     expect((await call(projectGoalsRoute.GET, `/api/projects/${alpha}/goals`, 'GET', alice, undefined, { id: alpha })).body.goals.map((g: { id: string }) => g.id)).toEqual([alphaGoal]);
     const { database } = await import('@/lib/server/db');
     expect(database().get('SELECT 1 FROM goal_links WHERE goal_id = ?', leaf)).toBeUndefined();
+  });
+
+  it('deletes a project’s goals with it and leaves nothing pointing at it', async () => {
+    const { database } = await import('@/lib/server/db');
+    const gone = projects.createTeamProject({ name: 'Doomed' }).id;
+    const top = (await createGoal(owner, { title: 'Doomed top', level: 'project', projectId: gone })).body.goal.id;
+    const sub = (await createGoal(owner, { title: 'Doomed sub', level: 'project', projectId: gone, parentId: top })).body.goal.id;
+    const outer = (await createGoal(owner, { title: 'Outer under doomed', level: 'project', projectId: alpha, parentId: top })).body.goal.id;
+    await call(initiativesRoute.PUT, `/api/goals/${sub}/initiatives`, 'PUT', owner, { ids: [initiative] }, { id: sub });
+    const served = (await createGoal(owner, { title: 'Served company goal', level: 'company', projectIds: [gone] })).body.goal.id;
+    projects.deleteProjectWithTransfer(gone, undefined, owner.id);
+    for (const id of [top, sub]) {
+      expect(database().get('SELECT 1 FROM goals WHERE id = ?', id)).toBeUndefined();
+      expect(database().get('SELECT 1 FROM goal_links WHERE goal_id = ?', id)).toBeUndefined();
+      expect(database().get('SELECT 1 FROM project_goals WHERE goal_id = ?', id)).toBeUndefined();
+    }
+    expect(database().get('SELECT 1 FROM project_goals WHERE project_id = ?', gone)).toBeUndefined();
+    expect(database().get('SELECT 1 FROM goals WHERE project_id = ?', gone)).toBeUndefined();
+    expect(database().get('SELECT 1 FROM goals WHERE id = ?', served)).toBeDefined();
+    expect((await call(goalRoute.GET, `/api/goals/${outer}`, 'GET', owner, undefined, { id: outer })).body.goal.parentId).toBeUndefined();
   });
 
   it('links brain initiatives the caller may read, and answers 400 for others', async () => {

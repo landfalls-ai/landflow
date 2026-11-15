@@ -54,7 +54,8 @@ A project's brief, set by its admins (all fields optional, `null` clears one):
 | `leadId` | a user | Who leads it |
 | `decisionOwnerId` | a user | Who decides when the team disagrees |
 
-The lead and the decision owner must have a role in the project, or the change answers 400. Renaming a project keeps its
+The lead and the decision owner must be existing users with a role in the project (a member, the owner of a personal
+project, or an instance owner or admin, who are admins of every project), or the change answers 400. Renaming a project keeps its
 brief. `GET /api/projects/:id` returns it as `project.brief`, with the names of the lead and decision owner, the goals the
 project serves in order (`goals`) and `canEdit`.
 
@@ -64,6 +65,10 @@ project serves in order (`goals`) and `canEdit`.
 | --- | --- | --- | --- |
 | See | everyone signed in | members of the project; owners and admins see all | members |
 | Edit | owners and admins | admins of that project (and owners and admins) | admins of that project (and owners and admins) |
+
+Deleting a project deletes its own project goals with their initiative links and removes its goal rows; sub-goals of a
+deleted goal move up to its nearest remaining parent (or become roots), and company goals the project served stay. A
+company goal serves up to 50 projects. `GET /api/goals?projectId=` for a project you can't see answers an empty list.
 
 A viewer who can't see a goal's parent sees the goal as a root. A member never sees another project's project goals: they
 are left out of lists and answer 404. The mission is everyone's to read.

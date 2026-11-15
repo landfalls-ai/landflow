@@ -57,6 +57,14 @@ afterAll(() => {
 });
 
 describe('the project brief', () => {
+  it('lets the instance owner, with no membership row, lead a team project', async () => {
+    const res = await call('PATCH', team, owner, { brief: { leadId: owner.id, decisionOwnerId: owner.id } });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.project.brief.leadName).toBe('Olive Owner');
+    expect((await call('PATCH', team, owner, { brief: { leadId: 'nobody' } })).status).toBe(400);
+    await call('PATCH', team, owner, { brief: { leadId: null, decisionOwnerId: null } });
+  });
+
   it('starts empty, with the viewer’s right to edit', async () => {
     expect((await call('GET', team, alice)).body.project.brief).toMatchObject({ goals: [], canEdit: true });
     expect((await call('GET', team, carol)).body.project.brief.canEdit).toBe(false);
