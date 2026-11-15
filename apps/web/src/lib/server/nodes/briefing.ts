@@ -306,6 +306,8 @@ export const brainSaveBriefingNode = defineNode({
   },
 });
 
+const SLACK_NOT_CONNECTED =
+  'Slack delivery skipped: the Slack credential of Deliver Briefing has no token. Connect it again to deliver by Slack; email delivery goes on.';
 const SLACK_UNTRUSTED =
   'Slack delivery skipped: a member or an automatic process changed the Slack credential of Deliver Briefing last. An owner or admin must check its Base URL and token and save a change to deliver by Slack; email delivery goes on.';
 const SLACK_ELSEWHERE =
@@ -333,7 +335,13 @@ function slackCredentialOf(ctx: IExecuteContext, record: ExecutionRecord | undef
     if (!data) continue;
     const id = refs[type]?.id;
     if (!id || !trusted(vault.lastChangedBy(id))) return { skipped: SLACK_UNTRUSTED };
-    const slack = slackCredential(data);
+    let slack: SlackCredential;
+    try {
+      slack = slackCredential(data);
+    } catch {
+      // A trusted credential with no token yet (never connected, or disconnected): skip Slack, keep email.
+      return { skipped: SLACK_NOT_CONNECTED };
+    }
     return slack.baseUrl === briefingSlackUrl() ? { slack } : { skipped: SLACK_ELSEWHERE };
   }
   return {};
@@ -375,7 +383,7 @@ export const brainDeliverBriefingNode = defineNode({
     const { slack, skipped } = slackCredentialOf(ctx, record);
     if (skipped) {
       ctx.logger.warn(skipped);
-      logger.warn('briefing: Slack delivery skipped', { 'landflow.briefing.skip_reason': skipped === SLACK_UNTRUSTED ? 'untrusted_credential' : 'not_slack_api', 'landflow.workflow.id': ctx.getWorkflowId(), 'landflow.execution.id': ctx.getExecutionId() });
+      logger.warn('briefing: Slack delivery skipped', { 'landflow.briefing.skip_reason': skipped === SLACK_UNTRUSTED ? 'untrusted_credential' : skipped === SLACK_NOT_CONNECTED ? 'not_connected' : 'not_slack_api', 'landflow.workflow.id': ctx.getWorkflowId(), 'landflow.execution.id': ctx.getExecutionId() });
     }
     for (const [index, item] of ctx.getInputData().entries()) {
       const person = personOf(item, index);

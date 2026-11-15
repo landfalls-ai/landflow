@@ -901,6 +901,18 @@ describe('the Slack credential: who last changed it (through the credential rout
       }
     });
 
+    it('a trusted credential with no token skips Slack and the run still succeeds', async () => {
+      await connect(owner, oauth.id);
+      await ready('wf_slack_disconnected', oauth.id, 'messaging.slackOAuth2Api');
+      expect((await token(owner, 'DELETE', oauth.id)).status).toBe(200);
+      expect(vault.lastChangedBy(oauth.id)).toBe(owner.id);
+      const run = await production('wf_slack_disconnected');
+      expect(run.status).toBe('success');
+      expect(slackCalls).toEqual([]);
+      expect(await bobsWarning(run)).toMatch(/^Slack delivery skipped: .*has no token/);
+      await connect(owner, oauth.id);
+    });
+
     it('a member’s Refresh now, Connect or Disconnect makes her the last changer', async () => {
       const vouch = async (scope: string) => {
         expect((await patch(owner, { data: { scope } }, oauth.id)).status).toBe(200);
