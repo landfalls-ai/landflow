@@ -8,6 +8,8 @@
 import { z } from 'zod';
 import { agentStore } from '@/lib/server/agents/store';
 import { cleanComment, listAgentFeedback, setFeedback } from '@/lib/server/chat-feedback';
+import { resourceAccess } from '@/lib/server/projects/access';
+import { routeActor } from '@/lib/server/projects/http';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 
 export const dynamic = 'force-dynamic';
@@ -17,6 +19,8 @@ const bodySchema = z.object({ entryId: z.string().min(1).max(200), rating: z.enu
 
 export const GET = handler(async (_request: Request, { params }: Ctx) => {
   const { id, sid } = await params;
+  // PC06: a project that only uses an agent never reads its sessions (they hold other projects' briefs).
+  if (!resourceAccess(routeActor(), 'agent', id)?.home) return error('Agent not found', 404);
   const session = agentStore.getSession(sid);
   if (!session || session.agentId !== id) return error('Session not found', 404);
   return json({ feedback: listAgentFeedback(id, sid) });

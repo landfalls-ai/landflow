@@ -5,7 +5,7 @@ import { isRunning, newSession, runAgent } from '@/lib/server/agents/runtime';
 import { agentStore } from '@/lib/server/agents/store';
 import { currentActorId } from '@/lib/server/auth/context';
 import { error, handler, parseBody } from '@/lib/server/http';
-import { projectRole } from '@/lib/server/projects/access';
+import { agentAvailableIn, projectRole } from '@/lib/server/projects/access';
 import { getProject } from '@/lib/server/projects/store';
 import { routeActor } from '@/lib/server/projects/http';
 
@@ -20,6 +20,8 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   // "Test in project": the block is that project's. A project the person has no role in is not found, not forbidden.
   const asked = body.data.projectId;
   if (asked && (!getProject(asked) || !projectRole(routeActor(), asked))) return error('Project not found', 404);
+  // PC06: the agent must be available there (its home, a share to it, or all projects).
+  if (asked && !agentAvailableIn(agent.id, asked)) return error('This agent isn’t available in that project', 403);
   let session = body.data.sessionId ? agentStore.getSession(body.data.sessionId) : undefined;
   if (body.data.sessionId && (!session || session.agentId !== agent.id)) return error('Session not found', 404);
   if (session && (isRunning(session.id) || session.status === 'running')) return error('This session is still answering — wait for the reply', 409);

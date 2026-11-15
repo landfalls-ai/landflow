@@ -274,11 +274,20 @@ export const messageAgentNode = defineNode({
     loadOptions: {
       async agents() {
         const { agentStore } = await import('../agents/store');
-        return agentStore.list().map((agent) => ({
-          name: agent.name,
-          value: agent.id,
-          description: agent.published ? `Published v${agent.published.version}` : 'Not published yet',
-        }));
+        // PC06: with a project in scope (the workflow being edited), only the agents available there.
+        const { tableScope } = await import('../datatables/projects');
+        const projects = await import('../projects');
+        const projectId = tableScope()?.projectId;
+        const all = agentStore.list();
+        const available = projectId ? projects.availableAgentIds(projectId, all.map((a) => a.id)) : undefined;
+        return all
+          .filter((agent) => !available || available.has(agent.id))
+          .map((agent) => {
+            const state = agent.published ? `Published v${agent.published.version}` : 'Not published yet';
+            const home = projectId ? projects.homeProjectId('agent', agent.id) : undefined;
+            const from = home && home !== projectId ? projects.getProject(home)?.name : undefined;
+            return { name: agent.name, value: agent.id, description: from ? `From ${from} · ${state}` : state };
+          });
       },
     },
   },

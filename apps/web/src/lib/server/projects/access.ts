@@ -13,6 +13,7 @@
  */
 import { can, type Role } from '../../shared/auth';
 import {
+  ALL_PROJECTS,
   FULL_ACCESS,
   personalProjectId,
   projectRoleCan,
@@ -74,6 +75,11 @@ function accessFrom(home: string | undefined, homeShares: Array<{ projectId: str
   const homeRole = roleIn(home);
   let access: ResourceAccess | undefined = homeRole && { role: homeRole, home: true };
   for (const share of homeShares) {
+    // PC06: an "All projects" share gives every signed-in member use of the resource.
+    if (share.projectId === ALL_PROJECTS) {
+      access = strongerAccess(access, { role: 'user', home: false });
+      continue;
+    }
     const role = roleIn(share.projectId);
     if (!role) continue;
     access = strongerAccess(access, { role: share.role === 'user' ? 'user' : weakerRole<ResourceAccess['role']>(role, share.role as ProjectRole), home: false });
@@ -158,7 +164,7 @@ export function visibleIds(actor: Actor, kind: ResourceKind, ids: Iterable<strin
   const shared = new Set(
     authDb()
       .all<{ resource_id: string; project_id: string }>('SELECT resource_id, project_id FROM resource_shares WHERE kind = ?', kind)
-      .filter((row) => projects.has(row.project_id))
+      .filter((row) => row.project_id === ALL_PROJECTS || projects.has(row.project_id)) // PC06: '*' is seen by everyone
       .map((row) => row.resource_id),
   );
   for (const id of ids) {
@@ -193,7 +199,7 @@ export function withOwnership<T extends { id: string }>(actor: Actor, kind: Reso
     if (visible && !visible.has(item.id)) continue;
     const home = homes.get(item.id) ?? fallback ?? '';
     const itemShares = allShared.get(item.id) ?? [];
-    if (projectId && home !== projectId && !itemShares.some((s) => s.projectId === projectId)) continue;
+    if (projectId && home !== projectId && !itemShares.some((s) => s.projectId === projectId || s.projectId === ALL_PROJECTS)) continue;
     const access = (admin ? FULL_ACCESS : accessFrom(homes.get(item.id) ?? fallback, itemShares, roleIn)) ?? FULL_ACCESS;
     const project = projects.get(home);
     out.push({ ...item, ownership: { projectId: home, projectName: project?.name ?? 'Default', projectType: project?.type ?? 'personal', access, shared: !access.home } });
@@ -252,4 +258,26 @@ export function usableCredentialIds(projectId: string | undefined, ids: Iterable
   const usable = new Set<string>();
   for (const id of ids) if ((homes.get(id) ?? fallback) === projectId || shared.has(id)) usable.add(id);
   return usable;
+}
+
+// ---- agents across projects (PC06) ------------------------------------------------------------------------
+
+/** Whether an agent is available in a project: its home, a share to that project, or an "All projects" share. One query. */
+export function agentAvailableIn(agentId: string, projectId: string): boolean {
+  const home = homeProjectId('agent', agentId) ?? defaultProjectId();
+  if (home === projectId) return true;
+  return Boolean(
+    authDb().get<{ n: number }>('SELECT 1 AS n FROM resource_shares WHERE kind = ? AND resource_id = ? AND project_id IN (?, ?)', 'agent', agentId, projectId, ALL_PROJECTS),
+  );
+}
+
+/** Ids of the agents available in a project (home, shared to it, or to all), from two queries. Agents without a row belong to the default project (pass `ids` to include them). */
+export function availableAgentIds(projectId: string, ids?: Iterable<string>): Set<string> {
+  const homes = homeProjects('agent');
+  const fallback = defaultProjectId();
+  const out = new Set<string>();
+  for (const [id, home] of homes) if (home === projectId) out.add(id);
+  for (const row of authDb().all<{ resource_id: string }>('SELECT resource_id FROM resource_shares WHERE kind = ? AND project_id IN (?, ?)', 'agent', projectId, ALL_PROJECTS)) out.add(row.resource_id);
+  if (ids && fallback === projectId) for (const id of ids) if (!homes.has(id)) out.add(id);
+  return out;
 }

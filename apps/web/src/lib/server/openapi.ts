@@ -2388,6 +2388,37 @@ function paths(): Record<string, Record<string, Json>> {
     body: jsonBody(object({ text: { type: 'string', maxLength: 20000 }, citations: { type: 'array', items: { type: 'string' }, maxItems: 20 }, executionId: { type: 'string' }, repo: { type: 'string' } })),
     responses: { 200: reply('What was recorded', object({ recorded: array({ type: 'string' }), unknown: array({ type: 'string' }) }, ['recorded', 'unknown'])), 400: invalid, 404: notFound },
   });
+  // PC06: agents across projects.
+  const availabilityDoc = object({ home: object({ id: { type: 'string' }, name: { type: 'string' } }, ['id', 'name']), all: { type: 'boolean' }, projects: array(object({ id: { type: 'string' }, name: { type: 'string' } }, ['id', 'name'])) }, ['home', 'all', 'projects']);
+  const agentSharesDoc = object({ availability: availabilityDoc, shares: array({ type: 'object', description: 'projectId, projectName, projectType, role (`user`), createdAt, createdBy' }) }, ['availability', 'shares']);
+  add('get', '/api/agents/{id}/shares', {
+    tag: 'Agents',
+    id: 'getAgentShares',
+    summary: 'Where an agent is available',
+    description: 'Its home project, the projects it is shared with (only those the caller has a role in; `[]` when `all` is true) and whether it is shared with all projects. The “All projects” row is not in `shares`.',
+    pathParams: { id: 'The agent id' },
+    responses: { 200: reply('The availability', agentSharesDoc), 404: notFound },
+  });
+  add('put', '/api/agents/{id}/shares', {
+    tag: 'Agents',
+    id: 'setAgentShares',
+    summary: 'Make an agent available to projects',
+    description: 'Admins of the agent’s home project, owners and admins. Replaces every share; the home project in `projectIds` is ignored and an unknown project is 404. `all: true` shares it with every project. Each change is audited.',
+    pathParams: { id: 'The agent id' },
+    body: jsonBody(object({ projectIds: { type: 'array', items: { type: 'string' }, maxItems: 100, uniqueItems: true }, all: { type: 'boolean' } }, ['projectIds', 'all'])),
+    responses: { 200: reply('The availability', agentSharesDoc), 400: invalid, 403: errorRef('Not an admin of the agent’s project'), 404: notFound },
+  });
+  add('get', '/api/agents', {
+    tag: 'Agents',
+    id: 'listAgents',
+    summary: 'List the agents the caller sees',
+    description: 'Each agent has its `ownership`. `availableIn` lists only the agents available in that project (its own, shared to it, or shared with all); the caller needs a role there, else 404 “Project not found”. For a shared agent `ownership.shared` is true and `ownership.projectName` is its home.',
+    query: [
+      { name: 'projectId', description: 'Only the agents this project owns or has been shared', schema: { type: 'string' } },
+      { name: 'availableIn', description: 'Only the agents available in this project', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('The agents', object({ agents: array({ type: 'object', additionalProperties: true }) }, ['agents'])), 404: notFound },
+  });
   return out;
 }
 
