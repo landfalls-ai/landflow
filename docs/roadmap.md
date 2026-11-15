@@ -1897,6 +1897,33 @@ The wave 5 and L1 review notes were fixed in wave 6's carryover where they were 
   390×844, the GitHub template tile after a host restart, Explore with two marketplaces and real installed plugins, and
   fresh screenshots for B30, B31, B32 and B34 (the review's predate their fix commits). They need a host and a browser.
 
+## Company backbone: left open from the wave 6 reviews (2026-11-15)
+
+Wave 7's carryover fixed the contained wave 6 notes (the brain wiki's dead exports, the builder given back when the brain
+panel closes, run lines that name their workflow, one Ask why it failed per failed run, the run page's Ask in its ⋯ menu
+on a phone, `safeHref` and `safeLink` by host, the phone's setup button, /connect's marketplace install, closing Spotlight
+before the new sync workflow opens, and no Slack Apply on a build prompt). These wait, each with its reason:
+
+- **"What finished" on the briefing card**: still the open item under the briefing above; `Briefing` has no `finished`
+  list, and adding one changes B30's briefing shape and its nightly text, so it wants its own package.
+- **Set up tomorrow sync twice**: the button hides when a visible workflow has a List People node, so a sync workflow in
+  a project the admin cannot open leaves it up, and a second click makes a second copy. Recording the template on the
+  workflow does not help (the admin still cannot list it); the fix is a server-side check in `POST /api/templates/<id>/use`
+  or a "sync exists" answer on the briefing route, which reads past the caller's projects and needs its own review.
+- **Team work in overlap introductions**: B38's "two people sharing team work get one introduction" is not met; the
+  detector reads `org` work only until `canProposal` (`brain/scope.ts`) refuses non-audience readers for it
+  ([limitations](limitations.md)).
+- **The mod's nightly text and the review prompt's visibility**: still the open items above; PR05 changed the mod's
+  session start for practices only.
+- **Install lines in the node-plugin READMEs**: `claude plugin validate .` advises a `/plugin install <name>` line for
+  each `plugins/*` bundle. They are Landflow node plugins with flows, not Claude Code plugins, so a Claude Code install
+  line would mislead; the README's install text waits for Explore's own install wording.
+- **Live checks still open from wave 6**: B35's editor shots retaken after its fixes and "Ask the brain instead" / "Build
+  here instead" in about mode at 390×844; the credentials menu and the brain page's Ask button with real data; B37's
+  base-build and flow-briefing shots; ⌘K on Home, `/brain` and the editor; "Ask why it failed" from a phone-width ⋯ sheet
+  (the sheet closing, scroll lock, focus); Your morning with the shell panel open at 390 px and at desktop width. They
+  need a host and a headed browser, with wave 7's live pass.
+
 ## Runs: one list (B20, 2026-11-14)
 
 Closed from the wave 1 page review: X2 (Executions, Runs and Search runs are one page, **Runs** at `/runs`, the old URLs redirect), P-ex-1 (no ID or Mode column), P-ex-2 (Stop all only while a run runs), P-ex-3 (repeated failures fold into one row), P-ex-4 (two re-run words), P-runs-1 (one search box with Status and Workflow chips, the rest under More filters) and P-cmp-1 (compare with fewer than two runs goes back to the list). See [the Runs list](run-trace.md#the-runs-list).
