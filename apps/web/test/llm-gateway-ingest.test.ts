@@ -128,7 +128,9 @@ describe('the spend import', () => {
     await post(key);
     const keep = litellm.spendLogs[0];
     await post(ownKey);
-    await post(key, { 'x-litellm-spend-logs-metadata': JSON.stringify({ landflow: 'in-process' }) });
+    // An `in-process` row from a key that is not a runtime key (here Landflow's own key, or another client's).
+    const stranger = litellm.addKey({ key_alias: 'some-client' });
+    await post(stranger.key, { 'x-litellm-spend-logs-metadata': JSON.stringify({ landflow: 'in-process' }) });
     const template = litellm.spendLogs[0];
     const extra = (patch: Partial<FakeSpendLog>) => litellm.spendLogs.push({ ...template, request_id: fresh('req'), api_key: hashKey(key), metadata: { spend_logs_metadata: {} }, ...patch });
     extra({ status: 'failure' });
@@ -139,6 +141,17 @@ describe('the spend import', () => {
     expect(rows().filter((r) => r.agent_id === agentId).map((r) => r.call_id)).toEqual([keep.request_id]);
     expect(rows().some((r) => r.call_id === litellm.spendLogs[1].request_id)).toBe(false);
     expect(rows().some((r) => r.call_id === litellm.spendLogs[2].request_id)).toBe(false);
+  });
+
+  it('imports a runtime key’s call even when it claims to be in-process, and attributes it to the agent', async () => {
+    const agentId = fresh('ag');
+    const { key } = await ensureRuntimeKey({ agentId, runtime: 'kagent', model: 'qwen3-coder:30b', projectId: 'prj_claim' });
+    await post(key, { 'x-litellm-spend-logs-metadata': JSON.stringify({ landflow: 'in-process', runtime: 'claude', agent: 'someone-else', project: 'prj_other' }) });
+    const status = await importSpend({ now: later() });
+    expect(status).toMatchObject({ imported: 1, skipped: 0 });
+    expect(rows(agentId)).toHaveLength(1);
+    expect(rows(agentId)[0]).toMatchObject({ runtime: 'kagent', project_id: 'prj_claim' });
+    expect(rows().some((r) => r.agent_id === 'someone-else')).toBe(false);
   });
 
   it('does not take a call whose id is already in ai_usage', async () => {
@@ -184,6 +197,7 @@ describe('the spend import', () => {
     const agentId = fresh('ag');
     const { key } = await ensureRuntimeKey({ agentId, runtime: 'kagent', model: 'qwen3-coder:30b' });
     await post(key);
+    saveIngestStatus({ enabled: true, imported: 0, skipped: 0, totalImported: 0, lastEnd: new Date().toISOString() });
     const template = litellm.spendLogs[0];
     for (let i = 0; i < 1_149; i++) litellm.spendLogs.push({ ...template, request_id: `bulk-${agentId}-${i}` });
     const status = await importSpend({ now: later() });
@@ -193,6 +207,46 @@ describe('the spend import', () => {
     expect(pages.map((r) => r.query.get('page'))).toEqual(['1', '2', '3', '4']);
     expect(pages[0].query.get('page_size')).toBe('500');
     expect(pages[0].query.get('end_date')).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+  });
+
+  it('keeps paging when the gateway says its total is capped, and counts every row', async () => {
+    saveIngestStatus({ enabled: true, imported: 0, skipped: 0, totalImported: 0, lastEnd: new Date().toISOString() });
+    const tag = fresh('cap');
+    const all = Array.from({ length: 1_200 }, (_, i) => ({ request_id: `${tag}-${i}`, api_key: 'unknown', status: 'success', spend: 0.001, total_tokens: 3, prompt_tokens: 2, completion_tokens: 1, model: 'm', startTime: new Date().toISOString(), metadata: {} }));
+    let chunks = 0;
+    const fetcher = async (input: string) => {
+      const q = new URL(input).searchParams;
+      const page = Number(q.get('page'));
+      if (page === 1) chunks++;
+      const data = chunks === 1 ? all.slice((page - 1) * 500, page * 500) : [];
+      return new Response(JSON.stringify({ data, total: 10_000, total_is_capped: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const status = await importSpend({ now: later(), fetcher });
+    expect(status.imported).toBe(1_200);
+    expect(status.error).toBeUndefined();
+    expect(new Date(status.lastEnd!).getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it('never moves the mark past unread rows when the page cap is hit, and the next run imports them', async () => {
+    const before = new Date(Date.now() - 20 * 60_000).toISOString();
+    saveIngestStatus({ enabled: true, imported: 0, skipped: 0, totalImported: 0, lastEnd: before });
+    const tag = fresh('full');
+    let seq2 = 0;
+    const fetcher = async () => {
+      const data = Array.from({ length: 500 }, () => ({ request_id: `${tag}-${seq2++}`, api_key: 'unknown', status: 'failure', spend: 0, metadata: {} }));
+      return new Response(JSON.stringify({ data, total_is_capped: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const stuck = await importSpend({ now: later(), fetcher });
+    expect(stuck.error).toMatch(/keeps its place/);
+    expect(stuck.lastEnd).toBe(before);
+    expect(seq2).toBe(200 * 500);
+
+    const agentId = fresh('ag');
+    const { key } = await ensureRuntimeKey({ agentId, runtime: 'kagent', model: 'qwen3-coder:30b' });
+    await post(key);
+    const next = await importSpend({ now: later() });
+    expect(next.error).toBeUndefined();
+    expect(rows(agentId)).toHaveLength(1);
   });
 
   it('keeps the error and does not throw when the gateway is down', async () => {

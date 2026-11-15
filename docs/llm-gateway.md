@@ -74,12 +74,15 @@ address).
 LLM gateway has the import on (it is by default).
 
 - **Window.** From the last run's end minus 15 minutes (LiteLLM writes spend in batches, so late rows must not be lost; the
-  first run reads the last 24 hours) to one minute ago, in pages of 500 until a page is empty. The log answers at most
-  10,000 rows for one query: when a window holds more, the run says so in its status and the next one continues from the
-  newest row it read.
-- **Skipped.** Failed calls; rows marked `in-process` (Landflow's meter counted them); rows made with Landflow's own
+  first run reads the last 24 hours) to one minute ago, in chunks of one hour, oldest first, each in pages of 500 until a
+  page is empty (at most 200 pages a chunk). LiteLLM caps only the total it advertises (`total_is_capped`), never the
+  data, so the import ignores that flag. The last run's end moves only over chunks read to an empty page: a run that fails
+  or hits the page cap keeps its place and says so in its status, and the next run reads the rest.
+- **Skipped.** Failed calls; rows marked `in-process` (Landflow's meter counted them) unless the key is one Landflow
+  minted for a runtime (such a call is never Landflow's own, whatever its metadata says); rows made with Landflow's own
   virtual key; rows with no tokens and no spend; a call id that is already in `ai_usage`.
-- **Attribution.** The key's row in `llm_gateway_keys` gives the runtime, the agent and the project; else the row's
+- **Attribution.** The key's row in `llm_gateway_keys` gives the runtime, the agent and the project (metadata never
+  overrides it); else the row's
   `spend_logs_metadata`; else the project from the team (`landflow-project-<id>`). The person comes from the end user
   (`landflow-user-<id>`). Anything else is runtime `other`, with no agent.
 - **What it writes.** One `ai_usage` row per call: `source = 'litellm'`, the runtime, the agent, the project, the person,

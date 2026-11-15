@@ -138,7 +138,7 @@ export async function ensureRuntimeKey(input: RuntimeKeyInput, options: { db?: D
     }
     if (key) {
       if (row.blocked) {
-        await admin.unblockKey(key).catch(() => undefined);
+        await admin.unblockKey(key);
         changed = true;
       }
       const info = await admin.keyInfo(key);

@@ -24,8 +24,8 @@ const MAX_PAGES = 200;
 const OVERLAP_MS = 15 * 60_000;
 const LAG_MS = 60_000;
 const FIRST_WINDOW_MS = 24 * 3_600_000;
-/** LiteLLM answers at most this many rows for one query. */
-const SPEND_LOG_CAP = 10_000;
+/** The window is read in chunks of this length, oldest first, so an unfinished run never skips rows. */
+const CHUNK_MS = 3_600_000;
 const MISSING_ADMIN = 'The spend import needs LANDFLOW_LLM_GATEWAY_URL and LANDFLOW_LLM_GATEWAY_ADMIN_KEY on the server';
 
 const sha = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 20);
@@ -70,8 +70,9 @@ export function attribute(row: LiteLlmSpendLog, db: Database): Attribution {
   const meta = (row.metadata?.spend_logs_metadata ?? {}) as Record<string, unknown>;
   const metaRuntime = RUNTIMES.has(meta.runtime as AiRuntime) ? (meta.runtime as AiRuntime) : undefined;
   const runtime: AiRuntime = key && RUNTIMES.has(key.runtime as AiRuntime) ? (key.runtime as AiRuntime) : (metaRuntime ?? 'other');
-  const agentId = runtime === 'other' ? undefined : (key?.agent_id ?? text(meta.agent));
-  const projectId = key?.project_id ?? text(meta.project) ?? projectIdOfTeam(row.team_id || row.metadata?.user_api_key_team_id);
+  const trusted = key !== undefined && RUNTIMES.has(key.runtime as AiRuntime);
+  const agentId = runtime === 'other' ? undefined : trusted ? key.agent_id : text(meta.agent);
+  const projectId = key?.project_id ?? (trusted ? undefined : text(meta.project)) ?? projectIdOfTeam(row.team_id || row.metadata?.user_api_key_team_id);
   const userId = userIdOfCustomer(row.end_user);
   return { runtime, ...(agentId && { agentId }), ...(projectId && { projectId }), ...(userId && { userId }) };
 }
@@ -110,41 +111,45 @@ export async function importSpend(options: ImportOptions = {}): Promise<IngestSt
   let imported = 0;
   let skipped = 0;
   let error: string | undefined;
-  let newest: number | undefined;
-  let capped = false;
-  let seen = 0;
+  /** The end of the last chunk that was read to an empty page: nothing older than it is unread. */
+  let doneUpTo: number | undefined;
+  let stalled = false;
 
   try {
-    for (let page = 1; ; page++) {
-      if (page > MAX_PAGES) {
-        capped = true;
+    // LiteLLM caps only the advertised total (`total_is_capped`); the data is never cut, so page until a page is empty.
+    for (let from = startMs; from < endMs && !stalled; from += CHUNK_MS) {
+      const to = Math.min(endMs, from + CHUNK_MS);
+      let finished = false;
+      for (let page = 1; page <= MAX_PAGES; page++) {
+        // The chunk's end is one second late: a row on the boundary is read twice, never missed (a call id counts once).
+        const reply = await admin.spendLogs({ start: spendLogTime(from), end: spendLogTime(Math.min(endMs, to + 1000)), page, pageSize: PAGE_SIZE });
+        if (!reply.data.length) {
+          finished = true;
+          break;
+        }
+        for (const row of reply.data) {
+          if (importRow(row, { db, meter, ownKeyHash, now })) imported++;
+          else skipped++;
+        }
+      }
+      if (!finished) {
+        stalled = true;
+        error = `The gateway's spend log holds more than ${(MAX_PAGES * PAGE_SIZE).toLocaleString('en-US')} rows from ${new Date(from).toISOString()} on; the import keeps its place there and tries again`;
         break;
       }
-      const reply = await admin.spendLogs({ start: spendLogTime(startMs), end: spendLogTime(endMs), page, pageSize: PAGE_SIZE });
-      if (!reply.data.length) break;
-      seen += reply.data.length;
-      for (const row of reply.data) {
-        const at = timeOf(row.startTime) ?? timeOf(row.endTime);
-        if (at !== undefined && (newest === undefined || at > newest)) newest = at;
-        if (importRow(row, { db, meter, ownKeyHash, now })) imported++;
-        else skipped++;
-      }
-      if (reply.total_is_capped || seen >= SPEND_LOG_CAP) {
-        capped = true;
-        break;
-      }
+      doneUpTo = to;
     }
-    if (capped) error = `The gateway's spend log has more rows in this window than it returns (${SPEND_LOG_CAP.toLocaleString('en-US')}); the next run continues from the newest row read`;
   } catch (cause) {
     error = (cause as Error).message || 'The gateway could not be read';
     logger.warn('llm gateway: the spend import failed', { error });
   }
 
-  const failed = error !== undefined && !capped;
+  // Only chunks read to the end move the mark; a failed or stalled run keeps what it had.
+  const lastEnd = doneUpTo !== undefined ? new Date(doneUpTo).toISOString() : previous.lastEnd;
   const status: IngestStatus = {
     enabled: true,
     lastRunAt: new Date(now).toISOString(),
-    ...(failed ? (previous.lastEnd && { lastEnd: previous.lastEnd }) : { lastEnd: new Date(capped && newest !== undefined ? newest : endMs).toISOString() }),
+    ...(lastEnd && { lastEnd }),
     imported,
     skipped,
     totalImported: previous.totalImported + imported,
@@ -161,7 +166,10 @@ function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<
   const callId = text(row.request_id);
   if (!callId) return false;
   if (row.status !== undefined && row.status !== 'success') return false;
-  if ((row.metadata?.spend_logs_metadata as Record<string, unknown> | null | undefined)?.landflow === 'in-process') return false;
+  // A key Landflow minted for a runtime is never Landflow's own call, whatever metadata the caller sends.
+  const minted = row.api_key ? db.get<KeyRow>('SELECT runtime, agent_id, project_id FROM llm_gateway_keys WHERE key_hash = ?', row.api_key) : undefined;
+  const runtimeKey = minted !== undefined && RUNTIMES.has(minted.runtime as AiRuntime);
+  if (!runtimeKey && (row.metadata?.spend_logs_metadata as Record<string, unknown> | null | undefined)?.landflow === 'in-process') return false;
   if (ctx.ownKeyHash && row.api_key === ctx.ownKeyHash) return false;
   const input = count(row.prompt_tokens) || (row.prompt_tokens === undefined ? count(row.total_tokens) - count(row.completion_tokens) : 0);
   const output = count(row.completion_tokens);
