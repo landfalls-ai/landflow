@@ -3,6 +3,9 @@ import { createElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { listenAskAbout, takeAskAbout, ASK_ABOUT_EVENT } from '../src/components/spotlight/ask-about-listener';
 import {
+  builderFolds,
+  closeSpotlight,
+  dropShell,
   editorWorkflowId,
   getSpotlightState,
   keyAction,
@@ -10,6 +13,8 @@ import {
   parseAskAbout,
   resetSpotlightState,
   setBrainFile,
+  setBrainOpener,
+  setSpotlightState,
   shellPanelShows,
   spotlightMode,
   toggleResult,
@@ -138,5 +143,38 @@ describe('the mode chip', () => {
     const withSwitch = html({ kind: 'build', workflowId: 'wf-1', name: 'Ticket router' }, { label: 'Ask the brain instead', run: () => undefined });
     expect(withSwitch).toContain('<button');
     expect(withSwitch).toContain('aria-haspopup="menu"');
+  });
+});
+
+describe('one column at a time on the editor', () => {
+  it('folds the builder while the brain panel shows there, and only there', () => {
+    const asked = { ...INITIAL_STATE, open: true, askInstead: true };
+    expect(builderFolds('/workflows/wf-1', asked)).toBe(true);
+    expect(builderFolds('/workflows/wf-1', withAbout(INITIAL_STATE, detail))).toBe(true);
+    expect(builderFolds('/workflows/wf-1', { ...INITIAL_STATE, open: true })).toBe(false);
+    expect(builderFolds('/runs', asked)).toBe(false);
+  });
+  it('dropShell sends the brain panel away without a focus ask', () => {
+    const next = dropShell(withAbout({ ...INITIAL_STATE, askInstead: true }, detail));
+    expect(next).toMatchObject({ open: false, askInstead: false, buildFocus: 0 });
+    expect(next.about).toBeUndefined();
+  });
+  it('closing drops an ask-about', () => {
+    setSpotlightState(withAbout(INITIAL_STATE, detail));
+    closeSpotlight();
+    expect(getSpotlightState().about).toBeUndefined();
+    expect(getSpotlightState().open).toBe(false);
+  });
+  it('keeps the brain page opener in the store', () => {
+    const open = () => {};
+    setBrainOpener(open);
+    expect(getSpotlightState().openBrainPage).toBe(open);
+    setBrainOpener(undefined);
+    expect(getSpotlightState().openBrainPage).toBeUndefined();
+  });
+  it('refuses an about whose type the ask route would reject, and leaves Ctrl alone on a Mac', () => {
+    expect(parseAskAbout({ ref: { type: 'execution', id: 'x', name: 'x' }, starters: [] })).toBeUndefined();
+    expect(keyAction(key('k', { metaKey: false, ctrlKey: true }), { brain: false, mac: true })).toBe('none');
+    expect(keyAction(key('k', { metaKey: false, ctrlKey: true }), { brain: false })).toBe('toggle');
   });
 });

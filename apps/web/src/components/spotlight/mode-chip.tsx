@@ -1,6 +1,6 @@
 'use client';
-/** The chip in Spotlight's header that says what it is doing here (docs/spotlight.md#the-mode-chip). */
-import { useState } from 'react';
+/** The chip in Spotlight's header that says what it is doing here (docs/spotlight.md#one-spotlight). */
+import { useEffect, useRef, useState } from 'react';
 import { Brain, ChevronDown, Hammer, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { SpotlightMode } from './context';
@@ -23,18 +23,31 @@ const ICONS = { build: Hammer, brain: Brain, about: Sparkles } as const;
 export function ModeChip({ mode, switchTo, className }: { mode: SpotlightMode; switchTo?: { label: string; run: () => void }; className?: string }) {
   const [menu, setMenu] = useState(false);
   const Icon = ICONS[mode.kind];
+  const root = useRef<HTMLSpanElement>(null);
+  // Outside a click, or Escape from anywhere, closes the menu.
+  useEffect(() => {
+    if (!menu) return;
+    const away = (e: Event) => root.current && !root.current.contains(e.target as Node) && setMenu(false);
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && setMenu(false);
+    document.addEventListener('pointerdown', away);
+    document.addEventListener('keydown', esc);
+    return () => {
+      document.removeEventListener('pointerdown', away);
+      document.removeEventListener('keydown', esc);
+    };
+  }, [menu]);
   const look = 'inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-full border border-hair bg-bg px-2 py-0.5 text-[12px] font-medium text-t1';
   const body = (
     <>
       <Icon className="size-3.5 shrink-0 text-viz-7" aria-hidden />
-      <span className="truncate" data-mode={mode.kind}>
+      <span className="truncate" data-mode={mode.kind} title={chipLabel(mode)}>
         {chipLabel(mode)}
       </span>
     </>
   );
   if (!switchTo) return <span className={cn(look, className)}>{body}</span>;
   return (
-    <span className={cn('relative inline-flex min-w-0 max-w-full', className)}>
+    <span ref={root} className={cn('relative inline-flex min-w-0 max-w-full', className)}>
       <button type="button" onClick={() => setMenu((v) => !v)} aria-haspopup="menu" aria-expanded={menu} className={cn(look, 'hover:border-ac')}>
         {body}
         <ChevronDown className="size-3 shrink-0 text-t3" aria-hidden />

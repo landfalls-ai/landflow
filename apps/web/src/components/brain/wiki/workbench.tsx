@@ -29,7 +29,7 @@ import { WikiNav } from './parts';
 import { ExplorerView, FileIcon, SearchView, TimelineView, type Opener } from './side-views';
 import { lineId, SourceView } from './source-view';
 import { type SpotlightFile } from './spotlight';
-import { closeSpotlight, keyAction, openSpotlight, setBrainFile, useSpotlightState } from '../../spotlight/context';
+import { closeSpotlight, keyAction, openSpotlight, setBrainFile, setBrainOpener, useSpotlightState } from '../../spotlight/context';
 
 type View = 'explorer' | 'search' | 'timeline';
 type Mode = 'preview' | 'source';
@@ -222,6 +222,11 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
     setBrainFile(fileRef ? { ref: fileRef, name: fileName ?? fileRef, page: Boolean(fileIsPage), ...(fileTop && { topShared: fileTop }), ...(fileModel && { model: fileModel }) } : undefined);
   }, [fileRef, fileName, fileIsPage, fileTop, fileModel]);
   useEffect(() => () => setBrainFile(undefined), []);
+  // And its opener, so a link in an answer opens a tab here instead of navigating (which would remount the workbench).
+  useEffect(() => {
+    setBrainOpener(open);
+    return () => setBrainOpener(undefined);
+  }, [open]);
 
   const sideView = home && tree && (
     <>

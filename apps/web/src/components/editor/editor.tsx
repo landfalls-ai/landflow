@@ -71,7 +71,7 @@ import { EditLockBanner, editorTabHeaders, useEditLock, useEditLockSync } from '
 import { followable, useFollowRun } from './follow-run';
 import { pinFromRun } from './pin-from-run';
 import { useFollowWaiting } from './waiting';
-import { useSpotlightState } from '../spotlight/context';
+import { builderFolds, dropShell, isMac, keyAction, setSpotlightState, useSpotlightState } from '../spotlight/context';
 
 const nodeTypesMap = { lf: FlowNodeView, sticky: StickyNodeView, frame: GroupNodeView, ghost: GhostNodeView };
 const edgeTypesMap = { lf: FlowEdgeView, groupProxy: GroupProxyEdgeView, ghost: GhostEdgeView };
@@ -174,6 +174,8 @@ function KeepGhostsInView({ ids }: { ids: string[] }) {
 
 /** ⌘K, ⌘I, the Spotlight button, the rail's "Ask or build" and the empty canvas's hint: the right column shows Spotlight (unfolded, caret in its box). */
 function showSpotlight() {
+  // One column at a time: the builder coming back sends the brain panel away.
+  setSpotlightState(dropShell);
   useChatColumn.getState().apply('show-spotlight');
   focusSpotlight();
   // A folded column is invisible until its width has eased (240 ms): the first try cannot take the focus, this one can.
@@ -301,7 +303,7 @@ function Canvas({ onSave }: { onSave: () => void }) {
       } else if (mod && e.key === 'Enter') {
         e.preventDefault();
         state.run?.({ kind: e.shiftKey ? 'debug' : 'run' });
-      } else if (mod && !e.shiftKey && !e.altKey && (e.key === 'i' || e.key === 'k')) {
+      } else if (keyAction(e, { brain: false, mac: isMac() }) === 'toggle') {
         // ⌘K is Spotlight everywhere; here it is the builder in this column (docs/spotlight.md#one-spotlight).
         e.preventDefault();
         showSpotlight();
@@ -683,7 +685,18 @@ export function Editor({ workflowId }: { workflowId: string }) {
   useFollowWaiting();
   // A run this editor started before a reload goes on: show it live again.
   useFollowRun();
+  // The brain panel (asked for here, or about something) takes the room: the builder folds to its strip until it is back.
+  const spotlightState = useSpotlightState();
+  const brainPanelShows = builderFolds(`/workflows/${workflowId}`, spotlightState);
   const spotlightFolded = useAssistant((s) => s.collapsed);
+  const brainShownBefore = useRef(false);
+  useEffect(() => {
+    if (!brainPanelShows) brainShownBefore.current = false;
+    else if (!brainShownBefore.current) {
+      brainShownBefore.current = true;
+      useAssistant.getState().setCollapsed(true);
+    } else if (!spotlightFolded) setSpotlightState(dropShell); // the strip unfolded the builder: the brain panel goes
+  }, [brainPanelShows, spotlightFolded]);
   const spotlightOpen = !spotlightFolded;
   const spotlightVisible = column !== 'chat' && spotlightOpen;
   // On a phone, Spotlight's own runs take the canvas: the Execute bar steps aside while it drafts or tests.

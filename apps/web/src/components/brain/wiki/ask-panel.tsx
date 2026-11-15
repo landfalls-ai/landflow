@@ -1,7 +1,7 @@
 'use client';
 /**
- * Ask the brain (docs/second-brain.md#the-brain-page): the conversation beside the page. On a desktop it is the right
- * column of the workbench (the page narrows, a link in an answer opens the page next to it); on a phone, a bottom sheet.
+ * Ask the brain (docs/second-brain.md#the-brain-page): the conversation about the brain. It is the body of the shell's Spotlight panel
+ * (docs/spotlight.md#one-spotlight): a right column on a desktop, a bottom sheet on a phone; a link in an answer opens the page.
  * The answer streams: first what the brain found ("Found 3 pages · 2 facts"), then its words, then the sources it cited,
  * the model, time and cost. A follow-up carries the last two turns. Built on the chat kit.
  *
@@ -438,11 +438,14 @@ export function AskPanel({
   starters,
   request,
   subject,
+  onSubjectOff,
   heading,
 }: {
   about?: AskAbout;
   /** Asked about one thing that is not a brain page (a run, a workflow): a chip like `about`, sent as a tag (docs/spotlight.md#one-spotlight). */
   subject?: AskTag;
+  /** The subject chip was removed: the question goes to everything. */
+  onSubjectOff?: () => void;
   /** Replaces the header's title: the shell's mode chip. */
   heading?: ReactNode;
   onClose: () => void;
@@ -484,7 +487,7 @@ export function AskPanel({
     // The thing it was sent about goes first, once.
     const tags = subjectChip && !picked.some((t) => mentionKey(t as MentionRef) === mentionKey(subjectChip as MentionRef)) ? [subjectChip, ...picked] : picked;
     picker.clear();
-    void ask(text, chip, tags);
+    void ask(text, chip, tags.slice(0, 8));
   };
   const asker = useRef(send);
   useEffect(() => {
@@ -591,7 +594,10 @@ export function AskPanel({
                     {subjectChip && (
                       <span className="mb-1 inline-flex max-w-full items-center gap-1 rounded-md bg-acdim px-1.5 py-0.5 text-[11.5px] text-ac">
                         <span className="truncate">@{subjectChip.name}</span>
-                        <button type="button" onClick={() => setSubjectOff(true)} aria-label="Ask about everything" title="Ask about everything, not this" className="grid place-items-center hover:text-t1 max-md:size-9">
+                        <button type="button" onClick={() => {
+                          setSubjectOff(true);
+                          onSubjectOff?.();
+                        }} aria-label="Ask about everything" title="Ask about everything, not this" className="grid place-items-center hover:text-t1 max-md:size-9">
                           <X className="size-3" />
                         </button>
                       </span>

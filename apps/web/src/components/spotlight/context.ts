@@ -6,6 +6,7 @@
  */
 import { useSyncExternalStore } from 'react';
 import { usePathname } from 'next/navigation';
+import { MENTION_TYPES } from '@/lib/shared/mentions';
 
 /** What the panel does on this page: builds the open workflow, asks the brain, or asks about one thing it was sent. */
 export type SpotlightMode =
@@ -35,6 +36,8 @@ export interface SpotlightState {
   /** Set by an ask-about event: the panel asks about this until the chip is removed. */
   about?: AskAboutDetail;
   brainFile?: BrainFile;
+  /** The Brain page's own opener, so a link in an answer opens in the workbench instead of navigating. */
+  openBrainPage?: (ref: string) => void;
   /** On the editor the builder is the panel; this lets a person ask the brain there instead. */
   askInstead: boolean;
   /** Counts how often the editor's own Spotlight was asked for (a click on the rail's button). */
@@ -78,8 +81,10 @@ export function parseAskAbout(detail: unknown): AskAboutDetail | undefined {
   if (!detail || typeof detail !== 'object') return undefined;
   const { ref, starters } = detail as { ref?: Record<string, unknown>; starters?: unknown };
   if (!ref || typeof ref.type !== 'string' || typeof ref.id !== 'string' || typeof ref.name !== 'string' || !ref.type || !ref.id) return undefined;
+  // The brain's ask route only takes mention types; anything else would fail every question in about mode.
+  if (!(MENTION_TYPES as readonly string[]).includes(ref.type)) return undefined;
   return {
-    ref: { type: ref.type, id: ref.id, name: ref.name, ...(typeof ref.workflowId === 'string' && ref.workflowId && { workflowId: ref.workflowId }) },
+    ref: { type: ref.type, id: ref.id, name: ref.name.trim().slice(0, 200) || ref.id, ...(typeof ref.workflowId === 'string' && ref.workflowId && { workflowId: ref.workflowId }) },
     starters: Array.isArray(starters) ? starters.filter((s): s is string => typeof s === 'string' && s.trim() !== '').slice(0, 6) : [],
   };
 }
@@ -96,8 +101,9 @@ export const withoutAbout = (s: SpotlightState): SpotlightState => {
 
 /** The keys. ⌘K and ⌘I open (or focus) Spotlight everywhere; ⌘P on the brain page is QuickOpen (it was ⌘K). */
 export type KeyAction = 'toggle' | 'quick' | 'none';
-export function keyAction(e: { key: string; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }, where: { brain: boolean }): KeyAction {
-  if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return 'none';
+export function keyAction(e: { key: string; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }, where: { brain: boolean; mac?: boolean }): KeyAction {
+  // On a Mac, Ctrl+K in a text field is the system's kill-line: only ⌘ counts there.
+  if (!(e.metaKey || (e.ctrlKey && !where.mac)) || e.shiftKey || e.altKey) return 'none';
   const key = e.key.toLowerCase();
   if (key === 'k' || key === 'i') return 'toggle';
   if (key === 'p' && where.brain) return 'quick';
@@ -141,7 +147,18 @@ export function useSpotlightMode(workflowName?: string): SpotlightMode {
 export function openSpotlight(path: string) {
   setSpotlightState((s) => (isEditorRoute(path) && !s.askInstead && !s.about ? { ...s, buildFocus: s.buildFocus + 1 } : withOpen(s, true)));
 }
-export const closeSpotlight = () => setSpotlightState((s) => withOpen(s, false));
+/** Closing also drops an ask-about: the next ⌘K starts from the page again. */
+export const closeSpotlight = () => setSpotlightState((s) => withOpen(withoutAbout(s), false));
+/** Drop the brain panel on the editor without asking the builder for focus (the caller focuses it). */
+export const dropShell = (s: SpotlightState): SpotlightState => ({ ...withoutAbout(s), open: false, askInstead: false });
+/** The editor shows one column at a time: while the brain panel shows there, the builder column folds to its strip. */
+export const builderFolds = (path: string, state: Pick<SpotlightState, 'open' | 'askInstead' | 'about'>) => isEditorRoute(path) && shellPanelShows(path, state);
+export const isMac = () => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+export const setBrainOpener = (openBrainPage: ((ref: string) => void) | undefined) =>
+  setSpotlightState((s) => {
+    const { openBrainPage: _old, ...rest } = s;
+    return openBrainPage ? { ...rest, openBrainPage } : rest;
+  });
 export const showBrainInstead = () => setSpotlightState((s) => ({ ...s, open: true, askInstead: true }));
 /** "Build here instead" on the editor: the brain panel goes and the editor's own Spotlight takes the focus. */
 export const showBuilderInstead = () => setSpotlightState((s) => ({ ...withoutAbout(s), open: false, askInstead: false, buildFocus: s.buildFocus + 1 }));

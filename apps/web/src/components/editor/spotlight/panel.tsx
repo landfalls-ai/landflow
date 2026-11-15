@@ -457,7 +457,7 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
             note sits under the row, in the panel's flow, so it pushes the conversation down instead of covering it. */}
         <div className="hidden shrink-0 border-b border-hair md:block">
           <div className="flex h-9 items-center justify-between gap-2 px-3">
-            {/* What Spotlight is doing here; the chip offers the brain instead (the shell's panel opens beside this one). */}
+            {/* What Spotlight is doing here; the chip offers the brain instead (the shell's panel opens and this column folds to its strip). */}
             <ModeChip mode={{ kind: 'build', workflowId: keep.workflowId ?? '', name: workflowName }} switchTo={{ label: 'Ask the brain instead', run: showBrainInstead }} />
             <AutonomousSwitch explainer={explainer} />
           </div>

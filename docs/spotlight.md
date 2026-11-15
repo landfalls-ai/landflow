@@ -28,12 +28,14 @@ brain.
   rail's "Ask or build… ⌘K" button opens it too. It sits in the layout, so a conversation stays while you move from page
   to page. On a phone it is a bottom sheet with three heights (the arrows beside the chip step through them).
 - **Modes.** A chip in its header says what it does here. On a workflow's editor it is the builder, "Building Ticket
-  router": the editor's own column, which stays where it is and takes the focus on ⌘K, so there is never a second panel.
+  router": the editor's own column, which takes the focus on ⌘K.
   Everywhere else it is the brain, "Asking the brain", about the open page on the Brain page and about everything
   elsewhere. A page can send it to one thing: the `landflow:ask-about` window event (detail `{ ref: { type, id, name,
   workflowId? }, starters }`) opens it as "About <name>" with that thing as the chip and the starters as its first
-  questions. On the editor the chip offers "Ask the brain instead" (which opens the brain beside the builder), and in
-  about mode "Ask the brain instead" drops the chip.
+  questions. On the editor the chip offers "Ask the brain instead" (or any ask-about event there), and the brain panel then takes the
+  right side while the builder folds to its 44 px strip: one column at a time, so the canvas keeps its room. ⌘K, ⌘I, the
+  Spotlight button or the strip bring the builder back and the brain panel goes. In about mode "Ask the brain instead"
+  drops the chip, and so does closing the panel or removing the chip in its box. Ctrl does not count as the key on a Mac.
 - **The Brain page** has one way in: the Ask button in its title bar opens this panel.
 
 ## 1. Home 2.0

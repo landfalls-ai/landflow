@@ -15,6 +15,7 @@ import { ChevronsUpDown } from 'lucide-react';
 import { useViewer } from '../auth/viewer';
 import { AskPanel, ASK_INPUT, useAskConversation, type AskTag } from '../brain/wiki/ask-panel';
 import { bubblesFor } from '../brain/wiki/spotlight';
+import { WikiNav } from '../brain/wiki/parts';
 import { Sheet } from '../ui/sheet';
 import { usePhone } from '@/lib/client/use-phone';
 import { isChromelessPage } from '@/lib/shared/auth-paths';
@@ -22,6 +23,7 @@ import { listenAskAbout, takeAskAbout } from './ask-about-listener';
 import {
   closeSpotlight,
   isEditorRoute,
+  isMac,
   keyAction,
   setSpotlightState,
   shellPanelShows,
@@ -91,7 +93,7 @@ export function ShellSpotlight() {
   useEffect(() => {
     if (chromeless) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || keyAction(e, { brain: false }) !== 'toggle') return;
+      if (e.defaultPrevented || keyAction(e, { brain: false, mac: isMac() }) !== 'toggle') return;
       const { state: s, pathname: path } = stateRef.current;
       if (isEditorRoute(path)) return;
       e.preventDefault();
@@ -122,7 +124,9 @@ export function ShellSpotlight() {
   if (chromeless || !shows) return null;
   const mode = spotlightMode(pathname, state);
   const switchTo = switchFor(mode, editor);
-  const body = <PanelBody mode={mode} conversation={conversation} file={state.brainFile} about={state.about?.starters} />;
+  const panel = <PanelBody mode={mode} conversation={conversation} file={state.brainFile} about={state.about?.starters} />;
+  // On the Brain page a link in an answer opens in the workbench (a route change would remount it).
+  const body = state.openBrainPage ? <WikiNav.Provider value={state.openBrainPage}>{panel}</WikiNav.Provider> : panel;
 
   if (phone) {
     const sheet = SHEET_HEIGHTS[height]!;
@@ -192,7 +196,7 @@ function ResizeEdge({ width, onChange }: { width: number; onChange: (w: number, 
 function PanelBody({ mode, conversation, file, about }: { mode: SpotlightMode; conversation: ReturnType<typeof useAskConversation>; file?: { ref: string; name: string; page: boolean; topShared?: string; model?: string }; about?: string[] }) {
   const phone = usePhone();
   const heading = phone ? undefined : <ModeChipFor mode={mode} />;
-  const common = { onClose: closeSpotlight, conversation, ...(file?.model && { model: file.model }), ...(heading && { heading }) };
+  const common = { onClose: closeSpotlight, onSubjectOff: () => setSpotlightState(withoutAbout), conversation, ...(file?.model && { model: file.model }), ...(heading && { heading }) };
   if (mode.kind === 'about') {
     const { ref } = mode;
     const tag: AskTag = { type: ref.type, id: ref.id, name: ref.name, ...(ref.workflowId && { workflowId: ref.workflowId }) };
