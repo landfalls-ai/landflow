@@ -62,7 +62,7 @@ function agentMcpServer(agent: Agent, config: AgentConfig, version: number, sign
       const named = request.params.name;
       const args = (request.params.arguments ?? {}) as Record<string, unknown>;
       let failed: boolean | undefined;
-      const outcome = await traceToolCall({ agentId: agent.id, agentName: agent.name, tool: named, callId: `kagent_${nanoid(10)}`, kind: 'notebook' }, async () => {
+      const outcome = await traceToolCall({ agentId: agent.id, agentName: agent.name, tool: named, callId: `kagent_${nanoid(10)}`, kind: 'practice' }, async () => {
         const answer = practiceToolCall(agent, named, args);
         failed = answer.isError;
         return { output: answer.text };

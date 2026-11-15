@@ -315,12 +315,18 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
    * landflow-harness mod reports what it does to a trace for this call (a2a/agent-trace.ts): its real usage, cost, tool
    * calls and guardrail stops replace the estimate.
    */
-  /** The practices indexed to a session's conversation, kept until the answer that completes it (a pause or a question comes first). In memory: a restart in between loses them, and `practice_cite` still records. */
+  /** The practices indexed to a session's conversation, kept until the answer that completes it (a pause or a question comes first). A pause carries them in its saved state; a question to the caller keeps them in memory for this run only (a restart loses them, and `practice_cite` still records). */
   const indexed = new Map<string, PracticesIndex>();
   /** Records the citations of an answer that completes the conversation; a pause or a question to the caller keeps the index for the answer to come. */
   function settle(outcome: ToolOutcome, ctx: ToolContext): ToolOutcome {
     const index = indexed.get(ctx.session.id);
-    if (!index || outcome.pause || ctx.session.remoteContexts?.[config.id]?.question) return outcome;
+    if (!index) return outcome;
+    // A pause ends this run: the resume is a new run with a new tool, so the index travels in the saved state.
+    if (outcome.pause) {
+      outcome.pause.remote.state = { ...outcome.pause.remote.state, practices: index };
+      return outcome;
+    }
+    if (ctx.session.remoteContexts?.[config.id]?.question) return outcome;
     indexed.delete(ctx.session.id);
     recordRemoteCitations(index, typeof outcome.output === 'string' ? outcome.output : JSON.stringify(outcome.output ?? ''), ctx.session.execution?.executionId);
     return outcome;
@@ -432,6 +438,8 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
       return settle(outcome, ctx);
     },
     async resume(state, approved, ctx, answer) {
+      const carried = (state as { practices?: PracticesIndex }).practices;
+      if (carried) indexed.set(ctx.session.id, carried);
       const { taskId, contextId, request, question } = state as { taskId: string; contextId: string; request?: Extract<HitlRequest, { type: 'tool_approval_request' }>; question?: { id: string; questions: string[] } };
       // A question a person answered: the answer goes to the same task (as a plain reply when the agent asked without the extension).
       if (question) {

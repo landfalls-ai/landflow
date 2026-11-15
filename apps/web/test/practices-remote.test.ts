@@ -7,6 +7,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { runNode } from '@landflow/sdk';
 import type { Workflow, WorkflowNode } from '@landflow/engine';
 import type { ApprovedPractice } from '@/lib/shared/practices';
 import type { PracticesQuery, RunContext, RunContextProvider } from '@/lib/shared/project-context';
@@ -188,6 +189,21 @@ describe('The A2A node', () => {
   });
 });
 
+describe('The A2A node used as a tool', () => {
+  it('records one row when the answer to the remote agent’s question cites, from the node state', async () => {
+    let saved: Record<string, unknown> | undefined;
+    const extras = { mode: 'tool', getNodeState: () => saved, setNodeState: (v: Record<string, unknown>) => void (saved = v) } as never;
+    const params = (message: string) => ({ agentUrl: a2a.url, authentication: 'none', options: { timeout: 5_000 }, operation: 'sendMessage', message });
+    const asTool = (message: string) =>
+      runNode(a2aAgentNode, { protocol: 'landflow.plugin/v1', executionId: 'ex_tool', workflowId: 'wf_tool', mode: 'tool', node: { id: 'n1', name: 'Remote', type: 'core.a2aAgent', typeVersion: 1 }, parameters: params(message), itemParameters: [params(message)], inputs: [[{ json: {} }]] } as never, extras);
+    await withRunContext(context(), () => asTool('ask'));
+    expect(saved?.practices).toBeTruthy();
+    expect(rows.filter((r) => r.kind === 'cited')).toHaveLength(0);
+    await withRunContext(context(), () => asTool('Done.\nPractices followed: [helm/chart-location@1]'));
+    expect(rows.filter((r) => r.kind === 'cited')).toHaveLength(1);
+  });
+});
+
 describe('An A2A capability', () => {
   const toolContext = () => ({ agent: { id: 'agt_1', name: 'Caller' }, session: { id: 'ses_1', remoteContexts: {}, execution: { executionId: 'exec_cap', workflowId: 'wf', nodeId: 'n' } }, runId: 'run_1', signal: new AbortController().signal, approvals: 'ask' }) as never;
   async function tool(options: Record<string, unknown> = {}) {
@@ -199,14 +215,39 @@ describe('An A2A capability', () => {
   it('sends the index with the session’s first message and records its citation; a follow-up goes as it is', async () => {
     const t = await tool();
     const ctx = toolContext();
-    await withRunContext(context(), () => t.invoke({ message: 'Practices followed: [helm/chart-location@1]' }, ctx));
+    await withRunContext(context(), () => t.invoke({ message: 'Done.\nPractices followed: [helm/chart-location@1]' }, ctx));
     await withRunContext(context(), () => t.invoke({ message: 'next' }, ctx));
     const [one, two] = sends().map(textOf);
     expect(one).toContain(INDEX);
-    expect(one).toBe(`${BLOCK}\n\n${INDEX}\n\n${PRACTICES_INDEX_LINE}\n\nPractices followed: [helm/chart-location@1]`);
+    expect(one).toBe(`${BLOCK}\n\n${INDEX}\n\n${PRACTICES_INDEX_LINE}\n\nDone.\nPractices followed: [helm/chart-location@1]`);
     expect(two).toBe('next');
     expect(rows.filter((r) => r.kind === 'cited')).toHaveLength(1);
     expect(rows[0]).toMatchObject({ executionId: 'exec_cap' });
+  });
+
+  it('records the citation of an answer after a tool approval, through a tool built again for the resumed run', async () => {
+    const ctx = toolContext();
+    const paused = await withRunContext(context(), async () => (await tool()).invoke({ message: 'upper hello\nPractices followed: [helm/chart-location@1]' }, ctx));
+    expect(paused.pause).toBeTruthy();
+    expect(rows.filter((r) => r.kind === 'cited')).toHaveLength(0);
+    // The saved state is JSON; the resumed run builds its tool again.
+    const state = JSON.parse(JSON.stringify(paused.pause!.remote.state));
+    const second = await tool();
+    const done = await second.resume!(state, true, ctx);
+    expect(String(done.output)).toContain('HELLO');
+    const cited = rows.filter((r) => r.kind === 'cited');
+    expect(cited).toHaveLength(1);
+    expect(cited[0]).toMatchObject({ practiceId: 'prc_a', executionId: 'exec_cap' });
+  });
+
+  it('records nothing for a question to the caller, and one row for the answering call', async () => {
+    const t = await tool();
+    const ctx = toolContext();
+    const asked = await withRunContext(context(), () => t.invoke({ message: 'ask' }, ctx));
+    expect(String(asked.output)).toContain('Which colour?');
+    expect(rows.filter((r) => r.kind === 'cited')).toHaveLength(0);
+    await withRunContext(context(), () => t.invoke({ message: 'Done.\nPractices followed: [helm/chart-location@1]' }, ctx));
+    expect(rows.filter((r) => r.kind === 'cited')).toHaveLength(1);
   });
 
   it('sends no index with the capability option Off', async () => {

@@ -410,6 +410,7 @@ export const a2aAgentNode = defineNode({
             result = await callAgent(endpoint, card, { ...answer, metadata: { ...metadata, ...answer.metadata } }, send);
           } else {
             // A Landflow agent on kagent with the landflow-harness mod reports its real usage, cost and tool calls here.
+            if (remembered?.taskId) practiceIndex = remembered.practices;
             if (!contextId && !remembered?.taskId && options.projectContext !== 'off') {
               contextBlock = asTool
                 ? currentRunContext()

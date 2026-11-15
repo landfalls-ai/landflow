@@ -405,7 +405,6 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - Practices reach only the Claude Code mod and MCP clients until wave P2. Landflow agents, kagent agents and the Check
   Practices step do not get them yet, and `required` stops nothing: a failed check blocks a flow only from wave P2
   ([practices.md](practices.md)).
-- A remote agent's answer is scanned for practice citations after a pause or a question only while Landflow holds the index in memory (a restart, or a tool-approval pause of an A2A node used as a tool, loses it); `practice_cite` still records.
 - A draft does not file an inbox suggestion yet (wave P2). Find waiting drafts in `/brain` → Practices, or in the links the
   API, the mod and the CLI return.
 - There is no four-eyes setting: the drafter of a practice may approve their own, if they are allowed to approve at
@@ -417,6 +416,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 ## Practices for remote agents (wave P2)
 
+- A remote agent's answer is scanned for practice citations after a tool approval or a person's answer through the pause's saved state, and after a question to the caller only while Landflow holds the index in memory (the run, or the node's state for an A2A node used as a tool; a restart in between loses it). An A2A node in a workflow that pauses and is continued with the Respond operation is not scanned. `practice_cite` still records in every case.
 - Only a Landflow agent on kagent gets the practices index; any other A2A agent gets nothing new.
 - An A2A node outside a team binds `practices_for` to the agent's home project, not the run's: only a team's open call
   carries the run's project to the agent's MCP server.
