@@ -108,6 +108,17 @@ without a model call. The chat it sends to uses only the node types the workflow
 **Also built:** [Test and fix](assistant.md#test-and-fix), which runs the workflow, has failures fixed until a run passes,
 and then offers to publish it. While it works, the conversation waits in a card at the side of the canvas.
 
+### Ask about it
+
+Every resource's ⋯ menu has **Ask Spotlight**: workflows (list rows), runs (list rows, the run page and the run preview),
+agents (cards and the agent page), data tables, credentials and brain pages. A failed run also has a button, **Ask why it
+failed**, on its list row, its one-line row, its page and its preview. Each fires one browser event,
+`landflow:ask-about`, whose detail is `{ ref: { type, id, name, workflowId? }, starters }` (`lib/client/ask-about.ts`).
+The chat panel listens for it, sets the resource as the chip and offers the three starter questions for its type
+(`lib/shared/ask-starters.ts`; a failed run's first is "Why did this fail?"). A credential's item says **Ask about where
+it's used** and sends only its name and id, never a value. Until the panel listens for the event, the click does nothing
+visible.
+
 ## 3. The action layer
 
 Spotlight's agent has no network access, no API keys and no route access. Its tools are find, read, describe and

@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Download, Ellipsis, Loader2, Pencil, Plus, Search, Trash2, Upload, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Download, Ellipsis, Loader2, Pencil, Plus, Search, Sparkles, Trash2, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api, ApiError } from '@/lib/client/api';
@@ -18,6 +18,7 @@ import { PageHeader } from '../shell/page-header';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
 import { FieldLabel, Input, Select } from '../ui/inputs';
+import { askAbout, askDetail } from '../../lib/client/ask-about';
 import { MenuItem, MenuSeparator, Popover } from '../ui/popover';
 import { formatCell, toLocalInput, TypeIcon, TYPE_META } from './column-type';
 import { ConfirmDialog } from './dialog';
@@ -406,6 +407,15 @@ export function DataTableView({ tableId }: { tableId: string }) {
             >
               {(close) => (
                 <>
+                  <MenuItem
+                    disabled={!table}
+                    onClick={() => {
+                      close();
+                      if (table) askAbout(askDetail({ type: 'dataTable', id: tableId, name: table.name }));
+                    }}
+                  >
+                    <Sparkles /> Ask Spotlight
+                  </MenuItem>
                   <MenuItem
                     onClick={() => {
                       setRenamingTable(true);
