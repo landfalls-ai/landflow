@@ -6,7 +6,7 @@
  */
 import { pinsApply, type Workflow } from '@landflow/engine';
 import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type NodeItem } from '@landflow/sdk';
-import { getUser, listUsers, type UserRecord } from '../auth/users';
+import { getUser, isActiveAdmin, listUsers, type UserRecord } from '../auth/users';
 import { sendMail, mailConfigured } from '../auth/mail';
 import { gatherFor, writeBriefingText } from '../brain/briefing';
 import { createDraft, getBriefing, getDraft, markReady, pruneBriefings, writeText, type StoredBriefing } from '../brain/briefings-store';
@@ -14,7 +14,8 @@ import { brainModel } from '../brain/writer';
 import { credentials as vault } from '../credentials/vault';
 import { database } from '../db';
 import { getPreferences } from '../preferences';
-import { postMessage, SLACK_CREDENTIAL, SLACK_OAUTH2_CREDENTIAL, slackCredential, type SlackCredential } from '../slack';
+import { postMessage, SLACK_API, SLACK_CREDENTIAL, SLACK_OAUTH2_CREDENTIAL, slackCredential, type SlackCredential } from '../slack';
+import { envUrl } from '../config';
 import { safeFetch } from '../net/safe-fetch';
 import { logger } from '../telemetry/logger';
 import { brainEnabled, dayOf } from '../usage/ledger';
@@ -27,10 +28,7 @@ const main = [{ type: 'main' as const }];
 const icon = { icon: 'lucide:sunrise', color: '#8b5cf6', categories: ['AI', 'Core'] };
 
 /** An active owner or admin. */
-const trusted = (id: string | undefined): boolean => {
-  const user = id ? getUser(id) : undefined;
-  return Boolean(user && !user.disabledAt && (user.role === 'owner' || user.role === 'admin'));
-};
+const trusted = isActiveAdmin;
 
 /** Modes nobody starts by hand: a schedule or other trigger, a poll, a webhook. */
 const SYSTEM_MODES: ReadonlySet<string> = new Set(['trigger', 'poll', 'webhook']);
@@ -308,15 +306,22 @@ export const brainSaveBriefingNode = defineNode({
   },
 });
 
-const SLACK_UNTRUSTED = 'Slack delivery skipped: a member, or nobody, last changed the Slack credential of Deliver Briefing. An owner or admin saves the credential again to deliver by Slack; email delivery goes on.';
+const SLACK_UNTRUSTED =
+  'Slack delivery skipped: a member or an automatic process changed the Slack credential of Deliver Briefing last. An owner or admin must check its Base URL and token and save a change to deliver by Slack; email delivery goes on.';
+const SLACK_ELSEWHERE =
+  'Slack delivery skipped: the Slack credential of Deliver Briefing points at another server than Slack’s API. An owner or admin must set its Base URL back to Slack’s to deliver by Slack; email delivery goes on.';
+
+/** Where Deliver Briefing may call Slack: Slack's API, or the instance's LANDFLOW_BRIEFING_SLACK_URL (a local fake in tests). */
+const briefingSlackUrl = () => (envUrl('LANDFLOW_BRIEFING_SLACK_URL') ?? SLACK_API).replace(/\/+$/, '');
 
 /**
- * The Slack credential the node may deliver with: `untrusted` when its data was last changed by anyone but an active
- * owner or admin (`updatedBy`, lib/server/credentials/vault.ts). An editor of its project could otherwise point its base
- * URL or token at a server or workspace of their own, and the nightly run would send everyone's email address and
- * briefing there without any version changing. The credential is the one the node references in the graph that ran.
+ * The Slack credential the node may deliver with, or why it may not (`skipped`): its data was last changed by anyone but
+ * an active owner or admin (`updatedBy`, lib/server/credentials/vault.ts), or its base URL is not Slack's API (nor the
+ * instance's LANDFLOW_BRIEFING_SLACK_URL). An editor of its project could otherwise point its base URL or token at a
+ * server or workspace of their own, and the nightly run would send everyone's email address and briefing there without
+ * any version changing. The credential is the one the node references in the graph that ran.
  */
-function slackCredentialOf(ctx: IExecuteContext, record: ExecutionRecord | undefined): { slack?: SlackCredential; untrusted?: boolean } {
+function slackCredentialOf(ctx: IExecuteContext, record: ExecutionRecord | undefined): { slack?: SlackCredential; skipped?: string } {
   const refs = ranWorkflow(record)?.nodes.find((node) => node.id === ctx.getNode().id)?.credentials ?? {};
   for (const type of [SLACK_CREDENTIAL, SLACK_OAUTH2_CREDENTIAL]) {
     let data: JsonObject | undefined;
@@ -327,7 +332,9 @@ function slackCredentialOf(ctx: IExecuteContext, record: ExecutionRecord | undef
     }
     if (!data) continue;
     const id = refs[type]?.id;
-    return id && trusted(vault.lastChangedBy(id)) ? { slack: slackCredential(data) } : { untrusted: true };
+    if (!id || !trusted(vault.lastChangedBy(id))) return { skipped: SLACK_UNTRUSTED };
+    const slack = slackCredential(data);
+    return slack.baseUrl === briefingSlackUrl() ? { slack } : { skipped: SLACK_ELSEWHERE };
   }
   return {};
 }
@@ -365,10 +372,10 @@ export const brainDeliverBriefingNode = defineNode({
     if (!brainEnabled()) return [[]];
     const record = await requireInstanceFlow(ctx);
     const out: NodeItem[] = [];
-    const { slack, untrusted } = slackCredentialOf(ctx, record);
-    if (untrusted) {
-      ctx.logger.warn(SLACK_UNTRUSTED);
-      logger.warn('briefing: Slack delivery skipped, the credential was last changed by a member or nobody', { 'landflow.workflow.id': ctx.getWorkflowId(), 'landflow.execution.id': ctx.getExecutionId() });
+    const { slack, skipped } = slackCredentialOf(ctx, record);
+    if (skipped) {
+      ctx.logger.warn(skipped);
+      logger.warn('briefing: Slack delivery skipped', { 'landflow.briefing.skip_reason': skipped === SLACK_UNTRUSTED ? 'untrusted_credential' : 'not_slack_api', 'landflow.workflow.id': ctx.getWorkflowId(), 'landflow.execution.id': ctx.getExecutionId() });
     }
     for (const [index, item] of ctx.getInputData().entries()) {
       const person = personOf(item, index);
@@ -394,7 +401,7 @@ export const brainDeliverBriefingNode = defineNode({
           logger.warn('briefing delivery failed', { 'landflow.user.id': user.id, error: String(error) });
         }
       }
-      const warning = untrusted && choice === 'slack' ? SLACK_UNTRUSTED : undefined;
+      const warning = choice === 'slack' ? skipped : undefined;
       out.push({ json: { ...(item.json as JsonObject), delivered: Boolean(channel), ...(channel && { channel }), ...(warning && { warning }) }, pairedItem: { item: index } });
     }
     return [out];

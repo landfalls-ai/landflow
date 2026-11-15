@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { executeWorkflow, inProcessNodeType, type NodeTypeResolver } from '@landflow/engine';
 import type { GatheredWork } from '@/lib/shared/brain-work';
+import { startFakeOAuth2 } from './fake-oauth2';
 
 vi.setConfig({ testTimeout: 20_000 });
 
@@ -48,11 +49,18 @@ const { listVersions, versionAuthor } = await import('@/lib/server/versions');
 const { upsertProposal, applyProposal } = await import('@/lib/server/brain/proposals');
 const { planRetry } = await import('@/lib/server/runner/rerun');
 const credentialRoute = await import('@/app/api/credentials/[id]/route');
+const tokenRoute = await import('@/app/api/credentials/[id]/oauth2/token/route');
+const authorizeRoute = await import('@/app/api/credentials/[id]/oauth2/authorize/route');
+const callbackRoute = await import('@/app/api/oauth2/callback/route');
 const { enableTestAuth } = await import('@/lib/server/auth/test-bypass');
 
 const { defineCredentialType, definePlugin } = await import('@landflow/sdk');
+// The OAuth2 provider of the Slack OAuth2 type below (Slack's own in the real plugin).
+const provider = await startFakeOAuth2({ expiresIn: 3600 });
+const fixed = (name: string, displayName: string, value: string) => ({ name, displayName, type: 'hidden' as const, default: value });
 registry.registerBuiltin(corePlugin);
-// The Slack credential type Deliver Briefing reads (the messaging plugin isn't loaded here).
+// The Slack credential types Deliver Briefing reads (the messaging plugin isn't loaded here): the OAuth2 one fixes its
+// grant and URLs in hidden fields, as plugins/messaging/src/nodes/slack.ts does.
 registry.registerBuiltin(
   definePlugin({
     info: { id: 'messaging', name: 'Messaging', version: '1.0.0', language: 'typescript' },
@@ -62,6 +70,18 @@ registry.registerBuiltin(
         displayName: 'Slack API',
         properties: [
           { name: 'accessToken', displayName: 'Access Token', type: 'string', required: true, typeOptions: { password: true } },
+          { name: 'baseUrl', displayName: 'Base URL', type: 'string', default: 'https://slack.com/api' },
+        ],
+      }),
+      defineCredentialType({
+        name: 'slackOAuth2Api',
+        displayName: 'Slack OAuth2 API',
+        extends: ['oAuth2Api'],
+        properties: [
+          fixed('grantType', 'Grant Type', 'authorizationCode'),
+          fixed('authUrl', 'Authorization URL', `${provider.url}/authorize`),
+          fixed('accessTokenUrl', 'Access Token URL', `${provider.url}/token`),
+          fixed('authentication', 'Client Authentication', 'body'),
           { name: 'baseUrl', displayName: 'Base URL', type: 'string', default: 'https://slack.com/api' },
         ],
       }),
@@ -100,14 +120,18 @@ const slackUrl = await new Promise<string>((resolve) => {
     });
   }).listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${(slack.address() as { port: number }).port}`));
 });
+// Deliver Briefing calls only Slack's API, or the instance's LANDFLOW_BRIEFING_SLACK_URL: here, the fake.
+const ENV_SLACK = { LANDFLOW_BRIEFING_SLACK_URL: slackUrl };
+Object.assign(process.env, ENV_SLACK);
 
 // The Slack credential the delivery tests reference: an owner made it (Deliver Briefing uses no other).
 const ownerSlack = vault.create({ name: 'Owner’s Slack', type: 'messaging.slackApi', data: { accessToken: 'xoxb-dev-only', baseUrl: slackUrl } }, { actor: owner.id });
 
-afterAll(() => {
+afterAll(async () => {
   slack.close();
+  await provider.close();
   setMailTransport(undefined);
-  for (const key of Object.keys(ENV)) {
+  for (const key of [...Object.keys(ENV), ...Object.keys(ENV_SLACK)]) {
     if (previousEnv[key] === undefined) delete process.env[key];
     else process.env[key] = previousEnv[key];
   }
@@ -697,21 +721,47 @@ describe('the Slack credential: who last changed it (through the credential rout
   // One from before migration 2092: nobody recorded.
   const legacy = vault.create({ name: 'Old Slack', type: 'messaging.slackApi', data: { accessToken: 'xoxb-dev-only', baseUrl: slackUrl } });
   setHomeProject('credential', legacy.id, team.id);
-  const graph = (id: string, credentialId: string) => ({ ...template.workflow, id, nodes: template.workflow.nodes.map((n) => (n.id === 'deliver' ? { ...n, credentials: { 'messaging.slackApi': { id: credentialId, name: 'Slack' } } } : n)) });
-  const ready = async (id: string, credentialId: string) => {
-    as(owner, () => store.saveWorkflow(graph(id, credentialId)));
+  const graph = (id: string, credentialId: string, type: string) => ({ ...template.workflow, id, nodes: template.workflow.nodes.map((n) => (n.id === 'deliver' ? { ...n, credentials: { [type]: { id: credentialId, name: 'Slack' } } } : n)) });
+  const ready = async (id: string, credentialId: string, type = 'messaging.slackApi') => {
+    as(owner, () => store.saveWorkflow(graph(id, credentialId, type)));
     setHomeProject('workflow', id, team.id);
     await as(owner, () => publishOrRequest({ workflowId: id, action: 'publish', by: owner.id }));
   };
   const production = (id: string) => runWorkflow({ workflow: productionWorkflowById(id)!, mode: 'trigger', startNodeId: 'nightly', triggerItems: items({}) });
-  const patch = async (user: AnyUser, body: Record<string, unknown>) => {
+  /** Call a route as `user` (the suite's synthetic owner again afterwards). */
+  const asUser = async <T,>(user: AnyUser, fn: () => Promise<T>): Promise<T> => {
     enableTestAuth(user);
     try {
-      return await credentialRoute.PATCH(new Request(`http://landflow.test/api/credentials/${key.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }), { params: Promise.resolve({ id: key.id }) });
+      return await fn();
     } finally {
       enableTestAuth();
     }
   };
+  const patch = (user: AnyUser, body: Record<string, unknown>, id = key.id) =>
+    asUser(user, () => credentialRoute.PATCH(new Request(`http://landflow.test/api/credentials/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }), { params: Promise.resolve({ id }) }));
+  /** Get token / Refresh now (POST) or Disconnect (DELETE), through the route. */
+  const token = (user: AnyUser, method: 'POST' | 'DELETE', id: string) =>
+    asUser(user, () => tokenRoute[method](new Request(`http://landflow.test/api/credentials/${id}/oauth2/token`, { method }), { params: Promise.resolve({ id }) }));
+  /** Connect through the routes, as a browser would: authorize (as `user`) → the provider's consent → the public callback. */
+  const connect = async (user: AnyUser, id: string) => {
+    const start = await asUser(user, () => authorizeRoute.GET(new Request(`http://landflow.test/api/credentials/${id}/oauth2/authorize`), { params: Promise.resolve({ id }) }));
+    expect(start.status).toBe(302);
+    const consent = await fetch(new URL(start.headers.get('location')!), { redirect: 'manual' });
+    const page = await callbackRoute.GET(new Request(new URL(consent.headers.get('location')!), { headers: { cookie: start.headers.get('set-cookie')!.split(';')[0] } }));
+    expect(page.status).toBe(200);
+  };
+  /** A server of a member's own that records what reaches it. */
+  const memberServer = async () => {
+    const got: string[] = [];
+    const server = createServer((request, response) => {
+      got.push(request.url ?? '');
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({ ok: true, user: { id: 'UEVIL' } }));
+    });
+    const url = await new Promise<string>((resolve) => server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${(server.address() as { port: number }).port}`)));
+    return { got, url, close: () => server.close() };
+  };
+  const bobsWarning = async (run: { executionId: string }) => String((await deliverOut(run)).outputs![0].find((i) => i.json.userId === bob.id)!.json.warning ?? '');
   const mail: Array<{ to: string; text: string }> = [];
   const deliverOut = (run: { executionId: string }) => store.loadExecution(run.executionId).then((r) => r!.runData.deliver.at(-1)!);
   beforeEach(() => {
@@ -782,9 +832,39 @@ describe('the Slack credential: who last changed it (through the credential rout
     expect((await deliverOut(run)).outputs![0].find((i) => i.json.userId === bob.id)!.json.delivered).toBe(false);
     expect(mail.map((m) => m.to)).toEqual(['alice@sync.test']);
     // A change with no person behind it records nobody, even on an owner's credential.
-    vault.update(key.id, { data: { baseUrl: slackUrl } });
+    vault.update(key.id, { data: { accessToken: 'xoxb-dev-only-2' } });
     expect(vault.lastChangedBy(key.id)).toBeUndefined();
-    vault.update(key.id, { data: { baseUrl: slackUrl } }, { actor: owner.id });
+    vault.update(key.id, { data: { accessToken: 'xoxb-dev-only' } }, { actor: owner.id });
+    expect(vault.lastChangedBy(key.id)).toBe(owner.id);
+  });
+
+  it('a Base URL other than Slack’s API (or LANDFLOW_BRIEFING_SLACK_URL) is skipped, even when an owner set it', async () => {
+    await ready('wf_slack_origin', key.id);
+    const evil = await memberServer();
+    try {
+      expect((await patch(owner, { data: { baseUrl: evil.url } })).status).toBe(200);
+      expect(vault.lastChangedBy(key.id)).toBe(owner.id);
+      let run = await production('wf_slack_origin');
+      expect(run.status).toBe('success');
+      expect(evil.got).toEqual([]);
+      expect(await bobsWarning(run)).toMatch(/^Slack delivery skipped: the Slack credential of Deliver Briefing points at another server than Slack’s API/);
+      expect(mail.map((m) => m.to)).toEqual(['alice@sync.test']);
+      // Without the instance setting, only https://slack.com/api is allowed: the fake is skipped too.
+      expect((await patch(owner, { data: { baseUrl: `${slackUrl}/` } })).status).toBe(200);
+      delete process.env.LANDFLOW_BRIEFING_SLACK_URL;
+      try {
+        run = await production('wf_slack_origin');
+      } finally {
+        Object.assign(process.env, ENV_SLACK);
+      }
+      expect(slackCalls).toEqual([]);
+      expect(await bobsWarning(run)).toMatch(/points at another server/);
+      // With it, a trailing slash is the same base URL.
+      await production('wf_slack_origin');
+      expect(slackCalls.map((c) => c.url)).toEqual(['/users.lookupByEmail?email=bob%40sync.test', '/chat.postMessage']);
+    } finally {
+      evil.close();
+    }
   });
 });
 

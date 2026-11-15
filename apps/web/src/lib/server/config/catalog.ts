@@ -176,6 +176,7 @@ export const CONFIG_CATALOG: readonly ConfigVariable[] = [
   { name: 'LANDFLOW_BRAIN', group: 'ai', default: '`true`', description: '`false` turns the [second brain](../second-brain.md) off: no usage ledger, no detectors, no study' },
   { name: 'LANDFLOW_USAGE_RETENTION_DAYS', group: 'ai', default: '`90`', description: 'how long raw usage events are kept; daily rollups are kept 400 days', aliases: ['USAGE_RETENTION_DAYS'] },
   // B30:
+  { name: 'LANDFLOW_BRIEFING_SLACK_URL', group: 'ai', default: '`https://slack.com/api`', description: 'the only Slack API base URL Deliver Briefing calls: a Slack credential whose Base URL differs is skipped, with a warning. Set it only for a proxy or a local test double; it is read on the server and no member can change it ([work-and-briefings.md](../work-and-briefings.md#the-nightly-sync))' },
   { name: 'LANDFLOW_BRIEFING_MAX_CHARS', group: 'ai', default: '`1200`', description: 'most characters of a nightly briefing (the tomorrow-sync flow\'s Write Briefing node; a longer text is cut) ([work-and-briefings.md](../work-and-briefings.md#the-nightly-sync))' },
   { name: 'LANDFLOW_BRAIN_MODEL', group: 'ai', default: 'the builder model', description: 'the model the second brain writes fixes, tips, persona rules, drafts and purposes with; `off`: rules only' },
   { name: 'LANDFLOW_BRAIN_EMBEDDINGS', group: 'ai', default: '`nomic-embed-text`', description: 'the Ollama model that embeds its facts into `landflow-brain-<project>`; `off`: keyword search only' },

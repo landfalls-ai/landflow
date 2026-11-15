@@ -151,6 +151,7 @@ still works.
 | `LANDFLOW_AI_USAGE_RETENTION_DAYS` | `400` | how long per-call AI usage rows (tokens, cost) are kept. Deprecated alias: `AI_USAGE_RETENTION_DAYS`. |
 | `LANDFLOW_BRAIN` | `true` | `false` turns the [second brain](../second-brain.md) off: no usage ledger, no detectors, no study |
 | `LANDFLOW_USAGE_RETENTION_DAYS` | `90` | how long raw usage events are kept; daily rollups are kept 400 days. Deprecated alias: `USAGE_RETENTION_DAYS`. |
+| `LANDFLOW_BRIEFING_SLACK_URL` | `https://slack.com/api` | the only Slack API base URL Deliver Briefing calls: a Slack credential whose Base URL differs is skipped, with a warning. Set it only for a proxy or a local test double; it is read on the server and no member can change it ([work-and-briefings.md](../work-and-briefings.md#the-nightly-sync)) |
 | `LANDFLOW_BRIEFING_MAX_CHARS` | `1200` | most characters of a nightly briefing (the tomorrow-sync flow's Write Briefing node; a longer text is cut) ([work-and-briefings.md](../work-and-briefings.md#the-nightly-sync)) |
 | `LANDFLOW_BRAIN_MODEL` | the builder model | the model the second brain writes fixes, tips, persona rules, drafts and purposes with; `off`: rules only |
 | `LANDFLOW_BRAIN_EMBEDDINGS` | `nomic-embed-text` | the Ollama model that embeds its facts into `landflow-brain-<project>`; `off`: keyword search only |
