@@ -176,6 +176,9 @@ export const CONFIG_CATALOG: readonly ConfigVariable[] = [
   { name: 'LANDFLOW_AI_USAGE_RETENTION_DAYS', group: 'ai', default: '`400`', description: 'how long per-call AI usage rows (tokens, cost) are kept', aliases: ['AI_USAGE_RETENTION_DAYS'] },
   // SP03:
   { name: 'LANDFLOW_AI_CALL_PARTS_RETENTION_DAYS', group: 'ai', default: '`30`', description: 'how long the per-call split of a prompt into parts (token counts and hashes, never text) is kept ([llm-gateway.md](../llm-gateway.md#what-a-prompt-was-made-of))' },
+  // SP22:
+  { name: 'LANDFLOW_AI_PARTS_COUNT', group: 'ai', default: '`exact`', description: '`estimate` turns exact counting of a prompt\'s parts off (characters ÷ 4 only): `exact` counts with Anthropic\'s count endpoint, OpenAI\'s encodings or an Ollama model\'s own vocabulary, and falls back to the estimate when it cannot ([llm-gateway.md](../llm-gateway.md#what-a-prompt-was-made-of))' },
+  { name: 'LANDFLOW_AI_PARTS_COUNT_PER_MINUTE', group: 'ai', default: '`50`', description: 'most Anthropic count requests per minute for one credential; a call that would need more stays an estimate ([llm-gateway.md](../llm-gateway.md#what-a-prompt-was-made-of))' },
   { name: 'LANDFLOW_BRAIN', group: 'ai', default: '`true`', description: '`false` turns the [second brain](../second-brain.md) off: no usage ledger, no detectors, no study' },
   { name: 'LANDFLOW_USAGE_RETENTION_DAYS', group: 'ai', default: '`90`', description: 'how long raw usage events are kept; daily rollups are kept 400 days', aliases: ['USAGE_RETENTION_DAYS'] },
   // B30:
