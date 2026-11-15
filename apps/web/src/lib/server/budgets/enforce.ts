@@ -66,8 +66,10 @@ export interface Viewer {
 
 /** What `actor` may do with the project's budget: its admins (and instance owners and admins) edit; they and its owner resume and dismiss. */
 export function viewerOf(actor: Actor, projectId: string, budget: ProjectBudget | undefined): Viewer {
-  const canEdit = projectRoleCan.manage(projectRole(actor, projectId));
-  return { actor, canEdit, canResume: canEdit || (Boolean(budget?.ownerId) && budget?.ownerId === actor.id) };
+  const role = projectRole(actor, projectId);
+  const canEdit = projectRoleCan.manage(role);
+  // The owner counts only while they still have a role in the project.
+  return { actor, canEdit, canResume: canEdit || (Boolean(role) && Boolean(budget?.ownerId) && budget?.ownerId === actor.id) };
 }
 
 /** PUT: set (or, with 0, remove) the project's budget. */
@@ -119,6 +121,7 @@ export function actOnIncident(meter: BudgetMeter, project: Pick<ProjectRecord, '
   const viewer = viewerOf(actor, project.id, budget);
   if (action.action === 'raise' ? !viewer.canEdit : !viewer.canResume) throw new BudgetError(action.action === 'raise' ? 'Only the project’s admins raise its AI budget' : 'Only the project’s admins and its budget’s owner do this', 403);
   if (incident.status !== 'open') throw new BudgetError(`Already ${incident.resolution ?? incident.status}`, 409);
+  if (incident.month !== currentMonth(meter)) throw new BudgetError('This incident is from an earlier month', 409);
   const target = { type: 'project', id: project.id, name: project.name };
   if (action.action === 'resume') {
     if (incident.kind !== 'stop') throw new BudgetError('Only a stop is resumed; dismiss a warning');

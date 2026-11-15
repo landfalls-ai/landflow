@@ -17,7 +17,7 @@ const { createUser } = await import('@/lib/server/auth/users');
 const { enableTestAuth } = await import('@/lib/server/auth/test-bypass');
 const { database, openSqlite } = await import('@/lib/server/db');
 const { aiUsageMeter, savePriceOverrides, UsageScope, isUsageCapError } = await import('@/lib/server/ai-usage');
-const { createTeamProject, setMember, removeProjectRows } = await import('@/lib/server/projects/store');
+const { createTeamProject, setMember, removeMember, removeProjectRows } = await import('@/lib/server/projects/store');
 const { sweepBudgets, budgetItems } = await import('@/lib/server/budgets/enforce');
 const { getBudget, incidentsOf, saveBudget, currentMonth, openIncident, resolveIncident } = await import('@/lib/server/budgets/store');
 const { needsYou } = await import('@/lib/server/journal/needs-you');
@@ -371,6 +371,16 @@ describe('Needs you', () => {
     expect((await needsYou(undefined)).some((i) => i.kind === 'budget')).toBe(false);
     expect(budgetItems(owner, meter)).toHaveLength(2);
     enableTestAuth();
+  });
+
+  it('hides the items from an owner who was removed from the project', async () => {
+    setBudget({ ownerId: owner.id, monthlyUsd: 50 });
+    seed(50.12);
+    tryCall(priced);
+    await sweepBudgets(Date.now(), meter);
+    expect(budgetItems(owner, meter).length).toBeGreaterThan(0);
+    removeMember(projectId, owner.id);
+    expect(budgetItems(owner, meter)).toHaveLength(0);
   });
 
   it('leaves out last month’s incidents', async () => {
