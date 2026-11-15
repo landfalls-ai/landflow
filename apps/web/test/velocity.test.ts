@@ -30,7 +30,7 @@ const proposals = await import('@/lib/server/brain/proposals');
 const velocity = await import('@/lib/server/brain/velocity');
 const { proposeFlowsNode, velocitySignalsNode, velocityFingerprint } = await import('@/lib/server/nodes/velocity');
 const { BUILTIN_TEMPLATES } = await import('@/lib/server/templates/builtin');
-const { proposalKind, APPLY_LABEL } = await import('@/components/brain/proposal-card');
+const { proposalKind, APPLY_LABEL, ProposalCard } = await import('@/components/brain/proposal-card');
 const { parseAsk, withoutAsk, promptToSend } = await import('@/components/editor/spotlight/ask-param');
 const applyRoute = await import('@/app/api/proposals/[id]/apply/route');
 const { enableTestAuth } = await import('@/lib/server/auth/test-bypass');
@@ -295,7 +295,11 @@ describe('Build it', () => {
     expect(p.buildPrompt).toHaveLength(2_000);
     const response = await applyRoute.POST(new Request(`http://localhost/api/proposals/${p.id}/apply`, { method: 'POST' }), { params: Promise.resolve({ id: p.id }) });
     expect(response.status).toBe(200);
-    expect(((await response.json()) as { workflow: { id: string } }).workflow.id).toMatch(/^wf_/);
+    const body = (await response.json()) as { workflow: { id: string }; proposal: { createdWorkflowId?: string } };
+    expect(body.workflow.id).toMatch(/^wf_/);
+    // The link the editor's ?ask= check (promptToSend) depends on.
+    expect(body.proposal.createdWorkflowId).toBe(body.workflow.id);
+    expect(promptToSend(proposals.getProposal(p.id)!, body.workflow.id)).toBe('x'.repeat(2_000));
   });
 
   it('keeps Suggest Improvement’s Build Prompt as the suggestion’s', async () => {
@@ -336,6 +340,17 @@ describe('the card and the ask parameter', () => {
     expect(APPLY_LABEL.spotlight).toBe('Build it');
     expect(proposalKind(base)).toBe('advice');
     expect(renderToStaticMarkup(createElement('span', null, APPLY_LABEL[proposalKind({ ...base, buildPrompt: 'x' })]))).toContain('Build it');
+  });
+
+  it('describes a suggestion with both a draft and a build prompt as the draft it creates', () => {
+    const base = { id: 'p', source: 'workflow', fingerprint: 'f', target: { type: 'instance' }, title: 't', why: 'w', evidence: [], ops: [], risk: 'low', confidence: 0.5, score: 1, status: 'open', createdAt: '', updatedAt: '' } as Proposal;
+    const both = { ...base, buildPrompt: 'Build a nudge flow', draft: { name: 'Nudge', nodes: [], connections: [] } } as unknown as Proposal;
+    expect(proposalKind(both)).toBe('draft');
+    const actions = new Proxy({}, { get: () => () => undefined }) as never;
+    const html = renderToStaticMarkup(createElement(ProposalCard, { proposal: both, actions, expanded: true }));
+    expect(html).toContain('Create workflow');
+    expect(html).toContain('Creates a new workflow: Nudge');
+    expect(html).not.toContain('Spotlight builds');
   });
 
   it('reads ?ask=proposal:<id> and takes it out of the URL', () => {

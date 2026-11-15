@@ -9,7 +9,7 @@ import { useEffect, useRef } from 'react';
 import { nanoid } from 'nanoid';
 import { api } from '@/lib/client/api';
 import { useBuildFlow } from '../ai-builder';
-import { afterReply, testDraft, useAutonomous } from '../autonomous';
+import { testDraft, useAutonomous } from '../autonomous';
 import { draft as draftCall, useAssistant, type ChatItem } from '../assistant';
 import { useEditor } from '../store';
 import type { Reply } from './reply';
@@ -42,8 +42,9 @@ export function promptToSend(proposal: { status?: string; createdWorkflowId?: st
 }
 
 /**
- * Sends the suggestion's build prompt once the editor holds its workflow. An empty canvas drafts the whole flow (as the
- * first message does); a canvas with nodes sends it as a message. `ready` is true once the workflow has loaded.
+ * Sends the suggestion's build prompt once the editor holds its workflow, and only on an empty canvas, where it drafts
+ * the whole flow (as the first message does). A canvas with nodes means the prompt already ran (a link opened again
+ * later), so nothing is sent. `ready` is true once the workflow has loaded.
  */
 export function useAskParam(ready: boolean) {
   const { build } = useBuildFlow();
@@ -64,13 +65,9 @@ export function useAskParam(ready: boolean) {
         return;
       }
       if (!prompt || useAssistant.getState().pending || useAssistant.getState().drafting) return;
+      if (useEditor.getState().nodes.length) return;
       useAssistant.getState().setCollapsed(false);
-      if (useEditor.getState().nodes.length) {
-        await useAssistant.getState().send(prompt, useAutonomous.getState().on ? { session: 'auto' as const } : {});
-        await afterReply(prompt);
-        return;
-      }
-      // An empty canvas: the builder drafts the whole flow in one go, with test data on the trigger (as Spotlight's first message does).
+      // The builder drafts the whole flow in one go, with test data on the trigger (as Spotlight's first message does).
       const reply: ChatItem = { id: nanoid(8), role: 'assistant', parts: [] };
       useAssistant.getState().append([{ id: nanoid(8), role: 'user', text: prompt }, reply]);
       const patch = (fields: Partial<Reply>) => useAssistant.setState((s) => ({ items: s.items.map((i) => (i.id === reply.id ? { ...(i as Reply), ...fields } : i)) }));

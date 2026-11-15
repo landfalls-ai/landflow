@@ -669,10 +669,11 @@ editor loads the suggestion (`GET /api/proposals/:id`), Spotlight sends its buil
 (their click on Build it was the go-ahead; the parameter leaves the URL so a reload does not send it again), and builds
 the flow: on the empty canvas the whole flow at once, with the chat folded to the side card and the canvas in view. The
 flow is a draft until the person saves and publishes it. Spotlight sends the prompt only on the workflow Build it
-created for that suggestion (the suggestion is applied and its `createdWorkflowId` is this workflow); on any other
-workflow the parameter is dropped. The route treats a build prompt like a stored draft: any builder may apply it, and
+created for that suggestion (the suggestion is applied and its `createdWorkflowId` is this workflow), and only while
+its canvas is empty, so opening the link again after the build sends nothing; on any other workflow the parameter is
+dropped. The route treats a build prompt like a stored draft: any builder may apply it, and
 the workflow goes in `?projectId=` or the caller's home project, after the same create check as any new workflow.
-The Slack mirror shows no Apply button for it.
+The Slack mirror shows no Apply button for it and refuses an Apply click for it (only the web builds it).
 
 ## API and settings
 
