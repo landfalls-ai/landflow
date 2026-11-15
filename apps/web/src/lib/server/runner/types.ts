@@ -57,6 +57,8 @@ export interface RunOptions {
   parent?: { executionId: string; nodeId?: string };
   /** An error workflow run, for this failed execution (it never starts another error workflow). */
   errorOf?: string;
+  /** A metric's sub-workflow run, measuring this suggestion (brain/effect.ts): nobody started it, and no schedule either. */
+  metricOf?: string;
   /** Use this id (from newExecutionId()): webhook and form uploads are stored under it before the run starts. */
   executionId?: string;
   /** A trigger call's Idempotency-Key: the same key within the retention window rejects with DuplicateRunError (its execution id). */

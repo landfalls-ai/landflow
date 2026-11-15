@@ -213,6 +213,8 @@ export interface ExecutionRecord extends Omit<ExecutionResult, 'status' | 'wait'
   depth?: number;
   /** An error workflow run: the failed execution that started it. */
   errorOf?: string;
+  /** A metric's sub-workflow run: the suggestion it measures (lib/server/brain/effect.ts). */
+  metricOf?: string;
   /** What a Form node's completion step showed (the form's last page). */
   formCompletion?: FormCompletion;
   /** The workflow version the execution started on (absent: an unsaved editor draft, kept in `workflow`). */

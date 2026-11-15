@@ -118,6 +118,8 @@ export async function measureWorkflow(proposal: Proposal, spec: MetricSpec, from
       startNodeId: trigger.id,
       triggerItems: [{ json: { proposal: asJson, from: new Date(from).toISOString(), to: new Date(to).toISOString(), phase } }],
       signal: AbortSignal.timeout((call.timeoutSeconds ?? METRIC_TIMEOUT_SECONDS) * 1000),
+      // Marked as a measurement, not a schedule: whoever wrote the suggestion chose the workflow and its input.
+      metricOf: proposal.id,
     });
     if (record.status !== 'success') return undefined;
     const raw = lastNodeItems(record)[0]?.json?.[call.field];
