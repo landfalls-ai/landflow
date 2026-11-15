@@ -17,6 +17,25 @@ Three parts:
 3. **The action layer**: the only way Spotlight (and the instance MCP server) changes anything. The agent proposes;
    the layer validates, checks access and stores a plan; only the user's click applies it.
 
+## One Spotlight
+
+Built (B35, wave 6, closes CH17). Spotlight is one panel for the whole app, not one in the editor and another in the
+brain.
+
+- **Keys.** **⌘K** opens Spotlight on every page, and **⌘I** does the same. Pressed again from its box, either closes
+  it. On the Brain page, go-to-a-page (QuickOpen) is **⌘P**; it used to be ⌘K.
+- **Where.** A 360 px column at the right of the page, which you can drag wider (320 to 560 px, kept in this browser). The
+  rail's "Ask or build… ⌘K" button opens it too. It sits in the layout, so a conversation stays while you move from page
+  to page. On a phone it is a bottom sheet with three heights (the arrows beside the chip step through them).
+- **Modes.** A chip in its header says what it does here. On a workflow's editor it is the builder, "Building Ticket
+  router": the editor's own column, which stays where it is and takes the focus on ⌘K, so there is never a second panel.
+  Everywhere else it is the brain, "Asking the brain", about the open page on the Brain page and about everything
+  elsewhere. A page can send it to one thing: the `landflow:ask-about` window event (detail `{ ref: { type, id, name,
+  workflowId? }, starters }`) opens it as "About <name>" with that thing as the chip and the starters as its first
+  questions. On the editor the chip offers "Ask the brain instead" (which opens the brain beside the builder), and in
+  about mode "Ask the brain instead" drops the chip.
+- **The Brain page** has one way in: the Ask button in its title bar opens this panel.
+
 ## 1. Home 2.0
 
 Today `apps/web/src/app/page.tsx` shows four counters (Workflows, Executions 24h, Failed 24h, Plugins online), the last

@@ -74,6 +74,13 @@ empty field is replaced, otherwise it goes after a space, as a drop does). Rows 
 on a phone, and their remove button shows without hovering. Focus moves to the back arrow when the
 editor opens, and toasts sit just above the foot bar.
 
+## One Spotlight on a phone
+
+Spotlight outside the editor is a bottom sheet (docs/spotlight.md#one-spotlight): open it from the "Ask or build…" button at
+the top of the More drawer. It has three heights (34, 52 and 85 per cent of the screen; the arrows beside the chip step
+through them), a chip that says what it does, and closes on a tap outside or Escape. The editor keeps its own sheet under
+the canvas, so the canvas stays in view while it builds.
+
 ## Spotlight's dock
 
 On a phone Spotlight is a sheet under the steps or the canvas, with three heights:

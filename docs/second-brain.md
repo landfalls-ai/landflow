@@ -274,8 +274,8 @@ prose and a person keeps the facts. Spotlight asks it questions.
     the summary with its `[[type/id|Name]]` links and `[n]` references, then the work, people, related pages, facts,
     suggestions and mentions. In the Source, a link opens its page and a reference jumps to its work line. **Copy**
     takes the Markdown. The Source is read-only.
-  - **Ask** (the **Ask** button in the title bar, or ⌘I): the one way to ask the brain. On a desktop it is a 360 px
-    column docked at the right of the editor: the page narrows and nothing overlaps, and a link in an answer opens
+  - **Ask** (the **Ask** button in the title bar, or ⌘K, or ⌘I): the one way to ask the brain. It opens the app's one
+    [Spotlight](spotlight.md#one-spotlight), a 360 px column at the right of the page, the same on every page of Landflow: the page narrows and nothing overlaps, and a link in an answer opens
     that page in the editor beside it while the answer stays. With a page open, the question is about that page (the
     `@` chip) until the chip is removed. The answer streams: first **Found 3 pages · 2 facts · 5 work items** (with
     the pages as links), then its steps and its words, then the model, time, tokens and cost under it (a local model
@@ -299,7 +299,7 @@ prose and a person keeps the facts. Spotlight asks it questions.
     not open shows **Couldn't read @Billing** and nothing else. A kept turn holds your words, the tags' names, the answer
     with its links and the steps, never what was read from a tag. When you reopen one, a link to a page you can no longer
     open is dropped and the turn says **1 link hidden**. The model, time and cost footer comes back too.
-  - **Quick open** (⌘P or ⌘K): go to a file by name or path, or `>` for commands (open index or log, toggle Source,
+  - **Quick open** (⌘P; ⌘K opens Spotlight): go to a file by name or path, or `>` for commands (open index or log, toggle Source,
     Problems, Suggestions, run the brain). It only finds pages; it does not ask.
   - **Panel** (⌘J): **Problems** (initiatives and customers without an owner, pages quiet for 30 days, summaries behind
     their work) and **Suggestions** with their buttons. **Status bar**: two items, the page count and the problems
