@@ -154,7 +154,8 @@ export async function completeAuthorization(request: Request, fetchImpl?: typeof
 
 /**
  * "Get token" / "Refresh now": a client credentials grant, or a refresh with the stored refresh token. Returns the
- * credential with its new status; a failure is recorded on the credential and thrown as a CredentialError.
+ * credential with its new status; a failure is recorded on the credential and thrown as a CredentialError. `by` is recorded
+ * as a token operation (it never makes the credential trusted: vault.ts tokenChangedBy).
  */
 export async function requestTokenNow(credentialId: string, by: CredentialChange, fetchImpl?: typeof fetch): Promise<CredentialDetail> {
   const { config: saved, token } = credentials.oauth2(credentialId);
@@ -177,6 +178,7 @@ export async function requestTokenNow(credentialId: string, by: CredentialChange
   } catch (error) {
     throw error instanceof CredentialError ? error : new CredentialError((error as Error).message);
   }
+  credentials.noteTokenOperation(credentialId, by);
   return credentials.get(credentialId)!;
 }
 

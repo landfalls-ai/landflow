@@ -309,7 +309,8 @@ The host ships a generic OAuth2 type, `core.oAuth2Api` (fields `grantType` — `
 `authentication` — `header` (HTTP Basic) or `body` —, `userInfoUrl`). A plugin type that lists it in `extends`
 (n8n's `extends: ['oAuth2Api']`) becomes an OAuth2 type: the host merges the parent's properties first, a child
 property with the same name replaces the parent's in place (pin a provider's URLs with `hidden` properties and
-defaults), and the credential dialog shows **Connect**:
+defaults: the host never stores a value for a field that is `hidden` with a default, so the API can't point a
+provider's token URL elsewhere), and the credential dialog shows **Connect**:
 
 ```jsonc
 { "name": "googleOAuth2Api", "displayName": "Google OAuth2", "extends": ["oAuth2Api"], "properties": [

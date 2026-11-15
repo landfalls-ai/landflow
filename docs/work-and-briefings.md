@@ -195,22 +195,33 @@ lists: the reads use the ledger's one visibility rule. All five nodes read or wr
 **Where the text goes.** Deliver Briefing sends people's email addresses (to look them up in Slack) and briefings to the
 base URL and token its Slack credential holds, and an editor of the credential's project may change those without any
 version changing. So every credential records who created it (`createdBy`) and who last changed its data (`updatedBy`,
-migration 2092; the same fields in `credentials.json` in files mode): a save in the form, a Connect or Get token (the
-person who started it, carried in the signed OAuth state), a Disconnect, a Git or environment pull (the person who
-pulled). A change with no person behind it records nobody; a token refresh, an error note and an encryption key rotation
-change no settings and keep the last changer; a rename or a rate limit alone keeps it too. Deliver Briefing uses the Slack
-credential its node references only when that changer is an active owner or admin, and only when its Base URL is Slack's
-API: `https://slack.com/api`, or the base URL the instance sets in `LANDFLOW_BRIEFING_SLACK_URL` (server-side, for a
-proxy or a local test double); a credential pointing anywhere else is skipped the same way, even when an owner set it.
-Otherwise it sends nothing by Slack, for everyone: each person who chose Slack is passed on with `delivered: false` and a
-`warning`, and the run log says "Slack delivery skipped: a member or an automatic process changed the Slack credential
-of Deliver Briefing last. An owner or admin must check its Base URL and token and save a change …" (or that it points
-at another server than Slack's API), with no names, addresses or text. An owner or admin saves the credential to trust
-it again. Credentials from before migration 2092 have no recorded changer,
-so they need that save once. Email goes through the host's SMTP settings (`LANDFLOW_SMTP_*`, environment only, which no
-member can change) and is sent as before. Write Briefing's model comes from server settings only (`LANDFLOW_BRAIN_MODEL`
-with `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` / `OPENAI_BASE_URL` or `OLLAMA_URL`), never from a credential, so no member
-can point it elsewhere either.
+migration 2092; the same fields in `credentials.json` in files mode), and Deliver Briefing uses the Slack credential its
+node references only when that changer is an active owner or admin and its Base URL is Slack's API:
+
+- **A save that changes a value** records the person who saved it: the form, `PATCH /api/credentials/:id`, a Git or
+  environment pull (the person who pulled). The decrypted values are compared, secrets included; a save that changes
+  none of them (an empty `data`, the form saved as it was, a secret left empty, which keeps its value) records nobody
+  new, and a rename or a rate limit alone keeps the changer too.
+- **A token operation** (Connect, Get token, Refresh now, Disconnect) never makes a credential trusted: an owner's or
+  admin's keeps the last changer, and anyone else's records them (Connect: the person who started it, carried in the
+  signed OAuth state; nobody when no person started it). So after a member repoints the credential, an owner clicking
+  Disconnect, Get token or Connect does not vouch for the member's Base URL.
+- **No person behind it** (a background change) records nobody. A token refresh, an error note and an encryption key
+  rotation change no settings and keep the last changer.
+- **Fixed fields.** A field a credential type marks hidden and gives a default (Slack OAuth2's grant type, authorization
+  and token URLs) is never stored: the type's default always applies, whatever the API is sent.
+- **Slack's origin.** Deliver Briefing calls only `https://slack.com/api`, or the base URL the instance sets in
+  `LANDFLOW_BRIEFING_SLACK_URL` (server-side, for a proxy or a local test double). A credential whose Base URL is
+  anything else is skipped the same way, even when an owner set it.
+
+When the credential is skipped, nothing goes by Slack, for everyone: each person who chose Slack is passed on with
+`delivered: false` and a `warning`, and the run log says "Slack delivery skipped: a member or an automatic process
+changed the Slack credential of Deliver Briefing last. An owner or admin must check its Base URL and token and save a
+change …" (or that it points at another server than Slack's API), with no names, addresses or text. Credentials from
+before migration 2092 have no recorded changer, so they need that save once. Email goes through the host's SMTP settings (`LANDFLOW_SMTP_*`, environment only, which no member can change) and
+is sent as before. Write Briefing's model comes from server settings only (`LANDFLOW_BRAIN_MODEL` with
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` / `OPENAI_BASE_URL` or `OLLAMA_URL`), never from a credential, so no member can
+point it elsewhere either.
 
 A person's choice of Slack is consent to the instance's Slack, not to a colleague's. A webhook or form trigger in front
 of these nodes lets whoever calls it choose the items, so keep the template's Schedule. An owner's or admin's re-run

@@ -838,6 +838,110 @@ describe('the Slack credential: who last changed it (through the credential rout
     expect(vault.lastChangedBy(key.id)).toBe(owner.id);
   });
 
+  it('T1: after a member repoints it, an owner’s empty save, unchanged form or rename vouches for nothing; a real change does', async () => {
+    await ready('wf_slack_t1', key.id);
+    const evil = await memberServer();
+    try {
+      expect((await patch(alice, { data: { baseUrl: evil.url } })).status).toBe(200);
+      expect(vault.lastChangedBy(key.id)).toBe(alice.id);
+      // An empty data, the form as it was (the secret left empty keeps its value), a rename and a rate limit: no value changes.
+      for (const body of [{ data: {} }, { name: 'Team Slack', data: { baseUrl: evil.url, accessToken: '' }, rateLimit: null }, { name: 'Team Slack (renamed)' }, { rateLimit: { limit: 5, intervalSeconds: 1 } }]) {
+        expect((await patch(owner, body)).status).toBe(200);
+        expect(vault.lastChangedBy(key.id)).toBe(alice.id);
+      }
+      const run = await production('wf_slack_t1');
+      expect(run.status).toBe('success');
+      expect(evil.got).toEqual([]);
+      expect(slackCalls).toEqual([]);
+      expect(await bobsWarning(run)).toMatch(/^Slack delivery skipped: a member or an automatic process changed the Slack credential .* last\. An owner or admin must check its Base URL and token and save a change/);
+      // An owner's change of a value vouches for the credential; a member's save that changes nothing then leaves it so.
+      expect((await patch(owner, { data: { baseUrl: slackUrl } })).status).toBe(200);
+      expect(vault.lastChangedBy(key.id)).toBe(owner.id);
+      expect((await patch(alice, { data: { baseUrl: slackUrl, accessToken: '' } })).status).toBe(200);
+      expect(vault.lastChangedBy(key.id)).toBe(owner.id);
+      await production('wf_slack_t1');
+      expect(slackCalls.map((c) => c.url)).toEqual(['/users.lookupByEmail?email=bob%40sync.test', '/chat.postMessage']);
+    } finally {
+      evil.close();
+    }
+  });
+
+  describe('Slack OAuth2: token operations never vouch', () => {
+    const oauth = vault.create({ name: 'Team Slack OAuth2', type: 'messaging.slackOAuth2Api', data: { clientId: 'client-1', clientSecret: 'secret-1', baseUrl: slackUrl } }, { actor: owner.id });
+    setHomeProject('credential', oauth.id, team.id);
+
+    it('T2: after a member repoints it, an owner’s Refresh now, Disconnect and Connect leave her the last changer, and nothing reaches her server', async () => {
+      await connect(owner, oauth.id);
+      expect(vault.oauth2(oauth.id).token?.access_token).toBeTruthy();
+      expect(vault.lastChangedBy(oauth.id)).toBe(owner.id);
+      await ready('wf_slack_t2', oauth.id, 'messaging.slackOAuth2Api');
+      const evil = await memberServer();
+      try {
+        expect((await patch(alice, { data: { baseUrl: evil.url } }, oauth.id)).status).toBe(200);
+        expect(vault.lastChangedBy(oauth.id)).toBe(alice.id);
+        expect((await token(owner, 'POST', oauth.id)).status).toBe(200);
+        expect(vault.lastChangedBy(oauth.id)).toBe(alice.id);
+        expect((await token(owner, 'DELETE', oauth.id)).status).toBe(200);
+        expect(vault.lastChangedBy(oauth.id)).toBe(alice.id);
+        await connect(owner, oauth.id);
+        expect(vault.lastChangedBy(oauth.id)).toBe(alice.id);
+        const run = await production('wf_slack_t2');
+        expect(run.status).toBe('success');
+        expect(evil.got).toEqual([]);
+        expect(slackCalls).toEqual([]);
+        expect(await bobsWarning(run)).toMatch(/^Slack delivery skipped: a member or an automatic process/);
+        // An owner's real change vouches again, and the nightly run delivers through Slack's API (here the fake).
+        expect((await patch(owner, { data: { baseUrl: slackUrl } }, oauth.id)).status).toBe(200);
+        expect(vault.lastChangedBy(oauth.id)).toBe(owner.id);
+        await production('wf_slack_t2');
+        expect(slackCalls.map((c) => c.url)).toEqual(['/users.lookupByEmail?email=bob%40sync.test', '/chat.postMessage']);
+      } finally {
+        evil.close();
+      }
+    });
+
+    it('a member’s Refresh now, Connect or Disconnect makes her the last changer', async () => {
+      const vouch = async (scope: string) => {
+        expect((await patch(owner, { data: { scope } }, oauth.id)).status).toBe(200);
+        expect(vault.lastChangedBy(oauth.id)).toBe(owner.id);
+      };
+      await vouch('chat:write');
+      expect((await token(alice, 'POST', oauth.id)).status).toBe(200);
+      expect(vault.lastChangedBy(oauth.id)).toBe(alice.id);
+      await vouch('chat:write,users:read.email');
+      await connect(alice, oauth.id);
+      expect(vault.lastChangedBy(oauth.id)).toBe(alice.id);
+      await vouch('chat:write');
+      expect((await token(alice, 'DELETE', oauth.id)).status).toBe(200);
+      expect(vault.lastChangedBy(oauth.id)).toBe(alice.id);
+      // An automatic refresh changes no setting and keeps the last changer.
+      await vouch('chat:write,users:read.email');
+      await connect(owner, oauth.id);
+      expect(await vault.refreshOAuth2(oauth.id, { force: true })).toBe(true);
+      expect(vault.lastChangedBy(oauth.id)).toBe(owner.id);
+    });
+
+    it('the fields the type fixes (grant, authorization and token URLs) cannot be set through the API', async () => {
+      const evil = await memberServer();
+      try {
+        expect(vault.lastChangedBy(oauth.id)).toBe(owner.id);
+        const response = await patch(alice, { data: { grantType: 'clientCredentials', authUrl: `${evil.url}/authorize`, accessTokenUrl: `${evil.url}/token`, authentication: 'header' } }, oauth.id);
+        expect(response.status).toBe(200);
+        // Nothing changed: the type's values stand, and the owner is still the last changer.
+        expect(vault.oauth2(oauth.id).config).toMatchObject({ grantType: 'authorizationCode', authUrl: `${provider.url}/authorize`, accessTokenUrl: `${provider.url}/token` });
+        expect(vault.lastChangedBy(oauth.id)).toBe(owner.id);
+        expect(vault.get(oauth.id)!.data).not.toHaveProperty('accessTokenUrl');
+        // Nor when it is created.
+        const made = vault.create({ name: 'Made', type: 'messaging.slackOAuth2Api', data: { clientId: 'c', accessTokenUrl: `${evil.url}/token`, baseUrl: slackUrl } }, { actor: alice.id });
+        expect(vault.oauth2(made.id).config.accessTokenUrl).toBe(`${provider.url}/token`);
+        vault.delete(made.id);
+        expect(evil.got).toEqual([]);
+      } finally {
+        evil.close();
+      }
+    });
+  });
+
   it('a Base URL other than Slack’s API (or LANDFLOW_BRIEFING_SLACK_URL) is skipped, even when an owner set it', async () => {
     await ready('wf_slack_origin', key.id);
     const evil = await memberServer();
