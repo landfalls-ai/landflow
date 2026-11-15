@@ -7,6 +7,7 @@
 import type { AgentSession, AgentTraceSummary, TimelineEntry } from '../../shared/agents';
 import { reviewCommentOf } from '../../shared/review-comments';
 import { toolInput, type RunActor } from '../../shared/run-trace';
+import type { SawAttrs } from '../../shared/what-it-saw';
 import { traceModelCalls } from './trace-calls';
 import { liveJournal, type Journal } from './writer';
 
@@ -37,6 +38,8 @@ export interface AgentJournal {
   (entry: TimelineEntry): void;
   /** The span a tool call of this session is recorded under, once its entry was journaled. */
   spanOf(callId: string): string | undefined;
+  /** What the agent saw in this run (`attrs.saw` on the span the session writes under); a no-op outside a run. Call it once per run. */
+  saw(attrs: SawAttrs): void;
 }
 
 /**
@@ -48,7 +51,7 @@ export function agentSessionJournal(session: Pick<AgentSession, 'execution'>, ag
   const execution = session.execution;
   const calls = new Map<string, Call>();
   const spanOf = (callId: string) => calls.get(callId)?.spanId;
-  if (!execution) return Object.assign((_entry: TimelineEntry) => {}, { spanOf });
+  if (!execution) return Object.assign((_entry: TimelineEntry) => {}, { spanOf, saw: (_attrs: SawAttrs) => {} });
   const own: RunActor = { id: `agent:${agent.id}`, name: agent.name, type: 'agent' };
   let actor = own;
   const guardrails = new Set<string>();
@@ -93,7 +96,16 @@ export function agentSessionJournal(session: Pick<AgentSession, 'execution'>, ag
       // The journal never breaks an agent run.
     }
   };
-  return Object.assign(journalEntry, { spanOf });
+  const saw = (attrs: SawAttrs) => {
+    try {
+      const journal = liveJournal(execution.executionId);
+      if (!journal) return;
+      journal.record({ type: 'span.updated', spanId: options.under ?? journal.spanOfNode(execution.nodeId) ?? 'run', attrs: { saw: attrs } });
+    } catch {
+      // The journal never breaks an agent run.
+    }
+  };
+  return Object.assign(journalEntry, { spanOf, saw });
 
   function tool(entry: ToolEntry, parent: string, record: Journal['record']) {
     const spanId = `${parent}/step:${entry.callId}`;

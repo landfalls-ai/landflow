@@ -108,7 +108,21 @@ and `project.brief_changed`. The company profile rides on `settings.update`.
 
 An agent's run gets a short "Where this work fits" block: the mission, the project's brief, and its primary goal with the
 chain above it. How the block is built, how big it gets and how to turn it off are in
-[agents.md](agents.md#project-context).
+[agents.md](agents.md#project-context). What a past run saw is kept and shown: see
+[What an agent saw](#what-an-agent-saw).
+
+## What an agent saw
+
+Each agent run keeps the block it got. A Run an Agent step, and a team member's request, writes a `saw` attribute on its
+span once per run: the text the system prompt got, the mode (full, compact or off), the project and goal, the run's
+pinned time, a short persona summary (role, mission and what-I-do, each at most 300 characters; never the instructions)
+and the approved practices it was given. An approval that resumes the run does not write it again, since a resume reuses
+the first run's block.
+
+The Run Trace shows it as **What it saw** in the agent's sheet, and an agent's **Sessions** tab as a **What it saw** fold
+under each session. Both split the block into the goal chain, mission, brief, words, status, this run and practices,
+leave out the empty ones, and fold out the exact text. With the project context off the section says so. A run's root
+span also shows **Project** and **Goal** chips. The page is [run-trace.md](run-trace.md#what-it-saw).
 
 ## How it is built
 

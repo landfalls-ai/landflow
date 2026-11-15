@@ -282,6 +282,23 @@ deployment (the gateway adds the token) and is never shown as an ordinary MCP se
 A team node's usage names the lead's model, and an agent session counts each of its model calls, so the lead's card and
 the report say "3 model calls · 5,443 in · 714 out · $0 · qwen3-coder:30b" beside a member's reported usage.
 
+## What it saw
+
+An agent's span (a Run an Agent step, or a team member's request) carries `attrs.saw`, written once per run, never on a
+resume: `mode`, `text` (exactly what the system prompt got: the "Where this work fits" block, then the practices block),
+`projectId`/`projectName`, `goalId`/`goalTitle`, `at` (the run's pinned time), `persona` (role, mission and what-I-do, each
+cut to 300 characters; never the instructions) and `practices` (handle and version). The type is `SawAttrs` in
+`lib/shared/what-it-saw.ts`; `lib/shared/what-it-saw-sections.ts` splits the text by its line prefixes.
+
+- **In the sheet.** Tapping an agent's span shows **What it saw**: Goal chain, Mission, Brief, Words, Status, This run,
+  Practices and Persona. Empty parts are left out. **Show the exact text** folds out the raw block. With the project
+  context off it says "Project context off for this agent". `saw` is not repeated in the developer's raw **Details**.
+- **On the run.** The root span's sheet shows **Project** and **Goal** chips from `attrs.project` and `attrs.goal`.
+- **In sessions.** An agent's **Sessions** tab has the same section as a fold, built from the session's saved context
+  and the agent's persona now.
+
+The goal chain and the project are explained in [projects-and-goals.md](projects-and-goals.md#what-an-agent-saw).
+
 ## Iterations: rounds, turns and fix cycles
 
 A run that goes back and forth is told at three levels. The first two are folds of the journal (`foldJournal` in
