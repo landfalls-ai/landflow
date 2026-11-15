@@ -2196,6 +2196,11 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   `practice_cite` on the agent's MCP server (PR07) ([practices.md](practices.md#following)).
 - **Next:** the demo on a branch of the Landflow repository that ends at a draft pull request (PR10).
 
+## Token spend wave 11: who sees spend (SP20)
+
+- **Built**: every member sees every person's AI spend by name on the AI page, with the instance's total above the
+  person list (`peopleTotals`); the rules are in `contracts/s11/spend-visibility.md` ([llm-gateway.md](llm-gateway.md#the-ai-page)).
+
 ## Practices in Claude Code and the shell (PR05, wave P1)
 
 - **Built**: the landflow-brain mod 0.3.0 adds a practices section (`landflow-brain:practices`) inside the 2-second bound, the `practices` and `practice_draft` tools, `/brain practices` and `/brain learn [paths]`; the CLI adds `landflow practices list|show|check|learn`, with the machine checks run locally ([landflow-brain-mod.md](landflow-brain-mod.md#practices), [features/cli.md](features/cli.md#practices-landflow-practices)). Closes PRAC-5.

@@ -1,5 +1,5 @@
 /**
- * The AI page (docs/llm-gateway.md): the report's groups, totals, visibility ("Teammates"), caps and requests, the
+ * The AI page (docs/llm-gateway.md): the report's groups, totals, visibility (D1: everyone sees every person by name), caps and requests, the
  * gateway status against the fake LiteLLM, the pure helpers and the caps card's markup.
  */
 import { mkdtempSync } from 'node:fs';
@@ -156,21 +156,48 @@ describe("the owner's report", () => {
 });
 
 describe("a member's report", () => {
-  it('holds only their workflow and their own rows, and other people only as Teammates', () => {
+  it('holds only their workflow and their own rows in the totals, and every person by name in the person group', () => {
     const report = aiConsoleReport(member, '7d');
     // wfMine: 1 + 2 + 0.5; their own call: 0.25. Beta's 4 and the import's 8 are in no total.
     expect(report.totals.cost).toBeCloseTo(3.75);
     expect(report.totals.calls).toBe(4);
     expect(report.viewer.admin).toBe(false);
+    // D1 (2026-11-15): every member sees every person's spend by name, from every row of the period.
     const people = report.groups.person.map((r) => r.label).sort();
-    expect(people).toEqual(['Mia', 'Teammates']);
+    expect(people).toEqual(['Mia', 'No person', 'Olga', 'Omar']);
+    expect(report.groups.person.find((r) => r.label === 'Omar')?.cost).toBeCloseTo(6);
+    expect(report.groups.person.find((r) => r.label === 'Omar')?.key).toBe(other.id);
+    expect(report.groups.person.map((r) => r.label)).not.toContain('Teammates');
+    expect(report.peopleTotals.cost).toBeCloseTo(15.75);
+    expect(report.peopleTotals).toEqual(aiConsoleReport(owner, '7d').totals);
     const json = JSON.stringify(report);
-    expect(json).not.toContain('Omar');
-    expect(json).not.toContain('Olga');
-    expect(json).not.toContain(other.id);
-    expect(json).not.toContain(owner.id);
+    // D1: person rows are keyed by user id, so the other people's ids are in the JSON on purpose.
+    expect(json).not.toContain('Beta');
+    expect(json).not.toContain(wfTheirs);
     expect(report.groups.project.map((r) => r.label)).not.toContain('Beta');
     expect(report.groups.source.map((r) => r.key)).toEqual(['landflow:landflow']);
+  });
+
+  it("shows a person whose only rows are in a project the member can't read, by name, with the right amount", () => {
+    // Omar's 6 is 2 in Alpha and 4 in Beta, which Mia can't read: the figure holds both, Beta stays unnamed.
+    const mia = aiConsoleReport(member, '7d');
+    expect(mia.groups.person.find((r) => r.label === 'Omar')?.calls).toBe(2);
+    expect(mia.groups.project.map((r) => r.label)).not.toContain('Beta');
+    expect(mia.groups.person.find((r) => r.label === 'Omar')?.cost).toBeCloseTo(6);
+  });
+
+  it('counts a row with no workflow or agent in peopleTotals and the person, not in the totals', () => {
+    const report = aiConsoleReport(member, '7d');
+    // The import's row (no workflow, no agent, no user, cost 8) is in the people's whole and its "No person" row.
+    expect(report.groups.person.find((r) => r.label === 'No person')?.cost).toBeCloseTo(8);
+    expect(report.peopleTotals.cost - report.totals.cost).toBeCloseTo(12);
+    expect(report.peopleTotals.calls).toBe(6);
+    expect(report.totals.calls).toBe(4);
+  });
+
+  it("keeps other people's caps from a member", () => {
+    const ids = aiConsoleReport(member, '7d').caps.map((c) => c.id);
+    expect(ids.some((id) => id.startsWith(`user:${other.id}`) || id.startsWith(`user:${owner.id}`))).toBe(false);
   });
 
   it("does not show another project's rows to a member of neither", () => {
@@ -221,7 +248,8 @@ describe('caps', () => {
     const mine = aiConsoleReport(member, '7d');
     expect(mine.caps.find((c) => c.id === `user:${member.id}:day:cost`)?.pendingRequestId).toBe('acr_mine');
     expect(mine.requests.map((r) => r.id)).toEqual(['acr_mine']);
-    expect(JSON.stringify(mine)).not.toContain('Omar');
+    // D1: Omar is in the person group by name now; what stays private is his caps and requests.
+    expect(JSON.stringify({ caps: mine.caps, requests: mine.requests })).not.toContain('Omar');
     const all = aiConsoleReport(owner, '7d');
     expect(all.requests.map((r) => r.id).sort()).toEqual(['acr_mine', 'acr_other']);
     expect(all.requests.find((r) => r.id === 'acr_other')?.requestedByName).toBe('Omar');
