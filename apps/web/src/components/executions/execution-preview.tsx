@@ -756,7 +756,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                           <Waypoints /> Copy trace id
                         </MenuItem>
                       )}
-                      {developerDetails && traceUrl && (
+                      {traceUrl && (
                         <MenuItem
                           onClick={() => {
                             close();
