@@ -29,7 +29,7 @@ const { createUser } = await import('@/lib/server/auth/users');
 const { enableTestAuth } = await import('@/lib/server/auth/test-bypass');
 const { runWorkflow } = await import('@/lib/server/runner');
 const proposals = await import('@/lib/server/brain/proposals');
-const { cleanAudience, canDecide, canSee, settleMirrors } = await import('@/lib/server/brain/audience');
+const { applyable, cleanAudience, canDecide, canSee, settleMirrors } = await import('@/lib/server/brain/audience');
 const { settleSlackTasks, slackSignature } = await import('@/lib/server/slack');
 const proposalsRoute = await import('@/app/api/proposals/route');
 const proposalRoute = await import('@/app/api/proposals/[id]/route');
@@ -272,6 +272,16 @@ describe('the Slack mirror', () => {
     expect(store.listWorkflows()).toHaveLength(before);
     // A build prompt changes something: an audience member who can't edit the target can't mark it done as advice.
     expect(canDecide(dana, { ...built, audience: [{ userId: dana.id }] }, 'apply')).toBe(false);
+  });
+
+  it('offers no Apply for a missing-tool build prompt either, since its Apply is refused', () => {
+    const base = { ops: [], detector: 'missing-tool' } as unknown as Proposal;
+    // The go-ahead alone (nothing to change) and a ready draft keep their Apply.
+    expect(applyable(base)).toBe(true);
+    expect(applyable({ ...base, draft: { name: 'Nudge', nodes: [], connections: [] } } as unknown as Proposal)).toBe(true);
+    // A build prompt with no draft is built in Spotlight on the web: Slack must not offer what it then refuses.
+    expect(applyable({ ...base, buildPrompt: 'Build a reviewer nudge flow.' } as Proposal)).toBe(false);
+    expect(applyable({ ...base, detector: 'analyst', buildPrompt: 'Build a reviewer nudge flow.' } as Proposal)).toBe(false);
   });
 
   it('a decision in the inbox updates the Slack messages too', async () => {
