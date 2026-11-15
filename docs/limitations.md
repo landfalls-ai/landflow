@@ -283,6 +283,12 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 - **Developer details** ([ui-review.md](ui-review.md#developer-details)): with the switch off (the default) the Debug access dialog on the Run Trace page still opens from the header's ⋯ menu and speaks in plain words, and only the tool names behind them wait for the switch; the switch is per person and does not change what the API returns. An unfolded plugin card shows its endpoints (address, last error) and its transport policy only with the switch on, so a builder who wants to see an offline endpoint's error or change the policy turns it on first.
 
+## Learning practices (practices wave P1)
+
+- A learned citation is verified only by the Learn practices template (or a Draft Practice node) in a flow an owner or admin saved: the flow reads the file itself. `POST /api/practices/learn`, and so `/brain learn` in the mod and the CLI, only receive text a caller sent, so their drafts are tainted and none of their citations is ever verified; a person approves them against the repository.
+- The Learn practices template lists a directory one level deep and reads at most 20 text files under 20 KB a repository, at the default branch's latest commit. It needs a GitHub token you create; it has not been run against a real repository.
+- Draft Practice never verifies in a tool call (an agent's text is not a source), and a flow's member-saved or pinned run drafts with every citation unverified.
+
 ## MCP key scopes (company backbone)
 
 - An API key now sees and calls only the instance MCP tools its scopes cover (`lib/shared/mcp.ts` `TOOL_SCOPES`). A key with narrow scopes loses tools it had before: add `workflows:read`, `workflows:write`, `run`, `executions:read` or `brain:read` as needed, or use an MCP token.
