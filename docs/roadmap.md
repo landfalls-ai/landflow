@@ -2078,19 +2078,6 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
 - **Project budgets, built (PC14):** a project's budget is a cap kind of its own ([projects-and-goals.md](projects-and-goals.md#ai-budget)).
   The LiteLLM team budget as a backstop stays deferred, for the reason in [llm-gateway.md](llm-gateway.md#budgets-in-litellm).
 
-## Paperclip wave 9: project AI budget (PC14, server)
-
-- **PC14, built (server):** a project's monthly AI budget as one more cap in the LiteLLM wave's system: listed on
-  Insights → AI, watched by the cost alerts, raised through "Ask for more". It adds a warning, an optional hard stop
-  that refuses only priced calls and asks a person, incidents and Needs you items, with resume, raise and dismiss
-  ([projects-and-goals.md](projects-and-goals.md#ai-budget)). The screens are PC15's. Deferred: a LiteLLM team budget as
-  a backstop (its 30-day window does not match the calendar month and it counts calls Landflow never stops), and
-  per-goal budgets. Closes P6-2 (server).
-- **PC15, built (screens):** the **AI budget** card in a project's Settings tab and the budget rows in Needs you (Home
-  and the Runs page) with Resume, Raise, Dismiss and Open project ([run-trace.md](run-trace.md#needs-you-for-a-project-budget)).
-- **Left:** Landledger's AI budget flow raises agents' caps only
-  ([features/landledger.md](features/landledger.md#raise-or-hold-an-ai-budget)); a version for a project's budget is later.
-
 ## Paperclip wave 7: project context (PC03)
 
 - **PC03, built:** the "Where this work fits" block for every agent Landflow runs: the run resolves its project and goal
@@ -2111,12 +2098,27 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
 - **PC10, built (wave 8):** project repositories (`PATCH /api/projects/:id { repos }`, migration 2500), `GET
   /api/projects/context` by repository or id, the MCP `project_context` tool and `project://{id}/context` resource,
   "Your goals" in the morning briefing, and the project's compact block in Spotlight and the Agent architect (P5-1 to
-  P5-3, D8). The mod and the CLI use the route (PC11, built). The screen for a project's repositories came in wave 9 (PC16).
-  ([projects-and-goals.md](projects-and-goals.md#repositories-and-harnesses)).
-- **PC16, built (wave 9):** a project's **Workspace** card (Settings tab): repositories, a default branch and setup commands
-  for each, a worktree per run or shared, a branch template; saved in `project_workspaces` (migration 2701), served by
-  `GET/PUT /api/projects/:id/workspace`, `GET /api/projects/context` and the MCP `project_context` tool. Closes P6-3.
-  Open: the harness plan's stage 2 using it ([projects-and-goals.md](projects-and-goals.md#workspace)).
+  P5-3, D8). The mod and the CLI use the route (PC11, built). The screen for a project's repositories came in wave 9 (PC16;
+  [projects-and-goals.md](projects-and-goals.md#repositories-and-harnesses)).
+
+## Paperclip wave 8: goal pickers (PC12)
+
+- **PC12, built:** a workflow's settings and a team's page have a goal field (empty: the project's goal), and the team's
+  member picker lists the agents available in the team's project, keeping current members
+  ([projects-and-goals.md](projects-and-goals.md#picking-a-goal-for-a-workflow-or-team)).
+
+## Paperclip wave 9: project AI budget (PC14, server)
+
+- **PC14, built (server):** a project's monthly AI budget as one more cap in the LiteLLM wave's system: listed on
+  Insights → AI, watched by the cost alerts, raised through "Ask for more". It adds a warning, an optional hard stop
+  that refuses only priced calls and asks a person, incidents and Needs you items, with resume, raise and dismiss
+  ([projects-and-goals.md](projects-and-goals.md#ai-budget)). The screens are PC15's. Deferred: a LiteLLM team budget as
+  a backstop (its 30-day window does not match the calendar month and it counts calls Landflow never stops), and
+  per-goal budgets. Closes P6-2 (server).
+- **PC15, built (screens):** the **AI budget** card in a project's Settings tab and the budget rows in Needs you (Home
+  and the Runs page) with Resume, Raise, Dismiss and Open project ([run-trace.md](run-trace.md#needs-you-for-a-project-budget)).
+- **Left:** Landledger's AI budget flow raises agents' caps only
+  ([features/landledger.md](features/landledger.md#raise-or-hold-an-ai-budget)); a version for a project's budget is later.
 
 ## Paperclip wave 9: project settings for agents (PC13)
 
@@ -2125,12 +2127,10 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   ([projects-and-goals.md](projects-and-goals.md#project-settings-for-agents)). The settings card is PC15's. Left: a
   run-time wall for availability (decision 6 stands: the allow-list is the opt-in wall) and pre-filling a new agent's
   model from the project.
-
-## Paperclip wave 8: goal pickers (PC12)
-
-- **PC12, built:** a workflow's settings and a team's page have a goal field (empty: the project's goal), and the team's
-  member picker lists the agents available in the team's project, keeping current members
-  ([projects-and-goals.md](projects-and-goals.md#picking-a-goal-for-a-workflow-or-team)).
+- **PC16, built (wave 9):** a project's **Workspace** card (Settings tab): repositories, a default branch and setup commands
+  for each, a worktree per run or shared, a branch template; saved in `project_workspaces` (migration 2701), served by
+  `GET/PUT /api/projects/:id/workspace`, `GET /api/projects/context` and the MCP `project_context` tool. Closes P6-3.
+  Open: the harness plan's stage 2 using it ([projects-and-goals.md](projects-and-goals.md#workspace)).
 
 ## Practices (waves P1 and P2)
 
