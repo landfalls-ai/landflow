@@ -232,7 +232,8 @@ shows a body while it is off). Drafting and approving still work, so you can pre
 - **The port.** `practices/port.ts` is a slot (`practicesPort()`) the store fills at boot (`practices/register.ts`,
   imported by `lib/server/runtime.ts`). The Draft Practice node, the learn route, the applicable route and the MCP tools
   read the slot and never import the store. Unset (a test, a script that does not boot the runtime), nothing is drafted
-  or delivered, and the routes that read the slot (learn, applicable) answer 503 "Practices are not loaded"; the store routes use the store directly.
+  or delivered. Of the routes that read the slot, `learn` answers 503 "Practices are not loaded" and `applicable` answers an empty 200
+  (as does `resolve`'s 404 for nothing approved); the store routes use the store directly.
 - **The seam's practices slot.** The Landflow agent's run context has a third slot for practices beside the project
   context; nothing sets it in wave P1. Wave P2 sets it, so a Landflow agent's prompt and its cache key cover practices.
 - Practices are text. A rule that tries to widen an agent's tools or approvals has no way to: the block says it never
