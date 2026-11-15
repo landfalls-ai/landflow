@@ -14,6 +14,8 @@ import { Input, Select } from '../ui/inputs';
 import { Field, Section } from './dialog';
 import { AutoTextarea } from './model-card';
 import type { UpdateConfig } from './util';
+import { useContextPreview } from './context-preview';
+import { injectedText } from './project-names';
 
 const LANGUAGES = ['English', 'Spanish', 'French', 'German', 'Portuguese', 'Italian', 'Dutch', 'Polish', 'Turkish', 'Hebrew', 'Arabic', 'Hindi', 'Russian', 'Japanese', 'Korean', 'Chinese'];
 const MAX_EXAMPLES = 10;
@@ -208,6 +210,10 @@ function lineDiff(before: string, after: string): DiffLine[] | undefined {
 export function PromptPreview({ agent, config, nextVersion, testable, onTest, onEdit, initiallyOpen = false }: { agent: Agent; config: AgentConfig; nextVersion: number; testable: boolean; onTest: () => void; onEdit?: () => void; initiallyOpen?: boolean }) {
   const [open, setOpen] = useState(initiallyOpen);
   const prompt = useMemo(() => personaPrompt(config), [config]);
+  // What a run adds after the skills: the home project's block and the approved practices (the same text the test chat previews).
+  const { preview } = useContextPreview(agent.id, undefined, open, `${config.projectContext ?? ''}${(config as { practices?: string }).practices ?? ''}`);
+  const injected = injectedText(preview);
+  const shown = useMemo(() => (injected ? personaPrompt(config, { context: injected }) : prompt), [config, injected, prompt]);
   const published = agent.published;
   const before = useMemo(() => (published ? personaPrompt(published.config) : undefined), [published]);
   const changed = before !== undefined && before !== prompt;
@@ -289,7 +295,7 @@ export function PromptPreview({ agent, config, nextVersion, testable, onTest, on
             <p className="px-4 font-sans text-t3">Too long to compare here.</p>
           )
         ) : (
-          prompt.split('\n').map((line, i) => (
+          shown.split('\n').map((line, i) => (
             <div key={i} className={cn('whitespace-pre-wrap break-words px-4', line.startsWith('## ') ? 'font-semibold text-t1' : 'text-t2')}>
               {line || ' '}
             </div>
@@ -299,7 +305,7 @@ export function PromptPreview({ agent, config, nextVersion, testable, onTest, on
       )}
       <div className="flex items-center gap-3 px-4 py-2.5">
         <p className="min-w-0 flex-1 text-[11px] leading-snug text-t3">
-          {prompt.length.toLocaleString()} characters, about {Math.ceil(prompt.length / 4).toLocaleString()} tokens. Each run adds the date and time
+          {shown.length.toLocaleString()} characters, about {Math.ceil(shown.length / 4).toLocaleString()} tokens.{injected ? ' Shown with the home project’s block and practices.' : ''} Each run adds the date and time
           {config.memory.crossSession ? ' and what it remembers about the person' : ''}.
         </p>
         <span title={testable ? 'Chat with the draft' : 'Choose a model and describe the persona first'}>

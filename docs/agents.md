@@ -598,6 +598,14 @@ the remembered facts, then "You are X. Current date and time: …". The date is 
 for every model call of that run (and for a resume after an approval), so the prompt up to the date line is the same on
 every turn and the provider's [prompt cache](#prompt-cache) keeps working. A new run gets a new date.
 
+### The switches and the preview
+
+Settings → Guardrails has the **Project context** switch (Full, Compact, Off: what the agent is told about the project)
+and the **Practices** switch (On, Off: whether approved practices are added to each run; absent counts as On). Both
+save with the rest of the draft. **What it will be given** in the test chat, and **View prompt** in the persona tab,
+show the text the run gets with the saved switches (`GET /api/agents/:id/context-preview`). See
+[Testing an agent in a project](projects-and-goals.md#testing-an-agent-in-a-project).
+
 ### Which project a run is in
 
 The caller's project, not the agent's home, so one agent can work for several projects:

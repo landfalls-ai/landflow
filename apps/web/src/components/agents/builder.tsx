@@ -19,6 +19,7 @@ import {
   Package,
   Pencil,
   Rocket,
+  Share2,
   Sparkles,
   Trash2,
   TriangleAlert,
@@ -64,6 +65,8 @@ import { TriggersCard } from './triggers-card';
 import { useAgentData, useAgentList } from './use-agent-data';
 import { BackLink } from '../shell/page-header';
 import { ExportPluginDialog } from './export-plugin-dialog';
+import { AvailabilityDialog } from './availability-dialog';
+import { canMakeAvailable, ownershipOfSummary } from './project-names';
 import {
   abilityRows,
   publishLabel,
@@ -250,7 +253,7 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
   const [testing, setTesting] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [modal, setModal] = useState<
-    { kind: 'description' } | { kind: 'delete' } | { kind: 'template' } | { kind: 'plugin' } | { kind: 'import'; config: Partial<AgentConfig>; file: string } | null
+    { kind: 'description' } | { kind: 'delete' } | { kind: 'template' } | { kind: 'plugin' } | { kind: 'availability' } | { kind: 'import'; config: Partial<AgentConfig>; file: string } | null
   >(null);
   const [description, setDescription] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
@@ -688,6 +691,14 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
                   <MenuItem
                     onClick={() => {
                       close();
+                      setModal({ kind: 'availability' });
+                    }}
+                  >
+                    <Share2 /> Make available…
+                  </MenuItem>
+                  <MenuItem
+                    onClick={() => {
+                      close();
                       setModal({ kind: 'template' });
                     }}
                   >
@@ -874,6 +885,7 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
           </Field>
         </Dialog>
       )}
+      {modal?.kind === 'availability' && <AvailabilityDialog agentId={agentId} agentName={draft.name} canEdit={canMakeAvailable(ownershipOfSummary(agents?.find((a) => a.id === agentId)))} onClose={() => setModal(null)} />}
       {modal?.kind === 'plugin' && <ExportPluginDialog base={`/api/agents/${agentId}`} title={draft.name} onClose={() => setModal(null)} />}
       {modal?.kind === 'template' && (
         <SaveTemplateDialog agent={{ id: agentId, name: draft.name, description: draft.description }} onClose={() => setModal(null)} />

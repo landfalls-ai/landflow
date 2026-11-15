@@ -65,6 +65,10 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - A session stores the block it was given (`session.context`). Members of a project that only uses the agent (a share
   or All projects) cannot read its sessions: they get 404. Members of the home project still see the briefs of the
   other projects the agent ran in. Per-project session walls come in a later package (PC13).
+- The agent screens (wave 8): the Agents list reads each agent's availability with its own request, so a long list makes
+  one small request per card. The context preview and View prompt read the saved agent, a moment after the draft
+  autosaves; View prompt shows the agent's home project. The preview needs editor rights on the agent, so a person with
+  only a share to use it cannot see it.
 - The builder drops the brief entirely, then cuts the mission to 120 characters, when the usual drop order still leaves
   the block over its cap.
 - Whether Anthropic's prompt cache hits more with the pinned date is not measured on this machine: the prompt up to the
