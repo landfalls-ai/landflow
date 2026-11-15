@@ -30,7 +30,8 @@ const { agentStore } = await import('@/lib/server/agents/store');
 const { canReadSession } = await import('@/lib/server/agents/session-scope');
 const { credentials } = await import('@/lib/server/credentials/vault');
 const { aiUsageMeter, savePriceOverrides } = await import('@/lib/server/ai-usage');
-const { createTeamProject, setMember, setHomeProject, putShare, removeProjectRows, afterRemoved } = await import('@/lib/server/projects/store');
+const { createTeamProject, getProject, setMember, setHomeProject, putShare, removeProjectRows, afterRemoved, taskCounts } = await import('@/lib/server/projects/store');
+const { projectView } = await import('@/lib/server/projects/views');
 const { updateProjectSettings } = await import('@/lib/server/governance/scopes');
 const { createGoal, setProjectGoals } = await import('@/lib/server/goals/store');
 const { saveBudget, incidentsOf, currentMonth } = await import('@/lib/server/budgets/store');
@@ -713,6 +714,11 @@ describe('deleting', () => {
     const kept = (await create(ed, { title: 'Kept task', assignee: { kind: 'agent', id: X } }, other)).body.task as ProjectTaskView;
     const run = (await ask(ed, mine.id, project)).body.run as TaskRun;
     await ask(ed, kept.id, other);
+    // The project view counts its tasks, so the delete dialog can say they go with it (counts holds only what moves).
+    const view = projectView(getProject(project)!, getUser(ed.id)!);
+    expect(view.taskCount).toBe(1);
+    expect(view.counts).toEqual({});
+    expect(projectView(getProject(createTeamProject({ name: 'Taskless' }).id)!, getUser(ed.id)!).taskCount).toBeUndefined();
     removeProjectRows(project);
     await afterRemoved;
     expect(getTask(mine.id)).toBeUndefined();
@@ -720,5 +726,7 @@ describe('deleting', () => {
     expect(database().all('SELECT id FROM task_runs WHERE project_id = ?', project)).toEqual([]);
     expect(getTask(kept.id)).toBeDefined();
     expect(database().all('SELECT id FROM task_runs WHERE project_id = ?', other)).toHaveLength(1);
+    expect(taskCounts().get(project)).toBeUndefined();
+    expect(taskCounts().get(other)).toBe(1);
   });
 });

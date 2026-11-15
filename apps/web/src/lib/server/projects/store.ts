@@ -584,6 +584,13 @@ export function resourceCounts(): Map<string, Partial<Record<ResourceKind, numbe
   return counts;
 }
 
+/** Task counts per project (`project_tasks` rows; PC19): what deleting a project deletes with it. */
+export function taskCounts(): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const row of db().all<{ project_id: string; n: number }>('SELECT project_id, COUNT(*) AS n FROM project_tasks GROUP BY project_id')) counts.set(row.project_id, Number(row.n));
+  return counts;
+}
+
 // ---- shares -----------------------------------------------------------------------------------------------
 
 export function shares(kind: ResourceKind, id: string): ShareRecord[] {

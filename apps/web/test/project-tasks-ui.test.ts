@@ -10,6 +10,7 @@ import { ScheduleField } from '../src/components/projects/tasks/task-dialog';
 import { cronPreset, presetCron, WAKE_NOTE, WAKE_PRESETS } from '../src/components/projects/tasks/schedule';
 import { assigneeValue, fieldOfError, groupTasks, missingAssigneeOption, parseAssignee } from '../src/components/projects/tasks/tasks-model';
 import { tasksUrl } from '../src/components/projects/tasks/use-tasks';
+import { deletionNotice } from '../src/components/projects/project-dialogs';
 import type { NeedsYouRow } from '../src/lib/client/run-trace';
 import type { ProjectTaskView } from '../src/lib/shared/project-tasks';
 
@@ -147,5 +148,23 @@ describe('markup', () => {
     expect(html).toContain('Approve');
     expect(html).toContain('Deny');
     expect(html).toContain('max-md:min-h-[44px]');
+  });
+});
+
+describe('deleting a project says what goes with it', () => {
+  it('names the tasks it deletes, never promises nothing is deleted', () => {
+    const notice = deletionNotice({ counts: {}, taskCount: 12 });
+    expect(notice.deletes).toBe('Its 12 tasks and their runs, its own goals, its AI budget and its workspace are deleted with it; its practices are retired.');
+    expect(notice.moves).toBe('It owns no workflows, credentials, data tables or agents to move.');
+    expect(deletionNotice({ counts: {}, taskCount: 1 }).deletes).toMatch(/^Its 1 task and their runs/);
+    for (const text of Object.values(notice)) {
+      expect(text).not.toMatch(/Nothing it owns is deleted/);
+      expect(text).not.toMatch(/^It owns nothing\.$/);
+    }
+  });
+  it('says what moves and still that tasks are deleted when it holds none', () => {
+    const notice = deletionNotice({ counts: { workflow: 3, credential: 1 } });
+    expect(notice.moves).toBe('What it owns (3 workflows, 1 credential) moves to the project you choose.');
+    expect(notice.deletes).toBe('Its tasks, its own goals, its AI budget and its workspace are deleted with it; its practices are retired.');
   });
 });

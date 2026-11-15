@@ -477,7 +477,11 @@ in Home's tile and the rail's badge like any other. Its title opens the task (ne
 [run-trace.md](run-trace.md#needs-you-for-a-project-task).
 
 The red **Delete this project** card is the last card of the Settings tab: settings, Agents in this project, AI budget,
-Workspace, Variables, then it.
+Workspace, Variables, then it. The card and its dialog say what goes where: what the project owns (workflows,
+credentials, data tables, agents) moves to the project you choose, and its tasks with their runs, its own goals, its AI
+budget and its workspace are deleted with it (its practices are retired). The dialog counts the tasks ("Its 12 tasks and
+their runs … are deleted with it") from the project view's `taskCount`, so a project that holds only tasks is never
+called empty.
 ## Export
 
 **Export** in the project's header downloads the project as a Claude Code plugin: `PROJECT.md` with its brief and goals

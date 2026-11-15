@@ -32,7 +32,7 @@ import { CreateTableDialog } from '@/components/data-tables/create-table-dialog'
 import { useWorkflowsReadOnly } from '@/lib/client/environment';
 import { MenuItem, Popover } from '@/components/ui/popover';
 import { MoveToProjectDialog, RESOURCE_PATH } from './share-dialog';
-import { DeleteProjectDialog, describeCounts } from './project-dialogs';
+import { DeleteProjectDialog, deletionNotice } from './project-dialogs';
 import { rememberProject } from './current-project';
 import { projectLabel, useProjectStore } from './use-projects';
 import { Segmented } from '../ui/segmented';
@@ -350,7 +350,7 @@ function ProjectSettings({ project, section, onChanged }: { project: ProjectDeta
         <Card className="flex items-center gap-3 border-rdbd">
           <span className="min-w-0 flex-1">
             <span className="block text-[13px] font-semibold text-t1">Delete this project</span>
-            <span className="block text-[12px] text-t3">{describeCounts(project.counts) ? `What it owns (${describeCounts(project.counts)}) moves to a project you choose.` : 'It owns nothing.'}</span>
+            <span className="block text-[12px] text-t3">{Object.values(deletionNotice(project)).join(' ')}</span>
           </span>
           <Button variant="danger" size="sm" onClick={() => setDeleting(true)}>
             Delete project

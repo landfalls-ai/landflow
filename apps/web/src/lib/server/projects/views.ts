@@ -3,9 +3,9 @@ import { PROJECT_ROLES, type ProjectDetail, type ProjectView } from '../../share
 import { listUsers } from '../auth/users';
 import { briefView } from '../goals/views';
 import { projectRole, visibleProjectIds, type Actor } from './access';
-import { ensurePersonalProject, listProjects, memberCounts, members, resourceCounts, type ProjectRecord } from './store';
+import { ensurePersonalProject, listProjects, memberCounts, members, resourceCounts, taskCounts, type ProjectRecord } from './store';
 
-export function projectView(project: ProjectRecord, actor: Actor, counts = resourceCounts(), memberTotals = memberCounts()): ProjectView {
+export function projectView(project: ProjectRecord, actor: Actor, counts = resourceCounts(), memberTotals = memberCounts(), tasks = taskCounts()): ProjectView {
   return {
     id: project.id,
     name: project.name,
@@ -18,6 +18,7 @@ export function projectView(project: ProjectRecord, actor: Actor, counts = resou
     ...(projectRole(actor, project.id) && { role: projectRole(actor, project.id) }),
     memberCount: memberTotals.get(project.id) ?? 0,
     counts: counts.get(project.id) ?? {},
+    ...(tasks.get(project.id) && { taskCount: tasks.get(project.id) }),
   };
 }
 
@@ -27,10 +28,11 @@ export function visibleProjects(actor: Actor): ProjectView[] {
   const visible = visibleProjectIds(actor);
   const counts = resourceCounts();
   const totals = memberCounts();
+  const tasks = taskCounts();
   return listProjects()
     .filter((project) => !visible || visible.has(project.id))
     .sort((a, b) => Number(b.ownerId === actor.id) - Number(a.ownerId === actor.id))
-    .map((project) => projectView(project, actor, counts, totals));
+    .map((project) => projectView(project, actor, counts, totals, tasks));
 }
 
 export function projectDetail(project: ProjectRecord, actor: Actor): ProjectDetail {
