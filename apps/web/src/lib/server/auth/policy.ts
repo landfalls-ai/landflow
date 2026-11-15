@@ -90,6 +90,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
 
   // PC01: goals (docs/projects-and-goals.md); the routes check who may edit which goal.
   if (under('/api/goals')) return { scope: read ? 'workflows:read' : 'workflows:write' };
+  // PC19: a project task's run (docs/projects-and-goals.md#tasks); approving one starts an agent, so only a signed-in person does it.
+  if (under('/api/task-runs')) return read ? { scope: 'workflows:read' } : { scope: 'workflows:write', sessionOnly: true };
   if (path === '/api/projects/context') return { scope: 'brain:read' }; // PC10
   if (['/api/workflows', '/api/folders', '/api/data-tables', '/api/agents', '/api/agent-teams', '/api/agent-templates', '/api/skills', '/api/node-types', '/api/credential-types', '/api/expressions', '/api/projects', '/api/templates', '/api/composites', '/api/runbooks'].some(under)) {
     return { scope: read ? 'workflows:read' : 'workflows:write' };

@@ -411,6 +411,42 @@ default). `GET /api/goals?progress=1&window=` adds `progress`, one entry per goa
 answer is as before (`progress` must be `1` and `window` `7` or `30`, else 400; `window` alone is also 400). Every goal in an answer is counted in one query per source, never one per goal. The
 nightly sync uses the same numbers for its "Goals that moved" line ([work-and-briefings.md](work-and-briefings.md#the-nightly-sync)). Code:
 `lib/server/goals/progress.ts`; the answer's shape is `lib/shared/goal-progress.ts`.
+## Tasks
+
+A project keeps tasks: work with a title, a status (`To do`, `In progress`, `Blocked`, `Done`, `Cancelled`), a priority, an
+optional goal the project serves, an optional parent (one level: a sub-task of a top-level task), an **assignee** and,
+for an agent, a **wake-up** schedule. A project has at most 1000 tasks. Members read them; editors and admins create,
+change, delete, check out and ask for runs. The routes are in the [API reference](reference/api.md); the screens are the
+project's **Tasks** tab (wave 10).
+
+- **Assignee.** An agent must be available in the project ([agents across projects](#agents-across-projects)) and allowed by
+  the project's agent allow-list ([settings](#project-settings-for-agents)); a person needs a role in the project. Both
+  are checked when the assignee is set, so a member who leaves stays the assignee until someone changes it.
+- **Check out.** One person holds a task at a time. **Check out** is atomic: when two people press it at once, one gets it
+  and the other is told `Checked out by <name>` (409). Holding it already is fine. The holder or a project admin releases it.
+- **Wake-ups only ask.** An agent task can carry a five-field cron in the instance time zone (`0 9 * * 1-5`). The leader
+  looks every `LANDFLOW_TASK_WAKEUP_SECONDS` (60; `0` turns it off) for tasks that are `To do` or `In progress` and due,
+  and asks for a run: a `requested` run, merged into one the task already has open. Nothing runs. A schedule that never
+  fires (`0 0 31 2 *`) is refused when you save it. A task whose agent has left the project, is no longer allowed or is
+  not published gets no request (the log says why, once a day) and keeps its cron (its next wake-up moves to the next slot). **Ask to run now** does the same
+  by hand.
+- **Approve in Needs you.** The request is a **Needs you** item for the project's editors and admins, with **Approve**
+  and **Deny**. Approving needs a signed-in person (an API key or an MCP client
+  gets 403 `session_only`). Only a `requested` run is decided; a second decision is 409 `Already <status>`.
+- **The run obeys the project.** Approve checks again, at that moment, that the agent exists, is published, is available
+  in the project and is allowed by its rules (409 with the message, and the run stays `requested`). It then starts the agent
+  in the background through the same runner as the test chat, a schedule or a team, with the task's project (and goal) in
+  its context. So the project's allow-list, its default model, the tool kinds it withholds and its
+  [AI budget](#ai-budget) (the hard stop included) apply exactly as they do to every other agent run in the project. The
+  agent's published version runs. The workflows its tools start run for the person who approved.
+- **Where the run goes.** The run is `approved`, then `running` with a link to its **session** (source `Task`, in the agent's
+  Sessions tab, readable by the project's members and no one else's); it ends `done` with the agent's reply, or `failed`
+  with the reason (a refused agent, the budget's stop, the step limit). A tool that needs approval leaves the run `waiting`
+  and is a Needs you item that opens the session; decide it there. The status is settled from the session whenever it is
+  read, so a run finished elsewhere reads `done`, and one a restart cut short reads `failed` ("Landflow restarted before the
+  run finished").
+- **Deleting.** Deleting a task deletes its runs. Deleting the project deletes its tasks and runs with it; they are never
+  moved to another project.
 
 ## How it is built
 

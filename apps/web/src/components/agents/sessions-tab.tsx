@@ -2,7 +2,7 @@
 /** Activity → Sessions: every conversation the agent had (test chat, schedules, channels, workflows, other agents) and its timeline. */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Bot, ChevronRight, Clock, Code, FlaskConical, Loader2, MessagesSquare, RefreshCw, Send, Trash2, Workflow } from 'lucide-react';
+import { ArrowLeft, Bot, ChevronRight, Clock, Code, FlaskConical, ListTodo, Loader2, MessagesSquare, RefreshCw, Send, Trash2, Workflow } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
@@ -28,6 +28,7 @@ const SOURCE: Record<SessionSource, { label: string; icon: typeof Bot; tone: Ton
   workflow: { label: 'Workflow', icon: Workflow, tone: 'neutral' },
   agent: { label: 'Agent', icon: Bot, tone: 'neutral' },
   api: { label: 'API', icon: Code, tone: 'neutral' },
+  task: { label: 'Task', icon: ListTodo, tone: 'neutral' },
 };
 
 const STATUS: Record<SessionStatus, { label: string; tone: Tone }> = {

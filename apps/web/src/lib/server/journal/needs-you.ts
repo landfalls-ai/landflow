@@ -12,7 +12,7 @@ import { openWaitSpan } from './decisions';
 import { checksSinceAsync, spanStartAsync } from './store';
 
 /** `gate`: a Run report waits for a person to accept its failed checks or send the work back. `budget` (PC14): a project's AI budget warning or stop. */
-export type NeedsYouKind = 'approval' | 'form' | 'question' | 'gate' | 'check' | 'budget';
+export type NeedsYouKind = 'approval' | 'form' | 'question' | 'gate' | 'check' | 'budget' | 'task';
 
 export interface NeedsYouItem {
   executionId: string;
@@ -34,6 +34,11 @@ export interface NeedsYouItem {
   href?: string;
   canRaise?: boolean;
   canResume?: boolean;
+  // PC19: a `task` item's fields (lib/shared/project-tasks.ts `TaskNeedsYouFields`); its executionId, workflowId and workflowName are ''.
+  taskId?: string;
+  taskRunId?: string;
+  taskRunStatus?: 'requested' | 'waiting';
+  canDecide?: boolean;
 }
 
 const DAY_MS = 86_400_000;

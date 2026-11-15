@@ -386,6 +386,9 @@ export function removeProjectRows(id: string): string[] {
       if (typeof row.execution_id === 'string') waiting.push(row.execution_id);
     }
     database.delete('project_workspaces', { project_id: id }); // PC16: the workspace for harness runs
+    // PC19: its tasks and their runs are its own data: deleted with it, never transferred (raw deletes: tasks/* would grow http.ts's import closure).
+    for (const row of database.all<{ id: string }>('SELECT id FROM task_runs WHERE project_id = ?', id)) database.delete('task_runs', { id: row.id });
+    for (const row of database.all<{ id: string }>('SELECT id FROM project_tasks WHERE project_id = ?', id)) database.delete('project_tasks', { id: row.id });
     database.delete('project_members', { project_id: id });
     for (const share of database.all<ShareRow>('SELECT * FROM resource_shares WHERE project_id = ?', id)) {
       database.delete('resource_shares', { kind: share.kind, resource_id: share.resource_id, project_id: id });

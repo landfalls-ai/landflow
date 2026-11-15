@@ -1849,6 +1849,19 @@ export const MIGRATIONS: Migration[] = [
     name: 'project_workspaces',
     statements: [`CREATE TABLE IF NOT EXISTS project_workspaces (project_id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT)`],
   },
+  // PC19: project tasks and their runs (docs/projects-and-goals.md#tasks)
+  {
+    version: 2800,
+    name: 'project_tasks',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS project_tasks (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, goal_id TEXT, parent_id TEXT, title TEXT NOT NULL, description TEXT, status TEXT NOT NULL, priority TEXT NOT NULL, assignee_kind TEXT, assignee_id TEXT, wake_cron TEXT, next_wake_at TEXT, checked_out_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by TEXT)`,
+      `CREATE INDEX IF NOT EXISTS project_tasks_project ON project_tasks (project_id, status)`,
+      `CREATE INDEX IF NOT EXISTS project_tasks_wake ON project_tasks (next_wake_at)`,
+      `CREATE TABLE IF NOT EXISTS task_runs (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, project_id TEXT NOT NULL, agent_id TEXT NOT NULL, status TEXT NOT NULL, reason TEXT NOT NULL, requested_at TEXT NOT NULL, requested_by TEXT, decided_by TEXT, decided_at TEXT, session_id TEXT, reply TEXT, error TEXT, finished_at TEXT)`,
+      `CREATE INDEX IF NOT EXISTS task_runs_task ON task_runs (task_id, status)`,
+      `CREATE INDEX IF NOT EXISTS task_runs_open ON task_runs (project_id, status)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -1974,6 +1987,9 @@ export const TABLES = {
   practice_applications: ['id'],
   // PC16:
   project_workspaces: ['project_id'],
+  // PC19:
+  project_tasks: ['id'],
+  task_runs: ['id'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

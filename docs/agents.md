@@ -530,6 +530,16 @@ and footer, and keeps its answer card.
   latest report from `GET /api/executions/:id` (`progress`) and then the live `node.progress`
   events ([a2a.md](a2a.md#the-a2a-agent-node)).
 
+## Project tasks
+
+An agent can be the assignee of a project task ([projects-and-goals.md](projects-and-goals.md#tasks)). A person's **Approve**
+runs it: `runAgent` with `approvals: 'ask'` (a tool that needs approval waits in the session, not refused as in a
+schedule), the task's project and goal in the run context, and the agent's published version. The session has source
+`task` (the sessions tab shows **Task**), the user `task:<taskId>`, and belongs to the task's project like any session
+([sessions belong to a project](projects-and-goals.md#sessions-belong-to-a-project)): the project's allow-list, default
+model, tool kinds and AI budget apply. Its tools' workflows run for the person who approved. A run is always the in-process
+runner's, whatever else runs the agent (kagent).
+
 ## Available in
 
 An agent belongs to one project, its home, and is **available** there, in each project it is shared with and, when
