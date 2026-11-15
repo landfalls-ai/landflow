@@ -7,7 +7,7 @@ and post suggestions next to the built-in ones.
 
 ```
  observe ─────────► remember ─────────► conclude ─────────► propose ─────────► measure
- usage ledger       profiles, facts     12 detectors, your  Home inbox, canvas  did it help?
+ usage ledger       profiles, facts     13 detectors, your  Home inbox, canvas  did it help?
  (every run, edit,  and a searchable    workflows, the      card, a digest;     back into the
  AI call, action)   index               Platform analyst    Apply with a diff   facts
 ```
@@ -111,7 +111,23 @@ The first tick is 30 s after start.
 | Agent quality | 3+ thumbs down that are 30%+ of an agent's feedback in 14 days | persona rules the model writes from the comments, for the agent's draft |
 | Unmet demand | 3+ Spotlight asks that changed nothing, or empty node searches, about the same term, from 2 people or on 2 days | a draft workflow for the request |
 | Missing tool | something the Agent architect needed and no node online does, grouped by the app (or the first telling word, with spellings like "Text Toolkit" and "TextToolkit" as one); one need is enough, the same person asking again the same day counts once | "Build a tool for Grafana", with a sketch of the node plugin the model writes (nodes, parameters, credential) and a link to **Build a plugin**. Its button is **Build it**: approving it starts the workflows that build one (below) |
+| Work overlap | two people whose `team` or `org` work of the last 3 days shares an initiative, a customer, a directory of the same repository, or similar words, and who were not introduced in the last 14 days ([below](#work-overlap)) | one suggestion addressed to both: "Ana and Ben are both on billing", with the titles each may open |
 | No safety net | an active workflow with 3+ failed production runs in 14 days and no error workflow | `setWorkflowSettings` with the error workflow you have, or a draft "Failure alerts" workflow when there is none |
+
+### Work overlap
+
+The detector `work-overlap` (`lib/server/brain/overlap.ts`) introduces two people who are working on the same thing.
+
+- It reads only `team` and `org` work of the last 3 days; a private item is never selected. Two people count when their
+  items share an initiative, a customer, a directory of the same repository, or words (the same repository alone is
+  not enough).
+- The suggestion is one card addressed to both people (their inbox, and a Slack direct message when the instance has
+  exactly one Slack credential). It names both, and its evidence holds only the titles each person may open: an `org`
+  item, or a `team` item of someone who shares a project with the other. A pair with a side that has nothing the other
+  may open gets none.
+- The same two people are not introduced again for 14 days, whatever became of the first card. **Dismiss** with
+  **Don't suggest this again** mutes introductions for the person who pressed it: no pair with them is made again.
+- Quieter when people dismiss it as wrong: each side must then show two or three items before it speaks.
 
 - **What a suggestion holds** (`proposals`): a title; why, with evidence; the expected effect; its changes (ops, a
   draft or persona rules); a risk tier and confidence; and its target. Its status is open, applied, dismissed (with a

@@ -1531,6 +1531,7 @@ setting `brain.workAutoSend`.
   `brain-sdlc-velocity`, Suggest Improvement's Build Prompt, and **Build it** opening a new workflow with Spotlight
   building from the suggestion's prompt ([second-brain.md](second-brain.md#nightly-sdlc-velocity)). Closes V4.
 - **Built (B29)**: the mod's colleagues: `/brain sync`, the pane, the overlap band, team or org per item, Post as my update and the admin's no-auto rule ([landflow-brain-mod.md](landflow-brain-mod.md#colleagues)).
+- **Built (B38, MOD8 closed)**: the brain side of the mod: the Work overlap detector introduces two people on the same thing (one card to both, team and org work only, once in 14 days, mutable; [second-brain.md](second-brain.md#work-overlap)), the mod's `brain_ask` tool, and `landflow-brain` and `landflow-harness` in the repository marketplace ([landflow-brain-mod.md](landflow-brain-mod.md#brain_ask)).
 - **Built (B30, V3's server part)**: the Tomorrow sync template and its five brain nodes, the `brain_briefings` store, briefings served over MCP and `GET /api/brain/briefing`; Slack delivery with the server's own bot (`LANDFLOW_BRIEFING_SLACK_TOKEN`), never a credential ([work-and-briefings.md](work-and-briefings.md#the-nightly-sync)). Open, carried to B38: the landflow-brain mod's session start shows `summary` and `source` (`hooks/client.ts`, `register.ts`).
 - **Next**: the overlap detector, the web card and setup button (B37), and the mod showing the nightly text at session start. (The admin's auto-send switch is in Settings → MCP.)
 
