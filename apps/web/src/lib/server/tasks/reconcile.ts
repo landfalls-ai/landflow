@@ -34,6 +34,16 @@ export function sessionProblem(session: AgentSession): string | undefined {
   return undefined;
 }
 
+/** The `Stopped: …` notice a cap left after the session's last user or tool entry (the run ended by the budget, the step limit or a cancel). */
+function trailingStop(session: AgentSession): string | undefined {
+  for (let i = session.timeline.length - 1; i >= 0; i--) {
+    const entry = session.timeline[i];
+    if (entry.type === 'user' || entry.type === 'tool') return undefined;
+    if (entry.type === 'notice' && entry.message.startsWith('Stopped: ')) return entry.message;
+  }
+  return undefined;
+}
+
 const finished = () => new Date().toISOString();
 
 /** The run as it is now: open ones are looked at against their session and saved when it moved on. */
@@ -49,8 +59,11 @@ export function reconcileRun(run: TaskRun, now = Date.now()): TaskRun {
   }
   if (isRunning(session.id)) return run.status === 'running' ? run : (patchRun(run.id, { status: 'running' }) ?? run);
   switch (session.status) {
-    case 'idle':
+    case 'idle': {
+      const stopped = trailingStop(session);
+      if (stopped) return patchRun(run.id, { status: 'failed', error: cut(stopped), finishedAt: finished() }) ?? run;
       return patchRun(run.id, { status: 'done', reply: cut(lastReply(session) ?? ''), finishedAt: finished() }) ?? run;
+    }
     case 'error':
       return patchRun(run.id, { status: 'failed', error: cut(sessionProblem(session) ?? 'The run failed'), finishedAt: finished() }) ?? run;
     case 'awaiting_approval':

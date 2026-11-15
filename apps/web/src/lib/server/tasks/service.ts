@@ -164,10 +164,11 @@ export function checkout(viewer: Viewer, project: Project, id: string): ProjectT
 export function release(viewer: Viewer, project: Project, id: string): ProjectTaskView {
   requireEditor(viewer);
   if (getTask(id)?.projectId !== project.id) throw new TaskError('Task not found', 404);
+  const held = getTask(id)?.checkedOutBy;
   const result = releaseTask(id, (holder) => holder === viewer.actor.id || viewer.canRelease);
   if (!result) throw new TaskError('Task not found', 404);
   if (result.refused) throw new TaskError('Only the one who checked it out, or a project admin, releases it', 403);
-  recordAudit({ action: 'project.task.release', target: { type: 'task', id, name: result.task.title }, project: project.id, summary: `Released the task “${result.task.title}”` });
+  if (held) recordAudit({ action: 'project.task.release', target: { type: 'task', id, name: result.task.title }, project: project.id, summary: `Released the task “${result.task.title}”` });
   return taskView(result.task, viewer);
 }
 

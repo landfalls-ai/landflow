@@ -392,14 +392,14 @@ describe('the wake-up tick only asks', () => {
     const done = await newTask({ wake: { cron: '* * * * *' } });
     await patch(ed, done.id, { status: 'done' });
     expect((await ask(ed, done.id)).body.error).toBe('Reopen the task first');
-    // The agent leaves the project after the task was made: the wake-up does not ask, and keeps its schedule.
+    // The agent leaves the project after the task was made: the wake-up does not ask, and its schedule moves on so it holds no slot.
     const gone = await newTask({ wake: { cron: '* * * * *' }, assignee: { kind: 'agent', id: Z } });
     updateProjectSettings(P, { agents: { mode: 'allow', ids: [X] } });
     try {
       setNextWake(gone.id, '2020-01-01T00:00:00.000Z');
       taskWakeups.tick();
       expect(((await get(ed, gone.id)).body.task.runs as TaskRun[]).length).toBe(0);
-      expect(getTask(gone.id)!.nextWakeAt).toBe('2020-01-01T00:00:00.000Z');
+      expect(Date.parse(getTask(gone.id)!.nextWakeAt!)).toBeGreaterThan(Date.now() - 1000);
     } finally {
       updateProjectSettings(P, { agents: { mode: 'off', ids: [] } });
     }
@@ -579,6 +579,23 @@ describe('a tool that needs approval', () => {
     agentStore.saveSession(session);
     expect((await readRun(ed, run.id)).body.run).toMatchObject({ status: 'done', reply: 'All done after approval' });
     expect((await needsYou(ed)).filter((item) => item.taskRunId === run.id)).toHaveLength(0);
+  });
+
+  it('a waiting run whose session ends on a Stopped notice reads failed with it', async () => {
+    const task = await newTask({ title: 'Budget stop', assignee: { kind: 'agent', id: W } });
+    const run = (await ask(ed, task.id)).body.run as TaskRun;
+    await decide(ed, run.id, 'approve');
+    let current = (await readRun(ed, run.id)).body.run as TaskRun;
+    for (let i = 0; i < 200 && current.status !== 'waiting'; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      current = (await readRun(ed, run.id)).body.run as TaskRun;
+    }
+    expect(current.status).toBe('waiting');
+    const session = agentStore.getSession(current.sessionId!)!;
+    session.status = 'idle';
+    session.timeline.push({ id: 'n_stop', type: 'notice', message: 'Stopped: the project budget is spent', at: new Date().toISOString() });
+    agentStore.saveSession(session);
+    expect((await readRun(ed, run.id)).body.run).toMatchObject({ status: 'failed', error: 'Stopped: the project budget is spent' });
   });
 });
 

@@ -26,6 +26,17 @@ export const taskWakeups = singleton('task-wakeups', () => {
   /** Task id to the day its problem was last logged (one line per task and day). */
   const logged = new Map<string, number>();
 
+  /** Move the schedule on (a refused task too, so it never holds a slot of the tick). */
+  function advance(id: string, cron: string, at = new Date()): void {
+    let next: string | undefined;
+    try {
+      next = nextWake(cron, at, instanceTimezone())?.toISOString();
+    } catch {
+      next = undefined;
+    }
+    setNextWake(id, next ?? null);
+  }
+
   /** Ask for the runs of every due task; returns how many new runs were requested. */
   function tick(at = new Date()): number {
     let requested = 0;
@@ -40,6 +51,7 @@ export const taskWakeups = singleton('task-wakeups', () => {
           logged.set(task.id, day);
           logger.warn('a task wake-up was not requested', { 'landflow.task.id': task.id, 'landflow.project.id': task.projectId, reason: problem ?? 'the agent is not published' });
         }
+        advance(task.id, task.wake.cron, at);
         continue;
       }
       const { run, merged } = requestRun(task, task.assignee.id, 'wake');
@@ -47,13 +59,7 @@ export const taskWakeups = singleton('task-wakeups', () => {
         requested++;
         recordAudit({ action: 'project.task.run_requested', actor: 'system', target: { type: 'task', id: task.id, name: task.title }, project: task.projectId, summary: `A wake-up asked for a run of “${task.title}”`, details: { runId: run.id, agentId: run.agentId, reason: 'wake' } });
       }
-      let next: string | undefined;
-      try {
-        next = nextWake(task.wake.cron, at, instanceTimezone())?.toISOString();
-      } catch {
-        next = undefined;
-      }
-      setNextWake(task.id, next ?? null);
+      advance(task.id, task.wake.cron, at);
     }
     // Runs a restart cut short: settled against their sessions.
     for (const run of runsWith(['approved', 'running', 'waiting'], MAX_PER_TICK, new Date(at.getTime() - STALE_MS).toISOString())) reconcileRun(run, at.getTime());
