@@ -164,8 +164,22 @@ function linkExported(created: Array<{ file: ClaudeAgentFile; id: string }>, tea
     if (!agent?.tools.some((t) => t.type === 'agent' && bySource.has(t.agentId))) continue;
     agentStore.saveDraft(id, { tools: agent.tools.map((t) => (t.type === 'agent' && bySource.has(t.agentId) ? { ...t, agentId: bySource.get(t.agentId)! } : t)) });
   }
-  if (!team) return;
   const bySlug = new Map(created.map((c) => [c.file.path.split('/').pop()!.replace(/\.md$/i, ''), c.id] as const));
+  // A project export points sub-agent tools at their sibling by slug.
+  for (const { id } of created) {
+    const agent = agentStore.get(id);
+    const slugged = (t: { type: string }) => t.type === 'agent' && typeof (t as { agentSlug?: unknown }).agentSlug === 'string';
+    if (!agent?.tools.some(slugged)) continue;
+    agentStore.saveDraft(id, {
+      tools: agent.tools.flatMap((t) => {
+        if (!slugged(t)) return [t];
+        const { agentSlug, ...rest } = t as typeof t & { agentSlug: string };
+        const target = bySlug.get(agentSlug);
+        return target ? [{ ...rest, agentId: target }] : [];
+      }),
+    });
+  }
+  if (!team) return;
   const members = team.team.members.flatMap((member) => {
     if (member.kind !== 'agent') return [member];
     const agentId = typeof member.agent === 'string' ? bySlug.get(member.agent) : undefined;

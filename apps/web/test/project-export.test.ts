@@ -172,6 +172,58 @@ describe('the plugin', () => {
   });
 });
 
+describe('goals in a chain with a hidden one', () => {
+  it('hangs a visible goal under the nearest visible ancestor', async () => {
+    const chainProject = projects.createTeamProject({ name: 'Chain Project', createdBy: lead.id });
+    projects.setMember(chainProject.id, lead.id, 'editor');
+    const mid = goals.createGoal({ title: 'Hidden middle', level: 'project', projectId: other.id, parentId: company.id });
+    goals.createGoal({ title: 'Visible leaf', level: 'project', projectId: chainProject.id, parentId: mid.id });
+    const data = JSON.parse((await files(chainProject.id)).get('.landflow/project.json')!);
+    expect(data.goals.map((g: { title: string }) => g.title)).toEqual(['Boring invoices', 'Visible leaf']);
+    expect(data.goals[1].parent).toBe(0);
+    expect((await files(chainProject.id)).get('PROJECT.md')).toContain('Goal (company): Boring invoices, by 2027-03-31.\n└ Goal (project): Visible leaf.');
+  });
+});
+
+describe('agent and workflow ids', () => {
+  it('points sub-agent tools at siblings by slug and drops the other ids', async () => {
+    const idsProject = projects.createTeamProject({ name: 'Ids Project', createdBy: lead.id });
+    projects.setMember(idsProject.id, lead.id, 'editor');
+    const second = agentStore.create({ name: 'Second Clerk', instructions: 'Second.' } as never);
+    const first = agentStore.create({
+      name: 'First Clerk',
+      instructions: 'First.',
+      tools: [
+        { type: 'agent', agentId: second.id, useWhen: 'checks' },
+        { type: 'agent', agentId: shared.id },
+        { type: 'workflow', workflowId: 'wf_secret123456', name: 'Run it', description: 'd' },
+      ],
+    } as never);
+    projects.setHomeProject('agent', first.id, idsProject.id);
+    projects.setHomeProject('agent', second.id, idsProject.id);
+    const all = await files(idsProject.id);
+    const text = [...all.values()].join('\n');
+    for (const id of [first.id, second.id, shared.id, 'wf_secret123456']) expect(text, id).not.toContain(id);
+    const tools = JSON.parse(all.get('.landflow/agents/first-clerk.json')!).config.tools;
+    expect(tools).toEqual([{ type: 'agent', agentId: '', agentSlug: 'second-clerk', useWhen: 'checks' }]);
+  });
+});
+
+describe('a personal project', () => {
+  it('exports under a neutral name, for its owner and for the instance owner', async () => {
+    const personalId = projects.ensurePersonalProject(stranger.id)!;
+    for (const user of [stranger, null] as const) {
+      const res = await exportOf(personalId, '', user ?? undefined);
+      expect(res.status).toBe(200);
+      const disposition = res.headers.get('content-disposition') ?? '';
+      const all = [...unzipFiles(new Uint8Array(await res.arrayBuffer())).map((f) => f.content.toString('utf8'))].join('\n');
+      expect(disposition).toContain('personal-project.zip');
+      for (const needle of ['Sam Stranger', 'Sam', personalId]) expect(`${disposition}\n${all}`, needle).not.toContain(needle);
+      expect(all).toContain('Personal project');
+    }
+  });
+});
+
 describe('what never leaves', () => {
   it('has no person, email, id or secret anywhere in the zip', async () => {
     const all = await files(project.id, '?marketplace=1');

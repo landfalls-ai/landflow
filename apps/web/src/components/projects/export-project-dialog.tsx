@@ -28,12 +28,20 @@ export function ExportProjectDialog({ projectId, title, onClose }: { projectId: 
 
   useEffect(() => {
     setPreview(undefined);
+    setError(undefined);
+    let stale = false;
     fetch(`${base}?${query}&preview=1`, { cache: 'no-store' })
       .then(async (response) => {
         if (!response.ok) throw new Error(((await response.json().catch(() => ({}))) as { error?: string }).error ?? `${response.status} ${response.statusText}`);
-        setPreview((await response.json()) as Preview);
+        const next = (await response.json()) as Preview;
+        if (!stale) setPreview(next);
       })
-      .catch((e: Error) => setError(e.message));
+      .catch((e: Error) => {
+        if (!stale) setError(e.message);
+      });
+    return () => {
+      stale = true;
+    };
   }, [base, query]);
 
   const rows = useMemo(() => (preview ? treeRows(preview.files) : []), [preview]);

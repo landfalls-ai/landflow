@@ -15,6 +15,9 @@ import { redactPatterns, redactText } from '../secrets/redact';
 import { companyProfile } from '../settings';
 import { pluginFiles, quote, slugOf, type ExportFile, type ExportOptions, type PluginExport } from './export';
 
+/** What a personal project is called in an export: it is named after its user. */
+const PERSONAL_NAME = 'Personal project';
+
 /** What `PROJECT.md` and `.landflow/project.json` are written from: already redacted, free of people and ids. */
 export interface ProjectExportData {
   name: string;
@@ -35,8 +38,8 @@ const unstop = (value: string) => value.replace(/[.!?]+$/, '');
 
 /** The first sentence of a text, on one line. */
 function firstSentence(value: string): string {
-  const flat = value.replace(/\s+/g, ' ').trim();
-  const end = /[.!?](\s|$)/.exec(flat);
+  const flat = value.replace(/\s+/g, ' ').replace(/^(?:[#>\-*+]+\s*)+/, '').trim();
+  const end = /(?<!\b(?:e\.g|i\.e|etc|vs))[.!?](\s|$)/i.exec(flat);
   return (end ? flat.slice(0, end.index + 1) : flat).slice(0, 200).trim();
 }
 
@@ -69,7 +72,7 @@ export function projectMarkdown(data: ProjectExportData): string {
   if (project.glossary) sections.push(`## Words we use\n\n${project.glossary}`);
   const fits = [...(data.mission ? [`Company mission: ${sentence(data.mission)}`] : []), ...goalLines(data.goals)];
   if (fits.length) sections.push(`## Fits under\n\n${fits.join('\n')}`);
-  if (data.agents.length) sections.push(`## Agents\n\n${data.agents.map((a) => `- [${a.name}](agents/${a.slug}.md)`).join('\n')}`);
+  if (data.agents.length) sections.push(`## Agents\n\n${data.agents.map((a) => `- [${a.name.replace(/[\[\]\\\r\n]+/g, ' ').trim() || a.slug}](agents/${a.slug}.md)`).join('\n')}`);
   return `---\n${front.join('\n')}\n---\n\n${sections.join('\n\n')}\n`;
 }
 
@@ -99,12 +102,14 @@ export function exportProjectPlugin(projectId: string, actor: Actor, options: Ex
   if (!project || !projectRole(actor, project.id)) throw new HttpError('Project not found', 404);
   const home = resourceIdsIn(project.id, 'agent').flatMap((id) => {
     const agent = agentStore.get(id);
-    // No id: the export carries none (the agent's file would otherwise name it as its source).
-    return agent ? [{ config: configOf(agent) }] : [];
+    // The id only maps sub-agent tools to slugs; `localIds` keeps it out of the files.
+    return agent ? [{ id, config: configOf(agent) }] : [];
   });
+  // A personal project is named after its user: the export says no name.
+  const personal = project.type === 'personal';
   const brief = text(project.brief);
   const fields: LandflowProjectData['project'] = {
-    name: line(project.name, 120) || 'Project',
+    name: personal ? PERSONAL_NAME : line(project.name, 120) || 'Project',
     ...(brief && { brief }),
     ...(text(project.briefConstraints) && { constraints: text(project.briefConstraints) }),
     ...(text(project.doneWhen) && { doneWhen: text(project.doneWhen) }),
@@ -118,6 +123,7 @@ export function exportProjectPlugin(projectId: string, actor: Actor, options: Ex
   const description = (brief && firstSentence(brief)) || `${fields.name}, a Landflow project.`;
   // The exporting person's name is not written: the plugin's author is Landflow.
   return pluginFiles(name, description, home, undefined, { ...options, author: undefined }, {
+    localIds: true,
     keywords: ['landflow', 'project'],
     readme: 'Exported from Landflow as a Claude Code plugin. PROJECT.md has its brief and goals, next to the project’s agents in `agents/` and their skills in `skills/`.',
     files: (slugs): ExportFile[] => {
