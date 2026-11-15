@@ -1,13 +1,8 @@
-'use client';
 /**
- * Spotlight in the Brain workbench is Ask the brain (docs/second-brain.md#the-brain-page): the conversation lives in
- * `ask-panel.tsx`, docked beside the page. This file keeps the names importers know: the open file Spotlight is asked
- * from, the questions it suggests, and `BrainSpotlight`, which shows the panel.
+ * What the app's one Spotlight (components/spotlight/shell-spotlight.tsx) needs from the Brain workbench when it asks the
+ * brain (docs/second-brain.md#the-brain-page): the open file it is asked from, and the questions it suggests. The
+ * conversation itself is `ask-panel.tsx`, opened by the shell.
  */
-import type { AskConversation } from './ask-panel';
-import { ASK_INPUT, AskPanel } from './ask-panel';
-
-export const SPOTLIGHT_INPUT = ASK_INPUT;
 
 /** The open file, as Spotlight knows it: a page (asked about), or index/log (asked about everything). */
 export interface SpotlightFile {
@@ -22,14 +17,4 @@ export interface SpotlightFile {
 export function bubblesFor(file?: SpotlightFile): string[] {
   if (file?.page) return [`What is the latest on ${file.name}?`, `Who else works on ${file.name}?`, `Is any team duplicating ${file.name}?`];
   return [file?.topShared ? `Who is working on ${file.topShared}, and from which teams?` : 'Which customers did more than one team work on?', 'What changed this week?', 'Which initiatives have no owner?'];
-}
-
-/** The panel, asked from the open file (about the page unless its chip is removed). */
-export function BrainSpotlight({ file, onClose, conversation, model }: { file?: SpotlightFile; onClose: () => void; conversation?: AskConversation; model?: string }) {
-  return <AskPanel {...(file?.page && { about: { ref: file.ref, name: file.name } })} onClose={onClose} {...(conversation && { conversation })} {...(model && { model })} starters={bubblesFor(file)} />;
-}
-
-/** Put the caret in the Ask box (when it is open). */
-export function focusBrainSpotlight() {
-  document.getElementById(SPOTLIGHT_INPUT)?.focus();
 }

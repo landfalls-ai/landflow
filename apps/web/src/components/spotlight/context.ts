@@ -168,15 +168,24 @@ export function columnRule(input: { brainPanelShows: boolean; wasShowing: boolea
   if (!input.wasShowing) return { fold: true, closeChat: input.column === 'chat', dropShell: false };
   return { ...none, dropShell: !input.builderFolded || input.column === 'chat' };
 }
+
+/** Whether ⌘ (rather than Ctrl) is the shortcut key here: a Mac, an iPhone or an iPad. */
 export const isMac = () => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+
+/** The Brain page hands Spotlight its way to open a page (a link in an answer opens it beside the panel); undefined on leaving. */
 export const setBrainOpener = (openBrainPage: ((ref: string) => void) | undefined) =>
   setSpotlightState((s) => {
     const { openBrainPage: _old, ...rest } = s;
     return openBrainPage ? { ...rest, openBrainPage } : rest;
   });
+
+/** "Ask the brain instead" on the editor: the shell's brain panel opens in the builder's place. */
 export const showBrainInstead = () => setSpotlightState((s) => ({ ...s, open: true, askInstead: true }));
+
 /** "Build here instead" on the editor: the brain panel goes and the editor's own Spotlight takes the focus. */
 export const showBuilderInstead = () => setSpotlightState((s) => ({ ...withoutAbout(s), open: false, askInstead: false, buildFocus: s.buildFocus + 1 }));
+
+/** The Brain page publishes its open file, which Spotlight asks about (its starters and its `@` chip); undefined on leaving. */
 export const setBrainFile = (brainFile: BrainFile | undefined) =>
   setSpotlightState((s) => {
     const { brainFile: _old, ...rest } = s;
