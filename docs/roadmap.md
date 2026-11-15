@@ -1942,6 +1942,27 @@ wait, each with its reason:
 - **Live checks owed from wave 7**: the team's goal line and the A2A compact block, and Practices Act 1; carried to wave
   8's live pass with PC12's goal picker and PR07's index line.
 
+## Company backbone: left open from the wave 8 reviews (2026-11-15)
+
+Wave 9 closed the wave 8 notes its packages owned: a session is read and continued only from its own project, so home
+members no longer read other projects' briefs, ratings or graded replies, and whoever can read a run opens its Run an
+Agent session panel (PC13); a project's repositories have a screen (PC16). Its carryover added a join test for each
+contract (settings, sessions, budget, workspace and a project's deletion). These wait, each with its reason:
+
+- **The session fold's persona**: What it saw shows the agent's persona as it is now, not as the run had it; it needs the
+  persona's version on `attrs.saw`, its own package (PC08's line above).
+- **Citation drift**: the practice-drift detector reads compliance only (PR09's line above); drift in what agents cite
+  wants its own measure.
+- **Practices for remote and in-process agents by repository**: repository-scoped practices don't reach in-process
+  agents (PR06), and an A2A node outside a team binds `practices_for` to the agent's home project (PR07). A run binding
+  for remote agents is its own package, with kagent over MCP outside a team (the wave 7 list above).
+- **Live checks owed from wave 8**: `project_context` from Claude Code over the brain MCP key; a Claude Code session in
+  a throwaway repository listed on a scratch project starting with its goals (the mod 0.4.0); the workflow and team goal
+  pickers (PC12); a kagent member getting the practices index and calling `practices_for`; a tainted draft and a
+  person's draft in the inbox, Apply only on the second. They need a host and a headed browser, and are carried to wave
+  9's live pass with its own checks (the Settings tab's cards, a shared-only member's Run an Agent panel, a $0.01 budget
+  with a hard stop, the Workspace card) and those still owed from waves 6 and 7.
+
 ## Runs: one list (B20, 2026-11-14)
 
 Closed from the wave 1 page review: X2 (Executions, Runs and Search runs are one page, **Runs** at `/runs`, the old URLs redirect), P-ex-1 (no ID or Mode column), P-ex-2 (Stop all only while a run runs), P-ex-3 (repeated failures fold into one row), P-ex-4 (two re-run words), P-runs-1 (one search box with Status and Workflow chips, the rest under More filters) and P-cmp-1 (compare with fewer than two runs goes back to the list). See [the Runs list](run-trace.md#the-runs-list).
@@ -2011,7 +2032,13 @@ Projects get a mission to serve, goals and a brief, and agents learn where their
 - **PC11, built (wave 8):** the landflow-brain mod 0.4.0 starts a session with the project section for the repository and
   adds `/brain project`; `landflow work context` prints the same block in the shell
   ([projects-and-goals.md](projects-and-goals.md#in-claude-code-and-the-shell)).
-- **Open:** the budget and the workspace (wave 9); goal progress, tasks and the PROJECT.md export (wave 10).
+- **PC13 to PC16, built (wave 9):** project settings for agents (a default model, a knowledge base, the agents and tool
+  kinds allowed) and sessions read and continued only from their own project (PC13); the project AI budget as one more
+  cap, with a warning, an optional hard stop, incidents and Needs you items (PC14); the Settings tab's **Agents in this
+  project** and **AI budget** cards and the budget rows in Needs you (PC15); and the project workspace for harness runs
+  with the repositories screen (PC16) ([projects-and-goals.md](projects-and-goals.md#project-settings-for-agents),
+  [below](#paperclip-wave-9-project-settings-for-agents-pc13)).
+- **Open:** goal progress, tasks and the PROJECT.md export (wave 10).
 
 ## Not planned
 
@@ -2059,6 +2086,10 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   ([projects-and-goals.md](projects-and-goals.md#ai-budget)). The screens are PC15's. Deferred: a LiteLLM team budget as
   a backstop (its 30-day window does not match the calendar month and it counts calls Landflow never stops), and
   per-goal budgets. Closes P6-2 (server).
+- **PC15, built (screens):** the **AI budget** card in a project's Settings tab and the budget rows in Needs you (Home
+  and the Runs page) with Resume, Raise, Dismiss and Open project ([run-trace.md](run-trace.md#needs-you-for-a-project-budget)).
+- **Left:** Landledger's AI budget flow raises agents' caps only
+  ([features/landledger.md](features/landledger.md#raise-or-hold-an-ai-budget)); a version for a project's budget is later.
 
 ## Paperclip wave 7: project context (PC03)
 

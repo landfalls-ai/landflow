@@ -56,14 +56,6 @@ items still open (its "Wave 6" section); this page is the short list to check be
   `decisionOwnerId`, and as a goal's `ownerId`, until someone changes it; the view then has the id but no name.
 - A project goal can only be served by its home project; to share one across projects, make it a company goal.
 
-## Project workspace (wave 9)
-
-- Nothing runs it yet. Landflow stores the workspace and serves it with the project context; it never runs a setup
-  command or makes a worktree. The harness plan's stage 2 may, and must show the setup commands to a person first.
-- The landflow-brain mod and `landflow work context` do not show the workspace; the field is in the route's and the MCP
-  tool's answer only.
-- One workspace per project, not per goal or team. Setup commands are plain lines: no secrets, no per-run values.
-
 ## Project context (wave 7)
 
 - There is no wall at run time. Availability (home, shared projects, All projects) decides what pickers list and what
@@ -91,6 +83,14 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - A kagent agent called over MCP outside a team gets no block and falls back to its own home project (remote agents and
   a team's requests carry the block in their message: [below](#project-context-for-remote-agents-2026-11)). A run
   binding for kagent over MCP outside a team is deferred; practices bind the same way (PR07).
+
+## Project workspace (wave 9)
+
+- Nothing runs it yet. Landflow stores the workspace and serves it with the project context; it never runs a setup
+  command or makes a worktree. The harness plan's stage 2 may, and must show the setup commands to a person first.
+- The landflow-brain mod and `landflow work context` do not show the workspace; the field is in the route's and the MCP
+  tool's answer only.
+- One workspace per project, not per goal or team. Setup commands are plain lines: no secrets, no per-run values.
 
 ## Test chat history (B10, 2026-11)
 
