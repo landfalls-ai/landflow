@@ -181,7 +181,8 @@ export interface GatewayStatus {
   models: Array<{ id: string; ownedBy?: string }>;
   admin?: {
     baseUrl: string;
-    uiUrl: string;
+    /** Only from server configuration (Settings, the variable, the admin address); never a credential's URL. */
+    uiUrl?: string;
     credentialId?: string;
     clusterUrl?: string;
     portalHeaders: boolean;

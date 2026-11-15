@@ -10,7 +10,7 @@ under [What's next](#whats-next), and this page grows as they land.
 
 ## The shell
 
-- **Tab bar.** A bar at the bottom with **Home**, **Flows** (Workflows and Templates), **Runs** (Activity, Insights and
+- **Tab bar.** A bar at the bottom with **Home**, **Flows** (Workflows and Templates), **Runs** (Activity, Insights, AI and
   Search), **Agents** and **More** (`TabBar` in `components/shell/sidebar.tsx`). It replaces the old top bar and its menu
   button. **Runs** carries the number of things waiting for a person (`GET /api/runs/needs-you`, refreshed when a run
   waits or ends). **More** opens the rail as a drawer, with the same nine places as on a desktop (Home, Workflows,
