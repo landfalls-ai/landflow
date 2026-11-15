@@ -1769,6 +1769,32 @@ export const MIGRATIONS: Migration[] = [
     ],
     statements: [`CREATE UNIQUE INDEX IF NOT EXISTS ai_usage_gateway_request ON ai_usage (gateway_request_id) WHERE gateway_request_id IS NOT NULL`],
   },
+  // PR01: practices (docs/practices.md): the rule, its versions and where each was applied.
+  {
+    version: 2400,
+    name: 'practices',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS practices (id TEXT PRIMARY KEY, handle TEXT NOT NULL, scope_key TEXT NOT NULL, title TEXT NOT NULL, level TEXT NOT NULL, project_id TEXT, strength TEXT NOT NULL, topics TEXT NOT NULL, repos TEXT NOT NULL, paths TEXT NOT NULL, owner_id TEXT, status TEXT NOT NULL, approved_version BIGINT, supersedes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by TEXT)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS practices_handle ON practices (scope_key, handle)`,
+      `CREATE INDEX IF NOT EXISTS practices_project ON practices (project_id)`,
+    ],
+  },
+  {
+    version: 2401,
+    name: 'practice_versions',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS practice_versions (practice_id TEXT NOT NULL, version BIGINT NOT NULL, title TEXT NOT NULL, strength TEXT NOT NULL, topics TEXT NOT NULL, repos TEXT NOT NULL, paths TEXT NOT NULL, summary TEXT NOT NULL, body TEXT NOT NULL, checks TEXT NOT NULL, citations TEXT NOT NULL, source TEXT NOT NULL, tainted BIGINT NOT NULL DEFAULT 0, drafted_by TEXT, created_at TEXT NOT NULL, approved_by TEXT, approved_at TEXT, rejected_by TEXT, rejected_at TEXT, reject_reason TEXT, sha256 TEXT NOT NULL, PRIMARY KEY (practice_id, version))`,
+    ],
+  },
+  {
+    version: 2402,
+    name: 'practice_applications',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS practice_applications (id TEXT PRIMARY KEY, practice_id TEXT NOT NULL, version BIGINT NOT NULL, kind TEXT NOT NULL, execution_id TEXT, agent_id TEXT, user_id TEXT, repo TEXT, reason TEXT, at TEXT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS practice_applications_practice ON practice_applications (practice_id, at)`,
+      `CREATE INDEX IF NOT EXISTS practice_applications_execution ON practice_applications (execution_id)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -1881,6 +1907,10 @@ export const TABLES = {
   llm_gateway_keys: ['id'],
   llm_gateway_links: ['kind', 'landflow_id'],
   ai_cap_requests: ['id'],
+  // PR01:
+  practices: ['id'],
+  practice_versions: ['practice_id', 'version'],
+  practice_applications: ['id'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

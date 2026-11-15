@@ -154,6 +154,7 @@ still works.
 | `LANDFLOW_BRIEFING_SLACK_TOKEN` *(secret)* | – | the Slack bot token (`xoxb-…`, scopes `chat:write` and `users:read.email`) Deliver Briefing sends people's briefings with, as a DM to whoever chose Slack. It uses no credential from the vault, so no project member can redirect the nightly delivery; without it, Slack delivery is skipped with a warning and email goes on ([work-and-briefings.md](../work-and-briefings.md#the-nightly-sync)) |
 | `LANDFLOW_BRIEFING_SLACK_URL` | `https://slack.com/api` | the Slack API base URL Deliver Briefing calls with `LANDFLOW_BRIEFING_SLACK_TOKEN`. Set it only for a proxy or a local test double ([work-and-briefings.md](../work-and-briefings.md#the-nightly-sync)) |
 | `LANDFLOW_BRIEFING_MAX_CHARS` | `1200` | most characters of a nightly briefing (the tomorrow-sync flow's Write Briefing node; a longer text is cut) ([work-and-briefings.md](../work-and-briefings.md#the-nightly-sync)) |
+| `LANDFLOW_PRACTICES` | on | `off` stops practices reaching agents, the Claude Code mod and MCP clients; drafting and approving still work ([practices.md](../practices.md)) |
 | `LANDFLOW_BRAIN_MODEL` | the builder model | the model the second brain writes fixes, tips, persona rules, drafts and purposes with; `off`: rules only |
 | `LANDFLOW_BRAIN_EMBEDDINGS` | `nomic-embed-text` | the Ollama model that embeds its facts into `landflow-brain-<project>`; `off`: keyword search only |
 | `LANDFLOW_BRAIN_INTERVAL_MINUTES` | `60` | how often the leader rolls up, checks effects and runs the detectors (it studies once a day) |

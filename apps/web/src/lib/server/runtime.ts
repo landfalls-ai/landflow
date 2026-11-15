@@ -20,6 +20,8 @@
  */
 // Registers the composite governance rules with workflowViolations() (governance/policy.ts), in both roles.
 import './governance/composite-rules';
+// PR01: sets the practices port, so the nodes, routes and MCP tools reach the store (docs/practices.md).
+import './practices/register';
 import { agentTriggers } from './agents/triggers';
 import { alerts } from './alerts/service';
 import { auditHeads } from './audit/anchoring';
