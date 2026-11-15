@@ -154,7 +154,7 @@ goes through the secret redaction first. The agent and team exports are unchange
 
 A sub-agent tool pointing at another home agent of the export is written with that agent's file slug (`agentSlug`) and no
 id, and the install maps the slug to the new agent, so the link survives a reinstall. Sub-agent tools pointing at an
-agent outside the export, and workflow tools, are dropped from the zip. A personal project is named after its user, so
+agent outside the export, workflow tools, and tool-access rules that name one user are dropped from the zip. A personal project is named after its user, so
 it exports as "Personal project" (`personal-project.zip`): the person's name is nowhere in it.
 
 ## Flows

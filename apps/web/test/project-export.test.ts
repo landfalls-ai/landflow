@@ -209,6 +209,28 @@ describe('agent and workflow ids', () => {
   });
 });
 
+describe('access rules', () => {
+  it('drops the rules that name a user and keeps the others', async () => {
+    const accessProject = projects.createTeamProject({ name: 'Access Project', createdBy: lead.id });
+    projects.setMember(accessProject.id, lead.id, 'editor');
+    const guarded = agentStore.create({
+      name: 'Guarded Clerk',
+      instructions: 'Guard.',
+      access: {
+        rules: [
+          { id: 'r1', tool: '*', who: { user: decider.id }, effect: 'deny' },
+          { id: 'r2', tool: '*', who: { role: 'member' }, effect: 'deny' },
+        ],
+      },
+    } as never);
+    projects.setHomeProject('agent', guarded.id, accessProject.id);
+    const all = await files(accessProject.id);
+    expect([...all.values()].join('\n')).not.toContain(decider.id);
+    const rules = JSON.parse(all.get('.landflow/agents/guarded-clerk.json')!).config.access.rules;
+    expect(rules).toEqual([{ id: 'r2', tool: '*', who: { role: 'member' }, effect: 'deny' }]);
+  });
+});
+
 describe('a personal project', () => {
   it('exports under a neutral name, for its owner and for the instance owner', async () => {
     const personalId = projects.ensurePersonalProject(stranger.id)!;

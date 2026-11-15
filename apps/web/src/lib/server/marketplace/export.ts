@@ -85,7 +85,7 @@ export function portableConfig(config: AgentConfig): Partial<AgentConfig> {
 /**
  * The project export's tools: a sub-agent tool pointing at another agent of the export keeps no id but its slug
  * (`agentSlug`, which the install maps to the new agent); sub-agent tools pointing elsewhere and workflow tools are
- * dropped, since their ids belong to this instance.
+ * dropped, since their ids belong to this instance; so are the access rules that name one user.
  */
 function localTools(config: Partial<AgentConfig>, slugById: Map<string, string>): Partial<AgentConfig> {
   const tools = (config.tools ?? []).flatMap((tool): AgentToolConfig[] => {
@@ -96,7 +96,10 @@ function localTools(config: Partial<AgentConfig>, slugById: Map<string, string>)
     const { agentId: _id, ...rest } = tool;
     return [{ ...rest, agentId: '', agentSlug: slug } as AgentToolConfig];
   });
-  return { ...config, tools };
+  // Access rules naming one user carry that user's id: drop the whole rule (without `who.user` it would match everyone).
+  const rules = (config.access?.rules ?? []).filter((rule) => !rule.who.user);
+  const { access: _access, ...rest } = config;
+  return { ...rest, tools, ...(rules.length && { access: { ...config.access, rules } }) };
 }
 
 interface SkillFolder {
