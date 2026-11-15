@@ -19,6 +19,9 @@ const { createUser } = await import('@/lib/server/auth/users');
 const { enableTestAuth, TEST_OWNER } = await import('@/lib/server/auth/test-bypass');
 const { createTeamProject, setMember, setHomeProject } = await import('@/lib/server/projects/store');
 const { authDb } = await import('@/lib/server/auth/db');
+// The host boots lazily on the first route call and its runtime imports practices/register, which sets the store's port;
+// load it first so the fake port below (set after it) is the one the routes read.
+await import('@/lib/server/practices/register');
 const { setPracticesPort } = await import('@/lib/server/practices/port');
 const { parseCitations } = await import('@/lib/server/practices/cite');
 const applicableRoute = await import('@/app/api/practices/applicable/route');

@@ -22,6 +22,9 @@ vi.mock('@/lib/server/brain/writer', async (original) => ({ ...(await original<t
 
 const { database } = await import('@/lib/server/db');
 const { traceChat } = await import('@/lib/server/telemetry');
+// The host boots lazily on the first route call and its runtime imports practices/register, which sets the store's port;
+// load it first so the fake port below (set after it) is the one the routes read.
+await import('@/lib/server/practices/register');
 const { setPracticesPort } = await import('@/lib/server/practices/port');
 const { HttpError } = await import('@/lib/server/errors');
 const { routePolicy } = await import('@/lib/server/auth/policy');

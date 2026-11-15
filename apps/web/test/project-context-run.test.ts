@@ -46,6 +46,9 @@ const { configHash } = await import('@/lib/server/agents/semantic-cache');
 const { personaPrompt } = await import('@/lib/shared/persona');
 const { refFromSession, resolveRun, runLine } = await import('@/lib/server/project-context/resolve');
 const { emptyContext, projectContextProvider } = await import('@/lib/server/project-context/provider');
+// The host boots lazily on the first route call and its runtime imports goals/context-source, which sets the goals store as
+// the data source; load it first so the fake source each test sets (after it) is the one the block is built from.
+await import('@/lib/server/goals/context-source');
 const { setContextDataSource, currentRunContext } = await import('@/lib/server/project-context/seam');
 const { POST: chat } = await import('@/app/api/agents/[id]/chat/route');
 
