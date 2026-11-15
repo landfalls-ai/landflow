@@ -125,7 +125,7 @@ export function settleRejected(practiceId: string, version: number, actorId: str
 }
 
 /** Every open suggestion of a retired practice is dismissed. */
-export function settleRetired(practiceId: string, actorId: string, db: Database = database()): void {
+export function settleRetired(practiceId: string, actorId: string | undefined, db: Database = database()): void {
   try {
     for (const p of openFor(practiceId, db)) dismissProposal(p.id, 'not-relevant', { actorId, note: 'The practice was retired' }, db);
   } catch (caught) {

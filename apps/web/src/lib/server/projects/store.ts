@@ -342,9 +342,11 @@ function hasRoleIn(project: ProjectRecord, userId: string): boolean {
  * Remove a project row with its members, the shares made to it, its `project_goals` rows and its own project goals with their links
  * (./transfer moves its resources first). Its project-level practices are retired, not deleted: their versions and applications
  * stay for the audit trail, and no agent gets them again (a practice approved by one project's people is never handed to another's). Sub-goals of a removed goal go up to its nearest remaining ancestor, or become roots.
+ * Returns the ids of the practices it retired, so the caller can settle their inbox suggestions once the transaction holds.
  */
-export function removeProjectRows(id: string) {
+export function removeProjectRows(id: string): string[] {
   const database = db();
+  const retired: string[] = [];
   database.transaction(() => {
     const own = database.all<{ id: string; parent_id: string | null }>('SELECT id, parent_id FROM goals WHERE project_id = ?', id);
     const gone = new Map(own.map((g) => [g.id, g.parent_id]));
@@ -369,6 +371,7 @@ export function removeProjectRows(id: string) {
     for (const practice of database.all<{ id: string; handle: string }>("SELECT id, handle FROM practices WHERE project_id = ? AND status <> 'retired'", id)) {
       const row = database.get<Record<string, unknown>>('SELECT * FROM practices WHERE id = ?', practice.id);
       if (row) database.upsert('practices', { ...row, status: 'retired', updated_at: new Date().toISOString() });
+      retired.push(practice.id);
       recordAudit({ action: 'practice.retired', target: { type: 'practice', id: practice.id, name: practice.handle }, project: id, summary: `Retired ${practice.handle}: its project was deleted` });
     }
     database.delete('project_members', { project_id: id });
@@ -377,6 +380,7 @@ export function removeProjectRows(id: string) {
     }
     database.delete('projects', { id });
   });
+  return retired;
 }
 
 /** Keep a personal project's name in step with its user's. */

@@ -339,8 +339,8 @@ and summary, never its body.
   practice"), even an owner's. Project admins and others in the audience see the link only. An overlap with an
   approved practice has no answer in the inbox, so Apply says to approve it on /brain.
 - **A version that is no longer waiting** (approved, rejected, replaced, or its practice retired) answers 409 and settles
-  the suggestion as dismissed. A deleted project's practices are retired without telling the inbox, so Apply on one of
-  their suggestions finds it retired, answers 409 and dismisses it; a person may also dismiss it.
+  the suggestion as dismissed. Deleting a project (or removing the user whose personal project it was) retires its
+  practices and dismisses their open suggestions ("The practice was retired").
 - **Approving, rejecting or retiring on /brain settles it**: approved is applied, rejected is dismissed with the reason,
   retired dismisses the practice's open suggestions.
 - **Slack**: a practice suggestion is never mirrored with buttons. A message carries the title and a link to /brain only,
