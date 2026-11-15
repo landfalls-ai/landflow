@@ -2359,6 +2359,24 @@ function paths(): Record<string, Record<string, Json>> {
       404: notFound,
     },
   });
+  add('get', '/api/practices/resolve', {
+    tag: 'Practices',
+    id: 'resolvePractice',
+    summary: 'One approved practice in full',
+    description:
+      'Needs the `brain:read` scope or a session. The approved version of one practice: its rules, scope and machine checks, redacted, chosen the way delivery and MCP `practice_get` choose (`projectId` match, else the selector’s winner for `repo`, else the project practice, then the organization’s; `level` keeps one level). 404 when practices are off, when none is approved or when the caller may not get it. Unlike the Brain page’s list, this never gives a body while practices are off.',
+    query: [
+      { name: 'handle', description: 'The practice’s handle', required: true, schema: { type: 'string' } },
+      { name: 'repo', description: 'owner/name, as given to `applicable`', schema: { type: 'string' } },
+      { name: 'projectId', description: 'The project, for a project practice', schema: { type: 'string' } },
+      { name: 'level', description: 'Only the organization’s or only the project’s practice', schema: { type: 'string', enum: ['org', 'project'] } },
+    ],
+    responses: {
+      200: reply('The practice', object({ practice: { type: 'object', description: 'handle, version, title, strength, scope { level, projectId?, topics, repos, paths }, summary, body, checks' } }, ['practice'])),
+      400: invalid,
+      404: notFound,
+    },
+  });
   add('post', '/api/practices/cite', {
     tag: 'Practices',
     id: 'citePractices',

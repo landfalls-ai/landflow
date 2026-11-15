@@ -38,18 +38,16 @@ export interface ApprovedVersion {
   summary?: string;
 }
 
-export interface PracticeRow {
-  id?: string;
+/** `GET /api/practices/resolve`: one approved practice in full, as delivery would give it (redacted, hash-checked). */
+export interface FullPractice {
   handle: string;
+  version: number;
   title: string;
-  level: string;
-  projectId?: string;
   strength: PracticeStrength;
-  approved?: ApprovedVersion;
-}
-
-export interface PracticesResponse {
-  practices: PracticeRow[];
+  scope: { level: string; projectId?: string; topics: string[]; repos: string[]; paths: string[] };
+  summary: string;
+  body: string;
+  checks: PracticeCheck[];
 }
 
 export interface LearnResponse {

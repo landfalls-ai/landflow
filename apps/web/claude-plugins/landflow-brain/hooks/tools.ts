@@ -179,13 +179,15 @@ export async function practicesApplicable($: EngineInterface, config: Config, qu
 /** The `practices` tool. Never throws. */
 export async function practicesTool($: EngineInterface, config: Config, input: { path?: string; topic?: string; handle?: string }, repo: string | undefined): Promise<Answer> {
   if (input.handle) {
-    const got = await call($, config, 'GET', `/api/practices?${new URLSearchParams({ status: 'approved', q: input.handle }).toString()}`)
+    // The route delivery's own rules sit behind: nothing while practices are off, the hash checked, the text redacted, and
+    // the project's practice before the organization's one of the same handle.
+    const got = await call($, config, 'GET', `/api/practices/resolve?${new URLSearchParams({ handle: input.handle, ...(repo && { repo }) }).toString()}`)
     if (typeof got === 'string') return failure(got)
+    if (got.status === 404) return failure(`No approved practice has the handle ${input.handle}.`)
     const no = refused(got.status)
     if (no) return failure(no)
-    const rows = ((got.json as { practices?: Array<{ handle?: string; approved?: unknown }> } | undefined)?.practices ?? []).filter(row => row.handle === input.handle)
-    const row = rows.find(one => one.approved)
-    return row ? { text: practiceText(row as never), isError: false } : failure(`No approved practice has the handle ${input.handle}.`)
+    const practice = (got.json as { practice?: Record<string, unknown> } | undefined)?.practice
+    return practice ? { text: practiceText(practice), isError: false } : failure(`No approved practice has the handle ${input.handle}.`)
   }
   const got = await call($, config, 'GET', `/api/practices/applicable?${applicableQuery({ ...(repo && { repo }), ...(input.path && { path: input.path }), ...(input.topic && { topic: input.topic }), size: 'mod' })}`)
   if (typeof got === 'string') return failure(got)

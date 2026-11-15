@@ -87,12 +87,11 @@ export function draftBody(input: unknown): Record<string, unknown> {
   }
 }
 
-/** One approved practice, as the `practices` tool shows it for a handle. */
-export function practiceText(view: { handle?: unknown; title?: unknown; strength?: unknown; approved?: { version?: unknown; body?: unknown; checks?: unknown } }): string {
-  const approved = view.approved
-  const lines = [`[${String(view.handle)}@${String(approved?.version ?? '?')}] ${String(view.strength ?? '')}: ${clip(String(view.title ?? ''), 160)}`]
-  if (typeof approved?.body === 'string') lines.push('', approved.body.slice(0, PRACTICE_BODY_MAX))
-  const checks = Array.isArray(approved?.checks) ? approved.checks : []
+/** One approved practice, as the `practices` tool shows it for a handle (the shape of `GET /api/practices/resolve`'s `practice`). */
+export function practiceText(view: { handle?: unknown; title?: unknown; strength?: unknown; version?: unknown; body?: unknown; checks?: unknown }): string {
+  const lines = [`[${String(view.handle)}@${String(view.version ?? '?')}] ${String(view.strength ?? '')}: ${clip(String(view.title ?? ''), 160)}`]
+  if (typeof view.body === 'string') lines.push('', view.body.slice(0, PRACTICE_BODY_MAX))
+  const checks = Array.isArray(view.checks) ? view.checks : []
   if (checks.length) lines.push('', 'Machine checks:', ...checks.slice(0, 20).map(check => `- ${JSON.stringify(check).slice(0, 300)}`))
   return lines.join('\n')
 }

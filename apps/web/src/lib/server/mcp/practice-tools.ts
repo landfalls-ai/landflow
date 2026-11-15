@@ -13,7 +13,7 @@ import { toolAllowed } from '../../shared/mcp';
 import type { ApiKeyScope } from '../../shared/auth';
 import { publicUrl } from '../config';
 import { HttpError } from '../errors';
-import { applicableFor, cleanTitle, practicesCitable, practicesFor, resolvePractice } from '../practices/applicable';
+import { applicableFor, cleanTitle, practicesCitable, practicesFor, resolvePractice, toFull } from '../practices/applicable';
 import { recordCitations } from '../practices/cite';
 import { practicesPort } from '../practices/port';
 import { redactPatterns, redactText } from '../secrets/redact';
@@ -95,16 +95,7 @@ export function registerPracticeTools(server: McpServer, ctx: PracticeContext) {
         throw caught;
       }
       if (!practice) return failure(`Practice ${handle} not found`);
-      return json({
-        handle: practice.handle,
-        version: practice.version,
-        title: cleanTitle(practice.title),
-        strength: practice.strength,
-        scope: { level: practice.level, ...(practice.projectId && { projectId: practice.projectId }), topics: practice.topics.map(clean), repos: practice.repos.map(clean), paths: practice.paths.map(clean) },
-        summary: cleanSummary(clean(practice.summary)),
-        body: clean(practice.body),
-        checks: JSON.parse(clean(JSON.stringify(practice.checks))),
-      });
+      return json(toFull(practice));
     },
   );
 

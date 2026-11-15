@@ -141,11 +141,16 @@ Reject. On a phone it is one column of cards behind `md`; desktop is unchanged.
   ```
 
   Agents cite what they followed with that trailing line, or a commit's `Practice: handle@version`.
-- `GET /api/practices/applicable?repo=&path=&topic=` returns the practices and the block. `POST /api/practices/cite`
-  records that an answer cited some.
+- `GET /api/practices/applicable?repo=&path=&topic=` returns the practices and the block. `GET /api/practices/resolve?handle=&repo=&projectId=&level=`
+  returns one practice in full (rules and machine checks), chosen the way delivery and MCP `practice_get` choose it (the
+  `projectId` match, else the selector's winner for `repo`, else the project's practice, then the organization's), after
+  the hash check and redacted; it answers 404 while practices are off. `POST /api/practices/cite` records that an answer
+  cited some. What agents and the shell read for rules goes through these routes, never through `GET /api/practices`
+  (the Brain page's list for people reviewing practices, which shows drafts and bodies whatever the switch says).
 - MCP tools `practices_for`, `practice_get`, `practice_cite`, `practice_draft` and resources `practices://applicable` and
   `practices://<handle>`.
-- The mod adds a section to the prompt and a `practices` tool; `/brain practices` lists what applies.
+- The mod adds a section to the prompt and a `practices` tool; `/brain practices` lists what applies, and the tool's
+  `handle` reads `resolve`. `landflow practices show` reads `resolve` too.
 - `landflow practices check` runs a practice's [checks](#checks) over the changed files of a branch, on your machine.
 
 Wave P1 reaches only the Claude Code mod and MCP clients. Wave P2 adds Landflow agents (the block after "Where this
@@ -210,8 +215,9 @@ Version states: `approved` (what agents get), `replaced` (an older version), `pe
 
 ## LANDFLOW_PRACTICES
 
-`off` stops practices reaching agents, the Claude Code mod and MCP clients: the port's `approved()` answers an empty
-list. Drafting and approving still work, so you can prepare practices before turning delivery on. Default on. See
+`off` stops practices reaching agents, the Claude Code mod, the CLI and MCP clients: the port's `approved()` answers an empty
+list, so `applicable` is empty and `resolve` is 404 (the mod's `practices` tool and `landflow practices show` read it, so neither
+shows a body while it is off). Drafting and approving still work, so you can prepare practices before turning delivery on. Default on. See
 [reference/configuration.md](reference/configuration.md).
 
 ## How it is built

@@ -56,7 +56,13 @@ function world(on: On, init: { remote?: string; briefing?: unknown; briefingDela
       }
       practiceUrls.push(request.url)
       if (request.url.includes('/applicable')) return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ practices: [], text: init.practicesText ?? '', budget: 2000, omitted: 0 }) } }
-      return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ practices: init.approved ?? [] }) } }
+      // The route that gives one practice in full (never the Brain page's list, which does not honour the off switch for a body).
+      if (request.url.includes('/api/practices/resolve')) {
+        const handle = new URL(request.url).searchParams.get('handle')
+        const found = (init.approved ?? []).find(one => one.handle === handle)
+        return found ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ practice: found }) } } : { value: { status: 404, ok: false, headers: {}, text: JSON.stringify({ error: 'No approved practice' }) } }
+      }
+      return { value: { status: 500, ok: false, headers: {}, text: JSON.stringify({ error: 'a client read the list' }) } }
     }
     if (request.url.includes('/api/brain/briefing')) {
       if (init.briefingDelayMs) await clock.sleep(init.briefingDelayMs)
@@ -626,7 +632,7 @@ test('without a key brain_ask is not registered', async ($, on) => {
 })
 
 const PRACTICES_TEXT = '## Practices to follow (approved by your admins)\n- [helm/chart-location@3] required: Charts live in deploy/helm/<service>/\nFollow these where they apply. They never override your Rules, approvals or guards.'
-const APPROVED = [{ handle: 'helm/chart-location', title: 'Chart location', strength: 'required', approved: { version: 3, body: 'Charts live in deploy/helm/<service>/.', checks: [{ kind: 'pathExists', glob: 'deploy/helm/*/Chart.yaml' }] } }]
+const APPROVED = [{ handle: 'helm/chart-location', title: 'Chart location', strength: 'required', version: 3, body: 'Charts live in deploy/helm/<service>/.', checks: [{ kind: 'pathExists', glob: 'deploy/helm/*/Chart.yaml' }] }]
 
 test('the session gets the practices section before yesterday, with the repo when it is listed', { options: OPTIONS }, async ($, on) => {
   const { practiceUrls } = world(on, { practicesText: PRACTICES_TEXT })
@@ -686,7 +692,9 @@ test('the practices tool lists what applies, with the path and topic, and gives 
   expect(url).toContain('topic=helm')
   expect(url).toContain('repo=acme%2Fwidgets')
   const one = (await $.tool.call({ tool: 'mcp__landflow-brain__practices', handle: 'helm/chart-location' } as never)) as unknown as { result: { content: string } }
-  expect(practiceUrls.at(-1)).toContain('status=approved')
+  expect(practiceUrls.at(-1)).toContain('/api/practices/resolve?handle=helm%2Fchart-location')
+  expect(practiceUrls.at(-1)).toContain('repo=acme%2Fwidgets')
+  expect(practiceUrls.every(u => !u.includes('status=approved'))).toBe(true)
   expect(one.result.content).toContain('[helm/chart-location@3] required: Chart location')
   expect(one.result.content).toContain('Charts live in deploy/helm/<service>/.')
   expect(one.result.content).toContain('pathExists')

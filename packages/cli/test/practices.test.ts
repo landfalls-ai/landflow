@@ -57,10 +57,16 @@ function fakeHost(options: { applicable?: unknown[]; approved?: unknown[]; learn
       const method = init?.method ?? 'GET';
       calls.push({ method, url, ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}) });
       if (method === 'GET' && url.pathname === '/api/practices/applicable') return reply({ practices: options.applicable ?? [], text: '## Practices to follow\n- x', budget: 3000, omitted: options.omitted ?? 0 });
-      if (method === 'GET' && url.pathname === '/api/practices') {
-        const q = url.searchParams.get('q');
-        return reply({ practices: approved.filter((p) => !q || p.handle.includes(q)) });
+      // The route that gives a practice's rules the way delivery does (`GET /api/practices` is the Brain page's list and is never read for a body).
+      if (method === 'GET' && url.pathname === '/api/practices/resolve') {
+        const handle = url.searchParams.get('handle');
+        const level = url.searchParams.get('level');
+        const found = approved.filter((p) => p.handle === handle && (!level || p.level === level)).sort((a, b) => (a.level === 'project' ? -1 : 0) - (b.level === 'project' ? -1 : 0))[0];
+        if (!found?.approved) return reply({ error: 'No approved practice' }, 404);
+        const { version, body, checks } = found.approved;
+        return reply({ practice: { handle: found.handle, version, title: found.title, strength: found.strength, scope: { level: found.level, topics: [], repos: [], paths: [] }, summary: '', body, checks } });
       }
+      if (url.pathname === '/api/practices' && method === 'GET') return reply({ error: 'a client read the list for a body' }, 500);
       if (method === 'POST' && url.pathname === '/api/practices/learn') return reply(options.learn ?? { drafts: [{ practiceId: 'prc_1', handle: 'helm/chart-location', version: 1, url: 'http://host.test/brain?practice=prc_1' }], skipped: [] }, 201);
       return reply({ error: 'unexpected' }, 500);
     },
@@ -123,12 +129,12 @@ describe('list and show', () => {
     const out = await cli(host, tmpdir(), ['practices', 'show', 'helm/chart-location']);
     expect(out.stdout).toContain('Rules for helm/chart-location.');
     expect(out.stdout).toContain('pathAbsent **/Chart.yaml (unless deploy/helm/*/Chart.yaml)');
-    expect(host.calls[0].url.searchParams.get('status')).toBe('approved');
+    expect(host.calls.every((c) => c.url.pathname !== '/api/practices')).toBe(true);
     const none = await cli(host, tmpdir(), ['practices', 'show', 'no/such', '--json']);
     expect(none.code).toBe(3);
     expect(none.json.error.code).toBe('not_found');
     const shown = await cli(host, tmpdir(), ['practices', 'show', 'helm/chart-location', '--json']);
-    expect(shown.json.practices[0].approved.checks).toEqual(CHART_CHECK);
+    expect(shown.json.practices[0].checks).toEqual(CHART_CHECK);
   });
 });
 
@@ -187,6 +193,19 @@ describe('check', () => {
     const host = fakeHost({ applicable: [REQUIRED], approved: [row(REQUIRED, CHART_CHECK, 4)] });
     const out = await cli(host, dir, ['practices', 'check', '--json']);
     expect(out.json.practices[0].result).toBe('none');
+  });
+
+  it('an org and a project practice of one handle and version: the check runs the one that was delivered', async () => {
+    const dir = repoWith({ 'README.md': 'hello again\n' });
+    const orgRow = row({ ...REQUIRED, level: 'org' }, []);
+    const projectRow = row({ ...REQUIRED, level: 'project' }, CHART_CHECK);
+    const host = fakeHost({ applicable: [{ ...REQUIRED, level: 'project' }], approved: [orgRow, projectRow] });
+    const out = await cli(host, dir, ['practices', 'check', '--json']);
+    expect(out.json.practices[0].checks.length).toBeGreaterThan(0);
+    expect(host.calls.find((c) => c.url.pathname === '/api/practices/resolve')?.url.searchParams.get('level')).toBe('project');
+    const orgOnly = fakeHost({ applicable: [{ ...REQUIRED, level: 'org' }], approved: [projectRow, orgRow] });
+    const asOrg = await cli(orgOnly, dir, ['practices', 'check', '--json']);
+    expect(asOrg.json.practices[0].result).toBe('none');
   });
 
   it('does not pass quietly when practices were omitted: it narrows the ask, then says what is left', async () => {

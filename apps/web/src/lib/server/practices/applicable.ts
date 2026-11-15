@@ -3,7 +3,7 @@
  * project ids: GET /api/practices/applicable, the cite route and the MCP tools all come through here, so none can widen what
  * it gets. A repository, paths, topics or a task only narrow and rank (./select.ts); nothing a caller sends adds a practice.
  */
-import { PRACTICE_BUDGETS, type ApprovedPractice, type ApplicablePractice, type ApplicableResponse } from '../../shared/practices';
+import { PRACTICE_BUDGETS, type ApprovedPractice, type ApplicablePractice, type ApplicableResponse, type PracticeLevel } from '../../shared/practices';
 import { HttpError } from '../errors';
 import { projectRole, visibleProjectIds, type Actor } from '../projects/access';
 import { getProject, listProjects } from '../projects/store';
@@ -103,12 +103,24 @@ export function deliveredFor(caller: PracticeCaller, repo?: string): { applies: 
   return { applies: new Set(delivered.map((p) => p.id)), winners: new Map(selectPractices(delivered, { repo }).map((p) => [p.handle, p])) };
 }
 
+/** One approved practice in full, as every route and tool that gives its rules shows it: redacted, with its scope and machine checks. */
+export const toFull = (p: ApprovedPractice) => ({
+  handle: p.handle,
+  version: p.version,
+  title: cleanTitle(p.title),
+  strength: p.strength,
+  scope: { level: p.level, ...(p.projectId && { projectId: p.projectId }), topics: p.topics.map(cleanLine), repos: p.repos.map(cleanLine), paths: p.paths.map(cleanLine) },
+  summary: cleanSummary(cleanLine(p.summary)),
+  body: cleanLine(p.body),
+  checks: JSON.parse(cleanLine(JSON.stringify(p.checks))) as ApprovedPractice['checks'],
+});
+
 /**
  * The one practice a handle means for this caller, the way delivery picks: the `projectId` match if sent; else the
  * selector's winner for `repo`; else the project practice, then the organization's. Undefined if the caller may get none.
  */
-export function resolvePractice(caller: PracticeCaller, handle: string, options: { repo?: string; projectId?: string } = {}): ApprovedPractice | undefined {
-  const matches = practicesCitable(caller).filter((p) => p.handle === handle);
+export function resolvePractice(caller: PracticeCaller, handle: string, options: { repo?: string; projectId?: string; level?: PracticeLevel } = {}): ApprovedPractice | undefined {
+  const matches = practicesCitable(caller).filter((p) => p.handle === handle && (!options.level || p.level === options.level));
   if (!matches.length) return undefined;
   const byProject = options.projectId ? matches.find((p) => p.projectId === options.projectId) : undefined;
   if (byProject) return byProject;

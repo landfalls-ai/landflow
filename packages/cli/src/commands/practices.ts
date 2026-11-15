@@ -11,7 +11,7 @@ import { plural, table } from '../output';
 import { defaultRunner, originRepo, type Runner } from '../work/collect';
 import { checkLabel, runChecks, type CheckResult } from '../practices/check';
 import { parseChange } from '../practices/diff';
-import { APPLICABLE_PATHS, LEARN_FILES, LEARN_FILE_CHARS, type ApplicablePractice, type ApplicableResponse, type LearnResponse, type PracticeRow, type PracticesResponse } from '../practices/types';
+import { APPLICABLE_PATHS, LEARN_FILES, LEARN_FILE_CHARS, type ApplicablePractice, type ApplicableResponse, type FullPractice, type LearnResponse } from '../practices/types';
 
 /** The CLI's Io, optionally with a command runner (tests may pass a fake one; the real CLI uses child_process). */
 type GitIo = Context['io'] & { exec?: Runner };
@@ -57,9 +57,18 @@ async function applicable(ctx: Context, query: Record<string, string | string[] 
   return { practices: body.practices ?? [], text: body.text ?? '', ...(body.omitted !== undefined && { omitted: body.omitted }) };
 }
 
-async function approvedRows(ctx: Context, q?: string): Promise<PracticeRow[]> {
-  const body = await ctx.client.get<Partial<PracticesResponse>>('/api/practices', { status: 'approved', ...(q && { q }) });
-  return body.practices ?? [];
+/**
+ * One approved practice in full, read the way delivery gives it (`GET /api/practices/resolve`): nothing while practices are
+ * off, and the level (and project) of the one asked for, so an org practice never stands in for the project's.
+ */
+async function resolved(ctx: Context, handle: string, query: { repo?: string; projectId?: string; level?: string }): Promise<FullPractice | undefined> {
+  try {
+    const body = await ctx.client.get<{ practice?: FullPractice }>('/api/practices/resolve', { handle, ...query });
+    return body.practice;
+  } catch (caught) {
+    if (caught instanceof CliError && caught.code === 'not_found') return undefined;
+    throw caught;
+  }
 }
 
 export const list: Command = {
@@ -84,23 +93,25 @@ export const list: Command = {
   },
 };
 
-const checkText = (c: PracticeRow['approved']) => (c?.checks.length ? c.checks.map((k) => `- ${checkLabel(k)}`).join('\n') : 'No machine checks.');
+const checkText = (c: FullPractice) => (c.checks.length ? c.checks.map((k) => `- ${checkLabel(k)}`).join('\n') : 'No machine checks.');
 
 export const show: Command = {
   name: 'practices show',
   summary: 'One approved practice in full: its rules and machine checks',
-  usage: '<handle>',
+  usage: '<handle> [--repo owner/name] [--project <id>]',
+  details: 'Reads the practice the way delivery gives it: nothing while practices are off, and the project’s practice before the organization’s one of the same handle.',
+  flags: {
+    repo: flag.string('owner/name (default: this directory’s origin)', 'owner/name'),
+    project: flag.string('The project, for a project practice', 'id'),
+  },
   args: { min: 1, max: 1 },
   async run(ctx) {
     const handle = ctx.args[0];
-    const rows = (await approvedRows(ctx, handle)).filter((p) => p.handle === handle && p.approved);
-    if (!rows.length) throw new CliError('not_found', `No approved practice has the handle ${handle}`);
+    const p = await resolved(ctx, handle, { repo: await repoOf(ctx), projectId: ctx.flags.project as string | undefined });
+    if (!p) throw new CliError('not_found', `No approved practice has the handle ${handle}`);
     return {
-      data: { practices: rows },
-      human: () =>
-        rows
-          .map((p) => [`${p.handle}@${p.approved?.version} (${strengthMark(p)}, ${p.level}): ${p.title}`, '', p.approved?.body ?? '', '', 'Machine checks:', checkText(p.approved)].join('\n'))
-          .join('\n\n---\n\n'),
+      data: { practices: [p] },
+      human: () => [`${p.handle}@${p.version} (${strengthMark(p)}, ${p.scope.level}): ${p.title}`, '', p.body, '', 'Machine checks:', checkText(p)].join('\n'),
     };
   },
 };
@@ -156,13 +167,14 @@ export const check: Command = {
       } else omitted += missed;
     };
     for (const paths of chunks.length ? chunks : [[]]) await ask(paths);
-    const approved = byHandle.size ? await approvedRows(ctx) : [];
     const verdicts: Verdict[] = [];
     let moved = 0;
     for (const p of [...byHandle.values()].sort((a, b) => a.handle.localeCompare(b.handle))) {
-      const row = approved.find((a) => a.handle === p.handle && a.approved?.version === p.version);
+      // The same level the delivery gave: an org practice never stands in for the project's of the same handle and version.
+      const found = await resolved(ctx, p.handle, { repo, level: p.level });
+      const row = found && found.version === p.version && found.scope.level === p.level ? found : undefined;
       if (!row) moved += 1;
-      const checks = row?.approved?.checks ?? [];
+      const checks = row?.checks ?? [];
       const results = runChecks(checks, change);
       verdicts.push({ handle: p.handle, version: p.version, strength: p.strength, result: !results.length ? 'none' : results.every((r) => r.pass) ? 'pass' : 'fail', checks: results.map(view) });
     }
