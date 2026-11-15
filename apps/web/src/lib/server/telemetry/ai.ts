@@ -28,7 +28,9 @@ export interface ChatResponse {
   gatewayCost?: number;
   /** The gateway is the server's configured one, so its cost may stand in for an unpriced model's. */
   gatewayCostTrusted?: boolean;
-  /** SHA-256 of the key used on the server's gateway, so the spend import can match this call's row. */
+  /** The id the server's gateway gave the response, so the spend import pairs this call's row with its spend row. */
+  gatewayRequestId?: string;
+  /** SHA-256 of the server's own gateway key, when the call was made with it. */
   gatewayKeyHash?: string;
 }
 
@@ -105,6 +107,7 @@ async function traceGenAi<T>(
             ...(response.callId && { callId: response.callId }),
             ...(response.gatewayCost !== undefined && { gatewayCost: response.gatewayCost }),
             ...(response.gatewayCostTrusted && { gatewayCostTrusted: true }),
+            ...(response.gatewayRequestId && { gatewayRequestId: response.gatewayRequestId }),
             ...(response.gatewayKeyHash && { gatewayKeyHash: response.gatewayKeyHash }),
           };
           let cost: number | undefined;

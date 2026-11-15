@@ -31,7 +31,7 @@ afterAll(() => {
 });
 
 describe.skipIf(!enabled)('LiteLLM live: Landflow calls through the gateway', () => {
-  it('answers, keeps the call id on the ai_usage row and shows the end user in the spend log', async () => {
+  it('answers, keeps the call id and the response id on the ai_usage row, shows the end user, and is not imported again', async () => {
     const { database } = await import('@/lib/server/db');
     const { executionScope, runInUsageScope } = await import('@/lib/server/ai-usage');
     const { LiteLlmClient } = await import('@/lib/server/llm-gateway/client');
@@ -44,12 +44,15 @@ describe.skipIf(!enabled)('LiteLLM live: Landflow calls through the gateway', ()
       const scope = () => executionScope({ executionId: `ex_live_${randomBytes(3).toString('hex')}`, workflowId: 'wf_live', userId });
       const anthropic = anthropicModel({ model: MODEL, effort: 'low', maxTokens: 64, fallback: true, apiKey: minted.key, baseUrl: URL_, gateway: 'litellm' });
       const openai = openAiModel(openAiConnection({ baseUrl: `${URL_}/v1`, apiKey: minted.key, gateway: 'litellm' }), { model: MODEL });
+      // Plain and streamed: a stream's response id is message_start's (Anthropic) or the first chunk's (OpenAI).
       for (const model of [anthropic, openai]) {
-        const reply = await runInUsageScope(scope(), () => model.generate(turn));
-        expect(reply.text.length).toBeGreaterThan(0);
+        for (const streamed of [false, true]) {
+          const reply = await runInUsageScope(scope(), () => model.generate({ ...turn, ...(streamed && { onToken: () => undefined }) }));
+          expect(reply.text.length).toBeGreaterThan(0);
+        }
       }
-      const rows = database().all<{ call_id: string | null; source: string }>("SELECT call_id, source FROM ai_usage WHERE user_id = ? ORDER BY at", userId);
-      expect(rows).toHaveLength(2);
+      const rows = database().all<{ call_id: string | null; gateway_request_id: string | null; source: string }>("SELECT call_id, gateway_request_id, source FROM ai_usage WHERE user_id = ? ORDER BY at", userId);
+      expect(rows).toHaveLength(4);
       for (const row of rows) {
         expect(row.call_id).toBeTruthy();
         expect(row.source).toBe('landflow');
@@ -60,7 +63,16 @@ describe.skipIf(!enabled)('LiteLLM live: Landflow calls through the gateway', ()
           if (!log) await new Promise((resolve) => setTimeout(resolve, 2_000));
         }
         expect(log?.end_user).toBe(`landflow-user-${userId}`);
+        // The spend import pairs the two by this id.
+        expect(row.gateway_request_id).toBe(log?.request_id);
         expect(log?.metadata?.spend_logs_metadata).toMatchObject({ landflow: 'in-process' });
+      }
+      if (process.env.LANDFLOW_LLM_GATEWAY_ADMIN_KEY) {
+        const { importSpend } = await import('@/lib/server/llm-gateway/ingest');
+        await importSpend({ now: Date.now() + 90_000 });
+        const ids = rows.map((row) => row.gateway_request_id!);
+        const imported = database().all<{ id: string }>(`SELECT id FROM ai_usage WHERE source = 'litellm' AND gateway_request_id IN (${ids.map(() => '?').join(',')})`, ...ids);
+        expect(imported).toEqual([]);
       }
     } finally {
       await admin.blockKey(minted.key);

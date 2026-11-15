@@ -15,7 +15,7 @@ import type { AgentMessage, LanguageModel, ModelAttachment, ModelTurn, ToolCall,
 import type { Attributes } from '@opentelemetry/api';
 import { credentialIdOf } from '../ai-usage/credential-id';
 import { currentUsageScope } from '../ai-usage/scope';
-import { captureGatewayReply, gatewayBudgetError, gatewayHeaders, gatewayReplyOf, GATEWAY_CALL_HEADER, newGatewayCallId, takeGatewayReply, trustsGatewayCost, type GatewayReply } from '../llm-gateway/call';
+import { captureGatewayReply, gatewayBudgetError, gatewayHeaders, gatewayReplyOf, GATEWAY_CALL_HEADER, newGatewayCallId, serverKeyHash, serverKeyHashOf, takeGatewayReply, trustsGatewayCost, type GatewayReply } from '../llm-gateway/call';
 import { savedCredentialIsGateway } from '../llm-gateway/models';
 import { gatewayRoot, gatewaySettings } from '../llm-gateway/settings';
 import { hashKey } from '../llm-gateway/client';
@@ -38,6 +38,7 @@ interface ProviderReply {
   callId?: string;
   gatewayCost?: number;
   gatewayCostTrusted?: boolean;
+  gatewayRequestId?: string;
   gatewayKeyHash?: string;
 }
 
@@ -51,6 +52,7 @@ const describeReply = (reply: ProviderReply) => ({
   callId: reply.callId,
   gatewayCost: reply.gatewayCost,
   gatewayCostTrusted: reply.gatewayCostTrusted,
+  gatewayRequestId: reply.gatewayRequestId,
   gatewayKeyHash: reply.gatewayKeyHash,
 });
 
@@ -243,7 +245,8 @@ export function anthropicModel(options: { model: string; effort: Effort; maxToke
     const gatewayFields = {
       // The call id is what the spend import dedupes on: take it only from the server-configured gateway. Another
       // gateway (a credential's Base URL) could answer with the id of someone else's call and erase it from the import.
-      ...(reply.callId && costTrusted && { callId: reply.callId, ...(options.apiKey && { gatewayKeyHash: hashKey(options.apiKey) }) }),
+      // The response id (LiteLLM's spend-log request_id, assigned by the gateway) is what pairs the spend row with this call.
+      ...(reply.callId && costTrusted && { callId: reply.callId, ...(response.id && { gatewayRequestId: response.id }), ...(serverKeyHashOf(options.apiKey) && { gatewayKeyHash: serverKeyHashOf(options.apiKey) }) }),
       ...(reply.cost !== undefined && { gatewayCost: reply.cost }),
       ...(reply.cost !== undefined && costTrusted && { gatewayCostTrusted: true }),
     };
@@ -556,6 +559,9 @@ export function openAiConnection(credentials: JsonObject | undefined, credential
   };
 }
 
+/** The connection's key is the server's own gateway key, so its call ids are Landflow's alone (see serverKeyHash). */
+const ownKey = (connection: OpenAiConnection): boolean => Boolean(connection.keyHash && connection.keyHash === serverKeyHash());
+
 /** The headers of one POST: the connection's, and for a gateway the ones that say who is calling. */
 const postHeaders = (connection: OpenAiConnection): Record<string, string> =>
   connection.gateway ? { ...connection.headers, ...gatewayHeaders(currentUsageScope(), gatewaySettings()) } : connection.headers;
@@ -659,6 +665,8 @@ export type OpenAiMessage =
   | { role: 'tool'; tool_call_id: string; content: string };
 
 interface ChatCompletion {
+  /** The response id; a stream's is its first chunk's (what LiteLLM files as the spend row's request_id). */
+  id?: string;
   model?: string;
   choices?: Array<{
     message?: {
@@ -767,11 +775,14 @@ export async function openAiChat(
     ? () => openAiStream(connection, body, extra.onToken!, extra.signal, extra.fetcher, onResponse)
     : () => openAiRequest<ChatCompletion>(connection, '/chat/completions', { body, ...(extra.signal && { signal: extra.signal }), ...(extra.fetcher && { fetcher: extra.fetcher }), ...(onResponse && { onResponse }) });
   const trusted = connection.gateway === 'litellm' && trustsGatewayCost(gatewayRoot(connection.base));
+  let responseId: string | undefined;
   return traceChat(
     { system: connection.system, model: options.model, ...(connection.credentialId && { credentialId: connection.credentialId }), attributes },
     async () => {
       try {
-        return parseCompletion(connection, await request());
+        const completion = await request();
+        responseId = completion.id;
+        return parseCompletion(connection, completion);
       } catch (error) {
         const spent = connection.gateway && gatewayBudgetError(error);
         throw spent || error;
@@ -784,7 +795,7 @@ export async function openAiChat(
       cacheReadTokens: result.usage.cacheReadTokens,
       finishReasons: [result.finishReason],
       // As above: a call id only from the server-configured gateway.
-      ...(reply.callId && trusted && { callId: reply.callId, ...(connection.keyHash && { gatewayKeyHash: connection.keyHash }) }),
+      ...(reply.callId && trusted && { callId: reply.callId, ...(responseId && { gatewayRequestId: responseId }), ...(ownKey(connection) && { gatewayKeyHash: connection.keyHash }) }),
       ...(reply.cost !== undefined && { gatewayCost: reply.cost }),
       ...(reply.cost !== undefined && trusted && { gatewayCostTrusted: true }),
     }),
@@ -792,6 +803,7 @@ export async function openAiChat(
 }
 
 interface CompletionChunk {
+  id?: string;
   model?: string;
   choices?: Array<{
     delta?: { content?: string | null; refusal?: string | null; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> };
@@ -834,6 +846,7 @@ async function openAiStream(connection: OpenAiConnection, body: Record<string, u
   let content = '';
   let refusal = '';
   let model: string | undefined;
+  let id: string | undefined;
   let finish: string | null | undefined;
   let usage: ChatCompletion['usage'];
   const calls = new Map<number, { id?: string; name: string; arguments: string }>();
@@ -849,6 +862,7 @@ async function openAiStream(connection: OpenAiConnection, body: Record<string, u
     }
     if (chunk.error) throw new OpenAiApiError(`${connection.label}: ${chunk.error.message ?? 'stream error'}`, 500);
     model ??= chunk.model;
+    id ??= chunk.id;
     if (chunk.usage) usage = { prompt_tokens: chunk.usage.prompt_tokens, completion_tokens: chunk.usage.completion_tokens, prompt_tokens_details: chunk.usage.prompt_tokens_details };
     const choice = chunk.choices?.[0];
     if (!choice) continue;
@@ -870,6 +884,7 @@ async function openAiStream(connection: OpenAiConnection, body: Record<string, u
     if (choice.finish_reason) finish = choice.finish_reason;
   }
   return {
+    ...(id && { id }),
     ...(model && { model }),
     choices: [
       {
@@ -951,6 +966,6 @@ export async function openAiEmbeddings(
       }
       return { vectors: data.map((entry) => entry.embedding as number[]), ...(reply.model && { model: reply.model }), ...(reply.usage?.prompt_tokens !== undefined && { inputTokens: reply.usage.prompt_tokens }), ...(gatewayCall && { callId: gatewayCall }) };
     },
-    (result) => ({ responseModel: result.model, inputTokens: result.inputTokens, dimensions: result.vectors[0]?.length, ...(result.callId && { callId: result.callId, ...(connection.keyHash && { gatewayKeyHash: connection.keyHash }) }) }),
+    (result) => ({ responseModel: result.model, inputTokens: result.inputTokens, dimensions: result.vectors[0]?.length, ...(result.callId && { callId: result.callId, ...(ownKey(connection) && { gatewayKeyHash: connection.keyHash }) }) }),
   );
 }

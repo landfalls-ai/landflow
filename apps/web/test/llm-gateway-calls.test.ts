@@ -136,6 +136,9 @@ describe('Anthropic through the gateway', () => {
     expect(added).toHaveLength(1);
     const callId = fake.spendLogs.at(-1)!.litellm_call_id;
     expect(added[0]).toMatchObject({ call_id: callId, source: 'landflow', runtime: 'landflow', gateway_cost: 0.001, provider: 'litellm', execution_id: 'ex_a1' });
+    // The response id is the spend row's request_id: the import pairs the two by it. The key is not the server's own.
+    expect(added[0].gateway_request_id).toBe(fake.spendLogs.at(-1)!.request_id);
+    expect(added[0].gateway_key_hash).toBeNull();
     expect(added[0].project_id).toBe(project.id);
     const attrs = events().map((e) => JSON.parse(e.attrs) as Record<string, unknown>);
     expect(attrs.some((a) => a.callId === callId && a.gatewayCost === 0.001)).toBe(true);
@@ -152,6 +155,8 @@ describe('Anthropic through the gateway', () => {
     expect(tool.toolCalls[0]?.name).toBe('calculator');
     const toolCall = fake.spendLogs.at(-1)!.litellm_call_id;
     const ids = rows().map((r) => r.call_id);
+    // A streamed message's response id is message_start's.
+    expect(rows().find((r) => r.call_id === streamCall)?.gateway_request_id).toBe(fake.spendLogs.find((s) => s.litellm_call_id === streamCall)!.request_id);
     expect(ids).toContain(streamCall);
     expect(ids).toContain(toolCall);
     expect(new Set(ids.filter(Boolean)).size).toBe(ids.filter(Boolean).length);
@@ -233,6 +238,22 @@ describe('OpenAI-compatible through the gateway', () => {
     const added = rows().slice(before);
     expect(added.map((r) => r.call_id)).toEqual([plain, streamed]);
     expect(added.every((r) => r.gateway_cost === 0.001 && r.source === 'landflow')).toBe(true);
+    // A stream's response id is its first chunk's (each chunk has its own id in front of Ollama), as LiteLLM files it.
+    const requestIdOf = (callId: unknown) => fake.spendLogs.find((s) => s.litellm_call_id === callId)!.request_id;
+    expect(added.map((r) => r.gateway_request_id)).toEqual([requestIdOf(plain), requestIdOf(streamed)]);
+  });
+
+  it('marks a call on the server’s own key with the key’s hash, so a call without a response id pairs by its call id', async () => {
+    process.env.LANDFLOW_LLM_GATEWAY_URL = fake.origin;
+    process.env.LANDFLOW_LLM_GATEWAY_KEY = virtual;
+    try {
+      const before = rows().length;
+      await inScope('ex_o3', () => openAiModel(connection(), { model: 'qwen3-coder:30b' }).generate(turn));
+      const [row] = rows().slice(before);
+      expect(row.gateway_key_hash).toBe(fake.spendLogs.at(-1)!.api_key);
+    } finally {
+      delete process.env.LANDFLOW_LLM_GATEWAY_KEY;
+    }
   });
 });
 

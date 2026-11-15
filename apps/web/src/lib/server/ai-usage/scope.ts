@@ -26,7 +26,9 @@ export interface ModelCall {
   gatewayCost?: number;
   /** The gateway is the one the server is configured with, so its cost may stand in for an unpriced model's. */
   gatewayCostTrusted?: boolean;
-  /** SHA-256 of the key the call was made with, on the server's gateway: the spend import matches its row by it. */
+  /** The id the server's gateway gave the response (LiteLLM's spend-log `request_id`): the spend import pairs its row by it. */
+  gatewayRequestId?: string;
+  /** SHA-256 of the server's own gateway key, when the call was made with it: then the call id alone pairs the row. */
   gatewayKeyHash?: string;
   /** Where the row comes from (default `landflow`: Landflow's own meter). */
   source?: AiCallSource;

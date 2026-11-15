@@ -7,7 +7,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { startFakeLiteLlm, type FakeLiteLlm, type FakeSpendLog } from './fake-litellm';
 
 const { database } = await import('@/lib/server/db');
-const { aiUsageMeter, agentLimits } = await import('@/lib/server/ai-usage');
+const { aiUsageMeter, agentLimits, executionScope, runInUsageScope } = await import('@/lib/server/ai-usage');
+const { afterModelCall } = await import('@/lib/server/ai-usage/scope');
 const { importSpend } = await import('@/lib/server/llm-gateway/ingest');
 const { ensureRuntimeKey } = await import('@/lib/server/llm-gateway/runtime-keys');
 const { hashKey } = await import('@/lib/server/llm-gateway/client');
@@ -74,9 +75,18 @@ beforeEach(() => {
   saveIngestStatus({ enabled: false, imported: 0, skipped: 0, totalImported: 0 });
 });
 
-/** What Landflow's meter writes for a call it counted through the server's gateway: a row with that call id. */
-const metered = (row: { litellm_call_id?: string; request_id: string; api_key: string }) =>
-  database().insertNew('ai_usage', { id: fresh('au'), at: new Date().toISOString(), day: new Date().toISOString().slice(0, 10), provider: 'litellm', model: 'qwen3-coder:30b', operation: 'chat', input_tokens: 1, output_tokens: 1, cost: 0, call_id: idOf(row), gateway_key_hash: row.api_key, source: 'landflow', runtime: 'landflow' });
+const landflowRow = (fields: Record<string, string>) =>
+  database().insertNew('ai_usage', { id: fresh('au'), at: new Date().toISOString(), day: new Date().toISOString().slice(0, 10), provider: 'litellm', model: 'qwen3-coder:30b', operation: 'chat', input_tokens: 1, output_tokens: 1, cost: 0, source: 'landflow', runtime: 'landflow', ...fields });
+/** What Landflow's meter writes for a call it counted through the server's gateway: its call id and response id. */
+const metered = (row: { litellm_call_id?: string; request_id: string }) => landflowRow({ call_id: idOf(row), gateway_request_id: row.request_id });
+/** The same for a call with no response id (embeddings) on the server's own key: its call id and the key's hash. */
+const meteredByCallId = (row: { litellm_call_id?: string; api_key: string }) => landflowRow({ call_id: row.litellm_call_id!, gateway_key_hash: row.api_key });
+/** Landflow's meter recording a call after the import read its spend row. */
+const meterLater = (fields: { callId?: string; gatewayRequestId?: string; gatewayKeyHash?: string }) =>
+  runInUsageScope(executionScope({ executionId: fresh('ex'), workflowId: 'wf_meter_later', userId: 'u_meter_later' }), async () =>
+    afterModelCall({ provider: 'litellm', model: 'qwen3-coder:30b', operation: 'chat', inputTokens: 30, outputTokens: 10, ...fields }),
+  );
+const byRequest = (requestId: string) => database().all<UsageRow & { user_id: string | null }>('SELECT * FROM ai_usage WHERE gateway_request_id = ?', requestId);
 
 /** The id the import keeps: the proxy's call id (`x-litellm-call-id`), else the response id. */
 const idOf = (row: { litellm_call_id?: string; request_id: string }): string => row.litellm_call_id ?? row.request_id;
@@ -174,10 +184,10 @@ describe('the spend import', () => {
     expect(rows().some((r) => r.agent_id === 'someone-else')).toBe(false);
   });
 
-  it('takes one spend row for each call Landflow counted with that key, and imports a runtime key’s row that reuses its call id', async () => {
+  it('pairs a call on the server’s key without a response id by its call id, and imports a runtime key’s row that reuses it', async () => {
     await post(ownKey);
     const own = litellm.spendLogs.at(-1)!;
-    metered(own);
+    meteredByCallId(own);
     // A kagent agent sends Landflow's call id (it is in the ai.call event) on its own call: it is still counted.
     const agentId = fresh('ag');
     const { key } = await ensureRuntimeKey({ agentId, runtime: 'kagent', model: 'qwen3-coder:30b' });
@@ -185,6 +195,60 @@ describe('the spend import', () => {
     expect(await importSpend({ now: later() })).toMatchObject({ imported: 1, skipped: 1 });
     expect(rows(agentId)).toHaveLength(1);
     expect(rows().some((r) => r.gateway_request_id === own.request_id)).toBe(false);
+  });
+
+  it('never lets a key holder hide a call by reusing the call id of a Landflow call made with the same key, whichever is read first', async () => {
+    // A member's credential points at the server's gateway with the member's own key: Landflow's call on it is counted
+    // by the meter (with the response id), and the member reuses its call id for a call of their own.
+    const member = litellm.addKey({ key_alias: 'member-key' }).key;
+    await post(member);
+    const landflowCall = litellm.spendLogs.at(-1)!;
+    metered(landflowCall);
+    await post(member, { 'x-litellm-call-id': idOf(landflowCall) }, 'qwen3-coder:30b');
+    const own = litellm.spendLogs.pop()!;
+    litellm.spendLogs.unshift(own);
+    expect(await importSpend({ now: later() })).toMatchObject({ imported: 1, skipped: 1 });
+    expect(byRequest(own.request_id)).toHaveLength(1);
+    expect(byRequest(own.request_id)[0]).toMatchObject({ source: 'litellm' });
+    // Without a response id (embeddings) only the server's key pairs by call id: on the member's key both are imported.
+    litellm.spendLogs.length = 0;
+    await post(member);
+    const unpaired = litellm.spendLogs.at(-1)!;
+    meteredByCallId(unpaired);
+    await post(member, { 'x-litellm-call-id': idOf(unpaired) });
+    expect(await importSpend({ now: later() })).toMatchObject({ imported: 2, skipped: 0 });
+  });
+
+  it('lets the meter take over the row when the import read the spend row first: one row, Landflow’s attribution', async () => {
+    const member = litellm.addKey({ key_alias: 'member-late' }).key;
+    await post(member);
+    const call = litellm.spendLogs.at(-1)!;
+    expect(await importSpend({ now: later() })).toMatchObject({ imported: 1 });
+    await meterLater({ callId: idOf(call), gatewayRequestId: call.request_id });
+    expect(byRequest(call.request_id)).toHaveLength(1);
+    expect(byRequest(call.request_id)[0]).toMatchObject({ source: 'landflow', user_id: 'u_meter_later', workflow_id: 'wf_meter_later' });
+    const events = database().all<{ attrs: string }>("SELECT attrs FROM usage_events WHERE kind = 'ai.call'").filter((e) => e.attrs.includes(call.request_id));
+    expect(events).toHaveLength(1);
+    // A second run imports nothing again.
+    expect(await importSpend({ now: later() })).toMatchObject({ imported: 0 });
+    expect(byRequest(call.request_id)).toHaveLength(1);
+
+    // On the server's own key, a call without a response id is taken over by its call id.
+    await post(ownKey);
+    const own = litellm.spendLogs.at(-1)!;
+    await importSpend({ now: later() });
+    await meterLater({ callId: idOf(own), gatewayKeyHash: hashKey(ownKey) });
+    const ownRows = database().all<UsageRow & { user_id: string | null }>('SELECT * FROM ai_usage WHERE call_id = ?', idOf(own));
+    expect(ownRows).toHaveLength(1);
+    expect(ownRows[0]).toMatchObject({ source: 'landflow', user_id: 'u_meter_later' });
+
+    // Any other key's call id takes nothing over: the meter's row is a second one (counted twice, never hidden).
+    await post(member);
+    const other = litellm.spendLogs.at(-1)!;
+    await importSpend({ now: later() });
+    await meterLater({ callId: idOf(other), gatewayKeyHash: hashKey(member) });
+    expect(byRequest(other.request_id)).toHaveLength(1);
+    expect(byRequest(other.request_id)[0]).toMatchObject({ source: 'litellm' });
   });
 
   it('counts every call of a key that reuses one call id', async () => {

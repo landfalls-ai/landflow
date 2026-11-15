@@ -170,7 +170,7 @@ export async function startFakeLiteLlm(options: FakeLiteLlmOptions = {}) {
   }
 
   /** Charge a call and write its spend-log row; returns the call id. */
-  function charge(headers: IncomingHttpHeaders, model: string, callType: string, who: { key?: FakeKey; endUser?: string }): string {
+  function charge(headers: IncomingHttpHeaders, model: string, callType: string, who: { key?: FakeKey; endUser?: string }, requestId = `chatcmpl-${randomUUID()}`): { callId: string; requestId: string } {
     // As the proxy does, a caller's own `x-litellm-call-id` is taken (so two calls can share one).
     const callId = String(headers['x-litellm-call-id'] ?? '') || randomUUID();
     const now = new Date().toISOString();
@@ -195,7 +195,7 @@ export async function startFakeLiteLlm(options: FakeLiteLlmOptions = {}) {
       .map((t) => t.trim())
       .filter(Boolean);
     spendLogs.push({
-      request_id: `chatcmpl-${randomUUID()}`,
+      request_id: requestId,
       litellm_call_id: callId,
       call_type: callType,
       api_key: sha(sentLiteLlmKey(headers)),
@@ -218,7 +218,7 @@ export async function startFakeLiteLlm(options: FakeLiteLlmOptions = {}) {
         usage_object: { prompt_tokens: usage.input, completion_tokens: usage.output, ...(usage.cacheRead && { cache_read_input_tokens: usage.cacheRead }) },
       },
     });
-    return callId;
+    return { callId, requestId };
   }
 
   const callHeaders = (callId: string) => ({ 'x-litellm-call-id': callId, 'x-litellm-response-cost': String(costPerCall), 'x-litellm-model-id': 'fake-deployment' });
@@ -240,14 +240,15 @@ export async function startFakeLiteLlm(options: FakeLiteLlmOptions = {}) {
     const text = useTool ? '' : (options.answer?.(model, last) ?? `Echo: ${last}`);
     const content = useTool ? [{ type: 'tool_use', id: 'toolu_1', name: tools[0].name, input: { expression: '6*7' } }] : [{ type: 'text', text }];
     const stop = useTool ? 'tool_use' : 'end_turn';
-    const callId = charge(headers, model, 'anthropic_messages', who);
+    // As the proxy does: the spend row's request_id is the response's id (a streamed message's comes from message_start).
+    const { callId, requestId } = charge(headers, model, 'anthropic_messages', who, body.stream ? `msg_${randomUUID()}` : undefined);
     const usageBody = { input_tokens: usage.input, output_tokens: usage.output, ...(usage.cacheRead && { cache_read_input_tokens: usage.cacheRead }) };
     if (!body.stream) {
       res.writeHead(200, { 'content-type': 'application/json', ...callHeaders(callId) });
-      return res.end(JSON.stringify({ id: `msg_${callId.slice(0, 8)}`, type: 'message', role: 'assistant', model, content, stop_reason: stop, stop_sequence: null, usage: usageBody }));
+      return res.end(JSON.stringify({ id: requestId, type: 'message', role: 'assistant', model, content, stop_reason: stop, stop_sequence: null, usage: usageBody }));
     }
     const events: Array<{ event?: string; data: unknown }> = [
-      { event: 'message_start', data: { type: 'message_start', message: { id: `msg_${callId.slice(0, 8)}`, type: 'message', role: 'assistant', model, content: [], stop_reason: null, stop_sequence: null, usage: { ...usageBody, output_tokens: 1 } } } },
+      { event: 'message_start', data: { type: 'message_start', message: { id: requestId, type: 'message', role: 'assistant', model, content: [], stop_reason: null, stop_sequence: null, usage: { ...usageBody, output_tokens: 1 } } } },
     ];
     if (useTool) {
       events.push({ event: 'content_block_start', data: { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'toolu_1', name: tools[0].name, input: {} } } });
@@ -269,15 +270,17 @@ export async function startFakeLiteLlm(options: FakeLiteLlmOptions = {}) {
     const model = String(body.model);
     const last = lastUserText(body.messages);
     const text = options.answer?.(model, last) ?? `Echo: ${last}`;
-    const callId = charge(headers, model, 'acompletion', who);
+    const { callId, requestId } = charge(headers, model, 'acompletion', who);
     const usageBody = { prompt_tokens: usage.input, completion_tokens: usage.output, total_tokens: usage.input + usage.output };
     if (!body.stream) {
       res.writeHead(200, { 'content-type': 'application/json', ...callHeaders(callId) });
-      return res.end(JSON.stringify({ id: `chatcmpl-${callId.slice(0, 8)}`, object: 'chat.completion', model, choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }], usage: usageBody }));
+      return res.end(JSON.stringify({ id: requestId, object: 'chat.completion', model, choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }], usage: usageBody }));
     }
-    const events: Array<{ data: unknown }> = (text.match(/.{1,8}/gs) ?? []).map((piece) => ({ data: { id: 'chatcmpl-1', object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { content: piece }, finish_reason: null }] } }));
-    events.push({ data: { id: 'chatcmpl-1', object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] } });
-    if (body.stream_options?.include_usage) events.push({ data: { id: 'chatcmpl-1', object: 'chat.completion.chunk', model, choices: [], usage: usageBody } });
+    // As the proxy does in front of Ollama: every chunk has its own id, and the spend row keeps the first one.
+    const chunkId = (index: number) => (index === 0 ? requestId : randomUUID());
+    const events: Array<{ data: unknown }> = (text.match(/.{1,8}/gs) ?? []).map((piece, index) => ({ data: { id: chunkId(index), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { content: piece }, finish_reason: null }] } }));
+    events.push({ data: { id: chunkId(events.length), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] } });
+    if (body.stream_options?.include_usage) events.push({ data: { id: chunkId(events.length), object: 'chat.completion.chunk', model, choices: [], usage: usageBody } });
     events.push({ data: '[DONE]' });
     return sse(res, callHeaders(callId), events);
   }

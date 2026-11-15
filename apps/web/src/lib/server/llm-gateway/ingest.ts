@@ -4,9 +4,11 @@
  * LiteLLM's spend log into `ai_usage`, one row per call, attributed only from what Landflow controls (a key it minted, or
  * the key's team). Insights, the AI page and the usage caps sum `ai_usage`, so they count these calls by themselves.
  *
- * A call is counted once: a spend row is named by LiteLLM's own request id (row id and `gateway_request_id`), and a
- * Landflow row that its meter wrote for a call through the server's gateway (same call id, same key) takes exactly one
- * spend row instead of an import. Nothing a caller sends decides either. Only the server's admin connection reads the
+ * A call is counted once. A spend row is named by LiteLLM's request id, the id the gateway gave the response (row id and
+ * `gateway_request_id`); Landflow's meter keeps that id for each call it made through the server's gateway, so the import
+ * skips exactly those spend rows. A call with no response id (embeddings) made with the server's own key, whose call ids
+ * only Landflow mints, is paired by its call id instead, one spend row for one Landflow row. Nothing a caller sends
+ * decides either: a caller can choose its call id, never the response id. Only the server's admin connection reads the
  * log, so a member can't inject or erase spend.
  */
 import { createHash } from 'node:crypto';
@@ -19,6 +21,7 @@ import { logger } from '../telemetry/logger';
 import { projectIdOfTeam, type AiRuntime, type IngestStatus } from '../../shared/llm-gateway';
 import { hashKey, spendLogTime, type Fetcher, type LiteLlmSpendLog } from './client';
 import { adminClient, gatewayConnection, gatewaySettings, ingestStatus, saveIngestStatus } from './settings';
+import { serverKeyHash } from './call';
 
 const PAGE_SIZE = 500;
 const MAX_PAGES = 200;
@@ -108,6 +111,7 @@ export async function importSpend(options: ImportOptions = {}): Promise<IngestSt
   const meter = aiUsageMeter();
   // Only the server's own key (LANDFLOW_LLM_GATEWAY_KEY) labels a row as Landflow's; a credential's key is member-editable.
   const ownKeyHash = connection.source === 'environment' && connection.apiKey ? hashKey(connection.apiKey) : undefined;
+  const serverKey = serverKeyHash();
   const endMs = now - LAG_MS;
   const startMs = previous.lastEnd && timeOf(previous.lastEnd) !== undefined ? (timeOf(previous.lastEnd) as number) - OVERLAP_MS : now - FIRST_WINDOW_MS;
   let imported = 0;
@@ -130,7 +134,7 @@ export async function importSpend(options: ImportOptions = {}): Promise<IngestSt
           break;
         }
         for (const row of reply.data) {
-          if (importRow(row, { db, meter, ownKeyHash, now })) imported++;
+          if (importRow(row, { db, meter, ownKeyHash, serverKey, now })) imported++;
           else skipped++;
         }
       }
@@ -163,10 +167,10 @@ export async function importSpend(options: ImportOptions = {}): Promise<IngestSt
 }
 
 /** One spend row into `ai_usage` (and the usage ledger); false when it is skipped. */
-function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<typeof aiUsageMeter>; ownKeyHash?: string; now: number }): boolean {
+function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<typeof aiUsageMeter>; ownKeyHash?: string; serverKey?: string; now: number }): boolean {
   const { db, meter } = ctx;
-  // A spend row is named by LiteLLM's own id (server-assigned). The call id (`x-litellm-call-id`) is not enough: a
-  // caller may send its own, so two rows can share one.
+  // A spend row is named by LiteLLM's request id, the response's id (the gateway's, not the caller's). The call id
+  // (`x-litellm-call-id`) is not enough: a caller may send its own, so two rows can share one.
   const requestId = text(row.request_id);
   if (!requestId) return false;
   const callId = text(row.litellm_call_id);
@@ -175,14 +179,15 @@ function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<
   const output = count(row.completion_tokens);
   const spend = typeof row.spend === 'number' && Number.isFinite(row.spend) && row.spend > 0 ? row.spend : 0;
   if (input + output + count(row.total_tokens) === 0 && spend === 0) return false;
-  // Imported before, or already matched to a call Landflow counted.
+  // Imported before, or a call Landflow's meter counted (it keeps the response id the server's gateway gave it).
   if (db.get('SELECT 1 AS found FROM ai_usage WHERE gateway_request_id = ?', requestId)) return false;
-  // "Landflow already counted this" is decided only by Landflow's own record: a row its meter wrote for a call through
-  // the server's gateway, with this call id, made with this very key, and not matched yet. One Landflow row takes one
-  // spend row, so a caller who reuses a call id (even one of Landflow's) hides nothing. Nothing the caller sends (the
-  // `in-process` metadata) and no credential's key can make the import skip a row.
-  if (callId && row.api_key) {
-    const counted = db.get<Record<string, SqlValue>>("SELECT * FROM ai_usage WHERE call_id = ? AND source = 'landflow' AND gateway_key_hash = ? AND gateway_request_id IS NULL", callId, row.api_key);
+  // A call with no response id is paired by its call id only on the server's own key: only the server holds it and
+  // Landflow mints its call ids, so nobody can reuse one. Any other key's holder can, so its rows are always imported.
+  // One Landflow row takes one spend row. Nothing the caller sends (the `in-process` metadata) and no credential's key
+  // can make the import skip a row.
+  const serverKey = ctx.serverKey && row.api_key === ctx.serverKey ? ctx.serverKey : undefined;
+  if (callId && serverKey) {
+    const counted = db.get<Record<string, SqlValue>>("SELECT * FROM ai_usage WHERE call_id = ? AND source = 'landflow' AND gateway_key_hash = ? AND gateway_request_id IS NULL", callId, serverKey);
     if (counted) {
       db.upsert('ai_usage', { ...counted, gateway_request_id: requestId });
       return false;
@@ -215,6 +220,8 @@ function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<
     cost,
     call_id: freeCallId,
     gateway_request_id: requestId,
+    // On the server's key, so a meter that records after this import can take the row over by its call id.
+    ...(freeCallId && serverKey && { gateway_key_hash: serverKey }),
     source: 'litellm',
     runtime: who.runtime,
     project_id: who.projectId,

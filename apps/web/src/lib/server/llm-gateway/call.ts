@@ -9,6 +9,7 @@ import { safeFetch } from '../net/safe-fetch';
 import { homeProjectId } from '../projects/store';
 import { UsageCapError, type UsageScope } from '../ai-usage/scope';
 import { gatewayRoot } from './settings';
+import { hashKey } from './client';
 
 /** The request header a caller sets to find the reply of its own call again (removed before the request is sent). */
 export const GATEWAY_CALL_HEADER = 'x-landflow-gateway-call';
@@ -135,6 +136,22 @@ export function takeGatewayReply(id: string): GatewayReply {
  * (LANDFLOW_LLM_GATEWAY_URL). A gateway named only by a credential could be a fake one that under-reports, so its cost is
  * shown as "gateway says" and Landflow's own price table stays in charge.
  */
+/**
+ * The hash of the server's own gateway key (`LANDFLOW_LLM_GATEWAY_KEY`), as LiteLLM files it in the spend log's `api_key`.
+ * Only the server holds that key and Landflow mints the call ids it sends with it, so a call id is a safe match for it
+ * alone; any other key's holder can reuse a call id.
+ */
+export function serverKeyHash(): string | undefined {
+  const key = envString('LANDFLOW_LLM_GATEWAY_KEY');
+  return key ? hashKey(key) : undefined;
+}
+
+/** `gatewayKeyHash` for a call made with `apiKey`: set only when it is the server's own key (see serverKeyHash). */
+export function serverKeyHashOf(apiKey: string | undefined): string | undefined {
+  const own = serverKeyHash();
+  return own && apiKey && hashKey(apiKey) === own ? own : undefined;
+}
+
 export function trustsGatewayCost(baseUrl: string): boolean {
   const configured = envString('LANDFLOW_LLM_GATEWAY_URL');
   if (!configured) return false;
