@@ -44,13 +44,14 @@ function workflowRefusal(workflow: Workflow | undefined): string | undefined {
 
 const RUN_REFUSED = 'Only a schedule of the saved or published workflow, or a run an owner or admin started, may handle people’s briefings';
 const VERSION_REFUSED = 'A member, or nobody, saved the version of this workflow that ran: it handles no one’s briefings until an owner or admin saves a change to it (and publishes that version, when it is published)';
+const UNPUBLISHED_REFUSED = 'A schedule handles people’s briefings only from the published version: an owner or admin publishes it first';
 const PUBLISH_REFUSED = 'A member published the version of this workflow that ran: it handles no one’s briefings until an owner or admin publishes a version an owner or admin saved';
 
 /**
  * Why the version a run without a starter ran may not handle people's briefings, or undefined. It must be the workflow's
- * current saved version or its published one (not an older version or another graph), saved by an owner or admin
+ * published version (a draft has only one key, its author; publishing adds the second), saved by an owner or admin
  * (versionAuthor: the person whose save made that version, never whoever saved last, moved or restored it), and, when
- * it is the published version, published by an owner or admin too. Pin data is not part of a version, and production
+ * published by an owner or admin too. Pin data is not part of a version, and production
  * runs ignore it (the engine's PINLESS_MODES).
  */
 function versionRefusal(record: ExecutionRecord): string | undefined {
@@ -60,9 +61,9 @@ function versionRefusal(record: ExecutionRecord): string | undefined {
   if (!record.versionId) return RUN_REFUSED;
   const publication = getPublication(workflow!.id);
   const isPublished = publication?.versionId === record.versionId;
-  if (!isPublished && record.versionId !== versionFor(workflow!)?.id) return RUN_REFUSED;
+  if (!isPublished) return UNPUBLISHED_REFUSED;
   if (!trusted(versionAuthor(workflow!.id, record.versionId))) return VERSION_REFUSED;
-  if (isPublished && !trusted(publication!.publishedBy)) return PUBLISH_REFUSED;
+  if (!trusted(publication!.publishedBy)) return PUBLISH_REFUSED;
   return undefined;
 }
 

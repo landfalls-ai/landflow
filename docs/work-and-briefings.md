@@ -158,22 +158,22 @@ lists: the reads use the ledger's one visibility rule. All five nodes read or wr
   to be around it: the workflow run the agent works in (Run an Agent; the tool's run is its sub-execution), else the
   person chatting in the agent's test chat, else nobody. Such a run may handle briefings only when that person is an
   owner or an admin. A run nobody started may only when all of this holds:
-  - **The version that ran** is the workflow's current saved version or its published one (not an older version from
-    its history), and an owner or an admin **saved** it: each version records the person whose save made it
+  - **The version that ran** is the workflow's **published** version (a schedule of the saved draft is refused with "A
+    schedule handles people's briefings only from the published version: an owner or admin publishes it first"), and an
+    owner or an admin **saved** it: each version records the person whose save made it
     (`workflow_versions.author`, migration 2091). A save that changes nothing a version counts (moving, renaming,
     publishing, activating, an owner saving a member's graph unchanged) makes no version and credits nobody new; a
     restore makes a version credited to whoever saved the restored one; a save with no person behind it (a Slack click
     that applies a suggestion without a matched person, a background save, an import) and every version from before
     2091 (with those the database imports once from the old JSON files) credit nobody. So after a member's change, an owner or admin has to save a change of their own.
-  - **When it is the published version**, an owner or an admin **published** it too (`publishedBy`). Four-eyes
+  - **An owner or an admin published** it too (`publishedBy`). Four-eyes
     approval publishes as the person who asked: a member's publish request that an owner or admin approves stays a
     member's publication and is refused, so an owner or admin publishes the version themselves.
   - **Two keys, not one.** Any owner's or admin's save that changes what a version counts makes them its author, whatever
     else is in the graph: a change to the workflow's settings (the Insights time saved), applying a brain suggestion, a
     Git or environment pull. Saving over a member's draft therefore makes the member's graph the owner's version. The
-    author alone is one key; for the schedule of a published workflow the publisher is the second, so read the change
-    before you publish it, and keep the nightly workflow published (a schedule of an unpublished draft has only the
-    author's key).
+    author alone is one key, so a schedule runs only a published version: the publisher is the second key. Read the
+    change before you publish it, and publish the nightly workflow as an owner or admin; until then it does not run.
   - It is a trigger's run (mode `trigger`, `poll` or `webhook`), not a re-run, a retry someone asked for or a metric's
     measurement of a suggestion. What it came from passes the same check: the run an automatic retry retries (an
     automatic retry keeps that run's starter), the failed run an error workflow answers, and the run a sub-workflow

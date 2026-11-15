@@ -26,7 +26,7 @@ export function brainTemplates({ template, node, main, daily }: TemplateHelpers)
       description: 'Every night, prepare for each person a short briefing of their own work, what colleagues did that overlaps it, and what finished that they wait on. Each briefing is kept for that person only and shows up in their coding tool and chat at the start of the day.',
       categories: ['ai', 'productivity'],
       setup: [
-        'Publish it: it runs every night at 02:00 in the instance time zone (Settings), for everyone with work in the second brain in the last three days.',
+        'An owner or admin publishes it (a schedule handles briefings only from the published version, saved and published by an owner or admin): it runs every night at 02:00 in the instance time zone (Settings), for everyone with work in the second brain in the last three days.',
         'The briefing is written by the second brain’s model (LANDFLOW_BRAIN_MODEL); with the model off, it is a plain summary of the same lists.',
         'Nothing is sent unless a person chooses Slack or email in their preferences. For Slack, add the Slack credential to **Deliver Briefing**; for email, the host needs SMTP.',
       ],

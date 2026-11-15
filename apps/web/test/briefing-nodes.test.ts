@@ -6,7 +6,7 @@ import { createServer, type Server } from 'node:http';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { executeWorkflow, inProcessNodeType, type NodeTypeResolver } from '@landflow/engine';
 import type { GatheredWork } from '@/lib/shared/brain-work';
 
@@ -272,7 +272,13 @@ describe('who started the run (through the runner)', () => {
   as(alice, () => store.saveWorkflow(aliceGraph));
   as(owner, () => store.saveWorkflow(ownerGraph));
   const saved = () => store.getWorkflow('wf_nightly')!;
-  const scheduled = (workflow = saved()) => runWorkflow({ workflow, mode: 'trigger', startNodeId: 'nightly', triggerItems: items({}) });
+  // What the scheduler runs: the published version (a schedule of the saved draft is refused). The owner publishes the
+  // owner's graph first.
+  const publishNightly = () => as(owner, () => publishOrRequest({ workflowId: 'wf_nightly', action: 'publish', by: owner.id }));
+  const scheduled = (workflow = productionWorkflowById('wf_nightly')!) => runWorkflow({ workflow, mode: 'trigger', startNodeId: 'nightly', triggerItems: items({}) });
+  beforeAll(async () => {
+    await publishNightly();
+  });
   const today = () => dayOf(Date.now());
   const slackPosts = () => slackCalls.filter((c) => c.url === '/chat.postMessage');
 
@@ -359,29 +365,51 @@ describe('who started the run (through the runner)', () => {
     expect((await retry(failed('ex_failed_rerun', { rerunOf: { executionId: nightly.executionId } }), true)).status).toBe('error');
     expect(rowsFor(bob.id)).toHaveLength(0);
     // A made-up source is refused: there is nothing to check.
-    expect((await runWorkflow({ workflow: saved(), mode: 'trigger', startNodeId: 'nightly', triggerItems: items({}), retry: { of: 'ex_made_up', attempt: 1, automatic: true } })).status).toBe('error');
+    expect((await runWorkflow({ workflow: productionWorkflowById('wf_nightly')!, mode: 'trigger', startNodeId: 'nightly', triggerItems: items({}), retry: { of: 'ex_made_up', attempt: 1, automatic: true } })).status).toBe('error');
     const automatic = await retry('ex_failed_nightly', true);
     expect(automatic.retryAutomatic).toBe(true);
     expect(automatic.error?.message).toBeUndefined();
     expect(automatic.status).toBe('success');
   });
 
-  it('a member saving a change stops the nightly run until an owner or admin saves a change; a save with no change counts for nothing', async () => {
+  it('a member saving a change does not touch the published version; published by an owner it stops the nightly run until an owner or admin saves a change; a save with no change counts for nothing', async () => {
     as(alice, () => store.saveWorkflow(saved()));
     expect((await scheduled()).status).toBe('success');
-    as(alice, () => store.saveWorkflow(graph('wf_nightly', 5)));
+    as(alice, () => store.saveWorkflow({ ...graph('wf_nightly', 5), active: true }));
     try {
+      // The schedule still runs the owner's published version; the member's draft is not what runs.
+      expect((await scheduled()).status).toBe('success');
+      await publishNightly();
       const run = await scheduled();
       expect(run.status).toBe('error');
       expect(run.error?.message).toBe('A member, or nobody, saved the version of this workflow that ran: it handles no one’s briefings until an owner or admin saves a change to it (and publishes that version, when it is published)');
       // An owner's save of the same graph is no change: the version is still Alice's.
       as(owner, () => store.saveWorkflow(saved()));
+      await publishNightly();
       expect((await scheduled()).status).toBe('error');
       expect(rowsFor(bob.id).filter((r) => r.status === 'ready')).toHaveLength(1);
     } finally {
       as(owner, () => store.saveWorkflow(ownerGraph));
+      await publishNightly();
     }
     expect((await scheduled()).status).toBe('success');
+  });
+
+  it('a scheduled run of an owner-saved but unpublished workflow is refused and writes and sends nothing; the owner publishing it makes it run', async () => {
+    as(owner, () => store.saveWorkflow(graph('wf_unpublished', 3)));
+    setHomeProject('workflow', 'wf_unpublished', team.id);
+    const before = rowsFor(bob.id).length;
+    slackCalls.length = 0;
+    const draft = await runWorkflow({ workflow: store.getWorkflow('wf_unpublished')!, mode: 'trigger', startNodeId: 'nightly', triggerItems: items({}) });
+    expect(draft.status).toBe('error');
+    expect(JSON.stringify(draft.runData)).toContain('A schedule handles people’s briefings only from the published version: an owner or admin publishes it first');
+    expect(rowsFor(bob.id)).toHaveLength(before);
+    expect(slackCalls).toEqual([]);
+    await as(owner, () => publishOrRequest({ workflowId: 'wf_unpublished', action: 'publish', by: owner.id }));
+    const run = await runWorkflow({ workflow: productionWorkflowById('wf_unpublished')!, mode: 'trigger', startNodeId: 'nightly', triggerItems: items({}) });
+    expect(run.error?.message).toBeUndefined();
+    expect(run.status).toBe('success');
+    expect(slackPosts()).toHaveLength(1);
   });
 
   it('with the brain off nothing is written or sent, from any start node', async () => {
@@ -412,7 +440,11 @@ describe('who started the run (through the runner)', () => {
       return id;
     };
     const production = (id: string) => runWorkflow({ workflow: productionWorkflowById(id)!, mode: 'trigger', startNodeId: 'nightly', triggerItems: items({}) });
-    const draftRun = (id: string) => runWorkflow({ workflow: store.getWorkflow(id)!, mode: 'trigger', startNodeId: 'nightly', triggerItems: items({}) });
+    // The owner publishes whatever the draft is now (a schedule runs only the published version), then it runs.
+    const draftRun = async (id: string) => {
+      await as(owner, () => publishOrRequest({ workflowId: id, action: 'publish', by: owner.id }));
+      return production(id);
+    };
     // A graph of Alice's: List People pinned to a person and a day of her choosing (only manual runs use pins).
     const pinnedTo = (id: string, day: string) => ({ ...graph(id, 0), pinData: { people: [{ json: { userId: idle.id, day } }] } });
     const idleRows = () => rowsFor(idle.id);
