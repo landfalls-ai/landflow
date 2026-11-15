@@ -39,6 +39,7 @@ import { buildToolset, binaryScopeFor, dedupe, type BuiltTool, type ToolCaller, 
 import { hostBinaryClient, storeBinary } from '../binary/access';
 import { DEFAULT_KEPT_TOOL_IMAGES, hydrateToolImages, imageSizeLabel, storeToolImages, type ToolImageMode } from '../nodes/tool-images';
 import { HttpError } from '../errors';
+import { store } from '../store';
 
 const MAX_RESULT_CHARS = 16_000;
 const MAX_USER_TURNS_IN_CONTEXT = 30;
@@ -213,17 +214,28 @@ async function pool<T, R>(items: T[], limit: number, work: (item: T) => Promise<
 /** The least time between two saves of a running session. */
 const SAVE_EVERY_MS = 1_500;
 
+/**
+ * Whom a workflow session's tools run for when the request names no caller: the run it works in, but only while that
+ * run goes on (running, or waiting on this agent's approval). A session resumed after its run ended (an approval
+ * decided later) runs its tools for nobody, never as that run's starter or version.
+ */
+async function sessionCaller(execution: AgentSession['execution']): Promise<ToolCaller> {
+  if (!execution) return {};
+  const record = await store.loadExecution(execution.executionId);
+  return record?.status === 'running' || record?.status === 'waiting' ? { execution: { executionId: execution.executionId, nodeId: execution.nodeId } } : {};
+}
+
 /** Run the agent once on a session. Rejects if the session is already running. */
 export async function runAgent(request: RunRequest): Promise<RunResult> {
   const { agent } = request;
   let session = request.session;
+  // Never the request around the run: a schedule, a channel or a workflow's agent may run inside someone else's.
+  const caller: ToolCaller = request.caller ?? (await sessionCaller(session.execution));
   if (running.has(session.id)) throw new Error('This session is already running — wait for the reply');
   running.add(session.id);
   const config = configFor(agent, session.version);
   const depth = request.depth ?? 0;
   const maxDepth = request.maxDepth ?? Math.min(5, Math.max(1, config.settings.maxDelegationDepth));
-  // Never the request around the run: a schedule, a channel or a workflow's agent may run inside someone else's.
-  const caller: ToolCaller = request.caller ?? (session.execution ? { execution: { executionId: session.execution.executionId, nodeId: session.execution.nodeId } } : {});
 
   const emit = (event: AgentStreamEvent) => {
     request.onEvent?.(event);
