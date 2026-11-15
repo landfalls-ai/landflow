@@ -210,7 +210,7 @@ const schemas: Record<string, Json> = {
       executionOrder: array({ type: 'string' }),
       lastNodeId: { type: 'string' },
       error: object({ message: { type: 'string' } }, ['message'], { additionalProperties: true }),
-      startedBy: { type: 'string', description: 'User id of who started a manual run' },
+      startedBy: { type: 'string', description: 'User id of who started the run, when a person did (a manual, chat, MCP or tool run, a re-run, a retry they asked for)' },
     },
     ['executionId', 'workflowId', 'status', 'startedAt'],
     { additionalProperties: true },

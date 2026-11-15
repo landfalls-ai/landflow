@@ -4,6 +4,7 @@
  * (`{ userId, day, briefingId, counts }`): each person's gathered work and text live in their own row (brain/briefings-store.ts),
  * which only they read, because the run data of a workflow is visible to everyone who can open it.
  */
+import type { Workflow } from '@landflow/engine';
 import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type NodeItem } from '@landflow/sdk';
 import { getUser, listUsers, type UserRecord } from '../auth/users';
 import { sendMail, mailConfigured } from '../auth/mail';
@@ -16,36 +17,70 @@ import { postMessage, SLACK_CREDENTIAL, SLACK_OAUTH2_CREDENTIAL, slackCredential
 import { logger } from '../telemetry/logger';
 import { brainEnabled, dayOf } from '../usage/ledger';
 import { store } from '../store';
+import { publishedVersionId } from '../publications';
+import { versionFor, versionHash } from '../versions';
+import type { ExecutionRecord } from '../../shared/types';
 
 const main = [{ type: 'main' as const }];
 const icon = { icon: 'lucide:sunrise', color: '#8b5cf6', categories: ['AI', 'Core'] };
 
+/** An active owner or admin. */
+const trusted = (id: string | undefined): boolean => {
+  const user = id ? getUser(id) : undefined;
+  return Boolean(user && !user.disabledAt && (user.role === 'owner' || user.role === 'admin'));
+};
+
+/** Modes nobody starts by hand: a schedule or other trigger, a poll, a webhook. */
+const SYSTEM_MODES: ReadonlySet<string> = new Set(['trigger', 'poll', 'webhook']);
+
+/** Why `workflow` may not handle people's briefings, or undefined: it must be made, and last saved, by an owner or admin (or by nobody: seeded). */
+function workflowRefusal(workflow: Workflow | undefined): string | undefined {
+  if (!workflow) return 'The workflow is not saved';
+  if (workflow.createdBy && !trusted(workflow.createdBy)) return 'Only a workflow an owner or admin made may handle people’s briefings';
+  if (workflow.updatedBy && !trusted(workflow.updatedBy)) {
+    return 'A member saved this workflow last: it handles no one’s briefings until an owner or admin saves it again';
+  }
+  return undefined;
+}
+
+/** Whether the run ran the workflow's current saved graph or its published version, not an older version or another graph. */
+function ranCurrentGraph(record: ExecutionRecord, workflow: Workflow): boolean {
+  if (record.versionId) return record.versionId === publishedVersionId(workflow.id) || record.versionId === versionFor(workflow)?.id;
+  return Boolean(record.workflow) && versionHash(record.workflow!) === versionHash(workflow);
+}
+
+const RUN_REFUSED = 'Only a schedule of the saved or published workflow, or a run an owner or admin started, may handle people’s briefings';
+
 /**
- * Who may run the nodes that read or write a person's private briefing: a workflow made and last saved by an owner or an
- * admin, or one nobody made (seeded), and a run that an owner or admin started or nobody did (a schedule or trigger). A
- * member's workflow could otherwise feed any `userId` through them, and a member's run could post an unsaved graph or
- * their own items under an admin's saved workflow id, and read or send someone else's work
- * (docs/work-and-briefings.md#privacy).
+ * Why this run may not handle people's briefings, or undefined when it may. A run a person started (`startedBy`: the
+ * editor, the API, chat, MCP, an agent's tool, a re-run, a retry they asked for, or a sub-workflow of one) may when that
+ * person is an owner or admin. A run nobody started may only when a trigger started it (`trigger`, `poll`, `webhook`,
+ * not a re-run, not a retry someone asked for; an automatic retry may) on the workflow's current saved or published
+ * version, and, for a sub-workflow, when its parent may too.
+ */
+async function runRefusal(record: ExecutionRecord | undefined, depth = 0): Promise<string | undefined> {
+  if (!record || record.evaluation) return RUN_REFUSED;
+  if (record.startedBy) return trusted(record.startedBy) ? undefined : RUN_REFUSED;
+  if (!SYSTEM_MODES.has(record.mode) || record.rerunOf || (record.retryOf && !record.retryAutomatic)) return RUN_REFUSED;
+  const workflow = store.getWorkflow(record.workflowId);
+  const refused = workflowRefusal(workflow);
+  if (refused) return refused;
+  if (!ranCurrentGraph(record, workflow!)) return RUN_REFUSED;
+  if (!record.parentExecutionId) return undefined;
+  if (depth >= 8) return RUN_REFUSED;
+  return runRefusal(await store.loadExecution(record.parentExecutionId), depth + 1);
+}
+
+/**
+ * Who may run the nodes that read or write a person's private briefing (docs/work-and-briefings.md#the-nightly-sync, Privacy):
+ * a workflow an owner or admin made and last saved (or a seeded one), in a run an owner or admin started or a schedule
+ * started on its current saved or published version (`runRefusal`). A member could otherwise feed any `userId` through
+ * them (an MCP call from Gather Work, a re-run of the nightly run with an older graph) and read or send someone else's
+ * work.
  */
 async function requireInstanceFlow(ctx: IExecuteContext): Promise<void> {
-  const trusted = (id: string | undefined) => {
-    if (!id) return true;
-    const user = getUser(id);
-    return Boolean(user && !user.disabledAt && (user.role === 'owner' || user.role === 'admin'));
-  };
-  const workflow = store.getWorkflow(ctx.getWorkflowId() ?? '');
-  const record = await store.loadExecution(ctx.getExecutionId());
-  // A run started by a person (the editor, the API, chat) counts as that person's; an unsaved graph or an evaluation's
-  // cases are the caller's own input. No saved record of the run: refused.
-  const byPerson = record && (record.mode === 'manual' || record.mode === 'chat');
-  const runOk =
-    Boolean(record) &&
-    !record!.evaluation &&
-    (byPerson ? Boolean(record!.startedBy) && trusted(record!.startedBy) : !record!.startedBy || trusted(record!.startedBy)) &&
-    (!record!.workflow || record!.versionId || trusted(record!.startedBy) && Boolean(record!.startedBy));
-  if (!workflow || !trusted(workflow.createdBy) || !trusted(workflow.updatedBy) || !runOk) {
-    throw new NodeOperationError('Only an owner’s or admin’s workflow, run by an owner or admin or on a schedule, may handle people’s briefings', { description: 'A person’s briefing is private to them: save this workflow as an owner or admin and run it as one.' });
-  }
+  const refused = workflowRefusal(store.getWorkflow(ctx.getWorkflowId() ?? '')) ?? (await runRefusal(await store.loadExecution(ctx.getExecutionId())));
+  if (refused) throw new NodeOperationError(refused, { description: 'A person’s briefing is private to them: an owner or admin saves this workflow, and it runs on its schedule or as theirs.' });
 }
 
 const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
@@ -92,6 +127,8 @@ export const brainListPeopleNode = defineNode({
   },
   async execute(ctx) {
     if (!brainEnabled()) return [[]];
+    // Who recorded work lately is other people's data too.
+    await requireInstanceFlow(ctx);
     const withinDays = Math.max(0, Math.floor(Number(ctx.getNodeParameter('withinDays', 0, 3)) || 0));
     const given = text(ctx.getNodeParameter('day', 0, ''));
     if (given && !/^\d{4}-\d{2}-\d{2}$/.test(given)) throw new NodeOperationError('Day must be YYYY-MM-DD');
@@ -121,6 +158,7 @@ export const brainGatherWorkNode = defineNode({
     properties: [],
   },
   async execute(ctx) {
+    if (!brainEnabled()) return [[]];
     await requireInstanceFlow(ctx);
     const out: NodeItem[] = [];
     const items = ctx.getInputData();
@@ -151,6 +189,7 @@ export const brainWriteBriefingNode = defineNode({
     properties: [{ name: 'useModel', displayName: 'Use the Brain’s Model', type: 'boolean', default: true, description: 'Off, or with the model off or failing, the text is built from the lists alone. Redacted lines only ever reach the model, as data.' }],
   },
   async execute(ctx) {
+    if (!brainEnabled()) return [[]];
     await requireInstanceFlow(ctx);
     const out: NodeItem[] = [];
     const items = ctx.getInputData();
@@ -185,6 +224,7 @@ export const brainSaveBriefingNode = defineNode({
     properties: [],
   },
   async execute(ctx) {
+    if (!brainEnabled()) return [[]];
     await requireInstanceFlow(ctx);
     const out: NodeItem[] = [];
     for (const [index, item] of ctx.getInputData().entries()) {
@@ -242,6 +282,7 @@ export const brainDeliverBriefingNode = defineNode({
     properties: [],
   },
   async execute(ctx) {
+    if (!brainEnabled()) return [[]];
     await requireInstanceFlow(ctx);
     const out: NodeItem[] = [];
     const slack = slackCredentialOf(ctx);

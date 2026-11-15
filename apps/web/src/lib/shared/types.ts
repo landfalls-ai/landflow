@@ -223,6 +223,8 @@ export interface ExecutionRecord extends Omit<ExecutionResult, 'status' | 'wait'
   /** The failed execution this one retries, and which retry it is (1 = the first). */
   retryOf?: string;
   retryAttempt?: number;
+  /** That retry was started by the automatic retry timer, not by a person. */
+  retryAutomatic?: boolean;
   /** Set on a failed execution: the retry that followed it. */
   retriedBy?: string;
   /** Set on a failed execution: when its automatic retry starts. */
@@ -231,7 +233,10 @@ export interface ExecutionRecord extends Omit<ExecutionResult, 'status' | 'wait'
   resumedAfterRestart?: { at: string; stepId: string };
   /** The trigger call's Idempotency-Key. */
   idempotencyKey?: string;
-  /** A manual run: the user (id) who started it. */
+  /**
+   * The user (id) who started it, when a person did: a manual or chat run, an MCP or agent tool call, a re-run, a retry
+   * someone asked for, or a sub-workflow of one of those. Absent: a schedule, poll, webhook or other trigger started it.
+   */
   startedBy?: string;
   /** Status `queued`: how it starts once a slot frees. */
   queued?: QueuedStart;

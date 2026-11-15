@@ -146,11 +146,28 @@ prepares what happened that is relevant to them, stores it for that person only 
 **Privacy.** Items carry ids and counts, never content, because the run data of a workflow is visible to everyone who can
 open it. The gathered lists and the text live in `brain_briefings` (migration 2090), which only the person's own reads
 (`lib/server/brain/briefings-store.ts` takes the user id on every read). A colleague's private item never reaches anyone's
-lists: the reads use the ledger's one visibility rule. Gather Work, Write Briefing, Save Briefing and Deliver Briefing run only in a
-workflow that an owner or an admin created and last saved (or one nobody created): a member's workflow could otherwise feed any
-`userId` through them, read or replace that person's briefing, or deliver it through a Slack credential of the member's own.
-They also check the run: one a member started (a manual or chat run) fails, so a member cannot post an unsaved graph or start from Gather Work with their own items under an admin's saved workflow; a run an owner or admin started, or a schedule's, works. An unsaved draft and an evaluation run need an owner or admin as starter. In any other case they fail with a message saying so. A person's choice of Slack is consent to the instance's Slack, not to a colleague's.
-A manual re-run delivers again: nothing records that a day's briefing was sent.
+lists: the reads use the ledger's one visibility rule. All five nodes read or write other people's data, so they check the workflow and the run
+(`requireInstanceFlow` in `lib/server/nodes/briefing.ts`):
+
+- **The workflow** must be made and last saved by an owner or an admin (or by nobody: a seeded one). A member's workflow
+  could otherwise feed any `userId` through them, read or replace that person's briefing, or deliver it through a Slack
+  credential of the member's own. When a member saves the workflow, even only its draft, every run fails with "A member
+  saved this workflow last: it handles no one's briefings until an owner or admin saves it again", the published
+  nightly run included, until an owner or admin saves it.
+- **The run.** The runner records who started a run (`startedBy`) for every run a person starts: a manual or chat run, an
+  MCP call (`execute_workflow`, `run_node`), an agent's tool call, a re-run, a retry someone asked for, and a
+  sub-workflow of any of these (its parent's starter). Such a run may handle briefings only when that person is an
+  owner or an admin. A run nobody started may only when a trigger started it (mode `trigger`, `poll` or `webhook`), it
+  is not a re-run nor a retry someone asked for (an automatic retry keeps the starter of the run it retries), it runs the
+  workflow's current saved version or its published one (not an older version from its history), and, for a
+  sub-workflow, its parent passes the same check. So a member cannot start from Gather Work with someone else's
+  `userId` over MCP, re-run the nightly run with a graph of their own or an older one, or re-run it to send everyone's
+  briefing again. An evaluation run never may. Each refusal fails the run with a message that says why.
+- **The brain off** (`LANDFLOW_BRAIN=false`): every node returns no items, from whichever node a run starts.
+
+A person's choice of Slack is consent to the instance's Slack, not to a colleague's. A webhook or form trigger in front
+of these nodes lets whoever calls it choose the items, so keep the template's Schedule. An owner's or admin's re-run
+delivers again: nothing records that a day's briefing was sent.
 
 **Serving.** `briefingFor(actor, { day })` returns the stored `ready` briefing of the day when there is one (`source: 'flow'`,
 `summary` is its text (a 02:00 run gathers yesterday and today so far; the morning's lookup for the day finds it), `generatedBy` names the workflow and run, and the live `today`, `yesterday` and `related` follow), else

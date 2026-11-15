@@ -71,13 +71,15 @@ export function planRetry(sourceId: string, request: RetryRequest = {}): Omit<Ru
   const current = store.getWorkflow(source.workflowId);
   const workflow = request.version === 'current' ? (current ?? original) : (original ?? current);
   if (!workflow) throw new RerunError('The workflow of this execution no longer exists', 404);
-  const retry = { of: source.executionId, attempt: (source.retryAttempt ?? 0) + 1 };
+  // An automatic retry continues the run it retries, so it keeps that run's starter; one a person asks for is theirs (run.ts).
+  const retry = { of: source.executionId, attempt: (source.retryAttempt ?? 0) + 1, ...(request.automatic && { automatic: true }) };
+  const starter = request.automatic && source.startedBy ? { startedBy: source.startedBy } : {};
   const fromFailed = request.from !== 'start';
-  if (fromFailed && workflow === original && store.getCheckpoint(sourceId)) return { workflow, mode: source.mode, retry, fromCheckpoint: { executionId: sourceId } };
+  if (fromFailed && workflow === original && store.getCheckpoint(sourceId)) return { workflow, mode: source.mode, retry, ...starter, fromCheckpoint: { executionId: sourceId } };
   const failedNode = source.error?.nodeId;
   const scope = fromFailed && failedNode && workflow.nodes.some((node) => node.id === failedNode) ? { scope: 'from' as const, nodeId: failedNode } : { scope: 'all' as const };
   const { rerunOf: _rerunOf, ...options } = planRerun(sourceId, scope, workflow);
-  return { ...options, retry };
+  return { ...options, retry, ...starter };
 }
 
 /**

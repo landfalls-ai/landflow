@@ -34,8 +34,33 @@ const { createTeamProject, setMember } = await import('@/lib/server/projects/sto
 const { items } = await import('./helpers');
 const { store } = await import('@/lib/server/store');
 const { briefingMarkdown } = await import('@/lib/server/mcp/brain-prompts');
+const { runWorkflow, planRerun } = await import('@/lib/server/runner');
+const { withAuth } = await import('@/lib/server/auth/context');
+const { credentials: vault } = await import('@/lib/server/credentials/vault');
+const { setHomeProject } = await import('@/lib/server/projects/store');
+const { instanceServer } = await import('@/lib/server/mcp/instance-tools');
+const { dayOf } = await import('@/lib/server/usage/ledger');
+const { Client, InMemoryTransport } = await import('@modelcontextprotocol/client');
 
+const { defineCredentialType, definePlugin } = await import('@landflow/sdk');
 registry.registerBuiltin(corePlugin);
+// The Slack credential type Deliver Briefing reads (the messaging plugin isn't loaded here).
+registry.registerBuiltin(
+  definePlugin({
+    info: { id: 'messaging', name: 'Messaging', version: '1.0.0', language: 'typescript' },
+    credentialTypes: [
+      defineCredentialType({
+        name: 'slackApi',
+        displayName: 'Slack API',
+        properties: [
+          { name: 'accessToken', displayName: 'Access Token', type: 'string', required: true, typeOptions: { password: true } },
+          { name: 'baseUrl', displayName: 'Base URL', type: 'string', default: 'https://slack.com/api' },
+        ],
+      }),
+    ],
+    nodes: [],
+  }),
+);
 const owner = await createUser({ email: 'owner@sync.test', name: 'Owner', role: 'owner', password: 'owner-password-1' });
 const alice = await createUser({ email: 'alice@sync.test', name: 'Alice', role: 'member', password: 'alice-password-1' });
 const bob = await createUser({ email: 'bob@sync.test', name: 'Bob', role: 'member', password: 'bob-password-1' });
@@ -80,33 +105,21 @@ afterAll(() => {
 const minutesAgo = (n: number) => new Date(Date.now() - n * 60_000).toISOString();
 const work = (sourceId: string, patch: Record<string, unknown> = {}) => ({ kind: 'work.session', source: 'claude-code', sourceId, occurredAt: minutesAgo(1), title: `Work ${sourceId}`, ...patch });
 
-/** Runs the template as the runner would: the execution is saved as running first, by `startedBy` (the owner by default; none: a schedule). */
-async function sync(options: { credentials?: Record<string, unknown>; workflowId?: string; startedBy?: string | null; unsaved?: boolean; startNodeId?: string; triggerItems?: ReturnType<typeof items> } = {}) {
+/**
+ * The template's content and delivery, run in the engine with credentials handed straight to Deliver Briefing: an owner's
+ * manual run (the execution row the runner would save). Who may run the nodes is tested through the real runner below.
+ */
+async function sync(options: { credentials?: Record<string, unknown>; workflowId?: string } = {}) {
   const workflow = { ...template.workflow, id: options.workflowId ?? 'wf_sync', nodes: template.workflow.nodes.map((n) => (n.id === 'deliver' && options.credentials ? { ...n, credentials: {} } : n)) };
   const executionId = `ex_${Math.random().toString(36).slice(2)}`;
-  const startedBy = options.startedBy === undefined ? owner.id : options.startedBy;
-  const scheduled = startedBy === null;
-  store.saveExecution({
-    executionId,
-    workflowId: workflow.id,
-    workflowName: workflow.name,
-    mode: scheduled ? 'trigger' : 'manual',
-    status: 'running',
-    startedAt: new Date().toISOString(),
-    finishedAt: '',
-    durationMs: 0,
-    runData: {},
-    executionOrder: [],
-    ...(options.unsaved ? { workflow } : { versionId: 'v_1' }),
-    ...(startedBy && { startedBy }),
-  } as never);
+  store.saveExecution({ executionId, workflowId: workflow.id, workflowName: workflow.name, mode: 'manual', status: 'running', startedAt: new Date().toISOString(), finishedAt: '', durationMs: 0, runData: {}, executionOrder: [], workflow, startedBy: owner.id } as never);
   return executeWorkflow({
     workflow,
     resolver,
     executionId,
-    mode: scheduled ? 'trigger' : 'manual',
-    startNodeId: options.startNodeId ?? 'nightly',
-    triggerItems: options.triggerItems ?? items({}),
+    mode: 'manual',
+    startNodeId: 'nightly',
+    triggerItems: items({}),
     resolveCredentials: (node) => (node.id === 'deliver' ? (options.credentials as never) : undefined),
   });
 }
@@ -229,28 +242,137 @@ describe('who may run the nodes', () => {
   });
 });
 
-describe('who started the run', () => {
-  const credentials = { 'messaging.slackApi': { accessToken: 'xoxb-dev-only', baseUrl: '' } };
-  it('a member’s run of an unsaved graph under an admin-saved id gathers, saves and delivers nothing', async () => {
-    recordWork(actorOf(bob), [work('b1')]);
+describe('who started the run (through the runner)', () => {
+  type AnyUser = typeof owner;
+  const as = <T,>(user: AnyUser, fn: () => T): T => withAuth({ principal: { user, via: 'test' } }, fn);
+  const slackKey = vault.create({ name: 'Slack for briefings', type: 'messaging.slackApi', data: { accessToken: 'xoxb-dev-only', baseUrl: slackUrl } });
+  const graph = (id: string, withinDays: number) => ({
+    ...template.workflow,
+    id,
+    nodes: template.workflow.nodes.map((n) => (n.id === 'deliver' ? { ...n, credentials: { 'messaging.slackApi': { id: slackKey.id, name: slackKey.name } } } : n.id === 'people' ? { ...n, parameters: { ...n.parameters, withinDays } } : n)),
+  });
+  // The nightly workflow, in the team Alice and Bob are editors of (Alice may run it): first saved by the owner, then by
+  // Alice with her own graph, then by the owner again, so Alice's graph is an older version in its history.
+  const ownerGraph = graph('wf_nightly', 3);
+  const aliceGraph = graph('wf_nightly', 0);
+  as(owner, () => store.saveWorkflow(ownerGraph));
+  setHomeProject('workflow', 'wf_nightly', team.id);
+  setHomeProject('credential', slackKey.id, team.id);
+  as(alice, () => store.saveWorkflow(aliceGraph));
+  as(owner, () => store.saveWorkflow(ownerGraph));
+  const saved = () => store.getWorkflow('wf_nightly')!;
+  const scheduled = (workflow = saved()) => runWorkflow({ workflow, mode: 'trigger', startNodeId: 'nightly', triggerItems: items({}) });
+  const today = () => dayOf(Date.now());
+  const slackPosts = () => slackCalls.filter((c) => c.url === '/chat.postMessage');
+
+  beforeEach(() => {
+    recordWork(actorOf(bob), [work('b1', { title: 'PRIVATE-BOB diary' })]);
     setPreferences(bob.id, { briefingDelivery: 'slack' });
-    const result = await sync({ startedBy: alice.id, unsaved: true, credentials: { 'messaging.slackApi': { ...credentials['messaging.slackApi'], baseUrl: slackUrl } } });
-    expect(result.status).not.toBe('success');
+  });
+
+  it('a scheduled run of an owner-saved workflow writes and delivers the briefings', async () => {
+    const run = await scheduled();
+    expect(run.error?.message).toBeUndefined();
+    expect(run.status).toBe('success');
+    expect(run.startedBy).toBeUndefined();
+    expect(rowsFor(bob.id, 'ready')).toHaveLength(1);
+    expect(slackPosts()).toHaveLength(1);
+  });
+
+  it('a member’s MCP run from Gather Work with their own items is refused, and nothing is written or sent', async () => {
+    const run = await as(alice, () => runWorkflow({ workflow: saved(), mode: 'mcp', startNodeId: 'gather', triggerItems: items({ userId: bob.id, day: today() }) }));
+    expect(run.status).toBe('error');
+    expect(run.startedBy).toBe(alice.id);
+    // And her manual run of an unsaved graph under the saved id.
+    const unsaved = { ...saved(), name: 'Alice’s copy' };
+    expect((await as(alice, () => runWorkflow({ workflow: unsaved, mode: 'manual', startNodeId: 'nightly' }))).status).toBe('error');
     expect(rowsFor(bob.id)).toHaveLength(0);
     expect(slackCalls).toEqual([]);
   });
 
-  it('a member’s run from Gather Work with their own items does the same', async () => {
-    recordWork(actorOf(bob), [work('b1')]);
-    const result = await sync({ startedBy: alice.id, startNodeId: 'gather', triggerItems: items({ userId: bob.id, day: '2026-11-14' }) });
-    expect(result.status).not.toBe('success');
+  it('the same through the MCP tool execute_workflow', async () => {
+    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+    await instanceServer(actorOf(alice)).connect(serverSide);
+    const client = new Client({ name: 'briefing-test', version: '1.0.0' });
+    await client.connect(clientSide);
+    const result = (await client.callTool({ name: 'execute_workflow', arguments: { id: 'wf_nightly', startNode: 'gather', input: { userId: bob.id, day: today() } } })) as { content: Array<{ text: string }> };
+    expect(JSON.parse(result.content[0].text).status).toBe('error');
     expect(rowsFor(bob.id)).toHaveLength(0);
+    expect(slackCalls).toEqual([]);
   });
 
-  it('an admin’s run and a schedule still work', async () => {
-    recordWork(actorOf(bob), [work('b1')]);
-    expect((await sync({ startedBy: null })).status).toBe('success');
-    expect(rowsFor(bob.id, 'ready').length).toBeGreaterThan(0);
+  it('a member’s re-run of a scheduled run with an older version’s graph is refused', async () => {
+    const nightly = await scheduled();
+    slackCalls.length = 0;
+    const plan = planRerun(nightly.executionId, { scope: 'all' }, aliceGraph);
+    const run = await as(alice, () => runWorkflow(plan));
+    expect(run.versionId).toBeTruthy();
+    expect(run.status).toBe('error');
+    expect(rowsFor(bob.id)).toHaveLength(1);
+    expect(slackCalls).toEqual([]);
+  });
+
+  it('a member’s plain re-run of a scheduled run, from the start or from a node, is refused and delivers nothing again', async () => {
+    const nightly = await scheduled();
+    slackCalls.length = 0;
+    for (const request of [{ scope: 'all' as const }, { scope: 'from' as const, nodeId: 'gather' }, { scope: 'only' as const, nodeId: 'deliver' }]) {
+      const run = await as(alice, () => runWorkflow(planRerun(nightly.executionId, request)));
+      expect(run.status).toBe('error');
+    }
+    expect(rowsFor(bob.id)).toHaveLength(1);
+    expect(slackCalls).toEqual([]);
+  });
+
+  it('a re-run with no person behind it is refused too, and an owner’s re-run is allowed', async () => {
+    const nightly = await scheduled();
+    expect((await runWorkflow(planRerun(nightly.executionId, { scope: 'all' }))).status).toBe('error');
+    const again = await as(owner, () => runWorkflow(planRerun(nightly.executionId, { scope: 'all' })));
+    expect(again.startedBy).toBe(owner.id);
+    expect(again.status).toBe('success');
+    expect(rowsFor(bob.id).map((r) => r.status).sort()).toEqual(['ready', 'superseded']);
+  });
+
+  it('a trigger run of an older version is refused; a retry passes only when automatic', async () => {
+    expect((await scheduled(aliceGraph)).status).toBe('error');
+    expect(rowsFor(bob.id)).toHaveLength(0);
+    const retry = (automatic: boolean) => runWorkflow({ workflow: saved(), mode: 'trigger', startNodeId: 'nightly', triggerItems: items({}), retry: { of: 'ex_failed', attempt: 1, automatic } });
+    expect((await retry(false)).status).toBe('error');
+    expect(rowsFor(bob.id)).toHaveLength(0);
+    const automatic = await retry(true);
+    expect(automatic.retryAutomatic).toBe(true);
+    expect(automatic.status).toBe('success');
+  });
+
+  it('a member saving the workflow stops the nightly run until an owner or admin saves it again', async () => {
+    as(alice, () => store.saveWorkflow(saved()));
+    try {
+      const run = await scheduled();
+      expect(run.status).toBe('error');
+      expect(run.error?.message).toBe('A member saved this workflow last: it handles no one’s briefings until an owner or admin saves it again');
+      expect(rowsFor(bob.id)).toHaveLength(0);
+    } finally {
+      as(owner, () => store.saveWorkflow(ownerGraph));
+    }
+    expect((await scheduled()).status).toBe('success');
+  });
+
+  it('with the brain off nothing is written or sent, from any start node', async () => {
+    const nightly = await scheduled();
+    const briefingId = rowsFor(bob.id, 'ready')[0].id;
+    database().deleteBefore('brain_briefings', 'created_at', '9999');
+    slackCalls.length = 0;
+    process.env.LANDFLOW_BRAIN = 'false';
+    try {
+      expect(nightly.status).toBe('success');
+      for (const startNodeId of ['nightly', 'people', 'gather', 'write', 'save', 'deliver']) {
+        const run = await as(owner, () => runWorkflow({ workflow: saved(), mode: 'manual', startNodeId, triggerItems: items({ userId: bob.id, day: today(), briefingId }) }));
+        expect(run.status).toBe('success');
+      }
+    } finally {
+      delete process.env.LANDFLOW_BRAIN;
+    }
+    expect(rowsFor(bob.id)).toHaveLength(0);
+    expect(slackCalls).toEqual([]);
   });
 });
 
