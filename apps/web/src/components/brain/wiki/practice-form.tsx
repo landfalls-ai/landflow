@@ -15,7 +15,7 @@ import { Button } from '../../ui/button';
 import { Dialog, Field } from '../../ui/dialog';
 import { Input, Select, Textarea } from '../../ui/inputs';
 import { draftPractice, editPractice } from './practices-api';
-import { draftInput, editInput, emptyCheck, emptyForm, formFrom, validatePracticeForm, type CheckRow, type FormErrors, type PracticeFormValues } from './practices-logic';
+import { draftInput, editBase, editInput, emptyCheck, emptyForm, formFrom, validatePracticeForm, type CheckRow, type FormErrors, type PracticeFormValues } from './practices-logic';
 
 const CHECK_KINDS: Array<{ kind: PracticeCheck['kind']; label: string }> = [
   { kind: 'pathExists', label: 'A file must exist' },
@@ -27,7 +27,7 @@ const Error_ = ({ text }: { text?: string }) => (text ? <p className="mt-1 text-
 
 /** `editing`: the practice and its newest version; without it, a new practice. */
 export function PracticeForm({ editing, onClose, onSaved }: { editing?: PracticeDetailResponse; onClose: () => void; onSaved: (practice: PracticeView) => void }) {
-  const newest = editing?.versions[0];
+  const newest = editing ? editBase(editing.versions) : undefined;
   const [values, setValues] = useState<PracticeFormValues>(() => (editing && newest ? formFrom(editing.practice, newest) : emptyForm()));
   const [tag, setTag] = useState('');
   const [sent, setSent] = useState(false);
@@ -180,7 +180,7 @@ export function PracticeForm({ editing, onClose, onSaved }: { editing?: Practice
           <Textarea id={`${id}-summary`} rows={2} value={values.summary} onChange={(e) => set('summary', e.target.value)} placeholder="Charts live in deploy/helm/<service>/, one per service." className={cn(values.summary.length > PRACTICE_LIMITS.summary && 'border-rd')} />
           <Error_ text={shown.summary} />
         </Field>
-        <Field id={`${id}-body`} label="Rules" aside={`${values.body.length}/${PRACTICE_LIMITS.body}`} hint="Markdown.">
+        <Field id={`${id}-body`} label="Rules" aside={`${values.body.length}/${PRACTICE_LIMITS.body}`} hint="Markdown." required>
           <Textarea id={`${id}-body`} rows={7} value={values.body} onChange={(e) => set('body', e.target.value)} spellCheck className="font-mono text-[12.5px]" />
           <Error_ text={shown.body} />
         </Field>

@@ -13,6 +13,7 @@ import {
   approveBody,
   checkSentence,
   draftInput,
+  editBase,
   emptyCheck,
   emptyForm,
   groupPractices,
@@ -219,9 +220,15 @@ describe('the review dialog', () => {
 });
 
 describe('the form', () => {
-  const ok = () => ({ ...emptyForm(), handle: 'helm/chart-location', title: 'Charts', summary: 'One chart per service.' });
-  it('accepts a minimal practice', () => {
+  const ok = () => ({ ...emptyForm(), handle: 'helm/chart-location', title: 'Charts', summary: 'One chart per service.', body: 'Rules.' });
+  it('chooses the version an edit starts from', () => {
+    expect(editBase([{ state: 'rejected' as const, n: 2 }, { state: 'approved' as const, n: 1 }])?.n).toBe(1);
+    expect(editBase([{ state: 'rejected' as const, n: 2 }])?.n).toBe(2);
+  });
+  it('accepts a minimal practice, and needs a body', () => {
     expect(validatePracticeForm(ok())).toEqual({});
+    expect(validatePracticeForm({ ...ok(), body: '  ' }).body).toBeDefined();
+    expect(validatePracticeForm({ ...ok(), checks: [{ ...emptyCheck('fileMatches'), glob: '*.md', pattern: '  ' }] }).checks).toBeDefined();
   });
   it('checks the handle, the level and project, the title and the summary', () => {
     expect(validatePracticeForm({ ...ok(), handle: 'Helm' }).handle).toBeDefined();

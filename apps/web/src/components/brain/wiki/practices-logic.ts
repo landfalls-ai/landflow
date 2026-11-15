@@ -255,18 +255,24 @@ export function validatePracticeForm(v: PracticeFormValues, { editing = false }:
   else if (paths.some((p) => p.length > L.glob)) errors.paths = `A path is at most ${L.glob} characters.`;
   if (!v.summary.trim()) errors.summary = 'Write the one-line rule agents are given.';
   else if (v.summary.trim().length > L.summary) errors.summary = `At most ${L.summary} characters.`;
-  if (v.body.length > L.body) errors.body = `At most ${L.body} characters.`;
+  if (!v.body.trim()) errors.body = 'Write the rules.';
+  else if (v.body.length > L.body) errors.body = `At most ${L.body} characters.`;
   if (v.checks.length > L.checks) errors.checks = `At most ${L.checks} checks.`;
   else
     for (const [i, row] of v.checks.entries()) {
       const n = i + 1;
       if (!row.glob.trim()) errors.checks = `Check ${n} needs a path pattern.`;
       else if (row.glob.trim().length > L.glob || row.other.trim().length > L.glob) errors.checks = `Check ${n}: a path pattern is at most ${L.glob} characters.`;
-      else if (row.kind === 'fileMatches' && !row.pattern) errors.checks = `Check ${n} needs the text to look for.`;
+      else if (row.kind === 'fileMatches' && !row.pattern.trim()) errors.checks = `Check ${n} needs the text to look for.`;
       else if (row.kind === 'fileMatches' && (row.pattern.length > L.pattern || !regexOk(row.pattern))) errors.checks = `Check ${n}: the text is not a valid pattern of at most ${L.pattern} characters.`;
       if (errors.checks) break;
     }
   return errors;
+}
+
+/** The version an edit starts from: the newest that was not rejected, as the API builds a PATCH (all rejected: the newest). */
+export function editBase<T extends { state: PracticeVersionState }>(versions: T[]): T | undefined {
+  return versions.find((v) => v.state !== 'rejected') ?? versions[0];
 }
 
 /** The body of `POST /api/practices`. */

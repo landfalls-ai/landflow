@@ -168,7 +168,9 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
     const all = markdown ? outlineOf(markdown) : [];
     return active === INDEX && home ? indexOutline(all, home) : all;
   }, [markdown, active, home]);
-  const layout = workbenchLayout(home?.entries.length, active, Boolean(practices.data));
+  const [askedForPractices, setAskedForPractices] = useState(false);
+  const practicesOn = (practices.data?.practices.length ?? 0) > 0 || (practices.data?.waiting ?? 0) > 0 || askedForPractices;
+  const layout = workbenchLayout(home?.entries.length, active, practicesOn);
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
   const mode: Mode = active ? (modes[active] ?? 'preview') : 'preview';
@@ -477,7 +479,7 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
               { label: 'What Landflow knows', run: () => open(SETTINGS, { pin: true }) },
               { label: 'Toggle Preview and Source', run: toggleMode },
               ...(layout.explorer ? [{ label: 'Toggle the side bar', run: () => setSidebar((v) => !v) }] : []),
-              ...(layout.explorer ? [{ label: 'Show Practices', run: () => (setView('practices'), setSidebar(true), setDrawer(true)) }] : []),
+              { label: 'Show Practices', run: () => (setAskedForPractices(true), setView('practices'), setSidebar(true), setDrawer(true)) },
               { label: 'Show Problems', run: () => setPanel('problems') },
               { label: 'Show Suggestions', run: () => setPanel('suggestions') },
               ...(layout.explorer ? [{ label: 'Search the brain', run: () => (setView('search'), setSidebar(true), setDrawer(true)) }] : []),
