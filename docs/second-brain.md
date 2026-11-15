@@ -7,7 +7,7 @@ and post suggestions next to the built-in ones.
 
 ```
  observe ─────────► remember ─────────► conclude ─────────► propose ─────────► measure
- usage ledger       profiles, facts     12 detectors, your  Home inbox, canvas  did it help?
+ usage ledger       profiles, facts     13 detectors, your  Home inbox, canvas  did it help?
  (every run, edit,  and a searchable    workflows, the      card, a digest;     back into the
  AI call, action)   index               Platform analyst    Apply with a diff   facts
 ```
@@ -111,6 +111,7 @@ The first tick is 30 s after start.
 | Agent quality | 3+ thumbs down that are 30%+ of an agent's feedback in 14 days | persona rules the model writes from the comments, for the agent's draft |
 | Unmet demand | 3+ Spotlight asks that changed nothing, or empty node searches, about the same term, from 2 people or on 2 days | a draft workflow for the request |
 | Missing tool | something the Agent architect needed and no node online does, grouped by the app (or the first telling word, with spellings like "Text Toolkit" and "TextToolkit" as one); one need is enough, the same person asking again the same day counts once | "Build a tool for Grafana", with a sketch of the node plugin the model writes (nodes, parameters, credential) and a link to **Build a plugin**. Its button is **Build it**: approving it starts the workflows that build one (below) |
+| Work overlap | two people whose `org` work of the last 3 days shares an initiative, a customer, a directory of the same repository, or similar words, and who were not introduced in the last 14 days ([below](#work-overlap)) | one suggestion addressed to both: "Ana and Ben are both on billing", with the `org` titles |
 | No safety net | an active workflow with 3+ failed production runs in 14 days and no error workflow | `setWorkflowSettings` with the error workflow you have, or a draft "Failure alerts" workflow when there is none |
 
 - **What a suggestion holds** (`proposals`): a title; why, with evidence; the expected effect; its changes (ops, a
@@ -126,6 +127,24 @@ The first tick is 30 s after start.
 - **Quieter detectors**: a detector whose decided suggestions (5 or more) are mostly dismissed as wrong or not relevant
   gets its thresholds multiplied (×1.5 from 40% rejected, ×2 from 60%, ×3 from 80%). A [flow detector](#flow-detectors)
   gets the multiplier as `quiet`, and its findings also need a minimum confidence (0.5, 0.65, 0.8).
+
+### Work overlap
+
+The detector `work-overlap` (`lib/server/brain/overlap.ts`) introduces two people who are working on the same thing.
+
+- It reads only `org` work of the last 3 days; a private or `team` item is never selected. Two people count when their
+  items share an initiative or a customer (also within one repository), a directory of the same repository, or words
+  (the same repository alone is not enough, and a directory name across different repositories is none).
+- Why not `team` work: the card's target is the instance, so owners and admins can open it, and a `team` title is for
+  the owner's project mates only. Bringing team work in needs `canProposal` (`scope.ts`) to refuse non-audience readers
+  of this detector, a change outside the detector's files (a follow-up in [limitations](limitations.md)).
+- The suggestion is one card addressed to both people, in their inbox. No Slack message is sent on its own: a mirror
+  needs a credential someone chose, and an admin naming one is a follow-up. It names both, and its evidence holds only
+  `org` titles. A pair with a side that has no `org` item gets none.
+- The same two people are not introduced again for 14 days, whatever became of the first card. **Dismiss** with
+  **Don't suggest this again** mutes introductions for the person who pressed it (when it is one of the two): no pair
+  with them is made again. A decision from Slack, or by an admin outside the pair, mutes no one.
+- Quieter when people dismiss it as wrong: each side must then show two or three items before it speaks.
 
 ### 5. Where you see it
 

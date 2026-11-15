@@ -12,6 +12,7 @@ import { QUEUE_MAX, VISIBILITIES, backoffMs, callBrain, confirmAndPost, deleteWo
 import { addArea, addPrs, areaOf, bandLine, bashFacts, canPost, isAllowed, localDay, newEntry, parseRepos, repoSlug, statusLine, syncText, type Entry, type View } from './journal'
 import { PANE_ID, drawBand, drawPane } from './pane'
 import { titleFrom, toEvent } from './summary'
+import { BRAIN_ASK_FULL, BRAIN_ASK_SPEC, brainAsk, questionOf } from './tools'
 
 const FLUSH_MS = 60_000
 /** The journal keeps this many entries and this many days. */
@@ -343,6 +344,8 @@ export const register: Register = (on, options) => {
     allowed = undefined
     brainOff = false
     yesterday = undefined
+    // The model's own way in: only with a key, and never failing the session.
+    if (config) await $.tool.register(BRAIN_ASK_SPEC as never).catch(() => undefined)
     await $.command.register({ name: 'brain', description: 'Your work in the company brain: sync, today, review, status, pause, resume, forget <id>, visibility <id> private|team|org, post <id>', argumentHint: 'sync | today | review | status | pause | resume | forget <id> | visibility <id> <who> | post <id>' })
     if (config && mode !== 'off') {
       // An entry left open by a session that never ended is held as it stood.
@@ -403,6 +406,14 @@ export const register: Register = (on, options) => {
     }
     return next(e)
   }).catch(($, e, next) => next(e))
+
+  on('tool.call', { tool: BRAIN_ASK_FULL }, async ($, e) => {
+    const question = questionOf(e)
+    if (!config) return { result: { content: 'The brain is not set up: add the Landflow URL and key in the mod options.' }, isError: true } as never
+    if (!question) return { result: { content: 'Give a question.' }, isError: true } as never
+    const answer = await brainAsk($, config, question)
+    return { result: { content: answer.text }, ...(answer.isError && { isError: true }) } as never
+  })
 
   on('tool.call', async ($, e, next) => {
     // Observe after the call: never deny, never change what the tool answers.

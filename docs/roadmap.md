@@ -1531,9 +1531,10 @@ setting `brain.workAutoSend`.
   `brain-sdlc-velocity`, Suggest Improvement's Build Prompt, and **Build it** opening a new workflow with Spotlight
   building from the suggestion's prompt ([second-brain.md](second-brain.md#nightly-sdlc-velocity)). Closes V4.
 - **Built (B29)**: the mod's colleagues: `/brain sync`, the pane, the overlap band, team or org per item, Post as my update and the admin's no-auto rule ([landflow-brain-mod.md](landflow-brain-mod.md#colleagues)).
-- **Built (B30, V3's server part)**: the Tomorrow sync template and its five brain nodes, the `brain_briefings` store, briefings served over MCP and `GET /api/brain/briefing`; Slack delivery with the server's own bot (`LANDFLOW_BRIEFING_SLACK_TOKEN`), never a credential ([work-and-briefings.md](work-and-briefings.md#the-nightly-sync)). Open, carried to B38: the landflow-brain mod's session start shows `summary` and `source` (`hooks/client.ts`, `register.ts`).
+- **Built (B30, V3's server part)**: the Tomorrow sync template and its five brain nodes, the `brain_briefings` store, briefings served over MCP and `GET /api/brain/briefing`; Slack delivery with the server's own bot (`LANDFLOW_BRIEFING_SLACK_TOKEN`), never a credential ([work-and-briefings.md](work-and-briefings.md#the-nightly-sync)). Still open: the landflow-brain mod's session start shows `summary` and `source` (`hooks/client.ts`, `register.ts`).
 - **Built (B37, V3 closed on the web)**: "Your morning" on Home and at the top of the Brain index, and a one-click "Set up tomorrow sync" for admins ([work-and-briefings.md](work-and-briefings.md#on-the-web)).
-- **Next**: the overlap detector and the mod showing the nightly text at session start. (The admin's auto-send switch is in Settings → MCP.) Also next on the web: a `finished` list on `Briefing` and the card ("what finished"), and a live "Slack is set up" check so the Delivery line does not claim Slack when the server has no token or SMTP.
+- **Built (B38, MOD8 closed)**: the brain side of the mod: the Work overlap detector introduces two people on the same thing (one card to both, `org` work only, once in 14 days, mutable, inbox only; [second-brain.md](second-brain.md#work-overlap)), the mod's `brain_ask` tool, and `landflow-brain` and `landflow-harness` in the repository marketplace ([landflow-brain-mod.md](landflow-brain-mod.md#brain_ask)).
+- **Next**: the mod showing the nightly text at session start, `team` work in the overlap card (needs `canProposal` to refuse non-audience readers), and an admin-named Slack credential for it. (The admin's auto-send switch is in Settings → MCP.) Also next on the web: a `finished` list on `Briefing` and the card ("what finished"), and a live "Slack is set up" check so the Delivery line does not claim Slack when the server has no token or SMTP.
 
 ## Shell: nine-item rail (built 2026-11-14)
 
@@ -1780,7 +1781,7 @@ The wave 4 review notes were fixed in wave 5's carryover where they were contain
   the queue to re-check the policy at flush (or the server to refuse it), a change to the queue's contract.
 - **Review resets a widened item**: `/brain visibility <id> team` on a held item, then a plain Send in `/brain review`,
   sends it private (the safe direction, and what the prompt says). Showing the current visibility in the review question
-  is a wording change in `register.ts`, which B38 owns in wave 6.
+  is a wording change in `register.ts` (B38 did not do it; still open).
 - **No test renders a Teams card**: the card (name, goal, status) is inline in `TeamsView` behind `useRouter`; testing
   it needs it extracted into a component of its own.
 - **Live checks still open from wave 4**: Spotlight's continue-from-step with a real model stopped mid-run; importing an
