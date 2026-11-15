@@ -10,6 +10,7 @@
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { AiModelUsage, AiUsageTotals } from '../../shared/ai-usage';
+import type { AiCallSource, AiRuntime } from '../../shared/llm-gateway';
 import { singleton } from '../singleton';
 
 export interface ModelCall {
@@ -19,6 +20,16 @@ export interface ModelCall {
   operation: 'chat' | 'embeddings';
   /** The model credential the call was made with (caps per credential); absent for the host's own keys and local models. */
   credentialId?: string;
+  /** The gateway's call id (`x-litellm-call-id`), when the call went through one: a call id is counted once. */
+  callId?: string;
+  /** What the gateway said the call cost (`x-litellm-response-cost`), dollars. */
+  gatewayCost?: number;
+  /** The gateway is the one the server is configured with, so its cost may stand in for an unpriced model's. */
+  gatewayCostTrusted?: boolean;
+  /** Where the row comes from (default `landflow`: Landflow's own meter). */
+  source?: AiCallSource;
+  /** What ran the call (default `landflow`). */
+  runtime?: AiRuntime;
 }
 
 export interface MeteredCall extends ModelCall {
@@ -44,7 +55,7 @@ export interface UsageLimit {
 
 /** Prices calls and stores them; shared by a scope tree (children inherit their root's meter). */
 export interface UsageMeter {
-  cost(call: ModelCall & { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number }): number;
+  cost(call: ModelCall & { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number }): number; // a ModelCall may carry the gateway's cost
   record(call: MeteredCall, scope: UsageScope): void;
   /** Caps that depend on the call itself (the credential it uses) or on who started the run (Settings → AI usage caps). */
   callLimits?(call: ModelCall, scope: UsageScope): UsageLimit[];
@@ -59,15 +70,17 @@ export interface UsageScopeInfo {
   userId?: string;
   /** What made the call when no execution or agent did: Spotlight, the Agent architect or the brain (`ai_usage.surface`). */
   surface?: 'spotlight' | 'architect' | 'brain';
+  /** The project the call belongs to, when the opener knows it (else the agent's or workflow's home project). */
+  projectId?: string;
 }
 
 /** Thrown when a cap is reached: the call is refused (or, once over the cap, the run stops after it). */
 export class UsageCapError extends Error {
   readonly limit: { metric: UsageLimit['metric']; max: number; used: number; subject: string };
 
-  constructor(limit: UsageLimit, used: number) {
+  constructor(limit: UsageLimit, used: number, message?: string) {
     const amount = (value: number) => (limit.metric === 'cost' ? `$${value.toFixed(value < 1 ? 4 : 2)}` : `${Math.round(value).toLocaleString('en-US')} tokens`);
-    super(`AI usage cap reached: ${limit.subject} used ${amount(used)} of its ${amount(limit.max)} limit (${limit.setIn})`);
+    super(message ?? `AI usage cap reached: ${limit.subject} used ${amount(used)} of its ${amount(limit.max)} limit (${limit.setIn})`);
     this.name = 'UsageCapError';
     this.limit = { metric: limit.metric, max: limit.max, used, subject: limit.subject };
   }

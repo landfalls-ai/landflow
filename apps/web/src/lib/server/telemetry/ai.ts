@@ -23,6 +23,11 @@ export interface ChatResponse {
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
   finishReasons?: string[];
+  /** The LLM gateway's call id (`x-litellm-call-id`) and the cost it reported (`x-litellm-response-cost`), when the call went through one. */
+  callId?: string;
+  gatewayCost?: number;
+  /** The gateway is the server's configured one, so its cost may stand in for an unpriced model's. */
+  gatewayCostTrusted?: boolean;
 }
 
 /** Run one chat-completion call in a `gen_ai.chat {model}` span and record its metrics. */
@@ -77,6 +82,7 @@ async function traceGenAi<T>(
             ...(response.cacheReadTokens && { 'gen_ai.usage.cache_read.input_tokens': response.cacheReadTokens }),
             ...(response.cacheWriteTokens && { 'gen_ai.usage.cache_creation.input_tokens': response.cacheWriteTokens }),
             ...(response.finishReasons && { 'gen_ai.response.finish_reasons': response.finishReasons }),
+            ...(response.callId && { 'litellm.call_id': response.callId }),
             ...(response.dimensions && { 'gen_ai.embeddings.dimension.count': response.dimensions }),
           });
           if (response.inputTokens) instruments.aiTokens.add(response.inputTokens, { ...base, 'gen_ai.token.type': 'input' });
@@ -91,6 +97,9 @@ async function traceGenAi<T>(
             cacheReadTokens: response.cacheReadTokens,
             cacheWriteTokens: response.cacheWriteTokens,
             ...(request.credentialId && { credentialId: request.credentialId }),
+            ...(response.callId && { callId: response.callId }),
+            ...(response.gatewayCost !== undefined && { gatewayCost: response.gatewayCost }),
+            ...(response.gatewayCostTrusted && { gatewayCostTrusted: true }),
           };
           let cost: number | undefined;
           try {

@@ -36,6 +36,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | MCP gateway (agentgateway): sync, identity, tokens | [mcp-gateway.md](mcp-gateway.md) | [transports.md](transports.md) |
 | AI: AI Agent and sub-nodes, hosted chat and widget, RAG, guardrails, evaluations, MCP | [features/ai.md](features/ai.md) | |
 | Standalone agents: personas, skills, capabilities, channels (Telegram, Slack, Teams), schedules, memory | [agents.md](agents.md) | |
+| The LLM gateway: LiteLLM in front of the models, the Gateway field on the Anthropic API and OpenAI API credentials, who is calling, the call id and cost on each AI call | [llm-gateway.md](llm-gateway.md) | [agents.md](agents.md), [observability.md](observability.md) |
 | The agent roster: teams, persona templates, faces and other avatars, the Agent architect chat | [agents.md](agents.md#the-roster) | [second-brain.md](second-brain.md) |
 | Agent teams: agents with a lead, reporting lines and reviewers, the org chart, budgets, publishing | [agent-teams.md](agent-teams.md) | [agents.md](agents.md#teams) |
 | The team notebook: notes members write while they work, search by meaning, disputes, promotion to team and project, the Notebook tab, Claude Code members over MCP | [team-notebook.md](team-notebook.md) | [agent-teams.md](agent-teams.md), [second-brain.md](second-brain.md) |

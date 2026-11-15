@@ -27,6 +27,7 @@ import { logger } from '../telemetry/logger';
 import { recordUsage } from '../usage/ledger';
 import { instanceTimezone } from '../settings';
 import { singleton } from '../singleton';
+import { scopeProjectId } from '../llm-gateway/call';
 import { aiCaps, capSetActive } from './caps';
 import { getUser } from '../auth/users';
 import { noteUsage } from './notify';
@@ -88,9 +89,12 @@ export class AiUsageMeter implements UsageMeter {
     private readonly retentionDays = aiUsageRetentionDays(),
   ) {}
 
-  cost(call: { provider: string; model: string; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number }): number {
+  /** The price table's price when the model is priced; else what the configured gateway reported; else 0. */
+  cost(call: { provider: string; model: string; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number; gatewayCost?: number; gatewayCostTrusted?: boolean }): number {
     if (!this.prices || Date.now() - this.prices.at > PRICE_CACHE_MS) this.prices = { at: Date.now(), overrides: priceOverrides(this.db()) };
-    return estimateCost(findPrice(call.provider, call.model, this.prices.overrides), call.inputTokens, call.outputTokens, call.cacheReadTokens, call.cacheWriteTokens);
+    const price = findPrice(call.provider, call.model, this.prices.overrides);
+    if (!price && call.gatewayCostTrusted && call.gatewayCost !== undefined) return call.gatewayCost;
+    return estimateCost(price, call.inputTokens, call.outputTokens, call.cacheReadTokens, call.cacheWriteTokens);
   }
 
   /** The price of a call for display (Run Trace): the same pricing as `cost`, and whether the model has a price at all (an unknown one is $0). */
@@ -161,6 +165,11 @@ export class AiUsageMeter implements UsageMeter {
         user_id: scope.lookup('userId'),
         surface: scope.lookup('surface'),
         credential_id: call.credentialId,
+        call_id: call.callId,
+        source: call.source ?? 'landflow',
+        runtime: call.runtime ?? 'landflow',
+        project_id: scopeProjectId(scope),
+        gateway_cost: call.gatewayCost,
         cache_read_tokens: call.cacheReadTokens,
         cache_write_tokens: call.cacheWriteTokens,
         provider: call.provider,
@@ -181,7 +190,18 @@ export class AiUsageMeter implements UsageMeter {
         cost: call.cost,
         // `input` is the whole prompt, cached tokens included; `cacheRead` and `cacheWrite` are the parts of it the
         // provider read from or wrote to its prompt cache (0 when it reports none), so a ledger can price them apart.
-        attrs: { provider: call.provider, model: call.model, operation: call.operation, input: call.inputTokens, output: call.outputTokens, cacheRead: call.cacheReadTokens ?? 0, cacheWrite: call.cacheWriteTokens ?? 0 },
+        attrs: {
+          provider: call.provider,
+          model: call.model,
+          operation: call.operation,
+          input: call.inputTokens,
+          output: call.outputTokens,
+          cacheRead: call.cacheReadTokens ?? 0,
+          cacheWrite: call.cacheWriteTokens ?? 0,
+          ...(call.callId && { callId: call.callId }),
+          ...(call.callId && { source: call.source ?? 'landflow' }),
+          ...(call.gatewayCost !== undefined && { gatewayCost: call.gatewayCost }),
+        },
       });
       if (now - this.pruned > DAY_MS / 24) {
         this.pruned = now;

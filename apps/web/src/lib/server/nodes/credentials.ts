@@ -5,6 +5,7 @@
  */
 import Anthropic from '@anthropic-ai/sdk';
 import { defineCredentialType, type NodeOperationError } from '@landflow/sdk';
+import { testGatewayCredential } from '../llm-gateway/models';
 import { OPENAI_BASE_URL, openAiConnection, openAiModels } from './models';
 import { STRANDS_BASE_URL, TYPESAFE_BASE_URL, strandsConnection, systemOneDecide, typesafeConnection, typesafeModels } from './systemone';
 
@@ -31,6 +32,17 @@ export const openAiApiCredential = defineCredentialType({
       description: 'The API root, ending in /v1. Ollama: http://127.0.0.1:11434/v1',
     },
     {
+      name: 'gateway',
+      displayName: 'Gateway',
+      type: 'options',
+      default: 'none',
+      options: [
+        { name: 'None (call the provider)', value: 'none' },
+        { name: 'LiteLLM', value: 'litellm' },
+      ],
+      description: 'LiteLLM: the Base URL is your LiteLLM proxy and the API key a virtual key; usage is attributed to projects, agents and people',
+    },
+    {
       name: 'organization',
       displayName: 'Organization ID',
       type: 'string',
@@ -39,6 +51,7 @@ export const openAiApiCredential = defineCredentialType({
     },
   ],
   async test(data, ctx) {
+    if (data.gateway === 'litellm') return testGatewayCredential(data, ctx.http);
     try {
       const connection = openAiConnection(data);
       const models = await openAiModels(connection, ctx.http);
@@ -93,10 +106,22 @@ export const anthropicApiCredential = defineCredentialType({
       placeholder: 'https://api.anthropic.com',
       description: 'Optional: a proxy or gateway in front of the API',
     },
+    {
+      name: 'gateway',
+      displayName: 'Gateway',
+      type: 'options',
+      default: 'none',
+      options: [
+        { name: 'None (call the provider)', value: 'none' },
+        { name: 'LiteLLM', value: 'litellm' },
+      ],
+      description: 'LiteLLM: the Base URL is your LiteLLM proxy and the API key a virtual key; usage is attributed to projects, agents and people',
+    },
   ],
-  async test(data) {
+  async test(data, ctx) {
     const apiKey = typeof data.apiKey === 'string' ? data.apiKey.trim() : '';
     if (!apiKey) return { ok: false, message: 'Enter an API key' };
+    if (data.gateway === 'litellm') return testGatewayCredential(data, ctx.http);
     const baseUrl = typeof data.baseUrl === 'string' ? data.baseUrl.trim() : '';
     const client = new Anthropic({ apiKey, ...(baseUrl && { baseURL: baseUrl }), maxRetries: 0, timeout: 15_000 });
     try {

@@ -7,6 +7,8 @@ import type { AgentModel, ModelOption, ModelProvider } from '../../shared/agents
 import { credentials } from '../credentials/vault';
 import { anthropicModel, ollamaModel, openAiConnection, openAiModel, openAiModels } from '../nodes/models';
 import { ollamaUrl } from '../config';
+import { gatewayModelOptions } from '../llm-gateway/models';
+import { isGatewayCredential } from '../llm-gateway/settings';
 
 
 const ANTHROPIC_MODELS: ModelOption[] = [
@@ -26,7 +28,7 @@ export async function agentModel(config: AgentModel | undefined): Promise<Langua
       const data = config.credential ? await credentials.dataWithSecrets(config.credential, 'core.anthropicApi') : undefined;
       const apiKey = typeof data?.apiKey === 'string' ? data.apiKey.trim() : '';
       const baseUrl = typeof data?.baseUrl === 'string' ? data.baseUrl.trim() : '';
-      return anthropicModel({ model: config.model, effort: 'medium', maxTokens: 16_000, fallback: true, promptCache: true, ...(apiKey && { apiKey, ...(baseUrl && { baseUrl }) }), ...(config.credential?.id && { credentialId: config.credential.id }) });
+      return anthropicModel({ model: config.model, effort: 'medium', maxTokens: 16_000, fallback: true, promptCache: true, ...(apiKey && { apiKey, ...(baseUrl && { baseUrl }) }), ...(isGatewayCredential(data) && { gateway: 'litellm' as const }), ...(config.credential?.id && { credentialId: config.credential.id }) });
     }
     case 'openai': {
       if (!config.credential) throw new Error('Choose an OpenAI API credential for this agent’s model');
@@ -41,10 +43,19 @@ export async function agentModel(config: AgentModel | undefined): Promise<Langua
 
 /** Models for the builder's picker. */
 export async function modelOptions(provider: ModelProvider, options: { credentialId?: string; baseUrl?: string }): Promise<ModelOption[]> {
-  if (provider === 'anthropic') return ANTHROPIC_MODELS;
+  if (provider === 'anthropic') {
+    // A LiteLLM gateway serves its own models; a normal Anthropic credential has the fixed list.
+    if (options.credentialId) {
+      const data = await credentials.dataWithSecrets({ id: options.credentialId, name: options.credentialId }, 'core.anthropicApi').catch(() => undefined);
+      if (data && isGatewayCredential(data)) return gatewayModelOptions({ baseUrl: String(data.baseUrl ?? ''), ...(typeof data.apiKey === 'string' && data.apiKey.trim() && { apiKey: data.apiKey.trim() }) }, provider);
+    }
+    return ANTHROPIC_MODELS;
+  }
   if (provider === 'openai') {
     if (!options.credentialId) return [];
-    const connection = openAiConnection(await credentials.dataWithSecrets({ id: options.credentialId, name: options.credentialId }, 'core.openAiApi'));
+    const data = await credentials.dataWithSecrets({ id: options.credentialId, name: options.credentialId }, 'core.openAiApi');
+    if (isGatewayCredential(data)) return gatewayModelOptions({ baseUrl: String(data.baseUrl ?? ''), ...(typeof data.apiKey === 'string' && data.apiKey.trim() && { apiKey: data.apiKey.trim() }) }, provider);
+    const connection = openAiConnection(data);
     const models = await openAiModels(connection);
     return models
       .filter((m) => !NOT_CHAT.test(m.id))

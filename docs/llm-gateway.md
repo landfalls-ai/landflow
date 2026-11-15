@@ -48,8 +48,64 @@ COMPOSE_BAKE=false docker --context orbstack compose -p landflow-infra -f deploy
 
 ## Point Landflow at it
 
-<!-- LL02: the Gateway field on the Anthropic API and OpenAI API credentials, agents, chat model nodes, Spotlight and the
-router, the headers that say who is calling, the call id and cost on each AI call, the fallback beta. -->
+Landflow's own calls (agents, the chat model nodes, Spotlight, the brain, the model router) can go through the gateway.
+
+**On a credential.** The **Anthropic API** and **OpenAI API** credentials have a **Gateway** field: *None (call the
+provider)* or *LiteLLM*. With LiteLLM, the Base URL is your proxy and the API key a LiteLLM virtual key:
+
+| Credential | Base URL | Calls |
+|---|---|---|
+| Anthropic API | `http://127.0.0.1:54100` (the proxy's root) | `/v1/messages` |
+| OpenAI API | `http://127.0.0.1:54100/v1` | `/v1/chat/completions` |
+
+**Test connection** says "Connected to LiteLLM: N models" (and why not, if it can't). The credential has no admin key
+field on purpose: the master key is never stored in a credential (a member who can edit a credential could point its URL
+somewhere and receive it). The spend import, the budgets sync and the keys for kagent use only `LANDFLOW_LLM_GATEWAY_ADMIN_KEY`
+on the server, sent only to `LANDFLOW_LLM_GATEWAY_URL`.
+
+**Without a credential.** A deployment sets `LANDFLOW_LLM_GATEWAY_URL` and `LANDFLOW_LLM_GATEWAY_KEY` (a virtual key). Settings →
+AI → LLM gateway names a credential instead and wins over them.
+
+**Agents and chat model nodes.** An agent whose model credential has Gateway set to LiteLLM calls the proxy. So does the
+Anthropic Chat Model node with such a credential, and the router's models. The model picker lists what the gateway serves
+(`GET /v1/models` with the virtual key, cached for 60 seconds), each marked "via LiteLLM"; a normal Anthropic credential still
+lists Claude's fixed models. The Anthropic Chat Model node's own model dropdown stays the fixed list: type the gateway's model
+name in an agent, or use the OpenAI Chat Model node, whose list comes from the gateway.
+
+**Spotlight and the brain.** `litellm/<model>` as the model override, or `LANDFLOW_BUILDER_MODEL=litellm/qwen3-coder:30b`, uses the
+instance's gateway, resolved at call time, over the OpenAI-compatible path. With no gateway: "No LLM gateway: set one in Settings
+→ AI → LLM gateway, or LANDFLOW_LLM_GATEWAY_URL".
+
+**Who is calling.** Every call through a gateway sends ids (never names or emails):
+
+| Header | Value | LiteLLM uses it for |
+|---|---|---|
+| `x-litellm-end-user-id` | `landflow-user-<id>` of the person who started the run | spend and budget per customer |
+| `x-litellm-tags` | `landflow`, `landflow-project:<id>`, `landflow-agent:<id>`, `landflow-workflow:<id>`, `landflow-surface:<name>`, `landflow-runtime:landflow` | spend by tag |
+| `x-litellm-spend-logs-metadata` | JSON with `landflow: "in-process"` and the ids above | the spend log; the spend import skips rows marked `in-process` |
+| `x-litellm-trace-id` | the execution id, else the session id | grouping calls of one run |
+
+A person is only named when a person started the run. The project is the home project of the agent or workflow. With **Settings →
+AI → LLM gateway → Customer Portal headers** on, `x-litellm-customer-org-alias` and `x-litellm-customer-member-id` are sent too. It is
+off: the portal is not in a LiteLLM release yet.
+
+**No fallback beta.** Landflow's normal Anthropic calls send `betas: ['server-side-fallback-2026-07-01']` and `fallbacks: 'default'`
+so Anthropic retries a declined request on its fallback model. Through a gateway Landflow sends neither: LiteLLM routes its own
+fallbacks, and an unknown beta must not reach a model that is not Anthropic's. `output_config.effort` is sent only for `claude-`
+models.
+
+**The call id and the cost.** LiteLLM answers each call with `x-litellm-call-id` and `x-litellm-response-cost`. Landflow keeps both on
+the call it records: the `ai_usage` row has `call_id`, `source = landflow`, `runtime = landflow`, `project_id` and `gateway_cost`, and the
+`ai.call` event has `callId` and `gatewayCost`. A call id is in at most one row, so the spend import never counts the call again. The cost
+that counts in caps and Insights is Landflow's own price table. For a model with no price, the gateway's cost is used only when
+the call went to the gateway the server is configured with (`LANDFLOW_LLM_GATEWAY_URL`). A gateway named only by a credential could
+under-report, so its cost is stored and shown as "gateway says" and nothing more.
+
+**A spent budget is a cap.** When LiteLLM refuses a call because a budget is spent, Landflow shows "The LLM gateway stopped the call: the
+budget of <customer, team or key> is spent. Ask for a higher cap on Insights → AI." like any other cap, not as a crash.
+
+**Outbound policy.** `LANDFLOW_LLM_GATEWAY_URL` is reachable in production like `OLLAMA_URL`. A gateway named only by a credential follows
+`LANDFLOW_OUTBOUND_ALLOW` like any other Base URL.
 
 ## Agents outside Landflow
 
@@ -85,3 +141,8 @@ A call is counted in one place only:
 
 - **High availability.** One replica and no Redis; a restart interrupts calls in flight.
 - **TLS.** None on the loopback port; do not expose it beyond the machine.
+- **Tags budgets**: LiteLLM's budgets per tag are not used (whether they are in the open-source build is not verified). Tags are for
+  spend reports only.
+- **The Customer Portal**: not in a LiteLLM release yet. Landflow can send its headers (a setting, off) but does nothing with it.
+- **The Anthropic Chat Model node's model list** stays the fixed Claude list with a gateway credential.
+- **Bare Ollama models** (the Ollama Chat Model node, an agent with the Ollama provider) call Ollama directly, not through the gateway.
