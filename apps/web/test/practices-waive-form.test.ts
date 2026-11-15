@@ -15,8 +15,8 @@ describe('failuresFor', () => {
   it('gives the lines of this practice', () => {
     expect(failuresFor(run(lines), 'helm/charts')).toEqual(['helm/charts@1: pathExists charts/**: no changed file matches charts/**']);
   });
-  it('gives every line when none names it, and nothing for another kind of failure', () => {
-    expect(failuresFor(run(lines), 'other/rule')).toHaveLength(2);
+  it('gives nothing when no line names the practice, and nothing for another kind of failure', () => {
+    expect(failuresFor(run(lines), 'other/rule')).toEqual([]);
     expect(failuresFor({ workflowId: 'w', status: 'error', runData: { Code: [{ status: 'error', error: { message: 'boom' } }] } }, 'sec/no-secrets')).toEqual([]);
     expect(failuresFor(undefined, 'x')).toEqual([]);
   });

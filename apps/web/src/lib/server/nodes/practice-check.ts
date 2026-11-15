@@ -16,6 +16,7 @@ import { practicesPort } from '../practices/port';
 import { selectPractices } from '../practices/select';
 import { findWaiver } from '../practices/store';
 import { store } from '../store';
+import { publicUrl } from '../config/urls';
 import { PRACTICE_REPO, type ApprovedPractice } from '../../shared/practices';
 
 const main = [{ type: 'main' as const }];
@@ -111,6 +112,14 @@ export function waiverChain(executionId: string): string[] {
   return chain;
 }
 
+/** Whether a run's failed step shows this very failure line: the waiver was for what the approver saw, not for other files. */
+export function failedWith(executionId: string, line: string): boolean {
+  const runData = store.getExecution(executionId)?.runData ?? {};
+  return Object.values(runData).some((runs) =>
+    (runs ?? []).some((r) => String((r as { error?: { description?: string } }).error?.description ?? '').split('\n').includes(line)),
+  );
+}
+
 /** What a blocked practice failed, in one line, as the waive page shows it from the failed step. */
 export const failureLine = (o: Pick<PracticeOutcome, 'handle' | 'version' | 'files' | 'messages'>): string =>
   `${o.handle}@${o.version}: ${o.messages.join('; ') || 'failed'}${o.files.length ? ` (${o.files.slice(0, 10).join(', ')}${o.files.length > 10 ? `, and ${o.files.length - 10} more` : ''})` : ''}`;
@@ -122,7 +131,7 @@ export function judge(
   practice: ApprovedPractice,
   change: PracticeChange,
   verdict: Verdict | undefined,
-  options: { reviewerFailsBlock: boolean; executionId: string; waiverOf: (practiceId: string) => { reason?: string; at: string } | undefined },
+  options: { reviewerFailsBlock: boolean; executionId: string; waiverOf: (practiceId: string, line: string) => { reason?: string; at: string } | undefined },
 ): PracticeOutcome {
   const results: PracticeCheckResult[] = practice.checks.length ? runPracticeChecks(practice.checks, change) : [];
   const machineFail = results.some((r) => !r.pass);
@@ -130,12 +139,14 @@ export function judge(
   const judged = results.length > 0 || verdict !== undefined;
   const failed = machineFail || reviewerFail;
   const blocking = practice.strength === 'required' && (machineFail || (reviewerFail && options.reviewerFailsBlock));
-  const waiver = failed && blocking ? options.waiverOf(practice.id) : undefined;
-  const result: PracticeResult = !judged ? 'no-checks' : waiver ? 'waived' : failed ? 'fail' : 'pass';
   const messages = [
     ...results.filter((r) => !r.pass).map((r) => `${practiceCheckLabel(r.check)}: ${r.message ?? 'failed'}`),
     ...(reviewerFail ? [`Reviewer: ${verdict?.note ?? 'failed'}`] : []),
   ];
+  const failedFiles = [...new Set(results.flatMap((r) => (r.pass ? [] : r.files)))];
+  // A waiver holds for the failure the approver saw (the line the waive page shows), not for any failure of the practice.
+  const waiver = failed && blocking ? options.waiverOf(practice.id, failureLine({ handle: practice.handle, version: practice.version, files: failedFiles, messages })) : undefined;
+  const result: PracticeResult = !judged ? 'no-checks' : waiver ? 'waived' : failed ? 'fail' : 'pass';
   return {
     id: practice.id,
     handle: practice.handle,
@@ -144,7 +155,7 @@ export function judge(
     strength: practice.strength,
     result,
     blocks: blocking && !waiver,
-    files: [...new Set(results.flatMap((r) => (r.pass ? [] : r.files)))],
+    files: failedFiles,
     messages,
     checks: results.map((r) => ({ check: practiceCheckLabel(r.check), pass: r.pass, files: r.files, ...(r.message && { message: r.message }) })),
     ...(verdict && { reviewer: { pass: verdict.pass, ...(verdict.note && { note: verdict.note }) } }),
@@ -220,13 +231,16 @@ export const practiceCheckNode = defineNode({
     const chosen = selectPractices(approved, { ...(repo && { repo }), paths: changed.files.map((f) => f.path) }).filter((p) => !only.length || only.includes(p.handle));
     // A practice with a path scope that no changed path matches was left out by the selector; one with none applies to any change.
     const chain = executionId ? waiverChain(executionId) : [];
-    const waiverOf = (practiceId: string) => {
+    const waiverOf = (practiceId: string, line: string) => {
       for (const id of chain) {
         const found = findWaiver(practiceId, id);
-        if (found) return { ...(found.reason && { reason: found.reason }), at: found.at };
+        if (found && failedWith(id, line)) return { ...(found.reason && { reason: found.reason }), at: found.at };
       }
       return undefined;
     };
+    if (!enabled) ctx.check({ name: 'practices:off', status: 'warn', message: 'Practices are switched off, so nothing was checked' });
+    else if (!port) ctx.check({ name: 'practices:unavailable', status: 'warn', message: 'No practices source is connected, so nothing was checked' });
+    for (const h of only) if (!approved.some((p) => p.handle === h)) ctx.check({ name: `practice:${h}`, status: 'warn', message: `No approved practice “${h}” applies here (check the handle), so it was not checked`, subject: h });
     const outcomes = chosen.map((p) =>
       judge(p, changed.change, verdicts.find((v) => v.handle === p.handle), { reviewerFailsBlock: opts.reviewerFailsBlock === true, executionId, waiverOf }),
     );
@@ -264,7 +278,7 @@ export const practiceCheckNode = defineNode({
     if (blocked.length) {
       const names = blocked.map((o) => o.handle).join(', ');
       const change = String(opts.changeUrl ?? '').trim();
-      throw fail(`Required practices failed: ${names}. Fix the change and run the flow again, or waive ${blocked.length === 1 ? 'it' : 'them'} for this run.${change ? ` Change: ${change}` : ''} Waive: ${blocked.map((o) => o.waiveUrl).join(' ')}`, blocked.map(failureLine).join('\n'));
+      throw fail(`Required practices failed: ${names}. Fix the change and run the flow again, or waive ${blocked.length === 1 ? 'it' : 'them'} for this run.${change ? ` Change: ${change}` : ''} Waive: ${blocked.map((o) => `${publicUrl()}${o.waiveUrl}`).join(' ')}`, blocked.map(failureLine).join('\n'));
     }
     return [[{ json: summary, pairedItem: { item: 0 } } as NodeItem]];
   },

@@ -14,13 +14,13 @@ const many = <T extends z.ZodType>(item: T, max: number) =>
 
 const querySchema = z
   .object({
-  handle: z.string().regex(PRACTICE_HANDLE).optional(),
-  id: z.string().regex(/^prc_[A-Za-z0-9_-]{1,100}$/).optional(),
-  repo: z.string().regex(PRACTICE_REPO).optional(),
-  path: many(z.string().min(1).max(500), PRACTICE_LIMITS.paths),
-  topic: many(z.string().regex(PRACTICE_TOPIC), 5),
-  projectId: z.string().min(1).max(200).optional(),
-  level: z.enum(PRACTICE_LEVELS).optional(),
+    handle: z.string().regex(PRACTICE_HANDLE).optional(),
+    id: z.string().regex(/^prc_[A-Za-z0-9_-]{1,100}$/).optional(),
+    repo: z.string().regex(PRACTICE_REPO).optional(),
+    path: many(z.string().min(1).max(500), PRACTICE_LIMITS.paths),
+    topic: many(z.string().regex(PRACTICE_TOPIC), 5),
+    projectId: z.string().min(1).max(200).optional(),
+    level: z.enum(PRACTICE_LEVELS).optional(),
   })
   .refine((q) => (q.handle === undefined) !== (q.id === undefined), { message: 'Give either handle or id, not both and not neither' });
 

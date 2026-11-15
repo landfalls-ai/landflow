@@ -22,7 +22,7 @@ interface RunView {
   runData: Record<string, Array<{ status: string; error?: { message: string; description?: string } }>>;
 }
 
-/** The lines the failed step wrote about this practice (its handle starts the line), else every line it wrote. */
+/** The lines the failed step wrote about this practice (its handle starts the line); none when it did not fail in this run. */
 export function failuresFor(run: RunView | undefined, handle: string): string[] {
   const lines: string[] = [];
   for (const runs of Object.values(run?.runData ?? {})) {
@@ -32,7 +32,7 @@ export function failuresFor(run: RunView | undefined, handle: string): string[] 
     }
   }
   const mine = lines.filter((l) => l.startsWith(`${handle}@`));
-  return mine.length ? mine : lines;
+  return mine;
 }
 
 export const reasonProblem = (reason: string): string | undefined => {
@@ -74,6 +74,8 @@ export function WaiveForm({ practiceId, executionId }: { practiceId: string; exe
   const approved = practice?.approved;
   const alreadyWaived = Boolean(ready?.detail.applications.some((a) => a.kind === 'waived' && a.executionId === executionId));
   const failures = useMemo(() => failuresFor(ready?.run, practice?.handle ?? ''), [ready, practice?.handle]);
+  // The run did stop on practices, but not on this one: nothing to waive here.
+  const didNotFail = Boolean(ready?.run) && failures.length === 0 && Object.values(ready?.run?.runData ?? {}).some((runs) => runs.some((r) => r.status === 'error' && r.error?.message.startsWith('Required practices failed')));
   const problem = reasonProblem(reason);
 
   const waive = async () => {
@@ -131,6 +133,8 @@ export function WaiveForm({ practiceId, executionId }: { practiceId: string; exe
                     <li key={line} className="break-words rounded-[10px] border border-hair bg-wl px-3 py-2 font-mono text-[12px]">{line}</li>
                   ))}
                 </ul>
+              ) : didNotFail ? (
+                <p className="mt-1 text-[13px] text-t3">This practice did not fail in this run, so there is nothing to waive.</p>
               ) : (
                 <p className="mt-1 text-[13px] text-t3">The run does not say what failed. {runLink} to read it.</p>
               )}
@@ -150,7 +154,7 @@ export function WaiveForm({ practiceId, executionId }: { practiceId: string; exe
                 <p className="text-[13px] text-t2">This practice is recommended, so it only warned and did not stop the run. There is nothing to waive.</p>
               </Card>
             )}
-            {!waived && !alreadyWaived && practice.canApprove && practice.strength === 'required' && (
+            {!waived && !alreadyWaived && !didNotFail && practice.canApprove && practice.strength === 'required' && (
               <Card className="p-4">
                 <FieldLabel>Why is it fine to go on?</FieldLabel>
                 <Textarea className="mt-1 min-h-24" rows={4} value={reason} maxLength={PRACTICE_LIMITS.reason + 50} onChange={(e) => setReason(e.target.value)} placeholder="For example: the key file is a fixture for a test" aria-label="Reason" />

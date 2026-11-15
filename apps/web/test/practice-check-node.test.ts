@@ -165,6 +165,33 @@ describe('Check Practices', () => {
     expect(record?.runData.after).toBeDefined();
   });
 
+  const settle = async (id: string) => {
+    let record = store.getExecution(id);
+    for (let i = 0; i < 100 && record?.status === 'running'; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      record = store.getExecution(id);
+    }
+    return record;
+  };
+
+  it('a retry from the failed step passes with "waived"', async () => {
+    const first = await runFlow('wf_waive_failed', BAD);
+    recordApplication({ practiceId: 'prc_required', version: 2, kind: 'waived', executionId: first.run.executionId, reason: 'The key file is a fixture' });
+    const record = await settle(await startRetry(first.run.executionId, { from: 'failed' }));
+    expect(record?.status).toBe('success');
+  });
+
+  it('a waiver holds only for the failure the approver saw: a retry from the start with other files fails again', async () => {
+    const first = await runFlow('wf_waive_other', BAD);
+    recordApplication({ practiceId: 'prc_required', version: 2, kind: 'waived', executionId: first.run.executionId, reason: 'The key file is a fixture' });
+    // Someone changes what the flow reads, then retries from the start on the current version: other files break the same practice.
+    as(() => store.saveWorkflow(flow('wf_waive_other', [{ path: 'secrets/other.txt', status: 'A', added: ['z'] }])));
+    const record = await settle(await startRetry(first.run.executionId, { from: 'start', version: 'current' }));
+    expect(record?.status).toBe('error');
+    expect(record?.runData.after).toBeUndefined();
+    expect(record?.runData.check?.at(-1)?.error?.description).toContain('secrets/other.txt');
+  });
+
   it('a waiver for another run does not count', async () => {
     recordApplication({ practiceId: 'prc_required', version: 2, kind: 'waived', executionId: 'exec_elsewhere', reason: 'Not this run' });
     const { run } = await runFlow('wf_other_run', BAD);
@@ -246,7 +273,7 @@ describe('the templates', () => {
 describe('judge', () => {
   const p = practice('prc_x', 'a/b', { checks: NO_SECRETS });
   const change = { files: [{ path: 'secrets/k', status: 'A' as const }], added: new Map() };
-  const options = { reviewerFailsBlock: false, executionId: 'ex_1', waiverOf: () => undefined };
+  const options = { reviewerFailsBlock: false, executionId: 'ex_1', waiverOf: (_id: string, _line: string) => undefined as { reason?: string; at: string } | undefined };
   it('fails and blocks a required failure, names the files and gives the waive link', () => {
     expect(judge(p, change, undefined, options)).toMatchObject({ result: 'fail', blocks: true, files: ['secrets/k'], waiveUrl: waiveUrlOf('prc_x', 'ex_1') });
   });

@@ -148,7 +148,7 @@ export const check: Command = {
     const touched = change.files.map((f) => f.path);
     // The route takes at most 20 paths a call: ask in groups and join the answers by handle.
     // Keyed by level too: an org and a project practice of one handle and version are two practices.
-    const keyOf = (p: ApplicablePractice) => `${p.level}:${p.handle}@${p.version}:${JSON.stringify([p.repos, p.paths])}`;
+    const keyOf = (p: ApplicablePractice) => p.id;
     const byHandle = new Map<string, ApplicablePractice>();
     // The paths each was delivered for, so the read of its rules gives exactly the practice that was delivered.
     const pathsOf = new Map<string, string[]>();

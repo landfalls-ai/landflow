@@ -155,9 +155,10 @@ const BLOCKED_CODE = [
   "const msg = String((r.execution && r.execution.error && r.execution.error.message) || '');",
   "const names = ((msg.match(/Required practices failed: (.*?)\\. Fix/) || [])[1] || '').split(', ').filter(Boolean);",
   '// The waive links come in the order of the names.',
-  'const waive = [...msg.matchAll(/(\\/practices\\/waive\\?practice=([\\w-]+)&execution=[\\w-]+)/g)];',
+  'const waive = [...msg.matchAll(/((?:https?:\\/\\/[^\\s\\/]+)?\\/practices\\/waive\\?practice=([\\w-]+)&execution=[\\w-]+)/g)];',
+  "const origin = (String((r.execution && r.execution.url) || '').match(/^https?:\\/\\/[^\\/]+/) || [''])[0];",
   "const change = (msg.match(/Change: (\\S+)/) || [])[1];",
-  "const lines = names.map((name, i) => ['**' + name + '**', change ? '  Fix: ' + change : '  Fix: push a fix, then run the flow again', waive[i] ? '  Waive for this run: ' + waive[i][1] : '', waive[i] ? '  Change the practice: /brain/practices/' + waive[i][2] : ''].filter(Boolean).join('\\n'));",
+  "const lines = names.map((name, i) => ['**' + name + '**', change ? '  Fix: ' + change : '  Fix: push a fix, then run the flow again', waive[i] ? '  Waive for this run: ' + (waive[i][1].startsWith('/') ? origin : '') + waive[i][1] : '', waive[i] ? '  Change the practice: ' + origin + '/brain/practices/' + waive[i][2] : ''].filter(Boolean).join('\\n'));",
   "const workflow = (r.workflow && r.workflow.name) || 'A flow';",
   "return [{ json: { title: workflow + ': a required practice failed', text: (names.length ? lines.join('\\n\\n') : msg) + '\\n\\nRun: ' + ((r.execution && r.execution.url) || '') } }];",
 ].join('\n');
@@ -239,7 +240,7 @@ export function practicesTemplates(h: PracticesHelpers): TemplateDetail[] {
       'Needs the **github** plugin and a token you create yourself (a fine-grained token with Pull requests: read and write on the repository). The flow reads the files and posts one comment; it never merges.',
       'Edit **Pull request**: the owner, the repository (made-up names are in it) and the number. The practices checked are those of the project this flow is in and the organization’s that cover the repository and the changed paths.',
       'GitHub leaves the patch out of very large files, so a fileMatches check sees no added lines there. Run `landflow practices check` in a checkout for those.',
-      'To tell people when it is blocked, import **When a required practice blocks a flow** as well, then open this flow’s **Settings → Error workflow** and pick it. Error workflows start only for runs a trigger started, not for a manual Run.',
+      'To tell people when it is blocked, import **When a required practice blocks a flow** as well, then open this flow’s **Settings → Error workflow** and pick it. Error workflows start only for runs a trigger started, not for a manual Run, so swap the Start node for a schedule or webhook trigger first.',
       'A required practice that fails stops the run at **Check Practices**. After you fix the pull request, run the flow again. To waive it, open the waive link in the failure, then **Retry** the failed run: the waiver is for that run only.',
     ],
     nodes: [

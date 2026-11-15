@@ -169,7 +169,11 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - **On error: continue** on the Check Practices step defeats the block, as it does for any step. The editor warns about
   that setting; nothing here forbids it.
 - A waiver is for one run, and for the runs that retry it. A waiver of one practice does not cover another, and a flow run
-  again from the start is a new run that is checked again.
+  again from the start is checked again: a waiver holds only for the failure the approver saw (the same practice failing
+  on the same files and message), so a retry that breaks the practice on other files fails again. Check Practices runs
+  `fileMatches` patterns (up to 200 characters, no guard against catastrophic backtracking) inside the host process over
+  up to 20,000 added lines, so an approved practice with a bad pattern can stall the host's event loop; there is no
+  per-file cap or worker yet.
 - A required practice blocks only in a flow. An agent's tool call, `landflow practices check` in a shell and the Claude
   Code mod never deny anything.
 - The pull request template reads GitHub's patch of each file; GitHub leaves the patch out of very large files, so a

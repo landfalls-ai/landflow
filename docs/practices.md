@@ -233,7 +233,14 @@ strength, what failed in that run, a reason (10 to 500 characters) and **Waive f
 `POST /api/practices/:id/waivers`. Someone who may not approve the practice is told why and gets no button. After the
 waiver the page offers **Retry the run** (`POST /api/executions/:id/retry`): a retry is a new run linked to the failed one,
 and the step finds the waiver by following that link, so the waiver counts for the retry and for later retries of it. It
-never counts for another run of the flow, which is checked again.
+never counts for another run of the flow, which is checked again. It holds only for the failure the approver saw: the
+step compares the practice's failure line (practice, message and files) with the one in the waived run's failed step, so
+a retry (even from the start) that breaks the practice on other files fails again.
+
+The error text and the waive link are absolute (from `LANDFLOW_PUBLIC_URL`). The generic **Accept as is** button on the
+failed `practice:` check in the run trace only journals a decision; it is not a waiver, and a retry fails again. Use the
+waive link. A step that checks nothing (practices off, or a handle named in **Practices** that is not approved here)
+writes a warning check so the gap is visible.
 
 ### Templates
 
