@@ -168,3 +168,11 @@ describe('ProjectBriefCard', () => {
     expect(render(undefined)).toBe('');
   });
 });
+
+describe('createBody', () => {
+  it('sends the ticked projects with a company goal, and none with a project goal', async () => {
+    const { createBody } = await import('../src/components/goals/goal-dialog');
+    expect(createBody({ title: 'T' }, 'company', 'p1', new Set(['a', 'b']))).toMatchObject({ level: 'company', projectIds: ['a', 'b'], projectId: undefined });
+    expect(createBody({ title: 'T' }, 'project', 'p1', new Set(['a']))).toMatchObject({ level: 'project', projectId: 'p1', projectIds: undefined });
+  });
+});

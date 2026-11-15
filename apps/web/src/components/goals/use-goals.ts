@@ -7,7 +7,7 @@ import type { UserView } from '@/lib/shared/auth';
 import type { ProjectDetail } from '@/lib/shared/projects';
 import { useViewer } from '@/components/auth/viewer';
 
-export function useGoals() {
+export function useGoals(enabled = true) {
   const [data, setData] = useState<GoalsResponse>();
   const [error, setError] = useState<string>();
   const reload = useCallback(
@@ -21,8 +21,8 @@ export function useGoals() {
     [],
   );
   useEffect(() => {
-    void reload();
-  }, [reload]);
+    if (enabled) void reload();
+  }, [reload, enabled]);
   return { data, error, reload };
 }
 

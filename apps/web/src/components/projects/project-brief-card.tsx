@@ -32,7 +32,7 @@ export function ProjectBriefCard({ projectId, brief, onChanged }: { projectId: s
   const canEdit = Boolean(brief?.canEdit);
   const [newGoal, setNewGoal] = useState(false);
   const [linking, setLinking] = useState(false);
-  const { data: goalData, reload: reloadGoals } = useGoals();
+  const { data: goalData, reload: reloadGoals } = useGoals(canEdit);
 
   if (briefIsEmpty(brief) && !editing && !newGoal) {
     if (!canEdit) return null;
@@ -88,13 +88,13 @@ export function ProjectBriefCard({ projectId, brief, onChanged }: { projectId: s
         ) : (
           <ol className="overflow-hidden rounded-xl border border-hair">
             {brief!.goals.map((g, i) => (
-              <li key={g.id} className="flex items-center gap-2 border-b border-hair px-3 py-1.5 last:border-b-0 max-md:min-h-11">
+              <li key={g.id} className="flex items-center gap-2 border-b border-hair px-3 py-1.5 last:border-b-0 max-md:min-h-11 max-md:flex-wrap">
                 <span className="w-4 shrink-0 text-[12px] tabular-nums text-t3">{i + 1}</span>
-                <Link href="/goals" className="min-w-0 flex-1 truncate text-[13px] font-semibold text-t1 hover:text-ac">{g.title}</Link>
+                <Link href="/goals" className="min-w-0 flex-1 truncate text-[13px] font-semibold text-t1 hover:text-ac max-md:basis-[calc(100%-1.5rem)] max-md:py-2">{g.title}</Link>
                 <GoalLevelChip level={g.level} />
                 <GoalStatusChip status={g.status} />
                 {canEdit && (
-                  <span className="flex shrink-0 items-center">
+                  <span className="flex shrink-0 items-center max-md:ml-auto">
                     <Button variant="ghost" size="icon-sm" aria-label={`Move ${g.title} up`} disabled={i === 0} onClick={() => move(i, -1)} className="max-md:size-11"><ArrowUp className="size-3.5" /></Button>
                     <Button variant="ghost" size="icon-sm" aria-label={`Move ${g.title} down`} disabled={i === ids.length - 1} onClick={() => move(i, 1)} className="max-md:size-11"><ArrowDown className="size-3.5" /></Button>
                     <Button variant="ghost" size="icon-sm" aria-label={`Unlink ${g.title}`} onClick={() => void save(ids.filter((id) => id !== g.id))} className="max-md:size-11"><X className="size-3.5" /></Button>
@@ -153,7 +153,7 @@ function BriefSection({ label, text, lines, phone }: { label: string; text: stri
   return (
     <div>
       <div className="mb-0.5 text-[12px] font-semibold text-t2">{label}</div>
-      <p className={`whitespace-pre-wrap text-[13px] leading-relaxed text-t1 ${phone && !more ? 'line-clamp-3' : ''}`}>{more ? text : fold.text}</p>
+      <p className={`whitespace-pre-wrap text-[13px] leading-relaxed text-t1 ${!more ? (phone ? 'line-clamp-3' : 'line-clamp-6') : ''}`}>{more ? text : fold.text}</p>
       {long && (
         <button type="button" onClick={() => setMore(!more)} aria-expanded={more} className="mt-0.5 text-[12px] font-semibold text-ac hover:underline max-md:min-h-11">
           {more ? 'Less' : 'More'}

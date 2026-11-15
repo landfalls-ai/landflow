@@ -251,8 +251,6 @@ function findIn(nodes: GoalNode[], id: string): GoalNode | undefined {
 function GoalDetail({ goal, index, phone, onClose, onOpen, onEdit, onNewSub }: { goal: GoalNode; index: Map<string, GoalNode>; phone: boolean; onClose: () => void; onOpen: (id: string) => void; onEdit: () => void; onNewSub: () => void }) {
   const panel = useRef<HTMLDivElement>(null);
   useDialogFocus(panel, !phone, { onEscape: onClose });
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
   const parent = parentTitle(index, goal);
   const target = formatTarget(goal.targetDate);
   const body = (
@@ -308,7 +306,6 @@ function GoalDetail({ goal, index, phone, onClose, onOpen, onEdit, onNewSub }: {
     </div>
   );
   if (phone) return <Sheet open onClose={onClose} title={goal.title} footer={actions || undefined}>{body}</Sheet>;
-  if (!mounted) return null;
   return (
     <div className="fixed inset-0 z-[55]">
       <div className="absolute inset-0 bg-overlay animate-in" onClick={onClose} aria-hidden />

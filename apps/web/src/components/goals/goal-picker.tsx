@@ -1,7 +1,7 @@
 'use client';
 /**
  * Pick a goal (docs/projects-and-goals.md). Visible goals, indented by depth, cancelled ones left out; with a
- * `projectId` that project's goals come first under "This project". `level` is the level of the goal being placed: a company
+ * `projectId` that project's goals come first under "This project". `level` is the level of the goal being placed (not a filter by level): a company
  * goal may only sit under a company goal. `exclude` leaves out ids (a goal and what is under it, when choosing its parent).
  */
 import { useMemo } from 'react';
@@ -30,11 +30,11 @@ export function GoalPicker({
   noneLabel?: string;
   disabled?: boolean;
   exclude?: ReadonlySet<string>;
-  /** Goals already loaded by the caller (saves a request). */
+  /** Goals already loaded by the caller (the picker then loads nothing). */
   goals?: GoalNode[];
   ariaLabel?: string;
 }) {
-  const loaded = useGoals();
+  const loaded = useGoals(!goals);
   const tree = goals ?? loaded.data?.goals;
   const options = useMemo(() => {
     if (!tree) return [];

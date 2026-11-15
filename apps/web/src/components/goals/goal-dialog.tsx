@@ -11,7 +11,7 @@ import { api } from '@/lib/client/api';
 import { usePhone } from '@/lib/client/use-phone';
 import { GOAL_LEVEL_LABELS, GOAL_LEVELS, GOAL_LIMITS, GOAL_STATUS_LABELS, GOAL_STATUSES, type GoalLevel, type GoalNode, type GoalStatus, type GoalView } from '@/lib/shared/goals';
 import { useViewer } from '@/components/auth/viewer';
-import { useProjects } from '@/components/projects/use-projects';
+import { projectLabel, useProjects } from '@/components/projects/use-projects';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import { Checkbox, FieldLabel, Input, Select, Textarea } from '@/components/ui/inputs';
@@ -60,6 +60,7 @@ export function GoalDialog({
   const [parentId, setParentId] = useState(goal?.parentId ?? defaults?.parentId ?? '');
   const initialServed = useMemo(() => new Set((goal?.projects ?? []).map((p) => p.id)), [goal]);
   const [served, setServed] = useState<Set<string>>(initialServed);
+  const [savedId, setSavedId] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const people = usePeople(level === 'project' ? projectId || undefined : undefined);
@@ -72,7 +73,7 @@ export function GoalDialog({
   const index = useMemo(() => indexGoals(goals), [goals]);
   const levels = GOAL_LEVELS.filter((l) => (l === 'company' ? canCreateCompanyGoals || goal?.level === 'company' : adminProjects.length > 0 || goal?.level === 'project'));
   const projectChoices = goal?.projectId && !adminProjects.some((p) => p.id === goal.projectId) ? [...adminProjects, { id: goal.projectId, name: goal.projects.find((p) => p.id === goal.projectId)?.name ?? goal.projectId }] : adminProjects;
-  const lockLevel = Boolean(goal);
+  const lockLevel = Boolean(goal || savedId);
 
   const save = async () => {
     setError(undefined);
@@ -88,10 +89,23 @@ export function GoalDialog({
         targetDate: targetDate || (goal ? null : undefined),
         parentId: parentId || (goal ? null : undefined),
       };
-      let id = goal?.id;
-      if (goal) await api(`/api/goals/${goal.id}`, { method: 'PATCH', json: body });
-      else id = (await api<{ goal: { id: string } }>('/api/goals', { method: 'POST', json: { ...body, level, projectId: level === 'project' ? projectId : undefined } })).goal.id;
-      if (level === 'company' && id) await syncServed(id, initialServed, served);
+      let id = goal?.id ?? savedId;
+      if (id) await api(`/api/goals/${id}`, { method: 'PATCH', json: body });
+      else {
+        // Create is one request: the ticked projects go with it, so a refused link makes no goal.
+        const created = await api<{ goal: { id: string } }>('/api/goals', { method: 'POST', json: createBody(body, level, projectId, served) });
+        id = created.goal.id;
+        setSavedId(id);
+      }
+      if (level === 'company' && (goal || savedId)) {
+        try {
+          await syncServed(id, initialServed, served);
+        } catch (e) {
+          // The goal is saved; show what failed and refresh what is behind the dialog.
+          onSaved();
+          throw e;
+        }
+      }
       toast.success(goal ? 'Goal saved' : 'Goal created');
       onSaved();
       onClose();
@@ -162,7 +176,7 @@ export function GoalDialog({
       </div>
       <div>
         <FieldLabel>Level</FieldLabel>
-        <Segmented label="Level" value={level} onChange={(l) => { if (!lockLevel) { setLevel(l); setParentId(''); setOwnerId(''); } }} options={levels.map((l) => ({ value: l, label: GOAL_LEVEL_LABELS[l] }))} />
+        {lockLevel ? <p className="text-[13px] text-t1">{GOAL_LEVEL_LABELS[level]}</p> : <Segmented label="Level" value={level} onChange={(l) => { setLevel(l); setParentId(''); setOwnerId(''); }} options={levels.map((l) => ({ value: l, label: GOAL_LEVEL_LABELS[l] }))} />}
         {lockLevel && <p className="mt-1 text-[12px] text-t3">A goal keeps its level.</p>}
       </div>
       {level === 'project' && (
@@ -172,7 +186,7 @@ export function GoalDialog({
             <option value="">Choose a project…</option>
             {projectChoices.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.name}
+                {'type' in p ? projectLabel(p, viewer?.id) : p.name}
               </option>
             ))}
           </Select>
@@ -219,7 +233,7 @@ export function GoalDialog({
             {adminProjects.map((p) => (
               <Checkbox
                 key={p.id}
-                label={p.name}
+                label={projectLabel(p, viewer?.id)}
                 checked={served.has(p.id)}
                 onChange={(on) =>
                   setServed((prev) => {
@@ -257,6 +271,11 @@ function GoalFrame({ phone, title, onClose, footer, children }: { phone: boolean
       {children}
     </Dialog>
   );
+}
+
+/** The body of POST /api/goals: a company goal carries the projects that serve it. */
+export function createBody(body: Record<string, unknown>, level: GoalLevel, projectId: string, served: ReadonlySet<string>) {
+  return { ...body, level, projectId: level === 'project' ? projectId : undefined, projectIds: level === 'company' && served.size ? [...served] : undefined };
 }
 
 /** Link or unlink the projects that serve a company goal: each project keeps its other goals, the goal goes last. */
