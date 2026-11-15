@@ -11,6 +11,7 @@ import { database } from '../db';
 import { canResource, executionWorkflowId, isInstanceAdmin, projectRole, type Actor } from '../projects/access';
 import { redactPatterns, redactText } from '../secrets/redact';
 import { PracticeConflict, PracticeError, PracticeNeedsReview } from './errors';
+import { setInboxDeps, settleApproved, settleRejected, settleRetired } from './inbox'; // PR09:
 import { findWaiver, getPractice, getVersion, insertApplication, markApproved, markRejected, markRetired } from './store';
 
 /** Org practices: owners and admins. Project practices: that project's admins. */
@@ -96,6 +97,9 @@ export function approvePractice(actor: Actor, practiceId: string, input: Practic
     details: { version: version.version, sha256: version.sha256, superseded: superseded.map((c) => c.id).join(','), tainted: version.tainted },
     project: practice.projectId ?? null,
   });
+  // PR09: the inbox's suggestion for this version is applied; a practice it retired settles its own.
+  settleApproved(practice.id, version.version, actor.id);
+  for (const c of superseded) settleRetired(c.id, actor.id);
   return approved;
 }
 
@@ -108,6 +112,7 @@ export function rejectVersion(actor: Actor, practiceId: string, versionNumber: n
   if (!pending(practice, version)) throw new PracticeError('This version is not waiting for approval', 400);
   markRejected(practiceId, versionNumber, actor.id, redactPatterns(redactText(reason)).replace(/\s+/g, ' ').trim());
   recordAudit({ action: 'practice.rejected', target: { type: 'practice', id: practice.id, name: practice.handle }, details: { version: versionNumber }, project: practice.projectId ?? null });
+  settleRejected(practiceId, versionNumber, actor.id, redactPatterns(redactText(reason)).replace(/\s+/g, ' ').trim()); // PR09:
   return getPractice(practiceId)!;
 }
 
@@ -119,6 +124,7 @@ export function retirePractice(actor: Actor, practiceId: string): Practice {
   if (practice.status === 'retired') return practice;
   const retired = markRetired(practiceId);
   recordAudit({ action: 'practice.retired', target: { type: 'practice', id: practice.id, name: practice.handle }, project: practice.projectId ?? null });
+  settleRetired(practiceId, actor.id); // PR09:
   return retired;
 }
 
@@ -143,3 +149,17 @@ export function waivePractice(actor: Actor, practiceId: string, input: PracticeW
   });
   return application;
 }
+
+// PR09: what Apply in the inbox needs (./inbox.ts imports neither this file nor the store).
+setInboxDeps({
+  approve: (actor, practiceId, input) => approvePractice(actor, practiceId, input),
+  stale(practiceId, versionNumber) {
+    const practice = getPractice(practiceId);
+    if (!practice || practice.status === 'retired') return 'the practice is retired';
+    const version = getVersion(practiceId, versionNumber);
+    if (!version) return 'the version is gone';
+    if (version.rejectedAt) return 'it was rejected';
+    if (version.approvedAt || versionNumber <= (practice.approvedVersion ?? 0)) return versionNumber === practice.approvedVersion ? 'it is already approved' : 'a newer version replaced it';
+    return undefined;
+  },
+});

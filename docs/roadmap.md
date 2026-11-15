@@ -2036,6 +2036,7 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   waivers, the `/api/practices` routes, `LANDFLOW_PRACTICES` and the port other packages read.
 - **PR02 to PR05 (wave P1):** the Brain page, learning (Draft Practice, the Learn practices template, `/brain learn`),
   selection and the block, MCP tools, the mod and `landflow practices`.
+- **PR09, built (wave P2):** compliance (how often a practice was given, cited, passed and waived, and who follows it; the run's practices row), the practice-drift detector, and an inbox suggestion for every draft, applied by owners and admins only and never for a draft read from outside ([practices.md](practices.md#compliance)). Left: citation drift.
 - **Wave P2, next:** `ApplicablePractice` gets the practice id and project id (a change to `lib/shared/practices.ts`), so `landflow practices check` asks `resolve` by id instead of by handle and level; delivery to Landflow agents through the seam's practices slot (PR06) and to kagent agents (PR07),
   Check Practices with Ask a Person for Fix, Waive or Change (PR08), compliance and the inbox suggestion for a draft
   (PR09), and the demo on a branch of the Landflow repository that ends at a draft pull request (PR10).

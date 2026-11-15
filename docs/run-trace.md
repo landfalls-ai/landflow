@@ -623,6 +623,8 @@ only reach the process that runs the execution.
 | `GET /api/runs/needs-you` | Across the runs you can see: waits for a person (`approval`, `form`, `question`, `gate`) and failed checks of the last 7 days nobody decided on. |
 | `GET /api/runs/search`, `/api/runs/compare?a=&b=`, `/api/runs/measures?workflowId=` | Search, compare and measures across runs ("Search, compare and measures" below). |
 
+**What it saw, practices row** (PR09): `SawPracticesRow` lists each practice the run was given as `handle@version` with "Cited" or "Not cited" and how its check went (`GET /api/executions/:id/practices`); see [practices.md](practices.md#compliance).
+
 ## Not built
 
 - Re-running from a span re-runs the flow from a *node*: a step inside an agent (a tool call, a member's turn) can't be

@@ -421,3 +421,13 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - Citing accepts any version from 1 to the current approved one, so a version that was rejected and never approved can be recorded as `cited`. Tighten it in the practices store later.
 - `practice_cite` records at most 20 citations; the rest are neither recorded nor listed as unknown. `practices_for` appends one pointer line after the block is fitted to its budget.
 - Two project practices with the same handle in different projects are not ordered by the selector; the store's order decides.
+
+## Compliance and the inbox (wave P2)
+
+- Citation drift (a cited version that is no longer approved) is not looked at: the practice-drift detector counts how often a practice was given, cited and passed, nothing more.
+- The practice-drift suggestion is addressed to nobody: owners and admins see it, and the admins of a project do not unless they are one. It looks at the last 14 days of `practice_applications` in one scan, with no extra index.
+- An overlap with an approved practice has no answer in the inbox: Apply says to approve it on /brain.
+- Approving from the inbox (or on /brain) settles the suggestion but starts no On Suggestion Decided flow, and a person's Apply there is the only usage event.
+- "Followed by" counts an agent by its citations only; an agent that was given a practice and never cited it is not listed.
+- A flow-written or analyst suggestion about a practice still mirrors to Slack as any suggestion does; only `source: practice` ones are link-only.
+- The row in "What it saw" is mounted by the integrator (PC08's slot); until then its markup is tested, not seen.
