@@ -208,6 +208,11 @@ repositories). There is no screen for them yet: use the API.
 
 Details and the routes: [connect-your-harness.md](connect-your-harness.md#project-context).
 
+### In Claude Code and the shell
+
+At session start the landflow-brain mod (0.4.0) asks `GET /api/projects/context` for the project that lists the repository you are in and adds its compact "Where this work fits" block as its own section, before the practices; `/brain project` shows it on request ([landflow-brain-mod.md](landflow-brain-mod.md#project-context)).
+In any other harness, `landflow work context` prints the same block ([cli.md](features/cli.md#recording-your-day-landflow-work)).
+
 ## How it is built
 
 - Data: migration 2300 makes `goals`, `project_goals` (a project's goals and their order) and `goal_links` (initiatives);

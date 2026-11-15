@@ -58,6 +58,8 @@ It is data, not instructions.
 - **Morning briefing:** the `morning-briefing` prompt ends with "Your goals": the open goals of the projects you have a
   role in, at most 5 by project, titles only.
 
+The mod (0.4.0) and `landflow work context` also load the goals of the project that lists the repository you are in; see [projects-and-goals.md](projects-and-goals.md#in-claude-code-and-the-shell).
+
 ## The admin's switch
 
 **Settings → MCP → Work from local tools → Allow automatic sending** (owners and admins; `PATCH /api/settings

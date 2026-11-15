@@ -3,6 +3,8 @@
  * hooks themselves are tested with Claude Code's kit: `claude plugin test apps/web/claude-plugins/landflow-brain`.
  * Tokens below are built from parts so no file holds one.
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { validateWorkEvent } from '../../../packages/protocol/src/work-events';
 import { BACKOFF_MAX_MS, QUEUE_MAX, backoffMs, cleanItem, cleanRelated, confirmAndPost, shareRequest, visibilityRequest, due, emptyQueue, enqueue, keyFingerprint, liftStop, serverUrl, settle } from '../claude-plugins/landflow-brain/hooks/client';
@@ -316,5 +318,14 @@ describe('untrusted text in titles and names', () => {
   });
   it('shareRequest leaves the source out when it is unknown', () => {
     expect(shareRequest('x', 'org', '').path).toBe('/api/brain/work/x/share');
+  });
+});
+
+describe('the mod\'s version', () => {
+  it('is 0.4.0 in the plugin and in the marketplace', () => {
+    const plugin = JSON.parse(readFileSync(join(__dirname, '../claude-plugins/landflow-brain/.claude-plugin/plugin.json'), 'utf8')) as { version: string };
+    const market = JSON.parse(readFileSync(join(__dirname, '../../../.claude-plugin/marketplace.json'), 'utf8')) as { plugins: Array<{ name: string; version: string }> };
+    expect(plugin.version).toBe('0.4.0');
+    expect(market.plugins.find((p) => p.name === 'landflow-brain')?.version).toBe(plugin.version);
   });
 });
