@@ -5,7 +5,7 @@
  */
 import { PRACTICE_BUDGETS, type ApprovedPractice, type ApplicablePractice, type ApplicableResponse } from '../../shared/practices';
 import { HttpError } from '../errors';
-import { isInstanceAdmin, projectRole, visibleProjectIds, type Actor } from '../projects/access';
+import { projectRole, visibleProjectIds, type Actor } from '../projects/access';
 import { getProject, listProjects } from '../projects/store';
 import { cleanSummary, practicesBlock } from './block';
 import { redactPatterns, redactText } from '../secrets/redact';
@@ -61,6 +61,8 @@ export function practicesCitable(caller: PracticeCaller): ApprovedPractice[] {
 /** A title as one safe line. */
 export const cleanTitle = (title: string): string => cleanSummary(redactPatterns(redactText(title)));
 
+const cleanLine = (text: string): string => redactPatterns(redactText(text));
+
 export const toApplicable = (p: ApprovedPractice): ApplicablePractice => ({
   handle: p.handle,
   version: p.version,
@@ -68,9 +70,9 @@ export const toApplicable = (p: ApprovedPractice): ApplicablePractice => ({
   level: p.level,
   strength: p.strength,
   summary: cleanSummary(p.summary),
-  topics: p.topics,
-  repos: p.repos,
-  paths: p.paths,
+  topics: p.topics.map(cleanLine),
+  repos: p.repos.map(cleanLine),
+  paths: p.paths.map(cleanLine),
 });
 
 export interface ApplicableOptions {
@@ -90,4 +92,26 @@ export function applicableFor(caller: PracticeCaller, q: PracticeQuery, options:
     for (const p of block.included) port.record({ practiceId: p.id, version: p.version, kind: 'delivered', ...(caller.actor && { userId: caller.actor.id }), ...(q.repo && { repo: q.repo }) });
   }
   return { practices: block.included.map(toApplicable), text: block.text, budget, omitted: block.omitted, included: block.included };
+}
+
+/**
+ * What delivery gives for a repository: the ids that apply, and the selector's winner per handle. Throws 404 for a project
+ * the caller has no role in.
+ */
+export function deliveredFor(caller: PracticeCaller, repo?: string): { applies: Set<string>; winners: Map<string, ApprovedPractice> } {
+  const delivered = practicesFor(caller, { repo });
+  return { applies: new Set(delivered.map((p) => p.id)), winners: new Map(selectPractices(delivered, { repo }).map((p) => [p.handle, p])) };
+}
+
+/**
+ * The one practice a handle means for this caller, the way delivery picks: the `projectId` match if sent; else the
+ * selector's winner for `repo`; else the project practice, then the organization's. Undefined if the caller may get none.
+ */
+export function resolvePractice(caller: PracticeCaller, handle: string, options: { repo?: string; projectId?: string } = {}): ApprovedPractice | undefined {
+  const matches = practicesCitable(caller).filter((p) => p.handle === handle);
+  if (!matches.length) return undefined;
+  const byProject = options.projectId ? matches.find((p) => p.projectId === options.projectId) : undefined;
+  if (byProject) return byProject;
+  const winner = deliveredFor(caller, options.repo).winners.get(handle);
+  return (winner && matches.find((p) => p.id === winner.id)) ?? matches.find((p) => p.level === 'project') ?? matches[0];
 }

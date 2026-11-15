@@ -6,8 +6,7 @@
 import { PRACTICE_HANDLE, PRACTICE_LIMITS, PRACTICES_TRAILER, type ApprovedPractice } from '../../shared/practices';
 import { canResource, executionWorkflowId } from '../projects/access';
 import { HttpError } from '../errors';
-import { practicesCitable, practicesFor, type PracticeCaller } from './applicable';
-import { selectPractices } from './select';
+import { deliveredFor, practicesCitable, type PracticeCaller } from './applicable';
 import { practicesPort } from './port';
 
 const ITEM = /^([^\s@]+)@(\d{1,6})$/;
@@ -48,16 +47,8 @@ export function recordCitations(caller: PracticeCaller, input: CiteInput): { rec
   // Every candidate per handle, since an organization and a project practice (or two projects') may share one.
   const candidates = new Map<string, ApprovedPractice[]>();
   for (const p of practicesCitable(caller)) candidates.set(p.handle, [...(candidates.get(p.handle) ?? []), p]);
-  // The ones delivery would have given: the selector's winner for the repository, else any that applies without one.
-  let applies = new Set<string>();
-  let winners = new Map<string, ApprovedPractice>();
-  try {
-    const delivered = practicesFor(caller, { repo: input.repo });
-    applies = new Set(delivered.map((p) => p.id));
-    if (input.repo) winners = new Map(selectPractices(delivered, { repo: input.repo }).map((p) => [p.handle, p]));
-  } catch {
-    // A project the caller has no role in: nothing applies, and citable gave the same refusal.
-  }
+  // The ones delivery would have given: the selector's winner for the repository (or none), else any that applies.
+  const { applies, winners } = deliveredFor(caller, input.repo);
   const resolve = (handle: string, version: number): ApprovedPractice | undefined => {
     const winner = winners.get(handle);
     if (winner && version <= winner.version) return winner;

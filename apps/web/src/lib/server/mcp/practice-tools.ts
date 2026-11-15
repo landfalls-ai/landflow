@@ -7,12 +7,13 @@
  */
 import { z } from 'zod';
 import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
+import { cleanSummary } from '../practices/block';
 import { PRACTICE_HANDLE, PRACTICE_LIMITS, PRACTICE_REPO, PRACTICE_STRENGTHS, PRACTICE_TOPIC, PRACTICE_LEVELS, type ApprovedPractice, type PracticeDraftInput } from '../../shared/practices';
 import { toolAllowed } from '../../shared/mcp';
 import type { ApiKeyScope } from '../../shared/auth';
 import { publicUrl } from '../config';
 import { HttpError } from '../errors';
-import { applicableFor, cleanTitle, practicesCitable, practicesFor } from '../practices/applicable';
+import { applicableFor, cleanTitle, practicesCitable, practicesFor, resolvePractice } from '../practices/applicable';
 import { recordCitations } from '../practices/cite';
 import { practicesPort } from '../practices/port';
 import { redactPatterns, redactText } from '../secrets/redact';
@@ -25,7 +26,7 @@ export interface PracticeContext extends BrainContext {
 
 const READ_ONLY = { readOnlyHint: true, openWorldHint: false } as const;
 const RESOURCE_LIMIT = 50;
-const MORE = 'Call practice_get for a practice’s full rules.';
+const MORE = 'Call practice_get for a practice’s full rules (pass the same repo).';
 
 const clean = (text: string) => redactPatterns(redactText(text));
 
@@ -77,30 +78,32 @@ export function registerPracticeTools(server: McpServer, ctx: PracticeContext) {
     {
       title: 'A practice in full',
       description: 'The approved version of one practice: its rules in full, the scope it applies to and its machine checks.',
-      inputSchema: z.object({ handle: z.string().regex(PRACTICE_HANDLE), projectId: z.string().max(200).optional().describe('The project, for a project practice') }),
+      inputSchema: z.object({
+        handle: z.string().regex(PRACTICE_HANDLE),
+        projectId: z.string().max(200).optional().describe('The project, for a project practice'),
+        repo: z.string().regex(PRACTICE_REPO).optional().describe('The same owner/name you gave practices_for'),
+      }),
       annotations: READ_ONLY,
     },
-    async ({ handle, projectId }) => {
+    async ({ handle, projectId, repo }) => {
       if (projectId && ctx.scope && ctx.scope.projectId !== projectId) return failure(`Practice ${handle} not found`);
-      let list: ApprovedPractice[];
+      let practice: ApprovedPractice | undefined;
       try {
-        list = practicesCitable(caller);
+        practice = resolvePractice(caller, handle, { repo, projectId });
       } catch (caught) {
         if (caught instanceof HttpError) return failure(`Practice ${handle} not found`);
         throw caught;
       }
-      const matches = list.filter((p) => p.handle === handle);
-      const practice = (projectId ? matches.find((p) => p.projectId === projectId) : undefined) ?? matches.find((p) => p.level === 'project') ?? matches[0];
       if (!practice) return failure(`Practice ${handle} not found`);
       return json({
         handle: practice.handle,
         version: practice.version,
         title: cleanTitle(practice.title),
         strength: practice.strength,
-        scope: { level: practice.level, ...(practice.projectId && { projectId: practice.projectId }), topics: practice.topics, repos: practice.repos, paths: practice.paths },
-        summary: clean(practice.summary),
+        scope: { level: practice.level, ...(practice.projectId && { projectId: practice.projectId }), topics: practice.topics.map(clean), repos: practice.repos.map(clean), paths: practice.paths.map(clean) },
+        summary: cleanSummary(clean(practice.summary)),
         body: clean(practice.body),
-        checks: practice.checks,
+        checks: JSON.parse(clean(JSON.stringify(practice.checks))),
       });
     },
   );
@@ -197,7 +200,7 @@ export function registerPracticeTools(server: McpServer, ctx: PracticeContext) {
       uri,
       { title: cleanTitle(practice.title), description: `${practice.strength} practice, version ${practice.version}`, mimeType: 'text/markdown' },
       asResource(uri, () => {
-        const current = practicesCitable(caller).find((p) => p.id === practice.id) ?? practice;
+        const current = resolvePractice(caller, practice.handle) ?? practice;
         return `# ${clean(current.title)}\n\n${current.strength}, version ${current.version}\n\n${clean(current.body)}`;
       }),
     );
