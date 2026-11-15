@@ -6,13 +6,11 @@
  * No schema here: this module reaches the browser, and the request is a plain GET.
  */
 import { useEffect, useRef } from 'react';
-import { nanoid } from 'nanoid';
 import { api } from '@/lib/client/api';
 import { useBuildFlow } from '../ai-builder';
-import { testDraft, useAutonomous } from '../autonomous';
-import { draft as draftCall, useAssistant, type ChatItem } from '../assistant';
+import { useAssistant } from '../assistant';
 import { useEditor } from '../store';
-import type { Reply } from './reply';
+import { draftWholeFlow } from './draft-flow';
 
 const PREFIX = 'proposal:';
 
@@ -67,26 +65,7 @@ export function useAskParam(ready: boolean) {
       if (!prompt || useAssistant.getState().pending || useAssistant.getState().drafting) return;
       if (useEditor.getState().nodes.length) return;
       useAssistant.getState().setCollapsed(false);
-      // The builder drafts the whole flow in one go, with test data on the trigger (as Spotlight's first message does).
-      const reply: ChatItem = { id: nanoid(8), role: 'assistant', parts: [] };
-      useAssistant.getState().append([{ id: nanoid(8), role: 'user', text: prompt }, reply]);
-      const patch = (fields: Partial<Reply>) => useAssistant.setState((s) => ({ items: s.items.map((i) => (i.id === reply.id ? { ...(i as Reply), ...fields } : i)) }));
-      useAssistant.setState({ drafting: true });
-      const abort = (draftCall.request = new AbortController());
-      try {
-        const flow = await build(prompt, abort.signal);
-        const auto = useAutonomous.getState().on;
-        patch({
-          parts: [{ kind: 'text', text: `Built “${flow.name}” with ${flow.nodes} nodes.${flow.pinned ? ' Test data is pinned on the trigger.' : ''} ⌘Z undoes it.${auto ? ' Testing it now.' : ''}` }, { kind: 'action', action: 'test', goal: prompt }],
-          done: { model: flow.model, durationMs: flow.durationMs, steps: 1 },
-        });
-        if (auto) queueMicrotask(() => testDraft(reply.id, prompt));
-      } catch (e) {
-        patch(abort.signal.aborted ? { parts: [{ kind: 'text', text: 'Stopped: nothing was drafted.' }] } : { error: `Couldn’t build the flow: ${(e as Error).message}` });
-      } finally {
-        if (draftCall.request === abort) draftCall.request = undefined;
-        useAssistant.setState({ drafting: false });
-      }
+      await draftWholeFlow(prompt, build);
     })();
   }, [ready, workflowId, build]);
 }
