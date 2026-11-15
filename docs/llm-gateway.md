@@ -394,8 +394,10 @@ rows from before it, rows imported from the gateway's spend log, failed calls an
 
 **Purpose** is one of `answer`, `guardrail`, `judge`, `embed`, `cache-embed`, `rerank`, `summary`, `eval`. Code that
 knows why it makes a call sets it with `withCallPurpose` (`lib/server/ai-usage/call-context.ts`); otherwise an
-embeddings call is `embed`, a chat call inside a workflow run or an agent session is `answer`, and anything else
-(Spotlight, the brain) stays empty. There is no `router` purpose: the router makes no model call. The same note carries
+embeddings call is `embed`, a chat call inside a workflow run or an agent session is `answer`, and anything else stays
+empty. Spotlight, the Agent architect and the brain's Ask set `answer` themselves. An agent's loop step (Run an Agent,
+a team member, an agent tool) and the AI Agent node say `answer` only when no outer purpose is set: inside an
+evaluation run they keep `eval`, while a guardrail check or a judge inside it still says `guardrail` or `judge`. There is no `router` purpose: the router makes no model call. The same note carries
 the agent loop's iteration and the caller agent, and a listener (`setRecordedCallListener`) hears each recorded call
 once its row is written, for the prompt-parts work.
 

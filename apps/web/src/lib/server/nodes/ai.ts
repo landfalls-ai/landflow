@@ -1,5 +1,5 @@
 import vm from 'node:vm';
-import { withCallNote } from '../ai-usage/call-context'; // SP03:
+import { currentCallNote, withCallNote } from '../ai-usage/call-context'; // SP03:
 import { plainDraft } from '../ai-usage/drafts'; // SP03:
 import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type NodeItem } from '@landflow/sdk';
 import { splitToolOutput, toToolName, type AgentMemory, type AgentMessage, type AgentTool, type ToolCall, type ToolResult } from '@landflow/engine';
@@ -295,7 +295,8 @@ export const aiAgentNode = defineNode({
             }
           : undefined;
         const hydrated = await hydrateToolImages(ctx, run.messages, { model, keep: toolImagesKept, mode: toolImagesMode });
-        const turn = await withCallNote({ purpose: 'answer', draft: plainDraft({ system, tools, messages: hydrated }) }, () => model.generate({ system, messages: hydrated, tools, ...(onToken && { onToken }) })); // SP03:
+        // An outer purpose wins (an evaluation run's calls stay `eval`); else this is an answer.
+        const turn = await withCallNote({ purpose: currentCallNote().purpose ?? 'answer', draft: plainDraft({ system, tools, messages: hydrated }) }, () => model.generate({ system, messages: hydrated, tools, ...(onToken && { onToken }) })); // SP03:
         run.usage.inputTokens += turn.usage?.inputTokens ?? 0;
         run.usage.outputTokens += turn.usage?.outputTokens ?? 0;
         run.messages.push({ role: 'assistant', text: turn.text, toolCalls: turn.toolCalls, ...(turn.raw && { raw: turn.raw }) });

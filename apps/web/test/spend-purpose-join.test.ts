@@ -7,6 +7,9 @@
  * output guardrail judged by its own chat model), an agent with a similar-question cache (its question's embedding),
  * and a run report with "Add a Summary". Each call must land as an `ai_usage` row with the right `purpose`, the node it
  * ran under and, inside the agent loop, its `iteration`; the `ai.call` event carries the purpose.
+ *
+ * The second run is an evaluation run (SP02 sets `eval` around it): the Run an Agent node's loop and the AI Agent node's
+ * call build their prompts inside an SP03 note, and must still say `eval`, while the guardrails inside say `guardrail`.
  */
 import { mkdtempSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -32,6 +35,8 @@ const { runWorkflow } = await import('@/lib/server/runner');
 const { agentStore } = await import('@/lib/server/agents/store');
 const { database } = await import('@/lib/server/db');
 const { listUsageEvents } = await import('@/lib/server/usage/query');
+const { dataTables } = await import('@/lib/server/datatables');
+const { startEvaluation, evaluationDone, evaluationDetail } = await import('@/lib/server/evaluations/runner');
 
 registry.registerBuiltin(corePlugin);
 
@@ -146,6 +151,43 @@ describe('spend-purpose-join: SP02 call sites write SP01 attribution', () => {
 
     // Every row has a purpose, and the ai.call event of each carries the same purpose and usage id.
     expect(rows.every((r) => r.purpose)).toBe(true);
+    const events = listUsageEvents({ kinds: ['ai.call'] }, { limit: 200 }).filter((e) => rows.some((r) => r.id === e.attrs?.usageId));
+    expect(events).toHaveLength(rows.length);
+    for (const event of events) expect(event.attrs?.purpose, String(event.attrs?.usageId)).toBe(rows.find((r) => r.id === event.attrs?.usageId)!.purpose);
+  });
+
+  it('inside an evaluation run, the Run an Agent loop and the AI Agent node are `eval`; their guardrails stay `guardrail`', async () => {
+    const table = dataTables().createTable({ name: 'join_eval_cases', columns: [{ name: 'question', type: 'string' }, { name: 'expected', type: 'string' }] });
+    dataTables().insertRows(table.id, [{ question: 'Where do wombats hibernate?', expected: 'In burrows.' }]);
+    const workflow: Workflow = {
+      id: 'wf_spend_purpose_eval',
+      name: 'Spend purpose eval',
+      nodes: [
+        node('Trigger', 'core.evaluationTrigger', { dataTableId: table.id }),
+        node('Ask', 'core.messageAgent', { agentId: worker.id, message: '{{ $json.question }}', conversation: 'new' }),
+        node('Agent', 'core.aiAgent', { prompt: 'Where do wombats hibernate?' }),
+        node('Model', 'core.anthropicChatModel', { model: 'claude-join', fallback: false }, { credentials: { anthropicApi: ref(anthropic) } }),
+      ],
+      connections: [edge('Trigger', 'Ask'), edge('Ask', 'Agent'), edge('Model', 'Agent', 'ai_languageModel')],
+    };
+    store.saveWorkflow(workflow);
+    const done = await evaluationDone(startEvaluation(workflow.id).id);
+    expect(done).toMatchObject({ status: 'success', completed: 1, failed: 0 });
+    const executionId = evaluationDetail(done!.id)!.cases[0].executionId;
+    expect(executionId).toBeTruthy();
+
+    const rows = database().all<Row>('SELECT id, operation, provider, purpose, node_id, iteration, session_id, agent_id FROM ai_usage WHERE execution_id = ? ORDER BY at, id', executionId);
+    const of = (purpose: string) => rows.filter((r) => r.purpose === purpose);
+
+    // The Run an Agent loop: three steps, each `eval`, with its iteration; no `answer` anywhere in the run.
+    expect(of('eval').filter((r) => r.node_id === 'Ask').map((r) => r.iteration).sort()).toEqual([1, 2, 3]);
+    // The AI Agent node's call (made by its model sub-node).
+    expect(of('eval').filter((r) => r.node_id === 'Model')).toEqual([expect.objectContaining({ operation: 'chat', provider: 'anthropic' })]);
+    expect(of('answer')).toEqual([]);
+    // The agent's guardrails still say `guardrail`, outside any loop step.
+    expect(of('guardrail').map((r) => r.provider).sort()).toEqual(['anthropic', 'strands']);
+    expect(of('guardrail').every((r) => r.node_id === 'Ask' && r.iteration === null)).toBe(true);
+    // The ai.call event of each row carries the same purpose.
     const events = listUsageEvents({ kinds: ['ai.call'] }, { limit: 200 }).filter((e) => rows.some((r) => r.id === e.attrs?.usageId));
     expect(events).toHaveLength(rows.length);
     for (const event of events) expect(event.attrs?.purpose, String(event.attrs?.usageId)).toBe(rows.find((r) => r.id === event.attrs?.usageId)!.purpose);

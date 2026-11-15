@@ -24,7 +24,7 @@ import { refFromSession } from '../project-context/resolve';
 import { citedIn, recordRunPractices, runPractices, withPractices } from '../project-context/practices';
 import { runContextProvider, withRunContext } from '../project-context/seam';
 import { agentScope, isUsageCapError, runInUsageScope } from '../ai-usage';
-import { withCallNote } from '../ai-usage/call-context'; // SP03:
+import { currentCallNote, withCallNote } from '../ai-usage/call-context'; // SP03:
 import { agentDraft, type SystemSegment } from '../ai-usage/drafts'; // SP03:
 import { currentActorId, requestAuth } from '../auth/context';
 import { applyToolPolicy } from './policy';
@@ -604,7 +604,8 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
         const system = systemPromptParts(agent, config, session, runCtx, toolNote);
         const messages = await hydrateToolImages({ helpers: storeHelpers(binaryScopeFor(ctx)), logger: { warn: (m: string) => logger.warn(m) } as never }, contextWindow(session.messages), { model, keep: keptToolImages(request, config.settings), mode: request.toolImages?.mode });
         const draft = agentDraft({ systemSegments: system.segments, tools: specs, messages, cache: model.provider === 'anthropic' });
-        turn = await withCallNote({ purpose: 'answer', iteration: iterations, draft }, () => model.generate({ system: system.text, messages, tools: specs, signal: request.signal }));
+        // An outer purpose wins (an evaluation run's calls stay `eval`); else this is an answer.
+        turn = await withCallNote({ purpose: currentCallNote().purpose ?? 'answer', iteration: iterations, draft }, () => model.generate({ system: system.text, messages, tools: specs, signal: request.signal }));
       } catch (error) {
         if (isUsageCapError(error)) {
           upsert({ id: entryId(), type: 'notice', message: `Stopped: ${error.message}.`, at: now() });
