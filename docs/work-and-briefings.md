@@ -164,9 +164,16 @@ lists: the reads use the ledger's one visibility rule. All five nodes read or wr
     publishing, activating, an owner saving a member's graph unchanged) makes no version and credits nobody new; a
     restore makes a version credited to whoever saved the restored one; a save with no person behind it (a Slack click
     that applies a suggestion without a matched person, a background save, an import) and every version from before
-    2091 credit nobody. So after a member's change, an owner or admin has to save a change of their own.
-  - **When it is the published version**, an owner or an admin **published** it too (`publishedBy`; a publish request
-    an owner approved still names the member who asked).
+    2091 (with those the database imports once from the old JSON files) credit nobody. So after a member's change, an owner or admin has to save a change of their own.
+  - **When it is the published version**, an owner or an admin **published** it too (`publishedBy`). Four-eyes
+    approval publishes as the person who asked: a member's publish request that an owner or admin approves stays a
+    member's publication and is refused, so an owner or admin publishes the version themselves.
+  - **Two keys, not one.** Any owner's or admin's save that changes what a version counts makes them its author, whatever
+    else is in the graph: a change to the workflow's settings (the Insights time saved), applying a brain suggestion, a
+    Git or environment pull. Saving over a member's draft therefore makes the member's graph the owner's version. The
+    author alone is one key; for the schedule of a published workflow the publisher is the second, so read the change
+    before you publish it, and keep the nightly workflow published (a schedule of an unpublished draft has only the
+    author's key).
   - It is a trigger's run (mode `trigger`, `poll` or `webhook`), not a re-run, a retry someone asked for or a metric's
     measurement of a suggestion. What it came from passes the same check: the run an automatic retry retries (an
     automatic retry keeps that run's starter), the failed run an error workflow answers, and the run a sub-workflow
