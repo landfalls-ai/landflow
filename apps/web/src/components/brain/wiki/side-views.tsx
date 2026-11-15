@@ -73,7 +73,7 @@ function Decorations({ file }: { file: TreeFile }) {
   );
 }
 
-function Row({ depth, active, onClick, onDoubleClick, title, children }: { depth: number; active?: boolean; onClick: () => void; onDoubleClick?: () => void; title?: string; children: ReactNode }) {
+export function Row({ depth, active, onClick, onDoubleClick, title, children }: { depth: number; active?: boolean; onClick: () => void; onDoubleClick?: () => void; title?: string; children: ReactNode }) {
   return (
     <button
       type="button"

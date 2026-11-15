@@ -18,6 +18,9 @@ describe('workbench layout', () => {
   it('keeps the chrome when an empty brain has another file open', () => {
     expect(workbenchLayout(0, 'log').explorer).toBe(true);
   });
+  it('keeps the chrome of an empty brain when practices are on', () => {
+    expect(workbenchLayout(0, 'index', true)).toEqual({ indexOnly: false, explorer: true, tabs: true });
+  });
   it('has a two-item status bar', () => {
     expect(statusItems(12, 0)).toEqual(['12 pages', '0 problems']);
     expect(statusItems(1, 1)).toEqual(['1 page', '1 problem']);

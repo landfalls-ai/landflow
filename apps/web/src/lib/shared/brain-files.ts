@@ -15,6 +15,13 @@ export const LOG: FileRef = 'log';
 /** What Landflow knows (the brain's status, facts and detectors), opened as a file of its own. */
 export const SETTINGS: FileRef = 'settings';
 
+/** The folder a practice's file is in (docs/practices.md): `practices/<id>`, a card rather than a wiki page. */
+export const PRACTICES = 'practices';
+export const practiceRef = (id: string): FileRef => `${PRACTICES}/${id}`;
+export const isPracticeRef = (ref: FileRef) => ref.startsWith(`${PRACTICES}/`);
+/** A file the wiki routes serve (`type/id`): index, log, settings and practices are not. */
+export const isPageRef = (ref: FileRef) => ref.includes('/') && !isPracticeRef(ref);
+
 /** The address of a file. */
 export const urlOf = (ref: FileRef) => (ref === INDEX ? '/brain' : `/brain/${ref}`);
 
