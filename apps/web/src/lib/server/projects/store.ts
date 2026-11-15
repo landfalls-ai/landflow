@@ -16,7 +16,6 @@ import { can } from '../../shared/auth';
 import { authDb } from '../auth/db';
 import { getUser } from '../auth/users';
 import { HttpError } from '../errors';
-import { removeBudgetRows } from '../budgets/store'; // PC14
 
 export interface ProjectRecord {
   id: string;
@@ -375,8 +374,10 @@ export function removeProjectRows(id: string): string[] {
       retired.push(practice.id);
       recordAudit({ action: 'practice.retired', target: { type: 'practice', id: practice.id, name: practice.handle }, project: id, summary: `Retired ${practice.handle}: its project was deleted` });
     }
-    // PC14: its AI budget and incidents.
-    removeBudgetRows(database, id);
+    // PC14: its AI budget and incidents (deleted here, not through budgets/store.ts, which would pull the price table
+    // into http.ts's import closure: test/runtime.test.ts).
+    database.delete('project_budgets', { project_id: id });
+    for (const row of database.all<{ id: string }>('SELECT id FROM project_budget_incidents WHERE project_id = ?', id)) database.delete('project_budget_incidents', { id: row.id });
     database.delete('project_workspaces', { project_id: id }); // PC16: the workspace for harness runs
     database.delete('project_members', { project_id: id });
     for (const share of database.all<ShareRow>('SELECT * FROM resource_shares WHERE project_id = ?', id)) {

@@ -152,12 +152,6 @@ export function resumedThisMonth(db: Database, projectId: string, month: string)
   return Boolean(db.get("SELECT 1 AS found FROM project_budget_incidents WHERE project_id = ? AND month = ? AND kind = 'stop' AND resolution = 'resumed'", projectId, month));
 }
 
-/** Delete a project's budget and incidents (its removal). */
-export function removeBudgetRows(db: Database, projectId: string) {
-  db.delete('project_budgets', { project_id: projectId });
-  for (const row of db.all<{ id: string }>('SELECT id FROM project_budget_incidents WHERE project_id = ?', projectId)) db.delete('project_budget_incidents', { id: row.id });
-}
-
 // ---- spend ------------------------------------------------------------------------------------------------
 
 /** The part of the usage meter (ai-usage/index.ts `BudgetMeter`) the budgets read: the day and the project's totals. */
