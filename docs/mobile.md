@@ -97,6 +97,10 @@ height eases between its three heights (the bar as measured, peek, half) over 24
   Shared, Published and the last run's badge move to the second line, in front of at most three node icons (the strip
   clips when the badges need the room) and without the description (`WorkflowRow` in
   `components/workflows/workflows-list.tsx`). The desktop row is unchanged.
+- **Credential rows.** On a phone a row of the Credentials list keeps the icon, the name and the type on its first line;
+  its badges, "Used by …" and "Updated …" move to a second line under the name, and its ⋯ menu shows without hovering
+  (`app/credentials/page.tsx`: the second line is a wrapper that is `display: contents` on a desktop). The desktop row
+  is unchanged.
 - **No sideways scrolling.** No page scrolls sideways at 390 px: a plugin card's chips wrap, the Developers page breaks
   long inline code, and pages pad 16 px instead of 24. Strips that are meant to scroll (a segment control, the Settings
   tabs) scroll inside themselves.

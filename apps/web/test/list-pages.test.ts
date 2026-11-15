@@ -141,6 +141,21 @@ describe('credentials: the picker', () => {
   it('has no type grid on the page', () => {
     expect(src('app', 'credentials', 'page.tsx')).not.toContain('Credential types published by plugins');
   });
+
+  it('on a phone a row keeps the name on its first line and puts the meta on a second, without fixed widths', () => {
+    // At 390 px the fixed w-40 and w-28 meta columns left the name 0 px wide and pushed the row past the card.
+    const page = src('app', 'credentials', 'page.tsx');
+    const row = page.slice(page.indexOf('<CredentialTypeIcon info={info} size={34} />'), page.indexOf('</button>'));
+    expect(row).toContain('<span className="min-w-0 flex-1">');
+    const second = row.slice(row.indexOf('className="contents max-md:flex'));
+    // display: contents on a desktop (the row is unchanged), its own wrapping line under the name on a phone.
+    expect(second).toContain('max-md:basis-full max-md:flex-wrap');
+    expect(second).toContain('w-40 shrink-0 truncate text-right text-[12px] text-t2 max-md:w-auto max-md:min-w-0 max-md:shrink max-md:text-left');
+    expect(second).toContain('w-28 shrink-0 text-right text-[12px] text-t3 max-md:w-auto max-md:text-left');
+    expect(page).toContain('max-md:flex-wrap max-md:gap-y-1');
+    // No hover on a phone: the row's menu shows.
+    expect(page).toContain('group-hover:opacity-100 max-md:opacity-100');
+  });
 });
 
 describe('data tables', () => {

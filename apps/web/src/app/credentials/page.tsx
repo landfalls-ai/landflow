@@ -91,7 +91,7 @@ function CredentialsView() {
                 <div key={credential.id} style={{ animationDelay: `${Math.min(index, 12) * 25}ms` }} className="group flex items-center border-b border-hair transition-colors last:border-b-0 hover:bg-acdim animate-fade-up">
                   <button
                     onClick={() => (editable ? setDialog({ id: credential.id }) : toast.info(`Shared with you by ${credential.ownership?.projectName}: you can use it in workflows, not view or change it`))}
-                    className="flex min-w-0 flex-1 items-center gap-3.5 px-4 py-3 text-left"
+                    className="flex min-w-0 flex-1 items-center gap-3.5 px-4 py-3 text-left max-md:flex-wrap max-md:gap-y-1"
                   >
                     <CredentialTypeIcon info={info} size={34} />
                     <span className="min-w-0 flex-1">
@@ -100,26 +100,30 @@ function CredentialsView() {
                         {info ? `${info.descriptor.displayName} · ${info.pluginName}` : credential.type}
                       </span>
                     </span>
-                    {credential.ownership?.shared && <Badge tone="muted" title={`Shared from ${credential.ownership.projectName}`}>Shared · can use</Badge>}
-                    {!info && <Badge tone="warning" title="The plugin that publishes this type is not registered">plugin missing</Badge>}
-                    {info && !info.available && <Badge tone="warning">plugin offline</Badge>}
-                    {credential.oauth2 && (
-                      <Badge
-                        tone={credential.oauth2.error || (credential.oauth2.expired && !credential.oauth2.refreshable) ? 'warning' : credential.oauth2.connected ? 'success' : 'muted'}
-                        title={credential.oauth2.error ?? (credential.oauth2.account ? `Connected as ${credential.oauth2.account}` : undefined)}
-                      >
-                        {credential.oauth2.connected ? (credential.oauth2.expired && !credential.oauth2.refreshable ? 'expired' : 'connected') : 'not connected'}
-                      </Badge>
-                    )}
-                    <span className="w-40 shrink-0 truncate text-right text-[12px] text-t2" title={credential.usedBy.map((u) => u.workflowName).join(', ')}>
-                      {credential.usedBy.length ? `Used by ${credential.usedBy.length} workflow${credential.usedBy.length === 1 ? '' : 's'}` : 'Not used yet'}
+                    {/* On a phone the badges and the meta sit on a second line under the name; on a desktop this wrapper is
+                        display: contents, so the row is unchanged. */}
+                    <span className="contents max-md:flex max-md:min-w-0 max-md:basis-full max-md:flex-wrap max-md:items-center max-md:gap-x-2 max-md:gap-y-1 max-md:pl-12">
+                      {credential.ownership?.shared && <Badge tone="muted" title={`Shared from ${credential.ownership.projectName}`}>Shared · can use</Badge>}
+                      {!info && <Badge tone="warning" title="The plugin that publishes this type is not registered">plugin missing</Badge>}
+                      {info && !info.available && <Badge tone="warning">plugin offline</Badge>}
+                      {credential.oauth2 && (
+                        <Badge
+                          tone={credential.oauth2.error || (credential.oauth2.expired && !credential.oauth2.refreshable) ? 'warning' : credential.oauth2.connected ? 'success' : 'muted'}
+                          title={credential.oauth2.error ?? (credential.oauth2.account ? `Connected as ${credential.oauth2.account}` : undefined)}
+                        >
+                          {credential.oauth2.connected ? (credential.oauth2.expired && !credential.oauth2.refreshable ? 'expired' : 'connected') : 'not connected'}
+                        </Badge>
+                      )}
+                      <span className="w-40 shrink-0 truncate text-right text-[12px] text-t2 max-md:w-auto max-md:min-w-0 max-md:shrink max-md:text-left" title={credential.usedBy.map((u) => u.workflowName).join(', ')}>
+                        {credential.usedBy.length ? `Used by ${credential.usedBy.length} workflow${credential.usedBy.length === 1 ? '' : 's'}` : 'Not used yet'}
+                      </span>
+                      <span className="w-28 shrink-0 text-right text-[12px] text-t3 max-md:w-auto max-md:text-left">Updated {timeAgo(credential.updatedAt)}</span>
                     </span>
-                    <span className="w-28 shrink-0 text-right text-[12px] text-t3">Updated {timeAgo(credential.updatedAt)}</span>
                   </button>
                   <div className="pr-2.5">
                     <Popover
                       trigger={({ open, toggle }) => (
-                        <Button variant="ghost" size="icon-sm" onClick={toggle} aria-label={`${credential.name} menu`} className={open ? 'text-t3' : 'text-t3 opacity-0 focus-visible:opacity-100 group-hover:opacity-100'}>
+                        <Button variant="ghost" size="icon-sm" onClick={toggle} aria-label={`${credential.name} menu`} className={open ? 'text-t3' : 'text-t3 opacity-0 focus-visible:opacity-100 group-hover:opacity-100 max-md:opacity-100'}>
                           <MoreHorizontal className="size-4" />
                         </Button>
                       )}
