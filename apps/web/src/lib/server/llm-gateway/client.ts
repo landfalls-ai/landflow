@@ -43,7 +43,10 @@ export const hashKey = (key: string): string => createHash('sha256').update(key)
 export const spendLogTime = (ms: number): string => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
 
 export interface LiteLlmSpendLog {
+  /** The response's id (`chatcmpl-…`); not the call id the proxy sends back in `x-litellm-call-id`. */
   request_id: string;
+  /** The call id the proxy sent back in `x-litellm-call-id`, which Landflow keeps on its `ai_usage` row. */
+  litellm_call_id?: string;
   call_type?: string;
   /** The hashed key the call used. */
   api_key?: string;
@@ -95,6 +98,8 @@ export interface LiteLlmTeam {
 
 export interface LiteLlmCustomer {
   user_id: string;
+  /** The budget object that holds the customer's budget (`/budget/update` changes it). */
+  budget_id?: string | null;
   alias?: string | null;
   spend?: number | null;
   blocked?: boolean;
@@ -152,6 +157,11 @@ const num = (value: unknown): number | undefined => {
   return typeof n === 'number' && Number.isFinite(n) ? n : undefined;
 };
 
+const callIdOf = (raw: Record<string, unknown>, metadata: Record<string, unknown> | undefined): string | undefined => {
+  const id = raw.litellm_call_id ?? metadata?.litellm_call_id;
+  return typeof id === 'string' && id.trim() ? id.trim() : undefined;
+};
+
 /** One spend-log row as the proxy sent it, with `metadata` and `request_tags` parsed and numbers made numbers. */
 export function normalizeSpendLog(raw: Record<string, unknown>): LiteLlmSpendLog {
   const metadata = asObject(raw.metadata);
@@ -164,6 +174,7 @@ export function normalizeSpendLog(raw: Record<string, unknown>): LiteLlmSpendLog
   return {
     ...(raw as unknown as LiteLlmSpendLog),
     request_id: String(raw.request_id ?? ''),
+    ...(callIdOf(raw, metadata) && { litellm_call_id: callIdOf(raw, metadata) }),
     spend: num(raw.spend),
     total_tokens: num(raw.total_tokens),
     prompt_tokens: num(raw.prompt_tokens),
@@ -178,6 +189,7 @@ function customerOf(raw: Record<string, unknown>): LiteLlmCustomer {
   const budget = asObject(raw.litellm_budget_table) ?? {};
   return {
     user_id: String(raw.user_id ?? raw.end_user_id ?? ''),
+    budget_id: (raw.budget_id ?? budget.budget_id ?? null) as string | null,
     alias: (raw.alias as string | null | undefined) ?? null,
     spend: num(raw.spend) ?? null,
     blocked: Boolean(raw.blocked),
@@ -299,11 +311,11 @@ export class LiteLlmClient {
     };
   }
 
-  /** One call's spend-log row (GET /spend/logs?request_id=), for matching a call id. */
+  /** One call's spend-log row (GET /spend/logs?request_id=), for matching a call id: the proxy's `x-litellm-call-id` or the response id. */
   async spendLog(requestId: string): Promise<LiteLlmSpendLog | undefined> {
     const reply = await this.maybe(() => this.request<unknown>('GET', `/spend/logs?request_id=${encodeURIComponent(requestId)}`));
     const rows = Array.isArray(reply) ? reply : asObject(reply) ? [reply] : [];
-    const row = rows.map((r) => normalizeSpendLog(r as Record<string, unknown>)).find((r) => r.request_id === requestId);
+    const row = rows.map((r) => normalizeSpendLog(r as Record<string, unknown>)).find((r) => r.litellm_call_id === requestId || r.request_id === requestId);
     return row;
   }
 
@@ -329,8 +341,25 @@ export class LiteLlmClient {
     return customerOf(await this.request<Record<string, unknown>>('POST', '/customer/new', customer));
   }
 
+  /**
+   * Change a customer. `/customer/update` ignores budget fields (a null never clears one), so the budget goes through the
+   * customer's budget object: `/budget/update` when it has one, else a new budget (`/budget/new`) linked by `budget_id`.
+   */
   async updateCustomer(customer: { user_id: string; alias?: string; max_budget?: number | null; budget_duration?: string | null }): Promise<LiteLlmCustomer> {
-    return customerOf(await this.request<Record<string, unknown>>('POST', '/customer/update', customer));
+    const { user_id, alias, max_budget, budget_duration } = customer;
+    const touchesBudget = max_budget !== undefined || budget_duration !== undefined;
+    let budgetId: string | null | undefined;
+    if (touchesBudget) {
+      const current = await this.customerInfo(user_id);
+      if (!current) throw new LiteLlmError(404, "/customer/info", `End User Id=${user_id} does not exist`);
+      const fields = { ...(max_budget !== undefined && { max_budget }), ...(budget_duration !== undefined && { budget_duration }) };
+      if (current.budget_id) await this.request('POST', '/budget/update', { budget_id: current.budget_id, ...fields });
+      else if (max_budget !== null && max_budget !== undefined) budgetId = String((await this.request<Record<string, unknown>>('POST', '/budget/new', fields)).budget_id ?? '') || undefined;
+    }
+    if (alias !== undefined || budgetId) await this.request('POST', '/customer/update', { user_id, ...(alias !== undefined && { alias }), ...(budgetId && { budget_id: budgetId }) });
+    const after = await this.customerInfo(user_id);
+    if (!after) throw new LiteLlmError(404, "/customer/info", `End User Id=${user_id} does not exist`);
+    return after;
   }
 
   async generateKey(key: {

@@ -48,6 +48,8 @@ export interface FakeTeam {
 export interface FakeCustomer {
   user_id: string;
   alias?: string;
+  /** As in the real proxy, a customer's budget lives on a budget object (`/budget/new`, `/budget/update`). */
+  budget_id?: string;
   max_budget?: number | null;
   budget_duration?: string | null;
   blocked?: boolean;
@@ -55,7 +57,9 @@ export interface FakeCustomer {
 }
 
 export interface FakeSpendLog {
+  /** The response id (`chatcmpl-…`), as the real proxy writes it; the call id is `litellm_call_id`. */
   request_id: string;
+  litellm_call_id?: string;
   call_type: string;
   api_key: string;
   spend: number;
@@ -118,6 +122,7 @@ export async function startFakeLiteLlm(options: FakeLiteLlmOptions = {}) {
   const keys = new Map<string, FakeKey>();
   const teams = new Map<string, FakeTeam>();
   const customers = new Map<string, FakeCustomer>();
+  const budgets = new Map<string, { max_budget: number | null; budget_duration: string | null }>();
   const spendLogs: FakeSpendLog[] = [];
   let down = false;
 
@@ -138,6 +143,7 @@ export async function startFakeLiteLlm(options: FakeLiteLlmOptions = {}) {
     alias: c.alias ?? null,
     spend: c.spend,
     blocked: c.blocked ?? false,
+    budget_id: c.budget_id ?? null,
     litellm_budget_table: c.max_budget === undefined || c.max_budget === null ? null : { max_budget: c.max_budget, budget_duration: c.budget_duration ?? null },
   });
 
@@ -188,7 +194,8 @@ export async function startFakeLiteLlm(options: FakeLiteLlmOptions = {}) {
       .map((t) => t.trim())
       .filter(Boolean);
     spendLogs.push({
-      request_id: callId,
+      request_id: `chatcmpl-${randomUUID()}`,
+      litellm_call_id: callId,
       call_type: callType,
       api_key: sha(sentLiteLlmKey(headers)),
       spend: costPerCall,
@@ -319,7 +326,7 @@ export async function startFakeLiteLlm(options: FakeLiteLlmOptions = {}) {
     }
     if (path === '/spend/logs') {
       const id = q.get('request_id');
-      return send(res, 200, id ? spendLogs.filter((r) => r.request_id === id) : spendLogs);
+      return send(res, 200, id ? spendLogs.filter((r) => r.request_id === id || r.litellm_call_id === id) : spendLogs);
     }
 
     if (path === '/team/new') {
@@ -347,15 +354,38 @@ export async function startFakeLiteLlm(options: FakeLiteLlmOptions = {}) {
       if (!id) return send(res, 400, { error: { message: 'user_id is required' } });
       // A customer exists once it was created or once a call named it (as the proxy tracks end users): create only new ones.
       if (customers.has(id)) return send(res, 400, { error: { message: `Customer already exists, passed user_id=${id}`, type: 'bad_request', code: '400' } });
-      const customer: FakeCustomer = { user_id: id, ...(typeof b.alias === 'string' && { alias: b.alias }), max_budget: (b.max_budget as number | null | undefined) ?? null, budget_duration: (b.budget_duration as string | null | undefined) ?? null, spend: 0 };
+      const max = (b.max_budget as number | null | undefined) ?? null;
+      const customer: FakeCustomer = { user_id: id, ...(typeof b.alias === 'string' && { alias: b.alias }), ...(max !== null && { budget_id: randomUUID() }), max_budget: max, budget_duration: (b.budget_duration as string | null | undefined) ?? null, spend: 0 };
       customers.set(id, customer);
       return send(res, 200, publicCustomer(customer));
     }
     if (path === '/customer/update') {
       const customer = customers.get(String(b.user_id ?? ''));
       if (!customer) return send(res, 400, { error: { message: `End User Id=${String(b.user_id)} does not exist in db`, type: 'bad_request', code: '400' } });
-      for (const field of ['alias', 'max_budget', 'budget_duration', 'blocked'] as const) if (field in b) (customer as unknown as Record<string, unknown>)[field] = b[field];
+      // Like the pinned proxy: budget fields here are ignored (a null never clears one); the budget object holds them.
+      for (const field of ['alias', 'blocked'] as const) if (field in b) (customer as unknown as Record<string, unknown>)[field] = b[field];
+      if (typeof b.budget_id === 'string') {
+        const budget = budgets.get(b.budget_id);
+        if (!budget) return send(res, 400, { error: { message: `Budget not found, passed budget_id=${b.budget_id}` } });
+        Object.assign(customer, { budget_id: b.budget_id, max_budget: budget.max_budget, budget_duration: budget.budget_duration });
+      }
       return send(res, 200, publicCustomer(customer));
+    }
+    if (path === '/budget/new') {
+      const budget_id = typeof b.budget_id === 'string' ? b.budget_id : randomUUID();
+      const budget = { max_budget: (b.max_budget as number | null | undefined) ?? null, budget_duration: (b.budget_duration as string | null | undefined) ?? null };
+      budgets.set(budget_id, budget);
+      return send(res, 200, { budget_id, ...budget });
+    }
+    if (path === '/budget/update') {
+      const budget_id = String(b.budget_id ?? '');
+      const linked = [...customers.values()].filter((c) => c.budget_id === budget_id);
+      const budget = budgets.get(budget_id) ?? (linked[0] ? { max_budget: linked[0].max_budget ?? null, budget_duration: linked[0].budget_duration ?? null } : undefined);
+      if (!budget) return send(res, 400, { error: { message: `Budget not found, passed budget_id=${budget_id}` } });
+      for (const field of ['max_budget', 'budget_duration'] as const) if (field in b) budget[field] = (b[field] as never) ?? null;
+      budgets.set(budget_id, budget);
+      for (const c of linked) Object.assign(c, budget);
+      return send(res, 200, { budget_id, ...budget });
     }
     if (path === '/customer/info') {
       const customer = customers.get(q.get('end_user_id') ?? '');

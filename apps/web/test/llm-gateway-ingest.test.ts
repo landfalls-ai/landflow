@@ -73,6 +73,9 @@ beforeEach(() => {
   saveIngestStatus({ enabled: false, imported: 0, skipped: 0, totalImported: 0 });
 });
 
+/** The id the import keeps: the proxy's call id (`x-litellm-call-id`), else the response id. */
+const idOf = (row: { litellm_call_id?: string; request_id: string }): string => row.litellm_call_id ?? row.request_id;
+
 describe('the spend import', () => {
   it('turns a runtime key’s calls into ai_usage rows, once each, with an ai.call event', async () => {
     const agentId = fresh('ag');
@@ -99,7 +102,7 @@ describe('the spend import', () => {
       cost: 0.002,
       gateway_cost: 0.002,
     });
-    expect(imported.map((r) => r.call_id).sort()).toEqual([first.request_id, second.request_id].sort());
+    expect(imported.map((r) => r.call_id).sort()).toEqual([idOf(first), idOf(second)].sort());
     expect(imported[0].id).toMatch(/^au_ll_[0-9a-f]{20}$/);
     const events = database().all<{ id: string; kind: string; agent_id: string; tokens: number; attrs: string }>('SELECT * FROM usage_events WHERE agent_id = ?', agentId);
     expect(events).toHaveLength(2);
@@ -132,15 +135,15 @@ describe('the spend import', () => {
     const stranger = litellm.addKey({ key_alias: 'some-client' });
     await post(stranger.key, { 'x-litellm-spend-logs-metadata': JSON.stringify({ landflow: 'in-process' }) });
     const template = litellm.spendLogs[0];
-    const extra = (patch: Partial<FakeSpendLog>) => litellm.spendLogs.push({ ...template, request_id: fresh('req'), api_key: hashKey(key), metadata: { spend_logs_metadata: {} }, ...patch });
+    const extra = (patch: Partial<FakeSpendLog>) => litellm.spendLogs.push({ ...template, litellm_call_id: undefined, request_id: fresh('req'), api_key: hashKey(key), metadata: { spend_logs_metadata: {} }, ...patch });
     extra({ status: 'failure' });
     extra({ spend: 0, total_tokens: 0, prompt_tokens: 0, completion_tokens: 0 });
 
     const status = await importSpend({ now: later() });
     expect(status).toMatchObject({ imported: 1, skipped: 4 });
-    expect(rows().filter((r) => r.agent_id === agentId).map((r) => r.call_id)).toEqual([keep.request_id]);
-    expect(rows().some((r) => r.call_id === litellm.spendLogs[1].request_id)).toBe(false);
-    expect(rows().some((r) => r.call_id === litellm.spendLogs[2].request_id)).toBe(false);
+    expect(rows().filter((r) => r.agent_id === agentId).map((r) => r.call_id)).toEqual([idOf(keep)]);
+    expect(rows().some((r) => r.call_id === idOf(litellm.spendLogs[1]))).toBe(false);
+    expect(rows().some((r) => r.call_id === idOf(litellm.spendLogs[2]))).toBe(false);
   });
 
   it('imports a runtime key’s call even when it claims to be in-process, and attributes it to the agent', async () => {
@@ -159,7 +162,7 @@ describe('the spend import', () => {
     const { key } = await ensureRuntimeKey({ agentId, runtime: 'kagent', model: 'qwen3-coder:30b' });
     await post(key);
     const call = litellm.spendLogs[0];
-    database().insertNew('ai_usage', { id: fresh('au'), at: new Date().toISOString(), day: '2026-11-15', provider: 'anthropic', model: 'x', operation: 'chat', input_tokens: 1, output_tokens: 1, cost: 0, call_id: call.request_id, source: 'landflow', runtime: 'landflow' });
+    database().insertNew('ai_usage', { id: fresh('au'), at: new Date().toISOString(), day: '2026-11-15', provider: 'anthropic', model: 'x', operation: 'chat', input_tokens: 1, output_tokens: 1, cost: 0, call_id: idOf(call), source: 'landflow', runtime: 'landflow' });
     expect(await importSpend({ now: later() })).toMatchObject({ imported: 0, skipped: 1 });
     expect(rows(agentId)).toEqual([]);
   });
@@ -199,7 +202,7 @@ describe('the spend import', () => {
     await post(key);
     saveIngestStatus({ enabled: true, imported: 0, skipped: 0, totalImported: 0, lastEnd: new Date().toISOString() });
     const template = litellm.spendLogs[0];
-    for (let i = 0; i < 1_149; i++) litellm.spendLogs.push({ ...template, request_id: `bulk-${agentId}-${i}` });
+    for (let i = 0; i < 1_149; i++) litellm.spendLogs.push({ ...template, litellm_call_id: undefined, request_id: `bulk-${agentId}-${i}` });
     const status = await importSpend({ now: later() });
     expect(status.imported).toBe(1_150);
     expect(rows(agentId)).toHaveLength(1_150);

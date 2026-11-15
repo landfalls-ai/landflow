@@ -163,7 +163,8 @@ export async function importSpend(options: ImportOptions = {}): Promise<IngestSt
 /** One spend row into `ai_usage` (and the usage ledger); false when it is skipped. */
 function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<typeof aiUsageMeter>; ownKeyHash?: string; now: number }): boolean {
   const { db, meter } = ctx;
-  const callId = text(row.request_id);
+  // The call id Landflow keeps for its own calls (`x-litellm-call-id`), so a call it already counted is never counted again.
+  const callId = text(row.litellm_call_id) ?? text(row.request_id);
   if (!callId) return false;
   if (row.status !== undefined && row.status !== 'success') return false;
   // A key Landflow minted for a runtime is never Landflow's own call, whatever metadata the caller sends.

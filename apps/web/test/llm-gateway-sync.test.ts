@@ -101,7 +101,8 @@ describe('budgets sync', () => {
     expect(report.customers).toMatchObject({ updated: 1, unchanged: 0, created: 0 });
     expect(report.teams).toMatchObject({ created: 0, updated: 0, unchanged: 0 });
     expect(fake.customers.get(LITELLM_IDS.customer(ana.id))?.max_budget).toBe(1.1);
-    expect(fake.requests.slice(before).every((r) => r.path.includes('customer'))).toBe(true);
+    // A customer's budget changes through its budget object (`/budget/update`), as in the real proxy.
+    expect(fake.requests.slice(before).every((r) => r.path.includes('customer') || r.path.startsWith('/budget/'))).toBe(true);
   });
 
   it('follows a cap saved in Settings once, and only when the sync is on', async () => {
@@ -115,7 +116,7 @@ describe('budgets sync', () => {
     before = fake.requests.length;
     await capsRoute.PUT(new Request('http://x/api/settings/ai-caps', { method: 'PUT', body: JSON.stringify({ credentials: {}, users: { [ana.id]: { dayCost: 4 } }, allUsers: { monthCost: 10 } }) }));
     await vi.waitFor(() => expect(fake.customers.get(LITELLM_IDS.customer(ana.id))?.max_budget).toBe(4.4));
-    const updates = fake.requests.slice(before).filter((r) => r.path === '/customer/update');
+    const updates = fake.requests.slice(before).filter((r) => r.path === '/budget/update');
     expect(updates).toHaveLength(1);
     expect(lastSyncReport()?.trigger).toBe('change');
     expect(lastSyncReport()?.customers.updated).toBe(1);

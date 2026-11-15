@@ -18,6 +18,15 @@ model_list:
       api_base: http://host.docker.internal:11434
     model_info:
       supports_function_calling: true
+  # The same local model with a made-up price, only so the live budget test (apps/web/test/litellm-budgets-live.test.ts)
+  # can spend a budget: Ollama costs 0, so a budget on it never runs out, and Landflow rounds a backstop budget up to a whole
+  # cent, so one call here (about 15 tokens at $0.001 each) must cost more than that. Landflow does not use this name.
+  - model_name: landflow-live-priced
+    litellm_params:
+      model: ollama_chat/qwen3-coder:30b
+      api_base: http://host.docker.internal:11434
+      input_cost_per_token: 0.001
+      output_cost_per_token: 0.001
   # A hosted model reads its key from the environment (add ANTHROPIC_API_KEY to the service), never from this file:
   # - model_name: claude-sonnet-4-5
   #   litellm_params:

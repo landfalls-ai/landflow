@@ -37,6 +37,8 @@ COMPOSE_BAKE=false docker --context orbstack compose -p landflow-infra -f deploy
   on the host's Ollama (`ollama_chat/` serves both `/v1/messages` and `/v1/chat/completions`). To add a model, append a
   `model_list` entry and restart the service. Every model name a client sends must be listed. Ollama models have no
   price, so LiteLLM reports cost 0 for them and Landflow prices them from its own table.
+  A third name, `landflow-live-priced`, is `qwen3-coder:30b` with a made-up price of $0.001 a token. It exists only so
+  the live budget test can spend a budget (a free model never does); Landflow does not use it.
 - **Kubernetes.** `kubectl --context orbstack apply -k deploy/k8s/examples/llm-gateway` in `landflow-dev` (it needs the
   `postgres` component): a database Job, a one-replica Deployment and the Service `llm-gateway` on port 4000, with the
   same pinned image. The image runs as root, so the pod does not set `runAsNonRoot`. The UI: `kubectl --context orbstack
@@ -187,7 +189,8 @@ A call is counted in one place only:
   also carry LiteLLM's call id (`x-litellm-call-id`) and its cost, so the gateway's log can be matched to them. They are
   marked `in-process` in LiteLLM's spend log, and the spend import skips them.
 - **Calls made outside Landflow** (an agent on kagent, Claude Code on kagent, any other client of the gateway) are
-  counted from LiteLLM's spend log by the spend import, once per call id.
+  counted from LiteLLM's spend log by the spend import, once per call id. LiteLLM files each row under the response's id (`chatcmpl-…`) and keeps
+  the call id in `litellm_call_id`; Landflow matches and counts by the call id.
 - **LiteLLM's own totals** are the cross-check and the hard stop, never a second count.
 - The tokens a remote agent reports over A2A stay in the Run Trace for reading; they are not counted again.
 
@@ -206,6 +209,9 @@ a client that skips Landflow) is still stopped.
   A daily cap becomes a `1d` budget, else a monthly one a `30d` budget.
 - **Headroom.** The budget sits a percentage above the Landflow cap (10% by default, rounded up to the cent), so
   Landflow's own, clearer stop comes first. Agents on kagent get none: LiteLLM is the only stop there.
+- **How a customer's budget is written.** LiteLLM keeps a customer's budget on a budget object; `/customer/update`
+  ignores budget fields (a null never clears one). So a new customer gets its budget with `/customer/new`, and a change
+  or a removal goes through `/budget/update` on the customer's `budget_id` (or a new budget linked to it).
 - **Windows.** LiteLLM resets `1d` and `30d` budgets on its own clock (UTC), not the instance's time zone.
 - **When it runs.** "Sync now" in Settings → AI → LLM gateway (admins), when caps are saved or an approval raises one
   (only the objects that cap touches), and every `LANDFLOW_LLM_GATEWAY_SYNC_SECONDS` (10 minutes by default) while "Keep

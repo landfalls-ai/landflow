@@ -1,6 +1,6 @@
 /**
  * The cap stop at the gateway, against a real LiteLLM (opt-in: LANDFLOW_INTEGRATION=litellm; compose profile up, Ollama
- * with qwen3-coder:30b). A made-up user's cap of $0.000001 a day is mirrored by the budgets sync; the second call as that
+ * with qwen3-coder:30b, called as `landflow-live-priced`, its priced alias in deploy/llm-gateway/config.yaml). A made-up user's cap of $0.000001 a day is mirrored by the budgets sync; the second call as that
  * end user is refused by LiteLLM with a budget error. Then the cap goes, the sync clears the budget and the throwaway key
  * is blocked (nothing is deleted).
  *
@@ -13,7 +13,8 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 const enabled = Boolean(process.env.LANDFLOW_INTEGRATION?.split(',').includes('litellm'));
-const MODEL = 'qwen3-coder:30b';
+// Ollama costs 0, so a budget never runs out on it: the compose config's priced alias of the same model does.
+const MODEL = 'landflow-live-priced';
 
 vi.setConfig({ testTimeout: 120_000 });
 

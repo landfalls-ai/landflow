@@ -112,7 +112,7 @@ describe('Anthropic through the gateway', () => {
     expect(request.body.output_config).toEqual({ effort: 'low' });
     const added = rows().slice(before);
     expect(added).toHaveLength(1);
-    const callId = fake.spendLogs.at(-1)!.request_id;
+    const callId = fake.spendLogs.at(-1)!.litellm_call_id;
     expect(added[0]).toMatchObject({ call_id: callId, source: 'landflow', runtime: 'landflow', gateway_cost: 0.001, provider: 'litellm', execution_id: 'ex_a1' });
     expect(added[0].project_id).toBe(project.id);
     const attrs = events().map((e) => JSON.parse(e.attrs) as Record<string, unknown>);
@@ -123,10 +123,10 @@ describe('Anthropic through the gateway', () => {
     const streamed: string[] = [];
     await inScope('ex_a2', () => model().generate({ ...turn, onToken: (d) => void streamed.push(d) }));
     expect(streamed.join('')).toBe('Echo: hello');
-    const streamCall = fake.spendLogs.at(-1)!.request_id;
+    const streamCall = fake.spendLogs.at(-1)!.litellm_call_id;
     const tool = await inScope('ex_a3', () => model().generate({ ...turn, tools: [calc] }));
     expect(tool.toolCalls[0]?.name).toBe('calculator');
-    const toolCall = fake.spendLogs.at(-1)!.request_id;
+    const toolCall = fake.spendLogs.at(-1)!.litellm_call_id;
     const ids = rows().map((r) => r.call_id);
     expect(ids).toContain(streamCall);
     expect(ids).toContain(toolCall);
@@ -183,14 +183,14 @@ describe('OpenAI-compatible through the gateway', () => {
     const model = openAiModel(c, { model: 'qwen3-coder:30b' });
     const before = rows().length;
     expect((await inScope('ex_o1', () => model.generate(turn))).text).toBe('Echo: hello');
-    const plain = fake.spendLogs.at(-1)!.request_id;
+    const plain = fake.spendLogs.at(-1)!.litellm_call_id;
     const request = fake.last('/v1/chat/completions')!;
     expect(request.headers.authorization).toBe(`Bearer ${virtual}`);
     expect(request.headers['x-litellm-end-user-id']).toBe('landflow-user-u_gw');
     const out: string[] = [];
     await inScope('ex_o2', () => model.generate({ ...turn, onToken: (d) => void out.push(d) }));
     expect(out.join('')).toBe('Echo: hello');
-    const streamed = fake.spendLogs.at(-1)!.request_id;
+    const streamed = fake.spendLogs.at(-1)!.litellm_call_id;
     const added = rows().slice(before);
     expect(added.map((r) => r.call_id)).toEqual([plain, streamed]);
     expect(added.every((r) => r.gateway_cost === 0.001 && r.source === 'landflow')).toBe(true);
