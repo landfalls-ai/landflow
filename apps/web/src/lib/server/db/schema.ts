@@ -1862,6 +1862,33 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS task_runs_open ON task_runs (project_id, status)`,
     ],
   },
+  // SP01: what each model call was for and where it ran (docs/llm-gateway.md#what-each-call-was-for)
+  {
+    version: 2900,
+    name: 'ai_usage_attribution',
+    statements: [`CREATE INDEX IF NOT EXISTS ai_usage_purpose ON ai_usage (purpose, day)`],
+    addColumns: [
+      { table: 'ai_usage', column: 'node_id', definition: 'TEXT' },
+      { table: 'ai_usage', column: 'span_id', definition: 'TEXT' },
+      { table: 'ai_usage', column: 'purpose', definition: 'TEXT' },
+      { table: 'ai_usage', column: 'iteration', definition: 'BIGINT' },
+      { table: 'ai_usage', column: 'caller_agent_id', definition: 'TEXT' },
+      { table: 'ai_usage', column: 'duration_ms', definition: 'BIGINT' },
+      { table: 'ai_usage', column: 'stop_reason', definition: 'TEXT' },
+    ],
+  },
+  // SP03: the parts of each model call's prompt, in tokens and hashes, no text (docs/llm-gateway.md#what-a-prompt-was-made-of)
+  {
+    version: 2901,
+    name: 'ai_call_parts',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS ai_call_parts (id TEXT PRIMARY KEY, usage_id TEXT, gateway_request_id TEXT, at TEXT NOT NULL, source TEXT NOT NULL, method TEXT NOT NULL, input_tokens BIGINT NOT NULL DEFAULT 0, parts TEXT NOT NULL, prefix_hash TEXT, prompt_hash TEXT, part_hashes TEXT, tool_names TEXT)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS ai_call_parts_usage ON ai_call_parts (usage_id) WHERE usage_id IS NOT NULL`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS ai_call_parts_request ON ai_call_parts (gateway_request_id) WHERE gateway_request_id IS NOT NULL`,
+      `CREATE INDEX IF NOT EXISTS ai_call_parts_at ON ai_call_parts (at)`,
+      `CREATE INDEX IF NOT EXISTS ai_call_parts_prompt ON ai_call_parts (prompt_hash, at)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -1890,6 +1917,8 @@ export const TABLES = {
   workflow_publish_log: ['id'],
   node_static_data: ['workflow_id', 'node_id'],
   ai_usage: ['id'],
+  // SP03:
+  ai_call_parts: ['id'],
   chat_messages: ['workflow_id', 'session_id', 'seq'],
   trigger_buffers: ['key'],
   evaluation_runs: ['id'],

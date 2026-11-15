@@ -23,6 +23,7 @@ const { journalStore } = await import('@/lib/server/journal');
 const { runWorkflow } = await import('@/lib/server/runner');
 const { store } = await import('@/lib/server/store');
 const { defineNode, definePlugin } = await import('@landflow/sdk');
+const { currentCallNote } = await import('@/lib/server/ai-usage/call-context');
 
 afterAll(() => {
   for (const key of Object.keys(ENV)) {
@@ -44,6 +45,28 @@ registry.registerBuiltin(
           ctx.check({ name: 'Tests', status: 'fail', message: '2 of 10 failed' });
           return [ctx.getInputData()];
         },
+      }),
+    ],
+  }),
+);
+
+// A chat model that records the call note in force at each call, for "Add a Summary".
+const summaryNotes: Array<string | undefined> = [];
+registry.registerBuiltin(
+  definePlugin({
+    info: { id: 'notingmodel', name: 'Noting model (test)', version: '1.0.0', language: 'typescript' },
+    nodes: [
+      defineNode({
+        description: { name: 'model', displayName: 'Noting Model', version: 1, kind: 'subnode', supplies: 'ai_languageModel', inputs: [], outputs: [{ type: 'ai_languageModel', displayName: 'Model' }], properties: [] },
+        supplyData: () =>
+          ({
+            provider: 'fake',
+            model: 'noting-1',
+            async generate() {
+              summaryNotes.push(currentCallNote().purpose);
+              return { text: 'All good, mostly.', toolCalls: [], stopReason: 'end' };
+            },
+          }) as unknown as import('@landflow/engine').LanguageModel,
       }),
     ],
   }),
@@ -109,5 +132,21 @@ describe('Run report node', () => {
     expect(checksOf(events).filter((e) => e.check.name === 'Tests').at(-1)?.check.resolution).toMatchObject({ decision: 'accepted', note: 'flaky on CI' });
     // The checks were recorded once, before the wait; the report was saved again after the decision.
     expect(events.filter((e) => e.type === 'artifact' && e.artifact.kind === 'report')).toHaveLength(2);
+  });
+
+  it('writes “Add a Summary” inside a summary call note', async () => {
+    summaryNotes.length = 0;
+    const workflow = store.saveWorkflow({
+      id: 'wf_report_summary',
+      name: 'Report summary',
+      nodes: [node('Start', 'core.manualTrigger'), node('Report', 'core.runReport', { gate: 'warn', profile: 'generic', summarize: true }), node('Model', 'notingmodel.model')],
+      connections: [
+        { id: 'e1', type: 'main', source: 'Start', target: 'Report', sourceIndex: 0, targetIndex: 0 },
+        { id: 'e2', type: 'ai_languageModel', source: 'Model', target: 'Report', sourceIndex: 0, targetIndex: 0 },
+      ],
+    });
+    const record = await runWorkflow({ workflow, mode: 'manual', startNodeId: 'Start' });
+    expect(record.status).toBe('success');
+    expect(summaryNotes).toEqual(['summary']);
   });
 });

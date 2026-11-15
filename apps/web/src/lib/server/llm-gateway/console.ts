@@ -3,7 +3,9 @@
  * model and source, the caps and how near each is, the cap-raise requests and whether asking for more is on.
  *
  * Visibility: owners and admins see every row. Anyone else sees a row when they can read its workflow or agent, or it
- * is their own; other people's rows add up to one "Teammates" row, never by name. A row they can't see is in no total.
+ * is their own; a row they can't see is in no total and its project, goal, agent or workflow is "Another ...". The
+ * person group is the exception (the user's decision D1, 2026-11-15): every member sees every person's spend by name,
+ * from every row of the period, in `peopleTotals`. Other people's caps stay private (`capsFor`).
  */
 import { agentStore } from '../agents/store';
 import { watchedCaps } from '../ai-usage/alerts';
@@ -111,6 +113,19 @@ function usageRows(period: AiConsolePeriod, now: number): { rows: UsageRow[]; fr
 }
 
 const userLabel = (id: string) => getUser(id)?.name || getUser(id)?.email || 'Someone';
+
+/**
+ * A person's label in the person group, which every member sees (D1): the name. A person with no name, or whose name is
+ * their email address (as a sign-in without a display name leaves it), shows the email to admins and to themselves, and as
+ * "Unnamed person" to everyone else: a member never sees another person's email here.
+ */
+function personLabel(id: string, viewer: { id: string }, admin: boolean): string {
+  const user = getUser(id);
+  if (!user) return 'Someone';
+  const name = user.name?.trim();
+  if (admin || id === viewer.id) return name || user.email || 'Someone';
+  return name && !name.includes('@') ? name : 'Unnamed person';
+}
 
 /** Sorted by cost then tokens, each with its share, the tail beyond 50 rolled into "Other". */
 function finish(groups: Map<string, AiConsoleRow>, total: AiConsoleTotals): AiConsoleRow[] {
@@ -290,7 +305,14 @@ export function aiConsoleReport(actor: Actor, period: AiConsolePeriod, now = Dat
   };
 
   const totals = emptyTotals();
+  // SP20: the person group covers every row, whoever the viewer is (D1).
+  const peopleTotals = emptyTotals();
   const groups: Record<AiConsoleGroup, Map<string, AiConsoleRow>> = { project: new Map(), goal: new Map(), agent: new Map(), person: new Map(), model: new Map(), source: new Map() };
+  for (const row of rows) {
+    add(peopleTotals, row);
+    if (!row.user_id) bump(groups.person, 'none', 'No person', row);
+    else bump(groups.person, row.user_id, personLabel(row.user_id, actor, admin), row);
+  }
   for (const row of visibleRows) {
     add(totals, row);
     const projectId = row.project_id || (row.workflow_id ? homeProjectId('workflow', row.workflow_id) : row.agent_id ? homeProjectId('agent', row.agent_id) : undefined);
@@ -312,10 +334,6 @@ export function aiConsoleReport(actor: Actor, period: AiConsolePeriod, now = Dat
     else if (agents && !agents.has(row.agent_id)) bump(groups.agent, 'shared', 'Another agent', row);
     else bump(groups.agent, row.agent_id, agent?.name ?? 'Deleted agent', row, agent ? `/agents/${row.agent_id}` : undefined);
 
-    if (!row.user_id) bump(groups.person, 'none', 'No person', row);
-    else if (admin || row.user_id === actor.id) bump(groups.person, row.user_id, userLabel(row.user_id), row);
-    else bump(groups.person, 'teammates', 'Teammates', row);
-
     bump(groups.model, `${row.provider}/${row.model}`, row.model, row);
     const key = sourceKey(row.source, row.runtime);
     bump(groups.source, key, SOURCE_LABELS[key] ?? key, row);
@@ -331,11 +349,12 @@ export function aiConsoleReport(actor: Actor, period: AiConsolePeriod, now = Dat
     from,
     to,
     totals,
+    peopleTotals,
     groups: {
       project: finish(groups.project, totals),
       goal: finish(groups.goal, totals),
       agent: finish(groups.agent, totals),
-      person: finish(groups.person, totals),
+      person: finish(groups.person, peopleTotals),
       model: finish(groups.model, totals),
       source: finish(groups.source, totals),
     },

@@ -316,6 +316,30 @@ request is rejected ("Nobody answered in time"). The requester, or an admin, can
 
 The routes are in [reference/api.md](reference/api.md).
 
+## What a prompt was made of
+
+For every chat call that Landflow builds the prompt for, Landflow writes how the prompt split into parts, once the call is
+recorded: instructions, where this work fits (the project block), practices, memory, tool notes, tool definitions, the
+conversation so far, tool results, the message and images. The row is `ai_call_parts` (migration 2901), one per call,
+keyed by the call's `ai_usage` row. It holds token counts, hashes and tool names, never text.
+
+- **An estimate in this wave.** Each part's characters divided by 4 (an image counts 1,600), scaled so the parts add up to
+  the call's input tokens, the rounding remainder going to the largest part. `method` says `estimate`; `formatting` is
+  always 0 because only an exact count can tell what the provider added (a draft with nothing to count has no parts).
+  Wave 12 makes the numbers exact with the same row.
+- **Hashes.** Keyed hashes (HMAC-SHA-256 under a key derived from the instance's encryption key, 16 hex characters):
+  `promptHash` for the whole prompt (the same prompt sent again), `prefixHash` for everything up to the last cache
+  breakpoint (two calls with the same prefix could have shared a cache entry) and one hash per part (the instructions
+  changed between two runs). A part's hash is over its segments' texts joined in order into one string, so a counter that
+  holds the part whole (the gateway's callback, wave 12) gets the same hash. The prompt's date line (`Current date and
+  time: …`) is a `formatting` segment: it is in `promptHash` and `prefixHash` (a new run is a new prefix) and in no part
+  hash, so the instructions' hash only changes when the instructions do. They are comparable inside one instance only and cannot be turned back into text.
+- **Who writes it.** Agent runs (the system prompt is split where it is built), the AI Agent node, Spotlight, the Agent
+  architect and Ask the brain. The text of a prompt is held in memory for the length of one call and is never stored,
+  logged or put on a span.
+- **Kept 30 days**, `LANDFLOW_AI_CALL_PARTS_RETENTION_DAYS` ([configuration](reference/configuration.md)); pruned with
+  the usage rows, at most hourly.
+
 ## The AI page
 
 Runs → Insights → **AI** (`/insights/ai`) is the one place to see AI spend and how near each cap is. It has a switch
@@ -339,9 +363,15 @@ for the period (24 hours, 7 days, 30 days) and shows, from top to bottom:
   runs, **Open LiteLLM** (its admin UI, in a new tab) and **Settings**. Without a gateway the card says so. Open LiteLLM comes only from Settings' UI address, `LANDFLOW_LLM_GATEWAY_UI_URL` or the server's `LANDFLOW_LLM_GATEWAY_URL`, never from a credential's Base URL; without one the card says to set it. Only admins see the gateway's error text; members get "The gateway is not answering".
 
 **Who sees what.** Owners and admins see everything. Anyone else sees the calls of the workflows and agents they can open
-and their own calls; in the person list, other people's calls add up to one row, "Teammates", never by name. Calls they
-may not see are in no total. A member sees only their own user cap and the caps of workflows and agents they can open;
-credential caps and the gateway's address, keys and sync detail are for admins. The page never shows a key.
+and their own calls in the page's totals and in every group but one; calls they may not see are in no total, and a
+project, goal, agent or workflow they can't read is "Another ...". The person list is the exception (the user's decision
+D1, 2026-11-15): every member sees every person's spend by name, from every row of the period (rows with no workflow or
+agent included), with the instance's total above it ("Everyone's AI spend in this period, by person"; owners and
+admins see the caption alone, since the page's totals are already that figure). A person with no name, or whose name is
+their email address, is "Unnamed person" to a member, who never sees another person's email; admins, and the person
+themselves, see the email. Spend views never show prompt text or run contents. A member sees only their own user cap
+and the caps of workflows and agents they can open; credential caps and the gateway's address, keys and sync detail
+are for admins. The page never shows a key.
 
 **Ask for more.** A member sees **Ask for more** on their own user cap and on the caps of workflows and agents they can
 edit. It asks for a new maximum above the current one and a reason, and sends it to `POST /api/ai/cap-requests` (see
@@ -353,6 +383,34 @@ installs and publishes the flow. Admins change caps where they are set (the link
 
 The page reads `GET /api/insights/ai` and `GET /api/llm-gateway/status` ([reference/api.md](reference/api.md)) and
 refreshes every minute while the tab is visible.
+
+## What each call was for
+
+Each model call's `ai_usage` row says, besides the run, model and tokens, where the call ran and why (migration 2900;
+rows from before it, rows imported from the gateway's spend log and calls outside a run have none of these (a failed call writes no row); a call a plugin node reports in its `model` record has only `node_id`, no purpose, duration, stop reason or cache token types in its metrics yet):
+
+| Column | What it holds |
+|---|---|
+| `node_id` | The workflow node the call ran under: the innermost one, so a call by a model sub-node or a tool names that sub-node. The engine tells the host which node is running (`aroundNode`), so it works with OpenTelemetry on or off |
+| `span_id` | The `gen_ai.*` span's id, to open the call's span in the Run Trace |
+| `purpose` | Why the call was made (below) |
+| `iteration` | The agent loop's step, from 1 (a Landflow agent and the AI Agent node) |
+| `caller_agent_id` | The agent that asked: the nearest agent up the chain that is not the row's own, else the call note's `callerAgentId` when that is not the row's own agent (a team member names its lead, a sub-agent its caller) |
+| `duration_ms` | Wall time of the call |
+| `stop_reason` | The provider's first finish reason (`end_turn`, `tool_use`, `max_tokens`, `stop`, `length`) |
+
+**Purpose** is one of `answer`, `guardrail`, `judge`, `embed`, `cache-embed`, `rerank`, `summary`, `eval`. Code that
+knows why it makes a call sets it with `withCallPurpose` (`lib/server/ai-usage/call-context.ts`); otherwise an
+embeddings call is `embed`, a chat call inside a workflow run or an agent session is `answer`, and anything else stays
+empty. Spotlight, the Agent architect and the brain's Ask set `answer` themselves. An agent's loop step (Run an Agent,
+a team member, an agent tool) and the AI Agent node say `answer` only when no outer purpose is set: inside an
+evaluation run they keep `eval`, while a guardrail check or a judge inside it still says `guardrail` or `judge`. There is no `router` purpose: the router makes no model call. The same note carries
+the agent loop's iteration and the caller agent, and a listener (`setRecordedCallListener`) hears each recorded call
+once its row is written, for the prompt-parts work.
+
+The purpose and the cache token types are labels on the AI metrics, and the `ai.call` ledger event carries the purpose,
+node, session, iteration and the row's id ([observability.md](observability.md#8-token-and-cost-tracking)). Nothing here
+stores prompt text. These columns show on screens from wave 12; wave 11 only records them.
 
 ## Not built
 

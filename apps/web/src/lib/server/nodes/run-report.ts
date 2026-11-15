@@ -11,6 +11,7 @@ import type { LanguageModel } from '@landflow/engine';
 import type { JsonObject, NodeItem } from '@landflow/protocol';
 import { resolveRunProfile, type RunGate } from '../../shared/run-profiles';
 import { foldChanges } from '../../shared/run-changes';
+import { withCallPurpose } from '../ai-usage/call-context';
 import { buildRunReport, type ReportCheck } from '../../shared/run-report';
 import type { JournalEvent } from '../../shared/run-trace';
 import { foldJournal } from '../../shared/run-trace-model';
@@ -124,7 +125,8 @@ export const runReportNode = defineNode({
     if (ctx.getNodeParameter('summarize', 0, false) && !decision) {
       const [model] = (await ctx.getInputConnectionData?.<LanguageModel>('ai_languageModel')) ?? [];
       if (!model) throw new NodeOperationError('No chat model connected', { description: '“Add a Summary” needs a chat model on the “Chat Model” slot.' });
-      const turn = await model.generate({ system: SUMMARY_SYSTEM, messages: [{ role: 'user', content: report.markdown }], tools: [], ...(ctx.signal && { signal: ctx.signal }) });
+      // SP02: the report's summary is a summary call.
+      const turn = await withCallPurpose('summary', () => model.generate({ system: SUMMARY_SYSTEM, messages: [{ role: 'user', content: report.markdown }], tools: [], ...(ctx.signal && { signal: ctx.signal }) }));
       if (turn.text.trim()) report = buildRunReport(foldJournal(journalEvents(executionId)), profile, { title, branchFiles, changes, summary: { text: turn.text, by: model.model } });
     }
     const failed = report.checks.filter((c) => c.status === 'fail' && !c.resolution);

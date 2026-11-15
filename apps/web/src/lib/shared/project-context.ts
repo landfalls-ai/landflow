@@ -81,6 +81,8 @@ export interface RunContext {
   text: string;
   /** The compact block: a remote agent's first message ('' likewise). */
   compact: string;
+  /** The practices part of `text` ('' or absent when there is none), so a prompt's split needs no parsing (SP03). */
+  practicesText?: string; // SP03:
   /** One line for a team's requests: `Project “P” · goal: G` ('' likewise). */
   line: string;
   /** sha256 of `text`, hex, first 16 characters ('' when `text` is ''): part of the response-cache keys. */

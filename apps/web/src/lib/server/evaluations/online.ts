@@ -95,6 +95,7 @@ export async function gradeRun(target: string, run: GradedRun, options: { model?
   const toolsLine = run.tools?.length ? `\n\n(Tools the agent called: ${run.tools.join(', ')})` : '';
   const userFeedback = feedbackOf(run);
   const feedbackLine = userFeedback ? `\n\n(The person rated this reply thumbs ${userFeedback.rating}${userFeedback.comment ? `: "${clip(userFeedback.comment, 500)}"` : ''}. Weigh that, but grade the reply against the rubric.)` : '';
+  // SP02: grading a run (an agent session or a node's run) is a judge call.
   const result = await judge(model, 'rubric', { rubric: config.rubric, question: clip(run.input) + toolsLine + feedbackLine, actual: clip(run.output) }, options.signal);
   const now = Date.now();
   const score: OnlineEvalScore = {

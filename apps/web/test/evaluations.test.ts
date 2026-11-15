@@ -66,6 +66,7 @@ const agentEvalRoute = await import('@/app/api/agents/[id]/evaluations/route');
 /** What the "Answer" node replies per question; tests change it between runs. */
 const answers: Record<string, string> = {};
 const slow = { ms: 0 };
+const probed = { agent: [] as Array<string | undefined>, guardrail: [] as Array<string | undefined> };
 const main = [{ type: 'main' as const }];
 
 const evalTestPlugin = definePlugin({
@@ -91,6 +92,18 @@ const evalTestPlugin = definePlugin({
         properties: [],
       },
       supplyData: () => scripted(),
+    }),
+    defineNode({
+      description: { name: 'noteprobe', displayName: 'Note Probe', description: 'Records the call note its model call and a guardrail check run in', version: 1, kind: 'action', inputs: main, outputs: main, properties: [] },
+      async execute(ctx) {
+        const { currentCallNote } = await import('@/lib/server/ai-usage/call-context');
+        const { runGuardrails } = await import('@/lib/server/guardrails');
+        // Its own model call keeps the run's note; a guardrail check inside the same run says `guardrail`.
+        await scripted().generate({ messages: [{ role: 'user', content: 'hi' }], tools: [] } as never);
+        probed.agent.push(currentCallNote().purpose);
+        await runGuardrails('hello', { nsfw: {} }, { judge: async () => { probed.guardrail.push(currentCallNote().purpose); return { flagged: false, confidence: 0.1 }; } });
+        return [ctx.getInputData()];
+      },
     }),
   ],
 });
@@ -325,6 +338,19 @@ function qaWorkflow(id: string, tableId: string, destination: 'run' | 'row' = 'r
     ],
   );
 }
+
+describe('purpose inside an evaluation run (SP02)', () => {
+  it('a node’s model call is `eval` and a guardrail inside the same run is `guardrail`', async () => {
+    probed.agent.length = 0;
+    probed.guardrail.length = 0;
+    const table = dataset('note_cases', [{ question: 'q1', expected: 'a1' }]);
+    const workflow = save('wf_eval_note', [{ name: 'Trigger', type: 'core.evaluationTrigger', parameters: { dataTableId: table.id } }, { name: 'Probe', type: 'evaltest.noteprobe' }], [['Trigger', 'Probe']]);
+    const done = await evaluationDone(startEvaluation(workflow.id).id);
+    expect(done).toMatchObject({ status: 'success', completed: 1, failed: 0 });
+    expect(probed.agent).toEqual(['eval']);
+    expect(probed.guardrail).toEqual(['guardrail']);
+  });
+});
 
 describe('offline evaluation runs', () => {
   const rows = [

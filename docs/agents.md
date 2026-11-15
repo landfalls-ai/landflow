@@ -361,6 +361,10 @@ absent from an agent without any). Publishing needs a model, and a persona part 
   `https://api.typesafe.ai` for Jev). A 429 or 529 is retried (honouring
   `retry-after`); any other failure fails closed, like every guardrail. Only block rules use a
   judge (sanitize rules run no model checks).
+  A judge's calls count like any model call (tokens as the service reports them; unpriced unless
+  priced in Settings → AI prices, under the model name the service reports, or “Strands Decider” when a Strands
+  connection names no model), with the purpose “Guardrail check”. They also meet the usage caps: a reached cap
+  refuses the judge call, and the check fails closed ("AI usage cap reached").
 
   Each stage has an action. **Block** checks the text (the model-based checks use the agent's
   own model, or the rule's judge) and, when something is found, answers with the stage's *reply* (a default is used
@@ -387,6 +391,8 @@ absent from an agent without any). Publishing needs a model, and a persona part 
   `budget` and a notice saying which limit and where to change it; later runs are refused before
   any model call until the day or month turns. The Guardrails row shows today's and this month's
   usage ([observability.md](observability.md#8-token-and-cost-tracking)).
+  A session's usage keeps the prompt-cache reads and writes the model reported, next to its input and output tokens, and
+  each model call's prompt is split into parts ([llm-gateway.md](llm-gateway.md#what-a-prompt-was-made-of)).
 
 **Publish** snapshots the draft as version N. At most 20 versions are kept, and the builder's
 "…" menu lists them. A session stays on the version it started with. Telegram conversations move
