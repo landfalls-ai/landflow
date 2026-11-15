@@ -71,6 +71,13 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (under('/api/settings/audit')) return { scope: 'admin', action: read ? 'audit:read' : 'settings:manage' };
   // Four-eyes publish requests: builders list, ask and decide (who may approve is checked by lib/server/governance).
   if (under('/api/publish-requests')) return { scope: read ? 'workflows:read' : 'workflows:write' };
+  // LL: the LLM gateway (docs/llm-gateway.md). Syncing budgets and minting keys change LiteLLM: admins. The status is for
+  // anyone signed in (the route leaves out the admin detail). Cap-raise requests: anyone who reads runs may see theirs,
+  // a builder may ask; installing the cap-raise flow is an admin's.
+  if (under('/api/llm-gateway/sync') || under('/api/llm-gateway/keys')) return { scope: 'admin', action: 'settings:manage' };
+  if (under('/api/llm-gateway')) return { scope: 'executions:read' };
+  if (path === '/api/ai/cap-requests/setup') return read ? { scope: 'executions:read' } : { scope: 'admin', action: 'settings:manage' };
+  if (under('/api/ai/cap-requests')) return { scope: read ? 'executions:read' : 'workflows:write' };
   // Re-sealing every secret is the owner's (the route checks the role); an API key can't start it.
   if (under('/api/settings/encryption')) return { scope: 'admin', action: 'settings:manage', sessionOnly: true };
   if (under('/api/settings/security')) return { scope: 'admin', action: 'settings:manage' };

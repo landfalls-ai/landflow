@@ -23,7 +23,7 @@ still works.
 |---|---|---|
 | `LANDFLOW_PROFILE` | `production` when `NODE_ENV=production`, else `development` | `development` or `production`: whether the host refuses development secrets and a missing `LANDFLOW_PUBLIC_URL` ("Production profile" in [deployment.md](../deployment.md)). The in-repo compose and Kubernetes stacks set `development` |
 | `LANDFLOW_OUTBOUND_BLOCK_PRIVATE` | `true` in the production profile, `false` in development | whether `safeFetch` refuses loopback, private (10/8, 172.16/12, 192.168/16, fc00::/7), link-local, CGNAT (100.64/10), multicast and metadata addresses for the HTTP Request node, alert channels, HTTP SIEM destinations, remote MCP servers, RAG embeddings, OpenAI-compatible model calls and rerank to a credential's Base URL, in-process plugins' load-options and credential tests, and OIDC/SAML metadata, including through redirects and DNS names ([audit-and-governance.md](../features/audit-and-governance.md#outbound-requests)) |
-| `LANDFLOW_OUTBOUND_ALLOW` | – | comma-separated host names (`*.corp.example` works), IP addresses and CIDR ranges that stay reachable with blocking on. The exact endpoints (host and port) of `OLLAMA_URL` (or its default), `LANDFLOW_CODE_RUNNER_URL`, `OPENAI_BASE_URL`, `LANDFLOW_MCP_GATEWAY_PUBLIC_URL`, `LANDFLOW_GITHUB_MCP_URL` (or its in-cluster default) and `LANDFLOW_OIDC_DISCOVERY_URL` are always allowed; an in-cluster identity provider's other endpoints (token, JWKS) need an entry here |
+| `LANDFLOW_OUTBOUND_ALLOW` | – | comma-separated host names (`*.corp.example` works), IP addresses and CIDR ranges that stay reachable with blocking on. The exact endpoints (host and port) of `OLLAMA_URL` (or its default), `LANDFLOW_CODE_RUNNER_URL`, `OPENAI_BASE_URL`, `LANDFLOW_LLM_GATEWAY_URL`, `LANDFLOW_MCP_GATEWAY_PUBLIC_URL`, `LANDFLOW_GITHUB_MCP_URL` (or its in-cluster default) and `LANDFLOW_OIDC_DISCOVERY_URL` are always allowed; an in-cluster identity provider's other endpoints (token, JWKS) need an entry here |
 | `LANDFLOW_CSP` | `enforce` in the production profile, else `report` | `enforce`, `report` (Report-Only, visible in the browser console) or `off`: the nonce-based Content Security Policy on pages ([deployment.md](../deployment.md#security-headers-and-content-security-policy)) |
 | `LANDFLOW_HSTS` | on over https | `off` drops the `Strict-Transport-Security` header |
 | `LANDFLOW_REGISTRY_OPEN` | – | `true`: accept plugin registrations without `LANDFLOW_REGISTRY_SECRET` in the production profile (the development profile accepts them anyway; see [plugins.md](../plugins.md#registration-rules)) |
@@ -166,6 +166,13 @@ still works.
 | `OPENAI_API_KEY` *(secret)* | – | key for the OpenAI-compatible assistant model, server-side only |
 | `OPENAI_BASE_URL` | – | base URL of that OpenAI-compatible API; its endpoint stays reachable with `LANDFLOW_OUTBOUND_BLOCK_PRIVATE` on |
 | `NEXT_PUBLIC_LANDFLOW_JSON_RENDER` | off | `1` does what `LANDFLOW_JSON_RENDER` does, and also reaches the browser bundle |
+| `LANDFLOW_LLM_GATEWAY_URL` | – | the LiteLLM proxy's root (e.g. `http://127.0.0.1:54100`) when Settings → AI → LLM gateway names no credential ([llm-gateway.md](../llm-gateway.md)) |
+| `LANDFLOW_LLM_GATEWAY_KEY` *(secret)* | – | the virtual key Landflow's own calls send to the gateway of `LANDFLOW_LLM_GATEWAY_URL` |
+| `LANDFLOW_LLM_GATEWAY_ADMIN_KEY` *(secret)* | – | the gateway's master or proxy-admin key: the spend import, the budgets sync and the keys Landflow mints for kagent need it; it is sent only to `LANDFLOW_LLM_GATEWAY_URL`, and never stored in a credential |
+| `LANDFLOW_LLM_GATEWAY_CLUSTER_URL` | – | the gateway as kagent's agents and the Claude Code harness reach it (e.g. `http://host.docker.internal:54100`); unset, agents on kagent call their model directly |
+| `LANDFLOW_LLM_GATEWAY_UI_URL` | `<gateway>/ui` | LiteLLM's admin UI, linked for admins from the AI page and Settings |
+| `LANDFLOW_LLM_GATEWAY_INGEST_SECONDS` | `300` | how often the leader imports from the gateway's spend log the calls Landflow did not meter itself (agents outside Landflow, other clients, and Landflow's own calls made outside a usage scope) (30 to 86400) |
+| `LANDFLOW_LLM_GATEWAY_SYNC_SECONDS` | `600` | how often the leader reconciles LiteLLM's teams, customers and key budgets with Landflow's projects, people and caps, when the sync is on (60 to 86400) |
 
 ## Observability
 

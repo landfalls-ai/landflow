@@ -1,0 +1,29 @@
+# LiteLLM config for the Kubernetes example (docs/llm-gateway.md): the compose config with Ollama on the OrbStack host,
+# reached from a pod as host.internal. Add a model by appending to model_list; every model name a client sends must be listed.
+# `ollama_chat/` serves /v1/messages and /v1/chat/completions; Ollama models have no price, so LiteLLM reports cost 0.
+model_list:
+  - model_name: qwen3-coder:30b
+    litellm_params:
+      model: ollama_chat/qwen3-coder:30b
+      api_base: http://host.internal:11434
+    model_info:
+      supports_function_calling: true
+  - model_name: qwen3.8
+    litellm_params:
+      model: ollama_chat/qwen3.8
+      api_base: http://host.internal:11434
+    model_info:
+      supports_function_calling: true
+  # A hosted model reads its key from the environment (add ANTHROPIC_API_KEY to the service), never from this file:
+  # - model_name: claude-sonnet-4-5
+  #   litellm_params:
+  #     model: anthropic/claude-sonnet-4-5
+  #     api_key: os.environ/ANTHROPIC_API_KEY
+
+litellm_settings:
+  drop_params: true
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  store_model_in_db: false

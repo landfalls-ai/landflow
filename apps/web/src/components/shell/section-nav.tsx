@@ -29,6 +29,7 @@ export const SECTION_GROUPS: Record<SectionGroup, SectionTab[]> = {
   runs: [
     { href: '/runs', label: 'All runs' },
     { href: '/insights', label: 'Insights' },
+    { href: '/insights/ai', label: 'AI' },
   ],
   plugins: [
     { href: '/plugins', label: 'Installed' },

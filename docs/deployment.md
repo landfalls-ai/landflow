@@ -8,7 +8,7 @@ Three independent Compose projects:
 
 | Project | File | What |
 |---|---|---|
-| `landflow-infra` | [`compose.infra.yml`](../deploy/compose.infra.yml) | Development and test services: Postgres 16 + pgvector, Valkey, Mailpit, MinIO, OpenBao; Keycloak (profile `auth`), Jaeger (profile `observability`), MySQL 8.4 (profile `mysql`), GreenMail (profile `mail`), Vector as a SIEM receiver (profile `siem`), LocalStack for AWS Secrets Manager (profile `aws`), a throwaway SSH Git server for Source control (profile `git`); the transport layer's brokers, one profile each (`kafka`, `rabbitmq`, `nats`, `mqtt`, `artemis`, `pulsar`, `pubsub`, `servicebus`) agentgateway as the MCP gateway (`mcp-gateway`) and in front of the models (`llm-gateway`, see [agents.md](agents.md#model-router)): see [Message brokers and the MCP gateway](#message-brokers-and-the-mcp-gateway) |
+| `landflow-infra` | [`compose.infra.yml`](../deploy/compose.infra.yml) | Development and test services: Postgres 16 + pgvector, Valkey, Mailpit, MinIO, OpenBao; Keycloak (profile `auth`), Jaeger (profile `observability`), MySQL 8.4 (profile `mysql`), GreenMail (profile `mail`), Vector as a SIEM receiver (profile `siem`), LocalStack for AWS Secrets Manager (profile `aws`), a throwaway SSH Git server for Source control (profile `git`); the transport layer's brokers, one profile each (`kafka`, `rabbitmq`, `nats`, `mqtt`, `artemis`, `pulsar`, `pubsub`, `servicebus`) agentgateway as the MCP gateway (`mcp-gateway`) and LiteLLM in front of the models (`llm-gateway`, see [The LLM gateway](#the-llm-gateway)): see [Message brokers and the MCP gateway](#message-brokers-and-the-mcp-gateway) |
 | `landflow` | [`compose.yml`](../deploy/compose.yml) | Landflow itself as images: the host (Next.js standalone), the seven plugins, which announce themselves to the host, and the sandboxed [code runner](#code-runner) for the Code node |
 | `landflow-queue` | [`compose.queue.yml`](../deploy/compose.queue.yml) | Landflow in [queue mode with high availability](#queue-mode-two-mains-two-workers): two mains behind a load balancer and two workers, on the infra stack's Postgres, Valkey and MinIO |
 
@@ -38,6 +38,9 @@ docker compose -f deploy/compose.infra.yml --profile siem up -d --wait siem
 
 # ... LocalStack, AWS Secrets Manager for the external secrets tests (dummy credentials only)
 COMPOSE_BAKE=false docker compose -p landflow-infra -f deploy/compose.infra.yml --profile aws up -d --wait localstack
+
+# ... LiteLLM, the LLM gateway ("The LLM gateway" below)
+COMPOSE_BAKE=false docker --context orbstack compose -p landflow-infra -f deploy/compose.infra.yml --profile llm-gateway up -d --wait
 
 # ... the transport layer's brokers (one profile each; "Message brokers and the MCP gateway" below) and agentgateway
 COMPOSE_BAKE=false docker compose -p landflow-infra -f deploy/compose.infra.yml --profile kafka --profile rabbitmq --profile nats up -d --wait
@@ -357,6 +360,33 @@ they differ from the real services and from a clustered broker; the host, the pl
 one machine; Python's callers are threads on one core. Read the numbers as relative (which transport costs more, and how
 size changes it), not as capacity. The Service Bus emulator's entities are fixed in `infra/servicebus/Config.json`: the bench
 plugin's queue (`landflow.v1.plugin.transport-bench`) is not there, so that kind is skipped until it is added and the emulator recreated.
+
+## The LLM gateway
+
+The `llm-gateway` profile runs [LiteLLM](https://docs.litellm.ai)'s open-source proxy as the one door for model calls
+([llm-gateway.md](llm-gateway.md) has the whole story):
+
+```bash
+COMPOSE_BAKE=false docker --context orbstack compose -p landflow-infra -f deploy/compose.infra.yml --profile llm-gateway up -d --wait
+```
+
+- **URLs** (loopback only; the admin UI shares the API port): `http://127.0.0.1:54100/v1/messages`,
+  `/v1/chat/completions`, `/v1/models`, `/health/liveliness`, and the UI at `/ui` (`LANDFLOW_LLM_GATEWAY_PORT`). From
+  kagent in kind or OrbStack: `http://host.docker.internal:54100`; in the Kubernetes example: `http://llm-gateway:4000`.
+- **Development keys**: master key `sk-landflow-dev-master-only`, salt key `sk-landflow-dev-salt-only` (never change it
+  once keys exist), UI login `admin` / `landflow-dev-only`. Set real ones with `LANDFLOW_LLM_GATEWAY_MASTER_KEY`,
+  `_SALT_KEY`, `_UI_USERNAME` and `_UI_PASSWORD`.
+- **Database**: `litellm` in the infra Postgres, created by the one-shot `llm-gateway-db` service. It holds keys, teams,
+  customers and spend.
+- **Models**: [`llm-gateway/config.yaml`](../deploy/llm-gateway/config.yaml) lists `qwen3-coder:30b` and `qwen3.8` on the
+  host's Ollama. To add one, append a `model_list` entry (`ollama_chat/<model>` for Ollama) and restart the service. Every
+  model name a client sends must be listed.
+- **The image** is pinned by digest (`v1.108.2-lts`). On 21 October 2026 a supply-chain compromise poisoned LiteLLM
+  `v1.107.0` and its moving tags; never use `v1.107.0`, `latest`, `main-latest`, `main-stable`, `-nightly` or `-dev`.
+  Check the signature with `deploy/scripts/verify-litellm-image.sh` (needs `cosign`; exits 2 without it).
+- **Kubernetes**: `kubectl --context orbstack apply -k deploy/k8s/examples/llm-gateway` next to the orbstack overlay (it
+  needs the `postgres` component). One replica; reach the UI with `kubectl --context orbstack -n landflow-dev port-forward
+  svc/llm-gateway 54100:4000`.
 
 ## Using the infra from the dev server on the host
 

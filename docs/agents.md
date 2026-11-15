@@ -539,14 +539,10 @@ of the agent's config: it is versioned, diffed (**Changed: Router**), exported a
 Because the cheap model is just a model setting, the components behind it are swappable: point it at Ollama today and at
 a gateway (agentgateway, LiteLLM, OpenRouter) tomorrow without touching the agent.
 
-**An LLM gateway.** `deploy/llm-gateway/config.yaml` runs agentgateway (the data plane the MCP gateway already uses, and the
-one kgateway's own docs recommend now that its Envoy-based AI Gateway is deprecated) as one OpenAI-compatible endpoint in
-front of the models: `docker compose -p landflow-infra -f deploy/compose.infra.yml --profile llm-gateway up -d llm-gateway`
-serves `http://127.0.0.1:54100/v1` (admin UI on 55100). Make an **OpenAI API** credential with that base URL and no key, and an
-agent (or the router's cheap model) with the OpenAI provider and a model name from the config (`ollama/qwen3.8`). Each model
-the gateway offers is one entry in its config; the agent never names a provider. On Kubernetes,
-`deploy/k8s/examples/llm-gateway/llm-gateway.yaml` is the same gateway as a ConfigMap, Deployment and Service
-(`http://llm-gateway:3000/v1`).
+**An LLM gateway.** A [LiteLLM](llm-gateway.md) proxy in front of the models is one endpoint for every agent. Set an **Anthropic API** or
+**OpenAI API** credential's **Gateway** to LiteLLM, with the proxy as its Base URL and a virtual key as its API key, and an agent
+that uses it calls the proxy: the model picker lists the gateway's models, the call says which person, project and agent it is for,
+and LiteLLM's call id and cost are kept on the AI call. See [llm-gateway.md](llm-gateway.md#point-landflow-at-it).
 
 ## Prompt cache
 

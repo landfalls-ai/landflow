@@ -32,18 +32,22 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | Engine: data model, durable runtime, queue mode and HA, triggers and flow nodes (Ask a Person), debounce and rate limits, Code node | [features/engine.md](features/engine.md) | [architecture.md](architecture.md) |
 | Plugins: the node interface in each SDK, autodiscovery, branding | [plugins.md](plugins.md) | [protocol.md](protocol.md) |
 | Transports: HTTP, gRPC, ten brokers, Auto, the claim check, MCP faces | [transports.md](transports.md) | [protocol.md](protocol.md) §14–15 |
+| LLM gateway (LiteLLM): run it, image pin, models, Kubernetes example | [llm-gateway.md](llm-gateway.md) | [deployment.md](deployment.md#the-llm-gateway) |
 | MCP gateway (agentgateway): sync, identity, tokens | [mcp-gateway.md](mcp-gateway.md) | [transports.md](transports.md) |
 | AI: AI Agent and sub-nodes, hosted chat and widget, RAG, guardrails, evaluations, MCP | [features/ai.md](features/ai.md) | |
 | Standalone agents: personas, skills, capabilities, channels (Telegram, Slack, Teams), schedules, memory | [agents.md](agents.md) | |
+| The LLM gateway: LiteLLM in front of the models, the Gateway field on the Anthropic API and OpenAI API credentials, who is calling, the call id and cost on each AI call | [llm-gateway.md](llm-gateway.md) | [agents.md](agents.md), [observability.md](observability.md) |
 | The agent roster: teams, persona templates, faces and other avatars, the Agent architect chat | [agents.md](agents.md#the-roster) | [second-brain.md](second-brain.md) |
 | Agent teams: agents with a lead, reporting lines and reviewers, the org chart, budgets, publishing | [agent-teams.md](agent-teams.md) | [agents.md](agents.md#teams) |
 | The team notebook: notes members write while they work, search by meaning, disputes, promotion to team and project, the Notebook tab, Claude Code members over MCP | [team-notebook.md](team-notebook.md) | [agent-teams.md](agent-teams.md), [second-brain.md](second-brain.md) |
 | Remote agents over A2A (a capability and the A2A Agent node), kagent next to Landflow, tracing across both | [a2a.md](a2a.md) | [observability.md](observability.md#remote-agents-a2a) |
 | Searching and comparing runs, measures over time, and exporting each run's journal over OTLP with OpenInference kinds | [run-trace.md](run-trace.md#search-compare-and-measures) | [reference/api.md](reference/api.md), [reference/configuration.md](reference/configuration.md) (`LANDFLOW_OTLP_TRACES_URL`) |
+| Agents on kagent through the LLM gateway: a virtual key per agent, kagent's ModelConfig through LiteLLM, the spend import that counts their calls once | [llm-gateway.md](llm-gateway.md#agents-outside-landflow) | [a2a.md](a2a.md#landflow-agents-on-kagent) |
 | Claude Code agents' real usage, cost and guardrails (the landflow-harness mod) | [a2a.md](a2a.md#the-landflow-harness-mod) | [run-trace.md](run-trace.md), [agent-teams.md](agent-teams.md) |
 | Run Trace: each run's journal (who did what, requests between agents, waits, artifacts, checks), the Story, Trace, Team and Report screens, profiles, the Run report node and its gate | [run-trace.md](run-trace.md) | [protocol.md](protocol.md) (`records`) |
 | Marketplace: Claude Code plugin marketplaces as agents, skills, node plugins and flows; flow share pages; agents and teams exported as Claude Code plugins | [marketplace.md](marketplace.md) | |
 | Team templates: a team, its agents and its flow saved as one template and created again with fresh ids and credentials | [templates.md](templates.md) | [features/editor.md](features/editor.md), [agent-teams.md](agent-teams.md) |
+| Asking for a higher AI cap: the Cap Raise Request trigger, the cap-raise template with Ask a Person, and Apply Cap Raise (LiteLLM wave) | [llm-gateway.md](llm-gateway.md#asking-for-a-higher-cap) | [templates.md](templates.md), [reference/api.md](reference/api.md) |
 | Alert triage and Landfall war rooms: the triage, Landfall and threat-intel plugins and their flows | [triage.md](triage.md) | each plugin's README |
 | Runbooks made from closed Landfall war rooms, found by alert kind | [runbooks.md](runbooks.md) | [triage.md](triage.md) |
 | Integrations: messaging, productivity, Google Workspace, databases, the work ingest templates and GitHub into the brain (pull requests, reviews and CI as work events) | [features/integrations.md](features/integrations.md) | each plugin's README, [GitHub into the brain](features/integrations.md#github-into-the-brain) |
@@ -56,7 +60,9 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | Images in tool results: a tool can return a screenshot or other image to the AI Agent's model | [features/ai.md](features/ai.md) | [specs/18-desktop-agent-node.md](specs/18-desktop-agent-node.md) |
 | Specs: proposals written before the code (fifteen next features from 2026-11-05, chat with agents, the parallel build plan, the Desktop agent node, the debug token) | [specs/README.md](specs/README.md) | |
 | Files and binary data | [features/files.md](features/files.md) | [protocol.md](protocol.md) §11 |
+| The LLM gateway (LiteLLM) and the AI page: spend by project, agent, person, model and source, caps, requests | [llm-gateway.md](llm-gateway.md) | [observability.md §8](observability.md) |
 | Settings, variables, data tables, insights | [features/settings-and-data.md](features/settings-and-data.md) | |
+| LLM gateway (LiteLLM), budgets in LiteLLM | [llm-gateway.md](llm-gateway.md) | |
 | Authentication: users, roles, projects, API keys, OIDC, SAML, SCIM | [features/authentication.md](features/authentication.md) | |
 | Audit log and governance: SIEM streaming, signed heads, approvals, four-eyes | [features/audit-and-governance.md](features/audit-and-governance.md) | |
 | External secrets and environments | [features/secrets-and-environments.md](features/secrets-and-environments.md) | |
@@ -78,6 +84,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
   bundled gateway.
 - [mcp-gateway.md](mcp-gateway.md): agentgateway in Landflow, what was verified and how to rerun the spike.
 - [observability.md](observability.md): the OpenTelemetry contract: span names, attributes, metrics, logs.
+- [llm-gateway.md](llm-gateway.md): the LLM gateway (LiteLLM) in front of every model call, its budgets, and asking for a higher cap.
 
 **Features**: the twelve pages under [features/](#feature-map), plus [plugins.md](plugins.md),
 [assistant.md](assistant.md), [second-brain.md](second-brain.md), [composites.md](composites.md), [agents.md](agents.md), [agent-teams.md](agent-teams.md), [team-notebook.md](team-notebook.md), [a2a.md](a2a.md),

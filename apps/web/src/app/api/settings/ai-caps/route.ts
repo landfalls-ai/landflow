@@ -9,6 +9,7 @@ import { aiCaps, aiUsageMeter, saveAiCaps } from '@/lib/server/ai-usage';
 import { aiCapsSchema } from '@/lib/server/ai-usage/caps';
 import { recordAudit } from '@/lib/server/audit';
 import { getUser } from '@/lib/server/auth/users';
+import { capsChanged } from '@/lib/server/llm-gateway/events';
 import { credentials } from '@/lib/server/credentials/vault';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import type { AiCapsView } from '@/lib/shared/ai-usage';
@@ -45,5 +46,7 @@ export const PUT = handler(async (request: Request) => {
   saveAiCaps({ credentials: byCredential, users: byUser, ...(allUsers && { allUsers }) });
   aiUsageMeter().invalidateCaps();
   recordAudit({ action: 'settings.update', target: { type: 'settings', id: 'ai-caps', name: 'AI usage caps' }, details: { credentials: Object.keys(byCredential).length, users: Object.keys(byUser).length, allUsers: Boolean(allUsers) } });
+  // The LiteLLM backstop follows the caps when the sync is on; the save answers without waiting for it.
+  void capsChanged('settings');
   return json(view());
 });

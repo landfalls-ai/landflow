@@ -23,6 +23,15 @@ export interface ChatResponse {
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
   finishReasons?: string[];
+  /** The LLM gateway's call id (`x-litellm-call-id`) and the cost it reported (`x-litellm-response-cost`), when the call went through one. */
+  callId?: string;
+  gatewayCost?: number;
+  /** The gateway is the server's configured one, so its cost may stand in for an unpriced model's. */
+  gatewayCostTrusted?: boolean;
+  /** The id the server's gateway gave the response, so the spend import pairs this call's row with its spend row. */
+  gatewayRequestId?: string;
+  /** SHA-256 of the server's own gateway key, when the call was made with it. */
+  gatewayKeyHash?: string;
 }
 
 /** Run one chat-completion call in a `gen_ai.chat {model}` span and record its metrics. */
@@ -35,13 +44,16 @@ export interface EmbeddingsResponse {
   inputTokens?: number;
   /** `gen_ai.embeddings.dimension.count` */
   dimensions?: number;
+  /** The server-configured gateway's call id and the key's hash, so the spend import never counts the call again. */
+  callId?: string;
+  gatewayKeyHash?: string;
 }
 
 /** Run one embeddings call in a `gen_ai.embeddings {model}` span; it counts in the same `landflow.ai.*` metrics as chat (input tokens only). */
 export function traceEmbeddings<T>(request: ChatRequest, call: () => Promise<T>, describe: (result: T) => EmbeddingsResponse): Promise<T> {
   return traceGenAi('embeddings', request, call, (result) => {
     const response = describe(result);
-    return { responseModel: response.responseModel, inputTokens: response.inputTokens, ...(response.dimensions && { dimensions: response.dimensions }) };
+    return { responseModel: response.responseModel, inputTokens: response.inputTokens, ...(response.dimensions && { dimensions: response.dimensions }), ...(response.callId && { callId: response.callId }), ...(response.gatewayKeyHash && { gatewayKeyHash: response.gatewayKeyHash }) };
   });
 }
 
@@ -77,6 +89,7 @@ async function traceGenAi<T>(
             ...(response.cacheReadTokens && { 'gen_ai.usage.cache_read.input_tokens': response.cacheReadTokens }),
             ...(response.cacheWriteTokens && { 'gen_ai.usage.cache_creation.input_tokens': response.cacheWriteTokens }),
             ...(response.finishReasons && { 'gen_ai.response.finish_reasons': response.finishReasons }),
+            ...(response.callId && { 'litellm.call_id': response.callId }),
             ...(response.dimensions && { 'gen_ai.embeddings.dimension.count': response.dimensions }),
           });
           if (response.inputTokens) instruments.aiTokens.add(response.inputTokens, { ...base, 'gen_ai.token.type': 'input' });
@@ -91,6 +104,11 @@ async function traceGenAi<T>(
             cacheReadTokens: response.cacheReadTokens,
             cacheWriteTokens: response.cacheWriteTokens,
             ...(request.credentialId && { credentialId: request.credentialId }),
+            ...(response.callId && { callId: response.callId }),
+            ...(response.gatewayCost !== undefined && { gatewayCost: response.gatewayCost }),
+            ...(response.gatewayCostTrusted && { gatewayCostTrusted: true }),
+            ...(response.gatewayRequestId && { gatewayRequestId: response.gatewayRequestId }),
+            ...(response.gatewayKeyHash && { gatewayKeyHash: response.gatewayKeyHash }),
           };
           let cost: number | undefined;
           try {
