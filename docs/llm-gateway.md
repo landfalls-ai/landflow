@@ -394,7 +394,7 @@ rows from before it, rows imported from the gateway's spend log and calls outsid
 | `node_id` | The workflow node the call ran under: the innermost one, so a call by a model sub-node or a tool names that sub-node. The engine tells the host which node is running (`aroundNode`), so it works with OpenTelemetry on or off |
 | `span_id` | The `gen_ai.*` span's id, to open the call's span in the Run Trace |
 | `purpose` | Why the call was made (below) |
-| `iteration` | The agent loop's step, from 1 |
+| `iteration` | The agent loop's step, from 1 (a Landflow agent and the AI Agent node) |
 | `caller_agent_id` | The agent that asked: the nearest agent up the chain that is not the row's own, else the call note's `callerAgentId` when that is not the row's own agent (a team member names its lead, a sub-agent its caller) |
 | `duration_ms` | Wall time of the call |
 | `stop_reason` | The provider's first finish reason (`end_turn`, `tool_use`, `max_tokens`, `stop`, `length`) |

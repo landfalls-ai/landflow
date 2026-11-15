@@ -296,7 +296,7 @@ export const aiAgentNode = defineNode({
           : undefined;
         const hydrated = await hydrateToolImages(ctx, run.messages, { model, keep: toolImagesKept, mode: toolImagesMode });
         // An outer purpose wins (an evaluation run's calls stay `eval`); else this is an answer.
-        const turn = await withCallNote({ purpose: currentCallNote().purpose ?? 'answer', draft: plainDraft({ system, tools, messages: hydrated }) }, () => model.generate({ system, messages: hydrated, tools, ...(onToken && { onToken }) })); // SP03:
+        const turn = await withCallNote({ purpose: currentCallNote().purpose ?? 'answer', iteration: run.iterations, draft: plainDraft({ system, tools, messages: hydrated }) }, () => model.generate({ system, messages: hydrated, tools, ...(onToken && { onToken }) })); // SP03:
         run.usage.inputTokens += turn.usage?.inputTokens ?? 0;
         run.usage.outputTokens += turn.usage?.outputTokens ?? 0;
         run.messages.push({ role: 'assistant', text: turn.text, toolCalls: turn.toolCalls, ...(turn.raw && { raw: turn.raw }) });

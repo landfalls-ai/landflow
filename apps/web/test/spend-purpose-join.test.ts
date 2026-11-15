@@ -182,7 +182,7 @@ describe('spend-purpose-join: SP02 call sites write SP01 attribution', () => {
     // The Run an Agent loop: three steps, each `eval`, with its iteration; no `answer` anywhere in the run.
     expect(of('eval').filter((r) => r.node_id === 'Ask').map((r) => r.iteration).sort()).toEqual([1, 2, 3]);
     // The AI Agent node's call (made by its model sub-node).
-    expect(of('eval').filter((r) => r.node_id === 'Model')).toEqual([expect.objectContaining({ operation: 'chat', provider: 'anthropic' })]);
+    expect(of('eval').filter((r) => r.node_id === 'Model')).toEqual([expect.objectContaining({ operation: 'chat', provider: 'anthropic', iteration: 1 })]);
     expect(of('answer')).toEqual([]);
     // The agent's guardrails still say `guardrail`, outside any loop step.
     expect(of('guardrail').map((r) => r.provider).sort()).toEqual(['anthropic', 'strands']);
