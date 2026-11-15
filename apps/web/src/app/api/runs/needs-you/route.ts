@@ -3,11 +3,14 @@
  * needs-you.ts): waiting runs that ask for an approval, a form or an answer, and failed checks of the last 7 days nobody
  * settled. Each item: executionId, workflowId, workflowName, kind (`approval`, `form`, `question`, `check`), title, detail?,
  * actor?, spanId?, since. A `budget` item (a project's AI budget warning or stop, for its admins and the budget's owner) has
- * projectId, incidentId, incidentKind, href, canRaise and canResume too (docs/projects-and-goals.md#ai-budget).
+ * projectId, incidentId, incidentKind, href, canRaise and canResume too (docs/projects-and-goals.md#ai-budget). A `task` item (a
+ * project task's run that waits for an Approve, or for a tool approval in the agent's session, for the project's editors and
+ * admins) has projectId, taskId, taskRunId, taskRunStatus, href and canDecide (docs/projects-and-goals.md#tasks).
  */
 import { aiUsageMeter } from '@/lib/server/ai-usage';
 import { budgetItems } from '@/lib/server/budgets/enforce';
 import { handler, json } from '@/lib/server/http';
+import { taskItems } from '@/lib/server/tasks/needs-you';
 import { needsYou } from '@/lib/server/journal/needs-you';
 import { visibleIds } from '@/lib/server/projects';
 import { routeActor } from '@/lib/server/projects/http';
@@ -21,6 +24,6 @@ export const GET = handler(async () => {
   const actor = routeActor();
   // PC14: a project's AI budget incidents join the run items, newest first.
   // Budget items are added after needsYou() cut to its MAX_ITEMS, so the answer can pass it.
-  const items = [...(await needsYou(visible)), ...budgetItems(actor, aiUsageMeter())].sort((a, b) => b.since.localeCompare(a.since));
+  const items = [...(await needsYou(visible)), ...budgetItems(actor, aiUsageMeter()), ...taskItems(actor)].sort((a, b) => b.since.localeCompare(a.since));
   return json({ items });
 });
