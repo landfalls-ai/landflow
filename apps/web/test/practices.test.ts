@@ -188,6 +188,50 @@ describe('approval, versions and the hash', () => {
   });
 });
 
+describe('PATCH builds on what the caller may see', () => {
+  const patch = async (user: User, id: string, body: Record<string, unknown>) => {
+    as(user);
+    const response = await itemRoute.PATCH(req('PATCH', `/api/practices/${id}`, body), idOf(id));
+    return { status: response.status, body: (await response.json()) as { version: PracticeVersion } };
+  };
+
+  it('does not show a member another person’s org draft', async () => {
+    const made = await draft(member, { body: 'Approved text.' });
+    const id = made.body.practice.id;
+    await approve(owner, id, { version: 1 });
+    expect((await patch(member, id, { body: 'Secret draft text.' })).status).toBe(201);
+    const other = await patch(viewer, id, { strength: 'recommended' });
+    expect(other.status).toBe(201);
+    expect(other.body.version).toMatchObject({ strength: 'recommended', body: 'Approved text.' });
+  });
+
+  it('does not show a project editor the admin’s draft', async () => {
+    const editor = await createUser({ email: 'ed@prac.test', name: 'Ed', role: 'member', password: 'editor-password-2' });
+    projects.setMember(alpha, editor.id, 'editor');
+    const made = await draft(owner, { level: 'project', projectId: alpha, handle: 'alpha/base', body: 'Approved project text.' });
+    const id = made.body.practice.id;
+    await approve(padmin, id, { version: 1 });
+    await patch(padmin, id, { body: 'Admin only draft.' });
+    const edited = await patch(editor, id, { strength: 'recommended' });
+    expect(edited.status).toBe(201);
+    expect(edited.body.version.body).toBe('Approved project text.');
+  });
+
+  it('does not re-propose rejected text', async () => {
+    const made = await draft(member, { body: 'Approved text.' });
+    const id = made.body.practice.id;
+    await approve(owner, id, { version: 1 });
+    await patch(member, id, { body: 'Bad text that gets rejected.' });
+    as(owner);
+    await rejectRoute.POST(req('POST', `/api/practices/${id}/versions/2/reject`, { reason: 'This is not right at all' }), { params: Promise.resolve({ id, version: '2' }) });
+    const next = await patch(member, id, { strength: 'recommended' });
+    expect(next.body.version.body).toBe('Approved text.');
+    as(owner);
+    const bad = await rejectRoute.POST(req('POST', `/api/practices/${id}/versions/abc/reject`, { reason: 'This is not right at all' }), { params: Promise.resolve({ id, version: 'abc' }) });
+    expect(bad.status).toBe(400);
+  });
+});
+
 describe('project practices and visibility', () => {
   it('lets the project admin approve; others neither see nor approve; a viewer sees approved, not drafts', async () => {
     const made = await draft(owner, { level: 'project', projectId: alpha, handle: 'alpha/rule' });

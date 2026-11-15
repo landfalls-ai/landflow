@@ -43,6 +43,12 @@ function versionVisible(viewer: Actor | undefined, practice: Practice, v: Practi
   return canApprove(viewer, practice) || mine(viewer, v);
 }
 
+/** What a PATCH builds on: the newest version the caller may read and that was not rejected, else the newest they may read. */
+export function patchBase(viewer: Actor, practice: Practice, versions: readonly PracticeVersion[]): PracticeVersion | undefined {
+  const readable = versions.filter((v) => versionVisible(viewer, practice, v));
+  return readable.find((v) => !v.rejectedAt) ?? readable[0];
+}
+
 /** One practice as `viewer` sees it. With no viewer (a flow), no drafts. */
 export function viewOf(viewer: Actor | undefined, practice: Practice, versions: readonly PracticeVersion[]): PracticeView {
   const approved = practice.approvedVersion === undefined ? undefined : versions.find((v) => v.version === practice.approvedVersion);

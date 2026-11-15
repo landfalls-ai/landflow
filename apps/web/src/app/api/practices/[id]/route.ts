@@ -4,7 +4,7 @@ import { PracticeError } from '@/lib/server/practices/errors';
 import { patchSchema } from '@/lib/server/practices/schema';
 import { storePort } from '@/lib/server/practices/register';
 import { routeOrigin, versionsOf } from '@/lib/server/practices/store';
-import { detailView, visiblePractice } from '@/lib/server/practices/views';
+import { detailView, patchBase, visiblePractice } from '@/lib/server/practices/views';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
@@ -15,14 +15,15 @@ export const GET = handler(async (_request: Request, { params }: Ctx) => {
   return detail ? json(detail) : error('Practice not found', 404);
 });
 
-/** PATCH — a new draft version made from the newest version plus the changes. The approved one stays what agents get. */
+/** PATCH — a new draft version made from the newest version the caller may see (not a rejected one) plus the changes. The approved one stays what agents get. */
 export const PATCH = handler(async (request: Request, { params }: Ctx) => {
   const body = await parseBody(request, patchSchema);
   if (!body.ok) return body.response;
   const actor = routeActor();
   const practice = visiblePractice(actor, (await params).id);
   if (!practice) throw new PracticeError('Practice not found', 404);
-  const newest = versionsOf(practice.id)[0]!;
+  const newest = patchBase(actor, practice, versionsOf(practice.id));
+  if (!newest) throw new PracticeError('Practice not found', 404);
   const changes = body.data;
   const input = {
     practiceId: practice.id,

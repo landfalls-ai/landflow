@@ -198,7 +198,7 @@ rejecting, retiring and waiving need a session. See [reference/api.md](reference
 | `GET /api/practices?status=&level=&projectId=&topic=&q=` | the practices you may see (draft and approved by default; `status=retired` for retired), at most 500, with `canApproveOrg` and `waiting` |
 | `POST /api/practices` | a new practice as a draft (201 `{ practice, version }`); 409 when the handle is taken |
 | `GET /api/practices/:id` | the practice, its versions with their state, the latest 20 applications and the conflicts of its newest draft |
-| `PATCH /api/practices/:id` | any of `title, strength, topics, repos, paths, summary, body, checks, citations`: a new draft version |
+| `PATCH /api/practices/:id` | any of `title, strength, topics, repos, paths, summary, body, checks, citations`: a new draft version, built on the newest version the caller may see that was not rejected (never someone else's hidden draft) |
 | `POST /api/practices/:id/approve` | `{ version, reviewedSources?, conflicts? }` |
 | `POST /api/practices/:id/versions/:version/reject` | `{ reason }` |
 | `POST /api/practices/:id/retire` | retire |
@@ -226,7 +226,7 @@ list. Drafting and approving still work, so you can prepare practices before tur
 - **The port.** `practices/port.ts` is a slot (`practicesPort()`) the store fills at boot (`practices/register.ts`,
   imported by `lib/server/runtime.ts`). The Draft Practice node, the learn route, the applicable route and the MCP tools
   read the slot and never import the store. Unset (a test, a script that does not boot the runtime), nothing is drafted
-  or delivered, and a route answers 503 "Practices are not loaded".
+  or delivered, and the routes that read the slot (learn, applicable) answer 503 "Practices are not loaded"; the store routes use the store directly.
 - **The seam's practices slot.** The Landflow agent's run context has a third slot for practices beside the project
   context; nothing sets it in wave P1. Wave P2 sets it, so a Landflow agent's prompt and its cache key cover practices.
 - Practices are text. A rule that tries to widen an agent's tools or approvals has no way to: the block says it never

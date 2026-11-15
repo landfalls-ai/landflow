@@ -106,7 +106,7 @@ export function rejectVersion(actor: Actor, practiceId: string, versionNumber: n
   const version = getVersion(practiceId, versionNumber);
   if (!version) throw new PracticeError('Version not found', 404);
   if (!pending(practice, version)) throw new PracticeError('This version is not waiting for approval', 400);
-  markRejected(practiceId, versionNumber, actor.id, reason);
+  markRejected(practiceId, versionNumber, actor.id, redactPatterns(redactText(reason)).replace(/\s+/g, ' ').trim());
   recordAudit({ action: 'practice.rejected', target: { type: 'practice', id: practice.id, name: practice.handle }, details: { version: versionNumber }, project: practice.projectId ?? null });
   return getPractice(practiceId)!;
 }

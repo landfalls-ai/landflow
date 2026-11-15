@@ -2195,7 +2195,7 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Practices',
     id: 'editPractice',
     summary: 'Draft a new version',
-    description: 'Needs the `brain:write` scope (or a session). Any of `title`, `strength`, `topics`, `repos`, `paths`, `summary`, `body`, `checks`, `citations`: a new draft version is made from the newest one plus the changes. What agents get is unchanged until it is approved.',
+    description: 'Needs the `brain:write` scope (or a session). Any of `title`, `strength`, `topics`, `repos`, `paths`, `summary`, `body`, `checks`, `citations`: a new draft version is made from the newest version the caller may see (not a rejected one) plus the changes. What agents get is unchanged until it is approved.',
     body: jsonBody(object({ title: { type: 'string' }, strength: { type: 'string', enum: ['required', 'recommended'] }, topics: array({ type: 'string' }), repos: array({ type: 'string' }), paths: array({ type: 'string' }), summary: { type: 'string' }, body: { type: 'string' }, checks: array({ type: 'object' }), citations: array({ type: 'object' }) })),
     responses: { 201: reply('The practice and the new version', object({ practice: practiceView, version: practiceVersion }, ['practice', 'version'])), 400: invalid, 403: errorRef('Not allowed to draft here'), 404: notFound },
   });

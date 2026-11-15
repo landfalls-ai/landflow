@@ -1,4 +1,4 @@
-import { handler, json, parseBody } from '@/lib/server/http';
+import { error, handler, json, parseBody } from '@/lib/server/http';
 import { routeActor } from '@/lib/server/projects/http';
 import { PracticeError } from '@/lib/server/practices/errors';
 import { rejectVersion } from '@/lib/server/practices/approve';
@@ -15,7 +15,9 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   if (!body.ok) return body.response;
   const actor = routeActor();
   const { id, version } = await params;
+  const number = Number(version);
+  if (!Number.isInteger(number) || number < 1) return error('Version must be a positive integer', 400);
   if (!visiblePractice(actor, id)) throw new PracticeError('Practice not found', 404);
-  const practice = rejectVersion(actor, id, Number(version), body.data.reason);
+  const practice = rejectVersion(actor, id, number, body.data.reason);
   return json({ practice: viewOf(actor, practice, versionsOf(id)) });
 });
