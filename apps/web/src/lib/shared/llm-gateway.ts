@@ -114,6 +114,9 @@ export interface GatewayBudget {
   duration: '1d' | '30d';
 }
 
+/** Round up to the cent, ignoring float noise (1 × 1.1 × 100 is 110.00000000000001, which must not become 1.11). */
+const cents = (value: number): number => Math.ceil(Number((value * 100).toFixed(6))) / 100;
+
 const positive = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0);
 
 /**
@@ -124,9 +127,9 @@ const positive = (value: unknown): number => (typeof value === 'number' && Numbe
 export function backstopBudget(set: { dayCost?: number; monthCost?: number } | undefined, headroomPercent: number): GatewayBudget | undefined {
   const factor = 1 + Math.max(0, positive(headroomPercent)) / 100;
   const day = positive(set?.dayCost);
-  if (day) return { maxBudget: Math.ceil(day * factor * 100) / 100, duration: '1d' };
+  if (day) return { maxBudget: cents(day * factor), duration: '1d' };
   const month = positive(set?.monthCost);
-  if (month) return { maxBudget: Math.ceil(month * factor * 100) / 100, duration: '30d' };
+  if (month) return { maxBudget: cents(month * factor), duration: '30d' };
   return undefined;
 }
 

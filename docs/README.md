@@ -60,6 +60,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | Specs: proposals written before the code (fifteen next features from 2026-11-05, chat with agents, the parallel build plan, the Desktop agent node, the debug token) | [specs/README.md](specs/README.md) | |
 | Files and binary data | [features/files.md](features/files.md) | [protocol.md](protocol.md) §11 |
 | Settings, variables, data tables, insights | [features/settings-and-data.md](features/settings-and-data.md) | |
+| LLM gateway (LiteLLM), budgets in LiteLLM | [llm-gateway.md](llm-gateway.md) | |
 | Authentication: users, roles, projects, API keys, OIDC, SAML, SCIM | [features/authentication.md](features/authentication.md) | |
 | Audit log and governance: SIEM streaming, signed heads, approvals, four-eyes | [features/audit-and-governance.md](features/audit-and-governance.md) | |
 | External secrets and environments | [features/secrets-and-environments.md](features/secrets-and-environments.md) | |

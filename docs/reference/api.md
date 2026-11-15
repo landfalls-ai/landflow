@@ -28,6 +28,8 @@ while the Postgres store is blocked answers 503 with `Retry-After`. SCIM routes 
 | `GET/POST /api/workflows/:id/evaluations`, `GET/DELETE …/evaluations/:runId`, `POST …/:runId/cancel`, `GET …/evaluations/compare?a=&b=` | offline evaluation runs: overview, start (`{ maxRows? }`), a run with its cases, stop, delete, compare two runs |
 | `GET/PUT/DELETE /api/workflows/:id/evaluations/dataset`, `GET/PUT/DELETE …/evaluations/schedule` | the file dataset (multipart `file` or a raw body with `?fileName=`; GET previews it) and the run schedule (`{ enabled, cron, timezone?, maxRows? }`) |
 | `GET/PUT /api/settings/ai-caps` | AI usage caps per model credential and per user (`{ credentials, users, allUsers? }`, each `{ dayTokens?, monthTokens?, dayCost?, monthCost? }`), with current usage |
+| `GET/PUT /api/settings/llm-gateway` | the LLM gateway settings (`credentialId?`, `clusterUrl?`, `uiUrl?`, `portalHeaders?`, `ingest?`, `sync?`, `headroomPercent?`) and what the environment sets; never a key; admins change it |
+| `GET/POST /api/llm-gateway/sync` | the last LiteLLM budgets-sync report; POST runs one now (admins) |
 | `GET/PUT /api/workflows/:id/online-evaluations`, `GET/PUT/POST /api/agents/:id/evaluations` | online grading of AI Agent nodes (`PUT { nodeId, … }`) and standalone agents: settings, scores and trend; `POST { sessionId }` grades a session now |
 | `GET /api/workflows/:id/versions`, `GET /api/workflows/:id/versions/:versionId` | version history (summaries, newest first) and one version with its workflow |
 | `POST /api/workflows/:id/versions/:versionId/restore` | restore a version (keeps the current name, tags, folder and active state) and record it as a new version, credited to whoever saved the restored one |

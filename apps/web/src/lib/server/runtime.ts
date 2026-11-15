@@ -39,6 +39,7 @@ import { startOnlineEvaluations } from './evaluations/online';
 import { ensureExecutionReactions } from './execution-reactions';
 import { evaluationSchedules } from './evaluations/schedule';
 import { configureExpressionSandboxFromEnv } from './expression-sandbox';
+import { budgetsSync } from './llm-gateway/sync';
 import { imapIdle } from './imap-idle';
 import { countProcessError, isDraining, markBootFailed, markBooted, onShutdown, shutdownDeadlineMs, type ShutdownPhase } from './lifecycle';
 import { marketplace } from './marketplace/service';
@@ -147,6 +148,8 @@ export const SERVICES: ServiceSpec[] = [
   { name: 'audit', roles: MAIN, start: startAudit },
   // Signed chain heads (lib/server/audit/anchoring.ts): the leader signs the head on a schedule and anchors it (S3, webhook).
   { name: 'audit head signing', roles: MAIN, leader: true, start: () => auditHeads.start(), stop: () => auditHeads.stop() },
+  // LL04: keeps LiteLLM's teams, customers and key budgets in step with Landflow's projects, people and caps (lib/server/llm-gateway/sync.ts); on only when Settings → AI → LLM gateway says so.
+  { name: 'LLM gateway budgets sync', roles: MAIN, leader: true, start: () => budgetsSync.start(), stop: () => budgetsSync.stop() },
   // Binary data goes with its execution (a run that isn't kept is deleted where it ran); orphaned files are swept hourly.
   { name: 'binary maintenance', roles: BOTH, start: startBinaryMaintenance },
   // Draft and publish: an active workflow without a publication (imported after migration 200) publishes its newest version.
