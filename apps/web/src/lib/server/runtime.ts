@@ -28,6 +28,8 @@ import { appWebhooks } from './app-webhooks';
 import { bootstrapOwnerFromEnv } from './auth/bootstrap';
 import { startBinaryMaintenance } from './binary/access';
 import { brain } from './brain';
+// LL05:
+import { startCapRaiseTrigger } from './llm-gateway/cap-raise-trigger';
 import { startUsageTrigger } from './brain/usage-trigger';
 import { clusterActive, leaderService, startCluster, stopCluster, stopLeaderServices } from './cluster';
 import { clusterState } from './cluster/state';
@@ -148,6 +150,8 @@ export const SERVICES: ServiceSpec[] = [
   { name: 'binary maintenance', roles: BOTH, start: startBinaryMaintenance },
   // Draft and publish: an active workflow without a publication (imported after migration 200) publishes its newest version.
   { name: 'publications', roles: MAIN, leader: true, start: ensurePublications },
+  // LL05: Cap Raise Request (docs/llm-gateway.md#asking-for-a-higher-cap). A request starts its run on the process that took it, so not a leader service.
+  { name: 'cap-raise trigger', roles: MAIN, start: startCapRaiseTrigger },
   // Projects: credentials and agents (files) and anything else without a project go to the owner's personal project.
   { name: 'project adoption', roles: MAIN, leader: true, start: adoptUnassignedResources },
   // Scheduled publishes (lib/server/publish-schedule.ts): one main publishes what is due; a restart re-reads the table.

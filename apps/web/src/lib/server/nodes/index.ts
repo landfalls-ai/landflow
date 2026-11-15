@@ -9,6 +9,8 @@ import { runTeamNode } from './run-team';
 import { messageAgentNode, workflowTrigger } from './agents';
 import { brainEntityNode } from './entities';
 import { briefingNodes } from './briefing';
+// LL05:
+import { applyCapRaiseNode, capRaiseTriggerNode } from './cap-raise';
 // B32:
 import { proposeFlowsNode, velocitySignalsNode } from './velocity';
 import { detectorTriggerNode, findSimilarNode, landflowUsageNode, recordEventNode, suggestImprovementNode, suggestionDecidedTriggerNode, usageTriggerNode } from './usage';
@@ -114,6 +116,9 @@ export const corePlugin = definePlugin({
     suggestionDecidedTriggerNode,
     detectorTriggerNode,
     suggestImprovementNode,
+    // LL05:
+    capRaiseTriggerNode,
+    applyCapRaiseNode,
     // B30:
     ...briefingNodes,
     chainLlmNode,
