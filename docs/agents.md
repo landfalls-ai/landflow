@@ -473,7 +473,7 @@ Only one run can be active per session.
 
 ### Test chat
 
-The request may carry `projectId`: the chat then runs as if the agent was called from that project, and the block names it. A project you have no role in is a 404 "Project not found".
+The request may carry `projectId`: the chat then runs as if the agent was called from that project, and the block names it. A project you have no role in is a 404 "Project not found". A project the agent is not available in (not its home, not shared with it, not shared with all) is a 403.
 
 **Test agent** opens a chat with the draft on the chat kit. The tool calls of a turn are one activity line that opens
 into its steps (a call waiting for your **Approve** stays a full row); the footer under each reply gives the model, the
@@ -529,6 +529,16 @@ and footer, and keeps its answer card.
   the steps live, and under the tool call in the Agent session panel. A page opened mid-run gets the
   latest report from `GET /api/executions/:id` (`progress`) and then the live `node.progress`
   events ([a2a.md](a2a.md#the-a2a-agent-node)).
+
+## Available in
+
+An agent belongs to one project, its home, and is **available** there, in each project it is shared with and, when
+shared with **All projects**, everywhere. Run an Agent lists only the agents available in the workflow's project, and
+one from another project says "From <project>". The home's admins set it with `PUT /api/agents/:id/shares`; a project
+that only uses an agent can run and test it but not change, delete or share it. The agent's **sessions are read from the
+home project only** (they hold the briefs of the projects that called it): everyone else gets 404. Availability is not
+a wall at run time ([limitations](limitations.md#project-context-wave-7)). See
+[projects-and-goals.md](projects-and-goals.md#agents-across-projects).
 
 ## Version history and restore
 

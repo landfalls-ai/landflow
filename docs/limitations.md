@@ -57,10 +57,12 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 ## Project context (wave 7)
 
-- An agent has no project wall yet: any agent may be used in any project's run. Availability (which agents a project can
-  use) comes in wave 8. Until then the block only tells the agent where it works.
-- A session stores the block it was given (`session.context`), so anyone who can read the agent's sessions can read the
-  brief of a project the run was called from. Wave 8's availability rule closes this.
+- There is no wall at run time. Availability (home, shared projects, All projects) decides what pickers list and what
+  the test chat accepts, but a saved workflow that runs another project's agent keeps working, and an API call to an
+  agent by id is not stopped by it. This is decision 6 of the Paperclip plan.
+- A session stores the block it was given (`session.context`). Members of a project that only uses the agent (a share
+  or All projects) cannot read its sessions: they get 404. Members of the home project still see the briefs of the
+  other projects the agent ran in. Per-project session walls come in a later package (PC13).
 - The builder drops the brief entirely, then cuts the mission to 120 characters, when the usual drop order still leaves
   the block over its cap.
 - Whether Anthropic's prompt cache hits more with the pinned date is not measured on this machine: the prompt up to the

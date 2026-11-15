@@ -110,6 +110,26 @@ An agent's run gets a short "Where this work fits" block: the mission, the proje
 chain above it. How the block is built, how big it gets and how to turn it off are in
 [agents.md](agents.md#project-context).
 
+## Agents across projects
+
+An agent has one home project, and the home decides who edits it. It can also be **available** elsewhere: shared with
+chosen projects, or with **All projects** in one click. A project that only uses an agent can run it, pick it in Run an
+Agent and test it, but cannot change, delete, share or read the sessions of it.
+
+- **Sharing.** `GET|PUT /api/agents/:id/shares` (admins of the home project, owners and admins may change them). The
+  answer has `availability` (`home`, `all`, and the projects the caller has a role in) and `shares`. The "All projects"
+  row is a share with the project id `*`; it shows only as `availability.all`, and only agents can have it.
+- **Pickers.** `GET /api/agents?availableIn=<projectId>` lists the agents a project can use (404 for a project the caller
+  has no role in). The Run an Agent node lists the agents available in the workflow's project, and a shared one says
+  "From <home project>". Without a project, everything is listed as before.
+- **Test in project.** The test chat with a `projectId` the agent is not available in answers 403 "This agent isn't
+  available in that project".
+- **Sessions stay at home.** The agent's sessions and each session are read only by members of its home project (and
+  owners and admins). Others get 404 "Agent not found". A session keeps the brief of the project it ran for, so this
+  keeps one project's brief from another project that only uses the agent.
+- **No wall at run time.** A saved workflow that runs another project's agent keeps working, even after the share is
+  removed.
+
 ## How it is built
 
 - Data: migration 2300 makes `goals`, `project_goals` (a project's goals and their order) and `goal_links` (initiatives);
