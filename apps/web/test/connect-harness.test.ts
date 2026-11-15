@@ -53,7 +53,7 @@ describe('snippets', () => {
       expect(snippets.length).toBeGreaterThan(0);
       for (const s of snippets) {
         expect(occurrences(s.text, TOKEN), `${id}: ${s.label}`).toBeLessThanOrEqual(1);
-        if (s.label !== 'The landflow-brain mod') expect(s.text).toContain(s.label === 'The mod’s options' ? 'https://landflow.example.test\n' : URL_);
+        if (s.label !== 'The landflow-brain mod' && s.label !== 'Or from a checkout') expect(s.text).toContain(s.label === 'The mod’s options' ? 'https://landflow.example.test\n' : URL_);
       }
       expect(snippets.filter((s) => s.text.includes(TOKEN)).length).toBeGreaterThan(0);
       expect(snippets.map((s) => s.text).join('\n')).not.toContain(KEY_PLACEHOLDER);
@@ -64,11 +64,12 @@ describe('snippets', () => {
     for (const id of HARNESS_IDS) expect(snippetFor(id, { url: URL_ }).some((s) => s.text.includes(KEY_PLACEHOLDER))).toBe(true);
   });
 
-  it('claude-code: the command, a .mcp.json entry that parses, the mod and its options', () => {
-    const [command, file, mod, options] = snippetFor('claude-code', { url: URL_, token: TOKEN });
+  it('claude-code: the command, a .mcp.json entry that parses, the mod (marketplace, or a checkout) and its options', () => {
+    const [command, file, mod, checkout, options] = snippetFor('claude-code', { url: URL_, token: TOKEN });
     expect(command?.text).toBe(`claude mcp add --transport http landflow ${URL_} --header "Authorization: Bearer ${TOKEN}"`);
     expect(JSON.parse(file!.text)).toEqual({ mcpServers: { landflow: { type: 'http', url: URL_, headers: { Authorization: `Bearer ${TOKEN}` } } } });
-    expect(mod?.text).toBe('claude plugin install apps/web/claude-plugins/landflow-brain');
+    expect(mod?.text).toBe('claude plugin marketplace add landfalls-ai/landflow\nclaude plugin install landflow-brain');
+    expect(checkout?.text).toBe('claude plugin install apps/web/claude-plugins/landflow-brain');
     expect(options?.text).toBe(`url: https://landflow.example.test\nkey: ${TOKEN}\nrepos: owner/name\nmode: review`);
   });
 
