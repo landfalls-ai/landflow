@@ -67,7 +67,8 @@ project serves in order (`goals`) and `canEdit`.
 | Edit | owners and admins | admins of that project (and owners and admins) | admins of that project (and owners and admins) |
 
 Deleting a project deletes its own project goals with their initiative links and removes its goal rows; sub-goals of a
-deleted goal move up to its nearest remaining parent (or become roots), and company goals the project served stay. A
+deleted goal move up to its nearest remaining parent (or become roots), and company goals the project served stay. Its project-level
+practices are retired (not deleted, not moved by `transferTo`; [practices.md](practices.md#reject-retire-waive)). A
 company goal serves up to 50 projects. `GET /api/goals?projectId=` for a project you can't see answers an empty list.
 
 A viewer who can't see a goal's parent sees the goal as a root. A member never sees another project's project goals: they

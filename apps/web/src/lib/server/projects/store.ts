@@ -312,7 +312,8 @@ function hasRoleIn(project: ProjectRecord, userId: string): boolean {
 
 /**
  * Remove a project row with its members, the shares made to it, its `project_goals` rows and its own project goals with their links
- * (./transfer moves its resources first). Sub-goals of a removed goal go up to its nearest remaining ancestor, or become roots.
+ * (./transfer moves its resources first). Its project-level practices are retired, not deleted: their versions and applications
+ * stay for the audit trail, and no agent gets them again (a practice approved by one project's people is never handed to another's). Sub-goals of a removed goal go up to its nearest remaining ancestor, or become roots.
  */
 export function removeProjectRows(id: string) {
   const database = db();
@@ -336,6 +337,11 @@ export function removeProjectRows(id: string) {
       database.delete('goals', { id: goalId });
     }
     for (const row of database.all<{ goal_id: string }>('SELECT goal_id FROM project_goals WHERE project_id = ?', id)) database.delete('project_goals', { project_id: id, goal_id: row.goal_id });
+    for (const practice of database.all<{ id: string; handle: string }>("SELECT id, handle FROM practices WHERE project_id = ? AND status <> 'retired'", id)) {
+      const row = database.get<Record<string, unknown>>('SELECT * FROM practices WHERE id = ?', practice.id);
+      if (row) database.upsert('practices', { ...row, status: 'retired', updated_at: new Date().toISOString() });
+      recordAudit({ action: 'practice.retired', target: { type: 'practice', id: practice.id, name: practice.handle }, project: id, summary: `Retired ${practice.handle}: its project was deleted` });
+    }
     database.delete('project_members', { project_id: id });
     for (const share of database.all<ShareRow>('SELECT * FROM resource_shares WHERE project_id = ?', id)) {
       database.delete('resource_shares', { kind: share.kind, resource_id: share.resource_id, project_id: id });

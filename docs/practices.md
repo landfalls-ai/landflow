@@ -83,6 +83,11 @@ for what overlaps ("topic helm; repo acme/web").
   approved at some point. A second waiver of the same practice and run returns the first. Wave P2's Check Practices
   reads waivers; wave P1 only stores them.
 
+- **Delete a project**: its project-level practices (approved, draft or waiting) are retired in the same transaction, each
+  with a `practice.retired` audit event, and their versions and applications stay for the audit trail. Moving the project's
+  items with `?transferTo=` does not move them: a practice one project's people approved is never handed to another
+  project's agents. Org practices are untouched.
+
 All four are in the audit log: `practice.drafted`, `practice.approved`, `practice.rejected`, `practice.retired`,
 `practice.waived`.
 
@@ -232,8 +237,8 @@ shows a body while it is off). Drafting and approving still work, so you can pre
 - **The port.** `practices/port.ts` is a slot (`practicesPort()`) the store fills at boot (`practices/register.ts`,
   imported by `lib/server/runtime.ts`). The Draft Practice node, the learn route, the applicable route and the MCP tools
   read the slot and never import the store. Unset (a test, a script that does not boot the runtime), nothing is drafted
-  or delivered. Of the routes that read the slot, `learn` answers 503 "Practices are not loaded" and `applicable` answers an empty 200
-  (as does `resolve`'s 404 for nothing approved); the store routes use the store directly.
+  or delivered. Of the routes that read the slot, `learn` answers 503 "Practices are not loaded", `applicable` answers an empty
+  200 and `resolve` a 404; the store routes use the store directly.
 - **The seam's practices slot.** The Landflow agent's run context has a third slot for practices beside the project
   context; nothing sets it in wave P1. Wave P2 sets it, so a Landflow agent's prompt and its cache key cover practices.
 - Practices are text. A rule that tries to widen an agent's tools or approvals has no way to: the block says it never
