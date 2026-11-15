@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowRightLeft, ChevronDown, ChevronRight, Download, ExternalLink, FileUp, Folder as FolderIcon, FolderInput, FolderPlus, LayoutTemplate, Lock, MoreHorizontal, Pencil, Plus, Share2, Sparkles, Trash2 } from 'lucide-react';
+import { ArrowRightLeft, ChevronRight, Download, ExternalLink, FileUp, Folder as FolderIcon, FolderInput, FolderPlus, LayoutTemplate, Lock, MoreHorizontal, Pencil, Share2, Sparkles, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api, ApiError } from '@/lib/client/api';
@@ -41,7 +41,8 @@ import { projectLabel, useProjects } from '@/components/projects/use-projects';
 import { useViewer } from '@/components/auth/viewer';
 import { useTemplateImport } from '@/components/templates/template-library';
 import { FolderNameDialog, MoveDialog } from './folder-dialogs';
-import { describeLastRun, importTarget, lastRunByWorkflow, NEW_MENU_ITEMS, type NewMenuItem } from './list-model';
+import { importTarget, lastRunByWorkflow } from './list-model';
+import { LastRun, LastRunPhone, NewMenu } from './list-parts';
 
 /** A listed workflow with its project and the viewer's access (GET /api/workflows). */
 type WorkflowSummary = Summary & { ownership?: ResourceOwnership };
@@ -460,71 +461,6 @@ function WorkflowRow({
         </Popover>
       </div>
     </div>
-  );
-}
-
-/**
- * The row's last run: its state, and when it started (or "Not run yet"). On a phone only the state badge shows, beside
- * the updated time. `unknown` (the executions read did not reach back far enough) shows nothing for a row without a run.
- */
-export function LastRun({ run, unknown }: { run?: ExecutionSummary; unknown?: boolean }) {
-  if (!run && unknown) return null;
-  const last = describeLastRun(run);
-  const title = last.startedAt ? `Last run ${new Date(last.startedAt).toLocaleString()}` : undefined;
-  return (
-    <>
-      <span className="flex w-[110px] shrink-0 flex-col items-end gap-0.5 max-md:hidden" data-testid="last-run" title={title}>
-        <Badge tone={last.tone}>{last.label}</Badge>
-        {last.startedAt && <span className="text-[11px] tabular-nums text-t3">{timeAgo(last.startedAt)}</span>}
-      </span>
-    </>
-  );
-}
-
-/** The last run on a phone: the badge alone, on the row's second line (`WorkflowRow`). */
-export function LastRunPhone({ run, unknown }: { run?: ExecutionSummary; unknown?: boolean }) {
-  if (!run && unknown) return null;
-  const last = describeLastRun(run);
-  return (
-    <span className="shrink-0" data-testid="last-run-phone" title={last.startedAt ? `Last run ${new Date(last.startedAt).toLocaleString()}` : undefined}>
-      <Badge tone={last.tone}>{last.label}</Badge>
-    </span>
-  );
-}
-
-/** The page's one create menu: workflow, from template, import, folder. A bottom sheet on a phone (Popover does that). */
-const NEW_MENU_ICON = { workflow: Plus, template: LayoutTemplate, import: FileUp, folder: FolderPlus };
-
-function NewMenu({ locked, creating, onWorkflow, onTemplate, onImport, onFolder }: { locked: boolean; creating: boolean; onWorkflow: () => void; onTemplate: () => void; onImport: () => void; onFolder: () => void }) {
-  const actions: Record<NewMenuItem, () => void> = { workflow: onWorkflow, template: onTemplate, import: onImport, folder: onFolder };
-  return (
-    <Popover
-      title="New"
-      trigger={({ toggle, open }) => (
-        <Button variant="primary" size="sm" onClick={toggle} loading={creating} disabled={locked} aria-haspopup="menu" aria-expanded={open}>
-          {!creating && <Plus className="size-3.5" strokeWidth={2} />} New <ChevronDown className="size-3" />
-        </Button>
-      )}
-    >
-      {(close) => {
-        const pick = (run: () => void) => () => {
-          close();
-          run();
-        };
-        return (
-          <>
-            {NEW_MENU_ITEMS.map((item) => {
-              const Icon = NEW_MENU_ICON[item.id];
-              return (
-                <MenuItem key={item.id} onClick={pick(actions[item.id])}>
-                  <Icon /> {item.label}
-                </MenuItem>
-              );
-            })}
-          </>
-        );
-      }}
-    </Popover>
   );
 }
 
