@@ -6,6 +6,7 @@ import { Toaster } from 'sonner';
 import { ViewerProvider } from '@/components/auth/viewer';
 import { ConfirmHost } from '@/components/ui/confirm';
 import { Sidebar } from '@/components/shell/sidebar';
+import { ShellSpotlight } from '@/components/spotlight/shell-spotlight';
 import { themeScript } from '@/components/shell/theme-toggle';
 import { pageViewer } from '@/lib/server/auth/pages';
 import './globals.css';
@@ -38,6 +39,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <main id="main" tabIndex={-1} className="relative min-w-0 flex-1 outline-none">
               {children}
             </main>
+            <ShellSpotlight />
           </div>
         </ViewerProvider>
         <ConfirmHost />

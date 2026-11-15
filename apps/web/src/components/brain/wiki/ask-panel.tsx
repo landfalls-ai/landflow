@@ -8,7 +8,7 @@
  * The conversation is kept per page (docs/assistant.md#conversation-history): opening a page shows its last one under
  * "Earlier" when this visit has no answers yet (following a link keeps the answers on screen), the history button opens any other, and `@` tags pages, people, workflows and runs, each read as a step.
  */
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { SquarePen, Sparkles, X } from 'lucide-react';
 import { nanoid } from 'nanoid';
 import { api, ApiError } from '@/lib/client/api';
@@ -437,8 +437,14 @@ export function AskPanel({
   model,
   starters,
   request,
+  subject,
+  heading,
 }: {
   about?: AskAbout;
+  /** Asked about one thing that is not a brain page (a run, a workflow): a chip like `about`, sent as a tag (docs/spotlight.md#one-spotlight). */
+  subject?: AskTag;
+  /** Replaces the header's title: the shell's mode chip. */
+  heading?: ReactNode;
   onClose: () => void;
   conversation?: AskConversation;
   model?: string;
@@ -449,12 +455,15 @@ export function AskPanel({
   const { items, busy, ask, stop, clear, retry, open, setSubject } = conversation ?? own;
   const [input, setInput] = useState('');
   const [aboutOff, setAboutOff] = useState(false);
+  const [subjectOff, setSubjectOff] = useState(false);
   const phone = usePhone();
   const box = useRef<HTMLTextAreaElement>(null);
   // A new page brings its chip back, and its own conversation (the last one comes back under "Earlier").
   useEffect(() => setAboutOff(false), [about?.ref]);
+  useEffect(() => setSubjectOff(false), [subject?.type, subject?.id]);
   useEffect(() => setSubject(about?.ref), [about?.ref, setSubject]);
   const chip = about && !aboutOff ? about : undefined;
+  const subjectChip = subject && !subjectOff ? subject : undefined;
   // "On this page" in the picker: the page, and the pages the last answers linked to.
   const local = useMemo(() => {
     const linked = items
@@ -471,7 +480,9 @@ export function AskPanel({
   const picker = useMentionPicker({ value: input, onChange: setInput, inputRef: box, scope: { local } });
   const send = (text: string) => {
     setInput('');
-    const tags = picker.chips.map((c): AskTag => ({ type: c.type, id: c.id, name: c.name, ...(c.workflowId && { workflowId: c.workflowId }) }));
+    const picked = picker.chips.map((c): AskTag => ({ type: c.type, id: c.id, name: c.name, ...(c.workflowId && { workflowId: c.workflowId }) }));
+    // The thing it was sent about goes first, once.
+    const tags = subjectChip && !picked.some((t) => mentionKey(t as MentionRef) === mentionKey(subjectChip as MentionRef)) ? [subjectChip, ...picked] : picked;
     picker.clear();
     void ask(text, chip, tags);
   };
@@ -496,13 +507,13 @@ export function AskPanel({
         }}
       >
         <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-hair px-3 text-[12px] text-t2 max-md:hidden">
-          <Sparkles className="size-3.5 text-viz-7" aria-hidden />
-          <span className="font-medium text-t1">Ask the brain</span>
+          {!heading && <Sparkles className="size-3.5 text-viz-7" aria-hidden />}
+          {heading ?? <span className="font-medium text-t1">Ask the brain</span>}
           <span className="ml-auto">{history}</span>
           <button type="button" onClick={clear} disabled={!items.length} className={cn(CHAT_ICON_BUTTON, 'disabled:opacity-30')} title="New conversation" aria-label="New conversation">
             <SquarePen className="size-3.5" />
           </button>
-          <button type="button" onClick={onClose} className={CHAT_ICON_BUTTON} title="Close (⌘I)" aria-label="Close Ask">
+          <button type="button" onClick={onClose} className={CHAT_ICON_BUTTON} title="Close (⌘K)" aria-label="Close Ask">
             <X className="size-3.5" />
           </button>
         </div>
@@ -550,7 +561,7 @@ export function AskPanel({
               onSend={send}
               onStop={stop}
               busy={busy}
-              placeholder={chip ? `Ask about ${chip.name}` : 'Who is working on…, what changed…'}
+              placeholder={chip || subjectChip ? `Ask about ${(chip ?? subjectChip)!.name}` : 'Who is working on…, what changed…'}
               label="Ask the brain"
               onKeyDown={(e) => {
                 picker.onKeyDown(e);
@@ -561,7 +572,7 @@ export function AskPanel({
                 }
               }}
               top={
-                (chip || picker.chips.length > 0) && (
+                (chip || subjectChip || picker.chips.length > 0) && (
                   <div className="flex flex-wrap items-start gap-x-1.5">
                     {chip && (
                       <span className="mb-1 inline-flex max-w-full items-center gap-1 rounded-md bg-acdim px-1.5 py-0.5 text-[11.5px] text-ac">
@@ -573,6 +584,14 @@ export function AskPanel({
                           title="Ask about everything, not this page"
                           className="grid place-items-center hover:text-t1 max-md:size-9"
                         >
+                          <X className="size-3" />
+                        </button>
+                      </span>
+                    )}
+                    {subjectChip && (
+                      <span className="mb-1 inline-flex max-w-full items-center gap-1 rounded-md bg-acdim px-1.5 py-0.5 text-[11.5px] text-ac">
+                        <span className="truncate">@{subjectChip.name}</span>
+                        <button type="button" onClick={() => setSubjectOff(true)} aria-label="Ask about everything" title="Ask about everything, not this" className="grid place-items-center hover:text-t1 max-md:size-9">
                           <X className="size-3" />
                         </button>
                       </span>

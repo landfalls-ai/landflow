@@ -71,6 +71,7 @@ import { EditLockBanner, editorTabHeaders, useEditLock, useEditLockSync } from '
 import { followable, useFollowRun } from './follow-run';
 import { pinFromRun } from './pin-from-run';
 import { useFollowWaiting } from './waiting';
+import { useSpotlightState } from '../spotlight/context';
 
 const nodeTypesMap = { lf: FlowNodeView, sticky: StickyNodeView, frame: GroupNodeView, ghost: GhostNodeView };
 const edgeTypesMap = { lf: FlowEdgeView, groupProxy: GroupProxyEdgeView, ghost: GhostEdgeView };
@@ -171,13 +172,26 @@ function KeepGhostsInView({ ids }: { ids: string[] }) {
   return null;
 }
 
-/** ⌘I, the Spotlight button and the empty canvas's hint: the right column shows Spotlight (unfolded, caret in its box). */
+/** ⌘K, ⌘I, the Spotlight button, the rail's "Ask or build" and the empty canvas's hint: the right column shows Spotlight (unfolded, caret in its box). */
 function showSpotlight() {
   useChatColumn.getState().apply('show-spotlight');
   focusSpotlight();
+  // A folded column is invisible until its width has eased (240 ms): the first try cannot take the focus, this one can.
+  setTimeout(focusSpotlight, 280);
+}
+
+/** The rail's "Ask or build" button asks for this column's Spotlight (the store counts the asks). */
+function useBuildFocus() {
+  const asks = useSpotlightState().buildFocus;
+  const seen = useRef(asks);
+  useEffect(() => {
+    if (asks !== seen.current) showSpotlight();
+    seen.current = asks;
+  }, [asks]);
 }
 
 function Canvas({ onSave }: { onSave: () => void }) {
+  useBuildFocus();
   const flowNodes = useEditor((s) => s.nodes);
   const stickies = useEditor((s) => s.stickies);
   const groups = useEditor((s) => s.groups);
@@ -287,7 +301,8 @@ function Canvas({ onSave }: { onSave: () => void }) {
       } else if (mod && e.key === 'Enter') {
         e.preventDefault();
         state.run?.({ kind: e.shiftKey ? 'debug' : 'run' });
-      } else if (mod && e.key === 'i') {
+      } else if (mod && !e.shiftKey && !e.altKey && (e.key === 'i' || e.key === 'k')) {
+        // ⌘K is Spotlight everywhere; here it is the builder in this column (docs/spotlight.md#one-spotlight).
         e.preventDefault();
         showSpotlight();
       } else if (e.key === 'F8' && state.paused) {
@@ -465,7 +480,7 @@ function EmptyCanvas() {
         </span>
       </button>
       <button onClick={showSpotlight} className="pointer-events-auto -mt-4 animate-fade-up text-[12.5px] text-t3 transition-colors hover:text-t1" style={{ animationDelay: '80ms' }}>
-        or describe it to Spotlight <Kbd>⌘I</Kbd>
+        or describe it to Spotlight <Kbd>⌘K</Kbd>
       </button>
       {templates.length > 0 && (
         <div className="pointer-events-auto flex w-full max-w-[880px] flex-col items-center gap-3 px-6">
@@ -1072,7 +1087,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
             <Button
               variant={spotlightVisible ? 'outline' : 'ghost'}
               onClick={() => (spotlightVisible ? useAssistant.getState().setCollapsed(true) : showSpotlight())}
-              title="Spotlight: build and fix this flow by talking (⌘I)"
+              title="Spotlight: build and fix this flow by talking (⌘K)"
               aria-pressed={spotlightVisible}
               className="max-md:hidden"
             >
@@ -1146,7 +1161,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
                   value={chatOpen ? 'chat' : 'spotlight'}
                   onChange={(value) => (value === 'chat' ? useChatColumn.getState().apply('show-chat') : showSpotlight())}
                   options={[
-                    { value: 'spotlight', label: 'Spotlight', title: 'Build and fix this flow (⌘I)' },
+                    { value: 'spotlight', label: 'Spotlight', title: 'Build and fix this flow (⌘K)' },
                     { value: 'chat', label: 'Chat', title: 'Talk to this workflow' },
                   ]}
                 />

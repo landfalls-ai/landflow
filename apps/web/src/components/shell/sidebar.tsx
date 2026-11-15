@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { Activity, Bot, Brain, Ellipsis, House, KeyRound, PanelLeftClose, PanelLeftOpen, Puzzle, Settings, Table2, Workflow, X } from 'lucide-react';
+import { Activity, Bot, Brain, Ellipsis, House, KeyRound, PanelLeftClose, PanelLeftOpen, Puzzle, Search, Settings, Table2, Workflow, X } from 'lucide-react';
 import { useNeedsYou } from '@/lib/client/run-trace';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
@@ -11,6 +11,7 @@ import { isChromelessPage } from '@/lib/shared/auth-paths';
 import type { PluginSummary } from '@/lib/shared/types';
 import { UserMenu } from '../auth/user-menu';
 import { useViewer } from '../auth/viewer';
+import { openSpotlight } from '../spotlight/context';
 import { ProjectSwitcher } from '../projects/project-switcher';
 import { EnvironmentBadge } from './environment-badge';
 import { groupOf, offlineDot, railActive, RAIL_ITEMS, showReconnecting } from './section-nav';
@@ -180,6 +181,21 @@ function Rail({ pathname, open, onClose }: { pathname: string; open: boolean; on
           {folded ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
         </button>
       </div>
+      {/* The way into Spotlight (⌘K): the builder on the editor, the brain everywhere else. */}
+      <button
+        type="button"
+        onClick={() => {
+          onClose();
+          openSpotlight(pathname);
+        }}
+        aria-label={folded ? 'Ask or build' : undefined}
+        title="Ask or build (⌘K)"
+        className={cn('mb-2 flex h-8 items-center gap-2 rounded-lg border border-hair bg-bg px-2.5 text-[12.5px] text-t3 hover:border-ac hover:text-t2 max-md:h-11 max-md:text-[14px]', folded && 'md:justify-center md:px-0')}
+      >
+        <Search className="size-[15px] shrink-0" aria-hidden />
+        <span className={cn('truncate', label)}>Ask or build…</span>
+        <kbd className={cn('ml-auto rounded border border-hair px-1 font-mono text-[10.5px] text-t3 max-md:hidden', label)}>⌘K</kbd>
+      </button>
       <div className={label}>
         <EnvironmentBadge />
         <ProjectSwitcher />
