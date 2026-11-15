@@ -1,5 +1,5 @@
 /**
- * What a caller may get, and the block for it (docs/practices.md#how-agents-get-them). The one place that turns a caller into
+ * What a caller may get, and the block for it (docs/practices.md#following). The one place that turns a caller into
  * project ids: GET /api/practices/applicable, the cite route and the MCP tools all come through here, so none can widen what
  * it gets. A repository, paths, topics or a task only narrow and rank (./select.ts); nothing a caller sends adds a practice.
  */

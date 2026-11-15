@@ -2,7 +2,9 @@
 
 Rules in the brain that every connected agent follows, each approved by a person. Part of the [Landflow docs](README.md).
 Written for wave P1; what the Brain page, learning and selection add (packages PR02 to PR05) is described here too, and
-marked as it lands. Delivery to Landflow agents and kagent agents arrives in wave P2; the Check Practices step is built.
+marked as it lands. Landflow agents (PR06), kagent agents and A2A agents (PR07) are given the practices that apply
+([Following](#following)), the Check Practices step is built (PR08), and the compliance bar and the inbox (PR09) show how
+they are followed.
 
 ## What a practice is
 

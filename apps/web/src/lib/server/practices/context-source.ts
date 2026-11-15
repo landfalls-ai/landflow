@@ -1,5 +1,5 @@
 /**
- * Sets the project-context seam's practices slot (docs/practices.md#how-agents-get-them): the selector every Landflow run
+ * Sets the project-context seam's practices slot (docs/practices.md#following): the selector every Landflow run
  * goes through. A side-effect import in lib/server/runtime.ts. It reads the port and writes nothing (no `delivered` rows: a
  * preview calls it too); the project is the run's, resolved on the server, and nothing a caller sends adds one.
  */

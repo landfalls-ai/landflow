@@ -1,5 +1,5 @@
 /**
- * The one selector (docs/practices.md#how-agents-get-them): which approved practices apply to a repository, some paths, some
+ * The one selector (docs/practices.md#following): which approved practices apply to a repository, some paths, some
  * topics and a task, in what order. Pure and deterministic. It only narrows and ranks what it is given: who may get a
  * practice at all is decided before it (./applicable.ts), so nothing here, and nothing a caller sends, adds a practice.
  */

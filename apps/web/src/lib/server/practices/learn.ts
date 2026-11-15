@@ -1,5 +1,5 @@
 /**
- * Learning practices from files (docs/practices.md#learning-practices): the prompt, the defensive parsing, and the route's
+ * Learning practices from files (docs/practices.md#learning): the prompt, the defensive parsing, and the route's
  * logic. Repository text and the model's answer are both untrusted: file text is framed as data, a citation whose excerpt
  * is not in the file that was sent is dropped, and every draft goes to the store as `learned` with no `files`, so it is
  * tainted and none of its citations is verified. A person approves it on /brain → Practices.

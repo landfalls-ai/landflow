@@ -1,5 +1,5 @@
 /**
- * The one block (docs/practices.md#how-agents-get-them): the text every path that gives practices to an agent says them
+ * The one block (docs/practices.md#following): the text every path that gives practices to an agent says them
  * with. Pure. A summary is cleaned again here, whoever wrote it: a rule is text an agent reads, so it never carries a
  * secret, a heading, a quote or a fence that could pass for the prompt around it.
  */

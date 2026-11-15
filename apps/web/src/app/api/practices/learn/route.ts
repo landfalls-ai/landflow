@@ -1,6 +1,6 @@
 /**
  * POST /api/practices/learn `{ repo, sha, files: [{ path, content }], topics?, level?, projectId? }` — the brain's model reads
- * the files and drafts practices (docs/practices.md#learning-practices). Every draft is tainted and none of its citations is
+ * the files and drafts practices (docs/practices.md#learning). Every draft is tainted and none of its citations is
  * verified: the files came from the caller. 503 when the brain's model is off or practices are not loaded.
  */
 import { brainModel } from '@/lib/server/brain/writer';

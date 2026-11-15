@@ -1,5 +1,5 @@
 /**
- * A run's practices (docs/practices.md#how-agents-get-them): the one gate every Landflow path goes through before a run, a
+ * A run's practices (docs/practices.md#following): the one gate every Landflow path goes through before a run, a
  * preview or a remote request is given approved practices. It reads the seam's practices slot (./seam.ts), which
  * lib/server/practices/context-source.ts sets at boot (a side-effect import in lib/server/runtime.ts). Unset (a test, a
  * script that never boots the runtime), with LANDFLOW_PRACTICES=off, or with the switch off, a run gets nothing and its
