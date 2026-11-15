@@ -177,6 +177,22 @@ and records no delivery. The same text appears in the persona tab's **View promp
 the skills, before the date line), for the agent's home project. The preview is for editors of the agent: a share to use
 the agent does not show the home project's brief.
 
+## Progress
+
+### On the Goals page and the Overview
+
+(This section is added by the goal progress screens; the server half, `## Progress`, comes with the goal progress routes.)
+
+- **Where the line shows.** Under the title of each goal on the Goals page (the desktop rows and the phone cards), in the
+  goal's sheet, and on each row of **Goals it serves** on a project's Overview. The rows and cards show the last 7 days;
+  the sheet has a **7 days | 30 days** switch.
+- **What it counts.** `12 runs · 1 failed · 3 updates · $0.42 this week`: finished runs of workflows homed in a project that
+  serves the goal or a sub-goal (the failed ones are part of the run count), work updates linked to it, and AI spend
+  attributed to it. Zeros are left out; a small cost reads `< $0.01`; a goal with nothing says `No activity this week`.
+  A dot before the line marks a goal that moved.
+- **Who sees what.** You see only what you may see, so two people can see different numbers for the same goal.
+- **If the host cannot say.** An older host or a failed answer shows no line and no error.
+
 ## What a goal costs
 
 Each AI call a run makes is stamped with the goal that run served. The AI page (Insights → AI) has a Goal option in
