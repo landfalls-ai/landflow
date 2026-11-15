@@ -9,12 +9,12 @@ export const dynamic = 'force-dynamic';
 function view() {
   const settings = getSettings();
   // Counted in SQL: the page no longer reads every stored summary to show two numbers.
-  return { settings, jsonRender: jsonRenderOn(), hostTimezone: hostTimeZone(), executions: retentionCounts(settings.executions) };
+  return { settings, company: settings.company ?? {}, jsonRender: jsonRenderOn(), hostTimezone: hostTimeZone(), executions: retentionCounts(settings.executions) };
 }
 
 export const GET = handler(async () => json(view()));
 
-/** PATCH { timezone?, executions?: { maxCount?, maxAgeDays? }, jsonRender?: boolean | null } — 0 turns a retention limit off; jsonRender is the owner's (null: back to the environment default). */
+/** PATCH { timezone?, executions?: { maxCount?, maxAgeDays? }, jsonRender?: boolean | null, company?: { name?, mission? } (the company profile, docs/projects-and-goals.md#the-mission) } — 0 turns a retention limit off; jsonRender is the owner's (null: back to the environment default). */
 export const PATCH = handler(async (request: Request) => {
   const body = await parseBody(request, settingsPatchSchema);
   if (!body.ok) return body.response;

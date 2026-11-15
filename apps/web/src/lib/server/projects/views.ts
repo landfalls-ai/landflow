@@ -1,6 +1,7 @@
 /** Projects as the API shows them (lib/shared/projects.ts `ProjectView`, `ProjectDetail`). */
 import { PROJECT_ROLES, type ProjectDetail, type ProjectView } from '../../shared/projects';
 import { listUsers } from '../auth/users';
+import { briefView } from '../goals/views';
 import { projectRole, visibleProjectIds, type Actor } from './access';
 import { ensurePersonalProject, listProjects, memberCounts, members, resourceCounts, type ProjectRecord } from './store';
 
@@ -36,6 +37,7 @@ export function projectDetail(project: ProjectRecord, actor: Actor): ProjectDeta
   const users = new Map(listUsers().map((u) => [u.id, u]));
   return {
     ...projectView(project, actor),
+    brief: briefView(project, actor),
     // Admins first, then editors and viewers, each by name.
     members: members(project.id)
       .flatMap((member) => {

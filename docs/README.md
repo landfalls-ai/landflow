@@ -66,6 +66,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | Settings, variables, data tables, insights | [features/settings-and-data.md](features/settings-and-data.md) | |
 | LLM gateway (LiteLLM), budgets in LiteLLM | [llm-gateway.md](llm-gateway.md) | |
 | Authentication: users, roles, projects, API keys, OIDC, SAML, SCIM | [features/authentication.md](features/authentication.md) | |
+| Projects and goals: the company mission, the goal tree, the goals a project serves, initiative links and the project brief | [projects-and-goals.md](projects-and-goals.md) | [reference/api.md](reference/api.md) |
 | Audit log and governance: SIEM streaming, signed heads, approvals, four-eyes | [features/audit-and-governance.md](features/audit-and-governance.md) | |
 | External secrets and environments | [features/secrets-and-environments.md](features/secrets-and-environments.md) | |
 | Git sync | [features/git-sync.md](features/git-sync.md) | |

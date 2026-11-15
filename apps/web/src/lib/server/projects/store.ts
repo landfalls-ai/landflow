@@ -12,7 +12,9 @@
 import { nanoid } from 'nanoid';
 import { personalProjectId, PROJECT_ROLES, type ProjectRole, type ProjectType, type ResourceKind, type ShareRole } from '../../shared/projects';
 import { recordAudit } from '../audit';
+import { can } from '../../shared/auth';
 import { authDb } from '../auth/db';
+import { getUser } from '../auth/users';
 import { HttpError } from '../errors';
 
 export interface ProjectRecord {
@@ -22,10 +24,31 @@ export interface ProjectRecord {
   ownerId?: string;
   description?: string;
   icon?: string;
+  /** The brief (docs/projects-and-goals.md#the-brief): set through `updateProjectBrief`, kept by a rename. */
+  brief?: string;
+  briefConstraints?: string;
+  doneWhen?: string;
+  glossary?: string;
+  status?: string;
+  targetDate?: string;
+  leadId?: string;
+  decisionOwnerId?: string;
   createdAt: string;
   updatedAt: string;
   createdBy?: string;
 }
+
+/** The brief fields of a project record, with the project record field each is stored in. */
+export const BRIEF_FIELDS = [
+  ['brief', 'brief'],
+  ['constraints', 'briefConstraints'],
+  ['doneWhen', 'doneWhen'],
+  ['glossary', 'glossary'],
+  ['status', 'status'],
+  ['targetDate', 'targetDate'],
+  ['leadId', 'leadId'],
+  ['decisionOwnerId', 'decisionOwnerId'],
+] as const;
 
 export interface MemberRecord {
   projectId: string;
@@ -52,6 +75,14 @@ interface ProjectRow {
   owner_id: string | null;
   description: string | null;
   icon: string | null;
+  brief?: string | null;
+  brief_constraints?: string | null;
+  done_when?: string | null;
+  glossary?: string | null;
+  status?: string | null;
+  target_date?: string | null;
+  lead_id?: string | null;
+  decision_owner_id?: string | null;
   created_at: string;
   updated_at: string;
   created_by: string | null;
@@ -96,6 +127,14 @@ function projectFrom(row: ProjectRow): ProjectRecord {
     ...(row.owner_id && { ownerId: row.owner_id }),
     ...(row.description && { description: row.description }),
     ...(row.icon && { icon: row.icon }),
+    ...(row.brief && { brief: row.brief }),
+    ...(row.brief_constraints && { briefConstraints: row.brief_constraints }),
+    ...(row.done_when && { doneWhen: row.done_when }),
+    ...(row.glossary && { glossary: row.glossary }),
+    ...(row.status && { status: row.status }),
+    ...(row.target_date && { targetDate: row.target_date }),
+    ...(row.lead_id && { leadId: row.lead_id }),
+    ...(row.decision_owner_id && { decisionOwnerId: row.decision_owner_id }),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(row.created_by && { createdBy: row.created_by }),
@@ -110,6 +149,14 @@ function projectRow(project: ProjectRecord) {
     owner_id: project.ownerId ?? null,
     description: project.description ?? null,
     icon: project.icon ?? null,
+    brief: project.brief ?? null,
+    brief_constraints: project.briefConstraints ?? null,
+    done_when: project.doneWhen ?? null,
+    glossary: project.glossary ?? null,
+    status: project.status ?? null,
+    target_date: project.targetDate ?? null,
+    lead_id: project.leadId ?? null,
+    decision_owner_id: project.decisionOwnerId ?? null,
     created_at: project.createdAt,
     updated_at: project.updatedAt,
     created_by: project.createdBy ?? null,
@@ -229,10 +276,66 @@ export function updateProject(id: string, patch: { name?: string; description?: 
   return next;
 }
 
-/** Remove a project row with its members and the shares made to it (./transfer moves its resources first). */
+/**
+ * Set or clear brief fields (`null` clears; a field left out stays). Throws a 400 for a lead or decision owner who has no role in
+ * the project. Audits `project.brief_changed` with each changed field's old and new value.
+ */
+export function updateProjectBrief(id: string, patch: Partial<Record<(typeof BRIEF_FIELDS)[number][0], string | null>>): ProjectRecord {
+  const project = getProject(id);
+  if (!project) throw new ProjectError('Project not found', 404);
+  const next: ProjectRecord = { ...project, updatedAt: new Date().toISOString() };
+  const changes: Record<string, { from: string | null; to: string | null }> = {};
+  for (const [field, key] of BRIEF_FIELDS) {
+    const value = patch[field];
+    if (value === undefined) continue;
+    const clean = value?.trim() || undefined;
+    if ((field === 'leadId' || field === 'decisionOwnerId') && clean && !hasRoleIn(project, clean)) {
+      throw new ProjectError(field === 'leadId' ? 'The lead must be a member of the project' : 'The decision owner must be a member of the project');
+    }
+    if (clean === project[key]) continue;
+    changes[field] = { from: project[key] ?? null, to: clean ?? null };
+    if (clean === undefined) delete next[key];
+    else next[key] = clean;
+  }
+  if (!Object.keys(changes).length) return project;
+  db().upsert('projects', projectRow(next));
+  recordAudit({ action: 'project.brief_changed', target: { type: 'project', id, name: next.name }, project: id, summary: `Changed the brief of ${next.name} (${Object.keys(changes).join(', ')})`, details: Object.fromEntries(Object.entries(changes).flatMap(([field, change]) => [[`${field}From`, change.from], [`${field}To`, change.to]])) });
+  return next;
+}
+
+/** Whether `userId` is an existing user with a role in the project (as `projectRole` defines it: a member, the personal project's owner, an instance owner or admin). */
+function hasRoleIn(project: ProjectRecord, userId: string): boolean {
+  const user = getUser(userId);
+  if (!user) return false;
+  return can(user, 'projects:manage') || project.ownerId === userId || !!memberRole(project.id, userId);
+}
+
+/**
+ * Remove a project row with its members, the shares made to it, its `project_goals` rows and its own project goals with their links
+ * (./transfer moves its resources first). Sub-goals of a removed goal go up to its nearest remaining ancestor, or become roots.
+ */
 export function removeProjectRows(id: string) {
   const database = db();
   database.transaction(() => {
+    const own = database.all<{ id: string; parent_id: string | null }>('SELECT id, parent_id FROM goals WHERE project_id = ?', id);
+    const gone = new Map(own.map((g) => [g.id, g.parent_id]));
+    const survivor = (parent: string | null): string | null => {
+      for (let hops = 0; parent && gone.has(parent) && hops < 100; hops++) parent = gone.get(parent) ?? null;
+      return parent && gone.has(parent) ? null : parent;
+    };
+    for (const goalId of gone.keys()) {
+      for (const child of database.all<{ id: string }>('SELECT id FROM goals WHERE parent_id = ?', goalId)) {
+        if (gone.has(child.id)) continue;
+        const row = database.get<Record<string, string | null>>('SELECT * FROM goals WHERE id = ?', child.id);
+        if (row) database.upsert('goals', { ...row, parent_id: survivor(gone.get(goalId) ?? null) });
+      }
+    }
+    for (const goalId of gone.keys()) {
+      for (const row of database.all<{ project_id: string }>('SELECT project_id FROM project_goals WHERE goal_id = ?', goalId)) database.delete('project_goals', { project_id: row.project_id, goal_id: goalId });
+      for (const row of database.all<{ kind: string; ref_id: string }>('SELECT kind, ref_id FROM goal_links WHERE goal_id = ?', goalId)) database.delete('goal_links', { goal_id: goalId, kind: row.kind, ref_id: row.ref_id });
+      database.delete('goals', { id: goalId });
+    }
+    for (const row of database.all<{ goal_id: string }>('SELECT goal_id FROM project_goals WHERE project_id = ?', id)) database.delete('project_goals', { project_id: id, goal_id: row.goal_id });
     database.delete('project_members', { project_id: id });
     for (const share of database.all<ShareRow>('SELECT * FROM resource_shares WHERE project_id = ?', id)) {
       database.delete('resource_shares', { kind: share.kind, resource_id: share.resource_id, project_id: id });

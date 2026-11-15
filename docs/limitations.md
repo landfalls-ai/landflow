@@ -43,6 +43,18 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - **Log redaction** ([observability.md](observability.md#3-logs)): the host's logger scrubs secret-shaped values (Bearer tokens (the word `Bearer` with that case; an all-letter token shorter than 24 characters is left, so prose such as "Bearer authentication" is not mangled), `lf_` keys, `sk-`, GitHub and Slack keys, URL passwords, PEM private keys) and the credential values a node was handed; a secret in free text of another shape, or a credential value shorter than twelve characters (the vault does not remember short ones, so a weak password such as `postgres` is not scrubbed), is not found. Value patterns apply to log lines only: span attributes and exception events exported over OTLP are redacted by key name. OAuth access tokens handed to a node are scrubbed from its output too, so a workflow that passes one downstream through node output gets `[redacted]`. A multi-line credential that is not a PEM block is remembered whole, not line by line. The plugin SDKs keep their own rules (key names and the current request's credential values). A `traceparent` on a read response may name a trace the sampler dropped.
 - **By design**: a Respond to Webhook reply built from a secret is not redacted: redaction covers what is kept, and the reply is sent, not kept ([External secrets](features/secrets-and-environments.md)).
 
+## Projects and goals
+
+- **One company per instance** ([projects-and-goals.md](projects-and-goals.md#the-mission)): the mission and company name are
+  one pair in Settings → Company. Two companies need two instances.
+- **No goal progress yet**: a goal has a status, an owner and a target date, but nothing measures how far along it is (a
+  later wave of the Paperclip program).
+- **Goal lists stop at 500**: `GET /api/goals` keeps the first 500 goals the caller sees (oldest first) after filtering,
+  with no paging and no sign it was cut; children of a goal that was cut show as roots. Nothing caps how many goals exist.
+- **Removed people stay named by id**: a user removed from a project (or deleted) stays as its `leadId` or
+  `decisionOwnerId`, and as a goal's `ownerId`, until someone changes it; the view then has the id but no name.
+- A project goal can only be served by its home project; to share one across projects, make it a company goal.
+
 ## Test chat history (B10, 2026-11)
 
 - "Earlier tests" in an agent's test chat is per agent, not per person: test sessions all carry the user id `you`, so on a

@@ -41,7 +41,7 @@ function fromZod(schema: z.ZodType): Json {
 const samplePath = (path: string) => path.replace(/\{[^}]+\}/g, 'sample');
 
 interface Operation {
-  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Settings' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks' | 'Conversations';
+  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Settings' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks' | 'Conversations' | 'Goals';
   id: string;
   summary: string;
   description?: string;
@@ -1119,21 +1119,83 @@ function paths(): Record<string, Record<string, Json>> {
     timezone: { type: 'string' },
     executions: object({ maxCount: { type: 'integer' }, maxAgeDays: { type: 'integer' } }),
     jsonRender: { type: 'boolean', description: 'Saved json-render choice; absent while the LANDFLOW_JSON_RENDER default applies' },
+    // PC01:
+    company: object({ name: { type: 'string' }, mission: { type: 'string' } }),
   });
   add('get', '/api/settings', {
     tag: 'Settings',
     id: 'getSettings',
     summary: 'Get the instance settings',
     description: '`jsonRender` is the json-render flag as it stands: the saved choice, else the `LANDFLOW_JSON_RENDER` default.',
-    responses: { 200: reply('The settings', object({ settings: settingsDoc, jsonRender: { type: 'boolean' }, hostTimezone: { type: 'string' }, executions: object({ stored: { type: 'integer' }, prunable: { type: 'integer' } }) })) },
+    responses: { 200: reply('The settings', object({ settings: settingsDoc, company: object({ name: { type: 'string' }, mission: { type: 'string' } }), jsonRender: { type: 'boolean' }, hostTimezone: { type: 'string' }, executions: object({ stored: { type: 'integer' }, prunable: { type: 'integer' } }) })) },
   });
   add('patch', '/api/settings', {
     tag: 'Settings',
     id: 'updateSettings',
     summary: 'Change the instance settings',
     description: 'Any subset. `jsonRender` (`true`, `false`, or `null` for the environment default) is the owner’s: an admin gets 403.',
-    body: jsonBody(object({ timezone: { type: 'string' }, executions: object({ maxCount: { type: 'integer' }, maxAgeDays: { type: 'integer' } }), jsonRender: { type: ['boolean', 'null'] } })),
+    body: jsonBody(object({ timezone: { type: 'string' }, executions: object({ maxCount: { type: 'integer' }, maxAgeDays: { type: 'integer' } }), jsonRender: { type: ['boolean', 'null'] }, company: object({ name: { type: ['string', 'null'], maxLength: 120 }, mission: { type: ['string', 'null'], maxLength: 500 } }) })),
     responses: { 200: reply('The settings', object({ settings: settingsDoc, jsonRender: { type: 'boolean' } })), 400: invalid, 403: errorRef('Not the owner (json-render)') },
+  });
+
+  // ---- goals and project briefs (PC01; docs/projects-and-goals.md) ----
+  const goalDoc = object({ id: { type: 'string' }, title: { type: 'string' }, why: { type: 'string' }, level: { type: 'string', enum: ['company', 'project'] }, status: { type: 'string', enum: ['planned', 'active', 'achieved', 'cancelled'] }, ownerId: { type: 'string' }, ownerName: { type: 'string' }, targetDate: { type: 'string', description: 'YYYY-MM-DD' }, parentId: { type: 'string' }, projectId: { type: 'string' }, projects: array(object({ id: { type: 'string' }, name: { type: 'string' } })), initiatives: array(object({ id: { type: 'string' }, name: { type: 'string' } })), canEdit: { type: 'boolean' }, createdAt: { type: 'string' }, updatedAt: { type: 'string' } }, ['id', 'title', 'level', 'status', 'projects', 'initiatives', 'canEdit']);
+  const goalReply = (description: string) => reply(description, object({ goal: goalDoc }, ['goal']));
+  add('get', '/api/goals', {
+    tag: 'Goals',
+    id: 'listGoals',
+    summary: 'The goals you can see, as a tree',
+    description: 'Company goals, and the project goals of projects you can open. `goals` are the roots, each with `children`; a goal whose parent you can’t see is a root. `mission` is the company mission (Settings → Company). `projectId` keeps the goals that project serves; `status` one status.',
+    query: [
+      { name: 'projectId', description: 'Only the goals this project serves', schema: { type: 'string' } },
+      { name: 'status', description: 'Only goals in this status', schema: { type: 'string', enum: ['planned', 'active', 'achieved', 'cancelled'] } },
+    ],
+    responses: { 200: reply('The goal tree', object({ mission: { type: 'string' }, goals: array({ type: 'object', additionalProperties: true }), canCreateCompanyGoals: { type: 'boolean' } }, ['goals', 'canCreateCompanyGoals'])), 400: invalid },
+  });
+  add('post', '/api/goals', {
+    tag: 'Goals',
+    id: 'createGoal',
+    summary: 'Add a goal',
+    description: 'Company goals are for owners and admins; a project goal needs `projectId` (its admins). `projectIds` (company goals) lists the projects that serve it, each one you must admin. Goals go 4 levels deep; a company goal’s parent is a company goal.',
+    body: jsonBody(object({ title: { type: 'string', maxLength: 200 }, why: { type: 'string', maxLength: 2000 }, level: { type: 'string', enum: ['company', 'project'] }, status: { type: 'string', enum: ['planned', 'active', 'achieved', 'cancelled'], default: 'active' }, ownerId: { type: 'string' }, targetDate: { type: 'string', description: 'YYYY-MM-DD' }, parentId: { type: 'string' }, projectId: { type: 'string' }, projectIds: { type: 'array', maxItems: 10, items: { type: 'string' } } }, ['title', 'level'])),
+    responses: { 201: goalReply('The new goal'), 400: invalid, 403: errorRef('Not allowed to add this goal'), 404: notFound },
+  });
+  add('get', '/api/goals/{id}', { tag: 'Goals', id: 'getGoal', summary: 'A goal with its chain of parents', responses: { 200: reply('The goal', object({ goal: goalDoc, chain: array({ type: 'object', additionalProperties: true }) }, ['goal', 'chain'])), 404: notFound } });
+  add('patch', '/api/goals/{id}', {
+    tag: 'Goals',
+    id: 'updateGoal',
+    summary: 'Change a goal',
+    description: '`null` clears `why`, `ownerId`, `targetDate` or `parentId`. Moving a goal rejects cycles and more than 4 levels.',
+    body: jsonBody(object({ title: { type: 'string' }, why: { type: ['string', 'null'] }, status: { type: 'string', enum: ['planned', 'active', 'achieved', 'cancelled'] }, ownerId: { type: ['string', 'null'] }, targetDate: { type: ['string', 'null'] }, parentId: { type: ['string', 'null'] } })),
+    responses: { 200: goalReply('The goal'), 400: invalid, 403: errorRef('Not allowed to change this goal'), 404: notFound },
+  });
+  add('delete', '/api/goals/{id}', { tag: 'Goals', id: 'deleteGoal', summary: 'Delete a goal', description: 'Also removes it from the projects that serve it and unlinks its initiatives. A goal with sub-goals answers 409 `goal_has_children`.', responses: { 200: reply('Deleted', ok), 403: errorRef('Not allowed to delete this goal'), 404: notFound, 409: errorRef('The goal has sub-goals') } });
+  add('put', '/api/goals/{id}/initiatives', {
+    tag: 'Goals',
+    id: 'setGoalInitiatives',
+    summary: 'Link brain initiatives to a goal',
+    description: 'Replaces the links. Each id is a brain entity of type `initiative` you may read; otherwise 400 names the bad ids.',
+    body: jsonBody(object({ ids: { type: 'array', maxItems: 50, items: { type: 'string' } } }, ['ids'])),
+    responses: { 200: goalReply('The goal'), 400: invalid, 403: errorRef('Not allowed to change this goal'), 404: notFound },
+  });
+  add('get', '/api/projects/{id}/goals', { tag: 'Goals', id: 'getProjectGoals', summary: 'The goals a project serves, in order', description: 'The first planned or active one is the primary goal.', pathParams: { id: 'The project id' }, responses: { 200: reply('The goals', object({ goals: array(goalDoc) }, ['goals'])), 404: notFound } });
+  add('put', '/api/projects/{id}/goals', {
+    tag: 'Goals',
+    id: 'setProjectGoals',
+    summary: 'Set the goals a project serves, and their order',
+    description: 'The project’s admins. Each is a goal you can see: a company goal, or one of the project’s own. At most 10.',
+    pathParams: { id: 'The project id' },
+    body: jsonBody(object({ goalIds: { type: 'array', maxItems: 10, items: { type: 'string' } } }, ['goalIds'])),
+    responses: { 200: reply('The goals', object({ goals: array(goalDoc) }, ['goals'])), 400: invalid, 403: errorRef('Not a project admin'), 404: notFound },
+  });
+  add('patch', '/api/projects/{id}', {
+    tag: 'Goals',
+    id: 'updateProject',
+    summary: 'Rename a project or change its brief',
+    description: 'The project’s admins. `brief` sets the brief, constraints, done-when, words we use, status, target date, lead and decision owner (`null` clears one); the lead and decision owner must have a role in the project. `GET /api/projects/{id}` returns the brief as `project.brief`.',
+    pathParams: { id: 'The project id' },
+    body: jsonBody(object({ name: { type: 'string', maxLength: 120 }, description: { type: ['string', 'null'], maxLength: 500 }, icon: { type: ['string', 'null'] }, brief: object({ brief: { type: ['string', 'null'], maxLength: 1500 }, constraints: { type: ['string', 'null'], maxLength: 1000 }, doneWhen: { type: ['string', 'null'], maxLength: 600 }, glossary: { type: ['string', 'null'], maxLength: 800 }, status: { type: ['string', 'null'], enum: ['planned', 'active', 'paused', 'done', null] }, targetDate: { type: ['string', 'null'] }, leadId: { type: ['string', 'null'] }, decisionOwnerId: { type: ['string', 'null'] } }) })),
+    responses: { 200: reply('The project', object({ project: { type: 'object', additionalProperties: true } }, ['project'])), 400: invalid, 403: errorRef('Not a project admin'), 404: notFound },
   });
 
   // ---- templates ----
@@ -2169,6 +2231,7 @@ export function openApiDocument(origin?: string): Record<string, unknown> {
       { name: 'Executions', description: 'Runs: history, run data, stop, retry and re-run' },
       { name: 'Data tables', description: 'Built-in tables workflows read and write' },
       { name: 'Settings', description: 'Instance settings: time zone, execution retention and the json-render switch' },
+      { name: 'Goals', description: 'The goal tree, the goals each project serves and the project brief (docs/projects-and-goals.md)' },
       { name: 'Variables', description: 'Instance variables (`$vars`); changing them needs an owner or admin' },
       { name: 'Templates', description: 'The templates library: start workflows from templates, save and share your own' },
       { name: 'Audit', description: 'The audit log (owners and admins; project admins their projects’ events), its hash chain and four-eyes publish requests' },

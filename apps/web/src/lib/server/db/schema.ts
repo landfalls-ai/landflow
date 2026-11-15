@@ -1769,6 +1769,26 @@ export const MIGRATIONS: Migration[] = [
     ],
     statements: [`CREATE UNIQUE INDEX IF NOT EXISTS ai_usage_gateway_request ON ai_usage (gateway_request_id) WHERE gateway_request_id IS NOT NULL`],
   },
+  // PC01: goals (a tree: company goals and project goals), the goals a project serves in order, the brain initiatives a goal
+  // links, and the project brief (docs/projects-and-goals.md).
+  {
+    version: 2300,
+    name: 'goals',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS goals (id TEXT PRIMARY KEY, title TEXT NOT NULL, why TEXT, level TEXT NOT NULL, status TEXT NOT NULL, owner_id TEXT, target_date TEXT, parent_id TEXT, project_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by TEXT)`,
+      `CREATE INDEX IF NOT EXISTS goals_parent ON goals (parent_id)`,
+      `CREATE INDEX IF NOT EXISTS goals_project ON goals (project_id)`,
+      `CREATE TABLE IF NOT EXISTS project_goals (project_id TEXT NOT NULL, goal_id TEXT NOT NULL, position BIGINT NOT NULL DEFAULT 0, created_at TEXT NOT NULL, PRIMARY KEY (project_id, goal_id))`,
+      `CREATE INDEX IF NOT EXISTS project_goals_goal ON project_goals (goal_id)`,
+      `CREATE TABLE IF NOT EXISTS goal_links (goal_id TEXT NOT NULL, kind TEXT NOT NULL, ref_id TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT, PRIMARY KEY (goal_id, kind, ref_id))`,
+    ],
+  },
+  {
+    version: 2301,
+    name: 'project_brief',
+    statements: [],
+    addColumns: ['brief', 'brief_constraints', 'done_when', 'glossary', 'status', 'target_date', 'lead_id', 'decision_owner_id'].map((column) => ({ table: 'projects', column, definition: 'TEXT' })),
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -1881,6 +1901,10 @@ export const TABLES = {
   llm_gateway_keys: ['id'],
   llm_gateway_links: ['kind', 'landflow_id'],
   ai_cap_requests: ['id'],
+  // PC01:
+  goals: ['id'],
+  project_goals: ['project_id', 'goal_id'],
+  goal_links: ['goal_id', 'kind', 'ref_id'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;
