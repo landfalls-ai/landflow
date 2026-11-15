@@ -14,24 +14,28 @@
  * bar folds into it.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { AlertTriangle, Brain, ChevronRight, Code2, Eye, Files, GitCommitHorizontal, PanelBottom, PanelLeft, Search, Settings2, Sparkles, X } from 'lucide-react';
+import { AlertTriangle, Brain, ChevronRight, Code2, Eye, Files, GitCommitHorizontal, PanelBottom, PanelLeft, ScrollText, Search, Settings2, Sparkles, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { cn } from '@/lib/utils';
-import { brainTree, INDEX, indexMarkdown, LOG, logMarkdown, outlineOf, pageMarkdown, SETTINGS, urlOf, type BrainTree, type FileRef, type OutlineItem } from '@/lib/shared/brain-files';
+import { brainTree, INDEX, indexMarkdown, isPageRef, isPracticeRef, LOG, logMarkdown, outlineOf, pageMarkdown, practiceRef, SETTINGS, urlOf, type BrainTree, type FileRef, type OutlineItem } from '@/lib/shared/brain-files';
 import type { WikiHome, WikiPage, WikiSummary } from '@/lib/shared/brain-wiki';
 import { CopyButton } from '../../ui/copy-button';
 import { BrainPanel } from '../brain-panel';
 import { ProposalCard, useProposalActions } from '../proposal-card';
 import { IndexDoc, indexOutline, LogDoc } from './index-doc';
 import { PageDoc } from './page-doc';
+import { PracticeDoc } from './practice-doc';
+import { usePracticeList } from './practices-api';
+import { practiceFileName } from './practices-logic';
+import { PracticesView } from './practices-view';
 import { WikiNav } from './parts';
 import { ExplorerView, FileIcon, SearchView, TimelineView, type Opener } from './side-views';
 import { lineId, SourceView } from './source-view';
 import { type SpotlightFile } from './spotlight';
 import { closeSpotlight, keyAction, openSpotlight, setBrainFile, setBrainOpener, useSpotlightState } from '../../spotlight/context';
 
-type View = 'explorer' | 'search' | 'timeline';
+type View = 'explorer' | 'search' | 'timeline' | 'practices';
 type Mode = 'preview' | 'source';
 interface Tab {
   ref: FileRef;
@@ -40,11 +44,14 @@ interface Tab {
 type Loaded = WikiPage | { error: string };
 
 const STORE = 'landflow.brain.workbench';
-const isPage = (ref: FileRef) => ref.includes('/');
+const isPage = isPageRef;
 
-/** What chrome the workbench shows: with no pages and the index open, the index alone (no Explorer, no tabs). */
-export function workbenchLayout(pages: number | undefined, active?: FileRef): { indexOnly: boolean; explorer: boolean; tabs: boolean } {
-  const indexOnly = pages === 0 && (!active || active === INDEX);
+/**
+ * What chrome the workbench shows: with no pages and the index open, the index alone (no Explorer, no tabs), unless
+ * practices are on (the Practices view is how the first one is written).
+ */
+export function workbenchLayout(pages: number | undefined, active?: FileRef, practicesOn = false): { indexOnly: boolean; explorer: boolean; tabs: boolean } {
+  const indexOnly = pages === 0 && !practicesOn && (!active || active === INDEX);
   return { indexOnly, explorer: !indexOnly, tabs: !indexOnly };
 }
 
@@ -67,6 +74,7 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
   const [width, setWidth] = useState(272);
   const [quick, setQuick] = useState(false);
   const askOpen = useSpotlightState().open;
+  const practices = usePracticeList();
   const activeRef = useRef(active);
   useEffect(() => {
     activeRef.current = active;
@@ -160,7 +168,9 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
     const all = markdown ? outlineOf(markdown) : [];
     return active === INDEX && home ? indexOutline(all, home) : all;
   }, [markdown, active, home]);
-  const layout = workbenchLayout(home?.entries.length, active);
+  const [askedForPractices, setAskedForPractices] = useState(false);
+  const practicesOn = (practices.data?.practices.length ?? 0) > 0 || (practices.data?.waiting ?? 0) > 0 || askedForPractices;
+  const layout = workbenchLayout(home?.entries.length, active, practicesOn);
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
   const mode: Mode = active ? (modes[active] ?? 'preview') : 'preview';
@@ -210,7 +220,8 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [toggleMode]);
 
-  const nameOf = (ref: FileRef) => (ref === SETTINGS ? 'What Landflow knows' : (tree?.files.get(ref)?.name ?? `${ref.split('/').pop()}.md`));
+  const practiceName = (ref: FileRef) => practiceFileName(practices.data?.practices.find((p) => practiceRef(p.id) === ref)?.handle ?? practices.retired?.find((p) => practiceRef(p.id) === ref)?.handle ?? ref.slice(ref.indexOf('/') + 1));
+  const nameOf = (ref: FileRef) => (ref === SETTINGS ? 'What Landflow knows' : isPracticeRef(ref) ? practiceName(ref) : (tree?.files.get(ref)?.name ?? `${ref.split('/').pop()}.md`));
   const problems = tree ? [...tree.files.values()].filter((f) => f.problems.length) : [];
   const status = home && statusItems(home.entries.length, problems.length);
   const spotlightFile: SpotlightFile | undefined = active
@@ -233,13 +244,16 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
       {view === 'explorer' && <ExplorerView tree={tree} active={active} outline={outline} page={page} opener={opener} onOutline={jump} onRefresh={loadHome} />}
       {view === 'search' && <SearchView home={home} tree={tree} opener={opener} />}
       {view === 'timeline' && <TimelineView home={home} opener={opener} />}
+      {view === 'practices' && <PracticesView list={practices} active={active} opener={opener} />}
     </>
   );
   const VIEWS: Array<{ id: View; label: string; icon: typeof Files }> = [
     { id: 'explorer', label: 'Explorer', icon: Files },
     { id: 'search', label: 'Search', icon: Search },
     { id: 'timeline', label: 'Timeline', icon: GitCommitHorizontal },
+    { id: 'practices', label: 'Practices', icon: ScrollText },
   ];
+  const waiting = practices.data?.waiting ?? 0;
   const pickView = (id: View) => {
     if (id === view && sidebar) setSidebar(false);
     else {
@@ -296,7 +310,7 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
           {/* Activity bar. */}
           <nav className={cn('hidden w-11 shrink-0 flex-col items-center gap-1 border-r border-hair bg-sf2 py-1.5', layout.explorer && 'md:flex')} aria-label="Views">
             {VIEWS.map((v) => (
-              <ActivityButton key={v.id} label={v.label} active={sidebar && view === v.id} onClick={() => pickView(v.id)}>
+              <ActivityButton key={v.id} label={v.label} active={sidebar && view === v.id} onClick={() => pickView(v.id)} badge={v.id === 'practices' ? waiting : 0}>
                 <v.icon className="size-[18px]" />
               </ActivityButton>
             ))}
@@ -313,16 +327,17 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
             className={cn(
               'min-h-0 shrink-0 flex-col border-r border-hair bg-sf2',
               drawer ? 'fixed inset-y-0 left-0 z-40 flex w-[86vw] max-w-[340px] shadow-pop' : 'hidden',
-              sidebar && 'md:static md:z-auto md:flex md:max-w-none md:shadow-none',
+              sidebar && 'md:static md:z-auto md:flex md:w-[var(--sb)] md:max-w-none md:shadow-none',
             )}
-            style={{ width: drawer ? undefined : width }}
+            style={{ width: drawer ? undefined : width, ['--sb' as string]: `${width}px` }}
           >
             <div className="flex h-9 shrink-0 items-center gap-1 px-3 text-[11px] font-semibold uppercase tracking-wide text-t3">
               {VIEWS.find((v) => v.id === view)?.label}
               <div className="ml-auto flex items-center gap-0.5 md:hidden">
                 {VIEWS.map((v) => (
-                  <button key={v.id} type="button" onClick={() => setView(v.id)} className={cn('grid size-7 place-items-center rounded-md', view === v.id ? 'bg-acdim text-t1' : 'text-t3')} aria-label={v.label}>
+                  <button key={v.id} type="button" onClick={() => setView(v.id)} className={cn('relative grid size-7 place-items-center rounded-md', view === v.id ? 'bg-acdim text-t1' : 'text-t3')} aria-label={waiting > 0 && v.id === 'practices' ? `${v.label}, ${waiting} waiting for you` : v.label}>
                     <v.icon className="size-4" />
+                    {v.id === 'practices' && waiting > 0 && <span className="absolute right-0.5 top-0.5 size-2 rounded-full bg-warn" aria-hidden />}
                   </button>
                 ))}
                 <button type="button" onClick={() => open(SETTINGS, { pin: true })} className="grid size-7 place-items-center rounded-md text-t3" aria-label="What Landflow knows">
@@ -359,7 +374,7 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
                     t.ref === active ? 'bg-bg text-t1 shadow-[inset_0_2px_0_var(--color-ac)]' : 'text-t3 hover:text-t2',
                   )}
                 >
-                  {t.ref === SETTINGS ? <Settings2 className="size-3.5 shrink-0 text-t3" /> : <FileIcon file={tree?.files.get(t.ref)} />}
+                  {t.ref === SETTINGS ? <Settings2 className="size-3.5 shrink-0 text-t3" /> : isPracticeRef(t.ref) ? <ScrollText className="size-3.5 shrink-0 text-viz-4" aria-hidden /> : <FileIcon file={tree?.files.get(t.ref)} />}
                   <span className={cn('max-w-[180px] truncate', !t.pinned && 'italic')}>{nameOf(t.ref)}</span>
                   <button
                     type="button"
@@ -380,10 +395,10 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
             {active && !layout.indexOnly && (
               <div className="flex h-7 shrink-0 items-center gap-1 border-b border-hair px-3 text-[12px] text-t3">
                 <div className="flex min-w-0 items-center gap-1 overflow-hidden">
-                  {(active === SETTINGS ? ['What Landflow knows'] : ['brain', ...(tree?.paths.get(active) ?? [nameOf(active)])]).map((part, i, all) => (
+                  {(active === SETTINGS ? ['What Landflow knows'] : isPracticeRef(active) ? ['brain', 'practices', nameOf(active)] : ['brain', ...(tree?.paths.get(active) ?? [nameOf(active)])]).map((part, i, all) => (
                     <span key={i} className="flex shrink-0 items-center gap-1 last:min-w-0 last:shrink">
                       {i > 0 && <ChevronRight className="size-3 shrink-0" />}
-                      {i === all.length - 1 && active !== SETTINGS && <FileIcon file={tree?.files.get(active)} className="size-3" />}
+                      {i === all.length - 1 && active !== SETTINGS && !isPracticeRef(active) && <FileIcon file={tree?.files.get(active)} className="size-3" />}
                       <span className={cn('truncate', i === all.length - 1 && 'text-t2')}>{part}</span>
                     </span>
                   ))}
@@ -418,6 +433,7 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
                       onHomeChanged={loadHome}
                       onPageChanged={changed(active)}
                       onSummary={summaryWritten(active)}
+                      onPracticeChanged={practices.reload}
                     />
                   </div>
                 )}
@@ -463,6 +479,7 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
               { label: 'What Landflow knows', run: () => open(SETTINGS, { pin: true }) },
               { label: 'Toggle Preview and Source', run: toggleMode },
               ...(layout.explorer ? [{ label: 'Toggle the side bar', run: () => setSidebar((v) => !v) }] : []),
+              { label: 'Show Practices', run: () => (setAskedForPractices(true), setView('practices'), setSidebar(true), setDrawer(true)) },
               { label: 'Show Problems', run: () => setPanel('problems') },
               { label: 'Show Suggestions', run: () => setPanel('suggestions') },
               ...(layout.explorer ? [{ label: 'Search the brain', run: () => (setView('search'), setSidebar(true), setDrawer(true)) }] : []),
@@ -482,7 +499,8 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
   );
 }
 
-function FileContent({ ref_, home, loaded, onHomeChanged, onPageChanged, onSummary }: { ref_: FileRef; home?: WikiHome; loaded?: Loaded; onHomeChanged: () => void; onPageChanged: () => void; onSummary: (s: WikiSummary) => void }) {
+function FileContent({ ref_, home, loaded, onHomeChanged, onPageChanged, onSummary, onPracticeChanged }: { ref_: FileRef; home?: WikiHome; loaded?: Loaded; onHomeChanged: () => void; onPageChanged: () => void; onSummary: (s: WikiSummary) => void; onPracticeChanged: () => void }) {
+  if (isPracticeRef(ref_)) return <PracticeDoc key={ref_} id={ref_.slice(ref_.indexOf('/') + 1)} onChanged={onPracticeChanged} />;
   if (ref_ === SETTINGS)
     return (
       <div className="space-y-4">
@@ -538,17 +556,18 @@ function Welcome() {
   );
 }
 
-function ActivityButton({ label, active, onClick, children }: { label: string; active: boolean; onClick: () => void; children: ReactNode }) {
+function ActivityButton({ label, active, onClick, children, badge = 0 }: { label: string; active: boolean; onClick: () => void; children: ReactNode; badge?: number }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      title={label}
-      aria-label={label}
+      title={badge > 0 ? `${label}: ${badge} waiting for you` : label}
+      aria-label={badge > 0 ? `${label}, ${badge} waiting for you` : label}
       aria-pressed={active}
       className={cn('relative grid size-9 place-items-center rounded-md', active ? 'text-t1 before:absolute before:-left-1 before:top-1.5 before:h-6 before:w-0.5 before:rounded before:bg-ac' : 'text-t3 hover:text-t1')}
     >
       {children}
+      {badge > 0 && <span className="absolute -right-0.5 top-0 grid min-w-4 place-items-center rounded-full bg-warn px-1 text-[10px] font-bold leading-4 text-on-ac tabular-nums">{badge > 9 ? '9+' : badge}</span>}
     </button>
   );
 }
