@@ -385,7 +385,7 @@ project's **Tasks** tab (wave 10).
   looks every `LANDFLOW_TASK_WAKEUP_SECONDS` (60; `0` turns it off) for tasks that are `To do` or `In progress` and due,
   and asks for a run: a `requested` run, merged into one the task already has open. Nothing runs. A schedule that never
   fires (`0 0 31 2 *`) is refused when you save it. A task whose agent has left the project, is no longer allowed or is
-  not published gets no request (the log says why, once a day) and keeps its schedule. **Ask to run now** does the same
+  not published gets no request (the log says why, once a day) and keeps its cron (its next wake-up moves to the next slot). **Ask to run now** does the same
   by hand.
 - **Approve in Needs you.** The request is a **Needs you** item for the project's editors and admins, with **Approve**
   and **Deny**. Approving needs a signed-in person (an API key or an MCP client

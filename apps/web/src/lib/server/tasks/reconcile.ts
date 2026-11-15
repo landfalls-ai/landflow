@@ -29,19 +29,25 @@ export function sessionProblem(session: AgentSession): string | undefined {
   for (let i = session.timeline.length - 1; i >= 0; i--) {
     const entry = session.timeline[i];
     if (entry.type === 'error') return entry.message;
-    if (entry.type === 'notice' && entry.message.startsWith('Stopped: ')) return entry.message;
+    if (entry.type === 'notice' && entry.message.startsWith('Stopped')) return entry.message;
   }
   return undefined;
 }
 
-/** The `Stopped: …` notice a cap left after the session's last user or tool entry (the run ended by the budget, the step limit or a cancel). */
-function trailingStop(session: AgentSession): string | undefined {
+/**
+ * Whether a session that ended idle never reached a final answer (the budget, the step limit or a cancel cut it off):
+ * no assistant text after its last user or tool entry. The error is its trailing `Stopped…` notice (`Stopped: ` from the
+ * budget, `Stopped after N iterations` from the step limit); a cancel leaves no notice, so it gets a plain message.
+ */
+function unfinished(session: AgentSession): string | undefined {
+  let stop: string | undefined;
   for (let i = session.timeline.length - 1; i >= 0; i--) {
     const entry = session.timeline[i];
-    if (entry.type === 'user' || entry.type === 'tool') return undefined;
-    if (entry.type === 'notice' && entry.message.startsWith('Stopped: ')) return entry.message;
+    if (entry.type === 'assistant' && entry.text.trim()) return undefined;
+    if (entry.type === 'notice' && !stop && entry.message.startsWith('Stopped')) stop = entry.message;
+    if (entry.type === 'user' || entry.type === 'tool') break;
   }
-  return undefined;
+  return stop ?? 'The run stopped before a final answer';
 }
 
 const finished = () => new Date().toISOString();
@@ -60,7 +66,7 @@ export function reconcileRun(run: TaskRun, now = Date.now()): TaskRun {
   if (isRunning(session.id)) return run.status === 'running' ? run : (patchRun(run.id, { status: 'running' }) ?? run);
   switch (session.status) {
     case 'idle': {
-      const stopped = trailingStop(session);
+      const stopped = unfinished(session);
       if (stopped) return patchRun(run.id, { status: 'failed', error: cut(stopped), finishedAt: finished() }) ?? run;
       return patchRun(run.id, { status: 'done', reply: cut(lastReply(session) ?? ''), finishedAt: finished() }) ?? run;
     }

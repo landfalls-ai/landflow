@@ -623,6 +623,22 @@ describe('reconciling on read', () => {
     expect((await readRun(ed, second.id)).body.run).toMatchObject({ status: 'failed', error: 'The model refused' });
   });
 
+  it('a run whose session ended idle without a final answer reads failed (step limit, cancel)', async () => {
+    const at = new Date().toISOString();
+    const base = { agentId: X, agentName: 'Ledger clerk', source: 'task', title: 't', status: 'idle', version: 1, messages: [], usage: { inputTokens: 0, outputTokens: 0 }, traceIds: [], context: { projectId: P }, createdAt: at, updatedAt: at };
+    const tool = { id: 't1', type: 'tool', name: 'x' };
+    const cases: Array<[string, unknown[], string]> = [
+      ['as_step', [{ id: 'u', type: 'user', text: 'go', at }, tool, { id: 'n', type: 'notice', message: 'Stopped after 3 iterations without a final answer (Settings → Max iterations).', at }], 'Stopped after 3 iterations without a final answer (Settings → Max iterations).'],
+      ['as_cancel', [{ id: 'u', type: 'user', text: 'go', at }, tool], 'The run stopped before a final answer'],
+    ];
+    for (const [id, timeline, error] of cases) {
+      const run = approve((await newTask()).id);
+      agentStore.saveSession({ ...base, id, userId: `task:${run.taskId}`, timeline } as never);
+      patchRun(run.id, { status: 'running', sessionId: id });
+      expect((await readRun(ed, run.id)).body.run).toMatchObject({ status: 'failed', error });
+    }
+  });
+
   it('an approved run with no session after 2 minutes, and a running one nobody runs, read failed after a restart', async () => {
     const fresh = approve((await newTask()).id);
     expect((await readRun(ed, fresh.id)).body.run.status).toBe('approved');
