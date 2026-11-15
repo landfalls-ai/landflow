@@ -624,8 +624,10 @@ Signals → Propose Flows → Suggest Improvement.
   - *Handoffs*: pull requests with 3 or more review rounds, 2 or more of them in a repository.
   A repository needs 3 pull requests before it is judged. The thresholds are named constants (`THRESHOLDS` in
   `brain/velocity.ts`). The pull request, review and CI kinds come from the GitHub ingest template
-  ([work and briefings](work-and-briefings.md)); a flaky pair is a failed attempt and a later passing attempt of the same run id,
-  or a failure and a pass on the same commit when an event carries one; an event with neither is skipped.
+  ([work and briefings](work-and-briefings.md)); a flaky pair is a failed attempt and a later passing attempt of the same workflow run (its run id),
+  or a failure and a pass on the same commit when an event carries a `sha`, `headSha` or `commit` attribute; an event
+  with neither is skipped. The template's commit statuses are not paired: each carries its own status id and no
+  commit attribute, so a failed and then a passing status on one commit count as two separate runs.
 - **About the process, never a person.** A signal is about a repository, a kind of work or a phrase. No field names an
   author or a reviewer, nothing is ranked by person, and the node reads only what a system reader may: events shared
   with the organization and the platform's own, never a private one and never a `team` one (the suggestion reaches the

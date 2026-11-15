@@ -119,7 +119,11 @@ items still open (its "Wave 6" section); this page is the short list to check be
   Installing Linear, Attio or Fathom from the repository's marketplace on an instance that already runs it (`dev:all`,
   compose) starts a second copy under the same plugin id and lists its template twice (built-in and installed); install
   from the marketplace only where the plugin isn't bundled.
-- **GitHub into the brain** ([features/integrations.md](features/integrations.md#github-into-the-brain)) needs a webhook URL GitHub can reach, so it works only where Landflow is public (or tunnelled), and the productivity plugin must run. It was checked on pinned fixture deliveries, not a real repository. Record Event does not replace an earlier event with the same `sourceId`, so running a pinned delivery again records it again; only the trigger's delivery key stops a real redelivery. `work.pr_opened` and `work.pr_merged` keep the shared fields, so the PR number and state are dropped on them.
+- **GitHub into the brain** (B31, [features/integrations.md](features/integrations.md#github-into-the-brain)) was checked on pinned fixture deliveries, not a real repository, and the productivity plugin must run.
+  - The webhook needs a public URL: GitHub must reach Landflow, so it works only where Landflow is public (or tunnelled).
+  - A redelivered pinned event is recorded twice: Record Event does not replace an earlier event with the same `sourceId`, so running a pinned delivery again records it again; only the trigger's delivery key stops a real redelivery.
+  - `work.pr_opened` and `work.pr_merged` keep the shared fields, so the PR number and state are dropped on them.
+  - Its rows have no owner, so they never reach a person's briefing (merged PRs there come from people's own tools).
 - **Checked against fakes only**: Slack, Google, Notion, Linear, Attio and Fathom activity were tested against local fakes of their APIs, not a real workspace.
 - **Postgres mode and a rejected write** ([features/postgres-write-queue.md](features/postgres-write-queue.md)): a batch Postgres keeps rejecting (not a connection failure) blocks the store: it refuses every write (a `StoreUnavailableError` with status 503; route responses answer 503 with `Retry-After` (`handler()` maps it)) until the batch applies on a retry or the host restarts with `LANDFLOW_PG_SKIP_BATCH`. Reads keep working. The spool is fsynced at most every 100 ms by default, so a power cut can lose the last 100 ms of writes not yet in Postgres.
 
@@ -193,7 +197,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 - The signals need the pull request, review and CI events in the brain (the GitHub ingest template) and work sessions
   shared with the organization; private and `team` events are never read, so a company that shares little sees few signals.
-- A flaky CI pair is a failed attempt and a later passing attempt of the same run id (B31's events carry no commit), or a failure and a pass on the same commit when an event carries one (`sha`, `headSha` or `commit`). An event with neither is skipped, and a red run fixed by a new push is not counted.
+- A flaky CI pair is a failed attempt and a later passing attempt of the same run id (B31's events carry no commit), or a failure and a pass on the same commit when an event carries one (`sha`, `headSha` or `commit`). An event with neither is skipped, and a red run fixed by a new push is not counted. Commit statuses are not paired: each carries its own status id and no commit, so a failed and then a passing status on one commit are two runs.
 - Toil phrases come from work-session titles, which may contain a person's name; only structured fields are kept clear of
   names. The Slack mirror shows no Apply button for a build-prompt suggestion.
 - Suggestions carry the evidence as event ids in their text, not as chips with links.

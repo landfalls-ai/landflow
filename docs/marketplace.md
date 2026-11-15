@@ -22,7 +22,7 @@ templates that installing adds to Templates, each with a read-only [share page](
 
 - **Explore.** Plugins, agents and skills in one place: the plugins of every added marketplace, the registry's own
   plugins and the composite types. Workflows are not here: workflow templates live in
-  [Templates](features/editor.md#templates-library) (a one-line link on the page). One filter row: a search that covers
+  the Templates library under **Workflows** → **Templates** ([editor](features/editor.md); a one-line link on the page). One filter row: a search that covers
   names, descriptions, authors, keywords and node types, a kind switch, one **category** dropdown (a sheet on a phone;
   `incident-response` reads *Incident response*) and, only with more than one marketplace, a **source** dropdown. The
   kind switch has four views:
