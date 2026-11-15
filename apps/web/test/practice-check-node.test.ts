@@ -151,6 +151,7 @@ describe('Check Practices', () => {
     const first = await runFlow('wf_waive', BAD);
     expect(first.run.status).toBe('error');
     recordApplication({ practiceId: 'prc_required', version: 2, kind: 'waived', executionId: first.run.executionId, reason: 'The key file is a fixture' });
+    recorded.length = 0;
     const retried = await startRetry(first.run.executionId, { from: 'start' });
     expect(retried).not.toBe(first.run.executionId);
     let record = store.getExecution(retried);
@@ -163,6 +164,8 @@ describe('Check Practices', () => {
     expect(out).toMatchObject({ ok: true, failed: [], waived: ['sec/no-secrets'] });
     expect(out.practices.find((p: { handle: string }) => p.handle === 'sec/no-secrets')).toMatchObject({ result: 'waived', waiver: { reason: 'The key file is a fixture' } });
     expect(record?.runData.after).toBeDefined();
+    // The waiver is the record of a waived practice: the retry writes no check-fail row for it.
+    expect(recorded.filter((r) => r.practiceId === 'prc_required')).toEqual([]);
   });
 
   const settle = async (id: string) => {

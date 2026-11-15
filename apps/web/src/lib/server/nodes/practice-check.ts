@@ -268,14 +268,15 @@ export const practiceCheckNode = defineNode({
       else if (o.result === 'pass') ctx.check({ name: `practice:${subject}`, status: 'pass', subject, evidence });
       else if (o.result === 'waived') ctx.check({ name: `practice:${subject}`, status: 'warn', message: `Waived for this run${o.waiver?.reason ? `: ${o.waiver.reason}` : ''}`, subject, evidence });
       else ctx.check({ name: `practice:${subject}`, status: o.blocks ? 'fail' : 'warn', message: o.messages.join('; ') || 'Failed', subject, evidence });
-      if (o.result === 'pass' || o.result === 'fail' || o.result === 'waived') {
+      // A waived outcome writes no row: the person's waiver is its record, so compliance counts the failure once and the
+      // waiver once, however many retries the waiver lets pass.
+      if (o.result === 'pass' || o.result === 'fail') {
         port?.record({
           practiceId: o.id,
           version: o.version,
           kind: o.result === 'pass' ? 'check-pass' : 'check-fail',
           ...(executionId && { executionId }),
           ...(repo && { repo }),
-          ...(o.result === 'waived' && { reason: 'waived for this run' }),
         });
       }
     }

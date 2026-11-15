@@ -265,7 +265,8 @@ place a practice blocks. It is for flows: an agent's tool call is never denied.
   parameter names, selected for the repository and the changed paths as delivery does.
 - **Each practice** gets its machine checks run, and its reviewer verdict read. The step reports a check named
   `practice:<handle>@<version>` (`pass`, `warn`, `fail`, or `skip` for a practice with neither a machine check nor a
-  verdict) and writes a `check-pass` or `check-fail` row for the run.
+  verdict) and writes a `check-pass` or `check-fail` row for the run. A waived practice writes no row: the waiver is its
+  record, so compliance counts the failure and the waiver once each, however many retries pass on it.
 - **The output** is one item: `{ ok, repository?, changed, checked, failed, warned, waived, changeUrl?, practices }`. Each
   entry of `practices` has `id`, `handle`, `version`, `title`, `strength`, `result` (`pass`, `fail`, `waived` or
   `no-checks`), `blocks`, `files` (the failing paths), `messages`, `checks`, `reviewer?`, `waiver?` and `waiveUrl`
