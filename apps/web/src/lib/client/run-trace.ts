@@ -97,7 +97,7 @@ export interface NeedsYouRow {
   workflowId: string;
   workflowName: string;
   /** `gate`: a Run report waits for someone to accept its failed checks or send the work back. */
-  kind: 'approval' | 'form' | 'question' | 'gate' | 'check' | 'budget'; // PC15: budget
+  kind: 'approval' | 'form' | 'question' | 'gate' | 'check' | 'budget' | 'task'; // PC15: budget; PC20: task
   title: string;
   detail?: string;
   actor?: RunActor;
@@ -113,7 +113,15 @@ export interface NeedsYouRow {
   href?: string;
   canRaise?: boolean;
   canResume?: boolean;
+  // PC20: a project task item (TaskNeedsYouFields in lib/shared/project-tasks.ts); its run fields are ''. `href` opens the task, or the agent's session while it waits.
+  taskId?: string;
+  taskRunId?: string;
+  taskRunStatus?: 'requested' | 'waiting';
+  canDecide?: boolean;
 }
+
+/** Approve or deny a task's requested run (POST /api/task-runs/:runId, session only); a 409 carries its message. */
+export const decideTaskRun = (runId: string, decision: 'approve' | 'deny') => api<{ run: { id: string; status: string } }>(`/api/task-runs/${encodeURIComponent(runId)}`, { method: 'POST', json: { decision } });
 
 /**
  * One list for every component that shows it (Home's tile, the rail's badge, the runs page): requests asked for in the
