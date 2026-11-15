@@ -1789,6 +1789,16 @@ export const MIGRATIONS: Migration[] = [
     statements: [],
     addColumns: ['brief', 'brief_constraints', 'done_when', 'glossary', 'status', 'target_date', 'lead_id', 'decision_owner_id'].map((column) => ({ table: 'projects', column, definition: 'TEXT' })),
   },
+  // PC05: 2302: the goal a run served, on each model call row and each usage event (the project is on both already).
+  {
+    version: 2302,
+    name: 'run_goal',
+    addColumns: [
+      { table: 'ai_usage', column: 'goal_id', definition: 'TEXT' },
+      { table: 'usage_events', column: 'goal_id', definition: 'TEXT' },
+    ],
+    statements: [`CREATE INDEX IF NOT EXISTS ai_usage_goal ON ai_usage (goal_id, day)`, `CREATE INDEX IF NOT EXISTS usage_events_goal ON usage_events (goal_id, at)`],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */

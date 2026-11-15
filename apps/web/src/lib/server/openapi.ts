@@ -1992,7 +1992,8 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Second brain',
     id: 'listUsageEvents',
     summary: 'Usage events, newest first',
-    query: usageQuery,
+    // PC05:
+    query: [...usageQuery, text('projectId', 'Only events of one project'), text('goalId', 'Only events of one goal (the goal the run served)')],
     responses: { 200: reply('The events', object({ events: array({ type: 'object' }) }, ['events'])) },
   });
   const usageKind = { type: 'object', description: 'A declared custom kind: kind, description, fields [{ name, type: string|number|boolean, required, description }], projectId, createdBy, createdAt, updatedAt' };

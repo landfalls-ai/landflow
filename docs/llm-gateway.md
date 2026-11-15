@@ -85,7 +85,7 @@ instance's gateway, resolved at call time, over the OpenAI-compatible path. With
 | `x-litellm-spend-logs-metadata` | JSON with `landflow: "in-process"` (or `"unmetered"` outside a usage scope) and the ids above | the spend log, for reading; the spend import does not trust it |
 | `x-litellm-trace-id` | the execution id, else the session id | grouping calls of one run |
 
-A person is only named when a person started the run. The project is the home project of the agent or workflow. With **Settings →
+A person is only named when a person started the run. The project is the run's: the project the caller chose or the server resolved for the run, else the home project of the agent or workflow. When the meter takes over a spend row the import read first, the row gets the run's goal too, but the usage event stays the import's and has no goal. With **Settings →
 AI → LLM gateway → Customer Portal headers** on, `x-litellm-customer-org-alias` and `x-litellm-customer-member-id` are sent too. It is
 off: the portal is not in a LiteLLM release yet.
 

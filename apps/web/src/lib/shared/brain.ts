@@ -90,6 +90,8 @@ export interface UsageEvent {
   day: string;
   kind: UsageKind;
   projectId?: string;
+  /** The goal the run served (the run's context), when it had one. */
+  goalId?: string;
   workflowId?: string;
   nodeId?: string;
   nodeType?: string;

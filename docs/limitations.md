@@ -381,3 +381,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
   of a conversation: goal titles and a 200-character brief. Turn it off per A2A node, per A2A capability or per team remote member (**Project context: Off** in
   its options; the team's project line stays) or per agent (context mode Off). Nothing is sent where no project has goals.
 - The block is not repeated in follow-ups, so an agent that forgets it has to be asked again in a new conversation.
+
+## Usage by goal (wave 7)
+
+- Only `ai.call` usage events carry a goal (`goalId`); `run.finished`, `node.failed`, `node.slow` and `agent.session` do not, and calls that come in through the spend import (kagent) have none.
