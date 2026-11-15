@@ -183,6 +183,14 @@ Home starts with the **Your morning** card ([work-and-briefings.md](work-and-bri
   to three lines with **More**; a desktop shows up to six lines. The goals it serves have 44 px up, down and unlink
   buttons for admins.
 
+## What it saw
+
+- **In the Run Trace** the sheet is the same bottom sheet as any span's. **What it saw** is one column of labelled parts
+  (goal chain, brief, status, practices, persona) in a card; **Show the exact text** is a 44 px row that folds out the
+  raw block, which scrolls inside the sheet. The **Project** and **Goal** chips on the run wrap and cut long names.
+- **In an agent's sessions** the **What it saw** fold sits under the session's header and is closed until tapped.
+  A desktop shows the same card.
+
 ## Practices on the Brain page
 
 - **Practices** on `/brain` (the Practices view in the Files drawer) is one column of practice cards on a phone, with

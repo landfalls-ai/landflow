@@ -36,7 +36,8 @@ import { chooseTier } from '../../shared/agent-router';
 import { cacheKey, responseCache } from './response-cache';
 import { configHash, embedderFor, semanticCache } from './semantic-cache';
 import { agentModel } from './models';
-import { personaPrompt } from '../../shared/persona';
+import { cleanPersona, personaPrompt } from '../../shared/persona';
+import { sawPersona } from '../../shared/what-it-saw-sections';
 import { agentStore, configOf } from './store';
 import type { MemberPause } from '../agent-teams/pause';
 import { buildToolset, binaryScopeFor, dedupe, type BuiltTool, type ToolCaller, type ToolContext } from './tools';
@@ -285,7 +286,8 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
   // A resume after approval keeps what the run began with, date included.
   const provider = runContextProvider();
   let runCtx: RunContext;
-  if (request.message === undefined && session.pending && session.context) runCtx = session.context;
+  const resumed = request.message === undefined && Boolean(session.pending) && Boolean(session.context);
+  if (resumed) runCtx = session.context!;
   else {
     // The block is background data: if it cannot be built, the run goes on with the old prompt.
     try {
@@ -296,6 +298,20 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     }
   }
   session.context = runCtx;
+  // PC08: what the agent saw, once per run (a resume reuses the first run's block and records nothing).
+  if (!resumed) {
+    journalEntry.saw({
+      mode: runCtx.mode,
+      text: runCtx.text,
+      ...(runCtx.projectId && { projectId: runCtx.projectId }),
+      ...(runCtx.projectName && { projectName: runCtx.projectName }),
+      ...(runCtx.goalId && { goalId: runCtx.goalId }),
+      ...(runCtx.goalTitle && { goalTitle: runCtx.goalTitle }),
+      at: runCtx.at,
+      persona: sawPersona(cleanPersona(config.persona)),
+      practices: runCtx.practices,
+    });
+  }
   const userId = currentActorId();
   // The scope is created inside the run's context: it reads the run's own project and goal (not an outer run's).
   const usage = withRunContext(runCtx, () => agentScope({ agentId: agent.id, agentName: config.name, sessionId: session.id, settings: config.settings, ...(userId && { userId }) }));

@@ -2033,7 +2033,14 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   "Available in" lines, Test in project with the preview, the Project context and Practices switches and View prompt
   ([projects-and-goals.md](projects-and-goals.md#testing-an-agent-in-a-project)).
 
-## Practices (waves P1 and P2)
+## Paperclip wave 8: what the agent saw (PC08)
+
+- **PC08, built:** each agent run writes `attrs.saw` once per run (the block as the model got it, mode, project and goal,
+  pinned time, a persona summary, practice handles). Run Trace and the agent's Sessions tab show it as **What it saw**,
+  and the run's root span shows Project and Goal chips. It follows **Content kept** (`summaries` cuts the text, `off`
+  keeps none and says so). Closes D7 and P4-1 ([run-trace.md](run-trace.md#what-it-saw)). Left: the practices row and
+  compliance (PR09); the session fold shows the persona as it is now, not as the run had it.
+
 
 Rules in the brain that connected agents follow, each approved by a person ([practices.md](practices.md)). Decided
 2026-11-15: org practices are approved by instance owners and admins, project practices by that project's admins; no

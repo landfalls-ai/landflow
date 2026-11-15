@@ -69,6 +69,10 @@ items still open (its "Wave 6" section); this page is the short list to check be
   one small request per card. The context preview and View prompt read the saved agent, a moment after the draft
   autosaves; View prompt shows the agent's home project. The preview needs editor rights on the agent, so a person with
   only a share to use it cannot see it.
+- A run's `saw` attribute keeps the block as the model got it, so anyone who can read the run's journal can read the
+  brief and practices it was given (the text is redacted like the rest of the journal, and cut or dropped by the workflow's
+  **Content kept** setting: `summaries` cuts it to 400 characters, `off` keeps none; the setting covers only the journal, so the agent's Sessions tab still shows `session.context` in full). A run recorded before wave 8 has
+  no **What it saw**; a remote A2A agent's span has none either, since it builds its own prompt.
 - The builder drops the brief entirely, then cuts the mission to 120 characters, when the usual drop order still leaves
   the block over its cap.
 - Whether Anthropic's prompt cache hits more with the pinned date is not measured on this machine: the prompt up to the
