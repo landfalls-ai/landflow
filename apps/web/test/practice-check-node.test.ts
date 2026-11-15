@@ -192,6 +192,20 @@ describe('Check Practices', () => {
     expect(record?.runData.check?.at(-1)?.error?.description).toContain('secrets/other.txt');
   });
 
+  it('a waiver holds for all the files: with 12 failing, a retry that swaps file 11 or 12 fails again', async () => {
+    const files = (names: number[]) => names.map((n) => ({ path: `secrets/f${n}.txt`, status: 'A', added: ['z'] }));
+    const first = await runFlow('wf_waive_twelve', files([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]));
+    expect(first.run.status).toBe('error');
+    recordApplication({ practiceId: 'prc_required', version: 2, kind: 'waived', executionId: first.run.executionId, reason: 'The key files are fixtures' });
+    as(() => store.saveWorkflow(flow('wf_waive_twelve', files([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13]))));
+    const swapped = await settle(await startRetry(first.run.executionId, { from: 'start', version: 'current' }));
+    expect(swapped?.status).toBe('error');
+    expect(swapped?.runData.after).toBeUndefined();
+    as(() => store.saveWorkflow(flow('wf_waive_twelve', files([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]))));
+    const same = await settle(await startRetry(first.run.executionId, { from: 'start', version: 'current' }));
+    expect(same?.status).toBe('success');
+  });
+
   it('a waiver for another run does not count', async () => {
     recordApplication({ practiceId: 'prc_required', version: 2, kind: 'waived', executionId: 'exec_elsewhere', reason: 'Not this run' });
     const { run } = await runFlow('wf_other_run', BAD);

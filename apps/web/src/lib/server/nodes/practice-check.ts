@@ -9,6 +9,7 @@
  * Which practices: the approved ones of the workflow's home project and the organization's, read through the practices port
  * (never a project a parameter names), selected for the repository and the changed paths like delivery does.
  */
+import { createHash } from 'node:crypto';
 import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type NodeItem } from '@landflow/sdk';
 import { practiceCheckLabel, runPracticeChecks, type PracticeChange, type PracticeCheckResult } from '@landflow/protocol';
 import { homeProjectId } from '../projects/store';
@@ -116,13 +117,22 @@ export function waiverChain(executionId: string): string[] {
 export function failedWith(executionId: string, line: string): boolean {
   const runData = store.getExecution(executionId)?.runData ?? {};
   return Object.values(runData).some((runs) =>
-    (runs ?? []).some((r) => String((r as { error?: { description?: string } }).error?.description ?? '').split('\n').includes(line)),
+    (runs ?? []).some((r) => {
+      const error = (r as { error?: { message?: string; description?: string } }).error;
+      return Boolean(error?.message?.startsWith('Required practices failed')) && String(error?.description ?? '').split('\n').includes(line);
+    }),
   );
 }
 
-/** What a blocked practice failed, in one line, as the waive page shows it from the failed step. */
-export const failureLine = (o: Pick<PracticeOutcome, 'handle' | 'version' | 'files' | 'messages'>): string =>
-  `${o.handle}@${o.version}: ${o.messages.join('; ') || 'failed'}${o.files.length ? ` (${o.files.slice(0, 10).join(', ')}${o.files.length > 10 ? `, and ${o.files.length - 10} more` : ''})` : ''}`;
+/**
+ * What a blocked practice failed, in one line, as the waive page shows it from the failed step. The display lists at most
+ * ten files; the trailing key is a hash of the whole failure (every file and message), so a waiver matched on this line
+ * holds only for the same files, however many there are.
+ */
+export const failureLine = (o: Pick<PracticeOutcome, 'handle' | 'version' | 'files' | 'messages'>): string => {
+  const key = createHash('sha256').update(JSON.stringify([o.handle, o.version, o.messages, [...o.files].sort()])).digest('hex').slice(0, 12);
+  return `${o.handle}@${o.version}: ${o.messages.join('; ') || 'failed'}${o.files.length ? ` (${o.files.slice(0, 10).join(', ')}${o.files.length > 10 ? `, and ${o.files.length - 10} more` : ''})` : ''} [${key}]`;
+};
 
 export const waiveUrlOf = (practiceId: string, executionId: string): string => `/practices/waive?practice=${encodeURIComponent(practiceId)}&execution=${encodeURIComponent(executionId)}`;
 
