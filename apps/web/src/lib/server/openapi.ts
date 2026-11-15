@@ -2301,6 +2301,31 @@ function paths(): Record<string, Record<string, Json>> {
     query: [text('limit', '1 to 100'), text('cursor', 'From the previous page’s `nextCursor`')],
     responses: { 200: reply('A page', object({ applications: array({ type: 'object' }), nextCursor: { type: 'string' } }, ['applications'])), 404: notFound },
   });
+  // PR03:
+  add('post', '/api/practices/learn', {
+    tag: 'Practices',
+    id: 'learnPractices',
+    summary: 'Draft practices from files',
+    description: 'Needs the `brain:write` scope (or a session). The brain’s model reads up to 20 files of one repository at one commit and drafts at most 10 practices. Every draft is tainted and none of its citations is verified, because the files came from the caller; a citation whose excerpt is not in a sent file is dropped. A person approves on Brain → Practices. 503 when the brain’s model is off or practices are not loaded.',
+    body: jsonBody(
+      object(
+        {
+          repo: { type: 'string', description: 'owner/name' },
+          sha: { type: 'string', description: 'The commit the files are from' },
+          files: array(object({ path: { type: 'string' }, content: { type: 'string', maxLength: 20000 } }, ['path', 'content'])),
+          topics: array({ type: 'string' }),
+          level: { type: 'string', enum: ['org', 'project'] },
+          projectId: { type: 'string' },
+        },
+        ['repo', 'sha', 'files'],
+      ),
+    ),
+    responses: {
+      200: reply('The drafts and what was skipped', object({ drafts: array(object({ practiceId: { type: 'string' }, handle: { type: 'string' }, version: { type: 'integer' }, url: { type: 'string' } }, ['practiceId', 'handle', 'version', 'url'])), skipped: array(object({ handle: { type: 'string' }, reason: { type: 'string' } }, ['reason'])) }, ['drafts', 'skipped'])),
+      400: invalid,
+      503: errorRef('The brain’s model is off, or practices are not loaded'),
+    },
+  });
   return out;
 }
 
