@@ -24,6 +24,7 @@ const projects = await import('@/lib/server/projects');
 const { database } = await import('@/lib/server/db');
 const { aiUsageMeter } = await import('@/lib/server/ai-usage');
 const { cacheLine, matchPrevious, runSpend, aiCallView, SPEND_CALL_LIMIT } = await import('@/lib/server/ai-usage/run-spend');
+const { routePolicy } = await import('@/lib/server/auth/policy');
 const { findPrice } = await import('@/lib/server/ai-usage/prices');
 const spendRoute = await import('@/app/api/executions/[id]/spend/route');
 const callRoute = await import('@/app/api/ai-calls/[id]/route');
@@ -210,6 +211,10 @@ describe('the cache line', () => {
     expect(cacheLine([first, miss(2)], map([['c2', parts({}, { instructions: 600, toolDefinitions: 100 })]]))).toMatchObject({ missReasons: ['below-minimum'] });
     expect(cacheLine([first, miss(2)], map([['c2', parts({}, { instructions: 5000 })]]))).toMatchObject({ missReasons: ['unknown'] });
     expect(cacheLine([call(1), call(2)], map([]))).toMatchObject({ missCalls: 0, missReasons: ['not-requested'] });
+    // No cache activity with a small stable prefix is below the minimum; with a big prefix or no split the model asked for none.
+    const small = map([['c1', parts({}, { instructions: 600, toolDefinitions: 100 })], ['c2', parts({}, { instructions: 600, toolDefinitions: 100 })]]);
+    expect(cacheLine([call(1), call(2)], small)).toMatchObject({ missCalls: 0, missReasons: ['below-minimum'] });
+    expect(cacheLine([call(1), call(2)], map([['c1', parts({}, { instructions: 5000 })]]))).toMatchObject({ missReasons: ['not-requested'] });
     // A hit is no miss, and the first call of a session never is.
     expect(cacheLine([first, call(2, { cacheReadTokens: 5000 })], map([]))).toMatchObject({ missCalls: 0, missReasons: [], hitRate: 0.25 });
   });
@@ -247,6 +252,19 @@ describe('GET /api/ai-calls/:id', () => {
     // Same prefix as iteration 2; only the history changed.
     expect(view.previous).toEqual({ usageId: 'au_demo_2', samePrefix: true, changedParts: ['history'] });
     expect(view.runHref).toBe('/runs/ex_demo');
+  });
+
+  it('finds the previous call of an agent the viewer cannot read', async () => {
+    const base = { workflow_id: 'wf_rs_demo', execution_id: 'ex_demo', agent_id: secretAgent.id, session_id: 'as_secret', node_id: 'n_agent' };
+    usage({ id: 'au_sec_1', at: at(100), ...base });
+    usage({ id: 'au_sec_2', at: at(110), ...base });
+    const view = (await get(callRoute, 'au_sec_2', member)).body as AiCallView;
+    expect(view.call.agentId).toBeUndefined();
+    expect(view.previous?.usageId).toBe('au_sec_1');
+  });
+
+  it('the route is readable with executions:read', () => {
+    expect(routePolicy('GET', '/api/ai-calls/x')).toEqual({ scope: 'executions:read' });
   });
 
   it("a gateway's split joins by the row's gateway_request_id", async () => {

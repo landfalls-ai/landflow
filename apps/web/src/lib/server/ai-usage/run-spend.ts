@@ -132,7 +132,7 @@ function callOf(row: UsageRow, price: (c: { provider: string; model: string }) =
     cacheReadTokens: num(row.cache_read_tokens),
     cacheWriteTokens: num(row.cache_write_tokens),
     cost: num(row.cost),
-    priced: price(row) !== undefined,
+    priced: price(row) !== undefined || num(row.cost) > 0,
     ...(row.duration_ms !== null && row.duration_ms !== undefined && { durationMs: num(row.duration_ms) }),
     ...(row.stop_reason && { stopReason: row.stop_reason }),
     source: row.source === 'litellm' ? 'litellm' : 'landflow',
@@ -189,8 +189,15 @@ export function cacheLine(calls: SpendCall[], parts: ReadonlyMap<string, CallPar
     groups.set(key, [...(groups.get(key) ?? []), call]);
   }
   for (const group of groups.values()) {
-    // A model that asked for no cache at all (no write and no read over the whole session) says so, once.
-    if (group.length > 1 && group[0].provider === 'anthropic' && group.every((c) => c.cacheReadTokens === 0 && c.cacheWriteTokens === 0)) reason('not-requested');
+    // No write and no read over the whole session: a provider writes no entry under its minimum, so a stable prefix that small
+    // is the likely cause ("may be"); with no split, or a prefix over the minimum, the model made no cache request.
+    if (group.length > 1 && group[0].provider === 'anthropic' && group.every((c) => c.cacheReadTokens === 0 && c.cacheWriteTokens === 0)) {
+      const small = group.some((c) => {
+        const split = parts.get(c.usageId);
+        return split !== undefined && CACHE_PARTS.reduce((s, p) => s + (split.parts[p] ?? 0), 0) < MIN_CACHEABLE_TOKENS;
+      });
+      reason(small ? 'below-minimum' : 'not-requested');
+    }
     for (let i = 1; i < group.length; i++) {
       const call = group[i];
       if (!(call.cacheWriteTokens > 0 && call.cacheReadTokens === 0)) continue;
@@ -329,8 +336,9 @@ export async function runSpend(executionId: string, actor: Actor): Promise<RunSp
     const record = id === executionId ? root : liveExecution(id) ?? (await store.loadExecution(id));
     for (const [nodeId, name] of Object.entries(record?.nodeNames ?? {})) if (!nodeNames.has(nodeId)) nodeNames.set(nodeId, name);
   }
-  const modelCount = new Map<string, number>();
-  for (const call of all) modelCount.set(call.model, new Set(all.filter((c) => c.model === call.model).map((c) => c.provider)).size);
+  const providersOf = new Map<string, Set<string>>();
+  for (const call of all) providersOf.set(call.model, (providersOf.get(call.model) ?? new Set<string>()).add(call.provider));
+  const modelCount = new Map([...providersOf].map(([model, set]) => [model, set.size]));
   const agentLabel = (id: string) => (readableAgent(id) ? agentStore.get(id)?.name ?? 'An agent' : 'Another agent');
 
   const byPurpose = slices(all, (c) => (c.purpose ? { key: c.purpose, label: CALL_PURPOSE_LABELS[c.purpose] } : { key: 'none', label: 'Not set' }), totals);
@@ -400,7 +408,7 @@ export function aiCallView(usageId: string, actor: Actor): AiCallView | undefine
   const scope = row.session_id ? { column: 'session_id', value: row.session_id } : row.execution_id ? { column: 'execution_id', value: row.execution_id } : undefined;
   if (scope) {
     const candidates = db.all<UsageRow>(`SELECT ${USAGE_COLUMNS} FROM ai_usage WHERE ${scope.column} = ? AND model = ? AND at <= ? AND id <> ? ORDER BY at DESC, id DESC LIMIT 200`, scope.value, row.model, row.at, row.id);
-    const before = matchPrevious(call, candidates.map((c) => callOf(c, price, false, true)));
+    const before = matchPrevious({ ...call, agentId: row.agent_id ?? undefined }, candidates.map((c) => callOf(c, price, false, true)));
     if (before) {
       const earlier = partsOf(candidates.filter((c) => c.id === before.usageId)).get(before.usageId);
       const hashesNow = parts?.partHashes;

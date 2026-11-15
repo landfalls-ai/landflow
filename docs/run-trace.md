@@ -660,7 +660,7 @@ names and hashes only (the Run Trace's own content still follows `LANDFLOW_TRACE
 - The cache line is `hitRate` (cache reads over the whole prompt, for chat calls of providers that report cache numbers),
   the tokens read and written, the calls that wrote the prefix again instead of reading it (`missCalls`) and why, as far
   as hashes tell: the instructions changed, the tools changed, more than 5 minutes passed, the stable prefix may be under
-  the provider's minimum (1,024 tokens), or the model asked for no cache; `unknown` otherwise. `savedUsd` is what the
+  the provider's minimum (1,024 tokens; also when a session made no cache write or read at all and its split shows a small prefix), or the model asked for no cache (no split, or a prefix over the minimum); `unknown` otherwise. `savedUsd` is what the
   reads saved against the input price, 0 for a model with no price.
 - A sub-run the viewer can't open (a sub-workflow of another project, a team member's agent they can't read) is counted
   in `hidden` (runs, totals) and never listed or named. An agent they can't read is "Another agent".
@@ -670,6 +670,11 @@ names and hashes only (the Run Trace's own content still follows `LANDFLOW_TRACE
   read its run or its agent or has a role in its project; a call with none of these opens only for its own person and
   owners and admins. Anything else answers 404 (the rules are "Who sees what" in
   [llm-gateway.md](llm-gateway.md#the-ai-page)).
+
+Limits of the report: the node slice names the innermost node (a model sub-node, not its AI Agent node); the node, agent
+and loop-step slices leave out calls without that field, so they need not sum to the totals; the cache line and the
+composition cover the newest 500 calls, the totals all; calls with no run id (unattributed gateway rows) are in no run's
+spend. See [limitations](limitations.md#call-attribution-wave-11).
 
 The screens (the Run Trace's Spend section and a call's composition) come with wave 12's UI packages.
 
