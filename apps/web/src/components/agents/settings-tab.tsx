@@ -1,11 +1,13 @@
 'use client';
 /** Abilities → Guardrails, under the guardrails: limits of the agent loop, and usage limits (tokens and estimated cost) with what the agent used so far. */
 import { useEffect, useState } from 'react';
-import { CircleDollarSign, Gauge, Mail } from 'lucide-react';
+import { CircleDollarSign, Gauge, Mail, Target } from 'lucide-react';
 import { DEFAULT_AGENT_SETTINGS, type AgentConfig, type AgentSettings } from '@/lib/shared/agents';
 import { formatCost, formatTokens, type AiUsageReport, type AiUsageTotals } from '@/lib/shared/ai-usage';
 import { api } from '@/lib/client/api';
+import { CONTEXT_MODES, CONTEXT_MODE_LABELS, type ContextMode } from '@/lib/shared/project-context';
 import { Input } from '../ui/inputs';
+import { Segmented } from '../ui/segmented';
 import { Field, Section } from './dialog';
 import type { UpdateConfig } from './util';
 
@@ -134,9 +136,45 @@ function ApprovalEmails({ emails, onChange }: { emails: string[]; onChange: (ema
   );
 }
 
+/** The two switches of what a run is given from the project: its goals and brief (Full, Compact, Off), and approved practices (On, Off). */
+const CONTEXT_HINTS: Record<ContextMode, string> = {
+  full: 'The project’s goal, brief and recent runs in every run.',
+  compact: 'A short version: the goal and one line of the brief.',
+  off: 'The agent gets nothing about the project.',
+};
+
+function ContextSwitches({ config, update }: { config: AgentConfig; update: UpdateConfig }) {
+  const mode = config.projectContext ?? 'full';
+  // PC07: AgentConfig.practices comes from PR06.
+  const practices = (config as AgentConfig & { practices?: 'on' | 'off' }).practices ?? 'on';
+  return (
+    <Section icon={<Target className="size-4" />} title="Project context" description="What the agent is told about the project it works in, and the practices it follows there. “What it will be given” in Test agent shows the text.">
+      <div className="space-y-5">
+        <Field id="setting-projectContext" label="Project context" hint={CONTEXT_HINTS[mode]}>
+          <Segmented<ContextMode> label="Project context" stretch className="sm:w-fit" value={mode} onChange={(v) => update((c) => ({ ...c, projectContext: v }))} options={CONTEXT_MODES.map((m) => ({ value: m, label: CONTEXT_MODE_LABELS[m] }))} />
+        </Field>
+        <Field id="setting-practices" label="Practices" hint={practices === 'on' ? 'Approved practices of the project and the company are added to each run, and the agent says which it followed.' : 'The agent is given no practices.'}>
+          <Segmented<'on' | 'off'>
+            label="Practices"
+            stretch
+            className="sm:w-fit"
+            value={practices}
+            onChange={(v) => update((c) => ({ ...c, practices: v }) as AgentConfig)}
+            options={[
+              { value: 'on', label: 'On' },
+              { value: 'off', label: 'Off' },
+            ]}
+          />
+        </Field>
+      </div>
+    </Section>
+  );
+}
+
 export function SettingsTab({ config, update, agentId }: { config: AgentConfig; update: UpdateConfig; agentId?: string }) {
   return (
     <div className="space-y-4">
+      <ContextSwitches config={config} update={update} />
       <Section icon={<Gauge className="size-4" />} title="Limits" description="Guardrails for how long and how widely the agent works on one request.">
         <div className="grid gap-5 sm:grid-cols-2">
           {FIELDS.map((field) => (

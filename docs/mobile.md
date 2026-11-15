@@ -134,6 +134,10 @@ On a phone, what floats on a desktop rises from the bottom or takes the screen:
   agent dialogs use; credentials; data tables) are bottom sheets, full width, up to 92% of the screen, with a 44 px Close.
 - **Full screen:** the node picker (**What happens next?**), version history (the list above the preview), the node
   editor and a marketplace plugin's drawer. **Add marketplace** is a bottom sheet.
+- **Where an agent is available.** **Make available…** and **What it will be given** (in the test chat) are the shared
+  dialog, so on a phone they are bottom sheets with 44 px checkboxes; the project picker above the test chat is a 40 px
+  select, and the preview's text scrolls inside its sheet. The Agents list's "Available in" line is one truncated line
+  on a card. A desktop is unchanged.
 - **"Are you sure?"** Before a step that can't be taken back (deleting a transport connection or a secrets provider,
   replacing the MCP access token, letting node parameters read `$secrets`, a suggestion's action that asks first),
   `confirmAction` (`components/ui/confirm.tsx`) asks in a sheet with the question, **Cancel** and the action, both 44 px;

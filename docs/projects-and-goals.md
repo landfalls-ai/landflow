@@ -110,6 +110,25 @@ An agent's run gets a short "Where this work fits" block: the mission, the proje
 chain above it. How the block is built, how big it gets and how to turn it off are in
 [agents.md](agents.md#project-context).
 
+## Testing an agent in a project
+
+An agent keeps its home project, and its admins can make it available elsewhere: **Make available…** in the builder's
+⋯ menu lists the projects as checkboxes, with **All projects** (which disables the others). Only admins of the home
+project change it; everyone else sees the list read-only. The Agents list shows where each agent is available ("Available
+in Operations, Billing revamp", at most two names and "+N", or "All projects") and, for one shared into your project,
+"Shared from <project>". The routes behind it are in [reference/api.md](reference/api.md).
+
+**Test in project.** The test chat has a project picker above the conversation (home first, then the projects the agent
+is available in, by name). The chat is given that project's block, and the picker starts a new conversation when it
+changes, because the block is part of the run. A project the agent isn't available in answers 403, and the chat says
+"This agent isn't available in that project" in the conversation.
+
+**What it will be given.** The button beside the picker opens the text a chat in that project would get: the
+"Where this work fits" block in the agent's Project context mode, then the approved practices after it. It reads only
+and records no delivery. The same text appears in the persona tab's **View prompt**, in the place the run puts it (after
+the skills, before the date line), for the agent's home project. The preview is for editors of the agent: a share to use
+the agent does not show the home project's brief.
+
 ## How it is built
 
 - Data: migration 2300 makes `goals`, `project_goals` (a project's goals and their order) and `goal_links` (initiatives);

@@ -2024,7 +2024,9 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   the block's hash is part of the cache keys, and each agent has a `projectContext` switch. The test chat takes
   `projectId`. Teams and workflows can name a goal (`goalId`). `LANDFLOW_PROJECT_CONTEXT=off` turns it off
   ([agents.md](agents.md#project-context)). Left: the remote paths (PC04), usage attribution (PC05), the
-  availability rule (PC06) and the switch and preview in the UI (PC07).
+  availability rule (PC06) and the switch and preview in the UI (PC07). PC07 built the screens: Make available…, the
+  "Available in" lines, Test in project with the preview, the Project context and Practices switches and View prompt
+  ([projects-and-goals.md](projects-and-goals.md#testing-an-agent-in-a-project)).
 
 ## Practices (waves P1 and P2)
 

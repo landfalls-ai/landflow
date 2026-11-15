@@ -5,14 +5,16 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { nanoid } from 'nanoid';
-import { api, streamEvents } from '@/lib/client/api';
+import { api, ApiError, streamEvents } from '@/lib/client/api';
+import { NOT_AVAILABLE_MESSAGE } from './project-names';
 import type { AgentSession, AgentStreamEvent, RunEndReason, SessionStatus, TimelineEntry, TokenUsage } from '@/lib/shared/agents';
 
 /** Ids of entries shown before the server echoes them. */
 const LOCAL = 'local_';
 const NO_USAGE: TokenUsage = { inputTokens: 0, outputTokens: 0 };
 
-export function useAgentRun(agentId: string, initial?: AgentSession, initialTraceUrls?: Record<string, string>) {
+/** `projectId`: the test chat's "Test in project" (the chat is given that project's block; absent: the agent's home). */
+export function useAgentRun(agentId: string, initial?: AgentSession, initialTraceUrls?: Record<string, string>, projectId?: string) {
   const [entries, setEntries] = useState<TimelineEntry[]>(initial?.timeline ?? []);
   const [sessionId, setSessionId] = useState<string | undefined>(initial?.id);
   const [traceIds, setTraceIds] = useState<string[]>(initial?.traceIds ?? []);
@@ -103,7 +105,8 @@ export function useAgentRun(agentId: string, initial?: AgentSession, initialTrac
     } catch (error) {
       if (c.signal.aborted) return;
       setStatus('error');
-      localError((error as Error).message);
+      // 403 from the chat route: the agent isn't available in the chosen project (shown in the chat, not only as a toast).
+      localError(projectId && error instanceof ApiError && error.status === 403 ? NOT_AVAILABLE_MESSAGE : (error as Error).message);
     } finally {
       if (controller.current === c) {
         controller.current = undefined;
@@ -123,6 +126,7 @@ export function useAgentRun(agentId: string, initial?: AgentSession, initialTrac
     return consume(`/api/agents/${agentId}/chat`, {
       message,
       ...(sessionId && { sessionId }),
+      ...(projectId && { projectId }),
     });
   };
 

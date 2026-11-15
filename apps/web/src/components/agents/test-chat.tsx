@@ -21,6 +21,27 @@ import { AgentAvatar, type AvatarSource } from './avatar';
 import { timelineItems, type ToolEntry } from './timeline';
 import { useAgentList } from './use-agent-data';
 import { REASON_LABEL, useAgentRun } from './use-agent-run';
+import { ContextPreviewButton } from './context-preview';
+import { testProjectOptions, type AvailabilityAnswer, type ProjectRef } from './project-names';
+import { Select } from '../ui/inputs';
+
+/** The projects "Test in project" offers (home first), and none until they are known. */
+function useTestProjects(agentId: string): ProjectRef[] {
+  const [options, setOptions] = useState<ProjectRef[]>([]);
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      const { availability } = await api<{ availability: AvailabilityAnswer }>(`/api/agents/${agentId}/shares`, { background: true });
+      // "All projects": every project the person sees.
+      const caller = availability.all ? (await api<{ projects: ProjectRef[] }>('/api/projects', { background: true })).projects : [];
+      if (live) setOptions(testProjectOptions(availability, caller.map((p) => ({ id: p.id, name: p.name }))));
+    })().catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [agentId]);
+  return options;
+}
 
 /** The agent's earlier test sessions, newest first, whoever ran them: the sessions route, People, source test. */
 function TestHistory({ agentId, current, onOpen }: { agentId: string; current?: string; onOpen: (id: string) => void }) {
@@ -81,7 +102,12 @@ export function TestChat({
   tools?: AgentToolConfig[];
 }) {
   const analyst = isAnalyst(tools);
-  const run = useAgentRun(agentId);
+  const projects = useTestProjects(agentId);
+  const [project, setProject] = useState<string>();
+  const home = projects[0];
+  // The home project is the default: the chat names a project only when another is chosen.
+  const chosen = project && project !== home?.id ? project : undefined;
+  const run = useAgentRun(agentId, undefined, undefined, chosen);
   const [draft, setDraft] = useState('');
   const [deciding, setDeciding] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -186,6 +212,34 @@ export function TestChat({
           <X className="size-4" />
         </button>
       </div>
+
+      {projects.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-hair px-3 py-2">
+          {projects.length > 1 && (
+            <label className="flex min-w-[220px] flex-1 items-center gap-2 text-[12px] text-t3">
+              <span className="shrink-0">Test in project</span>
+              <Select
+                aria-label="Test in project"
+                value={project ?? home?.id}
+                onChange={(e) => {
+                  // Another project is another conversation: its block is part of the run.
+                  if (run.entries.length) run.reset();
+                  setProject(e.target.value);
+                }}
+                className="h-8 text-[12px] max-md:h-10"
+              >
+                {projects.map((p, i) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                    {i === 0 ? ' (home)' : ''}
+                  </option>
+                ))}
+              </Select>
+            </label>
+          )}
+          <ContextPreviewButton agentId={agentId} projectId={chosen} projectName={projects.find((p) => p.id === (project ?? home?.id))?.name} />
+        </div>
+      )}
 
       {analyst && <SourceChips sources={sourcesOf((tools ?? []).map((t) => ('name' in t ? String(t.name) : '')))} />}
 
