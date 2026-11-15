@@ -8,7 +8,7 @@ import { create } from 'zustand';
 /** The right column holds one panel: Spotlight, the flow chat, or neither (chat closed, Spotlight folded to its strip). */
 export type ChatColumn = 'spotlight' | 'chat' | null;
 
-/** What changes the column: the Execute bar's chat button, the chat's close button, ⌘I and the Spotlight | Chat strip. */
+/** What changes the column: the Execute bar's chat button, the chat's close button, ⌘K or ⌘I and the Spotlight | Chat strip. */
 export type ColumnAction = 'open-chat' | 'close-chat' | 'toggle-chat' | 'show-spotlight' | 'show-chat';
 
 /** The column after an action. Never both: one value holds one panel. */

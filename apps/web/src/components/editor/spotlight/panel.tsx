@@ -21,6 +21,8 @@ import { Composer, focusSpotlight } from './composer';
 import { AutonomousExplainer, AutonomousSwitch, useAutonomousExplainer } from './proposal';
 import { Timeline } from './timeline-view';
 import { useAskParam } from './ask-param';
+import { ModeChip } from '../../spotlight/mode-chip';
+import { showBrainInstead } from '../../spotlight/context';
 
 /**
  * While Spotlight works, the canvas keeps the whole flow in view as the panel and the logs change its size; once it is on
@@ -211,6 +213,7 @@ function useSpotlightKeeping() {
  */
 export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hiddenOnPhone?: boolean; /** Stays mounted and keeps its conversation, but shows nothing (the Spotlight | Chat switch). */ hidden?: boolean }) {
   const keep = useSpotlightKeeping();
+  const workflowName = useEditor((s) => s.name) || 'this workflow';
   // "Build it" on a suggestion opens the editor with ?ask=proposal:<id>: Spotlight builds from its prompt once (./ask-param.ts).
   const boundTo = useAssistant((s) => s.workflowId);
   useAskParam(Boolean(keep.workflowId) && boundTo === keep.workflowId);
@@ -367,7 +370,7 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
       <button
           type="button"
           onClick={() => focusSpotlight()}
-          title={latest ? `${title}: ${latest}` : 'Show Spotlight (⌘I)'}
+          title={latest ? `${title}: ${latest}` : 'Show Spotlight (⌘K)'}
           aria-label="Show Spotlight"
           className={cn('hidden flex-1 flex-col items-center gap-3 py-3 text-t3 hover:bg-acdim hover:text-t1 md:absolute md:inset-y-0 md:right-0 md:flex md:w-11 md:transition-[opacity,visibility] md:duration-200 motion-reduce:transition-none', !collapsed && 'md:invisible md:opacity-0')}
         >
@@ -454,7 +457,8 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
             note sits under the row, in the panel's flow, so it pushes the conversation down instead of covering it. */}
         <div className="hidden shrink-0 border-b border-hair md:block">
           <div className="flex h-9 items-center justify-between gap-2 px-3">
-            <span className="text-[11.5px] text-t3">How Spotlight works</span>
+            {/* What Spotlight is doing here; the chip offers the brain instead (the shell's panel opens and this column folds to its strip). */}
+            <ModeChip mode={{ kind: 'build', workflowId: keep.workflowId ?? '', name: workflowName }} switchTo={{ label: 'Ask the brain instead', run: showBrainInstead }} />
             <AutonomousSwitch explainer={explainer} />
           </div>
           {explainer.note && <AutonomousExplainer onClose={explainer.close} className="mx-3 mb-2.5 shadow-none" />}

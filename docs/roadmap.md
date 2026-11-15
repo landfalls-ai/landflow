@@ -1609,6 +1609,11 @@ The shared pieces every chat will use, built in `components/ui/` and ready; the 
 - CH12 ✅ Done: Spotlight keeps its conversation per workflow, brings the last one back under "Earlier", has the history
   button, and checks a waiting proposal against the workflow (stale ones lose Apply). Leaving the editor no longer loses
   an unapplied proposal ([Spotlight](spotlight.md), [Conversation history](assistant.md#conversation-history)).
+- CH17 ✅ Done (B35): one Spotlight for the app. ⌘K (⌘I an alias) opens a shell panel on every page, a bottom sheet on a
+  phone; a chip says what it does ("Building <flow>" in the editor, whose own column stays the builder; "Asking the brain"
+  elsewhere; "About <thing>" after a `landflow:ask-about` event). The Brain page's own panel is gone and QuickOpen is ⌘P
+  ([One Spotlight](spotlight.md#one-spotlight)). Left: the editor's composer still hints ⌘I (it works), and the starters of
+  "about" come from the page that sent the event (B36).
 - CH14 ✅ Done: `@` in Spotlight is the app-wide picker; the server resolves the refs as the caller and shows each read as
   a step ([Tagging with @](assistant.md#tagging-with-)). The unchecked node path is gone.
 

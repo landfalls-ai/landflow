@@ -33,7 +33,7 @@ The reply is checked with zod, and each suggestion's ops are validated. Suggesti
 
 ## Spotlight
 
-Spotlight is the one AI surface in the editor: a panel at the right of the canvas, never over it. Press **⌘I** to put the cursor in its box. Its conversation lasts while the workflow is open. ✎ starts over.
+Spotlight is the one AI surface in the editor: a panel at the right of the canvas, never over it. Press **⌘K** (or **⌘I**) to put the cursor in its box. A chip above it, "Building <workflow>", says what it does here; it offers "Ask the brain instead" ([one Spotlight](spotlight.md#one-spotlight)). Its conversation lasts while the workflow is open. ✎ starts over.
 
 ### The Spotlight panel
 
