@@ -236,6 +236,8 @@ export function deleteGoal(id: string): boolean {
   db().transaction(() => {
     for (const projectId of serving) db().delete('project_goals', { project_id: projectId, goal_id: id });
     for (const row of db().all<{ kind: string; ref_id: string }>('SELECT kind, ref_id FROM goal_links WHERE goal_id = ?', id)) db().delete('goal_links', { goal_id: id, kind: row.kind, ref_id: row.ref_id });
+    // PC19: a task that pointed at it loses the link (raw rows: the tasks store imports this one).
+    for (const row of db().all<Record<string, unknown>>('SELECT * FROM project_tasks WHERE goal_id = ?', id)) db().upsert('project_tasks', { ...row, goal_id: null });
     db().delete('goals', { id });
   });
   recordAudit({ action: 'goal.deleted', target: { type: 'goal', id, name: goal.title }, ...(goal.projectId && { project: goal.projectId }), summary: `Deleted the goal ${goal.title}`, details: { level: goal.level } });

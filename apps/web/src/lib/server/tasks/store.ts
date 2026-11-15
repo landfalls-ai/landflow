@@ -182,20 +182,20 @@ export function removeTask(id: string): boolean {
 }
 
 /** Take the task for `userId`: the read and the write are one step. Holding it already is fine; someone else holding it throws. */
-export function checkoutTask(id: string, userId: string): ProjectTask | undefined {
+export function checkoutTask(id: string, userId: string): { task: ProjectTask; changed: boolean } | undefined {
   return db().transaction(() => {
     const row = db().get<TaskRow>('SELECT * FROM project_tasks WHERE id = ?', id);
     if (!row) return undefined;
     if (row.checked_out_by && row.checked_out_by !== userId) throw new TaskCheckedOut(row.checked_out_by);
-    if (row.checked_out_by === userId) return taskFrom(row);
+    if (row.checked_out_by === userId) return { task: taskFrom(row), changed: false };
     const next = { ...row, checked_out_by: userId, updated_at: new Date().toISOString() };
     db().upsert('project_tasks', next);
-    return taskFrom(next);
+    return { task: taskFrom(next), changed: true };
   });
 }
 
 /** Let the task go. `allow` decides, given who holds it, whether this caller may (the holder, or an admin). */
-export function releaseTask(id: string, allow: (holderId: string) => boolean): { task: ProjectTask; refused?: true } | undefined {
+export function releaseTask(id: string, allow: (holderId: string) => boolean): { task: ProjectTask; refused?: true; released?: boolean } | undefined {
   return db().transaction(() => {
     const row = db().get<TaskRow>('SELECT * FROM project_tasks WHERE id = ?', id);
     if (!row) return undefined;
@@ -203,7 +203,7 @@ export function releaseTask(id: string, allow: (holderId: string) => boolean): {
     if (!allow(row.checked_out_by)) return { task: taskFrom(row), refused: true as const };
     const next = { ...row, checked_out_by: null, updated_at: new Date().toISOString() };
     db().upsert('project_tasks', next);
-    return { task: taskFrom(next) };
+    return { task: taskFrom(next), released: true };
   });
 }
 
@@ -232,11 +232,16 @@ export function getRun(id: string): TaskRun | undefined {
 /** A task's runs, newest first. */
 export const runsOf = (taskId: string, limit: number): TaskRun[] => db().all<RunRow>('SELECT * FROM task_runs WHERE task_id = ? ORDER BY requested_at DESC, id DESC LIMIT ?', taskId, limit).map(runFrom);
 
-/** Runs in these statuses, newest first (one query, capped). `before` keeps only runs requested before that instant. */
-export function runsWith(statuses: readonly TaskRunStatus[], limit: number, before?: string): TaskRun[] {
+/**
+ * Runs in these statuses, newest first (one query, capped). `before` keeps only runs requested before that instant;
+ * `projectIds` keeps only runs of those projects (so the cap counts the caller's runs, not the instance's).
+ */
+export function runsWith(statuses: readonly TaskRunStatus[], limit: number, before?: string, projectIds?: readonly string[]): TaskRun[] {
+  if (projectIds && !projectIds.length) return [];
   const list = statuses.map((status) => `'${status}'`).join(', ');
+  const projects = projectIds ? ` AND project_id IN (${projectIds.map(() => '?').join(', ')})` : '';
   return db()
-    .all<RunRow>(`SELECT * FROM task_runs WHERE status IN (${list})${before ? ' AND requested_at < ?' : ''} ORDER BY requested_at DESC, id DESC LIMIT ?`, ...(before ? [before, limit] : [limit]))
+    .all<RunRow>(`SELECT * FROM task_runs WHERE status IN (${list})${before ? ' AND requested_at < ?' : ''}${projects} ORDER BY requested_at DESC, id DESC LIMIT ?`, ...(before ? [before] : []), ...(projectIds ?? []), limit)
     .map(runFrom);
 }
 

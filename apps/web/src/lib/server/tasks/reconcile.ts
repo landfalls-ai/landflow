@@ -10,6 +10,7 @@ import { patchRun } from './store';
 
 const RUNNING_FRESH_MS = 10 * 60_000;
 const APPROVED_GRACE_MS = 2 * 60_000;
+export const AGENT_GONE = 'The agent was deleted before this was approved';
 export const RESTARTED = 'Landflow restarted before the run finished';
 
 /** Cut a reply or error to the contract's length. */
@@ -54,6 +55,8 @@ const finished = () => new Date().toISOString();
 
 /** The run as it is now: open ones are looked at against their session and saved when it moved on. */
 export function reconcileRun(run: TaskRun, now = Date.now()): TaskRun {
+  // A request nobody can approve any more: its agent was deleted. Denied, so Needs you drops it and a new request can be made.
+  if (run.status === 'requested' && !agentStore.get(run.agentId)) return patchRun(run.id, { status: 'denied', error: AGENT_GONE, finishedAt: finished() }) ?? run;
   if (!(OPEN_TASK_RUN_STATUSES as readonly string[]).includes(run.status) || run.status === 'requested') return run;
   const age = now - Date.parse(run.decidedAt ?? run.requestedAt);
   const lost = () => patchRun(run.id, { status: 'failed', error: RESTARTED, finishedAt: finished() }) ?? run;

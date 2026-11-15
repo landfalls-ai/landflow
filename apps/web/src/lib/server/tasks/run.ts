@@ -12,7 +12,7 @@ import { recordAudit } from '../audit';
 import { outsideRequest } from '../auth/context';
 import { logger } from '../telemetry/logger';
 import { cut, lastReply, reconcileRun, sessionProblem } from './reconcile';
-import { requireEditor } from './service';
+import { goalOfProject, requireEditor } from './service';
 import { decideRun, getRun, getTask, patchRun, TaskError } from './store';
 import { agentProblem, viewerOf } from './views';
 import { getProject } from '../projects/store';
@@ -86,6 +86,8 @@ export async function startRun(runId: string): Promise<void> {
   const session = newSession(agent, { source: 'task', userId: `task:${task.id}`, version: agent.published.version, title: task.title.slice(0, 80) });
   patchRun(run.id, { status: 'running', sessionId: session.id });
   const startedBy = run.decidedBy;
+  // A goal deleted or unlinked from the project since the task was saved is dropped, never passed on as a dead id.
+  const goalId = task.goalId && goalOfProject(task.goalId, task.projectId) ? task.goalId : undefined;
   try {
     const result = await runAgent({
       agent,
@@ -94,10 +96,13 @@ export async function startRun(runId: string): Promise<void> {
       approvals: 'ask', // a tool that needs approval waits in the session
       rootTrace: true,
       ...(startedBy && { caller: { startedBy } }), // the workflows its tools start run for the approver
-      context: { caller: 'task', projectId: task.projectId, ...(task.goalId && { goalId: task.goalId }), agentId: agent.id, nodeName: task.title },
+      context: { caller: 'task', projectId: task.projectId, ...(goalId && { goalId }), agentId: agent.id, nodeName: task.title },
     });
     const at = new Date().toISOString();
-    if (result.reason === 'completed') patchRun(run.id, { status: 'done', reply: cut(result.reply ?? lastReply(result.session) ?? ''), finishedAt: at });
+    // A final turn with no text is a run that stopped before an answer, as reconcileRun reads the same session.
+    const reply = result.reason === 'completed' ? (result.reply?.trim() ? result.reply : lastReply(result.session)) : undefined;
+    if (result.reason === 'completed' && !reply) patchRun(run.id, { status: 'failed', error: 'The run stopped before a final answer', finishedAt: at });
+    else if (result.reason === 'completed') patchRun(run.id, { status: 'done', reply: cut(reply!), finishedAt: at });
     else if (result.reason === 'awaiting_approval') patchRun(run.id, { status: 'waiting' });
     else patchRun(run.id, { status: 'failed', error: cut(sessionProblem(result.session) ?? REASON_TEXT[result.reason] ?? 'The run failed'), finishedAt: at });
   } catch (error) {

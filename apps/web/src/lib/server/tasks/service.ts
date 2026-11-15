@@ -54,9 +54,14 @@ function checkWake(cron: string, task: Pick<ProjectTask, 'assignee' | 'status'>)
   if (!next) throw new TaskError('This schedule never fires');
 }
 
-function checkGoal(goalId: string, project: Project): void {
+/** Whether the goal still exists and is one of the project's own or one it serves. */
+export function goalOfProject(goalId: string, projectId: string): boolean {
   const goal = getGoal(goalId);
-  if (!goal || !(goal.projectId === project.id || projectGoalIds(project.id).includes(goalId))) throw new TaskError("That goal isn't one of this project's goals");
+  return Boolean(goal && (goal.projectId === projectId || projectGoalIds(projectId).includes(goalId)));
+}
+
+function checkGoal(goalId: string, project: Project): void {
+  if (!goalOfProject(goalId, project.id)) throw new TaskError("That goal isn't one of this project's goals");
 }
 
 function checkParent(parentId: string, project: Project, self?: ProjectTask): void {
@@ -154,21 +159,21 @@ export function deleteTask(viewer: Viewer, project: Project, id: string): void {
 export function checkout(viewer: Viewer, project: Project, id: string): ProjectTaskView {
   requireEditor(viewer);
   if (getTask(id)?.projectId !== project.id) throw new TaskError('Task not found', 404);
-  const before = getTask(id)?.checkedOutBy;
-  const task = checkoutTask(id, viewer.actor.id);
-  if (!task) throw new TaskError('Task not found', 404);
-  if (before !== viewer.actor.id) recordAudit({ action: 'project.task.checkout', target: { type: 'task', id, name: task.title }, project: project.id, summary: `Checked out the task “${task.title}”` });
+  // Whether the holder changed is read inside the store's transaction, so two clicks audit once.
+  const result = checkoutTask(id, viewer.actor.id);
+  if (!result) throw new TaskError('Task not found', 404);
+  const { task } = result;
+  if (result.changed) recordAudit({ action: 'project.task.checkout', target: { type: 'task', id, name: task.title }, project: project.id, summary: `Checked out the task “${task.title}”` });
   return taskView(task, viewer);
 }
 
 export function release(viewer: Viewer, project: Project, id: string): ProjectTaskView {
   requireEditor(viewer);
   if (getTask(id)?.projectId !== project.id) throw new TaskError('Task not found', 404);
-  const held = getTask(id)?.checkedOutBy;
   const result = releaseTask(id, (holder) => holder === viewer.actor.id || viewer.canRelease);
   if (!result) throw new TaskError('Task not found', 404);
   if (result.refused) throw new TaskError('Only the one who checked it out, or a project admin, releases it', 403);
-  if (held) recordAudit({ action: 'project.task.release', target: { type: 'task', id, name: result.task.title }, project: project.id, summary: `Released the task “${result.task.title}”` });
+  if (result.released) recordAudit({ action: 'project.task.release', target: { type: 'task', id, name: result.task.title }, project: project.id, summary: `Released the task “${result.task.title}”` });
   return taskView(result.task, viewer);
 }
 

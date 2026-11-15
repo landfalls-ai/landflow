@@ -7,7 +7,8 @@ import type { TaskNeedsYouFields } from '../../shared/project-tasks';
 import { agentStore } from '../agents/store';
 import { getUser } from '../auth/users';
 import type { NeedsYouItem } from '../journal/needs-you';
-import { projectRole, type Actor } from '../projects/access';
+import { projectRoleCan } from '../../shared/projects';
+import { projectRole, visibleProjectIds, type Actor } from '../projects/access';
 import { getProject } from '../projects/store';
 import { reconcileRun } from './reconcile';
 import { getTask, runsWith } from './store';
@@ -17,12 +18,22 @@ export type TaskNeedsYouItem = NeedsYouItem & TaskNeedsYouFields;
 
 const MAX_ITEMS = 200;
 
-export function taskItems(actor: Actor): TaskNeedsYouItem[] {
+/** The projects where the actor may decide (their editor and admin ones); undefined: every project (instance admins). */
+function editableProjectIds(actor: Actor): string[] | undefined {
+  const visible = visibleProjectIds(actor);
+  return visible && [...visible].filter((id) => projectRoleCan.create(projectRole(actor, id)));
+}
+
+/** `cap`: how many open runs of the actor's projects are read (a parameter so a test can lower it). */
+export function taskItems(actor: Actor, cap = MAX_ITEMS): TaskNeedsYouItem[] {
   const agentNames = new Map<string, string>();
   const taskCache = new Map<string, ReturnType<typeof getTask>>();
   const editorIn = new Map<string, boolean>();
   const items: TaskNeedsYouItem[] = [];
-  for (const run of runsWith(['requested', 'waiting'], MAX_ITEMS).map((open) => reconcileRun(open))) {
+  // Only the actor's own projects are read, so another project's open runs never push theirs past the cap; a run is
+  // settled against its session only once the actor may see it.
+  for (const open of runsWith(['requested', 'waiting'], cap, undefined, editableProjectIds(actor))) {
+    const run = reconcileRun(open);
     if (run.status !== 'requested' && run.status !== 'waiting') continue; // settled just now
     let canEdit = editorIn.get(run.projectId);
     if (canEdit === undefined) {

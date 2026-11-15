@@ -33,10 +33,11 @@ const { aiUsageMeter, savePriceOverrides } = await import('@/lib/server/ai-usage
 const { createTeamProject, getProject, setMember, setHomeProject, putShare, removeProjectRows, afterRemoved, taskCounts } = await import('@/lib/server/projects/store');
 const { projectView } = await import('@/lib/server/projects/views');
 const { updateProjectSettings } = await import('@/lib/server/governance/scopes');
-const { createGoal, setProjectGoals } = await import('@/lib/server/goals/store');
+const { createGoal, setProjectGoals, deleteGoal } = await import('@/lib/server/goals/store');
 const { saveBudget, incidentsOf, currentMonth } = await import('@/lib/server/budgets/store');
 const { requestRun, decideRun, patchRun, getRun, setNextWake, getTask, dueTasks } = await import('@/lib/server/tasks/store');
 const { taskWakeups, nextWake } = await import('@/lib/server/tasks/wakeups');
+const { taskItems } = await import('@/lib/server/tasks/needs-you');
 const { queryEvents } = await import('@/lib/server/audit/store');
 const { TASK_LIMITS } = await import('@/lib/shared/project-tasks');
 
@@ -48,7 +49,7 @@ const runRoute = await import('@/app/api/task-runs/[runId]/route');
 const needsYouRoute = await import('@/app/api/runs/needs-you/route');
 
 registry.registerBuiltin(corePlugin);
-const fake = await startFakeModels();
+const fake = await startFakeModels({ reply: (_provider, body) => (body.model === 'tasks-silent' ? { text: '' } : undefined) });
 const ollama = fake.url.replace(/\/v1$/, '');
 
 const BASE = 'http://localhost:3000';
@@ -689,6 +690,94 @@ describe('Needs you', () => {
     // Deciding takes it out of the list.
     await decide(ed, run.id, 'deny');
     expect((await needsYou(ed)).some((item) => item.taskRunId === run.id)).toBe(false);
+  });
+});
+
+describe('Needs you under load and after changes', () => {
+  it('open runs of other projects do not push a person’s own item past the cap', async () => {
+    const mine = await newTask({ title: 'Mine among many' });
+    const myRun = (await ask(ed, mine.id)).body.run as TaskRun;
+    // Newer, open runs in a project the person is not in: more of them than the cap.
+    for (let i = 0; i < 6; i++) {
+      const at = new Date().toISOString();
+      const id = `tsk_load_${i}`;
+      database().upsert('project_tasks', { id, project_id: Q, title: `Load ${i}`, status: 'todo', priority: 'normal', assignee_kind: 'agent', assignee_id: Y, created_at: at, updated_at: at });
+      requestRun({ id, projectId: Q }, Y, 'manual', qm.id);
+    }
+    const actor = { id: ed.id, role: getUser(ed.id)!.role };
+    expect(taskItems(actor, 3).some((item) => item.taskRunId === myRun.id)).toBe(true);
+    expect(taskItems(actor, 3).every((item) => item.projectId === P)).toBe(true);
+    // The people of the other project still see theirs, and the instance owner sees every project's.
+    expect(taskItems({ id: qm.id, role: getUser(qm.id)!.role }, 3).every((item) => item.projectId === Q)).toBe(true);
+    expect(taskItems({ id: owner.id, role: 'owner' }, 500).filter((item) => item.projectId === Q)).toHaveLength(6);
+  });
+
+  it('a request whose agent was deleted leaves Needs you, reads denied, and cannot be approved', async () => {
+    const doomed = agentStore.create({ name: 'Short lived', instructions: 'x', model: { provider: 'ollama', model: 'm', baseUrl: ollama } });
+    setHomeProject('agent', doomed.id, P);
+    agentStore.publish(doomed.id);
+    const task = await newTask({ title: 'Orphaned', assignee: { kind: 'agent', id: doomed.id } });
+    const run = (await ask(ed, task.id)).body.run as TaskRun;
+    expect((await needsYou(ed)).some((item) => item.taskRunId === run.id)).toBe(true);
+    agentStore.delete(doomed.id);
+    expect((await needsYou(ed)).some((item) => item.taskRunId === run.id)).toBe(false);
+    expect((await readRun(ed, run.id)).body.run).toMatchObject({ status: 'denied', error: 'The agent was deleted before this was approved' });
+    expect((await decide(ed, run.id, 'approve')).status).toBe(409);
+  });
+
+  it('Deny still works on such a request before anything has read it', async () => {
+    const doomed = agentStore.create({ name: 'Short lived two', instructions: 'x', model: { provider: 'ollama', model: 'm', baseUrl: ollama } });
+    setHomeProject('agent', doomed.id, P);
+    agentStore.publish(doomed.id);
+    const task = await newTask({ title: 'Orphaned two', assignee: { kind: 'agent', id: doomed.id } });
+    const run = (await ask(ed, task.id)).body.run as TaskRun;
+    agentStore.delete(doomed.id);
+    expect((await decide(ed, run.id, 'deny')).body.run.status).toBe('denied');
+  });
+});
+
+describe('a final turn with no text', () => {
+  it('a run whose last model turn is empty fails the same way the reconciler reads its session', async () => {
+    const silent = agentStore.create({ name: 'Silent clerk', instructions: 'x', model: { provider: 'ollama', model: 'tasks-silent', baseUrl: ollama } });
+    setHomeProject('agent', silent.id, P);
+    agentStore.publish(silent.id);
+    const task = await newTask({ assignee: { kind: 'agent', id: silent.id } });
+    const run = (await ask(ed, task.id)).body.run as TaskRun;
+    await decide(ed, run.id, 'approve');
+    const done = await settled(run.id);
+    expect(done).toMatchObject({ status: 'failed', error: 'The run stopped before a final answer' });
+    // Read again from its session: the same answer.
+    expect((await readRun(ed, run.id)).body.run).toMatchObject({ status: 'failed', error: 'The run stopped before a final answer' });
+  });
+});
+
+describe('a task’s goal that is gone', () => {
+  it('deleting the goal clears the task’s link', async () => {
+    const goal = createGoal({ title: 'Short lived goal', level: 'project', projectId: P });
+    const task = await newTask({ goalId: goal.id });
+    expect(deleteGoal(goal.id)).toBe(true);
+    const read = (await get(ed, task.id)).body.task as ProjectTaskView;
+    expect(read.goalId).toBeUndefined();
+    expect(read.goalTitle).toBeUndefined();
+  });
+
+  it('a goal unlinked from the project is not passed to the run', async () => {
+    const company = createGoal({ title: 'Company goal to unlink', level: 'company' });
+    setProjectGoals(P, [company.id]);
+    const task = await newTask({ goalId: company.id });
+    setProjectGoals(P, []);
+    const run = (await ask(ed, task.id)).body.run as TaskRun;
+    await decide(ed, run.id, 'approve');
+    const done = await settled(run.id);
+    expect(done.status).toBe('done');
+    // The run falls back to the project's own primary goal, never the dead link.
+    expect(agentStore.getSession(done.sessionId!)!.context?.goalId).not.toBe(company.id);
+    // Still linked: it is passed on.
+    setProjectGoals(P, [company.id]);
+    const again = (await ask(ed, task.id)).body.run as TaskRun;
+    await decide(ed, again.id, 'approve');
+    expect(agentStore.getSession((await settled(again.id)).sessionId!)!.context?.goalId).toBe(company.id);
+    setProjectGoals(P, []);
   });
 });
 
