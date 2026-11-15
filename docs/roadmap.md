@@ -2236,6 +2236,14 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   person list (`peopleTotals`; admins get the caption alone, and a person with no name is "Unnamed person" to a member);
   the rules are in [llm-gateway.md](llm-gateway.md#the-ai-page) "Who sees what".
 
+## Token spend wave 12: a run's spend and one call's view (SP05)
+
+- **Built**: `GET /api/executions/:id/spend` (totals, slices by purpose, model, node, agent and loop step, the prompt's
+  composition, the cache line with its miss reasons and the saving, up to 500 calls) and `GET /api/ai-calls/:id` (one
+  call, its split in tokens from Landflow or the gateway, what changed against the call before it, a link to its run).
+  Both follow [llm-gateway.md](llm-gateway.md#the-ai-page) "Who sees what" (rule 3) and hold no prompt text
+  ([run-trace.md](run-trace.md#spend)). No screen yet: the Run Trace (SP06, SP07) and the AI page (SP09, SP10) open them.
+
 ## Practices (waves P1 and P2)
 
 Rules in the brain that connected agents follow, each approved by a person ([practices.md](practices.md)). Decided
