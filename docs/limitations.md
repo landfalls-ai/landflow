@@ -470,7 +470,8 @@ items still open (its "Wave 6" section); this page is the short list to check be
   Landflow never stops).
 - A resumed month stays open even after a raise: the project's priced calls are not stopped again until the month ends.
 - Moving a workflow or agent to another project moves no budget; spend follows the project of the run.
-- Raising the amount in a project's settings settles that month's open incidents, as a raise from an incident does.
+- Every raise (an incident's **Raise budget…**, a higher amount in the project's settings, an approved request) settles all
+  that month's open incidents, the stop and the warning alike.
 
 ## Project tasks (wave 10)
 

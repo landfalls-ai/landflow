@@ -351,6 +351,8 @@ Ollama: it writes and tests code in the sandbox and hands it in through an appro
 real toolchains, and Claude models) is open. Stage 2 reads the project's
 [workspace](projects-and-goals.md#workspace) (default branch, worktree per run or shared, branch template, setup
 commands) from the project context. The setup commands are a risk: Landflow never runs them, and a stage 2 that does
-must show them to a person before running them in its sandbox.
+must show them to a person before running them in its sandbox. It must also check the branch it fills in
+(`{run}`, `{date}`, `{task}`) with `isValidBranch` (`lib/shared/project-workspace.ts`): `branchFor` makes a token's value
+safe but can still leave `..`, a trailing `.` or a trailing `.lock` that git refuses.
 Google's AX was looked at the same day and left out: a sandboxed task runner for coding agents, with no A2A, result
 stream or approval protocol yet.
