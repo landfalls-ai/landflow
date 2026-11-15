@@ -378,8 +378,9 @@ same goal.
   the goal or a sub-goal, or a project goal's own project, among the projects you may see. A running, waiting or cancelled
   run is not counted. Evaluation cases (runs with an evaluation run id) are not counted. A workflow with no project row is
   homed in the default project (the owner's personal one), so its runs count there. One run is one `executions` row, so a
-  sub-workflow's child run and a manual test run in the editor each count. A run of a workflow shared into the project from another home is not
-  counted.
+  sub-workflow's child run and a manual test run in the editor each count. A run of a workflow shared into the project
+  from another home is not counted. Runs of a deleted workflow with no project row still count in the default project
+  while their rows are kept.
 - **Spend:** the AI cost attributed to the goal or a sub-goal (`ai_usage.goal_id`), from projects you may see. It can be 0
   while runs are not (local models are unpriced).
 - **Updates:** work events (`work.*`) linked to the goal or a sub-goal: by its goal, by a serving project, or by a linked
@@ -391,8 +392,8 @@ same goal.
 
 `GET /api/goals/:id/progress?window=7|30` answers one goal (404 for a goal you cannot see, 400 for another window; 7 by
 default). `GET /api/goals?progress=1&window=` adds `progress`, one entry per goal in the tree; without `progress=1` the
-answer is as before (`progress` must be `1` and `window` `7` or `30`, else 400; `window` alone is also 400). Every goal in an answer is counted in one query per source, never one per goal. The nightly sync uses
-the same numbers for its "Goals that moved" line ([work-and-briefings.md](work-and-briefings.md#the-nightly-sync)). Code:
+answer is as before (`progress` must be `1` and `window` `7` or `30`, else 400; `window` alone is also 400). Every goal in an answer is counted in one query per source, never one per goal. The
+nightly sync uses the same numbers for its "Goals that moved" line ([work-and-briefings.md](work-and-briefings.md#the-nightly-sync)). Code:
 `lib/server/goals/progress.ts`; the answer's shape is `lib/shared/goal-progress.ts`.
 
 ## How it is built

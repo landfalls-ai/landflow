@@ -298,9 +298,9 @@ describe('goals that moved in the nightly sync', () => {
     const edge = createGoal({ title: 'Edge goal', level: 'project', projectId: gamma }).id;
     const target = '2020-03-10';
     const at = (iso: string) => iso;
-    event(ann.id, 'org', { goal: edge }, at('2020-03-07T12:00:00.000Z')); // two days before: left out
-    event(ann.id, 'org', { goal: edge }, at('2020-03-09T06:00:00.000Z')); // early the day before: kept
-    event(ann.id, 'org', { goal: edge }, at('2020-03-10T12:00:00.000Z')); // on the day: kept
+    event(ann.id, 'org', { goal: edge }, at('2020-03-07T10:00:00.000Z')); // two days before: left out
+    event(ann.id, 'org', { goal: edge }, at('2020-03-09T12:00:00.000Z')); // early the day before: kept
+    event(ann.id, 'org', { goal: edge }, at('2020-03-10T06:00:00.000Z')); // on the day: kept
     event(ann.id, 'org', { goal: edge }, at('2020-03-13T12:00:00.000Z')); // after the day: left out
     const moved = goalsMovedFor(actorOf(ann), target, Date.parse('2020-03-20T00:00:00.000Z'));
     expect(moved.find((g) => g.goalId === edge)?.because).toBe('2 updates');

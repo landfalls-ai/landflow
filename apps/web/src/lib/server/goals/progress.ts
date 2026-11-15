@@ -55,7 +55,7 @@ interface Counts {
 }
 
 /**
- * The progress of each goal in `goalIds` over `window` days back from `now` (or from `options.since`, the nightly sync's own
+ * The progress of each goal in `goalIds` over `window` days back from `now` (or from `options.since` up to `options.until`, the nightly sync's own
  * start), for `actor`. Each goal counts itself and the sub-goals the actor sees; projects, spend and work events are read
  * only where the actor may see them. A goal the actor cannot see (or an unknown one) answers an empty progress.
  */
