@@ -28,7 +28,7 @@ features. Size: S is about a day, M a few days.
 Plugins, Settings) with section tabs inside Workflows, Runs (with a Search tab until B20) and Plugins
 (`components/shell/section-nav.tsx`); the theme and Build a plugin moved into the user menu; the Live dot shows only as
 "Reconnecting…" with an amber dot (the dot alone on a folded rail); the Preview pill and the plugin count are gone (a red dot marks an offline plugin); the project
-switcher has Manage projects. The six-item proposal below is the older plan.
+switcher has Manage projects. **Projects | Goals** tabs sit above `/projects` and `/goals` (a project's own page shows none; the rail stays nine, and Goals is not a rail item). The six-item proposal below is the older plan.
 
 Today: the project switcher, 11 sidebar items (Build: Home, Workflows, Templates, Agents, Executions, Insights, Data
 tables, Credentials; Extend: Plugins, Marketplace, Build a plugin), then Settings, a Live dot, a theme switch and the
