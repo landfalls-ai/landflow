@@ -118,7 +118,7 @@ export function BudgetActions({
     <div className={cn('flex flex-wrap gap-2', className)}>
       {actions.map((a) =>
         a.id === 'open' ? (
-          <Link key={a.id} href={row.href ?? `/projects/${encodeURIComponent(row.projectId!)}?tab=settings#budget`} className={cn('inline-flex items-center rounded-[10px] border border-hair bg-wl px-3 text-[12.5px] font-medium text-t1 hover:border-ac', 'h-8', tall)}>
+          <Link key={a.id} href={row.href ?? `/projects/${encodeURIComponent(row.projectId!)}?tab=settings#budget`} className={cn('inline-flex items-center rounded-[10px] border border-hair bg-wl px-3 text-[12.5px] font-medium text-t1 hover:border-ac', 'h-7', tall)}>
             {a.label}
           </Link>
         ) : (

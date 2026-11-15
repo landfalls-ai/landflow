@@ -121,6 +121,8 @@ export interface NeedsYouRow {
  */
 const needsYouStore = { items: undefined as NeedsYouRow[] | undefined, listeners: new Set<() => void>(), scheduled: false, seq: 0 };
 
+export const refreshNeedsYou = () => loadNeedsYou();
+
 function loadNeedsYou() {
   if (needsYouStore.scheduled) return;
   needsYouStore.scheduled = true;

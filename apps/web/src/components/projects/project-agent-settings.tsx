@@ -93,18 +93,20 @@ export function ProjectAgentSettingsView({
   const edit = state.canEdit;
   const set = (patch: Partial<AgentSettingsForm>) => onForm?.({ ...form, ...patch });
   const dirty = !sameAgentSettings(form, saved);
+  const modelError = Boolean(error && /credential|model|provider/i.test(error));
+  const modelEmpty = Boolean(form.defaultModel && !form.defaultModel.model);
   const toggleAgent = (id: string, on: boolean) => set({ agents: { ...form.agents, ids: on ? [...form.agents.ids, id] : form.agents.ids.filter((x) => x !== id) } });
   const toggleKind = (kind: ProjectToolKind, on: boolean) => set({ agentTools: { ...form.agentTools, kinds: on ? [...form.agentTools.kinds, kind] : form.agentTools.kinds.filter((x) => x !== kind) } });
   const knowledge = form.knowledge;
   return (
-    <div id="agents" className="scroll-mt-4">
+    <div id="agents" className="scroll-mt-[72px] max-md:scroll-mt-[200px]">
       <Card className="space-y-5">
         <div className="text-[13px] font-semibold text-t1">Agents in this project</div>
 
         <div>
           <FieldLabel>Default model</FieldLabel>
           <p className="mb-2 text-[12px] text-t3">Used when neither the workflow’s step nor the agent names a model.</p>
-          <ModelChoice model={form.defaultModel} onChange={(m) => set({ defaultModel: m })} disabled={!edit} error={error?.includes('credential') ? error : undefined} />
+          <ModelChoice model={form.defaultModel} onChange={(m) => set({ defaultModel: m })} disabled={!edit} error={modelError ? error : undefined} />
         </div>
 
         <div>
@@ -182,14 +184,14 @@ export function ProjectAgentSettingsView({
           <p className="mt-2 text-[12px] text-t3">Skills, memory, a team’s notebook and the tools connected to a workflow’s step are always allowed.</p>
         </div>
 
-        {error && !error.includes('credential') && <p className="text-[12px] text-rd">{error}</p>}
+        {error && !modelError && <p className="text-[12px] text-rd">{error}</p>}
         {!edit && <p className="text-[12px] text-t3">The project’s admins change these.</p>}
         {edit && dirty && (
           <div className="flex justify-end gap-2 border-t border-hair pt-3">
             <Button size="sm" variant="ghost" onClick={() => onForm?.(saved)}>
               Discard
             </Button>
-            <Button size="sm" variant="primary" onClick={onSave} loading={saving}>
+            <Button size="sm" variant="primary" onClick={onSave} loading={saving} disabled={modelEmpty}>
               Save
             </Button>
           </div>

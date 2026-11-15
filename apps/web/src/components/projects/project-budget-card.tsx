@@ -28,6 +28,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import { FieldLabel, Input, Select, Switch, Textarea } from '@/components/ui/inputs';
+import { refreshNeedsYou } from '@/lib/client/run-trace';
 import { BudgetActions } from '@/components/run-trace/needs-you-actions';
 import { cn } from '@/lib/utils';
 
@@ -110,7 +111,7 @@ export function ProjectBudgetCardView({
   const edit = view.canEdit;
   const dirty = JSON.stringify(fields) !== JSON.stringify(fieldsFrom(view));
   return (
-    <div id="budget" className="scroll-mt-4">
+    <div id="budget" className="scroll-mt-[72px] max-md:scroll-mt-[200px]">
     <Card className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <div className="text-[13px] font-semibold text-t1">AI budget</div>
@@ -265,6 +266,11 @@ export function ProjectBudgetCard({ projectId }: { projectId: string }) {
     setFields(fieldsFrom(next));
     setError(undefined);
   };
+  // An incident action or a save may resolve incidents, so the shared Needs you list reloads too.
+  const changed = (next: ProjectBudgetView) => {
+    show(next);
+    refreshNeedsYou();
+  };
   useEffect(() => {
     fetchBudget(projectId)
       .then(show)
@@ -275,7 +281,7 @@ export function ProjectBudgetCard({ projectId }: { projectId: string }) {
   }, [projectId]);
   useScrollToHash('budget', Boolean(view) || failed);
   if (failed) return null;
-  if (!view || !fields) return <div id="budget"><Card className="h-24 animate-pulse-soft">{null}</Card></div>;
+  if (!view || !fields) return <div id="budget" className="scroll-mt-[72px] max-md:scroll-mt-[200px]"><Card className="h-24 animate-pulse-soft">{null}</Card></div>;
 
   const save = async () => {
     const parsed = budgetInput(fields);
@@ -283,7 +289,7 @@ export function ProjectBudgetCard({ projectId }: { projectId: string }) {
     if (parsed.input.monthlyUsd === 0 && view.budget && !window.confirm('Remove the budget? Nothing will be watched or stopped for this project.')) return;
     setSaving(true);
     try {
-      show(await saveBudget(projectId, parsed.input));
+      changed(await saveBudget(projectId, parsed.input));
       toast.success('AI budget saved');
     } catch (e) {
       setError((e as Error).message);
@@ -293,7 +299,7 @@ export function ProjectBudgetCard({ projectId }: { projectId: string }) {
   };
   return (
     <>
-      <ProjectBudgetCardView projectId={projectId} view={view} members={members} fields={fields} onFields={setFields} onSave={() => void save()} saving={saving} error={error} onView={show} onAsk={() => setAsking(true)} />
+      <ProjectBudgetCardView projectId={projectId} view={view} members={members} fields={fields} onFields={setFields} onSave={() => void save()} saving={saving} error={error} onView={changed} onAsk={() => setAsking(true)} />
       {asking && <AskDialog view={view} onClose={() => setAsking(false)} />}
     </>
   );

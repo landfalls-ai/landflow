@@ -60,13 +60,17 @@ export function useScrollToHash(id: string, ready: boolean) {
     const target = () => document.getElementById(id);
     target()?.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' });
     let done = false;
+    let first = true;
     const stop = () => {
       done = true;
       observer?.disconnect();
       window.clearTimeout(timer);
       for (const e of ['wheel', 'touchstart', 'keydown', 'mousedown']) window.removeEventListener(e, stop);
     };
-    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(() => !done && target()?.scrollIntoView({ block: 'start', behavior: 'auto' }));
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(() => {
+      if (first) return void (first = false); // observe() fires once at once
+      if (!done) target()?.scrollIntoView({ block: 'start', behavior: 'auto' });
+    });
     const parent = target()?.parentElement;
     if (parent) observer?.observe(parent);
     for (const e of ['wheel', 'touchstart', 'keydown', 'mousedown']) window.addEventListener(e, stop, { passive: true });
