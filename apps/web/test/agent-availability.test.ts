@@ -291,6 +291,17 @@ describe('sessions are read from home only', () => {
     expect((await list(eve, ids.allAgent)).status).toBe(404);
   });
 
+  it('a shared-only member cannot continue a session by id; a home member passes the check', async () => {
+    const chat = (caller: Caller, id: string, sessionId: string) => call(agentChatRoute.POST, `/api/agents/${id}/chat`, 'POST', caller, { message: 'hi', sessionId }, { id });
+    expect((await chat(cat, ids.agent, ids.session)).status).toBe(404);
+    // A home editor passes the check (the session is still answering, so 409 and nothing runs); the shared-only member never learns that.
+    const busy = newSession(agentStore.get(ids.agent)!, { source: 'api', userId: 'u', version: 'draft' });
+    busy.status = 'running';
+    agentStore.saveSession(busy);
+    expect((await chat(ben, ids.agent, busy.id)).status).toBe(409);
+    expect((await chat(cat, ids.agent, busy.id)).status).toBe(404);
+  });
+
   it('the evaluation scores and the eval gate are home-only too', async () => {
     const evals = (caller: Caller, id: string) => call(agentEvalsRoute.GET, `/api/agents/${id}/evaluations`, 'GET', caller, undefined, { id });
     const gate = (caller: Caller, id: string) => call(agentGateRoute.GET, `/api/agents/${id}/eval-gate`, 'GET', caller, undefined, { id });

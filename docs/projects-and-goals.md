@@ -140,7 +140,8 @@ Agent and run it from its workflows, but cannot change, delete, share or read th
   available in that project".
 - **Sessions stay at home.** The agent's sessions and each session are read only by members of its home project (and
   owners and admins). Others get 404 "Agent not found". A session keeps the brief of the project it ran for, so this
-  keeps one project's brief from another project that only uses the agent.
+  keeps one project's brief from another project that only uses the agent. Continuing a session by `sessionId` in the test
+  chat is the same read: a member who only uses the agent starts new sessions and gets 404 for an existing one.
 - **The live feed too.** `/api/events` sends an agent's `entry` and `run.finished` events (the session itself) only to
   members of its home project and to owners and admins.
 - **Still readable by a user project.** Because a share gives `read`, a project that only uses the agent can still list
