@@ -88,6 +88,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (under('/api/transports')) return read ? { scope: 'workflows:read' } : { scope: 'admin', action: 'settings:manage' };
   if (under('/api/credentials')) return { scope: 'admin' };
 
+  // PC01: goals (docs/projects-and-goals.md); the routes check who may edit which goal.
+  if (under('/api/goals')) return { scope: read ? 'workflows:read' : 'workflows:write' };
   if (['/api/workflows', '/api/folders', '/api/data-tables', '/api/agents', '/api/agent-teams', '/api/agent-templates', '/api/skills', '/api/node-types', '/api/credential-types', '/api/expressions', '/api/projects', '/api/templates', '/api/composites', '/api/runbooks'].some(under)) {
     return { scope: read ? 'workflows:read' : 'workflows:write' };
   }

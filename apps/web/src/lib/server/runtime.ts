@@ -20,6 +20,8 @@
  */
 // Registers the composite governance rules with workflowViolations() (governance/policy.ts), in both roles.
 import './governance/composite-rules';
+// PC01: hands the goals store to the project-context seam (lib/server/project-context/seam.ts), in both roles.
+import './goals/context-source';
 import { agentTriggers } from './agents/triggers';
 import { alerts } from './alerts/service';
 import { auditHeads } from './audit/anchoring';
