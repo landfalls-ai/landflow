@@ -6,6 +6,7 @@
  * - `slug <text>`: calls `slugify` and answers with the slug.
  * - `upper <text>`: calls `changeCase`, which needs approval; approved → the upper-case text, rejected → the reason.
  * - `ask`: asks a question; the answer comes back in the reply.
+ * - `ask-plain`: asks the same question as a bare INPUT_REQUIRED status, without the extension's request.
  * - `chatty <text>`: says something, calls `slugify`, says something more, then answers (words between the tool calls).
  * - `slow`: answers WORKING, and GetTask completes it.
  * - `fail`: the task fails.
@@ -144,6 +145,9 @@ export async function startFakeA2a(): Promise<FakeA2a> {
         state: 'TASK_STATE_INPUT_REQUIRED',
         message: { messageId: randomUUID(), role: 'ROLE_AGENT', parts: [{ text: 'Which colour?' }], metadata: { [HITL]: { type: 'ask_user_request', id: 'q-1', questions: [{ question: 'Which colour?' }] } } },
       };
+      task.pending = { kind: 'question' };
+    } else if (text === 'ask-plain') {
+      task.status = { state: 'TASK_STATE_INPUT_REQUIRED', message: { messageId: randomUUID(), role: 'ROLE_AGENT', parts: [{ text: 'Which colour?' }] } };
       task.pending = { kind: 'question' };
     } else if (text === 'slow') {
       task.status = { state: 'TASK_STATE_WORKING' };

@@ -250,6 +250,16 @@ describe('An A2A capability', () => {
     expect(rows.filter((r) => r.kind === 'cited')).toHaveLength(1);
   });
 
+  it('keeps the index across a plain question (no ask_user_request) and records the citation of the answer', async () => {
+    const t = await tool();
+    const ctx = toolContext();
+    const asked = await withRunContext(context(), () => t.invoke({ message: 'ask-plain' }, ctx));
+    expect(String(asked.output)).toContain('Which colour?');
+    expect(rows.filter((r) => r.kind === 'cited')).toHaveLength(0);
+    await withRunContext(context(), () => t.invoke({ message: 'Done.\nPractices followed: [helm/chart-location@1]' }, ctx));
+    expect(rows.filter((r) => r.kind === 'cited')).toHaveLength(1);
+  });
+
   it('sends no index with the capability option Off', async () => {
     const t = await tool({ practices: 'off' });
     await withRunContext(context(), () => t.invoke({ message: 'plain' }, toolContext()));

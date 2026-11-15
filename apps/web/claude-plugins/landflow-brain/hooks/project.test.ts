@@ -58,6 +58,8 @@ test('the /brain project reply', () => {
   expect(projectReply(undefined, undefined)).toMatch(/not listed/)
   expect(projectReply('acme/web', undefined)).toBe('No project lists acme/web.')
   expect(projectReply('acme/web', 'failed')).toMatch(/could not be asked/)
+  // A reply with no project in it (an empty list) is still an answer, not a crash.
+  expect(projectReply('acme/web', { projects: [], text: '' } as unknown as ReturnType<typeof parseProjectContext>)).toMatch(/acme\/web is listed by a project/)
   const reply = projectReply('acme/web', parseProjectContext(EXAMPLE))
   expect(reply).toContain('“Billing revamp”')
   expect(reply).toContain('Goal: Grow paid accounts')

@@ -326,7 +326,8 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
       outcome.pause.remote.state = { ...outcome.pause.remote.state, practices: index };
       return outcome;
     }
-    if (ctx.session.remoteContexts?.[config.id]?.question) return outcome;
+    // The task is still open (a question with or without the extension): the answer to come completes it.
+    if (ctx.session.remoteContexts?.[config.id]?.taskId) return outcome;
     indexed.delete(ctx.session.id);
     recordRemoteCitations(index, typeof outcome.output === 'string' ? outcome.output : JSON.stringify(outcome.output ?? ''), ctx.session.execution?.executionId);
     return outcome;

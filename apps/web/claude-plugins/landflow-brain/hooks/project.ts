@@ -74,7 +74,7 @@ export function projectReply(repo: string | undefined, found: ProjectContext | u
   if (found === 'failed') return `The host could not be asked which project lists ${repo}; try again.`
   if (!found) return `No project lists ${repo}.`
   const first = found.projects[0]
-  const lines = [`${repo} is listed by the project “${first.name}”.`]
+  const lines = [first ? `${repo} is listed by the project “${first.name}”.` : `${repo} is listed by a project.`]
   lines.push(found.text || 'That project has no mission, goal or brief yet.')
   const also = alsoListed(found)
   if (also) lines.push(also)
