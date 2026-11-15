@@ -19,6 +19,7 @@ import {
   Package,
   Pencil,
   Rocket,
+  Sparkles,
   Trash2,
   TriangleAlert,
   Undo2,
@@ -38,6 +39,7 @@ import { EmptyState } from '../ui/empty-state';
 import { Input, Textarea } from '../ui/inputs';
 import { Segmented } from '../ui/segmented';
 import { useCredentials } from '../credentials/use-credentials';
+import { askAbout, askDetail } from '../../lib/client/ask-about';
 import { MenuItem, MenuLabel, MenuSeparator, Popover } from '../ui/popover';
 import { AgentAvatar } from './avatar';
 import { AvatarDialog } from './avatar-dialog';
@@ -650,6 +652,14 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
             >
               {(close) => (
                 <>
+                  <MenuItem
+                    onClick={() => {
+                      close();
+                      askAbout(askDetail({ type: 'agent', id: agentId, name: draft.name }));
+                    }}
+                  >
+                    <Sparkles /> Ask Spotlight
+                  </MenuItem>
                   <MenuItem
                     onClick={() => {
                       close();

@@ -220,6 +220,11 @@ On by default, Spotlight doesn't wait for clicks (`components/editor/autonomous.
 
 Each fix in the session is applied the same way, as before. An agent Spotlight creates is designed by the Agent architect and **published**, so the flow can run it while it's tested ([Agents and teams](#agents-and-teams)); unpublishing it is one click on its page. **Publish to production** still waits for a person. The **Autonomous** switch in the conversation's header turns it off (kept in the browser, `localStorage` `landflow-spotlight-autonomous`); off, every proposal waits for Apply and a drafted flow for Test and fix. Test runs execute the workflow as Execute workflow does, with the pinned test data, so a step that sends a message or writes to an app would do so for real: before the first such test of a workflow, Spotlight asks (**Run it for real** or **Not now**, [Test and fix](#test-and-fix)). A change that only renames nodes isn't tested; any other is tested against the workflow's description plus your message. Tests: `test/spotlight-autonomous.test.ts`.
 
+## Ask about it
+
+A resource's ⋯ menu and a failed run open the chat about that resource with its chip set and three starter questions.
+The contract and the starters are in [spotlight.md](spotlight.md#ask-about-it).
+
 ## Tagging with @
 
 Typing `@` (at the start of the box or after a space) opens a list above the box where you pick what the model should

@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowRightLeft, ChevronDown, ChevronRight, Download, ExternalLink, FileUp, Folder as FolderIcon, FolderInput, FolderPlus, LayoutTemplate, Lock, MoreHorizontal, Pencil, Plus, Share2, Trash2 } from 'lucide-react';
+import { ArrowRightLeft, ChevronDown, ChevronRight, Download, ExternalLink, FileUp, Folder as FolderIcon, FolderInput, FolderPlus, LayoutTemplate, Lock, MoreHorizontal, Pencil, Plus, Share2, Sparkles, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api, ApiError } from '@/lib/client/api';
@@ -30,6 +30,7 @@ import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { NodeIcon } from '@/components/ui/icon';
 import { SearchInput, Select } from '@/components/ui/inputs';
+import { askAbout, askDetail } from '@/lib/client/ask-about';
 import { MenuItem, MenuSeparator, Popover } from '@/components/ui/popover';
 import { ImportReportDialog, showImportReport } from '@/components/editor/import-report';
 import { readJsonFile } from '@/components/editor/import-dialog';
@@ -405,6 +406,14 @@ function WorkflowRow({
                 <Link href={`/workflows/${workflow.id}`} className="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-t1 hover:bg-acdim [&_svg]:size-3.5">
                   <ExternalLink /> Open
                 </Link>
+                <MenuItem
+                  onClick={() => {
+                    close();
+                    askAbout(askDetail({ type: 'workflow', id: workflow.id, name: workflow.name }));
+                  }}
+                >
+                  <Sparkles /> Ask Spotlight
+                </MenuItem>
                 <MenuItem
                   disabled={Boolean(readOnly)}
                   hint={readOnly && 'read-only'}

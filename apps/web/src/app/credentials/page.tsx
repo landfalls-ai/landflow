@@ -1,9 +1,10 @@
 'use client';
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { ArrowRightLeft, MoreHorizontal, Plus, Share2 } from 'lucide-react';
+import { ArrowRightLeft, MoreHorizontal, Plus, Share2, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
+import { askAbout, askDetail } from '@/lib/client/ask-about';
 import { timeAgo } from '@/lib/client/format';
 import { showHeaderAction } from '@/lib/client/list-page';
 import { resourceCan, type ResourceOwnership } from '@/lib/shared/projects';
@@ -130,6 +131,15 @@ function CredentialsView() {
                     >
                       {(close) => (
                         <>
+                          {/* The reference only: a name and an id, never the secret. */}
+                          <MenuItem
+                            onClick={() => {
+                              close();
+                              askAbout(askDetail({ type: 'credential', id: credential.id, name: credential.name }));
+                            }}
+                          >
+                            <Sparkles /> Ask about where it’s used
+                          </MenuItem>
                           <MenuItem
                             onClick={() => {
                               close();

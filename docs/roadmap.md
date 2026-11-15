@@ -1820,6 +1820,12 @@ Closes P-wf-1, P-wf-2, P-cr-1, P-cr-2, P-dt-1, P-pr-2 and P-auth-1; X10 closed i
   list (the Overview lists those items itself); X10 still shows twice in Settings → Variables ("Add variable" beside
   "Add your first variable", now also in a project's Settings tab) and in Agents → Teams, both outside this package.
 
+## Ask about it (B36, backbone wave 6)
+
+- **CH16 closed (the sending side).** Every resource's ⋯ has **Ask Spotlight** and a failed run has **Ask why it failed**;
+  they fire `landflow:ask-about` with the resource and three starters ([spotlight.md](spotlight.md#ask-about-it)). The chat
+  panel that listens for it is B35.
+
 ## Not planned
 
 Later, maybe: an agent code sandbox, and prompt management. Not planned:
