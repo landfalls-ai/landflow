@@ -4,11 +4,12 @@
  * 10 seconds while the run is live) and the pure helpers turn a `RunSpend` into the rows, the cache sentence, the
  * composition bar and the call rows the Spend tab draws. Numbers and names only; the answer holds no prompt text.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import { CALL_PURPOSE_LABELS } from '../shared/ai-call';
 import { PROMPT_PART_LABELS, type CountMethod, type PromptPart } from '../shared/ai-call-parts';
 import { formatCost, formatTokens } from '../shared/ai-usage';
+import type { RunModel } from '../shared/run-trace-model';
 import { type CacheLine, type RunSpend, type SpendCall, type SpendComposition, type SpendSlice, type SpendTotals } from '../shared/run-spend';
 
 export const SPEND_REFRESH_MS = 10_000;
@@ -19,28 +20,47 @@ export interface RunSpendState {
   error?: string;
 }
 
-/** The run's spend, kept current while the run is live. */
-export function useRunSpend(executionId: string | undefined, live = false): RunSpendState {
+/** Whether the run's spend must be read once more: the run was live and is not any more (the last calls land after the last poll). */
+export const readsAtEnd = (wasLive: boolean, live: boolean): boolean => wasLive && !live;
+
+/** The run's spend, kept current while the run is live. `retry` reads again (after a failed read). */
+export function useRunSpend(executionId: string | undefined, live = false): RunSpendState & { retry: () => void } {
   const [state, setState] = useState<RunSpendState>({ loading: Boolean(executionId) });
+  const wasLive = useRef(false);
+  /** Bumped by every new run and every retry; an answer of an older read is ignored. */
+  const generation = useRef(0);
   const read = useCallback(async () => {
     if (!executionId) return;
+    const mine = generation.current;
     try {
       const spend = await api<RunSpend>(`/api/executions/${executionId}/spend`, { background: true });
-      setState({ spend, loading: false });
+      if (mine === generation.current) setState({ spend, loading: false });
     } catch (e) {
-      setState((s) => ({ ...s, loading: false, error: (e as Error).message }));
+      if (mine === generation.current) setState((s) => ({ ...s, loading: false, error: (e as Error).message }));
     }
   }, [executionId]);
   useEffect(() => {
+    generation.current += 1;
     setState({ loading: Boolean(executionId) });
     void read();
+    return () => {
+      generation.current += 1;
+    };
   }, [executionId, read]);
+  useEffect(() => {
+    if (readsAtEnd(wasLive.current, live)) void read();
+    wasLive.current = live;
+  }, [live, read]);
   useEffect(() => {
     if (!executionId || !live) return;
     const timer = setInterval(() => void read(), SPEND_REFRESH_MS);
     return () => clearInterval(timer);
   }, [executionId, live, read]);
-  return state;
+  const retry = useCallback(() => {
+    setState((s) => ({ ...s, loading: !s.spend, error: undefined }));
+    void read();
+  }, [read]);
+  return { ...state, retry };
 }
 
 export type SpendBy = 'purpose' | 'model' | 'node' | 'agent' | 'step';
@@ -69,7 +89,9 @@ export const costOf = (t: Pick<SpendTotals, 'cost' | 'calls' | 'unpricedCalls'>)
 
 /** One row per slice of the chosen breakdown, as the table shows it. A step's label is "Step 2". */
 export function spendRows(spend: RunSpend, by: SpendBy): SpendRow[] {
-  return slicesOf(spend, by).map((s) => ({
+  const slices = slicesOf(spend, by);
+  const ordered = by === 'step' ? [...slices].sort((a, b) => Number(a.key) - Number(b.key)) : slices;
+  return ordered.map((s) => ({
     key: s.key,
     label: by === 'step' ? `Step ${s.key}` : s.label,
     calls: s.calls,
@@ -96,7 +118,9 @@ export function cacheSentence(cache: CacheLine): { line: string; reasons: string
   const pct = Math.round(cache.hitRate * 100);
   const saved = cache.savedUsd > 0 ? ` · saved ${formatCost(cache.savedUsd)}` : '';
   const misses = ` · ${cache.missCalls} ${cache.missCalls === 1 ? 'miss' : 'misses'}`;
-  const reasons = [...new Set(cache.missReasons)].map((r) => MISS_REASON_WORDS[r]);
+  const counts = new Map<CacheLine['missReasons'][number], number>();
+  for (const r of cache.missReasons) counts.set(r, (counts.get(r) ?? 0) + 1);
+  const reasons = [...counts].map(([r, n]) => (n > 1 ? `${MISS_REASON_WORDS[r]} (${n} calls)` : MISS_REASON_WORDS[r]));
   return { line: `${pct}% of the prompt came from the cache${saved}${misses}`, reasons };
 }
 
@@ -140,7 +164,7 @@ export interface SpendCallRow {
   spanId?: string;
 }
 
-export function callRows(calls: SpendCall[]): SpendCallRow[] {
+export function callRows(calls: SpendCall[], model?: Pick<RunModel, 'spans'>): SpendCallRow[] {
   return calls.map((c) => ({
     usageId: c.usageId,
     at: c.at,
@@ -148,7 +172,7 @@ export function callRows(calls: SpendCall[]): SpendCallRow[] {
     model: c.model,
     tokens: `${formatTokens(c.inputTokens)} in · ${formatTokens(c.outputTokens)} out`,
     cost: c.priced ? formatCost(c.cost) : UNPRICED,
-    ...(c.spanId && { spanId: c.spanId }),
+    ...(model && matchCallToSpan(c, model) && { spanId: matchCallToSpan(c, model) }),
   }));
 }
 
@@ -162,4 +186,26 @@ export function totalTiles(t: SpendTotals): Array<[label: string, value: string]
     ['Calls', String(t.calls)],
   ];
   return tiles;
+}
+
+/**
+ * The journal model span of a priced call (the inverse of `matchSpanToCall`): the call's `spanId` is the OpenTelemetry
+ * id, the Run Trace's spans have journal ids. Same model name, `at` within [startedAt - 1 s, endedAt + 2 s], the same
+ * agent when the span's actor or caller is one, the nearest `at` on a tie.
+ */
+export function matchCallToSpan(call: Pick<SpendCall, 'at' | 'model' | 'agentId'>, model: Pick<RunModel, 'spans'>): string | undefined {
+  const at = Date.parse(call.at);
+  if (Number.isNaN(at)) return undefined;
+  let best: { id: string; gap: number } | undefined;
+  for (const span of Object.values(model.spans)) {
+    if (span.kind !== 'model' || span.name !== call.model) continue;
+    const start = Date.parse(span.startedAt);
+    const end = span.endedAt ? Date.parse(span.endedAt) : start;
+    if (Number.isNaN(start) || at < start - 1000 || at > end + 2000) continue;
+    const agent = [span.actor, span.caller].find((a) => a?.id.startsWith('agent:'));
+    if (agent && call.agentId && agent.id !== `agent:${call.agentId}`) continue;
+    const gap = Math.abs(at - start);
+    if (!best || gap < best.gap) best = { id: span.id, gap };
+  }
+  return best?.id;
 }

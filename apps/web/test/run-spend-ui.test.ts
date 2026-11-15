@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 import type { JournalEvent, RunActor } from '@/lib/shared/run-trace';
 import { foldJournal } from '@/lib/shared/run-trace-model';
 import type { RunSpend, SpendCall, SpendSlice, SpendTotals } from '@/lib/shared/run-spend';
-import { cacheSentence, callRows, compositionBars, spendRows, totalTiles } from '../src/lib/client/run-spend';
+import { cacheSentence, callRows, compositionBars, matchCallToSpan, readsAtEnd, spendRows, totalTiles } from '../src/lib/client/run-spend';
 import { TAB_LABELS, visibleTabs } from '../src/components/run-trace/run-trace-tabs';
 import { SpendBody } from '../src/components/run-trace/spend';
 
@@ -52,7 +52,7 @@ describe('the Spend helpers', () => {
     expect(cacheSentence(demo.cache)).toEqual({ line: '53% of the prompt came from the cache · saved $0.0432 · 0 misses', reasons: [] });
     const missed = cacheSentence({ ...demo.cache, missCalls: 2, missReasons: ['expired', 'tools-changed', 'expired'] });
     expect(missed.line).toContain('2 misses');
-    expect(missed.reasons).toEqual(['the cache expired (more than 5 minutes apart)', 'the tools changed']);
+    expect(missed.reasons).toEqual(['the cache expired (more than 5 minutes apart) (2 calls)', 'the tools changed']);
     expect(cacheSentence({ readTokens: 0, writeTokens: 0, missCalls: 0, missReasons: [], savedUsd: 0 }).line).toMatch(/No call/);
   });
 
@@ -69,10 +69,55 @@ describe('the Spend helpers', () => {
 
   it('the call rows and the totals', () => {
     const rows = callRows(demo.calls);
-    expect(rows[0]).toMatchObject({ purpose: 'Answer', cost: '$0.0248', spanId: 'span1' });
+    expect(rows[0]).toMatchObject({ purpose: 'Answer', cost: '$0.0248' });
+    expect(rows[0].spanId).toBeUndefined(); // the call's OpenTelemetry id opens nothing: only a matched journal span does
     expect(rows[3]).toMatchObject({ purpose: 'Guardrail check', cost: 'No price' });
-    expect(rows[3].spanId).toBeUndefined();
     expect(totalTiles(demo.totals)).toEqual([['Cost', '$0.0746'], ['Tokens in', '30.6k'], ['Tokens out', '1,500'], ['Cached', '16k'], ['Calls', '4']]);
+  });
+});
+
+describe('the Spend refresh and the span of a call', () => {
+  it('reads once more when a live run ends, not otherwise', () => {
+    expect(readsAtEnd(true, false)).toBe(true);
+    expect(readsAtEnd(false, false)).toBe(false);
+    expect(readsAtEnd(true, true)).toBe(false);
+    expect(readsAtEnd(false, true)).toBe(false);
+  });
+
+  it('steps read in step order whatever the route sent', () => {
+    const odd = { ...demo, byIteration: [slice('3', '3', 0.5, { calls: 1 }), slice('1', '1', 0.3, { calls: 1 }), slice('2', '2', 0.2, { calls: 1 })] };
+    expect(spendRows(odd, 'step').map((r) => r.label)).toEqual(['Step 1', 'Step 2', 'Step 3']);
+  });
+
+  const agent: RunActor = { id: 'agent:ag1', type: 'agent', name: 'Researcher' };
+  const journal = foldJournal(
+    (
+      [
+        { type: 'span.started', spanId: 'run', kind: 'run', name: 'Flow', actor: { id: 'workflow', type: 'system', name: 'Flow' } },
+        { type: 'span.started', spanId: 'run/model:0', parentSpanId: 'run', kind: 'model', name: 'claude-sonnet-4-6', actor: { id: 'model:claude-sonnet-4-6', type: 'model', name: 'claude-sonnet-4-6' }, caller: agent },
+        { type: 'span.ended', spanId: 'run/model:0', status: 'success' },
+        { type: 'span.started', spanId: 'run/model:1', parentSpanId: 'run', kind: 'model', name: 'claude-sonnet-4-6', actor: { id: 'model:claude-sonnet-4-6', type: 'model', name: 'claude-sonnet-4-6' }, caller: agent },
+        { type: 'span.ended', spanId: 'run/model:1', status: 'success' },
+        { type: 'span.ended', spanId: 'run', status: 'success' },
+      ] as Array<Record<string, unknown>>
+    ).map((e, i) => ({ seq: i + 1, executionId: 'x1', at: new Date(Date.parse('2026-11-16T10:00:00Z') + i * 1000).toISOString(), ...e }) as JournalEvent),
+  );
+
+  it('finds the journal span of a call that carries an OpenTelemetry span id', () => {
+    const c = (at: string, o: Partial<SpendCall> = {}) => call(1, { spanId: '5b8aa5a2d2c5f1e0', model: 'claude-sonnet-4-6', agentId: 'ag1', at, ...o });
+    expect(matchCallToSpan(c('2026-11-16T10:00:01.200Z'), journal)).toBe('run/model:0');
+    expect(matchCallToSpan(c('2026-11-16T10:00:03.100Z'), journal)).toBe('run/model:1');
+    expect(matchCallToSpan(c('2026-11-16T10:00:01.200Z', { model: 'other' }), journal)).toBeUndefined();
+    expect(matchCallToSpan(c('2026-11-16T10:00:01.200Z', { agentId: 'ag2' }), journal)).toBeUndefined();
+    expect(matchCallToSpan(c('2026-11-16T11:00:00.000Z'), journal)).toBeUndefined();
+    const rows = callRows([c('2026-11-16T10:00:01.200Z'), c('2026-11-16T11:00:00.000Z', { usageId: 'late' })], journal);
+    expect(rows.map((r) => r.spanId)).toEqual(['run/model:0', undefined]);
+  });
+
+  it('draws a time as a button only when a span was found', () => {
+    const html = renderToStaticMarkup(createElement(SpendBody, { spend: { ...demo, calls: [call(1, { at: '2026-11-16T10:00:01.200Z', model: 'claude-sonnet-4-6' }), call(2, { at: '2026-11-16T12:00:00.000Z', model: 'claude-sonnet-4-6' })] }, open: () => {}, model: journal }));
+    expect(html.match(/aria-label="Open the call at/g)).toHaveLength(1);
+    expect(html).toContain('Researcher');
   });
 });
 

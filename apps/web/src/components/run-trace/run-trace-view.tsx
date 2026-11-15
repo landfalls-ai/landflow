@@ -551,7 +551,7 @@ function TraceBody({
         {current === 'trace' && <Trace model={model} open={open} />}
         {current === 'team' && <Team model={model} open={open} />}
         {/* SP06: the Spend tab */}
-        {current === 'spend' && <Spend executionId={executionId} live={full.live} open={open} />}
+        {current === 'spend' && <Spend executionId={executionId} live={full.live} open={open} model={full} />}
         {current === 'artifacts' && <Artifacts executionId={executionId} model={model} changes={changes} repo={github} open={open} replay={replay} />}
       </div>
 

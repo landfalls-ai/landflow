@@ -113,8 +113,8 @@ the run in its workflow's Runs tab (`/workflows/<id>/runs/<executionId>`, no red
   for what), while **Needs you** keeps the run's (its buttons answer the execution); `waitEchoes` in
   `lib/shared/run-trace-model.ts` picks them. A team run opens with its [headlines](#headlines).
 - **Tabs only with something in them.** **Story** and **Trace** are always there. **Team** shows when more than one
-  person or agent took part, **Artifacts** when the run made something (files agents wrote count), so a short
-  single-flow run has just Story and Trace. The tabs are decided from the whole run, not the replay cut. A saved or linked tab that is
+  person or agent took part, **Artifacts** when the run made something (files agents wrote count), **Spend** when the
+  run used model tokens, so a short single-flow run has just Story and Trace. The tabs are decided from the whole run, not the replay cut. A saved or linked tab that is
   not shown falls back to the Story. `visibleTabs()` in `components/run-trace/run-trace-tabs.ts`.
 - **The time slider** shows only when the run took 5 seconds or more and more than one took part
   (`showScrubber()`); otherwise there is nothing to replay.
@@ -665,7 +665,10 @@ while the run is live. Tokens, models and cost are what happened in the run, nev
   shares, and how they were counted, said from the data: "Counted exactly", "Counted by the model's tokenizer" or
   "Estimated" (the weakest method among the calls summed), plus how many calls have no split.
 - **Calls**: time, purpose, model, tokens and cost, the latest 20 (Show all lists the rest); a time opens the call's
-  model span in the detail sheet.
+  model span in the detail sheet. A call's `spanId` is the OpenTelemetry id, the Run Trace's spans have journal ids, so
+  `matchCallToSpan` (`lib/client/run-spend.ts`) finds the span: same model name, the call's time within a second before
+  and two after the span, the same agent, the nearest time on a tie. A call with no such span shows its time as plain
+  text. The tab reads once more when the run ends, and a failed read has a Try again button.
 
 The answer holds sizes, counts and names only: no prompt text is shown or stored for spend.
 

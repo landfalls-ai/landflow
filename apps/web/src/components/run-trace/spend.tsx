@@ -8,8 +8,9 @@
  */
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useRunSpend, spendRows, cacheSentence, compositionBars, callRows, totalTiles, costOf, SPEND_BY_LABELS, type SpendBy } from '@/lib/client/run-spend';
+import { useRunSpend, spendRows, cacheSentence, compositionBars, callRows, totalTiles, costOf, UNPRICED, SPEND_BY_LABELS, type SpendBy } from '@/lib/client/run-spend';
 import type { RunSpend } from '@/lib/shared/run-spend';
+import type { RunModel } from '@/lib/shared/run-trace-model';
 import { can } from '@/lib/shared/auth';
 import { formatTokens } from '@/lib/shared/ai-usage';
 import { useViewer } from '../auth/viewer';
@@ -24,8 +25,8 @@ const CALLS_SHOWN = 20;
 /** A grey ramp that reads in both themes; the swatches in the legend use the same colours. */
 const swatch = (i: number) => `color-mix(in srgb, var(--t1) ${Math.max(14, 80 - i * 11)}%, var(--sf2))`;
 
-export function Spend({ executionId, live, open }: { executionId: string; live: boolean; open: (o: Open) => void }) {
-  const { spend, loading, error } = useRunSpend(executionId, live);
+export function Spend({ executionId, live, open, model }: { executionId: string; live: boolean; open: (o: Open) => void; model?: Pick<RunModel, 'spans'> }) {
+  const { spend, loading, error, retry } = useRunSpend(executionId, live);
   if (!spend && loading)
     return (
       <div className="flex flex-col gap-3" aria-busy>
@@ -34,12 +35,22 @@ export function Spend({ executionId, live, open }: { executionId: string; live: 
         ))}
       </div>
     );
-  if (!spend) return <EmptyState title="The spend could not be loaded" hint={error ?? 'Try again in a moment.'} />;
-  return <SpendBody spend={spend} open={open} />;
+  if (!spend) return (
+      <EmptyState
+        title="The spend could not be loaded"
+        hint={error ?? 'Try again in a moment.'}
+        action={
+          <button type="button" onClick={retry} className="rounded-lg border border-hair px-3 py-1.5 text-[13px] text-t1 hover:bg-sf2">
+            Try again
+          </button>
+        }
+      />
+    );
+  return <SpendBody spend={spend} open={open} model={model} />;
 }
 
 /** The tab's body for a loaded answer (also what the tests render). */
-export function SpendBody({ spend, open }: { spend: RunSpend; open: (o: Open) => void }) {
+export function SpendBody({ spend, open, model }: { spend: RunSpend; open: (o: Open) => void; model?: Pick<RunModel, 'spans'> }) {
   const viewer = useViewer();
   const admin = viewer ? can(viewer, 'settings:manage') : false;
   const [by, setBy] = useState<SpendBy>('purpose');
@@ -47,17 +58,17 @@ export function SpendBody({ spend, open }: { spend: RunSpend; open: (o: Open) =>
   const rows = useMemo(() => spendRows(spend, by), [spend, by]);
   const cache = cacheSentence(spend.cache);
   const bar = compositionBars(spend.composition);
-  const calls = useMemo(() => callRows(spend.calls), [spend.calls]);
+  const calls = useMemo(() => callRows(spend.calls, model), [spend.calls, model]);
   const shown = all ? calls : calls.slice(-CALLS_SHOWN);
   const t = spend.totals;
 
   return (
     <div className="flex flex-col gap-3">
       <Card>
-        <dl className="grid grid-cols-5 gap-3">
+        <dl className="grid grid-cols-[repeat(auto-fit,minmax(84px,1fr))] gap-3">
           {totalTiles(t).map(([label, value]) => (
             <div key={label} className="min-w-0">
-              <dd className="truncate text-[18px] font-semibold tabular-nums text-t1">{value}</dd>
+              <dd className="text-[18px] font-semibold tabular-nums text-t1">{value}</dd>
               <dt className="text-[12px] text-t3">{label}</dt>
             </div>
           ))}
@@ -74,7 +85,8 @@ export function SpendBody({ spend, open }: { spend: RunSpend; open: (o: Open) =>
         )}
         {spend.hidden.runs > 0 && (
           <p className="mt-2 text-[12px] text-t2">
-            {spend.hidden.runs} run{spend.hidden.runs === 1 ? '' : 's'} you can’t open: {costOf(spend.hidden.totals)}
+            {spend.hidden.runs} run{spend.hidden.runs === 1 ? '' : 's'} you can’t open:{' '}
+            {costOf(spend.hidden.totals) === UNPRICED ? `${formatTokens(spend.hidden.totals.inputTokens)} in · ${formatTokens(spend.hidden.totals.outputTokens)} out` : costOf(spend.hidden.totals)}
           </p>
         )}
       </Card>
