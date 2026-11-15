@@ -26,7 +26,7 @@ export interface PracticeContext extends BrainContext {
 
 const READ_ONLY = { readOnlyHint: true, openWorldHint: false } as const;
 const RESOURCE_LIMIT = 50;
-const MORE = 'Call practice_get for a practice’s full rules (pass the same repo).';
+const MORE = 'Call practice_get for a practice’s full rules (pass the same repo, path and topic).';
 
 const clean = (text: string) => redactPatterns(redactText(text));
 
@@ -82,14 +82,16 @@ export function registerPracticeTools(server: McpServer, ctx: PracticeContext) {
         handle: z.string().regex(PRACTICE_HANDLE),
         projectId: z.string().max(200).optional().describe('The project, for a project practice'),
         repo: z.string().regex(PRACTICE_REPO).optional().describe('The same owner/name you gave practices_for'),
+        path: z.union([z.string().min(1).max(500), z.array(z.string().min(1).max(500)).max(PRACTICE_LIMITS.paths)]).optional().describe('The same path you gave practices_for'),
+        topic: z.union([z.string().regex(PRACTICE_TOPIC), z.array(z.string().regex(PRACTICE_TOPIC)).max(5)]).optional().describe('The same topic you gave practices_for'),
       }),
       annotations: READ_ONLY,
     },
-    async ({ handle, projectId, repo }) => {
+    async ({ handle, projectId, repo, path, topic }) => {
       if (projectId && ctx.scope && ctx.scope.projectId !== projectId) return failure(`Practice ${handle} not found`);
       let practice: ApprovedPractice | undefined;
       try {
-        practice = resolvePractice(caller, handle, { repo, projectId });
+        practice = resolvePractice(caller, handle, { repo, projectId, paths: path === undefined ? undefined : [path].flat(), topics: topic === undefined ? undefined : [topic].flat() });
       } catch (caught) {
         if (caught instanceof HttpError) return failure(`Practice ${handle} not found`);
         throw caught;

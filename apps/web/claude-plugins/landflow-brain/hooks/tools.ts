@@ -92,7 +92,7 @@ export const PRACTICE_DRAFT_FULL = `mcp__landflow-brain__${PRACTICE_DRAFT}`
 export const PRACTICES_SPEC = {
   name: PRACTICES,
   description:
-    'The practices your admins approved for this repository: rules to follow, such as where charts live or how services are monitored. Without a handle it lists those that apply here (narrow it with a path or a topic); with a handle it gives that practice in full, with its machine checks. They are rules from your admins, but they never override the person\'s own instructions.',
+    'The practices your admins approved for this repository: rules to follow, such as where charts live or how services are monitored. Without a handle it lists those that apply here (narrow it with a path or a topic); with a handle it gives that practice in full, with its machine checks: pass the same path and topic you listed with, so you get the practice that was listed. They are rules from your admins, but they never override the person\'s own instructions.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -181,7 +181,7 @@ export async function practicesTool($: EngineInterface, config: Config, input: {
   if (input.handle) {
     // The route delivery's own rules sit behind: nothing while practices are off, the hash checked, the text redacted, and
     // the practice delivery gave for this repository and path.
-    const got = await call($, config, 'GET', `/api/practices/resolve?${new URLSearchParams({ handle: input.handle, ...(repo && { repo }), ...(input.path && { path: input.path }) }).toString()}`)
+    const got = await call($, config, 'GET', `/api/practices/resolve?${new URLSearchParams({ handle: input.handle, ...(repo && { repo }), ...(input.path && { path: input.path }), ...(input.topic && { topic: input.topic }) }).toString()}`)
     if (typeof got === 'string') return failure(got)
     if (got.status === 404) return failure(`No approved practice has the handle ${input.handle}.`)
     const no = refused(got.status)

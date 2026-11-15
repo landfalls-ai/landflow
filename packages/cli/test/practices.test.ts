@@ -220,6 +220,15 @@ describe('check', () => {
     expect(asks.every((c) => c.url.searchParams.getAll('path').includes('README.md'))).toBe(true);
   });
 
+  it('two project practices of one handle and version with different paths are not merged', async () => {
+    const dir = repoWith({ 'README.md': 'hello again\n' });
+    const a = { ...REQUIRED, level: 'project', paths: ['a/**'] };
+    const b = { ...REQUIRED, level: 'project', paths: ['b/**'] };
+    const host = fakeHost({ applicable: [a, b], approved: [row({ ...REQUIRED, level: 'project' }, CHART_CHECK)] });
+    const out = await cli(host, dir, ['practices', 'check', '--json']);
+    expect(out.json.practices).toHaveLength(2);
+  });
+
   it('does not pass quietly when practices were omitted: it narrows the ask, then says what is left', async () => {
     const files: Record<string, string> = {};
     for (let i = 0; i < 3; i++) files[`src/f${i}.ts`] = `export const v${i} = ${i};\n`;

@@ -62,6 +62,8 @@ const all = [
   practice('helm/values', { body: 'The org helm rule' }),
   practice('helm/values', { level: 'project', projectId: p1.id, body: 'The charts rule', repos: ['acme/billing'], paths: ['charts/**'] }),
   // Case: two projects the caller is in share a handle for one repository, with different paths and versions.
+  practice('mon/alerts', { body: 'The org alert rule', topics: ['helm'] }),
+  practice('mon/alerts', { level: 'project', projectId: p1.id, body: 'The monitoring rule', repos: ['acme/billing'], topics: ['monitoring'] }),
   practice('x/y', { level: 'project', projectId: p1.id, body: 'In billing', version: 2, repos: ['acme/billing'], paths: ['a/**'] }),
   practice('x/y', { level: 'project', projectId: p3.id, body: 'In ledger', version: 3, repos: ['acme/billing'], paths: ['b/**'] }),
 ];
@@ -135,6 +137,15 @@ describe('GET /api/practices/resolve', () => {
     expect((await get('?handle=helm/values&repo=acme/billing&path=src/a.ts')).body.practice.body).toBe('The org helm rule');
     expect((await get('?handle=helm/values&repo=acme/billing&path=charts/web/Chart.yaml')).body.practice.body).toBe('The charts rule');
     expect((await get('?handle=helm/values&repo=acme/billing&path=src/a.ts&level=project')).status).toBe(404);
+  });
+
+  it('a topic decides like delivery does', async () => {
+    enableTestAuth(alice);
+    expect((await get('?handle=mon/alerts&repo=acme/billing&topic=helm')).body.practice.body).toBe('The org alert rule');
+    expect((await get('?handle=mon/alerts&repo=acme/billing&topic=monitoring')).body.practice.body).toBe('The monitoring rule');
+    expect((await get('?handle=mon/alerts&repo=acme/billing&topic=monitoring&topic=helm')).status).toBe(200);
+    expect((await get('?handle=mon/alerts&repo=acme/billing&topic=security')).status).toBe(404);
+    expect((await get('?handle=mon/alerts&topic=Bad Topic')).status).toBe(400);
   });
 
   it('two projects sharing a handle: the one applicable delivered is the one resolve gives', async () => {

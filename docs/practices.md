@@ -146,9 +146,9 @@ Reject. On a phone it is one column of cards behind `md`; desktop is unchanged.
   ```
 
   Agents cite what they followed with that trailing line, or a commit's `Practice: handle@version`.
-- `GET /api/practices/applicable?repo=&path=&topic=` returns the practices and the block. `GET /api/practices/resolve?handle=&repo=&path=&projectId=&level=`
+- `GET /api/practices/applicable?repo=&path=&topic=` returns the practices and the block. `GET /api/practices/resolve?handle=&repo=&path=&topic=&projectId=&level=`
   returns one practice in full (rules and machine checks): exactly the one `applicable` delivered for the same `repo`,
-  `path`s (repeat, at most 20) and `projectId`, by the same filter and ranking, so a project practice that does not cover the
+  `path`s (repeat, at most 20), `topic`s (at most 5) and `projectId`, by the same filter and ranking, so a project practice that does not cover the
   path never stands in for the organization's, and two projects sharing a handle give the one delivery gave; `level` keeps a
   winner of that level. It is hash-checked and redacted, and answers 404 while practices are off, when delivery gave none,
   and for a project the caller has no role in. `POST /api/practices/cite` records that an answer

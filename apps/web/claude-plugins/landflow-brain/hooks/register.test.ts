@@ -697,6 +697,8 @@ test('the practices tool lists what applies, with the path and topic, and gives 
   expect(practiceUrls.every(u => !u.includes('status=approved'))).toBe(true)
   await $.tool.call({ tool: 'mcp__landflow-brain__practices', handle: 'helm/chart-location', path: 'charts/web/Chart.yaml' } as never)
   expect(practiceUrls.at(-1)).toContain('path=charts%2Fweb%2FChart.yaml')
+  await $.tool.call({ tool: 'mcp__landflow-brain__practices', handle: 'helm/chart-location', topic: 'helm' } as never)
+  expect(practiceUrls.at(-1)).toContain('topic=helm')
   expect(one.result.content).toContain('[helm/chart-location@3] required: Chart location')
   expect(one.result.content).toContain('Charts live in deploy/helm/<service>/.')
   expect(one.result.content).toContain('pathExists')

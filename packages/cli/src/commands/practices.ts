@@ -148,6 +148,7 @@ export const check: Command = {
     const touched = change.files.map((f) => f.path);
     // The route takes at most 20 paths a call: ask in groups and join the answers by handle.
     // Keyed by level too: an org and a project practice of one handle and version are two practices.
+    const keyOf = (p: ApplicablePractice) => `${p.level}:${p.handle}@${p.version}:${JSON.stringify([p.repos, p.paths])}`;
     const byHandle = new Map<string, ApplicablePractice>();
     // The paths each was delivered for, so the read of its rules gives exactly the practice that was delivered.
     const pathsOf = new Map<string, string[]>();
@@ -161,7 +162,7 @@ export const check: Command = {
       calls += 1;
       const got = await applicable(ctx, { repo, path: paths.length ? paths : undefined });
       for (const p of got.practices) {
-        const key = `${p.level}:${p.handle}@${p.version}`;
+        const key = keyOf(p);
         // The first call that delivered it: its paths alone reproduce that delivery (a union could pick another winner).
         if (!byHandle.has(key)) pathsOf.set(key, paths);
         byHandle.set(key, p);
@@ -179,7 +180,7 @@ export const check: Command = {
     let moved = 0;
     for (const p of [...byHandle.values()].sort((a, b) => a.handle.localeCompare(b.handle) || a.level.localeCompare(b.level))) {
       // The same level the delivery gave: an org practice never stands in for the project's of the same handle and version.
-      const found = await resolved(ctx, p.handle, { repo, level: p.level, path: (pathsOf.get(`${p.level}:${p.handle}@${p.version}`) ?? []).slice(0, APPLICABLE_PATHS) });
+      const found = await resolved(ctx, p.handle, { repo, level: p.level, path: (pathsOf.get(keyOf(p)) ?? []).slice(0, APPLICABLE_PATHS) });
       const row = found && found.version === p.version && found.scope.level === p.level ? found : undefined;
       if (!row) moved += 1;
       const checks = row?.checks ?? [];
