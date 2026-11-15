@@ -371,6 +371,8 @@ rolled out (17 MCP tools):
 | Tool or seat cost | the template imported (`tpl_SXW930LlkK`) and not used: dev Landbright's gate requests REQ-9 and REQ-10 were settled with made-up references, so the flow runs only against its stand-in until Landbright's PR #5 merges |
 | Incident cost | the template imported (`tpl_LTvyzkMAlD`) but can't be used on the cluster: it has no landfall plugin and no Landfall credential, so the flow ran only in its tests (`apps/web/test/landledger-flows.test.ts`, the landfall plugin against its fake Landfall) |
 
+After the review fixes (`7c176b2`), the plugin image was rebuilt and rolled out again (17 MCP tools) and the three changed templates re-imported in place of the old ones: tool or seat cost `tpl_4797PIXfJL` (was `tpl_SXW930LlkK`; still not run), incident cost `tpl_6UTyN84CP2` (was `tpl_LTvyzkMAlD`; still needs the landfall plugin) and variance notes `tpl_TtvrSj_XDn` (was `tpl_fTbP6v_OoD`). `wf_4RLZn8ZPgJ` took the new money helper in **One note per cost center** and was published as version 4.
+
 To draft a month's notes by hand when the event was missed, run the published workflow with the event pinned on
 **Notes requested**: `POST /api/workflows/wf_4RLZn8ZPgJ/run` with `{ startNodeId: <the trigger's id>, workflow: { …the
 workflow, pinData: { <the trigger's id>: [{ json: { type: 'notes.draft_requested', month, snapshotSha256, needed,
