@@ -205,7 +205,11 @@ credentials, `requests:read` and `annotations:write`). Subscribe **Landbright ev
   `http://host.docker.internal:11434`; the agent's id `landflow:<workflow>` and name; `SPONSOR`) → **Get the snapshot**
   (Close → Snapshot, the read key) → **Get the figures** (Note → Figures, the notes key).
 - **One note per cost center**: nothing when the snapshot, the figures and the event name different hashes (a newer
-  close wins). Each needed note gets a prompt with its figures, one per line, written as they may be cited.
+  close wins). Each needed note gets a prompt with its figures, one per line, each as the exact cite to copy
+  (`{"figure":"variance_budget","amount":"-799.50"}: actual minus budget: under budget`), with the direction in words.
+  A first prompt that listed names and values apart had qwen3-coder:30b cite a driver's change as the actual, twice
+  (the redraft repeated it); with the cites as a menu it drafted both notes right on the first try in five runs
+  (`LANDFLOW_INTEGRATION=ollama`, the fake Landledger checking every cite).
 - **Draft the note** (AI Agent, JSON only, on **Local model**: Ollama with `{{ $json.model }}` at temperature 0.1) →
   **Shape the draft** (the text and the cites, taken leniently) → **Submit the draft** (Note → Submit Draft as the
   agent, with this run's id; On Error: Continue) → **Submitted or refused**.

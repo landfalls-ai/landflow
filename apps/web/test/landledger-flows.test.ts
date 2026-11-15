@@ -1025,11 +1025,11 @@ describe('Landledger: draft variance notes', () => {
     type: 'notes.draft_requested', id: 'evt_notes', timestamp: '2026-11-15T08:00:00.000Z', month: NOTES_MONTH, snapshotSha256: sha, needed: NOTE_FIGURES,
     draftUrl: `${fake.url}/api/notes/${NOTES_MONTH}/drafts`, url: `http://localhost:4811/close/${NOTES_MONTH}`, requestId: null, kind: null, costCenter: null,
   });
-  async function installNotes(model = 'qwen3-coder:30b') {
+  async function installNotes(model = 'qwen3-coder:30b', url = ollamaUrl) {
     const workflow = await install('landledger-variance-notes.json');
     const settings = workflow.nodes.find((n) => n.name === 'Settings')!;
     settings.parameters.codeEach = String(settings.parameters.codeEach)
-      .replace("const OLLAMA_URL = 'http://host.docker.internal:11434';", `const OLLAMA_URL = '${ollamaUrl}';`)
+      .replace("const OLLAMA_URL = 'http://host.docker.internal:11434';", `const OLLAMA_URL = '${url}';`)
       .replace("const MODEL = 'qwen3-coder:30b';", `const MODEL = '${model}';`);
     store.saveWorkflow(workflow);
     return store.getWorkflow(workflow.id)!;
@@ -1058,8 +1058,8 @@ describe('Landledger: draft variance notes', () => {
     expect(ollamaCalls.map((c) => c.model)).toEqual(['qwen3-coder:30b', 'qwen3-coder:30b']);
     expect(ollamaCalls[1].system).toMatch(/Use only the figures listed under FIGURES/);
     expect(ollamaCalls[1].prompt).toContain('Cost center: ENG-AGENTS (Engineering agents)');
-    expect(ollamaCalls[1].prompt).toContain('- variance_budget = -799.50 (actual minus budget)');
-    expect(ollamaCalls[1].prompt).toContain('- driver_model key "claude-sonnet-5-5" (Claude Sonnet 5.5) = 150.25');
+    expect(ollamaCalls[1].prompt).toContain('- {"figure":"variance_budget","amount":"-799.50"}: actual minus budget: under budget');
+    expect(ollamaCalls[1].prompt).toContain('- {"figure":"driver_model","key":"claude-sonnet-5-5","amount":"150.25"}: Claude Sonnet 5.5 (model), its change on the month before: it cost more');
     expect(drafts().map((r) => r.headers.authorization)).toEqual([`Bearer ${NOTES_KEY}`, `Bearer ${NOTES_KEY}`]);
     expect(drafts()[1].body).toMatchObject({
       costCenter: 'ENG-AGENTS',
@@ -1112,6 +1112,20 @@ describe('Landledger: draft variance notes', () => {
     await run(workflow, 'Notes requested', [requested()]);
     expect(new Set(ollamaCalls.map((c) => c.model))).toEqual(new Set(['qwen3.8:latest']));
   });
+
+  // LANDFLOW_INTEGRATION=ollama: the real local model (OLLAMA_URL, default 127.0.0.1:11434, qwen3-coder:30b) drafts
+  // against the fake Landledger, which checks every cite to the cent. Each note ends submitted or given up, never lost.
+  it.skipIf(!process.env.LANDFLOW_INTEGRATION?.split(',').includes('ollama'))('drafts with the real local model', async () => {
+    const workflow = await installNotes('qwen3-coder:30b', process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434');
+    const { record } = await run(workflow, 'Notes requested', [requested()]);
+    expect(record.status).toBe('success');
+    const rows = rowsOf('Landledger note drafts');
+    expect(rows.map((r) => r.cost_center).sort()).toEqual(['ENG-AGENTS', 'TOTAL']);
+    for (const r of rows) expect(['submitted', 'gave_up']).toContain(r.outcome);
+    expect(rows.some((r) => r.outcome === 'submitted')).toBe(true);
+    for (const d of drafts()) console.log(`[ollama] ${String(d.body.costCenter)}: ${String(d.body.text)} ${JSON.stringify(d.body.cites)}`);
+    console.log(`[ollama] ${JSON.stringify(rows.map((r) => [r.cost_center, r.outcome, r.attempt, r.refusal]))}`);
+  }, 600_000);
 });
 
 describe('Landledger: incident cost to the room', () => {
