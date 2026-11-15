@@ -14,6 +14,7 @@ import { brainModel } from '../brain/writer';
 import { database } from '../db';
 import { getPreferences } from '../preferences';
 import { postMessage, SLACK_CREDENTIAL, SLACK_OAUTH2_CREDENTIAL, slackCredential, type SlackCredential } from '../slack';
+import { safeFetch } from '../net/safe-fetch';
 import { logger } from '../telemetry/logger';
 import { brainEnabled, dayOf } from '../usage/ledger';
 import { store } from '../store';
@@ -255,7 +256,7 @@ const slackCredentialOf = (ctx: IExecuteContext): SlackCredential | undefined =>
 /** The Slack member behind an email, if Slack knows it (a GET: users.lookupByEmail takes no JSON). */
 async function slackMemberOf(credential: SlackCredential, email: string): Promise<string | undefined> {
   try {
-    const response = await fetch(`${credential.baseUrl}/users.lookupByEmail?${new URLSearchParams({ email })}`, { headers: { authorization: `Bearer ${credential.accessToken}` }, signal: AbortSignal.timeout(15_000) });
+    const response = await safeFetch(`${credential.baseUrl}/users.lookupByEmail?${new URLSearchParams({ email })}`, { headers: { authorization: `Bearer ${credential.accessToken}` }, signal: AbortSignal.timeout(15_000) });
     const data = (await response.json().catch(() => undefined)) as { ok?: boolean; user?: { id?: string } } | undefined;
     return data?.ok === true ? data.user?.id : undefined;
   } catch {
