@@ -267,6 +267,8 @@ describe('briefingText', () => {
     expect(text).not.toContain('evil.example');
     expect(text).toContain('https://github.com/acme/billing/pull/1');
     expect(safeLink('http://github.com/a')).toBeUndefined();
+    expect(safeLink('https://github.com:8443/a')).toBeUndefined();
+    expect(safeLink('https://user:pw@github.com/a')).toBeUndefined();
   });
 
   it('never cuts a link in half: a long line loses the link instead', () => {

@@ -60,6 +60,8 @@ describe('briefing card markup', () => {
     expect(safeHref('https://github.com.evil.example/a')).toBeUndefined();
     expect(safeHref('https://user:pw@github.com/a')).toBeUndefined();
     expect(safeHref('https://github.com/a/b')?.external).toBe(true);
+    expect(safeHref('https://github.com:8443/a/b')).toBeUndefined();
+    expect(safeHref('https://github.com:443/a/b')).toEqual({ href: 'https://github.com/a/b', external: true });
     expect(safeHref('http://localhost:3203/x?y=1', 'http://localhost:3203')).toEqual({ href: '/x?y=1', external: false });
     expect(safeHref('http://localhost:3203//evil.example/x', 'http://localhost:3203')).toBeUndefined();
     expect(safeHref('http://localhost:3203/\\evil.example/x', 'http://localhost:3203')).toBeUndefined();

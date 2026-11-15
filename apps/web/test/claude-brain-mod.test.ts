@@ -269,6 +269,7 @@ describe('colleagues, visibility and the admin rule', () => {
     expect(safeLink('https://github.com.evil.example/x', base)).toBeUndefined();
     expect(safeLink('http://github.com/x', base)).toBeUndefined();
     expect(safeLink('https://user:pw@github.com/x', base)).toBeUndefined();
+    expect(safeLink('https://github.com:8443/x', base)).toBeUndefined();
     expect(safeLink('javascript:alert(1)', base)).toBeUndefined();
     expect(cleanItem({ title: 't', url: 'https://evil.example/' }, base).url).toBeUndefined();
     const related = cleanRelated([{ person: { name: 'N'.repeat(200) }, because: { type: 'repo', name: 'r' }, items: [{ title: 'a\nb\u0007c', url: 'https://github.com/a/b' }] }], base);

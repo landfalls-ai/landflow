@@ -29,13 +29,13 @@ const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0
 /** One line: line breaks and control characters become spaces, so a title can't start a new quoted line or a heading. */
 const oneLine = (text: string) => text.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
 
-/** A link only when it points at this instance or github.com (https). */
+/** A link only when it points at this instance or github.com (https, its own port, no user or password). */
 export function safeLink(url: string | undefined): string | undefined {
   if (!url) return undefined;
   try {
     const parsed = new URL(url);
     const own = new URL(instanceUrl());
-    const github = parsed.protocol === 'https:' && parsed.hostname === 'github.com';
+    const github = parsed.protocol === 'https:' && parsed.host === 'github.com' && !parsed.username && !parsed.password;
     return github || parsed.origin === own.origin ? parsed.toString() : undefined;
   } catch {
     return undefined;
