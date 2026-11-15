@@ -241,3 +241,14 @@ items still open (its "Wave 6" section); this page is the short list to check be
 ## Plugins, Marketplace and Templates (B33)
 
 - With one marketplace (the default, the built-in Anthropic official one) the source menu is hidden, and with it that marketplace's Refresh card and the "This instance" source filter. Listings re-read after the 10-minute cache.
+
+## Asking for a higher cap (LiteLLM wave, LL05)
+
+- One cap-raise flow per instance, and it asks in chat. Switching Ask a Person to Slack works for the question, but a Slack
+  answer can't be matched to a signed-in admin, so it never applies a cap; answer in chat or by email.
+- Nobody asks about a credential's caps (an admin sets those in Settings → AI caps), and a workflow has only daily caps.
+- A published workflow's cap is raised only when its draft equals the published version; with unpublished changes the
+  request fails and says to publish first.
+- An agent's raised cap is written into its published version in place (and its history entry), not as a new version.
+- Apply Cap Raise tells the budgets sync and records whether it updated LiteLLM; a workflow's cap has no LiteLLM backstop,
+  so its `gateway` is `skipped`.
