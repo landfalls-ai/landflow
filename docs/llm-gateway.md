@@ -354,6 +354,32 @@ installs and publishes the flow. Admins change caps where they are set (the link
 The page reads `GET /api/insights/ai` and `GET /api/llm-gateway/status` ([reference/api.md](reference/api.md)) and
 refreshes every minute while the tab is visible.
 
+## What each call was for
+
+Each model call's `ai_usage` row says, besides the run, model and tokens, where the call ran and why (migration 2900;
+rows from before it, rows imported from the gateway's spend log and calls outside a run have none of these):
+
+| Column | What it holds |
+|---|---|
+| `node_id` | The workflow node the call ran under: the innermost one, so a call by a model sub-node or a tool names that sub-node. The engine tells the host which node is running (`aroundNode`), so it works with OpenTelemetry on or off |
+| `span_id` | The `gen_ai.*` span's id, to open the call's span in the Run Trace |
+| `purpose` | Why the call was made (below) |
+| `iteration` | The agent loop's step, from 1 |
+| `caller_agent_id` | The agent that asked: the nearest agent up the chain that is not the row's own (a team member names its lead, a sub-agent its caller) |
+| `duration_ms` | Wall time of the call |
+| `stop_reason` | The provider's first finish reason (`end_turn`, `tool_use`, `max_tokens`, `stop`, `length`) |
+
+**Purpose** is one of `answer`, `guardrail`, `judge`, `embed`, `cache-embed`, `rerank`, `summary`, `eval`. Code that
+knows why it makes a call sets it with `withCallPurpose` (`lib/server/ai-usage/call-context.ts`); otherwise an
+embeddings call is `embed`, a chat call inside a workflow run or an agent session is `answer`, and anything else
+(Spotlight, the brain) stays empty. There is no `router` purpose: the router makes no model call. The same note carries
+the agent loop's iteration and the caller agent, and a listener (`setRecordedCallListener`) hears each recorded call
+once its row is written, for the prompt-parts work.
+
+The purpose and the cache token types are labels on the AI metrics, and the `ai.call` ledger event carries the purpose,
+node, session, iteration and the row's id ([observability.md](observability.md#8-token-and-cost-tracking)). Nothing here
+stores prompt text. These columns show on screens from wave 12; wave 11 only records them.
+
 ## Not built
 
 - **High availability.** One replica and no Redis; a restart interrupts calls in flight.

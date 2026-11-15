@@ -2179,6 +2179,13 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
 - **Left on purpose:** autonomous task runs, a progress history chart, and importing `PROJECT.md`
   ([limitations.md](limitations.md#project-tasks-wave-10)).
 
+## Token spend wave 11
+
+- **SP01, attribution on each call.** Each `ai_usage` row now has the node, span, purpose, iteration, caller agent,
+  duration and stop reason (migration 2900); the AI metrics gain `cache_read`/`cache_write` token types and a purpose
+  label; the `ai.call` event gains purpose, node, session, iteration and usage id; the engine's `aroundNode` hook tells
+  the host the active node. Setting purposes at the call sites is SP02, prompt parts SP03 ([llm-gateway.md](llm-gateway.md#what-each-call-was-for)).
+
 ## Practices (waves P1 and P2)
 
 Rules in the brain that connected agents follow, each approved by a person ([practices.md](practices.md)). Decided
