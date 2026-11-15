@@ -22,6 +22,7 @@ import { projectIdOfTeam, type AiRuntime, type IngestStatus } from '../../shared
 import { hashKey, spendLogTime, type Fetcher, type LiteLlmSpendLog } from './client';
 import { adminClient, gatewayConnection, gatewaySettings, ingestStatus, saveIngestStatus } from './settings';
 import { serverKeyHash } from './call';
+import { attachWaitingParts } from './parts-receiver';
 
 const PAGE_SIZE = 500;
 const MAX_PAGES = 200;
@@ -190,6 +191,8 @@ function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<
     const counted = db.get<Record<string, SqlValue>>("SELECT * FROM ai_usage WHERE call_id = ? AND source = 'landflow' AND gateway_key_hash = ? AND gateway_request_id IS NULL", callId, serverKey);
     if (counted) {
       db.upsert('ai_usage', { ...counted, gateway_request_id: requestId });
+      // SP21: a gateway split that arrived first waits under the request id; Landflow's own split for the call wins.
+      attachWaitingParts(String(counted.id), requestId, db);
       return false;
     }
   }
@@ -228,6 +231,8 @@ function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<
     gateway_cost: spend,
   });
   if (!done) return false;
+  // SP21: a gateway split that arrived before this row waits under the request id.
+  attachWaitingParts(`au_ll_${hash}`, requestId, db);
   recordUsage(
     {
       id: `ue_ll_${hash}`,

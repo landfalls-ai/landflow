@@ -35,6 +35,10 @@ model_list:
 
 litellm_settings:
   drop_params: true
+  # The gateway's split of each call (docs/llm-gateway.md, "The gateway's split"): custom_callbacks.py, next to this file in
+  # /app, posts numbers and hashes to Landflow. Off until LANDFLOW_PARTS_SECRET is set (LANDFLOW_LLM_GATEWAY_PARTS_SECRET on
+  # the host).
+  callbacks: custom_callbacks.proxy_handler_instance
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
