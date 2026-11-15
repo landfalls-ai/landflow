@@ -37,6 +37,8 @@ export interface Snippet {
 }
 
 const SERVER = 'landflow';
+/** The repository whose `.claude-plugin/marketplace.json` lists the landflow-brain mod (docs/landflow-brain-mod.md#install-and-set-up). */
+export const MOD_MARKETPLACE = 'landfalls-ai/landflow';
 
 const bearer = (token: string) => `Bearer ${token}`;
 const json = (value: unknown) => JSON.stringify(value, null, 2);
@@ -55,7 +57,8 @@ export function snippetFor(harness: HarnessId, { url, token }: SnippetInput): Sn
       return [
         { label: 'One command', where: 'Run it in a terminal', language: 'bash', text: `claude mcp add --transport http ${SERVER} ${url} --header "Authorization: ${bearer(key)}"` },
         { label: '.mcp.json', where: 'Or put this in .mcp.json in your project (do not commit it: it holds your key)', language: 'json', text: json({ mcpServers: { [SERVER]: { type: 'http', url, headers } } }) },
-        { label: 'The landflow-brain mod', where: 'Install it from a Landflow checkout. It journals your sessions and brings yesterday back', language: 'bash', text: 'claude plugin install apps/web/claude-plugins/landflow-brain' },
+        { label: 'The landflow-brain mod', where: 'Install it from the Landflow repository’s marketplace. It journals your sessions and brings yesterday back', language: 'bash', text: `claude plugin marketplace add ${MOD_MARKETPLACE}\nclaude plugin install landflow-brain` },
+        { label: 'Or from a checkout', where: 'In a clone of the Landflow repository', language: 'bash', text: 'claude plugin install apps/web/claude-plugins/landflow-brain' },
         { label: 'The mod’s options', where: 'Claude Code asks for these when you install it', language: 'text', text: `url: ${originOf(url)}\nkey: ${key}\nrepos: owner/name\nmode: review` },
       ];
     case 'cursor':

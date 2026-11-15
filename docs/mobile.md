@@ -169,6 +169,22 @@ Home starts with the **Your morning** card ([work-and-briefings.md](work-and-bri
 - **An agent's page** keeps its header on screen as you scroll, and every change saves itself (its ✓ is read out as
   *Saved* on a phone), so there is no Save to reach for.
 
+## Goals and project briefs
+
+- **Goals** (`/goals`, the second tab under Projects) is one column of cards on a phone. A card shows the title, the
+  status and level chips, **Under: <parent>** and **3 sub-goals ›**; the row is 44 px and opens the goal in a sheet.
+  **Sub-goals ›** drills into them, with a back row on top, so a tree is never drawn sideways. A desktop shows the tree
+  with the goal's sheet on the right. The goal dialog is a full-height sheet.
+- **The brief card** on a project's Overview shows its four texts (Brief, Constraints, Done when, Words we use) folded
+  to three lines with **More**; a desktop shows up to six lines. The goals it serves have 44 px up, down and unlink
+  buttons for admins.
+
+## Practices on the Brain page
+
+- **Practices** on `/brain` (the Practices view in the Files drawer) is one column of practice cards on a phone, with
+  44 px controls in the review dialog and the form; a desktop is unchanged. See
+  [practices.md](practices.md#the-brain-page).
+
 ## What's next
 
 1. ~~Touch and type baseline~~ (above; the 44 px targets are done for the tab bar, the editor's back arrow and the header

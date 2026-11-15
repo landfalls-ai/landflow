@@ -10,8 +10,8 @@ export const dynamic = 'force-dynamic';
 
 export const GET = handler(async (request: Request) => {
   const url = new URL(request.url);
-  const query = parseQuery(request, z.object({ limit: limitParam(5000, 100) }));
+  const query = parseQuery(request, z.object({ limit: limitParam(5000, 100), projectId: z.string().max(200).optional(), goalId: z.string().max(200).optional() }));
   if (!query.ok) return query.response;
-  const { limit } = query.data;
-  return json({ events: listUsageEvents(usageFilter(url), { limit, scope: scopeForActor(routeActor()) }) });
+  const { limit, projectId, goalId } = query.data;
+  return json({ events: listUsageEvents({ ...usageFilter(url), ...(projectId && { projectId }), ...(goalId && { goalId }) }, { limit, scope: scopeForActor(routeActor()) }) });
 });

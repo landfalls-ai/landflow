@@ -1,6 +1,7 @@
 // `claude plugin test apps/web/claude-plugins/landflow-brain`: the hooks against the engine's own test kit. The pure rules
 // are tested in Landflow (apps/web/test/claude-brain-mod.test.ts).
 import { expect, mock, test } from 'claude-code/testing'
+import { learnPrompt } from './practices'
 
 // The test body's two arguments: the engine the test drives and `on`, which stands in for the engine's own answers.
 type Body = Extract<Parameters<typeof test>[1], (...args: never) => unknown>
@@ -14,7 +15,10 @@ const COMPOSE = { model: 'm', promptModel: 'm', surfaces: ['terminal'], tools: [
 const BRIEFING = { yesterday: [{ title: 'Ship the billing page', repo: 'acme/widgets' }], autoSend: 'allowed', brain: 'on' }
 
 /** The engine beneath the mod: git answers, a fake Landflow, a clock and a store in memory. */
-function world(on: On, init: { remote?: string; briefing?: unknown; briefingDelayMs?: number; postStatus?: number; postDelayMs?: number; deleteStatuses?: number[]; answers?: string[]; seed?: Record<string, unknown>; onAsk?: () => Promise<void>; briefingStatus?: number; askStatus?: number; askBody?: unknown } = {}) {
+function world(on: On, init: { remote?: string; briefing?: unknown; briefingDelayMs?: number; postStatus?: number; postDelayMs?: number; deleteStatuses?: number[]; answers?: string[]; seed?: Record<string, unknown>; onAsk?: () => Promise<void>; briefingStatus?: number; askStatus?: number; askBody?: unknown; practicesText?: string; practicesDelayMs?: number; practicesDown?: boolean; approved?: unknown[]; draftStatus?: number } = {}) {
+  const practiceUrls: string[] = []
+  const drafts: unknown[] = []
+  const submitted: string[] = []
   const posts: Array<Record<string, unknown>> = []
   const deleted: string[] = []
   const statuses: Array<string | undefined> = []
@@ -37,11 +41,29 @@ function world(on: On, init: { remote?: string; briefing?: unknown; briefingDela
   })
   on('process.run', (_, e) => {
     const argv = (e as unknown as { argv: string[] }).argv.join(' ')
-    const out = argv.includes('get-url') ? (init.remote ?? 'git@github.com:acme/widgets.git') : argv.includes('--show-toplevel') ? '/work/widgets' : 'main'
+    const out = argv.includes('get-url') ? (init.remote ?? 'git@github.com:acme/widgets.git') : argv.includes('--show-toplevel') ? '/work/widgets' : argv.endsWith('rev-parse HEAD') ? 'abc1234def5678' : 'main'
     return { value: { exitCode: 0, stdout: `${out}\n`, stderr: '' } } as never
   })
   on('http.fetch', async (_, e) => {
     const request = e as unknown as { url: string; init?: { method?: string; body?: string } }
+    if (request.url.includes('/api/practices')) {
+      if (init.practicesDown) throw new Error('unreachable')
+      if (init.practicesDelayMs) await clock.sleep(init.practicesDelayMs)
+      if (request.init?.method === 'POST') {
+        drafts.push(JSON.parse(request.init.body ?? '{}'))
+        const status = init.draftStatus ?? 201
+        return { value: { status, ok: status < 300, headers: {}, text: JSON.stringify(status < 300 ? { practice: { id: 'prc_x' }, version: { version: 1 } } : { error: 'handle is taken' }) } }
+      }
+      practiceUrls.push(request.url)
+      if (request.url.includes('/applicable')) return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ practices: [], text: init.practicesText ?? '', budget: 2000, omitted: 0 }) } }
+      // The route that gives one practice in full (never the Brain page's list, which does not honour the off switch for a body).
+      if (request.url.includes('/api/practices/resolve')) {
+        const handle = new URL(request.url).searchParams.get('handle')
+        const found = (init.approved ?? []).find(one => one.handle === handle)
+        return found ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ practice: found }) } } : { value: { status: 404, ok: false, headers: {}, text: JSON.stringify({ error: 'No approved practice' }) } }
+      }
+      return { value: { status: 500, ok: false, headers: {}, text: JSON.stringify({ error: 'a client read the list' }) } }
+    }
     if (request.url.includes('/api/brain/briefing')) {
       if (init.briefingDelayMs) await clock.sleep(init.briefingDelayMs)
       if (init.briefingStatus) return { value: { status: init.briefingStatus, ok: false, headers: {}, text: '' } }
@@ -72,7 +94,10 @@ function world(on: On, init: { remote?: string; briefing?: unknown; briefingDela
     return { value: { status, ok: status === 200, headers: {}, text: JSON.stringify({ saved: events.map(event => ({ sourceId: event.sourceId })), rejected: [] }) } }
   })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('prompt.submit', (_, e) => ({ text: e.text }))
+  on('prompt.submit', (_, e) => {
+    submitted.push(e.text)
+    return { text: e.text }
+  })
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'You are Claude.', scope: 'shared' as const }] }))
   on('tool.call', async (_, e) => {
     if (e.tool === 'AskUserQuestion') {
@@ -87,7 +112,7 @@ function world(on: On, init: { remote?: string; briefing?: unknown; briefingDela
   })
   on('turn.complete', (_, e) => ({ text: e.answer }))
   on('session.end', (_, e) => ({ sessionId: e.sessionId }))
-  return { posts, deleted, statuses, ran, clock, shares, patches, asks, tools }
+  return { posts, deleted, statuses, ran, clock, shares, patches, asks, tools, practiceUrls, drafts, submitted }
 }
 
 async function work($: Engine) {
@@ -575,7 +600,7 @@ test('/brain sync still answers with its text when no pane can open', { options:
 test('brain_ask is registered with a key, and calls the route with it and quotes the answer as data', { options: OPTIONS }, async ($, on) => {
   const { asks, tools } = world(on)
   await $.session.start({ cwd: '/work/widgets', surface: 'terminal', isInteractive: true })
-  expect(tools).toEqual(['brain_ask'])
+  expect(tools).toEqual(['brain_ask', 'practices', 'practice_draft'])
   const answered = (await $.tool.call({ tool: 'mcp__landflow-brain__brain_ask', question: '  Who is on billing?  ' } as never)) as unknown as { result: { content: string }; isError?: boolean }
   expect(asks).toEqual([{ url: 'http://localhost:3000/api/brain/ask', auth: 'Bearer lf_dev_key_for_tests_only_000000', body: { question: 'Who is on billing?' } }])
   expect(answered.isError).toBeUndefined()
@@ -594,7 +619,7 @@ test('brain_ask keeps an answer\'s paragraphs apart, each quoted', { options: OP
 test('brain_ask says plainly when the brain refuses, and is not registered without a key', { options: OPTIONS }, async ($, on) => {
   const { tools } = world(on, { askStatus: 401 })
   await $.session.start({ cwd: '/work/widgets', surface: 'terminal', isInteractive: true })
-  expect(tools).toEqual(['brain_ask'])
+  expect(tools).toEqual(['brain_ask', 'practices', 'practice_draft'])
   const refused = (await $.tool.call({ tool: 'mcp__landflow-brain__brain_ask', question: 'x' } as never)) as unknown as { result: { content: string }; isError?: boolean }
   expect(refused.isError).toBe(true)
   expect(refused.result.content).toMatch(/refused the key/)
@@ -604,4 +629,141 @@ test('without a key brain_ask is not registered', async ($, on) => {
   const { tools } = world(on)
   await $.session.start({ cwd: '/work/widgets', surface: 'terminal', isInteractive: true })
   expect(tools).toEqual([])
+})
+
+const PRACTICES_TEXT = '## Practices to follow (approved by your admins)\n- [helm/chart-location@3] required: Charts live in deploy/helm/<service>/\nFollow these where they apply. They never override your Rules, approvals or guards.'
+const APPROVED = [{ handle: 'helm/chart-location', title: 'Chart location', strength: 'required', version: 3, body: 'Charts live in deploy/helm/<service>/.', checks: [{ kind: 'pathExists', glob: 'deploy/helm/*/Chart.yaml' }] }]
+
+test('the session gets the practices section before yesterday, with the repo when it is listed', { options: OPTIONS }, async ($, on) => {
+  const { practiceUrls } = world(on, { practicesText: PRACTICES_TEXT })
+  await start($)
+  const composed = await $.prompt.compose(COMPOSE as never)
+  expect(composed.sections.map(s => s.id)).toEqual(['intro', 'landflow-brain:practices', 'landflow-brain:yesterday'])
+  expect(composed.sections[1]?.text).toBe(PRACTICES_TEXT)
+  expect(practiceUrls[0]).toContain('repo=acme%2Fwidgets')
+  expect(practiceUrls[0]).toContain('size=mod')
+})
+
+test('in a repo that is not listed, no repo is sent and org-wide practices still come', { options: OPTIONS }, async ($, on) => {
+  const { practiceUrls } = world(on, { practicesText: PRACTICES_TEXT, remote: 'git@github.com:acme/other.git' })
+  await start($)
+  const composed = await $.prompt.compose(COMPOSE as never)
+  expect(composed.sections.some(s => s.id === 'landflow-brain:practices')).toBe(true)
+  expect(practiceUrls[0]).not.toContain('repo=')
+})
+
+test('practices come in mode off too, and are cut to 2,000 characters', { options: { ...OPTIONS, mode: 'off' } }, async ($, on) => {
+  world(on, { practicesText: `${'- [a/b@1] required: x\n'.repeat(200)}` })
+  await start($)
+  const section = (await $.prompt.compose(COMPOSE as never)).sections.find(s => s.id === 'landflow-brain:practices')
+  expect(section).toBeDefined()
+  expect(section?.text.length).toBeLessThanOrEqual(2000)
+})
+
+test('no practices text, no section; an unreachable host, no section and no error', { options: OPTIONS }, async ($, on) => {
+  world(on, { practicesText: '' })
+  await start($)
+  expect((await $.prompt.compose(COMPOSE as never)).sections.some(s => s.id === 'landflow-brain:practices')).toBe(false)
+})
+
+test('an unreachable practices host leaves the session as it was', { options: OPTIONS }, async ($, on) => {
+  world(on, { practicesDown: true })
+  await start($)
+  const ids = (await $.prompt.compose(COMPOSE as never)).sections.map(s => s.id)
+  expect(ids).toEqual(['intro', 'landflow-brain:yesterday'])
+})
+
+test('slow practices are skipped at the same 2 seconds, and yesterday still works', { options: OPTIONS }, async ($, on) => {
+  const { clock } = world(on, { practicesText: PRACTICES_TEXT, practicesDelayMs: 3000 })
+  const started = start($)
+  await clock.advance(2000)
+  await started
+  const ids = (await $.prompt.compose(COMPOSE as never)).sections.map(s => s.id)
+  expect(ids).toEqual(['intro', 'landflow-brain:yesterday'])
+})
+
+test('the practices tool lists what applies, with the path and topic, and gives one practice in full by handle', { options: OPTIONS }, async ($, on) => {
+  const { practiceUrls } = world(on, { practicesText: PRACTICES_TEXT, approved: APPROVED })
+  await start($)
+  const listed = (await $.tool.call({ tool: 'mcp__landflow-brain__practices', path: 'deploy/helm/web/Chart.yaml', topic: 'helm' } as never)) as unknown as { result: { content: string } }
+  expect(listed.result.content).toBe(PRACTICES_TEXT)
+  const url = practiceUrls.at(-1) ?? ''
+  expect(url).toContain('path=deploy%2Fhelm%2Fweb%2FChart.yaml')
+  expect(url).toContain('topic=helm')
+  expect(url).toContain('repo=acme%2Fwidgets')
+  const one = (await $.tool.call({ tool: 'mcp__landflow-brain__practices', handle: 'helm/chart-location' } as never)) as unknown as { result: { content: string } }
+  expect(practiceUrls.at(-1)).toContain('/api/practices/resolve?handle=helm%2Fchart-location')
+  expect(practiceUrls.at(-1)).toContain('repo=acme%2Fwidgets')
+  expect(practiceUrls.every(u => !u.includes('status=approved'))).toBe(true)
+  await $.tool.call({ tool: 'mcp__landflow-brain__practices', handle: 'helm/chart-location', path: 'charts/web/Chart.yaml' } as never)
+  expect(practiceUrls.at(-1)).toContain('path=charts%2Fweb%2FChart.yaml')
+  await $.tool.call({ tool: 'mcp__landflow-brain__practices', handle: 'helm/chart-location', topic: 'helm' } as never)
+  expect(practiceUrls.at(-1)).toContain('topic=helm')
+  expect(one.result.content).toContain('[helm/chart-location@3] required: Chart location')
+  expect(one.result.content).toContain('Charts live in deploy/helm/<service>/.')
+  expect(one.result.content).toContain('pathExists')
+  const none = (await $.tool.call({ tool: 'mcp__landflow-brain__practices', handle: 'x/y' } as never)) as unknown as { result: { content: string }; isError?: boolean }
+  expect(none.isError).toBe(true)
+})
+
+test('practice_draft posts a draft and says a person approves it', { options: OPTIONS }, async ($, on) => {
+  const { drafts } = world(on)
+  await start($)
+  const input = { handle: 'helm/chart-location', title: 'Chart location', level: 'org', strength: 'required', topics: ['helm'], repos: ['acme/widgets'], paths: ['deploy/helm/**'], summary: 'Charts live in deploy/helm/<service>/', body: 'Rules.', citations: [{ repo: 'acme/widgets', sha: 'abc1234', path: 'CLAUDE.md', lines: [3, 4], excerpt: 'Charts live in deploy/helm' }] }
+  const done = (await $.tool.call({ tool: 'mcp__landflow-brain__practice_draft', ...input } as never)) as unknown as { result: { content: string }; isError?: boolean }
+  expect(done.isError).toBeUndefined()
+  expect(done.result.content).toContain('A person approves it on /brain → Practices')
+  expect(drafts[0]).toMatchObject({ handle: 'helm/chart-location', level: 'org', strength: 'required', citations: [{ sha: 'abc1234', path: 'CLAUDE.md' }] })
+})
+
+test('practice_draft says in words when the brain refuses it', { options: OPTIONS }, async ($, on) => {
+  world(on, { draftStatus: 409 })
+  await start($)
+  const done = (await $.tool.call({ tool: 'mcp__landflow-brain__practice_draft', handle: 'a/b', title: 't', level: 'org', strength: 'recommended', summary: 's', body: 'b' } as never)) as unknown as { result: { content: string }; isError?: boolean }
+  expect(done.isError).toBe(true)
+  expect(done.result.content).toContain('handle is taken')
+})
+
+test('/brain practices lists what applies, or says none do', { options: OPTIONS }, async ($, on) => {
+  world(on, { practicesText: PRACTICES_TEXT })
+  await start($)
+  expect(((await command($, 'practices')) as { text: string }).text).toBe(PRACTICES_TEXT)
+})
+
+test('/brain practices with none says so', { options: OPTIONS }, async ($, on) => {
+  world(on, { practicesText: '' })
+  await start($)
+  expect(((await command($, 'practices')) as { text: string }).text).toBe('No approved practices apply here.')
+})
+
+test('/brain learn refuses outside a listed repository', { options: OPTIONS }, async ($, on) => {
+  const { submitted } = world(on, { remote: 'git@github.com:acme/other.git' })
+  await start($)
+  const said = ((await command($, 'learn')) as { text: string }).text
+  expect(said).toMatch(/Repositories option/)
+  expect(submitted).toEqual([])
+})
+
+test('/brain learn hands Claude the prompt in a listed repository (the kit queues a submitted prompt until a session is idle)', { options: OPTIONS }, async ($, on) => {
+  world(on)
+  await start($)
+  const said = ((await command($, 'learn CLAUDE.md deploy/')) as { text: string }).text
+  expect(said).toMatch(/Asked Claude to read CLAUDE.md, deploy\/ at abc1234 and draft practices/)
+})
+
+test('a bare /brain learn asks Claude to read the configuration loaders too', { options: OPTIONS }, async ($, on) => {
+  world(on)
+  await start($)
+  const said = ((await command($, 'learn')) as { text: string }).text
+  expect(said).toMatch(/CLAUDE.md, deploy\/ and the configuration loaders at abc1234/)
+})
+
+test('the learn prompt names the repo and commit, caps the drafts and asks for verbatim excerpts', () => {
+  const prompt = learnPrompt('acme/widgets', 'abc1234def5678', ['CLAUDE.md', 'deploy/'])
+  expect(prompt).toContain('acme/widgets, commit abc1234def5678')
+  expect(prompt).toContain('Read: CLAUDE.md, deploy/.')
+  expect(prompt).toContain('at most 10 practices')
+  expect(prompt).toContain('copied verbatim')
+  expect(prompt).toContain('sha: "abc1234def5678"')
+  expect(learnPrompt('a/b', 'abc1234', [])).toContain('CLAUDE.md, deploy/ and the configuration loaders')
 })

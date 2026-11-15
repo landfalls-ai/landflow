@@ -25,8 +25,9 @@ The instance MCP server must be on (Settings → MCP → Access token), or the t
 | VS Code | `.vscode/mcp.json` (`servers`, `type: "http"`) |
 | Any MCP client | the URL (Streamable HTTP) and an `Authorization: Bearer <key>` header |
 
-For Claude Code the page also shows the [landflow-brain mod](landflow-brain-mod.md) install and its options (`url`, `key`,
-`repos`, `mode`). The snippets are made by `snippetFor` in `apps/web/src/components/connect/harness-snippets.ts`.
+For Claude Code the page also shows the [landflow-brain mod](landflow-brain-mod.md) install, first from the repository's
+marketplace (`claude plugin marketplace add landfalls-ai/landflow`, then `claude plugin install landflow-brain`), or from a
+checkout, and its options (`url`, `key`, `repos`, `mode`). The snippets are made by `snippetFor` in `apps/web/src/components/connect/harness-snippets.ts`.
 
 ## Who may make which key
 

@@ -1769,6 +1769,62 @@ export const MIGRATIONS: Migration[] = [
     ],
     statements: [`CREATE UNIQUE INDEX IF NOT EXISTS ai_usage_gateway_request ON ai_usage (gateway_request_id) WHERE gateway_request_id IS NOT NULL`],
   },
+  // PC01: goals (a tree: company goals and project goals), the goals a project serves in order, the brain initiatives a goal
+  // links, and the project brief (docs/projects-and-goals.md).
+  {
+    version: 2300,
+    name: 'goals',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS goals (id TEXT PRIMARY KEY, title TEXT NOT NULL, why TEXT, level TEXT NOT NULL, status TEXT NOT NULL, owner_id TEXT, target_date TEXT, parent_id TEXT, project_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by TEXT)`,
+      `CREATE INDEX IF NOT EXISTS goals_parent ON goals (parent_id)`,
+      `CREATE INDEX IF NOT EXISTS goals_project ON goals (project_id)`,
+      `CREATE TABLE IF NOT EXISTS project_goals (project_id TEXT NOT NULL, goal_id TEXT NOT NULL, position BIGINT NOT NULL DEFAULT 0, created_at TEXT NOT NULL, PRIMARY KEY (project_id, goal_id))`,
+      `CREATE INDEX IF NOT EXISTS project_goals_goal ON project_goals (goal_id)`,
+      `CREATE TABLE IF NOT EXISTS goal_links (goal_id TEXT NOT NULL, kind TEXT NOT NULL, ref_id TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT, PRIMARY KEY (goal_id, kind, ref_id))`,
+    ],
+  },
+  {
+    version: 2301,
+    name: 'project_brief',
+    statements: [],
+    addColumns: ['brief', 'brief_constraints', 'done_when', 'glossary', 'status', 'target_date', 'lead_id', 'decision_owner_id'].map((column) => ({ table: 'projects', column, definition: 'TEXT' })),
+  },
+  // PC05: 2302: the goal a run served, on each model call row and each usage event (the project is on both already).
+  {
+    version: 2302,
+    name: 'run_goal',
+    addColumns: [
+      { table: 'ai_usage', column: 'goal_id', definition: 'TEXT' },
+      { table: 'usage_events', column: 'goal_id', definition: 'TEXT' },
+    ],
+    statements: [`CREATE INDEX IF NOT EXISTS ai_usage_goal ON ai_usage (goal_id, day)`, `CREATE INDEX IF NOT EXISTS usage_events_goal ON usage_events (goal_id, at)`],
+  },
+  // PR01: practices (docs/practices.md): the rule, its versions and where each was applied.
+  {
+    version: 2400,
+    name: 'practices',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS practices (id TEXT PRIMARY KEY, handle TEXT NOT NULL, scope_key TEXT NOT NULL, title TEXT NOT NULL, level TEXT NOT NULL, project_id TEXT, strength TEXT NOT NULL, topics TEXT NOT NULL, repos TEXT NOT NULL, paths TEXT NOT NULL, owner_id TEXT, status TEXT NOT NULL, approved_version BIGINT, supersedes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by TEXT)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS practices_handle ON practices (scope_key, handle)`,
+      `CREATE INDEX IF NOT EXISTS practices_project ON practices (project_id)`,
+    ],
+  },
+  {
+    version: 2401,
+    name: 'practice_versions',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS practice_versions (practice_id TEXT NOT NULL, version BIGINT NOT NULL, title TEXT NOT NULL, strength TEXT NOT NULL, topics TEXT NOT NULL, repos TEXT NOT NULL, paths TEXT NOT NULL, summary TEXT NOT NULL, body TEXT NOT NULL, checks TEXT NOT NULL, citations TEXT NOT NULL, source TEXT NOT NULL, tainted BIGINT NOT NULL DEFAULT 0, drafted_by TEXT, created_at TEXT NOT NULL, approved_by TEXT, approved_at TEXT, rejected_by TEXT, rejected_at TEXT, reject_reason TEXT, sha256 TEXT NOT NULL, PRIMARY KEY (practice_id, version))`,
+    ],
+  },
+  {
+    version: 2402,
+    name: 'practice_applications',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS practice_applications (id TEXT PRIMARY KEY, practice_id TEXT NOT NULL, version BIGINT NOT NULL, kind TEXT NOT NULL, execution_id TEXT, agent_id TEXT, user_id TEXT, repo TEXT, reason TEXT, at TEXT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS practice_applications_practice ON practice_applications (practice_id, at)`,
+      `CREATE INDEX IF NOT EXISTS practice_applications_execution ON practice_applications (execution_id)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -1881,6 +1937,14 @@ export const TABLES = {
   llm_gateway_keys: ['id'],
   llm_gateway_links: ['kind', 'landflow_id'],
   ai_cap_requests: ['id'],
+  // PC01:
+  goals: ['id'],
+  project_goals: ['project_id', 'goal_id'],
+  goal_links: ['goal_id', 'kind', 'ref_id'],
+  // PR01:
+  practices: ['id'],
+  practice_versions: ['practice_id', 'version'],
+  practice_applications: ['id'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

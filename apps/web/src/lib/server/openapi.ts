@@ -41,7 +41,7 @@ function fromZod(schema: z.ZodType): Json {
 const samplePath = (path: string) => path.replace(/\{[^}]+\}/g, 'sample');
 
 interface Operation {
-  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Settings' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks' | 'Conversations';
+  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Settings' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks' | 'Conversations' | 'Goals' | 'Practices';
   id: string;
   summary: string;
   description?: string;
@@ -1119,21 +1119,83 @@ function paths(): Record<string, Record<string, Json>> {
     timezone: { type: 'string' },
     executions: object({ maxCount: { type: 'integer' }, maxAgeDays: { type: 'integer' } }),
     jsonRender: { type: 'boolean', description: 'Saved json-render choice; absent while the LANDFLOW_JSON_RENDER default applies' },
+    // PC01:
+    company: object({ name: { type: 'string' }, mission: { type: 'string' } }),
   });
   add('get', '/api/settings', {
     tag: 'Settings',
     id: 'getSettings',
     summary: 'Get the instance settings',
     description: '`jsonRender` is the json-render flag as it stands: the saved choice, else the `LANDFLOW_JSON_RENDER` default.',
-    responses: { 200: reply('The settings', object({ settings: settingsDoc, jsonRender: { type: 'boolean' }, hostTimezone: { type: 'string' }, executions: object({ stored: { type: 'integer' }, prunable: { type: 'integer' } }) })) },
+    responses: { 200: reply('The settings', object({ settings: settingsDoc, company: object({ name: { type: 'string' }, mission: { type: 'string' } }), jsonRender: { type: 'boolean' }, hostTimezone: { type: 'string' }, executions: object({ stored: { type: 'integer' }, prunable: { type: 'integer' } }) })) },
   });
   add('patch', '/api/settings', {
     tag: 'Settings',
     id: 'updateSettings',
     summary: 'Change the instance settings',
     description: 'Any subset. `jsonRender` (`true`, `false`, or `null` for the environment default) is the owner’s: an admin gets 403.',
-    body: jsonBody(object({ timezone: { type: 'string' }, executions: object({ maxCount: { type: 'integer' }, maxAgeDays: { type: 'integer' } }), jsonRender: { type: ['boolean', 'null'] } })),
+    body: jsonBody(object({ timezone: { type: 'string' }, executions: object({ maxCount: { type: 'integer' }, maxAgeDays: { type: 'integer' } }), jsonRender: { type: ['boolean', 'null'] }, company: object({ name: { type: ['string', 'null'], maxLength: 120 }, mission: { type: ['string', 'null'], maxLength: 500 } }) })),
     responses: { 200: reply('The settings', object({ settings: settingsDoc, jsonRender: { type: 'boolean' } })), 400: invalid, 403: errorRef('Not the owner (json-render)') },
+  });
+
+  // ---- goals and project briefs (PC01; docs/projects-and-goals.md) ----
+  const goalDoc = object({ id: { type: 'string' }, title: { type: 'string' }, why: { type: 'string' }, level: { type: 'string', enum: ['company', 'project'] }, status: { type: 'string', enum: ['planned', 'active', 'achieved', 'cancelled'] }, ownerId: { type: 'string' }, ownerName: { type: 'string' }, targetDate: { type: 'string', description: 'YYYY-MM-DD' }, parentId: { type: 'string' }, projectId: { type: 'string' }, projects: array(object({ id: { type: 'string' }, name: { type: 'string' } })), initiatives: array(object({ id: { type: 'string' }, name: { type: 'string' } })), canEdit: { type: 'boolean' }, createdAt: { type: 'string' }, updatedAt: { type: 'string' } }, ['id', 'title', 'level', 'status', 'projects', 'initiatives', 'canEdit']);
+  const goalReply = (description: string) => reply(description, object({ goal: goalDoc }, ['goal']));
+  add('get', '/api/goals', {
+    tag: 'Goals',
+    id: 'listGoals',
+    summary: 'The goals you can see, as a tree',
+    description: 'Company goals, and the project goals of projects you can open. `goals` are the roots, each with `children`; a goal whose parent you can’t see is a root. `mission` is the company mission (Settings → Company). `projectId` keeps the goals that project serves; `status` one status.',
+    query: [
+      { name: 'projectId', description: 'Only the goals this project serves', schema: { type: 'string' } },
+      { name: 'status', description: 'Only goals in this status', schema: { type: 'string', enum: ['planned', 'active', 'achieved', 'cancelled'] } },
+    ],
+    responses: { 200: reply('The goal tree', object({ mission: { type: 'string' }, goals: array({ type: 'object', additionalProperties: true }), canCreateCompanyGoals: { type: 'boolean' } }, ['goals', 'canCreateCompanyGoals'])), 400: invalid },
+  });
+  add('post', '/api/goals', {
+    tag: 'Goals',
+    id: 'createGoal',
+    summary: 'Add a goal',
+    description: 'Company goals are for owners and admins; a project goal needs `projectId` (its admins). `projectIds` (company goals) lists the projects that serve it, each one you must admin. Goals go 4 levels deep; a company goal’s parent is a company goal.',
+    body: jsonBody(object({ title: { type: 'string', maxLength: 200 }, why: { type: 'string', maxLength: 2000 }, level: { type: 'string', enum: ['company', 'project'] }, status: { type: 'string', enum: ['planned', 'active', 'achieved', 'cancelled'], default: 'active' }, ownerId: { type: 'string' }, targetDate: { type: 'string', description: 'YYYY-MM-DD' }, parentId: { type: 'string' }, projectId: { type: 'string' }, projectIds: { type: 'array', maxItems: 10, items: { type: 'string' } } }, ['title', 'level'])),
+    responses: { 201: goalReply('The new goal'), 400: invalid, 403: errorRef('Not allowed to add this goal'), 404: notFound },
+  });
+  add('get', '/api/goals/{id}', { tag: 'Goals', id: 'getGoal', summary: 'A goal with its chain of parents', responses: { 200: reply('The goal', object({ goal: goalDoc, chain: array({ type: 'object', additionalProperties: true }) }, ['goal', 'chain'])), 404: notFound } });
+  add('patch', '/api/goals/{id}', {
+    tag: 'Goals',
+    id: 'updateGoal',
+    summary: 'Change a goal',
+    description: '`null` clears `why`, `ownerId`, `targetDate` or `parentId`. Moving a goal rejects cycles and more than 4 levels.',
+    body: jsonBody(object({ title: { type: 'string' }, why: { type: ['string', 'null'] }, status: { type: 'string', enum: ['planned', 'active', 'achieved', 'cancelled'] }, ownerId: { type: ['string', 'null'] }, targetDate: { type: ['string', 'null'] }, parentId: { type: ['string', 'null'] } })),
+    responses: { 200: goalReply('The goal'), 400: invalid, 403: errorRef('Not allowed to change this goal'), 404: notFound },
+  });
+  add('delete', '/api/goals/{id}', { tag: 'Goals', id: 'deleteGoal', summary: 'Delete a goal', description: 'Also removes it from the projects that serve it and unlinks its initiatives. A goal with sub-goals answers 409 `goal_has_children`.', responses: { 200: reply('Deleted', ok), 403: errorRef('Not allowed to delete this goal'), 404: notFound, 409: errorRef('The goal has sub-goals') } });
+  add('put', '/api/goals/{id}/initiatives', {
+    tag: 'Goals',
+    id: 'setGoalInitiatives',
+    summary: 'Link brain initiatives to a goal',
+    description: 'Replaces the links. Each id is a brain entity of type `initiative` you may read; otherwise 400 names the bad ids.',
+    body: jsonBody(object({ ids: { type: 'array', maxItems: 50, items: { type: 'string' } } }, ['ids'])),
+    responses: { 200: goalReply('The goal'), 400: invalid, 403: errorRef('Not allowed to change this goal'), 404: notFound },
+  });
+  add('get', '/api/projects/{id}/goals', { tag: 'Goals', id: 'getProjectGoals', summary: 'The goals a project serves, in order', description: 'The first planned or active one is the primary goal.', pathParams: { id: 'The project id' }, responses: { 200: reply('The goals', object({ goals: array(goalDoc) }, ['goals'])), 404: notFound } });
+  add('put', '/api/projects/{id}/goals', {
+    tag: 'Goals',
+    id: 'setProjectGoals',
+    summary: 'Set the goals a project serves, and their order',
+    description: 'The project’s admins. Each is a goal you can see: a company goal, or one of the project’s own. At most 10.',
+    pathParams: { id: 'The project id' },
+    body: jsonBody(object({ goalIds: { type: 'array', maxItems: 10, items: { type: 'string' } } }, ['goalIds'])),
+    responses: { 200: reply('The goals', object({ goals: array(goalDoc) }, ['goals'])), 400: invalid, 403: errorRef('Not a project admin'), 404: notFound },
+  });
+  add('patch', '/api/projects/{id}', {
+    tag: 'Goals',
+    id: 'updateProject',
+    summary: 'Rename a project or change its brief',
+    description: 'The project’s admins. `brief` sets the brief, constraints, done-when, words we use, status, target date, lead and decision owner (`null` clears one); the lead and decision owner must have a role in the project. `GET /api/projects/{id}` returns the brief as `project.brief`.',
+    pathParams: { id: 'The project id' },
+    body: jsonBody(object({ name: { type: 'string', maxLength: 120 }, description: { type: ['string', 'null'], maxLength: 500 }, icon: { type: ['string', 'null'] }, brief: object({ brief: { type: ['string', 'null'], maxLength: 1500 }, constraints: { type: ['string', 'null'], maxLength: 1000 }, doneWhen: { type: ['string', 'null'], maxLength: 600 }, glossary: { type: ['string', 'null'], maxLength: 800 }, status: { type: ['string', 'null'], enum: ['planned', 'active', 'paused', 'done', null] }, targetDate: { type: ['string', 'null'] }, leadId: { type: ['string', 'null'] }, decisionOwnerId: { type: ['string', 'null'] } }) })),
+    responses: { 200: reply('The project', object({ project: { type: 'object', additionalProperties: true } }, ['project'])), 400: invalid, 403: errorRef('Not a project admin'), 404: notFound },
   });
 
   // ---- templates ----
@@ -1930,7 +1992,8 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Second brain',
     id: 'listUsageEvents',
     summary: 'Usage events, newest first',
-    query: usageQuery,
+    // PC05:
+    query: [...usageQuery, text('projectId', 'Only events of one project'), text('goalId', 'Only events of one goal (the goal the run served)')],
     responses: { 200: reply('The events', object({ events: array({ type: 'object' }) }, ['events'])) },
   });
   const usageKind = { type: 'object', description: 'A declared custom kind: kind, description, fields [{ name, type: string|number|boolean, required, description }], projectId, createdBy, createdAt, updatedAt' };
@@ -2148,6 +2211,183 @@ function paths(): Record<string, Record<string, Json>> {
     query: [text('day', 'YYYY-MM-DD')],
     responses: { 200: reply('The briefing', object({ day: { type: 'string' }, generatedAt: { type: 'string' }, source: { type: 'string', enum: ['live', 'flow'] }, today: array(briefingWorkItem), yesterday: array(briefingWorkItem), related: array({ type: 'object' }), summary: { type: 'string' }, autoSend: { type: 'string', enum: ['allowed', 'forbidden'] }, brain: { type: 'string', enum: ['on', 'off'] } }, ['day', 'generatedAt', 'source', 'today', 'yesterday', 'related', 'autoSend', 'brain'])), 400: invalid },
   });
+  // PR01: practices (docs/practices.md).
+  const practiceDraftBody = object(
+    {
+      handle: { type: 'string', description: 'two or three lowercase parts, such as helm/chart-location' },
+      level: { type: 'string', enum: ['org', 'project'] },
+      projectId: { type: 'string' },
+      title: { type: 'string', maxLength: 160 },
+      strength: { type: 'string', enum: ['required', 'recommended'] },
+      topics: array({ type: 'string' }),
+      repos: array({ type: 'string' }),
+      paths: array({ type: 'string' }),
+      summary: { type: 'string', maxLength: 300 },
+      body: { type: 'string', maxLength: 4000 },
+      checks: array({ type: 'object' }),
+      citations: array({ type: 'object' }),
+    },
+    ['handle', 'level', 'strength', 'topics', 'repos', 'paths', 'title', 'summary', 'body'],
+  );
+  const practiceView = { type: 'object', description: 'A PracticeView (lib/shared/practices.ts): the practice, its approved version, the drafts the caller may see, `canApprove` and `canDraft`' };
+  const practiceVersion = { type: 'object', description: 'A PracticeVersion (lib/shared/practices.ts)' };
+  add('get', '/api/practices', {
+    tag: 'Practices',
+    id: 'listPractices',
+    summary: 'List practices',
+    description: 'Needs the `brain:read` scope (or a session). The practices the caller may see: approved and retired ones (org practices to everyone signed in, project practices to people with a role there) and drafts to their drafters and approvers. `status` defaults to draft and approved; `retired` lists retired ones. `waiting` counts the versions waiting for the caller’s approval.',
+    query: [text('status', 'draft, approved or retired'), text('level', 'org or project'), text('projectId', 'A project'), text('topic', 'A topic tag'), text('q', 'Words in the handle or title')],
+    responses: { 200: reply('The practices', object({ practices: array(practiceView), canApproveOrg: { type: 'boolean' }, waiting: { type: 'integer' } }, ['practices', 'canApproveOrg', 'waiting'])), 400: invalid },
+  });
+  add('post', '/api/practices', {
+    tag: 'Practices',
+    id: 'draftPractice',
+    summary: 'Draft a practice',
+    description: 'Needs the `brain:write` scope (or a session). Saves version 1 as a draft; nothing reaches an agent until a person approves it. A draft typed in a signed-in session is a person’s; one sent with an API key, MCP or by a flow is `learned` (with citations) or `agent` and is tainted: its approver must read it against its sources. A project practice needs editor access in the project. 409 when the handle is taken at that level.',
+    body: jsonBody(practiceDraftBody),
+    responses: { 201: reply('The practice and its first version', object({ practice: practiceView, version: practiceVersion }, ['practice', 'version'])), 400: invalid, 403: errorRef('Not allowed to draft here'), 404: notFound, 409: errorRef('The handle is taken') },
+  });
+  add('get', '/api/practices/{id}', {
+    tag: 'Practices',
+    id: 'getPractice',
+    summary: 'One practice',
+    description: 'Needs the `brain:read` scope (or a session). The versions the caller may see, each with its state (`approved`, `replaced`, `pending`, `rejected`), the latest 20 applications and the approved practices its newest pending version overlaps (for approvers). 404 when the caller may not see it.',
+    responses: { 200: reply('The practice', object({ practice: practiceView, versions: array(practiceVersion), applications: array({ type: 'object' }), conflicts: array({ type: 'object' }) }, ['practice', 'versions', 'applications', 'conflicts'])), 404: notFound },
+  });
+  add('patch', '/api/practices/{id}', {
+    tag: 'Practices',
+    id: 'editPractice',
+    summary: 'Draft a new version',
+    description: 'Needs the `brain:write` scope (or a session). Any of `title`, `strength`, `topics`, `repos`, `paths`, `summary`, `body`, `checks`, `citations`: a new draft version is made from the newest version the caller may see (not a rejected one) plus the changes. What agents get is unchanged until it is approved.',
+    body: jsonBody(object({ title: { type: 'string' }, strength: { type: 'string', enum: ['required', 'recommended'] }, topics: array({ type: 'string' }), repos: array({ type: 'string' }), paths: array({ type: 'string' }), summary: { type: 'string' }, body: { type: 'string' }, checks: array({ type: 'object' }), citations: array({ type: 'object' }) })),
+    responses: { 201: reply('The practice and the new version', object({ practice: practiceView, version: practiceVersion }, ['practice', 'version'])), 400: invalid, 403: errorRef('Not allowed to draft here'), 404: notFound },
+  });
+  add('post', '/api/practices/{id}/approve', {
+    tag: 'Practices',
+    id: 'approvePractice',
+    summary: 'Approve a version',
+    description: 'A session only (an API key gets 403). Org practices: owners and admins. Project practices: that project’s admins. The drafter may approve their own. A tainted version needs `reviewedSources: true` (409 `PracticeNeedsReview`). An approved practice it overlaps (a shared topic and scopes that meet) needs an answer in `conflicts` (`supersede` retires it, `keep` leaves both), else 409 `PracticeConflict` with the list.',
+    body: jsonBody(object({ version: { type: 'integer' }, reviewedSources: { type: 'boolean' }, conflicts: { type: 'object', additionalProperties: { type: 'string', enum: ['supersede', 'keep'] } } }, ['version'])),
+    responses: { 200: reply('The practice', object({ practice: practiceView }, ['practice'])), 400: invalid, 403: errorRef('Not an approver'), 404: notFound, 409: errorRef('Needs review, or an overlap needs an answer') },
+  });
+  add('post', '/api/practices/{id}/versions/{version}/reject', {
+    tag: 'Practices',
+    id: 'rejectPracticeVersion',
+    summary: 'Reject a version',
+    description: 'A session only. The same people who may approve it. `reason` is 10 to 500 characters.',
+    body: jsonBody(object({ reason: { type: 'string', minLength: 10, maxLength: 500 } }, ['reason'])),
+    responses: { 200: reply('The practice', object({ practice: practiceView }, ['practice'])), 400: invalid, 403: errorRef('Not an approver'), 404: notFound },
+  });
+  add('post', '/api/practices/{id}/retire', {
+    tag: 'Practices',
+    id: 'retirePractice',
+    summary: 'Retire a practice',
+    description: 'A session only. The same people who may approve it. Agents stop getting it; its versions stay, and a new approved version brings it back.',
+    responses: { 200: reply('The practice', object({ practice: practiceView }, ['practice'])), 403: errorRef('Not an approver'), 404: notFound },
+  });
+  add('post', '/api/practices/{id}/waivers', {
+    tag: 'Practices',
+    id: 'waivePractice',
+    summary: 'Waive a practice for one run',
+    description: 'A session only. Someone who may approve the practice, for a run they may read. `version` must have been approved. A second waiver for the same practice and run returns the first.',
+    body: jsonBody(object({ executionId: { type: 'string' }, version: { type: 'integer' }, reason: { type: 'string', minLength: 10, maxLength: 500 } }, ['executionId', 'version', 'reason'])),
+    responses: { 201: reply('The waiver', object({ application: { type: 'object' } }, ['application'])), 400: invalid, 403: errorRef('Not an approver'), 404: notFound },
+  });
+  add('get', '/api/practices/{id}/applications', {
+    tag: 'Practices',
+    id: 'listPracticeApplications',
+    summary: 'Where a practice was applied',
+    description: 'Needs the `brain:read` scope (or a session). Delivered, cited, checked and waived rows, newest first, 50 a page (`limit` up to 100). Only approvers see who a row belongs to.',
+    query: [text('limit', '1 to 100'), text('cursor', 'From the previous page’s `nextCursor`')],
+    responses: { 200: reply('A page', object({ applications: array({ type: 'object' }), nextCursor: { type: 'string' } }, ['applications'])), 404: notFound },
+  });
+  // PR03:
+  add('post', '/api/practices/learn', {
+    tag: 'Practices',
+    id: 'learnPractices',
+    summary: 'Draft practices from files',
+    description: 'Needs the `brain:write` scope (or a session). The brain’s model reads up to 20 files of one repository at one commit and drafts at most 10 practices. Every draft is tainted and none of its citations is verified, because the files came from the caller; a citation whose excerpt is not in a sent file is dropped. A person approves on Brain → Practices. 503 when the brain’s model is off or practices are not loaded.',
+    body: jsonBody(
+      object(
+        {
+          repo: { type: 'string', description: 'owner/name' },
+          sha: { type: 'string', description: 'The commit the files are from' },
+          files: array(object({ path: { type: 'string' }, content: { type: 'string', maxLength: 20000 } }, ['path', 'content'])),
+          topics: array({ type: 'string' }),
+          level: { type: 'string', enum: ['org', 'project'] },
+          projectId: { type: 'string' },
+        },
+        ['repo', 'sha', 'files'],
+      ),
+    ),
+    responses: {
+      200: reply('The drafts and what was skipped', object({ drafts: array(object({ practiceId: { type: 'string' }, handle: { type: 'string' }, version: { type: 'integer' }, url: { type: 'string' } }, ['practiceId', 'handle', 'version', 'url'])), skipped: array(object({ handle: { type: 'string' }, reason: { type: 'string' } }, ['reason'])) }, ['drafts', 'skipped'])),
+      400: invalid,
+      503: errorRef('The brain’s model is off, or practices are not loaded'),
+    },
+  });
+  // PR04: practices
+  add('get', '/api/practices/applicable', {
+    tag: 'Practices',
+    id: 'getApplicablePractices',
+    summary: 'Practices that apply',
+    description:
+      'Needs the `brain:read` scope or a session. The approved practices that apply for the caller, as a block that fits `size` (`full` 3,000 characters, `mod` 2,000, the default, `index` 800). Organization practices, and the project practices of projects the caller is in (with `projectId`, that project only; 404 when the caller is not in it). `repo`, `path`, `topic` and `task` only narrow and rank: they never add a practice. Records a `delivered` row per practice unless `preview=1`. Empty when practices are off.',
+    query: [
+      { name: 'repo', description: 'owner/name', schema: { type: 'string' } },
+      { name: 'path', description: 'A repository-relative path; repeat for more (at most 20)', schema: { type: 'string' } },
+      { name: 'topic', description: 'A topic; repeat for more (at most 5)', schema: { type: 'string' } },
+      { name: 'projectId', description: 'Only this project’s practices (and the organization’s)', schema: { type: 'string' } },
+      { name: 'task', description: 'What is about to be done, in words (at most 500 characters)', schema: { type: 'string', maxLength: 500 } },
+      { name: 'size', description: 'The budget of the block', schema: { type: 'string', enum: ['full', 'mod', 'index'], default: 'mod' } },
+      { name: 'preview', description: '`1`: do not record `delivered` rows', schema: { type: 'string', enum: ['0', '1'] } },
+    ],
+    responses: {
+      200: reply(
+        'The practices',
+        object(
+          {
+            practices: array(object({ handle: { type: 'string' }, version: { type: 'integer' }, title: { type: 'string' }, level: { type: 'string', enum: ['org', 'project'] }, strength: { type: 'string', enum: ['required', 'recommended'] }, summary: { type: 'string' }, topics: array({ type: 'string' }), repos: array({ type: 'string' }), paths: array({ type: 'string' }) }, ['handle', 'version', 'title', 'level', 'strength', 'summary', 'topics', 'repos', 'paths'])),
+            text: { type: 'string' },
+            budget: { type: 'integer' },
+            omitted: { type: 'integer' },
+          },
+          ['practices', 'text', 'budget', 'omitted'],
+        ),
+      ),
+      400: invalid,
+      404: notFound,
+    },
+  });
+  add('get', '/api/practices/resolve', {
+    tag: 'Practices',
+    id: 'resolvePractice',
+    summary: 'One approved practice in full',
+    description:
+      'Needs the `brain:read` scope or a session. The approved version of one practice: its rules, scope and machine checks, redacted, exactly the one `applicable` delivered for the same `repo`, `path`s, `topic`s and `projectId` (the same filter and ranking; `level` keeps a winner of that level). 404 when practices are off, when delivery gave none, or for a project the caller has no role in. Unlike the Brain page’s list, this never gives a body while practices are off.',
+    query: [
+      { name: 'handle', description: 'The practice’s handle', required: true, schema: { type: 'string' } },
+      { name: 'repo', description: 'owner/name, as given to `applicable`', schema: { type: 'string' } },
+      { name: 'path', description: 'A repository-relative path, as given to `applicable`; repeat for more (at most 20)', schema: { type: 'string' } },
+      { name: 'topic', description: 'A topic, as given to `applicable`; repeat for more (at most 5)', schema: { type: 'string' } },
+      { name: 'projectId', description: 'Only this project’s practices (and the organization’s); 404 when the caller has no role in it', schema: { type: 'string' } },
+      { name: 'level', description: 'Only the organization’s or only the project’s practice', schema: { type: 'string', enum: ['org', 'project'] } },
+    ],
+    responses: {
+      200: reply('The practice', object({ practice: { type: 'object', description: 'handle, version, title, strength, scope { level, projectId?, topics, repos, paths }, summary, body, checks' } }, ['practice'])),
+      400: invalid,
+      404: notFound,
+    },
+  });
+  add('post', '/api/practices/cite', {
+    tag: 'Practices',
+    id: 'citePractices',
+    summary: 'Record the practices an answer followed',
+    description:
+      'Needs the `brain:write` scope or a session. Reads the “Practices followed: [handle@version], …” line of `text` and any `Practice: handle@version` lines (a commit’s), plus `citations`, at most 20 in all, and records a `cited` row for each version of a practice the caller may get. The rest come back in `unknown`. An `executionId` the caller cannot read is 404.',
+    body: jsonBody(object({ text: { type: 'string', maxLength: 20000 }, citations: { type: 'array', items: { type: 'string' }, maxItems: 20 }, executionId: { type: 'string' }, repo: { type: 'string' } })),
+    responses: { 200: reply('What was recorded', object({ recorded: array({ type: 'string' }), unknown: array({ type: 'string' }) }, ['recorded', 'unknown'])), 400: invalid, 404: notFound },
+  });
   return out;
 }
 
@@ -2169,6 +2409,7 @@ export function openApiDocument(origin?: string): Record<string, unknown> {
       { name: 'Executions', description: 'Runs: history, run data, stop, retry and re-run' },
       { name: 'Data tables', description: 'Built-in tables workflows read and write' },
       { name: 'Settings', description: 'Instance settings: time zone, execution retention and the json-render switch' },
+      { name: 'Goals', description: 'The goal tree, the goals each project serves and the project brief (docs/projects-and-goals.md)' },
       { name: 'Variables', description: 'Instance variables (`$vars`); changing them needs an owner or admin' },
       { name: 'Templates', description: 'The templates library: start workflows from templates, save and share your own' },
       { name: 'Audit', description: 'The audit log (owners and admins; project admins their projects’ events), its hash chain and four-eyes publish requests' },
@@ -2180,6 +2421,7 @@ export function openApiDocument(origin?: string): Record<string, unknown> {
       { name: 'Agents', description: 'Agents that run elsewhere (kagent) reporting what they did back to the run that asked them (docs/a2a.md)' },
       { name: 'Agent teams', description: 'Teams of agents with standing relations: who leads, who reports to whom, who reviews (docs/agent-teams.md)' },
       { name: 'Conversations', description: 'A person’s own chats with Spotlight, the brain and the Agent architect, and their personal preferences: session only, owner only (docs/assistant.md#conversation-history)' },
+      { name: 'Practices', description: 'Rules in the brain that connected agents follow: drafts, versions, approval by a person, waivers (docs/practices.md)' },
       { name: 'MCP', description: 'Agents and MCP (docs/transports.md): Landflow-issued MCP tokens, tool grants, the JWKS, the plugin catalog (server.json, the registry API) and protected resource metadata' },
     ],
     security: [{ bearerAuth: [] }, { apiKeyHeader: [] }, { sessionCookie: [] }],

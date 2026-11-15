@@ -34,7 +34,8 @@ brain.
   workflowId? }, starters }`) opens it as "About <name>" with that thing as the chip and the starters as its first
   questions. On the editor the chip offers "Ask the brain instead" (or any ask-about event there), and the brain panel then takes the
   right side while the builder folds to its 44 px strip: one column at a time, so the canvas keeps its room. ⌘K, ⌘I, the
-  Spotlight button or the strip bring the builder back and the brain panel goes. In about mode "Ask the brain instead"
+  Spotlight button or the strip bring the builder back and the brain panel goes. Closing the brain panel (X) unfolds the
+  builder again if the panel was what folded it; a builder that was already folded stays folded. In about mode "Ask the brain instead"
   drops the chip, and so does closing the panel or removing the chip in its box. Ctrl does not count as the key on a Mac.
 - **The Brain page** has one way in: the Ask button in its title bar opens this panel.
 
@@ -112,8 +113,10 @@ and then offers to publish it. While it works, the conversation waits in a card 
 
 Every resource's ⋯ menu has **Ask Spotlight**: workflows (list rows), runs (list rows, the run page and the run preview),
 agents (cards and the agent page), data tables, credentials and brain pages. A failed run also has a button, **Ask why it
-failed**, on its list row, its one-line row, its page and its preview. The run page also has a header button, and the brain
-page has a header icon button, and a failed run's menu item reads **Ask why it failed**. A run's chip reads "<workflow> run",
+failed**, on its list row, its one-line row, its page and its preview; there the ⋯ menu leaves the item out, so it is
+offered once (a list row whose error is not shown keeps it in the menu, reading **Ask why it failed**). The run page has a
+header button on a desktop; on a phone it is the first item of the page's ⋯ menu, so the header keeps one row. The brain
+page has a header icon button. A run line on Home or a team's page names its workflow. A run's chip reads "<workflow> run",
 as the @ picker names it. Each fires one browser event,
 `landflow:ask-about`, whose detail is `{ ref: { type, id, name, workflowId? }, starters }` (`lib/client/ask-about.ts`).
 The chat panel listens for it, sets the resource as the chip and offers the three starter questions for its type

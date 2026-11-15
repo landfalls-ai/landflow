@@ -148,6 +148,12 @@ async function requireInstanceFlow(ctx: IExecuteContext): Promise<ExecutionRecor
   return record;
 }
 
+/** PR03: `requireInstanceFlow`'s test without the throw: the refusal it would give, or undefined when this flow is an owner's or admin's. */
+export async function instanceFlowRefusal(ctx: IExecuteContext): Promise<string | undefined> {
+  const record = await runRecord(ctx.getExecutionId());
+  return workflowRefusal(store.getWorkflow(ctx.getWorkflowId() ?? '')) ?? (await runRefusal(record)) ?? pinRefusal(ctx, record);
+}
+
 const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
 
 const skip = (reason: string, index: number) => logger.warn(`briefing: skipping item ${index}: ${reason}`);

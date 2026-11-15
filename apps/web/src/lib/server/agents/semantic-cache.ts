@@ -23,8 +23,8 @@ export interface SemanticStore {
 }
 
 /** A hash of what decides an answer, without the question: edit the prompt, model or guardrails and the old answers no longer match. */
-export function configHash(agentId: string, config: AgentConfig): string {
-  return createHash('sha256').update(JSON.stringify([agentId, answerShape(config)])).digest('hex');
+export function configHash(agentId: string, config: AgentConfig, contextHash = ''): string {
+  return createHash('sha256').update(JSON.stringify([agentId, answerShape(config), ...(contextHash ? [contextHash] : [])])).digest('hex');
 }
 
 /** The embedder the settings name: an Ollama embedding model. */

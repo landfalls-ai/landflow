@@ -28,6 +28,8 @@ import { recordUsage } from '../usage/ledger';
 import { instanceTimezone } from '../settings';
 import { singleton } from '../singleton';
 import { scopeProjectId } from '../llm-gateway/call';
+import { homeProjectId } from '../projects/store';
+import { currentRunContext } from '../project-context/seam';
 import { aiCaps, capSetActive } from './caps';
 import { getUser } from '../auth/users';
 import { noteUsage } from './notify';
@@ -155,6 +157,13 @@ export class AiUsageMeter implements UsageMeter {
     const now = Date.now();
     try {
       const db = this.db();
+      const projectId = scopeProjectId(scope);
+      // A goal is the scope's own, else the run context's; never paired with another project's row.
+      const run = currentRunContext();
+      // The goal comes from the same scope level that named the project, so it is that project's.
+      const named = [...scope.chain()].find((s) => s.info.projectId);
+      const scopeGoal = named ? named.info.goalId : scope.lookup('goalId');
+      const goalId = scopeGoal ?? (run?.goalId && run.projectId === projectId ? run.goalId : undefined);
       const counted = {
         execution_id: scope.lookup('executionId'),
         workflow_id: scope.lookup('workflowId'),
@@ -165,7 +174,8 @@ export class AiUsageMeter implements UsageMeter {
         credential_id: call.credentialId,
         source: call.source ?? 'landflow',
         runtime: call.runtime ?? 'landflow',
-        project_id: scopeProjectId(scope),
+        project_id: projectId,
+        goal_id: goalId,
         gateway_cost: call.gatewayCost,
         cache_read_tokens: call.cacheReadTokens,
         cache_write_tokens: call.cacheWriteTokens,
@@ -207,6 +217,8 @@ export class AiUsageMeter implements UsageMeter {
       noteUsage();
       recordUsage({
         kind: 'ai.call',
+        projectId,
+        goalId,
         workflowId: scope.lookup('workflowId'),
         agentId: scope.lookup('agentId'),
         executionId: scope.lookup('executionId'),
@@ -375,7 +387,7 @@ export function agentLimits(agentId: string, name: string, settings: Partial<Age
 
 /** Open a scope for one execution segment (runner). `previous` is what earlier segments used. */
 export function executionScope(
-  info: { executionId: string; workflowId: string; settings?: WorkflowSettings; previous?: ExecutionAiUsage; userId?: string },
+  info: { executionId: string; workflowId: string; settings?: WorkflowSettings; previous?: ExecutionAiUsage; userId?: string; projectId?: string; goalId?: string },
   meter: AiUsageMeter = aiUsageMeter(),
 ): UsageScope {
   let scope: UsageScope;
@@ -383,23 +395,28 @@ export function executionScope(
   const parent = currentUsageScope();
   const { models, ...previousTotals } = info.previous ?? ({} as ExecutionAiUsage);
   const base = info.previous ? { totals: { ...EMPTY_USAGE, ...previousTotals }, models } : undefined;
-  scope = new UsageScope({ executionId: info.executionId, workflowId: info.workflowId, ...(info.userId && { userId: info.userId }) }, limits, parent, parent ? undefined : meter, base);
+  scope = new UsageScope({ executionId: info.executionId, workflowId: info.workflowId, ...(info.userId && { userId: info.userId }), ...(info.projectId && { projectId: info.projectId }), ...(info.goalId && { goalId: info.goalId }) }, limits, parent, parent ? undefined : meter, base);
   return scope;
 }
 
 /** Open a scope for one agent run (agents runtime). */
-export function agentScope(info: { agentId: string; agentName: string; sessionId: string; settings: Partial<AgentSettings>; userId?: string }, meter: AiUsageMeter = aiUsageMeter()): UsageScope {
+export function agentScope(info: { agentId: string; agentName: string; sessionId: string; settings: Partial<AgentSettings>; userId?: string; projectId?: string; goalId?: string }, meter: AiUsageMeter = aiUsageMeter()): UsageScope {
   const parent = currentUsageScope();
-  return new UsageScope({ agentId: info.agentId, sessionId: info.sessionId, ...(info.userId && { userId: info.userId }) }, agentLimits(info.agentId, info.agentName, info.settings, meter), parent, parent ? undefined : meter);
+  // The run's project and goal (PC03 enters withRunContext first) unless the opener names them.
+  const run = currentRunContext();
+  const projectId = info.projectId ?? run?.projectId;
+  const goalId = info.goalId ?? (info.projectId ? undefined : run?.goalId);
+  return new UsageScope({ agentId: info.agentId, sessionId: info.sessionId, ...(info.userId && { userId: info.userId }), ...(projectId && { projectId }), ...(goalId && { goalId }) }, agentLimits(info.agentId, info.agentName, info.settings, meter), parent, parent ? undefined : meter);
 }
 
 /**
  * Open a scope for the assistant's own model calls (Spotlight, the Agent architect, the brain): the calls write
  * `ai_usage` rows with the `surface`, and the caller's per-user caps apply. Run the work with `runInUsageScope`.
  */
-export function assistantScope(info: { userId?: string; surface: 'spotlight' | 'architect' | 'brain'; workflowId?: string }, meter: AiUsageMeter = aiUsageMeter()): UsageScope {
+export function assistantScope(info: { userId?: string; surface: 'spotlight' | 'architect' | 'brain'; workflowId?: string; projectId?: string }, meter: AiUsageMeter = aiUsageMeter()): UsageScope {
   const parent = currentUsageScope();
-  return new UsageScope({ surface: info.surface, ...(info.workflowId && { workflowId: info.workflowId }), ...(info.userId && { userId: info.userId }) }, [], parent, parent ? undefined : meter);
+  const projectId = info.projectId ?? (info.workflowId ? homeProjectId('workflow', info.workflowId) : undefined);
+  return new UsageScope({ surface: info.surface, ...(projectId && { projectId }), ...(info.workflowId && { workflowId: info.workflowId }), ...(info.userId && { userId: info.userId }) }, [], parent, parent ? undefined : meter);
 }
 
 export { runInUsageScope };

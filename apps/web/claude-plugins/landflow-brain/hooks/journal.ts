@@ -180,7 +180,8 @@ export function safeLink(value: string, baseUrl: string): string | undefined {
     return undefined
   }
   if (url.username || url.password) return undefined
-  const github = url.protocol === 'https:' && (url.hostname === 'github.com' || url.hostname === 'www.github.com')
+  // `host`, not `hostname`: github.com on another port is not GitHub.
+  const github = url.protocol === 'https:' && (url.host === 'github.com' || url.host === 'www.github.com')
   return github || url.origin === base.origin ? clip(url.href, 300) : undefined
 }
 

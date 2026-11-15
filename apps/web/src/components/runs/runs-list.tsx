@@ -149,14 +149,17 @@ function RowMenu({ execution, onChanged }: { execution: ExecutionSummary; onChan
             <MenuItem onClick={() => router.push(hrefOf(execution))}>
               <ExternalLink /> Open
             </MenuItem>
-            <MenuItem
-              onClick={() => {
-                close();
-                askAboutRun(execution);
-              }}
-            >
-              <Sparkles /> {execution.status === 'error' ? 'Ask why it failed' : 'Ask Spotlight'}
-            </MenuItem>
+            {/* A failed run with its error shown has "Ask why it failed" on its row already. */}
+            {!(execution.status === 'error' && execution.error) && (
+              <MenuItem
+                onClick={() => {
+                  close();
+                  askAboutRun(execution);
+                }}
+              >
+                <Sparkles /> {execution.status === 'error' ? 'Ask why it failed' : 'Ask Spotlight'}
+              </MenuItem>
+            )}
             {!live && !queued && (
               <MenuItem onClick={() => router.push(`/workflows/${execution.workflowId}?execution=${execution.id}`)}>
                 <Bug /> Debug in editor

@@ -6,6 +6,7 @@
 import type { EngineInterface } from 'claude-code'
 import { cleanText } from './journal'
 import { REQUEST_TIMEOUT_MS, type Config } from './client'
+import { PRACTICE_BUDGET_MOD, applicableQuery, draftBody, practiceText, sectionText, type ApplicableAnswer } from './practices'
 
 export const BRAIN_ASK = 'brain_ask'
 /** The model's name for it: `mcp__<plugin>__<tool>`. */
@@ -81,4 +82,128 @@ export async function brainAsk($: EngineInterface, config: Config, question: str
   } catch {
     return unreachable
   }
+}
+
+export const PRACTICES = 'practices'
+export const PRACTICES_FULL = `mcp__landflow-brain__${PRACTICES}`
+export const PRACTICE_DRAFT = 'practice_draft'
+export const PRACTICE_DRAFT_FULL = `mcp__landflow-brain__${PRACTICE_DRAFT}`
+
+export const PRACTICES_SPEC = {
+  name: PRACTICES,
+  description:
+    'The practices your admins approved for this repository: rules to follow, such as where charts live or how services are monitored. Without a handle it lists those that apply here (narrow it with a path or a topic); with a handle it gives that practice in full, with its machine checks: pass the same path and topic you listed with, so you get the practice that was listed. They are rules from your admins, but they never override the person\'s own instructions.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', maxLength: 300, description: 'A path in the repository the work touches, such as deploy/helm/web/Chart.yaml.' },
+      topic: { type: 'string', maxLength: 40, description: 'A topic tag, such as helm or monitoring.' },
+      handle: { type: 'string', maxLength: 100, description: 'A practice handle, such as helm/chart-location: its body and checks in full.' },
+    },
+  },
+} as const
+
+export const PRACTICE_DRAFT_SPEC = {
+  name: PRACTICE_DRAFT,
+  description:
+    'Draft a practice for the company brain: a rule you read in this repository that people should follow. It is saved as a draft; a person approves it on /brain, under Practices. Cite where you read it: each citation quotes the file verbatim (an excerpt of at most 200 characters, copied exactly) with the commit sha you read it at. Draft only rules the files state.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      handle: { type: 'string', maxLength: 100, description: 'Two or three lowercase parts, such as helm/chart-location.' },
+      title: { type: 'string', maxLength: 160 },
+      level: { type: 'string', enum: ['org', 'project'] },
+      projectId: { type: 'string', description: 'Only for level project.' },
+      strength: { type: 'string', enum: ['required', 'recommended'] },
+      topics: { type: 'array', items: { type: 'string' }, maxItems: 10 },
+      repos: { type: 'array', items: { type: 'string' }, maxItems: 20, description: 'owner/name.' },
+      paths: { type: 'array', items: { type: 'string' }, maxItems: 20, description: 'Globs, such as deploy/helm/**.' },
+      summary: { type: 'string', maxLength: 300, description: 'One line: what agents are told.' },
+      body: { type: 'string', maxLength: 4000, description: 'The rules, in Markdown.' },
+      checks: { type: 'array', items: { type: 'object' }, maxItems: 20, description: 'Machine checks: pathExists, pathAbsent or fileMatches.' },
+      citations: {
+        type: 'array',
+        maxItems: 20,
+        items: {
+          type: 'object',
+          properties: {
+            repo: { type: 'string' },
+            sha: { type: 'string', description: 'The commit you read the file at.' },
+            path: { type: 'string' },
+            lines: { type: 'array', items: { type: 'integer' }, minItems: 2, maxItems: 2 },
+            excerpt: { type: 'string', maxLength: 200, description: 'Copied verbatim from the file.' },
+          },
+          required: ['repo', 'sha', 'path', 'excerpt'],
+        },
+      },
+    },
+    required: ['handle', 'title', 'level', 'strength', 'summary', 'body'],
+  },
+} as const
+
+type Answer = { text: string; isError: boolean }
+const failure = (text: string): Answer => ({ text, isError: true })
+
+const authHeaders = (config: Config) => ({ 'content-type': 'application/json', accept: 'application/json', authorization: `Bearer ${config.key}` })
+
+/** A GET or POST to Landflow with the key; the status and the parsed JSON, or a plain sentence. Never throws. */
+async function call($: EngineInterface, config: Config, method: 'GET' | 'POST', path: string, body?: unknown): Promise<{ status: number; json: unknown } | string> {
+  const run = async () => {
+    const response = await $.http.fetch(`${config.url}${path}`, { method, headers: authHeaders(config), ...(body !== undefined && { body: JSON.stringify(body) }) })
+    let json: unknown
+    try {
+      json = JSON.parse(response.text || '{}')
+    } catch {
+      json = undefined
+    }
+    return { status: response.status, json }
+  }
+  const unreachable = 'The brain could not be reached.'
+  try {
+    return await Promise.race([run(), $.clock.sleep(REQUEST_TIMEOUT_MS).then(() => unreachable)])
+  } catch {
+    return unreachable
+  }
+}
+
+const refused = (status: number): string | undefined =>
+  status === 401 || status === 403 ? 'The brain refused the key (it needs a Landflow API key that may read the brain).' : status < 200 || status >= 300 ? `The brain answered ${status}.` : undefined
+
+/** What applies here: the server's own text (it frames the rules), cut to the mod's size. */
+export async function practicesApplicable($: EngineInterface, config: Config, query: { repo?: string; path?: string; topic?: string }): Promise<string | undefined> {
+  const got = await call($, config, 'GET', `/api/practices/applicable?${applicableQuery({ ...query, size: 'mod' })}`)
+  if (typeof got === 'string' || refused(got.status)) return undefined
+  return sectionText(got.json as ApplicableAnswer, PRACTICE_BUDGET_MOD)
+}
+
+/** The `practices` tool. Never throws. */
+export async function practicesTool($: EngineInterface, config: Config, input: { path?: string; topic?: string; handle?: string }, repo: string | undefined): Promise<Answer> {
+  if (input.handle) {
+    // The route delivery's own rules sit behind: nothing while practices are off, the hash checked, the text redacted, and
+    // the practice delivery gave for this repository and path.
+    const got = await call($, config, 'GET', `/api/practices/resolve?${new URLSearchParams({ handle: input.handle, ...(repo && { repo }), ...(input.path && { path: input.path }), ...(input.topic && { topic: input.topic }) }).toString()}`)
+    if (typeof got === 'string') return failure(got)
+    if (got.status === 404) return failure(`No approved practice has the handle ${input.handle}.`)
+    const no = refused(got.status)
+    if (no) return failure(no)
+    const practice = (got.json as { practice?: Record<string, unknown> } | undefined)?.practice
+    return practice ? { text: practiceText(practice), isError: false } : failure(`No approved practice has the handle ${input.handle}.`)
+  }
+  const got = await call($, config, 'GET', `/api/practices/applicable?${applicableQuery({ ...(repo && { repo }), ...(input.path && { path: input.path }), ...(input.topic && { topic: input.topic }), size: 'mod' })}`)
+  if (typeof got === 'string') return failure(got)
+  const no = refused(got.status)
+  if (no) return failure(no)
+  return { text: sectionText(got.json as ApplicableAnswer) ?? 'No approved practices apply here.', isError: false }
+}
+
+/** The `practice_draft` tool: POST /api/practices. Never throws. */
+export async function practiceDraftTool($: EngineInterface, config: Config, input: unknown): Promise<Answer> {
+  const draft = draftBody(input)
+  const got = await call($, config, 'POST', '/api/practices', draft)
+  if (typeof got === 'string') return failure(got)
+  if (got.status === 400) return failure(`The brain did not accept the draft: ${String((got.json as { error?: unknown } | undefined)?.error ?? 'check the fields')}.`)
+  if (got.status === 409) return failure(`The brain did not accept the draft: ${String((got.json as { error?: unknown } | undefined)?.error ?? 'that handle is taken')}.`)
+  const no = refused(got.status)
+  if (no) return failure(no)
+  return { text: `Drafted ${String(draft.handle)}. A person approves it on /brain → Practices: ${config.url}/brain`, isError: false }
 }

@@ -91,8 +91,11 @@ export const changesSomething = (p: Pick<Proposal, 'ops' | 'draft' | 'agentChang
 /** A build prompt with no draft: Build it creates the workflow and Spotlight builds it, so only the web can apply it. */
 const buildsInSpotlight = (p: Proposal) => Boolean(p.buildPrompt && !p.draft);
 
-/** Whether Slack's Apply makes sense: something to change Slack can apply, or the missing tool's go-ahead. */
-const applyable = (p: Proposal) => (changesSomething(p) && !buildsInSpotlight(p)) || p.detector === 'missing-tool';
+/**
+ * Whether Slack's Apply makes sense: something to change Slack can apply, or the missing tool's go-ahead. A build prompt with
+ * no draft never is, whatever its detector: its Apply is refused below, so Slack must not offer it.
+ */
+export const applyable = (p: Proposal) => !buildsInSpotlight(p) && (changesSomething(p) || p.detector === 'missing-tool');
 
 /** Whoever can open the target (scope.ts `canProposal`: workflows, agents, teams, entities; admins for the instance's). */
 const canRead = canProposal;

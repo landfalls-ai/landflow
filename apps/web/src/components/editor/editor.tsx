@@ -690,12 +690,21 @@ export function Editor({ workflowId }: { workflowId: string }) {
   const brainPanelShows = builderFolds(`/workflows/${workflowId}`, spotlightState);
   const spotlightFolded = useAssistant((s) => s.collapsed);
   const brainShownBefore = useRef(false);
+  // Whether the builder was open when the brain panel folded it: closing the panel then gives it back.
+  const foldedByPanel = useRef(false);
   useEffect(() => {
-    const rule = columnRule({ brainPanelShows, wasShowing: brainShownBefore.current, builderFolded: spotlightFolded, column });
+    const rule = columnRule({ brainPanelShows, wasShowing: brainShownBefore.current, builderFolded: spotlightFolded, column, foldedByPanel: foldedByPanel.current });
     brainShownBefore.current = brainPanelShows;
-    if (rule.fold) useAssistant.getState().setCollapsed(true);
+    if (rule.fold) {
+      foldedByPanel.current = !spotlightFolded && column !== 'chat';
+      useAssistant.getState().setCollapsed(true);
+    }
     if (rule.closeChat) useChatColumn.getState().apply('close-chat');
     if (rule.dropShell) setSpotlightState(dropShell); // the strip or the flow chat took the column: the brain panel goes
+    if (!brainPanelShows) {
+      if (rule.unfold) useAssistant.getState().setCollapsed(false);
+      foldedByPanel.current = false;
+    }
   }, [brainPanelShows, spotlightFolded, column]);
   const spotlightOpen = !spotlightFolded;
   const spotlightVisible = column !== 'chat' && spotlightOpen;

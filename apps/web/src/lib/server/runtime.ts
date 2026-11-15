@@ -20,6 +20,12 @@
  */
 // Registers the composite governance rules with workflowViolations() (governance/policy.ts), in both roles.
 import './governance/composite-rules';
+// PC01: hands the goals store to the project-context seam (lib/server/project-context/seam.ts), in both roles.
+import './goals/context-source';
+// PC03: sets the run-context provider (the project block agents get).
+import './project-context/provider';
+// PR01: sets the practices port, so the nodes, routes and MCP tools reach the store (docs/practices.md).
+import './practices/register';
 import { agentTriggers } from './agents/triggers';
 import { alerts } from './alerts/service';
 import { auditHeads } from './audit/anchoring';

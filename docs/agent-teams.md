@@ -14,6 +14,7 @@ Microsoft Teams channel of an agent (`/api/teams/...`). This resource is `agent-
 | Field | |
 |---|---|
 | `name`, `goal`, `description` | the goal is what the team is for; every request inside the team carries it |
+| `goalId` | a goal in the goals tree (`goal_…`) the team works for: the project context of its members names it ([agents.md](agents.md#project-context)); a value that is not a goal id is dropped |
 | `members[]` | `kind: 'agent'` (`agentId`) or `kind: 'a2a'` (`parameters` of the A2A Agent node: `agentUrl`, `authentication`, `options`; `credentials`) |
 | per member | `id`, `title` (how its manager calls it), `role` (a sentence: when to ask it), `reportsTo`, `reviews[]`, `consults[]` (peers it **may consult**), `budgetTokens`, `questionsTo` (`manager`, the default, or `person`); a Landflow agent member may have `model` (provider, model, credential: the model it runs on in this team instead of its agent's) |
 
@@ -193,8 +194,11 @@ saved.
 3. A **remote** member is called over [A2A](a2a.md) with the tool of the `a2a` capability, keeping **one A2A conversation
    per member for the run** (its context id lives on its manager's session). The title, not the card's name, is what the
    journal and the trace call it.
-4. **Goal ancestry.** Every request a member gets starts with `Team goal: …` and `<manager>'s current task: …` (the
-   manager's own task, cut to 600 characters), then the message. An answer to a remote member's question goes as it is.
+4. **Goal ancestry.** Every request a member gets starts with the project line (`Project “P” · goal: G`, when the team's run is in a
+   project with goals), then `Team goal: …` and `<manager>'s current task: …` (the
+   manager's own task, cut to 600 characters), then the message. A remote member's first request in the run also carries the compact project block, once
+   ([a2a.md](a2a.md#project-context)); the team's project is the context of that call, replacing the manager agent's own for it.
+   An answer to a remote member's question goes as it is.
 5. **Questions.** A remote member's question goes to its manager by default (`questionsTo: manager`): the manager gets it as
    the tool result and answers with its next call to the same member. With `questionsTo: person` **the run waits for a
    person**: the question passes up to the lead (through every manager in between), the node pauses on a form (`<Member>

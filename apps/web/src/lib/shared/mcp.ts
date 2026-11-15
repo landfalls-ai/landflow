@@ -226,6 +226,11 @@ export const TOOL_SCOPES = {
   my_briefing: 'brain:read',
   brain_suggest: 'brain:write',
   record_work: 'brain:write',
+  // PR04: practices (docs/practices.md)
+  practices_for: 'brain:read',
+  practice_get: 'brain:read',
+  practice_cite: 'brain:write',
+  practice_draft: 'brain:write',
 } as const satisfies Record<string, ApiKeyScope>;
 
 /** Whether a caller with `keyScopes` (an API key's; undefined for every other caller) may see and call `tool`. A tool not in the map needs `admin`. */

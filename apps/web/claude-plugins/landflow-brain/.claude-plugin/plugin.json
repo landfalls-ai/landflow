@@ -1,7 +1,7 @@
 {
   "name": "landflow-brain",
-  "version": "0.2.0",
-  "description": "Your own Claude Code work in the Landflow company brain: a local journal, a summary held for your review, your yesterday back at the next session, and the colleagues whose work overlaps yours",
+  "version": "0.3.0",
+  "description": "Your own Claude Code work in the Landflow company brain: a local journal, a summary held for your review, your yesterday back at the next session, the colleagues whose work overlaps yours, and the practices your admins approved for the repository",
   "author": {
     "name": "Landflow"
   },

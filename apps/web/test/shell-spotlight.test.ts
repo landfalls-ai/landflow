@@ -237,16 +237,29 @@ describe('one column at a time on the editor', () => {
 describe('columnRule: one right column on the editor', () => {
   const base = { brainPanelShows: true, wasShowing: false, builderFolded: false, column: null };
   it('does nothing while the brain panel is away', () => {
-    expect(columnRule({ ...base, brainPanelShows: false })).toEqual({ fold: false, closeChat: false, dropShell: false });
+    expect(columnRule({ ...base, brainPanelShows: false })).toEqual({ fold: false, closeChat: false, dropShell: false, unfold: false });
   });
   it('folds the builder when the panel first shows, closing an open flow chat', () => {
-    expect(columnRule(base)).toEqual({ fold: true, closeChat: false, dropShell: false });
-    expect(columnRule({ ...base, column: 'chat' })).toEqual({ fold: true, closeChat: true, dropShell: false });
+    expect(columnRule(base)).toEqual({ fold: true, closeChat: false, dropShell: false, unfold: false });
+    expect(columnRule({ ...base, column: 'chat' })).toEqual({ fold: true, closeChat: true, dropShell: false, unfold: false });
   });
   it('drops the panel when the builder unfolds or the flow chat opens beside it', () => {
     const was = { ...base, wasShowing: true, builderFolded: true };
     expect(columnRule(was).dropShell).toBe(false);
     expect(columnRule({ ...was, builderFolded: false }).dropShell).toBe(true);
     expect(columnRule({ ...was, column: 'chat' }).dropShell).toBe(true);
+  });
+  it('gives the builder back when the panel goes, only if the panel folded it and the flow chat has not taken the column', () => {
+    const gone = { ...base, brainPanelShows: false, wasShowing: true, builderFolded: true };
+    expect(columnRule({ ...gone, foldedByPanel: true })).toEqual({ fold: false, closeChat: false, dropShell: false, unfold: true });
+    // Folded before the panel showed (the desktop default): it stays folded.
+    expect(columnRule({ ...gone, foldedByPanel: false }).unfold).toBe(false);
+    expect(columnRule(gone).unfold).toBe(false);
+    // The flow chat took the column: the builder stays folded.
+    expect(columnRule({ ...gone, foldedByPanel: true, column: 'chat' }).unfold).toBe(false);
+    // Already open (the strip was clicked): nothing to do.
+    expect(columnRule({ ...gone, foldedByPanel: true, builderFolded: false }).unfold).toBe(false);
+    // The panel never showed: nothing to give back.
+    expect(columnRule({ ...gone, foldedByPanel: true, wasShowing: false }).unfold).toBe(false);
   });
 });

@@ -438,7 +438,7 @@ older configs are unchanged):
 
 One run handles one user message, schedule fire or set of approval decisions:
 
-1. Build the system prompt from the persona and instructions, the skills index, the remembered facts, and the agent's name and the current time ([The persona](#the-persona)).
+1. Build the system prompt from the persona and instructions, the skills index, the project block ([below](#project-context)), the remembered facts, and the agent's name and the time the run began ([The persona](#the-persona)).
 2. Call the model with the session's messages and the tools.
 3. Run the tool calls, `toolConcurrency` at a time. A tool error is returned to the model as an error result. It does not end the run.
 4. Repeat until the model answers without tool calls. The run also stops when a tool needs approval, at *max iterations*, when the token budget is used up, or on a model error. The end reason is `completed`, `awaiting_approval`, `max_iterations`, `budget`, `error` or `canceled`.
@@ -472,6 +472,8 @@ sessions appear on their own every few seconds, except while the pointer is over
 Only one run can be active per session.
 
 ### Test chat
+
+The request may carry `projectId`: the chat then runs as if the agent was called from that project, and the block names it. A project you have no role in is a 404 "Project not found".
 
 **Test agent** opens a chat with the draft on the chat kit. The tool calls of a turn are one activity line that opens
 into its steps (a call waiting for your **Approve** stays a full row); the footer under each reply gives the model, the
@@ -572,6 +574,48 @@ a gateway (agentgateway, LiteLLM, OpenRouter) tomorrow without touching the agen
 **OpenAI API** credential's **Gateway** to LiteLLM, with the proxy as its Base URL and a virtual key as its API key, and an agent
 that uses it calls the proxy: the model picker lists the gateway's models, the call says which person, project and agent it is for,
 and LiteLLM's call id and cost are kept on the AI call. See [llm-gateway.md](llm-gateway.md#point-landflow-at-it).
+
+## Project context
+
+An agent's persona never names a project. When Landflow runs an agent, the server adds a "Where this work fits" block
+around it: the company mission, the goal chain (company goal, then project goal), the project's brief with its
+constraints and done-when, the words the project uses, its status, and one line saying what this run is (for example
+`workflow “Nightly export” → step “Check invoices”`). The block is data, not instructions, and says so. A value is
+redacted, flattened to one line and cut to a cap before it goes in, so a brief cannot add a heading or a key to the prompt.
+
+**Where it sits.** The system prompt is the persona and instructions, then the skills, then the project block, then
+the remembered facts, then "You are X. Current date and time: …". The date is the time the run began and stays the same
+for every model call of that run (and for a resume after an approval), so the prompt up to the date line is the same on
+every turn and the provider's [prompt cache](#prompt-cache) keeps working. A new run gets a new date.
+
+### Which project a run is in
+
+The caller's project, not the agent's home, so one agent can work for several projects:
+
+1. the project the caller chose (the test chat's `projectId`, after Landflow checks the person has a role in it);
+2. the home project of the workflow the agent runs in (not for an agent's own `agent:` runs, which have no workflow);
+3. the home project of the team, when a team runs it;
+4. the agent's own home project.
+
+The goal is the first of: the one the caller named, the team's `goalId`, the workflow's `settings.goalId`, the project's
+first planned or active goal. A cancelled or missing goal is skipped. With no goal, the mission stands in; with no
+mission, goal or brief there is no block and the prompt is exactly what it was. Schedules, channel messages, Run an
+Agent nodes, teams and approvals need no change of their own: the session already says who started it
+(`refFromSession`). A sub-agent gets the parent's project and goal, with the run line "a task from another agent", and
+applies its own switch. A kagent agent reached over MCP falls back to its own home project for now.
+
+**The switch.** Each agent has `projectContext`: `full` (the default), `compact` (the heading, the goal chain, the brief
+cut to 200 characters, the run line; at most 600 characters) or `off`. Set it through the agent config
+(`PUT /api/agents/:id`, `projectContext`); it is exported with the agent under `.landflow/`. `LANDFLOW_PROJECT_CONTEXT=off`
+switches the whole feature off. A full block is at most 2,400 characters; to fit, the builder drops the words, the
+status, the why, the constraints and the done-when, in that order, then cuts the brief, then the oldest goals.
+
+**Caches.** A short hash of the block joins the [response cache](#response-cache) key and the semantic cache's config
+hash, so an answer given in one project is not served in another, or after the goals change. With no block the keys are the
+same as before. The session keeps the block it got (`session.context`, with the project and goal ids).
+
+**Not in a deployed prompt.** An agent deployed to kagent has its persona baked in at deploy time; that prompt stays
+persona-only. Its project context travels in the message (later work).
 
 ## Prompt cache
 

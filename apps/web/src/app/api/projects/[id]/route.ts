@@ -1,13 +1,15 @@
 /**
  * GET /api/projects/:id — a project with its members (its members, owners and admins).
- * PATCH { name?, description?, icon? } — rename a team project (its admins).
+ * PATCH { name?, description?, icon?, brief?: { brief?, constraints?, doneWhen?, glossary?, status?, targetDate?, leadId?, decisionOwnerId? } } — rename a
+ * team project and set its brief (null clears a field; its admins). `project.brief` carries the brief and its goals (docs/projects-and-goals.md).
  * DELETE ?transferTo=<projectId> (or body { transferTo }) — delete a team project (its admins); what it owns moves to
  * `transferTo`, where the caller must be an editor, in one transaction (required when it owns anything).
  */
 import { z } from 'zod';
 import { projectRoleCan } from '@/lib/shared/projects';
+import { briefPatchSchema } from '@/lib/server/goals/schema';
 import { error, json, parseBody } from '@/lib/server/http';
-import { deleteProjectWithTransfer, getProject, projectRole, updateProject } from '@/lib/server/projects';
+import { deleteProjectWithTransfer, getProject, projectRole, updateProject, updateProjectBrief } from '@/lib/server/projects';
 import { projectRoute, routeActor } from '@/lib/server/projects/http';
 import { projectDetail } from '@/lib/server/projects/views';
 
@@ -21,7 +23,7 @@ export const GET = projectRoute(async (_request: Request, { params }: Ctx) => {
   return json({ project: projectDetail(project, actor) });
 });
 
-const patchSchema = z.object({ name: z.string().max(120).optional(), description: z.string().max(500).nullable().optional(), icon: z.string().max(40).nullable().optional() });
+const patchSchema = z.object({ name: z.string().max(120).optional(), description: z.string().max(500).nullable().optional(), icon: z.string().max(40).nullable().optional(), brief: briefPatchSchema.optional() });
 
 export const PATCH = projectRoute(async (request: Request, { params }: Ctx) => {
   const actor = routeActor();
@@ -31,7 +33,11 @@ export const PATCH = projectRoute(async (request: Request, { params }: Ctx) => {
   if (!projectRoleCan.manage(role)) return error('Only the project’s admins can change it', 403);
   const body = await parseBody(request, patchSchema);
   if (!body.ok) return body.response;
-  return json({ project: projectDetail(updateProject(project.id, body.data), actor) });
+  const { brief, ...rename } = body.data;
+  // Rename first (a bad name answers 400 before anything is written), then the brief; a brief that fails (a lead with no role) leaves the rename done.
+  const renamed = Object.keys(rename).length ? updateProject(project.id, rename) : project;
+  if (brief) updateProjectBrief(project.id, brief);
+  return json({ project: projectDetail(getProject(project.id) ?? renamed, actor) });
 });
 
 export const DELETE = projectRoute(async (request: Request, { params }: Ctx) => {

@@ -19,7 +19,7 @@ import { cn } from '@/lib/utils';
 import type { ActivityStep } from '@/lib/shared/activity';
 import { createBody } from '@/lib/shared/conversations';
 import type { ConversationItem, ConversationItemInput, ConversationPart, ConversationRecord } from '@/lib/shared/conversations';
-import { mentionKey, type MentionHit, type MentionRef } from '@/lib/shared/mentions';
+import type { MentionHit } from '@/lib/shared/mentions';
 import { ASK_HISTORY_CHARS, ASK_HISTORY_TURNS, streamingPreview, type AskEvent, type AskTurn, type WikiLink, type WorkItem } from '@/lib/shared/brain-wiki';
 import { ActivityTrace } from '../../ui/activity-trace';
 import { ConversationHistory } from '../../ui/conversation-history';
@@ -43,6 +43,9 @@ export interface AskTag {
   workflowId?: string;
   name: string;
 }
+
+/** What tells two tags apart (type, workflow and id), so a tag counts once in a turn. */
+const tagKey = (tag: AskTag): string => `${tag.type}:${tag.workflowId ?? ''}:${tag.id}`;
 
 export interface AskItem {
   id: string;
@@ -180,7 +183,7 @@ const splitRef = (ref: string) => {
 export function turnTags(item: Pick<AskItem, 'about' | 'mentions'>): AskTag[] {
   const tags: AskTag[] = [...(item.about ? [{ type: 'brainPage', id: item.about.ref, name: item.about.name }] : []), ...(item.mentions ?? [])];
   const seen = new Set<string>();
-  return tags.filter((t) => !seen.has(mentionKey(t as MentionRef)) && seen.add(mentionKey(t as MentionRef)));
+  return tags.filter((t) => !seen.has(tagKey(t)) && seen.add(tagKey(t)));
 }
 
 /**
@@ -485,7 +488,7 @@ export function AskPanel({
     setInput('');
     const picked = picker.chips.map((c): AskTag => ({ type: c.type, id: c.id, name: c.name, ...(c.workflowId && { workflowId: c.workflowId }) }));
     // The thing it was sent about goes first, once.
-    const tags = subjectChip && !picked.some((t) => mentionKey(t as MentionRef) === mentionKey(subjectChip as MentionRef)) ? [subjectChip, ...picked] : picked;
+    const tags = subjectChip && !picked.some((t) => tagKey(t) === tagKey(subjectChip)) ? [subjectChip, ...picked] : picked;
     picker.clear();
     void ask(text, chip, tags.slice(0, 8));
   };
@@ -597,10 +600,16 @@ export function AskPanel({
                     {subjectChip && (
                       <span className="mb-1 inline-flex max-w-full items-center gap-1 rounded-md bg-acdim px-1.5 py-0.5 text-[11.5px] text-ac">
                         <span className="truncate">@{subjectChip.name}</span>
-                        <button type="button" onClick={() => {
-                          setSubjectOff(true);
-                          onSubjectOff?.();
-                        }} aria-label="Ask about everything" title="Ask about everything, not this" className="grid place-items-center hover:text-t1 max-md:size-9">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSubjectOff(true);
+                            onSubjectOff?.();
+                          }}
+                          aria-label="Ask about everything"
+                          title="Ask about everything, not this"
+                          className="grid place-items-center hover:text-t1 max-md:size-9"
+                        >
                           <X className="size-3" />
                         </button>
                       </span>

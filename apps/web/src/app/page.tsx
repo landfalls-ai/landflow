@@ -122,7 +122,7 @@ export default function Overview() {
         <Panel title="Recent runs" href="/runs" linkLabel="View all">
           {recent?.length ? (
             <div className="p-3">
-              <RunLines runs={recent.map((e) => ({ id: e.id, href: `/runs/${e.id}`, name: e.workflowName, startedAt: e.startedAt }))} />
+              <RunLines runs={recent.map((e) => ({ id: e.id, href: `/runs/${e.id}`, name: e.workflowName, startedAt: e.startedAt, workflowId: e.workflowId }))} />
             </div>
           ) : null}
           {executions?.length === 0 && (

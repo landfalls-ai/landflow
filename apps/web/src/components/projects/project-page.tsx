@@ -34,6 +34,8 @@ import { DeleteProjectDialog, describeCounts } from './project-dialogs';
 import { rememberProject } from './current-project';
 import { projectLabel, useProjectStore } from './use-projects';
 import { Segmented } from '../ui/segmented';
+import { ProjectBriefCard } from './project-brief-card';
+import type { ProjectBriefView } from '@/lib/shared/goals';
 import { OVERVIEW_KINDS, PROJECT_TABS, projectTab, type ProjectTab } from './project-tabs';
 
 const ROLE_HINT: Record<ProjectRole, string> = {
@@ -184,6 +186,7 @@ const OWNED: Array<{ kind: 'dataTable' | 'agent'; title: string; href: (id: stri
 function Overview({ project, onChanged }: { project: ProjectDetail; onChanged: () => void }) {
   return (
     <div className="space-y-4">
+      <ProjectBriefCard projectId={project.id} brief={(project as ProjectDetail & { brief?: ProjectBriefView }).brief} onChanged={onChanged} />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {OVERVIEW_KINDS.map(({ kind, label, href }) => {
           const Icon = ICON[kind];

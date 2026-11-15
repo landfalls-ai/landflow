@@ -32,6 +32,7 @@ import type { ApiKeyScope } from '../../shared/auth';
 import { toolAllowed } from '../../shared/mcp';
 import { registerBrainPrompts } from './brain-prompts';
 import { registerBrainTools } from './brain-tools';
+import { registerPracticeTools } from './practice-tools'; // PR04
 import { registerDebugTools } from './debug-tools';
 import { normalizeWorkflow, validateWorkflow, type WorkflowInput } from './workflows';
 
@@ -514,6 +515,8 @@ export function instanceServer(actor?: Actor, scope?: McpScope, keyScopes?: read
   });
 
   registerBrainTools(server, { actor, scope, denied: (id, action) => denied(id, action), json, failure });
+  // PR04: practices (tools and resources)
+  registerPracticeTools(server, { actor, scope, denied: (id, action) => denied(id, action), json, failure, keyScopes });
   // The caller's briefing as a prompt and resources: for a person who may read the brain (not the instance access token).
   if (actor && toolAllowed(keyScopes, 'my_briefing')) registerBrainPrompts(server, actor);
 

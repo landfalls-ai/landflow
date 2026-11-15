@@ -5,7 +5,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { KeyRound, MoreHorizontal, X } from 'lucide-react';
+import { KeyRound, MoreHorizontal, Sparkles, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { DevOnly } from '@/lib/client/developer-details';
@@ -43,8 +43,8 @@ export const SCOPES: Array<{ id: Scope; name: string; hint: string }> = [
 ];
 const TONE: Record<string, Tone> = { live: 'success', revoked: 'muted', expired: 'muted', 'used up': 'warning' };
 
-/** The run page's ⋯ menu: "Debug access…" opens the dialog over the page, once the menu has closed. */
-export function RunMenu({ executionId }: { executionId: string }) {
+/** The run page's ⋯ menu: on a phone Ask first, then "Debug access…", which opens the dialog over the page once the menu has closed. */
+export function RunMenu({ executionId, ask }: { executionId: string; /** On a phone only: the header's Ask button, moved in here so the header keeps one row. */ ask?: { label: string; run: () => void } }) {
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
   return (
@@ -59,14 +59,28 @@ export function RunMenu({ executionId }: { executionId: string }) {
         )}
       >
         {(close) => (
-          <MenuItem
-            onClick={() => {
-              close();
-              setOpen(true);
-            }}
-          >
-            <KeyRound /> Debug access…
-          </MenuItem>
+          <>
+            {ask && (
+              <div className="md:hidden">
+                <MenuItem
+                  onClick={() => {
+                    close();
+                    ask.run();
+                  }}
+                >
+                  <Sparkles /> {ask.label}
+                </MenuItem>
+              </div>
+            )}
+            <MenuItem
+              onClick={() => {
+                close();
+                setOpen(true);
+              }}
+            >
+              <KeyRound /> Debug access…
+            </MenuItem>
+          </>
         )}
       </Popover>
       {/* In <body>, so the header's actions keep their order on a phone. */}

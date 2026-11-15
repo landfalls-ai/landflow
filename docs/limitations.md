@@ -43,6 +43,31 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - **Log redaction** ([observability.md](observability.md#3-logs)): the host's logger scrubs secret-shaped values (Bearer tokens (the word `Bearer` with that case; an all-letter token shorter than 24 characters is left, so prose such as "Bearer authentication" is not mangled), `lf_` keys, `sk-`, GitHub and Slack keys, URL passwords, PEM private keys) and the credential values a node was handed; a secret in free text of another shape, or a credential value shorter than twelve characters (the vault does not remember short ones, so a weak password such as `postgres` is not scrubbed), is not found. Value patterns apply to log lines only: span attributes and exception events exported over OTLP are redacted by key name. OAuth access tokens handed to a node are scrubbed from its output too, so a workflow that passes one downstream through node output gets `[redacted]`. A multi-line credential that is not a PEM block is remembered whole, not line by line. The plugin SDKs keep their own rules (key names and the current request's credential values). A `traceparent` on a read response may name a trace the sampler dropped.
 - **By design**: a Respond to Webhook reply built from a secret is not redacted: redaction covers what is kept, and the reply is sent, not kept ([External secrets](features/secrets-and-environments.md)).
 
+## Projects and goals
+
+- **One company per instance** ([projects-and-goals.md](projects-and-goals.md#the-mission)): the mission and company name are
+  one pair in Settings → Company. Two companies need two instances.
+- **No goal progress yet**: a goal has a status, an owner and a target date, but nothing measures how far along it is (a
+  later wave of the Paperclip program).
+- **Goal lists stop at 500**: `GET /api/goals` keeps the first 500 goals the caller sees (oldest first) after filtering,
+  with no paging and no sign it was cut; children of a goal that was cut show as roots. Nothing caps how many goals exist.
+- **Removed people stay named by id**: a user removed from a project (or deleted) stays as its `leadId` or
+  `decisionOwnerId`, and as a goal's `ownerId`, until someone changes it; the view then has the id but no name.
+- A project goal can only be served by its home project; to share one across projects, make it a company goal.
+
+## Project context (wave 7)
+
+- An agent has no project wall yet: any agent may be used in any project's run. Availability (which agents a project can
+  use) comes in wave 8. Until then the block only tells the agent where it works.
+- A session stores the block it was given (`session.context`), so anyone who can read the agent's sessions can read the
+  brief of a project the run was called from. Wave 8's availability rule closes this.
+- The builder drops the brief entirely, then cuts the mission to 120 characters, when the usual drop order still leaves
+  the block over its cap.
+- Whether Anthropic's prompt cache hits more with the pinned date is not measured on this machine: the prompt up to the
+  date line is stable by construction, and no run here talks to Anthropic.
+- A kagent agent called over MCP gets no block and falls back to its own home project. Remote agents and a team's
+  requests carry the block in their message in a later package.
+
 ## Test chat history (B10, 2026-11)
 
 - "Earlier tests" in an agent's test chat is per agent, not per person: test sessions all carry the user id `you`, so on a
@@ -128,6 +153,14 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - **Plugin knowledge bases: presets only in the dialog.** The knowledge dialog offers Clickland; another plugin node
   is set through the API. It has no documents, no passages-per-search setting (the node's own limit applies) and is not
   offered by the Agent architect, which lists only vector collections.
+
+## Practices in Claude Code and the shell
+
+- `landflow practices check` asks again in smaller path groups when the host omits practices that did not fit its block; any still omitted (or whose version moved mid-check) are reported and the run says the check is incomplete instead of `Passed.`. It runs machine checks only. A practice with no machine check is reported as such; there are no model verdicts until wave P2's Check Practices.
+- `/brain learn`'s citations are never verified: the host cannot read your checkout, so a draft from the mod or `landflow practices learn` stays unverified until a person approves it against the file.
+- `/brain learn` hands Claude a prompt as a turn of its own, so it waits until the session is idle, and a model that ignores the instructions can draft fewer than asked or none. `practice_draft` and the learn route always make tainted drafts.
+- The practices section is built once at session start: a practice approved later shows at the next session, or through the `practices` tool or `/brain practices`.
+- `check` reads the change as `git diff <base>...HEAD` shows it: uncommitted work is not in it, and a renamed file is read as a delete and an add.
 
 ## Landledger (built 2026-11-14)
 
@@ -283,6 +316,12 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 - **Developer details** ([ui-review.md](ui-review.md#developer-details)): with the switch off (the default) the Debug access dialog on the Run Trace page still opens from the header's ⋯ menu and speaks in plain words, and only the tool names behind them wait for the switch; the switch is per person and does not change what the API returns. An unfolded plugin card shows its endpoints (address, last error) and its transport policy only with the switch on, so a builder who wants to see an offline endpoint's error or change the policy turns it on first.
 
+## Learning practices (practices wave P1)
+
+- A learned citation is verified only by the Learn practices template (or a Draft Practice node) in a flow an owner or admin saved: the flow reads the file itself. `POST /api/practices/learn`, and so `/brain learn` in the mod and the CLI, only receive text a caller sent, so their drafts are tainted and none of their citations is ever verified; a person approves them against the repository.
+- The Learn practices template lists a directory one level deep and reads at most 20 text files under 20 KB a repository, at the default branch's latest commit. It needs a GitHub token you create; it has not been run against a real repository.
+- Draft Practice never verifies in a tool call (an agent's text is not a source), and a flow's member-saved or pinned run drafts with every citation unverified.
+
 ## MCP key scopes (company backbone)
 
 - An API key now sees and calls only the instance MCP tools its scopes cover (`lib/shared/mcp.ts` `TOOL_SCOPES`). A key with narrow scopes loses tools it had before: add `workflows:read`, `workflows:write`, `run`, `executions:read` or `brain:read` as needed, or use an MCP token.
@@ -349,3 +388,36 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - An agent's raised cap is written into its published version in place (and its history entry), not as a new version.
 - Apply Cap Raise tells the budgets sync and records whether it updated LiteLLM; a workflow's cap has no LiteLLM backstop,
   so its `gateway` is `skipped`.
+
+## Project context for remote agents (2026-11)
+
+- Remote, kagent and A2A agents and a team's remote members receive the compact block by default with the first message
+  of a conversation: goal titles and a 200-character brief. Turn it off per A2A node, per A2A capability or per team remote member (**Project context: Off** in
+  its options; the team's project line stays) or per agent (context mode Off). Nothing is sent where no project has goals.
+- The block is not repeated in follow-ups, so an agent that forgets it has to be asked again in a new conversation.
+
+## Usage by goal (wave 7)
+
+- Only `ai.call` usage events carry a goal (`goalId`); `run.finished`, `node.failed`, `node.slow` and `agent.session` do not, and calls that come in through the spend import (kagent) have none.
+
+## Practices (wave P1)
+
+- Practices reach only the Claude Code mod and MCP clients until wave P2. Landflow agents, kagent agents and the Check
+  Practices step do not get them yet, and `required` stops nothing: a failed check blocks a flow only from wave P2
+  ([practices.md](practices.md)).
+- A draft does not file an inbox suggestion yet (wave P2). Find waiting drafts in `/brain` → Practices, or in the links the
+  API, the mod and the CLI return.
+- There is no four-eyes setting: the drafter of a practice may approve their own, if they are allowed to approve at
+  that level.
+- A practice grants nothing: no tool, approval or guard changes. It is text an agent is asked to follow.
+- A practice has one `supersedes` pointer: approving a version that supersedes several records the first, and the audit
+  event lists them all.
+- No practices ship with Landflow; each instance learns or writes its own.
+
+## Following practices over MCP and citing (PR04, 2026-11)
+
+- A Landflow MCP project token is an instance token with a scope and has no actor, so it gets organization practices only; a project server gets its project's practices only for a personal API key on `/api/mcp/projects/<id>`.
+- An unscoped caller gets a project practice only when it lists the repository asked for. A project practice with no `repos` is reachable over the unscoped server through `practice_get { projectId }` and the resources, not through `practices_for`.
+- Citing accepts any version from 1 to the current approved one, so a version that was rejected and never approved can be recorded as `cited`. Tighten it in the practices store later.
+- `practice_cite` records at most 20 citations; the rest are neither recorded nor listed as unknown. `practices_for` appends one pointer line after the block is fitted to its budget.
+- Two project practices with the same handle in different projects are not ordered by the selector; the store's order decides.

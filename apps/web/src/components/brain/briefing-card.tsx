@@ -20,6 +20,7 @@ import type { Briefing, RelatedColleague, WorkItem } from '@/lib/shared/brain-wo
 import type { BriefingDelivery } from '@/lib/shared/preferences';
 import type { WorkflowSummary } from '@/lib/shared/types';
 import { useViewer } from '../auth/viewer';
+import { closeSpotlight } from '../spotlight/context';
 import { Card } from '../shell/page-header';
 import { Chip } from '../ui/badge';
 import { Button } from '../ui/button';
@@ -58,7 +59,8 @@ export function safeHref(url: string | undefined, origin?: string): { href: stri
     const path = `${parsed.pathname}${parsed.search}${parsed.hash}`;
     return path.startsWith('//') || path.includes('\\') ? undefined : { href: path, external: false };
   }
-  if (parsed.protocol === 'https:' && parsed.hostname === 'github.com' && !parsed.username && !parsed.password) return { href: parsed.href, external: true };
+  // `host`, not `hostname`: github.com on another port is not GitHub.
+  if (parsed.protocol === 'https:' && parsed.host === 'github.com' && !parsed.username && !parsed.password) return { href: parsed.href, external: true };
   return undefined;
 }
 
@@ -241,7 +243,7 @@ export function BriefingView({ briefing, delivery, onDelivery, canSetup, setting
           }
         </Popover>
         {canSetup && (
-          <Button size="sm" variant="ghost" onClick={onSetup} loading={settingUp} className="ml-auto max-md:h-11" title="Creates the nightly workflow from the template and opens it, unpublished, for you to review">
+          <Button size="sm" variant="ghost" onClick={onSetup} loading={settingUp} className="ml-auto max-md:ml-0 max-md:h-11 max-md:px-0" title="Creates the nightly workflow from the template and opens it, unpublished, for you to review">
             {SETUP_LABEL}
           </Button>
         )}
@@ -278,6 +280,8 @@ export function BriefingCard() {
     try {
       const made = await api<{ workflow?: { id: string } }>(`/api/templates/${TEMPLATE_ID}/use`, { method: 'POST', json: {} });
       if (!made.workflow) throw new Error('The template made no workflow');
+      // The new workflow opens with its builder: an About panel left open on Home would fold it and stay (one column).
+      closeSpotlight();
       router.push(`/workflows/${made.workflow.id}`);
     } catch (e) {
       toast.error((e as Error).message);

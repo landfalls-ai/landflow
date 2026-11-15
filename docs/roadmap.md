@@ -1897,6 +1897,33 @@ The wave 5 and L1 review notes were fixed in wave 6's carryover where they were 
   390×844, the GitHub template tile after a host restart, Explore with two marketplaces and real installed plugins, and
   fresh screenshots for B30, B31, B32 and B34 (the review's predate their fix commits). They need a host and a browser.
 
+## Company backbone: left open from the wave 6 reviews (2026-11-15)
+
+Wave 7's carryover fixed the contained wave 6 notes (the brain wiki's dead exports, the builder given back when the brain
+panel closes, run lines that name their workflow, one Ask why it failed per failed run, the run page's Ask in its ⋯ menu
+on a phone, `safeHref` and `safeLink` by host, the phone's setup button, /connect's marketplace install, closing Spotlight
+before the new sync workflow opens, and no Slack Apply on a build prompt). These wait, each with its reason:
+
+- **"What finished" on the briefing card**: still the open item under the briefing above; `Briefing` has no `finished`
+  list, and adding one changes B30's briefing shape and its nightly text, so it wants its own package.
+- **Set up tomorrow sync twice**: the button hides when a visible workflow has a List People node, so a sync workflow in
+  a project the admin cannot open leaves it up, and a second click makes a second copy. Recording the template on the
+  workflow does not help (the admin still cannot list it); the fix is a server-side check in `POST /api/templates/<id>/use`
+  or a "sync exists" answer on the briefing route, which reads past the caller's projects and needs its own review.
+- **Team work in overlap introductions**: B38's "two people sharing team work get one introduction" is not met; the
+  detector reads `org` work only until `canProposal` (`brain/scope.ts`) refuses non-audience readers for it
+  ([limitations](limitations.md)).
+- **The mod's nightly text and the review prompt's visibility**: still the open items above; PR05 changed the mod's
+  session start for practices only.
+- **Install lines in the node-plugin READMEs**: `claude plugin validate .` advises a `/plugin install <name>` line for
+  each `plugins/*` bundle. They are Landflow node plugins with flows, not Claude Code plugins, so a Claude Code install
+  line would mislead; the README's install text waits for Explore's own install wording.
+- **Live checks still open from wave 6**: B35's editor shots retaken after its fixes and "Ask the brain instead" / "Build
+  here instead" in about mode at 390×844; the credentials menu and the brain page's Ask button with real data; B37's
+  base-build and flow-briefing shots; ⌘K on Home, `/brain` and the editor; "Ask why it failed" from a phone-width ⋯ sheet
+  (the sheet closing, scroll lock, focus); Your morning with the shell panel open at 390 px and at desktop width. They
+  need a host and a headed browser, with wave 7's live pass.
+
 ## Runs: one list (B20, 2026-11-14)
 
 Closed from the wave 1 page review: X2 (Executions, Runs and Search runs are one page, **Runs** at `/runs`, the old URLs redirect), P-ex-1 (no ID or Mode column), P-ex-2 (Stop all only while a run runs), P-ex-3 (repeated failures fold into one row), P-ex-4 (two re-run words), P-runs-1 (one search box with Status and Workflow chips, the rest under More filters) and P-cmp-1 (compare with fewer than two runs goes back to the list). See [the Runs list](run-trace.md#the-runs-list).
@@ -1940,6 +1967,19 @@ Closes P-wf-1, P-wf-2, P-cr-1, P-cr-2, P-dt-1, P-pr-2 and P-auth-1; X10 closed i
   they fire `landflow:ask-about` with the resource and three starters ([spotlight.md](spotlight.md#ask-about-it)). The chat
   panel that listens for it is built (B35).
 
+## Projects with goals (Paperclip program, waves 7-10)
+
+Projects get a mission to serve, goals and a brief, and agents learn where their work fits. See
+[projects-and-goals.md](projects-and-goals.md).
+
+- **PC01, built:** the data and API. The company mission in Settings (`company`), the goal tree (levels, status, owner,
+  target date, parent, four levels deep), the goals a project serves in order (its first planned or active one is primary),
+  linked brain initiatives, the project brief (brief, constraints, done-when, words we use, status, target date, lead,
+  decision owner) and the context data source for the "Where this work fits" block. Closes the server side of P1.
+- **PC02, open:** the screens (Goals page, goal dialog, the brief on the project Overview, Settings → Company).
+- **PC03, open:** the block and its injection into agent runs.
+- **Open:** goal progress.
+
 ## Not planned
 
 Later, maybe: an agent code sandbox, and prompt management. Not planned:
@@ -1975,3 +2015,32 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   Person, and Apply Cap Raise, which changes the Landflow cap and tells the budgets sync only after an admin other than
   the requester approved ([llm-gateway.md](llm-gateway.md#asking-for-a-higher-cap)). The Insights → AI "Ask for more" dialog
   (LL06) is built.
+
+## Paperclip wave 7: project context (PC03)
+
+- **PC03, built:** the "Where this work fits" block for every agent Landflow runs: the run resolves its project and goal
+  (caller, workflow, team, agent home), the builder writes the block (mission, goal chain, brief, run line; full or
+  compact, redacted and capped), it sits after the skills and before the date line, the date is pinned for the run,
+  the block's hash is part of the cache keys, and each agent has a `projectContext` switch. The test chat takes
+  `projectId`. Teams and workflows can name a goal (`goalId`). `LANDFLOW_PROJECT_CONTEXT=off` turns it off
+  ([agents.md](agents.md#project-context)). Left: the remote paths (PC04), usage attribution (PC05), the
+  availability rule (PC06) and the switch and preview in the UI (PC07).
+
+## Practices (waves P1 and P2)
+
+Rules in the brain that connected agents follow, each approved by a person ([practices.md](practices.md)). Decided
+2026-11-15: org practices are approved by instance owners and admins, project practices by that project's admins; no
+four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows; no practices ship in code.
+
+- **PR01, built (wave P1):** the store, versions and the hash, approval with taint and conflicts, reject, retire and
+  waivers, the `/api/practices` routes, `LANDFLOW_PRACTICES` and the port other packages read.
+- **PR02 to PR05 (wave P1):** the Brain page, learning (Draft Practice, the Learn practices template, `/brain learn`),
+  selection and the block, MCP tools, the mod and `landflow practices`.
+- **Wave P2, next:** `ApplicablePractice` gets the practice id and project id (a change to `lib/shared/practices.ts`), so `landflow practices check` asks `resolve` by id instead of by handle and level; delivery to Landflow agents through the seam's practices slot (PR06) and to kagent agents (PR07),
+  Check Practices with Ask a Person for Fix, Waive or Change (PR08), compliance and the inbox suggestion for a draft
+  (PR09), and the demo on a branch of the Landflow repository that ends at a draft pull request (PR10).
+
+## Practices in Claude Code and the shell (PR05, wave P1)
+
+- **Built**: the landflow-brain mod 0.3.0 adds a practices section (`landflow-brain:practices`) inside the 2-second bound, the `practices` and `practice_draft` tools, `/brain practices` and `/brain learn [paths]`; the CLI adds `landflow practices list|show|check|learn`, with the machine checks run locally ([landflow-brain-mod.md](landflow-brain-mod.md#practices), [features/cli.md](features/cli.md#practices-landflow-practices)). Closes PRAC-5.
+- **Left**: model verdicts in `check` and a reminder after `Write` or `Edit` on a matching path (wave P2); the mod never denies a tool call.

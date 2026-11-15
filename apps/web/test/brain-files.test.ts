@@ -109,6 +109,7 @@ describe('addresses', () => {
     expect(refOfPath(['settings'])).toBe('settings');
     expect(refOfPath(['nonsense'])).toBe('index');
     expect(refOfPath(['person', 'dana-example.com'])).toBe('person/dana-example.com');
+    expect(refOfPath(['practices', 'prc_x'])).toBe('practices/prc_x');
     expect(urlOf('index')).toBe('/brain');
     expect(urlOf('customer/acme')).toBe('/brain/customer/acme');
   });

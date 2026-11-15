@@ -33,6 +33,8 @@ OTel trace id when telemetry recorded one, and a step's own span id in `attrs.ot
 
 ### Who writes it
 
+- **The run's project and goal**: when a run starts in a project, the runner adds `attrs.project` (`{ id, name }`) and, when the run serves a goal, `attrs.goal` (`{ id, title }`) to the `run` span. The Run Trace shows them in a later wave.
+
 - **The runner** feeds every engine event of a run to a translator (`journal/translator.ts`). Node runs become `step`
   or `agent` spans, sub-node runs become `model`, `tool` or `delegate` spans, and waits become `wait` spans. A chat or
   form trigger's input becomes a message from the person.

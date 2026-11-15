@@ -152,6 +152,7 @@ export function recordUsage(input: UsageInput, db: Database = database()): Usage
       day: dayOf(at.getTime()),
       kind: input.kind,
       ...(projectId && { projectId }),
+      ...(input.goalId && { goalId: input.goalId }),
       ...(input.workflowId && { workflowId: input.workflowId }),
       ...(input.nodeId && { nodeId: input.nodeId }),
       ...(input.nodeType && { nodeType: input.nodeType }),
@@ -182,6 +183,7 @@ export interface UsageRow {
   day: string;
   kind: string;
   project_id: string | null;
+  goal_id?: string | null;
   workflow_id: string | null;
   node_id: string | null;
   node_type: string | null;
@@ -207,6 +209,7 @@ const toRow = (e: UsageEvent, owned: UsageOwnership = {}) => ({
   day: e.day,
   kind: e.kind,
   project_id: e.projectId ?? null,
+  goal_id: e.goalId ?? null,
   workflow_id: e.workflowId ?? null,
   node_id: e.nodeId ?? null,
   node_type: e.nodeType ?? null,
@@ -239,6 +242,7 @@ export function fromRow(row: UsageRow): UsageEvent {
     day: row.day,
     kind: row.kind as UsageKind,
     ...(row.project_id && { projectId: row.project_id }),
+    ...(row.goal_id && { goalId: row.goal_id }),
     ...(row.workflow_id && { workflowId: row.workflow_id }),
     ...(row.node_id && { nodeId: row.node_id }),
     ...(row.node_type && { nodeType: row.node_type }),

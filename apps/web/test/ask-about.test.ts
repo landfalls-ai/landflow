@@ -10,7 +10,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ASK_ABOUT_EVENT, askAbout, askDetail } from '../src/lib/client/ask-about';
 import { startersFor } from '../src/lib/shared/ask-starters';
 import { MENTION_TYPES } from '../src/lib/shared/mentions';
-import { RunLineRow } from '../src/components/run-trace/run-line';
+import { RunLineRow, RunOneLine } from '../src/components/run-trace/run-line';
 import type { RunLine } from '../src/lib/shared/run-line';
 
 const src = (...parts: string[]) => readFileSync(join(import.meta.dirname, '..', 'src', ...parts), 'utf8');
@@ -64,25 +64,63 @@ describe('the failed-run button', () => {
   });
 });
 
+describe('RunOneLine', () => {
+  const line = (tone: RunLine['out']['tone'], ms = 1200): RunLine => ({ in: { kind: 'manual', label: 'Manual' }, by: { members: [] }, out: { tone, label: 'Done' }, ms, tokens: 0 }) as RunLine;
+  it('is one link with the name, the time it took and when', () => {
+    const html = renderToStaticMarkup(createElement(RunOneLine, { line: line('ok'), name: 'Nightly sync', href: '/runs/r1', startedAt: new Date(Date.now() - 120_000).toISOString() }));
+    expect(html.match(/<a /g)).toHaveLength(1);
+    expect(html).toContain('href="/runs/r1"');
+    expect(html).toContain('aria-label="Open the run: Nightly sync"');
+    expect(html).toContain('Nightly sync');
+    expect(html).toContain('1.2');
+    expect(html).not.toContain('<button');
+  });
+  it('a live run shows no duration', () => {
+    const html = renderToStaticMarkup(createElement(RunOneLine, { line: line('live', 5000), name: 'Nightly sync', href: '/runs/r1' }));
+    expect(html).not.toContain('5.0');
+  });
+  it('a failed run puts the Ask button beside the link, not inside it', () => {
+    const html = renderToStaticMarkup(createElement(RunOneLine, { line: line('bad'), name: 'Nightly sync', href: '/runs/r1', runId: 'r1', workflowId: 'w1' }));
+    expect(html).toMatch(/<\/a><\/div><button[^>]*>.*Ask why it failed<\/button>/);
+  });
+  it('a run with an agent on it is a card, not one line', () => {
+    const withAgent = { ...line('ok'), by: { lead: { id: 'agent:a1', name: 'Helper', type: 'agent' }, members: [] } } as unknown as RunLine;
+    const html = renderToStaticMarkup(createElement(RunLineRow, { line: withAgent, name: 'Nightly sync', href: '/runs/r1' }));
+    expect(html).toContain('rounded-2xl border border-hair bg-sf p-3');
+    expect(html).toContain('Open the run: Manual to Done');
+  });
+});
+
 describe('the menus', () => {
-  const files: Array<[string, string]> = [
-    ['workflows', 'components/workflows/workflows-list.tsx'],
-    ['runs', 'components/runs/runs-list.tsx'],
-    ['run page', 'components/run-trace/run-page.tsx'],
-    ['agent card', 'components/agents/agent-card.tsx'],
-    ['agent page', 'components/agents/builder.tsx'],
-    ['data table', 'components/data-tables/table-view.tsx'],
-    ['credentials', 'app/credentials/page.tsx'],
-    ['brain page', 'components/brain/wiki/page-doc.tsx'],
-    ['execution preview', 'components/executions/execution-preview.tsx'],
+  // Each surface, the resource type it sends and the id it takes (so an item wired to the wrong resource fails here).
+  const files: Array<[string, string, string, string]> = [
+    ['workflows', 'components/workflows/workflows-list.tsx', 'workflow', 'workflow.id'],
+    ['runs', 'components/runs/runs-list.tsx', 'run', 'execution.id'],
+    ['run page', 'components/run-trace/run-page.tsx', 'run', 'executionId'],
+    ['agent card', 'components/agents/agent-card.tsx', 'agent', 'agent.id'],
+    ['agent page', 'components/agents/builder.tsx', 'agent', 'agentId'],
+    ['data table', 'components/data-tables/table-view.tsx', 'dataTable', 'tableId'],
+    ['credentials', 'app/credentials/page.tsx', 'credential', 'credential.id'],
+    ['brain page', 'components/brain/wiki/page-doc.tsx', 'brainPage', '`${entity.type}/${entity.id}`'],
+    ['execution preview', 'components/executions/execution-preview.tsx', 'run', 'record.executionId'],
   ];
-  for (const [name, file] of files) {
+  for (const [name, file, type, id] of files) {
     it(`${name} asks about its resource`, () => {
       const text = src(file);
-      expect(text).toContain('askAbout(');
       expect(text).toMatch(/Ask Spotlight|Ask why it failed|Ask about where/);
+      const calls = [...text.matchAll(/askAbout\(askDetail\(\{ type: '([A-Za-z]+)', id: ([^,]+),/g)].map((m) => [m[1], m[2]]);
+      expect(calls.length).toBeGreaterThan(0);
+      for (const call of calls) expect(call).toEqual([type, id]);
     });
   }
+  it('a run names its workflow wherever it is asked about', () => {
+    for (const file of ['components/runs/runs-list.tsx', 'components/run-trace/run-page.tsx', 'components/executions/execution-preview.tsx', 'components/run-trace/run-line.tsx']) {
+      const text = src(file);
+      const calls = [...text.matchAll(/askDetail\(\{ type: 'run'.*$/gm)];
+      expect(calls.length, file).toBeGreaterThan(0);
+      for (const m of calls) expect(m[0], file).toContain('workflowId');
+    }
+  });
   it('a credential sends the reference only', () => {
     const text = src('app/credentials/page.tsx');
     expect(text).toMatch(/askDetail\(\{ type: 'credential', id: credential\.id, name: credential\.name \}\)/);

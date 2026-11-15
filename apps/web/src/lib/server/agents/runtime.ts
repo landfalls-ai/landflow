@@ -18,6 +18,10 @@ import type {
   TimelineEntry,
   TokenUsage,
 } from '../../shared/agents';
+import type { RunContext, RunContextRef } from '../../shared/project-context';
+import { emptyContext } from '../project-context/empty';
+import { refFromSession } from '../project-context/resolve';
+import { runContextProvider, withRunContext } from '../project-context/seam';
 import { agentScope, isUsageCapError, runInUsageScope } from '../ai-usage';
 import { currentActorId, requestAuth } from '../auth/context';
 import { applyToolPolicy } from './policy';
@@ -56,6 +60,8 @@ export interface RunRequest {
   approvals?: 'ask' | 'deny';
   signal?: AbortSignal;
   onEvent?: (event: AgentStreamEvent) => void;
+  /** Who is calling, for the project block (docs/agents.md#which-project-a-run-is-in); absent: the session says. Not `caller`, which is whose tools run. */
+  context?: RunContextRef;
   /** The session's usage so far, after each model call (a team's budget bars). */
   onUsage?: (usage: TokenUsage) => void;
   /** Images tools return (a screenshot): how many of the newest go to the model each turn (default 2, or LANDFLOW_TOOL_IMAGES_KEPT) and whether it sees them. */
@@ -145,7 +151,7 @@ export function newSession(
   };
 }
 
-function systemPrompt(agent: Agent, config: AgentConfig, session: AgentSession, extra?: string): string {
+function systemPrompt(agent: Agent, config: AgentConfig, session: AgentSession, runCtx: RunContext, extra?: string): string {
   let memory: string | undefined;
   if (config.memory.crossSession) {
     const notes = agentStore.memories(agent.id, session.userId);
@@ -155,7 +161,8 @@ function systemPrompt(agent: Agent, config: AgentConfig, session: AgentSession, 
       'Use the remember tool for durable facts worth knowing next time.',
     ].join('\n');
   }
-  const prompt = personaPrompt(config, { memory, now: new Date() });
+  // The date is the run's own, pinned at its start: a clock that moves on every model call defeats the provider's prompt cache.
+  const prompt = personaPrompt(config, { memory, now: new Date(runCtx.at), ...(runCtx.text && { context: runCtx.text }) });
   return extra ? `${prompt}\n\n${extra}` : prompt;
 }
 
@@ -274,10 +281,26 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
   };
 
   // Token & cost tracking: the run's model calls count for this agent, under its usage limits (and any caller's caps).
+  // The project block and the pinned date are settled before the usage scope opens: the scope reads the run's project and goal.
+  // A resume after approval keeps what the run began with, date included.
+  const provider = runContextProvider();
+  let runCtx: RunContext;
+  if (request.message === undefined && session.pending && session.context) runCtx = session.context;
+  else {
+    // The block is background data: if it cannot be built, the run goes on with the old prompt.
+    try {
+      runCtx = provider ? provider.build(request.context ?? refFromSession(session, agent.id), config.projectContext ?? 'full') : emptyContext();
+    } catch (error) {
+      logger.warn(`could not build the project context: ${(error as Error).message}`);
+      runCtx = emptyContext();
+    }
+  }
+  session.context = runCtx;
   const userId = currentActorId();
-  const usage = agentScope({ agentId: agent.id, agentName: config.name, sessionId: session.id, settings: config.settings, ...(userId && { userId }) });
+  // The scope is created inside the run's context: it reads the run's own project and goal (not an outer run's).
+  const usage = withRunContext(runCtx, () => agentScope({ agentId: agent.id, agentName: config.name, sessionId: session.id, settings: config.settings, ...(userId && { userId }) }));
   try {
-    return await runInUsageScope(usage, () => traceAgentRun(
+    return await withRunContext(runCtx, () => runInUsageScope(usage, () => traceAgentRun(
       {
         agentId: agent.id,
         agentName: config.name,
@@ -332,7 +355,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
         if (result.reason === 'awaiting_approval' && config.settings.approvalEmails?.length) void notifyApprovalEmails(agent, session, config.settings.approvalEmails);
         return { session, reason: result.reason, usage: session.usage, ...(result.reply !== undefined && { reply: result.reply }) };
       },
-    ));
+    )));
   } finally {
     clearTimeout(saveTimer);
     saveTimer = undefined;
@@ -436,7 +459,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     const first = session.messages[0];
     const question = request.message !== undefined && first?.role === 'user' && typeof first.content === 'string' ? first.content : undefined;
     const skip = session.userId === 'evaluation' ? 'it is an evaluation run (the eval gate must ask the model, and must not fill the cache)' : question === undefined ? 'it is a resumed run' : uncacheable({ cache: config.cache, messageCount: session.messages.length, toolCount: toolsOffered, memory: config.memory.crossSession, borrowed: Boolean(request.flow || request.team) });
-    const cacheId = question !== undefined && !skip ? cacheKey(agent.id, config, question) : undefined;
+    const cacheId = question !== undefined && !skip ? cacheKey(agent.id, config, question, runCtx.hash) : undefined;
     let questionVector: number[] | undefined;
     if (cacheId) {
       const stored = responseCache.get(cacheId);
@@ -451,7 +474,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       if (semantic?.enabled && question !== undefined) {
         try {
           questionVector = await embedderFor(semantic)(question, request.signal);
-          const similar = semanticCache.find(agent.id, configHash(agent.id, config), questionVector, semantic.threshold);
+          const similar = semanticCache.find(agent.id, configHash(agent.id, config, runCtx.hash), questionVector, semantic.threshold);
           if (similar) {
             session.messages.push({ role: 'assistant', text: similar.reply, toolCalls: [] });
             upsert({ id: entryId(), type: 'notice', message: `Answered from the response cache: no model call (similar to "${similar.question.slice(0, 80)}", ${Math.round(similar.similarity * 100)}% alike).`, at: now() });
@@ -487,7 +510,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       iterations++;
       let turn;
       try {
-        turn = await model.generate({ system: systemPrompt(agent, config, session, toolNote), messages: await hydrateToolImages({ helpers: storeHelpers(binaryScopeFor(ctx)), logger: { warn: (m: string) => logger.warn(m) } as never }, contextWindow(session.messages), { model, keep: keptToolImages(request, config.settings), mode: request.toolImages?.mode }), tools: specs, signal: request.signal });
+        turn = await model.generate({ system: systemPrompt(agent, config, session, runCtx, toolNote), messages: await hydrateToolImages({ helpers: storeHelpers(binaryScopeFor(ctx)), logger: { warn: (m: string) => logger.warn(m) } as never }, contextWindow(session.messages), { model, keep: keptToolImages(request, config.settings), mode: request.toolImages?.mode }), tools: specs, signal: request.signal });
       } catch (error) {
         if (isUsageCapError(error)) {
           upsert({ id: entryId(), type: 'notice', message: `Stopped: ${error.message}.`, at: now() });
@@ -526,7 +549,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
         // Store the answer the person got (after the output guardrail), unless the run left the first turn (a nudge sent it round again).
         if (cacheId && !routedToCheap && answer.trim() && config.cache && session.messages.length === 2) {
           responseCache.set(agent.id, cacheId, answer, config.cache.ttlSeconds);
-          if (questionVector && question !== undefined) semanticCache.add({ agentId: agent.id, configHash: configHash(agent.id, config), question, reply: answer, vector: questionVector, ttlSeconds: config.cache.ttlSeconds });
+          if (questionVector && question !== undefined) semanticCache.add({ agentId: agent.id, configHash: configHash(agent.id, config, runCtx.hash), question, reply: answer, vector: questionVector, ttlSeconds: config.cache.ttlSeconds });
         }
         return { reason: 'completed', reply: answer };
       }
@@ -658,7 +681,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       parentSessionId: session.id,
       parentAgentId: agent.id,
     });
-    const result = await runAgent({ agent: target, session: child, message: task, depth: depth + 1, maxDepth, approvals: 'deny', signal: request.signal, caller });
+    const result = await runAgent({ agent: target, session: child, message: task, depth: depth + 1, maxDepth, approvals: 'deny', signal: request.signal, caller, context: { ...(request.context ?? refFromSession(session, agent.id)), caller: 'agent', agentId: target.id, ...(runCtx.projectId && { projectId: runCtx.projectId }), ...(runCtx.goalId && { goalId: runCtx.goalId }) } });
     return { reply: result.reply, sessionId: child.id };
   }
 }

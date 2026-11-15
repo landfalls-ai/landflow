@@ -13,6 +13,7 @@
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import type { BrainSettings } from '../shared/brain-work';
+import type { CompanyProfile } from '../shared/goals';
 import type { InstanceSettings as PlatformSettings, RetentionSettings } from '../shared/platform';
 import type { ExecutionSummary } from '../shared/types';
 import { jsonRenderEnabled } from '../shared/ui-spec';
@@ -23,7 +24,7 @@ import { singleton } from './singleton';
 import { atomicWrite, store } from './store';
 
 /** The instance settings, with the brain's (B05: `brain.workAutoSend`, unset means allowed). */
-export type InstanceSettings = PlatformSettings & { brain?: BrainSettings };
+export type InstanceSettings = PlatformSettings & { brain?: BrainSettings; /** PC01: Settings → Company (docs/projects-and-goals.md#the-mission). */ company?: CompanyProfile };
 export type { RetentionSettings };
 
 /** The execution cap Landflow had before retention became a setting. */
@@ -60,7 +61,12 @@ const retentionSchema = z.object({
 /** A complete, valid settings document. */
 const brainSchema = z.object({ workAutoSend: z.enum(['allowed', 'forbidden']) });
 
-export const instanceSettingsSchema = z.object({ timezone: timezoneSchema, executions: retentionSchema, jsonRender: z.boolean().optional(), brain: brainSchema.optional() });
+/** PC01: the company's name and mission (one company per instance). The limits are BRIEF_LIMITS.companyName and .mission (lib/shared/goals.ts), written out here because http.ts loads this file and keeps its imports few; test/goals.test.ts checks they match. */
+const COMPANY_NAME_MAX = 120;
+const MISSION_MAX = 500;
+const companySchema = z.object({ name: z.string().max(COMPANY_NAME_MAX).optional(), mission: z.string().max(MISSION_MAX).optional() });
+
+export const instanceSettingsSchema = z.object({ timezone: timezoneSchema, executions: retentionSchema, jsonRender: z.boolean().optional(), brain: brainSchema.optional(), company: companySchema.optional() });
 
 /** PATCH /api/settings: any subset; `executions` merges field by field. */
 export const settingsPatchSchema = z.strictObject({
@@ -70,6 +76,8 @@ export const settingsPatchSchema = z.strictObject({
   jsonRender: z.boolean().nullable().optional(),
   /** Whether people's tools may send their work to the brain on their own (docs/work-and-briefings.md). */
   brain: brainSchema.partial().strict().optional(),
+  /** The company's name and mission; null clears one. */
+  company: z.strictObject({ name: z.string().max(COMPANY_NAME_MAX).nullable().optional(), mission: z.string().max(MISSION_MAX).nullable().optional() }).optional(),
 });
 export type SettingsPatch = z.infer<typeof settingsPatchSchema>;
 
@@ -84,8 +92,10 @@ function withDefaults(saved: Partial<InstanceSettings>): InstanceSettings {
   const maxCount = retentionSchema.shape.maxCount.safeParse(saved.executions?.maxCount);
   const maxAgeDays = retentionSchema.shape.maxAgeDays.safeParse(saved.executions?.maxAgeDays);
   const workAutoSend = brainSchema.shape.workAutoSend.safeParse(saved.brain?.workAutoSend);
+  const company = companySchema.safeParse(saved.company);
   return {
     ...(typeof saved.jsonRender === 'boolean' ? { jsonRender: saved.jsonRender } : {}),
+    ...(company.success && (company.data.name || company.data.mission) ? { company: company.data } : {}),
     ...(workAutoSend.success ? { brain: { workAutoSend: workAutoSend.data } } : {}),
     timezone: timezone.success ? timezone.data : defaults.timezone,
     executions: {
@@ -95,10 +105,24 @@ function withDefaults(saved: Partial<InstanceSettings>): InstanceSettings {
   };
 }
 
+/** The company profile after a patch: a string sets a field, null (or blank) clears it, a field left out stays. */
+function mergedCompany(current: CompanyProfile | undefined, patch: SettingsPatch['company']): CompanyProfile | undefined {
+  const next: CompanyProfile = { ...current };
+  for (const field of ['name', 'mission'] as const) {
+    const value = patch?.[field];
+    if (value === undefined) continue;
+    const clean = value?.trim();
+    if (clean) next[field] = clean;
+    else delete next[field];
+  }
+  return next.name || next.mission ? next : undefined;
+}
+
 function merged(current: InstanceSettings, patch: SettingsPatch): InstanceSettings {
   const jsonRender = patch.jsonRender === undefined ? current.jsonRender : (patch.jsonRender ?? undefined);
   const brain = patch.brain?.workAutoSend ? { workAutoSend: patch.brain.workAutoSend } : current.brain;
-  return instanceSettingsSchema.parse({ timezone: patch.timezone ?? current.timezone, executions: { ...current.executions, ...patch.executions }, ...(jsonRender === undefined ? {} : { jsonRender }), ...(brain ? { brain } : {}) });
+  const company = mergedCompany(current.company, patch.company);
+  return instanceSettingsSchema.parse({ timezone: patch.timezone ?? current.timezone, executions: { ...current.executions, ...patch.executions }, ...(jsonRender === undefined ? {} : { jsonRender }), ...(brain ? { brain } : {}), ...(company ? { company } : {}) });
 }
 
 /** Settings backed by one JSON file. */
@@ -151,6 +175,11 @@ export function getSettings(): InstanceSettings {
 
 export function updateSettings(patch: SettingsPatch): InstanceSettings {
   return instance.update(patch);
+}
+
+/** The company's name and mission (Settings → Company); empty fields are left out. */
+export function companyProfile(): CompanyProfile {
+  return getSettings().company ?? {};
 }
 
 /** Whether the json-render prototype is on: the saved setting, else the environment default. */

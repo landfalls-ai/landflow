@@ -3,10 +3,10 @@
 Your own Claude Code work in the [company brain](second-brain.md): a local journal, a summary held for your review, and
 your yesterday back at the next session. Part of the [Landflow docs](README.md). It sends [work events](work-and-briefings.md)
 (`work.session`) to `POST /api/brain/work`, and every event is `private` by default: nobody else sees it until you pick
-team or org for it (`/brain visibility`, or Send wider in `/brain review`) or post it as your update. It also gives the model a `brain_ask` tool ([below](#brain_ask)).
+team or org for it (`/brain visibility`, or Send wider in `/brain review`) or post it as your update. It also gives the model a `brain_ask` tool ([below](#brain_ask)) and brings the [practices](practices.md) your admins approved for the repository into the session ([below](#practices)).
 
 The code is `apps/web/claude-plugins/landflow-brain/`: `hooks/journal.ts` (the entry and its rules), `hooks/summary.ts`
-(the title and the event), `hooks/client.ts` (the calls and the queue), `hooks/tools.ts` (the `brain_ask` tool), `hooks/pane.tsx` (the pane and the band) and `hooks/register.ts` (the hooks and the
+(the title and the event), `hooks/client.ts` (the calls and the queue), `hooks/tools.ts` (the `brain_ask`, `practices` and `practice_draft` tools), `hooks/practices.ts` (the practices section, the learn prompt and cleaning what the server answers), `hooks/pane.tsx` (the pane and the band) and `hooks/register.ts` (the hooks and the
 commands). The first three are plain functions with no engine calls, tested in `apps/web/test/claude-brain-mod.test.ts`;
 the hooks are tested with Claude Code's own kit.
 
@@ -54,6 +54,8 @@ Every event is private by default, and not even an admin reads a private one.
 | `/brain review` | asks about each held entry: send, drop, skip, or a new title |
 | `/brain status` | the state, and exactly what was sent, with ids (the event as JSON) |
 | `/brain pause`, `/brain resume` | pause closes the running session's entry (held as it stands) and stops recording and sending; resume records the session again, as a new entry |
+| `/brain practices` | the approved practices that apply here (the same text the session section holds), or "No approved practices apply here."; works in any mode |
+| `/brain learn [paths…]` | only in a listed repository: asks Claude to read the paths (default `CLAUDE.md`, `deploy/` and the config loaders it finds) and draft practices with `practice_draft`; see [Practices](#practices) |
 | `/brain forget <id>` | drops the entry here; if it was sent, deletes it with `DELETE /api/brain/work/:sourceId`. If Landflow cannot be reached the entry stays (as waiting to be deleted) and the delete is retried every minute (it is kept past the 14-day journal horizon until the brain answers). Forgetting the running session's entry does not stop recording: your next prompt opens a new entry, so use `/brain pause` to stop. A request that gets no answer in 10 seconds counts as unreachable |
 
 If the server says the brain is off, the mod pauses for that session.
@@ -95,6 +97,18 @@ characters, and its links are cleaned like every other text from the brain (a li
 A refused key, an error or an unreachable host comes back as one plain sentence marked as an error; the tool never
 sends anything but the question, and it is not registered without a key. The key needs the `brain:read` scope that `POST
 /api/brain/ask` asks for.
+
+## Practices
+
+[Practices](practices.md) are rules your admins approved, such as where charts live. The mod brings the ones that apply to this repository into the session and lets the model ask for them and draft new ones. Reading them records nothing, so they work in every mode, with a URL and key set. A key with `brain:write` may read them.
+
+- **The session section.** At session start the mod asks `GET /api/practices/applicable?size=mod`, in the same 2 seconds as git and the briefing (one deadline for all three, never longer). It sends `repo=owner/name` only when this repository is in your `repos` option; otherwise it sends none, and the practices that apply to every repository still come. The answer's text is added to the system prompt as `landflow-brain:practices`, before yesterday, cut to 2,000 characters. It is not framed as quoted data: the server's heading says these are rules an admin approved, and its footer says they never override your own instructions. No text, no section; a slow or unreachable host leaves the session as it was, with no error.
+- **`practices { path?, topic?, handle? }`** (full name `mcp__landflow-brain__practices`). Without a handle it answers what applies here (this repository when listed, the path and topic you gave). With a handle it answers that approved practice's rules and machine checks. An error comes back as one sentence marked as an error; it never throws.
+- **`practice_draft { handle, title, level, strength, summary, body, … }`.** Saves a draft with `POST /api/practices`. Through an API key a draft is always tainted: it says so and waits for a person, who approves it on `/brain` → Practices. Its description tells the model to cite each rule with the file's own words (an excerpt of at most 200 characters, copied verbatim) and the commit `sha`.
+- **`/brain learn [paths…]`.** Only in a listed repository (else it says how to list it). It reads `git rev-parse HEAD` and submits a prompt to the session (`$.prompt.submit`, a turn of its own once the session is idle) that asks Claude to read the paths, draft at most 10 practices with `practice_draft`, cite each as `{ repo, sha, path, lines, excerpt }`, and say what it drafted. No GitHub token is involved: Claude reads your checkout. The submitted prompt is not counted as one of your turns in the journal. Citations are never verified by the host (a draft from here is unverified until a person approves it against the file).
+- **Never a gate.** The mod does not deny or change a tool call because of a practice.
+
+The key needs `brain:write` (which includes reading) for `practice_draft`; reading needs `brain:read`.
 
 ## Offline queue
 

@@ -88,6 +88,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (under('/api/transports')) return read ? { scope: 'workflows:read' } : { scope: 'admin', action: 'settings:manage' };
   if (under('/api/credentials')) return { scope: 'admin' };
 
+  // PC01: goals (docs/projects-and-goals.md); the routes check who may edit which goal.
+  if (under('/api/goals')) return { scope: read ? 'workflows:read' : 'workflows:write' };
   if (['/api/workflows', '/api/folders', '/api/data-tables', '/api/agents', '/api/agent-teams', '/api/agent-templates', '/api/skills', '/api/node-types', '/api/credential-types', '/api/expressions', '/api/projects', '/api/templates', '/api/composites', '/api/runbooks'].some(under)) {
     return { scope: read ? 'workflows:read' : 'workflows:write' };
   }
@@ -112,6 +114,9 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (path === '/api/mentions') return { scope: 'workflows:read' };
   // Entities (initiatives, people, customers, systems): the routes check the entity's project, like suggestions.
   if (under('/api/entities')) return { scope: read ? 'workflows:read' : 'workflows:write' };
+  // PR01: practices (docs/practices.md). Approving, rejecting, retiring and waiving are a person's (the handler checks the role).
+  if (/^\/api\/practices\/[^/]+\/(approve|retire|waivers)$/.test(path) || /^\/api\/practices\/[^/]+\/versions\/[^/]+\/reject$/.test(path)) return { scope: 'admin', sessionOnly: true };
+  if (under('/api/practices')) return { scope: read ? 'brain:read' : 'brain:write' };
   return { scope: 'admin', fallback: true };
 }
 
