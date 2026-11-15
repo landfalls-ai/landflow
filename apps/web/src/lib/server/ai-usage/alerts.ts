@@ -16,6 +16,11 @@ import { getUser } from '../auth/users';
 import { customNotice, publicUrl, type AlertNotice } from '../alerts/message';
 import { alertStore } from '../alerts/store';
 import { store } from '../store';
+// Load-bearing: importing budgets/enforce registers the stop's audit and log (onStopOpened) as a side effect.
+import { sweepBudgets } from '../budgets/enforce';
+import { getBudget, listBudgets } from '../budgets/store';
+import { getProject } from '../projects/store';
+import { projectCapId } from '../../shared/project-budget';
 import { aiUsageMeter, type AiUsageMeter } from './index';
 
 /** One cap with a period, and what it has used in the current one. */
@@ -78,6 +83,13 @@ export function watchedCaps(meter: AiUsageMeter = aiUsageMeter()): WatchedCap[] 
       caps.push(...fromSet(configured.allUsers, `user:${id}`, `user “${userName(id)}” (the cap for every user)`, 'Settings → AI caps', settingsLink, (period) => meter.sinceTotals('user_id', id, period)));
     }
   }
+  // PC14: a project's monthly budget is one more cap, so the cost alerts, Insights → AI and "Ask for more" see it like the others.
+  for (const budget of listBudgets()) {
+    const project = getProject(budget.projectId);
+    if (!project) continue;
+    const link = `${base}/projects/${encodeURIComponent(project.id)}?tab=settings#budget`;
+    caps.push({ id: projectCapId(project.id), subject: `project “${project.name}”`, period: 'month', metric: 'cost', max: budget.monthlyUsd, used: meter.sinceTotals('project_id', project.id, 'month').cost, setIn: `Project “${project.name}” → Settings → AI budget`, link });
+  }
   return caps;
 }
 
@@ -89,6 +101,15 @@ const amount = (cap: WatchedCap, value: number) => (cap.metric === 'cost' ? form
 
 /** The period a cap's usage belongs to now (`2026-10-27` or `2026-10`), so an alert is sent once for each. */
 export const periodKey = (period: 'day' | 'month', today: string) => (period === 'day' ? today : today.slice(0, 7));
+
+/** What happens when a cap is reached: a project's budget only refuses priced calls, and only with its hard stop on. */
+function atFull(cap: WatchedCap): string {
+  if (!/^project:[^:]+:month:cost$/.test(cap.id)) return 'Further model calls are refused with a clear error until the period ends or the cap is raised';
+  const budget = getBudget(cap.id.split(':')[1]);
+  return budget?.hardStop
+    ? 'Priced model calls are refused until the month ends or the budget is raised or resumed; local (unpriced) models keep running'
+    : 'Calls keep running; the project’s admins are told';
+}
 
 /** What the alert says about one cap. */
 export function costNotice(rule: Pick<AlertRule, 'id' | 'name'>, cap: WatchedCap, threshold: number): AlertNotice {
@@ -103,7 +124,7 @@ export function costNotice(rule: Pick<AlertRule, 'id' | 'name'>, cap: WatchedCap
       { label: 'Used', value: `${amount(cap, cap.used)} of ${amount(cap, cap.max)} (${percent}%)` },
       { label: 'Alert at', value: `${threshold}% of a cap, once per ${cap.period}` },
       { label: 'Set in', value: cap.setIn },
-      { label: 'What happens at 100%', value: 'Further model calls are refused with a clear error until the period ends or the cap is raised' },
+      { label: 'What happens at 100%', value: atFull(cap) },
     ],
     link: cap.link,
   });
@@ -132,3 +153,6 @@ export async function checkCosts(now: number, send: Send, meter: AiUsageMeter = 
     }
   }
 }
+
+/** PC14: open the warnings and stops the month's spend of each project budget calls for (the alert service's ticker calls it; ../budgets/enforce.ts). */
+export const sweepProjectBudgets = (now: number, meter: AiUsageMeter = aiUsageMeter()): Promise<void> => sweepBudgets(now, meter);

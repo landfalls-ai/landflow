@@ -10,7 +10,7 @@ import { watchedCaps } from '../ai-usage/alerts';
 import { getUser } from '../auth/users';
 import { database } from '../db';
 import { productionWorkflowById } from '../publish';
-import { canResource, isInstanceAdmin, visibleIds, visibleProjectIds } from '../projects/access';
+import { canResource, isInstanceAdmin, projectRole, visibleIds, visibleProjectIds } from '../projects/access';
 import type { Actor } from '../projects/access';
 import { getGoal } from '../goals/store';
 import { visibleGoals } from '../goals/views';
@@ -222,6 +222,7 @@ function capsFor(actor: Actor, admin: boolean): AiConsoleCap[] {
   const pending = admin ? new Map<string, string>() : openRequestIds(actor.id);
   const all = watchedCaps();
   const caps: AiConsoleCap[] = [];
+  const flowOn = once(() => capRaiseSetup().active);
   for (const cap of all) {
     const parsed = parseCapId(cap.id);
     if (!parsed) continue;
@@ -234,6 +235,11 @@ function capsFor(actor: Actor, admin: boolean): AiConsoleCap[] {
       } else if (parsed.kind === 'workflow' || parsed.kind === 'agent') {
         visible = canResource(actor, parsed.kind, parsed.subjectId, 'read');
         canWrite = visible && canResource(actor, parsed.kind, parsed.subjectId, 'update');
+      } else if (parsed.kind === 'project') {
+        // PC14: a project's budget is visible to its members; its editors who are not admins may ask for more while the flow is on.
+        const role = projectRole(actor, parsed.subjectId);
+        visible = Boolean(role);
+        canWrite = role === 'editor' && flowOn();
       }
     }
     if (!visible) continue;
@@ -337,5 +343,18 @@ export function aiConsoleReport(actor: Actor, period: AiConsolePeriod, now = Dat
     requests: requestsFor(actor, admin, now),
     viewer: { admin, userId: actor.id },
     capRaise: capRaiseSetup(),
+  };
+}
+
+/** `fn`'s first answer, kept for the rest of one pass. */
+function once<T>(fn: () => T): () => T {
+  let done = false;
+  let value: T;
+  return () => {
+    if (!done) {
+      value = fn();
+      done = true;
+    }
+    return value;
   };
 }

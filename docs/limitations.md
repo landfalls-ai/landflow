@@ -61,11 +61,13 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - There is no wall at run time. Availability (home, shared projects, All projects) decides what pickers list and what
   the test chat accepts, but a saved workflow that runs another project's agent keeps working, and an API call to an
   agent by id is not stopped by it. This is decision 6 of the Paperclip plan.
-- A member of a project that only uses an agent gets 404 from the Run an Agent session panel on their own execution
-  (`GET /api/agents/:id/sessions?executionId=`). Per-project session reads are deferred to PC13.
-- A session stores the block it was given (`session.context`). Members of a project that only uses the agent (a share
-  or All projects) cannot read its sessions: they get 404. Members of the home project still see the briefs of the
-  other projects the agent ran in. Per-project session walls come in a later package (PC13).
+- A session saved without a project (before wave 7) follows the agent's home project now, so moving the agent moves
+  those sessions with it; a session with a project stays where it ran.
+- The Agents page lists every agent, whatever a project's allow-list says; only the pickers apply it. A2A and kagent
+  agents run elsewhere, so a project's allowed agents and tool kinds do not cover them. A project's knowledge base names
+  a collection that is global, as an agent's own is: another project that names the same collection reads the same data.
+- The online evaluation report of an agent filters the scores the viewer may read from the newest 500, so a viewer who
+  can read few sessions may see fewer than the page asks; its totals and trend are the agent's own counts.
 - The agent screens (wave 8): the Agents list reads each agent's availability with its own request, so a long list makes
   one small request per card. The context preview and View prompt read the saved agent, a moment after the draft
   autosaves; View prompt shows the agent's home project. The preview needs editor rights on the agent, so a person with
@@ -81,6 +83,14 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - A kagent agent called over MCP outside a team gets no block and falls back to its own home project (remote agents and
   a team's requests carry the block in their message: [below](#project-context-for-remote-agents-2026-11)). A run
   binding for kagent over MCP outside a team is deferred; practices bind the same way (PR07).
+
+## Project workspace (wave 9)
+
+- Nothing runs it yet. Landflow stores the workspace and serves it with the project context; it never runs a setup
+  command or makes a worktree. The harness plan's stage 2 may, and must show the setup commands to a person first.
+- The landflow-brain mod and `landflow work context` do not show the workspace; the field is in the route's and the MCP
+  tool's answer only.
+- One workspace per project, not per goal or team. Setup commands are plain lines: no secrets, no per-run values.
 
 ## Test chat history (B10, 2026-11)
 
@@ -429,6 +439,8 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - An agent's raised cap is written into its published version in place (and its history entry), not as a new version.
 - Apply Cap Raise tells the budgets sync and records whether it updated LiteLLM; a workflow's cap has no LiteLLM backstop,
   so its `gateway` is `skipped`.
+- A project's AI budget is asked about like a cap, by its editors who are not its admins (its admins edit it themselves),
+  and its `gateway` is `skipped`: a project has no LiteLLM backstop.
 
 ## Project context for remote agents (2026-11)
 
@@ -440,6 +452,18 @@ items still open (its "Wave 6" section); this page is the short list to check be
 ## Usage by goal (wave 7)
 
 - Only `ai.call` usage events carry a goal (`goalId`); `run.finished`, `node.failed`, `node.slow` and `agent.session` do not, and calls that come in through the spend import (kagent) have none, so they show under "No goal" on the AI page.
+
+## Project AI budgets (wave 9)
+
+- A budget is monthly and per project. There is no budget per goal.
+- The hard stop refuses only calls Landflow makes with a model that has a price in the price table. A model only the
+  gateway prices, a local model, and the calls of kagent and the Claude Code harness count towards the spend but are
+  never stopped. Imported spend can open a stop, which asks a person, but cannot refuse a call that already ran.
+- There is no LiteLLM team budget behind it (its window is 30 days, not the calendar month, and it would count calls
+  Landflow never stops).
+- A resumed month stays open even after a raise: the project's priced calls are not stopped again until the month ends.
+- Moving a workflow or agent to another project moves no budget; spend follows the project of the run.
+- Raising the amount in a project's settings settles that month's open incidents, as a raise from an incident does.
 
 ## Practices (waves P1 and P2)
 

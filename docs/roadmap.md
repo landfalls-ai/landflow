@@ -1931,9 +1931,8 @@ pickers and the test chat follow availability and shared-only members cannot rea
 practices row is in "What it saw", and a deleted project's practice suggestions are dismissed with its practices. These
 wait, each with its reason:
 
-- **Home readers see other projects' briefs**: members of an agent's home project still read the `session.context` of
-  its runs in other projects; per-project session walls are PC13's allow-list (wave 9)
-  ([limitations](limitations.md#project-context-wave-7)).
+- ~~**Home readers see other projects' briefs**~~ Done in wave 9 (PC13): a session is read and continued only from the
+  project it ran in ([projects-and-goals.md](projects-and-goals.md#sessions-belong-to-a-project)).
 - **kagent over MCP outside a team**: a kagent agent called over MCP gets no project block and its `practices_for`
   binds to its home project; only a team's open call carries the run's project. A run binding for it is its own package.
 - **Model verdicts in `landflow practices check`**: the CLI runs machine checks only; a model's verdict reaches a flow
@@ -1942,6 +1941,27 @@ wait, each with its reason:
   package.
 - **Live checks owed from wave 7**: the team's goal line and the A2A compact block, and Practices Act 1; carried to wave
   8's live pass with PC12's goal picker and PR07's index line.
+
+## Company backbone: left open from the wave 8 reviews (2026-11-15)
+
+Wave 9 closed the wave 8 notes its packages owned: a session is read and continued only from its own project, so home
+members no longer read other projects' briefs, ratings or graded replies, and whoever can read a run opens its Run an
+Agent session panel (PC13); a project's repositories have a screen (PC16). Its carryover added a join test for each
+contract (settings, sessions, budget, workspace and a project's deletion). These wait, each with its reason:
+
+- **The session fold's persona**: What it saw shows the agent's persona as it is now, not as the run had it; it needs the
+  persona's version on `attrs.saw`, its own package (PC08's line above).
+- **Citation drift**: the practice-drift detector reads compliance only (PR09's line above); drift in what agents cite
+  wants its own measure.
+- **Practices for remote and in-process agents by repository**: repository-scoped practices don't reach in-process
+  agents (PR06), and an A2A node outside a team binds `practices_for` to the agent's home project (PR07). A run binding
+  for remote agents is its own package, with kagent over MCP outside a team (the wave 7 list above).
+- **Live checks owed from wave 8**: `project_context` from Claude Code over the brain MCP key; a Claude Code session in
+  a throwaway repository listed on a scratch project starting with its goals (the mod 0.4.0); the workflow and team goal
+  pickers (PC12); a kagent member getting the practices index and calling `practices_for`; a tainted draft and a
+  person's draft in the inbox, Apply only on the second. They need a host and a headed browser, and are carried to wave
+  9's live pass with its own checks (the Settings tab's cards, a shared-only member's Run an Agent panel, a $0.01 budget
+  with a hard stop, the Workspace card) and those still owed from waves 6 and 7.
 
 ## Runs: one list (B20, 2026-11-14)
 
@@ -2012,8 +2032,13 @@ Projects get a mission to serve, goals and a brief, and agents learn where their
 - **PC11, built (wave 8):** the landflow-brain mod 0.4.0 starts a session with the project section for the repository and
   adds `/brain project`; `landflow work context` prints the same block in the shell
   ([projects-and-goals.md](projects-and-goals.md#in-claude-code-and-the-shell)).
-- **Open:** per-project settings for agents, the budget and the workspace (wave 9); goal progress, tasks and the
-  PROJECT.md export (wave 10).
+- **PC13 to PC16, built (wave 9):** project settings for agents (a default model, a knowledge base, the agents and tool
+  kinds allowed) and sessions read and continued only from their own project (PC13); the project AI budget as one more
+  cap, with a warning, an optional hard stop, incidents and Needs you items (PC14); the Settings tab's **Agents in this
+  project** and **AI budget** cards and the budget rows in Needs you (PC15); and the project workspace for harness runs
+  with the repositories screen (PC16) ([projects-and-goals.md](projects-and-goals.md#project-settings-for-agents),
+  [below](#paperclip-wave-9-project-settings-for-agents-pc13)).
+- **Open:** goal progress, tasks and the PROJECT.md export (wave 10).
 
 ## Not planned
 
@@ -2050,6 +2075,8 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   Person, and Apply Cap Raise, which changes the Landflow cap and tells the budgets sync only after an admin other than
   the requester approved ([llm-gateway.md](llm-gateway.md#asking-for-a-higher-cap)). The Insights → AI "Ask for more" dialog
   (LL06) is built.
+- **Project budgets, built (PC14):** a project's budget is a cap kind of its own ([projects-and-goals.md](projects-and-goals.md#ai-budget)).
+  The LiteLLM team budget as a backstop stays deferred, for the reason in [llm-gateway.md](llm-gateway.md#budgets-in-litellm).
 
 ## Paperclip wave 7: project context (PC03)
 
@@ -2071,14 +2098,39 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
 - **PC10, built (wave 8):** project repositories (`PATCH /api/projects/:id { repos }`, migration 2500), `GET
   /api/projects/context` by repository or id, the MCP `project_context` tool and `project://{id}/context` resource,
   "Your goals" in the morning briefing, and the project's compact block in Spotlight and the Agent architect (P5-1 to
-  P5-3, D8). The mod and the CLI use the route (PC11, built). Left: a screen for a project's repositories
-  ([projects-and-goals.md](projects-and-goals.md#repositories-and-harnesses)).
+  P5-3, D8). The mod and the CLI use the route (PC11, built). The screen for a project's repositories came in wave 9 (PC16;
+  [projects-and-goals.md](projects-and-goals.md#repositories-and-harnesses)).
 
 ## Paperclip wave 8: goal pickers (PC12)
 
 - **PC12, built:** a workflow's settings and a team's page have a goal field (empty: the project's goal), and the team's
   member picker lists the agents available in the team's project, keeping current members
   ([projects-and-goals.md](projects-and-goals.md#picking-a-goal-for-a-workflow-or-team)).
+
+## Paperclip wave 9: project AI budget (PC14, server)
+
+- **PC14, built (server):** a project's monthly AI budget as one more cap in the LiteLLM wave's system: listed on
+  Insights → AI, watched by the cost alerts, raised through "Ask for more". It adds a warning, an optional hard stop
+  that refuses only priced calls and asks a person, incidents and Needs you items, with resume, raise and dismiss
+  ([projects-and-goals.md](projects-and-goals.md#ai-budget)). The screens are PC15's. Deferred: a LiteLLM team budget as
+  a backstop (its 30-day window does not match the calendar month and it counts calls Landflow never stops), and
+  per-goal budgets. Closes P6-2 (server).
+- **PC15, built (screens):** the **AI budget** card in a project's Settings tab and the budget rows in Needs you (Home
+  and the Runs page) with Resume, Raise, Dismiss and Open project ([run-trace.md](run-trace.md#needs-you-for-a-project-budget)).
+- **Left:** Landledger's AI budget flow raises agents' caps only
+  ([features/landledger.md](features/landledger.md#raise-or-hold-an-ai-budget)); a version for a project's budget is later.
+
+## Paperclip wave 9: project settings for agents (PC13)
+
+- **PC13, built (P6-1):** a project can name a default model, one knowledge base, the agents and the tool kinds allowed
+  in it, and a run in the project obeys them; sessions are read and continued only from their own project
+  ([projects-and-goals.md](projects-and-goals.md#project-settings-for-agents)). The settings card is PC15's. Left: a
+  run-time wall for availability (decision 6 stands: the allow-list is the opt-in wall) and pre-filling a new agent's
+  model from the project.
+- **PC16, built (wave 9):** a project's **Workspace** card (Settings tab): repositories, a default branch and setup commands
+  for each, a worktree per run or shared, a branch template; saved in `project_workspaces` (migration 2701), served by
+  `GET/PUT /api/projects/:id/workspace`, `GET /api/projects/context` and the MCP `project_context` tool. Closes P6-3.
+  Open: the harness plan's stage 2 using it ([projects-and-goals.md](projects-and-goals.md#workspace)).
 
 ## Practices (waves P1 and P2)
 

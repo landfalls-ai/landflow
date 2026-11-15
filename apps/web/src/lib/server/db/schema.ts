@@ -1832,6 +1832,23 @@ export const MIGRATIONS: Migration[] = [
     statements: [],
     addColumns: [{ table: 'projects', column: 'repos', definition: 'TEXT' }],
   },
+  // PC14: a project's monthly AI budget and its incidents (docs/projects-and-goals.md#ai-budget)
+  {
+    version: 2700,
+    name: 'project_budgets',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS project_budgets (project_id TEXT PRIMARY KEY, monthly_usd DOUBLE PRECISION NOT NULL, warn_percent BIGINT NOT NULL, hard_stop BIGINT NOT NULL DEFAULT 0, owner_id TEXT, updated_at TEXT NOT NULL, updated_by TEXT)`,
+      `CREATE TABLE IF NOT EXISTS project_budget_incidents (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, month TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL, used_usd DOUBLE PRECISION NOT NULL, budget_usd DOUBLE PRECISION NOT NULL, resolution TEXT, resolved_by TEXT, created_at TEXT NOT NULL, resolved_at TEXT)`,
+      `CREATE INDEX IF NOT EXISTS project_budget_incidents_month ON project_budget_incidents (project_id, month)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS project_budget_incidents_open ON project_budget_incidents (project_id, month, kind) WHERE status = 'open'`,
+    ],
+  },
+  // PC16: a project's workspace for harness runs (per repository branch and setup lines, worktree, branch template)
+  {
+    version: 2701,
+    name: 'project_workspaces',
+    statements: [`CREATE TABLE IF NOT EXISTS project_workspaces (project_id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT)`],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -1948,10 +1965,15 @@ export const TABLES = {
   goals: ['id'],
   project_goals: ['project_id', 'goal_id'],
   goal_links: ['goal_id', 'kind', 'ref_id'],
+  // PC14:
+  project_budgets: ['project_id'],
+  project_budget_incidents: ['id'],
   // PR01:
   practices: ['id'],
   practice_versions: ['practice_id', 'version'],
   practice_applications: ['id'],
+  // PC16:
+  project_workspaces: ['project_id'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

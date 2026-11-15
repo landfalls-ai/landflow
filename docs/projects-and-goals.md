@@ -68,7 +68,9 @@ project serves in order (`goals`) and `canEdit`.
 
 Deleting a project deletes its own project goals with their initiative links and removes its goal rows; sub-goals of a
 deleted goal move up to its nearest remaining parent (or become roots), and company goals the project served stay. Its project-level
-practices are retired (not deleted, not moved by `transferTo`; [practices.md](practices.md#reject-retire-waive)). A
+practices are retired (not deleted, not moved by `transferTo`; [practices.md](practices.md#reject-retire-waive)). Its AI budget
+and incidents are deleted, the meter forgets the cached budget, and open requests to raise its cap are withdrawn (their
+waiting runs stop waiting). A
 company goal serves up to 50 projects. `GET /api/goals?projectId=` for a project you can't see answers an empty list.
 
 A viewer who can't see a goal's parent sees the goal as a root. A member never sees another project's project goals: they
@@ -128,7 +130,7 @@ span also shows **Project** and **Goal** chips. The page is [run-trace.md](run-t
 
 An agent has one home project, and the home decides who edits it. It can also be **available** elsewhere: shared with
 chosen projects, or with **All projects** in one click. A project that only uses an agent can pick it in Run an
-Agent and run it from its workflows, but cannot change, delete, share or read the sessions of it.
+Agent and run it from its workflows, but cannot change, delete or share it, and reads only the sessions of its own project ([below](#sessions-belong-to-a-project)).
 
 - **Sharing.** `GET|PUT /api/agents/:id/shares` (admins of the home project, owners and admins may change them). The
   answer has `availability` (`home`, `all`, and the projects the caller has a role in) and `shares`. The "All projects"
@@ -138,24 +140,24 @@ Agent and run it from its workflows, but cannot change, delete, share or read th
   "From <home project>". Without a project, everything is listed as before.
 - **Test in project.** The test chat with a `projectId` the agent is not available in answers 403 "This agent isn't
   available in that project".
-- **Sessions stay at home.** The agent's sessions and each session are read only by members of its home project (and
-  owners and admins). Others get 404 "Agent not found". A session keeps the brief of the project it ran for, so this
-  keeps one project's brief from another project that only uses the agent. Continuing a session by `sessionId` in the test
-  chat is the same read: a member who only uses the agent starts new sessions and gets 404 for an existing one.
+- **Sessions stay in their project.** See [Sessions belong to a project](#sessions-belong-to-a-project): sharing an agent never shares its sessions.
 - **The live feed too.** `/api/events` sends an agent's `entry` and `run.finished` events (the session itself) only to
-  members of its home project and to owners and admins.
+  members of the project the session ran in who can read the agent, and to owners and admins.
 - **Still readable by a user project.** Because a share gives `read`, a project that only uses the agent can still list
   the file names of its knowledge base and save it as a template. Its secrets and sessions stay hidden.
 - **Evaluations stay at home too.** The online evaluation scores and the eval gate carry session inputs and outputs, so
-  they are home-only (404 for others); the Run an Agent and tool pickers scope to the agent's home project only for
-  its home members.
+  they are home-only (404 for others), and a home member's list of scores holds only the graded replies of sessions they
+  may read (the totals and the trend stay the agent's own counts); the Run an Agent and tool pickers scope to the agent's
+  home project only for its home members.
 - **All projects replaces single shares.** Turning **All projects** on drops the single-project rows; turning it off
   later leaves the agent home-only. `availability.projects` lists only projects the caller has a role in, so build a
   `PUT` from `shares`, not from it.
 - **Brain and spend.** Whoever can read an agent (a share counts) sees its brain facts, suggestions and spend, which
   come from runs in every project.
 - **No wall at run time.** A saved workflow that runs another project's agent keeps working, even after the share is
-  removed.
+  removed. This holds only while the project's agent allow-list is off; once it is on, a run in the project may use only
+  the agents it lists ([Project settings for agents](#project-settings-for-agents)).
+
 ## Testing an agent in a project
 
 An agent keeps its home project, and its admins can make it available elsewhere: **Make available…** in the builder's
@@ -193,7 +195,7 @@ Each AI call a run makes is stamped with the goal that run served. The AI page (
 A project lists the repositories it works in, so a harness (Claude Code with the landflow-brain mod, the CLI, any MCP
 client) finds the project of the repository it is in and loads its goals. Repositories are `owner/name`, lowercased, at
 most 20 per project, and a project's admins set them (`PATCH /api/projects/:id { repos }`; the same rule as a practice's
-repositories). There is no screen for them yet: use the API.
+repositories). The project's **Settings** tab has a **Workspace** card to add and remove them (see [Workspace](#workspace)).
 
 - **By repository** (`GET /api/projects/context?repo=acme/web`): the projects you have a role in that list it, sorted by name.
   A repository can belong to several projects; you get the first one's block and the list of all.
@@ -208,6 +210,7 @@ repositories). There is no screen for them yet: use the API.
   they get nothing extra.
 
 Details and the routes: [connect-your-harness.md](connect-your-harness.md#project-context).
+How a harness works in those repositories (branch, setup commands, worktree) is the project's [workspace](#workspace).
 
 ### In Claude Code and the shell
 
@@ -225,6 +228,146 @@ A workflow or a team can name the goal it serves; with none, it works for its pr
 
 Both use the same picker as the goal dialog and the project brief. The team's member picker is in [agent-teams.md](agent-teams.md#picking-members).
 
+## Project settings for agents
+
+A project can set four things for the agents that run in it, next to its allowed nodes, approvers and four-eyes
+(`GET|PATCH /api/projects/:id/settings`, the project's admins). Each is off by default, each only narrows or fills a
+gap, and with none set a run, its prompt, its tools and its cache keys are what they were. The screen for them is the
+project page's **Agents in this project** card; the fields and answers are in [the API](reference/api.md).
+
+- **Default model.** An agent that runs in the project and has no model of its own uses this one. The order is: the
+  workflow node's model (Run an Agent), the model router's cheap model when it sends the run there, the agent's own
+  model, then the project's default. With none of them the run fails as before ("Choose a model for this agent first").
+  The Run Trace names the model that answered. A credential in it must be usable in the project and of the provider's
+  type.
+- **Knowledge base.** One knowledge base (a vector collection or a plugin's) every agent in the project can search, as the
+  tool `project_knowledge` ("Project knowledge" in the timeline). It is added after the kinds are filtered, so the list
+  of kinds never withholds it, and a broken one (a plugin node that is gone) is a "Tool unavailable" notice, not a failed
+  run. Its credentials must be usable in the project. The collection name is global, as an agent's own is.
+- **Allowed agents.** With **Only these**, an agent runs in the project only if it is the project's own (always) or on the
+  list; the list holds only agents available in the project. An agent that isn't allowed fails its run with "“Writer”
+  isn't allowed in project “Payments” (Project settings → Agents)", with no model call. Run an Agent nodes, team
+  members and sub-agents all reach the same check, so a sub-agent that isn't allowed is a failed tool call. The pickers
+  (Run an Agent, `GET /api/agents?availableIn=`) list only agents that are available **and** allowed; the Agents page
+  lists everything.
+- **Allowed tool kinds.** With **Only these**, an agent in the project gets only tools of the listed kinds: nodes, MCP
+  servers, knowledge bases, workflows, sub-agents, A2A agents. A withheld tool shows as a notice "Tool access: <tool>
+  withheld by project “P” settings". Skills, memory, a team's notebook and consult tools, the project's own knowledge
+  base and the tools connected to a Run an Agent node (already under the node allow-list) are never withheld.
+
+The run reads the settings once, when it starts (they are cached for a second). Each level narrows: instance, project,
+workflow, and now agents ([governance](features/audit-and-governance.md)). A2A and kagent agents run elsewhere, so the
+allow-lists do not cover them.
+
+### The Agents card
+
+A project's **Settings** tab has the card **Agents in this project** (`#agents`), under the governance and MCP cards.
+It holds the **Default model** ("Used when neither the workflow's step nor the agent names a model"; pick **None** to
+clear it), the **Knowledge base** (a switch and **Choose…**, which opens the agent builder's dialog; every agent in the
+project can search it as `project_knowledge`), **Allowed agents** (**Everything available** or **Only these**, with the
+project's own agents checked and disabled) and **Allowed tools** (**Every kind** or **Only these**, one box per kind).
+Project admins edit and press one **Save**, which sends only these four fields to `PATCH /api/projects/:id/settings`; a
+400 (a credential the project can't use, an agent that isn't available) shows under the field. Everyone else reads the
+values. Without `availableAgents` in the answer the list says "No agents to list". A failed load hides the card without a toast.
+
+## Sessions belong to a project
+
+A session is read and continued only from the project it ran in; sharing an agent never shares its sessions. A
+session's project is the one its run resolved (the caller's, the workflow's, the team's or the agent's home), saved as
+`projectId` in its summary. A session with no project (one saved before wave 7) follows the agent's home now: move the
+agent and those sessions move with it, while a session with a project stays where it ran.
+
+- **Who reads a session:** instance owners and admins; anyone who can read the run that started it (so a member of a
+  project that only uses the agent opens the Run an Agent panel of their own run); anyone with a role in the session's
+  project who can also read the agent. A home member with no role in project B no longer reads the sessions, ratings
+  or graded replies the agent had in B. A session of a deleted project is read by owners and admins only.
+- **Who continues one** (a message, an approval, a rating or comment, a delete): who reads it and is an editor or admin
+  in its project (owners and admins always), on top of the route's guard (`run` on the agent). Others get 404
+  "Session not found".
+- **The list.** `GET /api/agents/:id/sessions` answers 200 with only the sessions the caller may read; the store cuts by
+  project before the page, so a page is full. `?executionId=` answers with that run's sessions for whoever can read the
+  run, and 404 otherwise.
+- **The test chat** keeps a session in its project: a `projectId` that is not the session's answers 409 "This session
+  belongs to project “P”: start a new session there".
+- **Live and evaluations.** The live feed sends a session's events to members of its project; a list of an agent's
+  ratings and the online evaluation scores keep only those of sessions the viewer may read.
+
+## AI budget
+
+A project can have a monthly AI budget. It is one more cap in the same system as the caps on workflows, agents,
+credentials and people ([llm-gateway.md](llm-gateway.md#asking-for-a-higher-cap)): it is listed on Insights → AI with the
+others, its alerts are the cost alerts, and "Ask for more" goes through the cap-raise flow. What a cap has not got, the
+budget adds: a warning, an optional hard stop, incidents and Needs you items.
+
+- **The budget.** Dollars per calendar month, counted in the instance time zone. The spend is every AI call of the
+  project this month from every source: Landflow's own calls and the calls LiteLLM reports (kagent and Claude Code
+  agents). `0` means no budget, and nothing is watched or stopped.
+- **The warning.** Once spend reaches the warning share (80% by default, 1 to 100) a warning opens, once for each budget
+  amount. Dismiss it, or raise the budget. A raise lets a new warning open at the new amount. The cost alerts of
+  Insights → AI send the message; the warning itself is a Needs you item. That message says what happens at 100%: with
+  no hard stop, calls keep running and the project's admins are told; with it, priced calls are refused and local models
+  keep running.
+- **The hard stop.** Off by default. When it is on and spend reaches the budget, the project's **priced** AI calls are
+  refused with "AI usage cap reached: project “Name” this month used … of its … limit", and a stop opens in Needs you.
+  It never stops a local model (Ollama and others without a price), and never a model only the gateway prices. Calls
+  of kagent and the Claude Code harness count towards the budget but are not stopped: they go to LiteLLM directly.
+  Spend that arrives by import, which no call check saw, opens the stop too.
+- **Resume.** A person resumes a stop, and the project's priced calls go on until the month ends. A new month starts a
+  fresh count. A resumed month stays open even after a raise.
+- **Raise.** A project admin sets a higher amount from a stop or a warning. The stop's warning is settled with it.
+  An editor who is not an admin asks for more from Insights → AI ("Ask for more"); an approved request sets the new
+  amount and settles the month's open incidents.
+- **Dismiss.** Puts a warning away for the month.
+- **Who may do what.** Project admins and instance owners and admins edit the budget and raise it. They and the
+  budget's **owner** (any user with a role in the project) resume and dismiss. Any member reads it. Items in Needs you
+  go to the admins, the owner and instance admins.
+- **Where it shows.** The budget view (`GET /api/projects/:id/budget`), Insights → AI as the cap
+  `project:<id>:month:cost`, and Needs you (`GET /api/runs/needs-you`, a `budget` item with a link to the project's
+  settings). The screens are built in the project's Settings tab.
+- **Deleting the project** deletes its budget and incidents. Moving a workflow or agent to another project moves no
+  budget: spend follows the project the run was in.
+- **Not here.** A budget per goal, and a LiteLLM team budget ([llm-gateway.md](llm-gateway.md#budgets-in-litellm)).
+
+Routes: `GET` and `PUT /api/projects/:id/budget`, `POST /api/projects/:id/budget/incidents/:incidentId` with
+`resume`, `raise` or `dismiss` ([reference/api.md](reference/api.md)). Each change is audited: `project.budget.update`,
+`.stopped`, `.resumed`, `.raised` and `.dismissed`.
+
+### The AI budget card
+
+The card **AI budget** (`#budget`) follows **Agents in this project**. It shows this month's spend as a bar (amber from the warning percent, red
+at 100 or when paused), the amounts, "N calls to local models (not counted)" and a **Paused** badge, then the month's
+incidents, newest first, each with its buttons: **Resume this month** and **Raise budget…** for a stop, **Dismiss** for a
+warning. Admins edit the monthly budget, **Warn at**, the **Hard stop** switch (off by default) and the owner (one of the
+project's members) and press **Save**; `0` asks "Remove the budget?" first. An editor who is not an admin sees **Ask for
+more…** (an amount above the budget and a reason, sent to `POST /api/ai/cap-requests`) and **See it on Insights → AI**.
+Open `/projects/<id>?tab=settings#budget` or `#agents` and the page scrolls to the card once it has loaded. The same
+incidents are items in **Needs you** ([run-trace.md](run-trace.md#needs-you-for-a-project-budget)).
+
+## Workspace
+
+A project says how agents and harnesses work in its repositories. It is the **Workspace** card on the project's **Settings**
+tab, under the project's settings and above Variables. Landflow stores and serves it. It never runs a setup command and
+never makes a worktree.
+
+- **Repositories:** the list from [above](#repositories-and-harnesses). Admins add (`owner/name`) and remove them on the
+  card; each change saves at once. A repository removed here (or through the API) drops out of the workspace.
+- **Default branch**, per repository: the branch a run starts from. Empty means the repository's own default.
+- **Setup commands**, per repository: one per line, at most 10 lines of 300 characters, run once in a fresh worktree. Only
+  the project's editors and admins see them (viewers see the repositories and branches). **Landflow never runs these. A
+  harness may, in its own sandbox.** A harness that does should show them to a person first.
+- **Worktree:** **One per run** (the default; each run gets its own git worktree) or **Shared** (runs use one checkout).
+- **Branch template:** the branch a run works on, for example `landflow/{project}/{run}`. Tokens: `{project}` (the project's
+  slug), `{run}`, `{date}`, `{task}`. The card shows an example and says why a template is not allowed (an unknown token, or
+  a result git would refuse).
+
+Admins edit with one **Save workspace**; everyone else reads. `GET /api/projects/:id/workspace` and `PUT` are in the
+[API reference](reference/api.md); every change is audited as `project.workspace.update` (repository names, worktree and
+template; the count of setup lines, never their text).
+
+A harness reads it from the project's context ([connect-your-harness.md](connect-your-harness.md#project-context)): the
+answer has `workspace` when the project saved one, with `branchPattern` (the template with `{project}` filled in;
+`{run}`, `{date}` and `{task}` are the harness's to fill) and setup lines only for editors and admins.
+
 ## How it is built
 
 - Data: migration 2300 makes `goals`, `project_goals` (a project's goals and their order) and `goal_links` (initiatives);
@@ -232,5 +375,8 @@ Both use the same picker as the goal dialog and the project brief. The team's me
 - Code: `lib/server/goals/` (`store.ts` the data and its audit, `views.ts` the rules and views, `schema.ts` the request
   bodies, `context-source.ts` the reader the context provider calls), `lib/server/projects/store.ts` (the brief),
   `lib/shared/goals.ts` (the types and limits both sides share).
+- The AI budget: migration 2700 (`project_budgets`, `project_budget_incidents`), `lib/server/budgets/` (`store.ts` rows
+  and spend, `limit.ts` what the meter asks per call, `enforce.ts` the sweep, the actions and the Needs you items,
+  `view.ts`), `lib/shared/project-budget.ts` (the types both sides share).
 - The context data source (`lib/server/goals/context-source.ts`) hands the mission, a project's brief and a goal's chain to the
   project-context seam (`lib/server/project-context/seam.ts`); reads are cached for a second.

@@ -426,3 +426,34 @@ describe('createCapRequest without a second admin', () => {
     expect(request).toMatchObject({ status: 'failed', note: 'No admin other than you can approve this' });
   });
 });
+
+describe('a project’s AI budget (PC14)', () => {
+  it('its editors ask, its admins and viewers cannot; an approval sets the budget and resolves the incidents', async () => {
+    const { createTeamProject, setMember } = await import('@/lib/server/projects/store');
+    const { getBudget, saveBudget, incidentsOf, currentMonth } = await import('@/lib/server/budgets/store');
+    const project = createTeamProject({ name: 'Cap project' }).id;
+    setMember(project, member.id, 'editor');
+    setMember(project, other.id, 'viewer');
+    saveBudget({ projectId: project, monthlyUsd: 2, warnPercent: 80, hardStop: true });
+    const month = currentMonth(aiUsageMeter());
+    database().insertNew('project_budget_incidents', { id: 'pbi_cap_1', project_id: project, month, kind: 'stop', status: 'open', used_usd: 2, budget_usd: 2, created_at: new Date().toISOString() });
+    const capId = `project:${project}:month:cost`;
+    as(admin);
+    expect((await ask(capId, 8)).response.status).toBe(400);
+    as(other);
+    expect((await ask(capId, 8)).response.status).toBe(400);
+    as(member);
+    const { response, body } = await ask(capId, 8);
+    expect(response.status).toBe(201);
+    as(admin);
+    const answered = await answer(body.executionId!, { approved: true });
+    if (answered.status !== 200) throw new Error(`answer ${answered.status} ${await answered.text()}`);
+    expect(stored(body.id)).toMatchObject({ status: 'approved', gateway: 'skipped', decided_by: admin.id });
+    expect(getBudget(project)?.monthlyUsd).toBe(8);
+    expect(incidentsOf(project, month)[0]).toMatchObject({ status: 'resolved', resolution: 'raised', resolvedBy: admin.id });
+    const row = database().get("SELECT * FROM audit_events WHERE action = 'project.budget.raised' AND project_id = ? ORDER BY at DESC LIMIT 1", project);
+    expect(row).toBeDefined();
+    expect(JSON.stringify(row)).toContain('cap-request');
+    expect(JSON.stringify(row)).toContain(admin.id);
+  });
+});

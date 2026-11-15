@@ -19,7 +19,8 @@ import { database } from '../db';
 import { HttpError } from '../errors';
 import { decodeCursor, encodeCursor } from '../pagination';
 import { createIn } from '../projects/http';
-import { canResource, creationProject, isInstanceAdmin, type Actor } from '../projects/access';
+import { canResource, creationProject, isInstanceAdmin, projectRole, type Actor } from '../projects/access';
+import { raiseFromCapRequest } from '../budgets/enforce';
 import { cancelWaitingExecution, liveExecution } from '../runner';
 import { publishDraft } from '../publish';
 import { publishedVersionId } from '../publications';
@@ -160,6 +161,8 @@ function mayAsk(actor: Actor, cap: ParsedCapId): boolean {
   if (cap.kind === 'user') return cap.subjectId === actor.id;
   // An admin sets a credential's caps directly.
   if (cap.kind === 'credential') return false;
+  // PC14: a project's editors who are not its admins (its admins edit the budget themselves).
+  if (cap.kind === 'project') return projectRole(actor, cap.subjectId) === 'editor';
   return canResource(actor, cap.kind, cap.subjectId, 'update');
 }
 
@@ -325,6 +328,11 @@ async function raiseCap(row: Row, cap: ParsedCapId, approver: UserRecord) {
   const current = watchedCaps().find((c) => c.id === row.cap_id);
   if (!current) throw new Error('The cap no longer exists');
   if (current.max >= value) throw new Error(`The cap is already ${current.max}`);
+  // PC14: a project's budget; its month's open incidents are resolved as raised by the approver.
+  if (cap.kind === 'project') {
+    raiseFromCapRequest(aiUsageMeter(), cap.subjectId, value, approver.id);
+    return;
+  }
   if (cap.kind === 'user' || cap.kind === 'credential') {
     const caps = aiCaps();
     const group = cap.kind === 'user' ? caps.users : caps.credentials;

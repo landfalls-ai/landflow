@@ -164,6 +164,13 @@ On a phone, what floats on a desktop rises from the bottom or takes the screen:
 
 Home starts with the **Your morning** card ([work-and-briefings.md](work-and-briefings.md#on-the-web)): one column, lists folded to three items, and **Change**, **Show more** and **Set up tomorrow sync** are 44 px tall.
 
+### Project settings
+
+The cards **Agents in this project** and **AI budget** in a project's Settings tab are one column at 390 px; their checkboxes, **Ask for more…** and the buttons are 44 px tall. In **Needs you**, an AI budget row has its title as the link and its buttons (**Resume this month**, **Raise budget…**, **Dismiss**, **Open project**) on a line below, each 44 px tall. Desktop is as it was apart from the two cards and the rows.
+
+The **Workspace** card after them is one column too: the default branch and branch template fields, the add field and its button,
+and **Save** are 44 px tall on a phone, and each repository's **Remove** is a 44 px target. Desktop is as it was apart from the card.
+
 ## Settings and agents
 
 - **Settings** is five group cards on a phone (Workspace, People & access, Governance, AI, Infrastructure), each

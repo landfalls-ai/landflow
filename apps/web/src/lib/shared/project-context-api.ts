@@ -4,6 +4,8 @@
  * declare the same shape themselves (packages never import apps, and the mod is self-contained) and test against the
  * example below (project-context-example.json, the same answer as JSON). No runtime imports and no zod. Written by the plan
  * for wave 8: PC10 owns it; nobody else adds it (PC11 copies only the JSON example, byte for byte, into its tests).
+ * Amended in wave 9 by PC16 alone: `ProjectContextAnswer.workspace` (the first project's saved workspace, only when one is
+ * saved, so the example below is unchanged and readers that ignore unknown fields keep working).
  */
 
 /** `owner/name`, lowercased by the server (the same rule as PRACTICE_REPO). */
@@ -22,6 +24,19 @@ export interface ProjectContextAnswer {
   projects: Array<{ id: string; name: string }>;
   /** The first project's block; null when `projects` is empty. `text` may be '' (the project has no mission, goal or brief). */
   context: { projectId: string; size: ProjectContextSize; text: string } | null;
+  /**
+   * Wave 9 (PC16): the first project's workspace (docs/projects-and-goals.md#workspace), present only when that project has
+   * saved one. Repositories keep only those the project still lists. `setup` lines are left out unless the caller is an
+   * editor or admin of that project (owners and admins: always). Landflow never runs them; a harness may, in its own sandbox.
+   */
+  workspace?: {
+    projectId: string;
+    repos: Record<string, { defaultBranch?: string; setup?: string[] }>;
+    worktree: 'per-run' | 'shared';
+    branchTemplate: string;
+    /** The template with `{project}` filled in (the project's slug); `{run}`, `{date}` and `{task}` are left for the harness. */
+    branchPattern: string;
+  };
 }
 
 /** The example both sides test with (made-up names): two projects list `acme/web`; the first one's compact block. */

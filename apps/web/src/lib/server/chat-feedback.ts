@@ -111,12 +111,24 @@ export function listWorkflowFeedback(workflowId: string, options: { rating?: Fee
 }
 
 /** Ratings of an agent session's replies (all of an agent's with no session). */
-export function listAgentFeedback(agentId: string, sessionId?: string, limit = 200): ChatFeedback[] {
+export function listAgentFeedback(agentId: string, sessionId?: string, limit = 200, sessionVisible?: (sessionId: string) => boolean): ChatFeedback[] {
+  // PC13: the ratings of an agent's sessions that are not for one session keep only those the viewer may read (ratings follow their session).
   const rows = sessionId
     ? database().all<Row>(`SELECT ${COLUMNS} FROM chat_feedback WHERE agent_id = ? AND session_id = ? ORDER BY updated_at DESC LIMIT ?`, agentId, sessionId, limit)
-    : database().all<Row>(`SELECT ${COLUMNS} FROM chat_feedback WHERE agent_id = ? ORDER BY updated_at DESC LIMIT ?`, agentId, limit);
-  return rows.map(toFeedback);
+    : database().all<Row>(`SELECT ${COLUMNS} FROM chat_feedback WHERE agent_id = ? ORDER BY updated_at DESC LIMIT ?`, agentId, sessionVisible ? MAX_FILTERED_ROWS : limit);
+  const listed = rows.map(toFeedback);
+  if (!sessionVisible) return listed;
+  const seen = new Map<string, boolean>();
+  const visible = (id: string | undefined) => {
+    if (!id) return false;
+    if (!seen.has(id)) seen.set(id, sessionVisible(id));
+    return seen.get(id)!;
+  };
+  return listed.filter((f) => visible(f.sessionId)).slice(0, limit);
 }
+
+/** How many ratings are read before a viewer's filter cuts them (a page is the first `limit` that survive). */
+const MAX_FILTERED_ROWS = 1_000;
 
 /** Ratings of a workflow's chat by session id: `sessionId` → feedback of its answers (the session list of the hosted chat). */
 export function feedbackBySession(workflowId: string, sessionId: string): Map<string, ChatFeedback> {

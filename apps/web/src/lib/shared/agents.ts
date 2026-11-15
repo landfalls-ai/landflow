@@ -873,6 +873,7 @@ export interface SessionSummary {
   traceId?: string;
   parentSessionId?: string;
   execution?: SessionExecution;
+  projectId?: string; // PC13: the project the session ran in (absent on older ones: the agent's home)
   createdAt: string;
   updatedAt: string;
 }

@@ -163,6 +163,16 @@ the run in its workflow's Runs tab (`/workflows/<id>/runs/<executionId>`, no red
 - A chosen workflow shows its runs over time below the list.
 - **What the filters cover.** The search box, Status, From and To filter the latest 200 runs the page loads, so a date range older than those shows "No runs match" although such runs exist. Actor, tool, failed steps and check filters take at most 100 matches from `GET /api/runs/search` and intersect them with those 200 runs. Word search over journal text (with match snippets) is API-only: `GET /api/runs/search?text=`.
 
+### Needs you for a project budget
+
+An open incident of a project's AI budget is an item in **Needs you** (kind **AI budget**) for the project's admins, the
+budget's owner and instance owners and admins. It counts in Home's tile and the rail's badge like any other. Its title
+and detail say what happened; the title opens the project's Settings at the budget card. A stop has **Resume this month**
+(admins and the owner: paid calls go on until the month ends), **Raise budget…** (admins: a dialog for an amount above the
+current budget) and **Open project**; a warning has **Dismiss** and **Open project**. Each button posts to
+`POST /api/projects/:id/budget/incidents/:incidentId` and reloads the list. See
+[projects-and-goals.md](projects-and-goals.md#ai-budget).
+
 **Runs** (the list across workflows) starts with **Needs you** across every run you can see, and a card for each
 running execution showing who is working on what.
 
