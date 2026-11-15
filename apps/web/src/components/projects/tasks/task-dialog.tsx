@@ -33,7 +33,7 @@ import {
   type TaskStatus,
 } from '@/lib/shared/project-tasks';
 import { cronPreset, presetCron, WAKE_NOTE, WAKE_PRESET_LABELS, WAKE_PRESETS, type WakePreset } from './schedule';
-import { assigneeValue, fieldOfError, parseAssignee, RUN_LABELS, RUN_TONES, untilText, type TaskField } from './tasks-model';
+import { assigneeValue, fieldOfError, missingAssigneeOption, parseAssignee, RUN_LABELS, RUN_TONES, untilText, type TaskField } from './tasks-model';
 import { askToRun, checkoutTask, createTask, deleteTask, fetchTask, releaseTask, updateTask } from './use-tasks';
 
 interface AgentOption {
@@ -44,11 +44,11 @@ interface AgentOption {
 const errorText = (e: unknown) => (e as Error).message;
 
 /** The wake-up choice with its note and, once saved, the next wake-up. */
-export function ScheduleField({ preset, cron, onPreset, onCron, nextWakeAt, error, disabled }: { preset: WakePreset; cron: string; onPreset: (p: WakePreset) => void; onCron: (c: string) => void; nextWakeAt?: string; error?: string; disabled?: boolean }) {
+export function ScheduleField({ preset, cron, onPreset, onCron, nextWakeAt, error }: { preset: WakePreset; cron: string; onPreset: (p: WakePreset) => void; onCron: (c: string) => void; nextWakeAt?: string; error?: string }) {
   return (
     <div>
-      <Segmented label="Wake-up" value={preset} onChange={onPreset} options={WAKE_PRESETS.map((p) => ({ value: p, label: WAKE_PRESET_LABELS[p] }))} className={disabled ? 'pointer-events-none opacity-60' : undefined} />
-      {preset === 'custom' && <Input aria-label="Cron schedule" className="mt-2 font-mono max-md:h-11" value={cron} onChange={(e) => onCron(e.target.value)} placeholder="0 9 * * 1-5" disabled={disabled} />}
+      <Segmented label="Wake-up" value={preset} onChange={onPreset} options={WAKE_PRESETS.map((p) => ({ value: p, label: WAKE_PRESET_LABELS[p] }))} />
+      {preset === 'custom' && <Input aria-label="Cron schedule" className="mt-2 font-mono max-md:h-11" value={cron} onChange={(e) => onCron(e.target.value)} placeholder="0 9 * * 1-5" />}
       <p className="mt-1.5 text-[12px] leading-snug text-t3">{WAKE_NOTE}</p>
       {nextWakeAt && preset !== 'none' && <p className="mt-0.5 text-[12px] text-t2">Next wake-up {untilText(nextWakeAt)} ({new Date(nextWakeAt).toLocaleString()})</p>}
       {error && (
@@ -131,11 +131,12 @@ export function TaskDialog({ projectId, task: given, canCreate = true, onClose, 
   const projectGoals = useMemo(() => (goals.data ? filterTree(goals.data.goals, { activeOnly: false, projectId }) : undefined), [goals.data, projectId]);
   const picked = parseAssignee(assignee);
   const isAgent = picked?.kind === 'agent';
+  const missing = missingAssigneeOption(assignee, agents, people, task?.assigneeName);
   const wakeCron = isAgent ? (preset === 'custom' ? cron.trim() : presetCron(preset)) : undefined;
 
   const show = (message: string) => {
     const field = fieldOfError(message);
-    setErrors({ [field ?? 'other']: message });
+    setErrors({ [field === 'schedule' && !isAgent ? 'other' : (field ?? 'other')]: message });
   };
   const refresh = (next: ProjectTaskView) => {
     setTask(next);
@@ -286,6 +287,7 @@ export function TaskDialog({ projectId, task: given, canCreate = true, onClose, 
               className="max-md:h-11"
             >
               <option value="">Unassigned</option>
+              {missing && <option value={missing.value}>{missing.label}</option>}
               <optgroup label="Agents in this project">
                 {agents.map((a) => (
                   <option key={a.id} value={`agent:${a.id}`}>

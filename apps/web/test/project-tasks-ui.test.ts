@@ -8,7 +8,7 @@ import { PROJECT_TABS, projectTab } from '../src/components/projects/project-tab
 import { TaskCard, TaskRow } from '../src/components/projects/tasks/task-row';
 import { ScheduleField } from '../src/components/projects/tasks/task-dialog';
 import { cronPreset, presetCron, WAKE_NOTE, WAKE_PRESETS } from '../src/components/projects/tasks/schedule';
-import { assigneeValue, fieldOfError, groupTasks, parseAssignee } from '../src/components/projects/tasks/tasks-model';
+import { assigneeValue, fieldOfError, groupTasks, missingAssigneeOption, parseAssignee } from '../src/components/projects/tasks/tasks-model';
 import { tasksUrl } from '../src/components/projects/tasks/use-tasks';
 import type { NeedsYouRow } from '../src/lib/client/run-trace';
 import type { ProjectTaskView } from '../src/lib/shared/project-tasks';
@@ -81,6 +81,17 @@ describe('the list', () => {
     expect(fieldOfError('That goal isn’t one of this project’s goals')).toBe('goal');
     expect(fieldOfError('Ben isn’t a member of this project')).toBe('assignee');
     expect(fieldOfError('A project has at most 1000 tasks')).toBeUndefined();
+    expect(fieldOfError('Jane Mansfield isn’t a member of this project')).toBe('assignee');
+    expect(fieldOfError('“Clerk” isn’t allowed in project “Q4 goals” (Project settings → Agents)')).toBe('assignee');
+    expect(fieldOfError('“Cron helper” isn’t available in project “Billing”')).toBe('assignee');
+    expect(fieldOfError('A wake-up schedule has five fields')).toBe('schedule');
+  });
+
+  it('offers the saved assignee when it is not loaded', () => {
+    expect(missingAssigneeOption('agent:a1', [{ id: 'a1' }], [])).toBeUndefined();
+    expect(missingAssigneeOption('agent:a2', [{ id: 'a1' }], [], 'Clerk')).toEqual({ value: 'agent:a2', label: 'Clerk' });
+    expect(missingAssigneeOption('person:p1', [], [])).toEqual({ value: 'person:p1', label: 'Removed person' });
+    expect(missingAssigneeOption('', [], [])).toBeUndefined();
   });
 });
 

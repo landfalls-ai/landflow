@@ -55,11 +55,25 @@ export type TaskField = 'assignee' | 'schedule' | 'goal' | 'title';
 
 /** The field a server message (tasks-api.md, the 400 table) is about; undefined when it is about none. */
 export function fieldOfError(message: string): TaskField | undefined {
-  if (/goal/i.test(message)) return 'goal';
-  if (/wake-up|schedule|fields?\b|cron|never fires/i.test(message)) return 'schedule';
-  if (/isn.t available|isn.t allowed|isn.t a member|assignee/i.test(message)) return 'assignee';
-  if (/title/i.test(message)) return 'title';
+  // Match the contract's fixed wording only: the messages carry agent, project and person names.
+  if (/isn.t available in project|isn.t allowed in project|isn.t a member of this project/i.test(message)) return 'assignee';
+  if (/^That goal isn.t one of/i.test(message)) return 'goal';
+  if (/^Only an agent task has a wake-up schedule|^A wake-up schedule has five fields|^This schedule never fires/i.test(message)) return 'schedule';
+  if (/^A task needs a title/i.test(message)) return 'title';
   return undefined;
+}
+
+/** The option the assignee select needs when the saved assignee is not among the loaded ones; undefined when it is listed. */
+export function missingAssigneeOption(
+  value: string,
+  agents: { id: string }[],
+  people: { id: string }[],
+  assigneeName?: string,
+): { value: string; label: string } | undefined {
+  const picked = parseAssignee(value);
+  if (!picked) return undefined;
+  if ((picked.kind === 'agent' ? agents : people).some((o) => o.id === picked.id)) return undefined;
+  return { value, label: assigneeName ?? (picked.kind === 'agent' ? 'Removed agent' : 'Removed person') };
 }
 
 /** The assignee select's value: "agent:<id>", "person:<id>" or "". */
