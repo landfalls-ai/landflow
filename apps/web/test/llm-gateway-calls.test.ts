@@ -243,6 +243,21 @@ describe('OpenAI-compatible through the gateway', () => {
     expect(added.map((r) => r.gateway_request_id)).toEqual([requestIdOf(plain), requestIdOf(streamed)]);
   });
 
+  it('keeps no response id from a response-cache hit (it would be another call’s)', async () => {
+    process.env.LANDFLOW_LLM_GATEWAY_URL = fake.origin;
+    fake.setCacheHits(true);
+    try {
+      const before = rows().length;
+      await inScope('ex_cache', () => openAiModel(connection(), { model: 'qwen3-coder:30b' }).generate(turn));
+      await inScope('ex_cache2', () => anthropicModel({ model: 'claude-sonnet-5-5', effort: 'low', maxTokens: 200, fallback: true, apiKey: virtual, baseUrl: fake.origin, gateway: 'litellm' }).generate(turn));
+      const added = rows().slice(before);
+      expect(added).toHaveLength(2);
+      expect(added.every((r) => r.call_id && r.gateway_request_id === null)).toBe(true);
+    } finally {
+      fake.setCacheHits(false);
+    }
+  });
+
   it('marks a call on the server’s own key with the key’s hash, so a call without a response id pairs by its call id', async () => {
     process.env.LANDFLOW_LLM_GATEWAY_URL = fake.origin;
     process.env.LANDFLOW_LLM_GATEWAY_KEY = virtual;

@@ -80,6 +80,8 @@ export function gatewayHeaders(scope: Lookup | undefined, settings: Pick<LlmGate
 /** What the gateway said about one call. */
 export interface GatewayReply {
   callId?: string;
+  /** LiteLLM answered from its response cache (`x-litellm-cache-key`): the response id is another call's, so it is not kept. */
+  cached?: boolean;
   /** `x-litellm-response-cost`, dollars. */
   cost?: number;
 }
@@ -92,7 +94,8 @@ export function gatewayReplyOf(headers: Headers): GatewayReply {
   const callId = headers.get('x-litellm-call-id')?.trim();
   const raw = headers.get('x-litellm-response-cost');
   const cost = raw !== null && raw.trim() !== '' ? Number(raw) : undefined;
-  return { ...(callId && { callId }), ...(cost !== undefined && Number.isFinite(cost) && cost >= 0 && { cost }) };
+  const cached = Boolean(headers.get('x-litellm-cache-key')?.trim());
+  return { ...(callId && { callId }), ...(cached && { cached }), ...(cost !== undefined && Number.isFinite(cost) && cost >= 0 && { cost }) };
 }
 
 function remember(id: string, reply: GatewayReply) {
@@ -132,13 +135,8 @@ export function takeGatewayReply(id: string): GatewayReply {
 }
 
 /**
- * Whether a gateway-reported cost may count in caps and totals: only for the gateway the server itself is configured with
- * (LANDFLOW_LLM_GATEWAY_URL). A gateway named only by a credential could be a fake one that under-reports, so its cost is
- * shown as "gateway says" and Landflow's own price table stays in charge.
- */
-/**
  * The hash of the server's own gateway key (`LANDFLOW_LLM_GATEWAY_KEY`), as LiteLLM files it in the spend log's `api_key`.
- * Only the server holds that key and Landflow mints the call ids it sends with it, so a call id is a safe match for it
+ * Only the server holds that key, so nobody else can send a call id with it: a call id is a safe match for that key
  * alone; any other key's holder can reuse a call id.
  */
 export function serverKeyHash(): string | undefined {
@@ -152,6 +150,11 @@ export function serverKeyHashOf(apiKey: string | undefined): string | undefined 
   return own && apiKey && hashKey(apiKey) === own ? own : undefined;
 }
 
+/**
+ * Whether a gateway-reported cost may count in caps and totals: only for the gateway the server itself is configured with
+ * (LANDFLOW_LLM_GATEWAY_URL). A gateway named only by a credential could be a fake one that under-reports, so its cost is
+ * shown as "gateway says" and Landflow's own price table stays in charge.
+ */
 export function trustsGatewayCost(baseUrl: string): boolean {
   const configured = envString('LANDFLOW_LLM_GATEWAY_URL');
   if (!configured) return false;

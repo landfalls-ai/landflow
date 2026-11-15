@@ -233,6 +233,16 @@ describe('the spend import', () => {
     expect(await importSpend({ now: later() })).toMatchObject({ imported: 0 });
     expect(byRequest(call.request_id)).toHaveLength(1);
 
+    // A takeover never lowers what the import counted.
+    const cheaper = litellm.addKey({ key_alias: 'member-cheap' }).key;
+    await post(cheaper);
+    const priced = litellm.spendLogs.at(-1)!;
+    await importSpend({ now: later() });
+    const importedCost = byRequest(priced.request_id)[0].cost;
+    expect(importedCost).toBeGreaterThan(0);
+    await meterLater({ callId: idOf(priced), gatewayRequestId: priced.request_id });
+    expect(byRequest(priced.request_id)[0].cost).toBe(importedCost);
+
     // On the server's own key, a call without a response id is taken over by its call id.
     await post(ownKey);
     const own = litellm.spendLogs.at(-1)!;

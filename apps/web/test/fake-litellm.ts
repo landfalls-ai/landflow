@@ -125,6 +125,7 @@ export async function startFakeLiteLlm(options: FakeLiteLlmOptions = {}) {
   const budgets = new Map<string, { max_budget: number | null; budget_duration: string | null }>();
   const spendLogs: FakeSpendLog[] = [];
   let down = false;
+  let cacheHits = false;
 
   const keyOf = (value: string): FakeKey | undefined => (value === masterKey ? undefined : (keys.get(value) ?? [...keys.values()].find((k) => k.token === value)));
   const publicKey = (k: FakeKey) => ({
@@ -221,7 +222,7 @@ export async function startFakeLiteLlm(options: FakeLiteLlmOptions = {}) {
     return { callId, requestId };
   }
 
-  const callHeaders = (callId: string) => ({ 'x-litellm-call-id': callId, 'x-litellm-response-cost': String(costPerCall), 'x-litellm-model-id': 'fake-deployment' });
+  const callHeaders = (callId: string) => ({ 'x-litellm-call-id': callId, 'x-litellm-response-cost': String(costPerCall), 'x-litellm-model-id': 'fake-deployment', ...(cacheHits && { 'x-litellm-cache-key': 'fake-cache-key' }) });
 
   function sse(res: ServerResponse, headers: Record<string, string>, events: Array<{ event?: string; data: unknown }>) {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', ...headers });
@@ -456,6 +457,10 @@ export async function startFakeLiteLlm(options: FakeLiteLlmOptions = {}) {
       const made: FakeKey = { key: value, token: sha(value), spend: 0, ...key };
       keys.set(value, made);
       return made;
+    },
+    /** Mark every answer as a response-cache hit (`x-litellm-cache-key`), or stop. */
+    setCacheHits: (value: boolean) => {
+      cacheHits = value;
     },
     /** Make every request answer 503 (or come back). */
     setDown: (value: boolean) => {

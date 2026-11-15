@@ -186,7 +186,9 @@ export class AiUsageMeter implements UsageMeter {
           : undefined;
       if (imported) {
         // Its usage event is already in the ledger (from the import); the row now says who and what ran the call.
-        db.upsert('ai_usage', { ...imported, ...counted });
+        // Never cheaper than what the import counted: a takeover may add who ran the call, not take spend away.
+        const importedCost = typeof imported.cost === 'number' ? imported.cost : 0;
+        db.upsert('ai_usage', { ...imported, ...counted, cost: Math.max(importedCost, counted.cost ?? 0) });
         noteUsage();
         return;
       }

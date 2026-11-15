@@ -175,7 +175,11 @@ LLM gateway has the import on (it is by default).
   metadata) and no credential's key makes the import skip a row: a key holder could otherwise hide their spend.
 - **When the import is first.** A long call can be logged before Landflow's meter records it. The meter then takes the
   imported row over (found by the response id, or on the server's key by the call id): still one row, now with the
-  person, the run and Landflow's price. The `ai.call` event stays the import's.
+  person and the run, at the higher of the two prices (a takeover never lowers spend). The `ai.call` event stays the
+  import's, so the usage ledger keeps the key's agent and project and the import's price for that call.
+- **Response caching stays off.** A LiteLLM cache hit answers with an earlier response's id. Landflow keeps no response id
+  from a reply marked as a cache hit (`x-litellm-cache-key`), but the shipped configs leave LiteLLM's cache off; turning
+  it on is not supported.
 - **Attribution.** Only from what Landflow controls: the key's row in `llm_gateway_keys` gives the runtime, the agent
   and the project; else the project from the key's team (`landflow-project-<id>`, which an admin assigns). A row made
   with the server's own key (`LANDFLOW_LLM_GATEWAY_KEY`) is runtime Landflow. Anything else is runtime `other`, with no

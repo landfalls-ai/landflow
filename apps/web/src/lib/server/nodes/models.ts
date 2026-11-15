@@ -246,7 +246,7 @@ export function anthropicModel(options: { model: string; effort: Effort; maxToke
       // The call id is what the spend import dedupes on: take it only from the server-configured gateway. Another
       // gateway (a credential's Base URL) could answer with the id of someone else's call and erase it from the import.
       // The response id (LiteLLM's spend-log request_id, assigned by the gateway) is what pairs the spend row with this call.
-      ...(reply.callId && costTrusted && { callId: reply.callId, ...(response.id && { gatewayRequestId: response.id }), ...(serverKeyHashOf(options.apiKey) && { gatewayKeyHash: serverKeyHashOf(options.apiKey) }) }),
+      ...(reply.callId && costTrusted && { callId: reply.callId, ...(response.id && !reply.cached && { gatewayRequestId: response.id }), ...(serverKeyHashOf(options.apiKey) && { gatewayKeyHash: serverKeyHashOf(options.apiKey) }) }),
       ...(reply.cost !== undefined && { gatewayCost: reply.cost }),
       ...(reply.cost !== undefined && costTrusted && { gatewayCostTrusted: true }),
     };
@@ -795,7 +795,7 @@ export async function openAiChat(
       cacheReadTokens: result.usage.cacheReadTokens,
       finishReasons: [result.finishReason],
       // As above: a call id only from the server-configured gateway.
-      ...(reply.callId && trusted && { callId: reply.callId, ...(responseId && { gatewayRequestId: responseId }), ...(ownKey(connection) && { gatewayKeyHash: connection.keyHash }) }),
+      ...(reply.callId && trusted && { callId: reply.callId, ...(responseId && !reply.cached && { gatewayRequestId: responseId }), ...(ownKey(connection) && { gatewayKeyHash: connection.keyHash }) }),
       ...(reply.cost !== undefined && { gatewayCost: reply.cost }),
       ...(reply.cost !== undefined && trusted && { gatewayCostTrusted: true }),
     }),
@@ -862,7 +862,7 @@ async function openAiStream(connection: OpenAiConnection, body: Record<string, u
     }
     if (chunk.error) throw new OpenAiApiError(`${connection.label}: ${chunk.error.message ?? 'stream error'}`, 500);
     model ??= chunk.model;
-    id ??= chunk.id;
+    id ||= chunk.id;
     if (chunk.usage) usage = { prompt_tokens: chunk.usage.prompt_tokens, completion_tokens: chunk.usage.completion_tokens, prompt_tokens_details: chunk.usage.prompt_tokens_details };
     const choice = chunk.choices?.[0];
     if (!choice) continue;
