@@ -142,6 +142,15 @@ describe('credentials: the picker', () => {
     expect(src('app', 'credentials', 'page.tsx')).not.toContain('Credential types published by plugins');
   });
 
+  it('gives the empty page a primary New credential, and says so when a project’s list can’t be read', () => {
+    const page = src('app', 'credentials', 'page.tsx');
+    const empty = page.slice(page.indexOf('<EmptyState'), page.indexOf('</Card>', page.indexOf('<EmptyState')));
+    expect(empty).toContain('<Button variant="primary" onClick={() => setDialog({})}>');
+    // A failed `?project=` read replaces the list that would otherwise stay loading.
+    expect(page).toContain('setScopedError({ projectId, message: e.message })');
+    expect(page).toContain('{failed ? null : isEmpty ? (');
+  });
+
   it('on a phone a row keeps the name on its first line and puts the meta on a second, without fixed widths', () => {
     // At 390 px the fixed w-40 and w-28 meta columns left the name 0 px wide and pushed the row past the card.
     const page = src('app', 'credentials', 'page.tsx');
