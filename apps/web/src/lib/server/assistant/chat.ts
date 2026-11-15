@@ -46,6 +46,7 @@ import { availableTypes, catalogSummary, nodeContext, nodeDocs, searchNodes, wor
 import { MENTION_LIMITS, mentionKey, type MentionRef } from '../../shared/mentions';
 import { BLOCK_CLOSE, BLOCK_OPEN, resolveMentions, type MentionRead, type SentMention } from '../mentions/resolve';
 import type { Actor } from '../projects/access';
+import { builderContextEntry } from '../project-context/by-repo';
 
 /** The most model calls for one message. A reply stops sooner when two steps in a row add nothing new. */
 export const MAX_STEPS = 20;
@@ -365,6 +366,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
     `\nThe editor now:\n${outline()}`,
     working.groups?.some((g) => g.composite) ? `\nComposites (frames typed by a contract: fill their slots with matching nodes, keep their rules):\n${compositeOutline(working)}` : '',
     selected ? `\nThe user has “${selected.name}” selected:\n${nodeContext(working, selected.id, runs[selected.id], types)}` : '',
+    builderContextEntry({ workflowId: input.workflow.id }), // PC10: the goals of the project this workflow is in, as data
     tagged.length ? `\nThe user tagged these in the message (checked against what they may open):\n${tagged.join('\n')}` : '',
     input.session === 'auto' ? `\n${AUTO}` : input.session ? `\n${SESSION}` : '',
   ].join('\n');

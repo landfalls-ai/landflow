@@ -38,6 +38,7 @@ export function projectDetail(project: ProjectRecord, actor: Actor): ProjectDeta
   return {
     ...projectView(project, actor),
     brief: briefView(project, actor),
+    ...(project.repos?.length && { repos: project.repos }), // PC10
     // Admins first, then editors and viewers, each by name.
     members: members(project.id)
       .flatMap((member) => {

@@ -8,6 +8,8 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { Briefing, WorkItem } from '../../shared/brain-work';
+import { getGoal, projectGoalIds } from '../goals/store';
+import { visibleProjects } from '../projects/views';
 import { briefingFor, briefingMaxChars, dayBefore } from '../brain/briefing';
 import type { Actor } from '../projects/access';
 import { instanceUrl } from './tokens';
@@ -66,10 +68,11 @@ export function briefingMarkdown(briefing: Briefing): string {
  * instruction line. The nightly sync's text (it may name colleagues and the titles they shared) is added here and only here,
  * because every line of this prompt is quoted as data.
  */
-export function briefingText(briefing: Briefing): string {
+export function briefingText(briefing: Briefing, goals: string[] = []): string {
   const sync = briefing.brain !== 'off' && briefing.source === 'flow' && briefing.summary ? ['## From last night\u2019s sync', '', ...briefing.summary.split('\n'), ''] : [];
   const [head, ...rest] = briefingMarkdown(briefing).split('\n');
-  const lines = briefing.brain === 'off' ? [head, ...rest] : [head, '', ...sync, ...rest.slice(1)];
+  const mine = goals.length ? ['', 'Your goals:', ...goals] : []; // PC10
+  const lines = briefing.brain === 'off' ? [head, ...rest, ...mine] : [head, '', ...sync, ...rest.slice(1), ...mine];
   const quoted: string[] = [];
   // Room for the closing "> …" line and the instruction after a blank line.
   const budget = BRIEFING_PROMPT_LIMIT - BRIEFING_INSTRUCTION.length - 2 - 4;
@@ -86,6 +89,24 @@ export function briefingText(briefing: Briefing): string {
   return `${quoted.join('\n')}\n\n${BRIEFING_INSTRUCTION}`;
 }
 
+/** The most open goals named for one project in the briefing. */
+const GOALS_PER_PROJECT = 5;
+
+/** PC10: "Your goals": the open (planned or active) goals of the projects the person has a role in, at most 5 by project, titles only. [] when there are none. */
+export function goalLines(actor: Actor): string[] {
+  const lines: string[] = [];
+  for (const project of visibleProjects(actor)) {
+    const titles: string[] = [];
+    for (const id of projectGoalIds(project.id, { withoutCancelled: true })) {
+      const goal = getGoal(id);
+      if (goal && (goal.status === 'planned' || goal.status === 'active')) titles.push(clip(oneLine(goal.title), 120));
+      if (titles.length >= GOALS_PER_PROJECT) break;
+    }
+    if (titles.length) lines.push(`${clip(oneLine(project.name), 80)}:`, ...titles.map((t) => `- ${t}`));
+  }
+  return lines;
+}
+
 /** The prompt and the three resources, all the caller's own. */
 export function registerBrainPrompts(server: McpServer, actor: Actor) {
   server.registerPrompt(
@@ -95,7 +116,7 @@ export function registerBrainPrompts(server: McpServer, actor: Actor) {
       description: 'Your own work from yesterday and today in Landflow’s second brain, as background for this session.',
       argsSchema: z.object({ day: dayArgument('The day, YYYY-MM-DD; default today') }),
     },
-    ({ day }) => ({ messages: [{ role: 'user' as const, content: { type: 'text' as const, text: briefingText(briefingFor(actor, day ? { day } : {})) } }] }),
+    ({ day }) => ({ messages: [{ role: 'user' as const, content: { type: 'text' as const, text: briefingText(briefingFor(actor, day ? { day } : {}), goalLines(actor)) } }] }),
   );
 
   const resource = (name: string, uri: string, title: string, text: () => string) =>

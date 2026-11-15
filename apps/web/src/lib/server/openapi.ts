@@ -41,7 +41,7 @@ function fromZod(schema: z.ZodType): Json {
 const samplePath = (path: string) => path.replace(/\{[^}]+\}/g, 'sample');
 
 interface Operation {
-  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Settings' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks' | 'Conversations' | 'Goals' | 'Practices';
+  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Settings' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks' | 'Conversations' | 'Goals' | 'Practices' | 'Projects';
   id: string;
   summary: string;
   description?: string;
@@ -1194,7 +1194,7 @@ function paths(): Record<string, Record<string, Json>> {
     summary: 'Rename a project or change its brief',
     description: 'The project’s admins. `brief` sets the brief, constraints, done-when, words we use, status, target date, lead and decision owner (`null` clears one); the lead and decision owner must have a role in the project. `GET /api/projects/{id}` returns the brief as `project.brief`.',
     pathParams: { id: 'The project id' },
-    body: jsonBody(object({ name: { type: 'string', maxLength: 120 }, description: { type: ['string', 'null'], maxLength: 500 }, icon: { type: ['string', 'null'] }, brief: object({ brief: { type: ['string', 'null'], maxLength: 1500 }, constraints: { type: ['string', 'null'], maxLength: 1000 }, doneWhen: { type: ['string', 'null'], maxLength: 600 }, glossary: { type: ['string', 'null'], maxLength: 800 }, status: { type: ['string', 'null'], enum: ['planned', 'active', 'paused', 'done', null] }, targetDate: { type: ['string', 'null'] }, leadId: { type: ['string', 'null'] }, decisionOwnerId: { type: ['string', 'null'] } }) })),
+    body: jsonBody(object({ name: { type: 'string', maxLength: 120 }, description: { type: ['string', 'null'], maxLength: 500 }, icon: { type: ['string', 'null'] }, repos: { type: 'array', items: { type: 'string' }, maxItems: 20, description: 'owner/name, lowercased (PC10)' }, brief: object({ brief: { type: ['string', 'null'], maxLength: 1500 }, constraints: { type: ['string', 'null'], maxLength: 1000 }, doneWhen: { type: ['string', 'null'], maxLength: 600 }, glossary: { type: ['string', 'null'], maxLength: 800 }, status: { type: ['string', 'null'], enum: ['planned', 'active', 'paused', 'done', null] }, targetDate: { type: ['string', 'null'] }, leadId: { type: ['string', 'null'] }, decisionOwnerId: { type: ['string', 'null'] } }) })),
     responses: { 200: reply('The project', object({ project: { type: 'object', additionalProperties: true } }, ['project'])), 400: invalid, 403: errorRef('Not a project admin'), 404: notFound },
   });
 
@@ -2388,6 +2388,24 @@ function paths(): Record<string, Record<string, Json>> {
     body: jsonBody(object({ text: { type: 'string', maxLength: 20000 }, citations: { type: 'array', items: { type: 'string' }, maxItems: 20 }, executionId: { type: 'string' }, repo: { type: 'string' } })),
     responses: { 200: reply('What was recorded', object({ recorded: array({ type: 'string' }), unknown: array({ type: 'string' }) }, ['recorded', 'unknown'])), 400: invalid, 404: notFound },
   });
+  // PC10: project context for a harness
+  add('get', '/api/projects/context', {
+    tag: 'Projects',
+    id: 'projectContext',
+    summary: 'A project’s context block for a harness',
+    description:
+      'Needs the `brain:read` scope or a session. By `repo`: the projects the caller has a role in that list the repository (owners and admins: every one), sorted by name, and the first one’s block; never a 404. By `projectId`: that project, 404 without a role. `context.text` is the “Where this work fits” block: data, not instructions; \'\' when the project has nothing to say.',
+    query: [
+      { name: 'repo', description: 'owner/name, lowercased by the server', schema: { type: 'string' } },
+      { name: 'projectId', description: 'A project the caller has a role in', schema: { type: 'string' } },
+      { name: 'size', description: 'The block’s size', schema: { type: 'string', enum: ['full', 'compact'], default: 'compact' } },
+    ],
+    responses: {
+      200: reply('The projects and the first one’s block', object({ projects: array(object({ id: { type: 'string' }, name: { type: 'string' } }, ['id', 'name'])), context: { type: ['object', 'null'], additionalProperties: true } }, ['projects', 'context'])),
+      400: invalid,
+      404: notFound,
+    },
+  });
   return out;
 }
 
@@ -2422,6 +2440,7 @@ export function openApiDocument(origin?: string): Record<string, unknown> {
       { name: 'Agent teams', description: 'Teams of agents with standing relations: who leads, who reports to whom, who reviews (docs/agent-teams.md)' },
       { name: 'Conversations', description: 'A person’s own chats with Spotlight, the brain and the Agent architect, and their personal preferences: session only, owner only (docs/assistant.md#conversation-history)' },
       { name: 'Practices', description: 'Rules in the brain that connected agents follow: drafts, versions, approval by a person, waivers (docs/practices.md)' },
+      { name: 'Projects', description: 'A project’s context block for a harness, found by repository or id (docs/connect-your-harness.md#project-context)' },
       { name: 'MCP', description: 'Agents and MCP (docs/transports.md): Landflow-issued MCP tokens, tool grants, the JWKS, the plugin catalog (server.json, the registry API) and protected resource metadata' },
     ],
     security: [{ bearerAuth: [] }, { apiKeyHeader: [] }, { sessionCookie: [] }],

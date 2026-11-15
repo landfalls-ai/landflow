@@ -2026,6 +2026,12 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   ([agents.md](agents.md#project-context)). Left: the remote paths (PC04), usage attribution (PC05), the
   availability rule (PC06) and the switch and preview in the UI (PC07).
 
+- **PC10, built (wave 8):** project repositories (`PATCH /api/projects/:id { repos }`, migration 2500), `GET
+  /api/projects/context` by repository or id, the MCP `project_context` tool and `project://{id}/context` resource,
+  "Your goals" in the morning briefing, and the project's compact block in Spotlight and the Agent architect (P5-1 to
+  P5-3, D8). Left: a screen for a project's repositories; the mod and the CLI use the route (PC11)
+  ([projects-and-goals.md](projects-and-goals.md#repositories-and-harnesses)).
+
 ## Practices (waves P1 and P2)
 
 Rules in the brain that connected agents follow, each approved by a person ([practices.md](practices.md)). Decided

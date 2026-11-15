@@ -33,6 +33,7 @@ export interface ProjectRecord {
   targetDate?: string;
   leadId?: string;
   decisionOwnerId?: string;
+  repos?: string[]; // PC10: owner/name, lowercased
   createdAt: string;
   updatedAt: string;
   createdBy?: string;
@@ -83,6 +84,7 @@ interface ProjectRow {
   target_date?: string | null;
   lead_id?: string | null;
   decision_owner_id?: string | null;
+  repos?: string | null; // PC10: JSON
   created_at: string;
   updated_at: string;
   created_by: string | null;
@@ -119,6 +121,16 @@ const db = () => authDb();
 
 const isRole = (role: string): role is ProjectRole => (PROJECT_ROLES as readonly string[]).includes(role);
 
+/** PC10: the repositories column (a JSON array of owner/name). */
+function parseRepos(raw: string | null | undefined): string[] {
+  try {
+    const value: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 function projectFrom(row: ProjectRow): ProjectRecord {
   return {
     id: row.id,
@@ -135,6 +147,7 @@ function projectFrom(row: ProjectRow): ProjectRecord {
     ...(row.target_date && { targetDate: row.target_date }),
     ...(row.lead_id && { leadId: row.lead_id }),
     ...(row.decision_owner_id && { decisionOwnerId: row.decision_owner_id }),
+    ...(parseRepos(row.repos).length && { repos: parseRepos(row.repos) }), // PC10
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(row.created_by && { createdBy: row.created_by }),
@@ -157,6 +170,7 @@ function projectRow(project: ProjectRecord) {
     target_date: project.targetDate ?? null,
     lead_id: project.leadId ?? null,
     decision_owner_id: project.decisionOwnerId ?? null,
+    repos: project.repos?.length ? JSON.stringify(project.repos) : null, // PC10
     created_at: project.createdAt,
     updated_at: project.updatedAt,
     created_by: project.createdBy ?? null,
@@ -273,6 +287,19 @@ export function updateProject(id: string, patch: { name?: string; description?: 
     }
   }
   if (Object.keys(details).length) recordAudit({ action: 'project.update', target: { type: 'project', id: id, name: next.name }, project: id, summary: `Changed the project ${next.name} (${Object.keys(details).filter((k) => k.endsWith('From')).map((k) => k.replace('From', '')).join(', ')})`, details });
+  return next;
+}
+
+/** PC10: set the repositories a project lists (already validated and lowercased; [] clears). Audited. */
+export function setProjectRepos(id: string, repos: string[]): ProjectRecord {
+  const project = getProject(id);
+  if (!project) throw new ProjectError('Project not found', 404);
+  const next: ProjectRecord = { ...project, updatedAt: new Date().toISOString() };
+  if (repos.length) next.repos = repos;
+  else delete next.repos;
+  if (JSON.stringify(project.repos ?? []) === JSON.stringify(repos)) return project;
+  db().upsert('projects', projectRow(next));
+  recordAudit({ action: 'project.update', target: { type: 'project', id, name: next.name }, project: id, summary: `Changed the repositories of ${next.name}`, details: { reposFrom: (project.repos ?? []).join(', ') || null, reposTo: repos.join(', ') || null } });
   return next;
 }
 
