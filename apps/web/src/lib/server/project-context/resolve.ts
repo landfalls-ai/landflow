@@ -36,7 +36,7 @@ export function resolveRun(ref: RunContextRef): { projectId?: string; goalId?: s
   const workflow = realWorkflow(ref.workflowId) ? store.getWorkflow(ref.workflowId) : undefined;
   const projectId =
     ref.projectId ??
-    (workflow ? homeProjectId('workflow', ref.workflowId) : undefined) ??
+    (workflow && ref.workflowId ? homeProjectId('workflow', ref.workflowId) : undefined) ??
     team?.projectId ??
     (ref.agentId ? homeProjectId('agent', ref.agentId) : undefined);
   const teamGoal = (team?.published ?? team?.draft)?.goalId;
