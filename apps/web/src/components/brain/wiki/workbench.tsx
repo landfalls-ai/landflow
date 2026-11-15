@@ -327,9 +327,9 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
             className={cn(
               'min-h-0 shrink-0 flex-col border-r border-hair bg-sf2',
               drawer ? 'fixed inset-y-0 left-0 z-40 flex w-[86vw] max-w-[340px] shadow-pop' : 'hidden',
-              sidebar && 'md:static md:z-auto md:flex md:max-w-none md:shadow-none',
+              sidebar && 'md:static md:z-auto md:flex md:w-[var(--sb)] md:max-w-none md:shadow-none',
             )}
-            style={{ width: drawer ? undefined : width }}
+            style={{ width: drawer ? undefined : width, ['--sb' as string]: `${width}px` }}
           >
             <div className="flex h-9 shrink-0 items-center gap-1 px-3 text-[11px] font-semibold uppercase tracking-wide text-t3">
               {VIEWS.find((v) => v.id === view)?.label}
