@@ -20,6 +20,8 @@ const { store } = await import('@/lib/server/store');
 const { createUser } = await import('@/lib/server/auth/users');
 const { enableTestAuth } = await import('@/lib/server/auth/test-bypass');
 const projects = await import('@/lib/server/projects');
+const { createGoal } = await import('@/lib/server/goals/store');
+const { listProjects } = await import('@/lib/server/projects/store');
 const { database } = await import('@/lib/server/db');
 const { aiUsageMeter, saveAiCaps } = await import('@/lib/server/ai-usage');
 const { aiConsoleReport, sourceKey } = await import('@/lib/server/llm-gateway/console');
@@ -340,7 +342,7 @@ describe('the caps card markup', () => {
     from: '',
     to: '',
     totals: { inputTokens: 0, outputTokens: 0, cost: 0, calls: 0 },
-    groups: { project: [], agent: [], person: [], model: [], source: [] },
+    groups: { project: [], goal: [], agent: [], person: [], model: [], source: [] },
     caps: [{ ...cap, canRequest: !admin, ...over }],
     requests: [],
     viewer: { admin, userId: 'u1' },
@@ -373,5 +375,56 @@ describe('sourceKey', () => {
     expect(sourceKey(null, null)).toBe('landflow:landflow');
     expect(sourceKey('litellm', 'kagent')).toBe('litellm:kagent');
     expect(sourceKey('litellm', 'other')).toBe('litellm:other');
+  });
+});
+
+describe('spend by goal', () => {
+  let alphaGoal = '';
+  let betaGoal = '';
+  let goneGoal = '';
+  let companyGoal = '';
+
+  beforeAll(() => {
+    const alpha = listProjects().find((p) => p.name === 'Alpha')!.id;
+    const beta = listProjects().find((p) => p.name === 'Beta')!.id;
+    alphaGoal = createGoal({ title: 'Ship the pilot', level: 'project', projectId: alpha }).id;
+    betaGoal = createGoal({ title: 'Cut support load', level: 'project', projectId: beta }).id;
+    goneGoal = 'goal_deleted_one';
+    companyGoal = createGoal({ title: 'Grow the company', level: 'company' }).id;
+    row({ workflow_id: wfMine, user_id: member.id, goal_id: companyGoal, cost: 2 });
+    row({ workflow_id: wfMine, user_id: member.id, goal_id: alphaGoal, cost: 3 });
+    row({ workflow_id: wfMine, user_id: member.id, goal_id: betaGoal, cost: 5 });
+    row({ workflow_id: wfTheirs, user_id: other.id, goal_id: betaGoal, cost: 7 });
+    row({ workflow_id: wfMine, user_id: member.id, goal_id: goneGoal, cost: 11 });
+  });
+
+  it('an owner sees every goal by title, the rest as No goal, and the rows add up to the total', () => {
+    const report = aiConsoleReport(owner, '7d');
+    const goals = byKey(report.groups.goal);
+    expect(goals[alphaGoal]?.label).toBe('Ship the pilot');
+    expect(goals[alphaGoal]?.cost).toBeCloseTo(3);
+    expect(goals[betaGoal]?.label).toBe('Cut support load');
+    expect(goals[betaGoal]?.cost).toBeCloseTo(12);
+    expect(goals[goneGoal]?.label).toBe('Deleted goal');
+    expect(goals.none?.label).toBe('No goal');
+    expect(report.groups.goal.reduce((sum, r) => sum + r.cost, 0)).toBeCloseTo(report.totals.cost);
+    expect(report.groups.goal.reduce((sum, r) => sum + r.calls, 0)).toBe(report.totals.calls);
+  });
+
+  it("a member sees their project's goal by title and another project's as Another goal, never its title", () => {
+    const report = aiConsoleReport(member, '7d');
+    const goals = byKey(report.groups.goal);
+    expect(goals[alphaGoal]?.label).toBe('Ship the pilot');
+    expect(goals.shared?.label).toBe('Another goal');
+    // Only the row on their own workflow (5); the 7 on Beta's workflow is in no total.
+    expect(goals.shared?.cost).toBeCloseTo(5);
+    expect(JSON.stringify(report)).not.toContain('Cut support load');
+    expect(goals[goneGoal]?.label).toBe('Deleted goal');
+    expect(goals[companyGoal]?.label).toBe('Grow the company');
+    expect(report.groups.goal.reduce((sum, r) => sum + r.cost, 0)).toBeCloseTo(report.totals.cost);
+  });
+
+  it('lists Goal second among six groups', () => {
+    expect(helpers.AI_GROUPS.map((g) => g.value)).toEqual(['project', 'goal', 'agent', 'person', 'model', 'source']);
   });
 });

@@ -1983,6 +1983,7 @@ Projects get a mission to serve, goals and a brief, and agents learn where their
   screens are PC07.
 - **PC02, open:** the screens (Goals page, goal dialog, the brief on the project Overview, Settings → Company).
 - **PC03, open:** the block and its injection into agent runs.
+- **PC09, built:** cost per goal. A Goal grouping on the AI page, after Project, limited to the goals the viewer may see. Closes P4-2.
 - **Open:** goal progress.
 
 ## Not planned

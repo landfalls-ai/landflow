@@ -323,9 +323,11 @@ for the period (24 hours, 7 days, 30 days) and shows, from top to bottom:
 
 - **Totals**: the estimated cost, the tokens (in and out, and cached) and the calls. Cost comes from Landflow's own price
   table (Settings → AI prices), as everywhere else; a cost the gateway reports is not used for these totals.
-- **Spend by** project, agent, person, model or source. Each row has its cost, tokens, calls and a bar for its share of
+- **Spend by** project, goal, agent, person, model or source. Each row has its cost, tokens, calls and a bar for its share of
   the cost. A project row with no project on it counts under the workflow's or agent's home project; calls from no
-  agent (workflows, Spotlight) are "No agent". Sources are "Landflow" (calls Landflow made), "kagent", "Claude Code on
+  agent (workflows, Spotlight) are "No agent". The Goal grouping uses the goal each call was stamped with
+  ([what a goal costs](projects-and-goals.md#what-a-goal-costs)): "No goal" when there is none, "Another goal" for one
+  you can't see. Sources are "Landflow" (calls Landflow made), "kagent", "Claude Code on
   kagent" and "Other clients of the gateway" (the last three come from the spend import, once it has run). Each list
   holds the top 50; the rest add up as "Other". On a phone each row is a card; desktop shows a table.
 - **Caps**: every cap that has a period (a workflow's daily caps, an agent's guardrails, Settings → AI caps), what it has
