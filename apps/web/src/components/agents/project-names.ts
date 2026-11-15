@@ -57,7 +57,7 @@ export function sharedIds(shares: ReadonlyArray<{ projectId: string }>, home: st
   return [...new Set(shares.map((s) => s.projectId))].filter((id) => id !== home);
 }
 
-/** What "Make available" sends: the home project and the ids the caller can't see are not in the list. */
+/** What "Make available" sends: the home project is left out; the ids the caller can't see stay, so saving keeps hidden shares. With All on, the individual ids are dropped. */
 export function availabilityBody(selected: readonly string[], all: boolean, home: string): { projectIds: string[]; all: boolean } {
   return { projectIds: all ? [] : [...new Set(selected)].filter((id) => id !== home), all };
 }

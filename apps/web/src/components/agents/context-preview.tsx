@@ -4,7 +4,7 @@
  * practices it follows, exactly as a run would get them (GET /api/agents/:id/context-preview). Reads only. On a phone the
  * preview opens in the shared dialog, which is a bottom sheet there.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Eye } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import { CONTEXT_MODE_LABELS } from '@/lib/shared/project-context';
@@ -12,24 +12,36 @@ import { Button } from '../ui/button';
 import { Dialog } from './dialog';
 import { injectedText, previewUrl, type ContextPreviewAnswer } from './project-names';
 
+/** The state is good only for the request it answered: a stale answer (another project, another switch) reads as loading. */
+export function keyedPreview<T>(state: { at: string; value: T } | undefined, at: string): T | Record<string, never> {
+  return state && state.at === at ? state.value : {};
+}
+
 /** The preview of one project (the agent's home without `projectId`); `undefined` while loading, an error message when it fails. */
 export function useContextPreview(agentId: string, projectId: string | undefined, enabled = true, key = ''): { preview?: ContextPreviewAnswer; error?: string } {
-  const [state, setState] = useState<{ preview?: ContextPreviewAnswer; error?: string }>({});
+  const at = `${agentId}|${projectId ?? ''}|${key}`;
+  const [state, setState] = useState<{ at: string; value: { preview?: ContextPreviewAnswer; error?: string } }>();
+  const lastKey = useRef(key);
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      setState(undefined);
+      return;
+    }
     let live = true;
-    // A short pause: the settings switches autosave, and the preview reads the saved agent.
+    // A short pause only when a switch changed: the settings autosave, and the preview reads the saved agent.
+    const wait = lastKey.current !== key ? 400 : 0;
+    lastKey.current = key;
     const timer = setTimeout(() => {
       api<ContextPreviewAnswer>(previewUrl(agentId, projectId))
-        .then((preview) => live && setState({ preview }))
-        .catch((e: Error) => live && setState({ error: e.message }));
-    }, 400);
+        .then((preview) => live && setState({ at, value: { preview } }))
+        .catch((e: Error) => live && setState({ at, value: { error: e.message } }));
+    }, wait);
     return () => {
       live = false;
       clearTimeout(timer);
     };
-  }, [agentId, projectId, enabled, key]);
-  return state;
+  }, [agentId, projectId, enabled, key, at]);
+  return keyedPreview(state, at);
 }
 
 /** The two blocks and their handles (the body of the sheet; the sheet needs a browser). */

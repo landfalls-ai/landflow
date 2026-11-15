@@ -138,8 +138,8 @@ function ApprovalEmails({ emails, onChange }: { emails: string[]; onChange: (ema
 
 /** The two switches of what a run is given from the project: its goals and brief (Full, Compact, Off), and approved practices (On, Off). */
 const CONTEXT_HINTS: Record<ContextMode, string> = {
-  full: 'The project’s goal, brief and recent runs in every run.',
-  compact: 'A short version: the goal and one line of the brief.',
+  full: 'The mission, the project’s brief and its goals, in every run.',
+  compact: 'A short version: the goal and a cut brief (600 characters at most).',
   off: 'The agent gets nothing about the project.',
 };
 

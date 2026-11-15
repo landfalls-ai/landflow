@@ -41,12 +41,17 @@ export const GET = handler(async (request: Request, { params }: Ctx) => {
     if (!getProject(projectId!) || !projectRole(actor, projectId) || !available) return error('Project not found', 404);
   }
   const mode: ContextMode = agent.projectContext ?? 'full';
-  const ctx = runContextProvider()?.build({ caller: 'chat', agentId: id, ...(projectId && { projectId }) }, mode);
+  let ctx: ReturnType<NonNullable<ReturnType<typeof runContextProvider>>['build']> | undefined;
+  try {
+    ctx = runContextProvider()?.build({ caller: 'chat', agentId: id, ...(projectId && { projectId }) }, mode);
+  } catch {
+    // A run goes on without the block when the builder throws; the preview says the same.
+  }
   // PC07: AgentConfig.practices comes from PR06.
   const practices = runPractices((agent as { practices?: PracticesSwitch }).practices, { ...(projectId && { projectId }), agentId: id, size: 'full' });
   return json({
     ...(projectId && { projectId }),
-    mode,
+    mode: ctx?.mode ?? mode,
     text: ctx?.text ?? '',
     compact: ctx?.compact ?? '',
     practices: { text: practices.text, list: practices.practices },

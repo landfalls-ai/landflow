@@ -116,3 +116,12 @@ describe('GET /api/agents/:id/context-preview', () => {
     expect((await get(agent.id, shared.id)).status).toBe(403);
   });
 });
+
+import { keyedPreview } from '../src/components/agents/context-preview';
+describe('keyedPreview', () => {
+  it('shows only the answer of the same request', () => {
+    expect(keyedPreview({ at: 'a|p1|', value: { error: 'x' } }, 'a|p1|')).toEqual({ error: 'x' });
+    expect(keyedPreview({ at: 'a|p1|', value: { error: 'x' } }, 'a|p2|')).toEqual({});
+    expect(keyedPreview(undefined, 'a|p2|')).toEqual({});
+  });
+});
