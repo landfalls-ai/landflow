@@ -79,7 +79,11 @@ export async function startFakeA2a(): Promise<FakeA2a> {
     const message = params.message ?? {};
     const full = (message.parts ?? []).map((p) => p.text ?? '').join('').trim();
     // A team run puts the goal and the manager's task in front of the request, then a blank line.
-    const text = /^(Team goal:|.+'s current task:)/.test(full) ? full.split('\n\n').slice(1).join('\n\n').trim() : full;
+    const afterTeam = /^(Team goal:|.+'s current task:)/.test(full) ? full.split('\n\n').slice(1).join('\n\n').trim() : full;
+    // A Landflow agent on kagent gets the practices index (and the project block) in front of the task: the task follows the index line.
+    const marker = 'Call practices_for for a practice';
+    const at = afterTeam.indexOf(marker);
+    const text = at >= 0 ? afterTeam.slice(at).split('\n\n').slice(1).join('\n\n').trim() : afterTeam;
     const existing = message.taskId ? tasks.get(message.taskId) : undefined;
     if (existing?.pending) {
       const payload = message.metadata?.[HITL] as { type?: string; approvals?: Array<{ approved: boolean; rejection_reason?: string }>; answers?: Array<{ answer: string[] }> } | undefined;
@@ -87,8 +91,11 @@ export async function startFakeA2a(): Promise<FakeA2a> {
         const decision = payload?.type === 'tool_approval_response' ? payload.approvals?.[0] : undefined;
         const { callId, text: input } = existing.pending;
         if (decision?.approved) {
-          existing.artifacts.push(functionResponse(callId, 'changeCase', { output: { text: input.toUpperCase() } }, 5));
-          complete(existing, input.toUpperCase(), state.usage);
+          // A trailer ("Practices followed: ...") after the text stays as it is, so a test can cite after an approval.
+          const [body, ...trailer] = input.split('\nPractices followed:');
+          const upper = [body.toUpperCase(), ...trailer].join('\nPractices followed:');
+          existing.artifacts.push(functionResponse(callId, 'changeCase', { output: { text: upper } }, 5));
+          complete(existing, upper, state.usage);
         } else {
           existing.artifacts.push(functionResponse(callId, 'changeCase', { error: `rejected: ${decision?.rejection_reason ?? 'no reason'}` }, 5));
           complete(existing, `Not changed (${decision?.rejection_reason ?? 'no reason'})`, state.usage);

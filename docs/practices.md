@@ -160,6 +160,34 @@ Reject. On a phone it is one column of cards behind `md`; desktop is unchanged.
   `handle` reads `resolve`. `landflow practices show` reads `resolve` too.
 - `landflow practices check` runs a practice's [checks](#checks) over the changed files of a branch, on your machine.
 
+### kagent agents and A2A
+
+*Built by PR07.*
+
+A Landflow agent on kagent has its prompt baked at deploy, so nothing about practices goes into its prompt or its kagent
+resource: an approval or a retirement takes effect with the next request.
+
+- **The index.** The first message of a new conversation to such an agent (an A2A node, an A2A capability, or a team's
+  remote member) carries a short index of the practices that apply, after the project block and before the task, then the
+  line `Call practices_for for a practice's full rules, and end your answer with "Practices followed: [handle@version]" for
+  those you followed.` The index is the 800-character block of the project the run is in, ranked by the first 500
+  characters of the request. A follow-up, an answer and a resumed task go as they are. Any other A2A agent gets nothing new.
+  Turn it off with the option **Practices: Off** on the node, the capability or the team member.
+- **`practices_for { handle?, repo?, paths?, topics?, run? }`** on the agent's kagent MCP server gives the full rules of
+  what applies, or of one practice by `handle`, and records them as `delivered` for the run. **`practice_cite { cited, run? }`**
+  records up to 20 `handle@version` it followed, only those that apply in that project. Both are bound to the run that is
+  asking the agent, as the notebook tools are: one open team call, the one the `run` key names when several are open, or
+  the agent's home project when none is. Neither grants or denies a tool.
+- **Citations in answers.** When a remote answer comes back, the practices from the index it cites in its trailing
+  `Practices followed:` line are recorded as `cited` against the run, on the answer that completes the conversation: an
+  answer that comes after a tool approval or a person's answer is scanned too (the index travels in the pause's saved
+  state, so the resumed run finds it); so is an answer to a question to the caller, within the same run (kept in memory,
+  or in the node's state for an A2A node used as a tool). An agent that both calls `practice_cite` and ends with the line
+  gets two `cited` rows for the same practice and run; count distinct practices. `practice_cite` takes any approved
+  practice of the project or organization, not only what `practices_for` would give this agent.
+- **Order on a team.** A team's remote member gets the project block, then the index, then the team's ancestry line, goal
+  and the task.
+
 Wave P1 reaches only the Claude Code mod and MCP clients. Wave P2 adds Landflow agents (the block after "Where this
 work fits"), kagent agents (an index line with each request and the `practices_for` tool), and Check Practices.
 
