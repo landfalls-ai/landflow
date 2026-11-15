@@ -61,85 +61,6 @@
   },
   {
     "type": "cycle",
-    "from": "apps/web/src/lib/server/agents/store.ts",
-    "to": "apps/web/src/lib/server/agents/session-images.ts",
-    "unresolvedTo": "./session-images",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-circular"
-    },
-    "cycle": [
-      {
-        "name": "apps/web/src/lib/server/agents/session-images.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/binary/access.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner.ts",
-        "dependencyTypes": [
-          "local",
-          "dynamic-import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner/jobs.ts",
-        "dependencyTypes": [
-          "local",
-          "export"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner/recovery.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner/links.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/alerts/service.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/ai-usage/alerts.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/agents/store.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      }
-    ]
-  },
-  {
-    "type": "cycle",
     "from": "apps/web/src/lib/server/agents/triggers.ts",
     "to": "apps/web/src/lib/server/agents/runtime.ts",
     "unresolvedTo": "./runtime",
@@ -184,9 +105,9 @@
   },
   {
     "type": "cycle",
-    "from": "apps/web/src/lib/server/ai-usage/alerts.ts",
-    "to": "apps/web/src/lib/server/alerts/store.ts",
-    "unresolvedTo": "../alerts/store",
+    "from": "apps/web/src/lib/server/ai-usage/index.ts",
+    "to": "apps/web/src/lib/server/llm-gateway/call.ts",
+    "unresolvedTo": "../llm-gateway/call",
     "dependencyTypes": [
       "local",
       "import"
@@ -197,82 +118,33 @@
     },
     "cycle": [
       {
-        "name": "apps/web/src/lib/server/alerts/store.ts",
+        "name": "apps/web/src/lib/server/llm-gateway/call.ts",
         "dependencyTypes": [
           "local",
           "import"
         ]
       },
       {
-        "name": "apps/web/src/lib/server/credentials/vault.ts",
+        "name": "apps/web/src/lib/server/projects/store.ts",
         "dependencyTypes": [
           "local",
           "import"
         ]
       },
       {
-        "name": "apps/web/src/lib/server/plugins/registry.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/binary/access.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner.ts",
+        "name": "apps/web/src/lib/server/ai-usage/index.ts",
         "dependencyTypes": [
           "local",
           "dynamic-import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner/jobs.ts",
-        "dependencyTypes": [
-          "local",
-          "export"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner/recovery.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner/links.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/alerts/service.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/ai-usage/alerts.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
         ]
       }
     ]
   },
   {
     "type": "cycle",
-    "from": "apps/web/src/lib/server/alerts/channels.ts",
-    "to": "apps/web/src/lib/server/alerts/store.ts",
-    "unresolvedTo": "./store",
+    "from": "apps/web/src/lib/server/ai-usage/index.ts",
+    "to": "apps/web/src/lib/server/projects/store.ts",
+    "unresolvedTo": "../projects/store",
     "dependencyTypes": [
       "local",
       "import"
@@ -283,82 +155,26 @@
     },
     "cycle": [
       {
-        "name": "apps/web/src/lib/server/alerts/store.ts",
+        "name": "apps/web/src/lib/server/projects/store.ts",
         "dependencyTypes": [
           "local",
           "import"
         ]
       },
       {
-        "name": "apps/web/src/lib/server/credentials/vault.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/plugins/registry.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/binary/access.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner.ts",
+        "name": "apps/web/src/lib/server/ai-usage/index.ts",
         "dependencyTypes": [
           "local",
           "dynamic-import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner/jobs.ts",
-        "dependencyTypes": [
-          "local",
-          "export"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner/recovery.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner/links.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/alerts/service.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/alerts/channels.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
         ]
       }
     ]
   },
   {
     "type": "cycle",
-    "from": "apps/web/src/lib/server/alerts/monitors.ts",
-    "to": "apps/web/src/lib/server/alerts/store.ts",
-    "unresolvedTo": "./store",
+    "from": "apps/web/src/lib/server/ai-usage/index.ts",
+    "to": "apps/web/src/lib/server/usage/ledger.ts",
+    "unresolvedTo": "../usage/ledger",
     "dependencyTypes": [
       "local",
       "import"
@@ -369,235 +185,21 @@
     },
     "cycle": [
       {
-        "name": "apps/web/src/lib/server/alerts/store.ts",
+        "name": "apps/web/src/lib/server/usage/ledger.ts",
         "dependencyTypes": [
           "local",
           "import"
         ]
       },
       {
-        "name": "apps/web/src/lib/server/credentials/vault.ts",
+        "name": "apps/web/src/lib/server/projects/store.ts",
         "dependencyTypes": [
           "local",
           "import"
         ]
       },
       {
-        "name": "apps/web/src/lib/server/plugins/registry.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/binary/access.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner.ts",
-        "dependencyTypes": [
-          "local",
-          "dynamic-import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner/jobs.ts",
-        "dependencyTypes": [
-          "local",
-          "export"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner/recovery.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner/links.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/alerts/service.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/alerts/monitors.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      }
-    ]
-  },
-  {
-    "type": "cycle",
-    "from": "apps/web/src/lib/server/alerts/service.ts",
-    "to": "apps/web/src/lib/server/alerts/store.ts",
-    "unresolvedTo": "./store",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-circular"
-    },
-    "cycle": [
-      {
-        "name": "apps/web/src/lib/server/alerts/store.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/credentials/vault.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/plugins/registry.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/binary/access.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner.ts",
-        "dependencyTypes": [
-          "local",
-          "dynamic-import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner/jobs.ts",
-        "dependencyTypes": [
-          "local",
-          "export"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner/recovery.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner/links.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/alerts/service.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      }
-    ]
-  },
-  {
-    "type": "cycle",
-    "from": "apps/web/src/lib/server/app-webhooks.ts",
-    "to": "apps/web/src/lib/server/projects/credentials.ts",
-    "unresolvedTo": "./projects/credentials",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-circular"
-    },
-    "cycle": [
-      {
-        "name": "apps/web/src/lib/server/projects/credentials.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/credentials/vault.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/plugins/registry.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/binary/access.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner.ts",
-        "dependencyTypes": [
-          "local",
-          "dynamic-import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner/jobs.ts",
-        "dependencyTypes": [
-          "local",
-          "export"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner/recovery.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner/links.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/publish.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/app-webhooks.ts",
+        "name": "apps/web/src/lib/server/ai-usage/index.ts",
         "dependencyTypes": [
           "local",
           "dynamic-import"
@@ -741,12 +343,12 @@
   },
   {
     "type": "cycle",
-    "from": "apps/web/src/lib/server/audit/project.ts",
-    "to": "apps/web/src/lib/server/projects/store.ts",
-    "unresolvedTo": "../projects/store",
+    "from": "apps/web/src/lib/server/binary/access.ts",
+    "to": "apps/web/src/lib/server/runner.ts",
+    "unresolvedTo": "../runner",
     "dependencyTypes": [
       "local",
-      "import"
+      "dynamic-import"
     ],
     "rule": {
       "severity": "error",
@@ -754,21 +356,42 @@
     },
     "cycle": [
       {
-        "name": "apps/web/src/lib/server/projects/store.ts",
+        "name": "apps/web/src/lib/server/runner.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "apps/web/src/lib/server/runner/jobs.ts",
+        "dependencyTypes": [
+          "local",
+          "export"
+        ]
+      },
+      {
+        "name": "apps/web/src/lib/server/runner/run.ts",
         "dependencyTypes": [
           "local",
           "import"
         ]
       },
       {
-        "name": "apps/web/src/lib/server/audit/index.ts",
+        "name": "apps/web/src/lib/server/composites.ts",
         "dependencyTypes": [
           "local",
           "import"
         ]
       },
       {
-        "name": "apps/web/src/lib/server/audit/project.ts",
+        "name": "apps/web/src/lib/server/plugins/registry.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "apps/web/src/lib/server/binary/access.ts",
         "dependencyTypes": [
           "local",
           "import"
@@ -799,6 +422,43 @@
       },
       {
         "name": "apps/web/src/lib/server/brain/audience.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/lib/server/budgets/limit.ts",
+    "to": "apps/web/src/lib/server/projects/store.ts",
+    "unresolvedTo": "../projects/store",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/lib/server/projects/store.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "apps/web/src/lib/server/ai-usage/index.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "apps/web/src/lib/server/budgets/limit.ts",
         "dependencyTypes": [
           "local",
           "import"
@@ -949,6 +609,101 @@
   },
   {
     "type": "cycle",
+    "from": "apps/web/src/lib/server/projects/access.ts",
+    "to": "apps/web/src/lib/server/projects/store.ts",
+    "unresolvedTo": "./store",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/lib/server/projects/store.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "apps/web/src/lib/server/audit/index.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "apps/web/src/lib/server/audit/project.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "apps/web/src/lib/server/projects/access.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/lib/server/projects/credentials.ts",
+    "to": "apps/web/src/lib/server/projects/store.ts",
+    "unresolvedTo": "./store",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/lib/server/projects/store.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "apps/web/src/lib/server/runner.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "apps/web/src/lib/server/runner/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "export"
+        ]
+      },
+      {
+        "name": "apps/web/src/lib/server/runner/run.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "apps/web/src/lib/server/projects/credentials.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
     "from": "apps/web/src/lib/server/projects/store.ts",
     "to": "apps/web/src/lib/server/audit/index.ts",
     "unresolvedTo": "../audit",
@@ -1014,106 +769,6 @@
       },
       {
         "name": "apps/web/src/lib/server/retries.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      }
-    ]
-  },
-  {
-    "type": "cycle",
-    "from": "apps/web/src/lib/server/secrets/service.ts",
-    "to": "apps/web/src/lib/server/secrets/store.ts",
-    "unresolvedTo": "./store",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-circular"
-    },
-    "cycle": [
-      {
-        "name": "apps/web/src/lib/server/secrets/store.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/credentials/vault.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/plugins/registry.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/binary/access.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner.ts",
-        "dependencyTypes": [
-          "local",
-          "dynamic-import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner/jobs.ts",
-        "dependencyTypes": [
-          "local",
-          "export"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner/recovery.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/runner/links.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/alerts/service.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/alerts/channels.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/secrets/resolve.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "apps/web/src/lib/server/secrets/service.ts",
         "dependencyTypes": [
           "local",
           "import"
@@ -1232,6 +887,57 @@
       },
       {
         "name": "apps/web/src/lib/server/telemetry/config.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/lib/server/variables.ts",
+    "to": "apps/web/src/lib/server/projects/store.ts",
+    "unresolvedTo": "./projects/store",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/lib/server/projects/store.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "apps/web/src/lib/server/runner.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "apps/web/src/lib/server/runner/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "export"
+        ]
+      },
+      {
+        "name": "apps/web/src/lib/server/runner/run.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "apps/web/src/lib/server/variables.ts",
         "dependencyTypes": [
           "local",
           "import"
