@@ -252,8 +252,8 @@ project page's **Agents in this project** card; the fields and answers are in [t
   lists everything.
 - **Allowed tool kinds.** With **Only these**, an agent in the project gets only tools of the listed kinds: nodes, MCP
   servers, knowledge bases, workflows, sub-agents, A2A agents. A withheld tool shows as a notice "Tool access: <tool>
-  withheld by project “P” settings". Skills, memory, a team's notebook and consult tools, the project's own knowledge
-  base and the tools connected to a Run an Agent node (already under the node allow-list) are never withheld.
+  withheld by project “P” settings". Skills, memory, a team's own tools (its notebook, consults, reports and hand-offs), the project's own
+  knowledge base and the tools connected to a Run an Agent node (already under the node allow-list) are never withheld.
 
 The run reads the settings once, when it starts (they are cached for a second). Each level narrows: instance, project,
 workflow, and now agents ([governance](features/audit-and-governance.md)). A2A and kagent agents run elsewhere, so the

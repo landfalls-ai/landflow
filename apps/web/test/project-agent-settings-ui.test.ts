@@ -92,7 +92,7 @@ describe('the card', () => {
     expect(html).toMatch(/<input[^>]*checked=""[^>]*disabled=""|<input[^>]*disabled=""[^>]*checked=""/);
     expect(html).toContain('Release writer');
     expect(html).toContain('MCP servers');
-    expect(html).toContain('Skills, memory, a team’s notebook and the tools connected to a workflow’s step are always allowed.');
+    expect(html).toContain('Skills, memory, a team’s own tools and the tools connected to a workflow’s step are always allowed.');
   });
   it('a viewer reads it, with no Change button', () => {
     const html = render({ ...getExample, canEdit: false });

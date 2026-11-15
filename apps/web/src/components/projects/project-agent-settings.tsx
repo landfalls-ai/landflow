@@ -181,7 +181,7 @@ export function ProjectAgentSettingsView({
               ))}
             </ul>
           )}
-          <p className="mt-2 text-[12px] text-t3">Skills, memory, a team’s notebook and the tools connected to a workflow’s step are always allowed.</p>
+          <p className="mt-2 text-[12px] text-t3">Skills, memory, a team’s own tools and the tools connected to a workflow’s step are always allowed.</p>
         </div>
 
         {error && !modelError && <p className="text-[12px] text-rd">{error}</p>}
