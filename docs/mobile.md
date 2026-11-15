@@ -185,10 +185,12 @@ and **Save** are 44 px tall on a phone, and each repository's **Remove** is a 44
 - **Goals** (`/goals`, the second tab under Projects) is one column of cards on a phone. A card shows the title, the
   status and level chips, **Under: <parent>** and **3 sub-goals ›**; the row is 44 px and opens the goal in a sheet.
   **Sub-goals ›** drills into them, with a back row on top, so a tree is never drawn sideways. A desktop shows the tree
-  with the goal's sheet on the right. The goal dialog is a full-height sheet.
+  with the goal's sheet on the right. The goal dialog is a full-height sheet. Under each title sits one quiet line of
+  progress (`12 runs · 1 failed · 3 updates · $0.42 this week`); it wraps under the title and is never a table. The
+  goal's sheet has a **7 days | 30 days** switch above its sections.
 - **The brief card** on a project's Overview shows its four texts (Brief, Constraints, Done when, Words we use) folded
   to three lines with **More**; a desktop shows up to six lines. The goals it serves have 44 px up, down and unlink
-  buttons for admins.
+  buttons for admins. Each goal row shows the same progress line under its title.
 - **Goal pickers.** The workflow settings' **Goal** and the team page's **Project goal** are full-width selects, 44 px
   tall on a phone; a desktop keeps its height.
 

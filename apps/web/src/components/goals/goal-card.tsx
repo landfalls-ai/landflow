@@ -7,6 +7,8 @@ import { ChevronRight } from 'lucide-react';
 import { GOAL_LEVEL_LABELS, GOAL_STATUS_LABELS, type GoalNode, type GoalStatus } from '@/lib/shared/goals';
 import { plural } from '@/lib/client/format';
 import { Badge, type Tone } from '@/components/ui/badge';
+import type { GoalProgress } from '@/lib/shared/goal-progress';
+import { GoalProgressLine } from './goal-progress';
 import { formatTarget } from './tree';
 
 const STATUS_TONE: Record<GoalStatus, Tone> = { planned: 'neutral', active: 'accent', achieved: 'success', cancelled: 'muted' };
@@ -14,13 +16,14 @@ const STATUS_TONE: Record<GoalStatus, Tone> = { planned: 'neutral', active: 'acc
 export const GoalStatusChip = ({ status }: { status: GoalStatus }) => <Badge tone={STATUS_TONE[status]}>{GOAL_STATUS_LABELS[status]}</Badge>;
 export const GoalLevelChip = ({ level }: { level: GoalNode['level'] }) => <Badge tone="muted">{GOAL_LEVEL_LABELS[level]}</Badge>;
 
-export function GoalCard({ goal, parent, onOpen, onDrill }: { goal: GoalNode; parent?: string; onOpen: () => void; onDrill?: () => void }) {
+export function GoalCard({ goal, parent, progress, onOpen, onDrill }: { goal: GoalNode; parent?: string; progress?: GoalProgress; onOpen: () => void; onDrill?: () => void }) {
   const target = formatTarget(goal.targetDate);
   const count = goal.children.length;
   return (
     <div className="overflow-hidden rounded-2xl border border-hair bg-sf">
       <button type="button" onClick={onOpen} className="block min-h-11 w-full px-4 py-3 text-left">
         <span className="block text-[15px] font-semibold leading-snug text-t1">{goal.title}</span>
+        {progress && <GoalProgressLine progress={progress} className="mt-1" />}
         <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
           <GoalStatusChip status={goal.status} />
           <GoalLevelChip level={goal.level} />
