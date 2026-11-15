@@ -94,6 +94,14 @@ export class Landledger {
    * `POST /api/requests/:id/seats/release`: a seat request's seats go back to the contract and its reservations are
    * released (wave 3, spec 010). The creating key may release its own request's seat; 409 when nothing is held.
    */
+  /**
+   * `POST /api/requests/:id/cancel`: the creating key (or the requester, the sponsor, an admin) withdraws a request still
+   * `draft`, `awaiting_confirmation` or `pending`; Landledger sends `request.decided` (`cancelled`). 409 once decided.
+   */
+  cancelRequest(id: string, body: { reason?: string }) {
+    return this.json<JsonObject>('POST', `/api/requests/${enc(id)}/cancel`, { body, scope: 'requests:write' });
+  }
+
   releaseSeats(id: string, body: { reason: string; note: string }) {
     return this.json<JsonObject>('POST', `/api/requests/${enc(id)}/seats/release`, { body, scope: 'requests:write' });
   }

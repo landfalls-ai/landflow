@@ -1286,8 +1286,8 @@ the snapshot's figures, one redraft on a refusal) and [an incident's cost to the
 
 **Next:** a decision delivered live (once a person confirms or decides); the AI budget flow on the cluster; Slack's
 reject modal (`view_submission`); a Teams and an email card for the relay; Mark Applied wired to a
-real apply step in the infra flow; Landbright's external cost step (then `SETTLE_IN_LANDBRIGHT` on) and a seat-cost
-mark on its bundles (then no `SEAT_APPS`); a postmortem operation in the landfall plugin, for the incident cost to
+real apply step in the infra flow; `SETTLE_IN_LANDBRIGHT` on once Landbright's spec 008 (PR #5) merges, checked live;
+extensions through the cost gate (settle citing the first request's seat); a postmortem operation in the landfall plugin, for the incident cost to
 land in the postmortem; the incident flow run live once the cluster has a Landfall credential.
 
 ## The Brain page (built 2026-11-12)

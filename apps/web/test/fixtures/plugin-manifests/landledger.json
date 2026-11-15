@@ -328,6 +328,12 @@
        "action": "Mark a request applied"
       },
       {
+       "name": "Cancel",
+       "value": "cancel",
+       "description": "Withdraw a request this key raised that is not decided yet (draft, awaiting confirmation or pending)",
+       "action": "Cancel a request"
+      },
+      {
        "name": "Release Seats",
        "value": "releaseSeats",
        "description": "Give a seat request's seats back to the contract and release its reservations: access denied, the grant revoked, or not needed",
@@ -1432,6 +1438,13 @@
        "description": "Its page in Landbright"
       },
       {
+       "name": "breakGlass",
+       "displayName": "Break-Glass (Landbright)",
+       "type": "boolean",
+       "default": false,
+       "description": "Landbright already granted the access under break-glass, and this is its cost, raised afterwards: the Landbright request becomes the origin with breakGlass (Landledger lists it in the exceptions report until approved) and this run a related source. Needs Landbright Request"
+      },
+      {
        "name": "runUrl",
        "displayName": "Run URL",
        "type": "string",
@@ -1475,11 +1488,29 @@
        "operation": [
         "get",
         "markApplied",
-        "releaseSeats"
+        "releaseSeats",
+        "cancel"
        ]
       }
      },
      "description": "The request's id (req_…)"
+    },
+    {
+     "name": "cancelReason",
+     "displayName": "Reason",
+     "type": "string",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "request"
+       ],
+       "operation": [
+        "cancel"
+       ]
+      }
+     },
+     "description": "Why, for Landledger's audit and the request's page (≤ 1,000 characters)"
     },
     {
      "name": "seatReason",

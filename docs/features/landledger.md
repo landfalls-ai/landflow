@@ -34,7 +34,7 @@ the real one.
 | Package | `plugins/landledger` (TypeScript SDK), `pnpm plugin:landledger` |
 | Ports | HTTP 7120, gRPC 7220 |
 | Credentials | **Landledger API (ll_…)**: Base URL (default `http://landledger-api.landflow-dev.svc.cluster.local:4810`; `http://127.0.0.1:4810` on this machine), API Key, optional Webhook Signing Secret (`whsec_…`); one with `read` + `requests:write` for the node, one with `webhooks:write` for the trigger. **Landledger Relay Key (decisions:relay)**: Base URL, a key with `decisions:relay` only, for Decision → Relay. **Landledger Notes Key (notes:draft)**: Base URL, a key with `notes:draft` only, for Note → Figures and Submit Draft |
-| Nodes | **Landledger** (Budget → Check · Cost → Query, Window · Request → Create, Get, List, Mark Applied, Release Seats · Contract → Seats · Reservation → Create, Release · Period → Status · Close → Snapshot · Note → Figures, Submit Draft · Key → Who Am I · Decision → Relay), **Landledger Trigger** (app webhook) |
+| Nodes | **Landledger** (Budget → Check · Cost → Query, Window · Request → Create, Get, List, Mark Applied, Cancel, Release Seats · Contract → Seats · Reservation → Create, Release · Period → Status · Close → Snapshot · Note → Figures, Submit Draft · Key → Who Am I · Decision → Relay), **Landledger Trigger** (app webhook) |
 | Deploy | compose service `landledger`; Kubernetes `deploy/k8s/components/landledger` (the plugin and the `landledger-api` ExternalName Service), in the `orbstack-clickland` overlay; image `landflow/plugin-landledger` |
 
 The operations, routes, outputs and scopes are in the [plugin README](../../plugins/landledger/README.md). The parts
@@ -61,7 +61,10 @@ that carry the rule above:
   longer the month's. An analyst accepts or rejects the draft in Landledger. As an agent tool it must name the agent.
 - **A seat on a contract** (Request → Create, kind `tool_or_seat`, Seat: Contract ID, Seats, Price) holds seats on the
   contract, not money (Landledger `28dcf5a`: "within contract" until Landbright prices seats); Request → Release Seats
-  gives them back (`access_denied`, `grant_revoked`, `not_needed`).
+  gives them back (`access_denied`, `grant_revoked`, `not_needed`), and Request → Cancel withdraws a request not yet
+  decided. **Break-Glass (Landbright)** on Create makes the Landbright request the origin with `breakGlass: true` (this
+  run a related source): Landledger reads break-glass only from the origin and lists the cost in its exceptions report
+  until it is approved.
 - **Cost → Window** is an estimate: each day's cost by the share of the day inside the window (`basis: 'estimated'`),
   for at most 50 services and 31 days; an unknown name is `known: false` and $0.
 - **No knowledge kind.** Landledger has no explain or search route that answers with passages, so the node is not
@@ -80,7 +83,7 @@ events. Its item lifts `requestId`, `kind` and
 ## Flows
 
 Six templates (Templates, from the marketplace), each tested end to end in `apps/web/test/landledger-flows.test.ts`
-(34 tests: the plugin's own node and trigger against its fake Landledger, a stand-in Slack, Landbright and Ollama, a
+(38 tests, and one live test under `LANDFLOW_INTEGRATION=ollama`: the plugin's own node and trigger against its fake Landledger, a stand-in Slack, Landbright and Ollama, a
 fake Landflow API, and the landfall plugin against its fake Landfall). A
 flow that waits on a decision has two triggers: the one that raises the request, and a Landledger Trigger on Landledger's
 events. Nothing waits in between: a decision days later starts its own run, and the flow decides whether the request
@@ -167,34 +170,49 @@ URL as the Slack app's Interactivity Request URL, and the same signing secret on
 
 ### Tool or seat cost
 
-[`landledger-tool-or-seat.json`](../../plugins/landledger/flows/landledger-tool-or-seat.json), the six steps of
-Landbright's tool-or-seat integration (a paid seat is spend: Landledger's approvers decide the cost, Landbright's the
-access):
+[`landledger-tool-or-seat.json`](../../plugins/landledger/flows/landledger-tool-or-seat.json): a paid seat is spend.
+Landledger's approvers decide the cost, Landbright's the access, and the flow carries the conversation, through
+Landbright's **cost gate** (spec 008): a bundle's target says what a grant of it costs (`cost: { kind: seat,
+landbrightApp }`), and its policy opens with an external step (always step 0) that Landledger's answer settles.
+Checked against Landbright's branch `spec-008-seat-costs` (PR #5, `096d778`, not merged) with a stand-in in the tests,
+not live: settling stays behind `SETTLE_IN_LANDBRIGHT`, off, until the PR merges.
 
 1. **Landbright events** (Webhook, JWT Auth against Landbright's JWKS; Landbright's signed events) and **Landledger
    events** (`request.decided`, kind `tool_or_seat`) → **Settings** → **What happened** → **Raise, cost or access**.
-2. A new Landbright request → **Read the Landbright request** (Landbright's API with the Landflow application's client
-   credentials) → **Costs a seat?** (pending, not an extension, the bundle's app is a seat app: `SEAT_APPS` in
-   **Settings** maps a bundle to the `landbrightApp` its contract names, until Landbright marks a seat cost itself) →
-   **Find the contract** (Contract → Seats); none → **No contract: say so in Landbright** (an annotation).
+2. `request.created` (its data carries `costs: ["linear"]` and `waitsOn: "Landledger"`) → **Read the Landbright
+   request** (Landbright's API with the Landflow application's client credentials) → **Costs a seat?** (the request's
+   `costs`; pending at the gate, or approved under break-glass; not an extension; `SEAT_APPS` in **Settings** only for
+   a Landbright without spec 008) → **Find the contract** (Contract → Seats); none → **No contract: say so in
+   Landbright** (an annotation).
 3. **Ask Landledger for the seat** (Request → Create, `tool_or_seat`, the requester as the person, the contract's seat
-   price, the Landbright request as `related`, idempotency `landbright-<REQ-n>`) → **Asked, or already asked** (a 409
-   for the same key is a redelivery) → **Remember the seat request** (**Landledger seat requests**) → **Note it in
-   Landbright** (annotation `landflow.seat_cost`: `cost_asked`). The requester confirms it in Landledger.
+   price, idempotency `landbright-<REQ-n>`; the Landbright request as `related`, or, after break-glass, as the origin
+   with `breakGlass: true`) → **Asked, or already asked** (a 409 for the same key is a redelivery) → **Remember the seat
+   request** (**Landledger seat requests**) → **Note it in Landbright** (annotation `landflow.seat_cost`: `cost_asked`).
+   The requester confirms it in Landledger.
 4. `request.decided` → **Get the request** → **Who is this flow** → **Find the run that raised it** → **Ours to act
-   on?** (this key's request, kind `tool_or_seat`, raised by a run of this workflow) → **Tell Landbright the cost**
-   (`cost_approved` or `cost_denied`), or **Not this flow's: refused**.
-5. **Settle in Landbright?** → **Settle the cost step**: `POST /api/v1/requests/:id/steps/:step/settle` `{ outcome,
-   reference }`, the route proposed to Landbright for an external cost step. It is a placeholder HTTP node behind
-   `SETTLE_IN_LANDBRIGHT` (off): until Landbright builds the step, the annotation is how Landbright's approvers see the
-   cost decision.
-6. Landbright's decision or a grant change → **Find its seat request** → **What the seat needs**: granted → **Mark the
-   seat used** (Request → Mark Applied); access denied with the seat reserved → **Release the seat**
-   (`access_denied`); the grant revoked or expired → `grant_revoked` for a used seat, `not_needed` for one never used.
+   on?** (this key's request, kind `tool_or_seat`, raised by a run of this workflow: its origin, or for break-glass the
+   related `landflow_run`) → **Tell Landbright the cost** (`cost_approved` or `cost_denied`), or **Not this flow's:
+   refused**.
+5. **Read the gate** → **What Landbright needs**: the gate (step 0, `kind: external`, `system: Landledger`) still
+   waiting and the setting on → **Settle the cost gate**: `POST /api/v1/requests/:id/steps/0/settle { outcome:
+   "approve" | "deny", reference: { system: "Landledger", id: <request id>, url: <its console page> }, reason }` (scope
+   `steps:settle`; only the application the gate's `settledBy` names, `landflow-local` in dev) → **Settled?** (Landbright
+   answers 200 for the same answer again and 409 for another, or once the request moved on: said, not retried).
+   Approve passes the request to Landbright's people; deny ends it (`step_denied`). Break-glass skipped the gate (the
+   grant is live): **Mark the seat used (break-glass)** once Landledger approves. Otherwise **Nothing to settle**, with
+   why (the setting off, no gate, settled already).
+6. Landbright's decision or a grant change → **Find its seat request** → **What the seat needs**: `grant.activated`
+   (its data carries `requestId`) → **Mark the seat used** (Request → Mark Applied); access denied, or the gate run out
+   (`request.decided` with `outcome: expired`, `waitedOn: Landledger`): a cost request not yet decided → **Cancel the
+   cost request** (Request → Cancel), an approved one → **Release the seat** (`access_denied`); the grant revoked or
+   expired → `grant_revoked` for a used seat, `not_needed` for one never used.
+
+With the setting off, Landbright's gate is never settled: Landbright's approvers see the annotation, and a request
+expires at the gate's deadline (24 hours by default), which the flow then answers by cancelling or releasing the seat.
 
 Slots: Landledger requests, Landledger webhooks, Landbright events (JWT Auth), Landbright API (OAuth2 client
-credentials, `requests:read` and `annotations:write`). Subscribe **Landbright events**' URL in Landbright to
-`request.created`, `request.decided`, `grant.activated`, `grant.revoked` and `grant.expired`.
+credentials, `requests:read`, `annotations:write` and `steps:settle`). Subscribe **Landbright events**' URL in
+Landbright to `request.created`, `request.decided`, `grant.activated`, `grant.revoked` and `grant.expired`.
 
 ### Draft variance notes
 

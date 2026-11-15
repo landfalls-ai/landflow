@@ -376,6 +376,7 @@ export const LandledgerNode = defineNode({
           { name: 'Get', value: 'get', description: 'A request with its steps, decisions, reservations, Landledger\'s evidence and the evidence hash', action: 'Get a request', idempotent: true },
           { name: 'List', value: 'list', description: 'Requests, newest first: waiting, mine, decided, open or all', action: 'List requests', idempotent: true },
           { name: 'Mark Applied', value: 'markApplied', description: 'Tell Landledger an approved change is in place (approved → applied)', action: 'Mark a request applied' },
+          { name: 'Cancel', value: 'cancel', description: 'Withdraw a request this key raised that is not decided yet (draft, awaiting confirmation or pending)', action: 'Cancel a request' },
           {
             name: 'Release Seats',
             value: 'releaseSeats',
@@ -598,6 +599,13 @@ export const LandledgerNode = defineNode({
           { name: 'pullRequestUrl', displayName: 'Pull Request URL', type: 'string', default: '', description: 'The pull request the change is in (kept as a related source)' },
           { name: 'landbrightRequestId', displayName: 'Landbright Request', type: 'string', default: '', placeholder: 'REQ-128', description: 'The Landbright access request this cost belongs to (kept as a related source)' },
           { name: 'landbrightRequestUrl', displayName: 'Landbright Request URL', type: 'string', default: '', description: 'Its page in Landbright' },
+          {
+            name: 'breakGlass',
+            displayName: 'Break-Glass (Landbright)',
+            type: 'boolean',
+            default: false,
+            description: 'Landbright already granted the access under break-glass, and this is its cost, raised afterwards: the Landbright request becomes the origin with breakGlass (Landledger lists it in the exceptions report until approved) and this run a related source. Needs Landbright Request',
+          },
           { name: 'runUrl', displayName: 'Run URL', type: 'string', default: '', description: 'A link back to this run, for Landledger\'s console' },
           { name: 'originTitle', displayName: 'Origin Title', type: 'string', default: '', description: 'What the run is, in words' },
           { name: 'submit', displayName: 'Submit', type: 'boolean', default: true, description: 'Whether to submit it now (pending, or approved at once below the policy\'s threshold); off keeps a draft' },
@@ -612,7 +620,8 @@ export const LandledgerNode = defineNode({
       },
 
       // ---- Request → Get, Mark Applied
-      requestId('request', ['get', 'markApplied', 'releaseSeats']),
+      requestId('request', ['get', 'markApplied', 'releaseSeats', 'cancel']),
+      { name: 'cancelReason', displayName: 'Reason', type: 'string', default: '', displayOptions: show('request', ['cancel']), description: 'Why, for Landledger\'s audit and the request\'s page (≤ 1,000 characters)' },
       {
         name: 'seatReason',
         displayName: 'Reason',
@@ -874,6 +883,10 @@ async function requestOperation(ctx: IExecuteContext, client: Landledger, operat
         links: parsed.slice(0, 10).map((l: { label?: unknown; url?: unknown }) => ({ label: String(l?.label ?? l?.url ?? ''), url: String(l?.url ?? '') })),
       });
     }
+    case 'cancel': {
+      const reason = optionalString(ctx, 'cancelReason', i).slice(0, 1000);
+      return client.cancelRequest(requireString(ctx, 'requestId', 'Request ID', i), reason ? { reason } : {});
+    }
     case 'releaseSeats': {
       const id = requireString(ctx, 'requestId', 'Request ID', i);
       const reason = String(ctx.getNodeParameter('seatReason', i, 'access_denied'));
@@ -1001,26 +1014,31 @@ export function createBody(ctx: IExecuteContext, i: number): JsonObject {
       description: 'Landledger keeps the workflow and the run as the request\'s origin; an unsaved workflow has no id yet.',
     });
   }
-  const origin: JsonObject = {
+  const run: JsonObject = {
     type: 'landflow_run',
     workflowId,
     executionId: ctx.getExecutionId(),
     ...(text('runUrl') && { url: text('runUrl') }),
     ...(text('originTitle') && { title: text('originTitle').slice(0, 300) }),
   };
+  const landbright: JsonObject | null = text('landbrightRequestId')
+    ? { type: 'landbright_request', id: text('landbrightRequestId'), ...(text('landbrightRequestUrl') && { url: text('landbrightRequestUrl') }) }
+    : null;
+  // Break-glass: Landbright granted first, so the cost comes from the Landbright request (Landledger reads breakGlass
+  // only from the origin); the run that raised it stays a related source, so the flow still finds it.
+  const breakGlass = fields.breakGlass === true || fields.breakGlass === 'true';
+  if (breakGlass && !landbright) {
+    throw new NodeOperationError('Break-glass needs the Landbright request', { itemIndex: i, description: 'Set Landbright Request (REQ-n): it becomes the origin, with breakGlass.' });
+  }
+  const origin: JsonObject = breakGlass ? { ...landbright!, breakGlass: true } : run;
   const start = dayParameter(fields.start, 'Start', i);
   const end = dayParameter(fields.end, 'End', i);
   if (start && end && end < start) throw new NodeOperationError('End must be on or after Start', { itemIndex: i });
   const key = text('idempotencyKey') || (ctx.getIdempotencyKey() ? `${ctx.getIdempotencyKey()}:${i}` : '');
   const related: JsonObject[] = [];
   if (text('pullRequestUrl')) related.push({ type: 'pull_request', url: text('pullRequestUrl') });
-  if (text('landbrightRequestId')) {
-    related.push({
-      type: 'landbright_request',
-      id: text('landbrightRequestId'),
-      ...(text('landbrightRequestUrl') && { url: text('landbrightRequestUrl') }),
-    });
-  }
+  if (breakGlass) related.push(run);
+  else if (landbright) related.push(landbright);
   const seat = seatTerms(ctx, kind, i);
   return {
     kind,

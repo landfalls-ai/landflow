@@ -275,6 +275,16 @@ describe('Tool or seat', () => {
     expect((await call({ ...SEAT, amount: '20', requestFields: {} })).error?.message).toMatch(/400: A seat request is seats × seat price a month/);
   });
 
+  it('Break-glass: the Landbright request is the origin with breakGlass, and this run a related source', async () => {
+    const [out] = jsonOf(await call({ ...SEAT, requestFields: { ...(SEAT.requestFields as JsonObject), landbrightRequestId: 'REQ-43', idempotencyKey: 'landbright-REQ-43', breakGlass: true } }));
+    expect(last().body.origin).toEqual({ type: 'landbright_request', id: 'REQ-43', url: 'http://localhost:5173/requests/REQ-41', breakGlass: true });
+    expect(last().body.related).toEqual([{ type: 'landflow_run', workflowId: expect.any(String), executionId: expect.any(String) }]);
+    expect(out).toMatchObject({ created: true, request: { origin: { type: 'landbright_request', breakGlass: true, verified: false } } });
+    const before = fake.requests.length;
+    expect((await call({ ...SEAT, requestFields: { breakGlass: true } })).error?.message).toMatch(/Break-glass needs the Landbright request/);
+    expect(fake.requests.length).toBe(before);
+  });
+
   it('Release Seats gives a reserved seat back with its reason; an applied seat only when its grant was revoked; nothing held is a 409', async () => {
     const [{ request }] = jsonOf(await call(SEAT)) as Array<{ request: JsonObject }>;
     const id = String(request.id);
@@ -292,6 +302,15 @@ describe('Tool or seat', () => {
     expect((await call({ resource: 'request', operation: 'releaseSeats', requestId: id, seatReason: 'not_needed' })).error?.message).toMatch(/409: An applied seat is released only when its grant was revoked/);
     expect(jsonOf(await call({ resource: 'request', operation: 'releaseSeats', requestId: id, seatReason: 'grant_revoked' }))[0]).toMatchObject({ released: { from: 'applied', reason: 'grant_revoked' } });
     expect((await call({ resource: 'request', operation: 'releaseSeats', requestId: id, seatReason: 'lost' })).error?.message).toMatch(/Reason "lost" is not one of/);
+  });
+
+  it('Cancel withdraws a request not yet decided, with its reason; a decided one is a 409', async () => {
+    const [{ request }] = jsonOf(await call({ ...SEAT, requestFields: { landbrightRequestId: 'REQ-44', idempotencyKey: 'landbright-REQ-44' } })) as Array<{ request: JsonObject }>;
+    const id = String(request.id);
+    const [cancelled] = jsonOf(await call({ resource: 'request', operation: 'cancel', requestId: id, cancelReason: 'Landbright REQ-44 expired waiting on Landledger' }));
+    expect(last()).toMatchObject({ method: 'POST', path: `/api/requests/${id}/cancel`, body: { reason: 'Landbright REQ-44 expired waiting on Landledger' } });
+    expect(cancelled).toMatchObject({ id, status: 'cancelled' });
+    expect((await call({ resource: 'request', operation: 'cancel', requestId: id })).error?.message).toMatch(/409: Request is cancelled/);
   });
 
   it('Mark Applied moves a reserved seat to used', async () => {

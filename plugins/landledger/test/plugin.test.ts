@@ -51,6 +51,7 @@ describe('MCP tools', () => {
       'note_getFigures',
       'note_submitDraft',
       'period_getStatus',
+      'request_cancel',
       'request_create',
       'request_get',
       'request_list',

@@ -3,7 +3,7 @@
   "version": 1,
   "template": {
     "name": "Landledger: tool or seat cost",
-    "description": "A paid seat is spend: when someone asks Landbright for access to a bundle whose app costs a seat, this flow finds the Landledger contract that grants the app and raises a tool_or_seat request for one seat at the contract's price, naming the person (who confirms it in Landledger). Landledger's approvers decide the cost and Landbright's the access; the flow tells Landbright what Landledger decided (a note on the request, or its external cost step once Landbright builds it, behind a setting), marks the seat used when the grant is live, and gives it back when access is denied or the grant is revoked.",
+    "description": "A paid seat is spend: when someone asks Landbright for access to a bundle whose app costs a seat, this flow finds the Landledger contract that grants the app and raises a tool_or_seat request for one seat at the contract's price, naming the person (who confirms it in Landledger). Landledger's approvers decide the cost and Landbright's the access; the flow tells Landbright what Landledger decided (a note on the request, and its cost gate settled, behind a setting until Landbright's spec 008 merges), marks the seat used when the grant is live, raises the cost after break-glass, and cancels the cost request or gives the seat back when access is denied, the gate runs out, or the grant is revoked.",
     "categories": [
       "finance",
       "it-ops"
@@ -31,17 +31,18 @@
         "id": "landbright",
         "type": "core.oAuth2Api",
         "name": "Landbright API",
-        "description": "OAuth2 client credentials of the Landflow application in Landbright, with requests:read and annotations:write (and steps:settle once Landbright has the external cost step)."
+        "description": "OAuth2 client credentials of the Landflow application in Landbright (in dev landflow-local), with requests:read, annotations:write and steps:settle; the bundle's cost gate must name this application in settledBy."
       }
     ],
     "setup": [
       "Pick or add **Landledger (requests)**: an `ll_` key with `read` and `requests:write`, and **Landledger (webhooks)** for **Landledger events**: a key of its own with only `webhooks:write`.",
-      "Pick or add **Landbright events** (JWT Auth against Landbright's JWKS) and **Landbright API** (the Landflow application's client credentials: `requests:read`, `annotations:write`).",
-      "In **Settings**, set `LANDBRIGHT_URL` and, until Landbright marks a seat cost on the bundle's target, `SEAT_APPS`: a bundle's name → the `landbrightApp` its Landledger contract names.",
+      "Pick or add **Landbright events** (JWT Auth against Landbright's JWKS) and **Landbright API** (the Landflow application's client credentials: `requests:read`, `annotations:write`, `steps:settle`; the bundle's cost gate names it in `settledBy`).",
+      "In **Settings**, set `LANDBRIGHT_URL` and `LANDLEDGER_CONSOLE_URL`. Landbright says what a request costs (a bundle target's `cost: { kind: seat, landbrightApp }`); `SEAT_APPS` maps bundles only for a Landbright without that.",
       "Publish, then subscribe **Landbright events**' production URL in Landbright (Events) to `request.created`, `request.decided`, `grant.activated`, `grant.revoked` and `grant.expired`. Publishing subscribes **Landledger events** to `request.decided` for `tool_or_seat` requests.",
       "A request for a seat: **Find the contract** (Contract → Seats); none → a note on the Landbright request and nothing raised; else **Ask Landledger for the seat** (one seat at the contract's price, idempotency key `landbright-<REQ-n>`), recorded in **Landledger seat requests**, and a note on the Landbright request.",
-      "Landledger's decision: **Ours to act on?** trusts only this key's request from a run of this workflow, then **Tell Landbright the cost** notes it on the Landbright request. **Settle the cost step** calls Landbright's proposed `POST /api/v1/requests/:id/steps/:step/settle`: leave `SETTLE_IN_LANDBRIGHT` off until Landbright builds it.",
-      "Landbright's decision or a grant change: granted → **Mark the seat used** (Request → Mark Applied); access denied with the cost approved → **Release the seat** (`access_denied`); the grant revoked or expired → **Release the seat** (`grant_revoked`, or `not_needed` for a seat never used)."
+      "Landledger's decision: **Ours to act on?** trusts only this key's request from a run of this workflow, then **Tell Landbright the cost** notes it on the Landbright request, and **Settle the cost gate** answers the gate: `POST /api/v1/requests/:id/steps/0/settle { outcome: approve | deny, reference: { system: Landledger, id, url }, reason }`. Verified against Landbright's PR #5 (spec 008), not merged yet: `SETTLE_IN_LANDBRIGHT` stays off until it is.",
+      "Break-glass: Landbright grants at once and skips the gate, so the cost is raised afterwards with the Landbright request as its origin (`breakGlass`), never settled, and marked used once Landledger approves it.",
+      "Landbright's decision or a grant change: `grant.activated` → **Mark the seat used** (Request → Mark Applied); access denied, or the gate run out (`request.decided`, `expired`, `waitedOn: Landledger`): a cost request not yet decided → **Cancel the cost request**, an approved one → **Release the seat** (`access_denied`); the grant revoked or expired → **Release the seat** (`grant_revoked`, or `not_needed` for a seat never used)."
     ],
     "dataTables": [
       {
@@ -84,7 +85,7 @@
     ],
     "workflow": {
       "name": "Landledger: tool or seat cost",
-      "description": "A Landbright access request for a seat raises a tool_or_seat request in Landledger on the contract that grants the app; Landledger's decision is noted on the Landbright request (or settles its cost step, behind a setting); the grant marks the seat used, a denial or revocation releases it.",
+      "description": "A Landbright access request for a seat raises a tool_or_seat request in Landledger on the contract that grants the app; Landledger's decision is noted on the Landbright request and settles its cost gate (behind a setting); the grant marks the seat used; a denial, an expired gate or a revocation cancels the cost request or releases the seat.",
       "groups": [],
       "stickyNotes": [],
       "nodes": [
@@ -146,7 +147,7 @@
           "parameters": {
             "language": "javascript",
             "mode": "each",
-            "codeEach": "// Settings, in one place: every event passes through here.\n// Landbright's machine API (the Landbright API credential holds the application's client credentials):\nconst LANDBRIGHT_URL = 'http://127.0.0.1:4401';\n// Which bundles cost a seat, until Landbright marks it on the bundle's target (landbrightApp, proposed by Landbright):\n// a bundle's name → the app key a Landledger contract names (Landledger → Contracts, landbrightApp).\nconst SEAT_APPS = { 'Linear (seat)': 'linear' };\n// Settle Landbright's cost step from Landledger's decision. Off: Landbright has no external step yet (proposed:\n// POST /api/v1/requests/:id/steps/:step/settle { outcome, reference }, scope steps:settle), so the flow only notes the\n// decision on the Landbright request. Turn it on once Landbright ships the step, and set its position.\nconst SETTLE_IN_LANDBRIGHT = false;\nconst COST_STEP = 1;\nreturn { ...$json, settings: { landbrightUrl: LANDBRIGHT_URL.replace(/\\/+$/, ''), seatApps: SEAT_APPS, settleInLandbright: SETTLE_IN_LANDBRIGHT, costStep: COST_STEP } };"
+            "codeEach": "// Settings, in one place: every event passes through here.\n// Landbright's machine API (the Landbright API credential holds the application's client credentials):\nconst LANDBRIGHT_URL = 'http://127.0.0.1:4401';\n// Landledger's console, for the link Landbright shows with the gate's answer:\nconst LANDLEDGER_CONSOLE_URL = 'http://localhost:4811';\n// Only for a Landbright that doesn't say what a request costs (its request's costs): a bundle's name → the app key a\n// Landledger contract names (Landledger → Contracts, landbrightApp). Landbright with spec 008 needs nothing here.\nconst SEAT_APPS = {};\n// Settle Landbright's cost gate (step 0, settled by this flow's Landbright application with steps:settle) from\n// Landledger's decision: POST /api/v1/requests/:id/steps/0/settle. Verified against Landbright's PR #5 (spec 008), not\n// merged yet: off until it is. Off, the flow only notes the decision on the Landbright request, and a request whose\n// gate nobody settles expires in Landbright after the gate's deadline (the flow then cancels or releases the seat).\nconst SETTLE_IN_LANDBRIGHT = false;\nreturn { ...$json, settings: { landbrightUrl: LANDBRIGHT_URL.replace(/\\/+$/, ''), landledgerConsoleUrl: LANDLEDGER_CONSOLE_URL.replace(/\\/+$/, ''), seatApps: SEAT_APPS, settleInLandbright: SETTLE_IN_LANDBRIGHT } };"
           },
           "notes": "Landbright's URL, which bundles cost a seat, and whether to settle Landbright's cost step (off until Landbright builds it)."
         },
@@ -162,7 +163,7 @@
           "parameters": {
             "language": "javascript",
             "mode": "each",
-            "codeEach": "// Landbright's events arrive as a signed JWT (the event in jwtPayload.event: trust that, not the body); Landledger's\n// through the Landledger Trigger. 0: an access request was made (raise the cost); 1: Landledger decided the cost;\n// 2: Landbright decided the access, or a grant moved (apply or release the seat); 3: anything else.\nconst settings = $json.settings;\nconst e = $json.jwtPayload?.event;\nif (e) {\n  const type = String(e.type ?? '');\n  const landbrightRequestId = type.startsWith('request.') ? (e.target?.id ?? null) : (e.data?.requestId ?? null);\n  const route = !landbrightRequestId ? 3 : type === 'request.created' ? 0 : type === 'request.decided' || type.startsWith('grant.') ? 2 : 3;\n  return { route, source: 'landbright', eventType: type, landbrightRequestId, settings };\n}\nif ($json.type === 'request.decided' && $json.kind === 'tool_or_seat') {\n  return { route: 1, source: 'landledger', eventType: $json.type, requestId: $json.requestId, outcome: $json.outcome, settings };\n}\nreturn { route: 3, source: 'other', eventType: String($json.type ?? ''), settings };"
+            "codeEach": "// Landbright's events arrive as a signed JWT (the event in jwtPayload.event: trust that, not the body); Landledger's\n// through the Landledger Trigger. 0: an access request was made (raise the cost); 1: Landledger decided the cost;\n// 2: Landbright decided the access, or a grant moved (apply or release the seat); 3: anything else.\nconst settings = $json.settings;\nconst e = $json.jwtPayload?.event;\nif (e) {\n  const type = String(e.type ?? '');\n  // grant.* carries the request in data.requestId; request.created says what it costs (costs) and whether a gate waits\n  // on a system (waitsOn); request.decided says outcome, and waitedOn when a gate ran out.\n  const landbrightRequestId = type.startsWith('request.') ? (e.target?.id ?? null) : (e.data?.requestId ?? null);\n  const route = !landbrightRequestId ? 3 : type === 'request.created' ? 0 : type === 'request.decided' || type.startsWith('grant.') ? 2 : 3;\n  const d = e.data ?? {};\n  return { route, source: 'landbright', eventType: type, landbrightRequestId, costs: d.costs ?? [], waitsOn: d.waitsOn ?? null, outcome: d.outcome ?? null, waitedOn: d.waitedOn ?? null, settings };\n}\nif ($json.type === 'request.decided' && $json.kind === 'tool_or_seat') {\n  return { route: 1, source: 'landledger', eventType: $json.type, requestId: $json.requestId, outcome: $json.outcome, settings };\n}\nreturn { route: 3, source: 'other', eventType: String($json.type ?? ''), settings };"
           }
         },
         {
@@ -216,7 +217,7 @@
           "parameters": {
             "language": "javascript",
             "mode": "all",
-            "code": "// Does this access cost a seat? Landbright's state decides, not the event: a request still pending, not an extension\n// (an extension rides on the first request's seat), for a bundle whose target names a Landbright app a contract grants.\nconst settings = $('What happened').first().json.settings;\nconst r = $input.first().json;\nif (r.status !== 'pending' || r.extends) return [];\nconst app = r.bundle?.landbrightApp ?? settings.seatApps[r.bundle?.name] ?? null;\nif (!app) return [];\nconst subject = r.subject ?? r.requester;\nreturn [{ json: {\n  landbrightRequestId: r.id,\n  ref: r.ref,\n  url: r.decisionUrl,\n  app,\n  bundle: r.bundle?.name ?? '',\n  // Landledger finds the person by their Landbright subject; they confirm the request in their own session.\n  requester: r.requester?.id ?? r.requester?.email,\n  subject: subject?.displayName ?? subject?.email ?? 'someone',\n} }];"
+            "code": "// Does this access cost a seat? Landbright's state decides, not the event: the request's costs (spec 008; the event's,\n// or SEAT_APPS for an older Landbright). A request still pending (its gate waits on Landledger), or one Landbright\n// already granted under break-glass (it skipped the gate: the cost is raised afterwards, as break-glass). Not an\n// extension: it rides on the first request's seat.\nconst event = $('What happened').first().json;\nconst settings = event.settings;\nconst r = $input.first().json;\nconst breakGlass = r.method === 'break_glass' || (r.breakGlass !== null && r.breakGlass !== undefined);\nif (r.extends) return [];\nif (breakGlass ? r.status !== 'approved' : r.status !== 'pending') return [];\nconst app = r.costs?.find((c) => c.kind === 'seat')?.landbrightApp ?? event.costs?.[0] ?? settings.seatApps[r.bundle?.name] ?? null;\nif (!app) return [];\nconst subject = r.subject ?? r.requester;\nreturn [{ json: {\n  landbrightRequestId: r.id,\n  ref: r.ref,\n  url: r.decisionUrl,\n  app,\n  bundle: r.bundle?.name ?? '',\n  breakGlass,\n  waitsOn: r.waitingOnSystem ?? event.waitsOn ?? null,\n  // Landledger finds the person by their Landbright subject; they confirm the request in their own session.\n  requester: r.requester?.id ?? r.requester?.email,\n  subject: subject?.displayName ?? subject?.email ?? 'someone',\n} }];"
           }
         },
         {
@@ -291,6 +292,7 @@
             "requestFields": {
               "landbrightRequestId": "{{ $('Costs a seat?').first().json.ref }}",
               "landbrightRequestUrl": "{{ $('Costs a seat?').first().json.url }}",
+              "breakGlass": "{{ $('Costs a seat?').first().json.breakGlass }}",
               "originTitle": "Tool or seat cost (Landbright {{ $('Costs a seat?').first().json.ref }})",
               "idempotencyKey": "landbright-{{ $('Costs a seat?').first().json.ref }}"
             }
@@ -302,7 +304,7 @@
             }
           },
           "onError": "continue",
-          "notes": "Raised by this flow's key naming the person who asked: they confirm it in Landledger, then the cost center's owner decides with the seats left in front of them. The idempotency key is the Landbright request, so a retried run raises it once."
+          "notes": "Raised by this flow's key naming the person who asked: they confirm it in Landledger, then the cost center's owner decides with the seats left in front of them. The idempotency key is the Landbright request, so a retried run raises it once. After break-glass, the Landbright request is the origin with breakGlass (Landledger's exceptions report lists it until approved)."
         },
         {
           "id": "asked",
@@ -386,7 +388,7 @@
             "authentication": "genericCredentialType",
             "genericAuthType": "oAuth2Api",
             "bodyType": "json",
-            "body": "{{ { value: { status: 'cost_asked', landledgerRequest: $('Ask Landledger for the seat').first().json.request.number, landledgerRequestId: $('Ask Landledger for the seat').first().json.request.id, text: 'The seat\\'s cost is asked in Landledger as ' + $('Ask Landledger for the seat').first().json.request.number + '; its approvers decide the cost, Landbright\\'s the access.' } } }}"
+            "body": "{{ { value: { status: 'cost_asked', landledgerRequest: $('Ask Landledger for the seat').first().json.request.number, landledgerRequestId: $('Ask Landledger for the seat').first().json.request.id, text: 'The seat\\'s cost is asked in Landledger as ' + $('Ask Landledger for the seat').first().json.request.number + ($('Costs a seat?').first().json.breakGlass ? ', after break-glass granted the access.' : '; its approvers decide the cost, Landbright\\'s the access.') } } }}"
           },
           "credentials": {
             "oAuth2Api": {
@@ -499,7 +501,7 @@
           "parameters": {
             "language": "javascript",
             "mode": "all",
-            "code": "// Trust a decision only for a seat request this flow raised: created by this flow's key, a tool_or_seat, and recorded\n// by the run of this workflow its origin names. 0: the cost is approved; 1: rejected, cancelled or expired; 2: refused.\nconst event = $('What happened').first().json;\nconst settings = event.settings;\nconst r = $('Get the request').first().json.request;\nconst me = $('Who is this flow').first().json;\nconst rows = $input.all().map((i) => i.json).filter((x) => x.landledger_request_id === r.id);\nconst row = rows.find((x) => x.execution_id === r.origin?.executionId);\nconst problems = [];\nif (r.createdBy?.kind !== 'key' || !me.id || r.createdBy.id !== me.id) problems.push(`raised by ${r.createdBy?.name ?? 'someone else'}, not this flow's key (${me.name ?? 'unknown'})`);\nif (r.kind !== 'tool_or_seat') problems.push(`a ${r.kind} request, not a tool_or_seat`);\nif (r.origin?.type !== 'landflow_run' || r.origin.workflowId !== $workflow.id) problems.push('its origin is another workflow');\nelse if (!row) problems.push(rows.length ? `its origin names run ${r.origin.executionId}, but another run recorded it` : 'no run of this workflow raised it');\nconst approved = event.outcome === 'approved';\nif (!problems.length && approved && !['approved', 'applied'].includes(r.status)) problems.push(`Landledger says it is ${r.status} now, not approved`);\nconst decision = (r.decisions ?? []).at(-1);\nconst reason = approved ? '' : decision?.comment ? `${decision.person?.name ?? 'The approver'}: ${decision.comment}` : `the cost request was ${event.outcome ?? r.status}`;\nreturn [{ json: {\n  route: problems.length ? 2 : approved ? 0 : 1,\n  why: problems.join('; '),\n  outcome: approved ? 'approved' : 'denied',\n  landledgerRequestId: r.id,\n  number: r.number,\n  seat: r.seat ?? null,\n  landbrightRequestId: row?.landbright_request_id ?? null,\n  landbrightRef: row?.landbright_ref ?? null,\n  reason,\n  settle: settings.settleInLandbright === true,\n  costStep: settings.costStep,\n  landbrightUrl: settings.landbrightUrl,\n} }];"
+            "code": "// Trust a decision only for a seat request this flow raised: created by this flow's key, a tool_or_seat, and recorded\n// by the run of this workflow its origin names. 0: the cost is approved; 1: rejected, cancelled or expired; 2: refused.\nconst event = $('What happened').first().json;\nconst settings = event.settings;\nconst r = $('Get the request').first().json.request;\nconst me = $('Who is this flow').first().json;\nconst rows = $input.all().map((i) => i.json).filter((x) => x.landledger_request_id === r.id);\n// The run that raised it: the origin, or, for a break-glass cost (its origin is the Landbright request), a related source.\nconst breakGlass = r.origin?.type === 'landbright_request' && r.origin.breakGlass === true;\nconst run = breakGlass ? (r.related ?? []).find((x) => x.type === 'landflow_run') : r.origin;\nconst row = rows.find((x) => x.execution_id === run?.executionId);\nconst problems = [];\nif (r.createdBy?.kind !== 'key' || !me.id || r.createdBy.id !== me.id) problems.push(`raised by ${r.createdBy?.name ?? 'someone else'}, not this flow's key (${me.name ?? 'unknown'})`);\nif (r.kind !== 'tool_or_seat') problems.push(`a ${r.kind} request, not a tool_or_seat`);\nif (run?.type !== 'landflow_run' || run.workflowId !== $workflow.id) problems.push('its origin is another workflow');\nelse if (!row) problems.push(rows.length ? `its origin names run ${run.executionId}, but another run recorded it` : 'no run of this workflow raised it');\nelse if (breakGlass && row.landbright_ref !== r.origin.id) problems.push(`its origin names ${r.origin.id}, but the run recorded ${row.landbright_ref}`);\nconst approved = event.outcome === 'approved';\nif (!problems.length && approved && !['approved', 'applied'].includes(r.status)) problems.push(`Landledger says it is ${r.status} now, not approved`);\nconst decision = (r.decisions ?? []).at(-1);\nconst reason = approved ? '' : decision?.comment ? `${decision.person?.name ?? 'The approver'}: ${decision.comment}` : `the cost request was ${event.outcome ?? r.status}`;\nreturn [{ json: {\n  route: problems.length ? 2 : approved ? 0 : 1,\n  why: problems.join('; '),\n  outcome: approved ? 'approved' : 'denied',\n  landledgerRequestId: r.id,\n  number: r.number,\n  seat: r.seat ?? null,\n  landbrightRequestId: row?.landbright_request_id ?? null,\n  landbrightRef: row?.landbright_ref ?? null,\n  reason,\n  breakGlass,\n  settle: settings.settleInLandbright === true,\n  landbrightUrl: settings.landbrightUrl,\n  landledgerUrl: `${settings.landledgerConsoleUrl}/requests/${r.id}`,\n} }];"
           }
         },
         {
@@ -545,43 +547,76 @@
           "notes": "A note on the Landbright request (annotation landflow.seat_cost), shown on its page. Until Landbright has an external cost step, this is all the flow can tell it: access and cost are decided apart."
         },
         {
-          "id": "settleOn",
-          "name": "Settle in Landbright?",
-          "type": "core.if",
+          "id": "gateNow",
+          "name": "Read the gate",
+          "type": "core.httpRequest",
           "typeVersion": 1,
           "position": [
             2600,
             300
           ],
           "parameters": {
-            "conditions": {
-              "condition": [
-                {
-                  "left": "{{ $('Ours to act on?').first().json.settle }}",
-                  "operator": "equals",
-                  "right": "true"
-                }
-              ]
-            },
-            "combinator": "and"
+            "method": "GET",
+            "url": "{{ $('Ours to act on?').first().json.landbrightUrl }}/api/v1/requests/{{ $('Ours to act on?').first().json.landbrightRequestId }}",
+            "authentication": "genericCredentialType",
+            "genericAuthType": "oAuth2Api"
+          },
+          "credentials": {
+            "oAuth2Api": {
+              "id": "landbright",
+              "name": "Landbright API"
+            }
+          },
+          "notes": "Landbright's request as it stands: is its cost gate (step 0) still waiting on Landledger?"
+        },
+        {
+          "id": "gate",
+          "name": "What Landbright needs",
+          "type": "core.code",
+          "typeVersion": 1,
+          "position": [
+            2860,
+            300
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "all",
+            "code": "// What Landbright needs now, from its request as it stands. 0: settle the cost gate (step 0, waiting on Landledger,\n// and SETTLE_IN_LANDBRIGHT on); 1: the seat is in use already (break-glass granted it before the cost was approved):\n// mark it applied; 2: nothing to settle, and why (the setting is off, no gate, break-glass skipped it, already settled).\nconst d = $('Ours to act on?').first().json;\nconst r = $input.first().json;\nconst gate = r.steps?.[0];\nconst outcome = d.outcome === 'approved' ? 'approve' : 'deny';\nconst base = { ...d, ref: r.ref, decisionUrl: r.decisionUrl, landbrightStatus: r.status, grant: r.grant?.status ?? null };\nif (d.outcome === 'approved' && r.grant?.status === 'active') {\n  return [{ json: { ...base, route: 1, note: `Granted in Landbright as ${r.ref} under break-glass; the cost was approved after` } }];\n}\nconst waiting = gate?.kind === 'external' && gate.system === 'Landledger' && r.status === 'pending' && r.currentStep === 0 && !gate.settlement;\nif (!waiting) {\n  const why = gate?.kind !== 'external' ? `${r.ref} has no cost gate` : gate.settlement ? `${r.ref}'s gate was settled already (${gate.settlement.outcome}, ${gate.settlement.reference?.id})` : `${r.ref} is ${r.status}${r.method === 'break_glass' ? ' (break-glass skipped the gate)' : ''}, not waiting on Landledger`;\n  return [{ json: { ...base, route: 2, why } }];\n}\nif (!d.settle) return [{ json: { ...base, route: 2, why: `SETTLE_IN_LANDBRIGHT is off: ${r.ref} waits on Landledger until its gate's deadline` } }];\nconst body = {\n  outcome,\n  reference: { system: 'Landledger', id: d.landledgerRequestId, url: d.landledgerUrl },\n  ...(outcome === 'deny' && d.reason ? { reason: String(d.reason).slice(0, 1000) } : {}),\n};\nreturn [{ json: { ...base, route: 0, body } }];"
+          }
+        },
+        {
+          "id": "gateRoute",
+          "name": "Settle, apply or nothing",
+          "type": "core.switch",
+          "typeVersion": 1,
+          "position": [
+            3120,
+            300
+          ],
+          "parameters": {
+            "mode": "expression",
+            "output": "{{ $json.route }}",
+            "options": {
+              "fallbackOutput": "none"
+            }
           }
         },
         {
           "id": "settle",
-          "name": "Settle the cost step",
+          "name": "Settle the cost gate",
           "type": "core.httpRequest",
           "typeVersion": 1,
           "position": [
-            2860,
-            220
+            3380,
+            160
           ],
           "parameters": {
             "method": "POST",
-            "url": "{{ $('Ours to act on?').first().json.landbrightUrl }}/api/v1/requests/{{ $('Ours to act on?').first().json.landbrightRequestId }}/steps/{{ $('Ours to act on?').first().json.costStep }}/settle",
+            "url": "{{ $json.landbrightUrl }}/api/v1/requests/{{ $json.landbrightRequestId }}/steps/0/settle",
             "authentication": "genericCredentialType",
             "genericAuthType": "oAuth2Api",
             "bodyType": "json",
-            "body": "{{ { outcome: $('Ours to act on?').first().json.outcome, reference: $('Ours to act on?').first().json.landledgerRequestId } }}"
+            "body": "{{ $json.body }}"
           },
           "credentials": {
             "oAuth2Api": {
@@ -590,18 +625,58 @@
             }
           },
           "onError": "continue",
-          "notes": "Placeholder for Landbright's proposed external step (POST /api/v1/requests/:id/steps/:step/settle { outcome, reference }, scope steps:settle). Not built in Landbright yet: Settings keeps it off."
+          "notes": "Landbright's cost gate (spec 008, PR #5): POST /api/v1/requests/:id/steps/0/settle { outcome: approve | deny, reference: { system: 'Landledger', id, url }, reason }, scope steps:settle, only by the application the gate's settledBy names. Behind SETTLE_IN_LANDBRIGHT (off) until the PR merges."
+        },
+        {
+          "id": "settled",
+          "name": "Settled?",
+          "type": "core.code",
+          "typeVersion": 1,
+          "position": [
+            3640,
+            160
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "all",
+            "code": "// Landbright's answer. 200: settled (the same answer again is 200 too). 409: the request moved on (break-glass skipped\n// the gate, it expired, or it was settled with another answer): said, not retried. Anything else stops the run.\nconst item = $input.first().json;\nconst failed = item.error ? String(item.error.message ?? item.error) : '';\nconst detail = failed && item.description ? `: ${String(item.description).slice(0, 300)}` : '';\nconst d = $('What Landbright needs').first().json;\nif (failed && !/\\b409\\b/.test(failed)) throw new Error(failed + detail);\nreturn [{ json: { ref: d.ref, landledgerRequestId: d.landledgerRequestId, outcome: d.body.outcome, settled: !failed, why: failed + detail, landbrightStatus: item.status ?? null } }];"
+          }
+        },
+        {
+          "id": "bgApplied",
+          "name": "Mark the seat used (break-glass)",
+          "type": "landledger.landledger",
+          "typeVersion": 1,
+          "position": [
+            3380,
+            300
+          ],
+          "parameters": {
+            "resource": "request",
+            "operation": "markApplied",
+            "requestId": "{{ $json.landledgerRequestId }}",
+            "appliedNote": "{{ $json.note }}",
+            "links": "{{ [{ label: $json.ref, url: $json.decisionUrl }] }}"
+          },
+          "credentials": {
+            "landledgerApi": {
+              "id": "landledger",
+              "name": "Landledger (requests)"
+            }
+          },
+          "notes": "Break-glass granted the access before the cost was approved: the seat is in use already."
         },
         {
           "id": "notSettled",
-          "name": "Not settled: the setting is off",
+          "name": "Nothing to settle",
           "type": "core.noOp",
           "typeVersion": 1,
           "position": [
-            2860,
-            400
+            3380,
+            440
           ],
-          "parameters": {}
+          "parameters": {},
+          "notes": "What Landbright needs says why: the setting is off, the request has no gate, break-glass skipped it, or it was settled already."
         },
         {
           "id": "refused",
@@ -696,12 +771,12 @@
           "parameters": {
             "language": "javascript",
             "mode": "all",
-            "code": "// What the seat needs now, from both systems' state (not the event): granted → the seat is used (Mark Applied);\n// access denied with the cost approved → the reserved seat goes back; the grant revoked or expired → an applied seat goes\n// back as revoked, a reserved one as not needed. 0: apply; 1: release; 2: nothing.\nconst lb = $('Read the access request').first().json;\nconst row = $('Find its seat request').first().json;\nconst ll = $input.first().json.request;\nconst seat = ll.seat?.status ?? 'none';\nconst grant = lb.grant?.status ?? null;\nconst ref = row.landbright_ref || lb.ref;\nconst base = { landledgerRequestId: ll.id, number: ll.number, ref, url: lb.decisionUrl, seat, grant, landbrightStatus: lb.status };\nconst linked = (ll.related ?? []).some((x) => x.type === 'landbright_request' && (x.id === ref || x.id === lb.id));\nif (!linked) return [{ json: { ...base, route: 2, action: 'nothing', why: `${ll.number} does not name ${ref}` } }];\nif (grant === 'active' && ll.status === 'approved') return [{ json: { ...base, route: 0, action: 'apply', note: `Granted in Landbright as ${ref}` } }];\nif (['denied', 'cancelled', 'expired', 'superseded'].includes(lb.status) && seat === 'reserved') {\n  return [{ json: { ...base, route: 1, action: 'release', reason: 'access_denied', note: `Access ${lb.status} in Landbright (${ref})` } }];\n}\nif (['revoked', 'expired'].includes(grant) && seat === 'applied') return [{ json: { ...base, route: 1, action: 'release', reason: 'grant_revoked', note: `Grant ${grant} in Landbright (${ref})` } }];\nif (['revoked', 'expired'].includes(grant) && seat === 'reserved') return [{ json: { ...base, route: 1, action: 'release', reason: 'not_needed', note: `Grant ${grant} in Landbright before the seat was used (${ref})` } }];\nreturn [{ json: { ...base, route: 2, action: 'nothing', why: `seat ${seat}, Landbright ${lb.status}, grant ${grant ?? 'none'}` } }];"
+            "code": "// What the seat needs now, from both systems' state (not the event). 0: apply (granted, the cost approved); 1: release\n// the seat (access denied or expired with the cost approved; the grant revoked or expired); 2: cancel the cost request\n// (Landbright ended the request, its gate run out waiting on Landledger among them, while Landledger had not decided);\n// 3: nothing.\nconst event = $('What happened').first().json;\nconst lb = $('Read the access request').first().json;\nconst row = $('Find its seat request').first().json;\nconst ll = $input.first().json.request;\nconst seat = ll.seat?.status ?? 'none';\nconst grant = lb.grant?.status ?? null;\nconst ref = row.landbright_ref || lb.ref;\nconst base = { landledgerRequestId: ll.id, number: ll.number, ref, url: lb.decisionUrl, seat, grant, landbrightStatus: lb.status };\nconst ours = [ll.origin, ...(ll.related ?? [])].some((x) => x?.type === 'landbright_request' && (x.id === ref || x.id === lb.id));\nif (!ours) return [{ json: { ...base, route: 3, action: 'nothing', why: `${ll.number} does not name ${ref}` } }];\nconst ended = ['denied', 'cancelled', 'expired', 'superseded'].includes(lb.status);\nconst waited = event.waitedOn ? ` waiting on ${event.waitedOn}` : '';\nif (grant === 'active' && ll.status === 'approved') return [{ json: { ...base, route: 0, action: 'apply', note: `Granted in Landbright as ${ref}` } }];\nif (ended && ['draft', 'awaiting_confirmation', 'pending'].includes(ll.status)) {\n  return [{ json: { ...base, route: 2, action: 'cancel', reason: `Landbright's ${ref} ${lb.status}${waited}: the seat isn't needed` } }];\n}\nif (ended && seat === 'reserved') return [{ json: { ...base, route: 1, action: 'release', reason: 'access_denied', note: `Access ${lb.status}${waited} in Landbright (${ref})` } }];\nif (['revoked', 'expired'].includes(grant) && seat === 'applied') return [{ json: { ...base, route: 1, action: 'release', reason: 'grant_revoked', note: `Grant ${grant} in Landbright (${ref})` } }];\nif (['revoked', 'expired'].includes(grant) && seat === 'reserved') return [{ json: { ...base, route: 1, action: 'release', reason: 'not_needed', note: `Grant ${grant} in Landbright before the seat was used (${ref})` } }];\nreturn [{ json: { ...base, route: 3, action: 'nothing', why: `seat ${seat}, Landledger ${ll.status}, Landbright ${lb.status}, grant ${grant ?? 'none'}` } }];"
           }
         },
         {
           "id": "seatRoute",
-          "name": "Apply or release",
+          "name": "Apply, release or cancel",
           "type": "core.switch",
           "typeVersion": 1,
           "position": [
@@ -739,6 +814,29 @@
             }
           },
           "notes": "Landledger: approved → applied; the seat moves from reserved to used."
+        },
+        {
+          "id": "cancel",
+          "name": "Cancel the cost request",
+          "type": "landledger.landledger",
+          "typeVersion": 1,
+          "position": [
+            2340,
+            940
+          ],
+          "parameters": {
+            "resource": "request",
+            "operation": "cancel",
+            "requestId": "{{ $json.landledgerRequestId }}",
+            "cancelReason": "{{ $json.reason }}"
+          },
+          "credentials": {
+            "landledgerApi": {
+              "id": "landledger",
+              "name": "Landledger (requests)"
+            }
+          },
+          "notes": "Landbright ended the request (denied, cancelled, or its gate ran out waiting on Landledger) before Landledger decided: the cost request is withdrawn."
         },
         {
           "id": "release",
@@ -931,27 +1029,59 @@
           "type": "main",
           "source": "noteCost",
           "sourceIndex": 0,
-          "target": "settleOn",
+          "target": "gateNow",
           "targetIndex": 0
         },
         {
           "id": "c22",
           "type": "main",
-          "source": "settleOn",
+          "source": "gateNow",
           "sourceIndex": 0,
-          "target": "settle",
+          "target": "gate",
           "targetIndex": 0
         },
         {
           "id": "c23",
           "type": "main",
-          "source": "settleOn",
-          "sourceIndex": 1,
-          "target": "notSettled",
+          "source": "gate",
+          "sourceIndex": 0,
+          "target": "gateRoute",
           "targetIndex": 0
         },
         {
           "id": "c24",
+          "type": "main",
+          "source": "gateRoute",
+          "sourceIndex": 0,
+          "target": "settle",
+          "targetIndex": 0
+        },
+        {
+          "id": "c25",
+          "type": "main",
+          "source": "settle",
+          "sourceIndex": 0,
+          "target": "settled",
+          "targetIndex": 0
+        },
+        {
+          "id": "c26",
+          "type": "main",
+          "source": "gateRoute",
+          "sourceIndex": 1,
+          "target": "bgApplied",
+          "targetIndex": 0
+        },
+        {
+          "id": "c27",
+          "type": "main",
+          "source": "gateRoute",
+          "sourceIndex": 2,
+          "target": "notSettled",
+          "targetIndex": 0
+        },
+        {
+          "id": "c28",
           "type": "main",
           "source": "route",
           "sourceIndex": 2,
@@ -959,7 +1089,7 @@
           "targetIndex": 0
         },
         {
-          "id": "c25",
+          "id": "c29",
           "type": "main",
           "source": "findSeat",
           "sourceIndex": 0,
@@ -967,7 +1097,7 @@
           "targetIndex": 0
         },
         {
-          "id": "c26",
+          "id": "c30",
           "type": "main",
           "source": "rereadAccess",
           "sourceIndex": 0,
@@ -975,7 +1105,7 @@
           "targetIndex": 0
         },
         {
-          "id": "c27",
+          "id": "c31",
           "type": "main",
           "source": "seatNow",
           "sourceIndex": 0,
@@ -983,7 +1113,7 @@
           "targetIndex": 0
         },
         {
-          "id": "c28",
+          "id": "c32",
           "type": "main",
           "source": "plan",
           "sourceIndex": 0,
@@ -991,7 +1121,7 @@
           "targetIndex": 0
         },
         {
-          "id": "c29",
+          "id": "c33",
           "type": "main",
           "source": "seatRoute",
           "sourceIndex": 0,
@@ -999,11 +1129,19 @@
           "targetIndex": 0
         },
         {
-          "id": "c30",
+          "id": "c34",
           "type": "main",
           "source": "seatRoute",
           "sourceIndex": 1,
           "target": "release",
+          "targetIndex": 0
+        },
+        {
+          "id": "c35",
+          "type": "main",
+          "source": "seatRoute",
+          "sourceIndex": 2,
+          "target": "cancel",
           "targetIndex": 0
         }
       ]

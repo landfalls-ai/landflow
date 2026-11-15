@@ -445,6 +445,17 @@ export async function startFakeLandledger(): Promise<FakeLandledger> {
         for (const res of request.reservations) res.status = 'released';
         return { body: { request, released: { seats: request.seat.seats, from, reason } } };
       }
+      case 'POST requests/:id/cancel': {
+        const denied = need('requests:write');
+        if (denied) return denied;
+        const request = state.requests.get(id);
+        if (!request) return notFound;
+        if (keyRow && request.createdBy.id !== keyRow.id && !scopes.includes('admin')) return err(403, 'forbidden', 'Only the requester, the sponsor, the creating key or an admin cancels it');
+        if (!['draft', 'awaiting_confirmation', 'pending'].includes(request.status)) return err(409, 'conflict', `Request is ${request.status}: only a request not yet decided is cancelled`);
+        request.status = 'cancelled';
+        request.cancelReason = r.body?.reason ?? null;
+        return { body: request };
+      }
       case 'POST requests/:id/applied': {
         const denied = need('requests:write');
         if (denied) return denied;

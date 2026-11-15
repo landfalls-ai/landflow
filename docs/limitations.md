@@ -148,13 +148,14 @@ items still open (its "Wave 6" section); this page is the short list to check be
   Landledger's Slack relay channel must hold the same signing secret as the Slack credential.
 - **No knowledge kind.** Landledger has no explain or search route, so the plugin is not offered as an agent's knowledge
   base.
-- **Tool or seat cost: Landbright's cost step is a placeholder.** Landbright has no external cost step yet, so **Settle
-  the cost step** calls the proposed `POST /api/v1/requests/:id/steps/:step/settle` only when `SETTLE_IN_LANDBRIGHT`
-  is on (off by default); until then the flow tells Landbright through an annotation (`landflow.seat_cost`), which
-  Landbright's approvers read but which holds nothing. Landbright doesn't mark which bundles cost a seat either:
-  `SEAT_APPS` in **Settings** maps a bundle's name to its contract's `landbrightApp` by hand. A break-glass request
-  can't be flagged as one (Landledger reads `breakGlass` only from a request's origin), and the flow raises one seat
-  per request.
+- **Tool or seat cost: Landbright's cost gate isn't settled yet.** The settle call follows Landbright's spec 008 (PR #5,
+  not merged) and was checked only against a stand-in, not the dev Landbright; `SETTLE_IN_LANDBRIGHT` is off until the
+  PR merges. Off, a request behind a gate expires at the gate's deadline (the flow then cancels the cost request or
+  releases the seat), and Landbright's approvers see Landledger's decision only as an annotation. A 409 from the settle
+  route is reported with its status only (the engine keeps the error's message, not Landbright's text). Extensions are
+  not costed: Landbright sends an extension through the gate too, and the flow doesn't yet settle it citing the first
+  request's seat, so with a gate an extension expires. A break-glass seat whose cost Landledger rejects stays granted:
+  the flow notes the rejection and a person revokes. One seat per request.
 - **Variance notes need a model that keeps to the figures.** The flow drafts with a local Ollama model; a draft that
   misquotes a figure is redrafted once with Landledger's refusal, then left to Landledger's template draft, which a
   controller creates. A model too small for the prompt gives up more often than it drafts. The agent never accepts a
