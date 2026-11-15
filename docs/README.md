@@ -27,6 +27,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | The landflow-brain Claude Code mod: your own session as a held, private `work.session`, reviewed before it is sent, with yesterday back at the next session, and the colleagues whose work overlaps yours (`/brain sync`, a pane, a band) | [landflow-brain-mod.md](landflow-brain-mod.md) | [work-and-briefings.md](work-and-briefings.md) |
 | Work events and the daily briefing: what people's tools tell the brain about their work, private to the person (even from admins) until they share it with a team or the organization, related colleagues, repos as systems, the `brain:read` and `brain:write` API key scopes, `POST/DELETE /api/brain/work`, `GET /api/brain/briefing`, the nightly Tomorrow sync template that writes each person's briefing | [work-and-briefings.md](work-and-briefings.md) | [second-brain.md](second-brain.md#1-the-usage-ledger) |
 | The Brain page: the second brain as Markdown files in an editor's workbench (Explorer, tabs, Preview and Source, quick open, Problems), a file per person, customer and initiative with a summary the model writes, Spotlight to ask it, and work shared across teams | [second-brain.md](second-brain.md#the-brain-page) | [research/brain-ui-research.md](research/brain-ui-research.md) |
+| Practices: rules in the brain that connected agents follow, each with versions, a scope and a strength, approved by a person (owners and admins for the organization, a project's admins for the project); drafts from people, agents and flows are tainted until read against their sources; conflicts, waivers, the API and `LANDFLOW_PRACTICES` | [practices.md](practices.md) | [reference/api.md](reference/api.md) |
 | Composite nodes: groups typed by a contract (slots, rules, ports), checked in the editor, run as one step | [composites.md](composites.md) | [protocol.md](protocol.md) §3 |
 | Postgres mode's write queue: the spool, the blocked state, recovery and metrics | [features/postgres-write-queue.md](features/postgres-write-queue.md) | [features/engine.md](features/engine.md) |
 | Engine: data model, durable runtime, queue mode and HA, triggers and flow nodes (Ask a Person), debounce and rate limits, Code node | [features/engine.md](features/engine.md) | [architecture.md](architecture.md) |
@@ -87,6 +88,8 @@ how to run it and how to change it. The [project README](../README.md) has the q
 - [transports.md](transports.md): the transport plan as built: generic brokers, Auto, the bridge, MCP faces and the
   bundled gateway.
 - [mcp-gateway.md](mcp-gateway.md): agentgateway in Landflow, what was verified and how to rerun the spike.
+- [practices.md](practices.md): rules agents follow, approved by a person: drafts and taint, versions and the hash, conflicts,
+  waivers, globs and checks, the API and `LANDFLOW_PRACTICES`.
 - [observability.md](observability.md): the OpenTelemetry contract: span names, attributes, metrics, logs.
 - [llm-gateway.md](llm-gateway.md): the LLM gateway (LiteLLM) in front of every model call, its budgets, and asking for a higher cap.
 

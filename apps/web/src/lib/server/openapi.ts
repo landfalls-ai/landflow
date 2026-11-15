@@ -41,7 +41,7 @@ function fromZod(schema: z.ZodType): Json {
 const samplePath = (path: string) => path.replace(/\{[^}]+\}/g, 'sample');
 
 interface Operation {
-  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Settings' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks' | 'Conversations' | 'Goals';
+  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Settings' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks' | 'Conversations' | 'Goals' | 'Practices';
   id: string;
   summary: string;
   description?: string;
@@ -2211,6 +2211,96 @@ function paths(): Record<string, Record<string, Json>> {
     query: [text('day', 'YYYY-MM-DD')],
     responses: { 200: reply('The briefing', object({ day: { type: 'string' }, generatedAt: { type: 'string' }, source: { type: 'string', enum: ['live', 'flow'] }, today: array(briefingWorkItem), yesterday: array(briefingWorkItem), related: array({ type: 'object' }), summary: { type: 'string' }, autoSend: { type: 'string', enum: ['allowed', 'forbidden'] }, brain: { type: 'string', enum: ['on', 'off'] } }, ['day', 'generatedAt', 'source', 'today', 'yesterday', 'related', 'autoSend', 'brain'])), 400: invalid },
   });
+  // PR01: practices (docs/practices.md).
+  const practiceDraftBody = object(
+    {
+      handle: { type: 'string', description: 'two or three lowercase parts, such as helm/chart-location' },
+      level: { type: 'string', enum: ['org', 'project'] },
+      projectId: { type: 'string' },
+      title: { type: 'string', maxLength: 160 },
+      strength: { type: 'string', enum: ['required', 'recommended'] },
+      topics: array({ type: 'string' }),
+      repos: array({ type: 'string' }),
+      paths: array({ type: 'string' }),
+      summary: { type: 'string', maxLength: 300 },
+      body: { type: 'string', maxLength: 4000 },
+      checks: array({ type: 'object' }),
+      citations: array({ type: 'object' }),
+    },
+    ['handle', 'level', 'strength', 'topics', 'repos', 'paths', 'title', 'summary', 'body'],
+  );
+  const practiceView = { type: 'object', description: 'A PracticeView (lib/shared/practices.ts): the practice, its approved version, the drafts the caller may see, `canApprove` and `canDraft`' };
+  const practiceVersion = { type: 'object', description: 'A PracticeVersion (lib/shared/practices.ts)' };
+  add('get', '/api/practices', {
+    tag: 'Practices',
+    id: 'listPractices',
+    summary: 'List practices',
+    description: 'Needs the `brain:read` scope (or a session). The practices the caller may see: approved and retired ones (org practices to everyone signed in, project practices to people with a role there) and drafts to their drafters and approvers. `status` defaults to draft and approved; `retired` lists retired ones. `waiting` counts the versions waiting for the caller’s approval.',
+    query: [text('status', 'draft, approved or retired'), text('level', 'org or project'), text('projectId', 'A project'), text('topic', 'A topic tag'), text('q', 'Words in the handle or title')],
+    responses: { 200: reply('The practices', object({ practices: array(practiceView), canApproveOrg: { type: 'boolean' }, waiting: { type: 'integer' } }, ['practices', 'canApproveOrg', 'waiting'])), 400: invalid },
+  });
+  add('post', '/api/practices', {
+    tag: 'Practices',
+    id: 'draftPractice',
+    summary: 'Draft a practice',
+    description: 'Needs the `brain:write` scope (or a session). Saves version 1 as a draft; nothing reaches an agent until a person approves it. A draft typed in a signed-in session is a person’s; one sent with an API key, MCP or by a flow is `learned` (with citations) or `agent` and is tainted: its approver must read it against its sources. A project practice needs editor access in the project. 409 when the handle is taken at that level.',
+    body: jsonBody(practiceDraftBody),
+    responses: { 201: reply('The practice and its first version', object({ practice: practiceView, version: practiceVersion }, ['practice', 'version'])), 400: invalid, 403: errorRef('Not allowed to draft here'), 404: notFound, 409: errorRef('The handle is taken') },
+  });
+  add('get', '/api/practices/{id}', {
+    tag: 'Practices',
+    id: 'getPractice',
+    summary: 'One practice',
+    description: 'Needs the `brain:read` scope (or a session). The versions the caller may see, each with its state (`approved`, `replaced`, `pending`, `rejected`), the latest 20 applications and the approved practices its newest pending version overlaps (for approvers). 404 when the caller may not see it.',
+    responses: { 200: reply('The practice', object({ practice: practiceView, versions: array(practiceVersion), applications: array({ type: 'object' }), conflicts: array({ type: 'object' }) }, ['practice', 'versions', 'applications', 'conflicts'])), 404: notFound },
+  });
+  add('patch', '/api/practices/{id}', {
+    tag: 'Practices',
+    id: 'editPractice',
+    summary: 'Draft a new version',
+    description: 'Needs the `brain:write` scope (or a session). Any of `title`, `strength`, `topics`, `repos`, `paths`, `summary`, `body`, `checks`, `citations`: a new draft version is made from the newest version the caller may see (not a rejected one) plus the changes. What agents get is unchanged until it is approved.',
+    body: jsonBody(object({ title: { type: 'string' }, strength: { type: 'string', enum: ['required', 'recommended'] }, topics: array({ type: 'string' }), repos: array({ type: 'string' }), paths: array({ type: 'string' }), summary: { type: 'string' }, body: { type: 'string' }, checks: array({ type: 'object' }), citations: array({ type: 'object' }) })),
+    responses: { 201: reply('The practice and the new version', object({ practice: practiceView, version: practiceVersion }, ['practice', 'version'])), 400: invalid, 403: errorRef('Not allowed to draft here'), 404: notFound },
+  });
+  add('post', '/api/practices/{id}/approve', {
+    tag: 'Practices',
+    id: 'approvePractice',
+    summary: 'Approve a version',
+    description: 'A session only (an API key gets 403). Org practices: owners and admins. Project practices: that project’s admins. The drafter may approve their own. A tainted version needs `reviewedSources: true` (409 `PracticeNeedsReview`). An approved practice it overlaps (a shared topic and scopes that meet) needs an answer in `conflicts` (`supersede` retires it, `keep` leaves both), else 409 `PracticeConflict` with the list.',
+    body: jsonBody(object({ version: { type: 'integer' }, reviewedSources: { type: 'boolean' }, conflicts: { type: 'object', additionalProperties: { type: 'string', enum: ['supersede', 'keep'] } } }, ['version'])),
+    responses: { 200: reply('The practice', object({ practice: practiceView }, ['practice'])), 400: invalid, 403: errorRef('Not an approver'), 404: notFound, 409: errorRef('Needs review, or an overlap needs an answer') },
+  });
+  add('post', '/api/practices/{id}/versions/{version}/reject', {
+    tag: 'Practices',
+    id: 'rejectPracticeVersion',
+    summary: 'Reject a version',
+    description: 'A session only. The same people who may approve it. `reason` is 10 to 500 characters.',
+    body: jsonBody(object({ reason: { type: 'string', minLength: 10, maxLength: 500 } }, ['reason'])),
+    responses: { 200: reply('The practice', object({ practice: practiceView }, ['practice'])), 400: invalid, 403: errorRef('Not an approver'), 404: notFound },
+  });
+  add('post', '/api/practices/{id}/retire', {
+    tag: 'Practices',
+    id: 'retirePractice',
+    summary: 'Retire a practice',
+    description: 'A session only. The same people who may approve it. Agents stop getting it; its versions stay, and a new approved version brings it back.',
+    responses: { 200: reply('The practice', object({ practice: practiceView }, ['practice'])), 403: errorRef('Not an approver'), 404: notFound },
+  });
+  add('post', '/api/practices/{id}/waivers', {
+    tag: 'Practices',
+    id: 'waivePractice',
+    summary: 'Waive a practice for one run',
+    description: 'A session only. Someone who may approve the practice, for a run they may read. `version` must have been approved. A second waiver for the same practice and run returns the first.',
+    body: jsonBody(object({ executionId: { type: 'string' }, version: { type: 'integer' }, reason: { type: 'string', minLength: 10, maxLength: 500 } }, ['executionId', 'version', 'reason'])),
+    responses: { 201: reply('The waiver', object({ application: { type: 'object' } }, ['application'])), 400: invalid, 403: errorRef('Not an approver'), 404: notFound },
+  });
+  add('get', '/api/practices/{id}/applications', {
+    tag: 'Practices',
+    id: 'listPracticeApplications',
+    summary: 'Where a practice was applied',
+    description: 'Needs the `brain:read` scope (or a session). Delivered, cited, checked and waived rows, newest first, 50 a page (`limit` up to 100). Only approvers see who a row belongs to.',
+    query: [text('limit', '1 to 100'), text('cursor', 'From the previous page’s `nextCursor`')],
+    responses: { 200: reply('A page', object({ applications: array({ type: 'object' }), nextCursor: { type: 'string' } }, ['applications'])), 404: notFound },
+  });
   return out;
 }
 
@@ -2244,6 +2334,7 @@ export function openApiDocument(origin?: string): Record<string, unknown> {
       { name: 'Agents', description: 'Agents that run elsewhere (kagent) reporting what they did back to the run that asked them (docs/a2a.md)' },
       { name: 'Agent teams', description: 'Teams of agents with standing relations: who leads, who reports to whom, who reviews (docs/agent-teams.md)' },
       { name: 'Conversations', description: 'A person’s own chats with Spotlight, the brain and the Agent architect, and their personal preferences: session only, owner only (docs/assistant.md#conversation-history)' },
+      { name: 'Practices', description: 'Rules in the brain that connected agents follow: drafts, versions, approval by a person, waivers (docs/practices.md)' },
       { name: 'MCP', description: 'Agents and MCP (docs/transports.md): Landflow-issued MCP tokens, tool grants, the JWKS, the plugin catalog (server.json, the registry API) and protected resource metadata' },
     ],
     security: [{ bearerAuth: [] }, { apiKeyHeader: [] }, { sessionCookie: [] }],

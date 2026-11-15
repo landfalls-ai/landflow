@@ -1999,3 +1999,16 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   ([agents.md](agents.md#project-context)). Left: the remote paths (PC04), usage attribution (PC05), the
   availability rule (PC06) and the switch and preview in the UI (PC07).
 
+## Practices (waves P1 and P2)
+
+Rules in the brain that connected agents follow, each approved by a person ([practices.md](practices.md)). Decided
+2026-11-15: org practices are approved by instance owners and admins, project practices by that project's admins; no
+four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows; no practices ship in code.
+
+- **PR01, built (wave P1):** the store, versions and the hash, approval with taint and conflicts, reject, retire and
+  waivers, the `/api/practices` routes, `LANDFLOW_PRACTICES` and the port other packages read.
+- **PR02 to PR05 (wave P1):** the Brain page, learning (Draft Practice, the Learn practices template, `/brain learn`),
+  selection and the block, MCP tools, the mod and `landflow practices`.
+- **Wave P2, next:** delivery to Landflow agents through the seam's practices slot (PR06) and to kagent agents (PR07),
+  Check Practices with Ask a Person for Fix, Waive or Change (PR08), compliance and the inbox suggestion for a draft
+  (PR09), and the demo on a branch of the Landflow repository that ends at a draft pull request (PR10).

@@ -385,3 +385,17 @@ items still open (its "Wave 6" section); this page is the short list to check be
 ## Usage by goal (wave 7)
 
 - Only `ai.call` usage events carry a goal (`goalId`); `run.finished`, `node.failed`, `node.slow` and `agent.session` do not, and calls that come in through the spend import (kagent) have none.
+
+## Practices (wave P1)
+
+- Practices reach only the Claude Code mod and MCP clients until wave P2. Landflow agents, kagent agents and the Check
+  Practices step do not get them yet, and `required` stops nothing: a failed check blocks a flow only from wave P2
+  ([practices.md](practices.md)).
+- A draft does not file an inbox suggestion yet (wave P2). Find waiting drafts in `/brain` → Practices, or in the links the
+  API, the mod and the CLI return.
+- There is no four-eyes setting: the drafter of a practice may approve their own, if they are allowed to approve at
+  that level.
+- A practice grants nothing: no tool, approval or guard changes. It is text an agent is asked to follow.
+- A practice has one `supersedes` pointer: approving a version that supersedes several records the first, and the audit
+  event lists them all.
+- No practices ship with Landflow; each instance learns or writes its own.
