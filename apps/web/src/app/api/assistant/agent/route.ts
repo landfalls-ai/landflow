@@ -27,9 +27,9 @@ const Body = z.object({
     .refine((messages) => messages.at(-1)?.role === 'user', 'The last message must be from the user'),
   draft: z.record(z.string(), z.unknown()).optional(),
   model: z.string().max(100).optional(),
-  /** Continue a reply that failed after some steps, from the checkpoint its `error` event gave. */
   /** The project the agent is built for (PC10): its goals reach the architect as data. */
   projectId: z.string().max(200).optional(),
+  /** Continue a reply that failed after some steps, from the checkpoint its `error` event gave. */
   resume: z.object({ checkpoint: z.string().max(64) }).optional(),
 });
 

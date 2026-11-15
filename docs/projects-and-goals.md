@@ -126,7 +126,7 @@ repositories). There is no screen for them yet: use the API.
   request over MCP". It is data, not instructions.
 - **The morning briefing** (the `morning-briefing` MCP prompt) names your open goals, at most 5 by project.
 - **Spotlight and the Agent architect** read the compact block of the project they build in: Spotlight of the workflow's
-  home project, the architect of the project the Agent dialog was opened for (`projectId` in the body). With no project,
+  home project, the architect of the project named in the request (`projectId` in the body; the Agent dialog does not send it yet). With no project,
   they get nothing extra.
 
 Details and the routes: [connect-your-harness.md](connect-your-harness.md#project-context).

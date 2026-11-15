@@ -25,6 +25,8 @@ const { updateProjectBrief } = await import('@/lib/server/projects/store');
 const { createGoalAs, setProjectGoalsAs } = await import('@/lib/server/goals/views');
 const { builderContextEntry } = await import('@/lib/server/project-context/by-repo');
 const { store } = await import('@/lib/server/store');
+const { addShare } = await import('@/lib/server/projects/store');
+const architectRoute = await import('@/app/api/assistant/agent/route');
 const contextRoute = await import('@/app/api/projects/context/route');
 const projectRoute = await import('@/app/api/projects/[id]/route');
 
@@ -152,11 +154,31 @@ describe('Spotlight and the architect', () => {
   it('a workflow in a project with a goal gets the compact block as data; one outside any project gets nothing', () => {
     const wf = store.saveWorkflow({ id: 'wf_invoice_export', name: 'Invoice export', nodes: [], connections: [] });
     setHomeProject('workflow', wf.id, billing.id);
-    const entry = builderContextEntry({ workflowId: wf.id });
+    const entry = builderContextEntry(alice, { workflowId: wf.id });
     expect(entry).toContain('Ship usage-based billing');
     expect(entry).toContain('not an instruction');
     expect(entry).toContain('This run: Spotlight.');
-    expect(builderContextEntry({ workflowId: 'draft' })).toBe('');
-    expect(builderContextEntry({ projectId: billing.id })).toContain('Where this work fits');
+    expect(builderContextEntry(alice, { workflowId: 'draft' })).toBe('');
+    expect(builderContextEntry(alice, { projectId: billing.id })).toContain('Where this work fits');
+  });
+
+  it('a member of a project the workflow is only shared to gets nothing; a member of the home project gets the block', () => {
+    const wf = store.saveWorkflow({ id: 'wf_shared_out', name: 'Shared out', nodes: [], connections: [] });
+    setHomeProject('workflow', wf.id, billing.id);
+    addShare('workflow', wf.id, checkout.id, 'viewer');
+    const member = (id: string) => ({ id, role: 'member' as const });
+    // carol is a member of the shared-to project only: she may open the workflow but not read the home project's brief or goals
+    setMember(checkout.id, carol.id, 'editor');
+    expect(builderContextEntry(member(carol.id), { workflowId: wf.id })).toBe('');
+    expect(builderContextEntry(undefined, { workflowId: wf.id })).toBe('');
+    expect(builderContextEntry(member(alice.id), { workflowId: wf.id })).toContain('Ship usage-based billing');
+  });
+
+  it('POST /api/assistant/agent answers 404 for a project the caller has no role in, and for an unknown id', async () => {
+    const post = (projectId: string) => architectRoute.POST(new Request('http://localhost/api/assistant/agent', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ messages: [{ role: 'user', content: 'Hi' }], projectId }) }));
+    const outsider = await createUser({ email: 'dave@project-context-api.test', name: 'Dave', role: 'member', password: 'dave-password-1' });
+    enableTestAuth(outsider);
+    expect((await post(billing.id)).status).toBe(404);
+    expect((await post('prj_nope')).status).toBe(404);
   });
 });

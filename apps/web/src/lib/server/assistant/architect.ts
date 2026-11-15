@@ -473,7 +473,7 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
   const system = [
     SYSTEM,
     `\nPlugins online and the nodes an agent can use from them (search_nodes for details):\n${catalogSummary(types)}`,
-    input.projectId ? builderContextEntry({ projectId: input.projectId }) : '', // PC10
+    input.projectId ? builderContextEntry(input.actor, { projectId: input.projectId }) : '', // PC10
     draft ? `\nThe draft so far (propose_agent replaces it):\n${JSON.stringify({ ...draft, avatar: undefined }).slice(0, 6000)}` : '',
   ].join('\n');
 

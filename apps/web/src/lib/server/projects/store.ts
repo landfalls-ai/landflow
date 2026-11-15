@@ -132,6 +132,7 @@ function parseRepos(raw: string | null | undefined): string[] {
 }
 
 function projectFrom(row: ProjectRow): ProjectRecord {
+  const repos = parseRepos(row.repos);
   return {
     id: row.id,
     name: row.name,
@@ -147,7 +148,7 @@ function projectFrom(row: ProjectRow): ProjectRecord {
     ...(row.target_date && { targetDate: row.target_date }),
     ...(row.lead_id && { leadId: row.lead_id }),
     ...(row.decision_owner_id && { decisionOwnerId: row.decision_owner_id }),
-    ...(parseRepos(row.repos).length && { repos: parseRepos(row.repos) }), // PC10
+    ...(repos.length && { repos }), // PC10
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(row.created_by && { createdBy: row.created_by }),

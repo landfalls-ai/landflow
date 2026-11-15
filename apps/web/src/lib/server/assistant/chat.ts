@@ -122,6 +122,8 @@ export interface ChatInput {
   trace?: boolean;
   /** The caller, for AI usage and its per-user caps, and for keeping checkpoints. */
   userId?: string;
+  /** The caller, for what they may be told about the project (PC10): without it the project block is left out. */
+  actor?: Actor;
   /** Continue from a checkpoint (`takeCheckpoint`): the messages so far, no tool run again. */
   resume?: ChatState;
 }
@@ -366,7 +368,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
     `\nThe editor now:\n${outline()}`,
     working.groups?.some((g) => g.composite) ? `\nComposites (frames typed by a contract: fill their slots with matching nodes, keep their rules):\n${compositeOutline(working)}` : '',
     selected ? `\nThe user has “${selected.name}” selected:\n${nodeContext(working, selected.id, runs[selected.id], types)}` : '',
-    builderContextEntry({ workflowId: input.workflow.id }), // PC10: the goals of the project this workflow is in, as data
+    builderContextEntry(input.actor, { workflowId: input.workflow.id }), // PC10: the goals of the project this workflow is in, as data
     tagged.length ? `\nThe user tagged these in the message (checked against what they may open):\n${tagged.join('\n')}` : '',
     input.session === 'auto' ? `\n${AUTO}` : input.session ? `\n${SESSION}` : '',
   ].join('\n');
