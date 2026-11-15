@@ -34,6 +34,8 @@ describe('settings groups', () => {
     expect(resolveSection(sectionFromLocation('?section=api', ''), known)).toEqual({ kind: 'redirect', href: '/developers#api-reference' });
     expect(resolveSection(sectionFromLocation('', '#security'), known)).toEqual({ kind: 'section', id: 'security' });
     expect(resolveSection('#ai-prices', known)).toEqual({ kind: 'section', id: 'ai-prices' });
+    expect(resolveSection('#company', known)).toEqual({ kind: 'section', id: 'company' });
+    expect(SETTINGS_GROUPS[0]!.sections.slice(0, 2)).toEqual(['general', 'company']);
     expect(resolveSection('#nope', known)).toEqual({ kind: 'none' });
     expect(resolveSection('', known)).toEqual({ kind: 'none' });
   });

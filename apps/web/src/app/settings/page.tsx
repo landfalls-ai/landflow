@@ -1,13 +1,14 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { BellRing, Braces, ChevronLeft, ChevronRight, CircleDollarSign, Cpu, Gauge, GitBranch, KeyRound, Landmark, Layers, Network, Plug, Route, ScrollText, ShieldCheck, SlidersHorizontal, Users, Vault } from 'lucide-react';
+import { BellRing, Braces, Building2, ChevronLeft, ChevronRight, CircleDollarSign, Cpu, Gauge, GitBranch, KeyRound, Landmark, Layers, Network, Plug, Route, ScrollText, ShieldCheck, SlidersHorizontal, Users, Vault } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { can, type Action } from '@/lib/shared/auth';
 import { useViewer } from '@/components/auth/viewer';
 import { PageBody, PageHeader } from '@/components/shell/page-header';
 import { AiCapsSettings } from '@/components/settings/ai-caps-settings';
 import { AiPricesSettings } from '@/components/settings/ai-prices-settings';
+import { CompanySettings } from '@/components/settings/company-settings';
 import { AlertsSettings } from '@/components/settings/alerts-settings';
 import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
 import { AuditSettings } from '@/components/settings/audit-settings';
@@ -28,6 +29,7 @@ import { WorkersSettings } from '@/components/settings/workers-settings';
 /** `role`: only shown to roles that `can` do it. */
 const SECTIONS: readonly { id: string; label: string; icon: typeof Braces; hint: string; role?: Action }[] = [
   { id: 'general', label: 'General', icon: SlidersHorizontal, hint: 'Time zone and execution retention' },
+  { id: 'company', label: 'Company', icon: Building2, hint: 'Name and mission' },
   { id: 'variables', label: 'Variables', icon: Braces, hint: '$vars for expressions' },
   { id: 'alerts', label: 'Alerts', icon: BellRing, hint: 'Email, Slack or webhook on failures' },
   { id: 'ai-prices', label: 'AI prices', icon: CircleDollarSign, hint: 'What a token costs, per model' },
@@ -49,6 +51,7 @@ type Section = string;
 
 const BODIES: Record<string, () => React.ReactNode> = {
   general: () => <GeneralSettings />,
+  company: () => <CompanySettings />,
   variables: () => <VariablesSettings />,
   alerts: () => <AlertsSettings />,
   'ai-prices': () => <AiPricesSettings />,
@@ -67,7 +70,7 @@ const BODIES: Record<string, () => React.ReactNode> = {
   transports: () => <TransportsSettings />,
 };
 
-/** /settings (#general, #variables, #alerts, #environments, #source-control, #users, #api-keys, #security, #audit, #governance, #external-secrets, #ai-prices, #ai-caps, #llm-gateway, #mcp, #workers, #transports; the old #api and ?section=api open the API reference on Developers, in five groups): instance settings. */
+/** /settings (#general, #company, #variables, #alerts, #environments, #source-control, #users, #api-keys, #security, #audit, #governance, #external-secrets, #ai-prices, #ai-caps, #llm-gateway, #mcp, #workers, #transports; the old #api and ?section=api open the API reference on Developers, in five groups): instance settings. */
 export default function SettingsPage() {
   const viewer = useViewer();
   const router = useRouter();

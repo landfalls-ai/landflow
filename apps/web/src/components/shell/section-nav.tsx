@@ -12,7 +12,7 @@ import { api } from '@/lib/client/api';
 import type { PluginSummary } from '@/lib/shared/types';
 import { cn } from '@/lib/utils';
 
-export type SectionGroup = 'workflows' | 'runs' | 'plugins';
+export type SectionGroup = 'workflows' | 'runs' | 'plugins' | 'projects';
 export interface SectionTab {
   href: string;
   label: string;
@@ -36,6 +36,10 @@ export const SECTION_GROUPS: Record<SectionGroup, SectionTab[]> = {
     { href: '/marketplace', label: 'Marketplace' },
     { href: '/developers', label: 'Build your own' },
   ],
+  projects: [
+    { href: '/projects', label: 'Projects' },
+    { href: '/goals', label: 'Goals' },
+  ],
 };
 
 /** The rail: nine places. A group's item is active on every page of its group. */
@@ -58,6 +62,7 @@ export function groupOf(pathname: string): SectionGroup | undefined {
   if (['/workflows', '/templates', '/runbooks'].some((b) => under(pathname, b))) return 'workflows';
   if (['/runs', '/insights', '/executions'].some((b) => under(pathname, b))) return 'runs';
   if (['/plugins', '/marketplace', '/developers'].some((b) => under(pathname, b))) return 'plugins';
+  if (['/projects', '/goals'].some((b) => under(pathname, b))) return 'projects';
   return undefined;
 }
 
