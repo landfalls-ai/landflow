@@ -11,7 +11,7 @@ import { canEntity, getEntity } from '../brain/entities';
 import { database } from '../db';
 import type { SqlValue } from '../db';
 import { isInstanceAdmin, visibleProjectIds, type Actor } from '../projects/access';
-import { membershipsOf } from '../projects/store';
+import { defaultProjectId, membershipsOf } from '../projects/store';
 import { instanceTimezone } from '../settings';
 import { scopeClause } from '../usage/query';
 import { allInitiatives, allServing, listGoals } from './store';
@@ -57,12 +57,12 @@ interface Counts {
 /**
  * The progress of each goal in `goalIds` over `window` days back from `now` (or from `options.since`, the nightly sync's own
  * start), for `actor`. Each goal counts itself and the sub-goals the actor sees; projects, spend and work events are read
- * only where the actor may see them. An unknown goal answers an empty progress.
+ * only where the actor may see them. A goal the actor cannot see (or an unknown one) answers an empty progress.
  */
-export function progressFor(actor: Actor, goalIds: string[], window: GoalProgress['window'], now = Date.now(), options: { since?: number } = {}): GoalProgress[] {
+export function progressFor(actor: Actor, goalIds: string[], window: GoalProgress['window'], now = Date.now(), options: { since?: number; until?: number } = {}): GoalProgress[] {
   if (!goalIds.length) return [];
   const from = new Date(options.since ?? now - window * DAY_MS).toISOString();
-  const to = new Date(now).toISOString();
+  const to = new Date(Math.min(now, options.until ?? now)).toISOString();
   const projects = visibleProjectIds(actor);
   const admin = isInstanceAdmin(actor);
   const all = listGoals();
@@ -74,7 +74,7 @@ export function progressFor(actor: Actor, goalIds: string[], window: GoalProgres
   const serving = allServing();
   const initiatives = allInitiatives();
 
-  const members = new Map<string, string[]>(goalIds.map((id) => [id, subtreeOf(id, kids, allowed)]));
+  const members = new Map<string, string[]>(goalIds.filter((id) => allowed.has(id)).map((id) => [id, subtreeOf(id, kids, allowed)]));
   const memberRoots = new Map<string, string[]>();
   const projectRoots = new Map<string, string[]>();
   const initiativeRoots = new Map<string, string[]>();
@@ -91,7 +91,7 @@ export function progressFor(actor: Actor, goalIds: string[], window: GoalProgres
     if (!list.includes(root)) list.push(root);
     map.set(key, list);
   };
-  for (const root of goalIds)
+  for (const root of members.keys())
     for (const id of members.get(root) ?? []) {
       push(memberRoots, id, root);
       const goal: Goal | undefined = byId.get(id);
@@ -115,16 +115,20 @@ export function progressFor(actor: Actor, goalIds: string[], window: GoalProgres
   // Runs: one `executions` row each, finished ones only, of workflows homed in a serving project.
   const projectIds = [...projectRoots.keys()];
   if (projectIds.length) {
-    const rows = db().all<{ project_id: string; status: string; n: number; last: string }>(
+    // A workflow with no `project_resources` row is homed in the default project (the owner's personal one).
+    const fallback = defaultProjectId();
+    const unhomed = fallback !== undefined && projectIds.includes(fallback);
+    const rows = db().all<{ project_id: string | null; status: string; n: number; last: string }>(
       `SELECT pr.project_id AS project_id, e.status AS status, COUNT(*) AS n, MAX(COALESCE(e.finished_at, e.started_at)) AS last
-       FROM executions e JOIN project_resources pr ON pr.kind = 'workflow' AND pr.resource_id = e.workflow_id
-       WHERE e.status IN ('success', 'error') AND COALESCE(e.finished_at, e.started_at) >= ? AND COALESCE(e.finished_at, e.started_at) <= ? AND pr.project_id IN (${marks(projectIds.length)})
+       FROM executions e LEFT JOIN project_resources pr ON pr.kind = 'workflow' AND pr.resource_id = e.workflow_id
+       WHERE e.status IN ('success', 'error') AND e.evaluation_run_id IS NULL AND COALESCE(e.finished_at, e.started_at) >= ? AND COALESCE(e.finished_at, e.started_at) <= ?
+         AND (pr.project_id IN (${marks(projectIds.length)})${unhomed ? ' OR pr.project_id IS NULL' : ''})
        GROUP BY pr.project_id, e.status`,
       from,
       to,
       ...projectIds,
     );
-    for (const row of rows) bump(projectRoots.get(row.project_id), row.status === 'success' ? { ok: Number(row.n) } : { failed: Number(row.n) }, row.last);
+    for (const row of rows) bump(projectRoots.get(row.project_id ?? fallback ?? ''), row.status === 'success' ? { ok: Number(row.n) } : { failed: Number(row.n) }, row.last);
   }
 
   // Spend attributed to the goals (or their sub-goals), from projects the actor may see.
@@ -229,12 +233,13 @@ function startOfDay(day: string): number {
 export function goalsMovedFor(actor: Actor, day: string, now = Date.now()): GoalMoved[] {
   const [year, month, date] = day.split('-').map(Number);
   const before = new Date(Date.UTC(year, month - 1, date - 1)).toISOString().slice(0, 10);
+  const next = new Date(Date.UTC(year, month - 1, date + 1)).toISOString().slice(0, 10);
   const projectIds = new Set([personalProjectId(actor.id), ...membershipsOf(actor.id).map((m) => m.projectId)]);
   const serving = allServing();
   const visible = visibleGoals(actor).filter((goal) => goal.status !== 'cancelled' && (goal.projectId ? projectIds.has(goal.projectId) : (serving.get(goal.id) ?? []).some((id) => projectIds.has(id))));
   if (!visible.length) return [];
   const titles = new Map(visible.map((goal) => [goal.id, goal.title]));
-  const found = progressFor(actor, visible.map((goal) => goal.id), 1, now, { since: startOfDay(before) }).filter((p) => p.moved);
+  const found = progressFor(actor, visible.map((goal) => goal.id), 1, now, { since: startOfDay(before), until: startOfDay(next) - 1 }).filter((p) => p.moved);
   return found
     .sort((a, b) => b.runs.ok + b.runs.failed + b.updates - (a.runs.ok + a.runs.failed + a.updates) || (titles.get(a.goalId) ?? '').localeCompare(titles.get(b.goalId) ?? ''))
     .slice(0, NIGHTLY_GOALS)

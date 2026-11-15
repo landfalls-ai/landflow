@@ -48,8 +48,9 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 - **One company per instance** ([projects-and-goals.md](projects-and-goals.md#the-mission)): the mission and company name are
   one pair in Settings → Company. Two companies need two instances.
-- **No goal progress yet**: a goal has a status, an owner and a target date, but nothing measures how far along it is (a
-  later wave of the Paperclip program).
+- **Goal progress counts at most 5000 work events** ([projects-and-goals.md](projects-and-goals.md#progress)): the newest
+  5000 visible `work.*` events of the window that link by goal, project or (once an initiative is linked) any `initiative`
+  attribute; past that, `updates` undercounts with no sign. Runs and spend are not capped.
 - **Goal lists stop at 500**: `GET /api/goals` keeps the first 500 goals the caller sees (oldest first) after filtering,
   with no paging and no sign it was cut; children of a goal that was cut show as roots. Nothing caps how many goals exist.
 - **Removed people stay named by id**: a user removed from a project (or deleted) stays as its `leadId` or

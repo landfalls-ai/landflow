@@ -55,8 +55,8 @@ let initiative = '';
 let hiddenInitiative = '';
 let seq = 0;
 
-function run(workflowId: string, status: string, at: string) {
-  database().upsert('executions', { id: `ex_${++seq}`, workflow_id: workflowId, status, mode: 'manual', started_at: at, finished_at: status === 'running' ? null : at, duration_ms: 10, summary: '{}', data: '{}' });
+function run(workflowId: string, status: string, at: string, evaluationRunId?: string) {
+  database().upsert('executions', { id: `ex_${++seq}`, workflow_id: workflowId, status, mode: 'manual', started_at: at, finished_at: status === 'running' ? null : at, duration_ms: 10, summary: '{}', data: '{}', ...(evaluationRunId && { evaluation_run_id: evaluationRunId }) });
 }
 function spend(goalId: string | null, projectId: string | null, cost: number, at: string) {
   database().upsert('ai_usage', { id: `ai_${++seq}`, at, day: at.slice(0, 10), provider: 'test', model: 'm', operation: 'chat', input_tokens: 1, output_tokens: 1, cost, goal_id: goalId, project_id: projectId });
@@ -137,6 +137,24 @@ describe('goal progress', () => {
     expect(only(admin, quiet).lastActivityAt).toBeUndefined();
   });
 
+  it('does not count evaluation cases as runs', () => {
+    const before = only(admin, sub).runs;
+    run('wf_alpha', 'success', ago(HOUR), 'evr_1');
+    run('wf_alpha', 'error', ago(HOUR), 'evr_1');
+    expect(only(admin, sub).runs).toEqual(before);
+  });
+
+  it('counts runs of a workflow with no home row in the owner’s personal project, for the owner only', () => {
+    const mine = createGoal({ title: 'Personal serve', level: 'company' }).id;
+    setProjectGoals(projects.defaultProjectId() as string, [mine]);
+    run('wf_unhomed', 'success', ago(HOUR));
+    run('wf_unhomed', 'error', ago(2 * HOUR));
+    expect(only(owner, mine).runs).toEqual({ ok: 1, failed: 1 });
+    expect(only(owner, mine).moved).toBe(true);
+    expect(only(ann, mine)).toMatchObject({ runs: { ok: 0, failed: 0 }, moved: false });
+    expect(goalsMovedFor(actorOf(owner), dayOf(now), now).map((g) => g.goalId)).toContain(mine);
+  });
+
   it('sums spend per goal and its sub-goals, and gives a person only spend of projects they see', () => {
     expect(only(admin, sub).costUsd).toBeCloseTo(1.25);
     expect(only(admin, company).costUsd).toBeCloseTo(1.75);
@@ -186,7 +204,8 @@ describe('goal progress', () => {
     // Ann reads the alpha initiative only: the two Alpha rows count (plus her earlier team row), the Beta ones do not.
     expect(only(ann, quiet).updates).toBe(3);
     expect(only(dan, quiet).updates).toBe(0);
-    expect(only(cat, quiet).updates).toBe(2);
+    // Cat cannot see the goal, so it answers an empty progress whatever the events.
+    expect(only(cat, quiet)).toMatchObject({ updates: 0, moved: false });
   });
 
   it('answers nothing for no goals and ignores a window it is not asked about', () => {
@@ -273,6 +292,22 @@ describe('goals that moved in the nightly sync', () => {
     expect(prompt).toMatch(/<work>\n- goal moved: A \(4 runs ok\)\n<\/work>/);
     const written = await writeBriefingText({ own: [], related: [], finished: [], goalsMoved: [{ goalId: 'a', title: 'A', because: '4 runs ok' }] }, undefined);
     expect(written.text).toContain('Goals that moved');
+  });
+
+  it('reads from the day before `day` up to the end of `day`, no further', () => {
+    const edge = createGoal({ title: 'Edge goal', level: 'project', projectId: gamma }).id;
+    const target = '2020-03-10';
+    const at = (iso: string) => iso;
+    event(ann.id, 'org', { goal: edge }, at('2020-03-07T12:00:00.000Z')); // two days before: left out
+    event(ann.id, 'org', { goal: edge }, at('2020-03-09T06:00:00.000Z')); // early the day before: kept
+    event(ann.id, 'org', { goal: edge }, at('2020-03-10T12:00:00.000Z')); // on the day: kept
+    event(ann.id, 'org', { goal: edge }, at('2020-03-13T12:00:00.000Z')); // after the day: left out
+    const moved = goalsMovedFor(actorOf(ann), target, Date.parse('2020-03-20T00:00:00.000Z'));
+    expect(moved.find((g) => g.goalId === edge)?.because).toBe('2 updates');
+  });
+
+  it('answers an empty progress for a root the person cannot see', () => {
+    expect(progressFor(actorOf(cat), [quiet], 7, now)[0]).toMatchObject({ goalId: quiet, updates: 0, moved: false });
   });
 
   it('reads old stored rows without goalsMoved as before', () => {

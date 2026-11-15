@@ -1158,8 +1158,8 @@ function paths(): Record<string, Record<string, Json>> {
     query: [
       { name: 'projectId', description: 'Only the goals this project serves', schema: { type: 'string' } },
       { name: 'status', description: 'Only goals in this status', schema: { type: 'string', enum: ['planned', 'active', 'achieved', 'cancelled'] } },
-      { name: 'progress', description: 'PC17: `1` adds `progress`, one entry per goal in the tree', schema: { type: 'string', enum: ['1'] } },
-      { name: 'window', description: 'PC17: with `progress=1`, the days counted back (default 7)', schema: { type: 'string', enum: ['7', '30'] } },
+      { name: 'progress', description: '`1` adds `progress`, one entry per goal in the tree', schema: { type: 'string', enum: ['1'] } },
+      { name: 'window', description: 'with `progress=1`, the days counted back (default 7)', schema: { type: 'string', enum: ['7', '30'] } },
     ],
     responses: { 200: reply('The goal tree', object({ mission: { type: 'string' }, goals: array({ type: 'object', additionalProperties: true }), canCreateCompanyGoals: { type: 'boolean' }, progress: array({ type: 'object', additionalProperties: true }) }, ['goals', 'canCreateCompanyGoals'])), 400: invalid },
   });
