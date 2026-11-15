@@ -342,7 +342,7 @@ export function Composer() {
           before={<Sparkles className="mb-[9px] size-4 shrink-0 text-viz-7" />}
           after={
             <>
-              {!focused && !draft && !hasItems && <kbd className="mb-[9px] shrink-0 rounded border border-hair px-1 font-mono text-[10.5px] text-t3 max-md:hidden">⌘I</kbd>}
+              {!focused && !draft && !hasItems && <kbd className="mb-[9px] shrink-0 rounded border border-hair px-1 font-mono text-[10.5px] text-t3 max-md:hidden">⌘K</kbd>}
               {canDictate && !live && (
                 <button
                   onMouseDown={(e) => e.preventDefault()}

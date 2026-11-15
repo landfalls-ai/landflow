@@ -466,8 +466,8 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
 
   const hasSnapshot = Boolean(record.workflow);
   const retryable = canRetry(record);
-  const askAboutRecord = (failed: boolean) =>
-    record && askAbout(askDetail({ type: 'run', id: record.executionId, name: record.workflowName, workflowId: record.workflowId }, { failed: failed || record.status === 'error' }));
+  const askAboutRecord = () =>
+    askAbout(askDetail({ type: 'run', id: record.executionId, name: `${record.workflowName} run`, workflowId: record.workflowId }, { failed: record.status === 'error' }));
   const retryMenu = (close: () => void) => (
     <RerunMenu
       retryable={retryable}
@@ -621,7 +621,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
             ) : (
               <>
                 {record.status === 'error' && (
-                  <Button variant="outline" onClick={() => askAboutRecord(true)} title="Open Spotlight about this run">
+                  <Button variant="outline" onClick={() => askAboutRecord()} title="Open Spotlight about this run">
                     <Sparkles className="size-3.5" /> Ask why it failed
                   </Button>
                 )}
@@ -655,7 +655,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                       <MenuItem
                         onClick={() => {
                           close();
-                          askAboutRecord(false);
+                          askAboutRecord();
                         }}
                       >
                         <Sparkles /> {record.status === 'error' ? 'Ask why it failed' : 'Ask Spotlight'}

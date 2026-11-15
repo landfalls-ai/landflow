@@ -43,11 +43,12 @@ const hrefOf = (e: ExecutionSummary) => `/workflows/${e.workflowId}/runs/${e.id}
 
 type MenuView = 'main' | 'retry' | 'rerun' | 'delete';
 
-/** The ⋯ of a run: Open, Debug, the two re-run words (their choices one step in), Copy id, Cancel or Delete. */
 /** Open the chat about a run; a failed run's starters ask why first. */
 function askAboutRun(execution: ExecutionSummary) {
-  askAbout(askDetail({ type: 'run', id: execution.id, name: execution.workflowName, workflowId: execution.workflowId }, { failed: execution.status === 'error' }));
+  askAbout(askDetail({ type: 'run', id: execution.id, name: `${execution.workflowName} run`, workflowId: execution.workflowId }, { failed: execution.status === 'error' }));
 }
+
+/** The ⋯ of a run: Open, Debug, the two re-run words (their choices one step in), Copy id, Cancel or Delete. */
 
 function RowMenu({ execution, onChanged }: { execution: ExecutionSummary; onChanged: () => void }) {
   const router = useRouter();

@@ -110,6 +110,9 @@ export function keyAction(e: { key: string; metaKey: boolean; ctrlKey: boolean; 
   return 'none';
 }
 
+/** Whether a modal dialog is open: the keys leave it alone, so ⌘K does not open the panel behind a dialog. */
+export const modalOpen = (doc: Pick<Document, 'querySelector'>) => Boolean(doc.querySelector('[aria-modal="true"]'));
+
 /** What ⌘K does to the shell panel: open it, focus its box, or (pressed again from the box) close it. */
 export const toggleResult = (open: boolean, inBox: boolean): 'open' | 'focus' | 'close' => (!open ? 'open' : inBox ? 'close' : 'focus');
 

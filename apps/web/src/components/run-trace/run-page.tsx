@@ -42,7 +42,7 @@ function RunPageOf({ executionId }: { executionId: string }) {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => askAbout(askDetail({ type: 'run', id: executionId, name: record.workflowName, workflowId: record.workflowId }, { failed: record.status === 'error' }))}
+                onClick={() => askAbout(askDetail({ type: 'run', id: executionId, name: `${record.workflowName} run`, workflowId: record.workflowId }, { failed: record.status === 'error' }))}
               >
                 <Sparkles className="size-3.5" /> {record.status === 'error' ? 'Ask why it failed' : 'Ask Spotlight'}
               </Button>

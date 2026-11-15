@@ -70,7 +70,7 @@ export function AskWhyButton({ runId, name, workflowId, className }: { runId: st
   return (
     <button
       type="button"
-      onClick={() => askAbout(askDetail({ type: 'run', id: runId, name, ...(workflowId && { workflowId }) }, { failed: true }))}
+      onClick={() => askAbout(askDetail({ type: 'run', id: runId, name: `${name} run`, ...(workflowId && { workflowId }) }, { failed: true }))}
       className={cn('pointer-events-auto relative z-10 inline-flex w-fit items-center gap-1 rounded-full border border-rdbd px-2 py-0.5 text-[11.5px] font-semibold text-rd hover:border-rd max-md:min-h-11 max-md:px-3', className)}
     >
       <Sparkles className="size-3" /> Ask why it failed

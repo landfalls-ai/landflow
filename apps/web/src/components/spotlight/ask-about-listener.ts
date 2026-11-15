@@ -3,8 +3,9 @@
  * gives it the questions to start from. The panel opens in about mode with the chip and the starters.
  */
 import { getSpotlightState, parseAskAbout, setSpotlightState, withAbout, type AskAboutDetail } from './context';
+import { ASK_ABOUT_EVENT } from '@/lib/client/ask-about';
 
-export const ASK_ABOUT_EVENT = 'landflow:ask-about';
+export { ASK_ABOUT_EVENT };
 
 /** Listen on `target`; the handler gets each well-formed detail. Returns the stop function. */
 export function listenAskAbout(target: Pick<EventTarget, 'addEventListener' | 'removeEventListener'>, onAbout: (detail: AskAboutDetail) => void): () => void {

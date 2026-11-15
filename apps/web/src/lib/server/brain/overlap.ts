@@ -31,7 +31,7 @@ export interface OwnedItem extends Overlappable {
 export interface Overlap {
   /** The two user ids, sorted. */
   pair: [string, string];
-  /** What they share, as `becauseOf` words it (`repo` is only a lead when it is the same area too: see `sharedThing`). */
+  /** What they share: an initiative, a customer, a directory of the same repository (`area`) or similar words (see `sharedThing`). */
   thing: { type: 'initiative' | 'customer' | 'area' | 'similar'; name: string };
   /** Each person's items the other may open: `[for the first, for the second]` are theirs, listed by owner. */
   items: Record<string, WorkItem[]>;
@@ -104,7 +104,10 @@ export function rankOverlaps(items: OwnedItem[], teammates: ReadonlyMap<string, 
   return out.sort((x, y) => y.newest.localeCompare(x.newest)).slice(0, MAX_PAIRS);
 }
 
-/** The people each person shares a non-personal project with. */
+/**
+ * The people each person shares a non-personal project with. Kept for when `team` work is let in: `rankOverlaps` keeps
+ * `org` work only today (`mayOpen` already knows the `team` rule), so no detector needs it for now.
+ */
 export function teammatesOf(db: Database): Map<string, Set<string>> {
   const rows = db.all<{ a: string; b: string }>(
     `SELECT DISTINCT m1.user_id AS a, m2.user_id AS b FROM project_members m1 JOIN projects p ON p.id = m1.project_id JOIN project_members m2 ON m1.project_id = m2.project_id WHERE p.type <> 'personal' AND m1.user_id <> m2.user_id`,

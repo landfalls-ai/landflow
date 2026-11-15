@@ -25,6 +25,7 @@ import {
   isEditorRoute,
   isMac,
   keyAction,
+  modalOpen,
   setSpotlightState,
   shellPanelShows,
   showBuilderInstead,
@@ -95,7 +96,7 @@ export function ShellSpotlight() {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || keyAction(e, { brain: false, mac: isMac() }) !== 'toggle') return;
       const { state: s, pathname: path } = stateRef.current;
-      if (isEditorRoute(path)) return;
+      if (isEditorRoute(path) || modalOpen(document)) return;
       e.preventDefault();
       const result = toggleResult(shellPanelShows(path, s), document.activeElement?.id === ASK_INPUT);
       if (result === 'close') return closeSpotlight();

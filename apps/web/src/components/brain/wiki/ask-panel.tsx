@@ -309,8 +309,8 @@ export function useAskConversation() {
     itemsRef.current = items;
     keptRef.current = kept;
   });
-  // Closing the panel mid-answer stops the request, so the server stops the model (and its metering) too; the turn is kept
-  // as stopped, as the Stop button keeps it. The conversation lives in the layout, so changing page with the panel open goes on.
+  // Closing the panel does not stop an answer coming in: the conversation lives in the always-mounted ShellSpotlight, so
+  // the answer finishes in the background and is there when the panel reopens. Only unmounting this view aborts the read.
   useEffect(() => () => reading.current?.abort(), []);
 
   const awaitItems = (force: boolean) => {

@@ -12,6 +12,7 @@ import {
   editorWorkflowId,
   getSpotlightState,
   keyAction,
+  modalOpen,
   modeForRoute,
   parseAskAbout,
   resetSpotlightState,
@@ -141,6 +142,10 @@ describe('keys', () => {
     expect(keyAction(key('k', { metaKey: false, ctrlKey: true }), { brain: false })).toBe('toggle');
     expect(keyAction(key('k', { metaKey: false }), { brain: false })).toBe('none');
     expect(keyAction(key('k', { shiftKey: true }), { brain: false })).toBe('none');
+  });
+  it('leaves the keys alone while a modal dialog is open', () => {
+    expect(modalOpen({ querySelector: (q: string) => (q === '[aria-modal="true"]' ? {} : null) } as unknown as Document)).toBe(true);
+    expect(modalOpen({ querySelector: () => null } as unknown as Document)).toBe(false);
   });
   it('makes ⌘P QuickOpen on the brain page only', () => {
     expect(keyAction(key('p'), { brain: true })).toBe('quick');

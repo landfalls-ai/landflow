@@ -152,8 +152,8 @@ function RelatedList({ related, origin }: { related: RelatedColleague[]; origin?
   return (
     <Group title="Related" count={related.length}>
       <ul className="space-y-2">
-        {shown.map((entry) => (
-          <li key={`${entry.person.userId ?? entry.person.name}`} className="space-y-0.5 text-[13px]">
+        {shown.map((entry, i) => (
+          <li key={`${entry.person.userId ?? entry.person.name}:${entry.because.type}:${entry.because.name}:${i}`} className="space-y-0.5 text-[13px]">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <span className="font-medium text-t1">{entry.person.name}</span>
               <Chip>
@@ -200,8 +200,8 @@ export function BriefingView({ briefing, delivery, onDelivery, canSetup, setting
         <p className="text-[13px] text-t3">{EMPTY_TEXT}</p>
       ) : (
         <>
-          {briefing.source === 'flow' && briefing.summary ? (
-            <p className="whitespace-pre-line text-[13px] leading-relaxed text-t1">{briefing.summary}</p>
+          {briefing.source === 'flow' ? (
+            briefing.summary ? <p className="whitespace-pre-line text-[13px] leading-relaxed text-t1">{briefing.summary}</p> : null
           ) : (
             <p className="text-[12px] text-t3">{LIVE_TEXT}</p>
           )}

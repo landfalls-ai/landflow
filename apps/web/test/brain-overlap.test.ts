@@ -1,5 +1,5 @@
 /**
- * The work-overlap detector (docs/second-brain.md#work-overlap): two people whose team or org work of the last three days
+ * The work-overlap detector (docs/second-brain.md#work-overlap): two people whose org work of the last three days
  * is about the same thing get one introduction, never from private work, never twice in 14 days, and the card holds only
  * the titles each may open.
  */
@@ -22,6 +22,7 @@ const { recordWork } = await import('@/lib/server/brain/work');
 const { createTeamProject, setMember } = await import('@/lib/server/projects/store');
 const { DETECTOR_RUNS, detectContext } = await import('@/lib/server/brain/detectors');
 const { upsertProposal, dismissProposal, listProposals } = await import('@/lib/server/brain/proposals');
+const { canProposal } = await import('@/lib/server/brain/scope');
 const { rankOverlaps, mayOpen } = await import('@/lib/server/brain/overlap');
 type OwnedItem = import('@/lib/server/brain/overlap').OwnedItem;
 
@@ -52,7 +53,7 @@ beforeEach(() => {
 });
 
 describe('the detector', () => {
-  it('two people on the same area with team work get one suggestion for both', () => {
+  it('two people on the same area with org work get one suggestion for both', () => {
     recordWork(actorOf(alice), [session('a1', { visibility: 'org', title: 'Fix invoice rounding' })]);
     recordWork(actorOf(bob), [session('b1', { visibility: 'org', title: 'Billing page totals' })]);
     const found = run();
@@ -84,6 +85,20 @@ describe('the detector', () => {
     expect(finding.proposal.audience?.map((m) => m.userId).sort()).toEqual([alice.id, carol.id].sort());
     expect(finding.proposal.evidence.map((e) => e.value)).toEqual(expect.arrayContaining(['Carol org item', 'Org item']));
     expect(JSON.stringify(finding.proposal)).not.toMatch(/Private item|Team item/);
+  });
+
+  it('an owner outside the pair can open the card, and it holds only org titles', () => {
+    recordWork(actorOf(alice), [session('a1', { visibility: 'org', title: 'Alice org item' }), session('a2', { title: 'Alice private item' })]);
+    recordWork(actorOf(bob), [session('b1', { visibility: 'org', title: 'Bob org item' }), session('b2', { visibility: 'team', title: 'Bob team item' }), session('b3', { title: 'Bob private item' })]);
+    const [found] = run();
+    const saved = upsertProposal(found.proposal)!;
+    const opened = listProposals({ detector: 'work-overlap', viewer: { id: owner.id, email: owner.email } });
+    expect(opened.map((p) => p.id)).toContain(saved.id);
+    expect(canProposal(actorOf(owner), saved, 'read')).toBe(true);
+    const card = JSON.stringify(opened.find((p) => p.id === saved.id));
+    expect(card).toMatch(/Alice org item/);
+    expect(card).toMatch(/Bob org item/);
+    expect(card).not.toMatch(/private item|Bob team item/);
   });
 
   it('introduced in the last 14 days: none, even after it is dismissed as not relevant; muted: none later', () => {
@@ -134,7 +149,7 @@ describe('the detector', () => {
 });
 
 describe('the pure ranking', () => {
-  const item = (ownerId: string, visibility: 'org' | 'org' | 'private', over: Partial<OwnedItem['item']> & { initiative?: string; customer?: string } = {}): OwnedItem => ({
+  const item = (ownerId: string, visibility: 'org' | 'team' | 'private', over: Partial<OwnedItem['item']> & { initiative?: string; customer?: string } = {}): OwnedItem => ({
     ownerId,
     ...(over.initiative && { initiative: over.initiative }),
     ...(over.customer && { customer: over.customer }),
