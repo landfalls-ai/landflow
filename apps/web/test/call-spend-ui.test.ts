@@ -2,8 +2,8 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { cacheLine, compositionLegend, matchSpanToCall, noSplitReason, previousLine } from '../src/lib/client/call-spend';
-import { CallSpendView } from '../src/components/run-trace/call-spend';
+import { cacheLine, callSpendState, compositionLegend, matchSpanToCall, noSplitReason, previousLine } from '../src/lib/client/call-spend';
+import { CallSpendView, shadesFor } from '../src/components/run-trace/call-spend';
 import type { AiCallView, SpendCall } from '../src/lib/shared/run-spend';
 
 const call = (over: Partial<SpendCall> = {}): SpendCall => ({
@@ -73,11 +73,23 @@ describe('the words', () => {
     expect(previousLine(undefined)).toBeUndefined();
   });
   it('why there is no split', () => {
-    const now = Date.parse('2026-11-16T12:00:00Z');
-    expect(noSplitReason(call(), now)).toBe('The call was built outside Landflow.');
-    expect(noSplitReason(call({ source: 'litellm' }), now)).toContain('gateway sent no split');
-    expect(noSplitReason(call({ at: '2026-09-01T00:00:00Z' }), now)).toContain('older than 30 days');
-    expect(noSplitReason(undefined, now)).toContain("isn't in the run's spend record");
+    expect(noSplitReason(call())).toContain('No split was kept');
+    expect(noSplitReason(call({ source: 'litellm' }))).toContain('gateway sent no split');
+    expect(noSplitReason(undefined)).toContain("isn't in the run's spend record");
+    expect(noSplitReason(undefined, true)).toContain('500 newest');
+  });
+  it('a failed request is an error, not a fact about the call', () => {
+    const base = { callsLoading: false, viewLoading: false, hasView: false };
+    expect(callSpendState({ ...base, callsError: 'boom' })).toBe('error');
+    expect(callSpendState({ ...base, call: {}, viewError: '404' })).toBe('error');
+    expect(callSpendState({ ...base })).toBe('nosplit');
+    expect(callSpendState({ ...base, call: {} })).toBe('nosplit');
+    expect(callSpendState({ ...base, call: {}, hasView: true })).toBe('view');
+    expect(callSpendState({ ...base, callsLoading: true })).toBe('loading');
+  });
+  it('matches by node when both have one', () => {
+    expect(matchSpanToCall({ ...span, nodeId: 'n1' }, [call({ nodeId: 'n2' })])).toBeUndefined();
+    expect(matchSpanToCall({ ...span, nodeId: 'n1' }, [call({ nodeId: 'n1' })])?.usageId).toBe('u1');
   });
 });
 
@@ -86,8 +98,22 @@ describe('the rendered view', () => {
     const html = renderToStaticMarkup(createElement(CallSpendView, { view: view() }));
     expect(html).toContain('8,000 read from the cache');
     expect(html).toContain('Same prefix as the previous call');
-    expect(html).toContain('cached prefix');
-    expect(html).not.toMatch(/You are|system prompt/);
+    expect(html).toContain('cache prefix');
+    expect(html).not.toMatch(/toolNames|hash/i);
+    const legend = compositionLegend(view())!;
+    expect(legend.items.reduce((sum, i) => sum + i.share, 0)).toBeCloseTo(1);
+  });
+  it('shades the prefix in the accent and the rest in neutral', () => {
+    const items = compositionLegend(view())!.items;
+    const shades = shadesFor(items);
+    items.forEach((item, i) => expect(shades[i].startsWith('bg-ac')).toBe(item.cachedPrefix));
+    expect(shades[2]).toMatch(/^bg-t3/);
+    const none = compositionLegend(view({ call: call({ cacheReadTokens: 0, cacheWriteTokens: 0 }) }))!;
+    expect(shadesFor(none.items).some((x) => x.startsWith('bg-ac'))).toBe(false);
+  });
+  it('shows the Memory and Conversation rows in neutral shades', () => {
+    const html = renderToStaticMarkup(createElement(CallSpendView, { view: view() }));
+    expect(html).toContain('bg-t3');
   });
   it('says no split with the reason', () => {
     const html = renderToStaticMarkup(createElement(CallSpendView, { view: { call: call({ source: 'litellm' }) } }));

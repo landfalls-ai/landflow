@@ -17,6 +17,8 @@ export interface SpanForMatch {
   caller?: { id: string };
   actor?: { id: string };
   usage?: { model?: string };
+  nodeId?: string;
+  status?: string;
 }
 
 const BEFORE_MS = 1000;
@@ -43,6 +45,7 @@ export function matchSpanToCall(span: SpanForMatch, calls: SpendCall[]): SpendCa
   for (const call of calls) {
     if (call.model !== model && call.model !== span.name) continue;
     if (agent && call.agentId && call.agentId !== agent) continue;
+    if (span.nodeId && call.nodeId && call.nodeId !== span.nodeId) continue;
     const at = Date.parse(call.at);
     if (Number.isNaN(at) || at < start - BEFORE_MS || at > end + AFTER_MS) continue;
     const gap = Math.abs(at - end);
@@ -129,13 +132,23 @@ export function previousLine(previous: AiCallView['previous']): string | undefin
   return words.length ? [...new Set(words)].join(' · ') : 'The prefix changed since the previous call';
 }
 
-const DAY = 86_400_000;
+/**
+ * Why a call has no split. The retention days are a server setting the client does not know, so the words stay neutral
+ * about them. `truncated`: the run's list holds only its newest 500 calls, so a missing call may just be older.
+ */
+export function noSplitReason(call: Pick<SpendCall, 'source'> | undefined, truncated = false): string {
+  if (!call) return truncated ? "This step may be older than the 500 newest calls the run's spend record holds." : "This step isn't in the run's spend record yet.";
+  if (call.source === 'litellm') return 'The call was built outside Landflow and the gateway sent no split.';
+  return 'No split was kept for it: a split is made for chat calls Landflow builds, and kept for a limited time.';
+}
 
-/** Why a call has no split: built outside Landflow, or older than the 30 days splits are kept. */
-export function noSplitReason(call: Pick<SpendCall, 'at' | 'source'> | undefined, now = Date.now()): string {
-  if (!call) return "This step isn't in the run's spend record yet.";
-  if (now - Date.parse(call.at) > 30 * DAY) return 'The call is older than 30 days, and splits are kept for 30 days.';
-  return call.source === 'litellm' ? 'The call was built outside Landflow and the gateway sent no split.' : 'The call was built outside Landflow.';
+export type CallSpendState = 'loading' | 'error' | 'nosplit' | 'view';
+
+/** Which branch the sheet draws: a failed request is an error, never a statement about the call. */
+export function callSpendState(s: { callsLoading: boolean; callsError?: string; call?: unknown; viewLoading: boolean; viewError?: string; hasView: boolean }): CallSpendState {
+  if (s.callsLoading || (s.call && s.viewLoading)) return 'loading';
+  if (s.callsError || (s.call && s.viewError)) return 'error';
+  return s.call && s.hasView ? 'view' : 'nosplit';
 }
 
 interface Loaded<T> {
@@ -160,18 +173,18 @@ export function useAiCall(usageId: string | undefined): Loaded<AiCallView> {
   return usageId && state.id === usageId ? state : { loading: Boolean(usageId) };
 }
 
-/** The run's calls (`GET /api/executions/:id/spend`), for matching a span to its call. */
-export function useRunCalls(executionId: string | undefined): Loaded<SpendCall[]> {
-  const [state, setState] = useState<Loaded<SpendCall[]> & { id?: string }>({ loading: Boolean(executionId) });
+/** The run's calls (`GET /api/executions/:id/spend`), for matching a span to its call; `refresh` reads them again. */
+export function useRunCalls(executionId: string | undefined, refresh?: string): Loaded<RunSpend> {
+  const [state, setState] = useState<Loaded<RunSpend> & { id?: string }>({ loading: Boolean(executionId) });
   useEffect(() => {
     if (!executionId) return;
     let alive = true;
     api<RunSpend>(`/api/executions/${encodeURIComponent(executionId)}/spend`, { background: true })
-      .then((spend) => alive && setState({ id: executionId, data: spend.calls, loading: false }))
+      .then((spend) => alive && setState({ id: executionId, data: spend, loading: false }))
       .catch((e: Error) => alive && setState({ id: executionId, loading: false, error: e.message }));
     return () => {
       alive = false;
     };
-  }, [executionId]);
+  }, [executionId, refresh]);
   return executionId && state.id === executionId ? state : { loading: Boolean(executionId) };
 }
