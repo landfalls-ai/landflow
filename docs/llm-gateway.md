@@ -10,8 +10,6 @@ Only LiteLLM's open-source build is used: virtual keys, teams, customers (end us
 Customer Portal and organizations are not used by default (the portal is not in a release yet; organizations need
 Enterprise).
 
-<!-- Each section below is written by the package named in its comment; the integrator merges them. -->
-
 ## Run it
 
 The `llm-gateway` profile of `landflow-infra` runs LiteLLM next to the infra Postgres. It is opt-in:
@@ -322,8 +320,6 @@ The page reads `GET /api/insights/ai` and `GET /api/llm-gateway/status` ([refere
 refreshes every minute while the tab is visible.
 
 ## Not built
-
-<!-- Each package adds its own bullets here. -->
 
 - **High availability.** One replica and no Redis; a restart interrupts calls in flight.
 - **TLS.** None on the loopback port; do not expose it beyond the machine.
