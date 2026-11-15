@@ -272,6 +272,9 @@ describe('the gateway status', () => {
     const status = await gatewayStatus(owner);
     expect(status.health).toBe('down');
     expect(status.error).toBeTruthy();
+    const asMember = await gatewayStatus(member);
+    expect(asMember.error).toBe('The gateway is not answering');
+    expect(asMember.error).not.toBe(status.error);
     fake.setDown(false);
     resetGatewayStatus();
     expect((await gatewayStatus(owner)).health).toBe('ok');
@@ -293,11 +296,11 @@ describe('the gateway status', () => {
 describe('the admin UI link', () => {
   const base = { baseUrl: 'http://evil.example', uiUrl: 'http://evil.example/ui' };
   it('never comes from a credential URL', () => {
-    expect(helpersStatus.adminUiUrl({ ...base, source: 'credential' }, undefined, undefined)).toBeUndefined();
+    expect(helpersStatus.adminUiUrl({ ...base, source: 'credential' }, undefined, '')).toBeUndefined();
     expect(helpersStatus.adminUiUrl({ ...base, source: 'credential' }, 'http://ui.test', undefined)).toBe('http://ui.test');
     expect(helpersStatus.adminUiUrl({ ...base, source: 'credential' }, undefined, 'http://env.test')).toBe('http://env.test');
-    expect(helpersStatus.adminUiUrl({ ...base, source: 'credential', adminBaseUrl: 'http://real.test' }, undefined, undefined)).toBe('http://real.test/ui');
-    expect(helpersStatus.adminUiUrl({ ...base, source: 'environment' }, undefined, undefined)).toBe('http://evil.example/ui');
+    expect(helpersStatus.adminUiUrl({ ...base, source: 'credential', adminBaseUrl: 'http://real.test' }, undefined, '')).toBe('http://real.test/ui');
+    expect(helpersStatus.adminUiUrl({ ...base, source: 'environment' }, undefined, '')).toBe('http://evil.example/ui');
   });
 });
 

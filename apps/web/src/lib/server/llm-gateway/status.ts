@@ -9,6 +9,7 @@ import { singleton } from '../singleton';
 import type { GatewayStatus } from '../../shared/llm-gateway';
 import { callerClient, gatewayConnection, gatewaySettings, ingestStatus, lastSyncReport, type GatewayConnection } from './settings';
 import { hashKey } from './client';
+import { envString } from '../config';
 
 const CACHE_MS = 30_000;
 
@@ -34,7 +35,7 @@ const errorText = (error: unknown): string => (error instanceof Error ? error.me
  * Where "Open LiteLLM" goes, from server configuration only. A credential's Base URL is editable by project editors, so
  * it is never the source of an admin's link: Settings, then the variable, then the admin address, then the environment's own.
  */
-export function adminUiUrl(connection: GatewayConnection, settingsUiUrl: string | undefined, envUiUrl = process.env.LANDFLOW_LLM_GATEWAY_UI_URL): string | undefined {
+export function adminUiUrl(connection: GatewayConnection, settingsUiUrl: string | undefined, envUiUrl: string | undefined = envString('LANDFLOW_LLM_GATEWAY_UI_URL')): string | undefined {
   const set = settingsUiUrl?.trim() || envUiUrl?.trim();
   if (set) return set;
   if (connection.adminBaseUrl) return `${connection.adminBaseUrl}/ui`;

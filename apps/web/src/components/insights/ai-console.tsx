@@ -160,7 +160,7 @@ export function AiConsole() {
         <Card className="overflow-hidden p-0">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-hair px-4 py-2.5">
             <SectionLabel>Spend by</SectionLabel>
-            <Segmented label="Spend by" options={AI_GROUPS} value={group} onChange={setGroup} stretch className="ml-auto max-md:ml-0 max-md:w-full" />
+            <Segmented label="Spend by" options={AI_GROUPS} value={group} onChange={setGroup} className="ml-auto max-md:ml-0 max-md:w-full max-md:[&>button]:flex-1 max-md:[&>button]:shrink max-md:[&>button]:px-2" />
           </div>
           {shown ? <SpendBy rows={shown.groups[group]} label={label} /> : <div className="m-4 h-24 rounded-xl bg-acdim animate-pulse-soft" />}
         </Card>

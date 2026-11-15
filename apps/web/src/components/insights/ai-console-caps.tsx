@@ -80,7 +80,6 @@ export function CapBar({ cap }: { cap: Pick<AiConsoleCap, 'ratio' | 'subject'> }
   );
 }
 
-/** One cap: a card on a phone and a row of the same card on desktop (the bar fills the width either way). */
 /** The path only: the current origin may differ from LANDFLOW_PUBLIC_URL (dev ports, a proxy). */
 const pathOf = (link: string): string => {
   try {
@@ -91,6 +90,7 @@ const pathOf = (link: string): string => {
   }
 };
 
+/** One cap: a card on a phone and a row of the same card on desktop (the bar fills the width either way). */
 export function CapItem({ cap, admin, requestStatus, onAsk }: { cap: AiConsoleCap; admin: boolean; requestStatus?: string; onAsk: (cap: AiConsoleCap) => void }) {
   const tone = capTone(cap.ratio);
   return (
@@ -196,7 +196,7 @@ function when(iso: string): string {
 function RequestItem({ request, viewerId, admin, onCancel }: { request: CapRaiseRequest; viewerId?: string; admin: boolean; onCancel: (id: string) => void }) {
   const status = REQUEST_STATUS[request.status];
   const mine = request.requestedBy === viewerId;
-  const who = mine ? 'You' : request.requestedByName;
+  const who = mine ? 'you' : request.requestedByName;
   return (
     <li className="flex flex-col gap-1 py-3 first:pt-0 last:pb-0">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">

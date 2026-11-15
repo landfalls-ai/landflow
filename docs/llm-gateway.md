@@ -63,7 +63,7 @@ for the period (24 hours, 7 days, 30 days) and shows, from top to bottom:
 - **Requests**: cap-raise requests of the last 30 days (a member's own; every one for admins), with the decision and
   "In LiteLLM: updated, skipped or failed". A member can withdraw an open one.
 - **Gateway**: a health dot, the models the gateway serves, and for admins the spend import's and the budgets sync's last
-  runs, **Open LiteLLM** (its admin UI, in a new tab) and **Settings**. Without a gateway the card says so.
+  runs, **Open LiteLLM** (its admin UI, in a new tab) and **Settings**. Without a gateway the card says so. Open LiteLLM comes only from Settings' UI address, `LANDFLOW_LLM_GATEWAY_UI_URL` or the server's `LANDFLOW_LLM_GATEWAY_URL`, never from a credential's Base URL; without one the card says to set it. Only admins see the gateway's error text; members get "The gateway is not answering".
 
 **Who sees what.** Owners and admins see everything. Anyone else sees the calls of the workflows and agents they can open
 and their own calls; in the person list, other people's calls add up to one row, "Teammates", never by name. Calls they
