@@ -621,7 +621,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
             ) : (
               <>
                 {record.status === 'error' && (
-                  <Button variant="outline" onClick={() => askAboutRecord()} title="Open Spotlight about this run">
+                  <Button variant="outline" onClick={() => askAboutRecord()} title="Open Spotlight about this run" className="max-md:h-11">
                     <Sparkles className="size-3.5" /> Ask why it failed
                   </Button>
                 )}
@@ -633,6 +633,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                       loading={busy === 'retry' || busy === 'rerun'}
                       aria-expanded={isOpen}
                       title="Retry from the failed step, re-run with the same input, or debug in the editor"
+                      className="max-md:h-11"
                     >
                       <RotateCcw className="size-3.5" /> Re-run
                       <ChevronDown className={cn('size-3.5 transition-transform duration-200', isOpen && 'rotate-180')} />
@@ -652,14 +653,17 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                 >
                   {(close) => (
                     <>
-                      <MenuItem
-                        onClick={() => {
-                          close();
-                          askAboutRecord();
-                        }}
-                      >
-                        <Sparkles /> {record.status === 'error' ? 'Ask why it failed' : 'Ask Spotlight'}
-                      </MenuItem>
+                      {/* A failed run has "Ask why it failed" beside Re-run already. */}
+                      {record.status !== 'error' && (
+                        <MenuItem
+                          onClick={() => {
+                            close();
+                            askAboutRecord();
+                          }}
+                        >
+                          <Sparkles /> Ask Spotlight
+                        </MenuItem>
+                      )}
                       <MenuItem
                         onClick={() => {
                           close();

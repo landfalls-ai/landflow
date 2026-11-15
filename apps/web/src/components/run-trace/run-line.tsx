@@ -79,7 +79,7 @@ export function AskWhyButton({ runId, name, workflowId, className }: { runId: st
 }
 
 /** A single-flow run in one line: status dot, name, how long it took and when. The whole row opens the run. */
-export function RunOneLine({ line, name, href, startedAt, runId, className }: { line: Line; name: string; href: string; startedAt?: string; runId?: string; className?: string }) {
+export function RunOneLine({ line, name, href, startedAt, runId, workflowId, className }: { line: Line; name: string; href: string; startedAt?: string; runId?: string; workflowId?: string; className?: string }) {
   const live = line.out.tone === 'live';
   const ask = runId && line.out.tone === 'bad';
   const row = (
@@ -94,7 +94,7 @@ export function RunOneLine({ line, name, href, startedAt, runId, className }: { 
   return ask ? (
     <div className="flex items-center gap-2 max-md:flex-wrap">
       <div className="min-w-0 flex-1">{row}</div>
-      <AskWhyButton runId={runId} name={name} />
+      <AskWhyButton runId={runId} name={name} {...(workflowId && { workflowId })} />
     </div>
   ) : (
     row
@@ -102,8 +102,8 @@ export function RunOneLine({ line, name, href, startedAt, runId, className }: { 
 }
 
 /** One run as in → who → out, with the time it took and when. */
-export function RunLineRow({ line, name, href, onOpen, startedAt, runId, className }: { line: Line; name?: string; href?: string; onOpen?: () => void; startedAt?: string; runId?: string; className?: string }) {
-  if (name && href && isSingleFlow(line)) return <RunOneLine line={line} name={name} href={href} {...(startedAt && { startedAt })} {...(runId && { runId })} {...(className && { className })} />;
+export function RunLineRow({ line, name, href, onOpen, startedAt, runId, workflowId, className }: { line: Line; name?: string; href?: string; onOpen?: () => void; startedAt?: string; runId?: string; workflowId?: string; className?: string }) {
+  if (name && href && isSingleFlow(line)) return <RunOneLine line={line} name={name} href={href} {...(startedAt && { startedAt })} {...(runId && { runId })} {...(workflowId && { workflowId })} {...(className && { className })} />;
   const InIcon = IN_ICON[line.in.kind] ?? Workflow;
   const tone = OUT_TONE[line.out.tone];
   const url = safeUrl(line.out.url);
@@ -143,7 +143,7 @@ export function RunLineRow({ line, name, href, onOpen, startedAt, runId, classNa
       <p className="pointer-events-none relative mt-2 truncate text-[11.5px] text-t3">
         {[line.ms ? fmtMs(line.ms) : '', tokensText(line.tokens), startedAt ? timeAgo(startedAt) : ''].filter(Boolean).join(' · ')}
       </p>
-      {runId && line.out.tone === 'bad' && <AskWhyButton runId={runId} name={name ?? line.in.label} className="mt-2" />}
+      {runId && line.out.tone === 'bad' && <AskWhyButton runId={runId} name={name ?? line.in.label} {...(workflowId && { workflowId })} className="mt-2" />}
     </div>
   );
 }
@@ -174,8 +174,17 @@ export function useRunLines(ids: string[]): Record<string, Line> | undefined {
   return lines;
 }
 
+/** A run to draw as a line; `workflowId` names its workflow, as an ask-about's run ref does (lib/shared/mentions.ts). */
+export interface RunLineItem {
+  id: string;
+  href: string;
+  name: string;
+  startedAt?: string;
+  workflowId?: string;
+}
+
 /** Runs as lines, each from `GET /api/runs/lines`; a run without a journal yet shows its name until its line comes. */
-export function RunLines({ runs, empty }: { runs: Array<{ id: string; href: string; name: string; startedAt?: string }>; empty?: React.ReactNode }) {
+export function RunLines({ runs, empty }: { runs: RunLineItem[]; empty?: React.ReactNode }) {
   const lines = useRunLines(runs.map((r) => r.id));
   if (!runs.length) return <>{empty ?? null}</>;
   return (
@@ -183,7 +192,7 @@ export function RunLines({ runs, empty }: { runs: Array<{ id: string; href: stri
       {runs.map((r) => {
         const line = lines?.[r.id];
         return line ? (
-          <RunLineRow key={r.id} line={line} name={r.name} href={r.href} startedAt={r.startedAt} runId={r.id} className="animate-in" />
+          <RunLineRow key={r.id} line={line} name={r.name} href={r.href} startedAt={r.startedAt} runId={r.id} {...(r.workflowId && { workflowId: r.workflowId })} className="animate-in" />
         ) : (
           <Link key={r.id} href={r.href} className="flex items-center gap-3 rounded-2xl border border-hair bg-sf p-3 hover:bg-acdim/30">
             <span className={cn('size-[30px] shrink-0 rounded-lg bg-acdim', !lines && 'animate-pulse-soft')} />
@@ -198,11 +207,11 @@ export function RunLines({ runs, empty }: { runs: Array<{ id: string; href: stri
 
 /** The last runs an agent took part in (`GET /api/runs/search?actor=`), as lines: the agent page's Sessions tab. */
 export function AgentLastRuns({ agentName, limit = 3 }: { agentName: string; limit?: number }) {
-  const [runs, setRuns] = useState<Array<{ id: string; href: string; name: string; startedAt?: string }>>();
+  const [runs, setRuns] = useState<RunLineItem[]>();
   useEffect(() => {
     let gone = false;
     api<{ items: Array<{ executionId: string; workflowId: string; workflowName: string; startedAt: string }> }>(`/api/runs/search?actor=${encodeURIComponent(agentName)}&limit=${limit}`)
-      .then((r) => !gone && setRuns(r.items.map((i) => ({ id: i.executionId, href: `/runs/${i.executionId}`, name: i.workflowName, startedAt: i.startedAt }))))
+      .then((r) => !gone && setRuns(r.items.map((i) => ({ id: i.executionId, href: `/runs/${i.executionId}`, name: i.workflowName, startedAt: i.startedAt, workflowId: i.workflowId }))))
       .catch(() => !gone && setRuns([]));
     return () => {
       gone = true;

@@ -6,6 +6,8 @@ import type { TeamMoment } from '@/lib/shared/team-progress';
 
 export interface LastTeamRun {
   executionId: string;
+  /** The flow the run was in (the route sends it), for a run ref that names its workflow. */
+  workflowId?: string;
   workflowName: string;
   status: string;
   startedAt: string;

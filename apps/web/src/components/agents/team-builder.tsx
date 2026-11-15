@@ -300,7 +300,7 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
           </Field>
 
           {lastRun?.live && <RunTimelineLive executionId={lastRun.executionId} name={lastRun.workflowName} />}
-          {lastRun && !lastRun.live && <RunLines runs={[{ id: lastRun.executionId, href: `/runs/${lastRun.executionId}`, name: lastRun.workflowName, startedAt: lastRun.startedAt }]} />}
+          {lastRun && !lastRun.live && <RunLines runs={[{ id: lastRun.executionId, href: `/runs/${lastRun.executionId}`, name: lastRun.workflowName, startedAt: lastRun.startedAt, ...(lastRun.workflowId && { workflowId: lastRun.workflowId }) }]} />}
           <MemberCards config={draft} teamName={draft.name} agents={agents ?? []} run={lastRun} />
 
           <section aria-label="Org chart">

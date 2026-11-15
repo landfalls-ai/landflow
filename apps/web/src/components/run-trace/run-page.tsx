@@ -34,20 +34,21 @@ function RunPageOf({ executionId }: { executionId: string }) {
       .catch(() => {});
   }, [executionId]);
   const href = record ? `/workflows/${record.workflowId}/runs/${executionId}` : '/runs';
+  const ask = record && {
+    label: record.status === 'error' ? 'Ask why it failed' : 'Ask Spotlight',
+    run: () => askAbout(askDetail({ type: 'run', id: executionId, name: `${record.workflowName} run`, workflowId: record.workflowId }, { failed: record.status === 'error' })),
+  };
   return (
     <div className="flex h-dvh flex-col">
       <PageHeader back={{ href, label: 'Runs' }} title="Run trace" actions={
           <>
-            {record && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => askAbout(askDetail({ type: 'run', id: executionId, name: `${record.workflowName} run`, workflowId: record.workflowId }, { failed: record.status === 'error' }))}
-              >
-                <Sparkles className="size-3.5" /> {record.status === 'error' ? 'Ask why it failed' : 'Ask Spotlight'}
+            {/* On a phone Ask is the first item of the ⋯ menu, so the header stays one row. */}
+            {ask && (
+              <Button size="sm" variant="outline" onClick={ask.run} className="max-md:hidden">
+                <Sparkles className="size-3.5" /> {ask.label}
               </Button>
             )}
-            <RunMenu executionId={executionId} />
+            <RunMenu executionId={executionId} {...(ask && { ask })} />
           </>
         } />
       <div className="min-h-0 flex-1 overflow-y-auto">
