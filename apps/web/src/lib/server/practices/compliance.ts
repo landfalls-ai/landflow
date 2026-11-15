@@ -63,6 +63,11 @@ export function complianceOf(viewer: Actor, practiceId: string, days?: number, n
     // A waiver is a person's decision, not the practice being applied.
     if (row.kind !== 'waived' && (!lastApplied || row.last > lastApplied)) lastApplied = row.last;
   }
+  const newest = db.all<{ execution_id: string }>(
+    `SELECT execution_id FROM practice_applications WHERE practice_id = ? AND at >= ? AND kind <> 'waived' AND execution_id IS NOT NULL ORDER BY at DESC, id DESC LIMIT 1`,
+    practiceId,
+    since,
+  )[0];
   const citing = db.all<{ agent_id: string; n: number }>(
     `SELECT agent_id, COUNT(*) AS n FROM practice_applications WHERE practice_id = ? AND at >= ? AND kind = 'cited' AND agent_id IS NOT NULL GROUP BY agent_id ORDER BY n DESC, agent_id`,
     practiceId,
@@ -77,7 +82,7 @@ export function complianceOf(viewer: Actor, practiceId: string, days?: number, n
       else otherAgents++;
     } else otherAgents++;
   }
-  return { days: window, ...total, followedBy, otherAgents, ...(lastApplied && { lastApplied }), byVersion: [...versions.values()].sort((a, b) => b.version - a.version) };
+  return { days: window, ...total, followedBy, otherAgents, ...(lastApplied && { lastApplied }), ...(newest && { lastRunId: newest.execution_id }), byVersion: [...versions.values()].sort((a, b) => b.version - a.version) };
 }
 
 /**

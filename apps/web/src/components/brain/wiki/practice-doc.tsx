@@ -69,7 +69,7 @@ function Applications({ items }: { items: PracticeApplication[] }) {
           </span>
           {a.reason && <span className="basis-full text-t2">{a.reason}</span>}
           {a.executionId && (
-            <Link href={`/executions/${encodeURIComponent(a.executionId)}`} className="ml-auto text-ac hover:underline">
+            <Link href={`/runs/${encodeURIComponent(a.executionId)}`} className="ml-auto text-ac hover:underline">
               Run Trace
             </Link>
           )}
@@ -86,7 +86,7 @@ const SEGMENT_STYLE: Record<ComplianceSegmentKind, { bar: string; word: string }
 };
 
 /** How the practice is followed (docs/practices.md#compliance): the checks' bar, the counts, who follows it and when it was last applied. */
-export function ComplianceView({ compliance, lastRun }: { compliance: PracticeCompliance; lastRun?: string }) {
+export function ComplianceView({ compliance }: { compliance: PracticeCompliance }) {
   const segments = complianceSegments(compliance);
   const nothing = !compliance.delivered && !compliance.cited && !segments.length;
   if (nothing) return <p className="text-[12.5px] text-t3">Nothing used it in the last {compliance.days} days.</p>;
@@ -140,10 +140,10 @@ export function ComplianceView({ compliance, lastRun }: { compliance: PracticeCo
         </p>
         <p className="text-t2">
           <span className="text-t3">Last applied</span> {compliance.lastApplied ? timeAgo(compliance.lastApplied) : 'never'}
-          {lastRun && (
+          {compliance.lastRunId && (
             <>
               {' · '}
-              <Link href={`/executions/${encodeURIComponent(lastRun)}`} className="text-ac hover:underline">
+              <Link href={`/runs/${encodeURIComponent(compliance.lastRunId)}`} className="text-ac hover:underline">
                 Run Trace
               </Link>
             </>
@@ -308,7 +308,7 @@ export function PracticeCard({ detail, projectName, onReview, onEdit, onRetire, 
 
       {compliance && (
         <Section title="How it is followed">
-          <ComplianceView compliance={compliance} lastRun={applications.find((a) => a.executionId && a.kind !== 'waived')?.executionId} />
+          <ComplianceView compliance={compliance} />
         </Section>
       )}
 

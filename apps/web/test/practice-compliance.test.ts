@@ -251,7 +251,7 @@ describe('the markup', () => {
   });
 
   it('draws the bar, the counts, who follows it and the other agents', () => {
-    const html = renderToStaticMarkup(createElement(ComplianceView, { compliance: compliance(), lastRun: 'exec_1' }));
+    const html = renderToStaticMarkup(createElement(ComplianceView, { compliance: compliance({ lastRunId: 'exec_1' }) }));
     expect(html).toContain('5 passed');
     expect(html).toContain('1 failed');
     expect(html).toContain('1 waived');
@@ -259,7 +259,7 @@ describe('the markup', () => {
     expect(html).toContain('Followed by');
     expect(html).toContain('Release Helper');
     expect(html).toContain('and 2 other agents');
-    expect(html).toContain('/executions/exec_1');
+    expect(html).toContain('href="/runs/exec_1"');
   });
 
   it('says so when nothing used the practice', () => {

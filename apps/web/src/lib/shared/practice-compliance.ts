@@ -27,6 +27,8 @@ export interface PracticeCompliance extends ComplianceCounts {
   otherAgents: number;
   /** The newest delivery, citation or check in the window (ISO). */
   lastApplied?: string;
+  /** The run of the newest delivery, citation or check that has one (for the Run Trace link). */
+  lastRunId?: string;
   /** Newest version first. */
   byVersion: ComplianceVersion[];
 }

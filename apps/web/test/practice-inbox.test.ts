@@ -133,6 +133,15 @@ describe('Apply', () => {
     expect((await apply(owner, s.id)).status).toBe(409);
   });
 
+  it('marks the suggestion applied once: one proposal.applied usage event, and the Approved note stays', async () => {
+    const { practice } = storePort.draft(input(), { source: 'person', actor: member });
+    const s = only(practice.id);
+    expect((await apply(owner, s.id)).status).toBe(200);
+    const events = database().all<{ attrs: string }>("SELECT attrs FROM usage_events WHERE kind = 'proposal.applied'").filter((e) => String(e.attrs).includes(s.id));
+    expect(events).toHaveLength(1);
+    expect(proposals.getProposal(s.id)?.decision?.note).toBe('Approved');
+  });
+
   it('is refused for a member in the audience, and the suggestion stays', async () => {
     const { practice } = storePort.draft(input({ level: 'project', projectId: alpha }), { source: 'person', actor: member });
     const s = only(practice.id);

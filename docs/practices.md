@@ -114,7 +114,7 @@ A practice you cannot see answers 404.
 card: a strength pill, scope chips with the repository's logo, the rule lines, and citations that open as file excerpts
 with a "verified at `abc123`" tick. Files with a draft waiting are marked amber with **!**, like pages that need a
 person. The review dialog shows the draft against the approved version, its citations and its conflicts, with Approve and
-Reject. On a phone it is one column of cards behind `md`; desktop is unchanged. *PR09:* an approved practice also shows
+Reject. On a phone it is one column of cards behind `md`; desktop is unchanged. *PR09:* a practice with a loaded count also shows
 **How it is followed**: the compliance bar, the counts, **Followed by** and **Last applied** ([Compliance](#compliance)).
 
 ## Learning
@@ -210,7 +210,7 @@ P2, in Check Practices.
   **waived**. Rates never divide by zero: with nothing to divide they show "–".
 - **Followed by**: the agents that cited it most, at most 10 and only those you may read; the rest are counted, never
   named ("2 other agents").
-- **Last applied** with a Run Trace link, and the same counts per version.
+- **Last applied** with a Run Trace link. The route also returns the counts per version; the page does not draw them yet.
 - The **compliance bar** is the checks: green passed, red failed, amber waived.
 
 `GET /api/practices/:id/compliance` answers it for a practice you may see (404 otherwise). A run shows its own side in

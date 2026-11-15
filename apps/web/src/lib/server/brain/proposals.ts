@@ -379,6 +379,12 @@ export function applyProposal(id: string, options: ApplyOptions = {}, db: Databa
     const apply = appliers.get('practice');
     if (!apply) throw new ProposalError('Practices are not loaded on this host', 503);
     apply(proposal, options, db);
+    // Approving settles the suggestion itself (markApplied, once); only the flows listening are left to start here.
+    const settled = getProposal(proposal.id, db);
+    if (settled?.status === 'applied' && settled.decision) {
+      const started = startedBy(settled, settled.decision, options.viaWorkflowId);
+      return { proposal: settled, ...(workflow && { workflow }), warnings, ...(started.length && { started }) };
+    }
   } else if (proposal.detector === 'missing-tool') {
     // "Build it": a published workflow that starts from On Usage Event on proposal.applied builds the tool (an agentic
     // flow that writes the plugin, docs/second-brain.md). Applying only records the go-ahead.
@@ -444,9 +450,13 @@ export function finishApplied(
   // markApplied returns an already-applied suggestion as it is, without a new decision.
   const decision = next.decision;
   if (!decision || next === proposal) return { proposal: next, started: [] };
-  const usage = usageBuilders(proposal.detector);
-  const decided = dispatchDecision(next, decision, options.viaWorkflowId);
-  return { proposal: next, started: [...new Map([...usage, ...decided].map((w) => [w.id, w])).values()] };
+  return { proposal: next, started: startedBy(next, decision, options.viaWorkflowId) };
+}
+
+function startedBy(next: Proposal, decision: ProposalDecision, viaWorkflowId?: string): Array<{ id: string; name: string }> {
+  const usage = usageBuilders(next.detector);
+  const decided = dispatchDecision(next, decision, viaWorkflowId);
+  return [...new Map([...usage, ...decided].map((w) => [w.id, w])).values()];
 }
 
 /** Published workflows with On Usage Event on proposal.applied that take suggestions from this detector (unset: any). */
