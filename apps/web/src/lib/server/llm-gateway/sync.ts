@@ -133,7 +133,9 @@ async function runSync(input: SyncInput): Promise<SyncReport> {
     };
     try {
       const info = await client.teamInfo(teamId);
-      // Project budgets plug in here when Paperclip's project budget lands.
+      // Teams carry no budget: a LiteLLM team budget resets on its own 30-day window, not the calendar month a project's budget
+      // runs on, and the team's spend counts calls Landflow never stops (a local model through the gateway), so a backstop
+      // here would refuse what Landflow allows. The project's budget is enforced in Landflow (lib/server/budgets).
       if (!info) {
         await client.createTeam({ team_id: teamId, team_alias: alias, metadata: { landflow: 'project' } });
         bump('created');
@@ -222,12 +224,12 @@ async function runSync(input: SyncInput): Promise<SyncReport> {
 }
 
 /** What `capIds` touch: users (customers), credentials (the gateway key) and agents (runtime keys). */
-function scopeOf(capIds: string[]) {
+export function scopeOf(capIds: string[]) {
   const scope = { users: new Set<string>(), credentials: new Set<string>(), agents: new Set<string>() };
   for (const id of capIds) {
     const cap = parseCapId(id);
-    // Workflow caps (and ids that are no cap) have no backstop: nothing to do for them.
-    if (!cap || cap.kind === 'workflow') continue;
+    // Workflow caps (and ids that are no cap) have no backstop: nothing to do for them. PC14: nor has a project's budget.
+    if (!cap || cap.kind === 'workflow' || cap.kind === 'project') continue;
     if (cap.kind === 'user') scope.users.add(cap.subjectId);
     else if (cap.kind === 'credential') scope.credentials.add(cap.subjectId);
     else scope.agents.add(cap.subjectId);

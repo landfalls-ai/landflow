@@ -229,7 +229,7 @@ a client that skips Landflow) is still stopped.
   dollar cap, is a customer (`landflow-user-<id>`, no alias). The server's own gateway key (`LANDFLOW_LLM_GATEWAY_KEY`) gets no budget:
   its calls are under Landflow's caps already. A key named by a credential's data is never touched, because project
   editors can edit a credential and the admin key must not change a budget on a key that data picked. Each key Landflow minted for an agent on kagent gets the agent's dollar limits and its project's
-  team. Only ids go to LiteLLM, never names or emails. Teams carry no budget yet.
+  team. Only ids go to LiteLLM, never names or emails. Teams carry no budget: a LiteLLM team budget resets on its own 30-day window, not the calendar month a project's budget runs on, and the team's spend counts calls Landflow never stops (a local model through the gateway), so a backstop there would refuse what Landflow allows. A project's budget is enforced in Landflow ([projects-and-goals.md](projects-and-goals.md#ai-budget)).
 - **Which caps have a backstop.** Dollar caps only: LiteLLM budgets are dollars. Token caps and workflow caps have none.
   A daily cap becomes a `1d` budget, else a monthly one a `30d` budget.
 - **Headroom.** The budget sits a percentage above the Landflow cap (10% by default, rounded up to the cent), so
@@ -349,6 +349,8 @@ edit. It asks for a new maximum above the current one and a reason, and sends it
 flow is not installed and published, members see "Asking for more is off" and admins see **Turn on cap requests**, which
 installs and publishes the flow. Admins change caps where they are set (the link on each cap), so they are not offered it.
 
+**A project's budget** is a cap too: `project:<id>:month:cost`, listed for the project's members, with the link to the project's AI budget settings. Its editors who are not its admins see **Ask for more** while the cap-raise flow is on; an approved request sets the budget's amount, settles the month's open incidents as raised by the approver, and its `gateway` is `skipped` (a project has no LiteLLM backstop). The cost alerts watch it like the other caps. See [AI budget](projects-and-goals.md#ai-budget).
+
 The page reads `GET /api/insights/ai` and `GET /api/llm-gateway/status` ([reference/api.md](reference/api.md)) and
 refreshes every minute while the tab is visible.
 
@@ -371,7 +373,7 @@ refreshes every minute while the tab is visible.
   it started can be missed. The import lags by up to its interval plus LiteLLM's batch (about 10 s), so a cap counts an agent's calls a few
   minutes late. Token limits of an agent on kagent are counted but not enforced there (LiteLLM budgets are in dollars).
   The sandbox of a Claude Code agent can reach the gateway. Keys are blocked, never deleted, and not rotated.
-- Project budgets (until Paperclip's project budget lands), tag budgets, and budget windows in the instance's time zone (LL04).
+- A LiteLLM team budget as a backstop for a project's budget (see "Teams carry no budget" above), tag budgets, and budget windows in the instance's time zone (LL04). A project's own budget is built ([projects-and-goals.md](projects-and-goals.md#ai-budget)).
 - Asking for a cap raise by Slack or email: the template asks in chat (an admin can switch Ask a Person's channel, but a
   Slack answer never applies, see above).
 - Several cap-raise flows: one per instance.

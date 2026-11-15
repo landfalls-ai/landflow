@@ -2048,6 +2048,17 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   Person, and Apply Cap Raise, which changes the Landflow cap and tells the budgets sync only after an admin other than
   the requester approved ([llm-gateway.md](llm-gateway.md#asking-for-a-higher-cap)). The Insights → AI "Ask for more" dialog
   (LL06) is built.
+- **Project budgets, built (PC14):** a project's budget is a cap kind of its own ([projects-and-goals.md](projects-and-goals.md#ai-budget)).
+  The LiteLLM team budget as a backstop stays deferred, for the reason in [llm-gateway.md](llm-gateway.md#budgets-in-litellm).
+
+## Paperclip wave 9: project AI budget (PC14, server)
+
+- **PC14, built (server):** a project's monthly AI budget as one more cap in the LiteLLM wave's system: listed on
+  Insights → AI, watched by the cost alerts, raised through "Ask for more". It adds a warning, an optional hard stop
+  that refuses only priced calls and asks a person, incidents and Needs you items, with resume, raise and dismiss
+  ([projects-and-goals.md](projects-and-goals.md#ai-budget)). The screens are PC15's. Deferred: a LiteLLM team budget as
+  a backstop (its 30-day window does not match the calendar month and it counts calls Landflow never stops), and
+  per-goal budgets. Closes P6-2 (server).
 
 ## Paperclip wave 7: project context (PC03)
 

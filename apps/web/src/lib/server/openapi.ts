@@ -682,7 +682,7 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Executions',
     id: 'listRunsNeedingYou',
     summary: 'What waits for a person across runs',
-    description: 'Waiting runs that ask for an approval, a form, an answer or a Run report decision, and failed checks of the last 7 days nobody settled. Each item: executionId, workflowId, workflowName, kind (approval, form, question, gate, check), title, detail, actor, member (the team member a tool approval or a guard’s ask is for), spanId, since.',
+    description: 'Waiting runs that ask for an approval, a form, an answer or a Run report decision, and failed checks of the last 7 days nobody settled. Each item: executionId, workflowId, workflowName, kind (approval, form, question, gate, check, budget), title, detail, actor, member (the team member a tool approval or a guard’s ask is for), spanId, since. A `budget` item (an open AI budget warning or stop of a project the caller administers or owns the budget of) has empty executionId, workflowId and workflowName, and projectId, incidentId, incidentKind, href, canRaise and canResume.',
     responses: { 200: reply('The items, newest first', object({ items: array({ type: 'object' }) }, ['items'])) },
   });
   add('get', '/api/runs/lines', {
@@ -2508,6 +2508,49 @@ function paths(): Record<string, Record<string, Json>> {
     description: 'Only from the session’s own project (or by whoever can read the run that started it): 404 “Session not found” otherwise.',
     pathParams: { id: 'The agent id', sid: 'The session id' },
     responses: { 200: reply('The session', object({ session: { type: 'object', additionalProperties: true }, traceUrls: { type: 'object', additionalProperties: true }, feedback: array({ type: 'object', additionalProperties: true }) }, ['session'])), 404: notFound },
+  });
+  // PC14: a project's AI budget
+  const budgetViewDoc = object(
+    {
+      budget: { type: 'object', additionalProperties: true, description: 'projectId, monthlyUsd, warnPercent, hardStop, ownerId?, updatedAt?, updatedBy?; absent without a budget' },
+      month: { type: 'string', description: 'YYYY-MM in the instance time zone' },
+      usedUsd: { type: 'number', description: 'This month’s spend from every source' },
+      unpricedCalls: { type: 'integer', description: 'This month’s calls to models without a price: counted, never stopped' },
+      percent: { type: 'integer' },
+      paused: { type: 'boolean', description: 'A stop is open: the project’s priced calls are refused' },
+      incidents: array({ type: 'object', additionalProperties: true, description: 'id, projectId, month, kind (warn, stop), status (open, resolved, dismissed), usedUsd, budgetUsd, resolution?, resolvedBy?, createdAt, resolvedAt?' }),
+      canEdit: { type: 'boolean' },
+      canResume: { type: 'boolean' },
+      canAsk: { type: 'boolean' },
+      capId: { type: 'string', description: '`project:<id>:month:cost`, what “Ask for more” sends; present with a budget' },
+    },
+    ['month', 'usedUsd', 'unpricedCalls', 'percent', 'paused', 'incidents', 'canEdit', 'canResume', 'canAsk'],
+  );
+  add('get', '/api/projects/{id}/budget', {
+    tag: 'Projects',
+    id: 'getProjectBudget',
+    summary: 'A project’s monthly AI budget',
+    description: 'Any role in the project (owners and admins: any project); else 404. The budget, this month’s spend, the month’s incidents and what the caller may do (docs/projects-and-goals.md#ai-budget).',
+    pathParams: { id: 'The project id' },
+    responses: { 200: reply('The budget view', budgetViewDoc), 404: notFound },
+  });
+  add('put', '/api/projects/{id}/budget', {
+    tag: 'Projects',
+    id: 'setProjectBudget',
+    summary: 'Set a project’s monthly AI budget',
+    description: 'The project’s admins, owners and admins; another member gets 403. `monthlyUsd` 0 to 1,000,000 (0 removes the budget and resolves its open incidents as raised); `warnPercent` 1 to 100; `hardStop` refuses the project’s priced calls at the budget; `ownerId` is a user with a role in the project, or null. Audited as `project.budget.update`.',
+    pathParams: { id: 'The project id' },
+    body: jsonBody(object({ monthlyUsd: { type: 'number', minimum: 0, maximum: 1000000 }, warnPercent: { type: 'integer', minimum: 1, maximum: 100 }, hardStop: { type: 'boolean' }, ownerId: { type: ['string', 'null'] } }, ['monthlyUsd'])),
+    responses: { 200: reply('The new budget view', budgetViewDoc), 400: invalid, 403: errorRef('Not an admin of the project'), 404: notFound },
+  });
+  add('post', '/api/projects/{id}/budget/incidents/{incidentId}', {
+    tag: 'Projects',
+    id: 'actOnProjectBudgetIncident',
+    summary: 'Resume, raise or dismiss a project budget incident',
+    description: '`resume` an open stop (the project’s admins and the budget’s owner; priced calls go on for the month), `raise` an open stop or warning to a higher `monthlyUsd` (the project’s admins), `dismiss` an open warning (admins and the owner). 404 for an unknown incident or another project’s, 409 `Already <resolution>` for one already settled, 400 for the wrong action for its kind or a raise not above the budget, 403 when not allowed.',
+    pathParams: { id: 'The project id', incidentId: 'The incident id' },
+    body: jsonBody(object({ action: { type: 'string', enum: ['resume', 'raise', 'dismiss'] }, monthlyUsd: { type: 'number', description: 'With `raise`: the new monthly budget' } }, ['action'])),
+    responses: { 200: reply('The new budget view', budgetViewDoc), 400: invalid, 403: errorRef('Not allowed'), 404: notFound, 409: errorRef('Already settled') },
   });
   return out;
 }

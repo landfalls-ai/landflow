@@ -241,6 +241,32 @@ describe('capRaise', () => {
   });
 });
 
+describe('a project’s AI budget as a cap (PC14)', () => {
+  it('lists for its members, hides from others, and is requestable by a non-admin editor while the flow is on', async () => {
+    const { createTeamProject, setMember } = await import('@/lib/server/projects/store');
+    const { saveBudget } = await import('@/lib/server/budgets/store');
+    const { scopeOf } = await import('@/lib/server/llm-gateway/sync');
+    const project = createTeamProject({ name: 'Budgeted' }).id;
+    setMember(project, member.id, 'editor');
+    saveBudget({ projectId: project, monthlyUsd: 10, warnPercent: 80, hardStop: false });
+    const capId = `project:${project}:month:cost`;
+    workflow('wf_cap_raise_p', projects.createTeamProject({ name: 'Flows P' }).id, { active: true });
+    database().upsert('settings', { key: 'ai_cap_raise', value: JSON.stringify({ workflowId: 'wf_cap_raise_p' }) });
+    const mine = aiConsoleReport(member, '7d').caps.find((c) => c.id === capId);
+    expect(mine).toMatchObject({ period: 'month', metric: 'cost', max: 10, canRequest: true, subject: 'project “Budgeted”' });
+    expect(mine?.link).toContain(`/projects/${project}?tab=settings#budget`);
+    expect(aiConsoleReport(other, '7d').caps.some((c) => c.id === capId)).toBe(false);
+    const asOwner = aiConsoleReport(owner, '7d').caps.find((c) => c.id === capId);
+    expect(asOwner).toMatchObject({ canRequest: false });
+    expect(asOwner?.backstop).toBeUndefined();
+    setMember(project, other.id, 'viewer');
+    expect(aiConsoleReport(other, '7d').caps.find((c) => c.id === capId)?.canRequest).toBe(false);
+    database().upsert('settings', { key: 'ai_cap_raise', value: JSON.stringify({ workflowId: 'wf_gone' }) });
+    expect(aiConsoleReport(member, '7d').caps.find((c) => c.id === capId)?.canRequest).toBe(false);
+    expect(scopeOf([capId])).toEqual({ users: new Set(), credentials: new Set(), agents: new Set() });
+  });
+});
+
 describe('the gateway status', () => {
   it('is not configured without a gateway', async () => {
     resetGatewayStatus();

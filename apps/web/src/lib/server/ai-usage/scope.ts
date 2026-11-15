@@ -55,6 +55,8 @@ export interface UsageLimit {
   setIn: string;
   /** What the subject used so far (including the call just made, once it is recorded). */
   used: () => number;
+  /** Called with what the subject used just before `check()` throws for this limit (a failing callback never hides the cap error). */
+  onReached?(used: number): void;
 }
 
 /** Prices calls and stores them; shared by a scope tree (children inherit their root's meter). */
@@ -149,7 +151,14 @@ export class UsageScope {
     const reached = (limit: UsageLimit) => {
       if (!(limit.max > 0)) return;
       const used = limit.used();
-      if (when === 'before' ? used >= limit.max : used > limit.max) throw new UsageCapError(limit, used);
+      if (when === 'before' ? used >= limit.max : used > limit.max) {
+        try {
+          limit.onReached?.(used);
+        } catch {
+          // The cap error below is what matters.
+        }
+        throw new UsageCapError(limit, used);
+      }
     };
     for (const scope of this.chain()) for (const limit of scope.limits) reached(limit);
     if (call) for (const limit of this.meter?.callLimits?.(call, this) ?? []) reached(limit);

@@ -16,6 +16,7 @@ import { can } from '../../shared/auth';
 import { authDb } from '../auth/db';
 import { getUser } from '../auth/users';
 import { HttpError } from '../errors';
+import { removeBudgetRows } from '../budgets/store'; // PC14
 
 export interface ProjectRecord {
   id: string;
@@ -374,6 +375,8 @@ export function removeProjectRows(id: string): string[] {
       retired.push(practice.id);
       recordAudit({ action: 'practice.retired', target: { type: 'practice', id: practice.id, name: practice.handle }, project: id, summary: `Retired ${practice.handle}: its project was deleted` });
     }
+    // PC14: its AI budget and incidents.
+    removeBudgetRows(database, id);
     database.delete('project_members', { project_id: id });
     for (const share of database.all<ShareRow>('SELECT * FROM resource_shares WHERE project_id = ?', id)) {
       database.delete('resource_shares', { kind: share.kind, resource_id: share.resource_id, project_id: id });

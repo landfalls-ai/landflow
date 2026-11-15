@@ -30,6 +30,7 @@ import { singleton } from '../singleton';
 import { scopeProjectId } from '../llm-gateway/call';
 import { homeProjectId } from '../projects/store';
 import { currentRunContext } from '../project-context/seam';
+import { budgetEntry, hardStopLimit, stopReached, type BudgetEntry } from '../budgets/limit';
 import { aiCaps, capSetActive } from './caps';
 import { getUser } from '../auth/users';
 import { noteUsage } from './notify';
@@ -83,6 +84,8 @@ export const aiUsageRetentionDays = (): number => Number(envWithAliases('LANDFLO
 export class AiUsageMeter implements UsageMeter {
   private prices?: { at: number; overrides: ReturnType<typeof priceOverrides> };
   private capsCache?: { at: number; caps: AiCaps };
+  // PC14: each project's hard-stop budget, cached like the caps (undefined entry: no budget that stops).
+  private budgetCache = new Map<string, { at: number; month: string; entry?: BudgetEntry }>();
   private pruned = 0;
 
   constructor(
@@ -122,6 +125,21 @@ export class AiUsageMeter implements UsageMeter {
     this.capsCache = undefined;
   }
 
+  /** Forget the cached project budgets (after one is saved, raised, resumed or removed). */
+  invalidateBudgets() {
+    this.budgetCache.clear();
+  }
+
+  /** The project's hard-stop budget (cached for a few seconds); undefined when it has none that stops. */
+  private projectBudget(projectId: string): BudgetEntry | undefined {
+    const month = this.today().slice(0, 7);
+    const cached = this.budgetCache.get(projectId);
+    if (cached && cached.month === month && Date.now() - cached.at <= PRICE_CACHE_MS) return cached.entry;
+    const entry = budgetEntry(this.db(), projectId, month);
+    this.budgetCache.set(projectId, { at: Date.now(), month, entry });
+    return entry;
+  }
+
   /** The caps of Settings → AI caps that apply to `call`: its credential's, and its user's (or everyone's default). */
   callLimits(call: ModelCall, scope: UsageScope): UsageLimit[] {
     const caps = this.caps();
@@ -138,6 +156,13 @@ export class AiUsageMeter implements UsageMeter {
       const set = capSetActive(own) ? own : caps.allUsers;
       if (capSetActive(set)) limits.push(...setLimits(set, own === set ? `user “${set.name || userName(userId)}”` : `user “${own?.name || userName(userId)}” (the cap for every user)`, where, (period) => this.sinceTotals('user_id', userId, period)));
     }
+    // PC14: a project with a hard-stop budget refuses its priced calls at the budget (a local model, or one only the gateway prices, is never stopped).
+    const projectId = scopeProjectId(scope);
+    const entry = projectId ? this.projectBudget(projectId) : undefined;
+    if (projectId && entry && !entry.resumed && this.price({ provider: call.provider, model: call.model, inputTokens: 0, outputTokens: 0 }).priced) {
+      const db = this.db();
+      limits.push(hardStopLimit(entry, () => this.sinceTotals('project_id', projectId, 'month').cost, (used) => stopReached(this, db, entry.budget, used)));
+    }
     return limits;
   }
 
@@ -148,8 +173,8 @@ export class AiUsageMeter implements UsageMeter {
       .map((row) => row.user_id);
   }
 
-  /** What a credential or user used today or this month (`column` is `credential_id` or `user_id`). */
-  sinceTotals(column: 'credential_id' | 'user_id', id: string, period: 'day' | 'month', day = this.today()): AiUsageTotals {
+  /** What a credential, user or project used today or this month (`column` is `credential_id`, `user_id` or `project_id`). */
+  sinceTotals(column: 'credential_id' | 'user_id' | 'project_id', id: string, period: 'day' | 'month', day = this.today()): AiUsageTotals {
     return period === 'day' ? this.sum(`${column} = ? AND day = ?`, id, day) : this.sum(`${column} = ? AND day >= ?`, id, `${day.slice(0, 7)}-01`);
   }
 

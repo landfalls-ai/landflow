@@ -276,6 +276,44 @@ agent and those sessions move with it, while a session with a project stays wher
 - **Live and evaluations.** The live feed sends a session's events to members of its project; a list of an agent's
   ratings and the online evaluation scores keep only those of sessions the viewer may read.
 
+## AI budget
+
+A project can have a monthly AI budget. It is one more cap in the same system as the caps on workflows, agents,
+credentials and people ([llm-gateway.md](llm-gateway.md#asking-for-a-higher-cap)): it is listed on Insights → AI with the
+others, its alerts are the cost alerts, and "Ask for more" goes through the cap-raise flow. What a cap has not got, the
+budget adds: a warning, an optional hard stop, incidents and Needs you items.
+
+- **The budget.** Dollars per calendar month, counted in the instance time zone. The spend is every AI call of the
+  project this month from every source: Landflow's own calls and the calls LiteLLM reports (kagent and Claude Code
+  agents). `0` means no budget, and nothing is watched or stopped.
+- **The warning.** Once spend reaches the warning share (80% by default, 1 to 100) a warning opens, once for each budget
+  amount. Dismiss it, or raise the budget. A raise lets a new warning open at the new amount. The cost alerts of
+  Insights → AI send the message; the warning itself is a Needs you item.
+- **The hard stop.** Off by default. When it is on and spend reaches the budget, the project's **priced** AI calls are
+  refused with "AI usage cap reached: project “Name” this month used … of its … limit", and a stop opens in Needs you.
+  It never stops a local model (Ollama and others without a price), and never a model only the gateway prices. Calls
+  of kagent and the Claude Code harness count towards the budget but are not stopped: they go to LiteLLM directly.
+  Spend that arrives by import, which no call check saw, opens the stop too.
+- **Resume.** A person resumes a stop, and the project's priced calls go on until the month ends. A new month starts a
+  fresh count. A resumed month stays open even after a raise.
+- **Raise.** A project admin sets a higher amount from a stop or a warning. The stop's warning is settled with it.
+  An editor who is not an admin asks for more from Insights → AI ("Ask for more"); an approved request sets the new
+  amount and settles the month's open incidents.
+- **Dismiss.** Puts a warning away for the month.
+- **Who may do what.** Project admins and instance owners and admins edit the budget and raise it. They and the
+  budget's **owner** (any user with a role in the project) resume and dismiss. Any member reads it. Items in Needs you
+  go to the admins, the owner and instance admins.
+- **Where it shows.** The budget view (`GET /api/projects/:id/budget`), Insights → AI as the cap
+  `project:<id>:month:cost`, and Needs you (`GET /api/runs/needs-you`, a `budget` item with a link to the project's
+  settings). The screens are built in the project's Settings tab.
+- **Deleting the project** deletes its budget and incidents. Moving a workflow or agent to another project moves no
+  budget: spend follows the project the run was in.
+- **Not here.** A budget per goal, and a LiteLLM team budget ([llm-gateway.md](llm-gateway.md#budgets-in-litellm)).
+
+Routes: `GET` and `PUT /api/projects/:id/budget`, `POST /api/projects/:id/budget/incidents/:incidentId` with
+`resume`, `raise` or `dismiss` ([reference/api.md](reference/api.md)). Each change is audited: `project.budget.update`,
+`.stopped`, `.resumed`, `.raised` and `.dismissed`.
+
 ## How it is built
 
 - Data: migration 2300 makes `goals`, `project_goals` (a project's goals and their order) and `goal_links` (initiatives);
@@ -283,5 +321,8 @@ agent and those sessions move with it, while a session with a project stays wher
 - Code: `lib/server/goals/` (`store.ts` the data and its audit, `views.ts` the rules and views, `schema.ts` the request
   bodies, `context-source.ts` the reader the context provider calls), `lib/server/projects/store.ts` (the brief),
   `lib/shared/goals.ts` (the types and limits both sides share).
+- The AI budget: migration 2700 (`project_budgets`, `project_budget_incidents`), `lib/server/budgets/` (`store.ts` rows
+  and spend, `limit.ts` what the meter asks per call, `enforce.ts` the sweep, the actions and the Needs you items,
+  `view.ts`), `lib/shared/project-budget.ts` (the types both sides share).
 - The context data source (`lib/server/goals/context-source.ts`) hands the mission, a project's brief and a goal's chain to the
   project-context seam (`lib/server/project-context/seam.ts`); reads are cached for a second.

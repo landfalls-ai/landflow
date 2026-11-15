@@ -11,8 +11,8 @@ import { store } from '../store';
 import { openWaitSpan } from './decisions';
 import { checksSinceAsync, spanStartAsync } from './store';
 
-/** `gate`: a Run report waits for a person to accept its failed checks or send the work back. */
-export type NeedsYouKind = 'approval' | 'form' | 'question' | 'gate' | 'check';
+/** `gate`: a Run report waits for a person to accept its failed checks or send the work back. `budget` (PC14): a project's AI budget warning or stop. */
+export type NeedsYouKind = 'approval' | 'form' | 'question' | 'gate' | 'check' | 'budget';
 
 export interface NeedsYouItem {
   executionId: string;
@@ -27,6 +27,13 @@ export interface NeedsYouItem {
   spanId?: string;
   /** ISO: when it started waiting, or when the check failed. */
   since: string;
+  // PC14: a `budget` item's fields (lib/shared/project-budget.ts `BudgetNeedsYouFields`); its executionId, workflowId and workflowName are ''.
+  projectId?: string;
+  incidentId?: string;
+  incidentKind?: 'warn' | 'stop';
+  href?: string;
+  canRaise?: boolean;
+  canResume?: boolean;
 }
 
 const DAY_MS = 86_400_000;

@@ -197,7 +197,8 @@ export interface GatewayStatus {
 // Cap-raise requests (POST/GET /api/ai/cap-requests); a person decides each through Ask a Person
 // ---------------------------------------------------------------------------
 
-export type CapKind = 'workflow' | 'agent' | 'credential' | 'user';
+// PC14: 'project' is a project's monthly AI budget (lib/shared/project-budget.ts `projectCapId`).
+export type CapKind = 'workflow' | 'agent' | 'credential' | 'user' | 'project';
 
 /** A cap's id as lib/server/ai-usage/alerts.ts `watchedCaps()` builds it: `<kind>:<subject id>:<day|month>:<tokens|cost>`. */
 export interface ParsedCapId {
@@ -214,7 +215,7 @@ export function parseCapId(id: string): ParsedCapId | undefined {
   const metric = parts[parts.length - 1];
   const period = parts[parts.length - 2];
   const subjectId = parts.slice(1, -2).join(':');
-  if (!['workflow', 'agent', 'credential', 'user'].includes(kind) || !subjectId) return undefined;
+  if (!['workflow', 'agent', 'credential', 'user', 'project'].includes(kind) || !subjectId) return undefined;
   if (period !== 'day' && period !== 'month') return undefined;
   if (metric !== 'tokens' && metric !== 'cost') return undefined;
   return { kind, subjectId, period, metric };
