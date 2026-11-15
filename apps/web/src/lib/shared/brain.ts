@@ -199,6 +199,7 @@ export const DETECTORS = [
   'no-safety-net',
   'repeated-sequence',
   'missing-tool',
+  'work-overlap',
 ] as const;
 
 /** A detector built into Landflow (lib/server/brain/detectors.ts). */
@@ -238,6 +239,7 @@ export const DETECTOR_LABELS: Record<BuiltinDetectorId, string> = {
   'no-safety-net': 'No safety net',
   'repeated-sequence': 'Repeated by hand',
   'missing-tool': 'Missing tool',
+  'work-overlap': 'Work overlap',
 };
 
 /** A detector's name: a built-in one's label, or a flow detector's workflow name (`name`, or the suggestion's label). */
