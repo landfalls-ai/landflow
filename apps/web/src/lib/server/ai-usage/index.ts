@@ -37,6 +37,7 @@ import { activeNode } from './node-context'; // SP01:
 import { currentCallNote, notifyRecorded, takeCallDraft } from './call-context'; // SP01:
 import { getUser } from '../auth/users';
 import { noteUsage } from './notify';
+import { pruneParts } from './parts'; // SP03:
 import { estimateCost, findPrice, priceOverrides } from './prices';
 import { currentUsageScope, runInUsageScope, UsageScope, type MeteredCall, type ModelCall, type UsageLimit, type UsageMeter } from './scope';
 
@@ -293,6 +294,7 @@ export class AiUsageMeter implements UsageMeter {
       if (now - this.pruned > DAY_MS / 24) {
         this.pruned = now;
         this.db().deleteBefore('ai_usage', 'at', new Date(now - this.retentionDays * DAY_MS).toISOString());
+        pruneParts(now, this.db()); // SP03:
       }
     } catch (error) {
       // Accounting must never fail the call itself.

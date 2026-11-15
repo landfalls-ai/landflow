@@ -24,6 +24,8 @@ import { refFromSession } from '../project-context/resolve';
 import { citedIn, recordRunPractices, runPractices, withPractices } from '../project-context/practices';
 import { runContextProvider, withRunContext } from '../project-context/seam';
 import { agentScope, isUsageCapError, runInUsageScope } from '../ai-usage';
+import { withCallNote } from '../ai-usage/call-context'; // SP03:
+import { agentDraft, type SystemSegment } from '../ai-usage/drafts'; // SP03:
 import { currentActorId, requestAuth } from '../auth/context';
 import { applyToolPolicy } from './policy';
 import { bus } from '../bus';
@@ -158,6 +160,11 @@ export function newSession(
 }
 
 function systemPrompt(agent: Agent, config: AgentConfig, session: AgentSession, runCtx: RunContext, extra?: string): string {
+  return systemPromptParts(agent, config, session, runCtx, extra).text;
+}
+
+// SP03: the same prompt with its segments (persona, instructions and skills, the intro and date line → instructions; the project block; the practices; memory; the team's tool note), for the call's draft.
+export function systemPromptParts(agent: Agent, config: AgentConfig, session: AgentSession, runCtx: RunContext, extra?: string): { text: string; segments: SystemSegment[] } {
   let memory: string | undefined;
   if (config.memory.crossSession) {
     const notes = agentStore.memories(agent.id, session.userId);
@@ -168,9 +175,35 @@ function systemPrompt(agent: Agent, config: AgentConfig, session: AgentSession, 
     ].join('\n');
   }
   // The date is the run's own, pinned at its start: a clock that moves on every model call defeats the provider's prompt cache.
-  const prompt = personaPrompt(config, { memory, now: new Date(runCtx.at), ...(runCtx.text && { context: runCtx.text }) });
-  return extra ? `${prompt}\n\n${extra}` : prompt;
+  const now = new Date(runCtx.at);
+  const prompt = personaPrompt(config, { memory, now, ...(runCtx.text && { context: runCtx.text }) });
+  // Where the project block and the memory sit in the prompt: a probe with markers in their places (the persona text never holds a NUL).
+  const probe = personaPrompt(config, { memory: memory && MEMORY_MARK, now, ...(runCtx.text && { context: CONTEXT_MARK }) });
+  const marks: { at: number; mark: string; text: string; parts: SystemSegment[] }[] = [];
+  if (runCtx.text) {
+    const practices = runCtx.practicesText && runCtx.text.endsWith(runCtx.practicesText) ? runCtx.practicesText : '';
+    const block = runCtx.text.slice(0, runCtx.text.length - practices.length);
+    marks.push({ at: probe.indexOf(CONTEXT_MARK), mark: CONTEXT_MARK, text: runCtx.text, parts: [...(block ? [{ part: 'projectBlock' as const, text: block }] : []), ...(practices ? [{ part: 'practices' as const, text: practices }] : [])] });
+  }
+  if (memory) marks.push({ at: probe.indexOf(MEMORY_MARK), mark: MEMORY_MARK, text: memory, parts: [{ part: 'memory', text: memory }] });
+  marks.sort((a, b) => a.at - b.at);
+  const segments: SystemSegment[] = [];
+  let probeAt = 0;
+  let textAt = 0;
+  for (const m of marks) {
+    const gap = m.at - probeAt;
+    if (gap > 0) segments.push({ part: 'instructions', text: prompt.slice(textAt, textAt + gap) });
+    segments.push(...m.parts);
+    textAt += gap + m.text.length;
+    probeAt = m.at + m.mark.length;
+  }
+  if (textAt < prompt.length) segments.push({ part: 'instructions', text: prompt.slice(textAt) });
+  if (extra) segments.push({ part: 'toolNote', text: `\n\n${extra}` });
+  return { text: extra ? `${prompt}\n\n${extra}` : prompt, segments };
 }
+
+const CONTEXT_MARK = '\u0000project-block\u0000';
+const MEMORY_MARK = '\u0000memory\u0000';
 
 /**
  * A team member's tools in this run: its instructions may name a tool the team or the flow doesn't give it here (written
@@ -567,7 +600,11 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       iterations++;
       let turn;
       try {
-        turn = await model.generate({ system: systemPrompt(agent, config, session, runCtx, toolNote), messages: await hydrateToolImages({ helpers: storeHelpers(binaryScopeFor(ctx)), logger: { warn: (m: string) => logger.warn(m) } as never }, contextWindow(session.messages), { model, keep: keptToolImages(request, config.settings), mode: request.toolImages?.mode }), tools: specs, signal: request.signal });
+        // SP03: the prompt's parts go with the call (in memory only), for the split the meter's listener writes.
+        const system = systemPromptParts(agent, config, session, runCtx, toolNote);
+        const messages = await hydrateToolImages({ helpers: storeHelpers(binaryScopeFor(ctx)), logger: { warn: (m: string) => logger.warn(m) } as never }, contextWindow(session.messages), { model, keep: keptToolImages(request, config.settings), mode: request.toolImages?.mode });
+        const draft = agentDraft({ systemSegments: system.segments, tools: specs, messages, cache: model.provider === 'anthropic' });
+        turn = await withCallNote({ purpose: 'answer', iteration: iterations, draft }, () => model.generate({ system: system.text, messages, tools: specs, signal: request.signal }));
       } catch (error) {
         if (isUsageCapError(error)) {
           upsert({ id: entryId(), type: 'notice', message: `Stopped: ${error.message}.`, at: now() });
@@ -578,7 +615,10 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       }
       const usage = turn.usage ?? { inputTokens: 0, outputTokens: 0 };
       // Each model call counts, with the model that answered: a team's report names it beside the agent's tokens.
-      session.usage = { inputTokens: session.usage.inputTokens + usage.inputTokens, outputTokens: session.usage.outputTokens + usage.outputTokens, requests: (session.usage.requests ?? 0) + 1, model: model.model };
+      // SP03: the cache numbers stay with the session (they were dropped here).
+      const cacheRead = (session.usage.cacheReadTokens ?? 0) + (usage.cacheReadTokens ?? 0);
+      const cacheWrite = (session.usage.cacheWriteTokens ?? 0) + (usage.cacheWriteTokens ?? 0);
+      session.usage = { inputTokens: session.usage.inputTokens + usage.inputTokens, outputTokens: session.usage.outputTokens + usage.outputTokens, ...(cacheRead > 0 && { cacheReadTokens: cacheRead }), ...(cacheWrite > 0 && { cacheWriteTokens: cacheWrite }), requests: (session.usage.requests ?? 0) + 1, model: model.model };
       recordAgentTokens({ agentId: agent.id, agentName: config.name }, usage);
       request.onUsage?.(session.usage);
       // Output guardrail: only the final answer is checked; a blocked or sanitized one replaces it in the transcript too.

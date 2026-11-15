@@ -316,6 +316,26 @@ request is rejected ("Nobody answered in time"). The requester, or an admin, can
 
 The routes are in [reference/api.md](reference/api.md).
 
+## What a prompt was made of
+
+For every chat call that Landflow builds the prompt for, Landflow writes how the prompt split into parts, once the call is
+recorded: instructions, where this work fits (the project block), practices, memory, tool notes, tool definitions, the
+conversation so far, tool results, the message and images. The row is `ai_call_parts` (migration 2901), one per call,
+keyed by the call's `ai_usage` row. It holds token counts, hashes and tool names, never text.
+
+- **An estimate in this wave.** Each part's characters divided by 4 (an image counts 1,600), scaled so the parts add up to
+  the call's input tokens, the rounding remainder going to the largest part. `method` says `estimate`; `formatting` is
+  always 0 because only an exact count can tell what the provider added. Wave 12 makes the numbers exact with the same row.
+- **Hashes.** Keyed hashes (HMAC-SHA-256 under a key derived from the instance's encryption key, 16 hex characters):
+  `promptHash` for the whole prompt (the same prompt sent again), `prefixHash` for everything up to the last cache
+  breakpoint (two calls with the same prefix could have shared a cache entry) and one hash per part (the instructions
+  changed between two runs). They are comparable inside one instance only and cannot be turned back into text.
+- **Who writes it.** Agent runs (the system prompt is split where it is built), the AI Agent node, Spotlight, the Agent
+  architect and Ask the brain. The text of a prompt is held in memory for the length of one call and is never stored,
+  logged or put on a span.
+- **Kept 30 days**, `LANDFLOW_AI_CALL_PARTS_RETENTION_DAYS` ([configuration](reference/configuration.md)); pruned with
+  the usage rows, at most hourly.
+
 ## The AI page
 
 Runs → Insights → **AI** (`/insights/ai`) is the one place to see AI spend and how near each cap is. It has a switch

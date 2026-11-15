@@ -28,6 +28,8 @@ import './project-context/provider';
 import './practices/register';
 // PR06: sets the seam's practices slot, so agent runs get approved practices (docs/practices.md).
 import './practices/context-source';
+// SP03: writes the parts of each recorded model call's prompt (docs/llm-gateway.md#what-a-prompt-was-made-of).
+import './ai-usage/parts-register';
 import { agentTriggers } from './agents/triggers';
 import { taskWakeups } from './tasks/wakeups';
 import { alerts } from './alerts/service';

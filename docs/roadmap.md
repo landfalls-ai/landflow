@@ -2186,6 +2186,17 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   label; the `ai.call` event gains purpose, node, session, iteration and usage id; the engine's `aroundNode` hook tells
   the host the active node. Setting purposes at the call sites is SP02, prompt parts SP03 ([llm-gateway.md](llm-gateway.md#what-each-call-was-for)).
 
+## Token spend, wave 11: purpose at the call sites (SP02)
+
+- **Built**: guardrail verdicts (chat model or judge), cache embeddings, the LLM reranker, evaluation judges and online
+  grading, an evaluation run's calls, and summaries (run report, briefing, workflow descriptions, wiki pages) say why they
+  are made (`guardrail`, `cache-embed`, `rerank`, `judge`, `eval`, `summary`). Jev and Strands judge calls are counted
+  (unpriced). Cohere's reranker is not a token call and stays unmetered.
+
+## Token spend wave 11: prompt parts (SP03)
+
+- Each chat call Landflow builds a prompt for gets a split into parts (instructions, project block, practices, memory, tool notes, tool definitions, history, tool results, message, images) as an estimate, with keyed prompt, prefix and per-part hashes, kept 30 days; an agent session's usage keeps its cache numbers ([llm-gateway.md](llm-gateway.md#what-a-prompt-was-made-of)). Exact counts, the gateway's split and the screens come in wave 12.
+
 ## Practices (waves P1 and P2)
 
 Rules in the brain that connected agents follow, each approved by a person ([practices.md](practices.md)). Decided
@@ -2209,10 +2220,3 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
 - **Left (deferred)**: model verdicts in the CLI's `check` (a model's verdict reaches a flow through Check Practices, PR08;
   the CLI runs machine checks only) and a reminder after `Write` or `Edit` on a matching path (the mod never denies a
   tool call, so a reminder hook is its own package).
-
-## Token spend, wave 11: purpose at the call sites (SP02)
-
-- **Built**: guardrail verdicts (chat model or judge), cache embeddings, the LLM reranker, evaluation judges and online
-  grading, an evaluation run's calls, and summaries (run report, briefing, workflow descriptions, wiki pages) say why they
-  are made (`guardrail`, `cache-embed`, `rerank`, `judge`, `eval`, `summary`). Jev and Strands judge calls are counted
-  (unpriced). Cohere's reranker is not a token call and stays unmetered.
