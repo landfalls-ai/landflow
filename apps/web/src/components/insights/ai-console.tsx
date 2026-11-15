@@ -96,15 +96,22 @@ export function SpendBy({ rows, label }: { rows: AiConsoleRow[]; label: string }
   );
 }
 
-/** SP20 (D1): the person group is everyone's, whatever the page's own totals above can open. */
-export function PeopleTotal({ totals }: { totals: AiConsoleTotals }) {
+/**
+ * SP20 (D1): the person group is everyone's, whatever the page's own totals above can open. An owner or admin sees
+ * everything, so the page's totals already are this total: for them the line is the caption alone, not the same figure twice.
+ */
+export function PeopleTotal({ totals, admin }: { totals: AiConsoleTotals; admin: boolean }) {
   return (
     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-hair px-4 py-2.5 text-[13px]">
       <span className="text-t2">Everyone&apos;s AI spend in this period, by person</span>
-      <span className="font-semibold tabular-nums text-t1">{formatCost(totals.cost)}</span>
-      <span className="tabular-nums text-t3">
-        {formatTokens(totalTokens(totals))} tokens · {totals.calls.toLocaleString('en-US')} call{totals.calls === 1 ? '' : 's'}
-      </span>
+      {!admin && (
+        <>
+          <span className="font-semibold tabular-nums text-t1">{formatCost(totals.cost)}</span>
+          <span className="tabular-nums text-t3">
+            {formatTokens(totalTokens(totals))} tokens · {totals.calls.toLocaleString('en-US')} call{totals.calls === 1 ? '' : 's'}
+          </span>
+        </>
+      )}
     </div>
   );
 }
@@ -175,7 +182,7 @@ export function AiConsole() {
             <SectionLabel>Spend by</SectionLabel>
             <Segmented label="Spend by" options={AI_GROUPS} value={group} onChange={setGroup} className="ml-auto max-md:ml-0 max-md:w-full max-md:[&>button]:flex-1 max-md:[&>button]:shrink max-md:[&>button]:px-1.5 max-md:[&>button]:text-[12px]" />
           </div>
-          {shown && group === 'person' && <PeopleTotal totals={shown.peopleTotals} />}
+          {shown && group === 'person' && <PeopleTotal totals={shown.peopleTotals} admin={shown.viewer.admin} />}
           {shown ? <SpendBy rows={shown.groups[group]} label={label} /> : <div className="m-4 h-24 rounded-xl bg-acdim animate-pulse-soft" />}
         </Card>
         {shown && <CapsCard report={shown} onChanged={() => load()} />}

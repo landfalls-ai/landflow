@@ -1,6 +1,7 @@
 /**
- * The AI page (docs/llm-gateway.md): the report's groups, totals, visibility (D1: everyone sees every person by name), caps and requests, the
- * gateway status against the fake LiteLLM, the pure helpers and the caps card's markup.
+ * The AI page (docs/llm-gateway.md): the report's groups, totals, visibility (D1: everyone sees every person by name),
+ * caps and requests, the gateway status against the fake LiteLLM, the pure helpers and the caps card's and the
+ * people total's markup.
  */
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -32,6 +33,7 @@ const reportRoute = await import('@/app/api/insights/ai/route');
 const statusRoute = await import('@/app/api/llm-gateway/status/route');
 const helpers = await import('@/lib/client/ai-console');
 const { CapsCard } = await import('@/components/insights/ai-console-caps');
+const { PeopleTotal } = await import('@/components/insights/ai-console');
 
 type User = Awaited<ReturnType<typeof createUser>>;
 let owner: User;
@@ -178,7 +180,7 @@ describe("a member's report", () => {
     expect(report.groups.source.map((r) => r.key)).toEqual(['landflow:landflow']);
   });
 
-  it("shows a person whose only rows are in a project the member can't read, by name, with the right amount", () => {
+  it("adds a person's rows in a project the member can't read to their figure, without naming the project", () => {
     // Omar's 6 is 2 in Alpha and 4 in Beta, which Mia can't read: the figure holds both, Beta stays unnamed.
     const mia = aiConsoleReport(member, '7d');
     expect(mia.groups.person.find((r) => r.label === 'Omar')?.calls).toBe(2);
@@ -386,6 +388,24 @@ describe('client helpers', () => {
     expect(helpers.checkRaise('', 5).error).toBeTruthy();
     expect(helpers.checkRaise('5', 5).error).toBeTruthy();
     expect(helpers.checkRaise('7.5', 5)).toEqual({ value: 7.5 });
+  });
+});
+
+describe('the people total markup', () => {
+  const totals = { inputTokens: 1_500, outputTokens: 500, cost: 12.5, calls: 3 };
+
+  it('gives a member the whole figure above the person list', () => {
+    const html = renderToStaticMarkup(createElement(PeopleTotal, { totals, admin: false }));
+    expect(html).toContain('Everyone&#x27;s AI spend in this period, by person');
+    expect(html).toContain('$12.50');
+    expect(html).toContain('3 calls');
+  });
+
+  it('gives an owner or admin the caption alone, as the page totals above are the same figure', () => {
+    const html = renderToStaticMarkup(createElement(PeopleTotal, { totals, admin: true }));
+    expect(html).toContain('Everyone&#x27;s AI spend in this period, by person');
+    expect(html).not.toContain('$12.50');
+    expect(html).not.toContain('calls');
   });
 });
 

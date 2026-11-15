@@ -366,9 +366,12 @@ for the period (24 hours, 7 days, 30 days) and shows, from top to bottom:
 and their own calls in the page's totals and in every group but one; calls they may not see are in no total, and a
 project, goal, agent or workflow they can't read is "Another ...". The person list is the exception (the user's decision
 D1, 2026-11-15): every member sees every person's spend by name, from every row of the period (rows with no workflow or
-agent included), with the instance's total above it ("Everyone's AI spend in this period, by person"). Spend views
-never show prompt text or run contents. A member sees only their own user cap and the caps of workflows and agents they can open;
-credential caps and the gateway's address, keys and sync detail are for admins. The page never shows a key.
+agent included), with the instance's total above it ("Everyone's AI spend in this period, by person"; owners and
+admins see the caption alone, since the page's totals are already that figure). A person with no name, or whose name is
+their email address, is "Unnamed person" to a member, who never sees another person's email; admins, and the person
+themselves, see the email. Spend views never show prompt text or run contents. A member sees only their own user cap
+and the caps of workflows and agents they can open; credential caps and the gateway's address, keys and sync detail
+are for admins. The page never shows a key.
 
 **Ask for more.** A member sees **Ask for more** on their own user cap and on the caps of workflows and agents they can
 edit. It asks for a new maximum above the current one and a reason, and sends it to `POST /api/ai/cap-requests` (see

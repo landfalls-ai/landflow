@@ -2233,7 +2233,8 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
 ## Token spend wave 11: who sees spend (SP20)
 
 - **Built**: every member sees every person's AI spend by name on the AI page, with the instance's total above the
-  person list (`peopleTotals`); the rules are in `contracts/s11/spend-visibility.md` ([llm-gateway.md](llm-gateway.md#the-ai-page)).
+  person list (`peopleTotals`; admins get the caption alone, and a person with no name is "Unnamed person" to a member);
+  the rules are in [llm-gateway.md](llm-gateway.md#the-ai-page) "Who sees what".
 
 ## Practices (waves P1 and P2)
 

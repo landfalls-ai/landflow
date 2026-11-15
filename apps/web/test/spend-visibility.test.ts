@@ -1,7 +1,8 @@
 /**
- * The rules of backbone contracts s11/spend-visibility.md (the user's decision D1, 2026-11-15) that exist so far, as a
+ * The rules of docs/llm-gateway.md "Who sees what" (the user's decision D1, 2026-11-15) that exist so far, as a
  * checklist later waves extend. Wave 11: rule 1 (everyone sees every person by name), rule 2 (other groupings keep
- * their visibility), rule 4 (no prompt text), rule 5 (other people's caps stay private).
+ * their visibility), rule 3 (a person with no name is "Unnamed person" to a member, the email stays with admins),
+ * rule 4 (no prompt text), rule 5 (other people's caps stay private).
  */
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -25,6 +26,7 @@ type User = Awaited<ReturnType<typeof createUser>>;
 let alpha: User;
 let beta: User;
 let admin: User;
+let unnamed: User;
 let counter = 0;
 
 function row(fields: Record<string, unknown>) {
@@ -60,6 +62,8 @@ beforeAll(async () => {
   admin = await createUser({ email: 'ada@visibility.test', name: 'Ada Admin', role: 'owner', password: 'ada-password-1' });
   alpha = await createUser({ email: 'alma@visibility.test', name: 'Alma Alpha', role: 'member', password: 'alma-password-1' });
   beta = await createUser({ email: 'ben@visibility.test', name: 'Ben Beta', role: 'member', password: 'ben-password-1' });
+  // A sign-in without a display name leaves the email as the name.
+  unnamed = await createUser({ email: 'una@visibility.test', name: 'una@visibility.test', role: 'member', password: 'una-password-1' });
   const open = projects.createTeamProject({ name: 'Open Project' }).id;
   const closed = projects.createTeamProject({ name: 'Closed Project' }).id;
   projects.setMember(open, alpha.id, 'editor');
@@ -68,6 +72,7 @@ beforeAll(async () => {
   projects.setHomeProject('workflow', 'wf_sv_closed', closed);
   row({ workflow_id: 'wf_sv_closed', user_id: beta.id, project_id: closed, cost: 4 });
   row({ user_id: alpha.id, cost: 1 });
+  row({ user_id: unnamed.id, cost: 2 });
   saveAiCaps({ credentials: {}, users: { [beta.id]: { name: 'Ben Beta', dayCost: 77 } } });
   aiUsageMeter().invalidateCaps();
 });
@@ -82,7 +87,7 @@ describe('spend visibility (D1)', () => {
     const { body } = await get(alpha);
     const people = Object.fromEntries(body.groups.person.map((r: { label: string; cost: number }) => [r.label, r.cost]));
     expect(people).toMatchObject({ 'Alma Alpha': 1, 'Ben Beta': 4 });
-    expect(body.peopleTotals.cost).toBeCloseTo(5);
+    expect(body.peopleTotals.cost).toBeCloseTo(7);
     expect(body.totals.cost).toBeCloseTo(1);
   });
 
@@ -93,9 +98,32 @@ describe('spend visibility (D1)', () => {
     expect(text).not.toContain('Closed flow');
   });
 
-  it('rule 4: no prompt text in the JSON', async () => {
-    const { text } = await get(alpha);
-    expect(text).not.toMatch(/prompt|messages|content/i);
+  it('rule 3: a person with no name is "Unnamed person" to a member, and keeps the email for an admin; no member sees an email', async () => {
+    const member = await get(alpha);
+    const labels = member.body.groups.person.map((r: { label: string }) => r.label);
+    expect(labels).toContain('Unnamed person');
+    expect(labels).not.toContain('una@visibility.test');
+    expect(member.text).not.toContain('una@visibility.test');
+    expect(member.text).not.toContain('ben@visibility.test');
+    expect((await get(admin)).body.groups.person.map((r: { label: string }) => r.label)).toContain('una@visibility.test');
+    // Their own row is theirs to see.
+    expect((await get(unnamed)).body.groups.person.map((r: { label: string }) => r.label)).toContain('una@visibility.test');
+  });
+
+  it('rule 4: no prompt text in the response (no key that holds it)', async () => {
+    const { body } = await get(alpha);
+    const keys = new Set<string>();
+    const walk = (value: unknown) => {
+      if (Array.isArray(value)) value.forEach(walk);
+      else if (value && typeof value === 'object') {
+        for (const [key, inner] of Object.entries(value)) {
+          keys.add(key);
+          walk(inner);
+        }
+      }
+    };
+    walk(body);
+    for (const key of ['prompt', 'prompts', 'messages', 'content', 'text', 'system', 'draft', 'parts', 'answer', 'input']) expect(keys.has(key), key).toBe(false);
   });
 
   it("rule 5: other people's caps stay private to a member, visible to the owner", async () => {

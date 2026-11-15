@@ -114,6 +114,19 @@ function usageRows(period: AiConsolePeriod, now: number): { rows: UsageRow[]; fr
 
 const userLabel = (id: string) => getUser(id)?.name || getUser(id)?.email || 'Someone';
 
+/**
+ * A person's label in the person group, which every member sees (D1): the name. A person with no name, or whose name is
+ * their email address (as a sign-in without a display name leaves it), shows the email to admins and to themselves, and as
+ * "Unnamed person" to everyone else: a member never sees another person's email here.
+ */
+function personLabel(id: string, viewer: { id: string }, admin: boolean): string {
+  const user = getUser(id);
+  if (!user) return 'Someone';
+  const name = user.name?.trim();
+  if (admin || id === viewer.id) return name || user.email || 'Someone';
+  return name && !name.includes('@') ? name : 'Unnamed person';
+}
+
 /** Sorted by cost then tokens, each with its share, the tail beyond 50 rolled into "Other". */
 function finish(groups: Map<string, AiConsoleRow>, total: AiConsoleTotals): AiConsoleRow[] {
   const byCost = total.cost > 0;
@@ -298,7 +311,7 @@ export function aiConsoleReport(actor: Actor, period: AiConsolePeriod, now = Dat
   for (const row of rows) {
     add(peopleTotals, row);
     if (!row.user_id) bump(groups.person, 'none', 'No person', row);
-    else bump(groups.person, row.user_id, userLabel(row.user_id), row);
+    else bump(groups.person, row.user_id, personLabel(row.user_id, actor, admin), row);
   }
   for (const row of visibleRows) {
     add(totals, row);
