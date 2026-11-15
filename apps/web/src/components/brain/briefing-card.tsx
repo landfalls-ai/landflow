@@ -20,6 +20,7 @@ import type { Briefing, RelatedColleague, WorkItem } from '@/lib/shared/brain-wo
 import type { BriefingDelivery } from '@/lib/shared/preferences';
 import type { WorkflowSummary } from '@/lib/shared/types';
 import { useViewer } from '../auth/viewer';
+import { closeSpotlight } from '../spotlight/context';
 import { Card } from '../shell/page-header';
 import { Chip } from '../ui/badge';
 import { Button } from '../ui/button';
@@ -279,6 +280,8 @@ export function BriefingCard() {
     try {
       const made = await api<{ workflow?: { id: string } }>(`/api/templates/${TEMPLATE_ID}/use`, { method: 'POST', json: {} });
       if (!made.workflow) throw new Error('The template made no workflow');
+      // The new workflow opens with its builder: an About panel left open on Home would fold it and stay (one column).
+      closeSpotlight();
       router.push(`/workflows/${made.workflow.id}`);
     } catch (e) {
       toast.error((e as Error).message);
