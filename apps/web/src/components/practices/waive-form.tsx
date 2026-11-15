@@ -104,7 +104,7 @@ export function WaiveForm({ practiceId, executionId }: { practiceId: string; exe
   };
 
   const runLink = (
-    <Link href={`/runs/${encodeURIComponent(executionId)}`} className="text-ac hover:underline">
+    <Link href={`/runs/${encodeURIComponent(executionId)}`} className="text-ac underline underline-offset-2">
       Open the run
     </Link>
   );
@@ -172,7 +172,7 @@ export function WaiveForm({ practiceId, executionId }: { practiceId: string; exe
                 {error && <p className="mt-2 text-[13px] text-danger" role="alert">{error}</p>}
                 {retried ? (
                   <p className="mt-3 text-[13px]">
-                    Started again. <Link href={`/runs/${encodeURIComponent(retried)}`} className="text-ac hover:underline">Open the new run</Link>
+                    Started again. <Link href={`/runs/${encodeURIComponent(retried)}`} className="text-ac underline underline-offset-2">Open the new run</Link>
                   </p>
                 ) : (
                   <div className="mt-3 flex flex-wrap items-center gap-3">
