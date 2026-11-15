@@ -538,6 +538,9 @@ export interface ExecuteWorkflowOptions {
   onSecretParameter?: (value: unknown) => void;
   /** Continue a waiting execution (same `executionId`); start options are ignored. */
   resume?: ResumeOptions;
+  // SP01: runs a node's (or sub-node's) work with the node known to the host, so a model call under it can name it
+  // even when OpenTelemetry's context manager is off. Nested nodes nest the calls.
+  aroundNode?: <T>(node: { id: string; name: string; type: string }, fn: () => Promise<T>) => Promise<T>;
   /** `$execution.resumeUrl` / `$execution.resumeFormUrl`: where a webhook or form wait of this run is resumed. */
   resumeUrls?: { webhook: string; form: string };
   /** Called before the first node and after every main-flow node that finished: the state to continue from after a crash. */
