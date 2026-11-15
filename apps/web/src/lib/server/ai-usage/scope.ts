@@ -76,6 +76,8 @@ export interface UsageScopeInfo {
   surface?: 'spotlight' | 'architect' | 'brain';
   /** The project the call belongs to, when the opener knows it (else the agent's or workflow's home project). */
   projectId?: string;
+  /** The goal the run serves (the run's context), when it has one. */
+  goalId?: string;
 }
 
 /** Thrown when a cap is reached: the call is refused (or, once over the cap, the run stops after it). */

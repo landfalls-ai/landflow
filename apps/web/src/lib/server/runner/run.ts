@@ -19,8 +19,10 @@ import { retries, retryDueFor } from '../retries';
 import { versionFor } from '../versions';
 import { credentials } from '../credentials/vault';
 import { resolveWorkflowCredentials } from '../projects/credentials';
+import { getProject, homeProjectId } from '../projects/store';
 import { registry } from '../plugins/registry';
-import { traceSegment } from '../journal';
+import { liveJournal, traceSegment } from '../journal';
+import { contextDataSource, runContextProvider } from '../project-context/seam';
 import { parameterSecretOptions, redactRunData } from '../secrets/runtime';
 import { singleton } from '../singleton';
 import { store } from '../store';
@@ -211,7 +213,9 @@ export async function runSegment(segment: Segment): Promise<ExecutionRecord> {
   // Token & cost tracking: every model call of this segment counts here, under the workflow's AI usage caps.
   // Caps per user count the runs a signed-in user started (record.startedBy: the editor's Execute, the API, chat), also after a Wait.
   const scopes = workflowScopes(workflow);
-  const usage = executionScope({ executionId, workflowId: workflow.id, settings: workflow.settings, previous: record.aiUsage, ...((record.startedBy ?? currentActorId()) && { userId: (record.startedBy ?? currentActorId())! }) });
+  // The run's project and goal (PC05): the provider's resolution, on every model call and usage event of the run.
+  const runRef = runContextProvider()?.resolve({ caller: 'workflow', workflowId: workflow.id, executionId }) ?? {};
+  const usage = executionScope({ executionId, workflowId: workflow.id, ...runRef, settings: workflow.settings, previous: record.aiUsage, ...((record.startedBy ?? currentActorId()) && { userId: (record.startedBy ?? currentActorId())! }) });
   try {
     // $secrets in node parameters (Settings → External secrets): an engine-made text (an expression error) may quote a value.
     // Transports: the workflow's overrides of plugin policies apply to the plugin calls of this segment (settings `transports`).
@@ -257,6 +261,7 @@ export async function runSegment(segment: Segment): Promise<ExecutionRecord> {
       onEvent: (raw) => {
         const event = redactRunData(raw);
         trace.feed(event);
+        if (event.type === 'execution.started' && !event.resumed) recordRunProject(executionId, { ...runRef, projectId: runRef.projectId ?? homeProjectId('workflow', workflow.id) });
         if (event.type === 'execution.started' && event.traceId) record.traceId = event.traceId;
         if (event.type === 'node.finished') {
           (record.runData[event.nodeId] ??= []).push(event.run);
@@ -352,4 +357,21 @@ export function startTriggerBuffers(): void {
     );
     return true;
   });
+}
+
+/** Say on the run span which project and goal the run is in (Run Trace, wave 8). Never throws: a journal write never decides a run. */
+function recordRunProject(executionId: string, ref: { projectId?: string; goalId?: string }) {
+  try {
+    if (!ref.projectId) return;
+    const source = contextDataSource();
+    const name = source?.project(ref.projectId)?.name ?? getProject(ref.projectId)?.name;
+    const title = ref.goalId ? source?.goalChain(ref.goalId).at(-1)?.title : undefined;
+    liveJournal(executionId)?.record({
+      type: 'span.updated',
+      spanId: 'run',
+      attrs: { project: { id: ref.projectId, ...(name && { name }) }, ...(ref.goalId && { goal: { id: ref.goalId, ...(title && { title }) } }) },
+    });
+  } catch {
+    // Never decides a run.
+  }
 }

@@ -111,7 +111,10 @@ export function scopeClause(scope: UsageScope | undefined, where: string[], para
   params.push(...inner, ...(viewer ? [viewer] : []), ...(teamOf ? [teamOf] : []));
 }
 
-function filterClause(filter: UsageFilter, timeColumn: 'at' | 'day', scope?: UsageScope): Where {
+/** The filter of the usage routes: UsageFilter and, on the raw events, one project and one goal (PC05). */
+export type UsageQueryFilter = UsageFilter & { projectId?: string; goalId?: string };
+
+function filterClause(filter: UsageQueryFilter, timeColumn: 'at' | 'day', scope?: UsageScope): Where {
   const now = Date.now();
   const where: string[] = [];
   const params: SqlValue[] = [];
@@ -137,6 +140,11 @@ function filterClause(filter: UsageFilter, timeColumn: 'at' | 'day', scope?: Usa
   eq('agent_id', filter.agentId);
   eq('node_type', filter.nodeType);
   eq('signature', filter.signature);
+  // usage_daily has no project or goal column: these read the raw events.
+  if (timeColumn === 'at') {
+    eq('project_id', filter.projectId);
+    eq('goal_id', filter.goalId);
+  }
   // Attributes live in the raw events only (usage_daily keeps none): usageReport reads those whenever they are asked for.
   if (timeColumn === 'at') {
     for (const [name, value] of Object.entries(filter.attrEquals ?? {})) {
@@ -153,7 +161,7 @@ function filterClause(filter: UsageFilter, timeColumn: 'at' | 'day', scope?: Usa
 }
 
 /** Events matching `filter`, newest first. */
-export function listUsageEvents(filter: UsageFilter = {}, options: { limit?: number; scope?: UsageScope } = {}, db: Database = database()): UsageEvent[] {
+export function listUsageEvents(filter: UsageQueryFilter = {}, options: { limit?: number; scope?: UsageScope } = {}, db: Database = database()): UsageEvent[] {
   const { sql, params } = filterClause(filter, 'at', options.scope);
   const limit = Math.min(Math.max(options.limit ?? 100, 1), 5_000);
   return db.all<UsageRow>(`SELECT * FROM usage_events WHERE ${sql} ORDER BY at DESC LIMIT ${limit}`, ...params).map(fromRow);
@@ -368,7 +376,7 @@ export function ledgerSize(db: Database = database()): { events: number; oldest?
 }
 
 /** The filter of GET /api/usage and /api/usage/events, from the query string. */
-export function usageFilter(url: URL): UsageFilter {
+export function usageFilter(url: URL): UsageQueryFilter {
   const param = (name: string) => url.searchParams.get(name)?.trim() || undefined;
   const kinds = (param('kinds') ?? '')
     .split(',')
@@ -387,5 +395,7 @@ export function usageFilter(url: URL): UsageFilter {
     agentId: param('agentId'),
     nodeType: param('nodeType'),
     signature: param('signature'),
+    projectId: param('projectId'),
+    goalId: param('goalId'),
   };
 }
