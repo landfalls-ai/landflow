@@ -46,7 +46,7 @@ const SETUP_NOTE: Partial<Record<BriefingDelivery, string>> = {
 /** A link a briefing may show: a path or address on this instance, or github.com. Anything else is shown as plain text. */
 export function safeHref(url: string | undefined, origin?: string): { href: string; external: boolean } | undefined {
   if (!url) return undefined;
-  if (url.startsWith('/') && !url.startsWith('//') && !url.includes('\\')) return { href: url, external: false };
+  if (url.startsWith('/')) return /^\/(?![/\\])/.test(url) && !/[\\\t\r\n]/.test(url) ? { href: url, external: false } : undefined;
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -54,7 +54,10 @@ export function safeHref(url: string | undefined, origin?: string): { href: stri
     return undefined;
   }
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return undefined;
-  if (origin && parsed.origin === origin) return { href: `${parsed.pathname}${parsed.search}${parsed.hash}`, external: false };
+  if (origin && parsed.origin === origin) {
+    const path = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    return path.startsWith('//') || path.includes('\\') ? undefined : { href: path, external: false };
+  }
   if (parsed.protocol === 'https:' && parsed.hostname === 'github.com' && !parsed.username && !parsed.password) return { href: parsed.href, external: true };
   return undefined;
 }

@@ -1533,7 +1533,7 @@ setting `brain.workAutoSend`.
 - **Built (B29)**: the mod's colleagues: `/brain sync`, the pane, the overlap band, team or org per item, Post as my update and the admin's no-auto rule ([landflow-brain-mod.md](landflow-brain-mod.md#colleagues)).
 - **Built (B30, V3's server part)**: the Tomorrow sync template and its five brain nodes, the `brain_briefings` store, briefings served over MCP and `GET /api/brain/briefing`; Slack delivery with the server's own bot (`LANDFLOW_BRIEFING_SLACK_TOKEN`), never a credential ([work-and-briefings.md](work-and-briefings.md#the-nightly-sync)). Open, carried to B38: the landflow-brain mod's session start shows `summary` and `source` (`hooks/client.ts`, `register.ts`).
 - **Built (B37, V3 closed on the web)**: "Your morning" on Home and at the top of the Brain index, and a one-click "Set up tomorrow sync" for admins ([work-and-briefings.md](work-and-briefings.md#on-the-web)).
-- **Next**: the overlap detector and the mod showing the nightly text at session start. (The admin's auto-send switch is in Settings → MCP.)
+- **Next**: the overlap detector and the mod showing the nightly text at session start. (The admin's auto-send switch is in Settings → MCP.) Also next on the web: a `finished` list on `Briefing` and the card ("what finished"), and a live "Slack is set up" check so the Delivery line does not claim Slack when the server has no token or SMTP.
 
 ## Shell: nine-item rail (built 2026-11-14)
 
