@@ -7,6 +7,7 @@ import { executeWorkflow, type Workflow } from '@landflow/engine';
 import type { ExecutionRecord } from '../../shared/types';
 import { executionScope, executionUsage, runInUsageScope } from '../ai-usage';
 import { tagNodeCredentials } from '../ai-usage/credential-id';
+import { runInNode } from '../ai-usage/node-context'; // SP01:
 import { TriggerBuffers, triggerBuffers } from '../trigger-buffers';
 import { auditCredentialUse } from '../audit';
 import { currentActorId } from '../auth/context';
@@ -246,6 +247,7 @@ export async function runSegment(segment: Segment): Promise<ExecutionRecord> {
       // Composite frames whose type falls back, times out or has properties run as one step (docs/composites.md).
       ...(scopes && { scopes }),
       resumeUrls: resumeUrls(executionId),
+      aroundNode: runInNode, // SP01: the node a model call runs under
       debug: segment.debug,
       signal,
       // Queue mode: node rate limits count across all processes.

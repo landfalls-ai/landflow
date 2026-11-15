@@ -44,6 +44,13 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - **Log redaction** ([observability.md](observability.md#3-logs)): the host's logger scrubs secret-shaped values (Bearer tokens (the word `Bearer` with that case; an all-letter token shorter than 24 characters is left, so prose such as "Bearer authentication" is not mangled), `lf_` keys, `sk-`, GitHub and Slack keys, URL passwords, PEM private keys) and the credential values a node was handed; a secret in free text of another shape, or a credential value shorter than twelve characters (the vault does not remember short ones, so a weak password such as `postgres` is not scrubbed), is not found. Value patterns apply to log lines only: span attributes and exception events exported over OTLP are redacted by key name. OAuth access tokens handed to a node are scrubbed from its output too, so a workflow that passes one downstream through node output gets `[redacted]`. A multi-line credential that is not a PEM block is remembered whole, not line by line. The plugin SDKs keep their own rules (key names and the current request's credential values). A `traceparent` on a read response may name a trace the sampler dropped.
 - **By design**: a Respond to Webhook reply built from a secret is not redacted: redaction covers what is kept, and the reply is sent, not kept ([External secrets](features/secrets-and-environments.md)).
 
+## Call attribution (wave 11)
+
+- The new `ai_usage` columns (node, span, purpose, iteration, caller, duration, stop reason) show on no screen until wave 12.
+- Rows imported from the gateway's spend log and failed calls have none of them; neither has a call a plugin node reports in its `model` record, except `node_id`.
+- `node_id` is the innermost node, so a model sub-node's call names the sub-node, not the Agent node it belongs to. A per-node spend view must roll sub-nodes up to their root.
+- `landflow.ai.usage_id` is set on the span only when OpenTelemetry's context manager is on.
+
 ## Projects and goals
 
 - **One company per instance** ([projects-and-goals.md](projects-and-goals.md#the-mission)): the mission and company name are

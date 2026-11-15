@@ -33,7 +33,7 @@ function create(provider: MeterProvider) {
     mcpToolCalls: meter.createCounter('landflow.mcp.tool.calls', { description: 'Tool calls on the per-plugin MCP endpoints, by plugin, tool and outcome' }),
     aiRequests: meter.createCounter('landflow.ai.requests', { description: 'Model requests (chat and embeddings)' }),
     aiDuration: meter.createHistogram('landflow.ai.duration', { description: 'Model request duration (chat and embeddings)', unit: 'ms', advice }),
-    aiTokens: meter.createCounter('landflow.ai.tokens', { description: 'Model tokens (embeddings count input tokens only)' }),
+    aiTokens: meter.createCounter('landflow.ai.tokens', { description: 'Model tokens by type: input (the whole prompt), output, cache_read and cache_write (parts of input), and purpose; embeddings count input tokens only' }),
     aiCost: meter.createCounter('landflow.ai.cost', { description: 'Estimated cost of model calls by the price table', unit: 'USD' }),
     aiCapsReached: meter.createCounter('landflow.ai.caps_reached', { description: 'Model calls refused or runs stopped by an AI usage cap' }),
     agentRuns: meter.createCounter('landflow.agent.runs', { description: 'Agent runs (one per user message, schedule fire or resumed approval)' }),

@@ -10,6 +10,7 @@
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { AiModelUsage, AiUsageTotals } from '../../shared/ai-usage';
+import type { CallPurpose } from '../../shared/ai-call';
 import type { AiCallSource, AiRuntime } from '../../shared/llm-gateway';
 import { singleton } from '../singleton';
 
@@ -34,6 +35,14 @@ export interface ModelCall {
   source?: AiCallSource;
   /** What ran the call (default `landflow`). */
   runtime?: AiRuntime;
+  // SP01: what each call was for and where it ran (docs/llm-gateway.md#what-each-call-was-for)
+  nodeId?: string;
+  spanId?: string;
+  purpose?: CallPurpose;
+  iteration?: number;
+  callerAgentId?: string;
+  durationMs?: number;
+  stopReason?: string;
 }
 
 export interface MeteredCall extends ModelCall {
