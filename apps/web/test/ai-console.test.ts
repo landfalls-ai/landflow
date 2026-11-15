@@ -382,6 +382,7 @@ describe('spend by goal', () => {
   let alphaGoal = '';
   let betaGoal = '';
   let goneGoal = '';
+  let companyGoal = '';
 
   beforeAll(() => {
     const alpha = listProjects().find((p) => p.name === 'Alpha')!.id;
@@ -389,6 +390,8 @@ describe('spend by goal', () => {
     alphaGoal = createGoal({ title: 'Ship the pilot', level: 'project', projectId: alpha }).id;
     betaGoal = createGoal({ title: 'Cut support load', level: 'project', projectId: beta }).id;
     goneGoal = 'goal_deleted_one';
+    companyGoal = createGoal({ title: 'Grow the company', level: 'company' }).id;
+    row({ workflow_id: wfMine, user_id: member.id, goal_id: companyGoal, cost: 2 });
     row({ workflow_id: wfMine, user_id: member.id, goal_id: alphaGoal, cost: 3 });
     row({ workflow_id: wfMine, user_id: member.id, goal_id: betaGoal, cost: 5 });
     row({ workflow_id: wfTheirs, user_id: other.id, goal_id: betaGoal, cost: 7 });
@@ -412,10 +415,12 @@ describe('spend by goal', () => {
     const report = aiConsoleReport(member, '7d');
     const goals = byKey(report.groups.goal);
     expect(goals[alphaGoal]?.label).toBe('Ship the pilot');
-    expect(goals.other?.label).toBe('Another goal');
+    expect(goals.shared?.label).toBe('Another goal');
     // Only the row on their own workflow (5); the 7 on Beta's workflow is in no total.
-    expect(goals.other?.cost).toBeCloseTo(5);
+    expect(goals.shared?.cost).toBeCloseTo(5);
     expect(JSON.stringify(report)).not.toContain('Cut support load');
+    expect(goals[goneGoal]?.label).toBe('Deleted goal');
+    expect(goals[companyGoal]?.label).toBe('Grow the company');
     expect(report.groups.goal.reduce((sum, r) => sum + r.cost, 0)).toBeCloseTo(report.totals.cost);
   });
 

@@ -398,7 +398,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 ## Usage by goal (wave 7)
 
-- Only `ai.call` usage events carry a goal (`goalId`); `run.finished`, `node.failed`, `node.slow` and `agent.session` do not, and calls that come in through the spend import (kagent) have none.
+- Only `ai.call` usage events carry a goal (`goalId`); `run.finished`, `node.failed`, `node.slow` and `agent.session` do not, and calls that come in through the spend import (kagent) have none, so they show under "No goal" on the AI page.
 
 ## Practices (wave P1)
 

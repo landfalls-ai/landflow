@@ -13,7 +13,7 @@ import { productionWorkflowById } from '../publish';
 import { canResource, isInstanceAdmin, visibleIds, visibleProjectIds } from '../projects/access';
 import type { Actor } from '../projects/access';
 import { getGoal } from '../goals/store';
-import { visibleGoal } from '../goals/views';
+import { visibleGoals } from '../goals/views';
 import { getProject, homeProjectId } from '../projects/store';
 import { aiUsageMeter } from '../ai-usage';
 import { store } from '../store';
@@ -278,7 +278,7 @@ export function aiConsoleReport(actor: Actor, period: AiConsolePeriod, now = Dat
   const goalFor = (id: string) => {
     if (!goals.has(id)) {
       const goal = getGoal(id);
-      goals.set(id, goal && ((admin ? goal : visibleGoal(actor, id)) ?? null));
+      goals.set(id, goal && (visibleGoals(actor, [goal], projects)[0] ?? null));
     }
     return goals.get(id);
   };
@@ -297,7 +297,7 @@ export function aiConsoleReport(actor: Actor, period: AiConsolePeriod, now = Dat
     else {
       const goal = goalFor(row.goal_id);
       if (goal === undefined) bump(groups.goal, row.goal_id, 'Deleted goal', row);
-      else if (goal === null) bump(groups.goal, 'other', 'Another goal', row);
+      else if (goal === null) bump(groups.goal, 'shared', 'Another goal', row);
       else bump(groups.goal, goal.id, goal.title, row);
     }
 
