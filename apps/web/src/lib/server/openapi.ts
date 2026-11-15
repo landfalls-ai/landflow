@@ -2375,7 +2375,8 @@ function paths(): Record<string, Record<string, Json>> {
     description:
       'Needs the `brain:read` scope or a session. The approved version of one practice: its rules, scope and machine checks, redacted, exactly the one `applicable` delivered for the same `repo`, `path`s, `topic`s and `projectId` (the same filter and ranking; `level` keeps a winner of that level). 404 when practices are off, when delivery gave none, or for a project the caller has no role in. Unlike the Brain page’s list, this never gives a body while practices are off.',
     query: [
-      { name: 'handle', description: 'The practice’s handle', required: true, schema: { type: 'string' } },
+      { name: 'handle', description: 'The practice’s handle. Give this or `id`, not both.', schema: { type: 'string' } },
+      { name: 'id', description: 'The practice’s id (`prc_…`, as `applicable` lists it). Given, it is found only when delivery gives it for the same `repo`, `path`s and `topic`s; 404 otherwise. Give this or `handle`, not both.', schema: { type: 'string' } },
       { name: 'repo', description: 'owner/name, as given to `applicable`', schema: { type: 'string' } },
       { name: 'path', description: 'A repository-relative path, as given to `applicable`; repeat for more (at most 20)', schema: { type: 'string' } },
       { name: 'topic', description: 'A topic, as given to `applicable`; repeat for more (at most 5)', schema: { type: 'string' } },

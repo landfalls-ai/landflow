@@ -2,7 +2,7 @@
 
 Rules in the brain that every connected agent follows, each approved by a person. Part of the [Landflow docs](README.md).
 Written for wave P1; what the Brain page, learning and selection add (packages PR02 to PR05) is described here too, and
-marked as it lands. Delivery to Landflow agents, kagent agents and the Check Practices step arrive in wave P2.
+marked as it lands. Delivery to Landflow agents and kagent agents arrives in wave P2; the Check Practices step is built.
 
 ## What a practice is
 
@@ -54,7 +54,7 @@ pattern must be a regular expression, or the request answers 400 and names it.
 
 ## Strength
 
-- `required`: in a flow, a failed check of the practice stops the flow at Check Practices (wave P2), so nothing after it
+- `required`: in a flow, a failed check of the practice stops the flow at Check Practices ([below](#the-check-practices-step)), so nothing after it
   runs (no draft pull request), until the change is fixed or someone waives the practice for that run.
 - `recommended`: a failed check is reported and never stops a step.
 
@@ -80,8 +80,8 @@ for what overlaps ("topic helm; repo acme/web").
 - **Retire** a practice: agents stop getting it. Its versions stay; approving a newer version brings it back.
 - **Waive** a practice for one run: someone who may approve it records, with a reason, that a failed check does not
   count for that run. The run must exist and the person must be able to read its workflow; the version must have been
-  approved at some point. A second waiver of the same practice and run returns the first. Wave P2's Check Practices
-  reads waivers; wave P1 only stores them.
+  approved at some point. A second waiver of the same practice and run returns the first. Check Practices reads waivers
+  ([waiving from a flow](#waiving-from-a-flow)).
 
 - **Delete a project**: its project-level practices (approved, draft or waiting) are retired in the same transaction, each
   with a `practice.retired` audit event, and their versions and applications stay for the audit trail. Moving the project's
@@ -246,8 +246,61 @@ A version may carry machine checks, run with no model over the files a change ad
 - `fileMatches { glob, pattern, absent? }`: every changed file matching `glob` has `pattern` (a regular expression) in
   its added lines, or never has it with `absent: true`.
 
-At most 20 checks. In wave P1 they are stored and checked for shape; they run in `landflow practices check` and, in wave
-P2, in Check Practices.
+At most 20 checks. They run in `landflow practices check` and in the Check Practices step. Both use one implementation
+(`@landflow/protocol`, `practice-checks.ts`), so a change passes in one exactly when it passes in the other; the host's
+selector keeps its own copy of the glob, and a test runs both over one table.
+
+### The Check Practices step
+
+**Check Practices** (`core.practiceCheck`, category Flow) checks a change against the practices that apply and is the one
+place a practice blocks. It is for flows: an agent's tool call is never denied.
+
+- **Parameters**: **Repository** (`owner/name`, optional: it narrows to practices that list it or list none), **Changed
+  files** (an expression giving a list of `{ path, status: 'A' | 'M' | 'D', added?: [lines] }`), **Reviewer verdicts**
+  (optional, an expression giving `[{ handle, pass, note? }]` from a model or a person). Options: **Reviewer fails block**
+  (off by default), **Practices** (handles to check; empty means all that apply) and **Link to the change** (a pull
+  request, shown in the failure).
+- **Which practices**: the approved practices of the flow's home project and the organization's, never a project a
+  parameter names, selected for the repository and the changed paths as delivery does.
+- **Each practice** gets its machine checks run, and its reviewer verdict read. The step reports a check named
+  `practice:<handle>@<version>` (`pass`, `warn`, `fail`, or `skip` for a practice with neither a machine check nor a
+  verdict) and writes a `check-pass` or `check-fail` row for the run.
+- **The output** is one item: `{ ok, repository?, changed, checked, failed, warned, waived, changeUrl?, practices }`. Each
+  entry of `practices` has `id`, `handle`, `version`, `title`, `strength`, `result` (`pass`, `fail`, `waived` or
+  `no-checks`), `blocks`, `files` (the failing paths), `messages`, `checks`, `reviewer?`, `waiver?` and `waiveUrl`
+  (`/practices/waive?practice=<id>&execution=<run>`).
+- **A required practice whose machine check failed makes the step throw**: the run fails there and nothing after it runs.
+  The error names the practices and, in its details, says what failed for each. A reviewer's fail of a required practice
+  blocks only with **Reviewer fails block** on; otherwise it warns. A **recommended** failure never throws.
+- **Fix** the change and run the flow again, or **waive** it (below). With **On error: continue** set on the step, the
+  engine carries on past the failure and the block is gone: leave that setting off.
+
+### Waiving from a flow
+
+The failed step's error carries the waive link. `/practices/waive?practice=<id>&execution=<run>` shows the practice, its
+strength, what failed in that run, a reason (10 to 500 characters) and **Waive for this run**; it posts to
+`POST /api/practices/:id/waivers`. Someone who may not approve the practice is told why and gets no button. After the
+waiver the page offers **Retry the run** (`POST /api/executions/:id/retry`): a retry is a new run linked to the failed one,
+and the step finds the waiver by following that link, so the waiver counts for the retry and for later retries of it. It
+never counts for another run of the flow, which is checked again. It holds only for the failure the approver saw: the
+step compares the practice's failure line (practice, message and files) with the one in the waived run's failed step, so
+a retry (even from the start) that breaks the practice on other files fails again.
+
+The error text and the waive link are absolute (from `LANDFLOW_PUBLIC_URL`). The generic **Accept as is** button on the
+failed `practice:` check in the run trace only journals a decision; it is not a waiver, and a retry fails again. Use the
+waive link. A step that checks nothing (practices off, or a handle named in **Practices** that is not approved here)
+writes a warning check so the gap is visible.
+
+### Templates
+
+- **Check a pull request against the practices** (`practices-check-pr`): a GitHub pull request's files, mapped to changed
+  files, then Check Practices, then a comment on the pull request with the results, then **Ready to merge?** in Ask a
+  Person. It never merges. A pull request whose practices fail stops at the step, so no comment is posted: the error
+  workflow tells people.
+- **When a required practice blocks a flow** (`practices-blocked`): an error workflow (Error Trigger, then Ask a Person)
+  whose message names each failed practice with three links: **Fix** (the pull request), **Waive** (the waive page for that
+  run) and **Change the practice** (its page on `/brain`). To use it, open the first flow's **Settings → Error workflow**
+  and pick it; error workflows start only for runs a trigger started, not a manual Run.
 
 ## The API
 
@@ -264,6 +317,7 @@ rejecting, retiring and waiving need a session. See [reference/api.md](reference
 | `POST /api/practices/:id/versions/:version/reject` | `{ reason }` |
 | `POST /api/practices/:id/retire` | retire |
 | `POST /api/practices/:id/waivers` | `{ executionId, version, reason }` (201 `{ application }`) |
+| `GET /api/practices/resolve?handle=` or `?id=prc_…` | one approved practice in full, exactly the one delivery gave: by `handle`, the selector's winner; by `id`, that practice only when its id is in the listing for the same `repo`, `path`s and `topic`s, else 404 (the same 404 as another project's practice). `handle` and `id` together, or neither, are 400. `GET /api/practices/applicable` names each practice's `id` (and `projectId` for a project practice) so a reader resolves the one it listed |
 | `GET /api/practices/:id/applications?cursor=` | delivered, cited, checked and waived rows, newest first, keyset-paged |
 
 Version states: `approved` (what agents get), `replaced` (an older version), `pending` (waiting for a person) and

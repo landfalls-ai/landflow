@@ -64,6 +64,8 @@ export const cleanTitle = (title: string): string => cleanSummary(redactPatterns
 const cleanLine = (text: string): string => redactPatterns(redactText(text));
 
 export const toApplicable = (p: ApprovedPractice): ApplicablePractice => ({
+  id: p.id,
+  ...(p.projectId && { projectId: p.projectId }),
   handle: p.handle,
   version: p.version,
   title: cleanTitle(p.title),
@@ -122,6 +124,26 @@ export const toFull = (p: ApprovedPractice) => ({
  * practice of another project or level. Throws 404 for a project the caller has no role in (set `caller.projectId`).
  */
 export function resolvePractice(caller: PracticeCaller, handle: string, options: { repo?: string; paths?: string[]; topics?: string[]; projectId?: string; level?: PracticeLevel } = {}): ApprovedPractice | undefined {
+  return resolveBy(caller, { handle }, options);
+}
+
+/**
+ * The practice with this id, only when delivery gives it for the same `repo`, `paths` and `topics` the listing used (its id is in
+ * `deliveredFor(...).applies`). Undefined otherwise: another project's, one the repository does not list, or a retired one.
+ */
+export function resolvePracticeById(caller: PracticeCaller, id: string, options: { repo?: string; paths?: string[]; topics?: string[]; level?: PracticeLevel } = {}): ApprovedPractice | undefined {
+  return resolveBy(caller, { id }, options);
+}
+
+function resolveBy(caller: PracticeCaller, by: { handle?: string; id?: string }, options: { repo?: string; paths?: string[]; topics?: string[]; projectId?: string; level?: PracticeLevel }): ApprovedPractice | undefined {
+  if (by.id !== undefined) {
+    const found = practicesCitable(caller).find((p) => p.id === by.id && (!options.level || p.level === options.level));
+    if (!found) return undefined;
+    // In the listing for this scope: delivered for the repository, and the selector's winner of its handle for the paths and topics.
+    const { applies, winners } = deliveredFor(caller, options.repo, options.paths, options.topics);
+    return applies.has(found.id) && winners.get(found.handle)?.id === found.id ? found : undefined;
+  }
+  const handle = by.handle as string;
   const matches = practicesCitable(caller).filter((p) => p.handle === handle && (!options.level || p.level === options.level));
   if (!matches.length) return undefined;
   const byProject = options.projectId ? matches.find((p) => p.projectId === options.projectId) : undefined;

@@ -199,6 +199,12 @@ Home starts with the **Your morning** card ([work-and-briefings.md](work-and-bri
   44 px controls in the review dialog and the form; a desktop is unchanged. See
   [practices.md](practices.md#the-brain-page).
 
+## The waive page
+
+- `/practices/waive` is one column on a phone: the practice card, what failed, the reason box and a full-width **Waive for
+  this run** (then **Retry the run**); a desktop keeps a narrow centred column. See
+  [practices.md](practices.md#waiving-from-a-flow).
+
 ## What's next
 
 1. ~~Touch and type baseline~~ (above; the 44 px targets are done for the tab bar, the editor's back arrow and the header

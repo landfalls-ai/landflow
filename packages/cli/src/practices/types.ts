@@ -12,6 +12,10 @@ export type PracticeCheck =
 
 /** One line of `GET /api/practices/applicable`'s `practices`. */
 export interface ApplicablePractice {
+  /** `prc_…`: what `GET /api/practices/resolve?id=` reads it back by. */
+  id: string;
+  /** A project practice's project; none for an org practice. */
+  projectId?: string;
   handle: string;
   version: number;
   title: string;

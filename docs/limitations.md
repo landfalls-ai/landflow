@@ -169,11 +169,32 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 ## Practices in Claude Code and the shell
 
-- `landflow practices check` asks again in smaller path groups when the host omits practices that did not fit its block; any still omitted (or whose version moved mid-check) are reported and the run says the check is incomplete instead of `Passed.`. It runs machine checks only. A practice with no machine check is reported as such; there are no model verdicts until wave P2's Check Practices.
+- `landflow practices check` asks again in smaller path groups when the host omits practices that did not fit its block; any still omitted (or whose version moved mid-check) are reported and the run says the check is incomplete instead of `Passed.`. It runs machine checks only. A practice with no machine check is reported as such; a model's verdict reaches a flow only through Check Practices ([below](#checks-in-flows-wave-p2)).
 - `/brain learn`'s citations are never verified: the host cannot read your checkout, so a draft from the mod or `landflow practices learn` stays unverified until a person approves it against the file.
 - `/brain learn` hands Claude a prompt as a turn of its own, so it waits until the session is idle, and a model that ignores the instructions can draft fewer than asked or none. `practice_draft` and the learn route always make tainted drafts.
 - The practices section is built once at session start: a practice approved later shows at the next session, or through the `practices` tool or `/brain practices`.
 - `check` reads the change as `git diff <base>...HEAD` shows it: uncommitted work is not in it, and a renamed file is read as a delete and an add.
+
+## Checks in flows (wave P2)
+
+- Check Practices runs only the machine checks and the verdicts it is given; it has no model of its own. A practice with
+  neither is `no-checks` and never blocks. A reviewer's fail blocks only with **Reviewer fails block** on.
+- **On error: continue** on the Check Practices step defeats the block, as it does for any step. The editor warns about
+  that setting; nothing here forbids it.
+- A waiver is for one run, and for the runs that retry it. A waiver of one practice does not cover another, and a flow run
+  again from the start is checked again: a waiver holds only for the failure the approver saw (the same practice failing
+  on the same files and message), so a retry that breaks the practice on other files fails again, however many files fail. The waiver binds to the file
+  names and messages, not the added lines: a `fileMatches` failure on the same file with different added lines, and a
+  `pathExists` failure (it names no files) carry over on a retry from the start. Check Practices runs
+  `fileMatches` patterns (up to 200 characters, no guard against catastrophic backtracking) inside the host process over
+  up to 20,000 added lines, so an approved practice with a bad pattern can stall the host's event loop; there is no
+  per-file cap or worker yet.
+- A required practice blocks only in a flow. An agent's tool call, `landflow practices check` in a shell and the Claude
+  Code mod never deny anything.
+- The pull request template reads GitHub's patch of each file; GitHub leaves the patch out of very large files, so a
+  `fileMatches` check sees no added lines there. It has not been run against a real repository.
+- The blocked template's message is read from the failed step's error text, and its **Fix** link is the step's "Link to the
+  change" option; without it the message says to push a fix. Error workflows do not start for a manual Run.
 
 ## Landledger (built 2026-11-14)
 

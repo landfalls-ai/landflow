@@ -2,7 +2,8 @@
  * Practices (docs/practices.md): rules in the brain that connected agents follow, each approved by a person. Shared by the
  * server (lib/server/practices), the Brain page, the Draft Practice node and the MCP tools. No runtime imports and no zod
  * (the browser loads it). Written by the plan for Practices wave P1: PR01 owns it; PR02, PR03 and PR04 add this file byte
- * for byte; change it only in a later wave.
+ * for byte; change it only in a later wave. Amended in wave 8 by PR08 alone: `ApplicablePractice` names the practice's id and
+ * project, so a reader resolves exactly the practice it was listed (GET /api/practices/resolve?id=).
  */
 export const PRACTICE_LEVELS = ['org', 'project'] as const;
 export type PracticeLevel = (typeof PRACTICE_LEVELS)[number];
@@ -301,10 +302,14 @@ export interface PracticeDetailResponse {
 
 /** One practice as GET /api/practices/applicable and `practices_for` list it. */
 export interface ApplicablePractice {
+  /** `prc_…`: what GET /api/practices/resolve?id= and `landflow practices check` read it back by (wave 8). */
+  id: string;
   handle: string;
   version: number;
   title: string;
   level: PracticeLevel;
+  /** A project practice's project; none for an org practice. */
+  projectId?: string;
   strength: PracticeStrength;
   summary: string;
   topics: string[];
