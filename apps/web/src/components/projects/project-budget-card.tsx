@@ -44,7 +44,6 @@ export function BudgetBar({ view }: { view: ProjectBudgetView }) {
           {formatUsd(view.usedUsd)} of {formatUsd(budget.monthlyUsd)}
         </span>
         <span className="text-t3">in {view.month}</span>
-        {view.paused && <Badge tone="danger">Paused</Badge>}
       </div>
       <div className="mt-2 h-2 overflow-hidden rounded-full bg-sf" role="progressbar" aria-label="AI budget used" aria-valuemin={0} aria-valuemax={100} aria-valuenow={barPercent(view)}>
         <div className={cn('h-full rounded-full', TONE_CLASS[barTone(view)])} style={{ width: `${barPercent(view)}%` }} />
