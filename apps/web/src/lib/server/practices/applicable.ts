@@ -1,0 +1,89 @@
+/**
+ * What a caller may get, and the block for it (docs/practices.md#how-agents-get-them). The one place that turns a caller into
+ * project ids: GET /api/practices/applicable, the cite route and the MCP tools all come through here, so none can widen what
+ * it gets. A repository, paths, topics or a task only narrow and rank (./select.ts); nothing a caller sends adds a practice.
+ */
+import { PRACTICE_BUDGETS, type ApprovedPractice, type ApplicablePractice, type ApplicableResponse } from '../../shared/practices';
+import { HttpError } from '../errors';
+import { isInstanceAdmin, projectRole, visibleProjectIds, type Actor } from '../projects/access';
+import { getProject, listProjects } from '../projects/store';
+import { practicesBlock } from './block';
+import { practicesPort } from './port';
+import { selectPractices, type PracticeQuery } from './select';
+
+/** `full` for an agent's prompt, `mod` for Claude Code (the default), `index` for a remote agent's index. */
+export const PRACTICE_SIZES = ['full', 'mod', 'index'] as const;
+export type PracticeSize = (typeof PRACTICE_SIZES)[number];
+export const sizeBudget = (size: PracticeSize): number => (size === 'full' ? PRACTICE_BUDGETS.inProcess : size === 'index' ? PRACTICE_BUDGETS.remote : PRACTICE_BUDGETS.mod);
+
+/** Who is asking: a person (none: the instance access token), and the project a server or a request is limited to. */
+export interface PracticeCaller {
+  actor?: Actor;
+  projectId?: string;
+}
+
+/**
+ * Approved practices the caller may get, before any narrowing by what they asked for. Org practices always; project
+ * practices of one project (the caller needs a role there, else 404), or of every project they have a role in. Without an
+ * actor: org practices only. `repo` (the request's) keeps a project practice only when it lists it, when no project is
+ * named; the cite route passes none and so sees them all.
+ */
+export function practicesFor(caller: PracticeCaller, options: { repo?: string } = {}): ApprovedPractice[] {
+  const port = practicesPort();
+  if (!port?.enabled()) return [];
+  const { actor, projectId } = caller;
+  if (projectId) {
+    if (!actor || !getProject(projectId) || !projectRole(actor, projectId)) {
+      if (actor) throw new HttpError('Project not found', 404);
+      return port.approved({ projectIds: [] });
+    }
+    return port.approved({ projectIds: [projectId] });
+  }
+  if (!actor) return port.approved({ projectIds: [] });
+  const visible = visibleProjectIds(actor);
+  const projectIds = visible ? [...visible] : listProjects().map((p) => p.id);
+  const wanted = options.repo;
+  return port.approved({ projectIds }).filter((p) => p.level === 'org' || (wanted !== undefined && p.repos.includes(wanted)));
+}
+
+/** The same, for a caller that wants every project practice it may get whatever its repositories (citing). */
+export function practicesCitable(caller: PracticeCaller): ApprovedPractice[] {
+  const port = practicesPort();
+  if (!port?.enabled()) return [];
+  const { actor, projectId } = caller;
+  if (projectId) return practicesFor(caller);
+  if (!actor) return port.approved({ projectIds: [] });
+  const visible = visibleProjectIds(actor);
+  return port.approved({ projectIds: visible ? [...visible] : listProjects().map((p) => p.id) });
+}
+
+export const toApplicable = (p: ApprovedPractice): ApplicablePractice => ({
+  handle: p.handle,
+  version: p.version,
+  title: p.title,
+  level: p.level,
+  strength: p.strength,
+  summary: p.summary,
+  topics: p.topics,
+  repos: p.repos,
+  paths: p.paths,
+});
+
+export interface ApplicableOptions {
+  size: PracticeSize;
+  /** Do not write `delivered` rows (the Brain page and the CLI's dry look). */
+  preview?: boolean;
+}
+
+/** The caller's practices for a query, as the block and its list; writes a `delivered` row per included practice unless `preview`. */
+export function applicableFor(caller: PracticeCaller, q: PracticeQuery, options: ApplicableOptions): ApplicableResponse & { included: ApprovedPractice[] } {
+  const budget = sizeBudget(options.size);
+  const port = practicesPort();
+  if (!port?.enabled()) return { practices: [], text: '', budget, omitted: 0, included: [] };
+  const allowed = practicesFor(caller, { repo: q.repo });
+  const block = practicesBlock(selectPractices(allowed, q), budget);
+  if (!options.preview) {
+    for (const p of block.included) port.record({ practiceId: p.id, version: p.version, kind: 'delivered', ...(caller.actor && { userId: caller.actor.id }), ...(q.repo && { repo: q.repo }) });
+  }
+  return { practices: block.included.map(toApplicable), text: block.text, budget, omitted: block.omitted, included: block.included };
+}

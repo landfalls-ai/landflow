@@ -41,7 +41,7 @@ function fromZod(schema: z.ZodType): Json {
 const samplePath = (path: string) => path.replace(/\{[^}]+\}/g, 'sample');
 
 interface Operation {
-  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Settings' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks' | 'Conversations';
+  tag: 'Practices' | 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Settings' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks' | 'Conversations';
   id: string;
   summary: string;
   description?: string;
@@ -2148,6 +2148,48 @@ function paths(): Record<string, Record<string, Json>> {
     query: [text('day', 'YYYY-MM-DD')],
     responses: { 200: reply('The briefing', object({ day: { type: 'string' }, generatedAt: { type: 'string' }, source: { type: 'string', enum: ['live', 'flow'] }, today: array(briefingWorkItem), yesterday: array(briefingWorkItem), related: array({ type: 'object' }), summary: { type: 'string' }, autoSend: { type: 'string', enum: ['allowed', 'forbidden'] }, brain: { type: 'string', enum: ['on', 'off'] } }, ['day', 'generatedAt', 'source', 'today', 'yesterday', 'related', 'autoSend', 'brain'])), 400: invalid },
   });
+  // PR04: practices
+  add('get', '/api/practices/applicable', {
+    tag: 'Practices',
+    id: 'getApplicablePractices',
+    summary: 'Practices that apply',
+    description:
+      'Needs the `brain:read` scope or a session. The approved practices that apply for the caller, as a block that fits `size` (`full` 3,000 characters, `mod` 2,000, the default, `index` 800). Organization practices, and the project practices of projects the caller is in (with `projectId`, that project only; 404 when the caller is not in it). `repo`, `path`, `topic` and `task` only narrow and rank: they never add a practice. Records a `delivered` row per practice unless `preview=1`. Empty when practices are off.',
+    query: [
+      { name: 'repo', description: 'owner/name', schema: { type: 'string' } },
+      { name: 'path', description: 'A repository-relative path; repeat for more (at most 20)', schema: { type: 'string' } },
+      { name: 'topic', description: 'A topic; repeat for more (at most 5)', schema: { type: 'string' } },
+      { name: 'projectId', description: 'Only this project’s practices (and the organization’s)', schema: { type: 'string' } },
+      { name: 'task', description: 'What is about to be done, in words (at most 500 characters)', schema: { type: 'string', maxLength: 500 } },
+      { name: 'size', description: 'The budget of the block', schema: { type: 'string', enum: ['full', 'mod', 'index'], default: 'mod' } },
+      { name: 'preview', description: '`1`: do not record `delivered` rows', schema: { type: 'string', enum: ['0', '1'] } },
+    ],
+    responses: {
+      200: reply(
+        'The practices',
+        object(
+          {
+            practices: array(object({ handle: { type: 'string' }, version: { type: 'integer' }, title: { type: 'string' }, level: { type: 'string', enum: ['org', 'project'] }, strength: { type: 'string', enum: ['required', 'recommended'] }, summary: { type: 'string' }, topics: array({ type: 'string' }), repos: array({ type: 'string' }), paths: array({ type: 'string' }) }, ['handle', 'version', 'title', 'level', 'strength', 'summary', 'topics', 'repos', 'paths'])),
+            text: { type: 'string' },
+            budget: { type: 'integer' },
+            omitted: { type: 'integer' },
+          },
+          ['practices', 'text', 'budget', 'omitted'],
+        ),
+      ),
+      400: invalid,
+      404: notFound,
+    },
+  });
+  add('post', '/api/practices/cite', {
+    tag: 'Practices',
+    id: 'citePractices',
+    summary: 'Record the practices an answer followed',
+    description:
+      'Needs the `brain:write` scope or a session. Reads the “Practices followed: [handle@version], …” line of `text` and any `Practice: handle@version` lines (a commit’s), plus `citations`, at most 20 in all, and records a `cited` row for each version of a practice the caller may get. The rest come back in `unknown`. An `executionId` the caller cannot read is 404.',
+    body: jsonBody(object({ text: { type: 'string', maxLength: 20000 }, citations: { type: 'array', items: { type: 'string' }, maxItems: 20 }, executionId: { type: 'string' }, repo: { type: 'string' } })),
+    responses: { 200: reply('What was recorded', object({ recorded: array({ type: 'string' }), unknown: array({ type: 'string' }) }, ['recorded', 'unknown'])), 400: invalid, 404: notFound },
+  });
   return out;
 }
 
@@ -2180,6 +2222,7 @@ export function openApiDocument(origin?: string): Record<string, unknown> {
       { name: 'Agents', description: 'Agents that run elsewhere (kagent) reporting what they did back to the run that asked them (docs/a2a.md)' },
       { name: 'Agent teams', description: 'Teams of agents with standing relations: who leads, who reports to whom, who reviews (docs/agent-teams.md)' },
       { name: 'Conversations', description: 'A person’s own chats with Spotlight, the brain and the Agent architect, and their personal preferences: session only, owner only (docs/assistant.md#conversation-history)' },
+      { name: 'Practices', description: 'Approved practices agents follow: which apply to a repository, and recording the ones an answer followed (docs/practices.md)' },
       { name: 'MCP', description: 'Agents and MCP (docs/transports.md): Landflow-issued MCP tokens, tool grants, the JWKS, the plugin catalog (server.json, the registry API) and protected resource metadata' },
     ],
     security: [{ bearerAuth: [] }, { apiKeyHeader: [] }, { sessionCookie: [] }],
