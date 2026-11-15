@@ -66,7 +66,7 @@ function ModelChoice({ model, onChange, disabled, error }: { model?: AgentModel;
         )}
       </div>
       {model && <ModelPicker model={model} onChange={(patch) => onChange({ ...model, ...patch })} />}
-      {error && <p className="text-[12px] text-dg">{error}</p>}
+      {error && <p className="text-[12px] text-rd">{error}</p>}
     </div>
   );
 }
@@ -182,7 +182,7 @@ export function ProjectAgentSettingsView({
           <p className="mt-2 text-[12px] text-t3">Skills, memory, a team’s notebook and the tools connected to a workflow’s step are always allowed.</p>
         </div>
 
-        {error && !error.includes('credential') && <p className="text-[12px] text-dg">{error}</p>}
+        {error && !error.includes('credential') && <p className="text-[12px] text-rd">{error}</p>}
         {!edit && <p className="text-[12px] text-t3">The project’s admins change these.</p>}
         {edit && dirty && (
           <div className="flex justify-end gap-2 border-t border-hair pt-3">
@@ -222,7 +222,7 @@ export function ProjectAgentSettings({ projectId }: { projectId: string }) {
   const save = async () => {
     setSaving(true);
     try {
-      show(await saveAgentSettings(projectId, form));
+      show(await saveAgentSettings(projectId, form, state.form, state.available));
       toast.success('Agent settings saved');
     } catch (e) {
       setError((e as Error).message);

@@ -31,7 +31,7 @@ import { FieldLabel, Input, Select, Switch, Textarea } from '@/components/ui/inp
 import { BudgetActions } from '@/components/run-trace/needs-you-actions';
 import { cn } from '@/lib/utils';
 
-const TONE_CLASS: Record<BarTone, string> = { ok: 'bg-ac', warn: 'bg-warn', full: 'bg-dg' };
+const TONE_CLASS: Record<BarTone, string> = { ok: 'bg-ac', warn: 'bg-warn', full: 'bg-rd' };
 
 /** This month's spend against the budget. */
 export function BudgetBar({ view }: { view: ProjectBudgetView }) {
@@ -45,7 +45,7 @@ export function BudgetBar({ view }: { view: ProjectBudgetView }) {
         </span>
         <span className="text-t3">in {view.month}</span>
       </div>
-      <div className="mt-2 h-2 overflow-hidden rounded-full bg-sf" role="progressbar" aria-label="AI budget used" aria-valuemin={0} aria-valuemax={100} aria-valuenow={barPercent(view)}>
+      <div className="mt-2 h-2 overflow-hidden rounded-full bg-nudim" role="progressbar" aria-label="AI budget used" aria-valuemin={0} aria-valuemax={100} aria-valuenow={barPercent(view)}>
         <div className={cn('h-full rounded-full', TONE_CLASS[barTone(view)])} style={{ width: `${barPercent(view)}%` }} />
       </div>
       <p className="mt-1 text-[12px] text-t3">
@@ -153,7 +153,7 @@ export function ProjectBudgetCardView({
             </Select>
             <p className="mt-1 text-[12px] text-t3">Asked besides the admins; may resume and dismiss.</p>
           </div>
-          {error && <p className="text-[12px] text-dg">{error}</p>}
+          {error && <p className="text-[12px] text-rd">{error}</p>}
           {dirty && (
             <div className="flex justify-end gap-2 border-t border-hair pt-3">
               <Button size="sm" variant="ghost" onClick={() => onFields?.(fieldsFrom(view))}>
@@ -246,7 +246,7 @@ function AskDialog({ view, onClose }: { view: ProjectBudgetView; onClose: () => 
           <FieldLabel>Why</FieldLabel>
           <Textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} placeholder="What the extra is for" />
         </div>
-        {error && <p className="text-[12px] text-dg">{error}</p>}
+        {error && <p className="text-[12px] text-rd">{error}</p>}
       </div>
     </Dialog>
   );

@@ -3,7 +3,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { ProjectAgentSettingsView } from '../src/components/projects/project-agent-settings';
-import { parseAgentSettings, patchBody, sameAgentSettings } from '../src/lib/client/project-agent-settings';
+import { parseAgentSettings, patchBody, savePatch, sameAgentSettings } from '../src/lib/client/project-agent-settings';
 import type { ProjectSettingsView } from '../src/lib/shared/project-policy';
 
 const getExample: ProjectSettingsView = {
@@ -60,6 +60,22 @@ describe('patchBody', () => {
     expect(cleared.knowledge).toBeNull();
     expect(sameAgentSettings(form, { ...form })).toBe(true);
     expect(sameAgentSettings(form, { ...form, agents: { mode: 'off', ids: [] } })).toBe(false);
+  });
+});
+
+describe('savePatch', () => {
+  it('names only what changed', () => {
+    const form = parseAgentSettings(getExample).form;
+    expect(savePatch(form, form)).toEqual({});
+    expect(savePatch({ ...form, agentTools: { mode: 'off', kinds: [] } }, form)).toEqual({ agentTools: { mode: 'off', kinds: [] } });
+  });
+  it('drops allowed ids that are no longer available', () => {
+    const form = parseAgentSettings(getExample).form;
+    const stale = { ...form, agents: { mode: 'allow' as const, ids: ['agt_gone', 'agt_writer'] } };
+    const next = { ...stale, agents: { ...stale.agents, mode: 'off' as const } };
+    const body = savePatch(next, stale, [{ id: 'agt_writer', name: 'Writer', home: false }]);
+    expect(body.agents).toEqual({ mode: 'off', ids: ['agt_writer'] });
+    expect(savePatch({ ...stale, agentTools: { mode: 'off', kinds: [] } }, stale, [{ id: 'agt_writer', name: 'Writer', home: false }])).not.toHaveProperty('agents');
   });
 });
 

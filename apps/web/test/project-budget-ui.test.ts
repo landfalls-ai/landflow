@@ -117,6 +117,7 @@ describe('the card', () => {
   it('a paused budget as a viewer who can resume and ask', () => {
     const html = card(stopView);
     expect(html).toContain('Paused');
+    expect(html).toContain('bg-rd');
     expect(html).toContain('$50.12 of $50.00');
     expect(html).toContain('14 calls to local models (not counted)');
     expect(html).toContain('Resume this month');
@@ -137,6 +138,7 @@ describe('the card', () => {
     const html = card({ ...stopView, paused: false, percent: 85, incidents: [stopView.incidents[1]] });
     expect(html).not.toContain('Paused');
     expect(html).toContain('bg-warn');
+    expect(html).not.toContain('bg-rd');
   });
 });
 

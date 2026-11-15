@@ -81,7 +81,7 @@ export function RaiseDialog({ projectId, incidentId, current, onClose, onRaised 
           New monthly budget (USD)
         </label>
         <Input id="raise-amount" type="number" inputMode="decimal" min={0} step="any" value={value} onChange={(e) => setValue(e.target.value)} autoFocus placeholder={now !== undefined ? `More than ${now}` : ''} />
-        {error && <p className="mt-2 text-[12px] text-dg">{error}</p>}
+        {error && <p className="mt-2 text-[12px] text-rd">{error}</p>}
       </form>
     </Dialog>
   );

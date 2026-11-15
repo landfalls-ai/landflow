@@ -49,11 +49,28 @@ export function budgetInput(fields: BudgetFields): { input: ProjectBudgetInput }
   return { input: { monthlyUsd, warnPercent, hardStop: fields.hardStop, ownerId: fields.ownerId || null } };
 }
 
-/** The browser's own jump to `#<id>` misses a card that mounts after the project loads: scroll to it once it has. */
+/**
+ * The browser's own jump to `#<id>` misses a card that mounts after the project loads: scroll to it once it has, then keep it
+ * in place while the cards above it settle (they grow as their own answers arrive), until the reader scrolls or a few seconds pass.
+ */
 export function useScrollToHash(id: string, ready: boolean) {
   useEffect(() => {
     if (!ready || window.location.hash !== `#${id}`) return;
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    document.getElementById(id)?.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' });
+    const target = () => document.getElementById(id);
+    target()?.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' });
+    let done = false;
+    const stop = () => {
+      done = true;
+      observer?.disconnect();
+      window.clearTimeout(timer);
+      for (const e of ['wheel', 'touchstart', 'keydown', 'mousedown']) window.removeEventListener(e, stop);
+    };
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(() => !done && target()?.scrollIntoView({ block: 'start', behavior: 'auto' }));
+    const parent = target()?.parentElement;
+    if (parent) observer?.observe(parent);
+    for (const e of ['wheel', 'touchstart', 'keydown', 'mousedown']) window.addEventListener(e, stop, { passive: true });
+    const timer = window.setTimeout(stop, 4000);
+    return stop;
   }, [id, ready]);
 }
