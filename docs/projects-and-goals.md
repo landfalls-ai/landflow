@@ -155,7 +155,9 @@ Agent and run it from its workflows, but cannot change, delete or share it, and 
 - **Brain and spend.** Whoever can read an agent (a share counts) sees its brain facts, suggestions and spend, which
   come from runs in every project.
 - **No wall at run time.** A saved workflow that runs another project's agent keeps working, even after the share is
-  removed.
+  removed. This holds only while the project's agent allow-list is off; once it is on, a run in the project may use only
+  the agents it lists ([Project settings for agents](#project-settings-for-agents)).
+
 ## Testing an agent in a project
 
 An agent keeps its home project, and its admins can make it available elsewhere: **Make available…** in the builder's
@@ -257,7 +259,7 @@ The run reads the settings once, when it starts (they are cached for a second). 
 workflow, and now agents ([governance](features/audit-and-governance.md)). A2A and kagent agents run elsewhere, so the
 allow-lists do not cover them.
 
-### On the screen
+### The Agents card
 
 A project's **Settings** tab has the card **Agents in this project** (`#agents`), under the governance and MCP cards.
 It holds the **Default model** ("Used when neither the workflow's step nor the agent names a model"; pick **None** to
@@ -330,7 +332,7 @@ Routes: `GET` and `PUT /api/projects/:id/budget`, `POST /api/projects/:id/budget
 `resume`, `raise` or `dismiss` ([reference/api.md](reference/api.md)). Each change is audited: `project.budget.update`,
 `.stopped`, `.resumed`, `.raised` and `.dismissed`.
 
-### On the screen
+### The AI budget card
 
 The card **AI budget** (`#budget`) follows **Agents in this project**. It shows this month's spend as a bar (amber from the warning percent, red
 at 100 or when paused), the amounts, "N calls to local models (not counted)" and a **Paused** badge, then the month's
