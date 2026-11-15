@@ -676,14 +676,17 @@ conversation (the tool's result); it reaches the system prompt on the next run, 
 it again. The call's `prefixHash` (the AI call's parts) is now the hash of the stable prefix: tools plus stable system.
 
 Measured on a local fake that simulates Anthropic's cache (5 minutes, 1,024-token minimum, 20-block lookback;
-`apps/web/test/prompt-cache-layout.test.ts`, which prints the numbers): On a fake Anthropic that simulates the cache (a four-iteration run with one `remember`, then a second run four minutes later), base's layout read 3,215 cache tokens on iterations 2 to 4 and paid 373 at the full input price, and the second run read 1,612; the new layout read 5,054 and paid 0 at full price on iterations 2 to 4, and 3,180 on the second run. At Sonnet prices the first run went from $0.01541 to $0.00941 and the second from $0.00737 to $0.00208. Base's layout lost the whole cache on the
-iteration after a `remember`; the new layout does not. These are the fake's numbers, not Anthropic's.
+`apps/web/test/prompt-cache-layout.test.ts`, which prints the numbers): a four-iteration run with one `remember`, then a
+second run four minutes later. Base's layout read 3,215 cache tokens on iterations 2 to 4 and paid 373 at the full input
+price, and the second run read 1,612; the new layout read 5,054 and paid 0 at full price on iterations 2 to 4, and 3,180
+on the second run. At Sonnet prices the first run went from $0.01541 to $0.00941 and the second from $0.00737 to
+$0.00208. Base's layout lost the whole cache on the iteration after a `remember`; the new layout does not. These are the
+fake's numbers, not Anthropic's.
 
- The cached tokens show in
-the session's usage, the cost ledger prices them (Settings → AI prices has the cache read and write prices) and Run Trace
-shows them. Other chat model nodes are unchanged. OpenAI-compatible providers cache automatically on their side, and an
-agent deployed to kagent gets whatever its runtime does: kagent itself only reports `cachedInputTokens`, and has no
-response or semantic cache.
+The cached tokens show in the session's usage, the cost ledger prices them (Settings → AI prices has the cache read and
+write prices) and Run Trace shows them. Other chat model nodes are unchanged. OpenAI-compatible providers cache
+automatically on their side, and an agent deployed to kagent gets whatever its runtime does: kagent itself only reports
+`cachedInputTokens`, and has no response or semantic cache.
 
 ## Response cache
 

@@ -131,5 +131,6 @@ export function personaPromptParts(config: AgentConfig, run: { memory?: string; 
   const intro = `You are “${config.name}”${config.description ? `: ${config.description.trim()}` : ''}`;
   // A description that already ends a sentence doesn't get a second full stop.
   tail.push(`${/[.!?]$/.test(intro) ? intro : `${intro}.`}${run.now ? ` Current date and time: ${run.now.toISOString()}.` : ''}`);
-  return { stable, volatile: tail.map((t) => `\n\n${t}`).join('') };
+  // With nothing stable the prompt starts at the tail, with no leading separator, as it always did.
+  return { stable, volatile: (stable ? '\n\n' : '') + tail.join('\n\n') };
 }

@@ -40,7 +40,6 @@ vi.mock('@/lib/server/agents/models', () => ({
         const { memoryBlock } = await import('@/lib/server/agents/runtime');
         const current = agentRef ? memoryBlock(agentRef, configRef!, sessionRef!) : undefined;
         if (input.messages.length === 1) memoryAtStart = input.system?.includes('## What you remember') ? current : undefined;
-        void agentStore;
         const system = input.system && memoryAtStart && current ? input.system.replace(memoryAtStart, current) : input.system;
         if (input.messages.length === 1 && current) memoryAtStart = current;
         const { systemCacheBreak: _drop, ...rest } = input;
@@ -55,6 +54,7 @@ const { registry } = await import('@/lib/server/plugins/registry');
 const { corePlugin } = await import('@/lib/server/nodes');
 const { agentStore } = await import('@/lib/server/agents/store');
 const { newSession, runAgent, systemPromptParts, configFor } = await import('@/lib/server/agents/runtime');
+const persona = await import('@/lib/shared/persona');
 const { withPractices } = await import('@/lib/server/project-context/practices');
 const { agentDraft } = await import('@/lib/server/ai-usage/drafts');
 const { hashParts } = await import('@/lib/server/ai-usage/parts');
@@ -145,6 +145,21 @@ describe('the draft and its hashes', () => {
     expect(hashes.partHashes.instructions).toBe(main.partHashes.instructions);
   });
 
+  it('keeps base\'s prompt byte for byte when nothing is stable (no instructions, a half-filled example only)', () => {
+    const { personaPrompt, personaPromptParts } = persona;
+    const agent = agentOf({ instructions: '', persona: { examples: [{ user: 'only half', assistant: '' }] } as AgentConfig['persona'] });
+    const config = configFor(agent, 'draft');
+    const now = new Date(AT);
+    // Literals as base built them: no separator ahead of the first line.
+    expect(personaPrompt(config, { now })).toBe(`You are “Helper”. Current date and time: ${AT}.`);
+    expect(personaPrompt(config, { memory: 'MEM', now })).toBe(`MEM\n\nYou are “Helper”. Current date and time: ${AT}.`);
+    expect(personaPromptParts(config, { now }).stable).toBe('');
+    const out = systemPromptParts(agent, configFor(agent, 'draft'), sessionOf(agent), ctx());
+    expect(out.text).toBe(`You are “Helper”. Current date and time: ${AT}.`);
+    expect(out.segments.map((s) => s.text).join('')).toBe(out.text);
+    expect(out.cacheBreak).toBe(0);
+  });
+
   it('keeps the segments joined equal to the text, with a team member’s tool note after the break', () => {
     const agent = agentOf({ persona: { role: 'Reviewer' } as AgentConfig['persona'] });
     const plain = systemPromptParts(agent, configFor(agent, 'draft'), sessionOf(agent), ctx());
@@ -218,7 +233,7 @@ describe('the Anthropic request', () => {
         tools: [{ name: 'a', description: 'a tool', input_schema: { type: 'object' }, cache_control: { type: 'ephemeral' } }],
         output_config: { effort: 'medium' },
       };
-      expect(fake.calls[0]!.body).toMatchObject(base);
+      expect(fake.calls[0]!.body).toEqual(base);
       expect(marks(fake.calls[0]!.body)).toBe(2);
     } finally {
       await fake.close();

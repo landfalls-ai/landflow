@@ -174,8 +174,9 @@ export function systemPromptParts(agent: Agent, config: AgentConfig, session: Ag
   const memory = memoryText ?? memoryBlock(agent, config, session);
   // The date is the run's own, pinned at its start: a clock that moves on every model call defeats the provider's prompt cache.
   const now = new Date(runCtx.at);
-  const prompt = personaPrompt(config, { memory, now, ...(runCtx.text && { context: runCtx.text }) });
-  const cacheBreak = personaPromptParts(config, { memory, now, ...(runCtx.text && { context: runCtx.text }) }).stable.length;
+  const parts = personaPromptParts(config, { memory, now, ...(runCtx.text && { context: runCtx.text }) });
+  const prompt = parts.stable + parts.volatile;
+  const cacheBreak = parts.stable.length;
   // Where the project block and the memory sit in the prompt: a probe with markers in their places (the persona text never holds a NUL).
   const probe = personaPrompt(config, { memory: memory && MEMORY_MARK, now, ...(runCtx.text && { context: CONTEXT_MARK }) });
   const marks: { at: number; mark: string; text: string; parts: SystemSegment[] }[] = [];

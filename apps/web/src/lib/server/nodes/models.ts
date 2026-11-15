@@ -139,6 +139,7 @@ export function toAnthropicMessages(messages: AgentMessage[]): Anthropic.Beta.Be
   });
 }
 
+// SP19: the system as one block, or two when `at` marks where the stable part ends; the cache point sits on the first block, or on the only one.
 function systemBlocks(system: string, at?: number) {
   const mark = { type: 'ephemeral' as const };
   if (at === undefined || at <= 0 || at >= system.length) return [{ type: 'text' as const, text: system, cache_control: mark }];
