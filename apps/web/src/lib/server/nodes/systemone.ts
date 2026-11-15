@@ -17,6 +17,8 @@ export const STRANDS_BASE_URL = 'http://127.0.0.1:8000';
 export interface SystemOneConnection {
   /** Shown in errors: "TypeSafe", "Strands Decider". */
   label: string;
+  /** Which service it is, for the usage ledger. */
+  system: 'typesafe' | 'strands';
   baseUrl: string;
   /** Sent as a Bearer token when set. */
   apiKey?: string;
@@ -35,7 +37,7 @@ const trimUrl = (url: string) => url.replace(/\/+$/, '');
 export function typesafeConnection(data: Record<string, unknown> | undefined, credentialId?: string): SystemOneConnection {
   const apiKey = clean(data?.apiKey);
   if (!apiKey) throw new Error('The TypeSafe credential has no API key');
-  return { label: 'TypeSafe', apiKey, baseUrl: trimUrl(clean(data?.baseUrl) || TYPESAFE_BASE_URL), model: clean(data?.model) || TYPESAFE_MODEL, ...(credentialId && { credentialId }) };
+  return { label: 'TypeSafe', system: 'typesafe', apiKey, baseUrl: trimUrl(clean(data?.baseUrl) || TYPESAFE_BASE_URL), model: clean(data?.model) || TYPESAFE_MODEL, ...(credentialId && { credentialId }) };
 }
 
 /** Strands Decider: the server's address is required; a key and a model name are optional. */
@@ -44,7 +46,7 @@ export function strandsConnection(data: Record<string, unknown> | undefined, cre
   if (!baseUrl) throw new Error('The Strands Decider credential has no server address');
   const apiKey = clean(data?.apiKey);
   const model = clean(data?.model);
-  return { label: 'Strands Decider', baseUrl: trimUrl(baseUrl), ...(apiKey && { apiKey }), ...(model && { model }), ...(credentialId && { credentialId }) };
+  return { label: 'Strands Decider', system: 'strands', baseUrl: trimUrl(baseUrl), ...(apiKey && { apiKey }), ...(model && { model }), ...(credentialId && { credentialId }) };
 }
 
 export class SystemOneApiError extends Error {
@@ -141,7 +143,7 @@ export function systemOneJudge(connection: SystemOneConnection, options: { fetch
     ].join('\n\n---\n\n');
     // SP02: the call is a metered chat call (tokens from the service's usage; unpriced unless priced in Settings → AI prices).
     const result = await traceChat(
-      { system: connection.label === 'TypeSafe' ? 'typesafe' : 'strands', model: connection.model ?? connection.label, ...(connection.credentialId && { credentialId: connection.credentialId }) },
+      { system: connection.system, model: connection.model ?? connection.label, ...(connection.credentialId && { credentialId: connection.credentialId }) },
       () => systemOneDecide(connection, state, { flagged: `${instructions}\n\nAnswer yes if the text should be flagged.` }, { ...(signal && { signal }), ...(options.fetcher && { fetcher: options.fetcher }) }),
       (decided) => ({ responseModel: decided.model, inputTokens: decided.usage.inputTokens, outputTokens: decided.usage.outputTokens }),
     );

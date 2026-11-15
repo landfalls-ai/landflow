@@ -228,9 +228,10 @@ export function judgePrompt(metric: JudgeMetric, input: JudgeInput): string {
 }
 
 /** Ask the model for a 1–5 score with its reasoning (JSON, validated, one retry). */
-// SP02: every call a judge makes (the structured one and the plain-text fallback) is a judge call.
-export const judge = (model: LanguageModel, metric: JudgeMetric, input: JudgeInput, signal?: AbortSignal): Promise<JudgeResult> =>
-  withCallPurpose('judge', () => judgeUnnoted(model, metric, input, signal));
+export async function judge(model: LanguageModel, metric: JudgeMetric, input: JudgeInput, signal?: AbortSignal): Promise<JudgeResult> {
+  // SP02: every call a judge makes (the structured one and the plain-text fallback) is a judge call.
+  return withCallPurpose('judge', () => judgeUnnoted(model, metric, input, signal));
+}
 
 async function judgeUnnoted(model: LanguageModel, metric: JudgeMetric, input: JudgeInput, signal?: AbortSignal): Promise<JudgeResult> {
   const system = `${input.instructions?.trim() || INSTRUCTIONS[metric]}\n\n${SCALE}\n\nAnswer with a JSON object {"reasoning": "...", "score": <1-5>} and nothing else.`;

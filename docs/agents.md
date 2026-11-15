@@ -362,7 +362,9 @@ absent from an agent without any). Publishing needs a model, and a persona part 
   `retry-after`); any other failure fails closed, like every guardrail. Only block rules use a
   judge (sanitize rules run no model checks).
   A judge's calls count like any model call (tokens as the service reports them; unpriced unless
-  priced in Settings → AI prices), with the purpose “Guardrail check”.
+  priced in Settings → AI prices, under the model name the service reports, or “Strands Decider” when a Strands
+  connection names no model), with the purpose “Guardrail check”. They also meet the usage caps: a reached cap
+  refuses the judge call, and the check fails closed ("AI usage cap reached").
 
   Each stage has an action. **Block** checks the text (the model-based checks use the agent's
   own model, or the rule's judge) and, when something is found, answers with the stage's *reply* (a default is used

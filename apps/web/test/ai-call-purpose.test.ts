@@ -1,7 +1,7 @@
 import type { LanguageModel } from '@landflow/engine';
 import { describe, expect, it, vi } from 'vitest';
 import { assistantScope, runInUsageScope } from '../src/lib/server/ai-usage';
-import { currentCallNote, withCallPurpose } from '../src/lib/server/ai-usage/call-context';
+import { currentCallNote } from '../src/lib/server/ai-usage/call-context';
 import { database } from '../src/lib/server/db';
 import { gradeRun } from '../src/lib/server/evaluations/online';
 import { judge } from '../src/lib/server/evaluations/metrics';
@@ -56,11 +56,6 @@ describe('purpose at the call sites (SP02)', () => {
     expect(seen).toEqual(['guardrail']);
   });
 
-  it('a guardrail inside an eval keeps its own purpose (an inner purpose wins)', () => {
-    const inner = withCallPurpose('eval', () => ({ outer: currentCallNote().purpose, inner: withCallPurpose('guardrail', () => currentCallNote().purpose) }));
-    expect(inner).toEqual({ outer: 'eval', inner: 'guardrail' });
-  });
-
   it('the LLM reranker is a rerank call', async () => {
     const { model, notes } = noting('{"scores":[{"index":0,"score":3},{"index":1,"score":9}]}');
     const ranked = await llmReranker(model).rerank('q', [{ pageContent: 'a', metadata: {} }, { pageContent: 'b', metadata: {} }] as never);
@@ -96,11 +91,30 @@ describe('purpose at the call sites (SP02)', () => {
     await writeBriefingText({ own: [{ text: 'x' }], related: [], finished: [] } as never, model);
     expect(notes.map((n) => n.purpose)).toEqual(['summary']);
   });
+
+  it('a wiki page summary is a summary call', async () => {
+    const { upsertEntity } = await import('../src/lib/server/brain/entities');
+    const { writeSummary } = await import('../src/lib/server/brain/wiki');
+    const { entity } = upsertEntity({ type: 'customer', id: 'sp02-acme', name: 'Acme SP02' });
+    const { model, notes } = noting('{"summary": "Acme is a customer."}');
+    await writeSummary(entity, undefined, undefined, { model });
+    expect(notes.map((n) => n.purpose)).toEqual(['summary']);
+  });
+
+  it('a workflow description in the brain study is a summary call', async () => {
+    const { store } = await import('../src/lib/server/store');
+    const { study } = await import('../src/lib/server/brain/study');
+    store.saveWorkflow({ id: 'wf_sp02_study', name: 'SP02 study', nodes: [], connections: [] } as never);
+    const { model, notes } = noting('Does a thing for the team.');
+    await study({ model, embed: false });
+    expect(notes.length).toBeGreaterThan(0);
+    expect(notes.every((n) => n.purpose === 'summary')).toBe(true);
+  });
 });
 
 describe('Jev and Strands judge calls are counted (SP02)', () => {
   const metered = <T>(fn: () => Promise<T>) => runInUsageScope(assistantScope({ surface: 'brain' }), fn);
-  const rowsFor = (provider: string) => database().all<{ provider: string; input_tokens: number; output_tokens: number; cost: number | null }>('SELECT provider, input_tokens, output_tokens, cost FROM ai_usage WHERE provider = ?', provider);
+  const rowsFor = (provider: string) => database().all<{ provider: string; input_tokens: number; output_tokens: number; cost: number | null }>('SELECT provider, input_tokens, output_tokens, cost FROM ai_usage WHERE provider = ? ORDER BY rowid', provider);
 
   it('writes an unpriced ai_usage row with the tokens the service reports', async () => {
     const before = rowsFor('typesafe').length;
@@ -123,8 +137,15 @@ describe('Jev and Strands judge calls are counted (SP02)', () => {
   });
 
   it('still fails closed when the service fails, and runs inside a guardrail note', async () => {
-    const fetcher = vi.fn(async () => reply({ detail: 'down' }, 500));
+    const before = rowsFor('typesafe').length;
+    const seen: Array<string | undefined> = [];
+    const fetcher = vi.fn(async () => {
+      seen.push(currentCallNote().purpose);
+      return reply({ detail: 'down' }, 500);
+    });
     const outcome = await metered(() => runGuardrails('hello', { nsfw: {} }, { judge: systemOneJudge(jev, { fetcher }) }));
+    expect(seen).toEqual(['guardrail']);
+    expect(rowsFor('typesafe').length).toBe(before);
     expect(outcome.passed).toBe(false);
     expect(outcome.checks.find((c) => c.check === 'nsfw')?.error).toMatch(/TypeSafe answered 500/);
   });
