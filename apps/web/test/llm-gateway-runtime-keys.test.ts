@@ -229,6 +229,26 @@ describe('a virtual key per agent', () => {
     expect(runtimeKeyRows(agent.id)).toHaveLength(1);
     expect(runtimeKeyRows(agent.id)[0].blocked).toBe(0);
   });
+
+  it('mints a new key when the blocked key was deleted in LiteLLM', async () => {
+    const agent = publishedAgent();
+    await deployToKagent(agent.id, { credential: cluster });
+    const [row] = runtimeKeyRows(agent.id);
+    const key = credentials.openSecret(row.key_sealed);
+    await removeFromKagent(agent.id);
+    expect(runtimeKeyRows(agent.id)[0].blocked).toBe(1);
+    litellm.keys.delete(key);
+
+    await deployToKagent(agent.id, { credential: cluster });
+    expect(generated()).toHaveLength(2);
+    expect(generated()[1].body).toMatchObject({ key_alias: row.key_alias });
+    const rows = runtimeKeyRows(agent.id);
+    expect(rows).toHaveLength(1);
+    const fresh = credentials.openSecret(rows[0].key_sealed);
+    expect(fresh).not.toBe(key);
+    expect(rows[0]).toMatchObject({ id: row.id, key_hash: hashKey(fresh), blocked: 0 });
+    expect((held('secrets', 'text-formatter-landflow')!.stringData as Record<string, string>)['api-key']).toBe(fresh);
+  });
 });
 
 describe('without the gateway', () => {

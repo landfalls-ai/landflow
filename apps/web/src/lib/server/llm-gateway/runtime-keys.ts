@@ -137,13 +137,13 @@ export async function ensureRuntimeKey(input: RuntimeKeyInput, options: { db?: D
       key = undefined;
     }
     if (key) {
-      if (row.blocked) {
-        await admin.unblockKey(key);
-        changed = true;
-      }
       const info = await admin.keyInfo(key);
       if (!info) key = undefined;
       else {
+        if (row.blocked) {
+          await admin.unblockKey(key);
+          changed = true;
+        }
         const modelChanged = !(info.models?.length === 1 && info.models[0] === input.model);
         const teamChanged = (team ?? null) !== (info.team_id ?? null) && team !== undefined;
         const budgetChanged = !sameNumber(budget?.maxBudget, info.max_budget) || (budget?.duration ?? null) !== (info.budget_duration ?? null);
