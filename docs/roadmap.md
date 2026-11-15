@@ -2217,13 +2217,18 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
 
 ## Token spend wave 11: prompt parts (SP03)
 
-- Each chat call Landflow builds a prompt for gets a split into parts (instructions, project block, practices, memory, tool notes, tool definitions, history, tool results, message, images) as an estimate, with keyed prompt, prefix and per-part hashes, kept 30 days; an agent session's usage keeps its cache numbers ([llm-gateway.md](llm-gateway.md#what-a-prompt-was-made-of)). Exact counts, the gateway's split and the screens come in wave 12.
+- Each chat call Landflow builds a prompt for gets a split into parts (instructions, project block, practices, memory,
+  tool notes, tool definitions, history, tool results, message, images) as an estimate, with keyed prompt, prefix and
+  per-part hashes, kept 30 days; an agent session's usage keeps its cache numbers
+  ([llm-gateway.md](llm-gateway.md#what-a-prompt-was-made-of)). Exact counts, the gateway's split and the screens come
+  in wave 12.
 
 ## Token spend wave 11: telemetry out (SP04, with SP16)
 
 - The overview dashboard gains an "AI" row (tokens by type, Anthropic cache hit rate, cost by purpose) and
-  `prometheus-rules.yml` the 14th alert, `LandflowAiCacheHitRateDropped` (volume-guarded, promtool-tested, and a full cache loss still fires). A test
-  pins the `ai.call` event's keys that Landledger reads. SP16 (the cache alert and panels) is folded into SP04.
+  `prometheus-rules.yml` the 14th alert, `LandflowAiCacheHitRateDropped` (volume-guarded, promtool-tested, and a full
+  cache loss still fires). A test pins the `ai.call` event's keys that Landledger reads. SP16 (the cache alert and
+  panels) is folded into SP04.
 
 ## Token spend wave 11: who sees spend (SP20)
 
