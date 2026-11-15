@@ -110,6 +110,17 @@ An agent's run gets a short "Where this work fits" block: the mission, the proje
 chain above it. How the block is built, how big it gets and how to turn it off are in
 [agents.md](agents.md#project-context).
 
+## Picking a goal for a workflow or team
+
+A workflow or a team can name the goal it serves; with none, it works for its project's goal.
+
+- **A workflow**: the **Goal** field in the workflow's settings (Basic). Its first choice, **The project's goal**, means
+  inherit; the workflow's own project's goals come first. It saves `settings.goalId`, left out when inheriting.
+- **A team**: the **Project goal** field on the team page, under the team's own **Goal**. The two differ: **Goal** is
+  free text, what the team is for; **Project goal** picks one of the goals in the tree. It saves the team's `goalId`.
+
+Both use the same picker as the goal dialog and the project brief ([agent-teams.md](agent-teams.md#members)).
+
 ## How it is built
 
 - Data: migration 2300 makes `goals`, `project_goals` (a project's goals and their order) and `goal_links` (initiatives);

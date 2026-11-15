@@ -179,6 +179,9 @@ Home starts with the **Your morning** card ([work-and-briefings.md](work-and-bri
   to three lines with **More**; a desktop shows up to six lines. The goals it serves have 44 px up, down and unlink
   buttons for admins.
 
+- **Goal pickers.** The workflow settings' **Goal** and the team page's **Project goal** are full-width selects, 44 px
+  tall on a phone; a desktop keeps its height.
+
 ## Practices on the Brain page
 
 - **Practices** on `/brain` (the Practices view in the Files drawer) is one column of practice cards on a phone, with

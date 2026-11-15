@@ -56,6 +56,17 @@ in a row. Code: `components/agents/member-cards.tsx`.
 Above the cards: the team's run as a timeline while it works, and its last run as one line (in →
 who → out) once it is over ([run-trace.md](run-trace.md#a-run-as-a-timeline)).
 
+## Picking members
+
+The member dialog's **Agent** list shows the agents available in the team's project: its own, those shared with it
+and those shared with every project. A shared one says "Shared from <project>". An agent already on the team stays
+listed even when it is no longer available, marked "Not available in this project", and saving never removes a member.
+If the list of available agents can't be loaded, the dialog lists every agent, as it did before.
+
+The **Project goal** field picks which of the project's goals the team serves; empty means the project's goal
+([projects-and-goals.md](projects-and-goals.md#picking-a-goal-for-a-workflow-or-team)). It is not the team's **Goal**
+text, which says what the team is for.
+
 ## The chart
 
 The team page (`/agents/teams/:id`) draws the team as an aligned org chart of equal cards: the lead on top (tinted),

@@ -2026,6 +2026,12 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   ([agents.md](agents.md#project-context)). Left: the remote paths (PC04), usage attribution (PC05), the
   availability rule (PC06) and the switch and preview in the UI (PC07).
 
+## Paperclip wave 8: goal pickers (PC12)
+
+- **PC12, built:** a workflow's settings and a team's page have a goal field (empty: the project's goal), and the team's
+  member picker lists the agents available in the team's project, keeping current members
+  ([projects-and-goals.md](projects-and-goals.md#picking-a-goal-for-a-workflow-or-team)).
+
 ## Practices (waves P1 and P2)
 
 Rules in the brain that connected agents follow, each approved by a person ([practices.md](practices.md)). Decided
