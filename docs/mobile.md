@@ -179,6 +179,12 @@ Home starts with the **Your morning** card ([work-and-briefings.md](work-and-bri
   to three lines with **More**; a desktop shows up to six lines. The goals it serves have 44 px up, down and unlink
   buttons for admins.
 
+## Practices on the Brain page
+
+- **Practices** on `/brain` (the Practices view in the Files drawer) is one column of practice cards on a phone, with
+  44 px controls in the review dialog and the form; a desktop is unchanged. See
+  [practices.md](practices.md#the-brain-page).
+
 ## What's next
 
 1. ~~Touch and type baseline~~ (above; the 44 px targets are done for the tab bar, the editor's back arrow and the header

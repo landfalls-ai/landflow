@@ -332,6 +332,8 @@ prose and a person keeps the facts. Spotlight asks it questions.
     `/brain/settings`. The side-bar commands and ⌘B are left out while there is no side bar.
   - **On a phone**: the side bar is a drawer behind the Files button, with the views at its top; tabs scroll; the Ask
     button stays in the title bar and the status bar at the bottom.
+  - **Practices** (a view on the activity bar, with a count of drafts waiting): the rules connected agents follow. See
+    [practices.md](practices.md#the-brain-page).
 - **index.md**: **Shared across teams** (customers and initiatives two or more teams worked on in the last 7 days, most
   teams first, with their teams, people and latest items: no other product flags this, and it is what the Company
   Brain is for), **Suggestions**, **Teams this week** and **Needs a person**. A card with nothing in it is not shown, and the Source view leaves out its heading too.
@@ -390,6 +392,9 @@ no hand-built MCP Server Trigger workflow:
 | `brain_ask` | ask the brain a question (`question`, `about`), like `POST /api/brain/ask` |
 | `my_briefing` | the caller's own briefing (`day`) |
 | `record_work` | save the caller's own work events, private |
+
+Practices: see [practices.md](practices.md#following) (`practices_for`, `practice_get`, `practice_cite`,
+`practice_draft` and the `practices://` resources).
 
 An API key sees only the tools its scopes cover (`brain:read`, `brain:write`; [features/ai.md](features/ai.md#mcp)). Each tool sees what the token's user sees (an instance access token sees everything), cut down to the project on a
 project server (`/api/mcp/projects/<id>`, a project token), where `brain_suggest` must name a workflow or agent of it.
