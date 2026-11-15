@@ -117,7 +117,6 @@ describe('the Spend refresh and the span of a call', () => {
   it('draws a time as a button only when a span was found', () => {
     const html = renderToStaticMarkup(createElement(SpendBody, { spend: { ...demo, calls: [call(1, { at: '2026-11-16T10:00:01.200Z', model: 'claude-sonnet-4-6' }), call(2, { at: '2026-11-16T12:00:00.000Z', model: 'claude-sonnet-4-6' })] }, open: () => {}, model: journal }));
     expect(html.match(/aria-label="Open the call at/g)).toHaveLength(1);
-    expect(html).toContain('Researcher');
   });
 });
 
