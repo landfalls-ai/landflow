@@ -42,7 +42,7 @@ function workflowRefusal(workflow: Workflow | undefined): string | undefined {
   return undefined;
 }
 
-const RUN_REFUSED = 'Only a schedule of the saved or published workflow, or a run an owner or admin started, may handle people’s briefings';
+const RUN_REFUSED = 'Only a schedule of the published workflow, or a run an owner or admin started, may handle people’s briefings';
 const VERSION_REFUSED = 'A member, or nobody, saved the version of this workflow that ran: it handles no one’s briefings until an owner or admin saves a change to it (and publishes that version, when it is published)';
 const UNPUBLISHED_REFUSED = 'A schedule handles people’s briefings only from the published version: an owner or admin publishes it first';
 const PUBLISH_REFUSED = 'A member published the version of this workflow that ran: it handles no one’s briefings until an owner or admin publishes a version an owner or admin saved';
