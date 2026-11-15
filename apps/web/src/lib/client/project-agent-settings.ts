@@ -47,6 +47,18 @@ export function savePatch(form: AgentSettingsForm, saved: AgentSettingsForm, ava
   return out;
 }
 
+/** The fields of a PATCH the route can refuse with a 400 (a credential, an Ollama model's credential, an agent id). */
+export type AgentSettingsErrorField = 'defaultModel' | 'knowledge' | 'agents';
+
+/**
+ * Where a 400 for `patch` goes on the card: under the one field the PATCH sent that the route checks, or at the bottom when
+ * it sent several (or none). Cleared fields (`null`) and an allow-list with no ids can't be refused.
+ */
+export function errorFieldOf(patch: Partial<ReturnType<typeof patchBody>>): AgentSettingsErrorField | undefined {
+  const checked = (['defaultModel', 'knowledge', 'agents'] as const).filter((key) => (key === 'agents' ? Boolean(patch.agents?.ids.length) : Boolean(patch[key])));
+  return checked.length === 1 ? checked[0] : undefined;
+}
+
 export const saveAgentSettings = (projectId: string, form: AgentSettingsForm, saved: AgentSettingsForm, available: AgentSettingsState['available'] = []) =>
   api<ProjectSettingsView>(url(projectId), { method: 'PATCH', json: savePatch(form, saved, available) });
 

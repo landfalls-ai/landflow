@@ -12,6 +12,7 @@ import {
   askForMore,
   barPercent,
   barTone,
+  budgetDirty,
   budgetInput,
   fetchBudget,
   fieldsFrom,
@@ -26,6 +27,7 @@ import type { BudgetIncident, ProjectBudgetView } from '@/lib/shared/project-bud
 import { Card } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { confirmAction } from '@/components/ui/confirm';
 import { Dialog } from '@/components/ui/dialog';
 import { FieldLabel, Input, Select, Switch, Textarea } from '@/components/ui/inputs';
 import { refreshNeedsYou } from '@/lib/client/run-trace';
@@ -77,6 +79,7 @@ function IncidentRow({ projectId, view, incident, onDone }: { projectId: string;
           skip={['open']}
           onDone={onDone}
           row={{ kind: 'budget', incidentKind: incident.kind, canRaise: view.canEdit, canResume: view.canResume, projectId, incidentId: incident.id, href: undefined }}
+          {...(view.budget && { currentUsd: view.budget.monthlyUsd })}
         />
       )}
     </li>
@@ -109,7 +112,7 @@ export function ProjectBudgetCardView({
 }) {
   const set = (patch: Partial<BudgetFields>) => onFields?.({ ...fields, ...patch });
   const edit = view.canEdit;
-  const dirty = JSON.stringify(fields) !== JSON.stringify(fieldsFrom(view));
+  const dirty = budgetDirty(fields, view);
   return (
     <div id="budget" className="scroll-mt-[72px] max-md:scroll-mt-[200px]">
     <Card className="space-y-4">
@@ -286,7 +289,7 @@ export function ProjectBudgetCard({ projectId }: { projectId: string }) {
   const save = async () => {
     const parsed = budgetInput(fields);
     if ('error' in parsed) return setError(parsed.error);
-    if (parsed.input.monthlyUsd === 0 && view.budget && !window.confirm('Remove the budget? Nothing will be watched or stopped for this project.')) return;
+    if (parsed.input.monthlyUsd === 0 && view.budget && !(await confirmAction('Remove the budget? Nothing will be watched or stopped for this project.', { action: 'Remove', danger: true }))) return;
     setSaving(true);
     try {
       changed(await saveBudget(projectId, parsed.input));

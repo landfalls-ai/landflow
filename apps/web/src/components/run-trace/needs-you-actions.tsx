@@ -98,11 +98,14 @@ export function BudgetActions({
   onDone,
   skip,
   className,
+  currentUsd,
 }: {
   row: Pick<NeedsYouRow, 'kind' | 'incidentKind' | 'canRaise' | 'canResume' | 'projectId' | 'incidentId' | 'href'>;
   onDone: (view: ProjectBudgetView) => void;
   skip?: NeedsYouActionId[];
   className?: string;
+  /** The monthly budget when the caller already has it (the budget card): the raise dialog then fetches nothing. */
+  currentUsd?: number;
 }) {
   const [raising, setRaising] = useState(false);
   const [busy, setBusy] = useState<NeedsYouActionId>();
@@ -147,6 +150,7 @@ export function BudgetActions({
         <RaiseDialog
           projectId={row.projectId}
           incidentId={row.incidentId}
+          {...(currentUsd !== undefined && { current: currentUsd })}
           onClose={() => setRaising(false)}
           onRaised={(view) => {
             setRaising(false);

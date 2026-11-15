@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { actionsFor } from '../src/components/run-trace/needs-you-actions';
 import { BudgetRow } from '../src/components/run-trace/run-lists';
 import { ProjectBudgetCardView } from '../src/components/projects/project-budget-card';
-import { barPercent, barTone, budgetInput, fetchBudget, fieldsFrom, formatUsd, runIncidentAction, saveBudget } from '../src/lib/client/project-budget-api';
+import { barPercent, barTone, budgetDirty, budgetInput, fetchBudget, fieldsFrom, formatUsd, runIncidentAction, saveBudget } from '../src/lib/client/project-budget-api';
 import type { NeedsYouRow } from '../src/lib/client/run-trace';
 import type { ProjectBudgetView } from '../src/lib/shared/project-budget';
 
@@ -84,6 +84,18 @@ describe('the bar', () => {
     expect(fieldsFrom(stopView)).toEqual({ monthly: '50', warn: '80', hardStop: true, ownerId: 'usr_ana' });
     expect(fieldsFrom(emptyView)).toEqual({ monthly: '', warn: '80', hardStop: false, ownerId: '' });
   });
+  it('with no budget, Warn at, Hard stop or the owner alone are nothing to save', () => {
+    const empty = fieldsFrom(emptyView);
+    expect(budgetDirty(empty, emptyView)).toBe(false);
+    expect(budgetDirty({ ...empty, warn: '60' }, emptyView)).toBe(false);
+    expect(budgetDirty({ ...empty, hardStop: true, ownerId: 'usr_ana' }, emptyView)).toBe(false);
+    expect(budgetDirty({ ...empty, monthly: '0', hardStop: true }, emptyView)).toBe(false);
+    expect(budgetDirty({ ...empty, monthly: '5' }, emptyView)).toBe(true);
+    const saved = fieldsFrom(stopView);
+    expect(budgetDirty(saved, stopView)).toBe(false);
+    expect(budgetDirty({ ...saved, warn: '60' }, stopView)).toBe(true);
+    expect(budgetDirty({ ...saved, monthly: '' }, stopView)).toBe(true);
+  });
 });
 
 describe('the fetch helpers', () => {
@@ -133,6 +145,15 @@ describe('the card', () => {
     expect(html).toContain('When on, this project’s paid AI calls stop at the budget until someone resumes them. Local models never stop.');
     expect(html).toContain('Raise budget…');
     expect(html).toContain('Ana Example');
+  });
+  it('with no budget, changing only Warn at or Hard stop shows no Save', () => {
+    const fields = { ...fieldsFrom(emptyView), warn: '60', hardStop: true };
+    const html = renderToStaticMarkup(createElement(ProjectBudgetCardView, { projectId: 'prj_billing01', view: emptyView, members, fields }));
+    expect(html).not.toContain('>Save<');
+    expect(html).not.toContain('Discard');
+    const withAmount = renderToStaticMarkup(createElement(ProjectBudgetCardView, { projectId: 'prj_billing01', view: emptyView, members, fields: { ...fields, monthly: '5' } }));
+    expect(withAmount).toContain('>Save<');
+    expect(withAmount).toContain('Discard');
   });
   it('a warning only: not paused, amber bar', () => {
     const html = card({ ...stopView, paused: false, percent: 85, incidents: [stopView.incidents[1]] });

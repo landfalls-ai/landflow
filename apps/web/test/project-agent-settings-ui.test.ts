@@ -3,7 +3,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { ProjectAgentSettingsView } from '../src/components/projects/project-agent-settings';
-import { parseAgentSettings, patchBody, savePatch, sameAgentSettings } from '../src/lib/client/project-agent-settings';
+import { errorFieldOf, parseAgentSettings, patchBody, savePatch, sameAgentSettings } from '../src/lib/client/project-agent-settings';
 import type { ProjectSettingsView } from '../src/lib/shared/project-policy';
 
 const getExample: ProjectSettingsView = {
@@ -30,9 +30,9 @@ const getExample: ProjectSettingsView = {
   ],
 };
 
-const render = (view: ProjectSettingsView) => {
+const render = (view: ProjectSettingsView, extra: Partial<Parameters<typeof ProjectAgentSettingsView>[0]> = {}) => {
   const state = parseAgentSettings(view);
-  return renderToStaticMarkup(createElement(ProjectAgentSettingsView, { state, form: state.form, saved: state.form }));
+  return renderToStaticMarkup(createElement(ProjectAgentSettingsView, { state, form: state.form, saved: state.form, ...extra }));
 };
 
 describe('parseAgentSettings', () => {
@@ -79,7 +79,36 @@ describe('savePatch', () => {
   });
 });
 
+describe('errorFieldOf', () => {
+  it('names the one checked field the PATCH sent, else none', () => {
+    expect(errorFieldOf({ defaultModel: { provider: 'ollama', model: 'm', credential: { id: 'c', name: 'c' } } })).toBe('defaultModel');
+    expect(errorFieldOf({ defaultModel: { provider: 'ollama', model: 'm' }, agentTools: { mode: 'off', kinds: [] } })).toBe('defaultModel');
+    expect(errorFieldOf({ knowledge: { enabled: true, tool: {} as never } })).toBe('knowledge');
+    expect(errorFieldOf({ agents: { mode: 'allow', ids: ['agt_x'] } })).toBe('agents');
+    expect(errorFieldOf({ agents: { mode: 'off', ids: [] }, defaultModel: null })).toBeUndefined();
+    expect(errorFieldOf({ defaultModel: { provider: 'ollama', model: 'm' }, agents: { mode: 'allow', ids: ['agt_x'] } })).toBeUndefined();
+    expect(errorFieldOf({})).toBeUndefined();
+  });
+});
+
 describe('the card', () => {
+  it('puts a 400 under the field the PATCH sent, or at the bottom', () => {
+    const message = 'That credential isn’t available in this project';
+    const underAgents = render(getExample, { error: message, errorField: 'agents' });
+    expect(underAgents.indexOf(message)).toBeGreaterThan(underAgents.indexOf('Allowed agents'));
+    expect(underAgents.indexOf(message)).toBeLessThan(underAgents.indexOf('Allowed tools'));
+    const underModel = render(getExample, { error: message, errorField: 'defaultModel' });
+    expect(underModel.indexOf(message)).toBeLessThan(underModel.indexOf('Knowledge base'));
+    const bottom = render(getExample, { error: message });
+    expect(bottom.indexOf(message)).toBeGreaterThan(bottom.indexOf('Allowed tools'));
+    expect(bottom.split(message)).toHaveLength(2);
+  });
+  it('Save disabled with a provider and no model says "Choose a model"', () => {
+    const state = parseAgentSettings(getExample);
+    const html = renderToStaticMarkup(createElement(ProjectAgentSettingsView, { state, form: { ...state.form, defaultModel: { provider: 'ollama', model: '' } }, saved: state.form }));
+    expect(html).toContain('Choose a model');
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>(?:(?!<\/button>).)*Save/);
+  });
   it('an admin: model, knowledge, own agents disabled, tool kinds', () => {
     const html = render(getExample);
     expect(html).toContain('id="agents"');
@@ -99,6 +128,13 @@ describe('the card', () => {
     expect(html).toContain('The project’s admins change these.');
     expect(html).not.toContain('Change…');
     expect(html).toContain('ollama · qwen3:8b');
+    // The modes are text for a viewer, not choices that look enabled.
+    expect(html).not.toContain('role="tablist"');
+    expect(render(getExample)).toContain('role="tablist"');
+    expect(html).toContain('>Only these</p>');
+    const off = render({ ...getExample, canEdit: false, settings: { ...getExample.settings, agents: { mode: 'off', ids: [] }, agentTools: { mode: 'off', kinds: [] } } });
+    expect(off).toContain('>Everything available</p>');
+    expect(off).toContain('>Every kind</p>');
   });
   it('without availableAgents: "No agents to list"', () => {
     const { availableAgents: _drop, ...rest } = getExample;
