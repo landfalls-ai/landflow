@@ -8,8 +8,7 @@ import { personalProjectId } from '../../shared/projects';
 import type { Goal } from '../../shared/goals';
 import type { GoalMoved, GoalProgress } from '../../shared/goal-progress';
 import { canEntity, getEntity } from '../brain/entities';
-import { database } from '../db';
-import type { SqlValue } from '../db';
+import { database, type Database, type SqlValue } from '../db';
 import { isInstanceAdmin, visibleProjectIds, type Actor } from '../projects/access';
 import { defaultProjectId, membershipsOf } from '../projects/store';
 import { instanceTimezone } from '../settings';
@@ -22,7 +21,6 @@ const MAX_DEPTH = 4;
 const MAX_UPDATE_ROWS = 5000;
 const NIGHTLY_GOALS = 5;
 
-const db = () => database();
 const marks = (n: number) => Array.from({ length: n }, () => '?').join(', ');
 
 /** Every goal in the subtree of `root` (itself first), only through goals in `allowed`, depth at most MAX_DEPTH. */
@@ -55,12 +53,14 @@ interface Counts {
 }
 
 /**
- * The progress of each goal in `goalIds` over `window` days back from `now` (or from `options.since` up to `options.until`, the nightly sync's own
- * start), for `actor`. Each goal counts itself and the sub-goals the actor sees; projects, spend and work events are read
- * only where the actor may see them. A goal the actor cannot see (or an unknown one) answers an empty progress.
+ * The progress of each goal in `goalIds` over `window` days back from `now`, for `actor`. Each goal counts itself and the
+ * sub-goals the actor sees; projects, spend and work events are read only where the actor may see them. A goal the
+ * actor cannot see (or an unknown one) answers an empty progress. The nightly sync passes `options.since` and
+ * `options.until` to read its own start and end instead of a window back from `now`, and the `db` it gathers from.
  */
-export function progressFor(actor: Actor, goalIds: string[], window: GoalProgress['window'], now = Date.now(), options: { since?: number; until?: number } = {}): GoalProgress[] {
+export function progressFor(actor: Actor, goalIds: string[], window: GoalProgress['window'], now = Date.now(), options: { since?: number; until?: number; db?: Database } = {}): GoalProgress[] {
   if (!goalIds.length) return [];
+  const db = () => options.db ?? database();
   const from = new Date(options.since ?? now - window * DAY_MS).toISOString();
   const to = new Date(Math.min(now, options.until ?? now)).toISOString();
   const projects = visibleProjectIds(actor);
@@ -230,7 +230,7 @@ function startOfDay(day: string): number {
  * in the two days the nightly sync reads (the day before `day`, and `day` so far), as that person sees them: at most five,
  * the busiest first. Only counts and goal titles; never a work event's words.
  */
-export function goalsMovedFor(actor: Actor, day: string, now = Date.now()): GoalMoved[] {
+export function goalsMovedFor(actor: Actor, day: string, now = Date.now(), connection?: Database): GoalMoved[] {
   const [year, month, date] = day.split('-').map(Number);
   const before = new Date(Date.UTC(year, month - 1, date - 1)).toISOString().slice(0, 10);
   const next = new Date(Date.UTC(year, month - 1, date + 1)).toISOString().slice(0, 10);
@@ -239,7 +239,7 @@ export function goalsMovedFor(actor: Actor, day: string, now = Date.now()): Goal
   const visible = visibleGoals(actor).filter((goal) => goal.status !== 'cancelled' && (goal.projectId ? projectIds.has(goal.projectId) : (serving.get(goal.id) ?? []).some((id) => projectIds.has(id))));
   if (!visible.length) return [];
   const titles = new Map(visible.map((goal) => [goal.id, goal.title]));
-  const found = progressFor(actor, visible.map((goal) => goal.id), 1, now, { since: startOfDay(before), until: startOfDay(next) - 1 }).filter((p) => p.moved);
+  const found = progressFor(actor, visible.map((goal) => goal.id), 1, now, { since: startOfDay(before), until: startOfDay(next) - 1, db: connection }).filter((p) => p.moved);
   return found
     .sort((a, b) => b.runs.ok + b.runs.failed + b.updates - (a.runs.ok + a.runs.failed + a.updates) || (titles.get(a.goalId) ?? '').localeCompare(titles.get(b.goalId) ?? ''))
     .slice(0, NIGHTLY_GOALS)

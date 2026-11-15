@@ -22,6 +22,7 @@ const { progressFor, becauseText, goalsMovedFor } = await import('@/lib/server/g
 const { gatherFor, deterministicBriefing, briefingPrompt, writeBriefingText } = await import('@/lib/server/brain/briefing');
 const { createDraft, getDraft } = await import('@/lib/server/brain/briefings-store');
 const { dayOf } = await import('@/lib/server/usage/ledger');
+const { getSettings, updateSettings } = await import('@/lib/server/settings');
 const goalsRoute = await import('@/app/api/goals/route');
 const progressRoute = await import('@/app/api/goals/[id]/progress/route');
 
@@ -297,13 +298,50 @@ describe('goals that moved in the nightly sync', () => {
   it('reads from the day before `day` up to the end of `day`, no further', () => {
     const edge = createGoal({ title: 'Edge goal', level: 'project', projectId: gamma }).id;
     const target = '2020-03-10';
-    const at = (iso: string) => iso;
-    event(ann.id, 'org', { goal: edge }, at('2020-03-07T10:00:00.000Z')); // two days before: left out
-    event(ann.id, 'org', { goal: edge }, at('2020-03-09T12:00:00.000Z')); // early the day before: kept
-    event(ann.id, 'org', { goal: edge }, at('2020-03-10T06:00:00.000Z')); // on the day: kept
-    event(ann.id, 'org', { goal: edge }, at('2020-03-13T12:00:00.000Z')); // after the day: left out
+    event(ann.id, 'org', { goal: edge }, '2020-03-07T10:00:00.000Z'); // two days before: left out
+    event(ann.id, 'org', { goal: edge }, '2020-03-09T12:00:00.000Z'); // early the day before: kept
+    event(ann.id, 'org', { goal: edge }, '2020-03-10T06:00:00.000Z'); // on the day: kept
+    event(ann.id, 'org', { goal: edge }, '2020-03-13T12:00:00.000Z'); // after the day: left out
     const moved = goalsMovedFor(actorOf(ann), target, Date.parse('2020-03-20T00:00:00.000Z'));
     expect(moved.find((g) => g.goalId === edge)?.because).toBe('2 updates');
+  });
+
+  // The two edges of the window are the start of the day before `day` and the end of `day`, in the instance's time zone: one
+  // hour inside each edge counts and one hour outside does not, whatever the zone and across a DST change (Los Angeles
+  // springs forward on 2020-03-08, the day before the window starts).
+  it.each([
+    ['UTC', '2020-03-09T00:00:00.000Z', '2020-03-11T00:00:00.000Z'],
+    ['Pacific/Kiritimati', '2020-03-08T10:00:00.000Z', '2020-03-10T10:00:00.000Z'],
+    ['America/Los_Angeles', '2020-03-09T07:00:00.000Z', '2020-03-11T07:00:00.000Z'],
+  ])('keeps a tight day boundary in %s', (zone, start, end) => {
+    const before = getSettings().timezone;
+    updateSettings({ timezone: zone });
+    try {
+      const edge = createGoal({ title: `Edge ${zone}`, level: 'project', projectId: gamma }).id;
+      const hour = (iso: string, hours: number) => new Date(Date.parse(iso) + hours * HOUR).toISOString();
+      event(ann.id, 'org', { goal: edge }, hour(start, -1)); // an hour before the window: left out
+      event(ann.id, 'org', { goal: edge }, hour(start, 1)); // an hour into it: kept
+      event(ann.id, 'org', { goal: edge }, hour(end, -1)); // an hour before the end of the day: kept
+      event(ann.id, 'org', { goal: edge }, hour(end, 1)); // an hour after the day: left out
+      const moved = goalsMovedFor(actorOf(ann), '2020-03-10', Date.parse('2020-03-20T00:00:00.000Z'));
+      expect(moved.find((g) => g.goalId === edge)?.because, zone).toBe('2 updates');
+    } finally {
+      updateSettings({ timezone: before });
+    }
+  });
+
+  it('reads through the connection it is given', () => {
+    const real = database();
+    let reads = 0;
+    const counting = new Proxy(real, {
+      get(target, key) {
+        const value = Reflect.get(target, key) as unknown;
+        if (key === 'all' && typeof value === 'function') return (...args: unknown[]) => (reads++, (value as (...a: unknown[]) => unknown).apply(target, args));
+        return typeof value === 'function' ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+    goalsMovedFor(actorOf(ann), day, now, counting);
+    expect(reads).toBeGreaterThan(0);
   });
 
   it('answers an empty progress for a root the person cannot see', () => {

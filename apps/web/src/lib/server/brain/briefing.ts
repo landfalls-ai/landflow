@@ -49,7 +49,7 @@ export function gatherFor(actor: Actor, day: string, now = Date.now(), db: Datab
     .filter((item) => item.repo && repos.has(item.repo.toLowerCase()))
     .slice(0, 10);
   // PC17: the goals that moved, as this person sees them (never the run's starter, an admin or a system reader).
-  const goalsMoved = goalsMovedFor(actor, day, now);
+  const goalsMoved = goalsMovedFor(actor, day, now, db);
   return { own: mine.map(itemOf), related: relatedFor(actor, mine, now, db), finished, ...(goalsMoved.length && { goalsMoved }) };
 }
 
