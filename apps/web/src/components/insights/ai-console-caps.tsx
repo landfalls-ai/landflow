@@ -32,7 +32,7 @@ function AskDialog({ cap, onClose, onSent }: { cap: AiConsoleCap; onClose: () =>
       onSent();
       onClose();
     } catch (error) {
-      setMessage(error instanceof ApiError || error instanceof Error ? error.message : 'Could not send the request');
+      setMessage(error instanceof ApiError ? error.message : 'Could not send the request: cap requests are not available on this server');
     } finally {
       setBusy(false);
     }
