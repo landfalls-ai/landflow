@@ -4,7 +4,7 @@
  * model and source, the caps and how near each is, the requests for more, and the gateway. The report holds only what
  * the viewer may see. On a phone each row is a card; desktop shows tables in cards like the other Insights pages.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/client/api';
 import { AI_GROUPS, AI_PERIODS, rowModel, totalTokens } from '@/lib/client/ai-console';
@@ -119,15 +119,20 @@ export function AiConsole() {
   const [report, setReport] = useState<AiConsoleReport>();
   const [status, setStatus] = useState<GatewayStatus>();
   const [error, setError] = useState<string>();
+  const requestId = useRef(0);
 
   const load = useCallback(
     (background = false) => {
+      const mine = ++requestId.current;
       api<AiConsoleReport>(`/api/insights/ai?period=${period}`, { background })
         .then((r) => {
+          if (mine !== requestId.current) return;
           setReport(r);
           setError(undefined);
         })
-        .catch((e: Error) => setError(e.message));
+        .catch((e: Error) => {
+          if (mine === requestId.current) setError(e.message);
+        });
       api<GatewayStatus>('/api/llm-gateway/status', { background })
         .then(setStatus)
         .catch(() => {});
@@ -155,7 +160,7 @@ export function AiConsole() {
         <Card className="overflow-hidden p-0">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-hair px-4 py-2.5">
             <SectionLabel>Spend by</SectionLabel>
-            <Segmented label="Spend by" options={AI_GROUPS} value={group} onChange={setGroup} className="ml-auto max-md:ml-0 max-md:w-full" />
+            <Segmented label="Spend by" options={AI_GROUPS} value={group} onChange={setGroup} stretch className="ml-auto max-md:ml-0 max-md:w-full" />
           </div>
           {shown ? <SpendBy rows={shown.groups[group]} label={label} /> : <div className="m-4 h-24 rounded-xl bg-acdim animate-pulse-soft" />}
         </Card>

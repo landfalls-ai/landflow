@@ -24,6 +24,7 @@ const { database } = await import('@/lib/server/db');
 const { aiUsageMeter, saveAiCaps } = await import('@/lib/server/ai-usage');
 const { aiConsoleReport } = await import('@/lib/server/llm-gateway/console');
 const { gatewayStatus, resetGatewayStatus } = await import('@/lib/server/llm-gateway/status');
+const helpersStatus = await import('@/lib/server/llm-gateway/status');
 const { saveGatewaySettings } = await import('@/lib/server/llm-gateway/settings');
 const reportRoute = await import('@/app/api/insights/ai/route');
 const statusRoute = await import('@/app/api/llm-gateway/status/route');
@@ -286,6 +287,17 @@ describe('the gateway status', () => {
     expect((await response.json()).period).toBe('24h');
     const bad = await as(member, () => (reportRoute.GET as (r: Request) => Promise<Response>)(new Request('http://x.test/api/insights/ai?period=year')));
     expect(bad.status).toBe(400);
+  });
+});
+
+describe('the admin UI link', () => {
+  const base = { baseUrl: 'http://evil.example', uiUrl: 'http://evil.example/ui' };
+  it('never comes from a credential URL', () => {
+    expect(helpersStatus.adminUiUrl({ ...base, source: 'credential' }, undefined, undefined)).toBeUndefined();
+    expect(helpersStatus.adminUiUrl({ ...base, source: 'credential' }, 'http://ui.test', undefined)).toBe('http://ui.test');
+    expect(helpersStatus.adminUiUrl({ ...base, source: 'credential' }, undefined, 'http://env.test')).toBe('http://env.test');
+    expect(helpersStatus.adminUiUrl({ ...base, source: 'credential', adminBaseUrl: 'http://real.test' }, undefined, undefined)).toBe('http://real.test/ui');
+    expect(helpersStatus.adminUiUrl({ ...base, source: 'environment' }, undefined, undefined)).toBe('http://evil.example/ui');
   });
 });
 

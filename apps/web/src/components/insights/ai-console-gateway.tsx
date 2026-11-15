@@ -63,10 +63,14 @@ export function GatewayCard({ status, admin }: { status?: GatewayStatus; admin: 
         {status.health === 'ok' && <span className="sr-only">ok</span>}
         {admin && details && (
           <div className="ml-auto flex items-center gap-2 max-md:ml-0 max-md:w-full">
+            {details.uiUrl ? (
             <a href={details.uiUrl} target="_blank" rel="noreferrer" className={buttonClass('outline', 'sm', 'max-md:min-h-11 max-md:flex-1 max-md:px-4')}>
               Open LiteLLM
               <ExternalLink className="size-3.5" />
             </a>
+            ) : (
+              <span className="text-[12px] text-t3">Set the UI address in Settings to open LiteLLM</span>
+            )}
             <Link href="/settings#llm-gateway" className={buttonClass('ghost', 'sm', 'max-md:min-h-11 max-md:flex-1 max-md:px-4')}>
               Settings
             </Link>

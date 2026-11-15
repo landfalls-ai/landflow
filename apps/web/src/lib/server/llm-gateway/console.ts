@@ -120,6 +120,8 @@ function finish(groups: Map<string, AiConsoleRow>, total: AiConsoleTotals): AiCo
       rest.outputTokens += row.outputTokens;
       rest.cost += row.cost;
       rest.calls += row.calls;
+      if (row.cacheReadTokens) rest.cacheReadTokens = (rest.cacheReadTokens ?? 0) + row.cacheReadTokens;
+      if (row.cacheWriteTokens) rest.cacheWriteTokens = (rest.cacheWriteTokens ?? 0) + row.cacheWriteTokens;
     }
     out.push({ ...rest, key: 'other', label: 'Other', share: shareOf(rest) });
   }
@@ -288,6 +290,11 @@ export function aiConsoleReport(actor: Actor, period: AiConsolePeriod, now = Dat
     const key = sourceKey(row.source, row.runtime);
     bump(groups.source, key, SOURCE_LABELS[key] ?? key, row);
   }
+
+  // The same model through two providers keeps one row each: name the provider when labels collide.
+  const modelLabels = new Map<string, number>();
+  for (const entry of groups.model.values()) modelLabels.set(entry.label, (modelLabels.get(entry.label) ?? 0) + 1);
+  for (const [key, entry] of groups.model) if ((modelLabels.get(entry.label) ?? 0) > 1) entry.label = `${entry.label} (${key.slice(0, key.indexOf('/'))})`;
 
   return {
     period,

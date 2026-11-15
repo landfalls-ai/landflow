@@ -8,7 +8,7 @@ import type { Actor } from '../projects/access';
 import { singleton } from '../singleton';
 import type { GatewayStatus } from '../../shared/llm-gateway';
 import { callerClient, gatewayConnection, gatewaySettings, ingestStatus, lastSyncReport, type GatewayConnection } from './settings';
-import { LiteLlmError } from './client';
+import { hashKey } from './client';
 
 const CACHE_MS = 30_000;
 
@@ -28,10 +28,21 @@ export function resetGatewayStatus() {
   cache().value = undefined;
 }
 
-const errorText = (error: unknown): string => (error instanceof LiteLlmError || error instanceof Error ? error.message : 'The gateway did not answer');
+const errorText = (error: unknown): string => (error instanceof Error ? error.message : 'The gateway did not answer');
+
+/**
+ * Where "Open LiteLLM" goes, from server configuration only. A credential's Base URL is editable by project editors, so
+ * it is never the source of an admin's link: Settings, then the variable, then the admin address, then the environment's own.
+ */
+export function adminUiUrl(connection: GatewayConnection, settingsUiUrl: string | undefined, envUiUrl = process.env.LANDFLOW_LLM_GATEWAY_UI_URL): string | undefined {
+  const set = settingsUiUrl?.trim() || envUiUrl?.trim();
+  if (set) return set;
+  if (connection.adminBaseUrl) return `${connection.adminBaseUrl}/ui`;
+  return connection.source === 'environment' ? connection.uiUrl : undefined;
+}
 
 async function check(connection: GatewayConnection): Promise<Checked> {
-  const key = `${connection.baseUrl}|${connection.apiKey ?? ''}`;
+  const key = `${connection.baseUrl}|${connection.apiKey ? hashKey(connection.apiKey) : ''}`;
   const held = cache().value;
   if (held && held.key === key && Date.now() - held.at < CACHE_MS) return held;
   const client = callerClient(connection)!;
@@ -57,17 +68,18 @@ export async function gatewayStatus(actor: Actor): Promise<GatewayStatus> {
   const checked = await check(connection);
   const settings = gatewaySettings();
   const sync = lastSyncReport();
+  const uiUrl = adminUiUrl(connection, settings.uiUrl);
   return {
     configured: true,
     source: connection.source,
     health: checked.health,
     checkedAt: new Date(checked.at).toISOString(),
-    ...(checked.error && { error: checked.error }),
+    ...(checked.health !== 'ok' && { error: isInstanceAdmin(actor) && checked.error ? checked.error : 'The gateway is not answering' }),
     models: checked.models,
     ...(isInstanceAdmin(actor) && {
       admin: {
         baseUrl: connection.baseUrl,
-        uiUrl: connection.uiUrl,
+        ...(uiUrl && { uiUrl }),
         ...(connection.credentialId && { credentialId: connection.credentialId }),
         ...(connection.clusterUrl && { clusterUrl: connection.clusterUrl }),
         portalHeaders: settings.portalHeaders,

@@ -81,7 +81,17 @@ export function CapBar({ cap }: { cap: Pick<AiConsoleCap, 'ratio' | 'subject'> }
 }
 
 /** One cap: a card on a phone and a row of the same card on desktop (the bar fills the width either way). */
-export function CapItem({ cap, requestStatus, onAsk }: { cap: AiConsoleCap; requestStatus?: string; onAsk: (cap: AiConsoleCap) => void }) {
+/** The path only: the current origin may differ from LANDFLOW_PUBLIC_URL (dev ports, a proxy). */
+const pathOf = (link: string): string => {
+  try {
+    const url = new URL(link, 'http://x.invalid');
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return link;
+  }
+};
+
+export function CapItem({ cap, admin, requestStatus, onAsk }: { cap: AiConsoleCap; admin: boolean; requestStatus?: string; onAsk: (cap: AiConsoleCap) => void }) {
   const tone = capTone(cap.ratio);
   return (
     <li className="flex flex-col gap-2 py-3 first:pt-0 last:pb-0">
@@ -98,9 +108,13 @@ export function CapItem({ cap, requestStatus, onAsk }: { cap: AiConsoleCap; requ
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12px] text-t3">
         <span>
           Set in{' '}
-          <a href={cap.link} className="text-ac hover:underline">
-            {cap.setIn}
-          </a>
+          {admin || !cap.id.startsWith('user:') ? (
+            <a href={pathOf(cap.link)} className="text-ac hover:underline">
+              {cap.setIn}
+            </a>
+          ) : (
+            cap.setIn
+          )}
         </span>
         {cap.backstop && (
           <span title="The budget the gateway holds as a backstop">
@@ -151,7 +165,7 @@ export function CapsCard({ report, onChanged }: { report: AiConsoleReport; onCha
       ) : (
         <ul className="divide-y divide-hair">
           {report.caps.map((cap) => (
-            <CapItem key={cap.id} cap={cap} requestStatus={status(cap.pendingRequestId)} onAsk={setAsking} />
+            <CapItem key={cap.id} cap={cap} admin={report.viewer.admin} requestStatus={status(cap.pendingRequestId)} onAsk={setAsking} />
           ))}
         </ul>
       )}
