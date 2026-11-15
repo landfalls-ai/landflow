@@ -409,7 +409,14 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     }
     try {
       toolset = await buildToolset(agent, config, request.flow?.tools);
-      if (request.team?.tools.length) toolset = { ...toolset, tools: dedupe([...toolset.tools, ...request.team.tools]) };
+      // A team's own tools (reports, consults, hand-offs, notebook), by the names they have after the merge: an agent tool
+      // named like one keeps the name, so the team's copy is the renamed one and only it is exempt from the kinds below.
+      let teamNames = new Set<string>();
+      if (request.team?.tools.length) {
+        const merged = dedupe([...toolset.tools, ...request.team.tools]);
+        teamNames = new Set(merged.slice(toolset.tools.length).map((tool) => tool.name));
+        toolset = { ...toolset, tools: merged };
+      }
       toolsOffered = toolset.tools.length;
       // Tool access by caller: tools this caller may not use are withheld; some may need a person's approval for them.
       const role = requestAuth()?.principal?.user.id === session.userId ? requestAuth()?.principal?.user.role : undefined;
@@ -418,8 +425,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       accessNotes = access.notes;
       // PC13: the project's tool kinds, then its knowledge base (never withheld by the kinds).
       if (rules) {
-        // A team's own tools (reports, consults, hand-offs, notebook) are never withheld by the kinds.
-        const teamNames = new Set((request.team?.tools ?? []).map((tool) => tool.name));
+        // A team's own tools are never withheld by the kinds.
         const kept = toolset.tools.filter((tool) => teamNames.has(tool.name) || rules.toolAllowed(tool));
         accessNotes = [...accessNotes, ...toolset.tools.filter((tool) => !kept.includes(tool)).map((tool) => `${tool.label} withheld by project “${rules.projectName}” settings`)];
         const knowledge = rules.settings.knowledge;
