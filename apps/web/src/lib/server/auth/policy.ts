@@ -99,6 +99,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (under('/api/ai') || under('/api/assistant')) return { scope: 'workflows:write' };
   if (under('/api/executions') || under('/api/binary')) return { scope: read ? 'executions:read' : 'executions:write' };
   // Run Trace: the needs-you list across runs (docs/run-trace.md) reads like executions; the route limits it to what the caller sees.
+  // SP05: one model call's view (docs/run-trace.md#spend); the route checks who may open it. Without a rule the fallback is admin-only.
+  if (under('/api/ai-calls')) return { scope: 'executions:read' };
   if (under('/api/events') || under('/api/runs') || under('/api/insights') || under('/api/metrics')) return { scope: 'executions:read' };
   // The second brain (docs/second-brain.md): reading usage and facts is like reading insights; the editor reports its own
   // signals; suggestions are decided by builders (the routes check the target); running it now is for admins.

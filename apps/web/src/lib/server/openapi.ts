@@ -616,6 +616,22 @@ function paths(): Record<string, Record<string, Json>> {
     summary: 'Get an execution with its run data',
     responses: { 200: reply('The execution (and a trace link when LANDFLOW_TRACE_URL is set)', object({ execution: ref('ExecutionRecord'), traceUrl: { type: 'string' } }, ['execution'])), 404: notFound },
   });
+  add('get', '/api/executions/{id}/spend', {
+    tag: 'Executions',
+    id: 'getExecutionSpend',
+    summary: 'Read what a run spent on model calls',
+    description: 'Totals, slices (purpose, model, node, agent, loop step), the prompt cache line and up to 500 calls, newest last, over the run and the sub-runs you may open; the ones you may not are counted in `hidden`. Numbers, names and hashes only, never prompt text.',
+    pathParams: { id: 'The execution id' },
+    responses: { 200: reply('The run’s spend', { type: 'object', additionalProperties: true }), 404: notFound },
+  });
+  add('get', '/api/ai-calls/{id}', {
+    tag: 'Executions',
+    id: 'getAiCall',
+    summary: 'Read one model call',
+    description: 'One call of `ai_usage`: tokens, cost, cache, its prompt split in tokens (`parts`, with who made the split), what changed against the call before it and a link to its run. Never prompt text. A call you can’t open answers 404.',
+    pathParams: { id: 'The call id (`ai_usage.id`)' },
+    responses: { 200: reply('The call', { type: 'object', additionalProperties: true }), 404: notFound },
+  });
   add('get', '/api/executions/{id}/events', {
     tag: 'Executions',
     id: 'getExecutionEvents',
