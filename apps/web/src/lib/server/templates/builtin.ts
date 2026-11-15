@@ -15,6 +15,8 @@ import { brainTemplates } from './builtin-brain';
 import { workGithubTemplates } from './builtin-work-github'; // B31:
 // B32:
 import { velocityTemplates } from './builtin-velocity';
+// LL05:
+import { aiTemplates } from './builtin-ai';
 import type { AgentTeamConfig } from '../../shared/agent-teams';
 import type { AgentConfig } from '../../shared/agents';
 import type { TemplateBundle, TemplateCategory, TemplateCredentialSlot, TemplateDataTable, TemplateDetail } from '../../shared/templates';
@@ -1140,4 +1142,6 @@ export const BUILTIN_TEMPLATES: TemplateDetail[] = [
   ...brainTemplates({ template, node, main, daily, SLOT }),
   // B32:
   ...velocityTemplates({ template, node, main, daily, SLOT }),
+  // LL05:
+  ...aiTemplates({ template, node, main, daily, SLOT }),
 ];

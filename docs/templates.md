@@ -50,6 +50,15 @@ A team template shows on the Templates page with its own card (above). Its page 
 address), says how many agents come with it, and shows the flow's canvas if it has one. **Export** and **Import** carry
 it (the template file's `bundle`). Its flow can't be swapped by **Edit**: save it again from the team page.
 
+### Built in: Cap raise
+
+"When someone asks for a higher AI cap, an admin other than them decides." The template `ai-cap-raise` (categories IT Ops
+and AI, `templates/builtin-ai.ts`): **Cap Raise Request** → **Ask a Person** (chat, the owners and admins other than the
+requester, no editing, 3 day timeout that rejects) → **Apply Cap Raise** on Approved and on Rejected (Decision
+"Approved" or "Rejected"), with a note: nothing changes until an admin other than the requester approves. It needs no
+credentials. An admin installs it from Insights → AI (`POST /api/ai/cap-requests/setup`); see
+[Asking for a higher cap](llm-gateway.md#asking-for-a-higher-cap).
+
 ## Using
 
 **Use template** on a team template asks for the team's name, the flow's name (when there is one), the project, and a

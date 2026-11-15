@@ -1833,3 +1833,10 @@ Built: `/connect` (copy-paste setup and a brain key for each harness), Settings 
 ## Settings in five groups
 
 Built: Settings in five groups, API docs moved to Developers, the built-in price table folded and AI caps their own section, status rows with a help-tip instead of environment-variable paragraphs, an Audit Log and Configuration split with filters that apply on change, json-render under Advanced and "Prune now" in the ⋯ menu, and one sentence of help with a "?" popover in the settings intros (carry-over: the configured SAML card's key-management notes, the External secrets intro and its "Allow in node parameters" note, and the Users invite and removal notes still run longer than one sentence; ~~the cap-reached error, the cost-alert text and link, and the header comments still say "AI prices" and "Settings → API"~~ fixed in the wave 4 carryover: they say Settings → AI caps, link to `#ai-caps` and name Developers → API reference) ([settings-and-data.md](features/settings-and-data.md)). Closes P-set-1, P-set-2, P-set-4, P-set-5, P-set-6, P-set-7 and X9 of the company backbone plan.
+
+## LiteLLM wave (L1)
+
+- **LL05, built:** asking for a higher AI cap: requests, the Cap Raise Request trigger, the cap-raise template with Ask a
+  Person, and Apply Cap Raise, which changes the Landflow cap and tells the budgets sync only after an admin other than
+  the requester approved ([llm-gateway.md](llm-gateway.md#asking-for-a-higher-cap)). Open: the Insights → AI "Ask for
+  more" dialog (LL06).

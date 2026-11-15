@@ -133,7 +133,7 @@ describe('the HttpError tree', () => {
       return lines.flatMap((line, i) => (/class \w+ extends Error\b/.test(line) && lines.slice(i, i + 8).some((l) => /\bstatus\b/.test(l)) ? [`${path.slice(root.length + 1)}:${i + 1} ${line.trim()}`] : []));
     });
     // Upstream status codes (a Kubernetes or MCP answer) and runner.ts's classes (converted with its split) are not mapped.
-    expect(stray.filter((entry) => !/errors\.ts|runner\.ts|db\/|McpClientError|GatewayAdapterError|SecretProviderError|OAuth2Error|SystemOneApiError|journal\/store/.test(entry))).toEqual([]);
+    expect(stray.filter((entry) => !/errors\.ts|runner\.ts|db\/|McpClientError|GatewayAdapterError|SecretProviderError|OAuth2Error|SystemOneApiError|LiteLlmError|journal\/store/.test(entry))).toEqual([]);
   });
 
   it('gives every HttpError subclass a literal errorName (the production bundle minifies class names)', () => {

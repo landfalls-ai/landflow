@@ -168,7 +168,7 @@ still works.
 | `NEXT_PUBLIC_LANDFLOW_JSON_RENDER` | off | `1` does what `LANDFLOW_JSON_RENDER` does, and also reaches the browser bundle |
 | `LANDFLOW_LLM_GATEWAY_URL` | – | the LiteLLM proxy's root (e.g. `http://127.0.0.1:54100`) when Settings → AI → LLM gateway names no credential ([llm-gateway.md](../llm-gateway.md)) |
 | `LANDFLOW_LLM_GATEWAY_KEY` *(secret)* | – | the virtual key Landflow's own calls send to the gateway of `LANDFLOW_LLM_GATEWAY_URL` |
-| `LANDFLOW_LLM_GATEWAY_ADMIN_KEY` *(secret)* | – | the gateway's master or proxy-admin key: the spend import, the budgets sync and the keys Landflow mints for kagent need it |
+| `LANDFLOW_LLM_GATEWAY_ADMIN_KEY` *(secret)* | – | the gateway's master or proxy-admin key: the spend import, the budgets sync and the keys Landflow mints for kagent need it (a credential's Admin key wins) |
 | `LANDFLOW_LLM_GATEWAY_CLUSTER_URL` | – | the gateway as kagent's agents and the Claude Code harness reach it (e.g. `http://host.docker.internal:54100`); unset, agents on kagent call their model directly |
 | `LANDFLOW_LLM_GATEWAY_UI_URL` | `<gateway>/ui` | LiteLLM's admin UI, linked for admins from the AI page and Settings |
 | `LANDFLOW_LLM_GATEWAY_INGEST_SECONDS` | `300` | how often the leader imports the spend of keys that are not Landflow's own from the gateway (30 to 86400) |

@@ -47,6 +47,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | Run Trace: each run's journal (who did what, requests between agents, waits, artifacts, checks), the Story, Trace, Team and Report screens, profiles, the Run report node and its gate | [run-trace.md](run-trace.md) | [protocol.md](protocol.md) (`records`) |
 | Marketplace: Claude Code plugin marketplaces as agents, skills, node plugins and flows; flow share pages; agents and teams exported as Claude Code plugins | [marketplace.md](marketplace.md) | |
 | Team templates: a team, its agents and its flow saved as one template and created again with fresh ids and credentials | [templates.md](templates.md) | [features/editor.md](features/editor.md), [agent-teams.md](agent-teams.md) |
+| Asking for a higher AI cap: the Cap Raise Request trigger, the cap-raise template with Ask a Person, and Apply Cap Raise (LiteLLM wave) | [llm-gateway.md](llm-gateway.md#asking-for-a-higher-cap) | [templates.md](templates.md), [reference/api.md](reference/api.md) |
 | Alert triage and Landfall war rooms: the triage, Landfall and threat-intel plugins and their flows | [triage.md](triage.md) | each plugin's README |
 | Runbooks made from closed Landfall war rooms, found by alert kind | [runbooks.md](runbooks.md) | [triage.md](triage.md) |
 | Integrations: messaging, productivity, Google Workspace, databases, the work ingest templates and GitHub into the brain (pull requests, reviews and CI as work events) | [features/integrations.md](features/integrations.md) | each plugin's README, [GitHub into the brain](features/integrations.md#github-into-the-brain) |
@@ -83,6 +84,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 - [llm-gateway.md](llm-gateway.md): LiteLLM as the one door for model calls: the profile, the pinned image, models, the Kubernetes example.
 - [mcp-gateway.md](mcp-gateway.md): agentgateway in Landflow, what was verified and how to rerun the spike.
 - [observability.md](observability.md): the OpenTelemetry contract: span names, attributes, metrics, logs.
+- [llm-gateway.md](llm-gateway.md): the LLM gateway (LiteLLM) in front of every model call, its budgets, and asking for a higher cap.
 
 **Features**: the twelve pages under [features/](#feature-map), plus [plugins.md](plugins.md),
 [assistant.md](assistant.md), [second-brain.md](second-brain.md), [composites.md](composites.md), [agents.md](agents.md), [agent-teams.md](agent-teams.md), [team-notebook.md](team-notebook.md), [a2a.md](a2a.md),

@@ -230,7 +230,62 @@ a client that skips Landflow) is still stopped.
 
 ## Asking for a higher cap
 
-<!-- LL05: the request, the cap-raise flow (Ask a Person), what approval changes in Landflow and in LiteLLM. -->
+When someone reaches a cap they ask for more instead of finding an admin. Nothing changes until a person decides: the
+request is made by one person, decided by a different person who is an admin, and only then applied.
+
+**Who can ask about which cap.** Anyone who can build workflows (`workflows:write`) may ask about:
+
+- their own user cap (`user:<their id>:…`);
+- a workflow cap or an agent cap of a resource they can change (an editor or admin of its project, or an admin).
+
+A credential's caps are an admin's to set directly, so nobody asks about those. The new cap must be more than the
+current one and at most 100 times it, with a reason of 3 to 500 characters. A person has one open request per cap: a
+second ask answers 409 with the id of the first. Workflows have only daily caps; agents have daily token, daily cost and
+monthly cost caps; users and credentials have all four.
+
+**Turning it on (an admin, once).** The flow is the template **Cap raise: an admin approves a higher AI cap**
+(`ai-cap-raise`, [templates.md](templates.md)). An admin installs it with `POST /api/ai/cap-requests/setup`, from
+Insights → AI: it lands in the admin's home project, is published and active, and its workflow id is kept in the
+settings key `ai_cap_raise`. A second click answers the existing flow. Until then asking answers 409 "An admin must turn
+on the cap-raise flow first (Insights → AI)" and stores nothing. There is one cap-raise flow per instance: only that flow handles a request, and Apply Cap Raise changes nothing for a run of any other workflow (a copy, or one a builder published with the same trigger).
+
+**What the flow does.** It starts from **Cap Raise Request** (`core.capRaiseTrigger`), which runs once per request with
+one item: the request id, the cap, its subject, metric and period, the current and the asked-for cap, the reason, who
+asked (id and name) and `approvers`, the emails of the owners and admins other than the requester. Nothing else about
+another person is in it. **Ask a Person** then asks in chat, with those approvers, no editing, and a 3 day timeout that
+rejects. **Apply Cap Raise** (`core.applyCapRaise`) settles the request: the Approved branch uses it with Decision
+"Approved", the Rejected branch with "Rejected" (a timeout lands there too).
+
+**What the admin sees.** The request in Needs you as an Ask a Person: "Raise the day cost cap of user “Mia”?", with the
+current and asked-for cap, the reason and who asked. The Run Trace of the flow's run is linked from the request.
+
+**Why the requester can't approve their own.** Apply Cap Raise never trusts the item it receives (an expression or a
+Code node could write one). On the Approved branch it reads the server's own record of the run: the output of the run's
+Ask a Person node. The cap changes only when that record shows an approval by an active owner or admin, by email, who is
+not the requester, and not a timeout; the request must be `asking` and must belong to this run's execution. Anything
+else sets the request to `failed` with the reason, and nothing changes. A decision from Slack can't be matched to a
+person, so it never applies; ask in chat or by email.
+
+**What approval changes.**
+
+- In Landflow: the cap field the period and metric name. A user under the cap for every user gets a set of their own,
+  a copy of the default with the one field raised. A workflow's `aiMaxTokensPerDay` or `aiMaxCostPerDay` is raised in
+  its settings; when the workflow is published, its draft must equal the published version (else the request fails and
+  says to publish first), and it is published again with the new cap. An agent's `dailyTokenLimit`, `dailyCostLimit` or
+  `monthlyCostLimit` is raised in the draft and, in place, in the published version and its history entry, so nothing
+  else the draft changed goes live.
+- In LiteLLM: Apply Cap Raise calls `capsChanged('approval', [capId])` and waits; the budgets sync of
+  [Budgets in LiteLLM](#budgets-in-litellm) mirrors the change. The request then records `gateway`: `updated` (the
+  object's link is `synced` after the approval), `failed` (its link is `failed`) or `skipped` (no link, the sync is off,
+  or the cap has no backstop, such as a workflow's).
+- The request records who decided (`decidedBy`) and when, and the comment they left.
+
+**Rejecting, timeouts, cancelling.** A no records the comment and changes nothing. If nobody answers within 3 days the
+request is rejected ("Nobody answered in time"). The requester, or an admin, can cancel a request while it is open
+(`POST /api/ai/cap-requests/:id/cancel`). If no admin other than the requester exists, the request fails at once with
+"No admin other than you can approve this".
+
+The routes are in [reference/api.md](reference/api.md).
 
 ## The AI page
 
@@ -253,3 +308,7 @@ a client that skips Landflow) is still stopped.
   minutes late. Token limits of an agent on kagent are counted but not enforced there (LiteLLM budgets are in dollars).
   The sandbox of a Claude Code agent can reach the gateway. Keys are blocked, never deleted, and not rotated.
 - Project budgets (until Paperclip's project budget lands), tag budgets, and budget windows in the instance's time zone (LL04).
+- Asking for a cap raise by Slack or email: the template asks in chat (an admin can switch Ask a Person's channel, but a
+  Slack answer never applies, see above).
+- Several cap-raise flows: one per instance.
+- Asking about a credential's caps (an admin sets those directly).
