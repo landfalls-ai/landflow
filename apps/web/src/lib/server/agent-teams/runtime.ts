@@ -18,6 +18,7 @@ import type { Agent, AgentModel } from '../../shared/agents';
 import { estimateCost, findPrice, priceOverrides } from '../ai-usage/prices';
 import { newSession, runAgent, type TeamRole } from '../agents/runtime';
 import { a2aAgentTool, type BuiltTool, type ToolContext, type ToolOutcome } from '../agents/tools';
+import { runContextProvider, withRunContext } from '../project-context/seam';
 import { liveJournal } from '../journal/writer';
 import { nanoid } from 'nanoid';
 import { contentOf } from '../journal/content';
@@ -274,6 +275,12 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
   const leadAgent = agentStore.get(root.agentId);
   if (!leadAgent) throw new Error(`${root.title}'s agent no longer exists`);
 
+  // The project and goal this team's work serves: its line leads every request, and a remote member's first request carries the compact block.
+  const teamCtx = runContextProvider()?.build(
+    { caller: 'team', teamId: request.team.id, ...(request.execution && { workflowId: request.execution.workflowId, executionId: request.execution.executionId, nodeName: request.execution.nodeName }) },
+    'compact',
+  );
+
   const journal = request.execution ? liveJournal(request.execution.executionId) : undefined;
   const nodeSpan = () => (request.execution ? journal?.spanOfNode(request.execution.nodeId) : undefined);
   const check = (name: string, status: 'pass' | 'warn' | 'fail', message: string, subject: string) =>
@@ -329,6 +336,8 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
       type: 'span.updated',
       spanId: nodeSpan() ?? 'run',
       attrs: {
+        ...(teamCtx?.projectId && { project: { id: teamCtx.projectId, name: teamCtx.projectName ?? teamCtx.projectId } }),
+        ...(teamCtx?.goalId && { goal: { id: teamCtx.goalId, title: teamCtx.goalTitle ?? teamCtx.goalId } }),
         team: {
           id: request.team.id,
           name: request.team.name,
@@ -423,7 +432,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
   /** The goal and the manager's own task, in front of every request. */
   const withAncestry = (manager: TeamMember, message: string) => {
     const notebook = notebookBlock(notebookFor(manager));
-    return [config.goal ? `Team goal: ${config.goal}` : '', state.tasks[manager.id] ? `${manager.title}'s current task: ${cut(state.tasks[manager.id], TASK_CHARS)}` : '', ...(notebook ? [notebook] : []), '', message]
+    return [teamCtx?.line ?? '', config.goal ? `Team goal: ${config.goal}` : '', state.tasks[manager.id] ? `${manager.title}'s current task: ${cut(state.tasks[manager.id], TASK_CHARS)}` : '', ...(notebook ? [notebook] : []), '', message]
       .filter((line, i) => line || i > 0)
       .join('\n')
       .trim();
@@ -898,8 +907,11 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
           // two runs ask it at once.
           const open = openNotebookFor(report, ctx);
           try {
-            const message = known?.question ? text : [withAncestry(manager, text), open && NOTEBOOK_KEY(open.key)].filter(Boolean).join('\n\n');
-            return await redirectable(ctx, input, message, open);
+            const first = !known?.contextId && !known?.taskId;
+            const projectOff = (report.parameters as { options?: { projectContext?: string } }).options?.projectContext === 'off';
+            const message = known?.question ? text : [first && !projectOff && teamCtx?.compact, withAncestry(manager, text), open && NOTEBOOK_KEY(open.key)].filter(Boolean).join('\n\n');
+            // The team's context is the run's for this call, so the remote request carries the project and goal tags.
+            return await (teamCtx ? withRunContext(projectOff ? { ...teamCtx, mode: 'off' } : teamCtx, () => redirectable(ctx, input, message, open)) : redirectable(ctx, input, message, open));
           } finally {
             open?.close();
           }
