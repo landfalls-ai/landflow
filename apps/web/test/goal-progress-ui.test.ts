@@ -24,6 +24,11 @@ describe('progressText', () => {
     expect(progressText(p({ costUsd: 1.5 }))).toBe('$1.50 this week');
     expect(progressText(p({ costUsd: 0.004 }))).toBe('< $0.01 this week');
   });
+  it('puts a thousands separator in money from $1,000', () => {
+    expect(progressText(p({ costUsd: 999.5 }))).toBe('$999.50 this week');
+    expect(progressText(p({ costUsd: 1234.5 }))).toBe('$1,234.50 this week');
+    expect(progressText(p({ ok: 2, costUsd: 1_250_000 }))).toBe('2 runs · $1,250,000.00 this week');
+  });
   it('uses singulars', () => {
     expect(progressText(p({ ok: 1, updates: 1 }))).toBe('1 run · 1 update this week');
     expect(progressText(p({ failed: 1 }))).toBe('1 run · 1 failed this week');
@@ -41,6 +46,12 @@ describe('GoalProgressLine and GoalCard', () => {
     expect(moved).toContain('aria-label="Moved"');
     expect(moved).toContain('2 runs this week');
     expect(renderToStaticMarkup(createElement(GoalProgressLine, { progress: p() }))).not.toContain('Moved');
+  });
+  it('truncates the words with a prop, not by a parent reaching in', () => {
+    const wrapped = renderToStaticMarkup(createElement(GoalProgressLine, { progress: p({ ok: 1 }) }));
+    const cut = renderToStaticMarkup(createElement(GoalProgressLine, { progress: p({ ok: 1 }), truncate: true }));
+    expect(wrapped).not.toContain('truncate');
+    expect(cut).toContain('min-w-0 truncate');
   });
   it('a card shows the line only with progress', () => {
     const base = { goal, onOpen: () => {} };

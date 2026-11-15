@@ -9,6 +9,9 @@ import { api } from '@/lib/client/api';
 import { plural } from '@/lib/client/format';
 import type { GoalProgress, GoalProgressResponse, ProgressWindow } from '@/lib/shared/goal-progress';
 
+/** Two decimals, with a thousands separator from $1,000. */
+const MONEY = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 /** `12 runs · 1 failed · 3 updates · $0.42 this week`; zeros are left out; nothing moved says so. */
 export function progressText(p: GoalProgress): string {
   const when = p.window === 30 ? 'in 30 days' : p.window === 1 ? 'today' : 'this week';
@@ -17,16 +20,17 @@ export function progressText(p: GoalProgress): string {
   if (runs > 0) parts.push(plural(runs, 'run'));
   if (p.runs.failed > 0) parts.push(`${p.runs.failed} failed`);
   if (p.updates > 0) parts.push(plural(p.updates, 'update'));
-  if (p.costUsd > 0) parts.push(p.costUsd < 0.01 ? '< $0.01' : `$${p.costUsd.toFixed(2)}`);
+  if (p.costUsd > 0) parts.push(p.costUsd < 0.01 ? '< $0.01' : `$${MONEY.format(p.costUsd)}`);
   if (parts.length === 0) return `No activity ${when}`;
   return `${parts.join(' · ')} ${when}`;
 }
 
-export function GoalProgressLine({ progress, className }: { progress: GoalProgress; className?: string }) {
+/** `truncate`: cut the words to one line with an ellipsis (a table row); otherwise they wrap. */
+export function GoalProgressLine({ progress, className, truncate }: { progress: GoalProgress; className?: string; truncate?: boolean }) {
   return (
     <span className={`flex min-w-0 items-center gap-1.5 text-[12px] text-t3 ${className ?? ''}`}>
       {progress.moved && <span role="img" aria-label="Moved" className="size-1.5 shrink-0 rounded-full bg-ac" />}
-      <span className="min-w-0">{progressText(progress)}</span>
+      <span className={truncate ? 'min-w-0 truncate' : 'min-w-0'}>{progressText(progress)}</span>
     </span>
   );
 }
@@ -38,18 +42,25 @@ export function indexProgress(response?: Partial<GoalProgressResponse> | null): 
   return map;
 }
 
-export function useGoalProgress(window: ProgressWindow, projectId?: string): Map<string, GoalProgress> {
-  const [map, setMap] = useState<Map<string, GoalProgress>>(() => new Map());
+/**
+ * The progress answer for a window, as the host last gave it. A failed fetch keeps the last good answer (progress is extra:
+ * never an error, never a blank that was there a moment ago); `ready` is true once any answer has arrived. `refresh` is
+ * anything whose change should ask again, such as the goals the screen just reloaded.
+ */
+export function useGoalProgressState(window: ProgressWindow, projectId?: string, refresh?: unknown): { map: Map<string, GoalProgress>; ready: boolean } {
+  const [state, setState] = useState<{ map: Map<string, GoalProgress>; ready: boolean }>(() => ({ map: new Map(), ready: false }));
   useEffect(() => {
     let live = true;
     const qs = new URLSearchParams({ progress: '1', window: String(window) });
     if (projectId) qs.set('projectId', projectId);
     api<Partial<GoalProgressResponse>>(`/api/goals?${qs}`)
-      .then((r) => live && setMap(indexProgress(r)))
-      .catch(() => live && setMap(new Map()));
+      .then((r) => live && setState({ map: indexProgress(r), ready: true }))
+      .catch(() => undefined);
     return () => {
       live = false;
     };
-  }, [window, projectId]);
-  return map;
+  }, [window, projectId, refresh]);
+  return state;
 }
+
+export const useGoalProgress = (window: ProgressWindow, projectId?: string, refresh?: unknown): Map<string, GoalProgress> => useGoalProgressState(window, projectId, refresh).map;

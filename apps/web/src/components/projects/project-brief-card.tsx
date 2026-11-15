@@ -33,8 +33,8 @@ export function ProjectBriefCard({ projectId, brief, onChanged }: { projectId: s
   const canEdit = Boolean(brief?.canEdit);
   const [newGoal, setNewGoal] = useState(false);
   const [linking, setLinking] = useState(false);
-  const progress = useGoalProgress(7, projectId);
   const { data: goalData, reload: reloadGoals } = useGoals(canEdit);
+  const progress = useGoalProgress(7, projectId, brief?.goals);
 
   if (briefIsEmpty(brief) && !editing && !newGoal) {
     if (!canEdit) return null;
@@ -93,7 +93,7 @@ export function ProjectBriefCard({ projectId, brief, onChanged }: { projectId: s
               <li key={g.id} className="flex items-center gap-2 border-b border-hair px-3 py-1.5 last:border-b-0 max-md:min-h-11 max-md:flex-wrap">
                 <span className="w-4 shrink-0 text-[12px] tabular-nums text-t3">{i + 1}</span>
                 <span className="min-w-0 flex-1 max-md:basis-[calc(100%-1.5rem)] max-md:py-2">
-                  <Link href="/goals" className="block truncate text-[13px] font-semibold text-t1 hover:text-ac">{g.title}</Link>
+                  <Link href="/goals" className="block truncate text-[13px] font-semibold text-t1 hover:text-ac max-md:py-2">{g.title}</Link>
                   {progress.get(g.id) && <GoalProgressLine progress={progress.get(g.id)!} />}
                 </span>
                 <GoalLevelChip level={g.level} />

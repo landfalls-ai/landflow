@@ -22,7 +22,7 @@ import { useDialogFocus } from '@/components/ui/use-dialog-focus';
 import { cn } from '@/lib/utils';
 import { GoalCard, GoalLevelChip, GoalStatusChip } from './goal-card';
 import type { GoalProgress, ProgressWindow } from '@/lib/shared/goal-progress';
-import { GoalProgressLine, useGoalProgress } from './goal-progress';
+import { GoalProgressLine, useGoalProgress, useGoalProgressState } from './goal-progress';
 import { GoalDialog, type GoalDefaults } from './goal-dialog';
 import { allNodes, filterTree, flattenTree, formatTarget, indexGoals, parentIds, parentTitle, type GoalFilter } from './tree';
 import { useGoals } from './use-goals';
@@ -34,7 +34,7 @@ export function GoalsView() {
   const phone = usePhone();
   const { data, error, reload } = useGoals();
   const { projects } = useProjects();
-  const progress = useGoalProgress(7);
+  const progress = useGoalProgress(7, undefined, data);
   const [view, setView] = useState<View>('active');
   const [projectId, setProjectId] = useState<string>();
   const [expanded, setExpanded] = useState<Set<string>>();
@@ -146,7 +146,7 @@ export function GoalsView() {
   );
 }
 
-/** The desktop tree: 40 px rows, arrow keys move, → opens, ← closes (or goes to the parent), Enter opens the goal. */
+/** The desktop tree: one row a goal (its title, with the progress line under it), arrow keys move, → opens, ← closes (or goes to the parent), Enter opens the goal. */
 function GoalTree({ rows, progress, onToggle, onOpen }: { progress: Map<string, GoalProgress>; rows: ReturnType<typeof flattenTree>; onToggle: (id: string) => void; onOpen: (id: string) => void }) {
   const [focusId, setFocusId] = useState<string>();
   const list = useRef<HTMLDivElement>(null);
@@ -208,7 +208,7 @@ function GoalTree({ rows, progress, onToggle, onOpen }: { progress: Map<string, 
             )}
             <span className="min-w-0 flex-1 py-1">
               <span className="block truncate font-semibold text-t1">{node.title}</span>
-              {progress.get(node.id) && <GoalProgressLine progress={progress.get(node.id)!} className="[&>span:last-child]:truncate" />}
+              {progress.get(node.id) && <GoalProgressLine progress={progress.get(node.id)!} truncate />}
             </span>
             <GoalLevelChip level={node.level} />
             <GoalStatusChip status={node.status} />
@@ -260,7 +260,10 @@ function GoalDetail({ goal, index, phone, onClose, onOpen, onEdit, onNewSub }: {
   const parent = parentTitle(index, goal);
   const target = formatTarget(goal.targetDate);
   const [win, setWin] = useState<ProgressWindow>(7);
-  const progress = useGoalProgress(win).get(goal.id);
+  const { map, ready } = useGoalProgressState(win, undefined, goal);
+  const progress = map.get(goal.id);
+  // The answer for the other window stays until the new one arrives, dimmed so it is not read as the new window's.
+  const stale = progress !== undefined && progress.window !== win;
   const body = (
     <div className="space-y-4 text-[13px]">
       <div className="flex flex-wrap items-center gap-1.5">
@@ -270,10 +273,10 @@ function GoalDetail({ goal, index, phone, onClose, onOpen, onEdit, onNewSub }: {
       </div>
       {parent && <p className="text-t3">Under: {parent}</p>}
       {goal.ownerName && <p className="text-t2">Owner: {goal.ownerName}</p>}
-      {progress && (
+      {ready && (
         <div className="space-y-1.5">
           <Segmented label="Window" value={String(win) as '7' | '30'} onChange={(v) => setWin(Number(v) as ProgressWindow)} options={[{ value: '7', label: '7 days' }, { value: '30', label: '30 days' }]} />
-          <GoalProgressLine progress={progress} />
+          {progress && <GoalProgressLine progress={progress} className={stale ? 'opacity-50' : undefined} />}
         </div>
       )}
       <Section title="Why it matters">{goal.why ? <p className="whitespace-pre-wrap text-t2">{goal.why}</p> : <p className="text-t3">Nothing written yet.</p>}</Section>
