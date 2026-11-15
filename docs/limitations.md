@@ -156,6 +156,9 @@ items still open (its "Wave 6" section); this page is the short list to check be
   not costed: Landbright sends an extension through the gate too, and the flow doesn't yet settle it citing the first
   request's seat, so with a gate an extension expires. A break-glass seat whose cost Landledger rejects stays granted:
   the flow notes the rejection and a person revokes. One seat per request.
+- **A missed `notes.draft_requested` isn't sent again.** Landledger sends it once per snapshot; a flow subscribed later
+  (as on 2026-11-15) drafts only when run by hand with the event pinned
+  ([features/landledger.md](features/landledger.md#month-end-seats-and-incidents-2026-11-15)).
 - **Variance notes need a model that keeps to the figures.** The flow drafts with a local Ollama model; a draft that
   misquotes a figure is redrafted once with Landledger's refusal, then left to Landledger's template draft, which a
   controller creates. A model too small for the prompt gives up more often than it drafts. The agent never accepts a

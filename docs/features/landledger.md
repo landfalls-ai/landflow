@@ -312,3 +312,22 @@ plugin and messaging images rebuilt and rolled out:
 | Presses (signed with Landledger's relay channel secret, team `T_LANDDEV`, app `A_LANDLEDGER`) | Tal Levi on a recorded card (`ex_x7RysiRpwSDx`): relayed raw with the relay key, Landledger answered 403 "This step is for Budget Owners; you aren't in it", the card kept Open in Landledger only. A wrong signature: 401 at the Slack Trigger, no run. A signed press on a card never sent (`ex_q7wJ_dt5JNri`): stopped at **Find the card**, nothing relayed. No press as Shira; R-2 stays pending with no decision |
 
 The Slack stand-in was stopped; the Slack credential stays, named "Slack: simulated (no real Slack)".
+
+### Month end, seats and incidents (2026-11-15)
+
+On the same cluster, against Landledger's wave 4 (`b3616c3`, contract `2ed51f3`), with the plugin image rebuilt and
+rolled out (17 MCP tools):
+
+| Check | Result |
+|---|---|
+| Notes key | `LANDLEDGER_NOTES_KEY` from the land-family env file, piped into `POST /api/credentials` without printing it: `cred_0RU_DzuCRDcD` "Landledger notes (notes:draft)"; Test: "Connected to Landledger 0.1.0 as landflow notes (key key_xn2q9bbXpzvkVk8Mh87E): notes:draft" |
+| Variance notes | the template imported (`tpl_fTbP6v_OoD`) and used as `wf_4RLZn8ZPgJ` with the requests, webhooks and notes credentials; published, its trigger subscribed with the webhooks key (`wh_CNc3ZfG6BjkdCD895kAV`, `notes.draft_requested`) |
+| October's close | Landledger accepted October's accrual at 03:44:46 UTC, 18 minutes before the subscription, so its `notes.draft_requested` (once per snapshot) reached no Landflow URL. The event was replayed by hand from Landledger's own figures (the snapshot `9502767b…`, one note needed: TOTAL, $0.00, no budget or forecast) with it pinned on the trigger: run `ex_il6pr0k24cb-` → Close → Snapshot, Note → Figures, qwen3-coder:30b on the Mac's Ollama, Note → Submit Draft → `note_H42bbNJfcHT0Denz6dPF` version 1, `drafted`, "by landflow notes", agent `landflow:wf_4RLZn8ZPgJ`, the cite `actual 0.000000` checked against the snapshot; recorded in **Landledger note drafts** (`submitted`, attempt 1). An analyst accepts it in Landledger |
+| Cost → Window | `GET /api/cost/window` answers in the shape the fake follows (`basis: estimated`, `method`, per-service `known`, `amount`, `days`) |
+| Tool or seat cost | the template imported (`tpl_SXW930LlkK`) and not used: dev Landbright's gate requests REQ-9 and REQ-10 were settled with made-up references, so the flow runs only against its stand-in until Landbright's PR #5 merges |
+| Incident cost | the template imported (`tpl_LTvyzkMAlD`) but can't be used on the cluster: it has no landfall plugin and no Landfall credential, so the flow ran only in its tests (`apps/web/test/landledger-flows.test.ts`, the landfall plugin against its fake Landfall) |
+
+To draft a month's notes by hand when the event was missed, run the published workflow with the event pinned on
+**Notes requested**: `POST /api/workflows/wf_4RLZn8ZPgJ/run` with `{ startNodeId: <the trigger's id>, workflow: { …the
+workflow, pinData: { <the trigger's id>: [{ json: { type: 'notes.draft_requested', month, snapshotSha256, needed,
+draftUrl, url } }] } } }`, where `snapshotSha256` and `needed` are `GET /api/notes/:month/figures` with the notes key.
