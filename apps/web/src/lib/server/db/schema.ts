@@ -1862,6 +1862,21 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS task_runs_open ON task_runs (project_id, status)`,
     ],
   },
+  // SP01: what each model call was for and where it ran (docs/llm-gateway.md#what-each-call-was-for)
+  {
+    version: 2900,
+    name: 'ai_usage_attribution',
+    statements: [`CREATE INDEX IF NOT EXISTS ai_usage_purpose ON ai_usage (purpose, day)`],
+    addColumns: [
+      { table: 'ai_usage', column: 'node_id', definition: 'TEXT' },
+      { table: 'ai_usage', column: 'span_id', definition: 'TEXT' },
+      { table: 'ai_usage', column: 'purpose', definition: 'TEXT' },
+      { table: 'ai_usage', column: 'iteration', definition: 'BIGINT' },
+      { table: 'ai_usage', column: 'caller_agent_id', definition: 'TEXT' },
+      { table: 'ai_usage', column: 'duration_ms', definition: 'BIGINT' },
+      { table: 'ai_usage', column: 'stop_reason', definition: 'TEXT' },
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */

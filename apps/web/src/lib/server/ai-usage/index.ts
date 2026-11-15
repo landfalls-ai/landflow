@@ -32,6 +32,7 @@ import { homeProjectId } from '../projects/store';
 import { currentRunContext } from '../project-context/seam';
 import { budgetEntry, hardStopLimit, stopReached, type BudgetEntry } from '../budgets/limit';
 import { aiCaps, capSetActive } from './caps';
+import { currentCallNote, notifyRecorded, takeCallDraft } from './call-context'; // SP01:
 import { getUser } from '../auth/users';
 import { noteUsage } from './notify';
 import { estimateCost, findPrice, priceOverrides } from './prices';
@@ -189,7 +190,17 @@ export class AiUsageMeter implements UsageMeter {
       const named = [...scope.chain()].find((s) => s.info.projectId);
       const scopeGoal = named ? named.info.goalId : scope.lookup('goalId');
       const goalId = scopeGoal ?? (run?.goalId && run.projectId === projectId ? run.goalId : undefined);
+      // SP01: the agent that asked: the nearest scope up the chain whose agent is not the row's own.
+      const rowAgent = scope.lookup('agentId');
+      const callerAgentId = [...scope.chain()].find((s) => s.info.agentId && s.info.agentId !== rowAgent)?.info.agentId ?? call.callerAgentId;
       const counted = {
+        node_id: call.nodeId,
+        span_id: call.spanId,
+        purpose: call.purpose,
+        iteration: call.iteration,
+        caller_agent_id: callerAgentId,
+        duration_ms: call.durationMs,
+        stop_reason: call.stopReason,
         execution_id: scope.lookup('executionId'),
         workflow_id: scope.lookup('workflowId'),
         agent_id: scope.lookup('agentId'),
@@ -225,13 +236,15 @@ export class AiUsageMeter implements UsageMeter {
         const importedCost = typeof imported.cost === 'number' ? imported.cost : 0;
         db.upsert('ai_usage', { ...imported, ...counted, cost: Math.max(importedCost, counted.cost ?? 0) });
         noteUsage();
+        this.notify(String(imported.id), call, scope);
         return;
       }
       // call_id and gateway_request_id are unique: a repeated one must not lose the row or its event.
       const callId = call.callId && !db.get('SELECT 1 AS found FROM ai_usage WHERE call_id = ?', call.callId) ? call.callId : undefined;
       const requestId = call.gatewayRequestId && !db.get('SELECT 1 AS found FROM ai_usage WHERE gateway_request_id = ?', call.gatewayRequestId) ? call.gatewayRequestId : undefined;
+      const usageId = `au_${nanoid(14)}`;
       db.insertNew('ai_usage', {
-        id: `au_${nanoid(14)}`,
+        id: usageId,
         at: new Date(now).toISOString(),
         day: this.today(now),
         ...counted,
@@ -264,8 +277,15 @@ export class AiUsageMeter implements UsageMeter {
           ...(call.gatewayRequestId && { requestId: call.gatewayRequestId }),
           ...(call.callId && { source: call.source ?? 'landflow' }),
           ...(call.gatewayCost !== undefined && { gatewayCost: call.gatewayCost }),
+          // SP01: AiCallEventAttribution, each only when set.
+          ...(call.purpose && { purpose: call.purpose }),
+          ...(call.nodeId && { nodeId: call.nodeId }),
+          ...(scope.lookup('sessionId') && { sessionId: scope.lookup('sessionId') }),
+          ...(call.iteration !== undefined && { iteration: call.iteration }),
+          usageId,
         },
       });
+      this.notify(usageId, call, scope);
       if (now - this.pruned > DAY_MS / 24) {
         this.pruned = now;
         this.db().deleteBefore('ai_usage', 'at', new Date(now - this.retentionDays * DAY_MS).toISOString());
@@ -273,6 +293,33 @@ export class AiUsageMeter implements UsageMeter {
     } catch (error) {
       // Accounting must never fail the call itself.
       logger.warn('could not record AI usage', { error });
+    }
+  }
+
+  /** SP01: tell the recorded-call listener (wave 11's prompt parts) about a written row; it never fails the call. */
+  private notify(usageId: string, call: MeteredCall, scope: UsageScope) {
+    try {
+      notifyRecorded(
+        {
+          usageId,
+          at: new Date().toISOString(),
+          provider: call.provider,
+          model: call.model,
+          operation: call.operation,
+          inputTokens: call.inputTokens,
+          outputTokens: call.outputTokens,
+          cacheReadTokens: call.cacheReadTokens,
+          cacheWriteTokens: call.cacheWriteTokens,
+          ...(call.gatewayRequestId && { gatewayRequestId: call.gatewayRequestId }),
+          ...(scope.lookup('executionId') && { executionId: scope.lookup('executionId') }),
+          ...(scope.lookup('agentId') && { agentId: scope.lookup('agentId') }),
+          ...(scope.lookup('sessionId') && { sessionId: scope.lookup('sessionId') }),
+          note: { ...currentCallNote(), draft: call.operation === 'chat' ? takeCallDraft() : undefined },
+        },
+        (message, error) => logger.warn(message, { error }),
+      );
+    } catch (error) {
+      logger.warn('could not notify the recorded-call listener', { error });
     }
   }
 
