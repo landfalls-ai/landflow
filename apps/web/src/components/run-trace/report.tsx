@@ -4,7 +4,6 @@ import type { ReactNode } from 'react';
 import { Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { DevOnly } from '@/lib/client/developer-details';
 import { RUN_PROFILES } from '@/lib/shared/run-profiles';
 import { checksLine, type RunReport } from '@/lib/shared/run-report';
 import type { RunChanges } from '@/lib/shared/run-changes';
@@ -336,12 +335,10 @@ export function ReportDetails({ model, report, open }: { model: RunModel; report
               <Item key={a.actor.id} mark={a.priced ? '$' : '·'} onOpen={() => open({ kind: 'actor', id: a.actor.id })}>
                 <b>{a.actor.name}</b>
                 {a.workMs ? ` · ${fmtMs(a.workMs)}` : ''}
-                <DevOnly>
-                  <Small>
-                    <ModelMark connections={a.actor.connections} model={a.models[0]} />
-                    {spendLine(a)}
-                  </Small>
-                </DevOnly>
+                <Small>
+                  <ModelMark connections={a.actor.connections} model={a.models[0]} />
+                  {spendLine(a)}
+                </Small>
               </Item>
             ))}
           </List>
