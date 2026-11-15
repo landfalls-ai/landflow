@@ -319,6 +319,8 @@ export interface AiConsoleReport {
   from: string;
   to: string;
   totals: AiConsoleTotals;
+  // SP20: the period's totals over every row (the person group's whole): D1, everyone sees everyone's spend by name.
+  peopleTotals: AiConsoleTotals;
   groups: Record<AiConsoleGroup, AiConsoleRow[]>;
   caps: AiConsoleCap[];
   /** Admins: every open request; members: their own. Newest first. */

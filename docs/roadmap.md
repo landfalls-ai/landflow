@@ -2203,6 +2203,11 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   `prometheus-rules.yml` the 14th alert, `LandflowAiCacheHitRateDropped` (volume-guarded, promtool-tested, and a full cache loss still fires). A test
   pins the `ai.call` event's keys that Landledger reads. SP16 (the cache alert and panels) is folded into SP04.
 
+## Token spend wave 11: who sees spend (SP20)
+
+- **Built**: every member sees every person's AI spend by name on the AI page, with the instance's total above the
+  person list (`peopleTotals`); the rules are in `contracts/s11/spend-visibility.md` ([llm-gateway.md](llm-gateway.md#the-ai-page)).
+
 ## Practices (waves P1 and P2)
 
 Rules in the brain that connected agents follow, each approved by a person ([practices.md](practices.md)). Decided

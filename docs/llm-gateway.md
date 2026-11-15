@@ -359,8 +359,11 @@ for the period (24 hours, 7 days, 30 days) and shows, from top to bottom:
   runs, **Open LiteLLM** (its admin UI, in a new tab) and **Settings**. Without a gateway the card says so. Open LiteLLM comes only from Settings' UI address, `LANDFLOW_LLM_GATEWAY_UI_URL` or the server's `LANDFLOW_LLM_GATEWAY_URL`, never from a credential's Base URL; without one the card says to set it. Only admins see the gateway's error text; members get "The gateway is not answering".
 
 **Who sees what.** Owners and admins see everything. Anyone else sees the calls of the workflows and agents they can open
-and their own calls; in the person list, other people's calls add up to one row, "Teammates", never by name. Calls they
-may not see are in no total. A member sees only their own user cap and the caps of workflows and agents they can open;
+and their own calls in the page's totals and in every group but one; calls they may not see are in no total, and a
+project, goal, agent or workflow they can't read is "Another ...". The person list is the exception (the user's decision
+D1, 2026-11-15): every member sees every person's spend by name, from every row of the period (rows with no workflow or
+agent included), with the instance's total above it ("Everyone's AI spend in this period, by person"). Spend views
+never show prompt text or run contents. A member sees only their own user cap and the caps of workflows and agents they can open;
 credential caps and the gateway's address, keys and sync detail are for admins. The page never shows a key.
 
 **Ask for more.** A member sees **Ask for more** on their own user cap and on the caps of workflows and agents they can
