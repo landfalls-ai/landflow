@@ -148,16 +148,17 @@ function Evidence({ proposal }: { proposal: Proposal }) {
 function Changes({ proposal }: { proposal: Proposal }) {
   const [open, setOpen] = useState(false);
   const { draft, agentChange, ops, buildPrompt } = proposal;
-  if (buildPrompt)
-    return (
-      <p className="flex items-start gap-1.5 text-[12px] text-t2">
-        <FilePlus2 className="mt-0.5 size-3.5 shrink-0 text-ac" /> <span>Spotlight builds a new workflow from: {buildPrompt}</span>
-      </p>
-    );
+  // A stored draft wins, as in proposalKind and applyProposal.
   if (draft)
     return (
       <p className="flex items-center gap-1.5 text-[12px] text-t2">
         <FilePlus2 className="size-3.5 shrink-0 text-ac" /> Creates a new workflow: {draft.name} ({draft.nodes.length} node{draft.nodes.length === 1 ? '' : 's'})
+      </p>
+    );
+  if (buildPrompt)
+    return (
+      <p className="flex items-start gap-1.5 text-[12px] text-t2">
+        <FilePlus2 className="mt-0.5 size-3.5 shrink-0 text-ac" /> <span>Spotlight builds a new workflow from: {buildPrompt}</span>
       </p>
     );
   if (agentChange)

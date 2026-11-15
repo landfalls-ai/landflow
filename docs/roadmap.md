@@ -1531,8 +1531,10 @@ setting `brain.workAutoSend`.
   `brain-sdlc-velocity`, Suggest Improvement's Build Prompt, and **Build it** opening a new workflow with Spotlight
   building from the suggestion's prompt ([second-brain.md](second-brain.md#nightly-sdlc-velocity)). Closes V4.
 - **Built (B29)**: the mod's colleagues: `/brain sync`, the pane, the overlap band, team or org per item, Post as my update and the admin's no-auto rule ([landflow-brain-mod.md](landflow-brain-mod.md#colleagues)).
-- **Built (B30, V3's server part)**: the Tomorrow sync template and its five brain nodes, the `brain_briefings` store, briefings served over MCP and `GET /api/brain/briefing`; Slack delivery with the server's own bot (`LANDFLOW_BRIEFING_SLACK_TOKEN`), never a credential ([work-and-briefings.md](work-and-briefings.md#the-nightly-sync)). Open, carried to B38: the landflow-brain mod's session start shows `summary` and `source` (`hooks/client.ts`, `register.ts`).
-- **Next**: the overlap detector, the web card and setup button (B37), and the mod showing the nightly text at session start. (The admin's auto-send switch is in Settings → MCP.)
+- **Built (B30, V3's server part)**: the Tomorrow sync template and its five brain nodes, the `brain_briefings` store, briefings served over MCP and `GET /api/brain/briefing`; Slack delivery with the server's own bot (`LANDFLOW_BRIEFING_SLACK_TOKEN`), never a credential ([work-and-briefings.md](work-and-briefings.md#the-nightly-sync)). Still open: the landflow-brain mod's session start shows `summary` and `source` (`hooks/client.ts`, `register.ts`).
+- **Built (B37, V3 closed on the web)**: "Your morning" on Home and at the top of the Brain index, and a one-click "Set up tomorrow sync" for admins ([work-and-briefings.md](work-and-briefings.md#on-the-web)).
+- **Built (B38, MOD8 closed)**: the brain side of the mod: the Work overlap detector introduces two people on the same thing (one card to both, `org` work only, once in 14 days, mutable, inbox only; [second-brain.md](second-brain.md#work-overlap)), the mod's `brain_ask` tool, and `landflow-brain` and `landflow-harness` in the repository marketplace ([landflow-brain-mod.md](landflow-brain-mod.md#brain_ask)).
+- **Next**: the mod showing the nightly text at session start, `team` work in the overlap card (needs `canProposal` to refuse non-audience readers), and an admin-named Slack credential for it. (The admin's auto-send switch is in Settings → MCP.) Also next on the web: a `finished` list on `Briefing` and the card ("what finished"), and a live "Slack is set up" check so the Delivery line does not claim Slack when the server has no token or SMTP.
 
 ## Shell: nine-item rail (built 2026-11-14)
 
@@ -1609,6 +1611,11 @@ The shared pieces every chat will use, built in `components/ui/` and ready; the 
 - CH12 ✅ Done: Spotlight keeps its conversation per workflow, brings the last one back under "Earlier", has the history
   button, and checks a waiting proposal against the workflow (stale ones lose Apply). Leaving the editor no longer loses
   an unapplied proposal ([Spotlight](spotlight.md), [Conversation history](assistant.md#conversation-history)).
+- CH17 ✅ Done (B35): one Spotlight for the app. ⌘K (⌘I an alias) opens a shell panel on every page, a bottom sheet on a
+  phone; a chip says what it does ("Building <flow>" in the editor, whose own column stays the builder; "Asking the brain"
+  elsewhere; "About <thing>" after a `landflow:ask-about` event). The Brain page's own panel is gone and QuickOpen is ⌘P
+  ([One Spotlight](spotlight.md#one-spotlight)). Left: the starters of
+  "about" come from the page that sent the event (B36).
 - CH14 ✅ Done: `@` in Spotlight is the app-wide picker; the server resolves the refs as the caller and shows each read as
   a step ([Tagging with @](assistant.md#tagging-with-)). The unchecked node path is gone.
 
@@ -1774,7 +1781,7 @@ The wave 4 review notes were fixed in wave 5's carryover where they were contain
   the queue to re-check the policy at flush (or the server to refuse it), a change to the queue's contract.
 - **Review resets a widened item**: `/brain visibility <id> team` on a held item, then a plain Send in `/brain review`,
   sends it private (the safe direction, and what the prompt says). Showing the current visibility in the review question
-  is a wording change in `register.ts`, which B38 owns in wave 6.
+  is a wording change in `register.ts` (B38 did not do it; still open).
 - **No test renders a Teams card**: the card (name, goal, status) is inline in `TeamsView` behind `useRouter`; testing
   it needs it extracted into a component of its own.
 - **Live checks still open from wave 4**: Spotlight's continue-from-step with a real model stopped mid-run; importing an
@@ -1782,6 +1789,31 @@ The wave 4 review notes were fixed in wave 5's carryover where they were contain
   from Abilities → Deploy, and dark mode and Reduce motion on the new Abilities rows; the Brain with pages and Insights
   with cache or router traffic in a browser; and fresh screenshots for B24, B26, B27 and B28 at 1440×900 and 390×844
   (the review's were taken before their fix commits). They need a host and a browser, which the carryover does not run.
+
+## Company backbone: left open from the wave 5 and LiteLLM L1 reviews (2026-11-15)
+
+The wave 5 and L1 review notes were fixed in wave 6's carryover where they were contained; these wait, each with its reason:
+
+- **The mod's session start and the nightly text**: still the open item under the briefing above (B38 did not build it).
+- **Velocity counts a redelivered fact twice**: a pull request closed, reopened and closed again, or a delivery pinned
+  and run twice, gives two ledger rows with the same `sourceId`, so a review delivered twice adds a handoff round.
+  De-duplicating on `sourceId` alone would let anyone who can record an event choose a value that hides another's (and
+  Record Event's `workflowId` can be chosen within a project), so it waits for a key no caller controls.
+- **A takeover leaves the import's `ai.call` event**: when the spend import reads a row before Landflow's meter records
+  the call, the meter takes the `ai_usage` row over, but the `ue_ll_<hash>` usage event keeps the key's agent and project
+  and the import's price ([llm-gateway.md](llm-gateway.md)). Rewriting it touches who a call's money is attributed to, so
+  it needs its own reviewed change.
+- **A raw expression as a node's subtitle**: a tile whose subtitle names a parameter set to an expression (Record
+  Event's `{{ $json.kind }}` on the GitHub template) shows the expression. Hiding expressions changes every canvas tile,
+  so it waits for a design pass.
+- **One marketplace, added by someone**: its Refresh and Remove card is hidden with the source menu
+  ([limitations](limitations.md)); a card above every Explore page waits for a design pass.
+- **Layout checks**: the Workflows and Credentials empty-state tests read source strings, which do not catch a layout
+  break at 390 px; a browser check of scroll width and overlap belongs to the UI pass. `workflows-list.tsx` is still
+  above 800 lines after its last run and New menu moved to `list-parts.tsx`.
+- **Live checks still open from wave 5**: Build it clicked on desktop and phone, the GitHub to Work Event panel at
+  390×844, the GitHub template tile after a host restart, Explore with two marketplaces and real installed plugins, and
+  fresh screenshots for B30, B31, B32 and B34 (the review's predate their fix commits). They need a host and a browser.
 
 ## Runs: one list (B20, 2026-11-14)
 
@@ -1819,6 +1851,12 @@ Closes P-wf-1, P-wf-2, P-cr-1, P-cr-2, P-dt-1, P-pr-2 and P-auth-1; X10 closed i
 - Left open: `/data-tables` and `/agents` do not read `?project=` yet, so the Overview's counts for them open the whole
   list (the Overview lists those items itself); X10 still shows twice in Settings → Variables ("Add variable" beside
   "Add your first variable", now also in a project's Settings tab) and in Agents → Teams, both outside this package.
+
+## Ask about it (B36, backbone wave 6)
+
+- **CH16 closed (the sending side).** Every resource's ⋯ has **Ask Spotlight** and a failed run has **Ask why it failed**;
+  they fire `landflow:ask-about` with the resource and three starters ([spotlight.md](spotlight.md#ask-about-it)). The chat
+  panel that listens for it is built (B35).
 
 ## Not planned
 

@@ -1,9 +1,10 @@
 'use client';
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { ArrowRightLeft, MoreHorizontal, Plus, Share2 } from 'lucide-react';
+import { ArrowRightLeft, MoreHorizontal, Plus, Share2, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
+import { askAbout, askDetail } from '@/lib/client/ask-about';
 import { timeAgo } from '@/lib/client/format';
 import { showHeaderAction } from '@/lib/client/list-page';
 import { resourceCan, type ResourceOwnership } from '@/lib/shared/projects';
@@ -36,17 +37,24 @@ function CredentialsView() {
   // `?projectId=` read is exact, so the list asks it instead of filtering the viewer's whole list.
   const [scoped, setScoped] = useState<Listed[]>();
   const [scopedFor, setScopedFor] = useState<string>();
+  // A failed scoped read (no access to the project, say) says so in place of a list that would stay loading.
+  const [scopedError, setScopedError] = useState<{ projectId: string; message: string }>();
   useEffect(() => {
     if (!projectId) return;
     let live = true;
     api<{ credentials: Listed[] }>(`/api/credentials?projectId=${encodeURIComponent(projectId)}`)
-      .then((r) => live && (setScoped(r.credentials), setScopedFor(projectId)))
-      .catch((e: Error) => toast.error(e.message));
+      .then((r) => live && (setScoped(r.credentials), setScopedFor(projectId), setScopedError(undefined)))
+      .catch((e: Error) => {
+        if (!live) return;
+        setScopedError({ projectId, message: e.message });
+        toast.error(e.message);
+      });
     return () => {
       live = false;
     };
   }, [projectId, all]);
   const credentials = projectId ? (scopedFor === projectId ? scoped : undefined) : all;
+  const failed = projectId && !credentials && scopedError?.projectId === projectId ? `Couldn’t list this project’s credentials: ${scopedError.message}` : undefined;
   const isEmpty = credentials?.length === 0;
   const [dialog, setDialog] = useState<{ id?: string; type?: string } | null>(null);
   const [sharing, setSharing] = useState<{ kind: 'share' | 'move'; credential: Listed }>();
@@ -67,14 +75,14 @@ function CredentialsView() {
         }
       />
       <PageBody width="narrow">
-        {error && <div className="mb-4 rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>}
-        {isEmpty ? (
+        {(error || failed) && <div className="mb-4 rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error ?? failed}</div>}
+        {failed ? null : isEmpty ? (
           <Card className="py-6">
             <EmptyState
               title="No credentials yet"
               hint="API keys, tokens and connection strings for the services your nodes talk to. They are encrypted on the host and sent only to the plugin node that uses them."
               action={
-                <Button onClick={() => setDialog({})}>
+                <Button variant="primary" onClick={() => setDialog({})}>
                   <Plus className="size-3.5" /> New credential
                 </Button>
               }
@@ -130,6 +138,15 @@ function CredentialsView() {
                     >
                       {(close) => (
                         <>
+                          {/* The reference only: a name and an id, never the secret. */}
+                          <MenuItem
+                            onClick={() => {
+                              close();
+                              askAbout(askDetail({ type: 'credential', id: credential.id, name: credential.name }));
+                            }}
+                          >
+                            <Sparkles /> Ask about where it’s used
+                          </MenuItem>
                           <MenuItem
                             onClick={() => {
                               close();

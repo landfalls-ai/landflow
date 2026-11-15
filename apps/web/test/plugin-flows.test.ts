@@ -94,9 +94,19 @@ describe('plugin flows', () => {
       for (const entry of manifest.plugins) {
         const loaded = await loadPlugin(readerFor({ kind: 'local', root: repo, path: entry.source.slice(2) }), entry);
         expect(loaded.warnings, entry.name).toEqual([]);
+        if (entry.source.startsWith('./apps/web/claude-plugins/')) {
+          // The Claude Code mods (B38): no node plugin and no flows; their hooks are what Landflow reports it can't use.
+          expect(loaded.nodePlugin, entry.name).toBeUndefined();
+          expect(loaded.flows, entry.name).toEqual([]);
+          expect(entry.flows, entry.name).toBeUndefined();
+          expect(loaded.unsupported.map((u) => u.kind), entry.name).toContain('hooks');
+          continue;
+        }
+        expect(entry.source, entry.name).toMatch(/^\.\/plugins\//);
         expect(loaded.nodePlugin?.id, entry.name).toBe(entry.name);
         expect(loaded.flows.map((f) => `./${f.path}`).sort(), entry.name).toEqual([...(entry.flows ?? [])].sort());
       }
+      expect(manifest.plugins.filter((p) => p.source.startsWith('./apps/web/claude-plugins/')).map((p) => p.name).sort()).toEqual(['landflow-brain', 'landflow-harness']);
     } finally {
       delete process.env.LANDFLOW_MARKETPLACE_ALLOW_LOCAL;
     }

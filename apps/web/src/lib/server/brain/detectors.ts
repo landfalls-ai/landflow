@@ -21,6 +21,7 @@ import { searchTerms } from '../rag/search';
 import { instanceTimezone } from '../settings';
 import { store } from '../store';
 import { percentile } from '../usage/query';
+import { overlapFindings } from './overlap';
 import type { NewProposal } from './proposals';
 import { fingerprintOf } from './proposals';
 
@@ -790,6 +791,25 @@ export function noSafetyNet(ctx: DetectContext): Finding[] {
   ];
 }
 
+/** Two people whose shared work of the last 3 days is about the same thing, introduced once in 14 days (./overlap.ts). */
+export function workOverlap(ctx: DetectContext): Finding[] {
+  // Inbox only: no Slack message is sent on its own (a mirror needs a credential someone chose).
+  return overlapFindings(ctx.db, ctx.now, ctx.quiet('work-overlap')).map(({ overlap, title, why, evidence, audience }) => ({
+    proposal: {
+      ...base('work-overlap', overlap.pair.join('|'), { type: 'instance', name: 'Work overlap' }, {
+        title,
+        why,
+        evidence,
+        effect: 'Two people who work on the same thing talk before they duplicate it',
+        risk: 'low',
+        confidence: overlap.thing.type === 'similar' ? 0.55 : 0.75,
+        impact: 2,
+      }),
+      audience,
+    },
+  }));
+}
+
 export const DETECTOR_RUNS: Record<BuiltinDetectorId, (ctx: DetectContext) => Finding[]> = {
   'failure-hot-spot': failureHotSpots,
   'flaky-call': flakyCalls,
@@ -803,6 +823,7 @@ export const DETECTOR_RUNS: Record<BuiltinDetectorId, (ctx: DetectContext) => Fi
   'no-safety-net': noSafetyNet,
   'repeated-sequence': repeatedSequences,
   'missing-tool': missingTools,
+  'work-overlap': workOverlap,
 };
 
 export function detectContext(quiet: Partial<Record<DetectorId, number>> = {}, db: Database = database(), now = Date.now()): DetectContext {

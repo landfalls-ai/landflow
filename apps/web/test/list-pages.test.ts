@@ -13,7 +13,7 @@ import { groupCredentialTypes, stripApiSuffix } from '../src/components/credenti
 import { AddColumn } from '../src/components/data-tables/table-view';
 import { OVERVIEW_KINDS, PROJECT_TABS, projectTab } from '../src/components/projects/project-tabs';
 import { describeLastRun, importTarget, lastRunByWorkflow, NEW_MENU_ITEMS } from '../src/components/workflows/list-model';
-import { LastRun, LastRunPhone } from '../src/components/workflows/workflows-list';
+import { LastRun, LastRunPhone } from '../src/components/workflows/list-parts';
 import { showHeaderAction } from '../src/lib/client/list-page';
 import type { CredentialTypeInfo, ExecutionSummary } from '../src/lib/shared/types';
 
@@ -29,8 +29,11 @@ describe('workflows: the New menu', () => {
   it('has Workflow, From template, Import and Folder, in that order', () => {
     expect(NEW_MENU_ITEMS.map((i) => i.label)).toEqual(['Workflow', 'From template', 'Import…', 'Folder']);
     const page = src('components', 'workflows', 'workflows-list.tsx');
-    // The menu renders from the constant, so this list is what ships.
-    expect(page).toContain('NEW_MENU_ITEMS.map((item)');
+    const menu = src('components', 'workflows', 'list-parts.tsx');
+    // The menu renders from the constant, so this list is what ships, and the page uses that menu.
+    expect(menu).toContain('NEW_MENU_ITEMS.map((item)');
+    expect(menu).not.toMatch(/<MenuItem onClick=\{pick\(/);
+    expect(page).toContain('<NewMenu');
     expect(page).not.toMatch(/<MenuItem onClick=\{pick\(/);
     // The step count and the "All workflows" heading are gone.
     expect(page).not.toContain("plural(workflow.nodeCount, 'step')");
@@ -140,6 +143,15 @@ describe('credentials: the picker', () => {
 
   it('has no type grid on the page', () => {
     expect(src('app', 'credentials', 'page.tsx')).not.toContain('Credential types published by plugins');
+  });
+
+  it('gives the empty page a primary New credential, and says so when a project’s list can’t be read', () => {
+    const page = src('app', 'credentials', 'page.tsx');
+    const empty = page.slice(page.indexOf('<EmptyState'), page.indexOf('</Card>', page.indexOf('<EmptyState')));
+    expect(empty).toContain('<Button variant="primary" onClick={() => setDialog({})}>');
+    // A failed `?project=` read replaces the list that would otherwise stay loading.
+    expect(page).toContain('setScopedError({ projectId, message: e.message })');
+    expect(page).toContain('{failed ? null : isEmpty ? (');
   });
 
   it('on a phone a row keeps the name on its first line and puts the meta on a second, without fixed widths', () => {

@@ -219,6 +219,24 @@ delivers again: nothing records that a day's briefing was sent.
 `summary` is its text (a 02:00 run gathers yesterday and today so far; the morning's lookup for the day finds it), `generatedBy` names the workflow and run, and the live `today`, `yesterday` and `related` follow), else
 the live one (`source: 'live'`). `GET /api/brain/briefing`, the MCP prompt `morning-briefing` and the resources use it.
 
+## On the web
+
+**Your morning** is a card at the top of Home (above the numbers) and at the top of the Brain index. It reads your own
+`GET /api/brain/briefing`, so nobody sees someone else's. It shows the nightly text, or "Live: no nightly sync yet" when
+the sync hasn't written one; then **Yesterday**, **Today so far** (when there is any) and **Related** (a colleague, the
+reason as a chip, and their first item). A list of more than three folds to three with **Show N more**. Each item links
+only to this instance or github.com; any other address shows as plain text. With nothing recorded it says "Nothing yet.
+Work you record shows up here tomorrow." With the brain off the card isn't shown. On a phone it is one column and its
+buttons are 44 px tall.
+
+The last line says where the briefing goes: "Delivered here only" until you press **Change** and pick None, Slack or
+Email (the preference `briefingDelivery`). Choosing Slack or Email says what an admin has to set up on the server;
+the page can't tell whether that is done yet, so the choice is kept either way.
+
+**Set up tomorrow sync** is a quiet button on the card, for owners and admins, shown only while no workflow with the
+nightly nodes exists. It makes one from the template `brain-tomorrow-sync` (the same call as Use template) and opens it
+unpublished: an owner or admin reads it and publishes it themselves. Code: `components/brain/briefing-card.tsx`.
+
 ## Where the code is
 
 `packages/protocol/src/work-events.ts` (the contract), `lib/server/brain/work.ts` (record and delete),

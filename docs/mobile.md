@@ -74,6 +74,13 @@ empty field is replaced, otherwise it goes after a space, as a drop does). Rows 
 on a phone, and their remove button shows without hovering. Focus moves to the back arrow when the
 editor opens, and toasts sit just above the foot bar.
 
+## One Spotlight on a phone
+
+Spotlight outside the editor is a bottom sheet (docs/spotlight.md#one-spotlight): open it from the "Ask or build…" button at
+the top of the More drawer. It has three heights (34, 52 and 85 per cent of the screen; the arrows beside the chip step
+through them), a chip that says what it does, and closes on a tap outside or Escape. The editor keeps its own sheet under
+the canvas, so the canvas stays in view while it builds.
+
 ## Spotlight's dock
 
 On a phone Spotlight is a sheet under the steps or the canvas, with three heights:
@@ -148,6 +155,10 @@ On a phone, what floats on a desktop rises from the bottom or takes the screen:
 - The Steps view says, in one line read out as a run moves, which step runs, which failed and why, or how many ran. An
   Off step has a dashed border instead of being faded, so its text keeps its contrast.
 - Motion: everything that animates stops under *Reduce motion* (`app/globals.css`).
+
+### Home
+
+Home starts with the **Your morning** card ([work-and-briefings.md](work-and-briefings.md#on-the-web)): one column, lists folded to three items, and **Change**, **Show more** and **Set up tomorrow sync** are 44 px tall.
 
 ## Settings and agents
 

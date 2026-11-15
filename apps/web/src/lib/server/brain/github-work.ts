@@ -1,8 +1,9 @@
 /**
  * GitHub deliveries as work events (docs/features/integrations.md#github-into-the-brain). A pure mapper: one webhook
  * delivery (pull_request, pull_request_review, workflow_run or status) becomes zero or one flat work.* item, with a
- * sourceId that is stable per fact so a redelivery is the same event. It copies no diff, code, commit contents or review
- * text: a review's state only, and the first 300 characters of a pull request's description, redacted.
+ * sourceId that is stable per fact so a redelivery has the same id (Record Event does not upsert, so readers that count
+ * facts de-duplicate on it). It copies no diff, code, commit contents or review text: a review's state only, and the
+ * first 300 characters of a pull request's description, redacted.
  */
 import { redact } from '../usage/ledger';
 

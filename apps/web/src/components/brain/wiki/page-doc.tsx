@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pencil, Plus, RefreshCw, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
+import { askAbout, askDetail } from '@/lib/client/ask-about';
 import { timeAgo } from '@/lib/client/format';
 import { ENTITY_LABELS, FACT_KINDS, type FactKind } from '@/lib/shared/brain';
 import { peopleTitle } from '@/lib/shared/brain-files';
@@ -146,6 +147,9 @@ function Header({ page, sources, onSaved, Icon }: { page: WikiPage; sources: str
             {department && ` · ${department}`}
           </div>
         </div>
+        <Button size="icon-sm" variant="ghost" onClick={() => askAbout(askDetail({ type: 'brainPage', id: `${entity.type}/${entity.id}`, name: entity.name }))} aria-label="Ask Spotlight" title="Ask Spotlight">
+          <Sparkles className="size-3.5" />
+        </Button>
         {page.canEdit && !editing && (
           <Button size="icon-sm" variant="ghost" onClick={() => setEditing(true)} aria-label="Edit">
             <Pencil className="size-3.5" />

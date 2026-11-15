@@ -86,10 +86,13 @@ export function inAudience(person: { id: string; email?: string } | undefined, p
 }
 
 /** What a suggestion changes when applied: the target workflow or agent, a new workflow, or a kept note. Advice changes nothing. */
-export const changesSomething = (p: Pick<Proposal, 'ops' | 'draft' | 'agentChange' | 'notebook'>) => Boolean(p.ops.length || p.draft || p.agentChange || p.notebook);
+export const changesSomething = (p: Pick<Proposal, 'ops' | 'draft' | 'agentChange' | 'notebook' | 'buildPrompt'>) => Boolean(p.ops.length || p.draft || p.agentChange || p.notebook || p.buildPrompt);
 
-/** Whether Slack's Apply makes sense: something to change, or the missing tool's go-ahead. */
-const applyable = (p: Proposal) => changesSomething(p) || p.detector === 'missing-tool';
+/** A build prompt with no draft: Build it creates the workflow and Spotlight builds it, so only the web can apply it. */
+const buildsInSpotlight = (p: Proposal) => Boolean(p.buildPrompt && !p.draft);
+
+/** Whether Slack's Apply makes sense: something to change Slack can apply, or the missing tool's go-ahead. */
+const applyable = (p: Proposal) => (changesSomething(p) && !buildsInSpotlight(p)) || p.detector === 'missing-tool';
 
 /** Whoever can open the target (scope.ts `canProposal`: workflows, agents, teams, entities; admins for the instance's). */
 const canRead = canProposal;
@@ -316,6 +319,11 @@ export async function handleProposalClick(click: { actionId: string; value: stri
     else if (kind === 'snooze') snoozeProposal(proposal.id, 7, undefined, { actorId });
     else if (kind.startsWith('act:')) actOnProposal(proposal.id, value.a ?? kind.slice(4), { actorId });
     else if (kind === 'apply') {
+      // Slack shows no Apply for a build prompt; a forged click must not create a workflow outside the editor's Build it.
+      if (buildsInSpotlight(proposal)) {
+        await say(click.responseUrl, 'Build it opens Spotlight in Landflow: open the suggestion there to build it.');
+        return;
+      }
       // Applying changes things: the member needs edit access to the target (advice has nothing to change).
       if (changesSomething(proposal) && !(user && canDecide(user, proposal, 'apply'))) {
         await say(click.responseUrl, 'Applying this changes something you don’t have edit access to in Landflow (or Slack couldn’t match you to a Landflow user by email). Open it in Landflow to apply it.');

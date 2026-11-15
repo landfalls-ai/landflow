@@ -9,7 +9,7 @@
  * menu, which sends a template file here through `useTemplateImport`.
  */
 import { useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { TEMPLATE_CATEGORIES, type TemplateDetail, type TemplateSource } from '@/lib/shared/templates';
@@ -76,6 +76,8 @@ export function ProjectScopeNote({ label, onClear }: { label: string; onClear: (
 
 export function TemplateLibrary() {
   const params = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
   const viewer = useViewer();
   const { projects } = useProjects();
   const folder = params.get('folder') ?? undefined;
@@ -127,6 +129,12 @@ export function TemplateLibrary() {
             onClear={() => {
               rememberProject(undefined);
               setProject(undefined);
+              // A reload must not scope the list again: `?project=` leaves the URL too (the rest stays).
+              if (params.get('project')) {
+                const rest = new URLSearchParams(params.toString());
+                rest.delete('project');
+                router.replace(rest.size ? `${pathname}?${rest}` : pathname, { scroll: false });
+              }
             }}
           />
         )}

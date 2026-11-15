@@ -104,9 +104,10 @@ async function suggest(id: string, parameters: Record<string, unknown> = {}) {
 const open = () => proposals.listProposals({ status: 'all' });
 
 /** Click a button of a message the fake Slack received. */
-async function click(message: { body: Record<string, unknown>; ts?: string }, actionId: string, user: string) {
+async function click(message: { body: Record<string, unknown>; ts?: string }, actionId: string, user: string, forgedFrom?: string) {
   const blocks = (message.body.blocks ?? []) as Array<{ type: string; elements?: Array<{ action_id: string; value: string }> }>;
-  const value = blocks.find((b) => b.type === 'actions')!.elements!.find((e) => e.action_id === actionId)!.value;
+  // `forgedFrom`: a button the message has, whose value is sent under an action id the message does not show.
+  const value = blocks.find((b) => b.type === 'actions')!.elements!.find((e) => e.action_id === (forgedFrom ?? actionId))!.value;
   const payload = { type: 'block_actions', user: { id: user }, container: { channel_id: message.body.channel, message_ts: message.ts }, actions: [{ action_id: actionId, value }] };
   const body = new URLSearchParams({ payload: JSON.stringify(payload) }).toString();
   const timestamp = Math.floor(Date.now() / 1000);
@@ -255,6 +256,22 @@ describe('the Slack mirror', () => {
     expect(applied).toMatchObject({ status: 'applied', appliedBy: owner.id, decision: { by: owner.id } });
     expect(store.getWorkflow('wf_t')!.nodes[0].retryOnFail).toBe(true);
     expect(JSON.stringify(slack.of('chat.update').at(-1)!.body.blocks)).toContain('Olive Owner');
+  });
+
+  it('offers no Apply for a build prompt, and a forged Apply creates no workflow', async () => {
+    const before = store.listWorkflows().length;
+    const built = proposals.proposeFrom(
+      { title: 'Nudge reviewers', why: 'Reviews wait', buildPrompt: 'Build a reviewer nudge flow.', audience: [{ email: 'owner@audience.test', slackUserId: 'U_OWNER' }], slackCredential: slackRef },
+      'analyst',
+    )!;
+    await settleMirrors();
+    const [dm] = slack.of('chat.postMessage').filter((p) => p.body.channel === 'U_OWNER');
+    expect(JSON.stringify(dm.body.blocks)).not.toContain('landflow_pr_apply');
+    await click(dm, 'landflow_pr_apply', 'U_OWNER', 'landflow_pr_dismiss');
+    expect(proposals.getProposal(built.id)!.status).toBe('open');
+    expect(store.listWorkflows()).toHaveLength(before);
+    // A build prompt changes something: an audience member who can't edit the target can't mark it done as advice.
+    expect(canDecide(dana, { ...built, audience: [{ userId: dana.id }] }, 'apply')).toBe(false);
   });
 
   it('a decision in the inbox updates the Slack messages too', async () => {

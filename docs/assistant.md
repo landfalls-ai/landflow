@@ -33,7 +33,7 @@ The reply is checked with zod, and each suggestion's ops are validated. Suggesti
 
 ## Spotlight
 
-Spotlight is the one AI surface in the editor: a panel at the right of the canvas, never over it. Press **⌘I** to put the cursor in its box. Its conversation lasts while the workflow is open. ✎ starts over.
+Spotlight is the one AI surface in the editor: a panel at the right of the canvas, never over it. Press **⌘K** (or **⌘I**) to put the cursor in its box. A chip above it, "Building <workflow>", says what it does here; it offers "Ask the brain instead" ([one Spotlight](spotlight.md#one-spotlight)). Its conversation lasts while the workflow is open. ✎ starts over.
 
 ### The Spotlight panel
 
@@ -219,6 +219,11 @@ On by default, Spotlight doesn't wait for clicks (`components/editor/autonomous.
 - **A chat request**: when the reply ends, what it proposed is applied as one step (⌘Z undoes it), the cards turn to *applied*, and Test and fix runs with your message as the goal. A reply that proposed nothing, failed or was stopped changes nothing.
 
 Each fix in the session is applied the same way, as before. An agent Spotlight creates is designed by the Agent architect and **published**, so the flow can run it while it's tested ([Agents and teams](#agents-and-teams)); unpublishing it is one click on its page. **Publish to production** still waits for a person. The **Autonomous** switch in the conversation's header turns it off (kept in the browser, `localStorage` `landflow-spotlight-autonomous`); off, every proposal waits for Apply and a drafted flow for Test and fix. Test runs execute the workflow as Execute workflow does, with the pinned test data, so a step that sends a message or writes to an app would do so for real: before the first such test of a workflow, Spotlight asks (**Run it for real** or **Not now**, [Test and fix](#test-and-fix)). A change that only renames nodes isn't tested; any other is tested against the workflow's description plus your message. Tests: `test/spotlight-autonomous.test.ts`.
+
+## Ask about it
+
+A resource's ⋯ menu and a failed run open the chat about that resource with its chip set and three starter questions.
+The contract and the starters are in [spotlight.md](spotlight.md#ask-about-it).
 
 ## Tagging with @
 

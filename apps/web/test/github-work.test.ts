@@ -77,8 +77,10 @@ describe('GitHub to Work Event node', () => {
   it('outputs one item per work delivery and drops the rest', async () => {
     const items = ['opened', 'push', 'review-approved'].map((name) => ({ json: delivery(name) as never }));
     const ctx = { getInputData: () => items, getNodeParameter: () => '{"octo-lead": "lead@example.com"}' };
-    const [out] = (await githubWorkEventNode.execute!.call(ctx as never, ctx as never)) as Array<Array<{ json: Record<string, unknown> }>>;
+    const [out] = (await githubWorkEventNode.execute!.call(ctx as never, ctx as never)) as Array<Array<{ json: Record<string, unknown>; pairedItem?: unknown }>>;
     expect(out.map((i) => i.json.kind)).toEqual(['work.pr_opened', 'work.pr_reviewed']);
+    // Each output points back at the delivery it came from (the push in between is skipped, not renumbered).
+    expect(out.map((i) => i.pairedItem)).toEqual([{ item: 0 }, { item: 2 }]);
     expect(out[1]!.json.actorEmail).toBe('lead@example.com');
   });
 

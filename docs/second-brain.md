@@ -7,7 +7,7 @@ and post suggestions next to the built-in ones.
 
 ```
  observe ─────────► remember ─────────► conclude ─────────► propose ─────────► measure
- usage ledger       profiles, facts     12 detectors, your  Home inbox, canvas  did it help?
+ usage ledger       profiles, facts     13 detectors, your  Home inbox, canvas  did it help?
  (every run, edit,  and a searchable    workflows, the      card, a digest;     back into the
  AI call, action)   index               Platform analyst    Apply with a diff   facts
 ```
@@ -111,6 +111,7 @@ The first tick is 30 s after start.
 | Agent quality | 3+ thumbs down that are 30%+ of an agent's feedback in 14 days | persona rules the model writes from the comments, for the agent's draft |
 | Unmet demand | 3+ Spotlight asks that changed nothing, or empty node searches, about the same term, from 2 people or on 2 days | a draft workflow for the request |
 | Missing tool | something the Agent architect needed and no node online does, grouped by the app (or the first telling word, with spellings like "Text Toolkit" and "TextToolkit" as one); one need is enough, the same person asking again the same day counts once | "Build a tool for Grafana", with a sketch of the node plugin the model writes (nodes, parameters, credential) and a link to **Build a plugin**. Its button is **Build it**: approving it starts the workflows that build one (below) |
+| Work overlap | two people whose `org` work of the last 3 days shares an initiative, a customer, a directory of the same repository, or similar words, and who were not introduced in the last 14 days ([below](#work-overlap)) | one suggestion addressed to both: "Ana and Ben are both on billing", with the `org` titles |
 | No safety net | an active workflow with 3+ failed production runs in 14 days and no error workflow | `setWorkflowSettings` with the error workflow you have, or a draft "Failure alerts" workflow when there is none |
 
 - **What a suggestion holds** (`proposals`): a title; why, with evidence; the expected effect; its changes (ops, a
@@ -127,8 +128,30 @@ The first tick is 30 s after start.
   gets its thresholds multiplied (×1.5 from 40% rejected, ×2 from 60%, ×3 from 80%). A [flow detector](#flow-detectors)
   gets the multiplier as `quiet`, and its findings also need a minimum confidence (0.5, 0.65, 0.8).
 
+### Work overlap
+
+The detector `work-overlap` (`lib/server/brain/overlap.ts`) introduces two people who are working on the same thing.
+
+- It reads only `org` work of the last 3 days; a private or `team` item is never selected. Two people count when their
+  items share an initiative or a customer (also within one repository), a directory of the same repository, or words
+  (the same repository alone is not enough, and a directory name across different repositories is none).
+- Why not `team` work: the card's target is the instance, so owners and admins can open it, and a `team` title is for
+  the owner's project mates only. Bringing team work in needs `canProposal` (`scope.ts`) to refuse non-audience readers
+  of this detector, a change outside the detector's files (a follow-up in [limitations](limitations.md)).
+- The suggestion is one card addressed to both people, in their inbox. No Slack message is sent on its own: a mirror
+  needs a credential someone chose, and an admin naming one is a follow-up. It names both, and its evidence holds only
+  `org` titles. A pair with a side that has no `org` item gets none.
+- The same two people are not introduced again for 14 days after a card, whatever became of it. A card dismissed as
+  *wrong* or *not relevant* holds the pair back for 30 days (the [held back](#4-detectors-and-suggestions) rule), and one
+  dismissed as *intended* holds it for good: the pair is not introduced again. **Dismiss** with
+  **Don't suggest this again** also mutes introductions for the person who pressed it (when it is one of the two): no
+  pair with them is made again. A decision from Slack, or by an admin outside the pair, mutes no one, but the pair's own
+  hold above still applies.
+- Quieter when people dismiss it as wrong: each side must then show two or three items before it speaks.
+
 ### 5. Where you see it
 
+- **Home → Your morning** and the top of the Brain index: your own briefing, with its delivery choice and, for an admin, **Set up tomorrow sync** ([work-and-briefings.md](work-and-briefings.md#on-the-web)).
 - **Home → Suggestions**: the open suggestions the viewer can see, best first. Each card is compact: the title, one
   line of why (its first sentence), one button and **⋯**. **Show more** adds the kind, the subject, risk and
   confidence, the whole why, the evidence, what to expect and the **Changes** (the diff, as in Spotlight). What the
@@ -274,8 +297,8 @@ prose and a person keeps the facts. Spotlight asks it questions.
     the summary with its `[[type/id|Name]]` links and `[n]` references, then the work, people, related pages, facts,
     suggestions and mentions. In the Source, a link opens its page and a reference jumps to its work line. **Copy**
     takes the Markdown. The Source is read-only.
-  - **Ask** (the **Ask** button in the title bar, or ⌘I): the one way to ask the brain. On a desktop it is a 360 px
-    column docked at the right of the editor: the page narrows and nothing overlaps, and a link in an answer opens
+  - **Ask** (the **Ask** button in the title bar, or ⌘K, or ⌘I): the one way to ask the brain. It opens the app's one
+    [Spotlight](spotlight.md#one-spotlight), a 360 px column at the right of the page, the same on every page of Landflow: the page narrows and nothing overlaps, and a link in an answer opens
     that page in the editor beside it while the answer stays. With a page open, the question is about that page (the
     `@` chip) until the chip is removed. The answer streams: first **Found 3 pages · 2 facts · 5 work items** (with
     the pages as links), then its steps and its words, then the model, time, tokens and cost under it (a local model
@@ -299,7 +322,7 @@ prose and a person keeps the facts. Spotlight asks it questions.
     not open shows **Couldn't read @Billing** and nothing else. A kept turn holds your words, the tags' names, the answer
     with its links and the steps, never what was read from a tag. When you reopen one, a link to a page you can no longer
     open is dropped and the turn says **1 link hidden**. The model, time and cost footer comes back too.
-  - **Quick open** (⌘P or ⌘K): go to a file by name or path, or `>` for commands (open index or log, toggle Source,
+  - **Quick open** (⌘P; ⌘K opens Spotlight): go to a file by name or path, or `>` for commands (open index or log, toggle Source,
     Problems, Suggestions, run the brain). It only finds pages; it does not ask.
   - **Panel** (⌘J): **Problems** (initiatives and customers without an owner, pages quiet for 30 days, summaries behind
     their work) and **Suggestions** with their buttons. **Status bar**: two items, the page count and the problems
@@ -649,10 +672,11 @@ editor loads the suggestion (`GET /api/proposals/:id`), Spotlight sends its buil
 (their click on Build it was the go-ahead; the parameter leaves the URL so a reload does not send it again), and builds
 the flow: on the empty canvas the whole flow at once, with the chat folded to the side card and the canvas in view. The
 flow is a draft until the person saves and publishes it. Spotlight sends the prompt only on the workflow Build it
-created for that suggestion (the suggestion is applied and its `createdWorkflowId` is this workflow); on any other
-workflow the parameter is dropped. The route treats a build prompt like a stored draft: any builder may apply it, and
+created for that suggestion (the suggestion is applied and its `createdWorkflowId` is this workflow), and only while
+its canvas is empty, so opening the link again after the build sends nothing; on any other workflow the parameter is
+dropped. The route treats a build prompt like a stored draft: any builder may apply it, and
 the workflow goes in `?projectId=` or the caller's home project, after the same create check as any new workflow.
-The Slack mirror shows no Apply button for it.
+The Slack mirror shows no Apply button for it and refuses an Apply click for it (only the web builds it).
 
 ## API and settings
 

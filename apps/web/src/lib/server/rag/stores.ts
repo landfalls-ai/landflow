@@ -178,7 +178,9 @@ function openSqlite(file: string): DatabaseSync {
   const { DatabaseSync } = loadSqlite();
   mkdirSync(dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
+  // A busy timeout before WAL, as the main database does: another process on the same file waits instead of failing.
   db.exec(`
+    PRAGMA busy_timeout = 10000;
     PRAGMA journal_mode = WAL;
     CREATE TABLE IF NOT EXISTS vectors (
       collection TEXT NOT NULL,

@@ -17,6 +17,27 @@ Three parts:
 3. **The action layer**: the only way Spotlight (and the instance MCP server) changes anything. The agent proposes;
    the layer validates, checks access and stores a plan; only the user's click applies it.
 
+## One Spotlight
+
+Built (B35, wave 6, closes CH17). Spotlight is one panel for the whole app, not one in the editor and another in the
+brain.
+
+- **Keys.** **⌘K** opens Spotlight on every page, and **⌘I** does the same. Pressed again from its box, either closes
+  it. On the Brain page, go-to-a-page (QuickOpen) is **⌘P**; it used to be ⌘K.
+- **Where.** A 360 px column at the right of the page, which you can drag wider (320 to 560 px, kept in this browser). The
+  rail's "Ask or build… ⌘K" button opens it too. It sits in the layout, so a conversation stays while you move from page
+  to page. On a phone it is a bottom sheet with three heights (the arrows beside the chip step through them).
+- **Modes.** A chip in its header says what it does here. On a workflow's editor it is the builder, "Building Ticket
+  router": the editor's own column, which takes the focus on ⌘K.
+  Everywhere else it is the brain, "Asking the brain", about the open page on the Brain page and about everything
+  elsewhere. A page can send it to one thing: the `landflow:ask-about` window event (detail `{ ref: { type, id, name,
+  workflowId? }, starters }`) opens it as "About <name>" with that thing as the chip and the starters as its first
+  questions. On the editor the chip offers "Ask the brain instead" (or any ask-about event there), and the brain panel then takes the
+  right side while the builder folds to its 44 px strip: one column at a time, so the canvas keeps its room. ⌘K, ⌘I, the
+  Spotlight button or the strip bring the builder back and the brain panel goes. In about mode "Ask the brain instead"
+  drops the chip, and so does closing the panel or removing the chip in its box. Ctrl does not count as the key on a Mac.
+- **The Brain page** has one way in: the Ask button in its title bar opens this panel.
+
 ## 1. Home 2.0
 
 Today `apps/web/src/app/page.tsx` shows four counters (Workflows, Executions 24h, Failed 24h, Plugins online), the last
@@ -86,6 +107,23 @@ first version of Go and `@`: they complete canvas nodes and the node types the w
 without a model call. The chat it sends to uses only the node types the workflow allows (`assistant/scope.ts`).
 **Also built:** [Test and fix](assistant.md#test-and-fix), which runs the workflow, has failures fixed until a run passes,
 and then offers to publish it. While it works, the conversation waits in a card at the side of the canvas.
+
+### Ask about it
+
+Every resource's ⋯ menu has **Ask Spotlight**: workflows (list rows), runs (list rows, the run page and the run preview),
+agents (cards and the agent page), data tables, credentials and brain pages. A failed run also has a button, **Ask why it
+failed**, on its list row, its one-line row, its page and its preview. The run page also has a header button, and the brain
+page has a header icon button, and a failed run's menu item reads **Ask why it failed**. A run's chip reads "<workflow> run",
+as the @ picker names it. Each fires one browser event,
+`landflow:ask-about`, whose detail is `{ ref: { type, id, name, workflowId? }, starters }` (`lib/client/ask-about.ts`).
+The chat panel listens for it, sets the resource as the chip and offers the three starter questions for its type
+(`lib/shared/ask-starters.ts`; a failed run's first is "Why did this fail?"). A credential's item says **Ask about where
+it's used** and sends only its name and id, never a value. The shell panel's conversation outlives the panel, so an
+ask-about about another thing than the panel is already about starts a new conversation (`startsNew` in
+`components/spotlight/ask-about-listener.ts`): the starters show and the first question carries no history from the earlier
+talk, which stays under the history button. Asking about the same thing again keeps the conversation, and so does an
+answer still coming (it finishes first). Closing the panel does not stop an answer that is coming in: it finishes in the
+background and is there when the panel opens again.
 
 ## 3. The action layer
 
