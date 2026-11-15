@@ -182,6 +182,8 @@ Home starts with the **Your morning** card ([work-and-briefings.md](work-and-bri
 - **The brief card** on a project's Overview shows its four texts (Brief, Constraints, Done when, Words we use) folded
   to three lines with **More**; a desktop shows up to six lines. The goals it serves have 44 px up, down and unlink
   buttons for admins.
+- **Goal pickers.** The workflow settings' **Goal** and the team page's **Project goal** are full-width selects, 44 px
+  tall on a phone; a desktop keeps its height.
 
 ## What it saw
 
