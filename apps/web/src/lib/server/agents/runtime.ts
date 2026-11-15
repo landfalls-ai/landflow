@@ -418,7 +418,9 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       accessNotes = access.notes;
       // PC13: the project's tool kinds, then its knowledge base (never withheld by the kinds).
       if (rules) {
-        const kept = toolset.tools.filter((tool) => rules.toolAllowed(tool));
+        // A team's own tools (reports, consults, hand-offs, notebook) are never withheld by the kinds.
+        const teamNames = new Set((request.team?.tools ?? []).map((tool) => tool.name));
+        const kept = toolset.tools.filter((tool) => teamNames.has(tool.name) || rules.toolAllowed(tool));
         accessNotes = [...accessNotes, ...toolset.tools.filter((tool) => !kept.includes(tool)).map((tool) => `${tool.label} withheld by project “${rules.projectName}” settings`)];
         const knowledge = rules.settings.knowledge;
         const built = knowledge?.enabled ? (isNodeKnowledge(knowledge.tool) ? nodeKnowledgeTool(knowledge.tool) : knowledgeTool(knowledge.tool)) : undefined;

@@ -214,7 +214,7 @@ describe('the run obeys the project', () => {
     expect(projectToolKind({ kind: 'workflow' } as never)).toBe('workflow');
     expect(projectToolKind({ kind: 'agent' } as never)).toBe('agent');
     expect(projectToolKind({ kind: 'a2a' } as never)).toBe('a2a');
-    for (const kind of ['flow', 'skill', 'memory', 'notebook', 'team']) expect(projectToolKind({ kind } as never)).toBeUndefined();
+    for (const kind of ['flow', 'skill', 'memory', 'notebook']) expect(projectToolKind({ kind } as never)).toBeUndefined();
     expect(PROJECT_TOOL_KINDS).toHaveLength(6);
 
     const helper = makeAgent('Helper', { model: { provider: 'ollama', model: 'm1' } });
@@ -232,6 +232,13 @@ describe('the run obeys the project', () => {
     // Skills are never withheld; the sub-agent tool is.
     expect(seen.at(-1)?.tools).toContain('load_skill');
     expect(seen.at(-1)?.tools).not.toContain('ask_Helper');
+    // A team's own tools (here a kind 'agent' report tool) are never withheld, and give no notice.
+    const report = { kind: 'agent', name: 'ask_report', label: 'Report', description: 'A report', inputSchema: { type: 'object', properties: {} }, requireApproval: false, invoke: async () => ({ output: 'x' }) };
+    seen.length = 0;
+    const withTeam = await run(boss.id, P, { team: { tools: [report] } });
+    expect(seen.at(-1)?.tools).toContain('ask_report');
+    expect(seen.at(-1)?.tools).not.toContain('ask_Helper');
+    expect(notices(withTeam.session).some((m) => m?.includes('Report withheld'))).toBe(false);
     scopes.updateProjectSettings(P, { agentTools: { mode: 'allow', kinds: ['agent'] } });
     await run(boss.id, P);
     expect(seen.at(-1)?.tools).toContain('ask_Helper');

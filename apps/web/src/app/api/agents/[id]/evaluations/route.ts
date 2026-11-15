@@ -14,14 +14,18 @@ import { error, handler, json, parseBody } from '@/lib/server/http';
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
 
+/** PC13: each score only for a session the viewer may read (a home member never reads another project's graded replies). */
+const visibleTo = () => {
+  const actor = routeActor();
+  return (score: { sessionId?: string }) => canReadSessionById(actor, score.sessionId ? agentStore.getSession(score.sessionId) : undefined);
+};
+
 export const GET = handler(async (_request: Request, { params }: Ctx) => {
   const { id } = await params;
   if (!agentStore.get(id)) return error('Agent not found', 404);
   // PC06: the scores carry session inputs and outputs from every project; only the home reads them.
   if (!resourceAccess(routeActor(), 'agent', id)?.home) return error('Agent not found', 404);
-  // PC13: and each score only for a session the viewer may read (a home member never reads another project's graded replies).
-  const actor = routeActor();
-  return json({ report: onlineReport(agentTarget(id), 50, (score) => canReadSessionById(actor, score.sessionId ? agentStore.getSession(score.sessionId) : undefined)) });
+  return json({ report: onlineReport(agentTarget(id), 50, visibleTo()) });
 });
 
 export const PUT = handler(async (request: Request, { params }: Ctx) => {
@@ -33,7 +37,7 @@ export const PUT = handler(async (request: Request, { params }: Ctx) => {
   const target = agentTarget(id);
   const current = getOnlineConfig(target);
   saveOnlineConfig(target, normalizeOnlineConfig({ ...rest, ...(model && { model }) }, model === null ? { ...current, model: undefined } : current));
-  return json({ report: onlineReport(target) });
+  return json({ report: onlineReport(target, 50, visibleTo()) });
 });
 
 export const POST = handler(async (request: Request, { params }: Ctx) => {

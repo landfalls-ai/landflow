@@ -243,6 +243,10 @@ describe('paging, the live feed and the readers of ratings', () => {
     expect(report.body.report.scores.map((x: { id: string }) => x.id)).toEqual(['sc_a']);
     expect(report.body.report.total).toBe(2);
     expect(report.text).not.toContain('B secret comment');
+    const put = await call(evalsRoute.PUT, `/api/agents/${X}/evaluations`, 'PUT', ann, {}, { id: X });
+    expect(put.status).toBe(200);
+    expect(put.body.report.scores.map((x: { id: string }) => x.id)).toEqual(['sc_a']);
+    expect(put.text).not.toContain('B secret comment');
     const all = await call(evalsRoute.GET, `/api/agents/${X}/evaluations`, 'GET', owner, undefined, { id: X });
     expect(all.body.report.scores.map((x: { id: string }) => x.id).sort()).toEqual(['sc_a', 'sc_b']);
   });

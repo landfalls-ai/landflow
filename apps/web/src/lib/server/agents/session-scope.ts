@@ -46,7 +46,7 @@ export function canContinueSession(actor: Actor | undefined, session: SessionSco
   return role === 'admin' || role === 'editor';
 }
 
-/** Whether `actor` reads the session `sessionId` of `agentId` (false when it is gone, except for owners and admins). */
+/** Whether `actor` reads `session` (a session that is gone, undefined, is readable only by instance admins). */
 export function canReadSessionById(actor: Actor | undefined, session: SessionScoped | undefined): boolean {
   if (!session) return Boolean(actor && isInstanceAdmin(actor));
   return canReadSession(actor, session);
