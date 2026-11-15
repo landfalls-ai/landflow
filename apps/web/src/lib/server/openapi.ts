@@ -845,6 +845,15 @@ function paths(): Record<string, Record<string, Json>> {
     query: exportQuery,
     responses: { 200: zipReply, 400: invalid, 404: notFound },
   });
+  // PC07:
+  add('get', '/api/agents/{id}/context-preview', {
+    tag: 'Agents',
+    id: 'previewAgentContext',
+    summary: 'What a chat with the agent in a project would be given',
+    description: 'The project block in the agent’s Project context mode (`text`, and the `compact` block) and the approved practices the agent would follow (`practices.text`, `practices.list` of `{ handle, version }`), built as a chat in that project would build them. Reads only: no delivery is recorded. Without `projectId`, the agent’s home project. For editors of the agent; a project the agent is not available in, or you have no role in, is 404.',
+    query: [{ name: 'projectId', description: 'The project to preview (default: the agent’s home project)', schema: { type: 'string' } }],
+    responses: { 200: reply('The preview', object({ projectId: { type: 'string' }, mode: { type: 'string', enum: ['full', 'compact', 'off'] }, text: { type: 'string' }, compact: { type: 'string' }, practices: object({ text: { type: 'string' }, list: array(object({ handle: { type: 'string' }, version: { type: 'integer' } }, ['handle', 'version'])) }, ['text', 'list']) }, ['mode', 'text', 'compact', 'practices'])), 404: notFound },
+  });
   add('get', '/api/agent-teams/{id}/export', {
     tag: 'Agent teams',
     id: 'exportAgentTeamPlugin',
