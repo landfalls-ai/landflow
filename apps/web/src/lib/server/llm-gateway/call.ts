@@ -137,7 +137,18 @@ export function takeGatewayReply(id: string): GatewayReply {
  */
 export function trustsGatewayCost(baseUrl: string): boolean {
   const configured = envString('LANDFLOW_LLM_GATEWAY_URL');
-  return Boolean(configured && gatewayRoot(configured).toLowerCase() === gatewayRoot(baseUrl).toLowerCase());
+  if (!configured) return false;
+  const a = endpointOf(configured);
+  return a !== undefined && a === endpointOf(baseUrl);
+}
+
+/** `protocol//host:port/path` of a gateway root, with the default port filled in, so `:80` or a trailing `/v1` don't matter. */
+function endpointOf(baseUrl: string): string | undefined {
+  const root = gatewayRoot(baseUrl);
+  if (!URL.canParse(root)) return undefined;
+  const url = new URL(root);
+  const port = url.port || (url.protocol === 'https:' ? '443' : '80');
+  return `${url.protocol}//${url.hostname.toLowerCase()}:${port}${url.pathname.replace(/\/+$/, '')}`;
 }
 
 // ---- a spent budget is a cap -----------------------------------------------------------------------------------------

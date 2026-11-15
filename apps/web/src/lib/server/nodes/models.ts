@@ -18,6 +18,7 @@ import { currentUsageScope } from '../ai-usage/scope';
 import { captureGatewayReply, gatewayBudgetError, gatewayHeaders, gatewayReplyOf, GATEWAY_CALL_HEADER, newGatewayCallId, takeGatewayReply, trustsGatewayCost, type GatewayReply } from '../llm-gateway/call';
 import { savedCredentialIsGateway } from '../llm-gateway/models';
 import { gatewayRoot, gatewaySettings } from '../llm-gateway/settings';
+import { hashKey } from '../llm-gateway/client';
 import { OutboundBlockedError, safeFetch } from '../net/safe-fetch';
 import { traceChat, traceEmbeddings } from '../telemetry';
 import { attachmentText, audioFormat, pdfAttachmentText } from './attachments';
@@ -37,6 +38,7 @@ interface ProviderReply {
   callId?: string;
   gatewayCost?: number;
   gatewayCostTrusted?: boolean;
+  gatewayKeyHash?: string;
 }
 
 const describeReply = (reply: ProviderReply) => ({
@@ -49,6 +51,7 @@ const describeReply = (reply: ProviderReply) => ({
   callId: reply.callId,
   gatewayCost: reply.gatewayCost,
   gatewayCostTrusted: reply.gatewayCostTrusted,
+  gatewayKeyHash: reply.gatewayKeyHash,
 });
 
 const parseUrl = (url: string) => (URL.canParse(url) ? new URL(url) : undefined);
@@ -240,7 +243,7 @@ export function anthropicModel(options: { model: string; effort: Effort; maxToke
     const gatewayFields = {
       // The call id is what the spend import dedupes on: take it only from the server-configured gateway. Another
       // gateway (a credential's Base URL) could answer with the id of someone else's call and erase it from the import.
-      ...(reply.callId && costTrusted && { callId: reply.callId }),
+      ...(reply.callId && costTrusted && { callId: reply.callId, ...(options.apiKey && { gatewayKeyHash: hashKey(options.apiKey) }) }),
       ...(reply.cost !== undefined && { gatewayCost: reply.cost }),
       ...(reply.cost !== undefined && costTrusted && { gatewayCostTrusted: true }),
     };
@@ -520,6 +523,8 @@ export interface OpenAiConnection {
   credentialId?: string;
   /** `litellm`: the Base URL is a LiteLLM proxy (the credential's Gateway field): Landflow says who is calling and keeps the call id and cost. */
   gateway?: 'litellm';
+  /** SHA-256 of the API key, through a gateway: how LiteLLM's spend log names the key, so the import can match the call. */
+  keyHash?: string;
 }
 
 export function openAiConnection(credentials: JsonObject | undefined, credentialId = credentialIdOf(credentials)): OpenAiConnection {
@@ -547,6 +552,7 @@ export function openAiConnection(credentials: JsonObject | undefined, credential
     attributes: { 'server.address': url.hostname, ...(url.port && { 'server.port': Number(url.port) }) },
     ...(credentialId && { credentialId }),
     ...(gateway && { gateway: 'litellm' as const }),
+    ...(gateway && apiKey && { keyHash: hashKey(apiKey) }),
   };
 }
 
@@ -778,7 +784,7 @@ export async function openAiChat(
       cacheReadTokens: result.usage.cacheReadTokens,
       finishReasons: [result.finishReason],
       // As above: a call id only from the server-configured gateway.
-      ...(reply.callId && trusted && { callId: reply.callId }),
+      ...(reply.callId && trusted && { callId: reply.callId, ...(connection.keyHash && { gatewayKeyHash: connection.keyHash }) }),
       ...(reply.cost !== undefined && { gatewayCost: reply.cost }),
       ...(reply.cost !== undefined && trusted && { gatewayCostTrusted: true }),
     }),
@@ -945,6 +951,6 @@ export async function openAiEmbeddings(
       }
       return { vectors: data.map((entry) => entry.embedding as number[]), ...(reply.model && { model: reply.model }), ...(reply.usage?.prompt_tokens !== undefined && { inputTokens: reply.usage.prompt_tokens }), ...(gatewayCall && { callId: gatewayCall }) };
     },
-    (result) => ({ responseModel: result.model, inputTokens: result.inputTokens, dimensions: result.vectors[0]?.length, ...(result.callId && { callId: result.callId }) }),
+    (result) => ({ responseModel: result.model, inputTokens: result.inputTokens, dimensions: result.vectors[0]?.length, ...(result.callId && { callId: result.callId, ...(connection.keyHash && { gatewayKeyHash: connection.keyHash }) }) }),
   );
 }

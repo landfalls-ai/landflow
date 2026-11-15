@@ -168,6 +168,7 @@ export class AiUsageMeter implements UsageMeter {
         surface: scope.lookup('surface'),
         credential_id: call.credentialId,
         call_id: callId,
+        ...(callId && call.gatewayKeyHash && { gateway_key_hash: call.gatewayKeyHash }),
         source: call.source ?? 'landflow',
         runtime: call.runtime ?? 'landflow',
         project_id: scopeProjectId(scope),

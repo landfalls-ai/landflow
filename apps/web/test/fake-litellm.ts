@@ -171,7 +171,8 @@ export async function startFakeLiteLlm(options: FakeLiteLlmOptions = {}) {
 
   /** Charge a call and write its spend-log row; returns the call id. */
   function charge(headers: IncomingHttpHeaders, model: string, callType: string, who: { key?: FakeKey; endUser?: string }): string {
-    const callId = randomUUID();
+    // As the proxy does, a caller's own `x-litellm-call-id` is taken (so two calls can share one).
+    const callId = String(headers['x-litellm-call-id'] ?? '') || randomUUID();
     const now = new Date().toISOString();
     if (who.key) who.key.spend += costPerCall;
     const team = who.key?.team_id ? teams.get(who.key.team_id) : undefined;

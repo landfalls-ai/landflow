@@ -29,6 +29,7 @@ interface UsageRow {
   cost: number;
   gateway_cost: number;
   call_id: string;
+  gateway_request_id: string | null;
   day: string;
 }
 
@@ -74,8 +75,8 @@ beforeEach(() => {
 });
 
 /** What Landflow's meter writes for a call it counted through the server's gateway: a row with that call id. */
-const metered = (row: { litellm_call_id?: string; request_id: string }) =>
-  database().insertNew('ai_usage', { id: fresh('au'), at: new Date().toISOString(), day: new Date().toISOString().slice(0, 10), provider: 'litellm', model: 'qwen3-coder:30b', operation: 'chat', input_tokens: 1, output_tokens: 1, cost: 0, call_id: idOf(row), source: 'landflow', runtime: 'landflow' });
+const metered = (row: { litellm_call_id?: string; request_id: string; api_key: string }) =>
+  database().insertNew('ai_usage', { id: fresh('au'), at: new Date().toISOString(), day: new Date().toISOString().slice(0, 10), provider: 'litellm', model: 'qwen3-coder:30b', operation: 'chat', input_tokens: 1, output_tokens: 1, cost: 0, call_id: idOf(row), gateway_key_hash: row.api_key, source: 'landflow', runtime: 'landflow' });
 
 /** The id the import keeps: the proxy's call id (`x-litellm-call-id`), else the response id. */
 const idOf = (row: { litellm_call_id?: string; request_id: string }): string => row.litellm_call_id ?? row.request_id;
@@ -173,14 +174,29 @@ describe('the spend import', () => {
     expect(rows().some((r) => r.agent_id === 'someone-else')).toBe(false);
   });
 
-  it('does not take a call whose id is already in ai_usage', async () => {
+  it('takes one spend row for each call Landflow counted with that key, and imports a runtime key’s row that reuses its call id', async () => {
+    await post(ownKey);
+    const own = litellm.spendLogs.at(-1)!;
+    metered(own);
+    // A kagent agent sends Landflow's call id (it is in the ai.call event) on its own call: it is still counted.
     const agentId = fresh('ag');
     const { key } = await ensureRuntimeKey({ agentId, runtime: 'kagent', model: 'qwen3-coder:30b' });
-    await post(key);
-    const call = litellm.spendLogs[0];
-    database().insertNew('ai_usage', { id: fresh('au'), at: new Date().toISOString(), day: '2026-11-15', provider: 'anthropic', model: 'x', operation: 'chat', input_tokens: 1, output_tokens: 1, cost: 0, call_id: idOf(call), source: 'landflow', runtime: 'landflow' });
-    expect(await importSpend({ now: later() })).toMatchObject({ imported: 0, skipped: 1 });
-    expect(rows(agentId)).toEqual([]);
+    await post(key, { 'x-litellm-call-id': idOf(own) });
+    expect(await importSpend({ now: later() })).toMatchObject({ imported: 1, skipped: 1 });
+    expect(rows(agentId)).toHaveLength(1);
+    expect(rows().some((r) => r.gateway_request_id === own.request_id)).toBe(false);
+  });
+
+  it('counts every call of a key that reuses one call id', async () => {
+    const agentId = fresh('ag');
+    const { key } = await ensureRuntimeKey({ agentId, runtime: 'kagent', model: 'qwen3-coder:30b' });
+    const reused = fresh('call');
+    for (let i = 0; i < 3; i++) await post(key, { 'x-litellm-call-id': reused });
+    await importSpend({ now: later() });
+    expect(rows(agentId)).toHaveLength(3);
+    // A second run imports nothing more: rows are named by LiteLLM's request id.
+    expect(await importSpend({ now: later() })).toMatchObject({ imported: 0 });
+    expect(rows(agentId)).toHaveLength(3);
   });
 
   it('names nobody from what the caller sends: an unknown key’s call is runtime other with no person', async () => {

@@ -24,7 +24,7 @@ const { aiUsageMeter, executionScope, isUsageCapError, runInUsageScope, savePric
 const { credentials } = await import('@/lib/server/credentials/vault');
 const { anthropicModel, openAiConnection, openAiModel } = await import('@/lib/server/nodes/models');
 const { anthropicApiCredential, openAiApiCredential } = await import('@/lib/server/nodes/credentials');
-const { gatewayBudgetError, gatewayHeaders, scopeProjectId } = await import('@/lib/server/llm-gateway/call');
+const { gatewayBudgetError, gatewayHeaders, scopeProjectId, trustsGatewayCost } = await import('@/lib/server/llm-gateway/call');
 const { forgetGatewayModels } = await import('@/lib/server/llm-gateway/models');
 const { modelOptions } = await import('@/lib/server/agents/models');
 const { assistantModel } = await import('@/lib/server/assistant/model');
@@ -62,6 +62,20 @@ beforeEach(() => {
   delete process.env.LANDFLOW_LLM_GATEWAY_URL;
   savePriceOverrides([]);
   aiUsageMeter().invalidatePrices();
+});
+
+describe('trustsGatewayCost', () => {
+  it('trusts only the server-configured gateway, by scheme, host, port and path', () => {
+    process.env.LANDFLOW_LLM_GATEWAY_URL = 'http://LiteLLM.local:80/';
+    expect(trustsGatewayCost('http://litellm.local')).toBe(true);
+    expect(trustsGatewayCost('http://litellm.local/v1')).toBe(true);
+    expect(trustsGatewayCost('https://litellm.local')).toBe(false);
+    expect(trustsGatewayCost('http://litellm.local:8080')).toBe(false);
+    expect(trustsGatewayCost('http://litellm.local/other')).toBe(false);
+    expect(trustsGatewayCost('not a url')).toBe(false);
+    delete process.env.LANDFLOW_LLM_GATEWAY_URL;
+    expect(trustsGatewayCost('http://litellm.local')).toBe(false);
+  });
 });
 
 describe('gatewayHeaders', () => {

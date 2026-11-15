@@ -1,21 +1,22 @@
 /**
- * The spend import (docs/llm-gateway.md, "Agents outside Landflow"): copies the model calls of keys that are not Landflow's
- * own (agents on kagent, Claude Code on kagent, other clients of the gateway) from LiteLLM's spend log into `ai_usage`, one
- * row per call, attributed to the agent, the project and the person. Insights, the AI page and the usage caps sum `ai_usage`,
- * so they count these calls by themselves.
+ * The spend import (docs/llm-gateway.md, "Agents outside Landflow"): copies the model calls Landflow did not meter itself
+ * (agents on kagent, Claude Code on kagent, other clients of the gateway, Landflow's own calls outside a usage scope) from
+ * LiteLLM's spend log into `ai_usage`, one row per call, attributed only from what Landflow controls (a key it minted, or
+ * the key's team). Insights, the AI page and the usage caps sum `ai_usage`, so they count these calls by themselves.
  *
- * A call is counted once: its row id is derived from LiteLLM's call id, a call id that is already in `ai_usage` is skipped,
- * and Landflow's own calls (marked `in-process`, or made with Landflow's own virtual key) are never imported: its meter
- * wrote them. Only the server's admin connection reads the log, so a member can't inject or erase spend.
+ * A call is counted once: a spend row is named by LiteLLM's own request id (row id and `gateway_request_id`), and a
+ * Landflow row that its meter wrote for a call through the server's gateway (same call id, same key) takes exactly one
+ * spend row instead of an import. Nothing a caller sends decides either. Only the server's admin connection reads the
+ * log, so a member can't inject or erase spend.
  */
 import { createHash } from 'node:crypto';
 import { envInt } from '../config';
-import { database, type Database } from '../db';
+import { database, type Database, type SqlValue } from '../db';
 import { aiUsageMeter } from '../ai-usage';
 import { dayOf, recordUsage } from '../usage/ledger';
 import { singleton } from '../singleton';
 import { logger } from '../telemetry/logger';
-import { projectIdOfTeam, userIdOfCustomer, type AiRuntime, type IngestStatus } from '../../shared/llm-gateway';
+import { projectIdOfTeam, type AiRuntime, type IngestStatus } from '../../shared/llm-gateway';
 import { hashKey, spendLogTime, type Fetcher, type LiteLlmSpendLog } from './client';
 import { adminClient, gatewayConnection, gatewaySettings, ingestStatus, saveIngestStatus } from './settings';
 
@@ -61,7 +62,6 @@ interface Attribution {
   runtime: AiRuntime;
   agentId?: string;
   projectId?: string;
-  userId?: string;
 }
 
 /**
@@ -165,18 +165,29 @@ export async function importSpend(options: ImportOptions = {}): Promise<IngestSt
 /** One spend row into `ai_usage` (and the usage ledger); false when it is skipped. */
 function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<typeof aiUsageMeter>; ownKeyHash?: string; now: number }): boolean {
   const { db, meter } = ctx;
-  // The call id Landflow keeps for its own calls (`x-litellm-call-id`), so a call it already counted is never counted again.
-  const callId = text(row.litellm_call_id) ?? text(row.request_id);
-  if (!callId) return false;
+  // A spend row is named by LiteLLM's own id (server-assigned). The call id (`x-litellm-call-id`) is not enough: a
+  // caller may send its own, so two rows can share one.
+  const requestId = text(row.request_id);
+  if (!requestId) return false;
+  const callId = text(row.litellm_call_id);
   if (row.status !== undefined && row.status !== 'success') return false;
-  // "Landflow already counted this" is decided only by Landflow's own record: a call it metered through the server's
-  // gateway carries that gateway's call id in ai_usage (checked below). Nothing the caller sends (the `in-process`
-  // metadata) or a member-editable credential's key can make the import skip a row.
   const input = count(row.prompt_tokens) || (row.prompt_tokens === undefined ? count(row.total_tokens) - count(row.completion_tokens) : 0);
   const output = count(row.completion_tokens);
   const spend = typeof row.spend === 'number' && Number.isFinite(row.spend) && row.spend > 0 ? row.spend : 0;
   if (input + output + count(row.total_tokens) === 0 && spend === 0) return false;
-  if (db.get('SELECT 1 AS found FROM ai_usage WHERE call_id = ?', callId)) return false;
+  // Imported before, or already matched to a call Landflow counted.
+  if (db.get('SELECT 1 AS found FROM ai_usage WHERE gateway_request_id = ?', requestId)) return false;
+  // "Landflow already counted this" is decided only by Landflow's own record: a row its meter wrote for a call through
+  // the server's gateway, with this call id, made with this very key, and not matched yet. One Landflow row takes one
+  // spend row, so a caller who reuses a call id (even one of Landflow's) hides nothing. Nothing the caller sends (the
+  // `in-process` metadata) and no credential's key can make the import skip a row.
+  if (callId && row.api_key) {
+    const counted = db.get<Record<string, SqlValue>>("SELECT * FROM ai_usage WHERE call_id = ? AND source = 'landflow' AND gateway_key_hash = ? AND gateway_request_id IS NULL", callId, row.api_key);
+    if (counted) {
+      db.upsert('ai_usage', { ...counted, gateway_request_id: requestId });
+      return false;
+    }
+  }
 
   const at = timeOf(row.startTime) ?? timeOf(row.endTime) ?? ctx.now;
   const who = attribute(row, db);
@@ -186,13 +197,14 @@ function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<
   const cache = cacheTokens(row);
   const priced = meter.price({ provider: text(row.custom_llm_provider) ?? 'litellm', model, inputTokens: input, outputTokens: output, cacheReadTokens: cache.read, cacheWriteTokens: cache.write });
   const cost = priced.priced ? priced.cost : spend;
-  const hash = sha(callId);
+  const hash = sha(requestId);
+  // The call id is unique in ai_usage: a second row with a reused one keeps it only in the spend log.
+  const freeCallId = callId && !db.get('SELECT 1 AS found FROM ai_usage WHERE call_id = ?', callId) ? callId : undefined;
   const done = db.insertNew('ai_usage', {
     id: `au_ll_${hash}`,
     at: new Date(at).toISOString(),
     day: dayOf(at),
     agent_id: who.agentId,
-    user_id: who.userId,
     cache_read_tokens: cache.read,
     cache_write_tokens: cache.write,
     provider: 'litellm',
@@ -201,7 +213,8 @@ function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<
     input_tokens: input,
     output_tokens: output,
     cost,
-    call_id: callId,
+    call_id: freeCallId,
+    gateway_request_id: requestId,
     source: 'litellm',
     runtime: who.runtime,
     project_id: who.projectId,
@@ -214,11 +227,10 @@ function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<
       at: new Date(at).toISOString(),
       kind: 'ai.call',
       ...(who.agentId && { agentId: who.agentId }),
-      ...(who.userId && { actorId: who.userId }),
       ...(who.projectId && { projectId: who.projectId }),
       tokens: input + output,
       cost,
-      attrs: { provider: 'litellm', model, operation: 'chat', input, output, cacheRead: cache.read, cacheWrite: cache.write, callId, source: 'litellm', runtime: who.runtime, gatewayCost: spend },
+      attrs: { provider: 'litellm', model, operation: 'chat', input, output, cacheRead: cache.read, cacheWrite: cache.write, ...(callId && { callId }), requestId, source: 'litellm', runtime: who.runtime, gatewayCost: spend },
     },
     db,
   );

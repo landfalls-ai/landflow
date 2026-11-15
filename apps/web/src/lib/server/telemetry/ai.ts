@@ -28,6 +28,8 @@ export interface ChatResponse {
   gatewayCost?: number;
   /** The gateway is the server's configured one, so its cost may stand in for an unpriced model's. */
   gatewayCostTrusted?: boolean;
+  /** SHA-256 of the key used on the server's gateway, so the spend import can match this call's row. */
+  gatewayKeyHash?: string;
 }
 
 /** Run one chat-completion call in a `gen_ai.chat {model}` span and record its metrics. */
@@ -40,15 +42,16 @@ export interface EmbeddingsResponse {
   inputTokens?: number;
   /** `gen_ai.embeddings.dimension.count` */
   dimensions?: number;
-  /** The server-configured gateway's call id, so the spend import never counts the call again. */
+  /** The server-configured gateway's call id and the key's hash, so the spend import never counts the call again. */
   callId?: string;
+  gatewayKeyHash?: string;
 }
 
 /** Run one embeddings call in a `gen_ai.embeddings {model}` span; it counts in the same `landflow.ai.*` metrics as chat (input tokens only). */
 export function traceEmbeddings<T>(request: ChatRequest, call: () => Promise<T>, describe: (result: T) => EmbeddingsResponse): Promise<T> {
   return traceGenAi('embeddings', request, call, (result) => {
     const response = describe(result);
-    return { responseModel: response.responseModel, inputTokens: response.inputTokens, ...(response.dimensions && { dimensions: response.dimensions }), ...(response.callId && { callId: response.callId }) };
+    return { responseModel: response.responseModel, inputTokens: response.inputTokens, ...(response.dimensions && { dimensions: response.dimensions }), ...(response.callId && { callId: response.callId }), ...(response.gatewayKeyHash && { gatewayKeyHash: response.gatewayKeyHash }) };
   });
 }
 
@@ -102,6 +105,7 @@ async function traceGenAi<T>(
             ...(response.callId && { callId: response.callId }),
             ...(response.gatewayCost !== undefined && { gatewayCost: response.gatewayCost }),
             ...(response.gatewayCostTrusted && { gatewayCostTrusted: true }),
+            ...(response.gatewayKeyHash && { gatewayKeyHash: response.gatewayKeyHash }),
           };
           let cost: number | undefined;
           try {

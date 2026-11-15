@@ -1757,6 +1757,18 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS ai_cap_requests_execution ON ai_cap_requests (execution_id)`,
     ],
   },
+  // 2204: LiteLLM's own id for the spend row a usage row stands for (server-assigned, unlike the call id, which a caller
+  // may send), and the hash of the key Landflow called the gateway with. The spend import matches one Landflow row to
+  // one spend row of that key, so a caller who reuses a call id can't hide a call.
+  {
+    version: 2204,
+    name: 'ai_usage_gateway_request',
+    addColumns: [
+      { table: 'ai_usage', column: 'gateway_request_id', definition: 'TEXT' },
+      { table: 'ai_usage', column: 'gateway_key_hash', definition: 'TEXT' },
+    ],
+    statements: [`CREATE UNIQUE INDEX IF NOT EXISTS ai_usage_gateway_request ON ai_usage (gateway_request_id) WHERE gateway_request_id IS NOT NULL`],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */

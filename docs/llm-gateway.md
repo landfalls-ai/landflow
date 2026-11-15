@@ -96,7 +96,8 @@ models.
 
 **The call id and the cost.** LiteLLM answers each call with `x-litellm-call-id` and `x-litellm-response-cost`. Landflow keeps both on
 the call it records: the `ai_usage` row has `call_id`, `source = landflow`, `runtime = landflow`, `project_id` and `gateway_cost`, and the
-`ai.call` event has `callId` and `gatewayCost`. A call id is in at most one row, so the spend import never counts the call again. The cost
+`ai.call` event has `callId` and `gatewayCost`. Through the server-configured gateway the row also keeps a hash of the key the call
+was made with (`gateway_key_hash`), and the spend import pairs it with exactly one spend row, so it never counts the call again. The cost
 that counts in caps and Insights is Landflow's own price table. For a model with no price, the gateway's cost is used only when
 the call went to the gateway the server is configured with (`LANDFLOW_LLM_GATEWAY_URL`). A gateway named only by a credential could
 under-report, so its cost is stored and shown as "gateway says" and nothing more.
@@ -164,17 +165,22 @@ LLM gateway has the import on (it is by default).
   page is empty (at most 200 pages a chunk). LiteLLM caps only the total it advertises (`total_is_capped`), never the
   data, so the import ignores that flag. The last run's end moves only over chunks read to an empty page: a run that fails
   or hits the page cap keeps its place and says so in its status, and the next run reads the rest.
-- **Skipped.** Failed calls; rows with no tokens and no spend; a call id that is already in `ai_usage`. That last one is
-  how a call Landflow counted itself is recognised: Landflow keeps the call id only from the server-configured gateway
-  (`LANDFLOW_LLM_GATEWAY_URL`). Nothing the caller sends (the `in-process` metadata) and no credential's key makes the
-  import skip a row: a key holder could otherwise hide their spend.
+- **Skipped.** Failed calls; rows with no tokens and no spend; a spend row already imported (by LiteLLM's `request_id`);
+  and a spend row that a call Landflow counted itself claims. A Landflow row claims one spend row, and only one: the same
+  call id, made with the same key (`gateway_key_hash` is the hash LiteLLM files as `api_key`), and not yet paired; the
+  pairing is written on the Landflow row (`gateway_request_id`). Landflow keeps the call id and the key hash only from the
+  server-configured gateway (`LANDFLOW_LLM_GATEWAY_URL`). A caller can set its own call id (`x-litellm-call-id`), so a
+  second spend row with the same call id, or one made with another key, is imported, never skipped. Nothing the caller
+  sends (the `in-process` metadata) and no credential's key makes the import skip a row: a key holder could otherwise
+  hide their spend.
 - **Attribution.** Only from what Landflow controls: the key's row in `llm_gateway_keys` gives the runtime, the agent
   and the project; else the project from the key's team (`landflow-project-<id>`, which an admin assigns). A row made
   with the server's own key (`LANDFLOW_LLM_GATEWAY_KEY`) is runtime Landflow. Anything else is runtime `other`, with no
   agent. No person is taken from the call: the end user, tags and metadata are the caller's word, and a key holder could
   otherwise charge another person's cap.
-- **What it writes.** One `ai_usage` row per call: `source = 'litellm'`, the runtime, the agent, the project, the person,
-  the call id (an index keeps a call id to one row; the row id is derived from it) and LiteLLM's cost as `gateway_cost`.
+- **What it writes.** One `ai_usage` row per spend row: `source = 'litellm'`, the runtime, the agent and the project (no
+  person, see Attribution), LiteLLM's `request_id` as `gateway_request_id` (an index keeps it to one row; the row id is
+  derived from it), the call id when no other row has it yet, and LiteLLM's cost as `gateway_cost`.
   `cost` is Landflow's price-table price when the model is priced (Settings → AI prices), else LiteLLM's. One `ai.call`
   event goes to the usage ledger for each, so the second brain sees them.
 - **Caps.** They sum `ai_usage`, so they count these rows without more. Only dollar budgets stop an agent on kagent, at the
@@ -188,16 +194,21 @@ LLM gateway has the import on (it is by default).
 A call is counted in one place only:
 
 - **Calls Landflow makes itself** are counted by Landflow's meter, as before, when they return. Through the
-  server-configured gateway they also keep LiteLLM's call id (`x-litellm-call-id`), and the spend import skips a row whose
-  call id is already in `ai_usage`. Through a credential that points elsewhere, only the cost is kept, for reading: such a
-  gateway could answer with someone else's call id. So point a gateway credential at the same address as
-  `LANDFLOW_LLM_GATEWAY_URL`; the same proxy under another address is counted twice (by the meter and by the import).
+  server-configured gateway they also keep LiteLLM's call id (`x-litellm-call-id`) and the hash of the key, and the spend
+  import lets each such row claim the one spend row with that call id and key. Through a credential that points elsewhere,
+  only the cost is kept, for reading: such a gateway could answer with someone else's call id. So point a gateway
+  credential at the same address as `LANDFLOW_LLM_GATEWAY_URL` (compared by scheme, host, port and path, so a trailing
+  `/v1` or a default port does not matter); the same proxy under another address is counted twice (by the meter and by
+  the import).
 - **Calls Landflow makes outside a run, chat or agent** (a background job, such as the second brain's detectors, has no
   usage scope, so Landflow's meter does not count it) are marked `unmetered` instead and have no row of Landflow's, so the
-  spend import counts them, as source LiteLLM and runtime Landflow; the AI page shows them under Landflow.
+  spend import counts them, as source LiteLLM and runtime Landflow; the AI page shows them under Landflow. That label
+  comes from the server's own key (`LANDFLOW_LLM_GATEWAY_KEY`): when the gateway is set up only by a Settings credential,
+  they show under "Other clients of the gateway".
 - **Calls made outside Landflow** (an agent on kagent, Claude Code on kagent, any other client of the gateway) are
-  counted from LiteLLM's spend log by the spend import, once per call id. LiteLLM files each row under the response's id (`chatcmpl-…`) and keeps
-  the call id in `litellm_call_id`; Landflow matches and counts by the call id.
+  counted from LiteLLM's spend log by the spend import, once per spend row. LiteLLM files each row under the response's id
+  (`chatcmpl-…`, its `request_id`) and keeps the call id in `litellm_call_id`; Landflow names its row by the `request_id`
+  and pairs Landflow's own calls by the call id and the key.
 - **LiteLLM's own totals** are the cross-check and the hard stop, never a second count.
 - The tokens a remote agent reports over A2A stay in the Run Trace for reading; they are not counted again.
 
@@ -342,7 +353,12 @@ refreshes every minute while the tab is visible.
 - **The Anthropic Chat Model node's model list** stays the fixed Claude list with a gateway credential.
 - **Bare Ollama models** (the Ollama Chat Model node, an agent with the Ollama provider) call Ollama directly, not through the gateway.
 - **Agents outside Landflow** (LL03): LiteLLM sees the agent's key, not the person who asked, so a call kagent makes
-  has no person in `ai_usage`, even when the call names an end user (that is the caller's word). The import lags by up to its interval plus LiteLLM's batch (about 10 s), so a cap counts an agent's calls a few
+  has no person in `ai_usage`, even when the call names an end user (that is the caller's word). LiteLLM itself still
+  charges a named end user's customer budget, so a key holder can spend someone's LiteLLM backstop (not their Landflow cap).
+- **Plugins that call the gateway**: a plugin that meters its own model calls and calls the server's gateway keeps no call
+  id, so the import counts that call a second time.
+- **Long calls**: the import rereads 15 minutes behind its last run; a call LiteLLM logs more than about 15 minutes after
+  it started can be missed. The import lags by up to its interval plus LiteLLM's batch (about 10 s), so a cap counts an agent's calls a few
   minutes late. Token limits of an agent on kagent are counted but not enforced there (LiteLLM budgets are in dollars).
   The sandbox of a Claude Code agent can reach the gateway. Keys are blocked, never deleted, and not rotated.
 - Project budgets (until Paperclip's project budget lands), tag budgets, and budget windows in the instance's time zone (LL04).

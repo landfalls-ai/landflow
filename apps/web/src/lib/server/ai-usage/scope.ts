@@ -26,6 +26,8 @@ export interface ModelCall {
   gatewayCost?: number;
   /** The gateway is the one the server is configured with, so its cost may stand in for an unpriced model's. */
   gatewayCostTrusted?: boolean;
+  /** SHA-256 of the key the call was made with, on the server's gateway: the spend import matches its row by it. */
+  gatewayKeyHash?: string;
   /** Where the row comes from (default `landflow`: Landflow's own meter). */
   source?: AiCallSource;
   /** What ran the call (default `landflow`). */
