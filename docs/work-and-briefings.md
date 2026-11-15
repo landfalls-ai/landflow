@@ -149,20 +149,35 @@ open it. The gathered lists and the text live in `brain_briefings` (migration 20
 lists: the reads use the ledger's one visibility rule. All five nodes read or write other people's data, so they check the workflow and the run
 (`requireInstanceFlow` in `lib/server/nodes/briefing.ts`):
 
-- **The workflow** must be made and last saved by an owner or an admin (or by nobody: a seeded one). A member's workflow
-  could otherwise feed any `userId` through them, read or replace that person's briefing, or deliver it through a Slack
-  credential of the member's own. When a member saves the workflow, even only its draft, every run fails with "A member
-  saved this workflow last: it handles no one's briefings until an owner or admin saves it again", the published
-  nightly run included, until an owner or admin saves it.
+- **The workflow** must not be one a member made (`createdBy`, which comes only from the person whose save created it,
+  never from the saved body). A member's workflow could otherwise feed any `userId` through them, read or replace that
+  person's briefing, or deliver it through a Slack credential of the member's own.
 - **The run.** The runner records who started a run (`startedBy`) for every run a person starts: a manual or chat run, an
-  MCP call (`execute_workflow`, `run_node`), an agent's tool call, a re-run, a retry someone asked for, and a
-  sub-workflow of any of these (its parent's starter). Such a run may handle briefings only when that person is an
-  owner or an admin. A run nobody started may only when a trigger started it (mode `trigger`, `poll` or `webhook`), it
-  is not a re-run nor a retry someone asked for (an automatic retry keeps the starter of the run it retries), it runs the
-  workflow's current saved version or its published one (not an older version from its history), and, for a
-  sub-workflow, its parent passes the same check. So a member cannot start from Gather Work with someone else's
-  `userId` over MCP, re-run the nightly run with a graph of their own or an older one, or re-run it to send everyone's
-  briefing again. An evaluation run never may. Each refusal fails the run with a message that says why.
+  MCP call (`execute_workflow`, `run_node`), a re-run, a retry someone asked for, and a sub-workflow of any of these
+  (its parent's starter). An agent's tool call runs for the agent's caller, never for the person whose request happens
+  to be around it: the workflow run the agent works in (Run an Agent; the tool's run is its sub-execution), else the
+  person chatting in the agent's test chat, else nobody. Such a run may handle briefings only when that person is an
+  owner or an admin. A run nobody started may only when all of this holds:
+  - **The version that ran** is the workflow's current saved version or its published one (not an older version from
+    its history), and an owner or an admin **saved** it: each version records the person whose save made it
+    (`workflow_versions.author`, migration 2091). A save that changes nothing a version counts (moving, renaming,
+    publishing, activating, an owner saving a member's graph unchanged) makes no version and credits nobody new; a
+    restore makes a version credited to whoever saved the restored one; a save with no person behind it (a Slack click
+    that applies a suggestion without a matched person, a background save, an import) and every version from before
+    2091 credit nobody. So after a member's change, an owner or admin has to save a change of their own.
+  - **When it is the published version**, an owner or an admin **published** it too (`publishedBy`; a publish request
+    an owner approved still names the member who asked).
+  - It is a trigger's run (mode `trigger`, `poll` or `webhook`), not a re-run, a retry someone asked for or a metric's
+    measurement of a suggestion. What it came from passes the same check: the run an automatic retry retries (an
+    automatic retry keeps that run's starter), the failed run an error workflow answers, and the run a sub-workflow
+    or an agent's tool call was started from.
+  - **Pin data** is not part of a version, so runs in `trigger`, `poll`, `webhook` and `tool` mode ignore it (the
+    engine runs the node, [engine.md](features/engine.md)): a pin cannot change what the nightly run reads.
+
+  So a member cannot start from Gather Work with someone else's `userId` over MCP, re-run the nightly run with a graph
+  of their own or an older one, publish a version of their own (or have it published), pin List People to someone, or
+  re-run it to send everyone's briefing again. An evaluation run never may. Each refusal fails the run with a message
+  that says why.
 - **The brain off** (`LANDFLOW_BRAIN=false`): every node returns no items, from whichever node a run starts.
 
 A person's choice of Slack is consent to the instance's Slack, not to a colleague's. A webhook or form trigger in front

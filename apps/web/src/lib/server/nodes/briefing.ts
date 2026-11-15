@@ -18,8 +18,8 @@ import { safeFetch } from '../net/safe-fetch';
 import { logger } from '../telemetry/logger';
 import { brainEnabled, dayOf } from '../usage/ledger';
 import { store } from '../store';
-import { publishedVersionId } from '../publications';
-import { versionFor, versionHash } from '../versions';
+import { getPublication } from '../publications';
+import { versionAuthor, versionFor } from '../versions';
 import type { ExecutionRecord } from '../../shared/types';
 
 const main = [{ type: 'main' as const }];
@@ -34,54 +34,77 @@ const trusted = (id: string | undefined): boolean => {
 /** Modes nobody starts by hand: a schedule or other trigger, a poll, a webhook. */
 const SYSTEM_MODES: ReadonlySet<string> = new Set(['trigger', 'poll', 'webhook']);
 
-/** Why `workflow` may not handle people's briefings, or undefined: it must be made, and last saved, by an owner or admin (or by nobody: seeded). */
+/** Why `workflow` may not handle people's briefings at all, or undefined: a member made it (`createdBy` comes only from the saver). */
 function workflowRefusal(workflow: Workflow | undefined): string | undefined {
   if (!workflow) return 'The workflow is not saved';
   if (workflow.createdBy && !trusted(workflow.createdBy)) return 'Only a workflow an owner or admin made may handle people’s briefings';
-  if (workflow.updatedBy && !trusted(workflow.updatedBy)) {
-    return 'A member saved this workflow last: it handles no one’s briefings until an owner or admin saves it again';
-  }
   return undefined;
 }
 
-/** Whether the run ran the workflow's current saved graph or its published version, not an older version or another graph. */
-function ranCurrentGraph(record: ExecutionRecord, workflow: Workflow): boolean {
-  if (record.versionId) return record.versionId === publishedVersionId(workflow.id) || record.versionId === versionFor(workflow)?.id;
-  return Boolean(record.workflow) && versionHash(record.workflow!) === versionHash(workflow);
-}
-
 const RUN_REFUSED = 'Only a schedule of the saved or published workflow, or a run an owner or admin started, may handle people’s briefings';
+const VERSION_REFUSED = 'A member, or nobody, saved the version of this workflow that ran: it handles no one’s briefings until an owner or admin saves a change to it (and publishes that version, when it is published)';
+const PUBLISH_REFUSED = 'A member published the version of this workflow that ran: it handles no one’s briefings until an owner or admin publishes a version an owner or admin saved';
 
 /**
- * Why this run may not handle people's briefings, or undefined when it may. A run a person started (`startedBy`: the
- * editor, the API, chat, MCP, an agent's tool, a re-run, a retry they asked for, or a sub-workflow of one) may when that
- * person is an owner or admin. A run nobody started may only when a trigger started it (`trigger`, `poll`, `webhook`,
- * not a re-run, not a retry someone asked for; an automatic retry may) on the workflow's current saved or published
- * version, and, for a sub-workflow, when its parent may too.
+ * Why the version a run without a starter ran may not handle people's briefings, or undefined. It must be the workflow's
+ * current saved version or its published one (not an older version or another graph), saved by an owner or admin
+ * (versionAuthor: the person whose save made that version, never whoever saved last, moved or restored it), and, when
+ * it is the published version, published by an owner or admin too. Pin data is not part of a version, and production
+ * runs ignore it (the engine's PINLESS_MODES).
  */
-async function runRefusal(record: ExecutionRecord | undefined, depth = 0): Promise<string | undefined> {
-  if (!record || record.evaluation) return RUN_REFUSED;
-  if (record.startedBy) return trusted(record.startedBy) ? undefined : RUN_REFUSED;
-  if (!SYSTEM_MODES.has(record.mode) || record.rerunOf || (record.retryOf && !record.retryAutomatic)) return RUN_REFUSED;
+function versionRefusal(record: ExecutionRecord): string | undefined {
   const workflow = store.getWorkflow(record.workflowId);
   const refused = workflowRefusal(workflow);
   if (refused) return refused;
-  if (!ranCurrentGraph(record, workflow!)) return RUN_REFUSED;
-  if (!record.parentExecutionId) return undefined;
-  if (depth >= 8) return RUN_REFUSED;
-  return runRefusal(await store.loadExecution(record.parentExecutionId), depth + 1);
+  if (!record.versionId) return RUN_REFUSED;
+  const publication = getPublication(workflow!.id);
+  const isPublished = publication?.versionId === record.versionId;
+  if (!isPublished && record.versionId !== versionFor(workflow!)?.id) return RUN_REFUSED;
+  if (!trusted(versionAuthor(workflow!.id, record.versionId))) return VERSION_REFUSED;
+  if (isPublished && !trusted(publication!.publishedBy)) return PUBLISH_REFUSED;
+  return undefined;
+}
+
+/** A run's record: the live one while it runs (the saved row lags behind), else the saved one. */
+async function runRecord(executionId: string | undefined): Promise<ExecutionRecord | undefined> {
+  if (!executionId) return undefined;
+  const { live } = await import('../runner/state');
+  return live.get(executionId)?.record ?? (await store.loadExecution(executionId));
 }
 
 /**
- * Who may run the nodes that read or write a person's private briefing (docs/work-and-briefings.md#the-nightly-sync, Privacy):
- * a workflow an owner or admin made and last saved (or a seeded one), in a run an owner or admin started or a schedule
- * started on its current saved or published version (`runRefusal`). A member could otherwise feed any `userId` through
- * them (an MCP call from Gather Work, a re-run of the nightly run with an older graph) and read or send someone else's
- * work.
+ * Why this run may not handle people's briefings, or undefined when it may. A run a person started (`startedBy`: the
+ * editor, the API, chat, MCP, an agent's tool for its caller, a re-run, a retry they asked for, or a sub-workflow of one)
+ * may when that person is an owner or admin. A run nobody started may only when its version passes versionRefusal, it is
+ * not a re-run, a retry someone asked for or a metric's measurement, and what it came from may too: the run an automatic
+ * retry retries, the failed run an error workflow answers, the run a sub-workflow (or an agent's tool call) was started
+ * by. A run with none of those must be a trigger's (`trigger`, `poll`, `webhook`).
+ */
+async function runRefusal(record: ExecutionRecord | undefined, depth = 0): Promise<string | undefined> {
+  if (!record || record.evaluation || depth > 8) return RUN_REFUSED;
+  if (record.startedBy) return trusted(record.startedBy) ? undefined : RUN_REFUSED;
+  if (record.rerunOf || (record.retryOf && !record.retryAutomatic) || record.metricOf) return RUN_REFUSED;
+  const refused = versionRefusal(record);
+  if (refused) return refused;
+  for (const from of [record.retryOf, record.errorOf]) {
+    if (!from) continue;
+    const source = await runRefusal(await runRecord(from), depth + 1);
+    if (source) return source;
+  }
+  if (record.parentExecutionId) return runRefusal(await runRecord(record.parentExecutionId), depth + 1);
+  return SYSTEM_MODES.has(record.mode) ? undefined : RUN_REFUSED;
+}
+
+/**
+ * Who may run the nodes that read or write a person's private briefing (docs/work-and-briefings.md#the-nightly-sync, Privacy): a workflow
+ * no member made, in a run an owner or admin started, or a schedule's run of a version an owner or admin saved (and, if
+ * it is the published one, published) (`runRefusal`). A member could otherwise feed any `userId` through them (an MCP
+ * call from Gather Work, a re-run of the nightly run with an older graph, a version of their own published or pinned)
+ * and read or send someone else's work.
  */
 async function requireInstanceFlow(ctx: IExecuteContext): Promise<void> {
-  const refused = workflowRefusal(store.getWorkflow(ctx.getWorkflowId() ?? '')) ?? (await runRefusal(await store.loadExecution(ctx.getExecutionId())));
-  if (refused) throw new NodeOperationError(refused, { description: 'A person’s briefing is private to them: an owner or admin saves this workflow, and it runs on its schedule or as theirs.' });
+  const refused = workflowRefusal(store.getWorkflow(ctx.getWorkflowId() ?? '')) ?? (await runRefusal(await runRecord(ctx.getExecutionId())));
+  if (refused) throw new NodeOperationError(refused, { description: 'A person’s briefing is private to them: an owner or admin saves and publishes this workflow, and it runs on its schedule or as theirs.' });
 }
 
 const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '');

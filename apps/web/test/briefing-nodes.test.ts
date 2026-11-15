@@ -35,12 +35,18 @@ const { items } = await import('./helpers');
 const { store } = await import('@/lib/server/store');
 const { briefingMarkdown } = await import('@/lib/server/mcp/brain-prompts');
 const { runWorkflow, planRerun } = await import('@/lib/server/runner');
-const { withAuth } = await import('@/lib/server/auth/context');
+const { currentActorId, outsideRequest, withAuth } = await import('@/lib/server/auth/context');
 const { credentials: vault } = await import('@/lib/server/credentials/vault');
 const { setHomeProject } = await import('@/lib/server/projects/store');
 const { instanceServer } = await import('@/lib/server/mcp/instance-tools');
 const { dayOf } = await import('@/lib/server/usage/ledger');
 const { Client, InMemoryTransport } = await import('@modelcontextprotocol/client');
+const { publishOrRequest } = await import('@/lib/server/governance/approvals');
+const { productionWorkflowById } = await import('@/lib/server/publish');
+const { getPublication } = await import('@/lib/server/publications');
+const { listVersions, versionAuthor } = await import('@/lib/server/versions');
+const { upsertProposal, applyProposal } = await import('@/lib/server/brain/proposals');
+const { planRetry } = await import('@/lib/server/runner/rerun');
 
 const { defineCredentialType, definePlugin } = await import('@landflow/sdk');
 registry.registerBuiltin(corePlugin);
@@ -332,24 +338,41 @@ describe('who started the run (through the runner)', () => {
     expect(rowsFor(bob.id).map((r) => r.status).sort()).toEqual(['ready', 'superseded']);
   });
 
-  it('a trigger run of an older version is refused; a retry passes only when automatic', async () => {
+  it('a trigger run of an older version is refused; a retry passes only when automatic, and only of a source that passes', async () => {
     expect((await scheduled(aliceGraph)).status).toBe('error');
     expect(rowsFor(bob.id)).toHaveLength(0);
-    const retry = (automatic: boolean) => runWorkflow({ workflow: saved(), mode: 'trigger', startNodeId: 'nightly', triggerItems: items({}), retry: { of: 'ex_failed', attempt: 1, automatic } });
-    expect((await retry(false)).status).toBe('error');
+    const nightly = await scheduled();
+    database().deleteBefore('brain_briefings', 'created_at', '9999');
+    // A failed copy of the nightly run, and one with nobody behind it in a mode a person starts (a run from before startedBy).
+    const failed = (id: string, patch: Record<string, unknown> = {}) => {
+      store.saveExecution({ ...nightly, executionId: id, status: 'error', error: { message: 'Slack was down' }, ...patch } as never);
+      return id;
+    };
+    const retry = async (sourceId: string, automatic: boolean) => runWorkflow(planRetry(sourceId, { automatic, from: 'start' }));
+    expect((await retry(failed('ex_failed_nightly'), false)).status).toBe('error');
+    expect((await retry(failed('ex_failed_manual', { mode: 'manual' }), true)).status).toBe('error');
+    expect((await retry(failed('ex_failed_rerun', { rerunOf: { executionId: nightly.executionId } }), true)).status).toBe('error');
     expect(rowsFor(bob.id)).toHaveLength(0);
-    const automatic = await retry(true);
+    // A made-up source is refused: there is nothing to check.
+    expect((await runWorkflow({ workflow: saved(), mode: 'trigger', startNodeId: 'nightly', triggerItems: items({}), retry: { of: 'ex_made_up', attempt: 1, automatic: true } })).status).toBe('error');
+    const automatic = await retry('ex_failed_nightly', true);
     expect(automatic.retryAutomatic).toBe(true);
+    expect(automatic.error?.message).toBeUndefined();
     expect(automatic.status).toBe('success');
   });
 
-  it('a member saving the workflow stops the nightly run until an owner or admin saves it again', async () => {
+  it('a member saving a change stops the nightly run until an owner or admin saves a change; a save with no change counts for nothing', async () => {
     as(alice, () => store.saveWorkflow(saved()));
+    expect((await scheduled()).status).toBe('success');
+    as(alice, () => store.saveWorkflow(graph('wf_nightly', 5)));
     try {
       const run = await scheduled();
       expect(run.status).toBe('error');
-      expect(run.error?.message).toBe('A member saved this workflow last: it handles no one’s briefings until an owner or admin saves it again');
-      expect(rowsFor(bob.id)).toHaveLength(0);
+      expect(run.error?.message).toBe('A member, or nobody, saved the version of this workflow that ran: it handles no one’s briefings until an owner or admin saves a change to it (and publishes that version, when it is published)');
+      // An owner's save of the same graph is no change: the version is still Alice's.
+      as(owner, () => store.saveWorkflow(saved()));
+      expect((await scheduled()).status).toBe('error');
+      expect(rowsFor(bob.id).filter((r) => r.status === 'ready')).toHaveLength(1);
     } finally {
       as(owner, () => store.saveWorkflow(ownerGraph));
     }
@@ -373,6 +396,189 @@ describe('who started the run (through the runner)', () => {
     }
     expect(rowsFor(bob.id)).toHaveLength(0);
     expect(slackCalls).toEqual([]);
+  });
+
+  describe('which version ran: who saved it and who published it', () => {
+    // Each case has its own workflow in the team (Alice is an editor there), saved and published by the owner first.
+    const fresh = async (id: string, publish = true) => {
+      as(owner, () => store.saveWorkflow(graph(id, 3)));
+      setHomeProject('workflow', id, team.id);
+      if (publish) await as(owner, () => publishOrRequest({ workflowId: id, action: 'publish', by: owner.id }));
+      return id;
+    };
+    const production = (id: string) => runWorkflow({ workflow: productionWorkflowById(id)!, mode: 'trigger', startNodeId: 'nightly', triggerItems: items({}) });
+    const draftRun = (id: string) => runWorkflow({ workflow: store.getWorkflow(id)!, mode: 'trigger', startNodeId: 'nightly', triggerItems: items({}) });
+    // A graph of Alice's: List People pinned to a person and a day of her choosing (only manual runs use pins).
+    const pinnedTo = (id: string, day: string) => ({ ...graph(id, 0), pinData: { people: [{ json: { userId: idle.id, day } }] } });
+    const idleRows = () => rowsFor(idle.id);
+
+    it('an owner-saved, owner-published version runs on its schedule', async () => {
+      const id = await fresh('wf_v_owner');
+      const run = await production(id);
+      expect(run.error?.message).toBeUndefined();
+      expect(run.status).toBe('success');
+      expect(run.versionPublished).toBe(true);
+      expect(rowsFor(bob.id, 'ready')).toHaveLength(1);
+    });
+
+    it('A: a member publishes her own older version after the owner saved again: refused', async () => {
+      const id = await fresh('wf_v_a');
+      as(alice, () => store.saveWorkflow({ ...store.getWorkflow(id)!, ...pinnedTo(id, '2020-01-02'), active: true }));
+      const aliceVersion = listVersions(id)[0];
+      expect(versionAuthor(id, aliceVersion.id)).toBe(alice.id);
+      as(owner, () => store.saveWorkflow({ ...store.getWorkflow(id)!, ...graph(id, 3), pinData: undefined, active: true }));
+      expect(store.getWorkflow(id)!.updatedBy).toBe(owner.id);
+      await as(alice, () => publishOrRequest({ workflowId: id, action: 'publish', versionId: aliceVersion.id, by: alice.id }));
+      expect(getPublication(id)).toMatchObject({ versionId: aliceVersion.id, publishedBy: alice.id });
+      const run = await production(id);
+      expect(run.status).toBe('error');
+      expect(run.error?.message).toMatch(/^A member, or nobody, saved the version/);
+      expect(idleRows()).toHaveLength(0);
+      expect(rowsFor(bob.id)).toHaveLength(0);
+    });
+
+    it('B: a member publishes her graph and puts the draft back to the owner’s: production runs her version, refused', async () => {
+      const id = await fresh('wf_v_b');
+      as(alice, () => store.saveWorkflow({ ...store.getWorkflow(id)!, ...pinnedTo(id, '2020-01-03'), active: true }));
+      await as(alice, () => publishOrRequest({ workflowId: id, action: 'publish', by: alice.id }));
+      as(alice, () => store.saveWorkflow({ ...store.getWorkflow(id)!, ...graph(id, 3), pinData: undefined, active: true }));
+      as(owner, () => store.saveWorkflow(store.getWorkflow(id)!));
+      expect((await production(id)).status).toBe('error');
+      // The draft is the owner's graph again, but Alice's save made its version: a trigger run of the draft is refused too.
+      expect((await draftRun(id)).status).toBe('error');
+      expect(idleRows()).toHaveLength(0);
+      expect(rowsFor(bob.id)).toHaveLength(0);
+    });
+
+    it('an owner publishing a version a member saved is refused: the version’s author must be an owner or admin', async () => {
+      const id = await fresh('wf_v_pub_member');
+      as(alice, () => store.saveWorkflow(graph(id, 5)));
+      await as(owner, () => publishOrRequest({ workflowId: id, action: 'publish', by: owner.id }));
+      expect(getPublication(id)?.publishedBy).toBe(owner.id);
+      expect((await production(id)).status).toBe('error');
+      // An owner's change makes a version of their own; published, it runs.
+      as(owner, () => store.saveWorkflow(graph(id, 4)));
+      await as(owner, () => publishOrRequest({ workflowId: id, action: 'publish', by: owner.id }));
+      expect((await production(id)).status).toBe('success');
+    });
+
+    it('a member publishing an owner’s version is refused: the publisher must be an owner or admin', async () => {
+      const id = await fresh('wf_v_member_pub', false);
+      await as(alice, () => publishOrRequest({ workflowId: id, action: 'publish', by: alice.id }));
+      const run = await production(id);
+      expect(run.status).toBe('error');
+      expect(run.error?.message).toMatch(/^A member published the version/);
+    });
+
+    it('an admin restoring a member’s version credits it to the member: still refused', async () => {
+      const id = await fresh('wf_v_restore');
+      as(alice, () => store.saveWorkflow(graph(id, 5)));
+      const aliceVersion = listVersions(id)[0];
+      as(owner, () => store.saveWorkflow(graph(id, 3)));
+      const { POST } = await import('@/app/api/workflows/[id]/versions/[versionId]/restore/route');
+      const response = await POST(new Request(`http://localhost/api/workflows/${id}/versions/${aliceVersion.id}/restore`, { method: 'POST' }), { params: Promise.resolve({ id, versionId: aliceVersion.id }) });
+      expect(response.status).toBe(200);
+      const restored = listVersions(id)[0];
+      expect(restored.restoredFrom?.id).toBe(aliceVersion.id);
+      expect(versionAuthor(id, restored.id)).toBe(alice.id);
+      expect((await draftRun(id)).status).toBe('error');
+      // Moving, activating or publishing it adds no version and credits nobody new.
+      await as(owner, () => publishOrRequest({ workflowId: id, action: 'publish', by: owner.id }));
+      expect(listVersions(id)[0].id).toBe(restored.id);
+      expect((await production(id)).status).toBe('error');
+      expect(rowsFor(bob.id)).toHaveLength(0);
+    });
+
+    it('C: a save with no person behind it makes a version with no author, and the nightly run is refused', async () => {
+      const id = await fresh('wf_v_c', false);
+      withAuth({}, () => store.saveWorkflow({ ...store.getWorkflow(id)!, ...graph(id, 0) }));
+      const version = listVersions(id)[0];
+      expect(versionAuthor(id, version.id)).toBeUndefined();
+      expect(store.getWorkflow(id)!.updatedBy).toBeUndefined();
+      expect((await draftRun(id)).status).toBe('error');
+      // A pin added with no person behind it changes no version, and records nobody as the last saver.
+      as(owner, () => store.saveWorkflow(graph(id, 3)));
+      withAuth({}, () => store.saveWorkflow({ ...store.getWorkflow(id)!, pinData: { people: [{ json: { userId: idle.id, day: '2020-01-04' } }] } }));
+      expect(store.getWorkflow(id)!.updatedBy).toBeUndefined();
+      expect(versionAuthor(id, listVersions(id)[0].id)).toBe(owner.id);
+      expect(rowsFor(bob.id)).toHaveLength(0);
+    });
+
+    it('C: applying a suggestion saves as the person who applies it, never as the last saver or the request around it', async () => {
+      const id = await fresh('wf_v_apply', false);
+      const suggest = (fingerprint: string, withinDays: number) =>
+        upsertProposal({ source: 'workflow', fingerprint, target: { type: 'workflow', id }, title: 'Everyone, every night', why: 'so nobody is missed', evidence: [], ops: [{ op: 'setParameters', node: 'List People', parameters: { withinDays } }], risk: 'low', confidence: 0.5, score: 1 } as never)!;
+      // A Slack click: no signed-in request, nobody named (or someone Slack could not match).
+      withAuth({}, () => applyProposal(suggest('apply-nobody', 0).id, {}));
+      expect(versionAuthor(id, listVersions(id)[0].id)).toBeUndefined();
+      expect((await draftRun(id)).status).toBe('error');
+      // A member's apply inside an owner's request is still hers.
+      as(owner, () => applyProposal(suggest('apply-alice', 1).id, { actorId: alice.id }));
+      expect(versionAuthor(id, listVersions(id)[0].id)).toBe(alice.id);
+      expect((await draftRun(id)).status).toBe('error');
+      // The owner's own apply makes an owner's version.
+      applyProposal(suggest('apply-owner', 2).id, { actorId: owner.id });
+      expect(versionAuthor(id, listVersions(id)[0].id)).toBe(owner.id);
+      expect((await draftRun(id)).status).toBe('success');
+    });
+
+    it('a body’s createdBy and updatedBy are ignored: the saver is who saved it', () => {
+      const saved = as(alice, () => store.saveWorkflow({ ...graph('wf_v_body', 3), createdBy: owner.id, updatedBy: owner.id }));
+      expect(saved).toMatchObject({ createdBy: alice.id, updatedBy: alice.id });
+      expect(withAuth({}, () => store.saveWorkflow({ ...graph('wf_v_body_nobody', 3), createdBy: owner.id, updatedBy: owner.id }))).not.toHaveProperty('createdBy');
+    });
+
+    it('pinned data is ignored on a schedule: a member’s pin on List People picks no one', async () => {
+      const id = await fresh('wf_v_pin');
+      as(alice, () => store.saveWorkflow({ ...store.getWorkflow(id)!, pinData: { people: [{ json: { userId: idle.id, day: '2020-01-06' } }] } }));
+      expect(listVersions(id)).toHaveLength(1);
+      const run = await draftRun(id);
+      expect(run.status).toBe('success');
+      expect(idleRows()).toHaveLength(0);
+      expect(rowsFor(bob.id, 'ready')).toHaveLength(1);
+    });
+
+    it('an agent’s tool call runs for its caller: not for the owner whose request is around it', async () => {
+      const id = await fresh('wf_v_tool', false);
+      const tool = (extra: Record<string, unknown> = {}) => runWorkflow({ workflow: store.getWorkflow(id)!, mode: 'tool', startNodeId: 'gather', triggerItems: items({ userId: bob.id, day: today() }), ...extra });
+      const inOwnersContext = await as(owner, () => new Promise<Awaited<ReturnType<typeof tool>>>((resolve) => setTimeout(() => resolve(tool()), 0)));
+      expect(inOwnersContext.startedBy).toBeUndefined();
+      expect(inOwnersContext.status).toBe('error');
+      // Called from a run of Alice's: refused; from the nightly run: it may.
+      const hers = await as(alice, () => runWorkflow({ workflow: store.getWorkflow(id)!, mode: 'mcp', startNodeId: 'nightly', triggerItems: items({}) }));
+      expect((await tool({ parent: { executionId: hers.executionId } })).status).toBe('error');
+      expect(rowsFor(bob.id)).toHaveLength(0);
+      const nightly = await draftRun(id);
+      expect(nightly.status).toBe('success');
+      const called = await tool({ parent: { executionId: nightly.executionId } });
+      expect(called.error?.message).toBeUndefined();
+      expect(called.status).toBe('success');
+    });
+
+    it('an error workflow’s run is checked through the run that failed', async () => {
+      const id = await fresh('wf_v_error', false);
+      const answer = (failedId: string) => runWorkflow({ workflow: store.getWorkflow(id)!, mode: 'trigger', startNodeId: 'nightly', triggerItems: items({}), errorOf: failedId });
+      const hers = await as(alice, () => runWorkflow({ workflow: store.getWorkflow(id)!, mode: 'mcp', startNodeId: 'nightly', triggerItems: items({}) }));
+      expect((await answer(hers.executionId)).status).toBe('error');
+      expect((await answer('ex_made_up')).status).toBe('error');
+      expect(rowsFor(bob.id)).toHaveLength(0);
+      const nightly = await draftRun(id);
+      expect((await answer(nightly.executionId)).status).toBe('success');
+    });
+
+    it('what a request only sets off (a decision’s listening workflows) runs as nobody', async () => {
+      const seen = await as(owner, () => outsideRequest(() => new Promise<string | undefined>((resolve) => setTimeout(() => resolve(currentActorId()), 0))));
+      expect(seen).toBeUndefined();
+      expect(as(owner, () => currentActorId())).toBe(owner.id);
+    });
+
+    it('a metric’s measurement run is refused: whoever wrote the suggestion chose the workflow', async () => {
+      const id = await fresh('wf_v_metric', false);
+      const run = await runWorkflow({ workflow: store.getWorkflow(id)!, mode: 'trigger', startNodeId: 'nightly', triggerItems: items({}), metricOf: 'pr_x' });
+      expect(run.metricOf).toBe('pr_x');
+      expect(run.status).toBe('error');
+      expect(rowsFor(bob.id)).toHaveLength(0);
+    });
   });
 });
 
