@@ -159,13 +159,15 @@ export const builderFolds = (path: string, state: Pick<SpotlightState, 'open' | 
 /**
  * The editor's right column holds one panel (docs/spotlight.md#one-spotlight). What to do when the brain panel, the builder
  * column or the flow chat changes: fold the builder (and close the flow chat) when the brain panel first shows; drop the
- * brain panel again when the builder unfolds or the flow chat opens beside it; else nothing.
+ * brain panel again when the builder unfolds or the flow chat opens beside it; unfold the builder again when the brain
+ * panel goes (closed with X, or the ask is done) if the panel was what folded it and the flow chat has not taken the
+ * column; else nothing. `foldedByPanel`: the builder was open when the panel first showed.
  */
-export type ColumnRule = { fold: boolean; closeChat: boolean; dropShell: boolean };
-export function columnRule(input: { brainPanelShows: boolean; wasShowing: boolean; builderFolded: boolean; column: string | null }): ColumnRule {
-  const none = { fold: false, closeChat: false, dropShell: false };
-  if (!input.brainPanelShows) return none;
-  if (!input.wasShowing) return { fold: true, closeChat: input.column === 'chat', dropShell: false };
+export type ColumnRule = { fold: boolean; closeChat: boolean; dropShell: boolean; unfold: boolean };
+export function columnRule(input: { brainPanelShows: boolean; wasShowing: boolean; builderFolded: boolean; column: string | null; foldedByPanel?: boolean }): ColumnRule {
+  const none = { fold: false, closeChat: false, dropShell: false, unfold: false };
+  if (!input.brainPanelShows) return { ...none, unfold: input.wasShowing && Boolean(input.foldedByPanel) && input.builderFolded && input.column !== 'chat' };
+  if (!input.wasShowing) return { ...none, fold: true, closeChat: input.column === 'chat' };
   return { ...none, dropShell: !input.builderFolded || input.column === 'chat' };
 }
 

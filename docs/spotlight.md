@@ -34,7 +34,8 @@ brain.
   workflowId? }, starters }`) opens it as "About <name>" with that thing as the chip and the starters as its first
   questions. On the editor the chip offers "Ask the brain instead" (or any ask-about event there), and the brain panel then takes the
   right side while the builder folds to its 44 px strip: one column at a time, so the canvas keeps its room. ⌘K, ⌘I, the
-  Spotlight button or the strip bring the builder back and the brain panel goes. In about mode "Ask the brain instead"
+  Spotlight button or the strip bring the builder back and the brain panel goes. Closing the brain panel (X) unfolds the
+  builder again if the panel was what folded it; a builder that was already folded stays folded. In about mode "Ask the brain instead"
   drops the chip, and so does closing the panel or removing the chip in its box. Ctrl does not count as the key on a Mac.
 - **The Brain page** has one way in: the Ask button in its title bar opens this panel.
 
