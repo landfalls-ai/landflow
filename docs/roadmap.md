@@ -2259,3 +2259,7 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
 - **Left (deferred)**: model verdicts in the CLI's `check` (a model's verdict reaches a flow through Check Practices, PR08;
   the CLI runs machine checks only) and a reminder after `Write` or `Edit` on a matching path (the mod never denies a
   tool call, so a reminder hook is its own package).
+
+## Wave 12: token spend, one call
+
+- **SP07, built:** a model step's sheet in the Run Trace shows the call's composition, cache line and what changed since the previous call; sessions show cached tokens ([run-trace.md](run-trace.md#one-call)).

@@ -226,6 +226,8 @@ function SessionDetail({
               <span title={new Date(session.createdAt).toLocaleString()}>started {timeAgo(session.createdAt)}</span>
               <span className="font-mono" title="Input · output tokens">
                 {run.usage.inputTokens.toLocaleString()} in · {run.usage.outputTokens.toLocaleString()} out
+                {/* SP07: */}
+                {run.usage.cacheReadTokens ? ` · ${run.usage.cacheReadTokens.toLocaleString()} cached` : ''}
               </span>
               {session.parentSessionId && (
                 <span>

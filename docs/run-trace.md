@@ -648,6 +648,28 @@ stopped, or after `LANDFLOW_TEAM_PAUSE_MINUTES` (default 30), when the member ca
 so. A host restart ends the run as any run is interrupted (the pause is not saved), and in queue mode the pause routes
 only reach the process that runs the execution.
 
+## Spend
+
+### One call
+
+A model step's sheet shows what the call cost in tokens, not only how many (`components/run-trace/call-spend.tsx`,
+`lib/client/call-spend.ts`). The sheet finds the call of the run's spend record that the step is (`GET /api/executions/:id/spend`:
+the same model, a time within a second before the step started and two after it ended, the same agent; on a tie the call
+nearest the end), then reads its view (`GET /api/ai-calls/:id`):
+
+- **What this call was made of**: one bar and a line per part (instructions, tool definitions, memory, the conversation so
+  far and the rest) with its tokens and share, and the way the numbers were reached in words (counted by the provider,
+  counted with the model's own tokenizer, or estimated from text length). A split the LLM gateway made says **From the LLM
+  gateway**. The parts the provider's cache holds (tool definitions, instructions, the project block, practices) are marked
+  **cached prefix** when the call used the cache.
+- **The cache line**: "8,000 read from the cache · 2,000 not cached · written: 0". A model that reports no cache numbers says so.
+- **What changed**: "Same prefix as the previous call" (iteration 2 of a run, usually), or "The instructions changed" and
+  the like, against the previous call of the same session or run.
+- **No split for this call**, with the reason: built outside Landflow, or older than 30 days, or the step isn't in the spend record.
+
+The **Tokens** row of a model step also names the tokens read from and written to the cache. Sizes and shares only: never
+prompt text. These sheets are for a desktop; on a phone the page still fits.
+
 ## HTTP API
 
 | Route | What it does |

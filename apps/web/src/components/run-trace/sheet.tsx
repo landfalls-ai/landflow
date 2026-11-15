@@ -19,6 +19,7 @@ import { RunScopeChips, WhatItSaw, sawOf } from './what-it-saw';
 import { imagesOf, ToolImages, withoutImages } from './tool-images';
 import { RerunPanel, useRunControls } from './run-controls';
 import { TeamPauseBar } from '../editor/team-pause';
+import { CallSpend } from './call-spend';
 
 export type Open = {
   kind: 'span' | 'artifact' | 'check' | 'actor';
@@ -196,10 +197,12 @@ function SpanSheet({
           ['Started', <TimeButton key="s" iso={span.startedAt} onJump={onJump} />],
           ['Ended', span.endedAt ? <TimeButton key="e" iso={span.endedAt} onJump={onJump} /> : span.status === 'running' ? 'still going' : undefined],
           ['Took', fmtMs(span.ms)],
-          ['Tokens', span.usage ? `${span.usage.inputTokens.toLocaleString()} in · ${span.usage.outputTokens.toLocaleString()} out` : undefined],
+          ['Tokens', span.usage ? `${span.usage.inputTokens.toLocaleString()} in · ${span.usage.outputTokens.toLocaleString()} out${span.usage.cacheReadTokens ? ` · ${span.usage.cacheReadTokens.toLocaleString()} read from cache` : ''}${span.usage.cacheWriteTokens ? ` · ${span.usage.cacheWriteTokens.toLocaleString()} written to cache` : ''}` : undefined],
           ['Now', span.note],
         ]}
       />
+      {/* SP07: a model call's composition and cache line. */}
+      {span.kind === 'model' && model.executionId && <CallSpend span={span} executionId={model.executionId} />}
       <div className="mt-3 flex flex-col gap-2.5">
         {edits?.length ? (
           <ChangeSheet changes={edits.map((e) => e.c)} file={edits[0].file} git={Boolean(changes?.git)} />
