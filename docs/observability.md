@@ -486,8 +486,8 @@ collector was down). Check the rules with
 The "AI" row has three panels: tokens a second by `gen_ai_token_type` (`input`, `output`, `cache_read`, `cache_write`),
 the Anthropic cache hit rate over 1 hour, and estimated cost over the last day by `landflow_ai_purpose`. Through the
 OTLP path into the LGTM pod the cost counter is `landflow_ai_cost_USD_total` (the unit `USD` is kept in the name); a
-direct scrape of `/api/metrics` names it `landflow_ai_cost_total`, so a Prometheus that scrapes the host directly needs
-that spelling in the panel. The hit rate alert has a volume guard so a quiet hour of a few calls does not page.
+direct scrape of `/api/metrics` lowercases the unit and names it `landflow_ai_cost_usd_total`, so a Prometheus that
+scrapes the host directly needs that spelling in the panel. The hit rate alert has a volume guard so a quiet hour of a few calls does not page.
 
 There is no metric for the age of the oldest queued job, so the queue alert watches depth; add one before alerting on age.
 
