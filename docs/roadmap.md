@@ -1790,6 +1790,31 @@ The wave 4 review notes were fixed in wave 5's carryover where they were contain
   with cache or router traffic in a browser; and fresh screenshots for B24, B26, B27 and B28 at 1440×900 and 390×844
   (the review's were taken before their fix commits). They need a host and a browser, which the carryover does not run.
 
+## Company backbone: left open from the wave 5 and LiteLLM L1 reviews (2026-11-15)
+
+The wave 5 and L1 review notes were fixed in wave 6's carryover where they were contained; these wait, each with its reason:
+
+- **The mod's session start and the nightly text**: still the open item under the briefing above (B38 did not build it).
+- **Velocity counts a redelivered fact twice**: a pull request closed, reopened and closed again, or a delivery pinned
+  and run twice, gives two ledger rows with the same `sourceId`, so a review delivered twice adds a handoff round.
+  De-duplicating on `sourceId` alone would let anyone who can record an event choose a value that hides another's (and
+  Record Event's `workflowId` can be chosen within a project), so it waits for a key no caller controls.
+- **A takeover leaves the import's `ai.call` event**: when the spend import reads a row before Landflow's meter records
+  the call, the meter takes the `ai_usage` row over, but the `ue_ll_<hash>` usage event keeps the key's agent and project
+  and the import's price ([llm-gateway.md](llm-gateway.md)). Rewriting it touches who a call's money is attributed to, so
+  it needs its own reviewed change.
+- **A raw expression as a node's subtitle**: a tile whose subtitle names a parameter set to an expression (Record
+  Event's `{{ $json.kind }}` on the GitHub template) shows the expression. Hiding expressions changes every canvas tile,
+  so it waits for a design pass.
+- **One marketplace, added by someone**: its Refresh and Remove card is hidden with the source menu
+  ([limitations](limitations.md)); a card above every Explore page waits for a design pass.
+- **Layout checks**: the Workflows and Credentials empty-state tests read source strings, which do not catch a layout
+  break at 390 px; a browser check of scroll width and overlap belongs to the UI pass. `workflows-list.tsx` is still
+  above 800 lines after its last run and New menu moved to `list-parts.tsx`.
+- **Live checks still open from wave 5**: Build it clicked on desktop and phone, the GitHub to Work Event panel at
+  390×844, the GitHub template tile after a host restart, Explore with two marketplaces and real installed plugins, and
+  fresh screenshots for B30, B31, B32 and B34 (the review's predate their fix commits). They need a host and a browser.
+
 ## Runs: one list (B20, 2026-11-14)
 
 Closed from the wave 1 page review: X2 (Executions, Runs and Search runs are one page, **Runs** at `/runs`, the old URLs redirect), P-ex-1 (no ID or Mode column), P-ex-2 (Stop all only while a run runs), P-ex-3 (repeated failures fold into one row), P-ex-4 (two re-run words), P-runs-1 (one search box with Status and Workflow chips, the rest under More filters) and P-cmp-1 (compare with fewer than two runs goes back to the list). See [the Runs list](run-trace.md#the-runs-list).
