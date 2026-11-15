@@ -9,7 +9,7 @@ import { error, handler, json, parseQuery } from '@/lib/server/http';
 import { projectRole, requireResource } from '@/lib/server/projects/access';
 import { routeActor } from '@/lib/server/projects/http';
 import { getProject, homeProjectId, shares } from '@/lib/server/projects/store';
-import { runPractices, type PracticesSwitch } from '@/lib/server/project-context/practices';
+import { runPractices } from '@/lib/server/project-context/practices';
 import { runContextProvider } from '@/lib/server/project-context/seam';
 import type { ContextMode, RunPractice } from '@/lib/shared/project-context';
 
@@ -47,8 +47,7 @@ export const GET = handler(async (request: Request, { params }: Ctx) => {
   } catch {
     // A run goes on without the block when the builder throws; the preview says the same.
   }
-  // PC07: AgentConfig.practices comes from PR06.
-  const practices = runPractices((agent as { practices?: PracticesSwitch }).practices, { ...(projectId && { projectId }), agentId: id, size: 'full' });
+  const practices = runPractices(agent.practices, { ...(projectId && { projectId }), agentId: id, size: 'full' });
   return json({
     ...(projectId && { projectId }),
     mode: ctx?.mode ?? mode,
