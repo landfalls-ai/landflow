@@ -223,32 +223,36 @@ export function pageMarkdown(page: WikiPage): string {
   return out.join('\n');
 }
 
-/** `index.md`: the week's briefing. */
+/** The card headings of `index.md`, shared with the index's Preview (`IndexDoc`, `indexOutline`), so a renamed heading moves in both. */
+export const INDEX_HEADINGS = { shared: 'Shared across teams', suggestions: 'Suggestions', teams: 'Teams this week', needs: 'Needs a person' } as const;
+export type IndexCard = keyof typeof INDEX_HEADINGS;
+
+/** `index.md`: the week's briefing. A section shows only with something in it, as its card does in the Preview. */
 export function indexMarkdown(home: WikiHome): string {
   const names = new Map(home.entries.map((e) => [`${e.type}/${e.id}`, e.name]));
   const out = ['---', `pages: ${home.entries.length}`, `facts: ${home.status.facts}`, `model: ${home.model ?? 'off'}`, `window: ${home.days} days`, '---', '', '# Brain', ''];
   out.push(`${home.entries.length} pages: ${FOLDERS.map(({ type, folder }) => `${home.entries.filter((e) => e.type === type).length} ${folder}`).join(', ')}.`, '');
-  out.push('## Shared across teams', '');
-  if (home.shared.length)
+  if (home.shared.length) {
+    out.push(`## ${INDEX_HEADINGS.shared}`, '');
     for (const s of home.shared) {
       out.push(`- ${link(s.ref, s.name)} — ${s.teams.length} teams, ${s.events} items`);
       for (const t of s.teams) out.push(`  - ${t.team}: ${t.events} (${t.people.join(', ') || 'unknown'})`);
     }
-  else out.push('_Every page was worked on by one team this week._');
-  out.push('');
+    out.push('');
+  }
   if (home.proposals.length) {
-    out.push('## Suggestions', '');
+    out.push(`## ${INDEX_HEADINGS.suggestions}`, '');
     for (const p of home.proposals) out.push(`- **${oneLine(p.title)}**${p.target.name ? ` — ${p.target.name}` : ''}`);
     out.push('');
   }
   if (home.teams.length) {
-    out.push('## Teams this week', '');
+    out.push(`## ${INDEX_HEADINGS.teams}`, '');
     for (const t of home.teams) out.push(`- **${t.team}** — ${t.events} items, ${t.people} ${t.people === 1 ? 'person' : 'people'}: ${t.top.map((p) => `${link(p.ref, names.get(p.ref) ?? p.name)} (${p.events})`).join(', ') || 'no pages'}`);
     out.push('');
   }
   const { noOwner, quiet, staleSummaries } = home.health;
   if (noOwner.length + quiet.length + staleSummaries.length) {
-    out.push('## Needs a person', '');
+    out.push(`## ${INDEX_HEADINGS.needs}`, '');
     for (const [label, list] of [['No owner', noOwner], ['Quiet for 30 days', quiet], ['Summary behind its work', staleSummaries]] as const)
       if (list.length) out.push(`- ${label}: ${list.map((p) => link(p.ref, p.name)).join(', ')}`);
     out.push('');

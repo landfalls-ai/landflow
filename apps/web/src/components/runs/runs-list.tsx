@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Bug, ChevronDown, ChevronLeft, Copy, ExternalLink, GitCompareArrows, ListRestart, MoreHorizontal, OctagonX, RotateCcw, Square, Timer, Trash2 } from 'lucide-react';
+import { Bug, ChevronDown, ChevronLeft, Copy, ExternalLink, GitCompareArrows, ListRestart, MoreHorizontal, OctagonX, RotateCcw, Sparkles, Square, Timer, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
@@ -26,6 +26,7 @@ import { PageBody, PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Checkbox, Switch } from '@/components/ui/inputs';
+import { askAbout, askDetail } from '@/lib/client/ask-about';
 import { MenuItem, MenuLabel, MenuSeparator, Popover } from '@/components/ui/popover';
 import { groupFailures, groupTitle, type RunRow } from './failure-groups';
 import { RunsFilters } from './runs-filters';
@@ -42,7 +43,13 @@ const hrefOf = (e: ExecutionSummary) => `/workflows/${e.workflowId}/runs/${e.id}
 
 type MenuView = 'main' | 'retry' | 'rerun' | 'delete';
 
+/** Open the chat about a run; a failed run's starters ask why first. */
+function askAboutRun(execution: ExecutionSummary) {
+  askAbout(askDetail({ type: 'run', id: execution.id, name: `${execution.workflowName} run`, workflowId: execution.workflowId }, { failed: execution.status === 'error' }));
+}
+
 /** The ⋯ of a run: Open, Debug, the two re-run words (their choices one step in), Copy id, Cancel or Delete. */
+
 function RowMenu({ execution, onChanged }: { execution: ExecutionSummary; onChanged: () => void }) {
   const router = useRouter();
   const [view, setView] = useState<MenuView>('main');
@@ -141,6 +148,14 @@ function RowMenu({ execution, onChanged }: { execution: ExecutionSummary; onChan
           <>
             <MenuItem onClick={() => router.push(hrefOf(execution))}>
               <ExternalLink /> Open
+            </MenuItem>
+            <MenuItem
+              onClick={() => {
+                close();
+                askAboutRun(execution);
+              }}
+            >
+              <Sparkles /> {execution.status === 'error' ? 'Ask why it failed' : 'Ask Spotlight'}
             </MenuItem>
             {!live && !queued && (
               <MenuItem onClick={() => router.push(`/workflows/${execution.workflowId}?execution=${execution.id}`)}>
@@ -261,6 +276,13 @@ function Row({ execution, now, index, isNew, onChanged, picked, onPick, nested }
             {execution.error.nodeName && <span className="font-semibold">{execution.error.nodeName}: </span>}
             {execution.error.message}
           </span>
+          <button
+            type="button"
+            onClick={() => askAboutRun(execution)}
+            className="relative z-10 inline-flex shrink-0 items-center gap-1 rounded-full border border-rdbd px-2 py-0.5 text-[11.5px] font-semibold text-rd hover:border-rd max-md:min-h-11 max-md:px-3"
+          >
+            <Sparkles className="size-3" /> Ask why it failed
+          </button>
           {execution.retryAt && (
             <span className="ml-auto flex shrink-0 items-center gap-1 text-viz-7">
               <Timer className="size-3" /> Automatic retry at <span className="tabular-nums">{formatStamp(execution.retryAt)}</span>

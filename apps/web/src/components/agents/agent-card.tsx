@@ -1,7 +1,8 @@
 'use client';
-/** An agent's card on the Agents list: its name, what it does and whether it is published. Nothing else (docs/agents.md#the-list). */
+/** An agent's card on the Agents list: its name, what it does and whether it is published. Nothing else (docs/agents.md#the-roster). */
 import Link from 'next/link';
-import { Copy, Download, ExternalLink, MoreHorizontal } from 'lucide-react';
+import { Copy, Download, ExternalLink, MoreHorizontal, Sparkles } from 'lucide-react';
+import { askAbout, askDetail } from '@/lib/client/ask-about';
 import type { AgentSummary } from '@/lib/shared/agents';
 import { AgentAvatar } from './avatar';
 import { Badge } from '../ui/badge';
@@ -35,6 +36,14 @@ export function AgentCard({ agent, index = 0, onSave, onExport }: { agent: Agent
               <Link href={`/agents/${agent.id}`} role="menuitem" className="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-t1 hover:bg-acdim [&_svg]:size-3.5">
                 <ExternalLink /> Open
               </Link>
+              <MenuItem
+                onClick={() => {
+                  close();
+                  askAbout(askDetail({ type: 'agent', id: agent.id, name: agent.name }));
+                }}
+              >
+                <Sparkles /> Ask Spotlight
+              </MenuItem>
               <MenuItem
                 onClick={() => {
                   close();

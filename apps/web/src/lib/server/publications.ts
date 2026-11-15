@@ -13,7 +13,6 @@
 import { randomBytes } from 'node:crypto';
 import type { Workflow } from '@landflow/engine';
 import type { PublishLogEntry, WorkflowPublication } from '../shared/publish';
-import { currentActorId } from './auth/context';
 import { database } from './db';
 import { singleton } from './singleton';
 import { logger } from './telemetry/logger';
@@ -187,13 +186,13 @@ export function deletePublications(workflowId: string): () => void {
 /**
  * Keep the publication in line with a saved workflow's `active` flag (the store calls it inside the save's
  * transaction, with the version the save recorded or matched): active without a publication publishes that version,
- * inactive with one unpublishes. Saving an active workflow otherwise changes only the draft.
+ * inactive with one unpublishes, as `actor` (the saver; undefined: nobody). Saving an active workflow otherwise changes only the draft.
  */
-export function syncPublication(saved: Workflow, versionId: string | undefined): void {
+export function syncPublication(saved: Workflow, versionId: string | undefined, actor: string | undefined): void {
   try {
     const published = publishedVersionId(saved.id);
-    if (saved.active && !published && versionId) setPublication(saved.id, versionId, currentActorId(), 'Activated');
-    else if (!saved.active && published) clearPublication(saved.id, currentActorId(), 'Deactivated');
+    if (saved.active && !published && versionId) setPublication(saved.id, versionId, actor, 'Activated');
+    else if (!saved.active && published) clearPublication(saved.id, actor, 'Deactivated');
   } catch (error) {
     logger.warn('could not sync the publication with the active flag', { error, 'landflow.workflow.id': saved.id });
   }

@@ -137,6 +137,17 @@ const run = (workflow: Workflow, onEvent?: (e: ExecutionEvent) => void) =>
   executeWorkflow({ workflow, resolver, executionId: 'ex', mode: 'manual', triggerItems: [{ json: { n: 1 } }, { json: { n: 2 } }], onEvent });
 
 describe('executeWorkflow', () => {
+  it('uses pin data only in runs a person starts: a trigger, poll, webhook or tool run runs the node', async () => {
+    const pinned = { ...wf([n('a', 'trigger'), n('b', 'set', { key: 'ran', value: 'yes' }), n('c', 'set', { key: 'after', value: '{{ $json.ran ?? $json.pinned }}' })], [c('a', 'b'), c('b', 'c')]), pinData: { b: [{ json: { pinned: 'pin' } }] } };
+    const outputOf = async (mode: 'manual' | 'chat' | 'mcp' | 'trigger' | 'poll' | 'webhook' | 'tool') => {
+      const result = await executeWorkflow({ workflow: pinned, resolver, executionId: `ex_${mode}`, mode, triggerItems: [{ json: { n: 1 } }] });
+      expect(result.status).toBe('success');
+      return result.runData.c[0].outputs[0].map((i) => i.json.after);
+    };
+    for (const mode of ['manual', 'chat', 'mcp'] as const) expect(await outputOf(mode)).toEqual(['pin']);
+    for (const mode of ['trigger', 'poll', 'webhook', 'tool'] as const) expect(await outputOf(mode)).toEqual(['yes']);
+  });
+
   it('runs a linear flow and resolves expressions per item', async () => {
     const result = await run(wf([n('a', 'trigger'), n('b', 'set', { key: 'double', value: '{{ $json.n * 2 }}' })], [c('a', 'b')]));
     expect(result.status).toBe('success');

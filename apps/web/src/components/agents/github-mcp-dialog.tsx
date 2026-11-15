@@ -1,6 +1,6 @@
 'use client';
 /**
- * Build tab → Capabilities → Add GitHub MCP: GitHub's MCP server, with a Bearer Auth credential holding a GitHub token, and
+ * Abilities → Capabilities → Add GitHub MCP: GitHub's MCP server, with a Bearer Auth credential holding a GitHub token, and
  * the choice of what the agent may do with it (docs/a2a.md, "GitHub's MCP tools for agents"). The tools are cut down on the
  * server to that choice; merging and writing code are never offered, so there is no switch for them.
  */

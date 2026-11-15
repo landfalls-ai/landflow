@@ -167,6 +167,15 @@ interface NodeTelemetry {
   source: RunSource;
 }
 
+/**
+ * Modes that ignore pin data: nobody tests a workflow in them. Pins are saved with the draft but are not part of a
+ * version's hash, so a pin someone added would otherwise change what a production run does without a new version.
+ */
+const PINLESS_MODES: ReadonlySet<string> = new Set(['trigger', 'poll', 'webhook', 'tool']);
+
+/** Whether a run in `mode` uses pin data (a run a person starts: manual, chat, MCP, a re-run) or runs every node. */
+export const pinsApply = (mode: string): boolean => !PINLESS_MODES.has(mode);
+
 const now = () => new Date().toISOString();
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -949,7 +958,8 @@ class WorkflowRun {
       return outputs;
     }
 
-    const pinned = this.options.workflow.pinData?.[node.id];
+    // Pin data is test data for runs a person starts: a trigger, poll, webhook or an agent's tool call runs the node.
+    const pinned = pinsApply(this.options.mode) ? this.options.workflow.pinData?.[node.id] : undefined;
     if (pinned) {
       telemetry.span.setAttribute('landflow.node.pinned', true);
       const outputs = [pinned];

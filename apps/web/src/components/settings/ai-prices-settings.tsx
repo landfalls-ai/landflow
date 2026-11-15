@@ -135,7 +135,7 @@ export function AiPricesSettings() {
             the cached part of the prompt; empty means the input price. Ollama and other local models cost $0 unless you price them here. Costs are estimates; your provider’s bill is what counts.
           </HelpTip>
           {' '}
-          <a href="/settings#ai-caps" className="whitespace-nowrap text-t2 underline-offset-2 hover:underline">Usage caps are in AI caps ›</a>
+          <a href="/settings#ai-caps" className="relative whitespace-nowrap text-t2 underline-offset-2 hover:underline">Usage caps are in AI caps ›</a>
         </p>
         {rows.length ? (
           <div className="overflow-x-auto">

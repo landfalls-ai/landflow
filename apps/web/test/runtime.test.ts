@@ -38,7 +38,11 @@ const OLD_WORKER = ['config check', 'database', 'registry', 'broker providers', 
 const OLD_MAIN = [
   'config check', 'database', 'cluster', 'owner from environment', 'registry', 'broker providers', 'broker connections', 'mcp gateway sync', 'seed workflows', 'data maintenance',
   // B02: the conversation store's daily retention, a leader service after data maintenance.
-  'conversation retention', 'audit', 'audit head signing', 'binary maintenance', 'publications', 'project adoption', 'scheduled publishes', 'scheduler', 'mcp trigger subscriptions', 'wait timers', 'trigger buffers',
+  'conversation retention',
+  // LL03: the spend import of agents outside Landflow.
+  'LLM gateway spend import', 'audit', 'audit head signing',
+  // LL04: the budgets sync to LiteLLM.
+  'LLM gateway budgets sync', 'binary maintenance', 'publications', 'cap-raise trigger', 'project adoption', 'scheduled publishes', 'scheduler', 'mcp trigger subscriptions', 'wait timers', 'trigger buffers',
   'held trigger events', 'recovery', 'retry timers', 'alerts', 'agent triggers', 'evaluation schedules', 'online evaluations', 'usage listeners', 'usage trigger', 'second brain',
   'registry gRPC server', 'static plugin seeds', 'kubernetes discovery', 'startup scan', 'node plugins', 'app webhooks', 'IMAP IDLE',
 ];

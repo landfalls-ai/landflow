@@ -105,7 +105,7 @@ Claude Desktop.
   `remember` / `recall` when cross-session memory is on. Skills don't go through MCP; they ship in
   the plugin. `/api/mcp` (all agents: `list_agents`, `ask_agent`) comes in phase 2.
 - **Sessions:** `initialize` returns an `Mcp-Session-Id`. Calls with the same id go into one
-  Landflow session (source `harness`, `harness: { type: 'claude-code' }`), so the Sessions tab
+  Landflow session (source `harness`, `harness: { type: 'claude-code' }`), so Activity → Sessions
   shows what a Claude Code session did with Landflow's tools. Phase 1 checks that Claude Code
   echoes the header. Without it, calls are grouped by token and day.
 - **Auth:** per-agent tokens `lf_pat_<id>_<secret>`. They are created in the dialog and shown once,
@@ -311,7 +311,7 @@ Sessions show harness tool calls and diffs.
   calls a Landflow node tool over MCP and answers with its result:
   - with a Claude model, when an Anthropic key is available;
   - with `qwen3-coder:30b` on Ollama.
-- The call appears in the agent's Sessions tab and as a span in the trace.
+- The call appears in the agent's Activity → Sessions and as a span in the trace.
 - The dialog is checked in Chrome, and a revoked token stops the next call.
 - 141+ web tests pass and `tsc` is clean.
 

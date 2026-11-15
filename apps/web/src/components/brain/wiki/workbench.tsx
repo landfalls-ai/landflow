@@ -6,10 +6,10 @@
  * - Side bar: the view; drag its edge to resize, ⌘B to hide.
  * - Editor: tabs (one click opens a preview tab in italics, which the next replaces; a double click or a second click
  *   keeps it), breadcrumbs, and each file as Preview or Source (⌘⇧V).
- * - Ask (⌘I, or the Ask button in the title bar) is the one way to ask the brain: a column docked at the right of the editor
+ * - Ask (the Ask button in the title bar, or ⌘K) opens the app's one Spotlight, the shell's panel at the right of the page
  *   (a bottom sheet on a phone), about the open page unless its chip is removed. A link in an answer opens beside it.
  * - Panel (⌘J): Problems (pages that need a person) and Suggestions. Status bar: the page count and problems. With no pages the index shows alone.
- * - ⌘P (or ⌘K): go to a file, or `>` for commands.
+ * - ⌘P: go to a file, or `>` for commands.
  * The open tabs and the side bar's width are kept in this browser. On a phone the side bar is a drawer and the activity
  * bar folds into it.
  */
@@ -28,10 +28,8 @@ import { PageDoc } from './page-doc';
 import { WikiNav } from './parts';
 import { ExplorerView, FileIcon, SearchView, TimelineView, type Opener } from './side-views';
 import { lineId, SourceView } from './source-view';
-import { useAskConversation } from './ask-panel';
-import { BrainSpotlight, focusBrainSpotlight, SPOTLIGHT_INPUT, type SpotlightFile } from './spotlight';
-import { Sheet } from '../../ui/sheet';
-import { usePhone } from '@/lib/client/use-phone';
+import { type SpotlightFile } from './spotlight';
+import { closeSpotlight, keyAction, openSpotlight, setBrainFile, setBrainOpener, useSpotlightState } from '../../spotlight/context';
 
 type View = 'explorer' | 'search' | 'timeline';
 type Mode = 'preview' | 'source';
@@ -68,13 +66,7 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
   const [panel, setPanel] = useState<'problems' | 'suggestions' | undefined>();
   const [width, setWidth] = useState(272);
   const [quick, setQuick] = useState(false);
-  const [askOpen, setAskOpen] = useState(false);
-  const conversation = useAskConversation();
-  const phone = usePhone();
-  const askOpenRef = useRef(askOpen);
-  useEffect(() => {
-    askOpenRef.current = askOpen;
-  }, [askOpen]);
+  const askOpen = useSpotlightState().open;
   const activeRef = useRef(active);
   useEffect(() => {
     activeRef.current = active;
@@ -199,17 +191,10 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) return;
       const key = e.key.toLowerCase();
-      if ((key === 'p' || key === 'k') && !e.shiftKey) {
+      // ⌘K and ⌘I belong to the shell's Spotlight; QuickOpen is ⌘P.
+      if (keyAction(e, { brain: true }) === 'quick') {
         e.preventDefault();
         setQuick(true);
-      } else if (key === 'i') {
-        e.preventDefault();
-        // ⌘I opens Ask with the caret in its box; pressed again from the box, it closes.
-        if (askOpenRef.current && document.activeElement?.id === SPOTLIGHT_INPUT) setAskOpen(false);
-        else {
-          setAskOpen(true);
-          setTimeout(focusBrainSpotlight, 0);
-        }
       } else if (key === 'b') {
         e.preventDefault();
         if (layoutRef.current.explorer) setSidebar((v) => !v);
@@ -231,6 +216,17 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
   const spotlightFile: SpotlightFile | undefined = active
     ? { ref: active, name: page?.entity.name ?? tree?.files.get(active)?.title ?? nameOf(active), page: isPage(active), ...(home?.shared[0] && { topShared: home.shared[0].name }) }
     : undefined;
+  // The shell's Spotlight asks about the open file: publish it (and clear it when the workbench goes).
+  const [fileRef, fileName, fileIsPage, fileTop, fileModel] = [spotlightFile?.ref, spotlightFile?.name, spotlightFile?.page, spotlightFile?.topShared, home?.model];
+  useEffect(() => {
+    setBrainFile(fileRef ? { ref: fileRef, name: fileName ?? fileRef, page: Boolean(fileIsPage), ...(fileTop && { topShared: fileTop }), ...(fileModel && { model: fileModel }) } : undefined);
+  }, [fileRef, fileName, fileIsPage, fileTop, fileModel]);
+  useEffect(() => () => setBrainFile(undefined), []);
+  // And its opener, so a link in an answer opens a tab here instead of navigating (which would remount the workbench).
+  useEffect(() => {
+    setBrainOpener(open);
+    return () => setBrainOpener(undefined);
+  }, [open]);
 
   const sideView = home && tree && (
     <>
@@ -275,14 +271,14 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
           </button>
           <button
             type="button"
-            onClick={() => setAskOpen((v) => !v)}
+            onClick={() => (askOpen ? closeSpotlight() : openSpotlight('/brain'))}
             aria-pressed={askOpen}
-            title="Ask the brain (⌘I)"
+            title="Ask the brain (⌘K)"
             className={cn('flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2 text-[12px] font-medium max-md:min-h-9', askOpen ? 'border-ac bg-acdim text-t1' : 'border-bd text-t2 hover:border-ac hover:text-t1')}
           >
             <Sparkles className="size-3.5 text-viz-7" aria-hidden />
             Ask
-            <kbd className="hidden rounded border border-hair px-1 font-mono text-[10.5px] text-t3 lg:inline">⌘I</kbd>
+            <kbd className="hidden rounded border border-hair px-1 font-mono text-[10.5px] text-t3 lg:inline">⌘K</kbd>
           </button>
           <div className="hidden items-center gap-0.5 md:flex">
             {layout.explorer && (
@@ -439,13 +435,6 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
               />
             )}
           </div>
-
-          {/* Ask: docked at the right of the editor on a desktop (the page narrows), so a link opens the page beside the answer. */}
-          {askOpen && !phone && (
-            <aside className="hidden h-full min-h-0 w-[360px] shrink-0 flex-col border-l border-hair bg-sf md:flex" aria-label="Ask the brain">
-              <BrainSpotlight file={spotlightFile} onClose={() => setAskOpen(false)} conversation={conversation} {...(home?.model && { model: home.model })} />
-            </aside>
-          )}
         </div>
 
         {/* Status bar. */}
@@ -462,10 +451,6 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
             </>
           )}
         </div>
-
-        <Sheet open={askOpen && phone} onClose={() => setAskOpen(false)} title="Ask the brain" className="h-[85dvh]">
-          <BrainSpotlight file={spotlightFile} onClose={() => setAskOpen(false)} conversation={conversation} {...(home?.model && { model: home.model })} />
-        </Sheet>
 
         {quick && (
           <QuickOpen
@@ -531,7 +516,7 @@ const Skeleton = () => (
 function Welcome() {
   const rows: Array<[string, string]> = [
     ['Go to a page or command', '⌘P'],
-    ['Ask the brain', '⌘I'],
+    ['Ask the brain', '⌘K'],
     ['Toggle the side bar', '⌘B'],
     ['Toggle the panel', '⌘J'],
     ['Preview or Markdown', '⌘⇧V'],

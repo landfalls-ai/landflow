@@ -59,7 +59,7 @@ afterAll(() => {
 
 const node = (id: string, name: string, type: string, parameters: Record<string, unknown> = {}): WorkflowNode => ({ id, name, type, typeVersion: 1, position: [0, 0], parameters });
 const workflow = (id: string, name: string, nodes: WorkflowNode[], extra: Partial<Workflow> = {}) =>
-  store.saveWorkflow({ id, name, active: false, nodes, connections: [], createdBy: owner.id, ...extra } as Workflow);
+  store.saveWorkflow({ id, name, active: false, nodes, connections: [], createdBy: owner.id, ...extra } as Workflow, { actor: extra.createdBy ?? owner.id });
 const listener = (id: string, parameters: Record<string, unknown> = {}) => workflow(id, `Flow ${id}`, [node('d', 'On decided', 'core.suggestionDecidedTrigger', parameters)], { active: true });
 
 async function call(handler: unknown, url: string, init: RequestInit & { json?: unknown } = {}, params?: Record<string, string>) {

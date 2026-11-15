@@ -10,6 +10,7 @@
 import type { Workflow, WorkflowNode } from '@landflow/engine';
 import type { NodeItem } from '@landflow/sdk';
 import { detectorFilter, type Proposal, type ProposalDecision } from '../../shared/brain';
+import { outsideRequest } from '../auth/context';
 import { workflowForCall } from '../publish';
 import { runWorkflow } from '../runner';
 import { singleton } from '../singleton';
@@ -120,8 +121,8 @@ export function dispatchDecision(proposal: Proposal, decision: ProposalDecision,
       fireTrigger({ source: 'suggestion', workflowId: entry.workflow.id, nodeName: entry.node.name }, () =>
         runWorkflow({ workflow: entry.workflow, mode: 'trigger', startNodeId: entry.node.id, triggerItems: items }),
       ).catch((error) => logger.warn('On Suggestion Decided could not start its workflow', { error, 'landflow.workflow.id': entry.workflow.id }));
-    const timer = setTimeout(() => void start(), 0);
-    timer.unref?.();
+    // Outside the deciding person's request: a trigger run is nobody's (runner/run.ts), and nothing in it may act as them.
+    outsideRequest(() => setTimeout(() => void start(), 0)).unref?.();
   }
   return [...new Map(listeners.map((l) => [l.workflow.id, { id: l.workflow.id, name: l.workflow.name }])).values()];
 }

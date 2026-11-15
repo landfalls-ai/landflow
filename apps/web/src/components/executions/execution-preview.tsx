@@ -27,6 +27,7 @@ import {
   SkipForward,
   Square,
   StepForward,
+  Sparkles,
   Timer,
   Trash2,
   Waypoints,
@@ -34,6 +35,7 @@ import {
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
+import { askAbout, askDetail } from '@/lib/client/ask-about';
 import { useLiveEvents } from '@/lib/client/live';
 import { progressLine, type NodeProgress } from '@/lib/client/node-progress';
 import type { RunEntry } from '@/lib/client/run-data';
@@ -464,6 +466,8 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
 
   const hasSnapshot = Boolean(record.workflow);
   const retryable = canRetry(record);
+  const askAboutRecord = () =>
+    askAbout(askDetail({ type: 'run', id: record.executionId, name: `${record.workflowName} run`, workflowId: record.workflowId }, { failed: record.status === 'error' }));
   const retryMenu = (close: () => void) => (
     <RerunMenu
       retryable={retryable}
@@ -616,6 +620,11 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
               </Button>
             ) : (
               <>
+                {record.status === 'error' && (
+                  <Button variant="outline" onClick={() => askAboutRecord()} title="Open Spotlight about this run">
+                    <Sparkles className="size-3.5" /> Ask why it failed
+                  </Button>
+                )}
                 <Popover
                   trigger={({ open: isOpen, toggle }) => (
                     <Button
@@ -643,6 +652,14 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                 >
                   {(close) => (
                     <>
+                      <MenuItem
+                        onClick={() => {
+                          close();
+                          askAboutRecord();
+                        }}
+                      >
+                        <Sparkles /> {record.status === 'error' ? 'Ask why it failed' : 'Ask Spotlight'}
+                      </MenuItem>
                       <MenuItem
                         onClick={() => {
                           close();

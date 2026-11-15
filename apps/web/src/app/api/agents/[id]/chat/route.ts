@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { agentEventStream } from '@/lib/server/agents/http';
 import { isRunning, newSession, runAgent } from '@/lib/server/agents/runtime';
 import { agentStore } from '@/lib/server/agents/store';
+import { currentActorId } from '@/lib/server/auth/context';
 import { error, handler, parseBody } from '@/lib/server/http';
 
 export const dynamic = 'force-dynamic';
@@ -19,5 +20,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   if (session?.status === 'awaiting_approval') return error('Approve or deny the pending tool calls first', 409);
   session ??= newSession(agent, { source: 'test', userId: 'you', version: 'draft' });
   const start = session;
-  return agentEventStream((onEvent) => runAgent({ agent, session: start, message: body.data.message, onEvent, rootTrace: true }));
+  // The person chatting: workflows the agent's tools run are theirs (agents/tools.ts, ToolCaller).
+  const by = currentActorId();
+  return agentEventStream((onEvent) => runAgent({ agent, session: start, message: body.data.message, onEvent, rootTrace: true, ...(by && { caller: { startedBy: by } }) }));
 });

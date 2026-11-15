@@ -9,7 +9,7 @@
 #   docker compose -f deploy/compose.infra.yml --profile kafka --profile rabbitmq --profile nats up -d   # + tier 1 brokers
 #   docker compose -f deploy/compose.infra.yml --profile git up -d git-ssh                    # + throwaway SSH Git server (run infra/git/gen-keys.sh first)
 #   docker compose -f deploy/compose.infra.yml --profile valkey-cluster up -d --wait         # + a 6-node Valkey Cluster (3 primaries, 3 replicas) on 127.0.0.1:56411-56416
-#   ... profiles mqtt, artemis, pulsar, pubsub, servicebus (tier 2 brokers), mcp-gateway (agentgateway), llm-gateway (agentgateway in front of the models)
+#   ... profiles mqtt, artemis, pulsar, pubsub, servicebus (tier 2 brokers), mcp-gateway (agentgateway), llm-gateway (LiteLLM in front of the models)
 #
 # Ports, credentials and URLs: docs/deployment.md. Defaults live here; deploy/.env overrides them.
 # Every credential is for local development only.
@@ -549,21 +549,62 @@ services:
       - mcp-gateway-data:/data
 
   llm-gateway:
-    # agentgateway 1.6 as an LLM gateway in front of the model port (docs/agents.md "Model router", docs/deployment.md): one
-    # OpenAI-compatible endpoint, http://127.0.0.1:54100/v1/chat/completions, for any provider listed in llm-gateway/config.yaml
-    # (a local Ollama on the host to begin with). Landflow's agents use it as an OpenAI model with this base URL.
-    # The admin API and UI (http://127.0.0.1:55100/ui) have no authentication: loopback only. Distroless: no healthcheck.
-    image: cr.agentgateway.dev/agentgateway:v1.6.0@sha256:9d3e6044ddcdc0878b1787f77bd401252b95e22684203fb5e874c4c42d2ed90c
+    # LiteLLM's open-source proxy as the one door for model calls (docs/llm-gateway.md): http://127.0.0.1:54100/v1/messages,
+    # /v1/chat/completions and the admin UI at /ui, for the models listed in llm-gateway/config.yaml (a local Ollama on the
+    # host to begin with). Its keys, teams, budgets and spend log live in the `litellm` database of the postgres service
+    # above, created by llm-gateway-db. Dev keys only: set real ones with the LANDFLOW_LLM_GATEWAY_* variables.
+    # Pinned by digest: on 21 October 2026 a supply-chain compromise poisoned LiteLLM v1.107.0 and its moving tags, and the
+    # signing key was rotated on 23 October. Never use v1.107.0, latest, main-latest, main-stable, -nightly or -dev.
+    # Pinned: v1.108.2-lts, index digest sha256:d8b4ac35..., 2026-11-15, linux/arm64 and linux/amd64 found with
+    # `buildx imagetools inspect`; the cosign signature was NOT verified on that day (cosign was not installed): run
+    # deploy/scripts/verify-litellm-image.sh where it is.
+    # The admin UI shares the API port, so it stays on loopback on purpose (not LANDFLOW_BIND_ADDR).
+    image: ghcr.io/berriai/litellm:v1.108.2-lts@sha256:d8b4ac356743d647a13bb93f45b941fcd5f5354122cfd205948a1b192790389d
     profiles: [llm-gateway]
     restart: unless-stopped
-    command: ["-f", "/config/config.yaml"]
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    environment:
+      DATABASE_URL: postgresql://${LANDFLOW_POSTGRES_USER:-landflow}:${LANDFLOW_POSTGRES_PASSWORD:-landflow-dev-only}@postgres:5432/litellm
+      LITELLM_MASTER_KEY: ${LANDFLOW_LLM_GATEWAY_MASTER_KEY:-sk-landflow-dev-master-only}
+      LITELLM_SALT_KEY: ${LANDFLOW_LLM_GATEWAY_SALT_KEY:-sk-landflow-dev-salt-only}
+      UI_USERNAME: ${LANDFLOW_LLM_GATEWAY_UI_USERNAME:-admin}
+      UI_PASSWORD: ${LANDFLOW_LLM_GATEWAY_UI_PASSWORD:-landflow-dev-only}
+      LITELLM_TELEMETRY_DISABLED: "true"
+      LITELLM_LOG: INFO
+      STORE_MODEL_IN_DB: "False"
     ports:
-      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_LLM_GATEWAY_PORT:-54100}:3000"
-      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_LLM_GATEWAY_ADMIN_PORT:-55100}:15000"
+      - "127.0.0.1:${LANDFLOW_LLM_GATEWAY_PORT:-54100}:4000"
     volumes:
-      - ./llm-gateway/config.yaml:/config/config.yaml:ro
+      - ./llm-gateway/config.yaml:/app/config.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      llm-gateway-db:
+        condition: service_completed_successfully
+    healthcheck:
+      # The image is a Python image (python at /app/.venv/bin on PATH, per its config). It runs database migrations on start.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  llm-gateway-db:
+    # One-shot: creates the `litellm` database in the postgres service when it is missing (idempotent).
+    image: pgvector/pgvector:pg16
+    profiles: [llm-gateway]
+    restart: "no"
+    environment:
+      PGPASSWORD: ${LANDFLOW_POSTGRES_PASSWORD:-landflow-dev-only}
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        psql -h postgres -U ${LANDFLOW_POSTGRES_USER:-landflow} -d ${LANDFLOW_POSTGRES_DB:-landflow} -tc "SELECT 1 FROM pg_database WHERE datname='litellm'" | grep -q 1 || psql -h postgres -U ${LANDFLOW_POSTGRES_USER:-landflow} -d ${LANDFLOW_POSTGRES_DB:-landflow} -c "CREATE DATABASE litellm"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   tool-policy-opa:
     # Open Policy Agent as Landflow's tool access engine (docs/agents.md "Tool access"): LANDFLOW_TOOL_POLICY=opa and

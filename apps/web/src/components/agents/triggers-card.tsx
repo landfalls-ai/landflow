@@ -1,5 +1,5 @@
 'use client';
-/** Build tab → Triggers: schedules that message the agent, and chat channels it answers in (Telegram, Slack). */
+/** Abilities → Triggers: schedules that message the agent, and chat channels it answers in (Telegram, Slack). */
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { ChevronDown, Clock, Hash, Info, MessagesSquare, Pencil, Plus, Send, Trash2, X, Zap } from 'lucide-react';
 import { cn } from '@/lib/utils';

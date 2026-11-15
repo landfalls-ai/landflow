@@ -438,8 +438,10 @@ export function openSqliteConnection(location: string): DatabaseSync {
   if (location !== ':memory:') mkdirSync(dirname(location), { recursive: true });
   const sqlite = new DatabaseSync(location);
   if (location !== ':memory:') {
-    sqlite.exec('PRAGMA journal_mode = WAL');
+    // The busy timeout first: switching a new file to WAL takes a lock, and without the timeout a second process opening
+    // the same file at that moment fails at once with "database is locked" (tests that share one data directory did).
     sqlite.exec('PRAGMA busy_timeout = 10000');
+    sqlite.exec('PRAGMA journal_mode = WAL');
     sqlite.exec('PRAGMA synchronous = NORMAL');
   }
   sqlite.exec('PRAGMA foreign_keys = OFF');

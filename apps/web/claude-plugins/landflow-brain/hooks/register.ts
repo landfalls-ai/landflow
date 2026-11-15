@@ -9,9 +9,10 @@
  */
 import type { EngineInterface, Register } from 'claude-code'
 import { QUEUE_MAX, VISIBILITIES, backoffMs, callBrain, confirmAndPost, deleteWork, due, emptyQueue, enqueue, getBriefing, keyFingerprint, liftStop, postWork, serverUrl, settle, shareRequest, visibilityRequest, type Briefing, type Config, type OutEvent, type Queue, type WorkVisibility } from './client'
-import { addArea, addPrs, areaOf, bandLine, bashFacts, canPost, effectiveMode, isAllowed, localDay, newEntry, parseRepos, repoSlug, statusLine, syncText, type Entry, type View } from './journal'
+import { addArea, addPrs, areaOf, bandLine, bashFacts, canPost, isAllowed, localDay, newEntry, parseRepos, repoSlug, statusLine, syncText, type Entry, type View } from './journal'
 import { PANE_ID, drawBand, drawPane } from './pane'
 import { titleFrom, toEvent } from './summary'
+import { BRAIN_ASK_FULL, BRAIN_ASK_SPEC, brainAsk, questionOf } from './tools'
 
 const FLUSH_MS = 60_000
 /** The journal keeps this many entries and this many days. */
@@ -343,6 +344,8 @@ export const register: Register = (on, options) => {
     allowed = undefined
     brainOff = false
     yesterday = undefined
+    // The model's own way in: only with a key, and never failing the session.
+    if (config) await $.tool.register(BRAIN_ASK_SPEC as never).catch(() => undefined)
     await $.command.register({ name: 'brain', description: 'Your work in the company brain: sync, today, review, status, pause, resume, forget <id>, visibility <id> private|team|org, post <id>', argumentHint: 'sync | today | review | status | pause | resume | forget <id> | visibility <id> <who> | post <id>' })
     if (config && mode !== 'off') {
       // An entry left open by a session that never ended is held as it stood.
@@ -366,6 +369,8 @@ export const register: Register = (on, options) => {
       // The briefing is always read, for the policy (auto-send, brain off); `sync` only decides whether yesterday joins the prompt.
       const briefing: Briefing | undefined = await getBriefing($, config, day(await $.clock.now()))
       if (briefing?.brain === 'off') brainOff = true
+      // No briefing (offline, no cache for today): forget an older day's `allowed`, so mode `auto` holds until one answers.
+      if (!briefing) await $.store.delete('autoSend')
       if (briefing) {
         await $.store.set('autoSend', briefing.autoSend)
         await $.store.set('view', { day: briefing.day, today: briefing.today, yesterday: briefing.yesterday, related: briefing.related } satisfies View)
@@ -401,6 +406,14 @@ export const register: Register = (on, options) => {
     }
     return next(e)
   }).catch(($, e, next) => next(e))
+
+  on('tool.call', { tool: BRAIN_ASK_FULL }, async ($, e) => {
+    const question = questionOf(e)
+    if (!config) return { result: { content: 'The brain is not set up: add the Landflow URL and key in the mod options.' }, isError: true } as never
+    if (!question) return { result: { content: 'Give a question.' }, isError: true } as never
+    const answer = await brainAsk($, config, question)
+    return { result: { content: answer.text }, ...(answer.isError && { isError: true }) } as never
+  })
 
   on('tool.call', async ($, e, next) => {
     // Observe after the call: never deny, never change what the tool answers.
@@ -474,8 +487,10 @@ export const register: Register = (on, options) => {
       case '':
       case 'sync': {
         const view = await viewOf($, sub === 'sync')
-        await $.ui.open({ id: PANE_ID, title: 'Brain' })
-        return reply(sub === 'sync' ? syncText(view) : 'Brain pane opened (Esc closes it). /brain sync lists yesterday and your colleagues here.')
+        // Where there is no pane to open, /brain sync still answers with its text.
+        const opened = await $.ui.open({ id: PANE_ID, title: 'Brain' }).then(() => true, () => false)
+        if (sub === 'sync') return reply(syncText(view))
+        return reply(opened ? 'Brain pane opened (Esc closes it). /brain sync lists yesterday and your colleagues here.' : 'There is no pane here; /brain sync lists yesterday and your colleagues as text.')
       }
       case 'post': {
         const view = await viewOf($, false)

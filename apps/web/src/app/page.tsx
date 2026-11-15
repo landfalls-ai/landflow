@@ -14,6 +14,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { CountUp } from '@/components/ui/count-up';
 import { NodeIcon } from '@/components/ui/icon';
 import { SectionLabel } from '@/components/ui/inputs';
+import { BriefingCard } from '@/components/brain/briefing-card';
 import { SuggestionsInbox } from '@/components/brain/suggestions-inbox';
 import { LiveRuns } from '@/components/run-trace/run-lists';
 import { RunLines } from '@/components/run-trace/run-line';
@@ -107,6 +108,7 @@ export default function Overview() {
       />
       <PageBody className="flex flex-col gap-5">
         <PluginsOfflineLine count={offlinePlugins(plugins)} />
+        <BriefingCard />
         <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {homeKpis(stats, needsYou?.length).map((kpi, i) => (
             <Kpi key={kpi.label} kpi={kpi} index={i} />

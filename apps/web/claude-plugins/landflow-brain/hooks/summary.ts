@@ -131,7 +131,8 @@ export interface BrainWorkEvent {
   commits: number
   prs?: Array<{ url: string; state: 'opened' | 'merged' }>
   turns: number
-  visibility: 'private'
+  /** `private` as written; the review or `/brain visibility` may widen a held or sent one. */
+  visibility: 'private' | 'team' | 'org'
 }
 
 const plural = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`

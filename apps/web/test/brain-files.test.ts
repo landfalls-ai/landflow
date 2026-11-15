@@ -87,6 +87,10 @@ describe('Markdown', () => {
     const index = indexMarkdown(home);
     expect(index).toContain('## Shared across teams\n\n- [[customer/acme|Acme]] — 2 teams, 2 items\n  - Sales: 1 (Lee)');
     expect(index).toContain('## Needs a person\n\n- No owner: [[initiative/atlas|Atlas]]\n- Quiet for 30 days: [[initiative/atlas|Atlas]]');
+    // A section with nothing in it is left out, as its card is in the Preview.
+    const quiet = indexMarkdown({ ...home, shared: [], proposals: [], teams: [], health: { noOwner: [], quiet: [], staleSummaries: [] } } as typeof home);
+    expect(outlineOf(quiet)).toEqual([]);
+    expect(quiet).not.toContain('Shared across teams');
     const log = logMarkdown(home);
     expect(outlineOf(log).map((o) => o.title)).toEqual(['2026-11-12', '2026-11-11']);
     // Someone without a page is named by their email.

@@ -12,6 +12,7 @@ import { can } from '@/lib/shared/auth';
 import { cn } from '@/lib/utils';
 import { useViewer } from '../auth/viewer';
 import { MenuItem, MenuLabel, MenuSeparator, Popover } from '../ui/popover';
+import { rememberProject } from './current-project';
 import { NewProjectDialog } from './project-dialogs';
 import { projectLabel, useProjects } from './use-projects';
 
@@ -50,6 +51,8 @@ export function ProjectSwitcher() {
             <MenuItem
               onClick={() => {
                 close();
+                // The rail decides: Templates (and anything else that starts on the remembered project) shows all again.
+                rememberProject(undefined);
                 router.push('/projects');
               }}
             >

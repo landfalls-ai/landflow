@@ -175,7 +175,8 @@ function EndpointRow({ endpoint, open, onToggle }: { endpoint: Endpoint; open: b
   );
 }
 
-export function ApiDocs() {
+/** `onLoaded` runs once the OpenAPI document has rendered (the page is then its full height). */
+export function ApiDocs({ onLoaded }: { onLoaded?: () => void } = {}) {
   const [doc, setDoc] = useState<OpenApiDoc>();
   const [error, setError] = useState<string>();
   const [origin, setOrigin] = useState('http://localhost:3000');
@@ -188,6 +189,12 @@ export function ApiDocs() {
       .then(setDoc)
       .catch((e: Error) => setError(e.message));
   }, []);
+  const loaded = Boolean(doc);
+  useEffect(() => {
+    if (loaded) onLoaded?.();
+    // Once, when the document arrives: a new onLoaded on a later render is not a new load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded]);
 
   const groups = useMemo(() => {
     if (!doc) return [];

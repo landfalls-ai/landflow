@@ -39,6 +39,24 @@ import { afterRun } from './links';
 import { enqueue, drainQueueSafely } from './queue';
 import { seedFromCheckpoint } from './recovery';
 
+/** Modes a person starts: the editor's or the API's run, chat, an MCP tool call, an agent's tool call (its caller's). */
+const PERSON_MODES: ReadonlySet<RunOptions['mode']> = new Set(['manual', 'chat', 'mcp', 'tool']);
+
+/**
+ * Who started the run, when a person did (`startedBy`): a run in a person's mode, a re-run, or a retry someone asked
+ * for records the caller's user (`options.startedBy`, else the request's signed-in user); an automatic retry keeps the
+ * starter of the run it retries (planRetry passes it), and an agent's tool call the one its caller names (never the
+ * request around it). Trigger, poll and webhook runs record nobody, even inside a request: a schedule's timer armed
+ * during a save would otherwise carry the saver. The briefing nodes rely on it
+ * (nodes/briefing.ts): no starter means a trigger started the run. A sub-workflow takes its parent's (runWorkflow).
+ */
+function starterOf(options: RunOptions): string | undefined {
+  // An agent's tool call names its starter (agents/tools.ts): the request around it may be someone else's.
+  if (options.retry?.automatic || (options.mode === 'tool' && !options.retry && !options.rerunOf)) return options.startedBy;
+  const byPerson = PERSON_MODES.has(options.mode) || Boolean(options.rerunOf) || Boolean(options.retry);
+  return byPerson ? (options.startedBy ?? currentActorId() ?? options.mcp?.userId) : undefined;
+}
+
 /** Execute a workflow through the registry, stream events, persist the result. */
 export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord> {
   // Debounce / batching of the trigger: the event is held and a later run takes it (RunBufferedError says when).
@@ -79,10 +97,12 @@ export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord>
   const executionId = claimed?.executionId ?? options.executionId ?? newExecutionId();
   let depth = 0;
   let evaluation = options.evaluation;
+  let parentStarter: string | undefined;
   if (options.parent) {
     const parentEntry = live.get(options.parent.executionId);
     const parentRecord = parentEntry?.record ?? store.getExecution(options.parent.executionId);
     depth = (parentRecord?.depth ?? 0) + 1;
+    parentStarter = parentRecord?.startedBy;
     evaluation ??= parentRecord?.evaluation;
     if (depth > MAX_WORKFLOW_DEPTH) throw new Error(`Sub-workflows can be nested at most ${MAX_WORKFLOW_DEPTH} levels deep`);
     // Linked both ways: the parent lists its sub-executions, the child names its parent.
@@ -94,8 +114,7 @@ export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord>
   // The version it starts on (an unsaved editor draft has none: its graph is saved with the execution instead).
   const version = versionFor(options.workflow);
   const versionId = version?.id;
-  // A manual run started by a signed-in user (the editor's Execute, the API's run, a retry or re-run).
-  const startedBy = options.mode === 'manual' || options.mode === 'chat' ? currentActorId() : undefined;
+  const startedBy = options.parent ? parentStarter : starterOf(options);
   const record: ExecutionRecord = {
     executionId,
     workflowId: options.workflow.id,
@@ -112,8 +131,9 @@ export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord>
     ...(options.parent && { parentExecutionId: options.parent.executionId, depth }),
     ...(options.parent?.nodeId && { parentNodeId: options.parent.nodeId }),
     ...(options.errorOf && { errorOf: options.errorOf }),
+    ...(options.metricOf && { metricOf: options.metricOf }),
     ...(version && { versionId: version.id, versionNumber: version.number, versionPublished: publishedVersionId(options.workflow.id) === version.id }),
-    ...(options.retry && { retryOf: options.retry.of, retryAttempt: options.retry.attempt }),
+    ...(options.retry && { retryOf: options.retry.of, retryAttempt: options.retry.attempt, ...(options.retry.automatic && { retryAutomatic: true }) }),
     ...(idempotencyKey && { idempotencyKey }),
     ...(evaluation && { evaluation }),
     ...(startedBy && { startedBy }),

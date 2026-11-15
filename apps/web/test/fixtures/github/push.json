@@ -1,0 +1,23 @@
+{
+  "event": "push",
+  "action": null,
+  "deliveryId": "d-push",
+  "body": {
+    "ref": "refs/heads/main",
+    "commits": [
+      {
+        "id": "abc",
+        "message": "secret code"
+      }
+    ],
+    "repository": {
+      "full_name": "acme-demo/widgets"
+    },
+    "sender": {
+      "login": "octo-dev"
+    }
+  },
+  "headers": {
+    "x-github-event": "push"
+  }
+}

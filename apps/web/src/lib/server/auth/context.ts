@@ -37,3 +37,11 @@ export function requestAuth(): RequestAuth | undefined {
 export function currentActorId(): string | undefined {
   return storage().getStore()?.principal?.user.id;
 }
+
+/**
+ * Run `fn` outside the current request's auth: no actor inside it, nor in the timers and promises it starts. For work a
+ * request only sets off (a decision's listening workflows): it must not run as the person who made the request.
+ */
+export function outsideRequest<T>(fn: () => T): T {
+  return storage().exit(fn);
+}

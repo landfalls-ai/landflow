@@ -84,6 +84,8 @@ export function importJsonData(db: Database, dir: string, now = new Date()): Imp
             for (const entry of index) {
               const version = ID.test(entry.id) ? readJson<WorkflowVersion>(join(versionDir, `${entry.id}.json`)) : undefined;
               if (!version?.workflow) skip(join(versionDir, `${entry.id}.json`));
+              // No author: these files predate authors (migration 2091), and an author is never taken from a file, so an
+              // imported version counts as nobody's (versions.ts versionAuthor) until an owner or admin saves a change.
               else count('versions', db.insertNew('workflow_versions', versionRow({ ...version, ...entry, workflow: version.workflow })));
             }
           }

@@ -30,7 +30,7 @@ Once there are agents the strip is gone.
 
 ### Templates
 
-The **New agent** dialog has three ways in at its top: **From a persona** (the gallery below), **Design with AI** (the
+The **New agent** dialog has three ways in at its top: **From a persona** (the gallery below; pressing it moves the focus to the chosen card), **Design with AI** (the
 [Agent architect](#agent-architect)) and **From a file**, which imports an agent exported as JSON and opens it (this was
 **Import JSON** in the page header). The gallery starts an agent from a persona template, grouped by category: the built-in ones (Support lead,
 Researcher, Incident responder, Release notes writer, Data analyst, Onboarding guide, Account researcher, and a blank
@@ -185,7 +185,7 @@ the Triggers row. The three tabs:
 the kagent card does not show without one.
 
 Older links still work (`mapLegacyTab` in `components/agents/tabs.ts`): `?tab=build` opens Persona, `?tab=deploy` opens
-Abilities with Deploy open, `?tab=safety` and `?tab=settings` open Abilities with Guardrails open, `?tab=sessions` and
+Abilities with Deploy open (or with nothing open on a host with no kagent credential, where there is no Deploy row), `?tab=safety` and `?tab=settings` open Abilities with Guardrails open, `?tab=sessions` and
 `?tab=evaluations` open Activity on that view, and a `session=` id alone opens Activity on Sessions.
 
 ### The persona
@@ -205,7 +205,7 @@ beside it until you press **View prompt** (a read-only preview; **Edit** jumps t
 - **Examples**: a message and the answer you'd want, up to 10. Only examples with both sides go into the prompt.
 - **Instructions**: anything the parts don't cover, in your own words.
 
-**What the model reads** shows the system prompt as you type. It comes from `personaPrompt()` in
+**What the model reads** shows the system prompt once opened, kept up to date as you type. It comes from `personaPrompt()` in
 `apps/web/src/lib/shared/persona.ts`, the function the runtime and kagent's AgentTemplate also use, so the text you see
 is the text that runs here and on kagent. Each run adds the date and time and, with cross-session memory, the facts
 it remembers. The parts become sections in this order:
@@ -386,7 +386,7 @@ absent from an agent without any). Publishing needs a model, and a persona part 
   included) at the prices of Settings → AI prices. A run that reaches one stops with the reason
   `budget` and a notice saying which limit and where to change it; later runs are refused before
   any model call until the day or month turns. The Guardrails row shows today's and this month's
-  usage ([observability.md](observability.md#token-and-cost-tracking)).
+  usage ([observability.md](observability.md#8-token-and-cost-tracking)).
 
 **Publish** snapshots the draft as version N. At most 20 versions are kept, and the builder's
 "…" menu lists them. A session stays on the version it started with. Telegram conversations move
@@ -491,7 +491,7 @@ and footer, and keeps its answer card.
   All Data*. **Run** in the editor starts from it too, with empty example values for each argument.
 - **Run an Agent** (`core.messageAgent`, formerly "Message an Agent"; the type is unchanged) runs
   a published agent as a step of the flow. The agent brings its persona, skills, capabilities,
-  guardrails and usage limits. Used as a tool, the node (like Run a Team) takes `message` and a required `reason`. Tool images: the node's **Tool Images to Keep** option, else the agent's **Tool images to keep** (Settings tab), else `LANDFLOW_TOOL_IMAGES_KEPT`, else 2; Run Trace shows each image as a thumbnail ([features/ai.md](features/ai.md)). Like the AI Agent, the node has three optional sub-node ports:
+  guardrails and usage limits. Used as a tool, the node (like Run a Team) takes `message` and a required `reason`. Tool images: the node's **Tool Images to Keep** option, else the agent's **Tool images to keep** (Abilities → Guardrails), else `LANDFLOW_TOOL_IMAGES_KEPT`, else 2; Run Trace shows each image as a thumbnail ([features/ai.md](features/ai.md)). Like the AI Agent, the node has three optional sub-node ports:
   - **Chat Model**: a chat model node (Ollama, Anthropic, OpenAI…) that replaces the agent's own
     model for this run.
   - **Tool**: any `usableAsTool` node, an MCP Client Tool, or a vector store in *Retrieve
@@ -517,7 +517,7 @@ and footer, and keeps its answer card.
   A2A agent in each tool entry's `remote`, can be read mid-run. In the execution view
   (`/workflows/<wf>/runs/<ex>`) an **Agent session** panel sits between the canvas and the
   logs: it opens by itself while an agent node runs and polls every 2 s, shows the agent's own
-  timeline (the one of the Sessions tab, with each remote agent's commands), and stays after the
+  timeline (the one of Activity → Sessions, with each remote agent's commands), and stays after the
   run, with a link to the session on the agent's page. With several Run an Agent nodes, pick the
   node in the panel's header. Executions from before this change have no linked session.
 
@@ -568,14 +568,10 @@ of the agent's config: it is versioned, diffed (**Changed: Router**), exported a
 Because the cheap model is just a model setting, the components behind it are swappable: point it at Ollama today and at
 a gateway (agentgateway, LiteLLM, OpenRouter) tomorrow without touching the agent.
 
-**An LLM gateway.** `deploy/llm-gateway/config.yaml` runs agentgateway (the data plane the MCP gateway already uses, and the
-one kgateway's own docs recommend now that its Envoy-based AI Gateway is deprecated) as one OpenAI-compatible endpoint in
-front of the models: `docker compose -p landflow-infra -f deploy/compose.infra.yml --profile llm-gateway up -d llm-gateway`
-serves `http://127.0.0.1:54100/v1` (admin UI on 55100). Make an **OpenAI API** credential with that base URL and no key, and an
-agent (or the router's cheap model) with the OpenAI provider and a model name from the config (`ollama/qwen3.8`). Each model
-the gateway offers is one entry in its config; the agent never names a provider. On Kubernetes,
-`deploy/k8s/examples/llm-gateway/llm-gateway.yaml` is the same gateway as a ConfigMap, Deployment and Service
-(`http://llm-gateway:3000/v1`).
+**An LLM gateway.** A [LiteLLM](llm-gateway.md) proxy in front of the models is one endpoint for every agent. Set an **Anthropic API** or
+**OpenAI API** credential's **Gateway** to LiteLLM, with the proxy as its Base URL and a virtual key as its API key, and an agent
+that uses it calls the proxy: the model picker lists the gateway's models, the call says which person, project and agent it is for,
+and LiteLLM's call id and cost are kept on the AI call. See [llm-gateway.md](llm-gateway.md#point-landflow-at-it).
 
 ## Prompt cache
 
@@ -839,7 +835,7 @@ through the infra Mailpit (`apps/web/test/approval-email-mailpit.test.ts`, skipp
 | `GET /api/insights/ai-usage?agentId=` | the agent's tokens and estimated cost: totals, per model, per day, `today` and `month` |
 | `GET /api/agents/:id/sessions`, `GET/DELETE /api/agents/:id/sessions/:sid` | session list / full session (`feedback`: the thumbs up / down per reply) |
 | `GET /api/agents/:id/sessions?executionId=&nodeId=` | `{ sessions }`: the full sessions (timeline included, oldest first) that a workflow run started with Run an Agent nodes, optionally of one node; the execution view's Agent session panel polls it |
-| `GET /api/agents/:id/sessions/:sid/feedback`, `PUT` `{ entryId, rating: 'up' \| 'down' \| null, comment? }` | read / set the rating of one assistant reply (the Sessions tab's thumbs). A thumbs down on an agent with online grading enabled grades that reply ([Hosted chat and widget](features/ai.md#hosted-chat-and-widget)) |
+| `GET /api/agents/:id/sessions/:sid/feedback`, `PUT` `{ entryId, rating: 'up' \| 'down' \| null, comment? }` | read / set the rating of one assistant reply (the thumbs in Activity → Sessions). A thumbs down on an agent with online grading enabled grades that reply ([Hosted chat and widget](features/ai.md#hosted-chat-and-widget)) |
 | `GET /api/agents/models?provider&credentialId&baseUrl` | `{ options: ModelOption[], error? }` |
 | `GET /api/agents/workflow-tools` | workflows with `eligible` and the `reason` when they aren't |
 | `GET/PUT /api/agents/:id/evaluations` | online grading: `{ report: OnlineEvalReport }` (settings, scores, trend); `PUT` changes the settings |

@@ -1,7 +1,8 @@
 'use client';
 /**
- * Build tab → Capabilities → Add knowledge base: a vector store collection the agent searches with a
- * tool, or a plugin that answers the searches itself (Clickland's knowledge search: nothing to upload). Documents get in through a workflow (a vector store node in “Insert Documents” mode with the
+ * Abilities → Capabilities → Add knowledge base: a vector store collection the agent searches with a
+ * tool, or a plugin that answers the searches itself (Clickland's knowledge search: nothing to upload).
+ * Documents get in through a workflow (a vector store node in “Insert Documents” mode with the
  * same store, collection and embeddings model), or are uploaded here (PDF, DOCX, text, Markdown, HTML, CSV,
  * JSON): they go through the loader, a splitter and the embeddings model into the collection.
  */

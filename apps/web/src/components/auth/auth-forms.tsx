@@ -166,6 +166,16 @@ export function SetupForm() {
   );
 }
 
+/**
+ * What the invite card shows: the message alone when the invite is invalid or expired (nothing about choosing a
+ * password, since there is nothing to choose it for), a placeholder while it loads, else the form.
+ */
+export function InviteView({ loadError, loaded, children }: { loadError?: string; loaded: boolean; children: ReactNode }) {
+  if (loadError) return <ErrorBox message={loadError} />;
+  if (!loaded) return <div className="h-40 rounded-xl bg-sf2 animate-pulse-soft" />;
+  return <>{children}</>;
+}
+
 export function InviteForm({ token }: { token: string }) {
   const [invite, setInvite] = useState<{ email: string; role: Role; invitedBy?: string }>();
   const [loadError, setLoadError] = useState<string>();
@@ -180,14 +190,14 @@ export function InviteForm({ token }: { token: string }) {
     await api(`/api/auth/invites/${encodeURIComponent(token)}`, { method: 'POST', json: { name, password } });
     window.location.assign('/');
   });
-  if (loadError) return <ErrorBox message={loadError} />;
-  if (!invite) return <div className="h-40 rounded-xl bg-sf2 animate-pulse-soft" />;
   return (
+    <InviteView loadError={loadError} loaded={Boolean(invite)}>
+      {invite && (
     <form method="post" onSubmit={submit} className="space-y-3.5">
       <p className="text-[13px] leading-relaxed text-t2">
         {invite.invitedBy ? `${invite.invitedBy} invited you to join as ` : 'You are invited to join as '}
         <span className="font-semibold text-t1">{invite.role === 'admin' ? 'an admin' : 'a member'}</span>. You’ll sign in as{' '}
-        <span className="font-mono text-[12px] text-t1">{invite.email}</span>.
+        <span className="font-mono text-[12px] text-t1">{invite.email}</span>. Choose your name and a password to finish creating your account.
       </p>
       <Field label="Your name">
         <Input name="name" autoComplete="name" required autoFocus value={name} onChange={(e) => setName(e.target.value)} />
@@ -201,6 +211,8 @@ export function InviteForm({ token }: { token: string }) {
         Create account <ArrowRight className="size-3.5" />
       </Button>
     </form>
+      )}
+    </InviteView>
   );
 }
 

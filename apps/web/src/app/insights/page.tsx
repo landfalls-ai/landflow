@@ -77,7 +77,6 @@ const KPIS: { metric: Metric; label: string; format: (t: InsightsTotals) => stri
 
 function Kpi({ label, value, metric, report, index, previousLabel }: { label: string; value: string; metric: Metric; report: InsightsReport; index: number; previousLabel: string }) {
   const delta = change(metric, report.current, report.previous);
-  const Icon = delta.direction > 0 ? ArrowUp : ArrowDown;
   const before = KPIS.find((k) => k.metric === metric)!.format(report.previous);
   return (
     <StatCard
@@ -88,7 +87,7 @@ function Kpi({ label, value, metric, report, index, previousLabel }: { label: st
         delta.text ? (
           <>
             <span title={`${previousLabel}: ${before}`} className={cn('inline-flex items-center gap-0.5 whitespace-nowrap font-medium', delta.trend === 'good' ? 'text-gn' : delta.trend === 'bad' ? 'text-rd' : 'text-t2')}>
-              <Icon className="size-3" strokeWidth={2.4} />
+              {delta.direction > 0 ? <ArrowUp className="size-3" strokeWidth={2.4} /> : <ArrowDown className="size-3" strokeWidth={2.4} />}
               {delta.text}
             </span>
             <span>vs {previousLabel}</span>
@@ -212,7 +211,7 @@ export default function InsightsPage() {
         </Card>
 
         <details className="group text-[12px] leading-relaxed text-t3">
-          <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 hover:text-t2 [&::-webkit-details-marker]:hidden" aria-label="How Insights are counted">
+          <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 hover:text-t2 [&::-webkit-details-marker]:hidden">
             <CircleHelp className="size-3.5" aria-hidden />
             How these are counted
           </summary>

@@ -1,6 +1,6 @@
 'use client';
 /**
- * Build tab → Guardrails: checks on what goes into the agent (each user message) and what comes out (the final
+ * Abilities → Guardrails: checks on what goes into the agent (each user message) and what comes out (the final
  * answer), with the Guardrails node's checks. A rule blocks (the person gets the reply written here) or sanitizes
  * (PII, secrets, keywords and URLs are replaced and the run goes on). What a rule did shows in the session view.
  */

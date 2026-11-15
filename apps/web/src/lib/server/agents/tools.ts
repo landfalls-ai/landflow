@@ -65,6 +65,16 @@ import { agentStore } from './store';
 
 export const WORKFLOW_TRIGGER = 'core.workflowTrigger';
 
+/**
+ * Who a workflow an agent's tool runs is run for: the workflow run the agent works in (its sub-execution: it takes that
+ * run's starter, and the briefing nodes check that run), or the person who asked (`startedBy`). Empty: nobody, so the
+ * run has no starter (runner/run.ts never takes one from the request around it for a tool call).
+ */
+export interface ToolCaller {
+  execution?: { executionId: string; nodeId?: string };
+  startedBy?: string;
+}
+
 export interface ToolContext {
   agent: Agent;
   session: AgentSession;
@@ -83,6 +93,8 @@ export interface ToolContext {
   /** The model's id for this call, and the journal span it is recorded under (set by the runtime while a run is journaled). */
   callId?: string;
   callSpan?: string;
+  /** Who the workflows its tools start are run for (see ToolCaller). */
+  caller?: ToolCaller;
 }
 
 /**
@@ -573,7 +585,10 @@ function workflowTool(config: WorkflowToolConfig): BuiltTool | { error: string }
       // Read the workflow again: it may have been edited since the run started.
       const current = workflowToolInfo(config.workflowId);
       if (!current.eligible) throw new Error(current.reason);
-      const record = await runWorkflow({ workflow: current.workflow, mode: 'tool', startNodeId: current.trigger.id, triggerItems: [{ json: input as JsonObject }], signal: ctx.signal });
+      // Run for the agent's caller (ToolCaller), never for whoever's request is around the call.
+      const caller = ctx.caller ?? {};
+      const runFor = caller.execution ? { parent: caller.execution } : caller.startedBy ? { startedBy: caller.startedBy } : {};
+      const record = await runWorkflow({ workflow: current.workflow, mode: 'tool', startNodeId: current.trigger.id, triggerItems: [{ json: input as JsonObject }], signal: ctx.signal, ...runFor });
       if (record.status === 'error') throw new Error(`Workflow failed: ${record.error?.message ?? 'unknown error'} (execution ${record.executionId})`);
       // A Wait (or form page) in the workflow: it goes on in the background; the tool can't wait for it.
       if (record.status === 'waiting') {

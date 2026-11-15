@@ -20,7 +20,7 @@ import { executionRow, parse, pollRow, summarize, trimRunData, workflowRow } fro
 import { backtestScope } from './brain/backtest-scope';
 import { singleton } from './singleton';
 import { syncPublication } from './publications';
-import { recordVersion, versionFor } from './versions';
+import { recordVersion, versionFor, versionHash } from './versions';
 
 /** Write JSON through a temp file and a rename, so readers never see half a file. */
 export function atomicWrite(path: string, data: unknown) {
@@ -142,16 +142,27 @@ class Store {
     return this.cache.get(id);
   }
 
-  /** `autosave`: the editor's timed save, which folds into the newest autosave's version (lib/server/versions.ts). */
-  saveWorkflow(workflow: Workflow, options: { autosave?: boolean } = {}): Workflow {
+  /**
+   * Save a workflow. `autosave`: the editor's timed save, which folds into the newest autosave's version
+   * (lib/server/versions.ts). `actor`: who saves it (null: nobody); omitted, the signed-in user of the current request.
+   * `versionAuthor`: who a new version is credited to when that isn't the actor (a restore credits the restored
+   * version's author; null: nobody); omitted, the actor.
+   *
+   * Who made and last changed a workflow come only from the actor, never from the saved body. A save with no actor
+   * that changes the graph (anything versionHash counts) or its pin data records nobody as `updatedBy`, and the version
+   * it makes has no author.
+   */
+  saveWorkflow(workflow: Workflow, options: { autosave?: boolean; actor?: string | null; versionAuthor?: string | null } = {}): Workflow {
     const now = new Date().toISOString();
-    // Who: the signed-in user of the request saving it (none for system saves, which keep the last one).
-    const actor = currentActorId();
+    const actor = options.actor !== undefined ? (options.actor ?? undefined) : currentActorId();
     const existing = this.cache.get(workflow.id);
-    const createdBy = existing ? existing.createdBy : (workflow.createdBy ?? actor);
-    const updatedBy = actor ?? workflow.updatedBy;
+    const { createdBy: _createdBy, updatedBy: _updatedBy, ...body } = workflow;
+    const createdBy = existing ? existing.createdBy : actor;
+    const unchanged = Boolean(existing) && versionHash(existing!) === versionHash(workflow) && JSON.stringify(existing!.pinData ?? null) === JSON.stringify(workflow.pinData ?? null);
+    const updatedBy = actor ?? (unchanged ? existing!.updatedBy : undefined);
+    const author = options.versionAuthor !== undefined ? (options.versionAuthor ?? undefined) : actor;
     const saved: Workflow = {
-      ...workflow,
+      ...body,
       createdAt: existing?.createdAt ?? workflow.createdAt ?? now,
       updatedAt: now,
       ...(createdBy && { createdBy }),
@@ -160,7 +171,8 @@ class Store {
     this.db.transaction(() => {
       this.db.upsert('workflows', workflowRow(saved));
       // A save is a draft; turning `active` on or off (older clients) publishes it or unpublishes.
-      syncPublication(saved, (recordVersion(saved, options.autosave ? { autosave: { by: actor ?? '' } } : {}) ?? versionFor(saved))?.id);
+      const version = recordVersion(saved, { ...(options.autosave && { autosave: { by: actor ?? '' } }), ...(author && { author }) }) ?? versionFor(saved);
+      syncPublication(saved, version?.id, actor);
     });
     this.cache.set(saved.id, saved);
     this.listeners.forEach((listener) => listener());

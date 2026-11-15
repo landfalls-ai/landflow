@@ -1,6 +1,6 @@
 'use client';
 /**
- * Build tab → Capabilities → Add MCP server: a server whose tools the agent can call. The settings
+ * Abilities → Capabilities → Add MCP server: a server whose tools the agent can call. The settings
  * are the MCP Client Tool node's (endpoint, transport, auth credential, tools to include), so the
  * tool picker loads the server's tools the same way.
  */

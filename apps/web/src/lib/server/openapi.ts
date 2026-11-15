@@ -1,5 +1,5 @@
 /**
- * The public API as an OpenAPI 3.1 document (GET /api/openapi.json, Settings → API): workflows (and running them),
+ * The public API as an OpenAPI 3.1 document (GET /api/openapi.json, Developers → API reference): workflows (and running them),
  * executions, data tables, variables, templates and your account and API keys, plus the trigger URLs (webhooks, forms,
  * MCP Server Triggers and their test URLs: public, `security: []`, each checked by its trigger's own auth). Request
  * bodies of the workflow and row filter come from the routes' own zod schemas, so they can't drift; every other
@@ -210,7 +210,7 @@ const schemas: Record<string, Json> = {
       executionOrder: array({ type: 'string' }),
       lastNodeId: { type: 'string' },
       error: object({ message: { type: 'string' } }, ['message'], { additionalProperties: true }),
-      startedBy: { type: 'string', description: 'User id of who started a manual run' },
+      startedBy: { type: 'string', description: 'User id of who started the run, when a person did (a manual, chat, MCP or tool run, a re-run, a retry they asked for)' },
     },
     ['executionId', 'workflowId', 'status', 'startedAt'],
     { additionalProperties: true },
