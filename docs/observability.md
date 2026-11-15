@@ -450,10 +450,10 @@ Every process writes JSON logs with `trace_id`. To browse traces, run any OTLP b
 <a id="alerts-and-dashboard"></a>
 ### Alert rules and the dashboard
 
-[`deploy/observability/prometheus-rules.yml`](../deploy/observability/prometheus-rules.yml) holds 13 Prometheus alerts
+[`deploy/observability/prometheus-rules.yml`](../deploy/observability/prometheus-rules.yml) holds 14 Prometheus alerts
 over the metrics above; each has a `severity` label and a `runbook` annotation pointing here. Thresholds are starting
 points. `deploy/observability/landflow-dashboard.json` is the matching Grafana dashboard ("Landflow · overview": requests,
-runs, queue and workers, plugins, database, audit, runtime). The `orbstack-observability` overlay loads both
+runs, queue and workers, plugins, database, audit, runtime, AI). The `orbstack-observability` overlay loads both
 (`deploy/k8s/components/observability/` keeps copies, because kustomize can't read outside the component; a test checks
 they match, and that every metric the files name exists in the code); elsewhere, add the file to `rule_files:` and import
 the JSON. The local backend has no Alertmanager: alerts show under Prometheus -> Alerts and as the `ALERTS` series.
@@ -479,6 +479,13 @@ collector was down). Check the rules with
 | `LandflowAuditOutboxOld` | oldest undelivered SIEM event over 15 min | the destination, Settings -> Audit log -> SIEM streaming |
 | `LandflowEventLoopDelay` | event-loop delay p99 over 200 ms for 10 min | a CPU-heavy node or a blocking call; GC panel |
 | `LandflowProcessErrors` | any unhandled rejection, uncaught exception or service start failure | the error line (`kind`) and its fingerprint |
+| `LandflowAiCacheHitRateDropped` | the Anthropic prompt-cache hit rate (`cache_read` / `input`) over 1 h is under half its 7-day average, for 30 min, and only while Anthropic input is over 100,000 tokens an hour | the dashboard's "AI" row; a prompt prefix that changed (a timestamp or an id near the top), a cache lifetime, a model or provider switch |
+
+The "AI" row has three panels: tokens a second by `gen_ai_token_type` (`input`, `output`, `cache_read`, `cache_write`),
+the Anthropic cache hit rate over 1 hour, and estimated cost over the last day by `landflow_ai_purpose`. Through the
+OTLP path into the LGTM pod the cost counter is `landflow_ai_cost_USD_total` (the unit `USD` is kept in the name); a
+direct scrape of `/api/metrics` names it `landflow_ai_cost_total`, so a Prometheus that scrapes the host directly needs
+that spelling in the panel. The hit rate alert has a volume guard so a quiet hour of a few calls does not page.
 
 There is no metric for the age of the oldest queued job, so the queue alert watches depth; add one before alerting on age.
 

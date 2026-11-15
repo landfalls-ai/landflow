@@ -2202,3 +2202,9 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
 - **Left (deferred)**: model verdicts in the CLI's `check` (a model's verdict reaches a flow through Check Practices, PR08;
   the CLI runs machine checks only) and a reminder after `Write` or `Edit` on a matching path (the mod never denies a
   tool call, so a reminder hook is its own package).
+
+## Token spend wave 11: telemetry out (SP04, with SP16)
+
+- The overview dashboard gains an "AI" row (tokens by type, Anthropic cache hit rate, cost by purpose) and
+  `prometheus-rules.yml` the 14th alert, `LandflowAiCacheHitRateDropped` (volume-guarded, promtool-tested). A test
+  pins the `ai.call` event's keys that Landledger reads. SP16 (the cache alert and panels) is folded into SP04.
