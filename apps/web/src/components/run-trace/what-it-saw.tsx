@@ -1,6 +1,7 @@
 /**
  * "What it saw" (docs/run-trace.md#what-it-saw): the block an agent got in one run, as sections, with its persona summary.
- * Used by the Run Trace sheet (an agent's span) and by an agent's sessions. No hooks: the exact text folds out with <details>.
+ * Used by the Run Trace sheet (an agent's span) and by an agent's sessions. No hooks here: the exact text folds out with
+ * <details>, and the practices row (PR09's SawPracticesRow) asks the run's route itself when it has an `executionId`.
  */
 import type { ReactNode } from 'react';
 import { ChevronRight } from 'lucide-react';
@@ -10,12 +11,15 @@ import type { SawPersona } from '@/lib/shared/what-it-saw';
 import { sawSections } from '@/lib/shared/what-it-saw-sections';
 import { Badge } from '../ui/badge';
 import { SectionTitle } from './parts';
+import { SawPracticesRow } from './saw-practices';
 
 export interface WhatItSawProps {
   mode: ContextMode;
   text: string;
   persona?: SawPersona;
   practices?: RunPractice[];
+  /** The run, when there is one: the practices row then says, per practice, whether the run cited it and how its checks went. */
+  executionId?: string;
   /** The journal's content setting kept the text and persona out (`off`). */
   withheld?: boolean;
   /** Without its own title (a fold names it). */
@@ -31,7 +35,7 @@ function Part({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-export function WhatItSaw({ mode, text, persona, practices = [], withheld, bare }: WhatItSawProps) {
+export function WhatItSaw({ mode, text, persona, practices = [], executionId, withheld, bare }: WhatItSawProps) {
   const s = sawSections(text);
   const heading = s.practices[0]?.trim() === PRACTICES_HEADING;
   const practiceLines = (heading ? s.practices.slice(1) : s.practices).map((l) => l.trim()).filter(Boolean);
@@ -71,17 +75,8 @@ export function WhatItSaw({ mode, text, persona, practices = [], withheld, bare 
         {s.words && <Part label="Words">{s.words}</Part>}
         {s.status && <Part label="Status">{s.status}</Part>}
         {s.run && <Part label="This run">{s.run}</Part>}
-        {(practiceLines.length > 0 || practices.length > 0) && (
+        {practiceLines.length > 0 && (
           <Part label="Practices">
-            {practices.length > 0 && (
-              <ul className="mb-1 flex flex-wrap gap-1">
-                {practices.map((p) => (
-                  <li key={`${p.handle}@${p.version}`} className="rounded-md border border-hair bg-sf px-1.5 py-0.5 font-mono text-[11px] text-t2">
-                    {p.handle}@{p.version}
-                  </li>
-                ))}
-              </ul>
-            )}
             {practiceLines.map((l, i) => (
               <p key={i} className="whitespace-pre-wrap text-t2">
                 {l}
@@ -89,7 +84,8 @@ export function WhatItSaw({ mode, text, persona, practices = [], withheld, bare 
             ))}
           </Part>
         )}
-        {/* PR09: SawPracticesRow mounts here (integrator) */}
+        {/* PR09: the practices given as handle@version, with cited and check per practice when there is a run. */}
+        <SawPracticesRow practices={practices} executionId={executionId} />
         {who && (
           <Part label="Persona">
             {who.role && <p>{who.role}</p>}

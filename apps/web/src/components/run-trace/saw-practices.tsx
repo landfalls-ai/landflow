@@ -2,8 +2,8 @@
 /**
  * The practices row of "What it saw" (docs/run-trace.md#what-it-saw): each approved practice the run was given, as
  * `handle@version`. With a run (`executionId`) it says per practice whether the run cited it and how its check went
- * (GET /api/executions/:id/practices); until that answers, or without a run, it lists the practices alone. The integrator
- * mounts it in the slot of components/run-trace/what-it-saw.tsx. Nothing is drawn when the run was given none.
+ * (GET /api/executions/:id/practices); until that answers, or without a run, it lists the practices alone. It is mounted
+ * inside "What it saw" (components/run-trace/what-it-saw.tsx). Nothing is drawn when the run was given none.
  */
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/client/api';

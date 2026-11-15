@@ -82,7 +82,7 @@ function SawFold({ session, agentId }: { session: AgentSession; agentId: string 
         <ChevronRight className="size-3.5 text-t3 transition-transform group-open:rotate-90" /> What it saw
       </summary>
       <div className="pb-1.5">
-        <WhatItSaw bare mode={context.mode} text={context.text} practices={context.practices} persona={persona} />
+        <WhatItSaw bare mode={context.mode} text={context.text} practices={context.practices} executionId={session.execution?.executionId} persona={persona} />
       </div>
     </details>
   );

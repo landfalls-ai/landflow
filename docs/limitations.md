@@ -483,4 +483,5 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - Approving from the inbox (or on /brain) settles the suggestion once (one `proposal.applied` usage event). An inbox Apply starts the flows on On Suggestion Decided; an approval on /brain records the usage event but starts none.
 - "Followed by" counts an agent by its citations only; an agent that was given a practice and never cited it is not listed.
 - A flow-written or analyst suggestion about a practice still mirrors to Slack as any suggestion does; only `source: practice` ones are link-only.
-- The row in "What it saw" is mounted by the integrator (PC08's slot); until then its markup is tested, not seen.
+- An agent's session that no workflow run started (a test chat, a channel) lists the practices it was given in "What it
+  saw" without "Cited" or the check: it has no run id to ask `GET /api/executions/:id/practices` with.

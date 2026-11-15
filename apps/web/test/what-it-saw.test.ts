@@ -215,6 +215,9 @@ describe('the section', () => {
     const out = html({ text: `${full}\n\n${PRACTICES_HEADING}\n- helm/chart-location@2: charts in deploy/.`, practices: [{ handle: 'helm/chart-location', version: 2 }] });
     expect(out).toContain('Practices');
     expect(out).toContain('helm/chart-location@2');
+    // PR09's row is mounted in PC08's slot: the practices given, once, as handle@version.
+    expect(out).toContain('data-testid="saw-practices"');
+    expect(out).toContain('Practices given');
     const off = html({ mode: 'off', text: '', persona: undefined });
     expect(off).toContain('Project context off for this agent');
     expect(off).not.toContain('Goal chain');
@@ -228,6 +231,7 @@ describe('the sheet', () => {
     expect(source).toMatch(/k !== 'hidden' && k !== 'saw'/);
     expect(source).toContain("span.id === 'run' && <RunScopeChips");
     expect(source).toContain('withheld={saw.withheld}');
+    expect(source).toContain('executionId={model.executionId}');
     // From a journal event written with content off, through sawOf, to the markup.
     const off = readSaw((applyContent({ type: 'span.updated', spanId: 's', attrs: { saw: { mode: 'full', text: 'secret', persona: { role: 'R' } } } } as never, 'off') as unknown as { attrs: { saw: unknown } }).attrs.saw)!;
     expect(off.withheld).toBe(true);
