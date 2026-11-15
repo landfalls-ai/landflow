@@ -129,6 +129,14 @@ items still open (its "Wave 6" section); this page is the short list to check be
   is set through the API. It has no documents, no passages-per-search setting (the node's own limit applies) and is not
   offered by the Agent architect, which lists only vector collections.
 
+## Practices in Claude Code and the shell
+
+- `landflow practices check` runs machine checks only. A practice with no machine check is reported as such; there are no model verdicts until wave P2's Check Practices.
+- `/brain learn`'s citations are never verified: the host cannot read your checkout, so a draft from the mod or `landflow practices learn` stays unverified until a person approves it against the file.
+- `/brain learn` hands Claude a prompt as a turn of its own, so it waits until the session is idle, and a model that ignores the instructions can draft fewer than asked or none. `practice_draft` and the learn route always make tainted drafts.
+- The practices section is built once at session start: a practice approved later shows at the next session, or through the `practices` tool or `/brain practices`.
+- `check` reads the change as `git diff <base>...HEAD` shows it: uncommitted work is not in it, and a renamed file is read as a delete and an add.
+
 ## Landledger (built 2026-11-14)
 
 - **Not yet seen live: a decision delivered and acted on.** Subscriptions with a `webhooks:write` key and a signed

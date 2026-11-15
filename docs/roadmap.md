@@ -1975,3 +1975,8 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   Person, and Apply Cap Raise, which changes the Landflow cap and tells the budgets sync only after an admin other than
   the requester approved ([llm-gateway.md](llm-gateway.md#asking-for-a-higher-cap)). The Insights → AI "Ask for more" dialog
   (LL06) is built.
+
+## Practices in Claude Code and the shell (PR05, wave P1)
+
+- **Built**: the landflow-brain mod 0.3.0 adds a practices section (`landflow-brain:practices`) inside the 2-second bound, the `practices` and `practice_draft` tools, `/brain practices` and `/brain learn [paths]`; the CLI adds `landflow practices list|show|check|learn`, with the machine checks run locally ([landflow-brain-mod.md](landflow-brain-mod.md#practices), [features/cli.md](features/cli.md#practices-landflow-practices)). Closes PRAC-5.
+- **Left**: model verdicts in `check` and a reminder after `Write` or `Edit` on a matching path (wave P2); the mod never denies a tool call.
