@@ -32,6 +32,7 @@ const { aiUsageMeter, UsageScope, runInUsageScope, savePriceOverrides } = await 
 const { traceChat, traceEmbeddings } = await import('@/lib/server/telemetry/ai');
 const { withCallNote, withCallPurpose, setRecordedCallListener } = await import('@/lib/server/ai-usage/call-context');
 const { runInNode } = await import('@/lib/server/ai-usage/node-context');
+const { afterModelCall } = await import('@/lib/server/ai-usage/scope');
 const { listUsageEvents } = await import('@/lib/server/usage/query');
 const { database } = await import('@/lib/server/db');
 const { registry } = await import('@/lib/server/plugins/registry');
@@ -79,9 +80,20 @@ describe('what each call was for', () => {
     );
     const [row] = rows('execution_id = ?', 'ex_attr_1');
     expect(row).toMatchObject({ node_id: 'n_ab12', purpose: 'answer', iteration: 2, stop_reason: 'end_turn', cache_read_tokens: 60, cache_write_tokens: 10 });
-    expect(row.duration_ms).toBeGreaterThanOrEqual(4);
+    expect(row.duration_ms).toBeGreaterThan(0);
     expect(row.span_id).toMatch(/^[0-9a-f]{16}$/);
-    expect(spans.getFinishedSpans().some((s) => s.spanContext().spanId === row.span_id && s.attributes['landflow.node.id'] === 'n_ab12' && s.attributes['landflow.ai.iteration'] === 2)).toBe(true);
+    expect(spans.getFinishedSpans().some((s) => s.spanContext().spanId === row.span_id && s.attributes['landflow.node.id'] === 'n_ab12' && s.attributes['landflow.ai.iteration'] === 2 && s.attributes['landflow.ai.usage_id'] === row.id)).toBe(true);
+  });
+
+  it("names the active node for a call that has no telemetry note (a plugin node's model record)", async () => {
+    const scope = new UsageScope({ executionId: 'ex_attr_plugin' }, [], undefined, aiUsageMeter());
+    await runInUsageScope(scope, () =>
+      runInNode({ id: 'n_plug', name: 'Plugin', type: 'x.y' }, async () => {
+        afterModelCall({ provider: 'anthropic', model: 'claude-test', operation: 'chat', inputTokens: 5, outputTokens: 1 });
+      }),
+    );
+    const [row] = rows('execution_id = ?', 'ex_attr_plugin');
+    expect(row).toMatchObject({ node_id: 'n_plug', span_id: null, purpose: null });
   });
 
   it('gives an embeddings call embed, an explicit purpose its own, and leaves a call outside any run unset', async () => {

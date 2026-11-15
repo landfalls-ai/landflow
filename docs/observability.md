@@ -296,9 +296,6 @@ In queue mode each process also reports how far its copy trails the others:
 | `landflow.process.errors` | counter | `kind` (`unhandled_rejection`, `uncaught_exception`, `service_start`) |
 | `landflow.ai.requests` | counter | `gen_ai.system`, `gen_ai.request.model`, `landflow.ai.purpose`, `landflow.outcome` |
 | `landflow.ai.duration` | histogram (ms) | `gen_ai.system`, `gen_ai.request.model` |
-
-`landflow.ai.purpose` is one of the purposes in [llm-gateway.md](llm-gateway.md#what-each-call-was-for) or `none` when unset. No node, run, agent or person id is ever a metric attribute (cardinality).
-
 | `landflow.ai.tokens` | counter | `gen_ai.system`, `gen_ai.request.model`, `landflow.ai.purpose`, `gen_ai.token.type`: `input` (the whole prompt, cached tokens included), `output`, `cache_read` and `cache_write` (parts of `input`, never added to it: hit rate is `cache_read / input`). The OTel GenAI conventions define only `input` and `output`; the cache types are Landflow's |
 | `landflow.ai.cost` | counter (USD) | `gen_ai.system`, `gen_ai.request.model`, `landflow.ai.purpose`: estimated cost by the price table ([§8](#8-token-and-cost-tracking)) |
 | `landflow.ai.caps_reached` | counter | `gen_ai.system`, `gen_ai.request.model`, `landflow.ai.cap.when` (`before`: a call refused, `after`: a call that went over) |
@@ -321,6 +318,8 @@ In queue mode each process also reports how far its copy trails the others:
 | `landflow.assistant.suggestions` | counter | `landflow.assistant.kind` (`fix`/`param`/`data`/`next`, or `proposal` for a chat proposal): what the editor was shown |
 | `landflow.assistant.applied`, `landflow.assistant.dismissed` | counter | `landflow.assistant.kind`: reported by the editor (`POST /api/assistant/feedback`) |
 | `http.server.request.duration` | histogram (s) | standard: `http.request.method`, `http.route`, `http.response.status_code`. The host measures it from the Next.js request spans, untraced requests included |
+
+`landflow.ai.purpose` is one of the purposes in [llm-gateway.md](llm-gateway.md#what-each-call-was-for) or `none` when unset. No node, run, agent or person id is ever a metric attribute (cardinality). A plugin node's `model` record counts its tokens by `input` and `output` only and carries no purpose label yet.
 
 ### Plugins (every SDK, automatic)
 

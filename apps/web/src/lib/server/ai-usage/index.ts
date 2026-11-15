@@ -17,6 +17,7 @@
  * A call is refused once a cap is reached, and a call that goes over one stops the run with a
  * UsageCapError. Rows are kept for LANDFLOW_AI_USAGE_RETENTION_DAYS (default 400).
  */
+import { trace } from '@opentelemetry/api';
 import { nanoid } from 'nanoid';
 import type { WorkflowSettings } from '@landflow/engine';
 import type { AgentSettings } from '../../shared/agents';
@@ -32,6 +33,7 @@ import { homeProjectId } from '../projects/store';
 import { currentRunContext } from '../project-context/seam';
 import { budgetEntry, hardStopLimit, stopReached, type BudgetEntry } from '../budgets/limit';
 import { aiCaps, capSetActive } from './caps';
+import { activeNode } from './node-context'; // SP01:
 import { currentCallNote, notifyRecorded, takeCallDraft } from './call-context'; // SP01:
 import { getUser } from '../auth/users';
 import { noteUsage } from './notify';
@@ -192,9 +194,9 @@ export class AiUsageMeter implements UsageMeter {
       const goalId = scopeGoal ?? (run?.goalId && run.projectId === projectId ? run.goalId : undefined);
       // SP01: the agent that asked: the nearest scope up the chain whose agent is not the row's own.
       const rowAgent = scope.lookup('agentId');
-      const callerAgentId = [...scope.chain()].find((s) => s.info.agentId && s.info.agentId !== rowAgent)?.info.agentId ?? call.callerAgentId;
+      const callerAgentId = [...scope.chain()].find((s) => s.info.agentId && s.info.agentId !== rowAgent)?.info.agentId ?? (call.callerAgentId !== rowAgent ? call.callerAgentId : undefined);
       const counted = {
-        node_id: call.nodeId,
+        node_id: call.nodeId ?? activeNode()?.id, // a plugin node's model record has no telemetry note: the active node still names it
         span_id: call.spanId,
         purpose: call.purpose,
         iteration: call.iteration,
@@ -236,7 +238,7 @@ export class AiUsageMeter implements UsageMeter {
         const importedCost = typeof imported.cost === 'number' ? imported.cost : 0;
         db.upsert('ai_usage', { ...imported, ...counted, cost: Math.max(importedCost, counted.cost ?? 0) });
         noteUsage();
-        this.notify(String(imported.id), call, scope);
+        this.notify(String(imported.id), call, scope, now);
         return;
       }
       // call_id and gateway_request_id are unique: a repeated one must not lose the row or its event.
@@ -285,7 +287,9 @@ export class AiUsageMeter implements UsageMeter {
           usageId,
         },
       });
-      this.notify(usageId, call, scope);
+      // SP01: the span names its row (a no-op without a recording span).
+      trace.getActiveSpan()?.setAttribute('landflow.ai.usage_id', usageId);
+      this.notify(usageId, call, scope, now);
       if (now - this.pruned > DAY_MS / 24) {
         this.pruned = now;
         this.db().deleteBefore('ai_usage', 'at', new Date(now - this.retentionDays * DAY_MS).toISOString());
@@ -297,12 +301,12 @@ export class AiUsageMeter implements UsageMeter {
   }
 
   /** SP01: tell the recorded-call listener (wave 11's prompt parts) about a written row; it never fails the call. */
-  private notify(usageId: string, call: MeteredCall, scope: UsageScope) {
+  private notify(usageId: string, call: MeteredCall, scope: UsageScope, now: number) {
     try {
       notifyRecorded(
         {
           usageId,
-          at: new Date().toISOString(),
+          at: new Date(now).toISOString(),
           provider: call.provider,
           model: call.model,
           operation: call.operation,

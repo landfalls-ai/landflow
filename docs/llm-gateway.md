@@ -357,7 +357,7 @@ refreshes every minute while the tab is visible.
 ## What each call was for
 
 Each model call's `ai_usage` row says, besides the run, model and tokens, where the call ran and why (migration 2900;
-rows from before it, rows imported from the gateway's spend log and calls outside a run have none of these):
+rows from before it, rows imported from the gateway's spend log, failed calls and calls outside a run have none of these; a call a plugin node reports in its `model` record has only `node_id`, no purpose, duration, stop reason or cache token types in its metrics yet):
 
 | Column | What it holds |
 |---|---|
@@ -365,7 +365,7 @@ rows from before it, rows imported from the gateway's spend log and calls outsid
 | `span_id` | The `gen_ai.*` span's id, to open the call's span in the Run Trace |
 | `purpose` | Why the call was made (below) |
 | `iteration` | The agent loop's step, from 1 |
-| `caller_agent_id` | The agent that asked: the nearest agent up the chain that is not the row's own (a team member names its lead, a sub-agent its caller) |
+| `caller_agent_id` | The agent that asked: the nearest agent up the chain that is not the row's own, else the call note's `callerAgentId` when that is not the row's own agent (a team member names its lead, a sub-agent its caller) |
 | `duration_ms` | Wall time of the call |
 | `stop_reason` | The provider's first finish reason (`end_turn`, `tool_use`, `max_tokens`, `stop`, `length`) |
 
