@@ -314,8 +314,9 @@ budget adds: a warning, an optional hard stop, incidents and Needs you items.
   Spend that arrives by import, which no call check saw, opens the stop too.
 - **Resume.** A person resumes a stop, and the project's priced calls go on until the month ends. A new month starts a
   fresh count. A resumed month stays open even after a raise.
-- **Raise.** A project admin sets a higher amount from a stop or a warning. The stop's warning is settled with it.
-  An editor who is not an admin asks for more from Insights → AI ("Ask for more"); an approved request sets the new
+- **Raise.** A project admin sets a higher amount from a stop or a warning, or saves a higher budget. Every way of
+  raising (an incident's **Raise budget…**, a `PUT` with a higher amount, an approved request) settles all the month's
+  open incidents as `raised`, so a raise from a warning never leaves a stop open. An editor who is not an admin asks for more from Insights → AI ("Ask for more"); an approved request sets the new
   amount and settles the month's open incidents.
 - **Dismiss.** Puts a warning away for the month.
 - **Who may do what.** Project admins and instance owners and admins edit the budget and raise it. They and the

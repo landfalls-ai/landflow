@@ -138,9 +138,9 @@ export function actOnIncident(meter: BudgetMeter, project: Pick<ProjectRecord, '
     if (action.monthlyUsd > BUDGET_MAX_USD) throw new BudgetError(`The budget is at most ${BUDGET_MAX_USD.toLocaleString('en-US')} dollars a month`);
     db.transaction(() => {
       saveBudget({ ...budget, monthlyUsd: action.monthlyUsd, updatedAt: new Date().toISOString(), updatedBy: actor.id }, db);
-      resolveIncident(db, incident.id, 'raised', actor.id);
-      // A stop's warning is about the same overrun.
-      if (incident.kind === 'stop') for (const other of incidentsOf(project.id, incident.month, db)) if (other.kind === 'warn' && other.status === 'open') resolveIncident(db, other.id, 'raised', actor.id);
+      // A higher budget settles every open incident of the month, as a PUT and an approved cap request do: raising from
+      // a warning must not leave an open stop saying "paused" while priced calls pass.
+      resolveOpenAsRaised(db, project.id, incident.month, actor.id);
     });
     meter.invalidateBudgets();
     recordAudit({ action: 'project.budget.raised', target, project: project.id, summary: `Raised the AI budget of “${project.name}” to ${money(action.monthlyUsd)}`, details: { from: budget.monthlyUsd, to: action.monthlyUsd, incidentId: incident.id } });

@@ -226,6 +226,21 @@ describe('raise, remove and the sweep', () => {
     expect(incidents().filter((i) => i.status === 'open')).toHaveLength(1);
   });
 
+  it('a raise from the warning also settles the open stop, so the view is not paused', async () => {
+    setBudget();
+    seed(2);
+    tryCall(priced);
+    await sweepBudgets(Date.now(), meter);
+    const warn = incidents().find((i) => i.kind === 'warn')!;
+    expect(incidents().find((i) => i.kind === 'stop')?.status).toBe('open');
+    const raised = await act(admin, warn.id, { action: 'raise', monthlyUsd: 5 });
+    expect(raised.status).toBe(200);
+    expect(raised.body.paused).toBe(false);
+    expect(incidents().every((i) => i.status === 'resolved' && i.resolution === 'raised' && i.resolvedBy === admin.id)).toBe(true);
+    expect(budgetItems(admin, meter)).toHaveLength(0);
+    expect(tryCall(priced)).toBeUndefined();
+  });
+
   it('budget 0 removes it and resolves the open incidents as raised', async () => {
     setBudget();
     seed(2);
