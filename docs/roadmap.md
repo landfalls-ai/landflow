@@ -2012,3 +2012,8 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
 - **Wave P2, next:** delivery to Landflow agents through the seam's practices slot (PR06) and to kagent agents (PR07),
   Check Practices with Ask a Person for Fix, Waive or Change (PR08), compliance and the inbox suggestion for a draft
   (PR09), and the demo on a branch of the Landflow repository that ends at a draft pull request (PR10).
+
+## Practices in Claude Code and the shell (PR05, wave P1)
+
+- **Built**: the landflow-brain mod 0.3.0 adds a practices section (`landflow-brain:practices`) inside the 2-second bound, the `practices` and `practice_draft` tools, `/brain practices` and `/brain learn [paths]`; the CLI adds `landflow practices list|show|check|learn`, with the machine checks run locally ([landflow-brain-mod.md](landflow-brain-mod.md#practices), [features/cli.md](features/cli.md#practices-landflow-practices)). Closes PRAC-5.
+- **Left**: model verdicts in `check` and a reminder after `Write` or `Edit` on a matching path (wave P2); the mod never denies a tool call.
