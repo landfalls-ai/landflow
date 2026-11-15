@@ -113,8 +113,8 @@ chain above it. How the block is built, how big it gets and how to turn it off a
 ## Agents across projects
 
 An agent has one home project, and the home decides who edits it. It can also be **available** elsewhere: shared with
-chosen projects, or with **All projects** in one click. A project that only uses an agent can run it, pick it in Run an
-Agent and test it, but cannot change, delete, share or read the sessions of it.
+chosen projects, or with **All projects** in one click. A project that only uses an agent can pick it in Run an
+Agent and run it from its workflows, but cannot change, delete, share or read the sessions of it.
 
 - **Sharing.** `GET|PUT /api/agents/:id/shares` (admins of the home project, owners and admins may change them). The
   answer has `availability` (`home`, `all`, and the projects the caller has a role in) and `shares`. The "All projects"
@@ -127,6 +127,14 @@ Agent and test it, but cannot change, delete, share or read the sessions of it.
 - **Sessions stay at home.** The agent's sessions and each session are read only by members of its home project (and
   owners and admins). Others get 404 "Agent not found". A session keeps the brief of the project it ran for, so this
   keeps one project's brief from another project that only uses the agent.
+- **Evaluations stay at home too.** The online evaluation scores and the eval gate carry session inputs and outputs, so
+  they are home-only (404 for others); the Run an Agent and tool pickers scope to the agent's home project only for
+  its home members.
+- **All projects replaces single shares.** Turning **All projects** on drops the single-project rows; turning it off
+  later leaves the agent home-only. `availability.projects` lists only projects the caller has a role in, so build a
+  `PUT` from `shares`, not from it.
+- **Brain and spend.** Whoever can read an agent (a share counts) sees its brain facts, suggestions and spend, which
+  come from runs in every project.
 - **No wall at run time.** A saved workflow that runs another project's agent keeps working, even after the share is
   removed.
 

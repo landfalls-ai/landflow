@@ -6,6 +6,8 @@ import { z } from 'zod';
 import { agentStore } from '@/lib/server/agents/store';
 import { agentTarget, getOnlineConfig, gradeAgentSession, normalizeOnlineConfig, onlineReport, saveOnlineConfig } from '@/lib/server/evaluations';
 import { onlineEvalConfigSchema } from '@/lib/server/evaluations/http';
+import { resourceAccess } from '@/lib/server/projects/access';
+import { routeActor } from '@/lib/server/projects/http';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 
 export const dynamic = 'force-dynamic';
@@ -14,6 +16,8 @@ type Ctx = { params: Promise<{ id: string }> };
 export const GET = handler(async (_request: Request, { params }: Ctx) => {
   const { id } = await params;
   if (!agentStore.get(id)) return error('Agent not found', 404);
+  // PC06: the scores carry session inputs and outputs from every project; only the home reads them.
+  if (!resourceAccess(routeActor(), 'agent', id)?.home) return error('Agent not found', 404);
   return json({ report: onlineReport(agentTarget(id)) });
 });
 

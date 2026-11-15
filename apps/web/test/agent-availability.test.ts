@@ -28,6 +28,9 @@ const agentSharesRoute = await import('@/app/api/agents/[id]/shares/route');
 const agentChatRoute = await import('@/app/api/agents/[id]/chat/route');
 const agentSessionsRoute = await import('@/app/api/agents/[id]/sessions/route');
 const agentSessionRoute = await import('@/app/api/agents/[id]/sessions/[sid]/route');
+const agentEvalsRoute = await import('@/app/api/agents/[id]/evaluations/route');
+const agentGateRoute = await import('@/app/api/agents/[id]/eval-gate/route');
+const loadOptionsRoute = await import('@/app/api/node-types/load-options/route');
 const agentRoute = await import('@/app/api/agents/[id]/route');
 const workflowsRoute = await import('@/app/api/workflows/route');
 const workflowSharesRoute = await import('@/app/api/workflows/[id]/shares/route');
@@ -280,5 +283,22 @@ describe('sessions are read from home only', () => {
     expect((await list(admin, ids.agent)).status).toBe(200);
     // shared with all
     expect((await list(eve, ids.allAgent)).status).toBe(404);
+  });
+
+  it('the evaluation scores and the eval gate are home-only too', async () => {
+    const evals = (caller: Caller, id: string) => call(agentEvalsRoute.GET, `/api/agents/${id}/evaluations`, 'GET', caller, undefined, { id });
+    const gate = (caller: Caller, id: string) => call(agentGateRoute.GET, `/api/agents/${id}/eval-gate`, 'GET', caller, undefined, { id });
+    for (const check of [evals, gate]) {
+      expect((await check(cat, ids.agent)).status).toBe(404);
+      expect((await check(eve, ids.allAgent)).status).toBe(404);
+      expect((await check(dan, ids.agent)).status).toBe(200);
+    }
+  });
+
+  it('load-options with agentId gives a shared-only member no scope of the home project', async () => {
+    const options = (caller: Caller) => call(loadOptionsRoute.POST, '/api/node-types/load-options', 'POST', caller, { type: 'core.noop', method: 'x', agentId: ids.agent });
+    // Only the scope matters: the call never throws and never reads the home project's tables for a non-home member.
+    expect((await options(cat)).status).toBe(200);
+    expect((await options(dan)).status).toBe(200);
   });
 });

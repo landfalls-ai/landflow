@@ -264,7 +264,7 @@ export function usableCredentialIds(projectId: string | undefined, ids: Iterable
 
 /** Whether an agent is available in a project: its home, a share to that project, or an "All projects" share. One query. */
 export function agentAvailableIn(agentId: string, projectId: string): boolean {
-  const home = homeProjectId('agent', agentId) ?? defaultProjectId();
+  const home = homeProjectId('agent', agentId);
   if (home === projectId) return true;
   return Boolean(
     authDb().get<{ n: number }>('SELECT 1 AS n FROM resource_shares WHERE kind = ? AND resource_id = ? AND project_id IN (?, ?)', 'agent', agentId, projectId, ALL_PROJECTS),

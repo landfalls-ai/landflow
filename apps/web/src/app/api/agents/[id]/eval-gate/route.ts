@@ -8,6 +8,8 @@
 import { z } from 'zod';
 import { addCase, deleteCase, EvalGateError, listCases, listEvalRuns, runEval } from '@/lib/server/agents/eval-gate';
 import { agentStore } from '@/lib/server/agents/store';
+import { resourceAccess } from '@/lib/server/projects/access';
+import { routeActor } from '@/lib/server/projects/http';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 
 export const dynamic = 'force-dynamic';
@@ -18,6 +20,7 @@ const failure = (caught: unknown) => (caught instanceof EvalGateError ? error(ca
 export const GET = handler(async (_request: Request, { params }: Ctx) => {
   const { id } = await params;
   if (!agentStore.get(id)) return error('Agent not found', 404);
+  if (!resourceAccess(routeActor(), 'agent', id)?.home) return error('Agent not found', 404);
   return json({ cases: listCases(id), runs: listEvalRuns(id) });
 });
 

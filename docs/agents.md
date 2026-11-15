@@ -535,7 +535,7 @@ and footer, and keeps its answer card.
 An agent belongs to one project, its home, and is **available** there, in each project it is shared with and, when
 shared with **All projects**, everywhere. Run an Agent lists only the agents available in the workflow's project, and
 one from another project says "From <project>". The home's admins set it with `PUT /api/agents/:id/shares`; a project
-that only uses an agent can run and test it but not change, delete or share it. The agent's **sessions are read from the
+that only uses an agent can pick it in Run an Agent and run it from its workflows, but not change, delete or share it. The agent's **sessions are read from the
 home project only** (they hold the briefs of the projects that called it): everyone else gets 404. Availability is not
 a wall at run time ([limitations](limitations.md#project-context-wave-7)). See
 [projects-and-goals.md](projects-and-goals.md#agents-across-projects).
