@@ -3,10 +3,10 @@
 Your own Claude Code work in the [company brain](second-brain.md): a local journal, a summary held for your review, and
 your yesterday back at the next session. Part of the [Landflow docs](README.md). It sends [work events](work-and-briefings.md)
 (`work.session`) to `POST /api/brain/work`, and every event is `private` by default: nobody else sees it until you pick
-team or org for it (`/brain visibility`, or Send wider in `/brain review`) or post it as your update. `brain_ask` comes later.
+team or org for it (`/brain visibility`, or Send wider in `/brain review`) or post it as your update. It also gives the model a `brain_ask` tool ([below](#brain_ask)).
 
 The code is `apps/web/claude-plugins/landflow-brain/`: `hooks/journal.ts` (the entry and its rules), `hooks/summary.ts`
-(the title and the event), `hooks/client.ts` (the calls and the queue), `hooks/pane.tsx` (the pane and the band) and `hooks/register.ts` (the hooks and the
+(the title and the event), `hooks/client.ts` (the calls and the queue), `hooks/tools.ts` (the `brain_ask` tool), `hooks/pane.tsx` (the pane and the band) and `hooks/register.ts` (the hooks and the
 commands). The first three are plain functions with no engine calls, tested in `apps/web/test/claude-brain-mod.test.ts`;
 the hooks are tested with Claude Code's own kit.
 

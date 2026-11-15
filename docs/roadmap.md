@@ -1614,7 +1614,7 @@ The shared pieces every chat will use, built in `components/ui/` and ready; the 
 - CH17 ✅ Done (B35): one Spotlight for the app. ⌘K (⌘I an alias) opens a shell panel on every page, a bottom sheet on a
   phone; a chip says what it does ("Building <flow>" in the editor, whose own column stays the builder; "Asking the brain"
   elsewhere; "About <thing>" after a `landflow:ask-about` event). The Brain page's own panel is gone and QuickOpen is ⌘P
-  ([One Spotlight](spotlight.md#one-spotlight)). Left: the editor's composer still hints ⌘I (it works), and the starters of
+  ([One Spotlight](spotlight.md#one-spotlight)). Left: the starters of
   "about" come from the page that sent the event (B36).
 - CH14 ✅ Done: `@` in Spotlight is the app-wide picker; the server resolves the refs as the caller and shows each read as
   a step ([Tagging with @](assistant.md#tagging-with-)). The unchecked node path is gone.
@@ -1856,7 +1856,7 @@ Closes P-wf-1, P-wf-2, P-cr-1, P-cr-2, P-dt-1, P-pr-2 and P-auth-1; X10 closed i
 
 - **CH16 closed (the sending side).** Every resource's ⋯ has **Ask Spotlight** and a failed run has **Ask why it failed**;
   they fire `landflow:ask-about` with the resource and three starters ([spotlight.md](spotlight.md#ask-about-it)). The chat
-  panel that listens for it is B35.
+  panel that listens for it is built (B35).
 
 ## Not planned
 

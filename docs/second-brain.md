@@ -141,9 +141,12 @@ The detector `work-overlap` (`lib/server/brain/overlap.ts`) introduces two peopl
 - The suggestion is one card addressed to both people, in their inbox. No Slack message is sent on its own: a mirror
   needs a credential someone chose, and an admin naming one is a follow-up. It names both, and its evidence holds only
   `org` titles. A pair with a side that has no `org` item gets none.
-- The same two people are not introduced again for 14 days, whatever became of the first card. **Dismiss** with
-  **Don't suggest this again** mutes introductions for the person who pressed it (when it is one of the two): no pair
-  with them is made again. A decision from Slack, or by an admin outside the pair, mutes no one.
+- The same two people are not introduced again for 14 days after a card, whatever became of it. A card dismissed as
+  *wrong* or *not relevant* holds the pair back for 30 days (the [held back](#4-detectors-and-suggestions) rule), and one
+  dismissed as *intended* holds it for good: the pair is not introduced again. **Dismiss** with
+  **Don't suggest this again** also mutes introductions for the person who pressed it (when it is one of the two): no
+  pair with them is made again. A decision from Slack, or by an admin outside the pair, mutes no one, but the pair's own
+  hold above still applies.
 - Quieter when people dismiss it as wrong: each side must then show two or three items before it speaks.
 
 ### 5. Where you see it
