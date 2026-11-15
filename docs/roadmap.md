@@ -1931,9 +1931,8 @@ pickers and the test chat follow availability and shared-only members cannot rea
 practices row is in "What it saw", and a deleted project's practice suggestions are dismissed with its practices. These
 wait, each with its reason:
 
-- **Home readers see other projects' briefs**: members of an agent's home project still read the `session.context` of
-  its runs in other projects; per-project session walls are PC13's allow-list (wave 9)
-  ([limitations](limitations.md#project-context-wave-7)).
+- ~~**Home readers see other projects' briefs**~~ Done in wave 9 (PC13): a session is read and continued only from the
+  project it ran in ([projects-and-goals.md](projects-and-goals.md#sessions-belong-to-a-project)).
 - **kagent over MCP outside a team**: a kagent agent called over MCP gets no project block and its `practices_for`
   binds to its home project; only a team's open call carries the run's project. A run binding for it is its own package.
 - **Model verdicts in `landflow practices check`**: the CLI runs machine checks only; a model's verdict reaches a flow
@@ -2012,8 +2011,7 @@ Projects get a mission to serve, goals and a brief, and agents learn where their
 - **PC11, built (wave 8):** the landflow-brain mod 0.4.0 starts a session with the project section for the repository and
   adds `/brain project`; `landflow work context` prints the same block in the shell
   ([projects-and-goals.md](projects-and-goals.md#in-claude-code-and-the-shell)).
-- **Open:** per-project settings for agents, the budget and the workspace (wave 9); goal progress, tasks and the
-  PROJECT.md export (wave 10).
+- **Open:** the budget and the workspace (wave 9); goal progress, tasks and the PROJECT.md export (wave 10).
 
 ## Not planned
 
@@ -2073,6 +2071,14 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   "Your goals" in the morning briefing, and the project's compact block in Spotlight and the Agent architect (P5-1 to
   P5-3, D8). The mod and the CLI use the route (PC11, built). Left: a screen for a project's repositories
   ([projects-and-goals.md](projects-and-goals.md#repositories-and-harnesses)).
+
+## Paperclip wave 9: project settings for agents (PC13)
+
+- **PC13, built (P6-1):** a project can name a default model, one knowledge base, the agents and the tool kinds allowed
+  in it, and a run in the project obeys them; sessions are read and continued only from their own project
+  ([projects-and-goals.md](projects-and-goals.md#project-settings-for-agents)). The settings card is PC15's. Left: a
+  run-time wall for availability (decision 6 stands: the allow-list is the opt-in wall) and pre-filling a new agent's
+  model from the project.
 
 ## Paperclip wave 8: goal pickers (PC12)
 

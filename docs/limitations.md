@@ -61,11 +61,13 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - There is no wall at run time. Availability (home, shared projects, All projects) decides what pickers list and what
   the test chat accepts, but a saved workflow that runs another project's agent keeps working, and an API call to an
   agent by id is not stopped by it. This is decision 6 of the Paperclip plan.
-- A member of a project that only uses an agent gets 404 from the Run an Agent session panel on their own execution
-  (`GET /api/agents/:id/sessions?executionId=`). Per-project session reads are deferred to PC13.
-- A session stores the block it was given (`session.context`). Members of a project that only uses the agent (a share
-  or All projects) cannot read its sessions: they get 404. Members of the home project still see the briefs of the
-  other projects the agent ran in. Per-project session walls come in a later package (PC13).
+- A session saved without a project (before wave 7) follows the agent's home project now, so moving the agent moves
+  those sessions with it; a session with a project stays where it ran.
+- The Agents page lists every agent, whatever a project's allow-list says; only the pickers apply it. A2A and kagent
+  agents run elsewhere, so a project's allowed agents and tool kinds do not cover them. A project's knowledge base names
+  a collection that is global, as an agent's own is: another project that names the same collection reads the same data.
+- The online evaluation report of an agent filters the scores the viewer may read from the newest 500, so a viewer who
+  can read few sessions may see fewer than the page asks; its totals and trend are the agent's own counts.
 - The agent screens (wave 8): the Agents list reads each agent's availability with its own request, so a long list makes
   one small request per card. The context preview and View prompt read the saved agent, a moment after the draft
   autosaves; View prompt shows the agent's home project. The preview needs editor rights on the agent, so a person with

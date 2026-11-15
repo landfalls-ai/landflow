@@ -535,8 +535,13 @@ and footer, and keeps its answer card.
 An agent belongs to one project, its home, and is **available** there, in each project it is shared with and, when
 shared with **All projects**, everywhere. Run an Agent lists only the agents available in the workflow's project, and
 one from another project says "From <project>". The home's admins set it with `PUT /api/agents/:id/shares`; a project
-that only uses an agent can pick it in Run an Agent and run it from its workflows, but not change, delete or share it. The agent's **sessions are read from the
-home project only** (they hold the briefs of the projects that called it): everyone else gets 404. Availability is not
+that only uses an agent can pick it in Run an Agent and run it from its workflows, but not change, delete or share it. A session is read and continued
+only from the project it ran in (it holds that project's brief): sharing an agent never shares its sessions, and a member
+of the home project no longer reads the sessions the agent had in other projects
+([sessions belong to a project](projects-and-goals.md#sessions-belong-to-a-project)). A project can also allow only some
+agents and tool kinds, name a default model for agents without one, and add a knowledge base
+([project settings for agents](projects-and-goals.md#project-settings-for-agents)): the model is the workflow node's,
+the router's cheap one, the agent's own, then the project's default. Availability is not
 a wall at run time ([limitations](limitations.md#project-context-wave-7)). See
 [projects-and-goals.md](projects-and-goals.md#agents-across-projects).
 
