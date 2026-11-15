@@ -249,18 +249,18 @@ export async function getBriefing($: EngineInterface, config: Config, day: strin
   return old && { ...old, today: old.today ?? [], related: old.related ?? [] }
 }
 
-/** The project context of a repository: GET /api/projects/context. Any failure (unreachable, refused, not JSON, no project) is nothing. */
-export function getProjectContext($: EngineInterface, config: Config, repo: string): Promise<ProjectContext | undefined> {
-  const run = async (): Promise<ProjectContext | undefined> => {
+/** The project context of a repository: GET /api/projects/context. No project is undefined; any failure (unreachable, refused, not JSON, too slow) is 'failed'. */
+export function getProjectContext($: EngineInterface, config: Config, repo: string): Promise<ProjectContext | undefined | 'failed'> {
+  const run = async (): Promise<ProjectContext | undefined | 'failed'> => {
     try {
       const response = await $.http.fetch(`${config.url}/api/projects/context?${projectQuery(repo)}`, { method: 'GET', headers: headers(config) })
-      if (response.status < 200 || response.status >= 300) return undefined
+      if (response.status < 200 || response.status >= 300) return 'failed'
       return parseProjectContext(JSON.parse(response.text || '{}'))
     } catch {
-      return undefined
+      return 'failed'
     }
   }
-  return within($, run(), undefined, BRIEFING_TIMEOUT_MS)
+  return within($, run(), 'failed' as const, BRIEFING_TIMEOUT_MS)
 }
 
 /** The request that changes who reads an item the person sent: PATCH /api/brain/work/:sourceId. */

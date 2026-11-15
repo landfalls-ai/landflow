@@ -332,24 +332,27 @@ async function setVisibility($: EngineInterface, entry: Entry, visibility: WorkV
   return status === undefined ? 'the brain could not be reached; nothing changed there.' : `the brain refused it (HTTP ${status}); nothing changed there.`
 }
 
-/** The practices section for the session: within the one 2 s bound, or nothing. Sets `repoHere`. */
-async function practicesSection($: EngineInterface, cfg: Config, gitFacts: Promise<Array<string | undefined>>): Promise<string | undefined> {
-  const run = async () => {
-    const slug = repoSlug((await gitFacts)[0] ?? '')
-    repoHere = isAllowed(repos, slug) ? slug : undefined
-    return practicesApplicable($, cfg, { ...(repoHere && { repo: repoHere }) })
-  }
+/** The repository of this checkout when the person listed it, from git alone (no host call). Sets `repoHere`. */
+async function repoOf(gitFacts: Promise<Array<string | undefined>>): Promise<string | undefined> {
+  const slug = repoSlug((await gitFacts)[0] ?? '')
+  repoHere = isAllowed(repos, slug) ? slug : undefined
+  return repoHere
+}
+
+/** The practices section for the session: within the one 2 s bound, or nothing. */
+async function practicesSection($: EngineInterface, cfg: Config, repo: Promise<string | undefined>): Promise<string | undefined> {
+  const run = async () => practicesApplicable($, cfg, { ...((await repo) && { repo: await repo }) })
   const bound = $.clock.sleep(BRIEFING_TIMEOUT_MS).then(() => undefined)
   return Promise.race([run().catch(() => undefined), bound])
 }
 
-/** The project context for the session, within the same 2 s bound; needs `repoHere` (set by `practicesSection`, awaited first). */
-async function projectContext($: EngineInterface, cfg: Config, practicesDone: Promise<unknown>): Promise<ProjectContext | undefined> {
+/** The project context for the session, asked beside the practices once the repository is known, within the same 2 s bound. */
+async function projectContext($: EngineInterface, cfg: Config, repo: Promise<string | undefined>): Promise<ProjectContext | undefined> {
   const run = async () => {
-    await practicesDone
-    return repoHere ? getProjectContext($, cfg, repoHere) : undefined
+    const slug = await repo
+    const found = slug ? await getProjectContext($, cfg, slug) : undefined
+    return found === 'failed' ? undefined : found
   }
-  // The bound starts now, not after the practices: the one 2 s holds for git, the briefing, the practices and this.
   const bound = $.clock.sleep(BRIEFING_TIMEOUT_MS).then(() => undefined)
   return Promise.race([run().catch(() => undefined), bound])
 }
@@ -417,9 +420,10 @@ export const register: Register = (on, options) => {
     // Git runs beside the briefing and the practices, so one 2 s bound holds for all three.
     const gitFacts = Promise.all([gitOut($, ['git', 'remote', 'get-url', 'origin']), gitOut($, ['git', 'rev-parse', '--show-toplevel']), gitOut($, ['git', 'rev-parse', '--abbrev-ref', 'HEAD'])])
     // Practices are read in any mode (reading records nothing); the repository is sent only when the person listed it.
-    const sectionP = config ? practicesSection($, config, gitFacts) : Promise.resolve(undefined)
-    // The project the repository belongs to starts once the repository is known, inside the same bound.
-    const projectP = config ? projectContext($, config, sectionP) : Promise.resolve(undefined)
+    const repoP = repoOf(gitFacts)
+    const sectionP = config ? practicesSection($, config, repoP) : Promise.resolve(undefined)
+    // The project the repository belongs to is asked beside the practices, not after them, inside the same bound.
+    const projectP = config ? projectContext($, config, repoP) : Promise.resolve(undefined)
     if (config && mode !== 'off') {
       // An entry left open by a session that never ended is held as it stood.
       await withJournal(async () => {
@@ -465,8 +469,7 @@ export const register: Register = (on, options) => {
 
   on('prompt.compose', async ($, e, next) => {
     const result = await next(e)
-    // The project's goals come first, then practices, then yesterday. The server's heading and footer frame the project as data.
-    // Practices come before yesterday. They are the admins' rules, not quoted data: the server's heading and footer frame them.
+    // Order: the project's goals, then practices, then yesterday. The server's heading and footer frame the project as data; practices are the admins' rules.
     const sections = [...result.sections, ...(project ? [{ id: SECTION_PROJECT, text: project, scope: 'session' as const }] : []), ...(practices ? [{ id: SECTION_PRACTICES, text: practices, scope: 'session' as const }] : []), ...(yesterday ? [{ id: SECTION, text: yesterday, scope: 'session' as const }] : [])]
     return sections.length === result.sections.length ? result : { sections }
   }).catch(($, e, next) => next(e))

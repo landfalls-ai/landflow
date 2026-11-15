@@ -68,9 +68,11 @@ describe('landflow work context', () => {
     const { cli } = setup(EXAMPLE);
     const out = await cli(['work', 'context', '--repo', 'acme/web', '--size', 'full', '--json']);
     expect(out.code).toBe(0);
-    const data = out.json.data ?? out.json;
+    const data = out.json;
+    expect(data.repo).toBe('acme/web');
     expect(data.projects).toEqual(EXAMPLE.projects);
     expect(data.context.text).toBe(EXAMPLE.context.text);
+    expect((await setup(EXAMPLE).cli(['work', 'context', '--project', 'prj_billing01', '--json'])).json.repo).toBeNull();
   });
 
   it('with no project it says so and exits 0', async () => {

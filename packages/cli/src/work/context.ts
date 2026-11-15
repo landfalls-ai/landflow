@@ -29,7 +29,7 @@ export function parseContext(raw: unknown): ProjectContextView {
 
 /** The text a person reads: the block, then the other projects; or the sentence that no project lists the repository. */
 export function contextHuman(view: ProjectContextView, subject: string): string {
-  if (!view.projects.length) return `No project lists ${subject}.`;
+  if (!view.projects.length) return subject.startsWith('project ') ? `No ${subject} was found.` : `No project lists ${subject}.`;
   const lines = [view.context?.text || `The project “${view.projects[0].name}” has no mission, goal or brief yet.`];
   if (view.projects.length > 1) lines.push(`Also listed in: ${view.projects.slice(1).map((p) => p.name).join(', ')}`);
   return lines.join('\n');

@@ -824,6 +824,24 @@ test('/brain project says which project, or that none lists the repository', { o
   expect(JSON.stringify(yes)).toContain('Also listed in: Checkout')
 })
 
+test('a slow practices answer does not hold the project back', { options: OPTIONS }, async ($, on) => {
+  const { clock } = world(on, { practicesText: PRACTICES_TEXT, practicesDelayMs: 3000, project: PROJECT_EXAMPLE })
+  const started = start($)
+  await clock.advance(2000)
+  await started
+  const ids = (await $.prompt.compose(COMPOSE as never)).sections.map(s => s.id)
+  expect(ids).toContain('landflow-brain:project')
+  expect(ids).not.toContain('landflow-brain:practices')
+})
+
+test('/brain project does not say "no project" when the host cannot be asked', { options: OPTIONS }, async ($, on) => {
+  world(on, { project: 'junk', projectStatus: 500 })
+  await start($)
+  const reply = JSON.stringify(await command($, 'project'))
+  expect(reply).toContain('could not be asked')
+  expect(reply).not.toContain('No project lists')
+})
+
 test('/brain project with no project says so', { options: OPTIONS }, async ($, on) => {
   world(on, { project: { projects: [], context: null } })
   await start($)

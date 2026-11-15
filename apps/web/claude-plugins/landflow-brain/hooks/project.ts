@@ -3,7 +3,7 @@
  * session section, the `/brain project` reply and cleaning what the server answers. The mod never imports Landflow; the
  * shape it reads (`GET /api/projects/context`) is declared here and every field is checked.
  */
-import { sectionText } from './practices'
+import { hidden, sectionText } from './practices'
 
 /** The most characters of the session section (the server's compact block is far smaller; this cuts again if a server sends more). */
 export const PROJECT_BUDGET_MOD = 1500
@@ -24,7 +24,8 @@ export interface ProjectContext {
   text: string
 }
 
-const line = (value: unknown, max: number): string => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max) : '')
+/** One clean line: hidden and control characters dropped (as in the block), whitespace collapsed. */
+const line = (value: unknown, max: number): string => (typeof value === 'string' ? [...value.replace(/\s+/g, ' ')].filter(char => !hidden(char.charCodeAt(0))).join('').trim().slice(0, max) : '')
 
 /** The query string of the read: the repository and the compact size. */
 export function projectQuery(repo: string): string {
@@ -68,8 +69,9 @@ export function projectSection(found: ProjectContext | undefined): string | unde
 }
 
 /** `/brain project`: which project this repository maps to, or why none. */
-export function projectReply(repo: string | undefined, found: ProjectContext | undefined): string {
+export function projectReply(repo: string | undefined, found: ProjectContext | undefined | 'failed'): string {
   if (!repo) return 'This repository is not listed in the Repositories option of landflow-brain, so no project is looked up for it.'
+  if (found === 'failed') return `The host could not be asked which project lists ${repo}; try again.`
   if (!found) return `No project lists ${repo}.`
   const first = found.projects[0]
   const lines = [`${repo} is listed by the project “${first.name}”.`]

@@ -57,6 +57,7 @@ test('the query asks for the compact block of the repository', () => {
 test('the /brain project reply', () => {
   expect(projectReply(undefined, undefined)).toMatch(/not listed/)
   expect(projectReply('acme/web', undefined)).toBe('No project lists acme/web.')
+  expect(projectReply('acme/web', 'failed')).toMatch(/could not be asked/)
   const reply = projectReply('acme/web', parseProjectContext(EXAMPLE))
   expect(reply).toContain('“Billing revamp”')
   expect(reply).toContain('Goal: Grow paid accounts')
