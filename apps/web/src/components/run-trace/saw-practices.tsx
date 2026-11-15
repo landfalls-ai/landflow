@@ -49,6 +49,7 @@ export function PracticesRowView({ practices, rows }: { practices: SawPracticesR
 export function SawPracticesRow({ practices, executionId }: SawPracticesRowProps) {
   const [rows, setRows] = useState<RunPracticeRow[]>();
   useEffect(() => {
+    setRows(undefined);
     if (!executionId || !practices.length) return;
     let live = true;
     api<{ practices: RunPracticeRow[] }>(`/api/executions/${encodeURIComponent(executionId)}/practices`, { background: true })

@@ -29,6 +29,8 @@ const proposals = await import('@/lib/server/brain/proposals');
 const { applyable, canDecide, canSee, changesSomething, mirrorBlocks, mirrorButtons } = await import('@/lib/server/brain/audience');
 const { storePort } = await import('@/lib/server/practices/register');
 const { approvePractice, rejectVersion, retirePractice } = await import('@/lib/server/practices/approve');
+const { applyPracticeSuggestion } = await import('@/lib/server/practices/inbox');
+const { withAuth } = await import('@/lib/server/auth/context');
 const { getPractice, markRetired } = await import('@/lib/server/practices/store');
 const applyRoute = await import('@/app/api/proposals/[id]/apply/route');
 const { ProposalCard, cardButtons } = await import('@/components/brain/proposal-card');
@@ -131,6 +133,16 @@ describe('Apply', () => {
     expect(getPractice(practice.id)).toMatchObject({ status: 'approved', approvedVersion: 1 });
     expect(proposals.getProposal(s.id)).toMatchObject({ status: 'applied', appliedBy: owner.id });
     expect((await apply(owner, s.id)).status).toBe(409);
+  });
+
+  it('refuses an API key, even an owner’s, and the practice stays a draft', async () => {
+    const { practice } = storePort.draft(input(), { source: 'person', actor: member });
+    const s = only(practice.id);
+    // The route guard swaps in the test principal, so the applier is called under the key's own context.
+    const attempt = () => withAuth({ principal: { user: owner, via: 'api-key', apiKey: { id: 'key_1', scopes: ['workflows:write'] } } }, () => applyPracticeSuggestion(s, { actorId: owner.id }));
+    expect(attempt).toThrow(/API keys can't approve a practice/);
+    expect(getPractice(practice.id)?.status).not.toBe('approved');
+    expect(proposals.getProposal(s.id)?.status).toBe('open');
   });
 
   it('marks the suggestion applied once: one proposal.applied usage event, and the Approved note stays', async () => {

@@ -233,7 +233,8 @@ and summary, never its body.
 - **A draft read from outside** (an agent's or a repository's, so tainted): the card says "Read it against its sources on
   /brain" and links there. It has no Apply, for anyone; Apply on it answers 403.
 - **A draft a person wrote**: Apply approves that version with the applying person as approver (the same `approvePractice`).
-  Only instance owners and admins may; project admins and others in the audience see the link only. An overlap with an
+  Only instance owners and admins may, and only in a session: an API key's Apply answers 403 ("API keys can't approve a
+  practice"), even an owner's. Project admins and others in the audience see the link only. An overlap with an
   approved practice has no answer in the inbox, so Apply says to approve it on /brain.
 - **A version that is no longer waiting** (approved, rejected, replaced, or its practice retired) answers 409 and settles
   the suggestion as dismissed. A deleted project's practices are retired without telling the inbox, so Apply on one of

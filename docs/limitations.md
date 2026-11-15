@@ -427,7 +427,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - Citation drift (a cited version that is no longer approved) is not looked at: the practice-drift detector counts how often a practice was given, cited and passed, nothing more.
 - The practice-drift suggestion is addressed to nobody: owners and admins see it, and the admins of a project do not unless they are one. It looks at the last 14 days of `practice_applications` in one scan, with no extra index.
 - An overlap with an approved practice has no answer in the inbox: Apply says to approve it on /brain.
-- Approving from the inbox (or on /brain) settles the suggestion but settles the suggestion once (one `proposal.applied` usage event, and flows on On Suggestion Decided start for an inbox Apply; a /brain approval records the usage event but starts no On Suggestion Decided flow).
+- Approving from the inbox (or on /brain) settles the suggestion once (one `proposal.applied` usage event). An inbox Apply starts the flows on On Suggestion Decided; an approval on /brain records the usage event but starts none.
 - "Followed by" counts an agent by its citations only; an agent that was given a practice and never cited it is not listed.
 - A flow-written or analyst suggestion about a practice still mirrors to Slack as any suggestion does; only `source: practice` ones are link-only.
 - The row in "What it saw" is mounted by the integrator (PC08's slot); until then its markup is tested, not seen.

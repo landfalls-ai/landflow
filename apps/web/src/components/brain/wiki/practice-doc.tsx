@@ -343,7 +343,10 @@ export function PracticeDoc({ id, onChanged }: { id: string; onChanged: () => vo
       .then((r) => setCompliance(r.compliance))
       .catch(() => setCompliance(undefined));
   }, [id]);
-  useEffect(load, [load]);
+  useEffect(() => {
+    setCompliance(undefined); // not the previous practice's bar under this one
+    load();
+  }, [load]);
   const after = () => {
     setDialog(undefined);
     load();

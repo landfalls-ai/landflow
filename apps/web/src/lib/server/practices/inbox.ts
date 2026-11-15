@@ -12,12 +12,13 @@ import type { AudienceMember, Proposal } from '../../shared/brain';
 import { MAX_AUDIENCE } from '../../shared/brain';
 import type { Practice, PracticeApproveInput, PracticeVersion } from '../../shared/practices';
 import { projectRoleCan } from '../../shared/projects';
+import { currentPrincipal } from '../auth/guard';
 import { getUser, listUsers, type UserRecord } from '../auth/users';
 import { database, type Database } from '../db';
 import { isInstanceAdmin, projectRole } from '../projects/access';
 import { singleton } from '../singleton';
 import { logger } from '../telemetry/logger';
-import { PracticeConflict } from './errors';
+import { PracticeConflict, PracticeNeedsReview } from './errors';
 
 /** Where a practice is read on the Brain page. */
 export const practiceHref = (practiceId: string) => `/brain/practices/${practiceId}`;
@@ -152,6 +153,8 @@ export const setInboxDeps = (deps: InboxDeps | undefined): void => void (slot().
 export function applyPracticeSuggestion(proposal: Proposal, options: ApplyOptions, db: Database = database()): void {
   const info = proposal.practice;
   if (!info) throw new ProposalError('This suggestion is not about a practice', 400);
+  const principal = currentPrincipal();
+  if (principal && principal.via !== 'session' && principal.via !== 'test') throw new ProposalError("API keys can't approve a practice; sign in and approve it", 403);
   const actor = options.actorId ? getUser(options.actorId) : undefined;
   if (!actor || !isInstanceAdmin(actor)) throw new ProposalError('Only owners and admins approve a practice from the inbox. Open it on /brain.', 403);
   if (info.tainted) throw new ProposalError('This draft was read from outside: read it against its sources on /brain and approve it there', 403);
@@ -166,6 +169,7 @@ export function applyPracticeSuggestion(proposal: Proposal, options: ApplyOption
     deps.approve(actor, info.practiceId, { version: info.version });
   } catch (caught) {
     if (caught instanceof PracticeConflict) throw new ProposalError('This practice overlaps approved ones: approve it on /brain, where each overlap gets an answer', 409);
+    if (caught instanceof PracticeNeedsReview) throw new ProposalError('This draft was read from outside: read it against its sources on /brain and approve it there', 403);
     throw caught;
   }
 }
