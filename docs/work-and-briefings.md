@@ -201,7 +201,7 @@ node references only when that changer is an active owner or admin and its Base 
 - **A save that changes a value** records the person who saved it: the form, `PATCH /api/credentials/:id`, a Git or
   environment pull (the person who pulled). The decrypted values are compared, secrets included; a save that changes
   none of them (an empty `data`, the form saved as it was, a secret left empty, which keeps its value) records nobody
-  new, and a rename or a rate limit alone keeps the changer too.
+  new, and a rename or a rate limit alone keeps the changer too. The form sends only the fields that were edited.
 - **A token operation** (Connect, Get token, Refresh now, Disconnect) never makes a credential trusted: an owner's or
   admin's keeps the last changer, and anyone else's records them (Connect: the person who started it, carried in the
   signed OAuth state; nobody when no person started it). So after a member repoints the credential, an owner clicking
@@ -218,7 +218,8 @@ When the credential is skipped, nothing goes by Slack, for everyone: each person
 `delivered: false` and a `warning`, and the run log says "Slack delivery skipped: a member or an automatic process
 changed the Slack credential of Deliver Briefing last. An owner or admin must check its Base URL and token and save a
 change …" (or that it points at another server than Slack's API), with no names, addresses or text. Credentials from
-before migration 2092 have no recorded changer, so they need that save once. Email goes through the host's SMTP settings (`LANDFLOW_SMTP_*`, environment only, which no member can change) and
+before migration 2092 have no recorded changer, so they need that save once. The credential dialog shows who changed it
+last. Email goes through the host's SMTP settings (`LANDFLOW_SMTP_*`, environment only, which no member can change) and
 is sent as before. Write Briefing's model comes from server settings only (`LANDFLOW_BRAIN_MODEL` with
 `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` / `OPENAI_BASE_URL` or `OLLAMA_URL`), never from a credential, so no member can
 point it elsewhere either.

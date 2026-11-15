@@ -855,8 +855,9 @@ describe('the Slack credential: who last changed it (through the credential rout
       expect(slackCalls).toEqual([]);
       expect(await bobsWarning(run)).toMatch(/^Slack delivery skipped: a member or an automatic process changed the Slack credential .* last\. An owner or admin must check its Base URL and token and save a change/);
       // An owner's change of a value vouches for the credential; a member's save that changes nothing then leaves it so.
-      expect((await patch(owner, { data: { baseUrl: slackUrl } })).status).toBe(200);
+      const saved = await patch(owner, { data: { baseUrl: slackUrl } });
       expect(vault.lastChangedBy(key.id)).toBe(owner.id);
+      expect(((await saved.json()) as { credential: { updatedByName?: string } }).credential.updatedByName).toBe('Owner');
       expect((await patch(alice, { data: { baseUrl: slackUrl, accessToken: '' } })).status).toBe(200);
       expect(vault.lastChangedBy(key.id)).toBe(owner.id);
       await production('wf_slack_t1');

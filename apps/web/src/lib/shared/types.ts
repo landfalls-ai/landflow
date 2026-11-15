@@ -136,6 +136,8 @@ export interface CredentialDetail extends CredentialSummary {
   data: Record<string, unknown>;
   /** Secret fields that have a stored value. */
   secrets: string[];
+  /** The name of who last changed its data (`updatedBy`), on GET /api/credentials/:id. */
+  updatedByName?: string;
 }
 
 export type RegistryEvent =

@@ -36,6 +36,19 @@ function defaultsOf(info: CredentialTypeInfo) {
   return Object.fromEntries(info.descriptor.properties.filter((p) => p.default !== undefined).map((p) => [p.name, p.default]));
 }
 
+/**
+ * The fields edited since the credential was loaded or saved (a field emptied out is sent as null), or undefined when
+ * none was: a save sends only these, so saving the form unchanged changes no value and vouches for nothing.
+ */
+function editedFields(values: Record<string, unknown>, saved: Record<string, unknown>): Record<string, unknown> | undefined {
+  const edited: Record<string, unknown> = {};
+  for (const key of new Set([...Object.keys(saved), ...Object.keys(values)])) {
+    if (JSON.stringify(values[key]) === JSON.stringify(saved[key])) continue;
+    edited[key] = key in values ? values[key] : null;
+  }
+  return Object.keys(edited).length ? edited : undefined;
+}
+
 function TypePicker({ types, onPick }: { types: CredentialTypeInfo[]; onPick: (type: string) => void }) {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
@@ -125,6 +138,8 @@ export function CredentialDialog({
   const [existing, setExisting] = useState<CredentialDetail>();
   const [name, setName] = useState('');
   const [values, setValues] = useState<Record<string, unknown>>({});
+  // The fields as the server last sent them: what a save compares the form with.
+  const [savedValues, setSavedValues] = useState<Record<string, unknown>>({});
   const [test, setTest] = useState<TestResult | 'running'>();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
@@ -142,6 +157,7 @@ export function CredentialDialog({
         setType(credential.type);
         setName(credential.name);
         setValues(credential.data);
+        setSavedValues(credential.data);
         setRateCalls(credential.rateLimit ? String(credential.rateLimit.limit) : '');
         setRateSeconds(credential.rateLimit ? String(credential.rateLimit.intervalSeconds) : '60');
       })
@@ -205,9 +221,12 @@ export function CredentialDialog({
     }
     const rateLimit = rateCalls.trim() ? { limit: calls, intervalSeconds: seconds } : null;
     try {
+      const edited = existing ? editedFields(values, savedValues) : undefined;
       const { credential } = existing
-        ? await api<{ credential: CredentialDetail }>(`/api/credentials/${existing.id}`, { method: 'PATCH', json: { name, data: values, rateLimit } })
+        ? await api<{ credential: CredentialDetail }>(`/api/credentials/${existing.id}`, { method: 'PATCH', json: { name, ...(edited && { data: edited }), rateLimit } })
         : await api<{ credential: CredentialDetail }>(`/api/credentials${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`, { method: 'POST', json: { name, type, data: values, ...(rateLimit && { rateLimit }) } });
+      setSavedValues(credential.data);
+      if (existing) setExisting(credential);
       await useCredentialStore.getState().refresh();
       return credential;
     } catch (e) {
@@ -290,6 +309,7 @@ export function CredentialDialog({
               <div>
                 <FieldLabel>Credential name</FieldLabel>
                 <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="My account" />
+                {existing && <p className="mt-1 text-[12px] text-t3">{existing.updatedByName ? `Last changed by ${existing.updatedByName}` : 'Last changed by: not recorded'}</p>}
               </div>
               {info ? (
                 <>
