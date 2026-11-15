@@ -1274,9 +1274,21 @@ Checked live on 2026-11-15 against Landledger `fee9b0a`: the three keys, both tr
 key, a form request held for its person with a signed `request.needs_confirmation` delivery, and the Slack refusals
 (not an approver, a wrong signature, a card never sent).
 
+**Month end, seats and incidents (2026-11-15), against Landledger's wave 4 contract `2ed51f3`:** Request → Release
+Seats, Contract → Seats, the seat terms and a Landbright request on Request → Create; Close → Snapshot; Note →
+Figures and Submit Draft with a **Landledger Notes Key** (`notes:draft` only); Cost → Window; the trigger's
+`seat.released`, `notes.draft_requested`, `note.accepted`, `accrual.accepted`, `period.locked`, `period.reopened`
+and `datarails.uploaded`. Three flows: [a tool or seat cost](features/landledger.md#tool-or-seat-cost) with
+Landbright (raise at the contract's seat price, tell Landbright the decision, mark applied or release with the grant),
+[draft variance notes](features/landledger.md#draft-variance-notes) (a local Ollama model drafts each note citing only
+the snapshot's figures, one redraft on a refusal) and [an incident's cost to the room](features/landledger.md#incident-cost-to-the-room)
+(Landfall's ended room → Cost → Window → an estimated note in the room).
+
 **Next:** a decision delivered live (once a person confirms or decides); the AI budget flow on the cluster; Slack's
 reject modal (`view_submission`); a Teams and an email card for the relay; Mark Applied wired to a
-real apply step in the infra flow.
+real apply step in the infra flow; Landbright's external cost step (then `SETTLE_IN_LANDBRIGHT` on) and a seat-cost
+mark on its bundles (then no `SEAT_APPS`); a postmortem operation in the landfall plugin, for the incident cost to
+land in the postmortem; the incident flow run live once the cluster has a Landfall credential.
 
 ## The Brain page (built 2026-11-12)
 

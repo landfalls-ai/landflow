@@ -9,7 +9,7 @@ import { LandledgerNode } from '../src/nodes/landledger';
 import { amountParameter, fromMicros, toMicros } from '../src/shared';
 import { executeRequest, extras } from './helpers';
 import { runNode } from '@landflow/sdk';
-import { KEY, MIXED_RELAY_KEY, READ_KEY, RELAY_KEY, SLACK_CHANNEL, startFakeLandledger, WEBHOOKS_KEY, type FakeLandledger } from './fake-landledger';
+import { KEY, MIXED_RELAY_KEY, NOTES_KEY, NOTES_MONTH, READ_KEY, RELAY_KEY, SLACK_CHANNEL, SNAPSHOT_SHA, startFakeLandledger, WEBHOOKS_KEY, type FakeLandledger } from './fake-landledger';
 import { credentials, jsonOf, relayCredentials, run, slackPress, testCredentials, type RequestOptions } from './helpers';
 
 let fake: FakeLandledger;
@@ -226,6 +226,167 @@ describe('Request', () => {
     const response = await call(CREATE, { key: READ_KEY });
     expect(response.error?.message).toBe('Landledger API error 403: This needs the requests:write scope');
     expect(response.error?.description).toMatch(/needs requests:write/);
+  });
+});
+
+describe('Tool or seat', () => {
+  const SEAT: JsonObject = {
+    ...CREATE,
+    kind: 'tool_or_seat',
+    title: 'Linear seat for Tal Levi',
+    amount: '12.5',
+    requester: 'sub-tal',
+    evidence: '{}',
+    seatContractId: 'con_linear',
+    seats: 1,
+    seatPrice: '12.500000',
+    requestFields: { landbrightRequestId: 'REQ-41', landbrightRequestUrl: 'http://localhost:5173/requests/REQ-41', idempotencyKey: 'landbright-REQ-41' },
+  };
+
+  it('Contract → Seats finds the contract that grants a Landbright app; an app no contract names is found: false, not an error', async () => {
+    const [found] = jsonOf(await call({ resource: 'contract', operation: 'getSeats', landbrightApp: 'linear' }));
+    expect(last()).toMatchObject({ method: 'GET', path: '/api/contracts/seats', query: { landbrightApp: 'linear' } });
+    expect(found).toMatchObject({ found: true, landbrightApp: 'linear', seatPrice: '12.500000', left: 2, contract: { id: 'con_linear', costCenter: { code: 'ENG-PLATFORM' } } });
+    expect(jsonOf(await call({ resource: 'contract', operation: 'getSeats', landbrightApp: 'figma' }))[0]).toEqual({ found: false, landbrightApp: 'figma', contract: null, seatPrice: null, left: 0 });
+    const read = await call({ resource: 'contract', operation: 'getSeats', landbrightApp: 'linear' }, { key: WEBHOOKS_KEY });
+    expect(read.error?.message).toMatch(/403: This needs the read scope/);
+  });
+
+  it('Create carries the seat terms and the Landbright request as a related source; seat terms only on a tool_or_seat', async () => {
+    const [out] = jsonOf(await call(SEAT));
+    expect(last().body).toMatchObject({
+      kind: 'tool_or_seat',
+      amount: { amount: '12.5', currency: 'USD' },
+      recurrence: 'monthly',
+      seat: { contractId: 'con_linear', seats: 1, seatPrice: '12.5' },
+      requester: { kind: 'person', person: { sub: 'sub-tal' } },
+      related: [{ type: 'landbright_request', id: 'REQ-41', url: 'http://localhost:5173/requests/REQ-41' }],
+      idempotencyKey: 'landbright-REQ-41',
+    });
+    expect(out).toMatchObject({ created: true, request: { kind: 'tool_or_seat', seat: { contractId: 'con_linear', status: 'none' } } });
+    // The same parameters on an infra change send no seat; a seat price that isn't an amount is refused before the call.
+    await call({ ...SEAT, kind: 'infra_change', requestFields: {} });
+    expect(last().body.seat).toBeUndefined();
+    const before = fake.requests.length;
+    expect((await call({ ...SEAT, seatPrice: 'twelve' })).error?.message).toMatch(/Seat Price must be a non-negative amount/);
+    expect((await call({ ...SEAT, seats: 0 })).error?.message).toMatch(/Seats must be a whole number from 1 to 100/);
+    expect(fake.requests.length).toBe(before);
+    // Landledger checks the terms add up.
+    expect((await call({ ...SEAT, amount: '20', requestFields: {} })).error?.message).toMatch(/400: A seat request is seats × seat price a month/);
+  });
+
+  it('Release Seats gives a reserved seat back with its reason; an applied seat only when its grant was revoked; nothing held is a 409', async () => {
+    const [{ request }] = jsonOf(await call(SEAT)) as Array<{ request: JsonObject }>;
+    const id = String(request.id);
+    const seat = fake.state.requests.get(id);
+    seat.status = 'approved';
+    seat.seat.status = 'reserved';
+    const [released] = jsonOf(await call({ resource: 'request', operation: 'releaseSeats', requestId: id, seatReason: 'access_denied', seatNote: 'Landbright denied REQ-41' }));
+    expect(last()).toMatchObject({ method: 'POST', path: `/api/requests/${id}/seats/release`, body: { reason: 'access_denied', note: 'Landbright denied REQ-41' } });
+    expect(last().headers.authorization).toBe(`Bearer ${KEY}`);
+    expect(released).toMatchObject({ request: { seat: { status: 'released' } }, released: { from: 'reserved', reason: 'access_denied' } });
+    const again = await call({ resource: 'request', operation: 'releaseSeats', requestId: id, seatReason: 'access_denied' });
+    expect(again.error?.message).toMatch(/409: Nothing is held for this request/);
+
+    seat.seat.status = 'applied';
+    expect((await call({ resource: 'request', operation: 'releaseSeats', requestId: id, seatReason: 'not_needed' })).error?.message).toMatch(/409: An applied seat is released only when its grant was revoked/);
+    expect(jsonOf(await call({ resource: 'request', operation: 'releaseSeats', requestId: id, seatReason: 'grant_revoked' }))[0]).toMatchObject({ released: { from: 'applied', reason: 'grant_revoked' } });
+    expect((await call({ resource: 'request', operation: 'releaseSeats', requestId: id, seatReason: 'lost' })).error?.message).toMatch(/Reason "lost" is not one of/);
+  });
+
+  it('Mark Applied moves a reserved seat to used', async () => {
+    const [{ request }] = jsonOf(await call(SEAT)) as Array<{ request: JsonObject }>;
+    const seat = fake.state.requests.get(String(request.id));
+    seat.status = 'approved';
+    seat.seat.status = 'reserved';
+    await call({ resource: 'request', operation: 'markApplied', requestId: request.id, appliedNote: 'Granted in Landbright as REQ-41', links: '[{"label":"REQ-41","url":"http://localhost:5173/requests/REQ-41"}]' });
+    expect(seat).toMatchObject({ status: 'applied', seat: { status: 'applied' }, appliedNote: 'Granted in Landbright as REQ-41' });
+  });
+});
+
+describe('Notes key credential', () => {
+  it('passes a key with notes:draft alone, and refuses one without it or with a write scope besides', async () => {
+    const ok = await testCredentials({ baseUrl: fake.url, apiKey: NOTES_KEY }, 'landledgerNotesKey');
+    expect(ok).toEqual({ ok: true, message: 'Connected to Landledger 0.2.0 as Landflow notes (key key_notes): notes:draft' });
+    const without = await testCredentials({ baseUrl: fake.url, apiKey: READ_KEY }, 'landledgerNotesKey');
+    expect(without).toMatchObject({ ok: false, message: expect.stringMatching(/the key has no notes:draft \(read\)/) });
+    const admin = await testCredentials({ baseUrl: fake.url, apiKey: KEY }, 'landledgerNotesKey');
+    expect(admin.ok).toBe(false);
+  });
+});
+
+describe('Close, Notes and the cost of a window', () => {
+  const notes = (parameters: JsonObject, extra: Omit<RequestOptions, 'credentials'> & { key?: string } = {}) =>
+    run(LandledgerNode, { resource: 'note', ...parameters }, { credentials: { landledgerNotesKey: { baseUrl: fake.url, apiKey: extra.key ?? NOTES_KEY } }, ...extra });
+  const DRAFT: JsonObject = {
+    operation: 'submitDraft',
+    month: NOTES_MONTH,
+    noteCostCenter: 'ENG-AGENTS',
+    snapshotSha256: SNAPSHOT_SHA,
+    noteText: 'Engineering agents came in 799.50 under budget; Claude Sonnet 5.5 rose 150.25 on last month.',
+    cites: JSON.stringify([{ figure: 'variance_budget', amount: '-799.50' }, { figure: 'driver_model', key: 'claude-sonnet-5-5', amount: 150.25 }]),
+    noteAgentId: 'wf_notes',
+    noteAgentName: 'Variance note drafter',
+    noteSponsor: 'Eden.Tzur@landbright.test',
+  };
+
+  it('Close → Snapshot reads the frozen figures with the flows\' key; a month not frozen yet is a 404', async () => {
+    const [snapshot] = jsonOf(await call({ resource: 'close', operation: 'getSnapshot', month: NOTES_MONTH }));
+    expect(last()).toMatchObject({ method: 'GET', path: `/api/close/${NOTES_MONTH}/snapshot` });
+    expect(snapshot).toMatchObject({ month: NOTES_MONTH, sha256: SNAPSHOT_SHA, current: true });
+    expect((await call({ resource: 'close', operation: 'getSnapshot', month: '2026-11' })).error?.message).toMatch(/404: No snapshot for 2026-11/);
+  });
+
+  it('Note → Figures reads what each note may cite with the notes key', async () => {
+    const [figures] = jsonOf(await notes({ operation: 'getFigures', month: NOTES_MONTH }));
+    expect(last().headers.authorization).toBe(`Bearer ${NOTES_KEY}`);
+    expect(figures).toMatchObject({ snapshotSha256: SNAPSHOT_SHA, needed: [{ costCenter: 'TOTAL' }, { costCenter: 'ENG-AGENTS', drivers: [{ dimension: 'model', change: '150.250000' }] }] });
+  });
+
+  it('Note → Submit Draft sends the text, exact cites, the agent, its sponsor and this run', async () => {
+    const [note] = jsonOf(await notes(DRAFT));
+    expect(last()).toMatchObject({ method: 'POST', path: `/api/notes/${NOTES_MONTH}/drafts` });
+    expect(last().body).toEqual({
+      costCenter: 'ENG-AGENTS',
+      snapshotSha256: SNAPSHOT_SHA,
+      text: DRAFT.noteText,
+      cites: [{ figure: 'variance_budget', amount: '-799.500000' }, { figure: 'driver_model', key: 'claude-sonnet-5-5', amount: '150.250000' }],
+      agent: { id: 'wf_notes', name: 'Variance note drafter', system: 'landflow' },
+      sponsor: { email: 'eden.tzur@landbright.test' },
+      runId: 'ex_test',
+    });
+    expect(note).toMatchObject({ costCenter: 'ENG-AGENTS', status: 'drafted', versions: [{ version: 1, kind: 'draft' }] });
+  });
+
+  it('a cited figure that differs from the snapshot is Landledger\'s 422, with the mismatches in the message', async () => {
+    const refused = await notes({ ...DRAFT, cites: '[{"figure":"actual","amount":"1300"}]' });
+    expect(refused.error?.message).toBe('Landledger API error 422: A cited figure does not match the snapshot (mismatches: [{"figure":"actual","key":null,"cited":"1300.000000","snapshot":"1200.500000"}])');
+    expect(refused.error?.description).toMatch(/cite only the figures Notes → Figures lists/);
+    const stale = await notes({ ...DRAFT, snapshotSha256: 'b'.repeat(64) });
+    expect(stale.error?.message).toMatch(/409: That snapshot is not the month's current one/);
+  });
+
+  it('checks the draft before calling: the snapshot hash, the text, each figure, a driver\'s key; an agent drafts as itself', async () => {
+    const before = fake.requests.length;
+    expect((await notes({ ...DRAFT, snapshotSha256: 'abc' })).error?.message).toMatch(/64 hex characters/);
+    expect((await notes({ ...DRAFT, noteText: 'Short' })).error?.message).toMatch(/10-8,000 characters/);
+    expect((await notes({ ...DRAFT, cites: '[{"figure":"revenue","amount":"1"}]' })).error?.message).toMatch(/"revenue" is not one of actual, budget/);
+    expect((await notes({ ...DRAFT, cites: '[{"figure":"driver_service","amount":"1"}]' })).error?.message).toMatch(/needs the key of the driver/);
+    expect((await notes({ ...DRAFT, cites: '[{"figure":"actual","amount":"lots"}]' })).error?.message).toMatch(/the amount must be a decimal/);
+    expect((await notes({ ...DRAFT, noteAgentId: '' }, { mode: 'tool' })).error?.message).toMatch(/An agent drafts a note as itself/);
+    expect(fake.requests.length).toBe(before);
+    // A key without notes:draft is Landledger's 403.
+    expect((await notes(DRAFT, { key: KEY })).error?.message).toMatch(/403: This needs the notes:draft scope/);
+  });
+
+  it('Cost → Window asks for the services over the window, as ISO instants; an empty window is refused before the call', async () => {
+    const [window] = jsonOf(await call({ resource: 'cost', operation: 'window', services: 'checkout, landflow-host, checkout, ghost', windowFrom: '2026-11-14T10:00:00+02:00', windowTo: '2026-11-14T11:30:00Z' }));
+    expect(last()).toMatchObject({ method: 'GET', path: '/api/cost/window', query: { services: 'checkout,landflow-host,ghost', from: '2026-11-14T08:00:00.000Z', to: '2026-11-14T11:30:00.000Z' } });
+    expect(window).toMatchObject({ basis: 'estimated', total: '53.250000', services: [{ service: 'checkout', known: true }, { service: 'landflow-host' }, { service: 'ghost', known: false, amount: '0.000000' }] });
+    const before = fake.requests.length;
+    expect((await call({ resource: 'cost', operation: 'window', services: 'checkout', windowFrom: '2026-11-14T11:00:00Z', windowTo: '2026-11-14T10:00:00Z' })).error?.message).toMatch(/From must be before To/);
+    expect((await call({ resource: 'cost', operation: 'window', services: ' , ', windowFrom: '2026-11-14T10:00:00Z', windowTo: '2026-11-14T11:00:00Z' })).error?.message).toMatch(/name at least one service/);
+    expect(fake.requests.length).toBe(before);
   });
 });
 

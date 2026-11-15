@@ -174,6 +174,18 @@ describe('Landledger Trigger', () => {
     expect((await deliver(data, report, { parameters, id: 'evt_3' })).items![0].json).toMatchObject({ type: 'report.exceptions', id: 'evt_3', requestId: null, rows: 3, sha256: 'f'.repeat(64) });
   });
 
+  it('starts on seat.released, with the request id lifted out of the event', async () => {
+    const data = await created({ events: ['seat.released'] });
+    const released = { type: 'seat.released', timestamp: 't', data: { requestId: 'req_9', number: 'R-9', contractId: 'con_linear', seats: 1, reason: 'access_denied', from: 'reserved', url: 'u' } };
+    expect((await deliver(data, released, { parameters: { events: ['seat.released'] } })).items![0].json).toMatchObject({ type: 'seat.released', requestId: 'req_9', kind: null, contractId: 'con_linear', reason: 'access_denied' });
+  });
+
+  it('starts on notes.draft_requested with the month, the snapshot and the figures each note may cite', async () => {
+    const data = await created({ events: ['notes.draft_requested'] });
+    const requested = { type: 'notes.draft_requested', timestamp: 't', data: { month: '2026-10', snapshotSha256: 'c'.repeat(64), needed: [{ costCenter: 'TOTAL', actual: '0.000000', drivers: [] }], draftUrl: 'http://127.0.0.1:4810/api/notes/2026-10/drafts', url: 'u' } };
+    expect((await deliver(data, requested, { parameters: { events: ['notes.draft_requested'] } })).items![0].json).toMatchObject({ type: 'notes.draft_requested', month: '2026-10', snapshotSha256: 'c'.repeat(64), needed: [{ costCenter: 'TOTAL' }], requestId: null });
+  });
+
   it('a missing, forged or stale signature answers 401 and starts nothing', async () => {
     const data = await created();
     for (const options of [{ signature: '' }, { secret: `whsec_${Buffer.from('forged').toString('base64')}` }, { timestamp: Math.floor(Date.now() / 1000) - 3600 }]) {

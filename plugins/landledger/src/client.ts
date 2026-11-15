@@ -3,7 +3,7 @@
  * libs/contracts/src/requests.ts), over the shared HTTP client. Nothing here reads node parameters.
  */
 import { NodeOperationError, type JsonObject } from '@landflow/sdk';
-import { baseUrl, expectOk, fetchLandledger, type ApiContext, type ApiResponse, type LandledgerCredentials, type LandledgerRelayCredentials, type Scope } from './shared';
+import { baseUrl, expectOk, fetchLandledger, type ApiContext, type ApiResponse, type LandledgerCredentials, type LandledgerNotesCredentials, type LandledgerRelayCredentials, type Scope } from './shared';
 
 interface RequestOptions {
   query?: Record<string, string | number | boolean | undefined>;
@@ -18,7 +18,7 @@ export class Landledger {
   readonly base: string;
   constructor(
     private readonly api: ApiContext,
-    private readonly credentials: LandledgerCredentials | LandledgerRelayCredentials,
+    private readonly credentials: LandledgerCredentials | LandledgerRelayCredentials | LandledgerNotesCredentials,
   ) {
     this.base = baseUrl(credentials.baseUrl);
   }
@@ -91,6 +91,24 @@ export class Landledger {
   }
 
   /**
+   * `POST /api/requests/:id/seats/release`: a seat request's seats go back to the contract and its reservations are
+   * released (wave 3, spec 010). The creating key may release its own request's seat; 409 when nothing is held.
+   */
+  releaseSeats(id: string, body: { reason: string; note: string }) {
+    return this.json<JsonObject>('POST', `/api/requests/${enc(id)}/seats/release`, { body, scope: 'requests:write' });
+  }
+
+  /**
+   * `GET /api/contracts/seats?landbrightApp=`: the contract that grants a Landbright app, its seat price and seats left;
+   * null when no contract names the app (404).
+   */
+  async contractSeats(landbrightApp: string): Promise<{ contract: JsonObject; seatPrice: string | null; left: number } | null> {
+    const response = await this.raw('GET', '/api/contracts/seats', { query: { landbrightApp } });
+    if (response.status === 404) return null;
+    return expectOk(response, { scope: 'read' });
+  }
+
+  /**
    * `POST /api/relays/slack` with a `decisions:relay` key: the raw Slack interaction (body and signature headers as
    * Slack sent them). Landledger verifies it and decides as the person who linked that Slack user: `{ request, decision }`.
    */
@@ -109,6 +127,26 @@ export class Landledger {
   async release(id: string, reason: string): Promise<JsonObject> {
     const answer = await this.json<JsonObject>('POST', `/api/reservations/${enc(id)}/release`, { body: reason ? { reason } : {}, scope: 'reservations:write' });
     return (answer?.reservation && typeof answer.reservation === 'object' ? answer.reservation : answer) as JsonObject;
+  }
+
+  /** `GET /api/close/:month/snapshot`: the frozen figures and their sha256 (404 before the accrual is accepted). */
+  closeSnapshot(month: string) {
+    return this.json<JsonObject>('GET', `/api/close/${enc(month)}/snapshot`);
+  }
+
+  /** `GET /api/notes/:month/figures` (`read`, or a `notes:draft` key): `{ snapshotSha256, needed }`, what a note may cite. */
+  noteFigures(month: string) {
+    return this.json<{ snapshotSha256: string; needed: JsonObject[] }>('GET', `/api/notes/${enc(month)}/figures`);
+  }
+
+  /** `POST /api/notes/:month/drafts` (`notes:draft`): one note's draft; 422 when a cited figure differs from the snapshot. */
+  submitNoteDraft(month: string, body: JsonObject) {
+    return this.json<JsonObject>('POST', `/api/notes/${enc(month)}/drafts`, { body, scope: 'notes:draft' });
+  }
+
+  /** `GET /api/cost/window?services=&from=&to=`: the estimated cost of named services over a window. */
+  costWindow(query: { services: string; from: string; to: string }) {
+    return this.json<JsonObject>('GET', '/api/cost/window', { query });
   }
 
   /** A `webhooks:write` key lists only the subscriptions it created. */

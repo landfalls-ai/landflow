@@ -2,6 +2,7 @@ import { defineCredentialType, defineNode, NodeOperationError, type IExecuteCont
 import { Landledger } from '../client';
 import {
   amountParameter,
+  jsonParameter,
   dayParameter,
   DEFAULT_BASE_URL,
   fromMicros,
@@ -14,6 +15,7 @@ import {
   unsupported,
   type ApiContext,
   type LandledgerCredentials,
+  type LandledgerNotesCredentials,
   type LandledgerRelayCredentials,
 } from '../shared';
 
@@ -35,7 +37,7 @@ const baseUrlProperty = {
 const NOT_WITH_RELAY = ['requests:write', 'reservations:write', 'webhooks:write', 'ingest', 'admin'];
 
 /** `GET /api/health` and `GET /api/auth/me`: the version, the key's name and id, its scopes. */
-async function whoIs(ctx: { http: ApiContext['http'] }, data: LandledgerCredentials | LandledgerRelayCredentials) {
+async function whoIs(ctx: { http: ApiContext['http'] }, data: LandledgerCredentials | LandledgerRelayCredentials | LandledgerNotesCredentials) {
   const client = new Landledger({ http: ctx.http }, data);
   const health = await client.health();
   const me = await client.me();
@@ -130,6 +132,47 @@ export const landledgerRelayApi = defineCredentialType<LandledgerRelayCredential
   },
 });
 
+/** Scopes a notes key never needs: it drafts notes and reads the figures they cite, nothing else. */
+const NOT_WITH_NOTES = ['requests:write', 'reservations:write', 'webhooks:write', 'decisions:relay', 'ingest', 'admin'];
+
+/**
+ * The notes key: `notes:draft` only. Notes → Submit Draft sends an agent's draft of a variance note; Landledger checks
+ * every cited figure against the month's frozen snapshot, and only a person (FP&A or a controller) accepts a note. An
+ * agent may hold it: drafting is what agents are for.
+ */
+export const landledgerNotesKey = defineCredentialType<LandledgerNotesCredentials>({
+  name: 'landledgerNotesKey',
+  displayName: 'Landledger Notes Key (notes:draft)',
+  icon: ICON,
+  documentationUrl: DOCS,
+  properties: [
+    baseUrlProperty,
+    {
+      name: 'apiKey',
+      displayName: 'Notes Key',
+      type: 'string',
+      required: true,
+      typeOptions: { password: true },
+      default: '',
+      placeholder: 'll_…',
+      description: 'A Landledger API key with notes:draft and nothing else (it submits drafts of variance notes and reads the figures they may cite; no person\'s role carries it, and nothing it holds accepts a note)',
+    },
+  ],
+  async test(data, ctx) {
+    try {
+      const { scopes, who } = await whoIs(ctx, data);
+      const list = scopes.join(', ') || 'no scopes';
+      if (!scopes.includes('notes:draft')) return { ok: false, message: `Connected to ${who}, but the key has no notes:draft (${list}): it can't submit a draft` };
+      const extra = scopes.filter((s) => NOT_WITH_NOTES.includes(s));
+      if (extra.length) return { ok: false, message: `Connected to ${who}, but a notes key must hold notes:draft only; this one also holds ${extra.join(', ')}. Ask a Landledger admin for a key with notes:draft alone` };
+      const others = scopes.filter((s) => s !== 'notes:draft');
+      return { ok: true, message: `Connected to ${who}: ${list}${others.length ? `. Warning: drafting needs only notes:draft; this key also holds ${others.join(', ')}` : ''}` };
+    } catch (error) {
+      return { ok: false, message: (error as Error).message };
+    }
+  },
+});
+
 const show = (resource: string, operation: string[], extra: Record<string, unknown[]> = {}) => ({ show: { resource: [resource], operation, ...extra } });
 
 /** Landledger's spend dimensions (its libs/contracts Dimension). */
@@ -174,7 +217,7 @@ export const LandledgerNode = defineNode({
   description: {
     name: 'landledger',
     displayName: 'Landledger',
-    description: 'Check a cost center\'s budget, query spend, raise and read spend requests, reserve and release budget, read a month\'s status, and relay a person\'s signed Slack approval to Landledger',
+    description: 'Check a cost center\'s budget, query spend and the cost of services over a window, find a contract\'s seats, read a closing month\'s frozen snapshot, draft its variance notes, raise and read spend requests, release a seat request\'s seats, reserve and release budget, read a month\'s status, and relay a person\'s signed Slack approval to Landledger',
     version: 1,
     kind: 'action',
     categories: ['Finance', 'Productivity'],
@@ -187,13 +230,14 @@ export const LandledgerNode = defineNode({
     // Writes are at most once over a broker; reads opt back in with `idempotent: true`.
     idempotent: false,
     toolDescription:
-      'Landledger, the cost ledger: check what a cost center has left this month after actuals and reservations (and whether a planned amount fits), query spend grouped by cost center, team, service, agent, model…, raise a spend request (an agent always names its sponsor, the accountable person) and read its status and evidence, reserve or release budget for an approved request, and read whether a month is open, closing or locked. Agents request; people decide: no tool here approves or rejects.',
+      'Landledger, the cost ledger: check what a cost center has left this month after actuals and reservations (and whether a planned amount fits), query spend grouped by cost center, team, service, agent, model…, the estimated cost of named services over a time window, read a closing month\'s frozen snapshot and the figures its variance notes may cite, submit a draft of a variance note (a person accepts it), raise a spend request (an agent always names its sponsor, the accountable person) and read its status and evidence, reserve or release budget for an approved request, and read whether a month is open, closing or locked. Agents request; people decide: no tool here approves or rejects.',
     inputs: [{ type: 'main' }],
     outputs: [{ type: 'main' }],
     // Relays take their own key (decisions:relay only); everything else the flow's key.
     credentials: [
-      { name: 'landledgerApi', required: true, displayOptions: { hide: { resource: ['decision'] } } },
+      { name: 'landledgerApi', required: true, displayOptions: { hide: { resource: ['decision', 'note'] } } },
       { name: 'landledgerRelayApi', required: true, displayOptions: { show: { resource: ['decision'] } } },
+      { name: 'landledgerNotesKey', required: true, displayOptions: { show: { resource: ['note'] } } },
     ],
     properties: [
       {
@@ -204,10 +248,13 @@ export const LandledgerNode = defineNode({
         default: 'budget',
         options: [
           { name: 'Budget', value: 'budget' },
+          { name: 'Close', value: 'close' },
+          { name: 'Contract', value: 'contract' },
           { name: 'Cost', value: 'cost' },
           // A person's decision, carried by a flow (Slack, Teams, email). Never a tool: not for agents or MCP.
           { name: 'Decision', value: 'decision', mcp: false },
           { name: 'Key', value: 'key' },
+          { name: 'Note', value: 'note' },
           { name: 'Period', value: 'period' },
           { name: 'Request', value: 'request' },
           { name: 'Reservation', value: 'reservation' },
@@ -236,6 +283,66 @@ export const LandledgerNode = defineNode({
         displayName: 'Operation',
         type: 'options',
         noDataExpression: true,
+        default: 'getSnapshot',
+        displayOptions: { show: { resource: ['close'] } },
+        options: [
+          {
+            name: 'Snapshot',
+            value: 'getSnapshot',
+            description: 'A closing month\'s frozen figures (by cost center, P&L class, provider, the accrual, the notes\' figures) and their sha256; Landledger answers 404 before the accrual is accepted',
+            action: 'Get a month\'s frozen snapshot',
+            idempotent: true,
+            toolAnnotations: { readOnlyHint: true },
+          },
+        ],
+      },
+      {
+        name: 'operation',
+        displayName: 'Operation',
+        type: 'options',
+        noDataExpression: true,
+        default: 'submitDraft',
+        displayOptions: { show: { resource: ['note'] } },
+        options: [
+          {
+            name: 'Figures',
+            value: 'getFigures',
+            description: 'The notes a closing month needs (the whole month and each cost center) with the figures each may cite: actual, budget, the day-10 forecast, variances and the drivers',
+            action: 'Get the figures notes may cite',
+            idempotent: true,
+            toolAnnotations: { readOnlyHint: true },
+          },
+          {
+            name: 'Submit Draft',
+            value: 'submitDraft',
+            description: 'Send a draft of one variance note with the figures it cites; Landledger refuses a figure that differs from the frozen snapshot (422), and only a person accepts a note',
+            action: 'Submit a variance note draft',
+          },
+        ],
+      },
+      {
+        name: 'operation',
+        displayName: 'Operation',
+        type: 'options',
+        noDataExpression: true,
+        default: 'getSeats',
+        displayOptions: { show: { resource: ['contract'] } },
+        options: [
+          {
+            name: 'Seats',
+            value: 'getSeats',
+            description: 'The contract that grants a Landbright app, its price per seat a month and the seats left (found: false when no contract names the app)',
+            action: 'Find a contract\'s seats',
+            idempotent: true,
+            toolAnnotations: { readOnlyHint: true },
+          },
+        ],
+      },
+      {
+        name: 'operation',
+        displayName: 'Operation',
+        type: 'options',
+        noDataExpression: true,
         default: 'query',
         displayOptions: { show: { resource: ['cost'] } },
         options: [
@@ -244,6 +351,14 @@ export const LandledgerNode = defineNode({
             value: 'query',
             description: 'Spend over a month or a range of days, grouped by a dimension (spend_by)',
             action: 'Query spend',
+            idempotent: true,
+            toolAnnotations: { readOnlyHint: true },
+          },
+          {
+            name: 'Window',
+            value: 'window',
+            description: 'The estimated cost of named services over a time window (each day\'s cost by the share of it inside the window); always labelled estimated',
+            action: 'Get the cost of a window',
             idempotent: true,
             toolAnnotations: { readOnlyHint: true },
           },
@@ -261,6 +376,12 @@ export const LandledgerNode = defineNode({
           { name: 'Get', value: 'get', description: 'A request with its steps, decisions, reservations, Landledger\'s evidence and the evidence hash', action: 'Get a request', idempotent: true },
           { name: 'List', value: 'list', description: 'Requests, newest first: waiting, mine, decided, open or all', action: 'List requests', idempotent: true },
           { name: 'Mark Applied', value: 'markApplied', description: 'Tell Landledger an approved change is in place (approved → applied)', action: 'Mark a request applied' },
+          {
+            name: 'Release Seats',
+            value: 'releaseSeats',
+            description: 'Give a seat request\'s seats back to the contract and release its reservations: access denied, the grant revoked, or not needed',
+            action: 'Release a request\'s seats',
+          },
         ],
       },
       {
@@ -340,6 +461,33 @@ export const LandledgerNode = defineNode({
         displayOptions: show('budget', ['check']),
         description: 'Optional, in the ledger\'s currency: the output says whether it fits in what is left (`fits`) and what would be left after it',
       },
+
+      // ---- Close → Snapshot, Note → Figures, Submit Draft
+      { name: 'month', displayName: 'Month', type: 'string', required: true, default: '', placeholder: '2026-10', displayOptions: show('close', ['getSnapshot']), description: 'YYYY-MM: a month at least as far as the accepted accrual' },
+      { name: 'month', displayName: 'Month', type: 'string', required: true, default: '', placeholder: '2026-10', displayOptions: show('note', ['getFigures', 'submitDraft']), description: 'YYYY-MM: the closing month' },
+      { name: 'noteCostCenter', displayName: 'Cost Center', type: 'string', required: true, default: '', placeholder: 'ENG-AGENTS', displayOptions: show('note', ['submitDraft']), description: 'The note\'s cost center as Figures names it, or TOTAL for the month as a whole' },
+      { name: 'snapshotSha256', displayName: 'Snapshot SHA-256', type: 'string', required: true, default: '', displayOptions: show('note', ['submitDraft']), description: 'The frozen snapshot the draft cites (Figures\' snapshotSha256); Landledger answers 409 when it is no longer the month\'s current one' },
+      { name: 'noteText', displayName: 'Text', type: 'string', required: true, default: '', typeOptions: { rows: 6 }, displayOptions: show('note', ['submitDraft']), description: '10-8,000 characters' },
+      {
+        name: 'cites',
+        displayName: 'Cited Figures',
+        type: 'json',
+        default: '[]',
+        displayOptions: show('note', ['submitDraft']),
+        description: 'The figures the text uses, each equal to the snapshot\'s to the cent: [{ "figure": "actual", "amount": "1200.50" }, { "figure": "driver_service", "key": "landflow-host", "amount": "310.00" }]. Figures: actual, budget, forecast_day10, variance_budget, variance_forecast, driver_service, driver_agent, driver_model (a driver cites its change against last month)',
+      },
+      { name: 'noteAgentId', displayName: 'Agent ID', type: 'string', default: '', displayOptions: show('note', ['submitDraft']), description: 'The agent that drafted it (required when an agent calls this tool)' },
+      { name: 'noteAgentName', displayName: 'Agent Name', type: 'string', default: '', displayOptions: show('note', ['submitDraft']) },
+      { name: 'noteAgentSystem', displayName: 'Agent Runs In', type: 'string', default: 'landflow', displayOptions: show('note', ['submitDraft']) },
+      { name: 'noteSponsor', displayName: 'Sponsor', type: 'string', default: '', placeholder: 'eden.tzur@landbright.test', displayOptions: show('note', ['submitDraft']), description: `The person who answers for the agent; never the one who accepts the note. Empty: the key's minter. ${personHint}` },
+
+      // ---- Cost → Window
+      { name: 'services', displayName: 'Services', type: 'string', required: true, default: '', placeholder: 'checkout, landflow-host', displayOptions: show('cost', ['window']), description: 'Service names as Landledger\'s Explore names them, comma-separated (at most 50)' },
+      { name: 'windowFrom', displayName: 'From', type: 'dateTime', required: true, default: '', displayOptions: show('cost', ['window']), description: 'The start of the window (an ISO date-time)' },
+      { name: 'windowTo', displayName: 'To', type: 'dateTime', required: true, default: '', displayOptions: show('cost', ['window']), description: 'The end of the window (an ISO date-time)' },
+
+      // ---- Contract → Seats
+      { name: 'landbrightApp', displayName: 'Landbright App', type: 'string', required: true, default: '', placeholder: 'linear', displayOptions: show('contract', ['getSeats']), description: 'The app key a Landledger contract names (its landbrightApp)' },
 
       // ---- Cost → Query
       { name: 'by', displayName: 'Group By', type: 'options', default: 'costCenter', options: DIMENSIONS.map(([value, name]) => ({ name, value })), displayOptions: show('cost', ['query']) },
@@ -427,6 +575,17 @@ export const LandledgerNode = defineNode({
       { name: 'note', displayName: 'Note', type: 'string', default: '', typeOptions: { rows: 3 }, displayOptions: show('request', ['create']), description: 'Why, in the requester\'s words (≤ 4,000 characters)' },
       { name: 'evidence', displayName: 'Evidence', type: 'json', default: '{}', displayOptions: show('request', ['create']), description: EVIDENCE_HELP },
       {
+        name: 'seatContractId',
+        displayName: 'Seat: Contract ID',
+        type: 'string',
+        default: '',
+        placeholder: 'con_…',
+        displayOptions: show('request', ['create'], { kind: ['tool_or_seat'] }),
+        description: 'The contract the seat comes from (Contract → Seats gives it). Set, the request carries seat terms: Amount must be Seats × Seat Price, monthly, and approval reserves the seats on the contract. Empty: a tool or seat without a contract',
+      },
+      { name: 'seats', displayName: 'Seat: Seats', type: 'number', default: 1, typeOptions: { minValue: 1, maxValue: 100, numberPrecision: 0 }, displayOptions: show('request', ['create'], { kind: ['tool_or_seat'] }) },
+      { name: 'seatPrice', displayName: 'Seat: Price per Seat a Month', type: 'string', default: '', placeholder: '12.50', displayOptions: show('request', ['create'], { kind: ['tool_or_seat'] }), description: 'The contract\'s seat price (Contract → Seats)' },
+      {
         name: 'requestFields',
         displayName: 'Additional Fields',
         type: 'collection',
@@ -437,6 +596,8 @@ export const LandledgerNode = defineNode({
           { name: 'start', displayName: 'Start', type: 'dateTime', default: '', description: 'First day the spend applies (default: today)' },
           { name: 'end', displayName: 'End', type: 'dateTime', default: '', description: 'Last day, inclusive. Empty: open-ended (monthly) or the start day (once)' },
           { name: 'pullRequestUrl', displayName: 'Pull Request URL', type: 'string', default: '', description: 'The pull request the change is in (kept as a related source)' },
+          { name: 'landbrightRequestId', displayName: 'Landbright Request', type: 'string', default: '', placeholder: 'REQ-128', description: 'The Landbright access request this cost belongs to (kept as a related source)' },
+          { name: 'landbrightRequestUrl', displayName: 'Landbright Request URL', type: 'string', default: '', description: 'Its page in Landbright' },
           { name: 'runUrl', displayName: 'Run URL', type: 'string', default: '', description: 'A link back to this run, for Landledger\'s console' },
           { name: 'originTitle', displayName: 'Origin Title', type: 'string', default: '', description: 'What the run is, in words' },
           { name: 'submit', displayName: 'Submit', type: 'boolean', default: true, description: 'Whether to submit it now (pending, or approved at once below the policy\'s threshold); off keeps a draft' },
@@ -451,7 +612,20 @@ export const LandledgerNode = defineNode({
       },
 
       // ---- Request → Get, Mark Applied
-      requestId('request', ['get', 'markApplied']),
+      requestId('request', ['get', 'markApplied', 'releaseSeats']),
+      {
+        name: 'seatReason',
+        displayName: 'Reason',
+        type: 'options',
+        default: 'access_denied',
+        options: [
+          { name: 'Access Denied', value: 'access_denied', description: 'The cost was approved but access was not (the seat is still reserved)' },
+          { name: 'Grant Revoked', value: 'grant_revoked', description: 'The grant ended early; the only reason Landledger takes for a seat already applied' },
+          { name: 'Not Needed', value: 'not_needed', description: 'Nobody needs the seat any more' },
+        ],
+        displayOptions: show('request', ['releaseSeats']),
+      },
+      { name: 'seatNote', displayName: 'Note', type: 'string', default: '', displayOptions: show('request', ['releaseSeats']), description: 'Why, for Landledger\'s audit (≤ 1,000 characters)' },
       { name: 'appliedNote', displayName: 'Note', type: 'string', default: '', displayOptions: show('request', ['markApplied']), description: 'What was done (≤ 2,000 characters)' },
       { name: 'links', displayName: 'Links', type: 'json', default: '[]', displayOptions: show('request', ['markApplied']), description: 'Up to 10 links to what was done: [{ "label": "PR #42", "url": "https://…" }]' },
 
@@ -552,6 +726,9 @@ export const LandledgerNode = defineNode({
     // The flow's key, read only when an operation needs it (a relay node has the relay key instead).
     let flowClient: Landledger | undefined;
     const client = () => (flowClient ??= new Landledger(api, ctx.getCredentials<LandledgerCredentials>('landledgerApi')));
+    // The notes key (notes:draft only), for the Note resource.
+    let notesClient: Landledger | undefined;
+    const notes = () => (notesClient ??= new Landledger(api, ctx.getCredentials<LandledgerNotesCredentials>('landledgerNotesKey')));
     return mapItems(ctx, async (i) => {
       const resource = ctx.getNodeParameter<string>('resource', i);
       const operation = ctx.getNodeParameter<string>('operation', i);
@@ -559,9 +736,20 @@ export const LandledgerNode = defineNode({
         case 'budget':
           if (operation !== 'check') break;
           return checkBudget(ctx, client(), i);
+        case 'close':
+          if (operation !== 'getSnapshot') break;
+          return client().closeSnapshot(monthParameter(requireString(ctx, 'month', 'Month', i), i));
+        case 'note':
+          if (operation === 'getFigures') return notes().noteFigures(monthParameter(requireString(ctx, 'month', 'Month', i), i));
+          if (operation === 'submitDraft') return submitNoteDraft(ctx, notes(), i);
+          break;
+        case 'contract':
+          if (operation !== 'getSeats') break;
+          return contractSeats(ctx, client(), i);
         case 'cost':
-          if (operation !== 'query') break;
-          return querySpend(ctx, client(), i);
+          if (operation === 'query') return querySpend(ctx, client(), i);
+          if (operation === 'window') return costWindow(ctx, client(), i);
+          break;
         case 'request':
           return requestOperation(ctx, client(), operation, i);
         case 'reservation':
@@ -686,8 +874,98 @@ async function requestOperation(ctx: IExecuteContext, client: Landledger, operat
         links: parsed.slice(0, 10).map((l: { label?: unknown; url?: unknown }) => ({ label: String(l?.label ?? l?.url ?? ''), url: String(l?.url ?? '') })),
       });
     }
+    case 'releaseSeats': {
+      const id = requireString(ctx, 'requestId', 'Request ID', i);
+      const reason = String(ctx.getNodeParameter('seatReason', i, 'access_denied'));
+      if (!SEAT_REASONS.includes(reason)) throw new NodeOperationError(`Reason "${reason}" is not one of ${SEAT_REASONS.join(', ')}`, { itemIndex: i });
+      return client.releaseSeats(id, { reason, note: optionalString(ctx, 'seatNote', i).slice(0, 1000) });
+    }
   }
   throw unsupported('request', operation);
+}
+
+const SEAT_REASONS = ['access_denied', 'grant_revoked', 'not_needed'];
+
+/** What a variance note may cite (Landledger's NoteFigure). */
+export const NOTE_FIGURES = ['actual', 'budget', 'forecast_day10', 'variance_budget', 'variance_forecast', 'driver_service', 'driver_agent', 'driver_model'];
+
+/** `POST /api/notes/:month/drafts`: one note's draft with its cited figures, the agent and its sponsor, this run. */
+async function submitNoteDraft(ctx: IExecuteContext, client: Landledger, i: number): Promise<JsonObject> {
+  const month = monthParameter(requireString(ctx, 'month', 'Month', i), i);
+  const costCenter = requireString(ctx, 'noteCostCenter', 'Cost Center', i);
+  const snapshotSha256 = requireString(ctx, 'snapshotSha256', 'Snapshot SHA-256', i).toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(snapshotSha256)) throw new NodeOperationError('Snapshot SHA-256 must be 64 hex characters (Figures\' snapshotSha256)', { itemIndex: i });
+  const text = requireString(ctx, 'noteText', 'Text', i);
+  if (text.length < 10 || text.length > 8000) throw new NodeOperationError('Text must be 10-8,000 characters', { itemIndex: i });
+  const raw = jsonParameter(ctx.getNodeParameter('cites', i, '[]'), 'Cited Figures') ?? [];
+  if (!Array.isArray(raw)) throw new NodeOperationError('Cited Figures must be a JSON array of { figure, key?, amount }', { itemIndex: i });
+  if (raw.length > 50) throw new NodeOperationError('At most 50 cited figures', { itemIndex: i });
+  const cites = raw.map((c, n) => {
+    const cite = (c ?? {}) as JsonObject;
+    const figure = String(cite.figure ?? '');
+    if (!NOTE_FIGURES.includes(figure)) throw new NodeOperationError(`Cited figure ${n + 1}: "${figure}" is not one of ${NOTE_FIGURES.join(', ')}`, { itemIndex: i });
+    const micros = toMicros(cite.amount);
+    if (micros === undefined) throw new NodeOperationError(`Cited figure ${n + 1} (${figure}): the amount must be a decimal with at most six decimals`, { itemIndex: i });
+    const key = cite.key === undefined || cite.key === null ? '' : String(cite.key).trim();
+    if (figure.startsWith('driver_') && !key) throw new NodeOperationError(`Cited figure ${n + 1} (${figure}) needs the key of the driver it cites`, { itemIndex: i });
+    return { figure, ...(key && { key }), amount: fromMicros(micros) };
+  });
+  const agentId = optionalString(ctx, 'noteAgentId', i);
+  const agentName = optionalString(ctx, 'noteAgentName', i);
+  // An agent drafts as itself.
+  if (byAgent(ctx) && (!agentId || !agentName)) {
+    throw new NodeOperationError('An agent drafts a note as itself: give Agent ID and Agent Name', { itemIndex: i });
+  }
+  const sponsor = optionalString(ctx, 'noteSponsor', i);
+  return client.submitNoteDraft(month, {
+    costCenter,
+    snapshotSha256,
+    text,
+    cites,
+    ...(agentId && agentName && { agent: { id: agentId, name: agentName, system: optionalString(ctx, 'noteAgentSystem', i) || 'landflow' } }),
+    ...(sponsor && { sponsor: personRef(sponsor) }),
+    runId: ctx.getExecutionId(),
+  });
+}
+
+/** An ISO date-time with its offset (`2026-11-14T10:00:00.000Z`) from a date-time parameter. */
+function instantParameter(value: unknown, label: string, itemIndex: number): string {
+  const text = value === undefined || value === null ? '' : String(value).trim();
+  const date = text ? new Date(text) : undefined;
+  if (!date || Number.isNaN(date.getTime())) throw new NodeOperationError(`${label} "${text}" is not a date-time`, { itemIndex });
+  return date.toISOString();
+}
+
+/** `GET /api/cost/window`: the estimated cost of named services between two instants. */
+async function costWindow(ctx: IExecuteContext, client: Landledger, i: number): Promise<JsonObject> {
+  const services = optionalString(ctx, 'services', i)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (!services.length) throw new NodeOperationError('Services: name at least one service', { itemIndex: i });
+  if (services.length > 50) throw new NodeOperationError('Services: at most 50', { itemIndex: i });
+  const from = instantParameter(ctx.getNodeParameter('windowFrom', i, ''), 'From', i);
+  const to = instantParameter(ctx.getNodeParameter('windowTo', i, ''), 'To', i);
+  if (from >= to) throw new NodeOperationError('From must be before To', { itemIndex: i });
+  return client.costWindow({ services: [...new Set(services)].join(','), from, to });
+}
+
+/** `GET /api/contracts/seats`: `{ found, landbrightApp, contract, seatPrice, left }`; a 404 is `found: false`, not an error. */
+async function contractSeats(ctx: IExecuteContext, client: Landledger, i: number): Promise<JsonObject> {
+  const landbrightApp = requireString(ctx, 'landbrightApp', 'Landbright App', i);
+  const answer = await client.contractSeats(landbrightApp);
+  if (!answer) return { found: false, landbrightApp, contract: null, seatPrice: null, left: 0 };
+  return { found: true, landbrightApp, contract: answer.contract, seatPrice: answer.seatPrice ?? null, left: Number(answer.left ?? 0) };
+}
+
+/** The seat terms of a tool_or_seat request (`{ contractId, seats, seatPrice }`), or undefined without a contract. */
+function seatTerms(ctx: IExecuteContext, kind: string, i: number): JsonObject | undefined {
+  if (kind !== 'tool_or_seat') return undefined;
+  const contractId = optionalString(ctx, 'seatContractId', i);
+  if (!contractId) return undefined;
+  const seats = Math.trunc(Number(ctx.getNodeParameter('seats', i, 1)));
+  if (!(seats >= 1 && seats <= 100)) throw new NodeOperationError('Seats must be a whole number from 1 to 100', { itemIndex: i });
+  return { contractId, seats, seatPrice: amountParameter(ctx.getNodeParameter('seatPrice', i, ''), 'Seat Price', i) };
 }
 
 /** The `POST /api/requests` body (Landledger's CreateRequestInput) from the node's parameters. */
@@ -734,6 +1012,16 @@ export function createBody(ctx: IExecuteContext, i: number): JsonObject {
   const end = dayParameter(fields.end, 'End', i);
   if (start && end && end < start) throw new NodeOperationError('End must be on or after Start', { itemIndex: i });
   const key = text('idempotencyKey') || (ctx.getIdempotencyKey() ? `${ctx.getIdempotencyKey()}:${i}` : '');
+  const related: JsonObject[] = [];
+  if (text('pullRequestUrl')) related.push({ type: 'pull_request', url: text('pullRequestUrl') });
+  if (text('landbrightRequestId')) {
+    related.push({
+      type: 'landbright_request',
+      id: text('landbrightRequestId'),
+      ...(text('landbrightRequestUrl') && { url: text('landbrightRequestUrl') }),
+    });
+  }
+  const seat = seatTerms(ctx, kind, i);
   return {
     kind,
     title,
@@ -745,7 +1033,8 @@ export function createBody(ctx: IExecuteContext, i: number): JsonObject {
     ...(end && { end }),
     evidence: objectParameter(ctx.getNodeParameter('evidence', i, '{}'), 'Evidence', i),
     origin,
-    related: text('pullRequestUrl') ? [{ type: 'pull_request', url: text('pullRequestUrl') }] : [],
+    related,
+    ...(seat && { seat }),
     requester,
     submit: fields.submit !== false,
     ...(key && { idempotencyKey: key.slice(0, 200) }),

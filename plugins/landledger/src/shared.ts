@@ -24,6 +24,12 @@ export interface LandledgerRelayCredentials extends JsonObject {
   apiKey: string;
 }
 
+/** The notes key's credential (`landledgerNotesKey`): a key with `notes:draft`, which submits variance note drafts and nothing else. */
+export interface LandledgerNotesCredentials extends JsonObject {
+  baseUrl: string;
+  apiKey: string;
+}
+
 /**
  * Where Landledger's API answers from inside the OrbStack cluster (the credential's default): the ExternalName Service
  * `landledger-api` in `landflow-dev` (deploy/k8s/components/landledger) pointing at Landledger on this machine.
@@ -106,12 +112,17 @@ export async function fetchLandledger(api: ApiContext, url: string, init: Reques
 export function errorDetail(response: ApiResponse): string {
   const error = response.body?.error;
   const message = typeof error === 'object' && error ? error.message : typeof error === 'string' ? error : response.body?.message;
-  if (typeof message === 'string' && message) return message;
+  if (typeof message === 'string' && message) {
+    // A refused note draft names each cited figure that differs from the snapshot: keep them, a redraft needs them.
+    const mismatches = typeof error === 'object' && error ? error.details?.mismatches : undefined;
+    if (Array.isArray(mismatches) && mismatches.length) return `${message} (mismatches: ${JSON.stringify(mismatches).slice(0, 2000)})`;
+    return message;
+  }
   return response.text.slice(0, 200) || `HTTP ${response.status}`;
 }
 
 /** The scope each kind of call needs, for the 403 hint (Landledger's docs/reference/api.md). */
-export type Scope = 'read' | 'requests:write' | 'reservations:write' | 'decisions:relay' | 'webhooks:write' | 'ingest' | 'admin';
+export type Scope = 'read' | 'requests:write' | 'reservations:write' | 'decisions:relay' | 'webhooks:write' | 'ingest' | 'notes:draft' | 'admin';
 
 /** "Landledger API error 403: …" with a hint for the errors people hit. */
 export function landledgerError(response: ApiResponse, hints: { scope?: Scope } = {}): NodeOperationError {
@@ -136,7 +147,10 @@ export function landledgerError(response: ApiResponse, hints: { scope?: Scope } 
         'The request or the month has moved on (another step is pending, the month is closing or locked, the request is no longer pending), the evidence a decision cites is stale (served more than 30 minutes ago: show the request again), or an idempotency key came back with a different body.';
       break;
     case 422:
-      description = 'Landledger understood the request but can\'t take it yet (only USD until FX is set up).';
+      description =
+        hints.scope === 'notes:draft'
+          ? 'Landledger checked the draft\'s cited figures against the month\'s frozen snapshot and some differ (the mismatches say which): cite only the figures Notes → Figures lists, to the cent.'
+          : 'Landledger understood the request but can\'t take it yet (only USD until FX is set up).';
       break;
     case 429:
       description = 'Landledger is rate-limiting this key; try again shortly.';

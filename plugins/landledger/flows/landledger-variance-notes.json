@@ -1,0 +1,623 @@
+{
+  "kind": "landflow/template",
+  "version": 1,
+  "template": {
+    "name": "Landledger: draft variance notes",
+    "description": "When a month's close reaches the notes step, Landledger asks for its variance notes. This flow reads the frozen snapshot and the figures each note may cite, has an AI Agent (a local Ollama model by default) draft one note per cost center citing only those figures, and submits each draft with a key that can do nothing but draft. A draft Landledger refuses for a figure that doesn't match is redrafted once with the refusal, then left to Landledger's template. An analyst accepts every note.",
+    "categories": [
+      "finance",
+      "ai"
+    ],
+    "credentials": [
+      {
+        "id": "landledger",
+        "type": "landledger.landledgerApi",
+        "name": "Landledger (read)",
+        "description": "Landledger's API URL (in the cluster http://landledger-api.landflow-dev.svc.cluster.local:4810, on this machine http://127.0.0.1:4810) and an ll_ key with read (the flows' requests key will do): it reads the frozen snapshot."
+      },
+      {
+        "id": "landledgerWebhooks",
+        "type": "landledger.landledgerApi",
+        "name": "Landledger (webhooks)",
+        "description": "Landledger's API URL (in the cluster http://landledger-api.landflow-dev.svc.cluster.local:4810, on this machine http://127.0.0.1:4810) and an ll_ key with webhooks:write only: the Landledger Trigger subscribes itself on publish. Or the whsec_ secret of a webhook an admin made."
+      },
+      {
+        "id": "landledgerNotes",
+        "type": "landledger.landledgerNotesKey",
+        "name": "Landledger (notes:draft)",
+        "description": "Landledger's API URL (in the cluster http://landledger-api.landflow-dev.svc.cluster.local:4810, on this machine http://127.0.0.1:4810) and an ll_ key with notes:draft only: it reads the figures and submits drafts, and can accept nothing."
+      }
+    ],
+    "setup": [
+      "Pick or add **Landledger (read)** (an `ll_` key with `read`), **Landledger (webhooks)** (`webhooks:write` only) and **Landledger (notes:draft)** (a Landledger Notes Key: `notes:draft` only).",
+      "In **Settings**, check `MODEL` and `OLLAMA_URL` (by default `qwen3-coder:30b` on this machine's Ollama, as the cluster reaches it) and, if you like, `SPONSOR` (the person who answers for the drafts; empty: the notes key's minter).",
+      "Publish: **Notes requested** subscribes itself to `notes.draft_requested`. When a month's accrual is accepted, Landledger freezes the snapshot and sends it.",
+      "Each note: **Draft the note** (the model, citing only the listed figures) → **Submit the draft**. A refusal (a cited figure that differs from the snapshot) → **Redraft with the refusal** → **Submit the redraft**; a second refusal, or a moved snapshot, gives up: the note is left to Landledger's template.",
+      "**Landledger note drafts** records every note's outcome. An analyst (FP&A or a controller, never the sponsor) accepts or edits each note in Landledger."
+    ],
+    "dataTables": [
+      {
+        "name": "Landledger note drafts",
+        "columns": [
+          {
+            "name": "month",
+            "type": "string"
+          },
+          {
+            "name": "cost_center",
+            "type": "string"
+          },
+          {
+            "name": "snapshot_sha256",
+            "type": "string"
+          },
+          {
+            "name": "outcome",
+            "type": "string"
+          },
+          {
+            "name": "attempt",
+            "type": "number"
+          },
+          {
+            "name": "note_id",
+            "type": "string"
+          },
+          {
+            "name": "version",
+            "type": "string"
+          },
+          {
+            "name": "refusal",
+            "type": "string"
+          },
+          {
+            "name": "execution_id",
+            "type": "string"
+          },
+          {
+            "name": "drafted_at",
+            "type": "date"
+          }
+        ]
+      }
+    ],
+    "workflow": {
+      "name": "Landledger: draft variance notes",
+      "description": "On notes.draft_requested: the frozen snapshot and each note's figures → an AI Agent drafts one note per cost center citing only those figures → submitted with a notes:draft key; a refused draft is redrafted once, then left to Landledger's template.",
+      "groups": [],
+      "stickyNotes": [],
+      "nodes": [
+        {
+          "id": "requested",
+          "name": "Notes requested",
+          "type": "landledger.landledgerTrigger",
+          "typeVersion": 1,
+          "position": [
+            0,
+            200
+          ],
+          "parameters": {
+            "events": [
+              "notes.draft_requested"
+            ],
+            "kinds": "",
+            "costCenters": ""
+          },
+          "credentials": {
+            "landledgerApi": {
+              "id": "landledgerWebhooks",
+              "name": "Landledger (webhooks)"
+            }
+          },
+          "notes": "Landledger sends notes.draft_requested when the close reaches the notes step (the accrual accepted, the snapshot frozen), once per snapshot."
+        },
+        {
+          "id": "settings",
+          "name": "Settings",
+          "type": "core.code",
+          "typeVersion": 1,
+          "position": [
+            260,
+            200
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "each",
+            "codeEach": "// Settings. The model drafts; an analyst accepts in Landledger. The cluster has no Anthropic credential, so the drafts come\n// from the local Ollama model the cluster's agents use; change MODEL (and OLLAMA_URL) to use another.\nconst MODEL = 'qwen3-coder:30b';\nconst OLLAMA_URL = 'http://host.docker.internal:11434';  // Ollama on this machine, as the cluster reaches it\n// Landledger records who drafted each note: this flow, as an agent, and the person who answers for it (empty: the\n// notes key's minter). The sponsor never accepts the notes.\nconst AGENT = { id: `landflow:${$workflow.id}`, name: 'Variance note drafter', system: 'landflow' };\nconst SPONSOR = '';\nreturn { ...$json, settings: { model: MODEL, ollamaUrl: OLLAMA_URL.replace(/\\/+$/, ''), agent: AGENT, sponsor: SPONSOR } };"
+          },
+          "notes": "The model (MODEL, OLLAMA_URL), the agent Landledger records, its sponsor."
+        },
+        {
+          "id": "snapshot",
+          "name": "Get the snapshot",
+          "type": "landledger.landledger",
+          "typeVersion": 1,
+          "position": [
+            520,
+            200
+          ],
+          "parameters": {
+            "resource": "close",
+            "operation": "getSnapshot",
+            "month": "{{ $json.month }}"
+          },
+          "credentials": {
+            "landledgerApi": {
+              "id": "landledger",
+              "name": "Landledger (read)"
+            }
+          },
+          "notes": "The frozen snapshot, read fresh: the event is not what the drafts trust."
+        },
+        {
+          "id": "figures",
+          "name": "Get the figures",
+          "type": "landledger.landledger",
+          "typeVersion": 1,
+          "position": [
+            780,
+            200
+          ],
+          "parameters": {
+            "resource": "note",
+            "operation": "getFigures",
+            "month": "{{ $('Settings').first().json.month }}"
+          },
+          "credentials": {
+            "landledgerNotesKey": {
+              "id": "landledgerNotes",
+              "name": "Landledger (notes:draft)"
+            }
+          },
+          "notes": "Each note the month needs, with the figures it may cite and the drivers (service, agent, model)."
+        },
+        {
+          "id": "split",
+          "name": "One note per cost center",
+          "type": "core.code",
+          "typeVersion": 1,
+          "position": [
+            1040,
+            200
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "all",
+            "code": "// One item per note the month needs (the whole month, TOTAL, and each cost center), each with the figures it may cite\n// and the prompt. Only for the snapshot that is still the month's: an old event (the snapshot moved on) drafts nothing.\nconst event = $('Settings').first().json;\nconst snapshot = $('Get the snapshot').first().json;\nconst figures = $input.first().json;\nif (snapshot.sha256 !== figures.snapshotSha256 || event.snapshotSha256 !== figures.snapshotSha256 || snapshot.current === false) return [];\nconst money = (v) => (v === null || v === undefined ? null : Number(v).toFixed(2));\nreturn (figures.needed ?? []).map((f) => {\n  const lines = [];\n  const add = (figure, value, note = '') => { if (value !== null) lines.push(`- ${figure} = ${value}${note}`); };\n  add('actual', money(f.actual), ' (the month\\'s cost)');\n  add('budget', money(f.budget));\n  add('forecast_day10', money(f.forecastDay10), ' (the forecast on day 10)');\n  add('variance_budget', money(f.varianceBudget), ' (actual minus budget)');\n  add('variance_forecast', money(f.varianceForecast), ' (actual minus the day-10 forecast)');\n  for (const d of f.drivers ?? []) lines.push(`- driver_${d.dimension} key \"${d.key}\" (${d.label}) = ${money(d.change)} (its change on last month: ${money(d.amount)} against ${money(d.previous)})`);\n  const missing = [f.budget === null && 'no budget', f.forecastDay10 === null && 'no day-10 forecast'].filter(Boolean);\n  const prompt = [\n    `Month: ${event.month}`,\n    `Cost center: ${f.costCenter === 'TOTAL' ? 'TOTAL (the month as a whole)' : `${f.costCenter} (${f.name})`}`,\n    'FIGURES (USD):',\n    ...lines,\n    ...(missing.length ? [`This cost center has ${missing.join(' and ')}: say so, don't invent one.`] : []),\n  ].join('\\n');\n  return { json: {\n    month: event.month,\n    costCenter: f.costCenter,\n    name: f.name,\n    snapshotSha256: figures.snapshotSha256,\n    prompt,\n    model: event.settings.model,\n    ollamaUrl: event.settings.ollamaUrl,\n    agent: event.settings.agent,\n    sponsor: event.settings.sponsor,\n  } };\n});"
+          }
+        },
+        {
+          "id": "draft",
+          "name": "Draft the note",
+          "type": "core.aiAgent",
+          "typeVersion": 1,
+          "position": [
+            1300,
+            200
+          ],
+          "parameters": {
+            "prompt": "{{ $json.prompt }}",
+            "systemMessage": "You draft month-end variance notes for Landledger, the company's cost ledger. A finance analyst reviews and accepts every note; you only draft.\nWrite two to four plain sentences about one cost center: how the month's actual compares with its budget and its day-10 forecast, and what drove the change.\nUse only the figures listed under FIGURES, exactly as written, with two decimals. Never compute a new number, percentage or total.\nAnswer with JSON only, no prose around it: {\"text\": \"…\", \"cites\": [{\"figure\": \"<a name from FIGURES>\", \"key\": \"<the driver's key, drivers only>\", \"amount\": \"<its value as listed>\"}]}. Cite every figure the text uses.",
+            "options": {
+              "maxIterations": 2,
+              "returnIntermediateSteps": false
+            }
+          },
+          "notes": "One draft per note, citing only the snapshot's figures. The agent drafts; an analyst accepts in Landledger."
+        },
+        {
+          "id": "model",
+          "name": "Local model",
+          "type": "core.ollamaChatModel",
+          "typeVersion": 1,
+          "position": [
+            1300,
+            420
+          ],
+          "parameters": {
+            "baseUrl": "{{ $json.ollamaUrl }}",
+            "model": "{{ $json.model }}",
+            "temperature": 0.1
+          },
+          "notes": "The model and Ollama URL come from Settings (MODEL, OLLAMA_URL)."
+        },
+        {
+          "id": "shape",
+          "name": "Shape the draft",
+          "type": "core.code",
+          "typeVersion": 1,
+          "position": [
+            1560,
+            200
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "each",
+            "codeEach": "// The model answers JSON { text, cites }, sometimes inside a code fence. A reply that isn't JSON goes as text without\n// cites: Landledger's check (or the node's) decides, and a refusal gets one redraft.\nconst base = $('One note per cost center').item.json;\nconst raw = String($json.output ?? '').trim();\nconst body = raw.replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```$/, '');\nlet parsed = null;\ntry { parsed = JSON.parse(body); } catch { const m = body.match(/\\{[\\s\\S]*\\}/); if (m) { try { parsed = JSON.parse(m[0]); } catch {} } }\nconst text = String(parsed?.text ?? raw).trim();\nconst cites = Array.isArray(parsed?.cites)\n  ? parsed.cites.filter((c) => c && typeof c === 'object').map((c) => ({ figure: String(c.figure ?? ''), ...(c.key ? { key: String(c.key) } : {}), amount: String(c.amount ?? '') }))\n  : [];\nreturn { ...base, text, cites };"
+          }
+        },
+        {
+          "id": "submit",
+          "name": "Submit the draft",
+          "type": "landledger.landledger",
+          "typeVersion": 1,
+          "position": [
+            1820,
+            200
+          ],
+          "parameters": {
+            "resource": "note",
+            "operation": "submitDraft",
+            "month": "{{ $json.month }}",
+            "noteCostCenter": "{{ $json.costCenter }}",
+            "snapshotSha256": "{{ $json.snapshotSha256 }}",
+            "noteText": "{{ $json.text }}",
+            "cites": "{{ $json.cites }}",
+            "noteAgentId": "{{ $json.agent.id }}",
+            "noteAgentName": "{{ $json.agent.name }}",
+            "noteAgentSystem": "{{ $json.agent.system }}",
+            "noteSponsor": "{{ $json.sponsor }}"
+          },
+          "credentials": {
+            "landledgerNotesKey": {
+              "id": "landledgerNotes",
+              "name": "Landledger (notes:draft)"
+            }
+          },
+          "onError": "continue",
+          "notes": "Note → Submit Draft with the notes key (notes:draft only). Landledger checks every cited figure against the snapshot: a mismatch is a 422."
+        },
+        {
+          "id": "after1",
+          "name": "Submitted or refused",
+          "type": "core.code",
+          "typeVersion": 1,
+          "position": [
+            2080,
+            200
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "each",
+            "codeEach": "// Submitted, or refused. A refusal of the draft itself (Landledger's 422: a cited figure differs from the snapshot; or\n// the node's own check of the figures and text) gets one redraft with the refusal; anything else (409: the snapshot\n// moved on, 401/403, Landledger down) gives up and leaves the note to Landledger's template.\nconst draft = $('Shape the draft').item.json;\nconst error = $json.error ? String($json.error.message ?? $json.error) : '';\nif (!error) return { ...draft, route: 0, outcome: 'submitted', attempt: 1, noteId: $json.id ?? null, version: $json.versions?.at(-1)?.version ?? null, refusal: '' };\nconst retry = /Landledger API error 422|Cited figure|Text must be|Text is required/.test(error);\nconst retryPrompt = `${draft.prompt}\\n\\nLandledger refused your previous draft: ${error}\\nYour previous draft: ${JSON.stringify({ text: draft.text, cites: draft.cites })}\\nWrite it again. Every amount must be one of the FIGURES above, exactly as listed. Answer with JSON only.`;\nreturn { ...draft, route: retry ? 1 : 0, outcome: retry ? 'redraft' : 'gave_up', attempt: 1, noteId: null, version: null, refusal: error, retryPrompt };"
+          }
+        },
+        {
+          "id": "retryRoute",
+          "name": "Redraft?",
+          "type": "core.switch",
+          "typeVersion": 1,
+          "position": [
+            2340,
+            200
+          ],
+          "parameters": {
+            "mode": "expression",
+            "output": "{{ $json.route }}",
+            "options": {
+              "fallbackOutput": "none"
+            }
+          }
+        },
+        {
+          "id": "toRedraft",
+          "name": "Notes to redraft",
+          "type": "core.code",
+          "typeVersion": 1,
+          "position": [
+            2600,
+            360
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "all",
+            "code": "// The notes refused once, in the order the redraft gets them (\"Shape the redraft\" reads them back by position).\nreturn $input.all();"
+          }
+        },
+        {
+          "id": "redraft",
+          "name": "Redraft with the refusal",
+          "type": "core.aiAgent",
+          "typeVersion": 1,
+          "position": [
+            2860,
+            360
+          ],
+          "parameters": {
+            "prompt": "{{ $json.retryPrompt }}",
+            "systemMessage": "You draft month-end variance notes for Landledger, the company's cost ledger. A finance analyst reviews and accepts every note; you only draft.\nWrite two to four plain sentences about one cost center: how the month's actual compares with its budget and its day-10 forecast, and what drove the change.\nUse only the figures listed under FIGURES, exactly as written, with two decimals. Never compute a new number, percentage or total.\nAnswer with JSON only, no prose around it: {\"text\": \"…\", \"cites\": [{\"figure\": \"<a name from FIGURES>\", \"key\": \"<the driver's key, drivers only>\", \"amount\": \"<its value as listed>\"}]}. Cite every figure the text uses.",
+            "options": {
+              "maxIterations": 2,
+              "returnIntermediateSteps": false
+            }
+          },
+          "notes": "Once: the same figures, the refusal and the draft refused."
+        },
+        {
+          "id": "model2",
+          "name": "Local model (redraft)",
+          "type": "core.ollamaChatModel",
+          "typeVersion": 1,
+          "position": [
+            2860,
+            580
+          ],
+          "parameters": {
+            "baseUrl": "{{ $json.ollamaUrl }}",
+            "model": "{{ $json.model }}",
+            "temperature": 0.1
+          },
+          "notes": "The model and Ollama URL come from Settings (MODEL, OLLAMA_URL)."
+        },
+        {
+          "id": "shape2",
+          "name": "Shape the redraft",
+          "type": "core.code",
+          "typeVersion": 1,
+          "position": [
+            3120,
+            360
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "each",
+            "codeEach": "// The model answers JSON { text, cites }, sometimes inside a code fence. A reply that isn't JSON goes as text without\n// cites: Landledger's check (or the node's) decides, and a refusal gets one redraft.\nconst base = $('Notes to redraft').item.json;\nconst raw = String($json.output ?? '').trim();\nconst body = raw.replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```$/, '');\nlet parsed = null;\ntry { parsed = JSON.parse(body); } catch { const m = body.match(/\\{[\\s\\S]*\\}/); if (m) { try { parsed = JSON.parse(m[0]); } catch {} } }\nconst text = String(parsed?.text ?? raw).trim();\nconst cites = Array.isArray(parsed?.cites)\n  ? parsed.cites.filter((c) => c && typeof c === 'object').map((c) => ({ figure: String(c.figure ?? ''), ...(c.key ? { key: String(c.key) } : {}), amount: String(c.amount ?? '') }))\n  : [];\nreturn { ...base, text, cites };"
+          }
+        },
+        {
+          "id": "submit2",
+          "name": "Submit the redraft",
+          "type": "landledger.landledger",
+          "typeVersion": 1,
+          "position": [
+            3380,
+            360
+          ],
+          "parameters": {
+            "resource": "note",
+            "operation": "submitDraft",
+            "month": "{{ $json.month }}",
+            "noteCostCenter": "{{ $json.costCenter }}",
+            "snapshotSha256": "{{ $json.snapshotSha256 }}",
+            "noteText": "{{ $json.text }}",
+            "cites": "{{ $json.cites }}",
+            "noteAgentId": "{{ $json.agent.id }}",
+            "noteAgentName": "{{ $json.agent.name }}",
+            "noteAgentSystem": "{{ $json.agent.system }}",
+            "noteSponsor": "{{ $json.sponsor }}"
+          },
+          "credentials": {
+            "landledgerNotesKey": {
+              "id": "landledgerNotes",
+              "name": "Landledger (notes:draft)"
+            }
+          },
+          "onError": "continue",
+          "notes": "The second and last try."
+        },
+        {
+          "id": "after2",
+          "name": "After the redraft",
+          "type": "core.code",
+          "typeVersion": 1,
+          "position": [
+            3640,
+            360
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "each",
+            "codeEach": "// The redraft: submitted, or given up (one retry only). A note given up on is left to Landledger's template, which an\n// analyst runs from the close (POST /api/notes/:month/template).\nconst draft = $('Shape the redraft').item.json;\nconst error = $json.error ? String($json.error.message ?? $json.error) : '';\nif (!error) return { ...draft, outcome: 'submitted', attempt: 2, noteId: $json.id ?? null, version: $json.versions?.at(-1)?.version ?? null, refusal: draft.refusal };\nreturn { ...draft, outcome: 'gave_up', attempt: 2, noteId: null, version: null, refusal: error };"
+          }
+        },
+        {
+          "id": "record",
+          "name": "Record the draft",
+          "type": "core.dataTable",
+          "typeVersion": 1,
+          "position": [
+            3900,
+            200
+          ],
+          "parameters": {
+            "operation": "insert",
+            "dataTableId": "Landledger note drafts",
+            "mappingMode": "defineBelow",
+            "columns": {
+              "column": [
+                {
+                  "column": "month",
+                  "value": "{{ $json.month }}"
+                },
+                {
+                  "column": "cost_center",
+                  "value": "{{ $json.costCenter }}"
+                },
+                {
+                  "column": "snapshot_sha256",
+                  "value": "{{ $json.snapshotSha256 }}"
+                },
+                {
+                  "column": "outcome",
+                  "value": "{{ $json.outcome }}"
+                },
+                {
+                  "column": "attempt",
+                  "value": "{{ $json.attempt }}"
+                },
+                {
+                  "column": "note_id",
+                  "value": "{{ $json.noteId ?? '' }}"
+                },
+                {
+                  "column": "version",
+                  "value": "{{ $json.version ?? '' }}"
+                },
+                {
+                  "column": "refusal",
+                  "value": "{{ String($json.refusal ?? '').slice(0, 2000) }}"
+                },
+                {
+                  "column": "execution_id",
+                  "value": "{{ $execution.id }}"
+                },
+                {
+                  "column": "drafted_at",
+                  "value": "{{ new Date().toISOString() }}"
+                }
+              ]
+            }
+          },
+          "notes": "Every note's outcome: submitted (first or second try) or gave_up, which leaves the note to Landledger's template fallback (an analyst runs it from the close)."
+        }
+      ],
+      "connections": [
+        {
+          "id": "c1",
+          "type": "main",
+          "source": "requested",
+          "sourceIndex": 0,
+          "target": "settings",
+          "targetIndex": 0
+        },
+        {
+          "id": "c2",
+          "type": "main",
+          "source": "settings",
+          "sourceIndex": 0,
+          "target": "snapshot",
+          "targetIndex": 0
+        },
+        {
+          "id": "c3",
+          "type": "main",
+          "source": "snapshot",
+          "sourceIndex": 0,
+          "target": "figures",
+          "targetIndex": 0
+        },
+        {
+          "id": "c4",
+          "type": "main",
+          "source": "figures",
+          "sourceIndex": 0,
+          "target": "split",
+          "targetIndex": 0
+        },
+        {
+          "id": "c5",
+          "type": "main",
+          "source": "split",
+          "sourceIndex": 0,
+          "target": "draft",
+          "targetIndex": 0
+        },
+        {
+          "id": "c6",
+          "type": "main",
+          "source": "draft",
+          "sourceIndex": 0,
+          "target": "shape",
+          "targetIndex": 0
+        },
+        {
+          "id": "c7",
+          "type": "main",
+          "source": "shape",
+          "sourceIndex": 0,
+          "target": "submit",
+          "targetIndex": 0
+        },
+        {
+          "id": "c8",
+          "type": "main",
+          "source": "submit",
+          "sourceIndex": 0,
+          "target": "after1",
+          "targetIndex": 0
+        },
+        {
+          "id": "c9",
+          "type": "main",
+          "source": "after1",
+          "sourceIndex": 0,
+          "target": "retryRoute",
+          "targetIndex": 0
+        },
+        {
+          "id": "c10",
+          "type": "main",
+          "source": "retryRoute",
+          "sourceIndex": 0,
+          "target": "record",
+          "targetIndex": 0
+        },
+        {
+          "id": "c11",
+          "type": "main",
+          "source": "retryRoute",
+          "sourceIndex": 1,
+          "target": "toRedraft",
+          "targetIndex": 0
+        },
+        {
+          "id": "c12",
+          "type": "main",
+          "source": "toRedraft",
+          "sourceIndex": 0,
+          "target": "redraft",
+          "targetIndex": 0
+        },
+        {
+          "id": "c13",
+          "type": "main",
+          "source": "redraft",
+          "sourceIndex": 0,
+          "target": "shape2",
+          "targetIndex": 0
+        },
+        {
+          "id": "c14",
+          "type": "main",
+          "source": "shape2",
+          "sourceIndex": 0,
+          "target": "submit2",
+          "targetIndex": 0
+        },
+        {
+          "id": "c15",
+          "type": "main",
+          "source": "submit2",
+          "sourceIndex": 0,
+          "target": "after2",
+          "targetIndex": 0
+        },
+        {
+          "id": "c16",
+          "type": "main",
+          "source": "after2",
+          "sourceIndex": 0,
+          "target": "record",
+          "targetIndex": 0
+        },
+        {
+          "id": "m1",
+          "type": "ai_languageModel",
+          "source": "model",
+          "sourceIndex": 0,
+          "target": "draft",
+          "targetIndex": 0
+        },
+        {
+          "id": "m2",
+          "type": "ai_languageModel",
+          "source": "model2",
+          "sourceIndex": 0,
+          "target": "redraft",
+          "targetIndex": 0
+        }
+      ]
+    }
+  }
+}

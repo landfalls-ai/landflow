@@ -25,6 +25,8 @@ export const RELAY_KEY = 'll_test_key_relay_00000000000000000';
 export const MIXED_RELAY_KEY = 'll_test_key_mixed_00000000000000000';
 /** admin (every scope). */
 export const ADMIN_KEY = 'll_test_key_admin_00000000000000000';
+/** notes:draft only (Note → Submit Draft's own credential). */
+export const NOTES_KEY = 'll_test_key_notes_00000000000000000';
 /** Another flow's key with requests:write: what a forged request would be raised with. */
 export const OTHER_KEY = 'll_test_key_other_00000000000000000';
 
@@ -36,6 +38,7 @@ const KEYS: Record<string, { id: string; name: string; scopes: string[] }> = {
   [MIXED_RELAY_KEY]: { id: 'key_mixed', name: 'Old flows key', scopes: ['read', 'requests:write', 'decisions:relay'] },
   [ADMIN_KEY]: { id: 'key_admin', name: 'Admin', scopes: ['admin'] },
   [OTHER_KEY]: { id: 'key_other', name: 'Someone else', scopes: ['read', 'requests:write'] },
+  [NOTES_KEY]: { id: 'key_notes', name: 'Landflow notes', scopes: ['notes:draft'] },
 };
 
 /** The relay channel the fake knows: Slack, with this signing secret, team and app. */
@@ -63,6 +66,8 @@ export interface FakeState {
   links: Map<string, string>;
   /** Evidence hashes served per request id, with when (ms). */
   served: Map<string, Array<{ sha: string; at: number }>>;
+  /** Note drafts per `month|costCenter`, every version kept. */
+  notes: Map<string, any>;
 }
 
 export interface FakeLandledger {
@@ -88,6 +93,7 @@ const fresh = (): FakeState => ({
     ['U_TAL', 'tal.levi@landbright.test'],
   ]),
   served: new Map(),
+  notes: new Map(),
 });
 const RELAYABLE_KINDS = ['infra_change', 'ai_budget', 'tool_or_seat', 'other'];
 const STALE_MS = 30 * 60 * 1000;
@@ -124,6 +130,55 @@ export const SPEND = {
   drill: 'service',
   warnings: [],
 };
+
+/** The contracts the fake knows (`GET /api/contracts/seats`): Linear grants the Landbright app `linear`. */
+export const CONTRACTS = [
+  {
+    id: 'con_linear',
+    version: 1,
+    vendor: 'Linear',
+    product: 'Business',
+    costCenter: { code: 'ENG-PLATFORM', name: 'Platform' },
+    tcv: '3000.000000',
+    annualValue: '3000.000000',
+    termStart: '2026-01-01',
+    termEnd: '2026-12-31',
+    termMonths: 12,
+    seats: { paid: 20, used: 17, reserved: 1, left: 2 },
+    seatPrice: '12.500000',
+    renewalDate: '2027-01-01',
+    landbrightApp: 'linear',
+  },
+];
+
+/** The month the fake has closed as far as the notes (its accrual accepted, the snapshot frozen). */
+export const NOTES_MONTH = '2026-10';
+/** What the notes may cite (Landledger's NoteFigures): the month as a whole and one cost center. */
+export const NOTE_FIGURES = [
+  {
+    costCenter: 'TOTAL', name: 'The month', actual: '1210.500000', budget: '2000.000000', forecastDay10: '1300.000000',
+    varianceBudget: '-789.500000', varianceBudgetPct: '-39.5', varianceForecast: '-89.500000',
+    drivers: [{ dimension: 'service', key: 'landflow-host', label: 'landflow-host', amount: '900.000000', previous: '700.000000', change: '200.000000' }],
+  },
+  {
+    costCenter: 'ENG-AGENTS', name: 'Engineering agents', actual: '1200.500000', budget: '2000.000000', forecastDay10: '1250.000000',
+    varianceBudget: '-799.500000', varianceBudgetPct: '-40.0', varianceForecast: '-49.500000',
+    drivers: [{ dimension: 'model', key: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', amount: '800.250000', previous: '650.000000', change: '150.250000' }],
+  },
+];
+/** The frozen snapshot's sha256. */
+export const SNAPSHOT_SHA = createHash('sha256').update(JSON.stringify(NOTE_FIGURES)).digest('hex');
+/** The estimated cost of services over any window (`GET /api/cost/window`). */
+export const WINDOW_COST: Record<string, string> = { checkout: '41.250000', 'landflow-host': '12.000000' };
+
+const CITE_FIELD: Record<string, string> = { actual: 'actual', budget: 'budget', forecast_day10: 'forecastDay10', variance_budget: 'varianceBudget', variance_forecast: 'varianceForecast' };
+/** The snapshot's figure a cite names, or undefined. */
+function citedValue(figures: any, cite: any): string | undefined {
+  if (CITE_FIELD[cite.figure]) return figures[CITE_FIELD[cite.figure]] ?? undefined;
+  const dimension = String(cite.figure).replace('driver_', '');
+  return figures.drivers.find((d: any) => d.dimension === dimension && d.key === cite.key)?.change;
+}
+const cents = (value: unknown) => Math.round(Number(value) * 100);
 
 export async function startFakeLandledger(): Promise<FakeLandledger> {
   let state = fresh();
@@ -170,6 +225,7 @@ export async function startFakeLandledger(): Promise<FakeLandledger> {
     };
     request.decisions.push(decision);
     request.status = outcome === 'approve' ? 'approved' : 'rejected';
+    if (request.seat && outcome === 'approve') request.seat.status = 'reserved';
     return { status: 201, body: { request, decision } };
   }
 
@@ -187,8 +243,8 @@ export async function startFakeLandledger(): Promise<FakeLandledger> {
       failure = undefined;
       return { status: f.status, body: f.body ?? { error: { code: 'internal', message: 'boom' } } };
     }
-    const [head, id, sub] = r.path.split('/').filter(Boolean).slice(1); // after "api"
-    switch (`${r.method} ${head}${id !== undefined ? '/:id' : ''}${sub ? `/${sub}` : ''}`) {
+    const [head, id, sub, sub2] = r.path.split('/').filter(Boolean).slice(1); // after "api"
+    switch (`${r.method} ${head}${id !== undefined ? '/:id' : ''}${sub ? `/${sub}` : ''}${sub2 ? `/${sub2}` : ''}`) {
       case 'GET auth/:id':
         if (id !== 'me') break;
         if (personEmail) return { body: { kind: 'person', user: { id: `usr_${personEmail}`, name: personEmail, email: personEmail, roles: [], groups: [] }, scopes, authMode: 'oidc' } };
@@ -217,6 +273,14 @@ export async function startFakeLandledger(): Promise<FakeLandledger> {
         if (b.requester?.kind === 'agent' && !b.requester.sponsor) return err(400, 'bad_request', 'An agent needs a sponsor');
         if (typeof b.amount?.amount !== 'string') return err(400, 'bad_request', 'amount.amount is a decimal string');
         if (b.amount.currency && b.amount.currency !== 'USD') return err(422, 'unprocessable', 'Only USD until FX is set up');
+        if (b.seat && b.kind !== 'tool_or_seat') return err(400, 'bad_request', '`seat` is for a tool_or_seat request');
+        if (b.seat) {
+          const contract = CONTRACTS.find((c) => c.id === b.seat.contractId);
+          if (!contract) return err(400, 'bad_request', `No contract ${b.seat.contractId}`);
+          if (Math.round(Number(b.seat.seats ?? 1) * Number(b.seat.seatPrice) * 1e6) !== Math.round(Number(b.amount.amount) * 1e6) || b.recurrence !== 'monthly') {
+            return err(400, 'bad_request', 'A seat request is seats × seat price a month');
+          }
+        }
         const caller = keyRow?.id ?? `usr_${personEmail}`;
         const idem = b.idempotencyKey ? `${caller}:${b.idempotencyKey}` : undefined;
         const { idempotencyKey: _k, ...rest } = b;
@@ -247,6 +311,7 @@ export async function startFakeLandledger(): Promise<FakeLandledger> {
           evidence: b.evidence ?? {},
           origin: { ...(b.origin ?? { type: 'console' }), verified },
           related: b.related ?? [],
+          seat: b.seat ? { contractId: b.seat.contractId, vendor: 'Linear', product: 'Business', seats: Number(b.seat.seats ?? 1), seatPrice: Number(b.seat.seatPrice).toFixed(6), status: 'none' } : null,
           requester: b.requester?.kind === 'agent' ? { kind: 'agent', agent: b.requester.agent, sponsor: { id: 'usr_s', name: 'Sponsor', email: person.email ?? null, sub: person.sub ?? null } } : { kind: 'person', person: { id: 'usr_r', name: 'Requester', email: person.email ?? null, sub: person.sub ?? null } },
           requesterEmail: person.email ?? null,
           createdVia: keyRow ? 'key' : 'session',
@@ -313,6 +378,73 @@ export async function startFakeLandledger(): Promise<FakeLandledger> {
         if (!RELAYABLE_KINDS.includes(request.kind) || request.steps[0]?.key !== 'budget_owner') return err(403, 'forbidden', 'Only the budget owner\'s step is decided through a relay; this one is decided in Landledger');
         return decide(request, email, 'approve', '', m[3], { channelId: SLACK_CHANNEL.id, externalUserId: String(payload.user.id) });
       }
+      case 'GET close/:id/snapshot': {
+        const denied = need('read');
+        if (denied) return denied;
+        if (id !== NOTES_MONTH) return err(404, 'not_found', `No snapshot for ${id}: the accrual is not accepted yet`);
+        return { body: { id: 'snap_1', month: id, sha256: SNAPSHOT_SHA, frozenAt: '2026-11-15T08:00:00.000Z', frozenBy: 'Dana Controller', current: true, figures: { month: id, currency: 'USD', total: { total: NOTE_FIGURES[0].actual }, notes: NOTE_FIGURES } } };
+      }
+      case 'GET notes/:id/figures': {
+        if (!scopes.includes('notes:draft')) {
+          const denied = need('read');
+          if (denied) return denied;
+        }
+        if (id !== NOTES_MONTH) return err(404, 'not_found', `No snapshot for ${id}`);
+        return { body: { snapshotSha256: SNAPSHOT_SHA, needed: NOTE_FIGURES } };
+      }
+      case 'POST notes/:id/drafts': {
+        const denied = need('notes:draft');
+        if (denied) return denied;
+        const b = r.body ?? {};
+        if (id !== NOTES_MONTH) return err(404, 'not_found', `No snapshot for ${id}`);
+        if (b.snapshotSha256 !== SNAPSHOT_SHA) return err(409, 'conflict', 'That snapshot is not the month\'s current one');
+        const figures = NOTE_FIGURES.find((f) => f.costCenter === b.costCenter);
+        if (!figures) return err(400, 'bad_request', `${b.costCenter} needs no note this month`);
+        if (typeof b.text !== 'string' || b.text.trim().length < 10) return err(400, 'bad_request', 'text: 10 characters or more');
+        const mismatches = (b.cites ?? []).flatMap((c: any) => {
+          const value = citedValue(figures, c);
+          return value === undefined ? [{ figure: c.figure, key: c.key ?? null, cited: c.amount, snapshot: null }] : cents(value) !== cents(c.amount) ? [{ figure: c.figure, key: c.key ?? null, cited: c.amount, snapshot: value }] : [];
+        });
+        if (mismatches.length) return { status: 422, body: { error: { code: 'unprocessable', message: 'A cited figure does not match the snapshot', details: { mismatches } } } };
+        const key = `${id}|${b.costCenter}`;
+        const note = state.notes.get(key) ?? { id: next('note'), month: id, costCenter: b.costCenter, name: figures.name, status: 'drafted', accepted: null, versions: [], current: true };
+        note.versions.push({ version: note.versions.length + 1, text: b.text, cites: b.cites ?? [], kind: 'draft', by: keyRow?.name ?? personEmail, agent: b.agent ?? null, sponsor: b.sponsor ?? null, runId: b.runId ?? null, at: '2026-11-15T08:05:00.000Z', snapshotSha256: b.snapshotSha256, decision: null });
+        state.notes.set(key, note);
+        return { status: 201, body: note };
+      }
+      case 'GET cost/:id': {
+        if (id !== 'window') break;
+        const denied = need('read');
+        if (denied) return denied;
+        const services = String(r.query.services ?? '').split(',').filter(Boolean);
+        if (!services.length || !r.query.from || !r.query.to) return err(400, 'bad_request', 'services, from and to');
+        const rows = services.map((service) => ({ service, known: service in WINDOW_COST, amount: WINDOW_COST[service] ?? '0.000000', days: [] }));
+        const total = rows.reduce((sum, x) => sum + Number(x.amount), 0).toFixed(6);
+        return { body: { from: r.query.from, to: r.query.to, currency: 'USD', basis: 'estimated', method: 'Each day\'s cost by the share of the day inside the window', total, services: rows } };
+      }
+      case 'GET contracts/:id': {
+        if (id !== 'seats') break;
+        const denied = need('read');
+        if (denied) return denied;
+        const contract = CONTRACTS.find((c) => c.landbrightApp === r.query.landbrightApp);
+        if (!contract) return err(404, 'not_found', `No contract grants ${r.query.landbrightApp}`);
+        return { body: { contract, seatPrice: contract.seatPrice, left: contract.seats.left } };
+      }
+      case 'POST requests/:id/seats/release': {
+        const denied = need('requests:write');
+        if (denied) return denied;
+        const request = state.requests.get(id);
+        if (!request) return notFound;
+        if (keyRow && request.createdBy.id !== keyRow.id && !scopes.includes('admin')) return err(403, 'forbidden', 'Only the creating key, the requester or an admin releases its seats');
+        const reason = r.body?.reason;
+        if (!['access_denied', 'grant_revoked', 'not_needed'].includes(reason)) return err(400, 'bad_request', 'reason: access_denied, grant_revoked or not_needed');
+        if (!request.seat || !['reserved', 'applied'].includes(request.seat.status)) return err(409, 'conflict', 'Nothing is held for this request');
+        if (request.seat.status === 'applied' && reason !== 'grant_revoked') return err(409, 'conflict', 'An applied seat is released only when its grant was revoked');
+        const from = request.seat.status;
+        request.seat = { ...request.seat, status: 'released', releasedReason: reason, releaseNote: r.body?.note ?? '' };
+        for (const res of request.reservations) res.status = 'released';
+        return { body: { request, released: { seats: request.seat.seats, from, reason } } };
+      }
       case 'POST requests/:id/applied': {
         const denied = need('requests:write');
         if (denied) return denied;
@@ -322,6 +454,8 @@ export async function startFakeLandledger(): Promise<FakeLandledger> {
         if (request.status !== 'approved') return err(409, 'conflict', 'Only an approved request can be applied');
         request.status = 'applied';
         request.appliedNote = r.body?.note ?? '';
+        request.appliedLinks = r.body?.links ?? [];
+        if (request.seat?.status === 'reserved') request.seat.status = 'applied';
         return { body: { request } };
       }
       case 'POST reservations': {

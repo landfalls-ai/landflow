@@ -17,14 +17,17 @@ describe('manifest', () => {
     ]);
     for (const icon of [manifest.plugin.icon, ...manifest.nodes.map((n) => n.icon), ...(manifest.credentialTypes ?? []).map((c) => c.icon)]) expect(icon).toMatch(/^data:image\/svg\+xml;base64,/);
     expect(JSON.stringify(manifest)).not.toContain('file:');
-    const [credential, relay] = manifest.credentialTypes ?? [];
+    const [credential, relay, notes] = manifest.credentialTypes ?? [];
     expect(credential).toMatchObject({ name: 'landledgerApi', testable: true });
     expect(relay).toMatchObject({ name: 'landledgerRelayApi', testable: true });
+    expect(notes).toMatchObject({ name: 'landledgerNotesKey', testable: true });
+    expect(notes.properties.find((p) => p.name === 'apiKey')?.typeOptions?.password).toBe(true);
     expect(relay.properties.find((p) => p.name === 'apiKey')?.typeOptions?.password).toBe(true);
-    // A relay takes the relay key; every other operation the flows' key.
+    // A relay takes the relay key, a note the notes key; every other operation the flows' key.
     expect(manifest.nodes[0].credentials).toEqual([
-      { name: 'landledgerApi', required: true, displayOptions: { hide: { resource: ['decision'] } } },
+      { name: 'landledgerApi', required: true, displayOptions: { hide: { resource: ['decision', 'note'] } } },
       { name: 'landledgerRelayApi', required: true, displayOptions: { show: { resource: ['decision'] } } },
+      { name: 'landledgerNotesKey', required: true, displayOptions: { show: { resource: ['note'] } } },
     ]);
     expect(credential.properties.find((p) => p.name === 'apiKey')?.typeOptions?.password).toBe(true);
     expect(credential.properties.find((p) => p.name === 'webhookSecret')?.typeOptions?.password).toBe(true);
@@ -40,20 +43,26 @@ describe('MCP tools', () => {
   it('one per resource and operation, without Decision → Relay and without the trigger', () => {
     expect(tools.map((t) => t.name).sort()).toEqual([
       'budget_check',
+      'close_getSnapshot',
+      'contract_getSeats',
       'cost_query',
+      'cost_window',
       'key_me',
+      'note_getFigures',
+      'note_submitDraft',
       'period_getStatus',
       'request_create',
       'request_get',
       'request_list',
       'request_markApplied',
+      'request_releaseSeats',
       'reservation_create',
       'reservation_release',
     ]);
   });
 
   it('read-only hints on exactly the reads', () => {
-    expect(tools.filter((t) => t.annotations.readOnlyHint).map((t) => t.name).sort()).toEqual(['budget_check', 'cost_query', 'key_me', 'period_getStatus', 'request_get', 'request_list']);
+    expect(tools.filter((t) => t.annotations.readOnlyHint).map((t) => t.name).sort()).toEqual(['budget_check', 'close_getSnapshot', 'contract_getSeats', 'cost_query', 'cost_window', 'key_me', 'note_getFigures', 'period_getStatus', 'request_get', 'request_list']);
   });
 
   it('request_create asks for the agent and its sponsor', () => {

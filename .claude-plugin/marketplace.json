@@ -78,12 +78,12 @@
     {
       "name": "landledger",
       "source": "./plugins/landledger",
-      "description": "Landledger, the cost subledger: check budgets, query spend, raise and read spend requests, reserve and release budget, a month's status, relay a person's decision from Slack, and a signed webhook trigger for requests, budgets and periods. Flows: approve an infrastructure change, raise or hold an AI budget, and ask the approver in Slack.",
+      "description": "Landledger, the cost subledger: check budgets, query spend, raise and read spend requests, reserve and release budget, a month's status, relay a person's decision from Slack, tool-or-seat seats, a month's close snapshot and variance-note drafts, the estimated cost of a time window, and a signed webhook trigger for requests, budgets, periods and notes. Flows: approve an infrastructure change, raise or hold an AI budget, ask the approver in Slack, a tool or seat cost with Landbright, draft variance notes, and an incident's cost to the Landfall room.",
       "version": "0.1.0",
       "author": { "name": "Landflow" },
       "category": "finance",
       "keywords": ["landledger", "finance", "budget", "approval", "spend", "requests"],
-      "flows": ["./flows/landledger-ai-budget.json", "./flows/landledger-approve-infra-change.json", "./flows/landledger-slack-approver.json"]
+      "flows": ["./flows/landledger-ai-budget.json", "./flows/landledger-approve-infra-change.json", "./flows/landledger-incident-cost.json", "./flows/landledger-slack-approver.json", "./flows/landledger-tool-or-seat.json", "./flows/landledger-variance-notes.json"]
     }
   ]
 }

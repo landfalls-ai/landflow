@@ -148,6 +148,25 @@ items still open (its "Wave 6" section); this page is the short list to check be
   Landledger's Slack relay channel must hold the same signing secret as the Slack credential.
 - **No knowledge kind.** Landledger has no explain or search route, so the plugin is not offered as an agent's knowledge
   base.
+- **Tool or seat cost: Landbright's cost step is a placeholder.** Landbright has no external cost step yet, so **Settle
+  the cost step** calls the proposed `POST /api/v1/requests/:id/steps/:step/settle` only when `SETTLE_IN_LANDBRIGHT`
+  is on (off by default); until then the flow tells Landbright through an annotation (`landflow.seat_cost`), which
+  Landbright's approvers read but which holds nothing. Landbright doesn't mark which bundles cost a seat either:
+  `SEAT_APPS` in **Settings** maps a bundle's name to its contract's `landbrightApp` by hand. A break-glass request
+  can't be flagged as one (Landledger reads `breakGlass` only from a request's origin), and the flow raises one seat
+  per request.
+- **Variance notes need a model that keeps to the figures.** The flow drafts with a local Ollama model; a draft that
+  misquotes a figure is redrafted once with Landledger's refusal, then left to Landledger's template draft, which a
+  controller creates. A model too small for the prompt gives up more often than it drafts. The agent never accepts a
+  note.
+- **Incident cost goes into a room note, not the postmortem.** The landfall plugin has no postmortem operation (and
+  Landfall's code stays unchanged), so the estimate is a Timeline note in the room, saying so. The services are what the
+  room names (the alert's entity and hints, attached context), mapped to Explore's names by hand in `SERVICE_NAMES`;
+  the window ends at the room's last move to an ended state, and Landledger's cost is daily, so the figure is an
+  estimate by the share of each day. The trigger polls (60 s).
+- **`$('Node').item` follows position, not lineage.** After a Switch or a step that drops items, a later node reading
+  an earlier one by `.item` can get the wrong item; the variance-notes flow works around it with a pass-through node
+  (**Notes to redraft**) before the redraft.
 
 ## Integrations that report activity (built 2026-11-12)
 

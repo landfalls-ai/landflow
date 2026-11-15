@@ -35,7 +35,7 @@ export function run(node: INodeType, parameters: JsonObject, options: RequestOpt
   return runNode(node, executeRequest(node.description.name, parameters, options), extras);
 }
 
-export function testCredentials(data: JsonObject, credentialType: 'landledgerApi' | 'landledgerRelayApi' = 'landledgerApi') {
+export function testCredentials(data: JsonObject, credentialType: 'landledgerApi' | 'landledgerRelayApi' | 'landledgerNotesKey' = 'landledgerApi') {
   return runTestCredentials(plugin, { credentialType, data });
 }
 

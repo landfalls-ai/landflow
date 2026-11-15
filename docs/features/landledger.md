@@ -15,13 +15,16 @@ decided.
 Landflow works with it in two ways:
 
 - **The `landledger` plugin** ([plugins/landledger](../../plugins/landledger/README.md)): a node for budgets, spend,
-  requests, reservations, periods, the key in use and relayed Slack presses, usable as an agent tool and over MCP (narrower there: see
-  below), and a signed webhook trigger for Landledger's events.
+  requests, seats, reservations, periods, the month's close snapshot, variance-note drafts, the cost of a time window,
+  the key in use and relayed Slack presses, usable as an agent tool and over MCP (narrower there: see below), and a
+  signed webhook trigger for Landledger's events.
 - **Flows**: [approve an infrastructure change](#approve-an-infrastructure-change),
-  [raise or hold an AI budget](#raise-or-hold-an-ai-budget) and [ask the approver in Slack](#ask-the-approver-in-slack).
+  [raise or hold an AI budget](#raise-or-hold-an-ai-budget), [ask the approver in Slack](#ask-the-approver-in-slack),
+  [a tool or seat cost](#tool-or-seat-cost) (with Landbright), [draft variance notes](#draft-variance-notes) (month
+  end) and [an incident's cost to the room](#incident-cost-to-the-room) (with Landfall).
 
-The plugin follows Landledger's contract as of `c3c0115` ("Review of wave 2: contract"; its `docs/reference/api.md`
-and `libs/contracts/src/requests.ts`) and is tested against an in-memory fake of it; see [Checked live](#checked-live) for what ran against
+The plugin follows Landledger's contract as of `2ed51f3` ("Wave 4 contract: periods, close, accruals, notes, exports";
+its `docs/reference/api.md` and `libs/contracts/src/`; wave 3's contracts and seats from `3fa1df4`) and is tested against an in-memory fake of it; see [Checked live](#checked-live) for what ran against
 the real one.
 
 ## The plugin
@@ -30,8 +33,8 @@ the real one.
 |---|---|
 | Package | `plugins/landledger` (TypeScript SDK), `pnpm plugin:landledger` |
 | Ports | HTTP 7120, gRPC 7220 |
-| Credentials | **Landledger API (ll_…)**: Base URL (default `http://landledger-api.landflow-dev.svc.cluster.local:4810`; `http://127.0.0.1:4810` on this machine), API Key, optional Webhook Signing Secret (`whsec_…`); one with `read` + `requests:write` for the node, one with `webhooks:write` for the trigger. **Landledger Relay Key (decisions:relay)**: Base URL, a key with `decisions:relay` only, for Decision → Relay |
-| Nodes | **Landledger** (Budget → Check · Cost → Query · Request → Create, Get, List, Mark Applied · Reservation → Create, Release · Period → Status · Key → Who Am I · Decision → Relay), **Landledger Trigger** (app webhook) |
+| Credentials | **Landledger API (ll_…)**: Base URL (default `http://landledger-api.landflow-dev.svc.cluster.local:4810`; `http://127.0.0.1:4810` on this machine), API Key, optional Webhook Signing Secret (`whsec_…`); one with `read` + `requests:write` for the node, one with `webhooks:write` for the trigger. **Landledger Relay Key (decisions:relay)**: Base URL, a key with `decisions:relay` only, for Decision → Relay. **Landledger Notes Key (notes:draft)**: Base URL, a key with `notes:draft` only, for Note → Figures and Submit Draft |
+| Nodes | **Landledger** (Budget → Check · Cost → Query, Window · Request → Create, Get, List, Mark Applied, Release Seats · Contract → Seats · Reservation → Create, Release · Period → Status · Close → Snapshot · Note → Figures, Submit Draft · Key → Who Am I · Decision → Relay), **Landledger Trigger** (app webhook) |
 | Deploy | compose service `landledger`; Kubernetes `deploy/k8s/components/landledger` (the plugin and the `landledger-api` ExternalName Service), in the `orbstack-clickland` overlay; image `landflow/plugin-landledger` |
 
 The operations, routes, outputs and scopes are in the [plugin README](../../plugins/landledger/README.md). The parts
@@ -52,6 +55,15 @@ that carry the rule above:
   `x-slack-request-timestamp`) to `POST /api/relays/slack` with the relay key. Landledger verifies the signature (5
   minutes), the team and app, maps the presser to a person through their own link, and decides as that person, only on
   the budget owner's step; the flow names no one. It is refused as an agent tool or over MCP and not in the MCP list.
+- **Notes are drafted, never accepted, by a key.** Note → Submit Draft takes the notes key (`notes:draft` alone; its
+  test fails for a key that also holds a write scope). Every cited figure must equal the frozen snapshot's to the
+  cent: Landledger answers 422 with the mismatches, which the node's error carries, and 409 when the snapshot is no
+  longer the month's. An analyst accepts or rejects the draft in Landledger. As an agent tool it must name the agent.
+- **A seat on a contract** (Request → Create, kind `tool_or_seat`, Seat: Contract ID, Seats, Price) holds seats on the
+  contract, not money (Landledger `28dcf5a`: "within contract" until Landbright prices seats); Request → Release Seats
+  gives them back (`access_denied`, `grant_revoked`, `not_needed`).
+- **Cost → Window** is an estimate: each day's cost by the share of the day inside the window (`basis: 'estimated'`),
+  for at most 50 services and 31 days; an unknown name is `known: false` and $0.
 - **No knowledge kind.** Landledger has no explain or search route that answers with passages, so the node is not
   offered as an agent's knowledge base; agents use `budget_check`, `cost_query`, `request_get` and the rest as tools.
 
@@ -60,13 +72,16 @@ only its own webhooks) and keeps the `whsec_` secret Landledger returns once in 
 Landflow API or page shows; or it checks deliveries with the secret of a webhook an admin made (put in the credential).
 Every delivery is verified (Standard Webhooks signature, at most 300 s old), filtered by event, kind and cost center,
 and keyed by `webhook-id`, so Landledger's retries start one run. It handles `request.needs_confirmation`,
-`decision.relayed` and `report.exceptions` besides the request, budget and period events. Its item lifts `requestId`, `kind` and
+`decision.relayed`, `report.exceptions`, `seat.released` and wave 4's `notes.draft_requested`, `note.accepted`,
+`accrual.accepted`, `period.locked`, `period.reopened` and `datarails.uploaded` besides the request, budget and period
+events. Its item lifts `requestId`, `kind` and
 `costCenter` out of the request for joining.
 
 ## Flows
 
-Three templates (Templates, from the marketplace), each tested end to end in `apps/web/test/landledger-flows.test.ts`
-(20 tests: the plugin's own node and trigger against its fake Landledger, a stand-in Slack, a fake Landflow API). A
+Six templates (Templates, from the marketplace), each tested end to end in `apps/web/test/landledger-flows.test.ts`
+(34 tests: the plugin's own node and trigger against its fake Landledger, a stand-in Slack, Landbright and Ollama, a
+fake Landflow API, and the landfall plugin against its fake Landfall). A
 flow that waits on a decision has two triggers: the one that raises the request, and a Landledger Trigger on Landledger's
 events. Nothing waits in between: a decision days later starts its own run, and the flow decides whether the request
 is its own from Landledger's record, not from the event: who created it (`createdBy` against **Who is this flow**, Key
@@ -149,6 +164,79 @@ and **Raise settings**.
 Slots: Landledger requests (`read`), Landledger webhooks, Landledger relay (`decisions:relay` only), Slack (a bot token
 with `chat:write`, `users:read`, `users:read.email`, and the signing secret). After publishing, set **Button pressed**'s
 URL as the Slack app's Interactivity Request URL, and the same signing secret on Landledger's Slack relay channel.
+
+### Tool or seat cost
+
+[`landledger-tool-or-seat.json`](../../plugins/landledger/flows/landledger-tool-or-seat.json), the six steps of
+Landbright's tool-or-seat integration (a paid seat is spend: Landledger's approvers decide the cost, Landbright's the
+access):
+
+1. **Landbright events** (Webhook, JWT Auth against Landbright's JWKS; Landbright's signed events) and **Landledger
+   events** (`request.decided`, kind `tool_or_seat`) → **Settings** → **What happened** → **Raise, cost or access**.
+2. A new Landbright request → **Read the Landbright request** (Landbright's API with the Landflow application's client
+   credentials) → **Costs a seat?** (pending, not an extension, the bundle's app is a seat app: `SEAT_APPS` in
+   **Settings** maps a bundle to the `landbrightApp` its contract names, until Landbright marks a seat cost itself) →
+   **Find the contract** (Contract → Seats); none → **No contract: say so in Landbright** (an annotation).
+3. **Ask Landledger for the seat** (Request → Create, `tool_or_seat`, the requester as the person, the contract's seat
+   price, the Landbright request as `related`, idempotency `landbright-<REQ-n>`) → **Asked, or already asked** (a 409
+   for the same key is a redelivery) → **Remember the seat request** (**Landledger seat requests**) → **Note it in
+   Landbright** (annotation `landflow.seat_cost`: `cost_asked`). The requester confirms it in Landledger.
+4. `request.decided` → **Get the request** → **Who is this flow** → **Find the run that raised it** → **Ours to act
+   on?** (this key's request, kind `tool_or_seat`, raised by a run of this workflow) → **Tell Landbright the cost**
+   (`cost_approved` or `cost_denied`), or **Not this flow's: refused**.
+5. **Settle in Landbright?** → **Settle the cost step**: `POST /api/v1/requests/:id/steps/:step/settle` `{ outcome,
+   reference }`, the route proposed to Landbright for an external cost step. It is a placeholder HTTP node behind
+   `SETTLE_IN_LANDBRIGHT` (off): until Landbright builds the step, the annotation is how Landbright's approvers see the
+   cost decision.
+6. Landbright's decision or a grant change → **Find its seat request** → **What the seat needs**: granted → **Mark the
+   seat used** (Request → Mark Applied); access denied with the seat reserved → **Release the seat**
+   (`access_denied`); the grant revoked or expired → `grant_revoked` for a used seat, `not_needed` for one never used.
+
+Slots: Landledger requests, Landledger webhooks, Landbright events (JWT Auth), Landbright API (OAuth2 client
+credentials, `requests:read` and `annotations:write`). Subscribe **Landbright events**' URL in Landbright to
+`request.created`, `request.decided`, `grant.activated`, `grant.revoked` and `grant.expired`.
+
+### Draft variance notes
+
+[`landledger-variance-notes.json`](../../plugins/landledger/flows/landledger-variance-notes.json), month end:
+
+- **Notes requested** (`notes.draft_requested`: the month, the snapshot's hash, the notes needed) → **Settings**
+  (`MODEL`, default `qwen3-coder:30b`, the local Ollama model the cluster's agents use; `OLLAMA_URL`, default
+  `http://host.docker.internal:11434`; the agent's id `landflow:<workflow>` and name; `SPONSOR`) → **Get the snapshot**
+  (Close → Snapshot, the read key) → **Get the figures** (Note → Figures, the notes key).
+- **One note per cost center**: nothing when the snapshot, the figures and the event name different hashes (a newer
+  close wins). Each needed note gets a prompt with its figures, one per line, written as they may be cited.
+- **Draft the note** (AI Agent, JSON only, on **Local model**: Ollama with `{{ $json.model }}` at temperature 0.1) →
+  **Shape the draft** (the text and the cites, taken leniently) → **Submit the draft** (Note → Submit Draft as the
+  agent, with this run's id; On Error: Continue) → **Submitted or refused**.
+- A refusal for a figure (Landledger's 422, its mismatches in the message) → **Redraft with the refusal** (the same
+  prompt plus "Landledger refused your previous draft: …") → **Submit the redraft**. A second refusal gives up: the
+  note is left to Landledger's template draft (`POST /api/notes/:month/template`, the controller's), which an analyst
+  accepts as well.
+- **Record the draft**: a row per note in **Landledger note drafts** (month, cost center, snapshot, outcome, attempt,
+  note id and version, the refusal, the run).
+
+Slots: Landledger (read), Landledger webhooks, Landledger notes (`notes:draft` only).
+
+### Incident cost to the room
+
+[`landledger-incident-cost.json`](../../plugins/landledger/flows/landledger-incident-cost.json), with the
+[landfall plugin](../../plugins/landfall/README.md); Landfall knows nothing of Landledger and its code is unchanged:
+
+- **Room ended** (Landfall Trigger, a room's status reaching an ended state; polls every 60 s) → **Settings**
+  (`LANDLEDGER_CONSOLE_URL` for the link; `SERVICE_KINDS`, the entity kinds that are services; `SERVICE_NAMES`, a
+  Landfall name → the name Landledger's Explore uses) → **Read the room** (Room → Get) → **Window and services**: the
+  services from the alert's entity and entity hints and the context attached to the room; the window from the room's
+  opening to its last `status.changed` to an ended state.
+- **Services named?** → **Cost of the window** (Cost → Window) → **Write the note** → **Post it in the room** (Timeline
+  → Add Note): "Estimated cost during this incident: $53.25 (USD), … UTC (…)", a line per service (an unknown one: "no
+  cost in Landledger under this name"), "Estimated: each day's cost in Landledger, by the share of the day inside the
+  incident's window. Not an invoiced figure.", a link to Landledger's Explore filtered to the services and month, and
+  "Posted by Landflow as a room note: it can't write a postmortem section." No service named → **No service named:
+  nothing to cost**.
+- The landfall plugin has no postmortem operation, so the cost goes in as a room note rather than a postmortem section.
+
+Slots: Landfall (its API key), Landledger (read).
 
 ## Deploying
 

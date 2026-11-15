@@ -15,6 +15,13 @@ export const EVENTS = [
   'request.needs_confirmation',
   'decision.relayed',
   'report.exceptions',
+  'seat.released',
+  'notes.draft_requested',
+  'note.accepted',
+  'accrual.accepted',
+  'period.locked',
+  'period.reopened',
+  'datarails.uploaded',
 ] as const;
 /** What a new trigger listens to. */
 export const DEFAULT_EVENTS = ['request.step_pending', 'request.decided', 'request.applied', 'budget.at_risk', 'period.closing'];
@@ -63,7 +70,7 @@ export const LandledgerTrigger = defineNode({
   description: {
     name: 'landledgerTrigger',
     displayName: 'Landledger Trigger',
-    description: 'Starts the workflow when a Landledger request waits on its approvers or on a person\'s confirmation, is decided (also through a relay) or applied, a budget is at risk, a month starts closing, or the exceptions report is stored (a signed webhook)',
+    description: 'Starts the workflow when a Landledger request waits on its approvers or on a person\'s confirmation, is decided (also through a relay) or applied, a seat is released, a budget is at risk, a month starts closing, its notes are to be drafted or it is locked, or the exceptions report is stored (a signed webhook)',
     version: 1,
     kind: 'trigger',
     triggerSource: 'appWebhook',
@@ -97,6 +104,13 @@ export const LandledgerTrigger = defineNode({
           },
           { name: 'Decision Relayed', value: 'decision.relayed', description: 'A person\'s press in a relay channel (Slack) was recorded as their decision' },
           { name: 'Exceptions Report', value: 'report.exceptions', description: 'The weekly exceptions report was stored, with its sha256' },
+          { name: 'Seat Released', value: 'seat.released', description: 'A seat request\'s seats went back to its contract (released, or expired unapplied after 30 days)' },
+          { name: 'Notes Draft Requested', value: 'notes.draft_requested', description: 'The close reached the notes step (the accrual accepted, the snapshot frozen): the notes needed, with the figures each may cite' },
+          { name: 'Note Accepted', value: 'note.accepted', description: 'An analyst accepted a variance note' },
+          { name: 'Accrual Accepted', value: 'accrual.accepted', description: 'A controller accepted the month\'s accrual proposal' },
+          { name: 'Period Locked', value: 'period.locked', description: 'The second signature locked a month' },
+          { name: 'Period Reopened', value: 'period.reopened', description: 'The CFO approved reopening a locked month' },
+          { name: 'Datarails Uploaded', value: 'datarails.uploaded', description: 'The month\'s snapshot and notes were uploaded to Datarails (or the upload failed)' },
         ],
       },
       { name: 'kinds', displayName: 'Request Kinds', type: 'string', default: '', placeholder: 'infra_change, ai_budget', description: 'Only requests of these kinds (comma-separated; empty: every kind). Events without a request pass' },
@@ -198,7 +212,7 @@ export const LandledgerTrigger = defineNode({
       type: event.type,
       id: String(id ?? ''),
       ...(event.timestamp !== undefined && { timestamp: event.timestamp }),
-      requestId: typeof request?.id === 'string' ? request.id : null,
+      requestId: typeof request?.id === 'string' ? request.id : typeof payload.requestId === 'string' ? payload.requestId : null,
       kind,
       costCenter,
     };

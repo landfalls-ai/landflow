@@ -22,9 +22,12 @@ import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defineNode, definePlugin, type IPlugin, type JsonObject, type NodeDescriptor, type NodeItem } from '@landflow/sdk';
-import { landledgerApi, LandledgerNode, landledgerRelayApi } from '../../../plugins/landledger/src/nodes/landledger';
+import { landledgerApi, LandledgerNode, landledgerNotesKey, landledgerRelayApi } from '../../../plugins/landledger/src/nodes/landledger';
+import { Landfall, landfallApi, landfallHeartbeatApi } from '../../../plugins/landfall/src/nodes/landfall';
+import { LandfallTrigger } from '../../../plugins/landfall/src/nodes/landfall-trigger';
+import { SEED as LANDFALL_SEED, startFakeLandfall, type FakeLandfall } from '../../../plugins/landfall/test/fake-landfall';
 import { LandledgerTrigger } from '../../../plugins/landledger/src/nodes/landledger-trigger';
-import { KEY, OTHER_KEY, RELAY_KEY, SLACK_CHANNEL, startFakeLandledger, WEBHOOKS_KEY, type FakeLandledger } from '../../../plugins/landledger/test/fake-landledger';
+import { KEY, NOTE_FIGURES, NOTES_KEY, NOTES_MONTH, OTHER_KEY, RELAY_KEY, SLACK_CHANNEL, SNAPSHOT_SHA, startFakeLandledger, WEBHOOKS_KEY, type FakeLandledger } from '../../../plugins/landledger/test/fake-landledger';
 import { buttonPress } from '../../../plugins/messaging/src/nodes/slack-trigger';
 import { slackSignature } from '@landflow/sdk';
 
@@ -46,6 +49,7 @@ const flowFile = (name: string) => JSON.parse(readFileSync(join(repo, 'plugins/l
 const fixtures = join(import.meta.dirname, 'fixtures/plugin-manifests');
 const messaging = JSON.parse(readFileSync(join(fixtures, 'messaging.json'), 'utf8'));
 const landledgerManifest = JSON.parse(readFileSync(join(fixtures, 'landledger.json'), 'utf8'));
+const landfallManifest = JSON.parse(readFileSync(join(fixtures, 'landfall.json'), 'utf8'));
 
 // ---- Slack: a stand-in that records every call and knows its people (a guest, someone from another organization).
 const SLACK_PEOPLE: Record<string, JsonObject> = {
@@ -89,7 +93,10 @@ registry.registerBuiltin({
   credentialTypes: messaging.credentialTypes,
 } as unknown as IPlugin);
 registry.registerBuiltin(
-  definePlugin({ info: landledgerManifest.plugin, nodes: [LandledgerNode, LandledgerTrigger], credentialTypes: [landledgerApi, landledgerRelayApi], iconDir: new URL('../../../plugins/landledger/icons/', import.meta.url) }) as IPlugin,
+  definePlugin({ info: landledgerManifest.plugin, nodes: [LandledgerNode, LandledgerTrigger], credentialTypes: [landledgerApi, landledgerRelayApi, landledgerNotesKey], iconDir: new URL('../../../plugins/landledger/icons/', import.meta.url) }) as IPlugin,
+);
+registry.registerBuiltin(
+  definePlugin({ info: landfallManifest.plugin, nodes: [Landfall, LandfallTrigger], credentialTypes: [landfallApi, landfallHeartbeatApi], iconDir: new URL('../../../plugins/landfall/icons/', import.meta.url) }) as IPlugin,
 );
 
 // ---- Landflow's agent and usage API, as the HTTP Request nodes see it (an lf_ bearer key).
@@ -775,5 +782,388 @@ describe('Landledger: ask the approver in Slack', () => {
     const again = await run(workflow, 'Button pressed', [press({ ...card, blocks, value: String(approve.value) } as never)]);
     expect(again.record.status).toBe('success');
     expect(fake.state.requests.get(requestId).status).toBe('approved');
+  });
+});
+
+describe('Landledger: tool or seat cost', () => {
+  // ---- Landbright's machine API, as the HTTP Request nodes see it: client credentials, requests, annotations, the
+  // proposed settle route (recorded, so a test sees whether the flow called it).
+  interface LbCall { method: string; path: string; auth: string; body: JsonObject | null }
+  const lbCalls: LbCall[] = [];
+  const lbRequests = new Map<string, JsonObject>();
+  const LB_ID = '0b6c2a52-6c55-4a39-9a77-6a1c3a7e0041';
+  let lbUrl = '';
+  const landbright = createServer(async (req, res) => {
+    const url = new URL(req.url ?? '/', 'http://x');
+    const raw = await readBody(req);
+    const send = (status: number, value: unknown) => {
+      res.writeHead(status, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(value));
+    };
+    if (url.pathname === '/oauth/token') {
+      const form = new URLSearchParams(raw);
+      const basic = Buffer.from(String(req.headers.authorization ?? '').replace(/^Basic /, ''), 'base64').toString();
+      const client = basic.includes(':') ? basic : `${form.get('client_id')}:${form.get('client_secret')}`;
+      if (form.get('grant_type') !== 'client_credentials' || client !== 'landflow:landbright-dev-secret') return send(401, { error: 'invalid_client' });
+      return send(200, { access_token: 'lb_token_1', token_type: 'Bearer', expires_in: 3600 });
+    }
+    const body = raw ? (JSON.parse(raw) as JsonObject) : null;
+    lbCalls.push({ method: req.method ?? '', path: url.pathname, auth: String(req.headers.authorization ?? ''), body });
+    if (req.headers.authorization !== 'Bearer lb_token_1') return send(401, { message: 'Unauthorized' });
+    const m = /^\/api\/v1\/requests\/([^/]+)(?:\/(annotations|steps)\/([^/]+)(?:\/settle)?)?$/.exec(url.pathname);
+    const request = m ? [...lbRequests.values()].find((r) => r.id === m[1] || r.ref === m[1]) : undefined;
+    if (!request) return send(404, { message: 'Not found' });
+    if (req.method === 'GET' && !m![2]) return send(200, request);
+    if (req.method === 'PUT' && m![2] === 'annotations') {
+      (request.annotations as JsonObject)[m![3]] = body?.value ?? null;
+      return send(200, { key: m![3], value: body?.value ?? null, version: 1 });
+    }
+    if (req.method === 'POST' && m![2] === 'steps') return send(200, request);
+    send(404, { message: 'Not found' });
+  });
+  const person = { id: 'f3a0c1de-1111-4a39-9a77-6a1c3a7e0001', kind: 'person', displayName: 'Tal Levi', email: 'tal.levi@landbright.test', status: 'active' };
+  function lbRequest(overrides: JsonObject = {}): JsonObject {
+    const request = {
+      id: LB_ID, number: 41, ref: 'REQ-41', bundle: { id: 'b1', name: 'Linear (seat)' }, requester: person, subject: person, actingFor: null, extends: null,
+      status: 'pending', grant: null, decisionUrl: 'http://localhost:5173/access/requests/REQ-41', annotations: {}, createdAt: '2026-11-15T09:00:00.000Z', decidedAt: null,
+      ...overrides,
+    };
+    lbRequests.set(String(request.id), request);
+    return request;
+  }
+  /** What Landbright's Webhook trigger delivers: the signed event, in jwtPayload. */
+  const lbEvent = (type: string, data: JsonObject = {}, requestId = LB_ID) => ({
+    headers: {}, params: {}, query: {}, body: {},
+    jwtPayload: { iss: 'http://127.0.0.1:4401', event: { id: `evt_${type}`, type, at: '2026-11-15T09:00:00.000Z', target: { type: type.startsWith('grant.') ? 'grant' : 'request', id: type.startsWith('grant.') ? 'grant-1' : requestId }, data } },
+  });
+  const LB_ID_2 = '0b6c2a52-6c55-4a39-9a77-6a1c3a7e0042';
+  const second = { id: LB_ID_2, number: 42, ref: 'REQ-42', decisionUrl: 'http://localhost:5173/access/requests/REQ-42' };
+  const annotations = () => lbCalls.filter((c) => c.method === 'PUT').map((c) => (c.body as JsonObject).value as JsonObject);
+
+  async function installSeat(settle = false) {
+    const workflow = await install('landledger-tool-or-seat.json');
+    const settings = workflow.nodes.find((n) => n.name === 'Settings')!;
+    settings.parameters.codeEach = String(settings.parameters.codeEach)
+      .replace("const LANDBRIGHT_URL = 'http://127.0.0.1:4401';", `const LANDBRIGHT_URL = '${lbUrl}';`)
+      .replace('const SETTLE_IN_LANDBRIGHT = false;', `const SETTLE_IN_LANDBRIGHT = ${settle};`);
+    store.saveWorkflow(workflow);
+    return store.getWorkflow(workflow.id)!;
+  }
+  /** Landbright's request.created raises the seat request: its id. */
+  async function raised(workflow: Awaited<ReturnType<typeof install>>, overrides: JsonObject = {}) {
+    const request = lbRequest(overrides);
+    const { record } = await run(workflow, 'Landbright events', [lbEvent('request.created', {}, String(request.id))]);
+    expect(record.status).toBe('success');
+    return [...fake.state.requests.keys()].at(-1)!;
+  }
+  /** The person confirmed it, and the budget owner decided. */
+  async function costDecided(id: string, outcome: 'approve' | 'reject', comment = '') {
+    fake.state.requests.get(id).status = 'pending';
+    await decide(id, outcome, comment);
+  }
+  /** Landledger's request.decided, as the Landledger Trigger outputs it. */
+  const llDecided = (id: string, outcome: 'approved' | 'rejected') => decided(id, outcome);
+
+  beforeAll(async () => {
+    await new Promise<void>((resolve) => landbright.listen(0, '127.0.0.1', resolve));
+    lbUrl = `http://127.0.0.1:${(landbright.address() as AddressInfo).port}`;
+    slots.landbright = credentials.create({ name: 'Landbright API (test)', type: 'core.oAuth2Api', data: { grantType: 'clientCredentials', accessTokenUrl: `${lbUrl}/oauth/token`, clientId: 'landflow', clientSecret: 'landbright-dev-secret' } as JsonObject }).id;
+    slots.landbrightEvents = credentials.create({ name: 'Landbright events (test)', type: 'core.jwtAuth', data: { keyType: 'jwks', jwksUrl: `${lbUrl}/jwks` } as JsonObject }).id;
+  });
+  afterAll(() => new Promise((resolve) => landbright.close(resolve)));
+  beforeEach(() => {
+    lbCalls.length = 0;
+    lbRequests.clear();
+    const table = dataTables().findTable('Landledger seat requests');
+    if (table) dataTables().deleteRows(table.id, { type: 'and', conditions: [{ column: 'id', operator: 'isNotEmpty', value: '' }] });
+  });
+
+  it('a Landbright request for a seat raises one tool_or_seat request on the contract, naming the person, and notes it in Landbright', async () => {
+    const workflow = await installSeat();
+    const id = await raised(workflow);
+    expect(fake.requests.find((r) => r.path === '/api/contracts/seats')!.query).toEqual({ landbrightApp: 'linear' });
+    const created = fake.requests.find((r) => r.method === 'POST' && r.path === '/api/requests')!;
+    expect(created.headers.authorization).toBe(`Bearer ${KEY}`);
+    expect(created.body).toMatchObject({
+      kind: 'tool_or_seat',
+      title: 'Linear seat for Tal Levi (REQ-41)',
+      costCenter: 'ENG-PLATFORM',
+      amount: { amount: '12.5', currency: 'USD' },
+      recurrence: 'monthly',
+      seat: { contractId: 'con_linear', seats: 1, seatPrice: '12.5' },
+      requester: { kind: 'person', person: { sub: person.id } },
+      related: [{ type: 'landbright_request', id: 'REQ-41', url: 'http://localhost:5173/access/requests/REQ-41' }],
+      origin: { type: 'landflow_run', workflowId: workflow.id, title: 'Tool or seat cost (Landbright REQ-41)' },
+      evidence: { lines: [{ label: 'Linear Business seat', amount: '12.500000' }], links: [{ label: 'REQ-41', url: 'http://localhost:5173/access/requests/REQ-41' }] },
+      idempotencyKey: 'landbright-REQ-41',
+    });
+    expect(rowsOf('Landledger seat requests')).toEqual([expect.objectContaining({ landbright_request_id: LB_ID, landbright_ref: 'REQ-41', landledger_request_id: id, app: 'linear', workflow_id: workflow.id })]);
+    expect(lbCalls.map((c) => [c.method, c.path, c.auth])).toEqual([
+      ['GET', `/api/v1/requests/${LB_ID}`, 'Bearer lb_token_1'],
+      ['PUT', `/api/v1/requests/${LB_ID}/annotations/landflow.seat_cost`, 'Bearer lb_token_1'],
+    ]);
+    expect(annotations()[0]).toMatchObject({ status: 'cost_asked', landledgerRequestId: id, text: expect.stringContaining('asked in Landledger as R-1') });
+  });
+
+  it('raises nothing for a bundle without a seat, an extension, or a request no longer pending; no contract is said in Landbright', async () => {
+    const workflow = await installSeat();
+    for (const overrides of [{ bundle: { id: 'b2', name: 'Engineers' } }, { extends: { grantId: 'g0', ref: 'REQ-40' } }, { status: 'approved' }]) {
+      lbRequest(overrides);
+      expect((await run(workflow, 'Landbright events', [lbEvent('request.created')])).record.status).toBe('success');
+    }
+    expect(fake.requests.filter((r) => r.path.startsWith('/api/contracts') || r.path === '/api/requests')).toHaveLength(0);
+    expect(annotations()).toHaveLength(0);
+
+    lbRequest({ bundle: { id: 'b3', name: 'Figma (seat)', landbrightApp: 'figma' } });
+    const { ran } = await run(workflow, 'Landbright events', [lbEvent('request.created')]);
+    expect(ran('No contract: say so in Landbright')).toBe(true);
+    expect(fake.requests.some((r) => r.method === 'POST' && r.path === '/api/requests')).toBe(false);
+    expect(annotations()).toEqual([expect.objectContaining({ status: 'no_contract', app: 'figma', text: expect.stringContaining('No Landledger contract grants figma') })]);
+  });
+
+  it('tells Landbright what Landledger decided; the settle route is called only with the setting on', async () => {
+    const workflow = await installSeat();
+    const id = await raised(workflow);
+    await costDecided(id, 'approve');
+    lbCalls.length = 0;
+    const approved = await run(workflow, 'Landledger events', [llDecided(id, 'approved')]);
+    expect(approved.out('Ours to act on?')[0].json).toMatchObject({ route: 0, outcome: 'approved', landbrightRequestId: LB_ID, seat: { status: 'reserved' } });
+    expect(annotations()).toEqual([expect.objectContaining({ status: 'cost_approved', landledgerRequestId: id, text: expect.stringContaining('the seat is reserved') })]);
+    expect(lbCalls.some((c) => c.path.endsWith('/settle'))).toBe(false);
+    expect(approved.ran('Not settled: the setting is off')).toBe(true);
+
+    const settling = await installSeat(true);
+    const rejected = await raised(settling, second);
+    await costDecided(rejected, 'reject', 'Use the free plan');
+    lbCalls.length = 0;
+    await run(settling, 'Landledger events', [llDecided(rejected, 'rejected')]);
+    expect(annotations()).toEqual([expect.objectContaining({ status: 'cost_denied', reason: 'Amit Gal: Use the free plan' })]);
+    expect(lbCalls.find((c) => c.path.endsWith('/settle'))).toMatchObject({ method: 'POST', path: `/api/v1/requests/${LB_ID_2}/steps/1/settle`, body: { outcome: 'denied', reference: rejected } });
+  });
+
+  it('refuses a decision on a seat request another key raised, naming this workflow', async () => {
+    const workflow = await installSeat();
+    const raisedHere = await raised(workflow);
+    const forged = await raiseWith(OTHER_KEY, { kind: 'tool_or_seat', title: 'Forged seat', costCenter: 'ENG-PLATFORM', amount: { amount: '12.5', currency: 'USD' }, origin: { type: 'landflow_run', workflowId: workflow.id, executionId: fake.state.requests.get(raisedHere).origin.executionId } });
+    await costDecided(forged, 'approve');
+    lbCalls.length = 0;
+    const refused = await run(workflow, 'Landledger events', [llDecided(forged, 'approved')]);
+    expect(refused.out('Ours to act on?')[0].json).toMatchObject({ route: 2, why: expect.stringMatching(/raised by Someone else, not this flow's key/) });
+    expect(refused.ran("Not this flow's: refused")).toBe(true);
+    expect(lbCalls).toHaveLength(0);
+  });
+
+  it('marks the seat used when the grant is live, releases it when access is denied, and when the grant is revoked', async () => {
+    const workflow = await installSeat();
+    const id = await raised(workflow);
+    await costDecided(id, 'approve');
+    lbRequest({ status: 'approved', grant: { id: 'grant-1', status: 'active' } });
+    const granted = await run(workflow, 'Landbright events', [lbEvent('grant.activated', { requestId: LB_ID })]);
+    expect(granted.out('What the seat needs')[0].json).toMatchObject({ action: 'apply' });
+    expect(fake.state.requests.get(id)).toMatchObject({ status: 'applied', seat: { status: 'applied' }, appliedNote: 'Granted in Landbright as REQ-41', appliedLinks: [{ label: 'REQ-41', url: 'http://localhost:5173/access/requests/REQ-41' }] });
+
+    lbRequest({ status: 'approved', grant: { id: 'grant-1', status: 'revoked' } });
+    await run(workflow, 'Landbright events', [lbEvent('grant.revoked', { requestId: LB_ID })]);
+    expect(fake.requests.at(-1)).toMatchObject({ method: 'POST', path: `/api/requests/${id}/seats/release`, body: { reason: 'grant_revoked', note: 'Grant revoked in Landbright (REQ-41)' } });
+    expect(fake.state.requests.get(id).seat.status).toBe('released');
+
+    // Another request: the cost approved, then Landbright's approvers deny the access.
+    const denied = await raised(workflow, second);
+    await costDecided(denied, 'approve');
+    lbRequest({ ...second, status: 'denied', decidedAt: '2026-11-15T10:00:00.000Z' });
+    const access = await run(workflow, 'Landbright events', [lbEvent('request.decided', { outcome: 'denied' }, LB_ID_2)]);
+    expect(access.out('What the seat needs')[0].json).toMatchObject({ action: 'release', reason: 'access_denied' });
+    expect(fake.state.requests.get(denied).seat).toMatchObject({ status: 'released', releasedReason: 'access_denied' });
+  });
+
+  it('a redelivered request.created raises nothing twice: Landledger’s 409 for the same key is "already asked"', async () => {
+    const workflow = await installSeat();
+    await raised(workflow);
+    const again = await run(workflow, 'Landbright events', [lbEvent('request.created')]);
+    expect(again.record.status).toBe('success');
+    expect(again.ran('Remember the seat request')).toBe(false);
+    expect(fake.state.requests.size).toBe(1);
+    expect(rowsOf('Landledger seat requests')).toHaveLength(1);
+  });
+
+  it('a Landbright event for a request it never raised a seat for stops at the table', async () => {
+    const workflow = await installSeat();
+    lbRequest({ status: 'denied' });
+    const { ran } = await run(workflow, 'Landbright events', [lbEvent('request.decided', { outcome: 'denied' })]);
+    expect(ran('Read the access request')).toBe(false);
+    expect(fake.requests).toHaveLength(0);
+  });
+});
+
+describe('Landledger: draft variance notes', () => {
+  // ---- Ollama, as the Ollama Chat Model node calls it (/api/chat): each reply comes from `reply`, every call is recorded.
+  const ollamaCalls: Array<{ model: string; system: string; prompt: string }> = [];
+  let reply: (prompt: string, call: number) => string = () => '';
+  let ollamaUrl = '';
+  const ollama = createServer(async (req, res) => {
+    const body = JSON.parse(await readBody(req)) as { model: string; stream?: boolean; messages: Array<{ role: string; content: string }> };
+    const prompt = body.messages.filter((m) => m.role === 'user').at(-1)?.content ?? '';
+    ollamaCalls.push({ model: body.model, system: body.messages.find((m) => m.role === 'system')?.content ?? '', prompt });
+    const content = reply(prompt, ollamaCalls.length);
+    const done = { model: body.model, done: true, done_reason: 'stop', prompt_eval_count: 100, eval_count: 50 };
+    if (body.stream) {
+      res.writeHead(200, { 'content-type': 'application/x-ndjson' });
+      res.end(`${JSON.stringify({ model: body.model, message: { role: 'assistant', content }, done: false })}\n${JSON.stringify({ ...done, message: { role: 'assistant', content: '' } })}\n`);
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ...done, message: { role: 'assistant', content } }));
+  });
+  /** A good draft for the note in the prompt: its actual and its variance to budget, cited exactly. */
+  const good = (prompt: string) => {
+    const center = /Cost center: (\S+)/.exec(prompt)![1];
+    const f = NOTE_FIGURES.find((x) => x.costCenter === center)!;
+    return '```json\n' + JSON.stringify({ text: `${center} cost ${Number(f.actual).toFixed(2)}, ${Number(f.varianceBudget).toFixed(2)} against its budget.`, cites: [{ figure: 'actual', amount: Number(f.actual).toFixed(2) }, { figure: 'variance_budget', amount: Number(f.varianceBudget).toFixed(2) }] }) + '\n```';
+  };
+  const wrong = (prompt: string) => JSON.stringify({ text: `${/Cost center: (\S+)/.exec(prompt)![1]} cost about 1300 this month.`, cites: [{ figure: 'actual', amount: '1300.00' }] });
+  const requested = (sha = SNAPSHOT_SHA): JsonObject => ({
+    type: 'notes.draft_requested', id: 'evt_notes', timestamp: '2026-11-15T08:00:00.000Z', month: NOTES_MONTH, snapshotSha256: sha, needed: NOTE_FIGURES,
+    draftUrl: `${fake.url}/api/notes/${NOTES_MONTH}/drafts`, url: `http://localhost:4811/close/${NOTES_MONTH}`, requestId: null, kind: null, costCenter: null,
+  });
+  async function installNotes(model = 'qwen3-coder:30b') {
+    const workflow = await install('landledger-variance-notes.json');
+    const settings = workflow.nodes.find((n) => n.name === 'Settings')!;
+    settings.parameters.codeEach = String(settings.parameters.codeEach)
+      .replace("const OLLAMA_URL = 'http://host.docker.internal:11434';", `const OLLAMA_URL = '${ollamaUrl}';`)
+      .replace("const MODEL = 'qwen3-coder:30b';", `const MODEL = '${model}';`);
+    store.saveWorkflow(workflow);
+    return store.getWorkflow(workflow.id)!;
+  }
+  const drafts = () => fake.requests.filter((r) => r.method === 'POST' && r.path === `/api/notes/${NOTES_MONTH}/drafts`);
+
+  beforeAll(async () => {
+    await new Promise<void>((resolve) => ollama.listen(0, '127.0.0.1', resolve));
+    ollamaUrl = `http://127.0.0.1:${(ollama.address() as AddressInfo).port}`;
+    slots.landledgerNotes = credentials.create({ name: 'Landledger notes (test)', type: 'landledger.landledgerNotesKey', data: { baseUrl: fake.url, apiKey: NOTES_KEY } }).id;
+  });
+  afterAll(() => new Promise((resolve) => ollama.close(resolve)));
+  beforeEach(() => {
+    ollamaCalls.length = 0;
+    reply = good;
+    const table = dataTables().findTable('Landledger note drafts');
+    if (table) dataTables().deleteRows(table.id, { type: 'and', conditions: [{ column: 'id', operator: 'isNotEmpty', value: '' }] });
+  });
+
+  it('drafts one note per cost center from the frozen snapshot with the local model, and submits each with the notes key', async () => {
+    const workflow = await installNotes();
+    const { record } = await run(workflow, 'Notes requested', [requested()]);
+    expect(record.status).toBe('success');
+    expect(fake.requests.find((r) => r.path === `/api/close/${NOTES_MONTH}/snapshot`)!.headers.authorization).toBe(`Bearer ${KEY}`);
+    expect(fake.requests.find((r) => r.path === `/api/notes/${NOTES_MONTH}/figures`)!.headers.authorization).toBe(`Bearer ${NOTES_KEY}`);
+    expect(ollamaCalls.map((c) => c.model)).toEqual(['qwen3-coder:30b', 'qwen3-coder:30b']);
+    expect(ollamaCalls[1].system).toMatch(/Use only the figures listed under FIGURES/);
+    expect(ollamaCalls[1].prompt).toContain('Cost center: ENG-AGENTS (Engineering agents)');
+    expect(ollamaCalls[1].prompt).toContain('- variance_budget = -799.50 (actual minus budget)');
+    expect(ollamaCalls[1].prompt).toContain('- driver_model key "claude-sonnet-5-5" (Claude Sonnet 5.5) = 150.25');
+    expect(drafts().map((r) => r.headers.authorization)).toEqual([`Bearer ${NOTES_KEY}`, `Bearer ${NOTES_KEY}`]);
+    expect(drafts()[1].body).toMatchObject({
+      costCenter: 'ENG-AGENTS',
+      snapshotSha256: SNAPSHOT_SHA,
+      text: 'ENG-AGENTS cost 1200.50, -799.50 against its budget.',
+      cites: [{ figure: 'actual', amount: '1200.500000' }, { figure: 'variance_budget', amount: '-799.500000' }],
+      agent: { id: `landflow:${workflow.id}`, name: 'Variance note drafter', system: 'landflow' },
+      runId: record.executionId,
+    });
+    expect(drafts()[1].body.sponsor).toBeUndefined();
+    expect(fake.state.notes.get(`${NOTES_MONTH}|TOTAL`).versions).toHaveLength(1);
+    expect(rowsOf('Landledger note drafts').map((r) => [r.cost_center, r.outcome, r.attempt])).toEqual([['TOTAL', 'submitted', 1], ['ENG-AGENTS', 'submitted', 1]]);
+  });
+
+  it('redrafts once with Landledger’s refusal when a cited figure does not match, then submits', async () => {
+    const workflow = await installNotes();
+    reply = (prompt, call) => (call === 2 ? wrong(prompt) : good(prompt));
+    const { record } = await run(workflow, 'Notes requested', [requested()]);
+    expect(record.status).toBe('success');
+    expect(ollamaCalls).toHaveLength(3);
+    expect(ollamaCalls[2].prompt).toContain('Landledger refused your previous draft: Landledger API error 422: A cited figure does not match the snapshot (mismatches: [{"figure":"actual","key":null,"cited":"1300.000000","snapshot":"1200.500000"}])');
+    expect(ollamaCalls[2].prompt).toContain('Cost center: ENG-AGENTS');
+    expect(drafts()).toHaveLength(3);
+    expect(fake.state.notes.get(`${NOTES_MONTH}|ENG-AGENTS`).versions).toHaveLength(1);
+    expect(rowsOf('Landledger note drafts').map((r) => [r.cost_center, r.outcome, r.attempt])).toEqual(expect.arrayContaining([['TOTAL', 'submitted', 1], ['ENG-AGENTS', 'submitted', 2]]));
+  });
+
+  it('gives up after one redraft and leaves the note to Landledger’s template; nothing else is retried', async () => {
+    const workflow = await installNotes();
+    reply = (prompt) => (prompt.includes('ENG-AGENTS') ? wrong(prompt) : good(prompt));
+    const { record } = await run(workflow, 'Notes requested', [requested()]);
+    expect(record.status).toBe('success');
+    expect(ollamaCalls.filter((c) => c.prompt.includes('Cost center: ENG-AGENTS'))).toHaveLength(2);
+    expect(fake.state.notes.has(`${NOTES_MONTH}|ENG-AGENTS`)).toBe(false);
+    const rows = rowsOf('Landledger note drafts');
+    expect(rows.find((r) => r.cost_center === 'ENG-AGENTS')).toMatchObject({ outcome: 'gave_up', attempt: 2, refusal: expect.stringMatching(/422: A cited figure does not match/) });
+    expect(rows.find((r) => r.cost_center === 'TOTAL')).toMatchObject({ outcome: 'submitted', attempt: 1 });
+  });
+
+  it('drafts nothing for an event whose snapshot is no longer the month’s', async () => {
+    const workflow = await installNotes();
+    const { record } = await run(workflow, 'Notes requested', [requested('d'.repeat(64))]);
+    expect(record.status).toBe('success');
+    expect(ollamaCalls).toHaveLength(0);
+    expect(drafts()).toHaveLength(0);
+  });
+
+  it('the model is a setting', async () => {
+    const workflow = await installNotes('qwen3.8:latest');
+    await run(workflow, 'Notes requested', [requested()]);
+    expect(new Set(ollamaCalls.map((c) => c.model))).toEqual(new Set(['qwen3.8:latest']));
+  });
+});
+
+describe('Landledger: incident cost to the room', () => {
+  let landfall: FakeLandfall;
+  beforeAll(async () => {
+    landfall = await startFakeLandfall();
+    slots.landfall = credentials.create({ name: 'Landfall (test)', type: 'landfall.landfallApi', data: { baseUrl: landfall.url, orgSlug: LANDFALL_SEED.orgSlug, apiKey: LANDFALL_SEED.apiKey } }).id;
+  });
+  afterAll(() => landfall.server?.close());
+  /** A room for checkout that was open an hour and a half, with landflow-host attached, then resolved. */
+  function resolvedRoom(alertEntity: JsonObject | null = { kind: 'service', id: 'checkout' }) {
+    const incident = landfall.seed({ title: 'Checkout errors', severity: 'sev2', alertEntity: alertEntity as never, createdAt: '2026-11-14T08:00:00.000Z' });
+    landfall.append(incident, 'context.attached', { kind: 'service', id: 'landflow-host', label: 'Landflow host' }, 'system');
+    landfall.append(incident, 'context.attached', { kind: 'pod', id: 'checkout-7d9' }, 'system');
+    const end = landfall.append(incident, 'status.changed', { status: 'resolved', from: 'open' });
+    end.occurredAt = '2026-11-14T09:30:00.000Z';
+    const { events: _events, connectionId: _c, dedupKey: _d, ...view } = incident as unknown as JsonObject;
+    return { incident, item: { event: 'incident.ended', incident: view } };
+  }
+
+  it('posts the estimated cost of the room’s services over its window as a note, with a link to Explore', async () => {
+    const workflow = await install('landledger-incident-cost.json');
+    const { incident, item } = resolvedRoom();
+    const { record, out } = await run(workflow, 'Room ended', [item]);
+    expect(record.status).toBe('success');
+    const window = fake.requests.find((r) => r.path === '/api/cost/window')!;
+    expect(window.headers.authorization).toBe(`Bearer ${KEY}`);
+    expect(window.query).toEqual({ services: 'checkout,landflow-host', from: '2026-11-14T08:00:00.000Z', to: '2026-11-14T09:30:00.000Z' });
+    const note = incident.events.at(-1)!;
+    expect(note.type).toBe('chat.message');
+    expect(String(note.payload.text)).toBe(
+      [
+        'Estimated cost during this incident: $53.25 (USD), 2026-11-14 08:00 to 2026-11-14 09:30 UTC (1 h 30 min).',
+        '- checkout: $41.25',
+        '- landflow-host: $12.00',
+        "Estimated: each day's cost in Landledger, by the share of the day inside the incident's window. Not an invoiced figure.",
+        'Explore in Landledger: http://localhost:4811/explore?by=service&month=2026-11&filter=service%3Acheckout%2Cservice%3Alandflow-host',
+        "Posted by Landflow as a room note: it can't write a postmortem section.",
+      ].join('\n'),
+    );
+    expect(out('Write the note')[0].json).toMatchObject({ total: '53.250000' });
+  });
+
+  it('a room that names no service posts nothing and asks Landledger nothing', async () => {
+    const workflow = await install('landledger-incident-cost.json');
+    const incident = landfall.seed({ title: 'Something odd', alertEntity: null, createdAt: '2026-11-14T08:00:00.000Z' });
+    landfall.append(incident, 'status.changed', { status: 'resolved', from: 'open' });
+    const { events: _events, ...view } = incident as unknown as JsonObject;
+    const { record, ran } = await run(workflow, 'Room ended', [{ event: 'incident.ended', incident: view }]);
+    expect(record.status).toBe('success');
+    expect(ran('No service named: nothing to cost')).toBe(true);
+    expect(fake.requests.some((r) => r.path === '/api/cost/window')).toBe(false);
+    expect(incident.events.at(-1)!.type).toBe('status.changed');
   });
 });
