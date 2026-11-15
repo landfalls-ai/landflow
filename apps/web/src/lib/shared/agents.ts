@@ -385,6 +385,8 @@ export interface AgentConfig {
   plugins?: string[];
   /** How much of the project's goals and brief the agent gets in each run (docs/agents.md#project-context). Absent = full. */
   projectContext?: ContextMode;
+  /** Whether approved practices (docs/practices.md) go into this agent's prompt. Absent = on. */
+  practices?: 'on' | 'off';
 }
 
 export interface AgentVersion {

@@ -21,6 +21,7 @@ import type {
 import type { RunContext, RunContextRef } from '../../shared/project-context';
 import { emptyContext } from '../project-context/empty';
 import { refFromSession } from '../project-context/resolve';
+import { citedIn, recordRunPractices, runPractices, withPractices } from '../project-context/practices';
 import { runContextProvider, withRunContext } from '../project-context/seam';
 import { agentScope, isUsageCapError, runInUsageScope } from '../ai-usage';
 import { currentActorId, requestAuth } from '../auth/context';
@@ -294,6 +295,9 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       logger.warn(`could not build the project context: ${(error as Error).message}`);
       runCtx = emptyContext();
     }
+    // PR06: approved practices join the block, on a fresh build only: a resume keeps the context it began with. A run whose project context is Off still gets them.
+    runCtx = withPractices(runCtx, runPractices(config.practices, { ...(runCtx.projectId && { projectId: runCtx.projectId }), agentId: agent.id, ...(request.message && { task: request.message.slice(0, 500) }), size: 'full' }));
+    recordRunPractices('delivered', runCtx.practices, { ...(runCtx.projectId && { projectId: runCtx.projectId }), ...(session.execution?.executionId && { executionId: session.execution.executionId }), agentId: agent.id, ...(currentActorId() && { userId: currentActorId() }) });
   }
   session.context = runCtx;
   const userId = currentActorId();
@@ -343,6 +347,8 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
         const result = blockedReply !== undefined ? { reason: 'completed' as const, reply: blockedReply } : await loop();
         session.status = result.reason === 'awaiting_approval' ? 'awaiting_approval' : result.reason === 'error' ? 'error' : 'idle';
         session = agentStore.saveSession(session);
+        // PR06: what the answer cites, among the practices this run was given.
+        if (result.reply) recordRunPractices('cited', citedIn(result.reply, runCtx.practices), { ...(runCtx.projectId && { projectId: runCtx.projectId }), ...(session.execution?.executionId && { executionId: session.execution.executionId }), agentId: agent.id, ...(currentActorId() && { userId: currentActorId() }) });
         logger.info('agent run finished', {
           'gen_ai.agent.id': agent.id,
           'gen_ai.agent.name': config.name,

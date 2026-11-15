@@ -402,7 +402,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 ## Practices (wave P1)
 
-- Practices reach only the Claude Code mod and MCP clients until wave P2. Landflow agents, kagent agents and the Check
+- Practices reach the Claude Code mod, MCP clients and Landflow agents (PR06). kagent agents and the Check
   Practices step do not get them yet, and `required` stops nothing: a failed check blocks a flow only from wave P2
   ([practices.md](practices.md)).
 - A draft does not file an inbox suggestion yet (wave P2). Find waiting drafts in `/brain` → Practices, or in the links the
@@ -413,6 +413,14 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - A practice has one `supersedes` pointer: approving a version that supersedes several records the first, and the audit
   event lists them all.
 - No practices ship with Landflow; each instance learns or writes its own.
+
+## Practices in agent runs (wave P2)
+
+- An in-process agent run knows no repository, so practices scoped to repositories (`repos`) do not reach it; only
+  organization and project practices with no repository do. Deferred.
+- Nothing is denied because of a practice: an agent's tool calls are never blocked by one. Only flows block (PR08).
+- The block is built when a run starts, so a practice approved mid-run reaches the next run, not this one.
+- A run's `cited` rows come from the final reply only; a citation in an earlier turn of the same run is not recorded.
 
 ## Following practices over MCP and citing (PR04, 2026-11)
 
