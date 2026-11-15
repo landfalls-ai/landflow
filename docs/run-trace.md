@@ -69,7 +69,7 @@ once when a run finishes or starts waiting, and never fail the run. Each flushed
   everything redacted, cut to 32 KB per event. `summaries` keeps the first 400 characters of each text. `off` keeps only
   who did what and when: no inputs, outputs or message text, and error messages cut to 400 characters. An agent's
   `attrs.saw` follows the setting: `summaries` cuts its `text` to 400 characters, `off` keeps no `text` and no persona
-  (the mode, project and goal ids, time and practice handles stay).
+  (the mode, project and goal ids and names, time and practice handles stay; the section says the text was not kept, and for `summaries` that it was cut).
 - **Retention**: events older than `LANDFLOW_TRACE_RETENTION_DAYS` (default 30, `0` keeps them) are pruned at boot and
   daily. Deleting an execution deletes its journal.
 

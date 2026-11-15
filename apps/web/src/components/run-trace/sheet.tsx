@@ -212,7 +212,7 @@ function SpanSheet({
         <Value label="Came back" value={withoutImages(span.output)} repo={repo} />
         <Value label="Error" value={span.error} tone="error" repo={repo} />
       </div>
-      {saw && <WhatItSaw mode={saw.mode} text={saw.text} persona={saw.persona} practices={saw.practices} />}
+      {saw && <WhatItSaw mode={saw.mode} text={saw.text} persona={saw.persona} practices={saw.practices} withheld={saw.withheld} />}
       {span.id !== 'run' && span.kind !== 'wait' && span.kind !== 'model' && <RerunPanel model={model} spanId={span.id} />}
       {span.checks.length > 0 && (
         <>

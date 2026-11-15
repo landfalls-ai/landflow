@@ -16,7 +16,7 @@ import { SAW_PERSONA_MAX } from '@/lib/shared/what-it-saw';
 import { sawPersona, sawSections } from '@/lib/shared/what-it-saw-sections';
 import { projectContext } from '@/lib/server/project-context/build';
 import { applyContent } from '@/lib/server/journal/content';
-import { RunScopeChips, WhatItSaw } from '@/components/run-trace/what-it-saw';
+import { RunScopeChips, WhatItSaw, sawOf as readSaw } from '@/components/run-trace/what-it-saw';
 
 type Step = (input: { system?: string; messages: AgentMessage[]; tools: ToolSpec[] }) => Partial<ModelTurn>;
 const script: Step[] = [];
@@ -227,6 +227,11 @@ describe('the sheet', () => {
     const source = readFileSync(join(import.meta.dirname, '..', 'src', 'components', 'run-trace', 'sheet.tsx'), 'utf8');
     expect(source).toMatch(/k !== 'hidden' && k !== 'saw'/);
     expect(source).toContain("span.id === 'run' && <RunScopeChips");
+    expect(source).toContain('withheld={saw.withheld}');
+    // From a journal event written with content off, through sawOf, to the markup.
+    const off = readSaw((applyContent({ type: 'span.updated', spanId: 's', attrs: { saw: { mode: 'full', text: 'secret', persona: { role: 'R' } } } } as never, 'off') as unknown as { attrs: { saw: unknown } }).attrs.saw)!;
+    expect(off.withheld).toBe(true);
+    expect(renderToStaticMarkup(createElement(WhatItSaw, { mode: off.mode, text: off.text, persona: off.persona, practices: off.practices, withheld: off.withheld }))).toContain('was not kept');
     const chips = renderToStaticMarkup(createElement(RunScopeChips, { project: { id: 'p1', name: 'Flow project' }, goal: { id: 'g1', title: 'Export invoices' } }));
     expect(chips).toContain('Project: Flow project');
     expect(chips).toContain('Goal: Export invoices');

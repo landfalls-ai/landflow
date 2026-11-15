@@ -44,6 +44,7 @@ export function WhatItSaw({ mode, text, persona, practices = [], withheld, bare 
       <div className="flex flex-col gap-2.5 rounded-xl border border-hair bg-sf2 px-3 py-2.5">
         {mode === 'off' && <p className="text-[13px] text-t3">Project context off for this agent</p>}
         {withheld && <p className="text-[13px] text-t3">The text was not kept (this run's trace content is off).</p>}
+        {text.endsWith('…[cut]') && <p className="text-[13px] text-t3">The text was cut short (this run's trace content is summaries).</p>}
         {s.goals.length > 0 && (
           <Part label="Goal chain">
             <ol className="flex flex-col gap-0.5">
