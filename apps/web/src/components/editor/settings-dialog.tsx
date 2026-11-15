@@ -142,10 +142,6 @@ function TransportOverrides({ plugins, value, onChange }: { plugins: PluginSumma
   );
 }
 
-/**
- * The first part of Workflow settings: the three fields most workflows need, then the Advanced button that opens
- * the rest. Props only, so a test can render it.
- */
 /** The goal this workflow works for; empty: its project's goal (docs/projects-and-goals.md). */
 export function WorkflowGoalField({ value, projectId, onChange, goals }: { value?: string; projectId?: string; onChange: (id: string | undefined) => void; goals?: Parameters<typeof GoalPicker>[0]['goals'] }) {
   return (
@@ -155,6 +151,10 @@ export function WorkflowGoalField({ value, projectId, onChange, goals }: { value
   );
 }
 
+/**
+ * The first part of Workflow settings: the three fields most workflows need, then the Advanced button that opens
+ * the rest. Props only, so a test can render it.
+ */
 export function BasicWorkflowSettings({
   draft,
   patch,
@@ -163,7 +163,6 @@ export function BasicWorkflowSettings({
   showAdvanced,
   onToggleAdvanced,
   held = false,
-  projectId,
 }: {
   draft: WorkflowSettings;
   patch: (change: Partial<WorkflowSettings>) => void;
@@ -173,8 +172,6 @@ export function BasicWorkflowSettings({
   onToggleAdvanced: () => void;
   /** An invalid field in Advanced holds it open: the button says so instead of seeming to do nothing. */
   held?: boolean;
-  /** The workflow's home project: its goals are listed first. */
-  projectId?: string;
 }) {
   const zones = useMemo(timeZones, []);
   const browserZone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
@@ -209,7 +206,6 @@ export function BasicWorkflowSettings({
         </Select>
       </Field>
       <NotifyOnFailure workflowId={workflowId} />
-      <WorkflowGoalField value={draft.goalId} projectId={projectId} onChange={(goalId) => patch({ goalId })} />
 
       <Field id="wf-timezone" label="Time zone" hint="For schedules and $now in this workflow.">
         <Select id="wf-timezone" value={draft.timezone ?? ''} onChange={(e) => patch({ timezone: e.target.value || undefined })}>
@@ -363,8 +359,10 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
       }
     >
       <div className="space-y-4">
-        <BasicWorkflowSettings draft={draft} patch={patch} workflows={workflows} workflowId={workflowId} showAdvanced={showAdvanced} onToggleAdvanced={() => setAdvanced((v) => !v)} held={invalid} projectId={homeProject} />
+        <BasicWorkflowSettings draft={draft} patch={patch} workflows={workflows} workflowId={workflowId} showAdvanced={showAdvanced} onToggleAdvanced={() => setAdvanced((v) => !v)} held={invalid} />
         <div id="wf-advanced" hidden={!showAdvanced} className="space-y-4">
+          {/* The goal is for workflows that serve one; most inherit the project's, so it sits first under Advanced. */}
+          <WorkflowGoalField value={draft.goalId} projectId={homeProject} onChange={(goalId) => patch({ goalId })} />
           <Field
             id="wf-timeout"
             label="Timeout"

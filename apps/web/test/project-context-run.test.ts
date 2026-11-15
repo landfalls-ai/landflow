@@ -39,7 +39,7 @@ const { corePlugin } = await import('@/lib/server/nodes');
 const { store } = await import('@/lib/server/store');
 const { agentStore, configOf } = await import('@/lib/server/agents/store');
 const { agentTeamStore } = await import('@/lib/server/agent-teams/store');
-const { setHomeProject, createTeamProject } = await import('@/lib/server/projects/store');
+const { setHomeProject, createTeamProject, addShare } = await import('@/lib/server/projects/store');
 const { decide, newSession, runAgent } = await import('@/lib/server/agents/runtime');
 const { cacheKey } = await import('@/lib/server/agents/response-cache');
 const { configHash } = await import('@/lib/server/agents/semantic-cache');
@@ -319,6 +319,11 @@ describe('the test chat', () => {
     expect((await post(agent.id, { message: 'hi', projectId: 'p_made_up' })).status).toBe(404);
     const real = createTeamProject({ name: 'Caller project' });
     projects[real.id] = { id: real.id, name: 'Caller project', brief: 'Caller brief.', goalIds: [] };
+    // PC06: a role in the project is not enough; the agent must be available there too.
+    const unavailable = await post(agent.id, { message: 'hi', projectId: real.id });
+    expect(unavailable.status).toBe(403);
+    expect(agentStore.listSessions(agent.id)).toHaveLength(0);
+    addShare('agent', agent.id, real.id, 'user');
     const allowed = await post(agent.id, { message: 'hi', projectId: real.id });
     expect(allowed.status).toBe(200);
     await allowed.text();

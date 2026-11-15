@@ -217,7 +217,7 @@ In any other harness, `landflow work context` prints the same block ([cli.md](fe
 
 A workflow or a team can name the goal it serves; with none, it works for its project's goal.
 
-- **A workflow**: the **Goal** field in the workflow's settings (Basic). Its first choice, **The project's goal**, means
+- **A workflow**: the **Goal** field in the workflow's settings (first under **Advanced**, so the basic settings keep their three fields). Its first choice, **The project's goal**, means
   inherit; the workflow's own project's goals come first. It saves `settings.goalId`, left out when inheriting.
 - **A team**: the **Project goal** field on the team page, under the team's own **Goal**. The two differ: **Goal** is
   free text, what the team is for; **Project goal** picks one of the goals in the tree. It saves the team's `goalId`.

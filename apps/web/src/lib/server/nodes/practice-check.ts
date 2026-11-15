@@ -19,6 +19,7 @@ import { findWaiver } from '../practices/store';
 import { store } from '../store';
 import { publicUrl } from '../config/urls';
 import { PRACTICE_REPO, type ApprovedPractice } from '../../shared/practices';
+import type { ExecutionRecord } from '../../shared/types';
 
 const main = [{ type: 'main' as const }];
 const MAX_FILES = 5000;
@@ -103,19 +104,24 @@ export interface PracticeOutcome {
 }
 
 /** The runs whose waivers count for this one: this run, then the runs it retried. */
-export function waiverChain(executionId: string): string[] {
+export async function waiverChain(executionId: string): Promise<string[]> {
   const chain = [executionId];
-  let current = store.getExecution(executionId);
+  // The runs it retried have finished: read them through the async seam (store.loadExecution), not the sync in-flight read.
+  let current = await store.loadExecution(executionId);
   while (current?.retryOf && chain.length < MAX_CHAIN && !chain.includes(current.retryOf)) {
     chain.push(current.retryOf);
-    current = store.getExecution(current.retryOf);
+    current = await store.loadExecution(current.retryOf);
   }
   return chain;
 }
 
 /** Whether a run's failed step shows this very failure line: the waiver was for what the approver saw, not for other files. */
-export function failedWith(executionId: string, line: string): boolean {
-  const runData = store.getExecution(executionId)?.runData ?? {};
+export async function failedWith(executionId: string, line: string): Promise<boolean> {
+  return failedIn((await store.loadExecution(executionId))?.runData ?? {}, line);
+}
+
+/** `failedWith` over a run's data already read. */
+function failedIn(runData: NonNullable<ExecutionRecord['runData']>, line: string): boolean {
   return Object.values(runData).some((runs) =>
     (runs ?? []).some((r) => {
       const error = (r as { error?: { message?: string; description?: string } }).error;
@@ -240,11 +246,12 @@ export const practiceCheckNode = defineNode({
     const approved = enabled && port ? port.approved({ projectIds: projectId ? [projectId] : [] }) : [];
     const chosen = selectPractices(approved, { ...(repo && { repo }), paths: changed.files.map((f) => f.path) }).filter((p) => !only.length || only.includes(p.handle));
     // A practice with a path scope that no changed path matches was left out by the selector; one with none applies to any change.
-    const chain = executionId ? waiverChain(executionId) : [];
+    const chain = executionId ? await waiverChain(executionId) : [];
+    const chainRuns = await Promise.all(chain.map(async (id) => ({ id, runData: (await store.loadExecution(id))?.runData ?? {} })));
     const waiverOf = (practiceId: string, line: string) => {
-      for (const id of chain) {
+      for (const { id, runData } of chainRuns) {
         const found = findWaiver(practiceId, id);
-        if (found && failedWith(id, line)) return { ...(found.reason && { reason: found.reason }), at: found.at };
+        if (found && failedIn(runData, line)) return { ...(found.reason && { reason: found.reason }), at: found.at };
       }
       return undefined;
     };

@@ -619,6 +619,7 @@ describe('Instance MCP server', () => {
         'practice_draft',
         'practice_get',
         'practices_for',
+        'project_context',
         'record_work',
         'retry_execution',
         'run_node',
