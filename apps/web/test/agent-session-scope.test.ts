@@ -6,7 +6,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 const dataDir = mkdtempSync(join(tmpdir(), 'landflow-session-scope-'));
 const ENV: Record<string, string> = { LANDFLOW_DATA_DIR: dataDir, LANDFLOW_REGISTRY_GRPC_PORT: 'off', LANDFLOW_SCAN_ON_START: 'false', LANDFLOW_PLUGINS: '' };
@@ -249,5 +249,25 @@ describe('paging, the live feed and the readers of ratings', () => {
     expect(put.text).not.toContain('B secret comment');
     const all = await call(evalsRoute.GET, `/api/agents/${X}/evaluations`, 'GET', owner, undefined, { id: X });
     expect(all.body.report.scores.map((x: { id: string }) => x.id).sort()).toEqual(['sc_a', 'sc_b']);
+  });
+
+  it('graded replies read each session once per call, and owners and admins read none', async () => {
+    for (const id of ['sc_a2', 'sc_a3']) {
+      saveScore({ id, target: `agent:${X}`, createdAt: new Date().toISOString(), score: 3, flagged: false, reasoning: 'r', input: 'q', output: 'a', judge: 'j/m', agentId: X, sessionId: s.sA });
+    }
+    const spy = vi.spyOn(agentStore, 'getSession');
+    try {
+      const report = await call(evalsRoute.GET, `/api/agents/${X}/evaluations`, 'GET', ann, undefined, { id: X });
+      expect(report.body.report.scores.map((x: { id: string }) => x.id).sort()).toEqual(['sc_a', 'sc_a2', 'sc_a3']);
+      const reads = spy.mock.calls.map(([id]) => id);
+      expect(reads.filter((id) => id === s.sA)).toHaveLength(1);
+      expect(reads.filter((id) => id === s.sB)).toHaveLength(1);
+      spy.mockClear();
+      const all = await call(evalsRoute.GET, `/api/agents/${X}/evaluations`, 'GET', admin, undefined, { id: X });
+      expect(all.body.report.scores.map((x: { id: string }) => x.id).sort()).toEqual(['sc_a', 'sc_a2', 'sc_a3', 'sc_b']);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

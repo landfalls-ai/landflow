@@ -7,17 +7,27 @@ import { agentStore } from '@/lib/server/agents/store';
 import { agentTarget, getOnlineConfig, gradeAgentSession, normalizeOnlineConfig, onlineReport, saveOnlineConfig } from '@/lib/server/evaluations';
 import { onlineEvalConfigSchema } from '@/lib/server/evaluations/http';
 import { canReadSessionById } from '@/lib/server/agents/session-scope';
-import { resourceAccess } from '@/lib/server/projects/access';
+import { isInstanceAdmin, resourceAccess } from '@/lib/server/projects/access';
 import { routeActor } from '@/lib/server/projects/http';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
 
-/** PC13: each score only for a session the viewer may read (a home member never reads another project's graded replies). */
+/**
+ * PC13: each score only for a session the viewer may read (a home member never reads another project's graded replies).
+ * Instance owners and admins read every session, so they get no filter; for others each session is read once per call,
+ * however many of its turns were graded (as `listAgentFeedback` does).
+ */
 const visibleTo = () => {
   const actor = routeActor();
-  return (score: { sessionId?: string }) => canReadSessionById(actor, score.sessionId ? agentStore.getSession(score.sessionId) : undefined);
+  if (actor && isInstanceAdmin(actor)) return undefined;
+  const seen = new Map<string, boolean>();
+  return (score: { sessionId?: string }) => {
+    if (!score.sessionId) return canReadSessionById(actor, undefined);
+    if (!seen.has(score.sessionId)) seen.set(score.sessionId, canReadSessionById(actor, agentStore.getSession(score.sessionId)));
+    return seen.get(score.sessionId)!;
+  };
 };
 
 export const GET = handler(async (_request: Request, { params }: Ctx) => {
