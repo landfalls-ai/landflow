@@ -4,7 +4,7 @@
  * `ai_usage` row of the project this month, from every source (Landflow's meter and the LiteLLM import). The rules that
  * stop calls and open incidents are in ./enforce.
  */
-import { nanoid } from 'nanoid';
+import { createHash } from 'node:crypto';
 import { projectCapId, type BudgetIncident, type BudgetIncidentKind, type ProjectBudget, type ProjectBudgetView } from '../../shared/project-budget';
 import { findPrice, priceOverrides } from '../ai-usage/prices';
 import { database, type Database } from '../db';
@@ -110,7 +110,10 @@ export function openIncidents(month: string, db: Database = database()): BudgetI
  */
 export function openIncident(db: Database, input: { projectId: string; month: string; kind: BudgetIncidentKind; usedUsd: number; budgetUsd: number; at?: string }): BudgetIncident | undefined {
   if (db.get('SELECT 1 AS found FROM project_budget_incidents WHERE project_id = ? AND month = ? AND kind = ? AND status = ?', input.projectId, input.month, input.kind, 'open')) return undefined;
-  const id = `pbi_${nanoid(10)}`;
+  // Deterministic, so two processes (each with its own copy of the rows) that open the same incident compute the same
+  // id and the replay's ON CONFLICT (id) drops the second, instead of the partial unique index rejecting it on Postgres.
+  const earlier = Number(db.get<{ n: number }>('SELECT COUNT(*) AS n FROM project_budget_incidents WHERE project_id = ? AND month = ? AND kind = ?', input.projectId, input.month, input.kind)?.n ?? 0);
+  const id = `pbi_${createHash('sha256').update(`${input.projectId}|${input.month}|${input.kind}|${earlier}`).digest('hex').slice(0, 12)}`;
   try {
     const inserted = db.insertNew('project_budget_incidents', {
       id,

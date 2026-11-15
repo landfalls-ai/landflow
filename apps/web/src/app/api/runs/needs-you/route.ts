@@ -20,6 +20,7 @@ export const GET = handler(async () => {
   const visible = visibleIds(routeActor(), 'workflow', store.listWorkflows().map((w) => w.id));
   const actor = routeActor();
   // PC14: a project's AI budget incidents join the run items, newest first.
+  // Budget items are added after needsYou() cut to its MAX_ITEMS, so the answer can pass it.
   const items = [...(await needsYou(visible)), ...budgetItems(actor, aiUsageMeter())].sort((a, b) => b.since.localeCompare(a.since));
   return json({ items });
 });

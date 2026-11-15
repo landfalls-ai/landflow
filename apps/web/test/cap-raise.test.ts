@@ -451,5 +451,9 @@ describe('a project’s AI budget (PC14)', () => {
     expect(stored(body.id)).toMatchObject({ status: 'approved', gateway: 'skipped', decided_by: admin.id });
     expect(getBudget(project)?.monthlyUsd).toBe(8);
     expect(incidentsOf(project, month)[0]).toMatchObject({ status: 'resolved', resolution: 'raised', resolvedBy: admin.id });
+    const row = database().get("SELECT * FROM audit_events WHERE action = 'project.budget.raised' AND project_id = ? ORDER BY at DESC LIMIT 1", project);
+    expect(row).toBeDefined();
+    expect(JSON.stringify(row)).toContain('cap-request');
+    expect(JSON.stringify(row)).toContain(admin.id);
   });
 });

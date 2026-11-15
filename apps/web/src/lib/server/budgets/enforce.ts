@@ -148,6 +148,7 @@ export function actOnIncident(meter: BudgetMeter, project: Pick<ProjectRecord, '
 export function raiseFromCapRequest(meter: BudgetMeter, projectId: string, value: number, approverId: string, db: Database = database()) {
   const budget = getBudget(projectId, db);
   if (!budget) throw new Error('The cap no longer exists');
+  value = Math.min(value, BUDGET_MAX_USD); // a request may ask for up to 100 times the cap; a budget never passes its ceiling
   if (budget.monthlyUsd >= value) throw new Error(`The cap is already ${budget.monthlyUsd}`);
   const month = currentMonth(meter);
   db.transaction(() => {
@@ -169,7 +170,9 @@ export function budgetItems(actor: Actor, meter: BudgetMeter, db: Database = dat
   for (const incident of openIncidents(currentMonth(meter, now), db)) {
     const project = getProject(incident.projectId);
     if (!project) continue;
-    const viewer = viewerOf(actor, project.id, getBudget(project.id, db));
+    const budget = getBudget(project.id, db);
+    if (incident.kind === 'stop' && !budget?.hardStop) continue; // the hard stop went off: nothing is paused any more
+    const viewer = viewerOf(actor, project.id, budget);
     if (!viewer.canEdit && !viewer.canResume) continue;
     const amounts = `(${money(incident.usedUsd)} of ${money(incident.budgetUsd)})`;
     const stop = incident.kind === 'stop';

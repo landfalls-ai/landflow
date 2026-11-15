@@ -16,6 +16,7 @@ import { getUser } from '../auth/users';
 import { customNotice, publicUrl, type AlertNotice } from '../alerts/message';
 import { alertStore } from '../alerts/store';
 import { store } from '../store';
+// Load-bearing: importing budgets/enforce registers the stop's audit and log (onStopOpened) as a side effect.
 import { sweepBudgets } from '../budgets/enforce';
 import { listBudgets } from '../budgets/store';
 import { getProject } from '../projects/store';

@@ -15,11 +15,11 @@ Object.assign(process.env, ENV);
 
 const { createUser } = await import('@/lib/server/auth/users');
 const { enableTestAuth } = await import('@/lib/server/auth/test-bypass');
-const { database } = await import('@/lib/server/db');
+const { database, openSqlite } = await import('@/lib/server/db');
 const { aiUsageMeter, savePriceOverrides, UsageScope, isUsageCapError } = await import('@/lib/server/ai-usage');
 const { createTeamProject, setMember, removeProjectRows } = await import('@/lib/server/projects/store');
 const { sweepBudgets, budgetItems } = await import('@/lib/server/budgets/enforce');
-const { getBudget, incidentsOf, saveBudget, currentMonth } = await import('@/lib/server/budgets/store');
+const { getBudget, incidentsOf, saveBudget, currentMonth, openIncident, resolveIncident } = await import('@/lib/server/budgets/store');
 const { needsYou } = await import('@/lib/server/journal/needs-you');
 const { watchedCaps } = await import('@/lib/server/ai-usage/alerts');
 const budgetRoute = await import('@/app/api/projects/[id]/budget/route');
@@ -120,11 +120,33 @@ describe('the hard stop', () => {
     expect(audited('project.budget.stopped')).toBeGreaterThan(0);
   });
 
-  it('two calls racing open one stop', async () => {
+  it('repeated calls open one stop', () => {
     setBudget();
     seed(2);
-    await Promise.all([Promise.resolve().then(() => tryCall(priced)), Promise.resolve().then(() => tryCall(priced))]);
+    tryCall(priced);
+    tryCall(priced);
     expect(incidents().filter((i) => i.kind === 'stop')).toHaveLength(1);
+  });
+
+  it('two separate databases opening the same stop derive the same id; a reopened stop gets a new one', () => {
+    const a = openSqlite(':memory:');
+    const b = openSqlite(':memory:');
+    const input = { projectId: 'prj_x', month: '2026-11', kind: 'stop' as const, usedUsd: 2, budgetUsd: 1 };
+    const first = openIncident(a, input)!;
+    expect(openIncident(b, input)!.id).toBe(first.id);
+    resolveIncident(a, first.id, 'raised');
+    const second = openIncident(a, input)!;
+    expect(second.id).not.toBe(first.id);
+  });
+
+  it('never stops a model only the gateway prices, and counts its spend', async () => {
+    setBudget();
+    seed(2);
+    seed(1.5, { provider: 'openai', model: 'gateway-only', source: 'litellm', runtime: 'claude', call_id: 'gw-1' });
+    expect(tryCall(priced)).toBeDefined();
+    expect(tryCall({ provider: 'openai', model: 'gateway-only', operation: 'chat' as const })).toBeUndefined();
+    expect((await view(admin)).usedUsd).toBe(3.5);
+    enableTestAuth();
   });
 
   it('never stops an unpriced call, which still counts', async () => {
@@ -162,6 +184,7 @@ describe('the hard stop', () => {
     const response = await incidentRoute.POST(post({ action: 'resume' }), { params: Promise.resolve({ id: projectId, incidentId: stop.id }) });
     expect(response.status).toBe(200);
     expect(((await response.json()) as ProjectBudgetView).paused).toBe(false);
+    expect(audited('project.budget.resumed')).toBe(1);
     expect(tryCall(priced)).toBeUndefined();
     // A new month: the resume is over; with no spend this month the call passes, and spend there stops it again.
     vi.setSystemTime(new Date('2026-12-02T10:00:00Z'));
@@ -195,6 +218,7 @@ describe('raise, remove and the sweep', () => {
     expect(raised.status).toBe(200);
     expect(raised.body.budget?.monthlyUsd).toBe(5);
     expect(raised.body.paused).toBe(false);
+    expect(audited('project.budget.raised')).toBeGreaterThan(0);
     expect(tryCall(priced)).toBeUndefined();
     seed(4);
     expect(tryCall(priced)).toBeDefined();
@@ -223,6 +247,7 @@ describe('raise, remove and the sweep', () => {
     expect(incidents()).toHaveLength(1);
     const warn = incidents()[0]!;
     expect((await act(admin, warn.id, { action: 'dismiss' })).status).toBe(200);
+    expect(audited('project.budget.dismissed')).toBeGreaterThan(0);
     await sweepBudgets(Date.now(), meter);
     expect(incidents()).toHaveLength(1);
     setBudget({ hardStop: false, monthlyUsd: 1.1 });
@@ -276,6 +301,19 @@ describe('the routes', () => {
     expect(again.status).toBe(409);
     expect(again.body.error).toBe('Already resumed');
     expect((await act(owner, warn.id, { action: 'dismiss' })).status).toBe(200);
+  });
+
+  it('a raise with no budget is a 409, and a stop whose hard stop went off leaves Needs you', async () => {
+    setBudget();
+    seed(2);
+    tryCall(priced);
+    const stop = incidents()[0]!;
+    expect(budgetItems(admin, meter)).toHaveLength(1);
+    setBudget({ hardStop: false });
+    expect(budgetItems(admin, meter)).toHaveLength(0);
+    database().delete('project_budgets', { project_id: projectId });
+    meter.invalidateBudgets();
+    expect((await act(admin, stop.id, { action: 'raise', monthlyUsd: 9 })).status).toBe(409);
   });
 
   it('answers the contract example for the seeded data', async () => {
