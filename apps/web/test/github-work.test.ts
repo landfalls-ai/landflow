@@ -101,6 +101,17 @@ describe('the work-github template and kinds', () => {
     expect(t.setup.join(' ')).toContain('productivity');
   });
 
+  it('keeps a repository under the same system page id as recorded work (repoEntityId)', async () => {
+    const { ExpressionResolver } = await import('@landflow/engine');
+    const { repoEntityId } = await import('@/lib/server/brain/work');
+    const t = BUILTIN_TEMPLATES.find((x) => x.id === 'work-github')!;
+    const entityId = t.workflow.nodes.find((n) => n.id === 'repo')!.parameters.entityId;
+    for (const repo of ['acme-demo/widgets', 'Acme/My_Repo.js', `org/${'x'.repeat(80)}`, 'a--b/c..d']) {
+      const resolver = new ExpressionResolver({ items: [{ json: { repo } }], nodeOutputs: {}, workflow: { id: 'w', name: 'w' }, execution: { id: 'e', mode: 'manual' }, parameters: {} });
+      expect(resolver.resolveValue(entityId, 0), repo).toBe(repoEntityId(repo));
+    }
+  });
+
   it('declares every kind the mapper emits, and the fields of the GitHub-only kinds', () => {
     const file = JSON.parse(readFileSync(join(import.meta.dirname, '../../../deploy/brain/work-kinds.json'), 'utf8')) as { fields: Array<{ name: string }>; kinds: Array<{ kind: string; fields?: Array<{ name: string }> }> };
     const declared = new Map(file.kinds.map((k) => [k.kind, new Set((k.fields ?? file.fields).map((f) => f.name))]));

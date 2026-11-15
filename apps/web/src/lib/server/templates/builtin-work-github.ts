@@ -30,7 +30,7 @@ export function workGithubTemplates(h: WorkGithubHelpers): TemplateDetail[] {
         'Needs the **productivity** plugin (it holds the GitHub Webhook Trigger). Pick or add a GitHub token that can create webhooks: admin:repo_hook, or Webhooks read and write on a fine-grained token.',
         'Choose the repository in the trigger. Publishing registers the webhook and unpublishing removes it, so Landflow must be reachable from GitHub (a public URL).',
         'In **GitHub to Work Event**, set **People** to a JSON table of GitHub login to email, such as `{"octo-dev": "dev@example.com"}`, so person pages match. Without it the actor is the login.',
-        'Declare the work kinds once with `pnpm brain:work-kinds` (or leave **Declare Kind If New** on in **Record work event**). Publish; the events show in **Insights**.',
+        'Declare the work kinds once with `pnpm brain:work-kinds`. Without it, **Declare Kind If New** (on in **Record work event**) declares a kind from its first event, with only the fields that event set. Publish; the events show in **Insights**.',
       ],
       nodes: [
         node('trigger', 'GitHub Webhook Trigger', 'productivity.githubWebhookTrigger', [0, 0], { events: ['pull_request', 'pull_request_review', 'workflow_run', 'status'] }, { uses: [slot] }),
@@ -39,7 +39,8 @@ export function workGithubTemplates(h: WorkGithubHelpers): TemplateDetail[] {
         node('repo', 'Keep the repository', 'brainEntity', [520, 100], {
           operation: 'upsert',
           type: 'system',
-          entityId: "{{ String($json.repo).toLowerCase().replace(/[^a-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) }}",
+          // The same id as `repoEntityId` (brain/work.ts), so one repository gets one system page whichever path made it.
+          entityId: "{{ ('repo-' + String($json.repo).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')).slice(0, 64).replace(/-+$/, '') }}",
           name: '{{ $json.repo }}',
           attributes: '{{ ({ lastSource: $json.source, lastSeenAt: $json.occurredAt }) }}',
         }),

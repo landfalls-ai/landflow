@@ -12,12 +12,12 @@ the work was, where (a repository, directory names) and how much (commits, pull 
 file contents, file names or absolute paths. Clients redact before they send, and the host redacts every text again
 (emails, tokens, long numbers).
 
-An unknown `work.*` kind is rejected ("Unknown work kind; an admin can declare it"); `POST /api/brain/work` declares only the 23 listed kinds itself.
+An unknown `work.*` kind is rejected ("Unknown work kind; an admin can declare it"); `POST /api/brain/work` declares itself only the 18 listed kinds that share the common fields; the five GitHub-only kinds (`work.pr_closed`, `work.pr_reviewed`, `work.review_requested`, `work.ci_failed`, `work.ci_passed`) have fields of their own in `deploy/brain/work-kinds.json`, so `pnpm brain:work-kinds` or the GitHub template's Record Event declares them, and until then the route rejects them.
 
 An event is a row in the [usage ledger](second-brain.md#1-the-usage-ledger) with a `work.*` kind. The kind
 `work.session` is declared the first time a tool sends it, with the same fields as the other `work.*` kinds
 (`deploy/brain/work-kinds.json`). `work.pr_opened` and `work.pr_merged` now come from the `claude-code`, `landflow-cli`
-and `mcp` sources too, not only from Git host integrations. GitHub itself is a source: the `work-github` template records `work.pr_opened`, `work.pr_merged`, `work.pr_closed`, `work.pr_reviewed`, `work.review_requested`, `work.ci_failed` and `work.ci_passed` ([GitHub into the brain](features/integrations.md#github-into-the-brain)).
+and `mcp` sources too, not only from Git host integrations. GitHub itself is a source: the `work-github` template records `work.pr_opened`, `work.pr_merged`, `work.pr_closed`, `work.pr_reviewed`, `work.review_requested`, `work.ci_failed` and `work.ci_passed` ([GitHub into the brain](features/integrations.md#github-into-the-brain)). Those rows come through Record Event and have no owner, so they feed Insights, velocity and the repository's system page, not briefings: the merged PRs a briefing lists come from people's own tools (Claude Code, `landflow work`, MCP `record_work`), which record them as that person's work.
 
 ## Who sends them
 
@@ -138,7 +138,7 @@ prepares what happened that is relevant to them, stores it for that person only 
 | Node | What it does |
 |---|---|
 | **List People** (`core.brainListPeople`) | One item `{ userId, day }` for each active person who recorded work in the last N days (default 3; 0 is everyone). `day` is the day the briefings are read on: today in the instance time zone (a run at 02:00 on D prepares D's morning), or the parameter. Nothing with the brain off. |
-| **Gather Work** (`core.brainGatherWork`) | Reads that person's own work of the day and the day before, colleagues' `team` and `org` work that overlaps it (the same rule as related colleagues), and what finished on their repositories (merged PRs and releases). Keeps it in a `draft` row. Outputs `{ userId, day, briefingId, counts: { own, related, finished } }`. |
+| **Gather Work** (`core.brainGatherWork`) | Reads that person's own work of the day and the day before, colleagues' `team` and `org` work that overlaps it (the same rule as related colleagues), and what finished on their repositories (merged PRs and releases that people's own tools recorded; the GitHub template's rows have no owner and are not read). Keeps it in a `draft` row. Outputs `{ userId, day, briefingId, counts: { own, related, finished } }`. |
 | **Write Briefing** (`core.brainWriteBriefing`) | Asks the brain's model (`LANDFLOW_BRAIN_MODEL`) for at most `LANDFLOW_BRIEFING_MAX_CHARS` (1,200) characters. The model gets redacted lines inside a block it is told is data, not instructions. With the model off or failing, the text is built from the lists (`deterministicBriefing`: "Recently you merged 2 PRs in acme/billing. …"). Same output shape. |
 | **Save Briefing** (`core.brainSaveBriefing`) | Marks the draft `ready`; the day's older `ready` one becomes `superseded`. Briefings older than 30 days are deleted. |
 | **Deliver Briefing** (`core.brainDeliverBriefing`) | Only for a person whose preference `briefingDelivery` is `slack` or `email` and whose channel is set up (a Slack credential on the node; the host's SMTP): sends the text by Slack DM or email. Everyone else is passed on with `delivered: false`. Nothing is sent by default. |

@@ -93,7 +93,11 @@ that table sets the event's actor email, so person pages match; without it the a
 
 **Setup.** The productivity plugin must run. The token needs `admin:repo_hook` (or fine-grained Webhooks read and write) on the
 repository, and Landflow must be reachable from GitHub, because publishing registers the webhook. To try it without GitHub,
-pin a delivery on the trigger and run the flow. Declare the kinds with `pnpm brain:work-kinds`, not the first-event fallback (it keeps only the fields the first event sets, and `POST /api/brain/work` declares the shared fields). The five GitHub-only kinds list
+pin a delivery on the trigger and run the flow. Declare the kinds once with `pnpm brain:work-kinds`, as the template's setup
+says. **Record work event** has **Declare Kind If New** on, so a kind not declared yet is declared from its first event
+instead: that works, but the kind keeps only the fields that first event set (a first commit status has no
+`prNumber`, so later pull request numbers of that kind are dropped); the script declares every field. `POST
+/api/brain/work` never declares the GitHub-only kinds itself. The five GitHub-only kinds list
 their own fields in `deploy/brain/work-kinds.json` (a kind declares at most 20), so `work.pr_opened` and `work.pr_merged`,
 which keep the shared fields for the tools that also send them, drop `prNumber`, `state` and the like.
 
