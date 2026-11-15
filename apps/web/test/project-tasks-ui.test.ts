@@ -8,7 +8,7 @@ import { PROJECT_TABS, projectTab } from '../src/components/projects/project-tab
 import { TaskCard, TaskRow } from '../src/components/projects/tasks/task-row';
 import { ScheduleField } from '../src/components/projects/tasks/task-dialog';
 import { cronPreset, presetCron, WAKE_NOTE, WAKE_PRESETS } from '../src/components/projects/tasks/schedule';
-import { assigneeValue, fieldOfError, groupTasks, missingAssigneeOption, parseAssignee } from '../src/components/projects/tasks/tasks-model';
+import { assigneeValue, fieldOfError, fieldOfSaveError, groupTasks, missingAssigneeOption, parseAssignee } from '../src/components/projects/tasks/tasks-model';
 import { tasksUrl } from '../src/components/projects/tasks/use-tasks';
 import { deletionNotice } from '../src/components/projects/project-dialogs';
 import type { NeedsYouRow } from '../src/lib/client/run-trace';
@@ -86,6 +86,14 @@ describe('the list', () => {
     expect(fieldOfError('“Clerk” isn’t allowed in project “Q4 goals” (Project settings → Agents)')).toBe('assignee');
     expect(fieldOfError('“Cron helper” isn’t available in project “Billing”')).toBe('assignee');
     expect(fieldOfError('A wake-up schedule has five fields')).toBe('schedule');
+  });
+
+  it('maps a cron the parser rejects to the Wake-up field only for the Custom preset', () => {
+    expect(fieldOfSaveError('Invalid cron expression: minute out of range', true)).toBe('schedule');
+    expect(fieldOfSaveError('Invalid cron expression: minute out of range', false)).toBeUndefined();
+    expect(fieldOfSaveError('A project has at most 1000 tasks', true)).toBeUndefined();
+    expect(fieldOfSaveError('A task’s parent is a top-level task of the same project', true)).toBeUndefined();
+    expect(fieldOfSaveError('Ben isn’t a member of this project', true)).toBe('assignee');
   });
 
   it('offers the saved assignee when it is not loaded', () => {

@@ -63,6 +63,14 @@ export function fieldOfError(message: string): TaskField | undefined {
   return undefined;
 }
 
+/**
+ * The field a save's 400 is about. A custom cron the parser rejects answers with the parser's own words, which no pattern
+ * can know: with the Custom preset an unmatched message belongs to the Wake-up field (a parent or a count limit does not).
+ */
+export function fieldOfSaveError(message: string, customCron: boolean): TaskField | undefined {
+  return fieldOfError(message) ?? (customCron && !/parent|at most/i.test(message) ? 'schedule' : undefined);
+}
+
 /** The option the assignee select needs when the saved assignee is not among the loaded ones; undefined when it is listed. */
 export function missingAssigneeOption(
   value: string,

@@ -33,7 +33,7 @@ import {
   type TaskStatus,
 } from '@/lib/shared/project-tasks';
 import { cronPreset, presetCron, WAKE_NOTE, WAKE_PRESET_LABELS, WAKE_PRESETS, type WakePreset } from './schedule';
-import { assigneeValue, fieldOfError, missingAssigneeOption, parseAssignee, RUN_LABELS, RUN_TONES, untilText, type TaskField } from './tasks-model';
+import { assigneeValue, fieldOfSaveError, missingAssigneeOption, parseAssignee, RUN_LABELS, RUN_TONES, untilText, type TaskField } from './tasks-model';
 import { askToRun, checkoutTask, createTask, deleteTask, fetchTask, releaseTask, updateTask } from './use-tasks';
 
 interface AgentOption {
@@ -94,7 +94,7 @@ function RunItem({ run, task, names, onDecided }: { run: TaskRun; task: ProjectT
           </Link>
         )}
         {run.status === 'requested' && (
-          <TaskActions row={{ kind: 'task', taskRunId: run.id, taskRunStatus: 'requested', canDecide: task.canEdit, taskId: task.id, projectId: task.projectId }} skip={['open']} onDone={onDecided} />
+          <TaskActions row={{ kind: 'task', taskRunId: run.id, taskRunStatus: 'requested', canDecide: task.canEdit, taskId: task.id, projectId: task.projectId }} skip={['open']} onDone={onDecided} onFailed={onDecided} />
         )}
       </div>
     </li>
@@ -135,7 +135,7 @@ export function TaskDialog({ projectId, task: given, canCreate = true, onClose, 
   const wakeCron = isAgent ? (preset === 'custom' ? cron.trim() : presetCron(preset)) : undefined;
 
   const show = (message: string) => {
-    const field = fieldOfError(message);
+    const field = fieldOfSaveError(message, isAgent && preset === 'custom');
     setErrors({ [field === 'schedule' && !isAgent ? 'other' : (field ?? 'other')]: message });
   };
   const refresh = (next: ProjectTaskView) => {

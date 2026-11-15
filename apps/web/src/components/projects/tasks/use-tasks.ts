@@ -28,23 +28,39 @@ export function useTasks(projectId: string, filter: TaskFilter) {
   const [error, setError] = useState<string>();
   const [loadingMore, setLoadingMore] = useState(false);
   const seq = useRef(0);
+  /** How many pages the list holds (Load more adds one): a reload after a save fetches them all again, so the list keeps its length. */
+  const pages = useRef(1);
   const { status, mine } = filter;
 
-  const reload = useCallback(() => {
-    const mineSeq = ++seq.current;
-    return api<ProjectTasksResponse>(tasksUrl(projectId, { status, mine }))
-      .then((r) => {
+  const reload = useCallback(
+    async (count = pages.current) => {
+      const mineSeq = ++seq.current;
+      try {
+        const first = await api<ProjectTasksResponse>(tasksUrl(projectId, { status, mine }));
+        let all = first.tasks;
+        let next = first.nextCursor;
+        for (let page = 1; page < count && next; page++) {
+          const more = await api<ProjectTasksResponse>(tasksUrl(projectId, { status, mine }, next));
+          all = [...all, ...more.tasks.filter((t) => !all.some((a) => a.id === t.id))];
+          next = more.nextCursor;
+        }
         if (mineSeq !== seq.current) return;
-        setTasks(r.tasks);
-        setCursor(r.nextCursor);
-        setCanCreate(r.canCreate);
+        pages.current = Math.max(1, Math.min(count, pages.current));
+        setTasks(all);
+        setCursor(next);
+        setCanCreate(first.canCreate);
         setError(undefined);
-      })
-      .catch((e: Error) => mineSeq === seq.current && setError(e.message));
-  }, [projectId, status, mine]);
+      } catch (e) {
+        if (mineSeq === seq.current) setError((e as Error).message);
+      }
+    },
+    [projectId, status, mine],
+  );
   useEffect(() => {
+    // A new filter or project starts from its first page.
+    pages.current = 1;
     setTasks(undefined);
-    void reload();
+    void reload(1);
   }, [reload]);
 
   const more = async () => {
@@ -54,6 +70,7 @@ export function useTasks(projectId: string, filter: TaskFilter) {
       const r = await api<ProjectTasksResponse>(tasksUrl(projectId, { status, mine }, cursor));
       setTasks((current) => [...(current ?? []), ...r.tasks.filter((t) => !current?.some((c) => c.id === t.id))]);
       setCursor(r.nextCursor);
+      pages.current += 1;
     } catch (e) {
       setError((e as Error).message);
     } finally {

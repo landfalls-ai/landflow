@@ -167,12 +167,15 @@ export function BudgetActions({
 export function TaskActions({
   row,
   onDone,
+  onFailed,
   skip,
   className,
 }: {
   row: Pick<NeedsYouRow, 'kind' | 'taskRunId' | 'taskRunStatus' | 'canDecide' | 'href' | 'taskId' | 'projectId'>;
   /** After a decision went through (the Needs you list reloads either way). */
   onDone?: (decision: 'approve' | 'deny') => void;
+  /** After a decision was refused (a 409 "Already approved"): the caller's own copy of the run is stale, so it reloads. */
+  onFailed?: () => void;
   skip?: NeedsYouActionId[];
   className?: string;
 }) {
@@ -190,6 +193,7 @@ export function TaskActions({
       onDone?.(decision);
     } catch (e) {
       setError((e as Error).message);
+      onFailed?.();
     } finally {
       setBusy(undefined);
       refreshNeedsYou();
