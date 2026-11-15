@@ -190,6 +190,11 @@ items still open (its "Wave 6" section); this page is the short list to check be
   `fileMatches` patterns (up to 200 characters, no guard against catastrophic backtracking) inside the host process over
   up to 20,000 added lines, so an approved practice with a bad pattern can stall the host's event loop; there is no
   per-file cap or worker yet.
+- **Drift counts runs, and cannot tell whether a practice concerned the work.** A Landflow agent's or team's block lists
+  every practice that applies to its project, and its `delivered` row says nothing of the task or the paths touched, so an
+  org practice with no repository would look "rarely followed" fast. Compliance counts distinct runs; the practice-drift
+  detector counts a block's in-process deliveries a third each (30 runs, not 10, reach the floor) and a delivery that named
+  a repository in full. Relevance to the run is not recorded; a precise rate needs that.
 - A required practice blocks only in a flow. An agent's tool call, `landflow practices check` in a shell and the Claude
   Code mod never deny anything.
 - The pull request template reads GitHub's patch of each file; GitHub leaves the patch out of very large files, so a

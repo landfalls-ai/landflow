@@ -6,7 +6,7 @@
  */
 import type { PracticeStrength } from '../../shared/practices';
 import { citeRate, failRate, percent } from '../../shared/practice-compliance';
-import { countsByPractice } from '../practices/compliance';
+import { countsByPractice, inProcessDelivered } from '../practices/compliance';
 import type { DetectContext, Finding } from './detectors';
 import { fingerprintOf } from './proposals';
 
@@ -14,6 +14,13 @@ const DAY_MS = 86_400_000;
 export const DRIFT_DAYS = 14;
 /** Given at least this many times before the detector looks (scaled by the detector's quiet factor). */
 export const DRIFT_MIN_GIVEN = 10;
+/**
+ * A Landflow agent's block lists every practice that applies to its project, whatever the run is about, and the rows say
+ * nothing of the task or the paths it touched. So a practice given in-process counts toward the floor at one in this many
+ * (the floor, for in-process runs alone, is this times the floor above) while a delivery a person or a harness asked for
+ * (a repository named) counts in full.
+ */
+export const DRIFT_IN_PROCESS_FACTOR = 3;
 export const DRIFT_CITE_BELOW = 0.2;
 export const DRIFT_FAIL_ABOVE = 0.5;
 
@@ -27,10 +34,14 @@ interface PracticeRow {
 
 export function practiceDrift(ctx: DetectContext): Finding[] {
   const min = Math.ceil(DRIFT_MIN_GIVEN * ctx.quiet('practice-drift'));
-  const counts = countsByPractice(new Date(ctx.now - DRIFT_DAYS * DAY_MS).toISOString(), ctx.db);
+  const since = new Date(ctx.now - DRIFT_DAYS * DAY_MS).toISOString();
+  const counts = countsByPractice(since, ctx.db);
+  const inProcess = inProcessDelivered(since, ctx.db);
   const findings: Finding[] = [];
   for (const [practiceId, c] of counts) {
-    if (c.delivered < min) continue;
+    // Deliveries asked for count one each; the block's in-process ones count a third each (see DRIFT_IN_PROCESS_FACTOR).
+    const inBlock = Math.min(c.delivered, inProcess.get(practiceId) ?? 0);
+    if (c.delivered - inBlock + inBlock / DRIFT_IN_PROCESS_FACTOR < min) continue;
     const cite = citeRate(c);
     const fail = failRate(c);
     const seldomCited = cite !== undefined && cite < DRIFT_CITE_BELOW;

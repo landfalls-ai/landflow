@@ -315,6 +315,9 @@ writes a warning check so the gap is visible.
   named ("2 other agents").
 - **Last applied** with a Run Trace link. The route also returns the counts per version; the page does not draw them yet.
 - The **compliance bar** is the checks: green passed, red failed, amber waived.
+- **Given** and **Cited** count distinct runs: a run that cites a practice in its answer and through `practice_cite`
+  has two `cited` rows and is one run, and the rate never exceeds 100%. A row with no run (a `practices_for` call from a
+  shell) counts alone. Checks and waivers count per row.
 
 `GET /api/practices/:id/compliance` answers it for a practice you may see (404 otherwise). A run shows its own side in
 "What it saw": `GET /api/executions/:id/practices` lists each `handle@version` the run was given or checked, whether it
@@ -324,6 +327,11 @@ cited it and how its check went, and `SawPracticesRow` (`components/run-trace/sa
 The **practice-drift** detector ([second-brain.md](second-brain.md#4-detectors-and-suggestions)) files a suggestion for
 an approved practice that was given 10 times or more in 14 days and cited under 20% of them, or whose checks failed more
 than half the time: "Review <title>: rarely followed", with the numbers and a link to the page. It is advice only.
+
+A Landflow agent's block gives it every practice that applies to its project, and the row does not say whether the work
+concerned that practice. So the detector counts runs, counts a block's in-process deliveries (a run's `delivered` row with
+no repository) a third each, and counts a delivery that named a repository in full: a practice given only by blocks needs
+30 runs in 14 days to be looked at, not 10. See [limitations](limitations.md#practices-in-claude-code-and-the-shell).
 
 ## The inbox
 

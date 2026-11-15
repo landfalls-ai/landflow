@@ -286,6 +286,29 @@ describe('the practice-drift detector', () => {
     expect(proposals.upsertProposal(p)).toBeDefined();
   });
 
+  it('counts the block\'s in-process deliveries a third each, and a delivery that names a repository in full', () => {
+    const inProcess = (practiceId: string, runs: number, kind: 'delivered' | 'cited' = 'delivered') => {
+      for (let i = 0; i < runs; i++) storePort.record({ practiceId, version: 1, kind, executionId: `exec_ip_${practiceId}_${i}`, at: new Date(Date.now() - 2 * DAY).toISOString() });
+    };
+    const blockOnly = approvedPractice();
+    inProcess(blockOnly.id, 29);
+    expect(find(blockOnly.id)).toHaveLength(0);
+    inProcess(blockOnly.id, 31);
+    expect(find(blockOnly.id)).toHaveLength(1);
+    const asked = approvedPractice();
+    for (let i = 0; i < 10; i++) storePort.record({ practiceId: asked.id, version: 1, kind: 'delivered', repo: 'acme/web', at: new Date(Date.now() - 2 * DAY).toISOString() });
+    expect(find(asked.id)).toHaveLength(1);
+  });
+
+  it('counts runs, not rows: two rows of one run are one', () => {
+    const practice = approvedPractice();
+    rows(practice.id, 'delivered', 12);
+    // A cite in the answer and a practice_cite call in the same run: one run cited.
+    for (const exec of ['exec_a', 'exec_b', 'exec_c']) for (let i = 0; i < 2; i++) storePort.record({ practiceId: practice.id, version: 1, kind: 'cited', executionId: exec, at: new Date(Date.now() - DAY).toISOString() });
+    // 3 of 12 = 25%: not rarely followed (six rows would have said 50%, and one row each 8%).
+    expect(find(practice.id)).toHaveLength(0);
+  });
+
   it('fires on checks that failed more than half the time', () => {
     const practice = approvedPractice();
     rows(practice.id, 'delivered', 10);

@@ -102,6 +102,22 @@ describe('the pure rates', () => {
   });
 });
 
+describe('compliance counts runs', () => {
+  it('counts delivered and cited once per run, however many rows a run wrote', async () => {
+    const practice = approved();
+    for (const exec of ['exec_1', 'exec_2']) {
+      row(practice.id, 'delivered', { executionId: exec });
+      row(practice.id, 'delivered', { executionId: exec });
+      row(practice.id, 'cited', { executionId: exec });
+      row(practice.id, 'cited', { executionId: exec });
+    }
+    row(practice.id, 'delivered');
+    const { body } = await get(owner, practice.id);
+    expect(body.compliance).toMatchObject({ delivered: 3, cited: 2 });
+    expect(body.compliance.byVersion[0]).toMatchObject({ delivered: 3, cited: 2 });
+  });
+});
+
 describe('GET /api/practices/:id/compliance', () => {
   it('adds up delivered, cited, passed, failed and waived rows in the window', async () => {
     const practice = approved();

@@ -13,10 +13,13 @@ const DAY_MS = 86_400_000;
 
 const clampDays = (days: number | undefined) => Math.max(COMPLIANCE_DAYS.min, Math.min(COMPLIANCE_DAYS.max, Math.floor(days ?? COMPLIANCE_DAYS.default) || COMPLIANCE_DAYS.default));
 
-/** Add one row group to counts. */
-function add(counts: ComplianceCounts, kind: string, n: number): void {
-  if (kind === 'delivered') counts.delivered += n;
-  else if (kind === 'cited') counts.cited += n;
+/** What a row counts as for `delivered` and `cited`: its run (a run that cites twice, in the answer and by `practice_cite`, is one); a row without a run counts alone. */
+const RUN_KEY = 'COALESCE(execution_id, id)';
+
+/** Add one row group to counts: `delivered` and `cited` in distinct runs (`runs`), the checks and waivers per row (`n`). */
+function add(counts: ComplianceCounts, kind: string, n: number, runs: number): void {
+  if (kind === 'delivered') counts.delivered += runs;
+  else if (kind === 'cited') counts.cited += runs;
   else if (kind === 'check-pass') counts.checkPass += n;
   else if (kind === 'check-fail') counts.checkFail += n;
   else if (kind === 'waived') counts.waived += n;
@@ -24,17 +27,30 @@ function add(counts: ComplianceCounts, kind: string, n: number): void {
 
 /** The counts of every practice over a window, for the detector: one query. */
 export function countsByPractice(since: string, db: Database = database()): Map<string, ComplianceCounts> {
-  const rows = db.all<{ practice_id: string; kind: string; n: number }>(
-    'SELECT practice_id, kind, COUNT(*) AS n FROM practice_applications WHERE at >= ? GROUP BY practice_id, kind',
+  const rows = db.all<{ practice_id: string; kind: string; n: number; runs: number }>(
+    `SELECT practice_id, kind, COUNT(*) AS n, COUNT(DISTINCT ${RUN_KEY}) AS runs FROM practice_applications WHERE at >= ? GROUP BY practice_id, kind`,
     since,
   );
   const out = new Map<string, ComplianceCounts>();
   for (const row of rows) {
     const counts = out.get(row.practice_id) ?? emptyCounts();
-    add(counts, row.kind, Number(row.n));
+    add(counts, row.kind, Number(row.n), Number(row.runs));
     out.set(row.practice_id, counts);
   }
   return out;
+}
+
+/**
+ * How many of each practice's `delivered` runs were in-process deliveries: a Landflow agent's or team's block, written for
+ * every practice in it whether or not the work touched it (docs/practices.md#compliance). The drift detector asks more of
+ * these than of a delivery a person or a harness asked for (`practices_for`, the CLI), which names a repository.
+ */
+export function inProcessDelivered(since: string, db: Database = database()): Map<string, number> {
+  const rows = db.all<{ practice_id: string; runs: number }>(
+    `SELECT practice_id, COUNT(DISTINCT execution_id) AS runs FROM practice_applications WHERE at >= ? AND kind = 'delivered' AND execution_id IS NOT NULL AND repo IS NULL GROUP BY practice_id`,
+    since,
+  );
+  return new Map(rows.map((r) => [r.practice_id, Number(r.runs)]));
 }
 
 /**
@@ -46,8 +62,8 @@ export function complianceOf(viewer: Actor, practiceId: string, days?: number, n
   const window = clampDays(days);
   const since = new Date(now - window * DAY_MS).toISOString();
   const db = database();
-  const rows = db.all<{ version: number; kind: string; n: number; last: string }>(
-    'SELECT version, kind, COUNT(*) AS n, MAX(at) AS last FROM practice_applications WHERE practice_id = ? AND at >= ? GROUP BY version, kind',
+  const rows = db.all<{ version: number; kind: string; n: number; runs: number; last: string }>(
+    `SELECT version, kind, COUNT(*) AS n, COUNT(DISTINCT ${RUN_KEY}) AS runs, MAX(at) AS last FROM practice_applications WHERE practice_id = ? AND at >= ? GROUP BY version, kind`,
     practiceId,
     since,
   );
@@ -57,9 +73,9 @@ export function complianceOf(viewer: Actor, practiceId: string, days?: number, n
   for (const row of rows) {
     const version = Number(row.version);
     const entry = versions.get(version) ?? { version, ...emptyCounts() };
-    add(entry, row.kind, Number(row.n));
+    add(entry, row.kind, Number(row.n), Number(row.runs));
     versions.set(version, entry);
-    add(total, row.kind, Number(row.n));
+    add(total, row.kind, Number(row.n), Number(row.runs));
     // A waiver is a person's decision, not the practice being applied.
     if (row.kind !== 'waived' && (!lastApplied || row.last > lastApplied)) lastApplied = row.last;
   }
