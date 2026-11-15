@@ -770,6 +770,114 @@
      "legendFormat": "{{kind}}"
     }
    ]
+  },
+  {
+   "type": "row",
+   "title": "AI",
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 95
+   },
+   "panels": []
+  },
+  {
+   "type": "timeseries",
+   "title": "Tokens by type",
+   "description": "Model tokens a second by type. Input is the whole prompt; cache_read and cache_write are parts of it.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 96
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum by (gen_ai_token_type) (rate(landflow_ai_tokens_total[5m]))",
+     "legendFormat": "{{gen_ai_token_type}}"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "title": "Cache hit rate",
+   "description": "Prompt-cache reads as a share of Anthropic input tokens, over 1 hour.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 96
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(rate(landflow_ai_tokens_total{gen_ai_token_type=\"cache_read\"}[1h])) / sum(rate(landflow_ai_tokens_total{gen_ai_token_type=\"input\",gen_ai_system=\"anthropic\"}[1h]))",
+     "legendFormat": "hit rate"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "title": "Cost by purpose",
+   "description": "Estimated spend in USD over the last day, by what the call was for (none: no purpose set).",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 104
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum by (landflow_ai_purpose) (increase(landflow_ai_cost_USD_total[1d]))",
+     "legendFormat": "{{landflow_ai_purpose}}"
+    }
+   ]
   }
  ]
 }
