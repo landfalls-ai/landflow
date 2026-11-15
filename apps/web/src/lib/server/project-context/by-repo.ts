@@ -8,6 +8,7 @@ import type { RunContextRef } from '../../shared/project-context';
 import { HttpError } from '../errors';
 import { projectRole, type Actor } from '../projects/access';
 import { getProject, listProjects } from '../projects/store';
+import { contextWorkspace } from '../projects/workspace'; // PC16
 import { logger } from '../telemetry/logger';
 import { runContextProvider } from './seam';
 
@@ -57,7 +58,11 @@ export function projectContextFor(actor: Actor, query: ContextQuery, only?: stri
     projects = [];
   }
   const first = projects[0];
-  return { projects, context: first ? { projectId: first.id, size, text: blockFor({ caller: 'mcp', projectId: first.id }, size) } : null };
+  const answer: ProjectContextAnswer = { projects, context: first ? { projectId: first.id, size, text: blockFor({ caller: 'mcp', projectId: first.id }, size) } : null };
+  // PC16: the first project's workspace, only when it saved one (so an answer without one is unchanged)
+  const workspace = first ? contextWorkspace(actor, first.id) : undefined;
+  if (workspace) answer.workspace = workspace;
+  return answer;
 }
 
 /**

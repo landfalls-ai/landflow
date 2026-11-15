@@ -1843,6 +1843,12 @@ export const MIGRATIONS: Migration[] = [
       `CREATE UNIQUE INDEX IF NOT EXISTS project_budget_incidents_open ON project_budget_incidents (project_id, month, kind) WHERE status = 'open'`,
     ],
   },
+  // PC16: a project's workspace for harness runs (per repository branch and setup lines, worktree, branch template)
+  {
+    version: 2701,
+    name: 'project_workspaces',
+    statements: [`CREATE TABLE IF NOT EXISTS project_workspaces (project_id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT)`],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -1966,6 +1972,8 @@ export const TABLES = {
   practices: ['id'],
   practice_versions: ['practice_id', 'version'],
   practice_applications: ['id'],
+  // PC16:
+  project_workspaces: ['project_id'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

@@ -182,3 +182,32 @@ describe('Spotlight and the architect', () => {
     expect((await post('prj_nope')).status).toBe(404);
   });
 });
+
+// PC16: the first project's workspace, only when one is saved
+describe('the workspace in the answer', () => {
+  it('is absent until one is saved (the answer is the example, byte for byte)', async () => {
+    enableTestAuth();
+    const { body } = await ask('repo=acme/web&size=compact');
+    expect('workspace' in body).toBe(false);
+  });
+
+  it('is there for the first project once saved, with the pattern filled; a viewer gets no setup', async () => {
+    const { saveWorkspace } = await import('@/lib/server/projects/workspace');
+    saveWorkspace(owner, billing.id, { repos: { 'acme/web': { defaultBranch: 'develop', setup: ['pnpm install'] } }, worktree: 'shared', branchTemplate: 'landflow/{project}/{run}' });
+    enableTestAuth();
+    const full = (await ask('repo=acme/web')).body;
+    expect(full.workspace).toEqual({
+      projectId: billing.id,
+      repos: { 'acme/web': { defaultBranch: 'develop', setup: ['pnpm install'] } },
+      worktree: 'shared',
+      branchTemplate: 'landflow/{project}/{run}',
+      branchPattern: 'landflow/billing-revamp/{run}',
+    });
+    enableTestAuth(alice); // an editor of billing sees setup
+    expect((await ask(`projectId=${billing.id}`)).body.workspace?.repos['acme/web']?.setup).toEqual(['pnpm install']);
+    const dave = await createUser({ email: 'viewer@project-context-api.test', name: 'Vic', role: 'member', password: 'viewer-password-1' });
+    setMember(billing.id, dave.id, 'viewer');
+    enableTestAuth(dave);
+    expect((await ask(`projectId=${billing.id}`)).body.workspace?.repos['acme/web']).toEqual({ defaultBranch: 'develop' });
+  });
+});

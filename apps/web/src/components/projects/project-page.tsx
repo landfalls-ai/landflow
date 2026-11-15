@@ -18,6 +18,7 @@ import type { ProjectMcpView } from '@/lib/shared/mcp';
 import { EMPTY_NODE_POLICY, PROJECT_APPROVER_LABELS, type ProjectApprovers, type ProjectSettingsView, type ScopedNodePolicy } from '@/lib/shared/project-policy';
 import { ScopedNodeList } from '@/components/governance/scoped-node-list';
 import { VariablesSettings } from '@/components/settings/variables-settings';
+import { ProjectWorkspaceCard } from './project-workspace-card'; // PC16
 import { useViewer } from '@/components/auth/viewer';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
 import { AuditLog } from '@/components/settings/audit-settings';
@@ -114,6 +115,7 @@ export function ProjectPage({ projectId }: { projectId: string }) {
             <ProjectSettings section="settings" project={project} onChanged={(next) => (next ? setProject(next) : void loadProject())} />
             {/* PC15: */}<ProjectAgentSettings projectId={project.id} />
             {/* PC15: */}<ProjectBudgetCard projectId={project.id} />
+            {/* PC16: */}<ProjectWorkspaceCard projectId={project.id} />
             <Card>
               <div className="mb-3 text-[13px] font-semibold text-t1">Variables</div>
               <VariablesSettings projectId={project.id} />

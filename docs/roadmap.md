@@ -2080,8 +2080,12 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
 - **PC10, built (wave 8):** project repositories (`PATCH /api/projects/:id { repos }`, migration 2500), `GET
   /api/projects/context` by repository or id, the MCP `project_context` tool and `project://{id}/context` resource,
   "Your goals" in the morning briefing, and the project's compact block in Spotlight and the Agent architect (P5-1 to
-  P5-3, D8). The mod and the CLI use the route (PC11, built). Left: a screen for a project's repositories
+  P5-3, D8). The mod and the CLI use the route (PC11, built). The screen for a project's repositories came in wave 9 (PC16).
   ([projects-and-goals.md](projects-and-goals.md#repositories-and-harnesses)).
+- **PC16, built (wave 9):** a project's **Workspace** card (Settings tab): repositories, a default branch and setup commands
+  for each, a worktree per run or shared, a branch template; saved in `project_workspaces` (migration 2701), served by
+  `GET/PUT /api/projects/:id/workspace`, `GET /api/projects/context` and the MCP `project_context` tool. Closes P6-3.
+  Open: the harness plan's stage 2 using it ([projects-and-goals.md](projects-and-goals.md#workspace)).
 
 ## Paperclip wave 9: project settings for agents (PC13)
 

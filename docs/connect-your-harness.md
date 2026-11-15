@@ -54,6 +54,12 @@ It is data, not instructions.
   role it is 404. The answer's shape is `ProjectContextAnswer` (`lib/shared/project-context-api.ts`).
 - **MCP tool:** `project_context { repo?, projectId?, size? }` gives the same answer. On a server scoped to one project
   (`/api/mcp/projects/<id>`) it gives that project only, whatever is asked.
+- **Workspace:** when the first project saved a [workspace](projects-and-goals.md#workspace), the answer (and the MCP
+  tool's) also has `workspace: { projectId, repos, worktree, branchTemplate, branchPattern }`: for each repository its
+  `defaultBranch` and `setup` lines, a worktree per run or a shared checkout, and the branch pattern with `{project}`
+  filled in. `setup` is left out unless you are an editor or admin of that project (owners and admins always). Landflow
+  never runs the setup lines. Without a saved workspace the answer has no `workspace`. The mod and `landflow work context`
+  ignore the field for now.
 - **MCP resource:** `project://{id}/context` is the full block of a project you have a role in.
 - **Morning briefing:** the `morning-briefing` prompt ends with "Your goals": the open goals of the projects you have a
   role in, at most 5 by project, titles only.
