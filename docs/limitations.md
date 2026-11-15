@@ -429,6 +429,8 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - An agent's raised cap is written into its published version in place (and its history entry), not as a new version.
 - Apply Cap Raise tells the budgets sync and records whether it updated LiteLLM; a workflow's cap has no LiteLLM backstop,
   so its `gateway` is `skipped`.
+- A project's AI budget is asked about like a cap, by its editors who are not its admins (its admins edit it themselves),
+  and its `gateway` is `skipped`: a project has no LiteLLM backstop.
 
 ## Project context for remote agents (2026-11)
 
@@ -440,6 +442,18 @@ items still open (its "Wave 6" section); this page is the short list to check be
 ## Usage by goal (wave 7)
 
 - Only `ai.call` usage events carry a goal (`goalId`); `run.finished`, `node.failed`, `node.slow` and `agent.session` do not, and calls that come in through the spend import (kagent) have none, so they show under "No goal" on the AI page.
+
+## Project AI budgets (wave 9)
+
+- A budget is monthly and per project. There is no budget per goal.
+- The hard stop refuses only calls Landflow makes with a model that has a price in the price table. A model only the
+  gateway prices, a local model, and the calls of kagent and the Claude Code harness count towards the spend but are
+  never stopped. Imported spend can open a stop, which asks a person, but cannot refuse a call that already ran.
+- There is no LiteLLM team budget behind it (its window is 30 days, not the calendar month, and it would count calls
+  Landflow never stops).
+- A resumed month stays open even after a raise: the project's priced calls are not stopped again until the month ends.
+- Moving a workflow or agent to another project moves no budget; spend follows the project of the run.
+- Raising the amount in a project's settings settles that month's open incidents, as a raise from an incident does.
 
 ## Practices (waves P1 and P2)
 
