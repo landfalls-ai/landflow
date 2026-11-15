@@ -1,5 +1,5 @@
 /**
- * Which agents a team's member picker offers (docs/agent-teams.md#members). With the team's project known, the picker
+ * Which agents a team's member picker offers (docs/agent-teams.md#picking-members). With the team's project known, the picker
  * lists the agents available in it (`GET /api/agents?availableIn=<projectId>`: home agents, shared ones, and those shared
  * with every project). On an error, or without a project, it lists every agent it knows, as before. An agent already on
  * the team stays in the list even when it is no longer available, labelled as such: saving never removes a member.

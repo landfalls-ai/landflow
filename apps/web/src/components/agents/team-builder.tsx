@@ -79,7 +79,7 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
     router.replace(q.size ? `?${q}` : `/agents/teams/${teamId}`, { scroll: false });
   };
   const [noteTotal, setNoteTotal] = useState<number>();
-  // The agents available in the team's project (docs/agent-teams.md#members); undefined on an error or without a project: the picker lists every agent.
+  // The agents available in the team's project (docs/agent-teams.md#picking-members); undefined on an error or without a project: the picker lists every agent.
   const homeProject = team?.projectId;
   const [available, setAvailable] = useState<AvailableAgent[]>();
   useEffect(() => {
@@ -576,7 +576,7 @@ function TeamModelField({ value, agentModel, onChange }: { value?: AgentModel; a
 /** Which of the project's goals this team serves (docs/projects-and-goals.md); empty: the project's own goal. */
 export function TeamGoalField({ value, projectId, onChange, goals }: { value?: string; projectId?: string; onChange: (id: string | undefined) => void; goals?: Parameters<typeof GoalPicker>[0]['goals'] }) {
   return (
-    <Field id="team-goal-id" label="Project goal" hint="Which of the project’s goals this team serves. Empty: the project’s goal.">
+    <Field label="Project goal" hint="Which of the project’s goals this team serves. Empty: the project’s goal.">
       <GoalPicker value={value} onChange={onChange} projectId={projectId} allowNone noneLabel="The project's goal" goals={goals} ariaLabel="Project goal" />
     </Field>
   );

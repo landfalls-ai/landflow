@@ -119,7 +119,7 @@ A workflow or a team can name the goal it serves; with none, it works for its pr
 - **A team**: the **Project goal** field on the team page, under the team's own **Goal**. The two differ: **Goal** is
   free text, what the team is for; **Project goal** picks one of the goals in the tree. It saves the team's `goalId`.
 
-Both use the same picker as the goal dialog and the project brief ([agent-teams.md](agent-teams.md#members)).
+Both use the same picker as the goal dialog and the project brief. The team's member picker is in [agent-teams.md](agent-teams.md#picking-members).
 
 ## How it is built
 

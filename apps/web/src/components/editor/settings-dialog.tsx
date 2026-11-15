@@ -149,7 +149,7 @@ function TransportOverrides({ plugins, value, onChange }: { plugins: PluginSumma
 /** The goal this workflow works for; empty: its project's goal (docs/projects-and-goals.md). */
 export function WorkflowGoalField({ value, projectId, onChange, goals }: { value?: string; projectId?: string; onChange: (id: string | undefined) => void; goals?: Parameters<typeof GoalPicker>[0]['goals'] }) {
   return (
-    <Field id="wf-goal" label="Goal" hint="Which goal this workflow works for. Empty: the project’s goal.">
+    <Field label="Goal" hint="Which goal this workflow works for. Empty: the project’s goal.">
       <GoalPicker value={value} onChange={onChange} projectId={projectId} allowNone noneLabel="The project's goal" goals={goals} ariaLabel="Goal" />
     </Field>
   );

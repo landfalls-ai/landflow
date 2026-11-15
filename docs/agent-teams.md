@@ -63,6 +63,8 @@ and those shared with every project. A shared one says "Shared from <project>". 
 listed even when it is no longer available, marked "Not available in this project", and saving never removes a member.
 If the list of available agents can't be loaded, the dialog lists every agent, as it did before.
 
+## Goal
+
 The **Project goal** field picks which of the project's goals the team serves; empty means the project's goal
 ([projects-and-goals.md](projects-and-goals.md#picking-a-goal-for-a-workflow-or-team)). It is not the team's **Goal**
 text, which says what the team is for.
