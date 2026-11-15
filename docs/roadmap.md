@@ -2259,3 +2259,10 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
 - **Left (deferred)**: model verdicts in the CLI's `check` (a model's verdict reaches a flow through Check Practices, PR08;
   the CLI runs machine checks only) and a reminder after `Write` or `Edit` on a matching path (the mod never denies a
   tool call, so a reminder hook is its own package).
+
+## Token spend wave 12: the run's Spend tab (SP06)
+
+- The Run Trace gains a **Spend** tab for a run with model tokens: totals, spend by purpose, model, node, agent and step,
+  the cache line, the prompt's composition as one bar with the method named, and the calls list, refreshed every 10
+  seconds while the run is live ([run-trace.md](run-trace.md#spend)). A call opens its model span; the call's own sheet
+  with its composition comes with SP07.

@@ -648,6 +648,27 @@ stopped, or after `LANDFLOW_TEAM_PAUSE_MINUTES` (default 30), when the member ca
 so. A host restart ends the run as any run is interrupted (the pause is not saved), and in queue mode the pause routes
 only reach the process that runs the execution.
 
+## Spend
+
+A run that used model tokens has a **Spend** tab (after Artifacts; desktop first, on a phone it only must not scroll
+sideways). It reads `GET /api/executions/:id/spend` (the route and its numbers are SP05's) and again every 10 seconds
+while the run is live. Tokens, models and cost are what happened in the run, never behind the developer-details switch.
+
+- **The totals**: cost, tokens in and out, cached tokens and calls. "n unpriced calls" means the tokens count and the
+  cost does not; admins get a link to Settings → AI prices (`/settings#ai-prices`). "n runs you can't open: $X" counts
+  the sub-runs of projects you can't read (their cost, never their names).
+- **Where it went**: one table, switched between Purpose, Model, Node, Agent and Step (the agent's loop step, for Landflow
+  agents and the AI Agent node), with each row's share of the cost, calls, tokens, cached tokens and cost.
+- **The cache**: "53% of the prompt came from the cache · saved $0.0432 · 0 misses", with each miss's reason in words
+  (the instructions or tools changed, may be under the provider's minimum, expired, no cache asked for).
+- **What the prompt was made of**: one stacked bar over the calls that have a split, a legend of parts with tokens and
+  shares, and how they were counted, said from the data: "Counted exactly", "Counted by the model's tokenizer" or
+  "Estimated" (the weakest method among the calls summed), plus how many calls have no split.
+- **Calls**: time, purpose, model, tokens and cost, the latest 20 (Show all lists the rest); a time opens the call's
+  model span in the detail sheet.
+
+The answer holds sizes, counts and names only: no prompt text is shown or stored for spend.
+
 ## HTTP API
 
 | Route | What it does |
