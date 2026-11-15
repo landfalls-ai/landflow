@@ -19,6 +19,7 @@ import { EMPTY_NODE_POLICY, PROJECT_APPROVER_LABELS, type ProjectApprovers, type
 import { ScopedNodeList } from '@/components/governance/scoped-node-list';
 import { VariablesSettings } from '@/components/settings/variables-settings';
 import { ProjectWorkspaceCard } from './project-workspace-card'; // PC16
+import { ExportProjectButton } from './export-project-dialog'; // PC21
 import { useViewer } from '@/components/auth/viewer';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
 import { AuditLog } from '@/components/settings/audit-settings';
@@ -96,7 +97,14 @@ export function ProjectPage({ projectId }: { projectId: string }) {
             </>
           )
         }
-        actions={project && tab === 'overview' && projectRoleCan.create(project.role) && <NewInProject project={project} onChanged={() => void loadProject()} />}
+        actions={
+          project && (
+            <>
+              {/* PC21: */}<ExportProjectButton project={project} />
+              {tab === 'overview' && projectRoleCan.create(project.role) && <NewInProject project={project} onChanged={() => void loadProject()} />}
+            </>
+          )
+        }
       />
       <PageBody width="narrow">
         {project?.description && <p className="mb-4 text-[13px] text-t2">{project.description}</p>}

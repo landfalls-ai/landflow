@@ -368,6 +368,11 @@ A harness reads it from the project's context ([connect-your-harness.md](connect
 answer has `workspace` when the project saved one, with `branchPattern` (the template with `{project}` filled in;
 `{run}`, `{date}` and `{task}` are the harness's to fill) and setup lines only for editors and admins.
 
+## Export
+
+**Export** in the project's header downloads the project as a Claude Code plugin: `PROJECT.md` with its brief and goals
+next to its home agents and their skills, without people or ids ([marketplace.md](marketplace.md#export-a-project)).
+
 ## How it is built
 
 - Data: migration 2300 makes `goals`, `project_goals` (a project's goals and their order) and `goal_links` (initiatives);

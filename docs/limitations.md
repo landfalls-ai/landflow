@@ -92,6 +92,12 @@ items still open (its "Wave 6" section); this page is the short list to check be
   tool's answer only.
 - One workspace per project, not per goal or team. Setup commands are plain lines: no secrets, no per-run values.
 
+## Project export (wave 10)
+
+- No import yet: a project's plugin installs in Claude Code and its agents install in Landflow, but `PROJECT.md` and
+  `.landflow/project.json` are not read back into a project.
+- Agents only shared to the project are not included, and neither are its tasks, workflows or workspace.
+
 ## Test chat history (B10, 2026-11)
 
 - "Earlier tests" in an agent's test chat is per agent, not per person: test sessions all carry the user id `you`, so on a

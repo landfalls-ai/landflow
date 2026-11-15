@@ -2038,7 +2038,10 @@ Projects get a mission to serve, goals and a brief, and agents learn where their
   project** and **AI budget** cards and the budget rows in Needs you (PC15); and the project workspace for harness runs
   with the repositories screen (PC16) ([projects-and-goals.md](projects-and-goals.md#project-settings-for-agents),
   [below](#paperclip-wave-9-project-settings-for-agents-pc13)).
-- **Open:** goal progress, tasks and the PROJECT.md export (wave 10).
+- **PC21, built (wave 10; P7-3):** **Export** in a project's header downloads the project as a Claude Code plugin: `PROJECT.md`
+  with its brief and the goals it serves, its home agents and their skills, `.landflow/project.json`, no people or ids
+  ([marketplace.md](marketplace.md#export-a-project)). The agent and team exports are byte-identical (a test holds their bytes).
+- **Open:** goal progress and tasks (wave 10).
 
 ## Not planned
 
