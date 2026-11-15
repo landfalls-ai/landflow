@@ -465,6 +465,19 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - Moving a workflow or agent to another project moves no budget; spend follows the project of the run.
 - Raising the amount in a project's settings settles that month's open incidents, as a raise from an incident does.
 
+## Project tasks (wave 10)
+
+- No autonomous runs: every run of a task, from a wake-up or a click, needs a person's **Approve**. A wake-up only asks.
+- The tool approvals of a task run are decided in the agent's session (Needs you opens it), not on the task.
+- The agent's published version runs; an agent that is only a draft cannot be approved ("Publish it before it works on
+  tasks").
+- A removed member stays the assignee of a task until someone changes it.
+- A task run is always the in-process runner's (`runAgent`), whatever else runs the agent (kagent).
+- A task has one parent at most (no deeper trees), and a run in progress when its task is deleted finishes but saves
+  nothing.
+- Wake-ups use the instance time zone, not each person's; a clock change skips a wall-clock time that does not exist that
+  day. They run on the leader only, so a stopped host asks for nothing until it is back (a missed wake-up is not replayed).
+
 ## Practices (waves P1 and P2)
 
 - Practices reach the Claude Code mod, MCP clients, Landflow agents (PR06) and Landflow agents on kagent through the

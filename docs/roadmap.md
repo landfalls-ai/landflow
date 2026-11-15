@@ -1054,8 +1054,9 @@ four steps of the approved plan:
   Slack or email, **Approve** / **Deny** on the node and the phone card; the decision is an *Approval* check); members
   may **consult** peers and **hand a task over** (`consults`, the `consult_` and `hand_off_to_` tools), shown on the node
   with both members ringed, on the team page as dashed chips and in the Run Trace under the member that asked.
-- Next: tools of a Claude Code member on kagent asking for approval; Paperclip-style autonomy (heartbeats, a team inbox of
-  tasks) is left out on purpose for now.
+- Next: tools of a Claude Code member on kagent asking for approval. Paperclip-style autonomy is built, behind a person's
+  approval (wave 10, P7): project tasks with agent or person assignees, wake-ups that only ask and runs that need an
+  **Approve** ([Tasks](projects-and-goals.md#tasks)).
 
 ## Claude Code agents report what they use (built 2026-11-01)
 
@@ -2038,7 +2039,9 @@ Projects get a mission to serve, goals and a brief, and agents learn where their
   project** and **AI budget** cards and the budget rows in Needs you (PC15); and the project workspace for harness runs
   with the repositories screen (PC16) ([projects-and-goals.md](projects-and-goals.md#project-settings-for-agents),
   [below](#paperclip-wave-9-project-settings-for-agents-pc13)).
-- **Open:** goal progress, tasks and the PROJECT.md export (wave 10).
+- **Open:** goal progress and the PROJECT.md export (wave 10). Tasks, the server (P7-2, PC19): tasks with agent or person
+  assignees, atomic checkout, wake-ups that only ask, approved runs through the project's limits, Needs you items
+  ([Tasks](projects-and-goals.md#tasks)); the Tasks tab is PC20.
 
 ## Not planned
 
