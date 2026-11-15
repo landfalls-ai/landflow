@@ -13,7 +13,7 @@ import { groupCredentialTypes, stripApiSuffix } from '../src/components/credenti
 import { AddColumn } from '../src/components/data-tables/table-view';
 import { OVERVIEW_KINDS, PROJECT_TABS, projectTab } from '../src/components/projects/project-tabs';
 import { describeLastRun, importTarget, lastRunByWorkflow, NEW_MENU_ITEMS } from '../src/components/workflows/list-model';
-import { LastRun } from '../src/components/workflows/workflows-list';
+import { LastRun, LastRunPhone } from '../src/components/workflows/workflows-list';
 import { showHeaderAction } from '../src/lib/client/list-page';
 import type { CredentialTypeInfo, ExecutionSummary } from '../src/lib/shared/types';
 
@@ -78,12 +78,21 @@ describe('workflows: last run', () => {
     expect(renderToStaticMarkup(createElement(LastRun, {}))).toContain('Not run yet');
   });
 
-  it('shows the state badge on a phone row too, and nothing for an unknown run', () => {
-    const html = renderToStaticMarkup(createElement(LastRun, { run: run('a', 'error', new Date().toISOString()) }));
-    expect(html).toContain('data-testid="last-run-phone"');
-    expect(html).toContain('md:hidden');
-    expect(html).not.toContain('max-sm:hidden');
+  it('shows the state badge on a phone row too, on its second line, and nothing for an unknown run', () => {
+    const desktop = renderToStaticMarkup(createElement(LastRun, { run: run('a', 'error', new Date().toISOString()) }));
+    expect(desktop).toContain('max-md:hidden');
+    expect(desktop).not.toContain('last-run-phone');
+    expect(renderToStaticMarkup(createElement(LastRunPhone, { run: run('a', 'error', new Date().toISOString()) }))).toContain('data-testid="last-run-phone"');
     expect(renderToStaticMarkup(createElement(LastRun, { unknown: true }))).toBe('');
+    expect(renderToStaticMarkup(createElement(LastRunPhone, { unknown: true }))).toBe('');
+    // At 390 px the right block keeps only the time: the badges sit on the second line (md:hidden) and the icon strip
+    // gives way to them, so the name keeps its room and nothing is drawn over the icons.
+    const page = src('components', 'workflows', 'workflows-list.tsx');
+    const second = page.slice(page.indexOf('On a phone the badges sit here'), page.indexOf('{workflow.description ||'));
+    expect(second).toContain('md:hidden');
+    expect(second).toContain('<LastRunPhone');
+    expect(second).toContain('max-md:min-w-0 max-md:shrink max-md:overflow-hidden');
+    expect(page).toContain('<Badge tone="success" className="max-md:hidden">');
   });
 
   it('every empty state carries the New actions its hidden header menu had', () => {

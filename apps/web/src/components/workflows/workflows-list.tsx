@@ -473,7 +473,7 @@ export function LastRun({ run, unknown }: { run?: ExecutionSummary; unknown?: bo
 }
 
 /** The last run on a phone: the badge alone, on the row's second line (`WorkflowRow`). */
-function LastRunPhone({ run, unknown }: { run?: ExecutionSummary; unknown?: boolean }) {
+export function LastRunPhone({ run, unknown }: { run?: ExecutionSummary; unknown?: boolean }) {
   if (!run && unknown) return null;
   const last = describeLastRun(run);
   return (
