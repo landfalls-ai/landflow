@@ -2236,6 +2236,13 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   person list (`peopleTotals`; admins get the caption alone, and a person with no name is "Unnamed person" to a member);
   the rules are in [llm-gateway.md](llm-gateway.md#the-ai-page) "Who sees what".
 
+## Token spend wave 12: cache fixes (SP19)
+
+- **Done:** the system prompt's cache point moved after the stable part (persona, skills, project block, practices); the
+  memory, intro line and date line follow it; the conversation has a breakpoint; memory is read once per run. Measured on
+  a fake Anthropic cache: see [agents.md](agents.md#prompt-cache). Still open: the AI Agent node asks for no cache, and no
+  real Anthropic call has confirmed the hit rate.
+
 ## Practices (waves P1 and P2)
 
 Rules in the brain that connected agents follow, each approved by a person ([practices.md](practices.md)). Decided

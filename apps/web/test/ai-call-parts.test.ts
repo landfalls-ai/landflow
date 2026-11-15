@@ -180,7 +180,8 @@ describe('the system prompt and its segments', () => {
     const out = systemPromptParts(agent, configFor(agent, 'draft'), sessionOf(agent), ctx());
     expect(out.text).toBe(`Be brief.\n\nYou are “Helper”. Current date and time: ${AT}.`);
     expect(join(out.segments)).toBe(out.text);
-    expect(out.segments.map((s) => s.part)).toEqual(['instructions', 'formatting']);
+    // SP19: the intro line is its own `instructions` segment, after the cache point.
+    expect(out.segments.map((s) => s.part)).toEqual(['instructions', 'instructions', 'formatting']);
     expect(out.segments.at(-1)!.text).toBe(` Current date and time: ${AT}.`);
   });
 
@@ -224,7 +225,8 @@ describe('the system prompt and its segments', () => {
     const a = hashOf('2026-01-02T03:04:05.000Z');
     const b = hashOf('2026-02-02T03:04:05.000Z');
     expect(a.partHashes.instructions).toBe(b.partHashes.instructions);
-    expect(a.prefixHash).not.toBe(b.prefixHash);
+    // SP19 (D8): the date stamp sits after the cache point, so it is no longer in the prefix hash (it stays in the prompt hash).
+    expect(a.prefixHash).toBe(b.prefixHash);
   });
 });
 
