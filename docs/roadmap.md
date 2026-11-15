@@ -216,7 +216,7 @@ before sign-in and AI. ✅ Done; see [Durable runtime](features/engine.md#durabl
   stored; totals per model in the execution view, a cost column and total in Insights, usage on
   agent pages; caps per execution and per workflow per day (tokens or dollars, Workflow settings)
   and per agent per day or month, which stop the run with a clear error; see
-  [observability.md](observability.md#token-and-cost-tracking). Wave 6 ✅: caps per credential and
+  [observability.md](observability.md#8-token-and-cost-tracking). Wave 6 ✅: caps per credential and
   per user, cost alerts before a cap is reached, cached-token prices.
 - Evaluations, both offline (test datasets from Data Tables) and online (grading agent
   conversations). ✅ Done, after n8n's: an Evaluation Trigger runs the workflow once per Data Table
@@ -892,6 +892,15 @@ agents on the roster ([agents.md](agents.md#the-roster)).
 - **Tests**: `agent-workspace.test.ts` (8: faces, avatars, teams, summaries, templates) and `agent-architect.test.ts`
   (13: drafts, the chat with a scripted model, missing tools, marketplace agents), and a `brain.test.ts` case for the
   Missing tool detector and its plugin sketch.
+- **Plainer agents list and persona (B25, backbone wave 4; P-ag-1 to P-ag-3, P-ag-8)**: the persona strip only with no
+  agents, filter chips with no agents hidden (one row), cards with a name, description and status, **Import JSON** inside
+  New agent as **From a file**, one **What it does** field with the card text folded, and the system prompt behind **View
+  prompt**. Team cards follow the same rule.
+- **Agent detail in three tabs (B26, backbone wave 4; P-ag-4 to P-ag-7, P-ag-9)**: Persona, Abilities, Activity; the
+  layers are the Abilities navigation (rows that open their card in place, router, cache and tool access under
+  Advanced); one Add capability and one Add trigger menu; the kagent card only with a kagent cluster credential; the
+  publish state in the header button alone. Old `?tab=` links map to the new places
+  ([agents](agents.md#building-an-agent)).
 - What remains:
   - exporting agents as Claude Code plugins (`agents/<name>.md`, `skills/<name>/SKILL.md`, `.claude-plugin/plugin.json`
     and a `marketplace.json`), so they can be placed in a marketplace as well as installed from one;
@@ -969,11 +978,6 @@ approved plan:
 - **Quieter run screens (B21, backbone wave 3; P-trace-1 to P-trace-5, X13 for runs)**: tabs only with content (Story and
   Trace always, Team and Artifacts when they have something), the Report merged into the Story as a summary, one status
   line, no time slider on a short or single-participant run, Debug access in the header's ⋯ without tool names.
-- **Plainer agents list and persona (B25, backbone wave 4; P-ag-1 to P-ag-3, P-ag-8)**: the persona strip only with no
-  agents, filter chips with no agents hidden (one row), cards with a name, description and status, **Import JSON** inside
-  New agent as **From a file**, one **What it does** field with the card text folded, and the system prompt behind **View
-  prompt**. Team cards follow the same rule.
-- **Agent detail in three tabs (B26, backbone wave 4; P-ag-4 to P-ag-7, P-ag-9)**: Persona, Abilities, Activity; the layers are the Abilities navigation (rows that open their card in place, router, cache and tool access under Advanced); one Add capability and one Add trigger menu; the kagent card only with a kagent cluster credential; the publish state in the header button alone. Old `?tab=` links map to the new places ([agents](agents.md#building-an-agent)).
 - **The journal** (`execution_events`, migration 2000): actors, spans, messages, artifacts and checks per execution,
   written by the runner's translator, Landflow agent sessions, the A2A Agent node (every remote step kept, failed ones
   marked failed, `isError` results included), approvals (web, Slack, email) and the Run report gate. Redacted, cut to
@@ -1513,8 +1517,18 @@ setting `brain.workAutoSend`.
   repositories as `system` entities and the link from a person page to its user (migration 2080)
   ([work-and-briefings.md](work-and-briefings.md#related-colleagues)).
 - Follow-ups: `landflow work` should omit `visibility`; the briefing prompt (`briefingText`) does not render `related` yet (MOD6's clip, quote and link rules apply when it does); link a work event to its repository page and index systems by repo in the wiki; check `canEntity` before showing a person page's user link.
+- **Built (B31, wave 5)**: GitHub into the brain: the **GitHub to Work Event** node and the `work-github` template turn
+  pull requests, reviews and CI results (workflow runs and commit statuses) into work events, keep each repository as
+  a `system` page under the same id as recorded work, and declare the five GitHub-only kinds with their own fields
+  ([features/integrations.md](features/integrations.md#github-into-the-brain)). Open: a redelivered pinned event is
+  recorded twice, the webhook needs a public URL, and commit-status flakes are not paired
+  ([limitations.md](limitations.md)).
+- **Built (B32, wave 5)**: V4, nightly SDLC velocity: the Velocity Signals and Propose Flows nodes, the template
+  `brain-sdlc-velocity`, Suggest Improvement's Build Prompt, and **Build it** opening a new workflow with Spotlight
+  building from the suggestion's prompt ([second-brain.md](second-brain.md#nightly-sdlc-velocity)). Closes V4.
 - **Built (B29)**: the mod's colleagues: `/brain sync`, the pane, the overlap band, team or org per item, Post as my update and the admin's no-auto rule ([landflow-brain-mod.md](landflow-brain-mod.md#colleagues)).
-- **Next**: the overlap detector and a Settings screen for the auto-send setting.
+- **Built (B30, V3's server part)**: the Tomorrow sync template and its five brain nodes, the `brain_briefings` store, briefings served over MCP and `GET /api/brain/briefing`; Slack delivery with the server's own bot (`LANDFLOW_BRIEFING_SLACK_TOKEN`), never a credential ([work-and-briefings.md](work-and-briefings.md#the-nightly-sync)). Open, carried to B38: the landflow-brain mod's session start shows `summary` and `source` (`hooks/client.ts`, `register.ts`).
+- **Next**: the overlap detector, the web card and setup button (B37), and the mod showing the nightly text at session start. (The admin's auto-send switch is in Settings → MCP.)
 
 ## Shell: nine-item rail (built 2026-11-14)
 
@@ -1523,6 +1537,8 @@ pages), X4 (theme in the user menu, the connection shown only while reconnecting
 (a red dot for an offline plugin instead of a count), P-dev-1 (Build a plugin out of the rail), P-rb-1 (Runbooks only
 with the Landfall plugin) and P-pr-1 (Manage projects in the switcher, no intro on /projects) are closed. The look
 switch (`look-toggle.tsx`) was deleted by B12, which also closed X8 (developer details behind one switch).
+
+- **Plugins, Marketplace and Templates (B33, backbone wave 5; X3, X11, P-pl-1, P-pl-2, P-mk-1, P-mk-2, P-tp-1, P-tp-2)**: Plugins is one column (the feed behind **Show feed**, **Add endpoint** in the Scan button's menu, only the list count in the header) with 12 node chips and **+N**; Marketplace has Explore and Installed (plugins and skills together, a type filter), no workflows (Templates is their home), one category dropdown and a source dropdown only with several marketplaces; Templates has no project menu, usable templates first and the rest dimmed with *Needs <plugin>*. Import left the Templates page; B34 puts it in Workflows' New menu.
 
 ## Planned next
 
@@ -1745,6 +1761,24 @@ The wave 3 review notes were fixed in wave 4's carryover where they were contain
   look while a run is going on (a click does nothing); the node toolbar's ⋯ menu stays where it opened when the canvas
   pans under it.
 
+## Company backbone: left open from the wave 4 reviews (2026-11-15)
+
+The wave 4 review notes were fixed in wave 5's carryover where they were contained; these wait, each with its reason:
+
+- **Auto-sent events queued before the admin's rule**: the landflow-brain mod's mode `auto` queues an event at session
+  end; if the admin then forbids sending on its own, an event already queued is still flushed later. Dropping it needs
+  the queue to re-check the policy at flush (or the server to refuse it), a change to the queue's contract.
+- **Review resets a widened item**: `/brain visibility <id> team` on a held item, then a plain Send in `/brain review`,
+  sends it private (the safe direction, and what the prompt says). Showing the current visibility in the review question
+  is a wording change in `register.ts`, which B38 owns in wave 6.
+- **No test renders a Teams card**: the card (name, goal, status) is inline in `TeamsView` behind `useRouter`; testing
+  it needs it extracted into a component of its own.
+- **Live checks still open from wave 4**: Spotlight's continue-from-step with a real model stopped mid-run; importing an
+  agent JSON through **From a file**, the zero-agent persona strip and a Teams card with real data; a real kagent deploy
+  from Abilities → Deploy, and dark mode and Reduce motion on the new Abilities rows; the Brain with pages and Insights
+  with cache or router traffic in a browser; and fresh screenshots for B24, B26, B27 and B28 at 1440×900 and 390×844
+  (the review's were taken before their fix commits). They need a host and a browser, which the carryover does not run.
+
 ## Runs: one list (B20, 2026-11-14)
 
 Closed from the wave 1 page review: X2 (Executions, Runs and Search runs are one page, **Runs** at `/runs`, the old URLs redirect), P-ex-1 (no ID or Mode column), P-ex-2 (Stop all only while a run runs), P-ex-3 (repeated failures fold into one row), P-ex-4 (two re-run words), P-runs-1 (one search box with Status and Workflow chips, the rest under More filters) and P-cmp-1 (compare with fewer than two runs goes back to the list). See [the Runs list](run-trace.md#the-runs-list).
@@ -1759,6 +1793,29 @@ Follow-up: the Runs list filters load only the latest 200 runs and its journal f
   hidden; Insights drops the migration banner, shows the Agent layers card only when the cache or router was used, hides
   "no change" deltas and puts its footer behind a help line.
 
+## Lists, credentials, tables, projects and sign-in (B34, backbone wave 5)
+
+Closes P-wf-1, P-wf-2, P-cr-1, P-cr-2, P-dt-1, P-pr-2 and P-auth-1; X10 closed in part (below).
+
+- **Workflows** has one **New ▾** (Workflow, From template, Import…, Folder) in place of three buttons. **Import…** takes
+  a workflow file (Landflow, n8n or Flowise) or a template file (a template page's **Export**), which goes to the
+  templates library in the folder's or picked project and opens its page. A row shows its
+  last run (Succeeded, Failed, … and when) instead of the step count; the list reads the newest 500 runs after it has
+  drawn, so a workflow with no run among them says "Not run yet" (and nothing at all when older runs exist beyond the 500). On a
+  phone the row shows the state badge beside the updated time. The "All workflows" crumb shows only inside a folder or a project.
+- **Credentials** has no type grid; **New credential** opens the searchable type list, grouped by app, with no plugin
+  column and no "API" suffix. `/credentials?project=<id>` lists one project's credentials (the API's `?projectId=` read).
+- **Data tables**: Import CSV and Export CSV are in **⋯**; **+** at the end of the header row adds a column.
+- **Projects**: four tabs, Overview (counts that open the global page for the project, a **New ▾** that makes a workflow,
+  credential, data table or agent in it, and the project's data tables and agents each with **Move to project…**),
+  Members, Settings (with Variables) and Audit log. The old `?tab=` values map to them.
+- **Empty pages** (X10): on Workflows, Credentials and the data table's rows the header button hides while the empty state
+  shows its own; the empty Workflows states carry every New action (Folder at the root, Import in an empty folder).
+- **Sign-in**: no welcome sentence; an invalid or expired invite shows only the message.
+- Left open: `/data-tables` and `/agents` do not read `?project=` yet, so the Overview's counts for them open the whole
+  list (the Overview lists those items itself); X10 still shows twice in Settings → Variables ("Add variable" beside
+  "Add your first variable", now also in a project's Settings tab) and in Agents → Teams, both outside this package.
+
 ## Not planned
 
 Later, maybe: an agent code sandbox, and prompt management. Not planned:
@@ -1771,4 +1828,4 @@ Built: `/connect` (copy-paste setup and a brain key for each harness), Settings 
 
 ## Settings in five groups
 
-Built: Settings in five groups, API docs moved to Developers, the built-in price table folded and AI caps their own section, status rows with a help-tip instead of environment-variable paragraphs, an Audit Log and Configuration split with filters that apply on change, json-render under Advanced and "Prune now" in the ⋯ menu, and one sentence of help with a "?" popover in the settings intros (carry-over: the configured SAML card's key-management notes, the External secrets intro and its "Allow in node parameters" note, and the Users invite and removal notes still run longer than one sentence; the cap-reached error in `lib/server/ai-usage/index.ts`, the cost-alert text and link in `alerts.ts` and `test/ai-caps-cache.test.ts` still say "AI prices"; header comments in `api/settings/ai-caps/route.ts`, `api/openapi.json/route.ts` and `lib/server/openapi.ts` still say "AI prices" and "Settings → API") ([settings-and-data.md](features/settings-and-data.md)). Closes P-set-1, P-set-2, P-set-4, P-set-5, P-set-6, P-set-7 and X9 of the company backbone plan.
+Built: Settings in five groups, API docs moved to Developers, the built-in price table folded and AI caps their own section, status rows with a help-tip instead of environment-variable paragraphs, an Audit Log and Configuration split with filters that apply on change, json-render under Advanced and "Prune now" in the ⋯ menu, and one sentence of help with a "?" popover in the settings intros (carry-over: the configured SAML card's key-management notes, the External secrets intro and its "Allow in node parameters" note, and the Users invite and removal notes still run longer than one sentence; ~~the cap-reached error, the cost-alert text and link, and the header comments still say "AI prices" and "Settings → API"~~ fixed in the wave 4 carryover: they say Settings → AI caps, link to `#ai-caps` and name Developers → API reference) ([settings-and-data.md](features/settings-and-data.md)). Closes P-set-1, P-set-2, P-set-4, P-set-5, P-set-6, P-set-7 and X9 of the company backbone plan.

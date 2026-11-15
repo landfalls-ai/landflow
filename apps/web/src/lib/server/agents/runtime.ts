@@ -35,10 +35,11 @@ import { agentModel } from './models';
 import { personaPrompt } from '../../shared/persona';
 import { agentStore, configOf } from './store';
 import type { MemberPause } from '../agent-teams/pause';
-import { buildToolset, binaryScopeFor, dedupe, type BuiltTool, type ToolContext } from './tools';
+import { buildToolset, binaryScopeFor, dedupe, type BuiltTool, type ToolCaller, type ToolContext } from './tools';
 import { hostBinaryClient, storeBinary } from '../binary/access';
 import { DEFAULT_KEPT_TOOL_IMAGES, hydrateToolImages, imageSizeLabel, storeToolImages, type ToolImageMode } from '../nodes/tool-images';
 import { HttpError } from '../errors';
+import { store } from '../store';
 
 const MAX_RESULT_CHARS = 16_000;
 const MAX_USER_TURNS_IN_CONTEXT = 30;
@@ -65,6 +66,11 @@ export interface RunRequest {
   flow?: { model?: LanguageModel; tools?: AgentTool[] };
   /** What a team run adds to a member (agent-teams/runtime.ts): the tools for its reports, how it shows in the journal, a check before its answer. */
   team?: TeamRole;
+  /**
+   * Who the workflows this run's tools start are run for (ToolContext.caller): the person a chat route names, or a
+   * delegating agent's own caller. Absent: the workflow run the session belongs to (Run an Agent), else nobody.
+   */
+  caller?: ToolCaller;
 }
 
 export interface TeamRole {
@@ -208,10 +214,23 @@ async function pool<T, R>(items: T[], limit: number, work: (item: T) => Promise<
 /** The least time between two saves of a running session. */
 const SAVE_EVERY_MS = 1_500;
 
+/**
+ * Whom a workflow session's tools run for when the request names no caller: the run it works in, but only while that
+ * run goes on (running, or waiting on this agent's approval). A session resumed after its run ended (an approval
+ * decided later) runs its tools for nobody, never as that run's starter or version.
+ */
+async function sessionCaller(execution: AgentSession['execution']): Promise<ToolCaller> {
+  if (!execution) return {};
+  const record = await store.loadExecution(execution.executionId);
+  return record?.status === 'running' || record?.status === 'waiting' ? { execution: { executionId: execution.executionId, nodeId: execution.nodeId } } : {};
+}
+
 /** Run the agent once on a session. Rejects if the session is already running. */
 export async function runAgent(request: RunRequest): Promise<RunResult> {
   const { agent } = request;
   let session = request.session;
+  // Never the request around the run: a schedule, a channel or a workflow's agent may run inside someone else's.
+  const caller: ToolCaller = request.caller ?? (await sessionCaller(session.execution));
   if (running.has(session.id)) throw new Error('This session is already running — wait for the reply');
   running.add(session.id);
   const config = configFor(agent, session.version);
@@ -382,6 +401,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       signal: request.signal,
       delegate: (target, task) => delegate(target, task),
       approvals: request.approvals ?? 'ask',
+      caller,
     };
 
     let iterations = 0;
@@ -638,7 +658,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       parentSessionId: session.id,
       parentAgentId: agent.id,
     });
-    const result = await runAgent({ agent: target, session: child, message: task, depth: depth + 1, maxDepth, approvals: 'deny', signal: request.signal });
+    const result = await runAgent({ agent: target, session: child, message: task, depth: depth + 1, maxDepth, approvals: 'deny', signal: request.signal, caller });
     return { reply: result.reply, sessionId: child.id };
   }
 }
@@ -680,8 +700,9 @@ export async function decide(
     options.onEvent?.({ type: 'run.finished', sessionId, status: 'awaiting_approval', reason: 'awaiting_approval', usage: saved.usage });
     return { status: 'waiting', session: saved };
   }
-  const { by: _by, ...runOptions } = options;
-  const result = await runAgent({ agent, session, approvals: 'ask', ...runOptions });
+  const { by, ...runOptions } = options;
+  // The person deciding goes on with a chat; a workflow's session goes on for its run.
+  const result = await runAgent({ agent, session, approvals: 'ask', ...runOptions, ...(!session.execution && by && { caller: { startedBy: by } }) });
   return { status: 'resumed', ...result };
 }
 

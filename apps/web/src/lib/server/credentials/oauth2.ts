@@ -124,6 +124,8 @@ export interface StatePayload {
   r: string;
   /** Expiry, ms since the epoch. */
   e: number;
+  /** Who started the flow (the callback is public: the signed state carries them), recorded as the credential's changer. */
+  u?: string;
 }
 
 export const newNonce = () => b64url(randomBytes(18));

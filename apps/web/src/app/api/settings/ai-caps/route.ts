@@ -1,5 +1,5 @@
 /**
- * Settings → AI prices → AI usage caps: caps per model credential and per user (who started the run), per day or month,
+ * Settings → AI caps: caps per model credential and per user (who started the run), per day or month,
  * in tokens or US dollars (lib/server/ai-usage/caps.ts). Enforced on every model call like the workflow and agent caps; a
  * call over a cap fails with a clear error, and an alert rule of kind "AI cost" warns before it.
  *

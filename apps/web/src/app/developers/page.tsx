@@ -288,15 +288,20 @@ function Mono({ children }: { children: React.ReactNode }) {
   return <code className="rounded border border-hair bg-wl px-1 font-mono text-[12px] text-t1">{children}</code>;
 }
 
+/** Brings the API reference's heading to the top when the address asks for it. */
+function toReference() {
+  if (window.location.hash === '#api-reference') document.getElementById('api-reference')?.scrollIntoView({ block: 'start' });
+}
+
 export default function DevelopersPage() {
   const [lang, setLang] = useState<Lang>('typescript');
   const [copied, setCopied] = useState(false);
   const sample = SAMPLES[lang];
 
-  // A link to #api-reference (Settings used to hold it) lands with the heading at the top, after the page has laid out.
+  // A link to #api-reference (Settings used to hold it) lands with the heading at the top: once the page has laid out,
+  // and again when the OpenAPI document has loaded, since until then the page may be too short to bring it to the top.
   useEffect(() => {
-    if (window.location.hash !== '#api-reference') return;
-    const t = window.setTimeout(() => document.getElementById('api-reference')?.scrollIntoView({ block: 'start' }), 150);
+    const t = window.setTimeout(toReference, 150);
     return () => window.clearTimeout(t);
   }, []);
 
@@ -399,7 +404,7 @@ export default function DevelopersPage() {
         </Section>
 
         <Section title="API reference" id="api-reference">
-          <ApiDocs />
+          <ApiDocs onLoaded={() => requestAnimationFrame(toReference)} />
         </Section>
       </PageBody>
     </>

@@ -190,7 +190,7 @@ describe('caps per credential', () => {
     expect((await run(workflow)).status).toBe('success');
     const second = await run(workflow);
     expect(second.status).toBe('error');
-    expect(second.error!.message).toContain('AI usage cap reached: credential “Team OpenAI” today used 2,200 tokens of its 1,500 tokens limit (Settings → AI prices → AI usage caps)');
+    expect(second.error!.message).toContain('AI usage cap reached: credential “Team OpenAI” today used 2,200 tokens of its 1,500 tokens limit (Settings → AI caps)');
     const before = chatCalls();
     const third = await run(workflow);
     expect(third.status).toBe('error');

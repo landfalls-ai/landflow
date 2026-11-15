@@ -65,7 +65,7 @@ function workflow(id: string, name: string, nodes: WorkflowNode[], links: Array<
     connections: links.map(([source, target], i) => ({ id: `c${i}`, type: 'main', source, sourceIndex: 0, target, targetIndex: 0 })),
     createdBy: owner.id,
     ...extra,
-  } as Workflow);
+  } as Workflow, { actor: extra.createdBy ?? owner.id });
 }
 
 /** `n` failures of one node, the first an hour before `daysAgo` days ago. */

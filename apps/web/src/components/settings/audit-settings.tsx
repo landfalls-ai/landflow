@@ -9,11 +9,12 @@
  * Integrity: the Ed25519 key and the signed chain head, Sign now, and where signed heads are anchored (S3, webhook). Owners and admins only (the `audit:read` action); `AuditLog` alone, fixed to one project,
  * is the project page's Audit log tab for project admins.
  */
-import { useCallback, useEffect, useReducer, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { Check, Download, Pencil, Plus, RotateCw, Search, Send, ShieldCheck, Trash2, TriangleAlert, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
+import { usePhone } from '@/lib/client/use-phone';
 import { timeAgo, dayTime } from '@/lib/client/format';
 import { can } from '@/lib/shared/auth';
 import {
@@ -64,7 +65,7 @@ function actorLabel(event: AuditEvent): string {
   return actor.name || actor.email || actor.id || 'Unknown';
 }
 
-function EventRow({ event, onFilter, projectName }: { event: AuditEvent; onFilter: (patch: Partial<AuditFilters>) => void; projectName: (id: string) => string }) {
+function EventRow({ event, onFilter, projectName, phone }: { event: AuditEvent; onFilter: (patch: Partial<AuditFilters>) => void; projectName: (id: string) => string; phone?: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -72,13 +73,16 @@ function EventRow({ event, onFilter, projectName }: { event: AuditEvent; onFilte
         <td className="whitespace-nowrap px-3 py-2 text-[12px] text-t3" title={dayTime(event.at)}>
           {timeAgo(event.at)}
         </td>
-        <td className="max-w-[160px] truncate px-3 py-2 text-[12px] text-t1" title={event.actor.email}>
-          {actorLabel(event)}
-          {event.apiKeyId && <span className="ml-1 text-[11px] text-t3">· key</span>}
-        </td>
-        <td className="px-3 py-2 text-[12px]">
+        {!phone && (
+          <td className="max-w-[160px] truncate px-3 py-2 text-[12px] text-t1" title={event.actor.email}>
+            {actorLabel(event)}
+            {event.apiKeyId && <span className="ml-1 text-[11px] text-t3">· key</span>}
+          </td>
+        )}
+        <td className="min-w-0 break-words px-3 py-2 text-[12px]">
           <div className="text-t1">{event.summary}</div>
-          <div className="font-mono text-[11px] text-t3">{event.action}</div>
+          {phone && <div className="truncate text-[11px] text-t2">{actorLabel(event)}{event.apiKeyId && ' · key'}</div>}
+          <div className="truncate font-mono text-[11px] text-t3">{event.action}</div>
         </td>
         <td className="px-3 py-2">
           <Badge tone={OUTCOME_TONE[event.outcome]}>{event.outcome}</Badge>
@@ -86,7 +90,7 @@ function EventRow({ event, onFilter, projectName }: { event: AuditEvent; onFilte
       </tr>
       {open && (
         <tr className="border-b border-hair bg-sf2">
-          <td colSpan={4} className="px-3 py-2.5">
+          <td colSpan={phone ? 3 : 4} className="px-3 py-2.5">
             <dl className="grid grid-cols-[120px_minmax(0,1fr)] gap-x-3 gap-y-1 text-[12px]">
               <dt className="text-t3">When</dt>
               <dd className="text-t1">{dayTime(event.at)}</dd>
@@ -249,19 +253,25 @@ export function AuditLog({ projectId }: { projectId?: string } = {}) {
     }
   };
 
+  // Each request has a number; only the newest one's answer is shown, so a slow answer to an older filter never
+  // replaces a newer one.
+  const latest = useRef(0);
   const load = useCallback(async (next: AuditFilters, after?: string) => {
+    const mine = ++latest.current;
     setLoading(true);
     setError(undefined);
     try {
       const page = await api<AuditPage>(`/api/audit?${auditQuery(next, { limit: '50', ...(after && { cursor: after }) })}`);
+      if (mine !== latest.current) return;
       setEvents((current) => (after ? [...(current ?? []), ...page.events] : page.events));
       setCursor(page.nextCursor);
     } catch (e) {
-      setError((e as Error).message);
+      if (mine === latest.current) setError((e as Error).message);
     } finally {
-      setLoading(false);
+      if (mine === latest.current) setLoading(false);
     }
   }, []);
+  const phone = usePhone();
 
   useEffect(() => void load(filters), [filters, load]);
 
@@ -327,9 +337,9 @@ export function AuditLog({ projectId }: { projectId?: string } = {}) {
             <option value="failure">Failure</option>
             <option value="denied">Denied</option>
           </Select>
-          <div className="flex items-center gap-1.5">
-            <Input type="date" value={draft.from} onChange={(e) => apply({ from: e.target.value })} aria-label="From" title="From" />
-            <Input type="date" value={draft.to} onChange={(e) => apply({ to: e.target.value })} aria-label="To" title="To" />
+          <div className="col-span-2 flex min-w-0 items-center gap-1.5 sm:col-span-1">
+            <Input type="date" value={draft.from} onChange={(e) => apply({ from: e.target.value })} aria-label="From" title="From" className="min-w-0" />
+            <Input type="date" value={draft.to} onChange={(e) => apply({ to: e.target.value })} aria-label="To" title="To" className="min-w-0" />
           </div>
           {!projectId && (
             <Select value={draft.projectId} onChange={(e) => apply({ projectId: e.target.value })} aria-label="Project">
@@ -359,23 +369,24 @@ export function AuditLog({ projectId }: { projectId?: string } = {}) {
       <Card className="overflow-hidden p-0">
         {events?.length ? (
           <table className="w-full table-fixed">
+            {/* A phone has no Who column: the actor is a line under the summary, so What keeps its width. */}
             <colgroup>
-              <col className="w-[96px]" />
-              <col className="w-[160px]" />
+              <col className={phone ? 'w-[76px]' : 'w-[96px]'} />
+              {!phone && <col className="w-[160px]" />}
               <col />
               <col className="w-[90px]" />
             </colgroup>
             <thead>
               <tr className="border-b border-hair text-left text-[11px] uppercase tracking-wide text-t3">
                 <th className="px-3 py-2 font-semibold">When</th>
-                <th className="px-3 py-2 font-semibold">Who</th>
+                {!phone && <th className="px-3 py-2 font-semibold">Who</th>}
                 <th className="px-3 py-2 font-semibold">What</th>
                 <th className="px-3 py-2 font-semibold">Outcome</th>
               </tr>
             </thead>
             <tbody>
               {events.map((event) => (
-                <EventRow key={event.id} event={event} onFilter={apply} projectName={projectName} />
+                <EventRow key={event.id} event={event} onFilter={apply} projectName={projectName} phone={phone} />
               ))}
             </tbody>
           </table>
@@ -952,7 +963,10 @@ export function AuditSettings() {
         </p>
       </div>
 
-      {tab === 'log' && <AuditLog />}
+      {/* Hidden rather than unmounted, so the filters and the loaded pages survive a look at Configuration. */}
+      <div hidden={tab !== 'log'}>
+        <AuditLog />
+      </div>
 
       {tab === 'configuration' && (
         <div className="space-y-6">

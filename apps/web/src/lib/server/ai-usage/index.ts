@@ -116,11 +116,11 @@ export class AiUsageMeter implements UsageMeter {
     this.capsCache = undefined;
   }
 
-  /** The caps of Settings → AI usage caps that apply to `call`: its credential's, and its user's (or everyone's default). */
+  /** The caps of Settings → AI caps that apply to `call`: its credential's, and its user's (or everyone's default). */
   callLimits(call: ModelCall, scope: UsageScope): UsageLimit[] {
     const caps = this.caps();
     const limits: UsageLimit[] = [];
-    const where = 'Settings → AI prices → AI usage caps';
+    const where = 'Settings → AI caps';
     const credentialSet = call.credentialId ? caps.credentials[call.credentialId] : undefined;
     if (call.credentialId && capSetActive(credentialSet)) {
       const id = call.credentialId;
@@ -314,9 +314,9 @@ export function workflowLimits(scope: () => UsageScope, workflowId: string, sett
   return limits;
 }
 
-/** The caps of Agent → Settings → Usage limits. */
+/** The caps of Agent → Abilities → Guardrails (usage limits). */
 export function agentLimits(agentId: string, name: string, settings: Partial<AgentSettings>, meter: AiUsageMeter = aiUsageMeter()): UsageLimit[] {
-  const where = `Agent “${name}” → Settings → Usage limits`;
+  const where = `Agent “${name}” → Abilities → Guardrails`;
   const limits: UsageLimit[] = [];
   const dayTokens = positive(settings.dailyTokenLimit);
   const dayCost = positive(settings.dailyCostLimit);

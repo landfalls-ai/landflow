@@ -36,6 +36,8 @@ import { HttpError } from '../errors';
 const DAY_MS = 86_400_000;
 export const STALE_DAYS = 14;
 const QUIET_DAYS = 30;
+/** The longest build prompt a suggestion keeps (Spotlight's first message). */
+export const BUILD_PROMPT_MAX = 2_000;
 
 export const weeklyCap = () => {
   const n = Number(process.env.LANDFLOW_BRAIN_WEEKLY_CAP);
@@ -280,6 +282,7 @@ export function proposeFrom(
     ops: validated?.ops ?? [],
     ...(validated && (validated.warnings.length || validated.dropped.length) && { warnings: [...validated.warnings, ...validated.dropped] }),
     ...(input.draft && { draft: input.draft }),
+    ...(input.buildPrompt?.trim() && { buildPrompt: input.buildPrompt.trim().slice(0, BUILD_PROMPT_MAX) }),
     ...(input.agentChange && agent && { agentChange: input.agentChange }),
     ...(detector && input.metricSpec && { metricSpec: input.metricSpec }),
     risk,
@@ -321,12 +324,22 @@ export function applyProposal(id: string, options: ApplyOptions = {}, db: Databa
   const warnings: string[] = [];
   let workflow: Workflow | undefined;
   let createdWorkflowId: string | undefined;
+  // The save is the deciding person's, named here: a Slack click has no signed-in request to take it from, and a
+  // suggestion's ops or draft are someone else's (nobody, when no person decides: the new version has no author).
+  const saveAs = { actor: options.actorId ?? null };
 
   if (proposal.draft) {
     const draftId = `wf_${nanoid(10)}`;
     const draft: Workflow = { ...proposal.draft, id: draftId, active: false };
-    const create = () => governedSave(draft, undefined, (w) => store.saveWorkflow(w), { by: options.actorId, source: 'brain' }).workflow;
+    const create = () => governedSave(draft, undefined, (w) => store.saveWorkflow(w, saveAs), { by: options.actorId, source: 'brain' }).workflow;
     workflow = options.createWorkflow ? options.createWorkflow(create, draftId) : create();
+    createdWorkflowId = workflow.id;
+  } else if (proposal.buildPrompt) {
+    // "Build it" with Spotlight: an empty workflow named after the suggestion; the editor opens it and Spotlight builds from the prompt.
+    const buildId = `wf_${nanoid(10)}`;
+    const empty: Workflow = { id: buildId, name: proposal.title.slice(0, 120), active: false, nodes: [], connections: [] };
+    const create = () => governedSave(empty, undefined, (w) => store.saveWorkflow(w, saveAs), { by: options.actorId, source: 'brain' }).workflow;
+    workflow = options.createWorkflow ? options.createWorkflow(create, buildId) : create();
     createdWorkflowId = workflow.id;
   } else if (proposal.ops.length && proposal.target.type === 'workflow' && proposal.target.id) {
     const existing = store.getWorkflow(proposal.target.id);
@@ -334,7 +347,7 @@ export function applyProposal(id: string, options: ApplyOptions = {}, db: Databa
     const validated = validateOps(existing, proposal.ops);
     if (!validated.ops.length) throw new ProposalError(`These changes no longer fit the workflow: ${validated.dropped.join('; ') || 'nothing to change'}`, 409);
     warnings.push(...validated.warnings, ...validated.dropped);
-    workflow = governedSave(validated.workflow, existing, (w) => store.saveWorkflow(w), { by: options.actorId, source: 'brain' }).workflow;
+    workflow = governedSave(validated.workflow, existing, (w) => store.saveWorkflow(w, saveAs), { by: options.actorId, source: 'brain' }).workflow;
   } else if (proposal.agentChange && proposal.target.type === 'agent' && proposal.target.id) {
     const agent = agentStore.get(proposal.target.id);
     if (!agent) throw new ProposalError('The agent is gone', 404);

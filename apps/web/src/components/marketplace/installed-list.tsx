@@ -1,17 +1,27 @@
 'use client';
-/** Installed plugins: what each install created, node-plugin processes, and Uninstall. */
+/**
+ * The Installed tab: plugins (what each install created, node-plugin processes, Uninstall) and the skills they brought
+ * (the skill library) in one list, with a type filter.
+ */
 import { useState } from 'react';
 import Link from 'next/link';
 import { Bot, Package, RefreshCw, ScrollText, Sparkles, Workflow } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
-import type { InstalledPlugin } from '@/lib/shared/marketplace';
+import type { InstalledPlugin, LibrarySkill } from '@/lib/shared/marketplace';
 import { Card } from '../shell/page-header';
 import { Badge, type Tone } from '../ui/badge';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
+import { Segmented, SegmentedCount } from '../ui/segmented';
+import { SkillLibrary } from './skill-library';
 import { UNSUPPORTED_LABEL } from './use-marketplace';
+
+export type InstalledType = 'all' | 'plugins' | 'skills';
+
+/** Which of the two lists a type filter shows. */
+export const installedShows = (type: InstalledType) => ({ plugins: type !== 'skills', skills: type !== 'plugins' });
 
 const STATE_TONE: Record<string, Tone> = { running: 'success', starting: 'accent', installing: 'accent', restarting: 'warning', crashed: 'danger', stopped: 'muted' };
 
@@ -138,19 +148,38 @@ function InstalledRow({ plugin, onChanged }: { plugin: InstalledPlugin; onChange
   );
 }
 
-export function InstalledList({ installed, onChanged }: { installed: InstalledPlugin[]; onChanged: () => void }) {
-  if (!installed.length) {
+export function InstalledList({ installed, skills, onChanged }: { installed: InstalledPlugin[]; skills: LibrarySkill[] | undefined; onChanged: () => void }) {
+  const [type, setType] = useState<InstalledType>('all');
+  const counts: Record<InstalledType, number> = { all: installed.length + (skills?.length ?? 0), plugins: installed.length, skills: skills?.length ?? 0 };
+  const show = installedShows(type);
+  if (counts.all === 0 && skills) {
     return (
       <Card className="py-6">
-        <EmptyState title="Nothing installed yet" hint="Install a plugin from a marketplace: its agents show up under Agents and its skills in the skill library." />
+        <EmptyState title="Nothing installed yet" hint="Install a plugin from Explore: its agents show up under Agents and its skills here, ready to add to any agent." />
       </Card>
     );
   }
   return (
-    <div className="overflow-hidden rounded-2xl border border-hair bg-sf">
-      {installed.map((plugin) => (
-        <InstalledRow key={plugin.id} plugin={plugin} onChanged={onChanged} />
-      ))}
+    <div className="flex flex-col gap-3">
+      <Segmented
+        label="Type"
+        value={type}
+        onChange={setType}
+        options={([['all', 'All'], ['plugins', 'Plugins'], ['skills', 'Skills']] as const).map(([value, label]) => ({ value, label: <>{label} <SegmentedCount>{counts[value]}</SegmentedCount></> }))}
+      />
+      {show.plugins && installed.length > 0 && (
+        <div className="overflow-hidden rounded-2xl border border-hair bg-sf">
+          {installed.map((plugin) => (
+            <InstalledRow key={plugin.id} plugin={plugin} onChanged={onChanged} />
+          ))}
+        </div>
+      )}
+      {show.plugins && !installed.length && type === 'plugins' && (
+        <Card className="py-6">
+          <EmptyState compact title="No plugins installed" hint="Install one from Explore." />
+        </Card>
+      )}
+      {show.skills && (type === 'skills' || (skills?.length ?? 0) > 0 || !skills) && <SkillLibrary skills={skills} />}
     </div>
   );
 }

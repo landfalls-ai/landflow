@@ -642,6 +642,7 @@ export const suggestImprovementNode = defineNode({
       { name: 'nodeName', displayName: 'Node', type: 'string', default: '', description: 'The node it is about, by name' },
       { name: 'label', displayName: 'Label', type: 'string', default: '', description: 'A short tag in the inbox (default: this workflow’s name)' },
       { name: 'effect', displayName: 'Expected Effect', type: 'string', default: '' },
+      { name: 'buildPrompt', displayName: 'Build Prompt', type: 'string', default: '', typeOptions: { rows: 3 }, description: 'What Spotlight should build (up to 2,000 characters). With it, the card’s button is "Build it": it creates an empty workflow and opens Spotlight with this as the first message' },
       { name: 'ops', displayName: 'Changes (JSON)', type: 'json', default: '[]', description: 'Edit operations on the workflow, checked against it before they are kept; empty for advice' },
       {
         name: 'risk',
@@ -773,6 +774,7 @@ export const suggestImprovementNode = defineNode({
             nodeName: String(ctx.getNodeParameter('nodeName', i, '') ?? '').trim() || undefined,
             effect: String(ctx.getNodeParameter('effect', i, '') ?? '').trim() || undefined,
             ops,
+            buildPrompt: String(ctx.getNodeParameter('buildPrompt', i, '') ?? '').trim() || undefined,
             risk: ctx.getNodeParameter('risk', i, 'medium') as 'medium',
             confidence,
             fingerprint: String(ctx.getNodeParameter('fingerprint', i, '') ?? '').trim() || undefined,

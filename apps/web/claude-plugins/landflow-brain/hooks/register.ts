@@ -9,7 +9,7 @@
  */
 import type { EngineInterface, Register } from 'claude-code'
 import { QUEUE_MAX, VISIBILITIES, backoffMs, callBrain, confirmAndPost, deleteWork, due, emptyQueue, enqueue, getBriefing, keyFingerprint, liftStop, postWork, serverUrl, settle, shareRequest, visibilityRequest, type Briefing, type Config, type OutEvent, type Queue, type WorkVisibility } from './client'
-import { addArea, addPrs, areaOf, bandLine, bashFacts, canPost, effectiveMode, isAllowed, localDay, newEntry, parseRepos, repoSlug, statusLine, syncText, type Entry, type View } from './journal'
+import { addArea, addPrs, areaOf, bandLine, bashFacts, canPost, isAllowed, localDay, newEntry, parseRepos, repoSlug, statusLine, syncText, type Entry, type View } from './journal'
 import { PANE_ID, drawBand, drawPane } from './pane'
 import { titleFrom, toEvent } from './summary'
 
@@ -366,6 +366,8 @@ export const register: Register = (on, options) => {
       // The briefing is always read, for the policy (auto-send, brain off); `sync` only decides whether yesterday joins the prompt.
       const briefing: Briefing | undefined = await getBriefing($, config, day(await $.clock.now()))
       if (briefing?.brain === 'off') brainOff = true
+      // No briefing (offline, no cache for today): forget an older day's `allowed`, so mode `auto` holds until one answers.
+      if (!briefing) await $.store.delete('autoSend')
       if (briefing) {
         await $.store.set('autoSend', briefing.autoSend)
         await $.store.set('view', { day: briefing.day, today: briefing.today, yesterday: briefing.yesterday, related: briefing.related } satisfies View)
@@ -474,8 +476,10 @@ export const register: Register = (on, options) => {
       case '':
       case 'sync': {
         const view = await viewOf($, sub === 'sync')
-        await $.ui.open({ id: PANE_ID, title: 'Brain' })
-        return reply(sub === 'sync' ? syncText(view) : 'Brain pane opened (Esc closes it). /brain sync lists yesterday and your colleagues here.')
+        // Where there is no pane to open, /brain sync still answers with its text.
+        const opened = await $.ui.open({ id: PANE_ID, title: 'Brain' }).then(() => true, () => false)
+        if (sub === 'sync') return reply(syncText(view))
+        return reply(opened ? 'Brain pane opened (Esc closes it). /brain sync lists yesterday and your colleagues here.' : 'There is no pane here; /brain sync lists yesterday and your colleagues as text.')
       }
       case 'post': {
         const view = await viewOf($, false)

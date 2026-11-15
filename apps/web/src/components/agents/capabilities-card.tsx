@@ -1,5 +1,5 @@
 'use client';
-/** Build tab → Capabilities: node tools, workflow tools and sub-agents, plus memory. */
+/** Abilities → Capabilities: node tools, workflow tools and sub-agents, plus memory. */
 import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,

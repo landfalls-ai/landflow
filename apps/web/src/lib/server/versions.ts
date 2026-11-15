@@ -4,6 +4,9 @@
  * A save that leaves nodes, connections, settings, sticky notes and groups unchanged (same hash) adds no
  * version, and only the newest MAX_VERSIONS are kept per workflow (plus the published one: lib/server/publications.ts).
  * Executions record the version they started on (`versionFor`), and resume on it after a restart.
+ * Each version records its author (the `author` column, migration 2091): the person whose save made it, or nobody for a
+ * save without one (a background or system save, an import, versions from before 2091). A save that changes nothing that
+ * counts adds no version, so it never changes who wrote one: moving, renaming, publishing or activating leaves it alone.
  *
  * This module must not import the store: the store calls recordVersion().
  */
@@ -149,6 +152,15 @@ export function versionFor(workflow: Workflow): WorkflowVersionSummary | undefin
   }
 }
 
+/**
+ * Who saved a version: the user whose save made it, or undefined when nobody did (a save with no person behind it, an
+ * import, or a version from before authors were recorded). Read from its own column, never from the summary a file can carry.
+ */
+export function versionAuthor(workflowId: string, versionId: string): string | undefined {
+  if (!ID.test(workflowId) || !ID.test(versionId)) return undefined;
+  return database().get<{ author: string | null }>('SELECT author FROM workflow_versions WHERE id = ? AND workflow_id = ?', versionId, workflowId)?.author ?? undefined;
+}
+
 /** Whether anything refers to a version by id: a run, an open publish request, a pending schedule or the published one. */
 function isReferenced(workflowId: string, versionId: string): boolean {
   const db = database();
@@ -169,9 +181,10 @@ function isReferenced(workflowId: string, versionId: string): boolean {
  * request, a schedule, the published one), so an editing session is one version, not one per drag. Manual saves,
  * publishes and tab-leave saves always add a version. A decided publish request or the publish log may still name a
  * folded-away id; their readers already allow a missing version (the 50-version cap removes them too).
+ * `options.author`: who saved it (see versionAuthor); undefined records nobody.
  * Never throws: a save must not fail because of its history.
  */
-export function recordVersion(workflow: Workflow, options: { autosave?: { by: string } } = {}): WorkflowVersionSummary | undefined {
+export function recordVersion(workflow: Workflow, options: { autosave?: { by: string }; author?: string } = {}): WorkflowVersionSummary | undefined {
   try {
     if (!ID.test(workflow.id)) return undefined;
     const db = database();
@@ -205,7 +218,7 @@ export function recordVersion(workflow: Workflow, options: { autosave?: { by: st
       ...(auto && { autosave: auto }),
     };
     db.transaction(() => {
-      db.upsert('workflow_versions', versionRow({ ...summary, workflow }));
+      db.upsert('workflow_versions', { ...versionRow({ ...summary, workflow }), author: options.author ?? null });
       // The replacement has a new id, so a pending request or schedule that named the old one notices; the old row goes.
       if (replaces) db.delete('workflow_versions', { id: replaces.id });
       const stale = db.all<{ id: string }>('SELECT id FROM workflow_versions WHERE workflow_id = ? ORDER BY number DESC LIMIT -1 OFFSET ?', workflow.id, MAX_VERSIONS);

@@ -211,6 +211,8 @@ describe('Connect: authorization code with PKCE', () => {
     expect(exchange.basic).toEqual({ id: 'client-1', secret: 'secret-1' });
     const status = credentials.list().find((c) => c.id === credential.id)!.oauth2!;
     expect(status).toMatchObject({ grantType: 'pkce', connected: true, account: 'alice@example.test', expired: false, refreshable: true, scope: 'openid email' });
+    // The person who started Connect (carried in the signed state: the callback is public) last changed it.
+    expect(credentials.lastChangedBy(credential.id)).toBe('usr_test_owner');
     expect(Date.parse(status.expiresAt!)).toBeGreaterThan(Date.now() + 3_500_000);
   });
 

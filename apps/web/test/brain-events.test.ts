@@ -63,7 +63,7 @@ afterAll(() => {
 const node = (id: string, name: string, type: string, parameters: Record<string, unknown> = {}): WorkflowNode => ({ id, name, type, typeVersion: 1, position: [0, 0], parameters });
 
 function workflow(id: string, name: string, nodes: WorkflowNode[], extra: Partial<Workflow> = {}): Workflow {
-  return store.saveWorkflow({ id, name, active: false, nodes, connections: [], createdBy: owner.id, ...extra } as Workflow);
+  return store.saveWorkflow({ id, name, active: false, nodes, connections: [], createdBy: owner.id, ...extra } as Workflow, { actor: extra.createdBy ?? owner.id });
 }
 
 function clear() {

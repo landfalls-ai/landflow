@@ -27,7 +27,7 @@ const { briefingFor } = await import('@/lib/server/brain/briefing');
 const { findSimilar } = await import('@/lib/server/brain/similar');
 const { study } = await import('@/lib/server/brain/study');
 const { DETECTOR_RUNS, detectContext } = await import('@/lib/server/brain/detectors');
-const { recordUsage, upsertWorkEvent } = await import('@/lib/server/usage/ledger');
+const { dayOf, recordUsage, upsertWorkEvent } = await import('@/lib/server/usage/ledger');
 const { listUsageEvents, usageReport, rollupDays, ledgerSize } = await import('@/lib/server/usage/query');
 const { createTeamProject, setHomeProject, setMember } = await import('@/lib/server/projects/store');
 const { instanceServer } = await import('@/lib/server/mcp/instance-tools');
@@ -63,7 +63,7 @@ function clear() {
 }
 
 function seed() {
-  const w = store.saveWorkflow({ id: 'wf_vis', name: 'Ingest', active: false, nodes: [], connections: [], createdBy: owner.id } as unknown as Workflow);
+  const w = store.saveWorkflow({ id: 'wf_vis', name: 'Ingest', active: false, nodes: [], connections: [], createdBy: owner.id } as unknown as Workflow, { actor: owner.id });
   setHomeProject('workflow', w.id, team.id);
   entities.upsertEntity({ type: 'person', id: 'alice-vis.test', name: 'Alice', projectId: team.id, attrs: { email: 'alice@vis.test' } });
   // A's private work, and an event of a flow (no owner) that people with the workflow can read.
@@ -170,7 +170,7 @@ describe('a private work event', () => {
   });
 
   it('leaves Find Similar for a flow an owner made reading everything it did before', async () => {
-    store.saveWorkflow({ id: 'wf_owner_made', name: 'Billing retry sweeper', active: false, nodes: [], connections: [], createdBy: owner.id } as unknown as Workflow);
+    store.saveWorkflow({ id: 'wf_owner_made', name: 'Billing retry sweeper', active: false, nodes: [], connections: [], createdBy: owner.id } as unknown as Workflow, { actor: owner.id });
     const found = await findSimilar('Billing retry sweeper', { scope: scopeForWorkflow('wf_owner_made') });
     expect(JSON.stringify(found)).toContain('wf_owner_made');
   });
@@ -200,7 +200,8 @@ describe('a private work event', () => {
   });
 
   it('is left out of the daily rollups and of a flow’s reads', () => {
-    const day = at.slice(0, 10);
+    // The ledger files an event under the instance's day (its time zone), not the UTC date: they differ near midnight.
+    const day = dayOf(Date.parse(at));
     rollupDays([day]);
     const rolled = database().all<{ kind: string }>("SELECT kind FROM usage_daily WHERE kind = 'work.session'");
     expect(rolled).toEqual([]);

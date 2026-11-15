@@ -349,14 +349,19 @@ function LeaseBar({ expiresAt }: { expiresAt?: string }) {
   );
 }
 
-/** How many node icons a folded card shows before "+N". */
-const TILE_NODES = 7;
+/** How many node chips a card shows before "+N" (a plugin can have 70 or more). */
+export const NODE_CHIPS = 12;
+
+/** The first {@link NODE_CHIPS} nodes and how many are left out. */
+export function chipsToShow<T>(nodes: readonly T[], limit = NODE_CHIPS): { shown: T[]; more: number } {
+  const shown = nodes.slice(0, limit);
+  return { shown, more: nodes.length - shown.length };
+}
 
 /** A folded card: icon, name, status, two lines of description and the nodes' icons. Clicking it unfolds the card. */
 function PluginTile({ plugin, onToggle }: { plugin: PluginSummary; onToggle: () => void }) {
   const builtin = plugin.source === 'builtin';
-  const shown = plugin.nodes.slice(0, TILE_NODES);
-  const more = plugin.nodes.length - shown.length;
+  const { shown, more } = chipsToShow(plugin.nodes);
   return (
     <button
       onClick={onToggle}
@@ -380,7 +385,7 @@ function PluginTile({ plugin, onToggle }: { plugin: PluginSummary; onToggle: () 
         <ChevronDown className="size-3.5 shrink-0 text-t3 transition-colors duration-[120ms] group-hover:text-t1" strokeWidth={1.7} />
       </div>
       <p className="line-clamp-2 min-h-[2lh] text-[12px] leading-[1.45] text-t2">{plugin.info.description || <span className="text-t3">No description</span>}</p>
-      <div className="mt-auto flex w-full min-w-0 items-center gap-1 max-md:flex-wrap max-md:gap-y-1.5">
+      <div className="mt-auto flex w-full min-w-0 flex-wrap items-center gap-x-1 gap-y-1.5">
         {shown.map((node) => {
           const color = descriptorColor(node, plugin.info.color);
           return (
@@ -413,6 +418,7 @@ export function PluginCard({ plugin, onChange, expanded = true, onToggle }: { pl
 function PluginDetail({ plugin, onChange, onToggle }: { plugin: PluginSummary; onChange: (plugins: PluginSummary[]) => void; onToggle?: () => void }) {
   const builtin = plugin.source === 'builtin';
   const [busy, setBusy] = useState(false);
+  const [allNodes, setAllNodes] = useState(false);
   // Discovery sources besides the first one (a plugin can be announced and discovered), and Kubernetes namespaces.
   const otherSources = [...new Set(plugin.endpoints.map((e) => e.source))].filter((source) => source !== plugin.source);
   const namespaces = [...new Set(plugin.endpoints.flatMap((e) => (e.origin ? [e.origin.namespace] : [])))];
@@ -538,8 +544,8 @@ function PluginDetail({ plugin, onChange, onToggle }: { plugin: PluginSummary; o
 
       {/* nodes */}
       {plugin.nodes.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 border-t border-hair px-4 py-3">
-          {plugin.nodes.map((node) => (
+        <div className="flex flex-wrap items-center gap-1.5 border-t border-hair px-4 py-3">
+          {(allNodes ? plugin.nodes : chipsToShow(plugin.nodes).shown).map((node) => (
             <span
               key={node.name}
               title={node.description}
@@ -550,6 +556,11 @@ function PluginDetail({ plugin, onChange, onToggle }: { plugin: PluginSummary; o
               {node.usableAsTool && <span className="font-mono text-[11px] text-t3">tool</span>}
             </span>
           ))}
+          {plugin.nodes.length > NODE_CHIPS && (
+            <button onClick={() => setAllNodes((v) => !v)} aria-expanded={allNodes} className="rounded-md px-1.5 py-0.5 font-mono text-[12px] text-t3 hover:text-t1">
+              {allNodes ? 'Show fewer' : `+${chipsToShow(plugin.nodes).more} more`}
+            </button>
+          )}
         </div>
       )}
     </div>

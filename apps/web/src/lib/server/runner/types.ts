@@ -57,14 +57,21 @@ export interface RunOptions {
   parent?: { executionId: string; nodeId?: string };
   /** An error workflow run, for this failed execution (it never starts another error workflow). */
   errorOf?: string;
+  /** A metric's sub-workflow run, measuring this suggestion (brain/effect.ts): nobody started it, and no schedule either. */
+  metricOf?: string;
   /** Use this id (from newExecutionId()): webhook and form uploads are stored under it before the run starts. */
   executionId?: string;
   /** A trigger call's Idempotency-Key: the same key within the retention window rejects with DuplicateRunError (its execution id). */
   idempotencyKey?: string;
   /** Not held back by the workflow's concurrency limit (manual retries). */
   bypassConcurrency?: boolean;
-  /** A retry of this failed execution (attempt 1 = the first retry). */
-  retry?: { of: string; attempt: number };
+  /** A retry of this failed execution (attempt 1 = the first retry); `automatic`: the retry timer started it. */
+  retry?: { of: string; attempt: number; automatic?: boolean };
+  /**
+   * The person who started the run, when the caller knows (an MCP tool call's user, the person an automatic retry
+   * continues). Else a person-started run (see `starterOf` in run.ts) records the request's signed-in user.
+   */
+  startedBy?: string;
   /** Continue from this failed execution's last checkpoint: what ran before it is reused, the failed node runs again. */
   fromCheckpoint?: { executionId: string };
   /** A test case of an offline evaluation run (lib/server/evaluations); sub-executions inherit it. */

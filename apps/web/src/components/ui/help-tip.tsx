@@ -13,6 +13,7 @@ export function HelpTipBody({ children }: { children: ReactNode }) {
   return <div className="max-w-[320px] space-y-1.5 px-2.5 py-2 text-[12px] leading-relaxed text-t2 max-md:max-w-none max-md:px-0">{children}</div>;
 }
 
+/** On a phone the button's hit area grows 12 px each way (`after:-inset-3`): a link right after it should be `relative`, so it paints, and takes taps, above that area. */
 export function HelpTipButton({ label, open, onClick, children, className }: { label: string; open: boolean; onClick?: () => void; children?: ReactNode; className?: string }) {
   return (
     <button

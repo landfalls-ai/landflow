@@ -218,3 +218,16 @@ Underline tabs (a detail page's sections) and the Run Trace's stretched grid of 
 6. **OAuth2 connect buttons.** Credentials take tokens and keys directly; there is no in-app consent flow ("Connect with Google").
 7. **Debugger edits.** Parameter edits made while paused don't change the running debug session; they apply to the next run.
 8. ~~**Expression editor.**~~ Done: highlighting and autocomplete for `$json` fields, other nodes' output, variables and methods. n8n's full-screen expression editor with a live result pane is still missing; the result shows under the field.
+
+## Lists, credentials, tables, projects and sign-in (B34)
+
+- **Workflows**: one **New ▾** menu (Workflow, From template, Import…, Folder; a bottom sheet on a phone). Each row shows
+  its last run (state and time) and its last update; no step count, no "All workflows" crumb at the top level.
+- **Credentials**: no grid of types. **New credential** opens the type list with a search box, grouped by app (the
+  host's own generic logins under Generic), names without the "API" suffix and no plugin column.
+- **Data table**: **⋯** holds Rename, Import CSV, Export CSV and Delete; **+** at the end of the header row adds a column.
+- **Project**: Overview (counts; each opens the page for that kind filtered to the project), Members, Settings (with
+  Variables) and Audit log (project admins).
+- **Empty pages**: the header's primary button hides while the empty state shows the same action (Workflows,
+  Credentials, a data table's rows).
+- **Sign-in**: the title alone, no welcome sentence. An invalid, used or expired invite shows only its message.

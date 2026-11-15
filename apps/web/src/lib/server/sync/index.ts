@@ -174,7 +174,7 @@ function resolveCredentials(doc: Record<string, unknown>, saved: SyncCredential[
  * field changes only to a `$secrets` reference (never a value, neither from the file nor to the file), so the instance's own
  * secrets stay; a literal value in a secret field of the file is dropped with a warning.
  */
-function planCredentialUpdate(credential: { name: string; type: string; data?: Record<string, unknown>; secretFields?: string[] }, saved: SyncCredential[], add: (stage: number, change: SyncChange, run: () => unknown) => void, warnings: string[]) {
+function planCredentialUpdate(credential: { name: string; type: string; data?: Record<string, unknown>; secretFields?: string[] }, saved: SyncCredential[], add: (stage: number, change: SyncChange, run: () => unknown) => void, warnings: string[], by: string | undefined) {
   const target = saved.find((c) => c.type === credential.type && c.name === credential.name) ?? saved.find((c) => c.id === mappedCredential(credential.type, credential.name) && c.type === credential.type);
   if (!target?.id) return;
   const current = vault.definition(target.id);
@@ -189,7 +189,7 @@ function planCredentialUpdate(credential: { name: string; type: string; data?: R
   if (dropped.length) warnings.push(`${CREDENTIALS_FILE}: credential “${credential.name}”: ${dropped.join(', ')} ${dropped.length === 1 ? 'holds a value' : 'hold values'} instead of a $secrets reference: left as it is on this instance`);
   if (!Object.keys(patch).length) return;
   const id = target.id;
-  add(2.5, { kind: 'credential', action: 'update', id, name: credential.name, path: CREDENTIALS_FILE, fields: Object.keys(patch).sort() }, () => vault.update(id, { data: patch }));
+  add(2.5, { kind: 'credential', action: 'update', id, name: credential.name, path: CREDENTIALS_FILE, fields: Object.keys(patch).sort() }, () => vault.update(id, { data: patch }, { actor: by }));
 }
 
 /** Top-level fields that differ between two workflow documents. */
@@ -457,7 +457,7 @@ export function planSync(files: SyncFile[], options: PlanOptions = {}): SyncPlan
     if (!credential.data && !credential.secretFields) continue;
     const { name, type } = credential;
     if (present(type, name)) {
-      if (options.updateCredentials) planCredentialUpdate(credential, state.credentials, add, warnings);
+      if (options.updateCredentials) planCredentialUpdate(credential, state.credentials, add, warnings, options.by);
       continue;
     }
     if (!name.trim() || name.length > 200) {
@@ -479,7 +479,7 @@ export function planSync(files: SyncFile[], options: PlanOptions = {}): SyncPlan
     const empty = [...secret].filter((field) => data[field] === undefined).sort();
     const id = `cred_${nanoid(12)}`;
     planned.push({ id, name, type });
-    add(2.5, { kind: 'credential', action: 'create', id, name, path: CREDENTIALS_FILE, fields: [type, ...empty.map((field) => `${field} (empty)`)] }, () => vault.create({ name, type, data }, { id, partial: true }));
+    add(2.5, { kind: 'credential', action: 'create', id, name, path: CREDENTIALS_FILE, fields: [type, ...empty.map((field) => `${field} (empty)`)] }, () => vault.create({ name, type, data }, { id, partial: true, actor: options.by }));
     if (empty.length) warnings.push(`${CREDENTIALS_FILE}: credential “${name}” (${type}) is created without ${empty.join(', ')}: fill ${empty.length === 1 ? 'it' : 'them'} in on this instance`);
     if (dropped.length) warnings.push(`${CREDENTIALS_FILE}: credential “${name}”: ${dropped.join(', ')} ${dropped.length === 1 ? 'holds a value' : 'hold values'} instead of a $secrets reference: left out (secret values never travel in files)`);
   }

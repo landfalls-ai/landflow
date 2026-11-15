@@ -18,8 +18,9 @@ import { useEditor } from '../store';
 import { isPhone } from '@/lib/client/use-phone';
 import { lastOutcomeOf, lastRunOf, openNeedOf, stepsOf, stoppedAtOf, titleOf } from '../timeline';
 import { Composer, focusSpotlight } from './composer';
-import { AutonomousSwitch } from './proposal';
+import { AutonomousExplainer, AutonomousSwitch, useAutonomousExplainer } from './proposal';
 import { Timeline } from './timeline-view';
+import { useAskParam } from './ask-param';
 
 /**
  * While Spotlight works, the canvas keeps the whole flow in view as the panel and the logs change its size; once it is on
@@ -210,7 +211,11 @@ function useSpotlightKeeping() {
  */
 export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hiddenOnPhone?: boolean; /** Stays mounted and keeps its conversation, but shows nothing (the Spotlight | Chat switch). */ hidden?: boolean }) {
   const keep = useSpotlightKeeping();
+  // "Build it" on a suggestion opens the editor with ?ask=proposal:<id>: Spotlight builds from its prompt once (./ask-param.ts).
+  const boundTo = useAssistant((s) => s.workflowId);
+  useAskParam(Boolean(keep.workflowId) && boundTo === keep.workflowId);
   const collapsed = useAssistant((s) => s.collapsed);
+  const explainer = useAutonomousExplainer();
   const items = useAssistant((s) => s.items);
   const agents = useAssistant((s) => s.agents);
   const drafting = useAssistant((s) => s.drafting);
@@ -351,7 +356,8 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
       onTransitionEnd={(e) => {
         if (e.target !== e.currentTarget || e.propertyName !== 'width') return;
         setMoving(false);
-        refit();
+        // Under Reduce motion the effect above has already fitted; the near-zero transition the global rule leaves ends here too.
+        if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) refit();
       }}
       onTransitionCancel={(e) => {
         if (e.target === e.currentTarget && e.propertyName === 'width') setMoving(false);
@@ -444,10 +450,14 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
             <ChevronDown className={cn('size-4 transition-transform md:hidden', collapsed && 'rotate-180')} />
           </button>
         </div>
-        {/* Desktop: the switch has a row of its own, so the title keeps its width in the 360 px column. */}
-        <div className="hidden h-9 shrink-0 items-center justify-between gap-2 border-b border-hair px-3 md:flex">
-          <span className="text-[11.5px] text-t3">How Spotlight works</span>
-          <AutonomousSwitch />
+        {/* Desktop: the switch has a row of its own, so the title keeps its width in the 360 px column. The first-run
+            note sits under the row, in the panel's flow, so it pushes the conversation down instead of covering it. */}
+        <div className="hidden shrink-0 border-b border-hair md:block">
+          <div className="flex h-9 items-center justify-between gap-2 px-3">
+            <span className="text-[11.5px] text-t3">How Spotlight works</span>
+            <AutonomousSwitch explainer={explainer} />
+          </div>
+          {explainer.note && <AutonomousExplainer onClose={explainer.close} className="mx-3 mb-2.5 shadow-none" />}
         </div>
         {/* Phone, folded: the step Spotlight is on, and Review and Apply when a change waits. */}
         {folded && latest && (

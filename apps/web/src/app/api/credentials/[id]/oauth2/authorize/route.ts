@@ -1,6 +1,7 @@
 import { OAUTH2_MESSAGE_CHANNEL } from '@/lib/shared/oauth2';
 import { callbackPage, startAuthorization } from '@/lib/server/credentials/oauth2-flow';
 import { handler } from '@/lib/server/http';
+import { currentActorId } from '@/lib/server/auth/context';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
@@ -13,7 +14,7 @@ type Ctx = { params: Promise<{ id: string }> };
 export const GET = handler(async (request: Request, { params }: Ctx) => {
   const { id } = await params;
   try {
-    const { url, cookie } = await startAuthorization(id, request);
+    const { url, cookie } = await startAuthorization(id, request, { actor: currentActorId() });
     return new Response(null, { status: 302, headers: { location: url, 'set-cookie': cookie, 'cache-control': 'no-store' } });
   } catch (error) {
     return callbackPage({ message: { source: OAUTH2_MESSAGE_CHANNEL, credentialId: id, ok: false, message: (error as Error).message } });

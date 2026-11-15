@@ -371,7 +371,7 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
           steps ? (
             !streamed && i === firstProposal && <LiveSteps key="steps" live={steps} />
           ) : asRows && (part.proposal.state || live || spotlightBusy) ? (
-            <ProposalRow key={part.proposal.id} itemId={item.id} proposal={part.proposal} fix={Boolean(item.testId)} />
+            <ProposalRow key={part.proposal.id} proposal={part.proposal} fix={Boolean(item.testId)} />
           ) : (
             // Not applied by Spotlight (a stopped reply, a change that no longer fits, a Fix bubble): the person decides.
             <ProposalCard key={part.proposal.id} itemId={item.id} proposal={part.proposal} />

@@ -146,6 +146,12 @@ export function getUser(id: string): UserRecord | undefined {
   return row && fromRow(row);
 }
 
+/** An active (not deactivated) owner or admin: who may vouch for what the briefing nodes use (lib/server/nodes/briefing.ts). */
+export function isActiveAdmin(id: string | undefined): boolean {
+  const user = id ? getUser(id) : undefined;
+  return Boolean(user && !user.disabledAt && (user.role === 'owner' || user.role === 'admin'));
+}
+
 export function findUserByEmail(email: string): UserRecord | undefined {
   const row = authDb().get<UserRow>('SELECT * FROM users WHERE email = ?', normalizeEmail(email));
   return row && fromRow(row);

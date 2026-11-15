@@ -112,6 +112,9 @@ describe('agent tabs', () => {
     const plugin = cfg({ plugins: ['x@y'] });
     expect(rowSummary('capabilities', plugin, [], false)).toEqual({ state: 'done', detail: '1 plugin' });
     expect(rowSummary('capabilities', cfg({}), [], false).state).toBe('todo');
+    expect(rowSummary('triggers', { ...cfg({}), channels: [{} as never] }, [], false)).toEqual({ state: 'done', detail: '1 channel' });
+    expect(rowSummary('triggers', { ...cfg({}), schedules: [{} as never, {} as never], channels: [{} as never] }, [], false).detail).toBe('2 schedules · 1 channel');
+    expect(rowSummary('triggers', cfg({}), [], false).state).toBe('todo');
     const pub = rowSummary('deploy', plugin, [], true);
     expect(pub.state).toBe('todo');
     expect(pub.detail).toContain('Not deployed');

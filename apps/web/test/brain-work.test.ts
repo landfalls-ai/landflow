@@ -136,11 +136,19 @@ describe('POST /api/brain/work', () => {
 
   it('declares work kinds with the fields and kinds deploy/brain/work-kinds.json lists', async () => {
     const { readFileSync } = await import('node:fs');
-    const file = JSON.parse(readFileSync(join(__dirname, '../../../deploy/brain/work-kinds.json'), 'utf8')) as { fields: Array<{ name: string; type: string; required?: boolean }>; kinds: Array<{ kind: string }> };
+    const file = JSON.parse(readFileSync(join(__dirname, '../../../deploy/brain/work-kinds.json'), 'utf8')) as { fields: Array<{ name: string; type: string; required?: boolean }>; kinds: Array<{ kind: string; fields?: unknown[] }> };
     const { WORK_FIELDS, DECLARABLE_KINDS } = await import('@/lib/server/brain/work');
     const shape = (fields: Array<{ name: string; type: string; required?: boolean }>) => fields.map((f) => `${f.name}:${f.type}:${Boolean(f.required)}`).sort();
     expect(shape(WORK_FIELDS)).toEqual(shape(file.fields));
-    expect([...DECLARABLE_KINDS].sort()).toEqual(file.kinds.map((k) => k.kind).sort());
+    // Only the kinds with the shared fields: a kind with fields of its own would be declared here without them.
+    expect([...DECLARABLE_KINDS].sort()).toEqual(file.kinds.filter((k) => !k.fields).map((k) => k.kind).sort());
+  });
+
+  it('does not declare a GitHub-only kind with the shared fields: it waits for its own declaration', async () => {
+    const body = (await (await post([event('g1', { kind: 'work.ci_failed' })])).json()) as { saved: unknown[]; rejected: Array<{ reason: string }> };
+    expect(body.saved).toHaveLength(0);
+    expect(body.rejected.map((r) => r.reason)).toEqual(['Unknown work kind; an admin can declare it']);
+    expect(database().get("SELECT kind FROM usage_kinds WHERE kind = 'work.ci_failed'")).toBeUndefined();
   });
 
   it('answers 400 for no events or more than 50', async () => {

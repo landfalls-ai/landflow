@@ -34,8 +34,11 @@ export function rowSummary(row: AbilityRow, config: AgentConfig, layers: Layer[]
       return bits.length ? { state: 'done', detail: bits.join(' · ') } : { state: 'todo', detail: 'Tools, knowledge, skills and plugins. Without them the agent can only talk.' };
     }
     case 'triggers': {
-      const n = config.schedules.length + config.channels.length;
-      return n ? { state: 'done', detail: `${plural(config.schedules.length, 'schedule')} · ${plural(config.channels.length, 'channel')}` } : { state: 'todo', detail: 'Run on a schedule or let people message it.' };
+      const bits = [
+        config.schedules.length ? plural(config.schedules.length, 'schedule') : '',
+        config.channels.length ? plural(config.channels.length, 'channel') : '',
+      ].filter(Boolean);
+      return bits.length ? { state: 'done', detail: bits.join(' · ') } : { state: 'todo', detail: 'Run on a schedule or let people message it.' };
     }
     case 'guardrails': {
       const g = layer('guardrails');

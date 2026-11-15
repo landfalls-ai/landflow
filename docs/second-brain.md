@@ -134,6 +134,8 @@ The first tick is 30 s after start.
   confidence, the whole why, the evidence, what to expect and the **Changes** (the diff, as in Spotlight). What the
   change leaves out (*Leaves …*) is always shown, so nobody applies without seeing it. The Brain index uses the same card and can link to Home with **All suggestions**. The buttons:
   - **Apply**, which saves through governance; **Create workflow** for a draft; **Mark done** for advice.
+  - **Build it** for a suggestion with a build prompt: it creates an empty workflow and opens the editor with Spotlight
+    already building from the prompt ([below](#build-it-with-spotlight)).
   - **Build it** for a missing tool. It records the go-ahead (`proposal.applied`, with the detector), and published
     workflows that start from On Usage Event on `proposal.applied` with **Suggestion From: Missing tool** get the
     whole suggestion and build the tool, for example agents writing the plugin and opening a draft pull request. The
@@ -184,6 +186,7 @@ Seven nodes make the brain something workflows can use (and On Suggestion Decide
 - **Detector Trigger** (`core.detectorTrigger`) makes the workflow one of the brain's detectors (below).
 - **Find Similar** (`core.findSimilar`, usable as a tool) asks whether something like this already exists ([below](#find-similar)).
 - **Entity** (`core.brainEntity`, usable as a tool) keeps initiatives, people, customers and systems ([below](#entities)).
+- **List People**, **Gather Work**, **Write Briefing**, **Save Briefing** and **Deliver Briefing** (`core.brainListPeople`, `core.brainGatherWork`, `core.brainWriteBriefing`, `core.brainSaveBriefing`, `core.brainDeliverBriefing`) are the tomorrow sync's steps: they prepare a briefing for each person, items carrying ids and counts only ([work-and-briefings.md](work-and-briefings.md#the-nightly-sync)).
 
 #### Find Similar
 
@@ -308,7 +311,7 @@ prose and a person keeps the facts. Spotlight asks it questions.
     button stays in the title bar and the status bar at the bottom.
 - **index.md**: **Shared across teams** (customers and initiatives two or more teams worked on in the last 7 days, most
   teams first, with their teams, people and latest items: no other product flags this, and it is what the Company
-  Brain is for), **Suggestions**, **Teams this week** and **Needs a person**. A card with nothing in it is not shown.
+  Brain is for), **Suggestions**, **Teams this week** and **Needs a person**. A card with nothing in it is not shown, and the Source view leaves out its heading too.
 - **A page**:
   - **Kept by people**: name, what it is and owner, editable by editors of its project (`PATCH /api/entities/…`), and
     chips for owner (amber when none, not on people), teams, sources and last work.
@@ -403,7 +406,9 @@ shows up in the ledger and can start other flows.
   `sourceId`, `url`, `actor`, `title`, `summary`, `team`, `initiative`, `customer`, `occurredAt`). `pnpm brain:work-kinds
   [url]` declares them all on an instance (again: it updates them), signing in with `LANDFLOW_API_KEY` or the owner in
   `LANDFLOW_OWNER_EMAIL` / `LANDFLOW_OWNER_PASSWORD`. The [work ingest templates](features/integrations.md#work-ingest-templates)
-  record into them.
+  record into them. The GitHub kinds (`work.pr_closed`, `work.pr_reviewed`, `work.review_requested`, `work.ci_failed`,
+  `work.ci_passed`) list their own fields (`repo`, `prNumber`, `state`, `reviewState`, `ciConclusion`, `ciDurationMs`, `ciAttempt`,
+  `waitedMs`); see [GitHub into the brain](features/integrations.md#github-into-the-brain).
 
 #### Flow detectors
 
@@ -602,6 +607,53 @@ For example, the overlap finder: Detector Trigger with *A usage query*, name "In
 initiatives" and the flow (or whatever merges them) records `work.initiative_merged` events, the report can say how much
 duplicate work was avoided.
 
+## Nightly SDLC velocity
+
+The company's software lifecycle, read from the brain's `work.*` events, and the flows that would raise its velocity,
+as suggestions. It is the template **Nightly SDLC velocity** (`brain-sdlc-velocity`): Schedule (daily 03:00) → Velocity
+Signals → Propose Flows → Suggest Improvement.
+
+- **Velocity Signals** (`core.velocitySignals`; window in days, default 14, an optional repository list and signal
+  types) outputs one item per signal above its threshold, with the numbers and the evidence (event ids, at most 12):
+  - *Cycle time*: median and slowest tenth of opened to merged, per repository (flagged above 72 hours).
+  - *Review wait*: median and slowest tenth of the wait for a first review, per repository (above 24 hours).
+  - *Rework*: the share of pull requests that got "changes requested" (above 35%).
+  - *Flaky CI*: a failure and then a pass on the same commit, per repository (2 or more).
+  - *Toil*: the same work-session phrase (digits folded) or the same empty search, ask or missing-tool signature 5 or
+    more times.
+  - *Handoffs*: pull requests with 3 or more review rounds, 2 or more of them in a repository.
+  A repository needs 3 pull requests before it is judged. The thresholds are named constants (`THRESHOLDS` in
+  `brain/velocity.ts`). The pull request, review and CI kinds come from the GitHub ingest template
+  ([work and briefings](work-and-briefings.md)); a flaky pair is a failed attempt and a later passing attempt of the same workflow run (its run id),
+  or a failure and a pass on the same commit when an event carries a `sha`, `headSha` or `commit` attribute; an event
+  with neither is skipped. The template's commit statuses are not paired: each carries its own status id and no
+  commit attribute, so a failed and then a passing status on one commit count as two separate runs.
+- **About the process, never a person.** A signal is about a repository, a kind of work or a phrase. No field names an
+  author or a reviewer, nothing is ranked by person, and the node reads only what a system reader may: events shared
+  with the organization and the platform's own, never a private one and never a `team` one (the suggestion reaches the
+  whole instance).
+- **Propose Flows** (`core.proposeFlows`; **Use the Brain's Model**, **Most Ideas**, default 5) turns each signal into one
+  idea: a title, why (with the evidence), the expected effect and a build prompt. It asks the brain's model
+  (`LANDFLOW_BRAIN_MODEL`); with the model off, or when its answer does not fit, a rule per signal type writes it ("Ping
+  the reviewer when a PR waits over a day", "Re-run flaky CI once and label it", a checklist comment on new pull
+  requests, a nudge when review rounds pile up, a flow for a repeated task).
+- **Suggest Improvement** posts each idea as a suggestion labelled "SDLC velocity", with a fingerprint per signal, so the
+  next night refreshes it instead of adding another, and a dismissed one stays away as for any suggestion.
+
+## Build it with Spotlight
+
+Suggest Improvement's **Build Prompt** (up to 2,000 characters; `POST /api/proposals` does not take it yet) makes
+the card's button **Build it**. Applying it creates an empty workflow named after the suggestion, in the caller's home
+project, records the go-ahead like any applied suggestion, and the page opens `/workflows/<id>?ask=proposal:<id>`. The
+editor loads the suggestion (`GET /api/proposals/:id`), Spotlight sends its build prompt as the person's message once
+(their click on Build it was the go-ahead; the parameter leaves the URL so a reload does not send it again), and builds
+the flow: on the empty canvas the whole flow at once, with the chat folded to the side card and the canvas in view. The
+flow is a draft until the person saves and publishes it. Spotlight sends the prompt only on the workflow Build it
+created for that suggestion (the suggestion is applied and its `createdWorkflowId` is this workflow); on any other
+workflow the parameter is dropped. The route treats a build prompt like a stored draft: any builder may apply it, and
+the workflow goes in `?projectId=` or the caller's home project, after the same create check as any new workflow.
+The Slack mirror shows no Apply button for it.
+
 ## API and settings
 
 Routes are also in [reference/api.md](reference/api.md), and variables in
@@ -661,6 +713,7 @@ Routes are also in [reference/api.md](reference/api.md), and variables in
 - `apps/web/src/lib/server/usage/kinds.ts`: the declared custom kinds and the attribute checks;
   `apps/web/src/app/api/usage/kinds/`: their routes.
 - `apps/web/src/lib/server/mcp/brain-tools.ts`: the brain's tools on the instance MCP server.
+- `apps/web/src/lib/server/brain/velocity.ts` (the signals, pure), `nodes/velocity.ts` (Velocity Signals, Propose Flows), `templates/builtin-velocity.ts`, and `components/editor/spotlight/ask-param.ts` (`?ask=`). Tests: `apps/web/test/velocity.test.ts` (`velocity-live.test.ts` with `LANDFLOW_INTEGRATION=ollama`).
 - `apps/web/src/lib/server/nodes/usage.ts`: the seven nodes, `nodes/entities.ts` the Entity node; `nodes/vector-stores.ts` refuses the brain's collections.
 - `apps/web/src/components/brain/`: the inbox, the canvas card, What Landflow knows (`brain-panel.tsx`) and the Brain page
   (`wiki/`); `apps/web/src/lib/server/brain/wiki.ts` builds the Brain page and Ask.

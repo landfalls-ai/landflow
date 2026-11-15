@@ -417,6 +417,8 @@ export interface Proposal {
   ops: AssistantOp[];
   /** A new workflow to create instead (unmet demand, repeated sequences). */
   draft?: Workflow;
+  /** What Spotlight should build (at most 2,000 characters): "Build it" creates an empty workflow and opens Spotlight with this as the first message. */
+  buildPrompt?: string;
   /** Rules to add to the target agent's persona (agent quality); applied to its draft. */
   agentChange?: AgentChange;
   /** Keep a team's note for the project: applying it moves the note to project scope (notebook/approve.ts). */
@@ -469,6 +471,8 @@ export interface ProposalInput {
   effect?: string;
   ops?: unknown;
   draft?: Workflow;
+  /** What Spotlight builds when the person says "Build it" (up to 2,000 characters). */
+  buildPrompt?: string;
   agentChange?: AgentChange;
   risk?: ProposalRisk;
   confidence?: number;

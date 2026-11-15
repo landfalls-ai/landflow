@@ -93,6 +93,14 @@ height eases between its three heights (the bar as measured, peek, half) over 24
 - **Executions as cards.** On a phone each run is a card: the workflow and its menu on the first line, the status and how
   long it ran on the second, and when it started (with how long ago) on the third. The run's id, its mode and the column
   headings are left out, and an error shows two lines. The desktop keeps its table (`components/runs/runs-list.tsx`, at `/runs`).
+- **Workflow rows.** On a phone a row of the Workflows list keeps only the name and when it changed on its first line;
+  Shared, Published and the last run's badge move to the second line, in front of at most three node icons (the strip
+  clips when the badges need the room) and without the description (`WorkflowRow` in
+  `components/workflows/workflows-list.tsx`). The desktop row is unchanged.
+- **Credential rows.** On a phone a row of the Credentials list keeps the icon, the name and the type on its first line;
+  its badges, "Used by …" and "Updated …" move to a second line under the name, and its ⋯ menu shows without hovering
+  (`app/credentials/page.tsx`: the second line is a wrapper that is `display: contents` on a desktop). The desktop row
+  is unchanged.
 - **No sideways scrolling.** No page scrolls sideways at 390 px: a plugin card's chips wrap, the Developers page breaks
   long inline code, and pages pad 16 px instead of 24. Strips that are meant to scroll (a segment control, the Settings
   tabs) scroll inside themselves.
@@ -143,9 +151,10 @@ On a phone, what floats on a desktop rises from the bottom or takes the screen:
 
 ## Settings and agents
 
-- **Settings** is a list on a phone: each section as a row with its hint (Time zone and execution retention, $vars for
-  expressions…). A tap opens it alone, with **‹ Settings** to go back; the address keeps its `#section`, so a link to
-  `/settings#users` opens Users. A desktop keeps the sections beside the page.
+- **Settings** is five group cards on a phone (Workspace, People & access, Governance, AI, Infrastructure), each
+  section a row in its card with its hint (Time zone and execution retention, $vars for expressions…). A tap opens it alone, with **‹ Settings** to go back; the address keeps its `#section`, so a link to
+  `/settings#users` opens Users. A desktop keeps the sections beside the page. The audit log's dates take a row of
+  their own, and its table drops the Who column: the actor is a line under each event's summary.
 - **An agent's page** keeps its header on screen as you scroll, and every change saves itself (its ✓ is read out as
   *Saved* on a phone), so there is no Save to reach for.
 

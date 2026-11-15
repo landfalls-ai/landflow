@@ -1,4 +1,4 @@
-/** Rules for the Agents list (docs/agents.md#the-list): when the persona strip shows and which filter chips appear. */
+/** Rules for the Agents list (docs/agents.md#the-roster): when the persona strip shows and which filter chips appear. */
 
 /** The persona strip only helps someone with no agents yet; with agents the list comes first. */
 export function showPersonaStrip(agents: readonly unknown[] | undefined): boolean {

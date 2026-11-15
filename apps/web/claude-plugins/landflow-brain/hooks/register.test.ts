@@ -2,12 +2,19 @@
 // are tested in Landflow (apps/web/test/claude-brain-mod.test.ts).
 import { expect, mock, test } from 'claude-code/testing'
 
+// The test body's two arguments: the engine the test drives and `on`, which stands in for the engine's own answers.
+type Body = Extract<Parameters<typeof test>[1], (...args: never) => unknown>
+type Engine = Parameters<Body>[0]
+type On = Parameters<Body>[1]
+// The kit's types carry no timer globals; the tests wait a real moment for a flush that is not awaited.
+declare const setTimeout: (run: (value?: unknown) => void, ms: number) => unknown
+
 const OPTIONS = { url: 'http://localhost:3000', key: 'lf_dev_key_for_tests_only_000000', repos: 'acme/widgets', mode: 'review', sync: true }
 const COMPOSE = { model: 'm', promptModel: 'm', surfaces: ['terminal'], tools: [], outputStyle: null, traits: [] }
 const BRIEFING = { yesterday: [{ title: 'Ship the billing page', repo: 'acme/widgets' }], autoSend: 'allowed', brain: 'on' }
 
 /** The engine beneath the mod: git answers, a fake Landflow, a clock and a store in memory. */
-function world(on: Parameters<Parameters<typeof test>[1]>[1], init: { remote?: string; briefing?: unknown; briefingDelayMs?: number; postStatus?: number; postDelayMs?: number; deleteStatuses?: number[]; answers?: string[]; seed?: Record<string, unknown>; onAsk?: () => Promise<void>; briefingStatus?: number } = {}) {
+function world(on: On, init: { remote?: string; briefing?: unknown; briefingDelayMs?: number; postStatus?: number; postDelayMs?: number; deleteStatuses?: number[]; answers?: string[]; seed?: Record<string, unknown>; onAsk?: () => Promise<void>; briefingStatus?: number } = {}) {
   const posts: Array<Record<string, unknown>> = []
   const deleted: string[] = []
   const statuses: Array<string | undefined> = []
@@ -25,7 +32,7 @@ function world(on: Parameters<Parameters<typeof test>[1]>[1], init: { remote?: s
   on('process.run', (_, e) => {
     const argv = (e as unknown as { argv: string[] }).argv.join(' ')
     const out = argv.includes('get-url') ? (init.remote ?? 'git@github.com:acme/widgets.git') : argv.includes('--show-toplevel') ? '/work/widgets' : 'main'
-    return { value: { exitCode: 0, stdout: `${out}\n`, stderr: '' } }
+    return { value: { exitCode: 0, stdout: `${out}\n`, stderr: '' } } as never
   })
   on('http.fetch', async (_, e) => {
     const request = e as unknown as { url: string; init?: { method?: string; body?: string } }
@@ -72,9 +79,9 @@ function world(on: Parameters<Parameters<typeof test>[1]>[1], init: { remote?: s
   return { posts, deleted, statuses, ran, clock, shares, patches }
 }
 
-async function work($: Parameters<Parameters<typeof test>[1]>[0]) {
+async function work($: Engine) {
   await $.session.start({ cwd: '/work/widgets', surface: 'terminal', isInteractive: true })
-  await $.prompt.submit({ text: 'Fix the login redirect in apps/web/src/login.ts. Then add tests.' })
+  await $.prompt.submit({ text: 'Fix the login redirect in apps/web/src/login.ts. Then add tests.' } as never)
   await $.tool.call({ tool: 'Edit', file_path: '/work/widgets/apps/web/src/login.ts', old_string: 'a', new_string: 'b' })
   await $.tool.call({ tool: 'Bash', command: 'git commit -am "fix"' })
   await $.tool.call({ tool: 'Bash', command: 'gh pr create --fill' })
@@ -82,7 +89,7 @@ async function work($: Parameters<Parameters<typeof test>[1]>[0]) {
   await $.session.end({ reason: 'other', sessionId: 'sess-1', resume: { id: 'sess-1' } } as never)
 }
 
-const command = ($: Parameters<Parameters<typeof test>[1]>[0], args: string) => $.command.run({ command: 'brain', args, origin: { kind: 'user' }, presentation: 'text' } as never)
+const command = ($: Engine, args: string) => $.command.run({ command: 'brain', args, origin: { kind: 'user' }, presentation: 'text' } as never)
 
 test('a session in an allowed repo leaves one held entry, and nothing leaves the machine', { options: OPTIONS }, async ($, on) => {
   const { posts, statuses } = world(on)
@@ -121,7 +128,7 @@ test('mode auto holds it when the briefing says autoSend is forbidden', { option
 test('a disallowed repo records nothing, with the options set', { options: OPTIONS }, async ($, on) => {
   const { posts } = world(on, { remote: 'git@github.com:acme/other.git' })
   await $.session.start({ cwd: '/work/other', surface: 'terminal', isInteractive: true })
-  await $.prompt.submit({ text: 'hello' })
+  await $.prompt.submit({ text: 'hello' } as never)
   await $.session.end({ reason: 'other', sessionId: 's2', resume: { id: 's2' } } as never)
   expect(((await command($, 'today')) as { text: string }).text).toBe('Nothing today yet.')
   expect(posts).toEqual([])
@@ -130,7 +137,7 @@ test('a disallowed repo records nothing, with the options set', { options: OPTIO
 test('no key records and sends nothing', async ($, on) => {
   const { posts } = world(on, { remote: 'git@github.com:acme/other.git' })
   await $.session.start({ cwd: '/work/other', surface: 'terminal', isInteractive: true })
-  await $.prompt.submit({ text: 'hello' })
+  await $.prompt.submit({ text: 'hello' } as never)
   await $.session.end({ reason: 'other', sessionId: 's2', resume: { id: 's2' } } as never)
   expect(posts).toEqual([])
 })
@@ -191,8 +198,8 @@ test('a 401 stops sending and says the key was rejected', { options: { ...OPTION
   expect(statuses.at(-1)).toBe('brain: key rejected')
 })
 
-const start = ($: Parameters<Parameters<typeof test>[1]>[0]) => $.session.start({ cwd: '/work/widgets', surface: 'terminal', isInteractive: true })
-const say = ($: Parameters<Parameters<typeof test>[1]>[0], text: string) => $.prompt.submit({ text })
+const start = ($: Engine) => $.session.start({ cwd: '/work/widgets', surface: 'terminal', isInteractive: true })
+const say = ($: Engine, text: string) => $.prompt.submit({ text } as never)
 
 test('a /clear holds the entry and the next prompt is recorded in a new one', { options: OPTIONS }, async ($, on) => {
   world(on)
@@ -393,7 +400,7 @@ const RELATED = {
   related: [{ person: { name: 'Ada Example' }, because: { type: 'area', name: 'billing' }, items: [{ title: 'Rework billing/ totals', at: '2026-11-13T10:00:00Z', url: 'https://evil.example/x' }, { title: 'Docs', url: 'https://github.com/acme/widgets/pull/9' }] }],
 }
 const PANE = { plugin: 'landflow-brain', component: 'Pane', requestId: 'brain', props: { title: 'Brain', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} } } as const
-const BAND = { plugin: 'landflow-brain', component: 'AbovePrompt', requestId: 'band', viewport: { columns: 100, rows: 30 }, props: { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 90, scroll: { offset: 0, bodyRows: 6 }, view: {} } } as const
+const BAND = { plugin: 'landflow-brain', component: 'AbovePrompt', requestId: 'band', viewport: { columns: 100, rows: 30 }, props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 6, bodyColumns: 90, scroll: { offset: 0, bodyRows: 6 }, view: {} } } as const
 
 test('/brain sync lists yesterday and each colleague with the reason; links to other hosts are stripped', { options: OPTIONS }, async ($, on) => {
   world(on, { briefing: RELATED })
@@ -414,7 +421,7 @@ test('the pane opens only on /brain or /brain sync, never on its own', { options
     return { value: { isPlaced: true } }
   })
   await $.session.start({ cwd: '/work/widgets', surface: 'terminal', isInteractive: true })
-  await $.prompt.submit({ text: 'hello' })
+  await $.prompt.submit({ text: 'hello' } as never)
   expect(opened).toEqual([])
   await command($, 'today')
   expect(opened).toEqual([])
@@ -532,4 +539,24 @@ test('visibility changes a held entry here and a sent entry with PATCH', { optio
   expect(sent).toMatch(/now org in the brain/)
   expect(patches[0]).toEqual({ url: 'http://localhost:3000/api/brain/work/sess-1?source=claude-code', body: { visibility: 'org' } })
   expect(((await command($, 'status')) as { text: string }).text).toContain('"visibility":"org"')
+})
+
+test('mode auto holds when an earlier day allowed it and today\'s briefing fails', { options: { ...OPTIONS, mode: 'auto' } }, async ($, on) => {
+  const { posts } = world(on, { briefingStatus: 500, seed: { autoSend: 'allowed' } })
+  await start($)
+  await say($, 'Do a thing.')
+  await $.session.end({ reason: 'other', sessionId: 's-stale', resume: { id: 's-stale' } } as never)
+  expect(posts).toEqual([])
+})
+
+test('/brain sync still answers with its text when no pane can open', { options: OPTIONS }, async ($, on) => {
+  world(on, { briefing: RELATED })
+  on('ui.open', () => {
+    throw new Error('no surface')
+  })
+  await start($)
+  const text = ((await command($, 'sync')) as { text: string }).text
+  expect(text).toContain('> - Ship the billing page (acme/widgets)')
+  const bare = ((await command($, '')) as { text: string }).text
+  expect(bare).toContain('no pane here')
 })

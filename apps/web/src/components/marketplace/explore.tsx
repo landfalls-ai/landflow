@@ -1,45 +1,43 @@
 'use client';
 /**
- * The marketplace's Explore tab: every node plugin, workflow, composite type and Claude Code plugin in one place. It
- * merges GET /api/marketplaces/explore (every added marketplace, the Landflow plugins' flows), the registry's own
- * plugins (/api/plugins: those no marketplace installed show as "This instance"), the Templates library (built-in and
- * saved templates; a marketplace flow already installed is shown once, as its flow) and the composite types
- * (/api/composites: the plugins' and those saved here, docs/composites.md). One search, a kind switch, a source (all, or
- * one marketplace with its Refresh / Remove) and categories.
+ * The marketplace's Explore tab: every node plugin, composite type and Claude Code plugin (agents and skills) in one
+ * place. Workflows are not here: the Templates page is their home. It merges GET /api/marketplaces/explore (every added
+ * marketplace), the registry's own plugins (/api/plugins: those no marketplace installed show as "This instance") and
+ * the composite types (/api/composites: the plugins' and those saved here, docs/composites.md). One filter row: search,
+ * a kind switch, a source menu (only with more than one marketplace; one marketplace with its Refresh / Remove) and one
+ * category menu.
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { ArrowRight, Boxes, Check, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { ArrowRight, Boxes, Check, ChevronDown, RefreshCw, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { PhoneFilters } from '../ui/phone-filters';
 import { api } from '@/lib/client/api';
+import { cn } from '@/lib/utils';
 import { timeAgo } from '@/lib/client/format';
 import { DevOnly } from '@/lib/client/developer-details';
-import type { ExploreFlow, ExplorePlugin, MarketplaceSummary } from '@/lib/shared/marketplace';
+import type { ExplorePlugin, MarketplaceSummary } from '@/lib/shared/marketplace';
 import type { CompositeTypeInfo } from '@/lib/shared/composites';
-import type { NodeTypeInfo, PluginSummary } from '@/lib/shared/types';
-import { TEMPLATE_CATEGORIES, type TemplateSummary } from '@/lib/shared/templates';
-import { TemplateCard, TemplateNodeIcons } from '@/components/templates/template-card';
-import { useNodeTypeMap, useTemplateList } from '@/components/templates/use-templates';
+import type { PluginSummary } from '@/lib/shared/types';
+import { TEMPLATE_CATEGORIES } from '@/lib/shared/templates';
 import { Card } from '@/components/shell/page-header';
-import { Badge, Chip, FilterChip, LanguageBadge, StatusDot } from '@/components/ui/badge';
+import { Badge, Chip, LanguageBadge, StatusDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { AppIcon } from '@/components/ui/icon';
 import { SearchInput } from '@/components/ui/inputs';
+import { MenuItem, Popover } from '@/components/ui/popover';
 import { useExplore } from './use-marketplace';
 import { Segmented, SegmentedCount } from '../ui/segmented';
 
-type Kind = 'all' | 'nodes' | 'flows' | 'composites' | 'claude';
-/** A marketplace id, or this instance (registry plugins and the Templates library). */
+export type Kind = 'all' | 'nodes' | 'composites' | 'claude';
+/** A marketplace id, or this instance (the registry's own plugins and the composite types). */
 const LOCAL = 'local';
 /** How many of each kind "All" shows before "Show all". */
 const SECTION = 8;
 
-const KINDS: Array<{ id: Kind; label: string }> = [
+export const KINDS: Array<{ id: Kind; label: string }> = [
   { id: 'all', label: 'All' },
   { id: 'nodes', label: 'Node plugins' },
-  { id: 'flows', label: 'Workflows' },
   { id: 'composites', label: 'Composites' },
   { id: 'claude', label: 'Agents & skills' },
 ];
@@ -52,11 +50,9 @@ export function categoryLabel(category: string): string {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-type Item =
+export type Item =
   | { kind: 'nodes'; key: string; source: string; categories: string[]; text: string; plugin: ExplorePlugin }
   | { kind: 'nodes'; key: string; source: typeof LOCAL; categories: string[]; text: string; local: PluginSummary }
-  | { kind: 'flows'; key: string; source: string; categories: string[]; text: string; flow: ExploreFlow }
-  | { kind: 'flows'; key: string; source: typeof LOCAL; categories: string[]; text: string; template: TemplateSummary }
   | { kind: 'composites'; key: string; source: typeof LOCAL; categories: string[]; text: string; composite: CompositeTypeInfo }
   | { kind: 'claude'; key: string; source: string; categories: string[]; text: string; plugin: ExplorePlugin };
 
@@ -64,7 +60,8 @@ const lower = (...parts: Array<string | undefined>) => parts.filter(Boolean).joi
 
 const isNodePlugin = (p: ExplorePlugin) => Boolean(p.read?.nodePlugin || p.landflow);
 
-function buildItems(plugins: ExplorePlugin[], flows: ExploreFlow[], local: PluginSummary[], templates: TemplateSummary[], composites: CompositeTypeInfo[]): Item[] {
+/** Every plugin, agent and skill pack, and composite type: never a workflow (those are the Templates). */
+export function buildItems(plugins: ExplorePlugin[], local: PluginSummary[], composites: CompositeTypeInfo[]): Item[] {
   const linked = new Set(plugins.flatMap((p) => (p.read?.nodePlugin ? [p.read.nodePlugin.id] : [])));
   const items: Item[] = [];
   for (const plugin of plugins) {
@@ -74,14 +71,6 @@ function buildItems(plugins: ExplorePlugin[], flows: ExploreFlow[], local: Plugi
   for (const plugin of local) {
     if (linked.has(plugin.id)) continue;
     items.push({ kind: 'nodes', key: `local/${plugin.id}`, source: LOCAL, categories: [], text: lower(plugin.id, plugin.info.name, plugin.info.description, plugin.info.language, plugin.nodes.map((n) => n.displayName).join(' ')), local: plugin });
-  }
-  for (const flow of flows) {
-    items.push({ kind: 'flows', key: `${flow.marketplace.id}/${flow.plugin}/${flow.path}`, source: flow.marketplace.id, categories: flow.categories, text: lower(flow.name, flow.description, flow.plugin, flow.pluginDisplayName, flow.nodeTypes.join(' ')), flow });
-  }
-  // Installed marketplace flows are templates too (with an origin): they show once, as their flow.
-  for (const template of templates) {
-    if (template.origin) continue;
-    items.push({ kind: 'flows', key: `template/${template.id}`, source: LOCAL, categories: template.categories, text: lower(template.name, template.description, template.author, template.nodeTypes.join(' ')), template });
   }
   // Composite types this instance knows: what plugins declare (they come with the plugin) and the library saved here.
   for (const composite of composites) {
@@ -158,31 +147,6 @@ function LocalPluginTile({ plugin }: { plugin: PluginSummary }) {
   );
 }
 
-function FlowTile({ flow, types }: { flow: ExploreFlow; types: Record<string, NodeTypeInfo> }) {
-  const needs = flow.pluginInstalled ? [] : flow.needs;
-  return (
-    <Link href={flow.link ?? '#'} className={tileClass}>
-      <TemplateNodeIcons nodeTypes={flow.nodeTypes} types={types} />
-      <div className="min-w-0">
-        <div className="truncate text-[13px] font-semibold text-t1">{flow.name}</div>
-        <div className="truncate text-[11px] text-t3">
-          {flow.pluginDisplayName ?? flow.plugin} · {flow.marketplace.name}
-        </div>
-      </div>
-      <p className="line-clamp-2 text-[12px] leading-snug text-t2">{flow.description || 'No description.'}</p>
-      <div className="mt-auto flex flex-wrap items-center gap-1.5 text-[11px] text-t3">
-        {flow.pluginInstalled ? installedBadge : <Badge tone="muted">Installs with {flow.pluginDisplayName ?? flow.plugin}</Badge>}
-        {needs.length > 0 && (
-          <Badge tone="warning" title={`Node types this instance doesn't have: ${needs.join(', ')}`}>
-            Needs {needs.length} plugin{needs.length === 1 ? '' : 's'}
-          </Badge>
-        )}
-        <span>{flow.nodeCount} nodes</span>
-      </div>
-    </Link>
-  );
-}
-
 function CompositeTile({ composite, onDeleted }: { composite: CompositeTypeInfo; onDeleted: () => void }) {
   const d = composite.descriptor;
   const required = d.slots.filter((x) => (x.min ?? 1) > 0).length;
@@ -254,10 +218,53 @@ function locationText(m: MarketplaceSummary) {
   return l.kind === 'github' ? `github.com/${l.owner}/${l.repo}${l.ref ? ` @ ${l.ref}` : ''}` : l.kind === 'url' ? l.url : l.path;
 }
 
-export function Explore({ marketplaces, version, onAdd, onOpen, onChanged }: { marketplaces: MarketplaceSummary[]; version: number; onAdd: () => void; onOpen: (marketplaceId: string, name: string) => void; onChanged: () => void }) {
+/** The source menu only helps with more than one marketplace: with one, every item comes from it or from this instance. */
+export const showSourceFilter = (marketplaceCount: number) => marketplaceCount > 1;
+
+/** One dropdown filter: a button with the current choice that opens a menu (a bottom sheet on a phone). */
+function FilterMenu({ label, value, allLabel, options, onChange }: { label: string; value: string | undefined; allLabel: string; options: Array<{ value: string; label: string; count?: number }>; onChange: (value: string | undefined) => void }) {
+  const current = options.find((o) => o.value === value);
+  return (
+    <Popover
+      align="start"
+      title={label}
+      className="max-h-[320px] min-w-[220px] overflow-y-auto"
+      trigger={({ toggle, open }) => (
+        <button
+          type="button"
+          onClick={toggle}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-label={label}
+          className={cn('inline-flex h-9 items-center gap-2 rounded-full border px-3.5 text-[13px] max-md:h-10 max-md:text-[14px]', current ? 'border-ac bg-acdim font-semibold text-ac' : 'border-hair bg-sf text-t1 hover:border-bd')}
+        >
+          {current?.label ?? allLabel}
+          <ChevronDown className="size-3.5 text-t3" />
+        </button>
+      )}
+    >
+      {(close) => (
+        <>
+          {[{ value: undefined, label: allLabel, count: undefined as number | undefined }, ...options].map((o) => (
+            <MenuItem
+              key={o.value ?? 'all'}
+              hint={o.count}
+              onClick={() => {
+                onChange(o.value);
+                close();
+              }}
+            >
+              <span className={cn(o.value === value && 'font-semibold text-ac')}>{o.label}</span>
+            </MenuItem>
+          ))}
+        </>
+      )}
+    </Popover>
+  );
+}
+
+export function Explore({ marketplaces, version, onOpen, onChanged }: { marketplaces: MarketplaceSummary[]; version: number; onOpen: (marketplaceId: string, name: string) => void; onChanged: () => void }) {
   const { explore, loading, error } = useExplore(version);
-  const { listing } = useTemplateList('');
-  const types = useNodeTypeMap();
   const [local, setLocal] = useState<PluginSummary[]>([]);
   const [composites, setComposites] = useState<CompositeTypeInfo[]>([]);
   const [compositesVersion, setCompositesVersion] = useState(0);
@@ -281,7 +288,7 @@ export function Explore({ marketplaces, version, onAdd, onOpen, onChanged }: { m
     if (source && source !== LOCAL && !marketplaces.some((m) => m.id === source)) setSource(undefined);
   }, [marketplaces, source]);
 
-  const items = useMemo(() => (explore ? buildItems(explore.plugins, explore.flows, local, listing?.templates ?? [], composites) : []), [explore, local, listing, composites]);
+  const items = useMemo(() => (explore ? buildItems(explore.plugins, local, composites) : []), [explore, local, composites]);
   const inSource = useMemo(() => items.filter((i) => !source || i.source === source), [items, source]);
   const categories = useMemo(() => {
     const byLabel = new Map<string, string>();
@@ -293,7 +300,7 @@ export function Explore({ marketplaces, version, onAdd, onOpen, onChanged }: { m
     return inSource.filter((i) => (!category || i.categories.some((c) => categoryLabel(c) === category)) && (!q || i.text.includes(q)));
   }, [inSource, query, category]);
   const counts = useMemo(() => {
-    const c: Record<Kind, number> = { all: matching.length, nodes: 0, flows: 0, composites: 0, claude: 0 };
+    const c: Record<Kind, number> = { all: matching.length, nodes: 0, composites: 0, claude: 0 };
     for (const i of matching) c[i.kind]++;
     return c;
   }, [matching]);
@@ -330,7 +337,6 @@ export function Explore({ marketplaces, version, onAdd, onOpen, onChanged }: { m
 
   const tile = (item: Item) => {
     if (item.kind === 'nodes') return 'local' in item ? <LocalPluginTile key={item.key} plugin={item.local} /> : <NodePluginTile key={item.key} plugin={item.plugin} onOpen={() => onOpen(item.plugin.marketplace.id, item.plugin.name)} />;
-    if (item.kind === 'flows') return 'template' in item ? <TemplateCard key={item.key} template={item.template} types={types} index={0} href={`/templates/${encodeURIComponent(item.template.id)}`} /> : <FlowTile key={item.key} flow={item.flow} types={types} />;
     if (item.kind === 'composites') return <CompositeTile key={item.key} composite={item.composite} onDeleted={() => setCompositesVersion((v) => v + 1)} />;
     return <ClaudePluginTile key={item.key} plugin={item.plugin} onOpen={() => onOpen(item.plugin.marketplace.id, item.plugin.name)} />;
   };
@@ -339,72 +345,58 @@ export function Explore({ marketplaces, version, onAdd, onOpen, onChanged }: { m
   return (
     <>
       <div className="flex flex-wrap items-center gap-2">
-        <SearchInput value={query} onChange={setQuery} placeholder="Search plugins, workflows, agents…" label="Search the marketplace" className="w-full max-w-[360px] max-md:max-w-none" />
-        <Segmented label="Kind" value={kind} onChange={setKind} options={KINDS.map((k) => ({ value: k.id, label: <>{k.label} <SegmentedCount>{counts[k.id]}</SegmentedCount></> }))} />
+        <SearchInput value={query} onChange={setQuery} placeholder="Search plugins, agents, skills…" label="Search the marketplace" className="w-full max-w-[360px] max-md:max-w-none" />
+        <div className="max-w-full overflow-x-auto max-md:pb-0.5">
+          <Segmented label="Kind" value={kind} onChange={setKind} options={KINDS.map((k) => ({ value: k.id, label: <>{k.label} <SegmentedCount>{counts[k.id]}</SegmentedCount></> }))} />
+        </div>
+        {categories.length > 0 && (
+          <FilterMenu
+            label="Category"
+            value={category}
+            allLabel="All categories"
+            options={categories.map((c) => ({ value: c, label: c }))}
+            onChange={setCategory}
+          />
+        )}
+        {showSourceFilter(marketplaces.length) && (
+          <FilterMenu
+            label="Source"
+            value={source}
+            allLabel="All sources"
+            options={[...marketplaces.map((m) => ({ value: m.id, label: m.name, count: sourceCounts.get(m.id) ?? m.plugins })), { value: LOCAL, label: 'This instance', count: sourceCounts.get(LOCAL) ?? 0 }]}
+            onChange={setSource}
+          />
+        )}
+        <Link href="/templates" className="text-[12px] text-t3 hover:text-t1 max-md:w-full md:ml-auto">
+          Workflow templates live in Templates <ArrowRight className="inline size-3" />
+        </Link>
       </div>
 
-      {/* A phone: source, its marketplace and the categories in a Filters sheet (desktop: in place, as they were). */}
-      <PhoneFilters
-        active={(source ? 1 : 0) + (category ? 1 : 0)}
-        onClear={() => {
-          setSource(undefined);
-          setCategory(undefined);
-        }}
-      >
-        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Source">
-          <FilterChip active={!source} onClick={() => setSource(undefined)}>
-            All sources
-          </FilterChip>
-          {marketplaces.map((m) => (
-            <FilterChip key={m.id} active={source === m.id} onClick={() => setSource(m.id)}>
-              {m.name}
-              <SegmentedCount>{sourceCounts.get(m.id) ?? m.plugins}</SegmentedCount>
-            </FilterChip>
-          ))}
-          <FilterChip active={source === LOCAL} onClick={() => setSource(LOCAL)} title="The registry's own plugins and the Templates library">
-            This instance
-            <SegmentedCount>{sourceCounts.get(LOCAL) ?? 0}</SegmentedCount>
-          </FilterChip>
-          <button onClick={onAdd} className="inline-flex h-8 items-center gap-1.5 rounded-full border border-dashed border-bd px-3 text-[13px] text-t2 hover:border-ac hover:text-ac max-md:h-10 max-md:text-[14px]">
-            <Plus className="size-3.5" /> Add
-          </button>
-        </div>
-
-        {current && (
-          <Card className="flex flex-wrap items-center gap-3">
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="text-[13px] font-semibold text-t1">{current.name}</span>
-                {!current.removable && <Badge tone="accent">Built-in</Badge>}
-                {current.owner && <span className="text-[12px] text-t3">by {current.owner}</span>}
-              </div>
-              <p className="truncate text-[12px] text-t3">
-                {current.description ? `${current.description} · ` : ''}
-                <span className="font-mono text-[11px]">{locationText(current)}</span>
-                {current.fetchedAt && ` · fetched ${timeAgo(current.fetchedAt)}`}
-              </p>
+      {current && (
+        <Card className="flex flex-wrap items-center gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="text-[13px] font-semibold text-t1">{current.name}</span>
+              {!current.removable && <Badge tone="accent">Built-in</Badge>}
+              {current.owner && <span className="text-[12px] text-t3">by {current.owner}</span>}
             </div>
-            <Button size="sm" onClick={() => void refresh()} loading={refreshing}>
-              {!refreshing && <RefreshCw className="size-3.5" />} Refresh
-            </Button>
-            {current.removable && (
-              <Button variant="ghost" size="sm" onClick={() => void remove()} aria-label={`Remove ${current.name}`}>
-                <Trash2 className="size-3.5" /> Remove
-              </Button>
-            )}
-          </Card>
-        )}
-
-        {categories.length > 0 && (
-          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Categories">
-            {[undefined, ...categories].map((c) => (
-              <FilterChip key={c ?? 'all'} size="sm" active={category === c} onClick={() => setCategory(c)}>
-                {c ?? 'All categories'}
-              </FilterChip>
-            ))}
+            <p className="truncate text-[12px] text-t3">
+              {current.description ? `${current.description} · ` : ''}
+              <span className="font-mono text-[11px]">{locationText(current)}</span>
+              {current.fetchedAt && ` · fetched ${timeAgo(current.fetchedAt)}`}
+            </p>
           </div>
-        )}
-      </PhoneFilters>
+          <Button size="sm" onClick={() => void refresh()} loading={refreshing}>
+            {!refreshing && <RefreshCw className="size-3.5" />} Refresh
+          </Button>
+          {current.removable && (
+            <Button variant="ghost" size="sm" onClick={() => void remove()} aria-label={`Remove ${current.name}`}>
+              <Trash2 className="size-3.5" /> Remove
+            </Button>
+          )}
+        </Card>
+      )}
+
 
       {error && <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>}
       {explore && explore.errors.length > 0 && (
@@ -443,7 +435,7 @@ export function Explore({ marketplaces, version, onAdd, onOpen, onChanged }: { m
         ))}
       {explore && !matching.some((i) => kind === 'all' || i.kind === kind) && (
         <Card className="py-6">
-          <EmptyState compact title="Nothing matches" hint={items.length ? 'Try another search, kind, source or category.' : 'Add a marketplace to explore its plugins and workflows.'} />
+          <EmptyState compact title="Nothing matches" hint={items.length ? 'Try another search, kind, source or category.' : 'Add a marketplace to explore its plugins, agents and skills.'} />
         </Card>
       )}
       {!explore && loading && (

@@ -1,5 +1,5 @@
 /**
- * GET /api/openapi.json: the public API as an OpenAPI 3.1 document (lib/server/openapi.ts), for Settings → API, code
+ * GET /api/openapi.json: the public API as an OpenAPI 3.1 document (lib/server/openapi.ts), for Developers → API reference, code
  * generators and coding agents. Its server URL is this instance's public origin. Any API key or session can read it.
  */
 import { publicOrigin } from '@/lib/server/auth/cookies';

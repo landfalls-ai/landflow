@@ -30,7 +30,7 @@ export function ToggleRow({
   );
 }
 
-/** A card of the Build tab. */
+/** A card of the Abilities tab. */
 export function Section({
   icon,
   title,

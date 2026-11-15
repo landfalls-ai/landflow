@@ -111,7 +111,7 @@ Only the last step's text is the reply: narration a model writes before a tool c
 - With `trace`, a stall or an error ends the stream with `error` and no `done`: the reply's usage and cost are in AI usage, not in the stream.
 - **Provisional text.** `text.delta`s of a step are provisional. A step that continues sends its checked text as `thinking`; if the guards leave nothing of it, it sends nothing, so a client must drop a step's provisional deltas at the next `tool` or `step.start`. The last step's checked text, or an empty `text`, replaces its deltas. Deltas are the model's raw tokens, so a local model's tool-call markup (`<tool_call>`, `<function=…>`) and `<think>` text arrive in them: Spotlight and Ask the brain show provisional words through `provisionalText` (`lib/shared/leaked-markup.ts`), which removes that markup and holds back half a tag still arriving.
 
-**AI usage.** Spotlight's and the architect's model calls count like any other: each writes an `ai_usage` row with `surface` (`spotlight`, `architect`, and `brain` for Ask the brain) and the caller's id. A Spotlight row carries the workflow (`workflowId`, or the body's `workflow.id`) only when the caller can read it (`meteredWorkflowId`); otherwise, and for the architect, it carries none, and a row with no workflow is visible to owners and admins only. The calls show in Insights' AI usage totals, and the caller's per-user caps (Settings → AI usage caps) apply: a reached cap ends the reply with `error { kind: 'cap' }` and the cap's message. A workflow's own per-day caps and alerts count its runs only (`workflowDay` skips rows with a surface), so chatting about a workflow never makes its runs fail on a cap, while Insights' per-workflow figures include the surface rows. A reply that ends in an `error` event still counts as `error` in `landflow.assistant.requests`, and its span records the exception and `landflow.error.kind`.
+**AI usage.** Spotlight's and the architect's model calls count like any other: each writes an `ai_usage` row with `surface` (`spotlight`, `architect`, and `brain` for Ask the brain) and the caller's id. A Spotlight row carries the workflow (`workflowId`, or the body's `workflow.id`) only when the caller can read it (`meteredWorkflowId`); otherwise, and for the architect, it carries none, and a row with no workflow is visible to owners and admins only. The calls show in Insights' AI usage totals, and the caller's per-user caps (Settings → AI caps) apply: a reached cap ends the reply with `error { kind: 'cap' }` and the cap's message. A workflow's own per-day caps and alerts count its runs only (`workflowDay` skips rows with a surface), so chatting about a workflow never makes its runs fail on a cap, while Insights' per-workflow figures include the surface rows. A reply that ends in an `error` event still counts as `error` in `landflow.assistant.requests`, and its span records the exception and `landflow.error.kind`.
 
 Before showing a proposal, `propose_changes` makes these checks. A change it sends back to the model shows as one neutral step, *Reworked the change* (the model still gets it as an error, with the reason), not as a failure the person has to read:
 - **Nothing valid**: if none of the ops apply, the reasons go back to the model to fix.
@@ -212,7 +212,7 @@ It stops when:
 
 ### Autonomous mode
 
-The panel's header has a switch, **Asks first | Autonomous** (a `Segmented`; on a desktop it has a row of its own under the header so the title keeps its width, on a phone it is in the header as *Ask* and a bolt, and its note is a card at the bottom of the screen). The first time it shows, a note explains the two, once per browser (`landflow-spotlight-autonomous-explained`). Autonomous is the default; the choice is kept in `landflow-spotlight-autonomous`.
+The panel's header has a switch, **Asks first | Autonomous** (a `Segmented`; on a desktop it has a row of its own under the header so the title keeps its width, on a phone it is in the header as *Ask* and a bolt). On a desktop the first-run note sits under the switch's row and pushes the conversation down until **Got it**; on a phone it is a card at the bottom of the screen. The first time it shows, a note explains the two, once per browser (`landflow-spotlight-autonomous-explained`). Autonomous is the default; the choice is kept in `landflow-spotlight-autonomous`.
 
 On by default, Spotlight doesn't wait for clicks (`components/editor/autonomous.ts`):
 - **A new flow**: when it drafts a flow on an empty canvas, Test and fix starts right away (the reply says *Testing it now.*), instead of waiting for the **Test and fix** button.
@@ -266,7 +266,7 @@ page, a person or a credential. A choice turns the `@text` you typed into `@Name
 ## Chat surfaces
 
 Every conversation with an AI in Landflow has one look, from the chat kit in `components/ui/chat.tsx`: Spotlight, the
-editor's **Chat** (a workflow with a Chat Message trigger), an agent's **Test agent** chat and its Sessions tab, the
+editor's **Chat** (a workflow with a Chat Message trigger), an agent's **Test agent** chat and its Activity → Sessions, the
 Agent architect and **Ask the brain** on `/brain`.
 
 - **Your message** is a bubble on the right (`UserBubble`); a **reply** is text beside a small mark (Spotlight's

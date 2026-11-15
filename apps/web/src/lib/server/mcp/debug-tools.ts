@@ -380,6 +380,7 @@ export function registerDebugTools(server: McpServer, ctx: DebugContext) {
         workflow,
         mode: 'manual' as const,
         executionId,
+        ...(ctx.actor && { startedBy: ctx.actor.id }),
         destinationNodeId: node.id,
         ...(fromExecution ? { partial: { executionId: fromExecution, nodeId: node.id, scope: 'only' as const } } : { startNodeId: node.id, triggerItems }),
       };

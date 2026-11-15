@@ -119,6 +119,10 @@ export interface CredentialSummary {
   type: string;
   createdAt: string;
   updatedAt: string;
+  /** Who created it (absent: nobody recorded). */
+  createdBy?: string;
+  /** Who last changed its data (absent: nobody recorded, or a change with no person behind it). */
+  updatedBy?: string;
   /** Workflows with a node that references this credential. */
   usedBy: Array<{ workflowId: string; workflowName: string }>;
   /** At most `limit` calls per `intervalSeconds` across every node and run that uses it (lib/server/credentials/vault.ts). */
@@ -132,6 +136,8 @@ export interface CredentialDetail extends CredentialSummary {
   data: Record<string, unknown>;
   /** Secret fields that have a stored value. */
   secrets: string[];
+  /** The name of who last changed its data (`updatedBy`), on GET /api/credentials/:id. */
+  updatedByName?: string;
 }
 
 export type RegistryEvent =
@@ -213,6 +219,8 @@ export interface ExecutionRecord extends Omit<ExecutionResult, 'status' | 'wait'
   depth?: number;
   /** An error workflow run: the failed execution that started it. */
   errorOf?: string;
+  /** A metric's sub-workflow run: the suggestion it measures (lib/server/brain/effect.ts). */
+  metricOf?: string;
   /** What a Form node's completion step showed (the form's last page). */
   formCompletion?: FormCompletion;
   /** The workflow version the execution started on (absent: an unsaved editor draft, kept in `workflow`). */
@@ -223,6 +231,8 @@ export interface ExecutionRecord extends Omit<ExecutionResult, 'status' | 'wait'
   /** The failed execution this one retries, and which retry it is (1 = the first). */
   retryOf?: string;
   retryAttempt?: number;
+  /** That retry was started by the automatic retry timer, not by a person. */
+  retryAutomatic?: boolean;
   /** Set on a failed execution: the retry that followed it. */
   retriedBy?: string;
   /** Set on a failed execution: when its automatic retry starts. */
@@ -231,7 +241,10 @@ export interface ExecutionRecord extends Omit<ExecutionResult, 'status' | 'wait'
   resumedAfterRestart?: { at: string; stepId: string };
   /** The trigger call's Idempotency-Key. */
   idempotencyKey?: string;
-  /** A manual run: the user (id) who started it. */
+  /**
+   * The user (id) who started it, when a person did: a manual or chat run, an MCP or agent tool call, a re-run, a retry
+   * someone asked for, or a sub-workflow of one of those. Absent: a schedule, poll, webhook or other trigger started it.
+   */
   startedBy?: string;
   /** Status `queued`: how it starts once a slot frees. */
   queued?: QueuedStart;

@@ -420,7 +420,8 @@ export function instanceServer(actor?: Actor, scope?: McpScope, keyScopes?: read
       const start = startNode(workflow, ref);
       if (ref && !start) return failure(`No node "${ref}" in “${workflow.name}”`);
       const triggerItems: NodeItem[] = (Array.isArray(input) ? input : input ? [input] : [{}]).map((json) => ({ json: json as JsonObject }));
-      const options = { workflow, mode: 'mcp' as const, ...(start && { startNodeId: start.id }), triggerItems };
+      // The caller is who started it (`startedBy`): nodes that guard other people's data judge the run by them (nodes/briefing.ts).
+      const options = { workflow, mode: 'mcp' as const, ...(start && { startNodeId: start.id }), triggerItems, ...(actor && { startedBy: actor.id }) };
       const trigger = startTrigger({ source: 'mcp', workflowId: workflow.id, nodeName: start?.name });
       try {
         if (wait === false) {

@@ -138,6 +138,35 @@ describe('agent runtime', () => {
     expect(entry?.type === 'tool' && entry.executionId).toBeTruthy();
   });
 
+  it('a workflow session’s tool runs under its run only while that run goes on, else for nobody', async () => {
+    store.saveWorkflow({
+      id: 'wf_agent_tool',
+      name: 'Lookup',
+      nodes: [
+        { id: 'in', name: 'When Called by an Agent', type: 'core.workflowTrigger', typeVersion: 1, position: [0, 0], parameters: { inputs: { fields: [{ name: 'count', type: 'number', required: true }] } } },
+        { id: 'out', name: 'Done', type: 'core.noOp', typeVersion: 1, position: [300, 0], parameters: {} },
+      ],
+      connections: [{ id: 'e1', type: 'main', source: 'in', sourceIndex: 0, target: 'out', targetIndex: 0 }],
+    } as never);
+    const agent = makeAgent({ tools: [{ id: 't1', type: 'workflow', workflowId: 'wf_agent_tool', name: 'Lookup', description: 'Look things up' }] });
+    const toolRun = async (status: string) => {
+      const executionId = `ex_parent_${status}`;
+      store.saveExecution({ executionId, workflowId: 'wf_1', workflowName: 'Parent', mode: 'manual', status, startedAt: new Date().toISOString(), finishedAt: '', durationMs: 0, runData: {}, executionOrder: [], startedBy: 'usr_someone' } as never);
+      const session = newSession(agent, { source: 'workflow', userId: 'workflow:wf_1', version: 'draft' });
+      session.execution = { workflowId: 'wf_1', executionId, nodeId: 'n1', nodeName: 'Agent' };
+      script.push(call('Lookup', { count: '1' }), reply('Done.'));
+      const result = await runAgent({ agent, session, message: 'look up 1' });
+      const entry = result.session.timeline.find((e) => e.type === 'tool');
+      return store.loadExecution((entry?.type === 'tool' && entry.executionId) || '');
+    };
+    // The run is going on (the agent works in it): the tool's run is its sub-execution and inherits its starter.
+    expect(await toolRun('running')).toMatchObject({ parentExecutionId: 'ex_parent_running', startedBy: 'usr_someone' });
+    // The run ended (an approval decided later resumes the session): no parent, nobody.
+    const after = await toolRun('success');
+    expect(after?.parentExecutionId).toBeUndefined();
+    expect(after?.startedBy).toBeUndefined();
+  });
+
   it('reports unknown tools and tool errors to the model instead of failing', async () => {
     const agent = makeAgent();
     script.push(call('nope'), reply('Sorry.'));
