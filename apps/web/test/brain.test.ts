@@ -94,7 +94,7 @@ function workflow(id: string, name: string, nodes: WorkflowNode[], links: Array<
     connections: links.map(([source, target], i) => ({ id: `c${i}`, type: 'main', source, sourceIndex: 0, target, targetIndex: 0 })),
     createdBy: owner.id,
     ...extra,
-  } as Workflow);
+  } as Workflow, { actor: extra.createdBy ?? owner.id });
 }
 
 const runs = (workflowId: string, n: number, extra: Partial<Parameters<typeof ledger.recordUsage>[0]> & { status?: string; mode?: string } = {}) => {

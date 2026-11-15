@@ -1644,6 +1644,14 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS brain_briefings_user ON brain_briefings (user_id, day, status)`,
     ],
   },
+  // Who saved each workflow version (lib/server/versions.ts): the user whose save made it, NULL for a save with no person
+  // (a background or system save) and for versions older than this. The briefing nodes trust only an owner's or admin's.
+  {
+    version: 2091,
+    name: 'workflow_versions_author',
+    addColumns: [{ table: 'workflow_versions', column: 'author', definition: 'TEXT' }],
+    statements: [],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */

@@ -71,7 +71,7 @@ function clear() {
 
 function asker(id = 'wf_test', createdBy: string = alice.id, project = alpha.id) {
   const node: WorkflowNode = { id: 'n1', name: 'Entity', type: 'core.brainEntity', typeVersion: 1, position: [0, 0], parameters: {} };
-  const w = store.saveWorkflow({ id, name: 'Asker', active: false, nodes: [node], connections: [], createdBy } as Workflow);
+  const w = store.saveWorkflow({ id, name: 'Asker', active: false, nodes: [node], connections: [], createdBy } as Workflow, { actor: createdBy });
   setHomeProject('workflow', w.id, project);
   return w;
 }
@@ -241,7 +241,7 @@ describe('Landflow Usage and Suggest Improvement nodes', () => {
     const { mine } = seed();
     entities.addEntityFact(mine, { kind: 'quality', statement: 'Reminder emails were opened less' });
     facts.upsertFact({ subjectType: 'workflow', subjectId: 'wf_x', subjectName: 'Mailer', kind: 'usage', statement: 'Sends reminder emails', evidence: [], confidence: 1, projectId: alpha.id });
-    store.saveWorkflow({ id: 'wf_x', name: 'Mailer', active: false, nodes: [], connections: [], createdBy: alice.id } as Workflow);
+    store.saveWorkflow({ id: 'wf_x', name: 'Mailer', active: false, nodes: [], connections: [], createdBy: alice.id } as Workflow, { actor: alice.id });
     setHomeProject('workflow', 'wf_x', alpha.id);
     const only = (await runOk(landflowUsageNode, { operation: 'facts', query: 'reminder emails', subjectType: 'entity', limit: 10, oneItem: false })).json();
     expect(only.map((f) => f.subjectType)).toEqual(['entity']);

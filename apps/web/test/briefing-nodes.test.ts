@@ -126,9 +126,9 @@ async function sync(options: { credentials?: Record<string, unknown>; workflowId
 
 const rowsFor = (userId: string, status?: string) => database().all<{ id: string; status: string; text: string; model: string; gathered: string; day: string }>(`SELECT * FROM brain_briefings WHERE user_id = ?${status ? ` AND status = '${status}'` : ''} ORDER BY created_at`, userId);
 
-// The nodes run only in a workflow that an owner or admin made, or that nobody made: a seeded one, and one a member made.
+// The nodes run only in a workflow that no member made: a seeded one, and one a member made (as her: a body's createdBy is ignored).
 store.saveWorkflow({ ...template.workflow, id: 'wf_sync' });
-store.saveWorkflow({ ...template.workflow, id: 'wf_member', createdBy: alice.id });
+withAuth({ principal: { user: alice, via: 'test' } }, () => store.saveWorkflow({ ...template.workflow, id: 'wf_member', createdBy: owner.id }));
 
 beforeEach(() => {
   const db = database();

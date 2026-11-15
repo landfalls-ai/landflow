@@ -253,7 +253,7 @@ describe('Propose Flows', () => {
 describe('the nightly template', () => {
   const template = () => BUILTIN_TEMPLATES.find((t) => t.id === 'brain-sdlc-velocity')!;
   const night = async () => {
-    const workflow = store.saveWorkflow({ ...template().workflow, id: 'wf_velocity', createdBy: owner.id, active: false });
+    const workflow = store.saveWorkflow({ ...template().workflow, id: 'wf_velocity', createdBy: owner.id, active: false }, { actor: owner.id });
     const run = await runWorkflow({ workflow, mode: 'manual', startNodeId: 'nightly' });
     expect(run.error?.message).toBeUndefined();
     return proposals.listProposals({ status: 'open' });

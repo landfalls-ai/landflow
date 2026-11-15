@@ -79,7 +79,7 @@ const link = (source: string, target: string) => ({ id: `${source}-${target}`, t
 const RETRY = [{ op: 'setNodeSettings', node: 'Call', settings: { retryOnFail: true } }];
 
 function target() {
-  return store.saveWorkflow({ id: 'wf_t', name: 'Target flow', active: false, nodes: [node('h', 'Call', 'core.httpRequest')], connections: [], createdBy: owner.id } as Workflow);
+  return store.saveWorkflow({ id: 'wf_t', name: 'Target flow', active: false, nodes: [node('h', 'Call', 'core.httpRequest')], connections: [], createdBy: owner.id } as Workflow, { actor: owner.id });
 }
 
 /** A workflow that posts one suggestion (Suggest Improvement) to the audience, mirrored to Slack. */

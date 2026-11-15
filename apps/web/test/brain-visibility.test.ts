@@ -63,7 +63,7 @@ function clear() {
 }
 
 function seed() {
-  const w = store.saveWorkflow({ id: 'wf_vis', name: 'Ingest', active: false, nodes: [], connections: [], createdBy: owner.id } as unknown as Workflow);
+  const w = store.saveWorkflow({ id: 'wf_vis', name: 'Ingest', active: false, nodes: [], connections: [], createdBy: owner.id } as unknown as Workflow, { actor: owner.id });
   setHomeProject('workflow', w.id, team.id);
   entities.upsertEntity({ type: 'person', id: 'alice-vis.test', name: 'Alice', projectId: team.id, attrs: { email: 'alice@vis.test' } });
   // A's private work, and an event of a flow (no owner) that people with the workflow can read.
@@ -170,7 +170,7 @@ describe('a private work event', () => {
   });
 
   it('leaves Find Similar for a flow an owner made reading everything it did before', async () => {
-    store.saveWorkflow({ id: 'wf_owner_made', name: 'Billing retry sweeper', active: false, nodes: [], connections: [], createdBy: owner.id } as unknown as Workflow);
+    store.saveWorkflow({ id: 'wf_owner_made', name: 'Billing retry sweeper', active: false, nodes: [], connections: [], createdBy: owner.id } as unknown as Workflow, { actor: owner.id });
     const found = await findSimilar('Billing retry sweeper', { scope: scopeForWorkflow('wf_owner_made') });
     expect(JSON.stringify(found)).toContain('wf_owner_made');
   });

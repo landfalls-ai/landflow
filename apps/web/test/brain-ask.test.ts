@@ -53,7 +53,7 @@ const FIELDS = ['source', 'sourceId', 'url', 'actor', 'title', 'summary', 'team'
 for (const kind of ['work.discussion', 'work.bug_reported']) saveKind({ kind, fields: FIELDS });
 
 function flow(id: string, project: string) {
-  const w = store.saveWorkflow({ id, name: `Ingest ${id}`, active: false, nodes: [], connections: [], createdBy: owner.id } as unknown as Workflow);
+  const w = store.saveWorkflow({ id, name: `Ingest ${id}`, active: false, nodes: [], connections: [], createdBy: owner.id } as unknown as Workflow, { actor: owner.id });
   setHomeProject('workflow', w.id, project);
 }
 const ago = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString();

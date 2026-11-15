@@ -56,7 +56,7 @@ const FIELDS = ['source', 'sourceId', 'url', 'actor', 'title', 'summary', 'team'
 for (const kind of ['work.discussion', 'work.doc_edited', 'work.bug_reported']) saveKind({ kind, fields: FIELDS });
 
 function flow(id: string, project: string) {
-  const w = store.saveWorkflow({ id, name: `Ingest ${id}`, active: false, nodes: [], connections: [], createdBy: owner.id } as unknown as Workflow);
+  const w = store.saveWorkflow({ id, name: `Ingest ${id}`, active: false, nodes: [], connections: [], createdBy: owner.id } as unknown as Workflow, { actor: owner.id });
   setHomeProject('workflow', w.id, project);
   return w;
 }
