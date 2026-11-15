@@ -1993,6 +1993,28 @@ These wait, each with its reason:
   host and a headed browser, and are carried to wave 10's live pass with its own checks and those still owed from
   waves 6 to 8.
 
+## Company backbone: left open from the wave 10 reviews (2026-11-16)
+
+Wave 11 (token spend) checked the wave 10 notes against its merge; none were in its packages' files. These wait, each with
+its reason:
+
+- **Goal progress tests (PC18)**: the progress tests build their examples through a helper rather than the contract's
+  JSON literals, and there is no "today" case with a one-day window; a change for when a package next touches
+  `goal-progress` tests.
+- **No Cancelled filter on the Tasks tab (PC20)**: cancelled tasks show only under All; a filter is its own small UI
+  change with a desktop live check.
+- **Initiative caps match with `attrs LIKE` (PC17)**: documented in [projects-and-goals.md](projects-and-goals.md); no
+  change.
+- **Long signatures in `goals/progress.ts`** (lines over 180 characters): cosmetic, there is no formatter; no change.
+- **Agent and team exports keep judge and cheap-model credential references**: documented
+  ([limitations](limitations.md#project-export-wave-10)); no change.
+- **Live checks owed from wave 10 and wave 11**: wave 10's Goals progress line and sheet, the project Tasks tab and its
+  dialog, Approve and Deny for a task in Needs you, the project Export dialog with a downloaded zip (desktop and 390 px);
+  wave 11's Insights → AI as a member (every person by name, the "Everyone" total, other projects still "Another
+  project") and, on the integrated host, an agent run with a guardrail and a judge showing its purposes on Insights → AI
+  and `GET /api/insights/ai-usage?executionId=`, with Grafana's AI panels drawing on the local LGTM stack. They need a
+  host and a headed browser, and are carried with those still owed from waves 6 to 9.
+
 ## Runs: one list (B20, 2026-11-14)
 
 Closed from the wave 1 page review: X2 (Executions, Runs and Search runs are one page, **Runs** at `/runs`, the old URLs redirect), P-ex-1 (no ID or Mode column), P-ex-2 (Stop all only while a run runs), P-ex-3 (repeated failures fold into one row), P-ex-4 (two re-run words), P-runs-1 (one search box with Status and Workflow chips, the rest under More filters) and P-cmp-1 (compare with fewer than two runs goes back to the list). See [the Runs list](run-trace.md#the-runs-list).
