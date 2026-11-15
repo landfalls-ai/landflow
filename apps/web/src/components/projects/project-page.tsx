@@ -100,10 +100,11 @@ export function ProjectPage({ projectId }: { projectId: string }) {
         }
         actions={
           project && (
-            <>
+            // One box for both, so a phone's header puts them together on the title's row (it moves only the last action there), as every other tab's one action is.
+            <div className="flex items-center gap-2">
               {/* PC21: */}<ExportProjectButton project={project} />
               {tab === 'overview' && projectRoleCan.create(project.role) && <NewInProject project={project} onChanged={() => void loadProject()} />}
-            </>
+            </div>
           )
         }
       />

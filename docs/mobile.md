@@ -25,6 +25,7 @@ under [What's next](#whats-next), and this page grows as they land.
   whole, at 17 px, and the page's main action (its last one) on the first row. The other actions go on the next row (a
   search box there takes the row), and the meta line comes last. This is done in CSS only (the actions' box becomes
   `contents`, and its children order themselves), so nothing remounts.
+  On a project's Overview, **Export** and **New ▾** share one box, so both sit on the title's row (the header moves only its last action there); the other tabs have Export alone, in the same place.
 - **Editor header.** Two rows. The first has back, the workflow's name, the saved state (a dot, read out as Saved or
   Unsaved) and **⋯**. The second has Editor, Runs and Tests, then **Publish**. There is no Save (a draft saves itself;
   a failed save's toast has **Retry**) and no "Not published" chip: **Publish** carries the state ("Publish" or
