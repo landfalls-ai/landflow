@@ -153,6 +153,8 @@ export class AiUsageMeter implements UsageMeter {
 
   record(call: MeteredCall, scope: UsageScope) {
     const now = Date.now();
+    // call_id is unique: a repeated one (never expected from the server's gateway) must not lose the row or its event.
+    const callId = call.callId && !this.db().get('SELECT 1 AS found FROM ai_usage WHERE call_id = ?', call.callId) ? call.callId : undefined;
     try {
       this.db().insertNew('ai_usage', {
         id: `au_${nanoid(14)}`,
@@ -165,7 +167,7 @@ export class AiUsageMeter implements UsageMeter {
         user_id: scope.lookup('userId'),
         surface: scope.lookup('surface'),
         credential_id: call.credentialId,
-        call_id: call.callId,
+        call_id: callId,
         source: call.source ?? 'landflow',
         runtime: call.runtime ?? 'landflow',
         project_id: scopeProjectId(scope),

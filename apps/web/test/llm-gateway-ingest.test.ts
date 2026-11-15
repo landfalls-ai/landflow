@@ -73,6 +73,10 @@ beforeEach(() => {
   saveIngestStatus({ enabled: false, imported: 0, skipped: 0, totalImported: 0 });
 });
 
+/** What Landflow's meter writes for a call it counted through the server's gateway: a row with that call id. */
+const metered = (row: { litellm_call_id?: string; request_id: string }) =>
+  database().insertNew('ai_usage', { id: fresh('au'), at: new Date().toISOString(), day: new Date().toISOString().slice(0, 10), provider: 'litellm', model: 'qwen3-coder:30b', operation: 'chat', input_tokens: 1, output_tokens: 1, cost: 0, call_id: idOf(row), source: 'landflow', runtime: 'landflow' });
+
 /** The id the import keeps: the proxy's call id (`x-litellm-call-id`), else the response id. */
 const idOf = (row: { litellm_call_id?: string; request_id: string }): string => row.litellm_call_id ?? row.request_id;
 
@@ -125,13 +129,14 @@ describe('the spend import', () => {
     expect(rows(agentId)[0]).toMatchObject({ runtime: 'claude', project_id: 'prj_team' });
   });
 
-  it('skips Landflow’s own calls, failed calls and empty rows', async () => {
+  it('skips the calls Landflow counted (by call id), failed calls and empty rows; a caller’s in-process label skips nothing', async () => {
     const agentId = fresh('ag');
     const { key } = await ensureRuntimeKey({ agentId, runtime: 'kagent', model: 'qwen3-coder:30b' });
     await post(key);
     const keep = litellm.spendLogs[0];
-    await post(ownKey);
-    // An `in-process` row from a key that is not a runtime key (here Landflow's own key, or another client's).
+    await post(ownKey, { 'x-litellm-spend-logs-metadata': JSON.stringify({ landflow: 'in-process' }) });
+    metered(litellm.spendLogs[1]);
+    // Another client claiming `in-process` is still counted: only Landflow's own record says a call was counted.
     const stranger = litellm.addKey({ key_alias: 'some-client' });
     await post(stranger.key, { 'x-litellm-spend-logs-metadata': JSON.stringify({ landflow: 'in-process' }) });
     const template = litellm.spendLogs[0];
@@ -140,20 +145,21 @@ describe('the spend import', () => {
     extra({ spend: 0, total_tokens: 0, prompt_tokens: 0, completion_tokens: 0 });
 
     const status = await importSpend({ now: later() });
-    expect(status).toMatchObject({ imported: 1, skipped: 4 });
+    expect(status).toMatchObject({ imported: 2, skipped: 3 });
     expect(rows().filter((r) => r.agent_id === agentId).map((r) => r.call_id)).toEqual([idOf(keep)]);
     expect(rows().some((r) => r.call_id === idOf(litellm.spendLogs[1]))).toBe(false);
-    expect(rows().some((r) => r.call_id === idOf(litellm.spendLogs[2]))).toBe(false);
+    expect(rows().find((r) => r.call_id === idOf(litellm.spendLogs[2]))).toMatchObject({ runtime: 'other' });
   });
 
   it('counts a call Landflow made outside a usage scope (marked unmetered), even on its own key', async () => {
     await post(ownKey, { 'x-litellm-spend-logs-metadata': JSON.stringify({ landflow: 'unmetered', runtime: 'landflow' }) });
     const unmetered = litellm.spendLogs.at(-1)!;
     await post(ownKey, { 'x-litellm-spend-logs-metadata': JSON.stringify({ landflow: 'in-process', runtime: 'landflow' }) });
-    const metered = litellm.spendLogs.at(-1)!;
+    const counted = litellm.spendLogs.at(-1)!;
+    metered(counted);
     await importSpend({ now: later() });
     expect(rows().find((r) => r.call_id === idOf(unmetered))).toMatchObject({ source: 'litellm', runtime: 'landflow' });
-    expect(rows().some((r) => r.call_id === idOf(metered))).toBe(false);
+    expect(rows().some((r) => r.call_id === idOf(counted))).toBe(false);
   });
 
   it('imports a runtime key’s call even when it claims to be in-process, and attributes it to the agent', async () => {
@@ -177,7 +183,7 @@ describe('the spend import', () => {
     expect(rows(agentId)).toEqual([]);
   });
 
-  it('attributes an unknown key’s call to the person named as its end user, runtime other', async () => {
+  it('names nobody from what the caller sends: an unknown key’s call is runtime other with no person', async () => {
     const other = litellm.addKey({ key_alias: 'some-client' });
     const before = new Set(rows().map((r) => r.id));
     await post(other.key, { 'x-litellm-end-user-id': LITELLM_IDS.customer('usr_ana') });
@@ -185,12 +191,11 @@ describe('the spend import', () => {
     await importSpend({ now: later() });
     const mine = rows().filter((r) => r.runtime === 'other' && !before.has(r.id));
     expect(mine).toHaveLength(2);
-    const person = mine.find((r) => r.user_id === 'usr_ana')!;
-    expect(person).toMatchObject({ agent_id: null, source: 'litellm' });
-    expect(mine.find((r) => r.user_id === null)).toBeDefined();
+    // The end user header is the caller's word: it must not charge usr_ana's cap.
+    expect(mine.every((r) => r.user_id === null && r.agent_id === null && r.source === 'litellm')).toBe(true);
   });
 
-  it('is counted by the agent’s caps and the person’s totals', async () => {
+  it('is counted by the agent’s caps, and not by a person the caller names', async () => {
     const agentId = fresh('ag');
     const { key } = await ensureRuntimeKey({ agentId, runtime: 'kagent', model: 'qwen3-coder:30b' });
     await post(key, { 'x-litellm-end-user-id': LITELLM_IDS.customer('usr_cap') });
@@ -202,7 +207,7 @@ describe('the spend import', () => {
     await importSpend({ now: later() });
     expect(meter.agentDay(agentId)).toMatchObject({ calls: 2, inputTokens: 60, outputTokens: 20 });
     expect(meter.agentDay(agentId).cost).toBeCloseTo(0.004);
-    expect(meter.sinceTotals('user_id', 'usr_cap', 'day').calls).toBe(2);
+    expect(meter.sinceTotals('user_id', 'usr_cap', 'day').calls).toBe(0);
     // The cap that was not reached before is now: the next call would be refused.
     expect(limit.used()).toBeGreaterThanOrEqual(limit.max);
   });

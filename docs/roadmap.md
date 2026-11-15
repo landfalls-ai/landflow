@@ -1836,7 +1836,22 @@ Built: Settings in five groups, API docs moved to Developers, the built-in price
 
 ## LiteLLM wave (L1)
 
+LiteLLM in front of every model call, open-source build only; Landflow's caps decide and LiteLLM's budgets are the
+backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferred.
+
+- **LL01, built:** the `llm-gateway` compose profile runs LiteLLM pinned by digest (after the 21 October 2026
+  compromise), with its own database, Ollama models and the UI on loopback; a Kubernetes example for `landflow-dev`
+  ([llm-gateway.md](llm-gateway.md#run-it)).
+- **LL02, built:** Landflow's own calls through the gateway: the Gateway field on the Anthropic API and OpenAI API
+  credentials, gateway model lists, who-is-calling headers, no fallback beta, and LiteLLM's call id and cost on each
+  AI call ([llm-gateway.md](llm-gateway.md#point-landflow-at-it)).
+- **LL03, built:** a virtual key per agent on kagent and Claude Code, kagent's ModelConfig through LiteLLM, and the spend
+  import that counts their calls once ([llm-gateway.md](llm-gateway.md#agents-outside-landflow)).
+- **LL04, built:** the budgets sync (projects as teams, people as customers, dollar caps as backstop budgets) and
+  Settings → LLM gateway ([llm-gateway.md](llm-gateway.md#budgets-in-litellm)).
+- **LL06, built:** Insights → AI: spend and tokens by project, agent, person, model and source, caps and how near, the
+  gateway, and requests with Ask for more ([llm-gateway.md](llm-gateway.md#the-ai-page)).
 - **LL05, built:** asking for a higher AI cap: requests, the Cap Raise Request trigger, the cap-raise template with Ask a
   Person, and Apply Cap Raise, which changes the Landflow cap and tells the budgets sync only after an admin other than
-  the requester approved ([llm-gateway.md](llm-gateway.md#asking-for-a-higher-cap)). Open: the Insights → AI "Ask for
-  more" dialog (LL06).
+  the requester approved ([llm-gateway.md](llm-gateway.md#asking-for-a-higher-cap)). The Insights → AI "Ask for more" dialog
+  (LL06) is built.

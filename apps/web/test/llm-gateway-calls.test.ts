@@ -105,6 +105,8 @@ describe('Anthropic through the gateway', () => {
   const model = () => anthropicModel({ model: 'claude-sonnet-5-5', effort: 'low', maxTokens: 200, fallback: true, apiKey: virtual, baseUrl: fake.origin, gateway: 'litellm' });
 
   it('sends the virtual key, who is calling and no fallback, and keeps the call id and cost', async () => {
+    // The call id is kept only from the server-configured gateway.
+    process.env.LANDFLOW_LLM_GATEWAY_URL = fake.origin;
     const before = rows().length;
     const turnResult = await inScope('ex_a1', () => model().generate(turn));
     expect(turnResult.text).toBe('Echo: hello');
@@ -126,6 +128,8 @@ describe('Anthropic through the gateway', () => {
   });
 
   it('does the same streamed and with a tool', async () => {
+    // The call id is kept only from the server-configured gateway.
+    process.env.LANDFLOW_LLM_GATEWAY_URL = fake.origin;
     const streamed: string[] = [];
     await inScope('ex_a2', () => model().generate({ ...turn, onToken: (d) => void streamed.push(d) }));
     expect(streamed.join('')).toBe('Echo: hello');
@@ -176,6 +180,19 @@ describe('cost', () => {
     const [row] = rows().slice(before);
     expect(row.cost).toBe(0);
     expect(row.gateway_cost).toBe(0.001);
+    // Nor is its call id kept: the spend import dedupes on it, and another gateway could answer with someone else's.
+    expect(row.call_id).toBeNull();
+  });
+
+  it('records every call even when a call id repeats', async () => {
+    const { afterModelCall } = await import('@/lib/server/ai-usage/scope');
+    const before = rows().length;
+    await inScope('ex_dup', async () => {
+      for (let i = 0; i < 2; i++) afterModelCall({ provider: 'litellm', model: 'qwen3-coder:30b', operation: 'chat', inputTokens: 3, outputTokens: 1, callId: 'call-repeated' });
+    });
+    const added = rows().slice(before);
+    expect(added).toHaveLength(2);
+    expect(added.map((r) => r.call_id).sort()).toEqual(['call-repeated', null].sort());
   });
 });
 
@@ -183,6 +200,8 @@ describe('OpenAI-compatible through the gateway', () => {
   const connection = () => openAiConnection({ baseUrl: `${fake.origin}/v1`, apiKey: virtual, gateway: 'litellm' });
 
   it('is the litellm system and records the call id and cost, plain and streamed', async () => {
+    // The call id is kept only from the server-configured gateway.
+    process.env.LANDFLOW_LLM_GATEWAY_URL = fake.origin;
     const c = connection();
     expect(c.system).toBe('litellm');
     expect(c.label).toBe('LiteLLM');

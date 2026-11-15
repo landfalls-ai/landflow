@@ -82,7 +82,6 @@ how to run it and how to change it. The [project README](../README.md) has the q
   webhooks, messaging and MCP mapping.
 - [transports.md](transports.md): the transport plan as built: generic brokers, Auto, the bridge, MCP faces and the
   bundled gateway.
-- [llm-gateway.md](llm-gateway.md): LiteLLM as the one door for model calls: the profile, the pinned image, models, the Kubernetes example.
 - [mcp-gateway.md](mcp-gateway.md): agentgateway in Landflow, what was verified and how to rerun the spike.
 - [observability.md](observability.md): the OpenTelemetry contract: span names, attributes, metrics, logs.
 - [llm-gateway.md](llm-gateway.md): the LLM gateway (LiteLLM) in front of every model call, its budgets, and asking for a higher cap.

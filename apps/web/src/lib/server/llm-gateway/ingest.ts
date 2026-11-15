@@ -64,17 +64,18 @@ interface Attribution {
   userId?: string;
 }
 
-/** Who made the call: the key Landflow minted, else what the key's metadata says, else the team and the end user. */
+/**
+ * Who made the call, from what Landflow controls only: a key it minted for a runtime (its agent and project), else the
+ * project of the key's LiteLLM team (an admin assigns teams). What the caller sends (end user, tags, spend-log metadata)
+ * names nobody: a key holder could otherwise file spend under another person, agent or project and use up their caps.
+ */
 export function attribute(row: LiteLlmSpendLog, db: Database): Attribution {
   const key = row.api_key ? db.get<KeyRow>('SELECT runtime, agent_id, project_id FROM llm_gateway_keys WHERE key_hash = ?', row.api_key) : undefined;
-  const meta = (row.metadata?.spend_logs_metadata ?? {}) as Record<string, unknown>;
-  const metaRuntime = RUNTIMES.has(meta.runtime as AiRuntime) ? (meta.runtime as AiRuntime) : undefined;
-  const runtime: AiRuntime = key && RUNTIMES.has(key.runtime as AiRuntime) ? (key.runtime as AiRuntime) : (metaRuntime ?? 'other');
   const trusted = key !== undefined && RUNTIMES.has(key.runtime as AiRuntime);
-  const agentId = runtime === 'other' ? undefined : trusted ? key.agent_id : text(meta.agent);
-  const projectId = key?.project_id ?? (trusted ? undefined : text(meta.project)) ?? projectIdOfTeam(row.team_id || row.metadata?.user_api_key_team_id);
-  const userId = userIdOfCustomer(row.end_user);
-  return { runtime, ...(agentId && { agentId }), ...(projectId && { projectId }), ...(userId && { userId }) };
+  const runtime: AiRuntime = trusted ? (key.runtime as AiRuntime) : 'other';
+  const agentId = trusted ? key.agent_id : undefined;
+  const projectId = key?.project_id ?? projectIdOfTeam(row.team_id || row.metadata?.user_api_key_team_id);
+  return { runtime, ...(agentId && { agentId }), ...(projectId && { projectId }) };
 }
 
 export interface ImportOptions {
@@ -105,7 +106,8 @@ export async function importSpend(options: ImportOptions = {}): Promise<IngestSt
   }
 
   const meter = aiUsageMeter();
-  const ownKeyHash = connection.apiKey ? hashKey(connection.apiKey) : undefined;
+  // Only the server's own key (LANDFLOW_LLM_GATEWAY_KEY) labels a row as Landflow's; a credential's key is member-editable.
+  const ownKeyHash = connection.source === 'environment' && connection.apiKey ? hashKey(connection.apiKey) : undefined;
   const endMs = now - LAG_MS;
   const startMs = previous.lastEnd && timeOf(previous.lastEnd) !== undefined ? (timeOf(previous.lastEnd) as number) - OVERLAP_MS : now - FIRST_WINDOW_MS;
   let imported = 0;
@@ -167,12 +169,9 @@ function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<
   const callId = text(row.litellm_call_id) ?? text(row.request_id);
   if (!callId) return false;
   if (row.status !== undefined && row.status !== 'success') return false;
-  // A key Landflow minted for a runtime is never Landflow's own call, whatever metadata the caller sends.
-  const minted = row.api_key ? db.get<KeyRow>('SELECT runtime, agent_id, project_id FROM llm_gateway_keys WHERE key_hash = ?', row.api_key) : undefined;
-  const runtimeKey = minted !== undefined && RUNTIMES.has(minted.runtime as AiRuntime);
-  if (!runtimeKey && (row.metadata?.spend_logs_metadata as Record<string, unknown> | null | undefined)?.landflow === 'in-process') return false;
-  // Landflow's own key: its calls were metered in process, except those it marked `unmetered` (outside a usage scope).
-  if (ctx.ownKeyHash && row.api_key === ctx.ownKeyHash && (row.metadata?.spend_logs_metadata as Record<string, unknown> | null | undefined)?.landflow !== 'unmetered') return false;
+  // "Landflow already counted this" is decided only by Landflow's own record: a call it metered through the server's
+  // gateway carries that gateway's call id in ai_usage (checked below). Nothing the caller sends (the `in-process`
+  // metadata) or a member-editable credential's key can make the import skip a row.
   const input = count(row.prompt_tokens) || (row.prompt_tokens === undefined ? count(row.total_tokens) - count(row.completion_tokens) : 0);
   const output = count(row.completion_tokens);
   const spend = typeof row.spend === 'number' && Number.isFinite(row.spend) && row.spend > 0 ? row.spend : 0;

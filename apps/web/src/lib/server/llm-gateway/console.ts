@@ -72,9 +72,12 @@ const SOURCE_LABELS: Record<string, string> = {
   'litellm:other': 'Other clients of the gateway',
 };
 
-/** `landflow:landflow`, or `litellm:<kagent|claude|other>`: a row without a source is Landflow's own. */
+/**
+ * `landflow:landflow`, or `litellm:<kagent|claude|other>`: a row without a source is Landflow's own, and so is an
+ * imported row of runtime `landflow` (a call Landflow made outside a usage scope on the server's gateway key).
+ */
 export function sourceKey(source: string | null | undefined, runtime: string | null | undefined): string {
-  if (source !== 'litellm') return 'landflow:landflow';
+  if (source !== 'litellm' || runtime === 'landflow') return 'landflow:landflow';
   return runtime === 'kagent' || runtime === 'claude' ? `litellm:${runtime}` : 'litellm:other';
 }
 

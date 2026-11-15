@@ -22,7 +22,7 @@ const { enableTestAuth } = await import('@/lib/server/auth/test-bypass');
 const projects = await import('@/lib/server/projects');
 const { database } = await import('@/lib/server/db');
 const { aiUsageMeter, saveAiCaps } = await import('@/lib/server/ai-usage');
-const { aiConsoleReport } = await import('@/lib/server/llm-gateway/console');
+const { aiConsoleReport, sourceKey } = await import('@/lib/server/llm-gateway/console');
 const { gatewayStatus, resetGatewayStatus } = await import('@/lib/server/llm-gateway/status');
 const helpersStatus = await import('@/lib/server/llm-gateway/status');
 const { saveGatewaySettings } = await import('@/lib/server/llm-gateway/settings');
@@ -363,5 +363,15 @@ describe('the caps card markup', () => {
     expect(renderToStaticMarkup(createElement(CapsCard, { report: off, onChanged: () => {} }))).toContain('Asking for more is off');
     const adminOff = { ...report(true), capRaise: { active: false } };
     expect(renderToStaticMarkup(createElement(CapsCard, { report: adminOff, onChanged: () => {} }))).toContain('Turn on cap requests');
+  });
+});
+
+describe('sourceKey', () => {
+  it('files a call Landflow made outside a usage scope (imported, runtime landflow) under Landflow, not other clients', () => {
+    expect(sourceKey('litellm', 'landflow')).toBe('landflow:landflow');
+    expect(sourceKey('landflow', 'landflow')).toBe('landflow:landflow');
+    expect(sourceKey(null, null)).toBe('landflow:landflow');
+    expect(sourceKey('litellm', 'kagent')).toBe('litellm:kagent');
+    expect(sourceKey('litellm', 'other')).toBe('litellm:other');
   });
 });

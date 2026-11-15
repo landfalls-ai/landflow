@@ -238,7 +238,9 @@ export function anthropicModel(options: { model: string; effort: Effort; maxToke
 
     const reply: GatewayReply = callId ? takeGatewayReply(callId) : {};
     const gatewayFields = {
-      ...(reply.callId && { callId: reply.callId }),
+      // The call id is what the spend import dedupes on: take it only from the server-configured gateway. Another
+      // gateway (a credential's Base URL) could answer with the id of someone else's call and erase it from the import.
+      ...(reply.callId && costTrusted && { callId: reply.callId }),
       ...(reply.cost !== undefined && { gatewayCost: reply.cost }),
       ...(reply.cost !== undefined && costTrusted && { gatewayCostTrusted: true }),
     };
@@ -775,7 +777,8 @@ export async function openAiChat(
       outputTokens: result.usage.outputTokens,
       cacheReadTokens: result.usage.cacheReadTokens,
       finishReasons: [result.finishReason],
-      ...(reply.callId && { callId: reply.callId }),
+      // As above: a call id only from the server-configured gateway.
+      ...(reply.callId && trusted && { callId: reply.callId }),
       ...(reply.cost !== undefined && { gatewayCost: reply.cost }),
       ...(reply.cost !== undefined && trusted && { gatewayCostTrusted: true }),
     }),
@@ -924,20 +927,24 @@ export async function openAiEmbeddings(
   model: string,
   input: string[],
   options: { dimensions?: number; signal?: AbortSignal } = {},
-): Promise<{ vectors: number[][]; model?: string; inputTokens?: number }> {
+): Promise<{ vectors: number[][]; model?: string; inputTokens?: number; callId?: string }> {
   return traceEmbeddings(
     { system: connection.system, model, ...(connection.credentialId && { credentialId: connection.credentialId }), attributes: connection.attributes },
     async () => {
+      // Through the server-configured gateway, keep its call id so the spend import does not count the call again.
+      let gatewayCall: string | undefined;
+      const trusted = connection.gateway === 'litellm' && trustsGatewayCost(gatewayRoot(connection.base));
       const reply = await openAiRequest<{ model?: string; data?: Array<{ index?: number; embedding?: unknown }>; usage?: { prompt_tokens?: number } }>(connection, '/embeddings', {
         body: { model, input, ...(options.dimensions && { dimensions: options.dimensions }) },
         ...(options.signal && { signal: options.signal }),
+        ...(trusted && { onResponse: (response: Response) => void (gatewayCall = gatewayReplyOf(response.headers).callId) }),
       });
       const data = [...(reply.data ?? [])].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
       if (data.length !== input.length || data.some((entry) => !Array.isArray(entry.embedding))) {
         throw new NodeOperationError(`${connection.label} returned ${data.length} embedding(s) for ${input.length} input(s)`, { description: 'Is this an embedding model?' });
       }
-      return { vectors: data.map((entry) => entry.embedding as number[]), ...(reply.model && { model: reply.model }), ...(reply.usage?.prompt_tokens !== undefined && { inputTokens: reply.usage.prompt_tokens }) };
+      return { vectors: data.map((entry) => entry.embedding as number[]), ...(reply.model && { model: reply.model }), ...(reply.usage?.prompt_tokens !== undefined && { inputTokens: reply.usage.prompt_tokens }), ...(gatewayCall && { callId: gatewayCall }) };
     },
-    (result) => ({ responseModel: result.model, inputTokens: result.inputTokens, dimensions: result.vectors[0]?.length }),
+    (result) => ({ responseModel: result.model, inputTokens: result.inputTokens, dimensions: result.vectors[0]?.length, ...(result.callId && { callId: result.callId }) }),
   );
 }

@@ -25,7 +25,7 @@ export function aiTemplates(h: Helpers): TemplateDetail[] {
       categories: ['it-ops', 'ai'],
       setup: [
         'An admin turns this flow on once, from Insights → AI. Until then nobody can ask for a higher cap.',
-        'The request reaches every owner and admin except the person who asked, in Needs you. It asks in chat; switch Ask a Person to Slack or email if you prefer.',
+        'The request reaches every owner and admin except the person who asked, in Needs you. It asks in chat; email works too. A Slack answer cannot be matched to a person, so it never applies a cap.',
         'If nobody answers in 3 days the request is rejected and nothing changes.',
       ],
       nodes: [

@@ -82,7 +82,7 @@ instance's gateway, resolved at call time, over the OpenAI-compatible path. With
 |---|---|---|
 | `x-litellm-end-user-id` | `landflow-user-<id>` of the person who started the run | spend and budget per customer |
 | `x-litellm-tags` | `landflow`, `landflow-project:<id>`, `landflow-agent:<id>`, `landflow-workflow:<id>`, `landflow-surface:<name>`, `landflow-runtime:landflow` | spend by tag |
-| `x-litellm-spend-logs-metadata` | JSON with `landflow: "in-process"` and the ids above | the spend log; the spend import skips rows marked `in-process` |
+| `x-litellm-spend-logs-metadata` | JSON with `landflow: "in-process"` (or `"unmetered"` outside a usage scope) and the ids above | the spend log, for reading; the spend import does not trust it |
 | `x-litellm-trace-id` | the execution id, else the session id | grouping calls of one run |
 
 A person is only named when a person started the run. The project is the home project of the agent or workflow. With **Settings →
@@ -164,13 +164,15 @@ LLM gateway has the import on (it is by default).
   page is empty (at most 200 pages a chunk). LiteLLM caps only the total it advertises (`total_is_capped`), never the
   data, so the import ignores that flag. The last run's end moves only over chunks read to an empty page: a run that fails
   or hits the page cap keeps its place and says so in its status, and the next run reads the rest.
-- **Skipped.** Failed calls; rows marked `in-process` (Landflow's meter counted them) unless the key is one Landflow
-  minted for a runtime (such a call is never Landflow's own, whatever its metadata says); rows made with Landflow's own
-  virtual key; rows with no tokens and no spend; a call id that is already in `ai_usage`.
-- **Attribution.** The key's row in `llm_gateway_keys` gives the runtime, the agent and the project (metadata never
-  overrides it); else the row's
-  `spend_logs_metadata`; else the project from the team (`landflow-project-<id>`). The person comes from the end user
-  (`landflow-user-<id>`). Anything else is runtime `other`, with no agent.
+- **Skipped.** Failed calls; rows with no tokens and no spend; a call id that is already in `ai_usage`. That last one is
+  how a call Landflow counted itself is recognised: Landflow keeps the call id only from the server-configured gateway
+  (`LANDFLOW_LLM_GATEWAY_URL`). Nothing the caller sends (the `in-process` metadata) and no credential's key makes the
+  import skip a row: a key holder could otherwise hide their spend.
+- **Attribution.** Only from what Landflow controls: the key's row in `llm_gateway_keys` gives the runtime, the agent
+  and the project; else the project from the key's team (`landflow-project-<id>`, which an admin assigns). A row made
+  with the server's own key (`LANDFLOW_LLM_GATEWAY_KEY`) is runtime Landflow. Anything else is runtime `other`, with no
+  agent. No person is taken from the call: the end user, tags and metadata are the caller's word, and a key holder could
+  otherwise charge another person's cap.
 - **What it writes.** One `ai_usage` row per call: `source = 'litellm'`, the runtime, the agent, the project, the person,
   the call id (an index keeps a call id to one row; the row id is derived from it) and LiteLLM's cost as `gateway_cost`.
   `cost` is Landflow's price-table price when the model is priced (Settings → AI prices), else LiteLLM's. One `ai.call`
@@ -185,12 +187,14 @@ LLM gateway has the import on (it is by default).
 
 A call is counted in one place only:
 
-- **Calls Landflow makes itself** are counted by Landflow's meter, as before, when they return. Through the gateway they
-  also carry LiteLLM's call id (`x-litellm-call-id`) and its cost, so the gateway's log can be matched to them. They are
-  marked `in-process` in LiteLLM's spend log, and the spend import skips them.
+- **Calls Landflow makes itself** are counted by Landflow's meter, as before, when they return. Through the
+  server-configured gateway they also keep LiteLLM's call id (`x-litellm-call-id`), and the spend import skips a row whose
+  call id is already in `ai_usage`. Through a credential that points elsewhere, only the cost is kept, for reading: such a
+  gateway could answer with someone else's call id. So point a gateway credential at the same address as
+  `LANDFLOW_LLM_GATEWAY_URL`; the same proxy under another address is counted twice (by the meter and by the import).
 - **Calls Landflow makes outside a run, chat or agent** (a background job, such as the second brain's detectors, has no
-  usage scope, so Landflow's meter does not count it) are marked `unmetered` instead. The spend import counts them, even on
-  Landflow's own gateway key, as source LiteLLM and runtime Landflow.
+  usage scope, so Landflow's meter does not count it) are marked `unmetered` instead and have no row of Landflow's, so the
+  spend import counts them, as source LiteLLM and runtime Landflow; the AI page shows them under Landflow.
 - **Calls made outside Landflow** (an agent on kagent, Claude Code on kagent, any other client of the gateway) are
   counted from LiteLLM's spend log by the spend import, once per call id. LiteLLM files each row under the response's id (`chatcmpl-…`) and keeps
   the call id in `litellm_call_id`; Landflow matches and counts by the call id.
@@ -204,16 +208,16 @@ a client that skips Landflow) is still stopped.
 
 - **What is mirrored.** Each project is a LiteLLM team (`landflow-project-<id>`, alias the project's name; a personal
   project gets the alias "Personal project"). Each person with a cap of their own, or everyone when "every user" has a
-  dollar cap, is a customer (`landflow-user-<id>`, no alias). The gateway key named by the server's `LANDFLOW_LLM_GATEWAY_KEY` gets that
-  credential's cap; a key named by a credential's data is never touched, because project editors can edit a credential
-  and the admin key must not change a budget on a key that data picked. Each key Landflow minted for an agent on kagent gets the agent's dollar limits and its project's
+  dollar cap, is a customer (`landflow-user-<id>`, no alias). The server's own gateway key (`LANDFLOW_LLM_GATEWAY_KEY`) gets no budget:
+  its calls are under Landflow's caps already. A key named by a credential's data is never touched, because project
+  editors can edit a credential and the admin key must not change a budget on a key that data picked. Each key Landflow minted for an agent on kagent gets the agent's dollar limits and its project's
   team. Only ids go to LiteLLM, never names or emails. Teams carry no budget yet.
 - **Which caps have a backstop.** Dollar caps only: LiteLLM budgets are dollars. Token caps and workflow caps have none.
   A daily cap becomes a `1d` budget, else a monthly one a `30d` budget.
 - **Headroom.** The budget sits a percentage above the Landflow cap (10% by default, rounded up to the cent), so
   Landflow's own, clearer stop comes first. Agents on kagent get none: LiteLLM is the only stop there.
 - **How a customer's budget is written.** LiteLLM keeps a customer's budget on a budget object; `/customer/update`
-  ignores budget fields (a null never clears one). So a new customer gets its budget with `/customer/new`, and a change
+  ignores a null budget (it never clears one) and drops `budget_duration`. So a new customer gets its budget with `/customer/new`, and a change
   or a removal goes through `/budget/update` on the customer's `budget_id` (or a new budget linked to it).
 - **Windows.** LiteLLM resets `1d` and `30d` budgets on its own clock (UTC), not the instance's time zone.
 - **When it runs.** "Sync now" in Settings → AI → LLM gateway (admins), when caps are saved or an approval raises one
@@ -338,8 +342,7 @@ refreshes every minute while the tab is visible.
 - **The Anthropic Chat Model node's model list** stays the fixed Claude list with a gateway credential.
 - **Bare Ollama models** (the Ollama Chat Model node, an agent with the Ollama provider) call Ollama directly, not through the gateway.
 - **Agents outside Landflow** (LL03): LiteLLM sees the agent's key, not the person who asked, so a call kagent makes
-  has no person in `ai_usage` (a call made with an end user named, such as an agent calling the gateway for someone, has
-  one). The import lags by up to its interval plus LiteLLM's batch (about 10 s), so a cap counts an agent's calls a few
+  has no person in `ai_usage`, even when the call names an end user (that is the caller's word). The import lags by up to its interval plus LiteLLM's batch (about 10 s), so a cap counts an agent's calls a few
   minutes late. Token limits of an agent on kagent are counted but not enforced there (LiteLLM budgets are in dollars).
   The sandbox of a Claude Code agent can reach the gateway. Keys are blocked, never deleted, and not rotated.
 - Project budgets (until Paperclip's project budget lands), tag budgets, and budget windows in the instance's time zone (LL04).

@@ -40,13 +40,15 @@ export interface EmbeddingsResponse {
   inputTokens?: number;
   /** `gen_ai.embeddings.dimension.count` */
   dimensions?: number;
+  /** The server-configured gateway's call id, so the spend import never counts the call again. */
+  callId?: string;
 }
 
 /** Run one embeddings call in a `gen_ai.embeddings {model}` span; it counts in the same `landflow.ai.*` metrics as chat (input tokens only). */
 export function traceEmbeddings<T>(request: ChatRequest, call: () => Promise<T>, describe: (result: T) => EmbeddingsResponse): Promise<T> {
   return traceGenAi('embeddings', request, call, (result) => {
     const response = describe(result);
-    return { responseModel: response.responseModel, inputTokens: response.inputTokens, ...(response.dimensions && { dimensions: response.dimensions }) };
+    return { responseModel: response.responseModel, inputTokens: response.inputTokens, ...(response.dimensions && { dimensions: response.dimensions }), ...(response.callId && { callId: response.callId }) };
   });
 }
 
