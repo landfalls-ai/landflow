@@ -2463,6 +2463,52 @@ function paths(): Record<string, Record<string, Json>> {
       404: notFound,
     },
   });
+  // PC13: project settings for agents, and sessions by project.
+  const agentSettingsDoc = object({
+    defaultModel: { type: 'object', additionalProperties: true, description: 'An agent model (`provider`, `model`, optional `credential`, `baseUrl`): used when neither the workflow’s node nor the agent names one' },
+    knowledge: { type: 'object', additionalProperties: true, description: '`{ enabled, tool }`: one knowledge base every agent in the project can search, as `project_knowledge`' },
+    agents: object({ mode: { type: 'string', enum: ['off', 'allow'] }, ids: { type: 'array', items: { type: 'string' }, maxItems: 200 } }, ['mode', 'ids']),
+    agentTools: object({ mode: { type: 'string', enum: ['off', 'allow'] }, kinds: { type: 'array', items: { type: 'string', enum: ['node', 'mcp', 'knowledge', 'workflow', 'agent', 'a2a'] } } }, ['mode', 'kinds']),
+  });
+  const settingsView = object({ settings: { type: 'object', additionalProperties: true }, canEdit: { type: 'boolean' }, plugins: array({ type: 'object', additionalProperties: true }), nodeTypes: array({ type: 'object', additionalProperties: true }), availableAgents: array(object({ id: { type: 'string' }, name: { type: 'string' }, home: { type: 'boolean' } }, ['id', 'name', 'home'])) }, ['settings', 'canEdit']);
+  add('get', '/api/projects/{id}/settings', {
+    tag: 'Projects',
+    id: 'getProjectSettings',
+    summary: 'A project’s settings',
+    description: 'Any role in the project. Besides the node allow-list and approvers: `defaultModel`, `knowledge`, `agents` and `agentTools` for the agents that run in it, and `availableAgents` (the agents available in the project, sorted by name, `home` true for its own).',
+    pathParams: { id: 'The project id' },
+    responses: { 200: reply('The settings', settingsView), 404: notFound },
+  });
+  add('patch', '/api/projects/{id}/settings', {
+    tag: 'Projects',
+    id: 'updateProjectSettings',
+    summary: 'Change a project’s settings',
+    description: 'The project’s admins, owners and admins. A field the body leaves out keeps its value; `null` clears `defaultModel` and `knowledge`. 400 for a credential the project can’t use, an agent that isn’t available in it, or a tool kind that doesn’t exist.',
+    pathParams: { id: 'The project id' },
+    body: jsonBody(agentSettingsDoc),
+    responses: { 200: reply('The settings', settingsView), 400: invalid, 403: errorRef('Not an admin of the project'), 404: notFound },
+  });
+  add('get', '/api/agents/{id}/sessions', {
+    tag: 'Agents',
+    id: 'listAgentSessions',
+    summary: 'An agent’s sessions the caller may read',
+    description: 'Newest first, paged by `cursor`. A session belongs to the project it ran in and is read only from there: members get the sessions of their projects, owners and admins all. With `executionId`, the sessions that run started, for anyone who can read the run (404 otherwise).',
+    pathParams: { id: 'The agent id' },
+    query: [
+      { name: 'limit', description: 'Page size (up to 200)', schema: { type: 'integer' } },
+      { name: 'cursor', description: 'From `nextCursor`', schema: { type: 'string' } },
+      { name: 'executionId', description: 'Only the sessions this run started (in full, oldest first)', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('The sessions', object({ sessions: array({ type: 'object', additionalProperties: true }), nextCursor: { type: ['string', 'null'] } }, ['sessions'])), 404: notFound },
+  });
+  add('get', '/api/agents/{id}/sessions/{sid}', {
+    tag: 'Agents',
+    id: 'getAgentSession',
+    summary: 'One agent session',
+    description: 'Only from the session’s own project (or by whoever can read the run that started it): 404 “Session not found” otherwise.',
+    pathParams: { id: 'The agent id', sid: 'The session id' },
+    responses: { 200: reply('The session', object({ session: { type: 'object', additionalProperties: true }, traceUrls: { type: 'object', additionalProperties: true }, feedback: array({ type: 'object', additionalProperties: true }) }, ['session'])), 404: notFound },
+  });
   return out;
 }
 

@@ -205,9 +205,13 @@ export async function gradeNodeExecution(record: ExecutionRecord, nodeId: string
 const DAY_MS = 86_400_000;
 const average = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / values.length;
 
-export function onlineReport(target: string, limit = 50): OnlineEvalReport {
+/**
+ * `scoreVisible` (PC13): an agent's scores carry each graded reply and its rating comment, so the viewer sees only those of
+ * the sessions they may read (the totals and the daily trend stay the agent's own counts).
+ */
+export function onlineReport(target: string, limit = 50, scoreVisible?: (score: OnlineEvalScore) => boolean): OnlineEvalReport {
   const config = db.getOnlineConfig(target);
-  const scores = db.listScores(target, Math.max(limit, 20));
+  const scores = scoreVisible ? db.listScores(target, 500).filter(scoreVisible) : db.listScores(target, Math.max(limit, 20));
   const totals = db.scoreTotals(target);
   const since = new Date(Date.now() - 30 * DAY_MS).toISOString().slice(0, 10);
   const recent = scores.slice(0, 10).map((s) => s.score);

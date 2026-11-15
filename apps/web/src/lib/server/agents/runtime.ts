@@ -41,7 +41,11 @@ import { cleanPersona, personaPrompt } from '../../shared/persona';
 import { sawPersona } from '../../shared/what-it-saw-sections';
 import { agentStore, configOf } from './store';
 import type { MemberPause } from '../agent-teams/pause';
-import { buildToolset, binaryScopeFor, dedupe, type BuiltTool, type ToolCaller, type ToolContext } from './tools';
+import { buildToolset, binaryScopeFor, dedupe, nodeKnowledgeTool, type BuiltTool, type ToolCaller, type ToolContext } from './tools';
+import { knowledgeTool } from './knowledge';
+import { agentNotAllowedMessage, projectAgentRules } from '../project-context/project-settings';
+import { isNodeKnowledge } from '../../shared/agents';
+import { PROJECT_KNOWLEDGE_TOOL } from '../../shared/project-policy';
 import { hostBinaryClient, storeBinary } from '../binary/access';
 import { DEFAULT_KEPT_TOOL_IMAGES, hydrateToolImages, imageSizeLabel, storeToolImages, type ToolImageMode } from '../nodes/tool-images';
 import { HttpError } from '../errors';
@@ -248,7 +252,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
 
   const emit = (event: AgentStreamEvent) => {
     request.onEvent?.(event);
-    bus.publish({ channel: 'agent', agentId: agent.id, event });
+    bus.publish({ channel: 'agent', agentId: agent.id, ...(session.context?.projectId && { projectId: session.context.projectId }), event }); // PC13: the session's project, for the live feed
   };
   // A session a Run an Agent node started also writes its entries into that run's journal (lib/server/journal).
   const journalEntry = agentSessionJournal(session, { id: agent.id, name: request.team?.title ?? agent.name }, { under: request.team?.under, inline: Boolean(request.team?.under) });
@@ -302,6 +306,12 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     recordRunPractices('delivered', runCtx.practices, { ...(runCtx.projectId && { projectId: runCtx.projectId }), ...(session.execution?.executionId && { executionId: session.execution.executionId }), agentId: agent.id, ...(currentActorId() && { userId: currentActorId() }) });
   }
   session.context = runCtx;
+  // PC13: the project's settings for agents, read once for the run (undefined: none on, the run is as it was).
+  const rules = projectAgentRules(runCtx.projectId);
+  const notAllowed = rules && !rules.agentAllowed(agent.id) ? agentNotAllowedMessage(config.name, rules.projectName) : undefined;
+  const effectiveModel = request.flow?.model ?? config.model ?? rules?.settings.defaultModel;
+  // The response caches key on the model the run really uses, so two projects' defaults never share an answer.
+  const cacheConfig = rules?.settings.defaultModel && !config.model ? { ...config, model: rules.settings.defaultModel } : config;
   // PC08: what the agent saw, once per run (a resume reuses the first run's block and records nothing).
   if (!resumed) {
     journalEntry.saw({
@@ -327,7 +337,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
         sessionId: session.id,
         source: session.source,
         version: String(session.version),
-        ...((request.flow?.model ?? config.model) && { model: { provider: (request.flow?.model ?? config.model)!.provider, model: (request.flow?.model ?? config.model)!.model } }),
+        ...(effectiveModel && { model: { provider: effectiveModel.provider, model: effectiveModel.model } }),
         root: request.rootTrace,
       },
       async () => {
@@ -341,7 +351,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
           let text = request.message.trim();
           // Input guardrail: the model never sees a blocked message; a sanitized one reaches it (and the session) cleaned.
           const rule = config.guardrails?.input;
-          const checked = ruleActive(rule) ? await applyGuardrail(rule, 'input', text, { model: () => agentModel(config.model), signal: request.signal, log: (m) => logger.warn(m) }) : undefined;
+          const checked = ruleActive(rule) && !notAllowed ? await applyGuardrail(rule, 'input', text, { model: () => agentModel(config.model ?? rules?.settings.defaultModel), signal: request.signal, log: (m) => logger.warn(m) }) : undefined;
           const from = session.source !== 'test' ? { from: session.userId } : {};
           if (checked?.action === 'blocked') {
             blockedReply = checked.text;
@@ -392,6 +402,11 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     let accessNotes: string[] = [];
     /** The router sent this run to the cheap model: its answer is not stored, so the agent's own model still answers the same question later. */
     let routedToCheap = false;
+    // PC13: an agent the project doesn't allow doesn't run: no tool or model is built.
+    if (notAllowed) {
+      upsert({ id: entryId(), type: 'error', message: notAllowed, at: now() });
+      return { reason: 'error' };
+    }
     try {
       toolset = await buildToolset(agent, config, request.flow?.tools);
       if (request.team?.tools.length) toolset = { ...toolset, tools: dedupe([...toolset.tools, ...request.team.tools]) };
@@ -401,10 +416,22 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       const access = await applyToolPolicy(toolset.tools, { agentId: agent.id, caller: { id: session.userId, ...(role && { role }), source: session.source }, access: config.access, ...(request.signal && { signal: request.signal }) });
       toolset = { ...toolset, tools: access.tools };
       accessNotes = access.notes;
+      // PC13: the project's tool kinds, then its knowledge base (never withheld by the kinds).
+      if (rules) {
+        const kept = toolset.tools.filter((tool) => rules.toolAllowed(tool));
+        accessNotes = [...accessNotes, ...toolset.tools.filter((tool) => !kept.includes(tool)).map((tool) => `${tool.label} withheld by project “${rules.projectName}” settings`)];
+        const knowledge = rules.settings.knowledge;
+        const built = knowledge?.enabled ? (isNodeKnowledge(knowledge.tool) ? nodeKnowledgeTool(knowledge.tool) : knowledgeTool(knowledge.tool)) : undefined;
+        if (built && 'error' in built) toolset = { ...toolset, tools: kept, unavailable: [...toolset.unavailable, built.error] };
+        else if (built) {
+          toolset = { ...toolset, tools: dedupe([...kept, { ...built, name: PROJECT_KNOWLEDGE_TOOL, label: 'Project knowledge' }]) };
+          toolsOffered += 1;
+        } else toolset = { ...toolset, tools: kept };
+      }
       // The model router: a short, simple request goes to the cheap model. A workflow's own model (Run an Agent) always wins.
       const route = request.flow?.model ? undefined : chooseTier(config.router, { ...(request.message !== undefined && { message: request.message }), toolCount: toolset.tools.length });
       const cheap = route?.tier === 'cheap' ? config.router?.cheapModel : undefined;
-      model = request.flow?.model ?? (await agentModel(cheap ?? config.model));
+      model = request.flow?.model ?? (await agentModel(cheap ?? config.model ?? rules?.settings.defaultModel));
       if (cheap) routedToCheap = true;
       if (cheap) upsert({ id: entryId(), type: 'notice', message: `Routed to ${cheap.model}: ${route?.reason}`, at: now() });
     } catch (error) {
@@ -425,7 +452,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
         results.map(async (result) => {
           let next = result;
           if (!result.isError && ruleActive(toolRule)) {
-            const checked = await applyGuardrail(toolRule, 'tool', result.content, { model: () => agentModel(config.model), signal: request.signal, log: (m) => logger.warn(m) });
+            const checked = await applyGuardrail(toolRule, 'tool', result.content, { model: () => agentModel(config.model ?? rules?.settings.defaultModel), signal: request.signal, log: (m) => logger.warn(m) });
             if (checked.action !== 'pass') {
               upsert(guardrailEntry(entryId(), 'tool', checked, now(), result.name));
               next = { ...result, content: checked.text, ...(checked.action === 'blocked' && { isError: true }) };
@@ -481,7 +508,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     const first = session.messages[0];
     const question = request.message !== undefined && first?.role === 'user' && typeof first.content === 'string' ? first.content : undefined;
     const skip = session.userId === 'evaluation' ? 'it is an evaluation run (the eval gate must ask the model, and must not fill the cache)' : question === undefined ? 'it is a resumed run' : uncacheable({ cache: config.cache, messageCount: session.messages.length, toolCount: toolsOffered, memory: config.memory.crossSession, borrowed: Boolean(request.flow || request.team) });
-    const cacheId = question !== undefined && !skip ? cacheKey(agent.id, config, question, runCtx.hash) : undefined;
+    const cacheId = question !== undefined && !skip ? cacheKey(agent.id, cacheConfig, question, runCtx.hash) : undefined;
     let questionVector: number[] | undefined;
     if (cacheId) {
       const stored = responseCache.get(cacheId);
@@ -496,7 +523,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       if (semantic?.enabled && question !== undefined) {
         try {
           questionVector = await embedderFor(semantic)(question, request.signal);
-          const similar = semanticCache.find(agent.id, configHash(agent.id, config, runCtx.hash), questionVector, semantic.threshold);
+          const similar = semanticCache.find(agent.id, configHash(agent.id, cacheConfig, runCtx.hash), questionVector, semantic.threshold);
           if (similar) {
             session.messages.push({ role: 'assistant', text: similar.reply, toolCalls: [] });
             upsert({ id: entryId(), type: 'notice', message: `Answered from the response cache: no model call (similar to "${similar.question.slice(0, 80)}", ${Math.round(similar.similarity * 100)}% alike).`, at: now() });
@@ -571,7 +598,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
         // Store the answer the person got (after the output guardrail), unless the run left the first turn (a nudge sent it round again).
         if (cacheId && !routedToCheap && answer.trim() && config.cache && session.messages.length === 2) {
           responseCache.set(agent.id, cacheId, answer, config.cache.ttlSeconds);
-          if (questionVector && question !== undefined) semanticCache.add({ agentId: agent.id, configHash: configHash(agent.id, config, runCtx.hash), question, reply: answer, vector: questionVector, ttlSeconds: config.cache.ttlSeconds });
+          if (questionVector && question !== undefined) semanticCache.add({ agentId: agent.id, configHash: configHash(agent.id, cacheConfig, runCtx.hash), question, reply: answer, vector: questionVector, ttlSeconds: config.cache.ttlSeconds });
         }
         return { reason: 'completed', reply: answer };
       }
@@ -695,6 +722,8 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
   }
 
   async function delegate(target: Agent, task: string): Promise<{ reply?: string; sessionId: string }> {
+    // PC13: a sub-agent the project doesn't allow is a failed tool call, not an empty answer.
+    if (rules && !rules.agentAllowed(target.id)) throw new Error(agentNotAllowedMessage(target.name, rules.projectName));
     const child = newSession(target, {
       source: 'agent',
       userId: `agent:${agent.id}`,

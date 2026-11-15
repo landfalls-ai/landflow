@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { agentStore } from '@/lib/server/agents/store';
 import { agentTarget, getOnlineConfig, gradeAgentSession, normalizeOnlineConfig, onlineReport, saveOnlineConfig } from '@/lib/server/evaluations';
 import { onlineEvalConfigSchema } from '@/lib/server/evaluations/http';
+import { canReadSessionById } from '@/lib/server/agents/session-scope';
 import { resourceAccess } from '@/lib/server/projects/access';
 import { routeActor } from '@/lib/server/projects/http';
 import { error, handler, json, parseBody } from '@/lib/server/http';
@@ -18,7 +19,9 @@ export const GET = handler(async (_request: Request, { params }: Ctx) => {
   if (!agentStore.get(id)) return error('Agent not found', 404);
   // PC06: the scores carry session inputs and outputs from every project; only the home reads them.
   if (!resourceAccess(routeActor(), 'agent', id)?.home) return error('Agent not found', 404);
-  return json({ report: onlineReport(agentTarget(id)) });
+  // PC13: and each score only for a session the viewer may read (a home member never reads another project's graded replies).
+  const actor = routeActor();
+  return json({ report: onlineReport(agentTarget(id), 50, (score) => canReadSessionById(actor, score.sessionId ? agentStore.getSession(score.sessionId) : undefined)) });
 });
 
 export const PUT = handler(async (request: Request, { params }: Ctx) => {
@@ -37,6 +40,9 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const { id } = await params;
   const body = await parseBody(request, z.object({ sessionId: z.string().min(1) }));
   if (!body.ok) return body.response;
+  // PC13: grading shows the session's input and output, so the session must be one the caller may read.
+  const session = agentStore.getSession(body.data.sessionId);
+  if (!session || session.agentId !== id || !canReadSessionById(routeActor(), session)) return error('Session not found', 404);
   try {
     return json({ score: await gradeAgentSession(id, body.data.sessionId) }, 201);
   } catch (caught) {

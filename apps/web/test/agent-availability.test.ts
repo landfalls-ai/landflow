@@ -276,19 +276,27 @@ describe('sharing with all projects', () => {
   });
 });
 
-describe('sessions are read from home only', () => {
-  it('a shared-only member (a project, or all) gets 404; a home viewer reads them', async () => {
+describe('sessions are read from their own project (PC13)', () => {
+  it('a shared-only member (a project, or all) lists none of the home project’s sessions and cannot open one; a home viewer reads them', async () => {
     const list = (caller: Caller, id: string) => call(agentSessionsRoute.GET, `/api/agents/${id}/sessions`, 'GET', caller, undefined, { id });
     const one = (caller: Caller, id: string, sid: string) => call(agentSessionRoute.GET, `/api/agents/${id}/sessions/${sid}`, 'GET', caller, undefined, { id, sid });
     // ids.agent is shared to Billing; a session of it
+    // PC13: the list answers 200 with nothing of the home project's; the session itself stays 404. (Not shared with Billing: 404, as before.)
     expect((await list(cat, ids.agent)).status).toBe(404);
+    projects.putShare('agent', ids.agent, billing, 'user');
+    const shared = await list(cat, ids.agent);
+    expect(shared.status).toBe(200);
+    expect(shared.body.sessions).toEqual([]);
     expect((await one(cat, ids.agent, ids.session)).status).toBe(404);
     expect((await list(dan, ids.agent)).status).toBe(200);
     expect((await list(dan, ids.agent)).body.sessions.map((s: { id: string }) => s.id)).toEqual([ids.session]);
     expect((await one(dan, ids.agent, ids.session)).status).toBe(200);
     expect((await list(admin, ids.agent)).status).toBe(200);
+    projects.removeShare('agent', ids.agent, billing);
     // shared with all
-    expect((await list(eve, ids.allAgent)).status).toBe(404);
+    const all = await list(eve, ids.allAgent);
+    expect(all.status).toBe(200);
+    expect(all.body.sessions).toEqual([]);
   });
 
   it('a shared-only member cannot continue a session by id; a home member passes the check', async () => {
