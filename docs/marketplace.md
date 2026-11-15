@@ -126,6 +126,39 @@ workflows (their ids mean nothing elsewhere), kagent deployments, and a team's f
 for those). Claude Code ignores tools it has no equivalent of, so a Landflow agent's node, MCP and knowledge tools only
 work again once the plugin is installed in Landflow.
 
+## Export a project
+
+A project downloads as a Claude Code plugin too: **Export** in the project's header (any role in the project; an icon on
+a phone) lists the files, with a switch for `marketplace.json`, then downloads `<project-slug>.zip`.
+`GET /api/projects/:id/export?format=claude-plugin[&marketplace=1][&preview=1]` is the same ([API](reference/api.md)).
+
+```text
+<project-slug>/
+  PROJECT.md                        frontmatter name, title, status, target, goals; the brief, constraints, done when,
+                                    words we use, what it fits under (company mission and goal chain) and its agents
+  .claude-plugin/plugin.json        name, description (the brief's first sentence), keywords landflow and project
+  agents/<slug>.md, skills/…        the agents whose home is the project, written as an agent export writes them
+  .landflow/project.json            landflow/project: the brief fields, the goals (with a parent index) and the agent slugs
+  .landflow/agents/<slug>.json      each agent's Landflow data, without its id
+  README.md
+```
+
+Only agents whose home is the project are in; an agent only shared to it is left out. The goals are the ones the project
+serves and their parents up to the root, each once, in the wording of the "Where this work fits" block
+([agents.md](agents.md#project-context)) without owners; a goal the caller cannot see is left out.
+
+Never in the zip: people (lead, decision owner, goal owners, members, who made or changed anything, the exporting person
+as author), emails, any id, the workspace and its setup commands, the budget, project settings, variables, credentials,
+repositories, tasks and sessions. Every free text (brief, constraints, done when, glossary, goal titles and reasons)
+goes through the secret redaction first; that covers the project's own text. The agents' free text (instructions,
+persona, skills) is exported as the agent export writes it. The agent and team exports are unchanged.
+
+A sub-agent tool pointing at another home agent of the export is written with that agent's file slug (`agentSlug`) and no
+id, and the install maps the slug to the new agent, so the link survives a reinstall. Sub-agent tools pointing at an
+agent outside the export, workflow tools, tool-access rules that name one user, the agents' approval emails, and the
+guardrail judges' and the cheap model's credential references are dropped from the zip. A personal project is named
+after its user, so it exports as "Personal project" (`personal-project.zip`): the person's name is nowhere in it.
+
 ## Flows
 
 A flow is a Landflow template file: the JSON a template's **Export** downloads and

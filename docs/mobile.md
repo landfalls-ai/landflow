@@ -25,6 +25,7 @@ under [What's next](#whats-next), and this page grows as they land.
   whole, at 17 px, and the page's main action (its last one) on the first row. The other actions go on the next row (a
   search box there takes the row), and the meta line comes last. This is done in CSS only (the actions' box becomes
   `contents`, and its children order themselves), so nothing remounts.
+  On a project's Overview, **Export** and **New ▾** share one box, so both sit on the title's row (the header moves only its last action there); the other tabs have Export alone, in the same place.
 - **Editor header.** Two rows. The first has back, the workflow's name, the saved state (a dot, read out as Saved or
   Unsaved) and **⋯**. The second has Editor, Runs and Tests, then **Publish**. There is no Save (a draft saves itself;
   a failed save's toast has **Retry**) and no "Not published" chip: **Publish** carries the state ("Publish" or
@@ -171,6 +172,15 @@ The cards **Agents in this project** and **AI budget** in a project's Settings t
 The **Workspace** card after them is one column too: the default branch and branch template fields, the add field and its button,
 and **Save** are 44 px tall on a phone, and each repository's **Remove** is a 44 px target. Desktop is as it was apart from the card.
 
+### Project tasks
+
+The **Tasks** tab of a project is one column at 390 px. The five tabs scroll sideways inside their switch rather than
+overflowing the page. The status filter scrolls the same way, and **Mine**, **New task** and **Load more** are 44 px tall.
+Each task is a card (title with its priority, assignee, next wake-up, last run) instead of a row, the whole card a 44 px
+target. The task dialog rises as a bottom sheet with 44 px fields, wake-up choice, **Check out**, **Ask to run now**,
+**Approve**, **Deny**, **Open session** and **Delete**. A task row in **Needs you** has its title as the link and **Approve**,
+**Deny** and **Open task** below it, 44 px each. Desktop is as it was apart from the tab and the rows.
+
 ## Settings and agents
 
 - **Settings** is five group cards on a phone (Workspace, People & access, Governance, AI, Infrastructure), each
@@ -185,10 +195,12 @@ and **Save** are 44 px tall on a phone, and each repository's **Remove** is a 44
 - **Goals** (`/goals`, the second tab under Projects) is one column of cards on a phone. A card shows the title, the
   status and level chips, **Under: <parent>** and **3 sub-goals ›**; the row is 44 px and opens the goal in a sheet.
   **Sub-goals ›** drills into them, with a back row on top, so a tree is never drawn sideways. A desktop shows the tree
-  with the goal's sheet on the right. The goal dialog is a full-height sheet.
+  with the goal's sheet on the right. The goal dialog is a full-height sheet. Under each title sits one quiet line of
+  progress (`12 runs · 1 failed · 3 updates · $0.42 this week`); it wraps under the title and is never a table. The
+  goal's sheet has a **7 days | 30 days** switch above its sections.
 - **The brief card** on a project's Overview shows its four texts (Brief, Constraints, Done when, Words we use) folded
   to three lines with **More**; a desktop shows up to six lines. The goals it serves have 44 px up, down and unlink
-  buttons for admins.
+  buttons for admins. Each goal row shows the same progress line under its title.
 - **Goal pickers.** The workflow settings' **Goal** and the team page's **Project goal** are full-width selects, 44 px
   tall on a phone; a desktop keeps its height.
 

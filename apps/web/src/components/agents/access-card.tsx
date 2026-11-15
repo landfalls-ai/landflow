@@ -24,6 +24,7 @@ const SOURCES: Array<{ value: SessionSource; label: string }> = [
   { value: 'workflow', label: 'A workflow' },
   { value: 'agent', label: 'Another agent' },
   { value: 'api', label: 'The API' },
+  { value: 'task', label: 'A project task' },
 ];
 
 const EFFECTS: Array<{ value: AccessEffect; label: string }> = [

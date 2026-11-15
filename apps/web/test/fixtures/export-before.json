@@ -1,0 +1,104 @@
+{
+ "agent": [
+  {
+   "path": ".claude-plugin/plugin.json",
+   "content": "{\n  \"name\": \"alpha-lead\",\n  \"version\": \"2.0.0\",\n  \"description\": \"Leads, \\\"quoted\\\": text.\",\n  \"author\": {\n    \"name\": \"Me\"\n  },\n  \"keywords\": [\n    \"landflow\",\n    \"agent\"\n  ],\n  \"agents\": [\n    \"./agents/alpha-lead.md\"\n  ],\n  \"skills\": [\n    \"./skills/shared-skill\"\n  ]\n}\n"
+  },
+  {
+   "path": ".claude-plugin/marketplace.json",
+   "content": "{\n  \"name\": \"alpha-lead-marketplace\",\n  \"owner\": {\n    \"name\": \"Me\"\n  },\n  \"metadata\": {\n    \"description\": \"Leads, \\\"quoted\\\": text.\"\n  },\n  \"plugins\": [\n    {\n      \"name\": \"alpha-lead\",\n      \"source\": \"./\",\n      \"description\": \"Leads, \\\"quoted\\\": text.\",\n      \"version\": \"2.0.0\",\n      \"category\": \"agents\"\n    }\n  ]\n}\n"
+  },
+  {
+   "path": "agents/alpha-lead.md",
+   "content": "---\nname: alpha-lead\ndescription: \"Leads, \\\"quoted\\\": text.\"\ntools: Read\nmodel: inherit\ncolor: blue\n---\n\nLead the work\n\n## Skills\nSkills are step-by-step instructions for specific tasks. When a task matches a skill, call load_skill first and follow it.\n- Shared skill: Use it\n\nYou are “Alpha Lead”: Leads, \"quoted\": text.\n"
+  },
+  {
+   "path": ".landflow/agents/alpha-lead.json",
+   "content": "{\n  \"kind\": \"landflow/agent\",\n  \"version\": 1,\n  \"sourceId\": \"<A>\",\n  \"config\": {\n    \"name\": \"Alpha Lead\",\n    \"description\": \"Leads, \\\"quoted\\\": text.\",\n    \"icon\": \"bot\",\n    \"color\": \"#3b82f6\",\n    \"instructions\": \"Lead the work\",\n    \"skills\": [\n      {\n        \"id\": \"sk_a\",\n        \"name\": \"Shared skill\",\n        \"whenToUse\": \"Use it\",\n        \"instructions\": \"1. do\\n2. done\",\n        \"allowedTools\": [\n          \"Read\"\n        ],\n        \"references\": [\n          {\n            \"name\": \"r.md\",\n            \"content\": \"# R\"\n          }\n        ]\n      }\n    ],\n    \"tools\": [],\n    \"memory\": {\n      \"crossSession\": false\n    },\n    \"settings\": {\n      \"maxIterations\": 12,\n      \"toolConcurrency\": 5,\n      \"sessionTokenBudget\": 0,\n      \"maxDelegationDepth\": 2\n    }\n  },\n  \"body\": \"Lead the work\\n\\n## Skills\\nSkills are step-by-step instructions for specific tasks. When a task matches a skill, call load_skill first and follow it.\\n- Shared skill: Use it\\n\\nYou are “Alpha Lead”: Leads, \\\"quoted\\\": text.\"\n}\n"
+  },
+  {
+   "path": "skills/shared-skill/SKILL.md",
+   "content": "---\nname: shared-skill\ndescription: \"Use it\"\nallowed-tools: Read\n---\n\n1. do\n2. done\n"
+  },
+  {
+   "path": "skills/shared-skill/references/r.md",
+   "content": "# R"
+  },
+  {
+   "path": "README.md",
+   "content": "# alpha-lead\n\nLeads, \"quoted\": text.\n\nExported from Landflow as a Claude Code plugin. The agent is in `agents/` and its skills in `skills/`.\n\n`.landflow/` holds what only Landflow uses (persona parts, tools, avatar, model provider). Claude Code ignores it; installing the plugin in Landflow restores it.\n"
+  }
+ ],
+ "agentPlain": [
+  {
+   "path": ".claude-plugin/plugin.json",
+   "content": "{\n  \"name\": \"alpha-lead\",\n  \"version\": \"1.0.0\",\n  \"description\": \"Leads, \\\"quoted\\\": text.\",\n  \"author\": {\n    \"name\": \"Landflow\"\n  },\n  \"keywords\": [\n    \"landflow\",\n    \"agent\"\n  ],\n  \"agents\": [\n    \"./agents/alpha-lead.md\"\n  ],\n  \"skills\": [\n    \"./skills/shared-skill\"\n  ]\n}\n"
+  },
+  {
+   "path": "agents/alpha-lead.md",
+   "content": "---\nname: alpha-lead\ndescription: \"Leads, \\\"quoted\\\": text.\"\ntools: Read\nmodel: inherit\ncolor: blue\n---\n\nLead the work\n\n## Skills\nSkills are step-by-step instructions for specific tasks. When a task matches a skill, call load_skill first and follow it.\n- Shared skill: Use it\n\nYou are “Alpha Lead”: Leads, \"quoted\": text.\n"
+  },
+  {
+   "path": ".landflow/agents/alpha-lead.json",
+   "content": "{\n  \"kind\": \"landflow/agent\",\n  \"version\": 1,\n  \"sourceId\": \"<A>\",\n  \"config\": {\n    \"name\": \"Alpha Lead\",\n    \"description\": \"Leads, \\\"quoted\\\": text.\",\n    \"icon\": \"bot\",\n    \"color\": \"#3b82f6\",\n    \"instructions\": \"Lead the work\",\n    \"skills\": [\n      {\n        \"id\": \"sk_a\",\n        \"name\": \"Shared skill\",\n        \"whenToUse\": \"Use it\",\n        \"instructions\": \"1. do\\n2. done\",\n        \"allowedTools\": [\n          \"Read\"\n        ],\n        \"references\": [\n          {\n            \"name\": \"r.md\",\n            \"content\": \"# R\"\n          }\n        ]\n      }\n    ],\n    \"tools\": [],\n    \"memory\": {\n      \"crossSession\": false\n    },\n    \"settings\": {\n      \"maxIterations\": 12,\n      \"toolConcurrency\": 5,\n      \"sessionTokenBudget\": 0,\n      \"maxDelegationDepth\": 2\n    }\n  },\n  \"body\": \"Lead the work\\n\\n## Skills\\nSkills are step-by-step instructions for specific tasks. When a task matches a skill, call load_skill first and follow it.\\n- Shared skill: Use it\\n\\nYou are “Alpha Lead”: Leads, \\\"quoted\\\": text.\"\n}\n"
+  },
+  {
+   "path": "skills/shared-skill/SKILL.md",
+   "content": "---\nname: shared-skill\ndescription: \"Use it\"\nallowed-tools: Read\n---\n\n1. do\n2. done\n"
+  },
+  {
+   "path": "skills/shared-skill/references/r.md",
+   "content": "# R"
+  },
+  {
+   "path": "README.md",
+   "content": "# alpha-lead\n\nLeads, \"quoted\": text.\n\nExported from Landflow as a Claude Code plugin. The agent is in `agents/` and its skills in `skills/`.\n\n`.landflow/` holds what only Landflow uses (persona parts, tools, avatar, model provider). Claude Code ignores it; installing the plugin in Landflow restores it.\n"
+  }
+ ],
+ "team": [
+  {
+   "path": ".claude-plugin/plugin.json",
+   "content": "{\n  \"name\": \"fixed-team\",\n  \"version\": \"1.0.0\",\n  \"description\": \"Ship it\",\n  \"author\": {\n    \"name\": \"Landflow\"\n  },\n  \"keywords\": [\n    \"landflow\",\n    \"team\"\n  ],\n  \"agents\": [\n    \"./agents/alpha-lead.md\",\n    \"./agents/beta-dev.md\"\n  ],\n  \"skills\": [\n    \"./skills/shared-skill\",\n    \"./skills/own-skill\"\n  ]\n}\n"
+  },
+  {
+   "path": ".claude-plugin/marketplace.json",
+   "content": "{\n  \"name\": \"fixed-team-marketplace\",\n  \"owner\": {\n    \"name\": \"Landflow\"\n  },\n  \"metadata\": {\n    \"description\": \"Ship it\"\n  },\n  \"plugins\": [\n    {\n      \"name\": \"fixed-team\",\n      \"source\": \"./\",\n      \"description\": \"Ship it\",\n      \"version\": \"1.0.0\",\n      \"category\": \"agents\"\n    }\n  ]\n}\n"
+  },
+  {
+   "path": "agents/alpha-lead.md",
+   "content": "---\nname: alpha-lead\ndescription: \"Leads, \\\"quoted\\\": text.\"\ntools: Read\nmodel: inherit\ncolor: blue\n---\n\nLead the work\n\n## Skills\nSkills are step-by-step instructions for specific tasks. When a task matches a skill, call load_skill first and follow it.\n- Shared skill: Use it\n\nYou are “Alpha Lead”: Leads, \"quoted\": text.\n"
+  },
+  {
+   "path": ".landflow/agents/alpha-lead.json",
+   "content": "{\n  \"kind\": \"landflow/agent\",\n  \"version\": 1,\n  \"sourceId\": \"<A>\",\n  \"config\": {\n    \"name\": \"Alpha Lead\",\n    \"description\": \"Leads, \\\"quoted\\\": text.\",\n    \"icon\": \"bot\",\n    \"color\": \"#3b82f6\",\n    \"instructions\": \"Lead the work\",\n    \"skills\": [\n      {\n        \"id\": \"sk_a\",\n        \"name\": \"Shared skill\",\n        \"whenToUse\": \"Use it\",\n        \"instructions\": \"1. do\\n2. done\",\n        \"allowedTools\": [\n          \"Read\"\n        ],\n        \"references\": [\n          {\n            \"name\": \"r.md\",\n            \"content\": \"# R\"\n          }\n        ]\n      }\n    ],\n    \"tools\": [],\n    \"memory\": {\n      \"crossSession\": false\n    },\n    \"settings\": {\n      \"maxIterations\": 12,\n      \"toolConcurrency\": 5,\n      \"sessionTokenBudget\": 0,\n      \"maxDelegationDepth\": 2\n    }\n  },\n  \"body\": \"Lead the work\\n\\n## Skills\\nSkills are step-by-step instructions for specific tasks. When a task matches a skill, call load_skill first and follow it.\\n- Shared skill: Use it\\n\\nYou are “Alpha Lead”: Leads, \\\"quoted\\\": text.\"\n}\n"
+  },
+  {
+   "path": "agents/beta-dev.md",
+   "content": "---\nname: beta-dev\ndescription: \"Beta Dev, a Landflow agent.\"\nmodel: inherit\ncolor: purple\n---\n\nWrite code\n\n## Skills\nSkills are step-by-step instructions for specific tasks. When a task matches a skill, call load_skill first and follow it.\n- Shared skill: Use it\n- Own skill: Use it too\n\nYou are “Beta Dev”.\n"
+  },
+  {
+   "path": ".landflow/agents/beta-dev.json",
+   "content": "{\n  \"kind\": \"landflow/agent\",\n  \"version\": 1,\n  \"sourceId\": \"<B>\",\n  \"config\": {\n    \"name\": \"Beta Dev\",\n    \"description\": \"\",\n    \"icon\": \"bot\",\n    \"color\": \"#a855f7\",\n    \"instructions\": \"Write code\",\n    \"skills\": [\n      {\n        \"id\": \"sk_b\",\n        \"name\": \"Shared skill\",\n        \"whenToUse\": \"Use it\",\n        \"instructions\": \"1. do\\n2. done\"\n      },\n      {\n        \"id\": \"sk_c\",\n        \"name\": \"Own skill\",\n        \"whenToUse\": \"Use it too\",\n        \"instructions\": \"Be careful\"\n      }\n    ],\n    \"tools\": [],\n    \"memory\": {\n      \"crossSession\": false\n    },\n    \"settings\": {\n      \"maxIterations\": 12,\n      \"toolConcurrency\": 5,\n      \"sessionTokenBudget\": 0,\n      \"maxDelegationDepth\": 2\n    }\n  },\n  \"body\": \"Write code\\n\\n## Skills\\nSkills are step-by-step instructions for specific tasks. When a task matches a skill, call load_skill first and follow it.\\n- Shared skill: Use it\\n- Own skill: Use it too\\n\\nYou are “Beta Dev”.\"\n}\n"
+  },
+  {
+   "path": "skills/shared-skill/SKILL.md",
+   "content": "---\nname: shared-skill\ndescription: \"Use it\"\nallowed-tools: Read\n---\n\n1. do\n2. done\n"
+  },
+  {
+   "path": "skills/shared-skill/references/r.md",
+   "content": "# R"
+  },
+  {
+   "path": "skills/own-skill/SKILL.md",
+   "content": "---\nname: own-skill\ndescription: \"Use it too\"\n---\n\nBe careful\n"
+  },
+  {
+   "path": ".landflow/team.json",
+   "content": "{\n  \"kind\": \"landflow/team\",\n  \"version\": 1,\n  \"team\": {\n    \"name\": \"Fixed team\",\n    \"goal\": \"Ship it\",\n    \"members\": [\n      {\n        \"id\": \"m_a\",\n        \"kind\": \"agent\",\n        \"title\": \"Lead\",\n        \"agent\": \"alpha-lead\"\n      },\n      {\n        \"id\": \"m_b\",\n        \"kind\": \"agent\",\n        \"title\": \"Dev\",\n        \"reportsTo\": \"m_a\",\n        \"agent\": \"beta-dev\"\n      }\n    ]\n  }\n}\n"
+  },
+  {
+   "path": "README.md",
+   "content": "# fixed-team\n\nShip it\n\nExported from Landflow as a Claude Code plugin. Its agents are in `agents/` and its skills in `skills/`.\n\n`.landflow/` holds what only Landflow uses (persona parts, tools, avatar, model provider, the team’s relations). Claude Code ignores it; installing the plugin in Landflow restores it.\n"
+  }
+ ]
+}

@@ -1158,8 +1158,10 @@ function paths(): Record<string, Record<string, Json>> {
     query: [
       { name: 'projectId', description: 'Only the goals this project serves', schema: { type: 'string' } },
       { name: 'status', description: 'Only goals in this status', schema: { type: 'string', enum: ['planned', 'active', 'achieved', 'cancelled'] } },
+      { name: 'progress', description: '`1` adds `progress`, one entry per goal in the tree', schema: { type: 'string', enum: ['1'] } },
+      { name: 'window', description: 'with `progress=1`, the days counted back (default 7)', schema: { type: 'string', enum: ['7', '30'] } },
     ],
-    responses: { 200: reply('The goal tree', object({ mission: { type: 'string' }, goals: array({ type: 'object', additionalProperties: true }), canCreateCompanyGoals: { type: 'boolean' } }, ['goals', 'canCreateCompanyGoals'])), 400: invalid },
+    responses: { 200: reply('The goal tree', object({ mission: { type: 'string' }, goals: array({ type: 'object', additionalProperties: true }), canCreateCompanyGoals: { type: 'boolean' }, progress: array({ type: 'object', additionalProperties: true }) }, ['goals', 'canCreateCompanyGoals'])), 400: invalid },
   });
   add('post', '/api/goals', {
     tag: 'Goals',
@@ -2561,6 +2563,116 @@ function paths(): Record<string, Record<string, Json>> {
   const workspaceView = object({ workspace: workspaceDoc, repos: array({ type: 'string' }), saved: { type: 'boolean' }, canEdit: { type: 'boolean' }, setupShown: { type: 'boolean' }, updatedAt: { type: 'string' }, updatedBy: { type: 'string' } }, ['workspace', 'repos', 'saved', 'canEdit', 'setupShown']);
   add('get', '/api/projects/{id}/workspace', { tag: 'Projects', id: 'getProjectWorkspace', summary: 'A project’s workspace for harness runs', description: 'Any role. Setup commands only for editors and admins (`setupShown`). The default when nothing is saved (`saved: false`). Repositories the project no longer lists are left out.', pathParams: { id: 'The project id' }, responses: { 200: reply('The workspace', workspaceView), 404: notFound } });
   add('put', '/api/projects/{id}/workspace', { tag: 'Projects', id: 'putProjectWorkspace', summary: 'Save a project’s workspace', description: 'The project’s admins (and instance owners and admins). Each repository key must be one the project lists. Landflow never runs a setup command. Audited as `project.workspace.update` with what changed, never the setup text.', pathParams: { id: 'The project id' }, body: jsonBody(workspaceDoc), responses: { 200: reply('The workspace', workspaceView), 400: invalid, 403: errorRef('Not a project admin'), 404: notFound } });
+  // PC17: goal progress
+  add('get', '/api/goals/{id}/progress', {
+    tag: 'Goals',
+    id: 'getGoalProgress',
+    summary: 'What moved a goal',
+    description: 'Finished runs of the workflows homed in the projects that serve the goal or its sub-goals, AI spend attributed to them, and work updates linked to them, in the last 7 or 30 days. Counted only from what the caller may see: a person’s private work counts for that person alone, owners and admins included. 404 for a goal the caller cannot see.',
+    pathParams: { id: 'The goal id' },
+    query: [{ name: 'window', description: 'Days counted back (default 7)', schema: { type: 'string', enum: ['7', '30'] } }],
+    responses: { 200: reply('The progress', object({ progress: array({ type: 'object', additionalProperties: true }) }, ['progress'])), 400: invalid, 404: notFound },
+  });
+  // PC19: a project's tasks (docs/projects-and-goals.md#tasks)
+  const taskRunDoc = object(
+    {
+      id: { type: 'string' },
+      taskId: { type: 'string' },
+      projectId: { type: 'string' },
+      agentId: { type: 'string' },
+      status: { type: 'string', enum: ['requested', 'approved', 'denied', 'running', 'waiting', 'done', 'failed'] },
+      reason: { type: 'string', enum: ['wake', 'manual'] },
+      requestedAt: { type: 'string' },
+      requestedBy: { type: 'string' },
+      decidedBy: { type: 'string' },
+      decidedAt: { type: 'string' },
+      sessionId: { type: 'string', description: 'The agent session of the run: /agents/<agentId>?tab=sessions&session=<sessionId>' },
+      reply: { type: 'string', description: 'The agent’s answer, at most 4000 characters' },
+      error: { type: 'string' },
+      finishedAt: { type: 'string' },
+    },
+    ['id', 'taskId', 'projectId', 'agentId', 'status', 'reason', 'requestedAt'],
+  );
+  const taskDoc = object(
+    {
+      id: { type: 'string' },
+      projectId: { type: 'string' },
+      goalId: { type: 'string' },
+      parentId: { type: 'string' },
+      title: { type: 'string' },
+      description: { type: 'string' },
+      status: { type: 'string', enum: ['todo', 'in_progress', 'blocked', 'done', 'cancelled'] },
+      priority: { type: 'string', enum: ['low', 'normal', 'high'] },
+      assignee: object({ kind: { type: 'string', enum: ['agent', 'person'] }, id: { type: 'string' } }, ['kind', 'id']),
+      assigneeName: { type: 'string' },
+      wake: object({ cron: { type: 'string', description: 'Five fields, in the instance time zone' } }, ['cron']),
+      nextWakeAt: { type: 'string' },
+      goalTitle: { type: 'string' },
+      checkedOutBy: { type: 'string' },
+      checkedOutByName: { type: 'string' },
+      createdAt: { type: 'string' },
+      updatedAt: { type: 'string' },
+      createdBy: { type: 'string' },
+      runs: array(taskRunDoc),
+      canEdit: { type: 'boolean' },
+      canRelease: { type: 'boolean' },
+    },
+    ['id', 'projectId', 'title', 'status', 'priority', 'createdAt', 'updatedAt', 'runs', 'canEdit', 'canRelease'],
+  );
+  const taskInput = object(
+    {
+      title: { type: 'string', maxLength: 200 },
+      description: { type: ['string', 'null'], maxLength: 4000 },
+      status: { type: 'string', enum: ['todo', 'in_progress', 'blocked', 'done', 'cancelled'] },
+      priority: { type: 'string', enum: ['low', 'normal', 'high'] },
+      goalId: { type: ['string', 'null'] },
+      parentId: { type: ['string', 'null'] },
+      assignee: { type: ['object', 'null'], additionalProperties: false, properties: { kind: { type: 'string', enum: ['agent', 'person'] }, id: { type: 'string' } } },
+      wake: { type: ['object', 'null'], additionalProperties: false, properties: { cron: { type: 'string' } } },
+    },
+    ['title'],
+  );
+  add('get', '/api/projects/{id}/tasks', {
+    tag: 'Projects',
+    id: 'listProjectTasks',
+    summary: 'A project’s tasks',
+    description: 'Any role in the project (404 otherwise). Ordered by status group (in progress, to do, blocked, done, cancelled), priority, then newest update. `status` filters one status; `mine=1` keeps tasks assigned to or checked out by the caller. Keyset-paged: `limit` 1 to 500 (default 100), `cursor` from `nextCursor`.',
+    pathParams: { id: 'The project id' },
+    query: [
+      { name: 'limit', description: '1 to 500, default 100', schema: { type: 'integer', minimum: 1, maximum: 500 } },
+      { name: 'cursor', description: 'The `nextCursor` of the previous page', schema: { type: 'string' } },
+      { name: 'status', description: 'Only this status', schema: { type: 'string', enum: ['todo', 'in_progress', 'blocked', 'done', 'cancelled'] } },
+      { name: 'mine', description: '`1`: assigned to or checked out by the caller', schema: { type: 'string', enum: ['1'] } },
+    ],
+    responses: { 200: reply('The tasks', object({ tasks: array(taskDoc), nextCursor: { type: 'string' }, canCreate: { type: 'boolean' } }, ['tasks', 'canCreate'])), 404: notFound },
+  });
+  add('post', '/api/projects/{id}/tasks', {
+    tag: 'Projects',
+    id: 'createProjectTask',
+    summary: 'Create a project task',
+    description: 'The project’s editors and admins (403 for other roles). An agent assignee must be available in the project and allowed by its agent settings; a person needs a role in it; `wake` (five-field cron) only on an agent task. 400 with a plain message otherwise. Audited as `project.task.create`.',
+    pathParams: { id: 'The project id' },
+    body: jsonBody(taskInput),
+    responses: { 201: reply('The task', object({ task: taskDoc }, ['task'])), 400: invalid, 403: errorRef('Not an editor of the project'), 404: notFound },
+  });
+  add('get', '/api/projects/{id}/tasks/{taskId}', { tag: 'Projects', id: 'getProjectTask', summary: 'One project task', description: 'Any role in the project. Its newest five runs are settled against their sessions first.', pathParams: { id: 'The project id', taskId: 'The task id' }, responses: { 200: reply('The task', object({ task: taskDoc }, ['task'])), 404: notFound } });
+  add('patch', '/api/projects/{id}/tasks/{taskId}', { tag: 'Projects', id: 'updateProjectTask', summary: 'Change a project task', description: 'The project’s editors and admins. Every field is optional; null clears an optional one. Changing the assignee, `wake` or status recomputes `nextWakeAt`. Audited as `project.task.update`.', pathParams: { id: 'The project id', taskId: 'The task id' }, body: jsonBody({ ...taskInput, required: [] }), responses: { 200: reply('The task', object({ task: taskDoc }, ['task'])), 400: invalid, 403: errorRef('Not an editor of the project'), 404: notFound } });
+  add('delete', '/api/projects/{id}/tasks/{taskId}', { tag: 'Projects', id: 'deleteProjectTask', summary: 'Delete a project task', description: 'The project’s editors and admins. Its runs go with it. Audited as `project.task.delete`.', pathParams: { id: 'The project id', taskId: 'The task id' }, responses: { 204: { description: 'Deleted' }, 403: errorRef('Not an editor of the project'), 404: notFound } });
+  add('post', '/api/projects/{id}/tasks/{taskId}/checkout', { tag: 'Projects', id: 'checkoutProjectTask', summary: 'Check a task out', description: 'Editors and admins. Atomic: when nobody holds the task the caller gets it (holding it already is 200); someone else holding it is 409 `task_checked_out` (“Checked out by <name>”). Audited as `project.task.checkout`.', pathParams: { id: 'The project id', taskId: 'The task id' }, responses: { 200: reply('The task', object({ task: taskDoc }, ['task'])), 403: errorRef('Not an editor of the project'), 404: notFound, 409: errorRef('Checked out by someone else') } });
+  add('delete', '/api/projects/{id}/tasks/{taskId}/checkout', { tag: 'Projects', id: 'releaseProjectTask', summary: 'Release a task', description: 'The one who checked it out, or a project admin (403 otherwise). Audited as `project.task.release`.', pathParams: { id: 'The project id', taskId: 'The task id' }, responses: { 200: reply('The task', object({ task: taskDoc }, ['task'])), 403: errorRef('Not the holder or an admin'), 404: notFound } });
+  add('post', '/api/projects/{id}/tasks/{taskId}/runs', { tag: 'Projects', id: 'askProjectTaskRun', summary: 'Ask an agent task to run now', description: 'Editors and admins. Agent tasks only (400 `Only an agent task runs`; 400 `Reopen the task first` for a done or cancelled one). Creates a `requested` run (201) or answers the run the task has open (200, `merged: true`). Nothing runs until a person approves it. Audited as `project.task.run_requested`.', pathParams: { id: 'The project id', taskId: 'The task id' }, responses: { 200: reply('The run it merged into', object({ run: taskRunDoc, merged: { type: 'boolean' } }, ['run', 'merged'])), 201: reply('The new run', object({ run: taskRunDoc, merged: { type: 'boolean' } }, ['run', 'merged'])), 400: invalid, 403: errorRef('Not an editor of the project'), 404: notFound } });
+  add('get', '/api/task-runs/{runId}', { tag: 'Projects', id: 'getProjectTaskRun', summary: 'A project task’s run', description: 'Any role in the run’s project. A running or waiting run is settled against its agent session first.', pathParams: { runId: 'The run id' }, responses: { 200: reply('The run', object({ run: taskRunDoc }, ['run'])), 404: notFound } });
+  add('post', '/api/task-runs/{runId}', { tag: 'Projects', id: 'decideProjectTaskRun', summary: 'Approve or deny a task run', description: 'Editors and admins of the run’s project, signed in (an API key or MCP client gets 403 `session_only`). Only a `requested` run is decided (409 `Already <status>`). Approve re-checks the agent (published, available in the project, allowed by its rules; 409 and the run stays requested), answers 202 and runs the agent in the background through the same runner and limits as every agent run in the project. Deny answers 200. Audited as `project.task.run_decided`.', pathParams: { runId: 'The run id' }, body: jsonBody(object({ decision: { type: 'string', enum: ['approve', 'deny'] } }, ['decision'])), responses: { 200: reply('Denied', object({ run: taskRunDoc }, ['run'])), 202: reply('Approved, starting', object({ run: taskRunDoc }, ['run'])), 403: errorRef('Not an editor of the project, or an API key'), 404: notFound, 409: errorRef('Already decided, or the agent may not run here') } });
+  // PC21: a project as a Claude Code plugin
+  add('get', '/api/projects/{id}/export', {
+    tag: 'Projects',
+    id: 'exportProjectPlugin',
+    summary: 'Export a project as a Claude Code plugin',
+    description: 'Any role in the project (owners and admins: any); none is 404 `Project not found`. The zip is `<project-slug>.zip`: `PROJECT.md` (the brief, constraints, done-when, glossary, the goals it serves and the agents), `.claude-plugin/plugin.json`, `.landflow/project.json`, and `agents/`, `skills/` and `.landflow/agents/` for the agents whose home is the project (agents only shared to it are left out). People, ids, the workspace, budget, settings, variables, credentials, repositories, tasks and sessions are never included; free text is redacted for secrets. Goals the caller cannot see are left out.',
+    pathParams: { id: 'The project id' },
+    query: exportQuery,
+    responses: { 200: zipReply, 400: invalid, 404: notFound },
+  });
   return out;
 }
 

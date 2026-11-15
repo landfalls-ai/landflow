@@ -115,6 +115,8 @@ export interface ProjectView {
   role?: ProjectRole;
   memberCount: number;
   counts?: Partial<Record<ResourceKind, number>>;
+  /** Its tasks (PC19), present when it has any: deleting the project deletes them and their runs, never moves them. */
+  taskCount?: number;
 }
 
 export interface ProjectMemberView {

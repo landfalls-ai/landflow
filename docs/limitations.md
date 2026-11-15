@@ -48,8 +48,9 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 - **One company per instance** ([projects-and-goals.md](projects-and-goals.md#the-mission)): the mission and company name are
   one pair in Settings → Company. Two companies need two instances.
-- **No goal progress yet**: a goal has a status, an owner and a target date, but nothing measures how far along it is (a
-  later wave of the Paperclip program).
+- **Goal progress counts at most 5000 work events** ([projects-and-goals.md](projects-and-goals.md#progress)): the newest
+  5000 visible `work.*` events of the window that link by goal, project or (once an initiative is linked) any `initiative`
+  attribute; past that, `updates` undercounts with no sign. Runs and spend are not capped.
 - **Goal lists stop at 500**: `GET /api/goals` keeps the first 500 goals the caller sees (oldest first) after filtering,
   with no paging and no sign it was cut; children of a goal that was cut show as roots. Nothing caps how many goals exist.
 - **Removed people stay named by id**: a user removed from a project (or deleted) stays as its `leadId` or
@@ -91,6 +92,15 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - The landflow-brain mod and `landflow work context` do not show the workspace; the field is in the route's and the MCP
   tool's answer only.
 - One workspace per project, not per goal or team. Setup commands are plain lines: no secrets, no per-run values.
+
+## Project export (wave 10)
+
+- No import yet: a project's plugin installs in Claude Code and its agents install in Landflow, but `PROJECT.md` and
+  `.landflow/project.json` are not read back into a project.
+- Agents only shared to the project are not included, and neither are its tasks, workflows or workspace.
+- The plain agent and team exports ([marketplace.md](marketplace.md#export-agents-as-plugins)) still keep the guardrail
+  judges' and the cheap model's credential references (and an agent's approval emails); only the project export drops
+  them. Closing it changes those exports' bytes, so it waits for a decision.
 
 ## Test chat history (B10, 2026-11)
 
@@ -463,7 +473,26 @@ items still open (its "Wave 6" section); this page is the short list to check be
   Landflow never stops).
 - A resumed month stays open even after a raise: the project's priced calls are not stopped again until the month ends.
 - Moving a workflow or agent to another project moves no budget; spend follows the project of the run.
-- Raising the amount in a project's settings settles that month's open incidents, as a raise from an incident does.
+- Every raise (an incident's **Raise budget…**, a higher amount in the project's settings, an approved request) settles all
+  that month's open incidents, the stop and the warning alike.
+
+## Project tasks (wave 10)
+
+- No autonomous runs: every run of a task, from a wake-up or a click, needs a person's **Approve**. A wake-up only asks.
+- The tool approvals of a task run are decided in the agent's session (Needs you opens it), not on the task.
+- The agent's published version runs; an agent that is only a draft cannot be approved ("Publish it before it works on
+  tasks").
+- A removed member stays the assignee of a task until someone changes it.
+- A task run is always the in-process runner's (`runAgent`), whatever else runs the agent (kagent).
+- A task has one parent at most (no deeper trees), and a run in progress when its task is deleted finishes but saves
+  nothing. The same holds when its project is deleted: the task and run rows go with the project, but the agent's
+  session is not stopped; it runs to its end and stays in the agent's Sessions tab (its spend is still counted), and
+  the run's later saves do nothing.
+- A request whose agent was deleted is settled as `denied` ("The agent was deleted before this was approved") the next
+  time anything reads it, not at the moment of deletion.
+- Wake-ups use the instance time zone, not each person's; a clock change skips a wall-clock time that does not exist that
+  day. They run on the leader only, so a stopped host asks for nothing until it is back (a missed wake-up is not replayed).
+- A February 29 wake-up schedule can be refused as `This schedule never fires` (the search looks 366 days ahead). A request for a run that was made before a task was reassigned stays open and answers 409 on Approve until someone denies it. With more than one host process, a run with a quiet step longer than 10 minutes can be marked failed by another process, and its later result is dropped. A run whose session was deleted settles as `Landflow restarted before the run finished`.
 
 ## Practices (waves P1 and P2)
 
@@ -515,3 +544,14 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - A flow-written or analyst suggestion about a practice still mirrors to Slack as any suggestion does; only `source: practice` ones are link-only.
 - An agent's session that no workflow run started (a test chat, a channel) lists the practices it was given in "What it
   saw" without "Cited" or the check: it has no run id to ask `GET /api/executions/:id/practices` with.
+
+## Goal progress (wave 10)
+
+- Runs count only finished runs of workflows whose home is a project serving the goal; a run of a workflow shared in from
+  another project is not counted.
+- kagent and harness spend counts only when it carries a goal.
+- A project task's run is never counted as a run: it counts toward a goal only as spend (`ai_usage.goal_id`), and only
+  while the task's goal is still one of the project's.
+- There is no history chart: progress is a count over the last 7 or 30 days.
+- The nightly "Goals that moved" covers the goals of the projects a person has a role in, five at most; an owner or admin
+  gets the goals of their own projects, not every goal.

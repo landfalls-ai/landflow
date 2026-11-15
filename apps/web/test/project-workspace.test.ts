@@ -171,6 +171,34 @@ describe('a removed repository', () => {
     expect(broken.saved).toBe(false);
     await put(workspace());
   });
+
+  it('is pruned from the stored row, so re-adding it starts empty', async () => {
+    enableTestAuth(admin);
+    await put(workspace({ repos: { 'acme/web': { defaultBranch: 'develop', setup: ['pnpm install'] }, 'acme/api': { defaultBranch: 'main' } } }));
+    setProjectRepos(project.id, ['acme/api']);
+    const raw = projectsDb().get<{ data: string }>('SELECT data FROM project_workspaces WHERE project_id = ?', project.id);
+    expect(JSON.parse(raw!.data).repos).toEqual({ 'acme/api': { defaultBranch: 'main' } });
+    setProjectRepos(project.id, ['acme/web', 'acme/api']);
+    expect((await get()).body.workspace.repos).toEqual({ 'acme/api': { defaultBranch: 'main' } });
+    await put(workspace());
+  });
+});
+
+describe('saving the same workspace again', () => {
+  it('writes nothing and records no audit event', async () => {
+    enableTestAuth(admin);
+    await put(workspace({ worktree: 'shared' }));
+    const count = () => queryEvents({ action: ['project.workspace.update'] }, { limit: 100 }).events.length;
+    const before = count();
+    const updatedAt = projectsDb().get<{ updated_at: string }>('SELECT updated_at FROM project_workspaces WHERE project_id = ?', project.id)?.updated_at;
+    const { status, body } = await put(workspace({ worktree: 'shared' }));
+    expect(status).toBe(200);
+    expect(body.workspace.worktree).toBe('shared');
+    expect(count()).toBe(before);
+    expect(projectsDb().get<{ updated_at: string }>('SELECT updated_at FROM project_workspaces WHERE project_id = ?', project.id)?.updated_at).toBe(updatedAt);
+    await put(workspace());
+    expect(count()).toBe(before + 1);
+  });
 });
 
 describe('deleting the project', () => {

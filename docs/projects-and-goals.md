@@ -37,7 +37,7 @@ A goal is something the company or a project wants. Each has:
 - **Linked initiatives.** Initiatives are found by the brain, not typed in. A goal links up to 50 of them, each a brain
   entity of type `initiative` the editor may read. Links to initiatives you can't read are kept when you change the rest.
 
-Progress against a goal is not built yet ([limitations](limitations.md#projects-and-goals)).
+Progress against a goal is read in [Progress](#progress).
 
 ## The brief
 
@@ -252,8 +252,8 @@ project page's **Agents in this project** card; the fields and answers are in [t
   lists everything.
 - **Allowed tool kinds.** With **Only these**, an agent in the project gets only tools of the listed kinds: nodes, MCP
   servers, knowledge bases, workflows, sub-agents, A2A agents. A withheld tool shows as a notice "Tool access: <tool>
-  withheld by project “P” settings". Skills, memory, a team's notebook and consult tools, the project's own knowledge
-  base and the tools connected to a Run an Agent node (already under the node allow-list) are never withheld.
+  withheld by project “P” settings". Skills, memory, a team's own tools (its notebook, consults, reports and hand-offs), the project's own
+  knowledge base and the tools connected to a Run an Agent node (already under the node allow-list) are never withheld.
 
 The run reads the settings once, when it starts (they are cached for a second). Each level narrows: instance, project,
 workflow, and now agents ([governance](features/audit-and-governance.md)). A2A and kagent agents run elsewhere, so the
@@ -267,8 +267,9 @@ clear it), the **Knowledge base** (a switch and **Choose…**, which opens the a
 project can search it as `project_knowledge`), **Allowed agents** (**Everything available** or **Only these**, with the
 project's own agents checked and disabled) and **Allowed tools** (**Every kind** or **Only these**, one box per kind).
 Project admins edit and press one **Save**, which sends only these four fields to `PATCH /api/projects/:id/settings`; a
-400 (a credential the project can't use, an agent that isn't available) shows under the field. Everyone else reads the
-values. Without `availableAgents` in the answer the list says "No agents to list". A failed load hides the card without a toast.
+400 (a credential the project can't use, an agent that isn't available) shows under the field the save sent, or below
+the card when it sent several. With a provider and no model, Save stays off and the bar says "Choose a model". Everyone
+else reads the values, the two modes as plain text. Without `availableAgents` in the answer the list says "No agents to list". A failed load hides the card without a toast.
 
 ## Sessions belong to a project
 
@@ -314,8 +315,9 @@ budget adds: a warning, an optional hard stop, incidents and Needs you items.
   Spend that arrives by import, which no call check saw, opens the stop too.
 - **Resume.** A person resumes a stop, and the project's priced calls go on until the month ends. A new month starts a
   fresh count. A resumed month stays open even after a raise.
-- **Raise.** A project admin sets a higher amount from a stop or a warning. The stop's warning is settled with it.
-  An editor who is not an admin asks for more from Insights → AI ("Ask for more"); an approved request sets the new
+- **Raise.** A project admin sets a higher amount from a stop or a warning, or saves a higher budget. Every way of
+  raising (an incident's **Raise budget…**, a `PUT` with a higher amount, an approved request) settles all the month's
+  open incidents as `raised`, so a raise from a warning never leaves a stop open. An editor who is not an admin asks for more from Insights → AI ("Ask for more"); an approved request sets the new
   amount and settles the month's open incidents.
 - **Dismiss.** Puts a warning away for the month.
 - **Who may do what.** Project admins and instance owners and admins edit the budget and raise it. They and the
@@ -338,7 +340,8 @@ The card **AI budget** (`#budget`) follows **Agents in this project**. It shows 
 at 100 or when paused), the amounts, "N calls to local models (not counted)" and a **Paused** badge, then the month's
 incidents, newest first, each with its buttons: **Resume this month** and **Raise budget…** for a stop, **Dismiss** for a
 warning. Admins edit the monthly budget, **Warn at**, the **Hard stop** switch (off by default) and the owner (one of the
-project's members) and press **Save**; `0` asks "Remove the budget?" first. An editor who is not an admin sees **Ask for
+project's members) and press **Save**; `0` asks "Remove the budget?" first (a sheet on a phone). With no budget, Save
+shows only once an amount is typed: Warn at, Hard stop or the owner alone save nothing. An editor who is not an admin sees **Ask for
 more…** (an amount above the budget and a reason, sent to `POST /api/ai/cap-requests`) and **See it on Insights → AI**.
 Open `/projects/<id>?tab=settings#budget` or `#agents` and the page scrolls to the card once it has loaded. The same
 incidents are items in **Needs you** ([run-trace.md](run-trace.md#needs-you-for-a-project-budget)).
@@ -350,7 +353,8 @@ tab, under the project's settings and above Variables. Landflow stores and serve
 never makes a worktree.
 
 - **Repositories:** the list from [above](#repositories-and-harnesses). Admins add (`owner/name`) and remove them on the
-  card; each change saves at once. A repository removed here (or through the API) drops out of the workspace.
+  card; each change saves at once. A repository removed here (or through the API) drops out of the workspace, and its stored branch and setup lines are
+  deleted, so adding it again starts empty.
 - **Default branch**, per repository: the branch a run starts from. Empty means the repository's own default.
 - **Setup commands**, per repository: one per line, at most 10 lines of 300 characters, run once in a fresh worktree. Only
   the project's editors and admins see them (viewers see the repositories and branches). **Landflow never runs these. A
@@ -362,11 +366,137 @@ never makes a worktree.
 
 Admins edit with one **Save workspace**; everyone else reads. `GET /api/projects/:id/workspace` and `PUT` are in the
 [API reference](reference/api.md); every change is audited as `project.workspace.update` (repository names, worktree and
-template; the count of setup lines, never their text).
+template; the count of setup lines, never their text). Saving the same workspace again writes nothing and audits nothing.
 
 A harness reads it from the project's context ([connect-your-harness.md](connect-your-harness.md#project-context)): the
 answer has `workspace` when the project saved one, with `branchPattern` (the template with `{project}` filled in;
 `{run}`, `{date}` and `{task}` are the harness's to fill) and setup lines only for editors and admins.
+
+## Progress
+
+A goal shows what moved it: runs, AI spend and work updates in the last 7 or 30 days. Each number counts the goal and
+every sub-goal below it (the sub-goals you can see), and counts only what you may see. Two people can see different
+numbers for the same goal.
+
+- **Runs:** finished runs (status `success`, or `error` as a failed run) of the workflows whose home is a project that
+  serves the goal or a sub-goal, or a project goal's own project, among the projects you may see. A running, waiting or
+  cancelled run is not counted. Evaluation cases (runs with an evaluation run id) are not counted. A workflow with no
+  project row is homed in the default project (the owner's personal one), so its runs count there. One run is one
+  `executions` row, so a sub-workflow's child run and a manual test run in the editor each count. A run of a workflow
+  shared into the project from another home is not counted. Runs of a deleted workflow with no project row still count
+  in the default project while their rows are kept.
+- **Spend:** the AI cost attributed to the goal or a sub-goal (`ai_usage.goal_id`), from projects you may see. It can be
+  0 while runs are not (local models are unpriced).
+- **Task runs:** a project task's run is not a run here: it counts toward a goal only as spend, through the
+  `ai_usage.goal_id` of its model calls (the task's goal, if it still has one).
+- **Updates:** work events (`work.*`) linked to the goal or a sub-goal: by its goal, by a serving project, or by a
+  linked initiative (an initiative you can read, by its id or its name, in any case). They are read by the ledger's one
+  visibility rule, as you: your own, `team` ones of people who share a project with you, and `org` ones. Another
+  person's private work never counts for you, whatever your role; owners and admins are no exception. An answer carries
+  counts and a time, never a title.
+- **Moved:** something happened in the window (a run, an update, or spend). `lastActivityAt` is the newest of them.
+
+`GET /api/goals/:id/progress?window=7|30` answers one goal (404 for a goal you cannot see, 400 for another window; 7 by
+default). `GET /api/goals?progress=1&window=` adds `progress`, one entry per goal in the tree; without `progress=1` the
+answer is as before (`progress` must be `1` and `window` `7` or `30`, else 400; an invalid `window` is 400 even without
+`progress=1`). Every goal in an answer is counted in one query per source, never one per goal. The nightly sync uses the
+same numbers for its "Goals that moved" line ([work-and-briefings.md](work-and-briefings.md#the-nightly-sync)). Code:
+`lib/server/goals/progress.ts`; the answer's shape is `lib/shared/goal-progress.ts`.
+
+### On the Goals page and the Overview
+
+- **Where the line shows.** Under the title of each goal on the Goals page (the desktop rows and the phone cards), in
+  the goal's sheet, and on each row of **Goals it serves** on a project's Overview. The rows and cards show the last 7
+  days; the sheet has a **7 days | 30 days** switch.
+- **What it counts.** `12 runs · 1 failed · 3 updates · $0.42 this week`: finished runs of workflows homed in a project
+  that serves the goal or a sub-goal (the failed ones are part of the run count), work updates linked to it, and AI
+  spend attributed to it. Zeros are left out; a small cost reads `< $0.01`; a goal with nothing says `No activity this
+  week`. A dot before the line marks a goal that moved.
+- **Who sees what.** You see only what you may see, so two people can see different numbers for the same goal.
+- **If the host cannot say.** An older host or a failed answer shows no line and no error.
+
+## Tasks
+
+A project keeps tasks: work with a title, a status (`To do`, `In progress`, `Blocked`, `Done`, `Cancelled`), a priority,
+an optional goal the project serves, an optional parent (one level: a sub-task of a top-level task), an **assignee**
+and, for an agent, a **wake-up** schedule. A project has at most 1000 tasks. Members read them; editors and admins
+create, change, delete, check out and ask for runs. The routes are in the [API reference](reference/api.md); the screens
+are the project's **Tasks** tab (wave 10).
+
+- **Assignee.** An agent must be available in the project ([agents across projects](#agents-across-projects)) and
+  allowed by the project's agent allow-list ([settings](#project-settings-for-agents)); a person needs a role in the
+  project. Both are checked when the assignee is set, so a member who leaves stays the assignee until someone changes
+  it.
+- **Check out.** One person holds a task at a time. **Check out** is atomic: when two people press it at once, one gets
+  it and the other is told `Checked out by <name>` (409). Holding it already is fine. The holder or a project admin
+  releases it.
+- **Wake-ups only ask.** An agent task can carry a five-field cron in the instance time zone (`0 9 * * 1-5`). The leader
+  looks every `LANDFLOW_TASK_WAKEUP_SECONDS` (60; `0` turns it off) for tasks that are `To do` or `In progress` and due,
+  and asks for a run: a `requested` run, merged into one the task already has open. Nothing runs. A schedule that never
+  fires (`0 0 31 2 *`) is refused when you save it. A task whose agent has left the project, is no longer allowed or is
+  not published gets no request (the log says why, once a day) and keeps its cron (its next wake-up moves to the next
+  slot). **Ask to run now** does the same by hand.
+- **Approve in Needs you.** The request is a **Needs you** item for the project's editors and admins, with **Approve**
+  and **Deny**. Approving needs a signed-in person (an API key or an MCP client
+  gets 403 `session_only`). Only a `requested` run is decided; a second decision is 409 `Already <status>`.
+- **The run obeys the project.** Approve checks again, at that moment, that the agent exists, is published, is available
+  in the project and is allowed by its rules (409 with the message, and the run stays `requested`). It then starts the
+  agent in the background through the same runner as the test chat, a schedule or a team, with the task's project (and
+  goal) in its context. So the project's allow-list, its default model, the tool kinds it withholds and its [AI
+  budget](#ai-budget) (the hard stop included) apply exactly as they do to every other agent run in the project. The
+  agent's published version runs. The workflows its tools start run for the person who approved.
+- **Where the run goes.** The run is `approved`, then `running` with a link to its **session** (source `Task`, in the
+  agent's Sessions tab, readable by the project's members and no one else's); it ends `done` with the agent's reply, or
+  `failed` with the reason (a refused agent, the budget's stop, the step limit). A tool that needs approval leaves the
+  run `waiting` and is a Needs you item that opens the session; decide it there. The status is settled from the session
+  whenever it is read, so a run finished elsewhere reads `done`, and one a restart cut short reads `failed` ("Landflow
+  restarted before the run finished").
+- **Progress.** A task run is never a run in [goal progress](#progress): it counts toward its goal only as spend,
+  through `ai_usage.goal_id`. A goal that was deleted, or unlinked from the project, is dropped from the run's context
+  at Approve; deleting a goal clears the link on its tasks.
+- **A deleted agent.** A request whose agent was deleted reads `denied` ("The agent was deleted before this was
+  approved") the next time anything reads it, and leaves Needs you.
+- **Deleting.** Deleting a task deletes its runs. Deleting the project deletes its tasks and runs with it; they are
+  never moved to another project.
+
+### The Tasks tab and Needs you
+
+The project page has a **Tasks** tab after **Overview** (`/projects/<id>?tab=tasks`). Its toolbar has a status filter
+(All, To do, In progress, Blocked, Done), a **Mine** toggle (tasks assigned to you or checked out by you) and **New
+task** (editors and admins; it sits in the tab, not in the page header). The tasks are one card, grouped by status in
+the server's order (In progress, To do, Blocked, Done, Cancelled), each row showing the title with a High or Low badge,
+the assignee, the goal, the next wake-up ("in 20h", the cron in a tooltip) and the last run as a status chip with its
+age. On a phone each task is a card (title and chips, assignee, last run) and the page scrolls sideways inside the tab
+switch instead of overflowing. **Load more** appends the next page of the keyset-paged list. An empty project says "No
+tasks yet", with **New task** for editors. `?tab=tasks&task=<id>` opens the tab with that task's dialog.
+
+The **task dialog** (a bottom sheet on a phone) has the title, description, status, priority, goal (a picker limited to
+the project's goals), and an assignee chosen from the agents available in the project and its members. For an agent the
+**Wake-up** choice is None, Daily 9:00, Weekdays 9:00, Weekly Monday 9:00 or Custom (a cron field), under the line "A
+wake-up only asks: the agent runs after someone approves it." and, once saved, the next wake-up. **Check out** and
+**Release** (the holder, or an admin) show "Checked out by <name>" when someone else holds it; **Ask to run now** asks
+for a run, and an open request answers "Already asked". **Last runs** lists each run's status, who asked and decided,
+the reply folded under "The reply", **Open session** and, for a run that waits, **Approve** and **Deny**. A message from
+the server about the assignee, the schedule or the goal shows under that field. **Delete** asks first. Viewers read the
+same task as text.
+
+A run that waits for a person is an item in **Needs you** (kind **Task**) for the project's editors and admins; it
+counts in Home's tile and the rail's badge like any other. Its title opens the task (never a run); **Approve**, **Deny**
+and **Open task** sit below it. A run waiting for a tool approval has **Open session** instead. Approve and Deny post to
+`POST /api/task-runs/:runId` (session only) and reload the list; a 409 ("Already approved") shows under the buttons. See
+[run-trace.md](run-trace.md#needs-you-for-a-project-task).
+
+The red **Delete this project** card is the last card of the Settings tab: settings, Agents in this project, AI budget,
+Workspace, Variables, then it. The card and its dialog say what goes where: what the project owns (workflows,
+credentials, data tables, agents) moves to the project you choose, and its tasks with their runs, its own goals, its AI
+budget and its workspace are deleted with it (its practices are retired). The dialog counts the tasks ("Its 12 tasks and
+their runs … are deleted with it") from the project view's `taskCount`, so a project that holds only tasks is never
+called empty.
+
+## Export
+
+**Export** in the project's header downloads the project as a Claude Code plugin: `PROJECT.md` with its brief and goals
+next to its home agents and their skills, without people or ids ([marketplace.md](marketplace.md#export-a-project)).
 
 ## How it is built
 

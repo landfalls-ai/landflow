@@ -38,7 +38,10 @@ export const updateGoalSchema = z.strictObject({
 });
 export type UpdateGoalBody = z.infer<typeof updateGoalSchema>;
 
-export const goalsQuerySchema = z.object({ projectId: z.string().optional(), status: z.enum(GOAL_STATUSES).optional() });
+// PC17: `progress=1` adds each goal's progress; `window` is 7 or 30 days (default 7).
+const progressWindow = z.enum(['7', '30']).transform((value) => Number(value) as 7 | 30);
+export const goalsQuerySchema = z.object({ projectId: z.string().optional(), status: z.enum(GOAL_STATUSES).optional(), progress: z.enum(['1']).optional(), window: progressWindow.optional() });
+export const goalProgressQuerySchema = z.object({ window: progressWindow.default(7) });
 
 export const initiativesSchema = z.strictObject({ ids: z.array(id).max(GOAL_LIMITS.initiatives) });
 export const projectGoalsSchema = z.strictObject({ goalIds: z.array(id).max(GOAL_LIMITS.goalsPerProject) });

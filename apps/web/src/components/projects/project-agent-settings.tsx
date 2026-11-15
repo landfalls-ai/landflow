@@ -11,7 +11,10 @@ import {
   fetchAgentSettings,
   parseAgentSettings,
   sameAgentSettings,
+  errorFieldOf,
   saveAgentSettings,
+  savePatch,
+  type AgentSettingsErrorField,
   type AgentSettingsForm,
   type AgentSettingsState,
 } from '@/lib/client/project-agent-settings';
@@ -71,6 +74,22 @@ function ModelChoice({ model, onChange, disabled, error }: { model?: AgentModel;
   );
 }
 
+/** An allow-list's mode: the two choices for an admin, plain text for everyone else. */
+function ModeChoice({ label, edit, value, onChange, off }: { label: string; edit: boolean; value: 'off' | 'allow'; onChange: (mode: 'off' | 'allow') => void; off: string }) {
+  if (!edit) return <p className="text-[13px] text-t1">{value === 'allow' ? 'Only these' : off}</p>;
+  return (
+    <Segmented
+      label={label}
+      value={value}
+      onChange={onChange}
+      options={[
+        { value: 'off', label: off },
+        { value: 'allow', label: 'Only these' },
+      ]}
+    />
+  );
+}
+
 /** The card without its data fetching, for the page and for tests. */
 export function ProjectAgentSettingsView({
   state,
@@ -79,6 +98,7 @@ export function ProjectAgentSettingsView({
   onSave,
   saving,
   error,
+  errorField,
   saved,
 }: {
   state: AgentSettingsState;
@@ -87,13 +107,15 @@ export function ProjectAgentSettingsView({
   onSave?: () => void;
   saving?: boolean;
   error?: string;
+  /** The field the refused PATCH sent (errorFieldOf); without one the error shows at the bottom. */
+  errorField?: AgentSettingsErrorField;
   saved: AgentSettingsForm;
 }) {
   const [picking, setPicking] = useState(false);
   const edit = state.canEdit;
   const set = (patch: Partial<AgentSettingsForm>) => onForm?.({ ...form, ...patch });
   const dirty = !sameAgentSettings(form, saved);
-  const modelError = Boolean(error && /credential|model|provider/i.test(error));
+  const errorUnder = (field: AgentSettingsErrorField) => (error && errorField === field ? <p className="mt-2 text-[12px] text-rd">{error}</p> : null);
   const modelEmpty = Boolean(form.defaultModel && !form.defaultModel.model);
   const toggleAgent = (id: string, on: boolean) => set({ agents: { ...form.agents, ids: on ? [...form.agents.ids, id] : form.agents.ids.filter((x) => x !== id) } });
   const toggleKind = (kind: ProjectToolKind, on: boolean) => set({ agentTools: { ...form.agentTools, kinds: on ? [...form.agentTools.kinds, kind] : form.agentTools.kinds.filter((x) => x !== kind) } });
@@ -106,7 +128,7 @@ export function ProjectAgentSettingsView({
         <div>
           <FieldLabel>Default model</FieldLabel>
           <p className="mb-2 text-[12px] text-t3">Used when neither the workflow’s step nor the agent names a model.</p>
-          <ModelChoice model={form.defaultModel} onChange={(m) => set({ defaultModel: m })} disabled={!edit} error={modelError ? error : undefined} />
+          <ModelChoice model={form.defaultModel} onChange={(m) => set({ defaultModel: m })} disabled={!edit} error={errorField === 'defaultModel' ? error : undefined} />
         </div>
 
         <div>
@@ -133,19 +155,12 @@ export function ProjectAgentSettingsView({
               }}
             />
           )}
+          {errorUnder('knowledge')}
         </div>
 
         <div>
           <FieldLabel>Allowed agents</FieldLabel>
-          <Segmented
-            label="Allowed agents"
-            value={form.agents.mode}
-            onChange={(mode) => edit && set({ agents: { ...form.agents, mode } })}
-            options={[
-              { value: 'off', label: 'Everything available' },
-              { value: 'allow', label: 'Only these' },
-            ]}
-          />
+          <ModeChoice label="Allowed agents" edit={edit} value={form.agents.mode} onChange={(mode) => set({ agents: { ...form.agents, mode } })} off="Everything available" />
           {form.agents.mode === 'allow' &&
             (state.available.length === 0 ? (
               <p className="mt-2 text-[12px] text-t3">No agents to list</p>
@@ -159,19 +174,12 @@ export function ProjectAgentSettingsView({
                 ))}
               </ul>
             ))}
+          {errorUnder('agents')}
         </div>
 
         <div>
           <FieldLabel>Allowed tools</FieldLabel>
-          <Segmented
-            label="Allowed tools"
-            value={form.agentTools.mode}
-            onChange={(mode) => edit && set({ agentTools: { ...form.agentTools, mode } })}
-            options={[
-              { value: 'off', label: 'Every kind' },
-              { value: 'allow', label: 'Only these' },
-            ]}
-          />
+          <ModeChoice label="Allowed tools" edit={edit} value={form.agentTools.mode} onChange={(mode) => set({ agentTools: { ...form.agentTools, mode } })} off="Every kind" />
           {form.agentTools.mode === 'allow' && (
             <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
               {PROJECT_TOOL_KINDS.map((k) => (
@@ -181,13 +189,14 @@ export function ProjectAgentSettingsView({
               ))}
             </ul>
           )}
-          <p className="mt-2 text-[12px] text-t3">Skills, memory, a team’s notebook and the tools connected to a workflow’s step are always allowed.</p>
+          <p className="mt-2 text-[12px] text-t3">Skills, memory, a team’s own tools and the tools connected to a workflow’s step are always allowed.</p>
         </div>
 
-        {error && !modelError && <p className="text-[12px] text-rd">{error}</p>}
+        {error && !errorField && <p className="text-[12px] text-rd">{error}</p>}
         {!edit && <p className="text-[12px] text-t3">The project’s admins change these.</p>}
         {edit && dirty && (
-          <div className="flex justify-end gap-2 border-t border-hair pt-3">
+          <div className="flex items-center justify-end gap-2 border-t border-hair pt-3">
+            {modelEmpty && <span className="mr-auto text-[12px] text-t3">Choose a model</span>}
             <Button size="sm" variant="ghost" onClick={() => onForm?.(saved)}>
               Discard
             </Button>
@@ -206,12 +215,14 @@ export function ProjectAgentSettings({ projectId }: { projectId: string }) {
   const [form, setForm] = useState<AgentSettingsForm>();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
+  const [errorField, setErrorField] = useState<AgentSettingsErrorField>();
   const [failed, setFailed] = useState(false);
   const show = (view: Parameters<typeof parseAgentSettings>[0]) => {
     const next = parseAgentSettings(view);
     setState(next);
     setForm(next.form);
     setError(undefined);
+    setErrorField(undefined);
   };
   useEffect(() => {
     fetchAgentSettings(projectId)
@@ -220,17 +231,18 @@ export function ProjectAgentSettings({ projectId }: { projectId: string }) {
   }, [projectId]);
   useScrollToHash('agents', Boolean(state) || failed);
   if (failed) return null;
-  if (!state || !form) return <div id="agents"><Card className="h-24 animate-pulse-soft">{null}</Card></div>;
+  if (!state || !form) return <div id="agents" className="scroll-mt-[72px] max-md:scroll-mt-[200px]"><Card className="h-24 animate-pulse-soft">{null}</Card></div>;
   const save = async () => {
     setSaving(true);
     try {
       show(await saveAgentSettings(projectId, form, state.form, state.available));
       toast.success('Agent settings saved');
     } catch (e) {
+      setErrorField(errorFieldOf(savePatch(form, state.form, state.available)));
       setError((e as Error).message);
     } finally {
       setSaving(false);
     }
   };
-  return <ProjectAgentSettingsView state={state} saved={state.form} form={form} onForm={setForm} onSave={() => void save()} saving={saving} error={error} />;
+  return <ProjectAgentSettingsView state={state} saved={state.form} form={form} onForm={setForm} onSave={() => void save()} saving={saving} error={error} errorField={errorField} />;
 }

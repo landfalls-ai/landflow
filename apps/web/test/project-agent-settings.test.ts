@@ -239,6 +239,15 @@ describe('the run obeys the project', () => {
     expect(seen.at(-1)?.tools).toContain('ask_report');
     expect(seen.at(-1)?.tools).not.toContain('ask_Helper');
     expect(notices(withTeam.session).some((m) => m?.includes('Report withheld'))).toBe(false);
+    // A team tool named like one of the agent's own: the agent's keeps the name and is still withheld; the team's copy
+    // (renamed by the merge) is the exempt one.
+    const colliding = { ...report, name: 'ask_Helper', label: 'Team helper' };
+    seen.length = 0;
+    const collided = await run(boss.id, P, { team: { tools: [colliding] } });
+    expect(seen.at(-1)?.tools).toContain('ask_Helper_2');
+    expect(seen.at(-1)?.tools).not.toContain('ask_Helper');
+    expect(notices(collided.session)).toContain('Tool access: Helper withheld by project “Payments” settings');
+    expect(notices(collided.session).some((m) => m?.includes('Team helper withheld'))).toBe(false);
     scopes.updateProjectSettings(P, { agentTools: { mode: 'allow', kinds: ['agent'] } });
     await run(boss.id, P);
     expect(seen.at(-1)?.tools).toContain('ask_Helper');

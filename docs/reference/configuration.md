@@ -76,6 +76,7 @@ still works.
 | `LANDFLOW_APP_WEBHOOK_RETRY_MS` | `60000` | how often app webhook registrations that failed at publish are retried (minimum 1000) |
 | `LANDFLOW_APP_WEBHOOK_MAX_BYTES` | `26214400` (25 MiB) | largest body an app webhook trigger accepts (larger ones are refused) |
 | `LANDFLOW_AGENT_CHANNEL_POLL_SECONDS` | `5` | how often an agent's Telegram channel is polled for new messages (at least `2`) |
+| `LANDFLOW_TASK_WAKEUP_SECONDS` | `60` | how often the leader looks for project tasks whose wake-up is due and asks for a run (a person still approves it); `0` turns wake-ups off (at most `3600`) |
 | `LANDFLOW_EXECUTE_TIMEOUT_MS` | `120000` | per remote Execute call (and per call to the code runner); minimum 1000 for plugin calls |
 | `LANDFLOW_RETENTION_EVERY` | 50 | finished runs between retention passes (minimum 1: `0` or a fraction counts as 1); the hourly timer and Prune now run regardless, so the count may exceed its cap by up to N-1 between passes ([features/settings-and-data.md](../features/settings-and-data.md)) |
 | `LANDFLOW_APPROVAL_EMAIL_TTL_HOURS` | `24` | hours an Approve or Reject link in an approval email stays valid (minimum 1) |

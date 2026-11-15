@@ -22,6 +22,19 @@ export function describeCounts(counts: Partial<Record<ResourceKind, number>> | u
   return parts.join(', ');
 }
 
+/**
+ * What deleting a project does, for the delete dialog and the settings card: what it owns moves (to the project chosen),
+ * and its tasks with their runs (PC19), its own goals, its AI budget and its workspace are deleted (removeProjectRows).
+ */
+export function deletionNotice(project: Pick<ProjectView, 'counts' | 'taskCount'>): { moves: string; deletes: string } {
+  const owned = describeCounts(project.counts);
+  const tasks = project.taskCount ?? 0;
+  return {
+    moves: owned ? `What it owns (${owned}) moves to the project you choose.` : 'It owns no workflows, credentials, data tables or agents to move.',
+    deletes: `${tasks ? `Its ${tasks} ${tasks === 1 ? 'task' : 'tasks'} and their runs, its` : 'Its tasks, its'} own goals, its AI budget and its workspace are deleted with it; its practices are retired.`,
+  };
+}
+
 export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; onCreated?: (id: string) => void }) {
   const id = useId();
   const [name, setName] = useState('');
@@ -84,6 +97,7 @@ export function DeleteProjectDialog({ project, onClose, onDeleted }: { project: 
   const viewer = useViewer();
   const { projects } = useProjects();
   const owned = describeCounts(project.counts);
+  const notice = deletionNotice(project);
   const choices = writableProjects(projects).filter((p) => p.id !== project.id);
   const [target, setTarget] = useState('');
   const [deleting, setDeleting] = useState(false);
@@ -120,8 +134,10 @@ export function DeleteProjectDialog({ project, onClose, onDeleted }: { project: 
       }
     >
       <div className="space-y-4 text-[13px] text-t1">
-        <p>Its members lose access to what it owns, and what is shared with it stops being shared. Nothing it owns is deleted.</p>
-        {owned ? (
+        <p>Its members lose access to what it owns, and what is shared with it stops being shared.</p>
+        <p>{notice.moves}</p>
+        <p className={project.taskCount ? 'font-semibold text-rd' : 'text-t2'}>{notice.deletes}</p>
+        {owned && (
           <Field id="delete-project-target" label={`Move its ${owned} to`} required>
             <Select id="delete-project-target" value={target} onChange={(e) => setTarget(e.target.value)}>
               <option value="">Choose a project…</option>
@@ -132,8 +148,6 @@ export function DeleteProjectDialog({ project, onClose, onDeleted }: { project: 
               ))}
             </Select>
           </Field>
-        ) : (
-          <p className="text-t3">It owns nothing.</p>
         )}
       </div>
     </Dialog>

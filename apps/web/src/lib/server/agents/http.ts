@@ -70,7 +70,7 @@ export const agentConfigSchema = z
             z.object({
               id: z.string().max(64),
               tool: z.string().min(1).max(200),
-              who: z.object({ role: z.string().max(64).optional(), user: z.string().max(200).optional(), source: z.enum(['test', 'schedule', 'telegram', 'slack', 'teams', 'workflow', 'agent', 'api']).optional() }),
+              who: z.object({ role: z.string().max(64).optional(), user: z.string().max(200).optional(), source: z.enum(['test', 'schedule', 'telegram', 'slack', 'teams', 'workflow', 'agent', 'api', 'task']).optional() }),
               effect: z.enum(['allow', 'ask', 'deny']),
             }),
           )

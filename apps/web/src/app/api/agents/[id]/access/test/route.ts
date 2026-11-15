@@ -15,7 +15,7 @@ import { error, handler, json, parseBody } from '@/lib/server/http';
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
 
-const SOURCES = ['test', 'schedule', 'telegram', 'slack', 'teams', 'workflow', 'agent', 'api'] as const;
+const SOURCES = ['test', 'schedule', 'telegram', 'slack', 'teams', 'workflow', 'agent', 'api', 'task'] as const;
 const body = z.object({
   caller: z.object({ id: z.string().trim().min(1).max(200), role: z.string().trim().max(50).optional(), source: z.enum(SOURCES) }),
   rules: z.array(z.object({ id: z.string(), tool: z.string(), who: z.object({ role: z.string().optional(), user: z.string().optional(), source: z.enum(SOURCES).optional() }), effect: z.enum(['allow', 'ask', 'deny']) })).max(100).optional(),

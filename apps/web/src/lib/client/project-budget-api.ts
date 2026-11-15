@@ -40,6 +40,18 @@ export const fieldsFrom = (view: Pick<ProjectBudgetView, 'budget'>): BudgetField
   ownerId: view.budget?.ownerId ?? '',
 });
 
+/**
+ * Whether the fields differ from the saved budget in a way a save would change: with no budget, Warn at, Hard stop and the
+ * owner alone save nothing (the PUT would be `monthlyUsd: 0`), so only an amount above 0 counts.
+ */
+export function budgetDirty(fields: BudgetFields, view: Pick<ProjectBudgetView, 'budget'>): boolean {
+  if (!view.budget) {
+    const monthly = fields.monthly.trim();
+    if (monthly === '' || Number(monthly) === 0) return false;
+  }
+  return JSON.stringify(fields) !== JSON.stringify(fieldsFrom(view));
+}
+
 /** The PUT body for the fields, or what is wrong with them. */
 export function budgetInput(fields: BudgetFields): { input: ProjectBudgetInput } | { error: string } {
   const monthlyUsd = fields.monthly.trim() === '' ? 0 : Number(fields.monthly);

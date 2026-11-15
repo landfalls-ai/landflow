@@ -13,6 +13,7 @@ import { PROJECT_STATUS_LABELS, type ProjectBriefView } from '@/lib/shared/goals
 import { GoalLevelChip, GoalStatusChip } from '@/components/goals/goal-card';
 import { GoalDialog } from '@/components/goals/goal-dialog';
 import { GoalPicker } from '@/components/goals/goal-picker';
+import { GoalProgressLine, useGoalProgress } from '@/components/goals/goal-progress';
 import { briefFold, formatTarget } from '@/components/goals/tree';
 import { putProjectGoals, useGoals } from '@/components/goals/use-goals';
 import { Card } from '@/components/shell/page-header';
@@ -33,6 +34,7 @@ export function ProjectBriefCard({ projectId, brief, onChanged }: { projectId: s
   const [newGoal, setNewGoal] = useState(false);
   const [linking, setLinking] = useState(false);
   const { data: goalData, reload: reloadGoals } = useGoals(canEdit);
+  const progress = useGoalProgress(7, projectId, brief?.goals);
 
   if (briefIsEmpty(brief) && !editing && !newGoal) {
     if (!canEdit) return null;
@@ -90,7 +92,10 @@ export function ProjectBriefCard({ projectId, brief, onChanged }: { projectId: s
             {brief!.goals.map((g, i) => (
               <li key={g.id} className="flex items-center gap-2 border-b border-hair px-3 py-1.5 last:border-b-0 max-md:min-h-11 max-md:flex-wrap">
                 <span className="w-4 shrink-0 text-[12px] tabular-nums text-t3">{i + 1}</span>
-                <Link href="/goals" className="min-w-0 flex-1 truncate text-[13px] font-semibold text-t1 hover:text-ac max-md:basis-[calc(100%-1.5rem)] max-md:py-2">{g.title}</Link>
+                <span className="min-w-0 flex-1 max-md:basis-[calc(100%-1.5rem)] max-md:py-2">
+                  <Link href="/goals" className="block truncate text-[13px] font-semibold text-t1 hover:text-ac max-md:py-2">{g.title}</Link>
+                  {progress.get(g.id) && <GoalProgressLine progress={progress.get(g.id)!} />}
+                </span>
                 <GoalLevelChip level={g.level} />
                 <GoalStatusChip status={g.status} />
                 {canEdit && (

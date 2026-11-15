@@ -32,6 +32,7 @@ const { storePort } = await import('@/lib/server/practices/register');
 const { approvePractice } = await import('@/lib/server/practices/approve');
 const { getPractice } = await import('@/lib/server/practices/store');
 const needsYouRoute = await import('@/app/api/runs/needs-you/route');
+const { requestRun, getTask } = await import('@/lib/server/tasks/store');
 
 const owner = await createUser({ email: 'owner@delete-join.test', name: 'Owner', role: 'owner', password: 'owner-password-1' });
 enableTestAuth(owner);
@@ -136,5 +137,75 @@ describe('transferring', () => {
     expect(getBudget(to)?.monthlyUsd).toBe(7);
     expect(incidentsOf(to, currentMonth(meter))).toEqual([]);
     expect(rows(from.id)).toEqual({ budget: 0, incidents: 0, workspace: 0, shares: 0 });
+  });
+});
+
+// ---- tasks (PC19): a project's tasks and their runs are its own data --------------------------------------------------
+
+const at = new Date().toISOString();
+/** A project with a task checked out by the owner, and an open (requested) run of it by a published agent. */
+function withTasks(name: string) {
+  const id = projects.createTeamProject({ name }).id;
+  const agent = agentStore.create({ name: `${name} worker`, instructions: 'Work.' });
+  agentStore.publish(agent.id);
+  const taskId = `tsk_${name.replace(/\W/g, '')}`;
+  database().upsert('project_tasks', { id: taskId, project_id: id, title: `${name} task`, status: 'todo', priority: 'normal', assignee_kind: 'agent', assignee_id: agent.id, checked_out_by: owner.id, created_at: at, updated_at: at });
+  const { run } = requestRun({ id: taskId, projectId: id }, agent.id, 'manual', owner.id);
+  return { id, taskId, runId: run.id, agentId: agent.id };
+}
+const taskRows = (projectId: string) => ({
+  tasks: database().all('SELECT 1 FROM project_tasks WHERE project_id = ?', projectId).length,
+  runs: database().all('SELECT 1 FROM task_runs WHERE project_id = ?', projectId).length,
+});
+const taskItems = async () => {
+  const response = await needsYouRoute.GET(new Request('http://landflow.test/api/runs/needs-you'));
+  return ((await response.json()) as { items: Array<{ kind: string; taskId?: string }> }).items.filter((i) => i.kind === 'task');
+};
+
+describe('deleting a project that has tasks', () => {
+  it('a failure part way keeps the tasks and their runs', async () => {
+    const doomed = withTasks('HalfTasks');
+    const db = authDb();
+    const real = db.delete.bind(db);
+    const spy = vi.spyOn(db, 'delete').mockImplementation(((table: string, where: Record<string, unknown>) => {
+      if (table === 'projects') throw new Error('disk full');
+      return real(table as never, where as never);
+    }) as never);
+    try {
+      expect(() => projects.deleteProjectWithTransfer(doomed.id, undefined, owner.id)).toThrow('disk full');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(taskRows(doomed.id)).toEqual({ tasks: 1, runs: 1 });
+    expect(getTask(doomed.taskId)?.checkedOutBy).toBe(owner.id);
+    projects.deleteProjectWithTransfer(doomed.id, undefined, owner.id);
+  });
+
+  it('deletes the tasks, their runs and the checkout; Needs you forgets the item; the count is gone; another project keeps its own', async () => {
+    const doomed = withTasks('DoomedTasks');
+    const kept = withTasks('KeptTasks');
+    expect((await taskItems()).map((i) => i.taskId).sort()).toEqual([doomed.taskId, kept.taskId].sort());
+    expect(projects.taskCounts().get(doomed.id)).toBe(1);
+
+    projects.deleteProjectWithTransfer(doomed.id, undefined, owner.id);
+
+    expect(taskRows(doomed.id)).toEqual({ tasks: 0, runs: 0 });
+    expect(getTask(doomed.taskId)).toBeUndefined();
+    expect(projects.taskCounts().has(doomed.id)).toBe(false);
+    expect((await taskItems()).map((i) => i.taskId)).toEqual([kept.taskId]);
+    expect(taskRows(kept.id)).toEqual({ tasks: 1, runs: 1 });
+    expect(projects.taskCounts().get(kept.id)).toBe(1);
+  });
+
+  it('deleting with a transfer moves what it owns but no task or run', async () => {
+    const from = withTasks('FromTasks');
+    const to = projects.createTeamProject({ name: 'ToTasks' }).id;
+    const owned = agentStore.create({ name: 'Moved along', instructions: 'Stay.' });
+    projects.setHomeProject('agent', owned.id, from.id);
+    projects.deleteProjectWithTransfer(from.id, to, owner.id);
+    expect(projects.homeProjectId('agent', owned.id)).toBe(to);
+    expect(taskRows(from.id)).toEqual({ tasks: 0, runs: 0 });
+    expect(taskRows(to)).toEqual({ tasks: 0, runs: 0 });
+    expect(database().all('SELECT 1 FROM project_tasks WHERE id = ?', from.taskId)).toEqual([]);
   });
 });

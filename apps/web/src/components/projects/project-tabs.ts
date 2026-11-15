@@ -1,9 +1,10 @@
 import type { ResourceKind } from '@/lib/shared/projects';
 
-/** The project page's four tabs. */
-export type ProjectTab = 'overview' | 'members' | 'settings' | 'audit';
+/** The project page's five tabs. */
+export type ProjectTab = 'overview' | 'tasks' | 'members' | 'settings' | 'audit';
 export const PROJECT_TABS: Array<{ id: ProjectTab; label: string }> = [
   { id: 'overview', label: 'Overview' },
+  { id: 'tasks', label: 'Tasks' }, // PC20
   { id: 'members', label: 'Members' },
   { id: 'settings', label: 'Settings' },
   // Project admins (and owners and admins) read the project's audit events.
@@ -19,7 +20,7 @@ const OLD_TAB: Record<string, ProjectTab> = {
   variables: 'settings',
 };
 
-/** The tab a `?tab=` value names: one of the four, an old link's new home, else the Overview. */
+/** The tab a `?tab=` value names: one of the five, an old link's new home, else the Overview. */
 export function projectTab(value: string | null | undefined): ProjectTab {
   if (!value) return 'overview';
   return PROJECT_TABS.find((t) => t.id === value)?.id ?? OLD_TAB[value] ?? 'overview';

@@ -197,6 +197,22 @@ describe('a run of the sync', () => {
     expect(rowsFor(alice.id, 'ready')[0].model).toBe('deterministic');
   });
 
+  it('adds the goals that moved to each person’s draft, counted in the run data and named in the text, never a title', async () => {
+    const { createGoal } = await import('@/lib/server/goals/store');
+    const goal = createGoal({ title: 'Faster billing', level: 'project', projectId: team.id });
+    database().upsert('usage_events', { id: 'ev_goal_alice', at: minutesAgo(5), day: dayOf(Date.now() - 5 * 60_000), kind: 'work.session', project_id: team.id, goal_id: null, owner_id: alice.id, visibility: 'private', source: 'test', source_id: 'g1', message: 'PRIVATE-GOAL-WORK' });
+    recordWork(actorOf(bob), [work('g2', { title: 'Bob’s day' })]);
+    const result = await sync();
+    expect(result.status).toBe('success');
+    const counts = Object.fromEntries(result.runData.deliver.at(-1)!.outputs[0].map((item) => [item.json.userId as string, (item.json.counts as Record<string, number>).goalsMoved]));
+    // Alice's private event moves the goal for her; Bob's numbers do not include it.
+    expect(counts[alice.id]).toBe(1);
+    expect(counts[bob.id] ?? 0).toBe(0);
+    expect(rowsFor(alice.id, 'ready')[0].text).toContain(`Goals that moved: ${goal.title} (1 update).`);
+    expect(rowsFor(bob.id, 'ready')[0].text).not.toContain('Goals that moved');
+    expect(JSON.stringify(result.runData)).not.toContain('PRIVATE-GOAL-WORK');
+  });
+
   it('keeps one person’s private items out of another’s gathered work', async () => {
     recordWork(actorOf(alice), [work('a1', { repo: 'acme/billing', title: 'Fix the invoice export', visibility: 'team' }), work('a2', { repo: 'acme/billing', title: 'PRIVATE-ALICE secret plan' })]);
     recordWork(actorOf(bob), [work('b1', { repo: 'acme/billing', title: 'Billing retries', visibility: 'team' })]);

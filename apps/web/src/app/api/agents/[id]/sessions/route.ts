@@ -10,7 +10,7 @@ import { decodeCursor, encodeCursor, limitParam } from '@/lib/server/pagination'
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
 
-const SOURCES = ['test', 'schedule', 'telegram', 'slack', 'teams', 'workflow', 'agent', 'api'] as const;
+const SOURCES = ['test', 'schedule', 'telegram', 'slack', 'teams', 'workflow', 'agent', 'api', 'task'] as const;
 
 const Query = z.object({
   limit: limitParam(200, 100),

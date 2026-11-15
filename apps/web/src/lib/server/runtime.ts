@@ -29,6 +29,7 @@ import './practices/register';
 // PR06: sets the seam's practices slot, so agent runs get approved practices (docs/practices.md).
 import './practices/context-source';
 import { agentTriggers } from './agents/triggers';
+import { taskWakeups } from './tasks/wakeups';
 import { alerts } from './alerts/service';
 import { auditHeads } from './audit/anchoring';
 import { startAudit } from './audit/start';
@@ -184,6 +185,8 @@ export const SERVICES: ServiceSpec[] = [
   // Failure alerts: throttle digests and "waiting too long" checks.
   { name: 'alerts', roles: MAIN, leader: true, start: () => alerts.start(), stop: () => alerts.stop() },
   { name: 'agent triggers', roles: MAIN, leader: true, start: () => agentTriggers.start(), stop: () => agentTriggers.stop() },
+  // PC19: project task wake-ups only ask for a run; a person's Approve starts it (lib/server/tasks/wakeups.ts).
+  { name: 'project task wake-ups', roles: MAIN, leader: true, start: () => taskWakeups.start(), stop: () => taskWakeups.stop() },
   // Scheduled evaluation runs (a cron on a workflow's Evaluations tab): one main evaluates them.
   { name: 'evaluation schedules', roles: MAIN, leader: true, start: () => evaluationSchedules.start(), stop: () => evaluationSchedules.stop() },
   // Online evaluations: a sample of finished agent runs is graded by an LLM judge (on every process that runs agents).

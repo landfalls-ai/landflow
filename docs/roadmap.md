@@ -1054,8 +1054,9 @@ four steps of the approved plan:
   Slack or email, **Approve** / **Deny** on the node and the phone card; the decision is an *Approval* check); members
   may **consult** peers and **hand a task over** (`consults`, the `consult_` and `hand_off_to_` tools), shown on the node
   with both members ringed, on the team page as dashed chips and in the Run Trace under the member that asked.
-- Next: tools of a Claude Code member on kagent asking for approval; Paperclip-style autonomy (heartbeats, a team inbox of
-  tasks) is left out on purpose for now.
+- Next: tools of a Claude Code member on kagent asking for approval. Paperclip-style autonomy is built, behind a person's
+  approval (wave 10, P7): project tasks with agent or person assignees, wake-ups that only ask and runs that need an
+  **Approve** ([Tasks](projects-and-goals.md#tasks)).
 
 ## Claude Code agents report what they use (built 2026-11-01)
 
@@ -1963,6 +1964,35 @@ contract (settings, sessions, budget, workspace and a project's deletion). These
   9's live pass with its own checks (the Settings tab's cards, a shared-only member's Run an Agent panel, a $0.01 budget
   with a hard stop, the Workspace card) and those still owed from waves 6 and 7.
 
+## Company backbone: left open from the wave 9 reviews (2026-11-15)
+
+Wave 10 closed the wave 9 notes it owned: Delete this project is last in Settings and the Run Trace's budget section no
+longer splits the Runs paragraph (PC20); the integration fixed a raise from a warning leaving the stop open, a dropped
+repository's stored workspace entry, a workspace save that changed nothing being audited, the audit labels, the
+evaluations route's session reads, the team-tool exemption by name, and the two Settings cards (errors under the field
+sent, viewer modes as text, "Choose a model", the budget card's dirty rule, the confirm sheet, the raise dialog's amount).
+These wait, each with its reason:
+
+- **Session summaries without a project**: summaries saved before `projectId` existed cost one session read per list
+  call for a member who is not an admin; a one-time backfill or a cache is its own change.
+- **The routed model on the span**: a run's span names the project's default model, not the router's cheap model when
+  the run was routed (main behaves the same); the span attributes are their own change.
+- **The stop's audit by import side effect**: `budgets/enforce.ts` registers the stop's audit event when it is
+  imported; a process that loads only the usage meter would open stops without it. The host always loads it through
+  `runtime.ts` (lesson 10 territory, its own change).
+- **`callLimits` and `scopeProjectId`**: every check resolves the project again. It is cheap; measure before changing.
+- **Branch names a harness fills in**: `branchFor` can leave `..`, a trailing `.` or `.lock` from a token; the harness
+  plan's stage 2 must check the result with `isValidBranch` ([harnesses.md](harnesses.md)).
+- **Workspace card edges**: a setup line refuses a tab inside it, and the branch example keeps the old project slug
+  after a rename until the page reloads.
+- **Hand-indented lines** in the PC15 cards: there is no formatter in the repository; no change.
+- **Live checks owed from wave 9**: a shared-only member opening the Run an Agent panel of their run; a home member's
+  Sessions tab without another project's sessions; an Ollama call running while the project is stopped; the cap on
+  Insights → AI and an editor's "Ask for more" approved through the cap-raise flow; Raise and Dismiss from Needs you; the
+  Workspace card and `GET /api/projects/context?repo=` as an editor and a viewer; dark mode on the cards. They need a
+  host and a headed browser, and are carried to wave 10's live pass with its own checks and those still owed from
+  waves 6 to 8.
+
 ## Runs: one list (B20, 2026-11-14)
 
 Closed from the wave 1 page review: X2 (Executions, Runs and Search runs are one page, **Runs** at `/runs`, the old URLs redirect), P-ex-1 (no ID or Mode column), P-ex-2 (Stop all only while a run runs), P-ex-3 (repeated failures fold into one row), P-ex-4 (two re-run words), P-runs-1 (one search box with Status and Workflow chips, the rest under More filters) and P-cmp-1 (compare with fewer than two runs goes back to the list). See [the Runs list](run-trace.md#the-runs-list).
@@ -2038,7 +2068,10 @@ Projects get a mission to serve, goals and a brief, and agents learn where their
   project** and **AI budget** cards and the budget rows in Needs you (PC15); and the project workspace for harness runs
   with the repositories screen (PC16) ([projects-and-goals.md](projects-and-goals.md#project-settings-for-agents),
   [below](#paperclip-wave-9-project-settings-for-agents-pc13)).
-- **Open:** goal progress, tasks and the PROJECT.md export (wave 10).
+- **PC17 to PC21, built (wave 10):** goal progress, project tasks and the project export: [Paperclip wave 10](#paperclip-wave-10-progress-tasks-and-export).
+- **Open:** the Paperclip plan (PC01 to PC21) is built. What is left is in the follow-ups: [wave 10's limits](limitations.md#project-tasks-wave-10)
+  (no autonomous task runs, no progress history, no PROJECT.md import) and
+  [the wave 9 reviews' list](#company-backbone-left-open-from-the-wave-9-reviews-2026-11-15).
 
 ## Not planned
 
@@ -2131,6 +2164,20 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   for each, a worktree per run or shared, a branch template; saved in `project_workspaces` (migration 2701), served by
   `GET/PUT /api/projects/:id/workspace`, `GET /api/projects/context` and the MCP `project_context` tool. Closes P6-3.
   Open: the harness plan's stage 2 using it ([projects-and-goals.md](projects-and-goals.md#workspace)).
+
+## Paperclip wave 10: progress, tasks and export
+
+- **PC17 and PC18, built:** goal progress (runs, spend and work updates per goal over 7 or 30 days, through the
+  visibility rule for the person it is for) on the Goals page, the goal sheet and the project Overview, and "Goals that
+  moved" in the nightly sync ([projects-and-goals.md](projects-and-goals.md#progress)). Closes P7-1.
+- **PC19 and PC20, built:** project tasks with agent or person assignees, checkout, wake-ups that only ask, runs a person
+  approves (through `runAgent` and the project's limits), the Tasks tab and Approve and Deny in Needs you
+  ([projects-and-goals.md](projects-and-goals.md#tasks)). A task run counts toward goal progress only as spend, never as
+  a run. Closes P7-2.
+- **PC21, built:** a project exported as a Claude Code plugin with `PROJECT.md` and its home agents, without people or ids
+  ([marketplace.md](marketplace.md#export-a-project)). Closes P7-3.
+- **Left on purpose:** autonomous task runs, a progress history chart, and importing `PROJECT.md`
+  ([limitations.md](limitations.md#project-tasks-wave-10)).
 
 ## Practices (waves P1 and P2)
 
