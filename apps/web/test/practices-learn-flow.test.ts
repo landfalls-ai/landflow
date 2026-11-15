@@ -193,6 +193,17 @@ describe('the template', () => {
     expect(out('Draft Practice')[0].json).toMatchObject({ verified: 0, verification: 'skipped' });
   });
 
+  it('citation entries that are not objects, and a bad lines value, do not stop the draft', async () => {
+    reply = JSON.stringify([practice({ topics: ['Helm Charts', 'devops'], citations: [null, 'text', { path: 'CLAUDE.md', lines: ['a'], excerpt: 'Charts live in deploy/helm.' }] })]);
+    const { record } = await start(await install(owner), owner);
+    expect(record.status).toBe('success');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].input.topics).toEqual(['devops']);
+    expect(calls[0].input.citations).toHaveLength(1);
+    expect(calls[0].input.citations![0]).toMatchObject({ path: 'CLAUDE.md', excerpt: 'Charts live in deploy/helm.' });
+    expect(calls[0].input.citations![0].lines).toBeUndefined();
+  });
+
   it('an answer that is not JSON drafts nothing and the run still ends', async () => {
     reply = 'Sorry, I cannot.';
     const { record, out } = await start(await install(owner), owner);

@@ -41,7 +41,7 @@ const SYSTEM = [
   'Reply with JSON only.',
 ].join(' ');
 
-/** The user message: the files between boundary lines that hold a token the files cannot know. */
+/** The user message (the Learn practices template's prompt in templates/builtin-practices.ts copies it; keep them in step): the files between boundary lines that hold a token the files cannot know. */
 export function learnPrompt(input: Pick<LearnInput, 'repo' | 'sha' | 'files' | 'topics'>, nonce: string): string {
   const files = input.files.map((f) => `===== FILE ${nonce} path: ${f.path} =====\n${f.content}\n===== END FILE ${nonce} =====`).join('\n\n');
   return [
@@ -183,8 +183,8 @@ export async function learnPractices(input: LearnInput, actor: Actor, model: Lan
       const { practice, version } = port.draft(draft, { source: 'learned', actor });
       saved.push({ practiceId: practice.id, handle: practice.handle, version: version.version, url: `/brain/practices/${practice.id}` });
     } catch (caught) {
-      if (!(caught instanceof HttpError)) throw caught;
-      skipped.push({ handle: draft.handle, reason: caught.message });
+      if (!(caught instanceof HttpError)) logger.warn('practices: a draft failed', { handle: draft.handle, error: caught });
+      skipped.push({ handle: draft.handle, reason: caught instanceof HttpError ? caught.message : 'The draft could not be saved' });
     }
   }
   return { drafts: saved, skipped };

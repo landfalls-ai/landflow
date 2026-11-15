@@ -57,7 +57,7 @@ const TAG_CODE = [
   'return out;',
 ].join('\n');
 
-/** One item per repository: its files as the model reads them, and the prompt. The model sees only this text. */
+/** One item per repository: its files as the model reads them, and the prompt. The model sees only this text. Keep the wording in step with `learnPrompt` in practices/learn.ts. */
 const GROUP_CODE = [
   "const src = $('Files to read').all();",
   'const byRepo = {};',
@@ -95,12 +95,21 @@ const DRAFTS_CODE = [
   '  try { list = a >= 0 && b > a ? JSON.parse(reply.slice(a, b + 1)) : []; } catch (e) { list = []; }',
   '  for (const p of list.slice(0, 10)) {',
   "    if (!p || typeof p !== 'object') continue;",
+  "    const handle = String(p.handle || '').toLowerCase().trim();",
+  "    const title = String(p.title || '').trim(), summary = String(p.summary || '').trim();",
+  '    if (!handle || !title || !summary) continue;',
   '    const citations = (Array.isArray(p.citations) ? p.citations : []).flatMap((c) => {',
+  "      if (!c || typeof c !== 'object') return [];",
   '      const f = g.files.find((x) => x.path === c.path);',
-  "      const excerpt = String((c && c.excerpt) || '').slice(0, 200).trim();",
-  '      return f && excerpt && f.content.includes(excerpt) ? [{ repo: g.repo, sha: g.sha, path: c.path, lines: Array.isArray(c.lines) ? c.lines : undefined, excerpt }] : [];',
+  "      const excerpt = String(c.excerpt || '').slice(0, 200).trim();",
+  '      if (!f || !excerpt || !f.content.includes(excerpt)) return [];',
+  '      const l = c.lines;',
+  '      const lines = Array.isArray(l) && l.length === 2 && l.every((n) => Number.isInteger(n) && n > 0) && l[0] <= l[1] ? [l[0], l[1]] : undefined;',
+  '      return [{ repo: g.repo, sha: g.sha, path: c.path, ...(lines && { lines }), excerpt }];',
   '    });',
-  '    out.push({ handle: String(p.handle || "").toLowerCase(), title: p.title, strength: p.strength === "required" ? "required" : "recommended", topics: Array.isArray(p.topics) ? p.topics.join(",") : "", repo: g.repo, paths: Array.isArray(p.paths) ? p.paths.join(",") : "", summary: p.summary, body: p.body || "", checks: Array.isArray(p.checks) ? p.checks : [], citations });',
+  "    const topics = (Array.isArray(p.topics) ? p.topics : []).map((t) => String(t).toLowerCase().trim()).filter((t) => /^[a-z0-9][a-z0-9-]{0,39}$/.test(t));",
+  "    const paths = (Array.isArray(p.paths) ? p.paths : []).map((t) => String(t).trim()).filter(Boolean);",
+  '    out.push({ handle, title, strength: p.strength === "required" ? "required" : "recommended", topics: topics.join(","), repo: g.repo, paths: paths.join(","), summary, body: p.body || "", checks: Array.isArray(p.checks) ? p.checks : [], citations });',
   '  }',
   '});',
   'return out;',
