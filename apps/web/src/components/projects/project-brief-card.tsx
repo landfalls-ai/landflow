@@ -4,7 +4,7 @@
  * owner; the brief, constraints, done when and words we use (each folds to 3 lines on a phone, up to 6 on a desktop);
  * then the goals the project serves, in order, which its admins reorder, link and add to.
  */
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ArrowDown, ArrowUp, Pencil, Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -145,15 +145,27 @@ export function ProjectBriefCard({ projectId, brief, onChanged }: { projectId: s
   );
 }
 
-/** One brief field: its first lines, with More on a phone (and on a desktop past six lines). */
+/** One brief field: clamped to its first lines, with More whenever the text is really cut (measured, so wrapped paragraphs count). */
 function BriefSection({ label, text, lines, phone }: { label: string; text: string; lines: number; phone: boolean }) {
   const [more, setMore] = useState(false);
+  const [clamped, setClamped] = useState(false);
+  const ref = useRef<HTMLParagraphElement>(null);
   const fold = briefFold(text, lines);
-  const long = fold.folded || (phone && text.length > 160);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || more) return;
+    const measure = () => setClamped(el.scrollHeight > el.clientHeight + 1);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [text, more, phone]);
+  const long = fold.folded || clamped || more;
   return (
     <div>
       <div className="mb-0.5 text-[12px] font-semibold text-t2">{label}</div>
-      <p className={`whitespace-pre-wrap text-[13px] leading-relaxed text-t1 ${!more ? (phone ? 'line-clamp-3' : 'line-clamp-6') : ''}`}>{more ? text : fold.text}</p>
+      <p ref={ref} className={`whitespace-pre-wrap text-[13px] leading-relaxed text-t1 ${!more ? (phone ? 'line-clamp-3' : 'line-clamp-6') : ''}`}>{more ? text : fold.text}</p>
       {long && (
         <button type="button" onClick={() => setMore(!more)} aria-expanded={more} className="mt-0.5 text-[12px] font-semibold text-ac hover:underline max-md:min-h-11">
           {more ? 'Less' : 'More'}
