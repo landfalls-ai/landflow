@@ -352,14 +352,14 @@ async function learnCommand($: EngineInterface, paths: string[]): Promise<string
   const sha = await gitOut($, ['git', 'rev-parse', 'HEAD'])
   if (!sha || !/^[0-9a-f]{7,40}$/.test(sha)) return 'Could not read this repository\'s commit (git rev-parse HEAD).'
   const clean = paths.map(path => path.replace(/^\.?\//, '')).filter(path => path && !path.includes('..') && !path.startsWith('/')).slice(0, 20)
-  const prompt = learnPrompt(repoHere, sha, clean.length ? clean : [...LEARN_DEFAULT_PATHS])
+  const prompt = learnPrompt(repoHere, sha, clean)
   ownPrompt = prompt
   try {
     // Not awaited: the prompt is a turn of its own, once the session is idle, and this command must not wait on it.
     void Promise.resolve($.prompt.submit({ text: prompt } as never)).catch(() => {
       ownPrompt = undefined
     })
-    return `Asked Claude to read ${clean.length ? clean.join(', ') : LEARN_DEFAULT_PATHS.join(', ')} at ${sha.slice(0, 7)} and draft practices. A person approves each draft on /brain → Practices.`
+    return `Asked Claude to read ${clean.length ? clean.join(', ') : `${LEARN_DEFAULT_PATHS.join(', ')} and the configuration loaders`} at ${sha.slice(0, 7)} and draft practices. A person approves each draft on /brain → Practices.`
   } catch {
     ownPrompt = undefined
     return `This session cannot send a prompt on its own. Paste this to Claude:\n\n${prompt}`

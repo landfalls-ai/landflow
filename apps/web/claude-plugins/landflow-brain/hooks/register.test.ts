@@ -739,6 +739,13 @@ test('/brain learn hands Claude the prompt in a listed repository (the kit queue
   expect(said).toMatch(/Asked Claude to read CLAUDE.md, deploy\/ at abc1234 and draft practices/)
 })
 
+test('a bare /brain learn asks Claude to read the configuration loaders too', { options: OPTIONS }, async ($, on) => {
+  world(on)
+  await start($)
+  const said = ((await command($, 'learn')) as { text: string }).text
+  expect(said).toMatch(/CLAUDE.md, deploy\/ and the configuration loaders at abc1234/)
+})
+
 test('the learn prompt names the repo and commit, caps the drafts and asks for verbatim excerpts', () => {
   const prompt = learnPrompt('acme/widgets', 'abc1234def5678', ['CLAUDE.md', 'deploy/'])
   expect(prompt).toContain('acme/widgets, commit abc1234def5678')

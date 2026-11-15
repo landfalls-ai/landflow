@@ -46,7 +46,7 @@ interface Fake {
   fetch: typeof fetch;
 }
 
-function fakeHost(options: { applicable?: unknown[]; approved?: unknown[]; learn?: unknown } = {}): Fake {
+function fakeHost(options: { applicable?: unknown[]; approved?: unknown[]; learn?: unknown; omitted?: number } = {}): Fake {
   const calls: Fake['calls'] = [];
   const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
   const approved = (options.approved ?? []) as Array<Record<string, any>>;
@@ -56,7 +56,7 @@ function fakeHost(options: { applicable?: unknown[]; approved?: unknown[]; learn
       const url = new URL(String(input));
       const method = init?.method ?? 'GET';
       calls.push({ method, url, ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}) });
-      if (method === 'GET' && url.pathname === '/api/practices/applicable') return reply({ practices: options.applicable ?? [], text: '## Practices to follow\n- x', budget: 3000, omitted: 0 });
+      if (method === 'GET' && url.pathname === '/api/practices/applicable') return reply({ practices: options.applicable ?? [], text: '## Practices to follow\n- x', budget: 3000, omitted: options.omitted ?? 0 });
       if (method === 'GET' && url.pathname === '/api/practices') {
         const q = url.searchParams.get('q');
         return reply({ practices: approved.filter((p) => !q || p.handle.includes(q)) });
@@ -189,6 +189,19 @@ describe('check', () => {
     expect(out.json.practices[0].result).toBe('none');
   });
 
+  it('does not pass quietly when practices were omitted: it narrows the ask, then says what is left', async () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 3; i++) files[`src/f${i}.ts`] = `export const v${i} = ${i};\n`;
+    const dir = repoWith(files);
+    const host = fakeHost({ applicable: [REQUIRED], approved: [row(REQUIRED, [])], omitted: 2 });
+    const out = await cli(host, dir, ['practices', 'check', '--json']);
+    expect(out.json.omitted).toBeGreaterThan(0);
+    expect(host.calls.filter((c) => c.url.pathname === '/api/practices/applicable').length).toBeGreaterThan(1);
+    const human = await cli(host, dir, ['practices', 'check']);
+    expect(human.stdout).toContain('did not fit');
+    expect(human.stdout).not.toMatch(/^Passed\.$/m);
+  });
+
   it('refuses a base that looks like a flag', async () => {
     const out = await cli(fakeHost(), repoWith({ 'README.md': 'x\n' }), ['practices', 'check', '--base=--output=x']);
     expect(out.code).toBe(2);
@@ -248,7 +261,7 @@ describe('learn', () => {
     expect(post?.body).toMatchObject({ repo: 'acme/widgets', sha, topics: ['helm'] });
     expect(post?.body.files.map((f: any) => f.path)).toEqual(['CLAUDE.md', 'deploy/helm/web/Chart.yaml', 'deploy/small.yaml']);
     expect(post?.body.files[0].content).toContain('Charts live in deploy/helm');
-    expect(out.json.skippedFiles).toEqual([{ path: 'deploy/big.yaml', reason: 'over 20,000 characters' }, { path: 'deploy/bin.dat', reason: 'not a text file' }]);
+    expect(out.json.skippedFiles).toEqual([{ path: 'deploy/big.yaml', reason: 'over 20,000 bytes' }, { path: 'deploy/bin.dat', reason: 'not a text file' }]);
     expect(out.json.drafts[0]).toMatchObject({ handle: 'helm/chart-location', url: 'http://host.test/brain?practice=prc_1' });
     const human = await cli(host, dir, ['practices', 'learn', 'CLAUDE.md']);
     expect(human.stdout).toContain('Drafted 1 practice');

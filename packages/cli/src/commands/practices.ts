@@ -18,11 +18,12 @@ type GitIo = Context['io'] & { exec?: Runner };
 const runner = (ctx: Context): Runner => (ctx.io as GitIo).exec ?? defaultRunner;
 
 const REPO = /^[\w.-]{1,100}\/[\w.-]{1,100}$/;
+const MAX_CHECK_CALLS = 60;
 const SHA = /^[0-9a-f]{7,40}$/;
 
 async function git(ctx: Context, args: string[]): Promise<string> {
   const out = await runner(ctx)('git', args, { cwd: ctx.io.cwd });
-  if (out.code !== 0) throw new CliError('io', `git ${args.filter((a) => !a.startsWith('-c')).slice(0, 3).join(' ')} failed here (is this a git repository?)`);
+  if (out.code !== 0) throw new CliError('io', `git ${args.filter((a) => a !== '-c' && !a.startsWith('core.')).slice(0, 3).join(' ')} failed here (is this a git repository, and does the base branch exist? pass --base)`);
   return out.stdout;
 }
 
@@ -57,7 +58,7 @@ async function applicable(ctx: Context, query: Record<string, string | string[] 
 }
 
 async function approvedRows(ctx: Context, q?: string): Promise<PracticeRow[]> {
-  const body = await ctx.client.get<Partial<PracticesResponse>>('/api/practices', { status: 'approved', ...(q && { q }), limit: 500 });
+  const body = await ctx.client.get<Partial<PracticesResponse>>('/api/practices', { status: 'approved', ...(q && { q }) });
   return body.practices ?? [];
 }
 
@@ -138,14 +139,29 @@ export const check: Command = {
     const byHandle = new Map<string, ApplicablePractice>();
     const chunks: string[][] = [];
     for (let i = 0; i < touched.length; i += APPLICABLE_PATHS) chunks.push(touched.slice(i, i + APPLICABLE_PATHS));
-    for (const paths of chunks.length ? chunks : [[]]) {
+    // The host lists only what fits its block and counts the rest as omitted. Ask again in smaller groups until nothing
+    // is omitted; what still does not fit one path (or the call cap) is reported, never passed over.
+    let omitted = 0;
+    let calls = 0;
+    const ask = async (paths: string[]): Promise<void> => {
+      calls += 1;
       const got = await applicable(ctx, { repo, path: paths.length ? paths : undefined });
       for (const p of got.practices) byHandle.set(`${p.handle}@${p.version}`, p);
-    }
+      const missed = got.omitted ?? 0;
+      if (!missed) return;
+      if (paths.length > 1 && calls < MAX_CHECK_CALLS) {
+        const half = Math.ceil(paths.length / 2);
+        await ask(paths.slice(0, half));
+        await ask(paths.slice(half));
+      } else omitted += missed;
+    };
+    for (const paths of chunks.length ? chunks : [[]]) await ask(paths);
     const approved = byHandle.size ? await approvedRows(ctx) : [];
     const verdicts: Verdict[] = [];
+    let moved = 0;
     for (const p of [...byHandle.values()].sort((a, b) => a.handle.localeCompare(b.handle))) {
       const row = approved.find((a) => a.handle === p.handle && a.approved?.version === p.version);
+      if (!row) moved += 1;
       const checks = row?.approved?.checks ?? [];
       const results = runChecks(checks, change);
       verdicts.push({ handle: p.handle, version: p.version, strength: p.strength, result: !results.length ? 'none' : results.every((r) => r.pass) ? 'pass' : 'fail', checks: results.map(view) });
@@ -154,7 +170,7 @@ export const check: Command = {
     const failedRecommended = verdicts.filter((v) => v.result === 'fail' && v.strength !== 'required');
     const ok = !failedRequired.length;
     return {
-      data: { base, repo: repo ?? null, changed: change.files, ok, practices: verdicts },
+      data: { base, repo: repo ?? null, changed: change.files, ok, omitted, moved, practices: verdicts },
       ...(!ok && { exitCode: EXIT.error }),
       human: () => {
         const lines = [`${plural(change.files.length, 'file')} changed against ${base}; ${plural(verdicts.length, 'practice')} apply.`];
@@ -163,7 +179,10 @@ export const check: Command = {
           lines.push(head);
           for (const c of v.checks.filter((x) => !x.pass)) lines.push(`      ${c.check}: ${c.message ?? 'failed'}${c.files.length ? `\n      ${c.files.slice(0, 10).join('\n      ')}${c.files.length > 10 ? `\n      … and ${c.files.length - 10} more` : ''}` : ''}`);
         }
-        lines.push(ok ? (failedRecommended.length ? `Passed, with ${plural(failedRecommended.length, 'warning')}.` : 'Passed.') : `Failed: ${failedRequired.map((v) => v.handle).join(', ')} (required).`);
+        if (omitted) lines.push(`${plural(omitted, 'practice')} did not fit the host's block and ${omitted === 1 ? 'was' : 'were'} not checked. Check a smaller change, or read them with landflow practices list.`);
+        if (moved) lines.push(`${plural(moved, 'practice')} changed version while checking, so ${moved === 1 ? 'its' : 'their'} machine checks were not run: run check again.`);
+        const clean = !omitted && !moved;
+        lines.push(ok ? (!clean ? 'No required practice failed, but the check is incomplete (see above).' : failedRecommended.length ? `Passed, with ${plural(failedRecommended.length, 'warning')}.` : 'Passed.') : `Failed: ${failedRequired.map((v) => v.handle).join(', ')} (required).`);
         return lines.join('\n');
       },
     };
@@ -176,7 +195,7 @@ function readText(file: string): { text: string } | { skip: string } {
   if (bytes.subarray(0, 8000).includes(0)) return { skip: 'not a text file' };
   const text = bytes.toString('utf8');
   if (text.includes('�')) return { skip: 'not UTF-8 text' };
-  if (text.length > LEARN_FILE_CHARS) return { skip: `over ${LEARN_FILE_CHARS.toLocaleString('en-US')} characters` };
+  if (bytes.length > LEARN_FILE_CHARS) return { skip: `over ${LEARN_FILE_CHARS.toLocaleString('en-US')} bytes` };
   return { text };
 }
 
@@ -209,7 +228,7 @@ export const learn: Command = {
   summary: 'Draft practices from files in this checkout (a person approves each draft in the brain)',
   usage: '[paths…] [--repo owner/name] [--project <id>] [--topic <t>]…',
   details:
-    `Reads up to ${LEARN_FILES} text files under the paths (default CLAUDE.md and deploy/; each at most ${LEARN_FILE_CHARS.toLocaleString('en-US')} characters, others are listed as skipped) and sends them with this checkout’s commit to the brain, whose model drafts practices. Drafts are saved for a person to approve on /brain → Practices; nothing is approved here. This sends the files’ text to your Landflow host: read the list before you run it in a private repository. Needs no GitHub token.`,
+    `Reads up to ${LEARN_FILES} text files under the paths (default CLAUDE.md and deploy/; each at most ${LEARN_FILE_CHARS.toLocaleString('en-US')} bytes, others are listed as skipped) and sends them with this checkout’s commit to the brain, whose model drafts practices. Drafts are saved for a person to approve on /brain → Practices; nothing is approved here. This sends the files’ text to your Landflow host: read the list before you run it in a private repository. Needs no GitHub token.`,
   flags: {
     repo: flag.string('owner/name (default: this directory’s origin)', 'owner/name'),
     project: flag.string('Draft project-level practices for this project', 'id'),

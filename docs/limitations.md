@@ -131,7 +131,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 ## Practices in Claude Code and the shell
 
-- `landflow practices check` runs machine checks only. A practice with no machine check is reported as such; there are no model verdicts until wave P2's Check Practices.
+- `landflow practices check` asks again in smaller path groups when the host omits practices that did not fit its block; any still omitted (or whose version moved mid-check) are reported and the run says the check is incomplete instead of `Passed.`. It runs machine checks only. A practice with no machine check is reported as such; there are no model verdicts until wave P2's Check Practices.
 - `/brain learn`'s citations are never verified: the host cannot read your checkout, so a draft from the mod or `landflow practices learn` stays unverified until a person approves it against the file.
 - `/brain learn` hands Claude a prompt as a turn of its own, so it waits until the session is idle, and a model that ignores the instructions can draft fewer than asked or none. `practice_draft` and the learn route always make tainted drafts.
 - The practices section is built once at session start: a practice approved later shows at the next session, or through the `practices` tool or `/brain practices`.
