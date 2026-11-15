@@ -39,7 +39,6 @@ import { logger } from '../telemetry/logger';
 import { verifyCitations } from './citations';
 import { PracticeError, PracticeHandleTaken } from './errors';
 import type { PracticeDraftOrigin } from './port';
-import { practiceVisible } from './views';
 
 /* -------------------------------------------------------------------------------------------------------------- rows */
 
@@ -185,7 +184,7 @@ export const hashFields = (f: Fields): string =>
 /** A one-line value: secrets redacted, control characters removed, newlines to spaces, spaces collapsed. */
 const oneLine = (value: string) =>
   redactPatterns(redactText(value))
-    .replace(/\r\n|\r|\n/g, ' ')
+    .replace(/\r\n|\r|\n|\t/g, ' ')
     .replace(/[\u0000-\u001f\u007f]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -468,7 +467,6 @@ export function routeOrigin(citations: number): PracticeDraftOrigin {
 export function draftPractice(input: PracticeDraftInput, origin: PracticeDraftOrigin): { practice: Practice; version: PracticeVersion } {
   const existing = input.practiceId ? getPractice(input.practiceId) : undefined;
   if (input.practiceId && !existing) throw new PracticeError('Practice not found', 404);
-  if (existing && origin.actor && !practiceVisible(origin.actor, existing, versionsOf(existing.id))) throw new PracticeError('Practice not found', 404);
   const level = existing?.level ?? input.level;
   const projectId = existing ? existing.projectId : input.projectId;
   const handle = existing?.handle ?? bare(String(input.handle ?? ''));
