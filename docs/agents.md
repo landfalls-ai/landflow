@@ -361,6 +361,8 @@ absent from an agent without any). Publishing needs a model, and a persona part 
   `https://api.typesafe.ai` for Jev). A 429 or 529 is retried (honouring
   `retry-after`); any other failure fails closed, like every guardrail. Only block rules use a
   judge (sanitize rules run no model checks).
+  A judge's calls count like any model call (tokens as the service reports them; unpriced unless
+  priced in Settings → AI prices), with the purpose “Guardrail check”.
 
   Each stage has an action. **Block** checks the text (the model-based checks use the agent's
   own model, or the rule's judge) and, when something is found, answers with the stage's *reply* (a default is used

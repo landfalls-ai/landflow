@@ -12,6 +12,7 @@
  */
 import type { LanguageModel, Workflow } from '@landflow/engine';
 import { ENTITY_LABELS, type BrainFact, type BrainProfile, type FactKind, type FactSubject, type ProfileStats, type ProposalEvidence } from '../../shared/brain';
+import { withCallPurpose } from '../ai-usage/call-context';
 import { agentStore } from '../agents/store';
 import { agentTeamStore } from '../agent-teams/store';
 import { workflowOutline } from '../assistant/research';
@@ -117,11 +118,12 @@ async function purposeOf(workflow: Workflow, model: LanguageModel | undefined, b
   if (model && budget.left > 0) {
     budget.left--;
     try {
-      const turn = await model.generate({
+      // SP02: a workflow's one-sentence description is a summary call.
+      const turn = await withCallPurpose('summary', () => model.generate({
         system: 'You describe automation workflows in one plain sentence (at most 25 words) that says what it is for. No preamble.',
         messages: [{ role: 'user', content: workflowOutline(workflow) }],
         tools: [],
-      });
+      }));
       const sentence = (turn.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 240);
       if (sentence) return sentence;
     } catch (error) {

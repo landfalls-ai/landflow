@@ -17,6 +17,7 @@ import type {
   MetricSummary,
 } from '../../shared/evaluations';
 import type { ExecutionRecord } from '../../shared/types';
+import { withCallPurpose } from '../ai-usage/call-context';
 import { dataTables } from '../datatables';
 import { workflowProject } from '../datatables/projects';
 import { singleton } from '../singleton';
@@ -140,7 +141,8 @@ async function runCases(run: EvaluationRunSummary, workflow: Workflow, triggerId
     let record: ExecutionRecord | undefined;
     let failure: string | undefined;
     try {
-      record = await runWorkflow({
+      // SP02: an evaluation run's calls are `eval` (a guardrail inside still says `guardrail`).
+      record = await withCallPurpose('eval', () => runWorkflow({
         workflow,
         mode: 'manual',
         startNodeId: triggerId,
@@ -149,7 +151,7 @@ async function runCases(run: EvaluationRunSummary, workflow: Workflow, triggerId
         bypassConcurrency: true,
         signal,
         onStart: (executionId) => db.updateCase(run.id, index, (current) => ({ ...current, executionId })),
-      });
+      }));
     } catch (error) {
       failure = (error as Error).message;
     }

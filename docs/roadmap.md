@@ -2202,3 +2202,10 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
 - **Left (deferred)**: model verdicts in the CLI's `check` (a model's verdict reaches a flow through Check Practices, PR08;
   the CLI runs machine checks only) and a reminder after `Write` or `Edit` on a matching path (the mod never denies a
   tool call, so a reminder hook is its own package).
+
+## Token spend, wave 11: purpose at the call sites (SP02)
+
+- **Built**: guardrail verdicts (chat model or judge), cache embeddings, the LLM reranker, evaluation judges and online
+  grading, an evaluation run's calls, and summaries (run report, briefing, workflow descriptions, wiki pages) say why they
+  are made (`guardrail`, `cache-embed`, `rerank`, `judge`, `eval`, `summary`). Jev and Strands judge calls are counted
+  (unpriced). Cohere's reranker is not a token call and stays unmetered.

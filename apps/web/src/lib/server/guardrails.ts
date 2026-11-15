@@ -13,6 +13,7 @@
  */
 import { isIPv4, isIPv6 } from 'node:net';
 import type { LanguageModel } from '@landflow/engine';
+import { withCallPurpose } from './ai-usage/call-context';
 import { generateStructured, type JsonSchema } from './nodes/structured';
 import { traceGuardrails } from './telemetry';
 
@@ -479,7 +480,8 @@ export async function modelVerdict(model: LanguageModel, instructions: string, t
 
 /** The verdict from the judge when there is one, else from the chat model. */
 const judgeText = (options: GuardrailsOptions, instructions: string, text: string, context?: string): Promise<Verdict> =>
-  options.judge ? options.judge(instructions, text, options.signal, context) : modelVerdict(options.model as LanguageModel, instructions, text, options.signal, context);
+  // SP02: the verdict's model call (the chat model's or the judge's) is a guardrail check.
+  withCallPurpose('guardrail', () => (options.judge ? options.judge(instructions, text, options.signal, context) : modelVerdict(options.model as LanguageModel, instructions, text, options.signal, context)));
 
 // ---------------------------------------------------------------------------
 // Masking and replacement

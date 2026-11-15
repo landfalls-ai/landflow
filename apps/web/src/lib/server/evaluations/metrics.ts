@@ -4,6 +4,7 @@
  * helpfulness, faithfulness, a custom rubric), scored 1–5 by a chat model. Pure apart from the model call.
  */
 import type { LanguageModel } from '@landflow/engine';
+import { withCallPurpose } from '../ai-usage/call-context';
 import { generateStructured, type JsonSchema } from '../nodes/structured';
 
 /** A value as comparable text: strings as they are, everything else as JSON. */
@@ -227,7 +228,11 @@ export function judgePrompt(metric: JudgeMetric, input: JudgeInput): string {
 }
 
 /** Ask the model for a 1–5 score with its reasoning (JSON, validated, one retry). */
-export async function judge(model: LanguageModel, metric: JudgeMetric, input: JudgeInput, signal?: AbortSignal): Promise<JudgeResult> {
+// SP02: every call a judge makes (the structured one and the plain-text fallback) is a judge call.
+export const judge = (model: LanguageModel, metric: JudgeMetric, input: JudgeInput, signal?: AbortSignal): Promise<JudgeResult> =>
+  withCallPurpose('judge', () => judgeUnnoted(model, metric, input, signal));
+
+async function judgeUnnoted(model: LanguageModel, metric: JudgeMetric, input: JudgeInput, signal?: AbortSignal): Promise<JudgeResult> {
   const system = `${input.instructions?.trim() || INSTRUCTIONS[metric]}\n\n${SCALE}\n\nAnswer with a JSON object {"reasoning": "...", "score": <1-5>} and nothing else.`;
   const { value } = await generateStructured<{ reasoning?: string; score: number }>(model, {
     system,
