@@ -2403,6 +2403,10 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   caps, an owner or admin included; other people's spend stays on the AI page. The wire is `lib/shared/my-spend-wire.ts` (the CLI keeps
   its own copy; the landflow-brain mod's status line, SP15, reads it). See [llm-gateway.md](llm-gateway.md#the-ai-page).
 
+- **SP15, today's spend in your own Claude Code (landflow-brain 0.5.0).** The mod's status line adds today's own spend
+  from `GET /api/brain/my-spend?period=24h` (SP14's route), with the option `showSpend`. Tests: `claude-brain-mod.test.ts`
+  and `hooks/register.test.ts`. Left: the live check in a real Claude Code session.
+
 ## Practices (waves P1 and P2)
 
 Rules in the brain that connected agents follow, each approved by a person ([practices.md](practices.md)). Decided
