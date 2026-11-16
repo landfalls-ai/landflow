@@ -5,11 +5,14 @@ export interface AiCacheAgent {
   /** An agent id, `none` (calls with no agent) or `shared` ("Another agent"). */
   key: string;
   label: string;
-  /** Input tokens that did not come from the cache (input minus cache reads), over the calls the cache line counts. */
+  /** Input tokens that were not cached (input minus cache reads and writes, as the Run Trace's call sheet says), over the calls the cache line counts. */
   uncachedTokens: number;
   calls: number;
   hitRate?: number;
   missCalls: number;
+  /** Distinct runs (a session, else an execution, else one call) the cache line counts, and how many had at least one miss. */
+  runs: number;
+  missRuns: number;
   missReasons: CacheLine['missReasons'];
 }
 
@@ -17,6 +20,9 @@ export interface AiCacheReport {
   period: '24h' | '7d' | '30d';
   /** The cache line over the period: the calls `cacheLine` counts (Anthropic and OpenAI rows, and gateway rows that report cache tokens). */
   cache: CacheLine;
+  /** Distinct runs counted over the period, and how many had a miss. */
+  runs: number;
+  missRuns: number;
   /** The top 5 by uncached input. */
   agents: AiCacheAgent[];
   /** Anthropic calls of the AI Agent node, which asks for no cache (docs/limitations.md): in this period. */

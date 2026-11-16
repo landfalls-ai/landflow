@@ -20,8 +20,16 @@ export function forecastRange(forecast: AiForecast, monthEnd: string, metric: 'c
 }
 
 /** The P50 in words, and why the band is rough when it is. */
+/** An amount as the Caps card shows it (cents at every size), for a cap's used and max. */
+export const exactOf = (metric: 'cost' | 'tokens', value: number): string => (metric === 'cost' ? formatCost(value) : amountOf(metric, value));
+
 export function forecastNote(forecast: AiForecast, metric: 'cost' | 'tokens' = 'cost'): string {
-  const base = `Most likely about ${amountOf(metric, forecast.p50)}: ${amountOf(metric, forecast.monthToDate)} so far, plus the last ${Math.min(7, forecast.daysObserved) || 'few'} days’ average for the ${forecast.daysLeft} day${forecast.daysLeft === 1 ? '' : 's'} left.`;
+  const left = `${forecast.daysLeft} day${forecast.daysLeft === 1 ? '' : 's'} left`;
+  const seen = Math.min(7, forecast.daysObserved);
+  const base =
+    seen === 0
+      ? `Most likely about ${amountOf(metric, forecast.p50)}: no spend yet this month, ${left}.`
+      : `Most likely about ${amountOf(metric, forecast.p50)}: ${amountOf(metric, forecast.monthToDate)} so far, plus the last ${seen === 1 ? 'day’s' : `${seen} days’`} average for the ${left}.`;
   return forecast.early ? `${base} Early: under 7 days of data, so the range is rough.` : base;
 }
 

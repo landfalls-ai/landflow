@@ -327,7 +327,8 @@ describe('the cache card', () => {
     const overrides = priceOverrides();
     const price = (c: { provider: string; model: string }) => findPrice(c.provider, c.model, overrides);
     const parts = partsOf(found);
-    const expected = cacheLine(found.map((r) => callOf(r, price, parts.has(r.id), true)), parts, price);
+    // Each call is grouped by its own run: its session, else its execution, else itself.
+    const expected = cacheLine(found.map((r) => ({ ...callOf(r, price, parts.has(r.id), true), sessionId: r.session_id ?? r.execution_id ?? r.id })), parts, price);
     expect(report.cache).toEqual(expected);
     expect(report.cache.hitRate).toBeGreaterThan(0);
     expect(report.cache.missCalls).toBe(1);
@@ -335,12 +336,57 @@ describe('the cache card', () => {
     expect(report.cache.savedUsd).toBeGreaterThan(0);
   });
 
+  it('counts a run once however many misses it had, and says how many runs broke the cache', () => {
+    const report = aiCacheReport(member, '24h', NOW);
+    // The session has one miss; the node's execution counts as a run with no miss.
+    const support = report.agents.find((a) => a.key === readableAgent.id)!;
+    expect(support.missCalls).toBe(1);
+    expect(support.missRuns).toBe(1);
+    expect(support.runs).toBe(3); // the session, and the two seeded days' one-call runs
+    expect(report.missRuns).toBeLessThanOrEqual(report.runs);
+    expect(report.missRuns).toBe(1);
+    // A second miss in the same session still counts one run.
+    row({ atMs: t(2), id: 'au_fc_cache_x1', agent_id: readableAgent.id, session_id: 'cache_s1', workflow_id: wfMine, user_id: member.id, purpose: 'answer', input_tokens: 10_000, cache_write_tokens: 8000 });
+    const again = aiCacheReport(member, '24h', NOW);
+    expect(again.cache.missCalls).toBe(2);
+    expect(again.missRuns).toBe(1);
+    expect(again.agents.find((a) => a.key === readableAgent.id)!.missRuns).toBe(1);
+    database().delete('ai_usage', { id: 'au_fc_cache_x1' });
+  });
+
+  it('does not chain independent session-less runs of one model into false misses', () => {
+    // Two healthy gateway sessions (write, then read), each its own run, hours apart; and two agents' runs that interleave.
+    const gw = (id: string, atMs: number, agent: string, execution: string, write: number, read: number, hash: string) => {
+      row({ atMs, id, agent_id: agent, execution_id: execution, workflow_id: wfMine, user_id: member.id, input_tokens: 10_000, cache_write_tokens: write, cache_read_tokens: read, purpose: 'answer' });
+      database().insertNew('ai_call_parts', { id: `acp_${id}`, usage_id: id, gateway_request_id: null, at: new Date(atMs).toISOString(), source: 'landflow', method: 'estimate', input_tokens: 9000, parts: JSON.stringify({ toolDefinitions: 1500, instructions: 3000, history: 4500 }), prefix_hash: 'p', prompt_hash: null, part_hashes: JSON.stringify({ toolDefinitions: 'a', instructions: hash }), tool_names: null });
+    };
+    const a = agentStore.create({ name: 'Run agent A' });
+    const b = agentStore.create({ name: 'Run agent B' });
+    projects.setHomeProject('agent', a.id, mineProject);
+    projects.setHomeProject('agent', b.id, mineProject);
+    gw('au_fc_rk_a1', t(400), a.id, 'ex_rk_a', 8000, 0, 'ha');
+    gw('au_fc_rk_a2', t(399), a.id, 'ex_rk_a', 0, 8000, 'ha');
+    gw('au_fc_rk_b1', t(300), b.id, 'ex_rk_b', 8000, 0, 'hb');
+    gw('au_fc_rk_b2', t(299), b.id, 'ex_rk_b', 0, 8000, 'hb');
+    gw('au_fc_rk_a3', t(200), a.id, 'ex_rk_c', 8000, 0, 'ha');
+    gw('au_fc_rk_a4', t(199), a.id, 'ex_rk_c', 0, 8000, 'ha');
+    const report = aiCacheReport(member, '24h', NOW);
+    const forA = report.agents.find((x) => x.key === a.id);
+    expect(forA?.missCalls ?? 0).toBe(0);
+    expect(report.agents.find((x) => x.key === b.id)?.missCalls ?? 0).toBe(0);
+    // Only the seeded session's one miss remains; no reason made up by chaining other runs.
+    expect(report.cache.missCalls).toBe(1);
+    expect(report.cache.missReasons).toContain('expired');
+    expect(report.cache.missReasons).not.toContain('instructions-changed');
+    expect(report.missRuns).toBe(1);
+  });
+
   it('lists the agents by uncached input with their miss reasons, and counts the AI Agent node', () => {
     const report = aiCacheReport(member, '24h', NOW);
     const support = report.agents.find((a) => a.key === readableAgent.id)!;
     expect(support.label).toBe('Support agent');
-    // 10,000 + 2,000 + 10,000 from the three calls, and 100 each from the two seeded days inside the 24 hours.
-    expect(support.uncachedTokens).toBe(22_200);
+    // 2,000 each from the three calls (input minus reads and writes), and 100 each from the two seeded days inside the 24 hours.
+    expect(support.uncachedTokens).toBe(6_200);
     expect(support.missReasons).toEqual(['expired']);
     expect(report.agents.length).toBeLessThanOrEqual(5);
     expect(report.agentNode).toEqual({ calls: 2, uncachedTokens: 10_000 });

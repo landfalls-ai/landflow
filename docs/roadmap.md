@@ -2289,7 +2289,9 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   with why they missed, and the AI Agent node's uncached calls). `forecastMonth` (`lib/shared/ai-forecast.ts`) is the one
   method; SP23 alerts on it and SP12's My AI spend takes it for its own caps. Until the daily rollup (SP08) merges the
   forecast reads `ai_usage` by day through one function (`dayRows` in `lib/server/ai-usage/forecast.ts`).
-  Live check: owner and member views on a seeded month, light and dark, in the report's deviations.
+  Live check: owner and member views on a seeded month, light and dark, desktop and phone; the seed had the same spend on
+  each day (no spread), so the range form was covered by unit tests only. Misses are also counted in distinct runs
+  ("in 3 of 40 runs"), each call grouped by its own session, else execution.
 
 ## Practices (waves P1 and P2)
 

@@ -5,7 +5,7 @@
  */
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/client/api';
-import { amountOf, capOutlook, forecastNote, forecastRange } from '@/lib/client/ai-forecast';
+import { exactOf, capOutlook, forecastNote, forecastRange } from '@/lib/client/ai-forecast';
 import { monthEndOf } from '@/lib/shared/ai-forecast';
 import type { AiForecastReport } from '@/lib/shared/ai-spend';
 import { cn } from '@/lib/utils';
@@ -60,7 +60,7 @@ export function AiForecastCard() {
                         <span className="ml-2 text-[12px] text-t3">{cap.metric === 'cost' ? 'Cost' : 'Tokens'} {cap.period === 'day' ? 'per day' : 'per month'}</span>
                       </span>
                       <span className="tabular-nums text-t3">
-                        {amountOf(cap.metric, cap.used)} of {amountOf(cap.metric, cap.max)}
+                        {exactOf(cap.metric, cap.used)} of {exactOf(cap.metric, cap.max)}
                       </span>
                       <span className={cn('tabular-nums', TONE[outlook.tone])}>{outlook.text}</span>
                     </li>

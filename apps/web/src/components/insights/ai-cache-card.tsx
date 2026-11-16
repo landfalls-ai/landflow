@@ -13,21 +13,29 @@ import type { AiConsolePeriod } from '@/lib/shared/llm-gateway';
 import { Card } from '@/components/shell/page-header';
 import { SectionLabel } from '@/components/ui/inputs';
 
+const REFRESH_MS = 60_000;
+
 export function AiCacheCard({ period }: { period: AiConsolePeriod }) {
   const [report, setReport] = useState<AiCacheReport>();
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let current = true;
-    api<AiCacheReport>(`/api/insights/ai/cache?period=${period}`)
-      .then((r) => {
-        if (current) {
-          setReport(r);
-          setFailed(false);
-        }
-      })
-      .catch(() => current && setFailed(true));
+    const load = (background: boolean) =>
+      api<AiCacheReport>(`/api/insights/ai/cache?period=${period}`, { background })
+        .then((r) => {
+          if (current) {
+            setReport(r);
+            setFailed(false);
+          }
+        })
+        .catch(() => current && setFailed(true));
+    load(false);
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') load(true);
+    }, REFRESH_MS);
     return () => {
       current = false;
+      clearInterval(timer);
     };
   }, [period]);
   if (failed && !report) return null;
@@ -48,7 +56,7 @@ export function AiCacheCard({ period }: { period: AiConsolePeriod }) {
             </p>
             {shown.cache.hitRate !== undefined && (
               <p className="mt-0.5 text-[12px] text-t3">
-                {formatTokens(shown.cache.readTokens)} read · {formatTokens(shown.cache.writeTokens)} written · {shown.cache.missCalls} {shown.cache.missCalls === 1 ? 'miss' : 'misses'}
+                {formatTokens(shown.cache.readTokens)} read · {formatTokens(shown.cache.writeTokens)} written · {shown.cache.missCalls} {shown.cache.missCalls === 1 ? 'miss' : 'misses'}{shown.missRuns > 0 && ` in ${shown.missRuns} of ${shown.runs} ${shown.runs === 1 ? 'run' : 'runs'}`}
               </p>
             )}
             {shown.agentNode.calls > 0 && (
@@ -65,7 +73,7 @@ export function AiCacheCard({ period }: { period: AiConsolePeriod }) {
                       <span className="min-w-0 flex-1 truncate text-t1 max-md:basis-full">{agent.label}</span>
                       <span className="tabular-nums text-t2">{formatTokens(agent.uncachedTokens)} uncached</span>
                       <span className="tabular-nums text-t3">{agent.hitRate === undefined ? 'no cache numbers' : `${hitPercent(agent.hitRate)} hit`}</span>
-                      {agent.missReasons.length > 0 && <span className="basis-full text-[12px] text-t3">Misses: {agent.missReasons.map((r) => MISS_REASON_WORDS[r]).join('; ')}</span>}
+                      {agent.missReasons.length > 0 && <span className="basis-full text-[12px] text-t3">Misses{agent.missRuns > 0 && ` in ${agent.missRuns} of ${agent.runs} ${agent.runs === 1 ? 'run' : 'runs'}`}: {agent.missReasons.map((r) => MISS_REASON_WORDS[r]).join('; ')}</span>}
                     </li>
                   ))}
                 </ul>

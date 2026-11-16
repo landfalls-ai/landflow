@@ -13,6 +13,7 @@ import { aiUsageMeter } from './index';
 import { visibleRow } from './forecast';
 import { findPrice, priceOverrides } from './prices';
 import { cacheLine, callOf, partsOf } from './run-spend';
+import { uncachedInput } from '../../shared/run-spend';
 
 const DAY_MS = 86_400_000;
 const PARTS_KEPT_DAYS = 30;
@@ -27,7 +28,27 @@ const COLUMNS =
 const CANDIDATE = "(provider IN ('anthropic', 'openai') OR cache_read_tokens + cache_write_tokens > 0) AND operation <> 'embeddings'";
 const PERIOD_DAYS = { '24h': 1, '7d': 7, '30d': 30 } as const;
 
-const uncached = (c: SpendCall) => Math.max(0, c.inputTokens - c.cacheReadTokens);
+// Not cached, as the Run Trace's call sheet says it: input minus reads and writes.
+const uncached = (c: SpendCall) => uncachedInput(c);
+const NOT_CHAT = ['embed', 'cache-embed', 'rerank'];
+
+/** One call's own run: its session, else its execution, else itself, so `cacheLine` never chains calls of different runs. */
+const runKey = (row: UsageRow) => (row.session_id ? `s:${row.session_id}` : row.execution_id ? `e:${row.execution_id}` : `u:${row.id}`);
+
+/** `cacheLine` over `calls` with each call grouped by its own run, plus how many runs had at least one miss, of how many counted. */
+function runsLine(calls: SpendCall[], keys: string[], parts: Parameters<typeof cacheLine>[1], price: Parameters<typeof cacheLine>[2]) {
+  const keyed = calls.map((c, i) => ({ ...c, sessionId: keys[i] }));
+  const byRun = new Map<string, SpendCall[]>();
+  for (const c of keyed) byRun.set(c.sessionId!, [...(byRun.get(c.sessionId!) ?? []), c]);
+  let runs = 0;
+  let missRuns = 0;
+  for (const group of byRun.values()) {
+    if (!group.some((c) => !(c.purpose && NOT_CHAT.includes(c.purpose)) && (c.provider === 'anthropic' || c.provider === 'openai' || c.cacheReadTokens + c.cacheWriteTokens > 0))) continue;
+    runs += 1;
+    if (cacheLine(group, parts, price).missCalls > 0) missRuns += 1;
+  }
+  return { line: cacheLine(keyed, parts, price), runs, missRuns };
+}
 
 /** The cache card's numbers for `actor`. */
 export function aiCacheReport(actor: Actor, period: keyof typeof PERIOD_DAYS, now = Date.now()): AiCacheReport {
@@ -52,25 +73,27 @@ export function aiCacheReport(actor: Actor, period: keyof typeof PERIOD_DAYS, no
   const price = (c: { provider: string; model: string }) => findPrice(c.provider, c.model, overrides);
   const parts = partsOf(rows);
   const calls = rows.map((row) => callOf(row, price, parts.has(row.id), !row.agent_id || agentReadable(row.agent_id)));
-  const whole = cacheLine(calls, parts, price);
+  const keys = rows.map(runKey);
+  const whole = runsLine(calls, keys, parts, price);
 
   // Per agent (an agent the viewer can't read is "Another agent"); calls with no agent are one row.
-  const groups = new Map<string, { label: string; calls: SpendCall[] }>();
-  const keyed = rows.map((row, i) => ({ row, call: calls[i] }));
-  for (const { row, call } of keyed) {
+  const groups = new Map<string, { label: string; calls: SpendCall[]; keys: string[] }>();
+  for (const [i, row] of rows.entries()) {
+    const call = calls[i];
     const key = !row.agent_id ? 'none' : agentReadable(row.agent_id) ? row.agent_id : 'shared';
     let group = groups.get(key);
     if (!group) {
       const label = key === 'none' ? 'No agent' : key === 'shared' ? 'Another agent' : (agentStore.get(key)?.name ?? 'Deleted agent');
-      groups.set(key, (group = { label, calls: [] }));
+      groups.set(key, (group = { label, calls: [], keys: [] }));
     }
     group.calls.push(call);
+    group.keys.push(keys[i]);
   }
   const agents: AiCacheAgent[] = [...groups]
     .map(([key, group]) => {
-      const line = cacheLine(group.calls, parts, price);
+      const { line, runs, missRuns } = runsLine(group.calls, group.keys, parts, price);
       const counted = group.calls.filter((c) => !c.purpose || !['embed', 'cache-embed', 'rerank'].includes(c.purpose));
-      return { key, label: group.label, uncachedTokens: counted.reduce((s, c) => s + uncached(c), 0), calls: group.calls.length, ...(line.hitRate !== undefined && { hitRate: line.hitRate }), missCalls: line.missCalls, missReasons: line.missReasons };
+      return { key, label: group.label, uncachedTokens: counted.reduce((s, c) => s + uncached(c), 0), calls: group.calls.length, ...(line.hitRate !== undefined && { hitRate: line.hitRate }), missCalls: line.missCalls, runs, missRuns, missReasons: line.missReasons };
     })
     .filter((a) => a.uncachedTokens > 0)
     .sort((a, b) => b.uncachedTokens - a.uncachedTokens || a.label.localeCompare(b.label))
@@ -80,7 +103,9 @@ export function aiCacheReport(actor: Actor, period: keyof typeof PERIOD_DAYS, no
   const node = calls.filter((c, i) => c.provider === 'anthropic' && !c.sessionId && rows[i].execution_id && c.nodeId && c.cacheReadTokens + c.cacheWriteTokens === 0);
   return {
     period,
-    cache: whole,
+    cache: whole.line,
+    runs: whole.runs,
+    missRuns: whole.missRuns,
     agents,
     agentNode: { calls: node.length, uncachedTokens: node.reduce((s, c) => s + uncached(c), 0) },
     reasonsPartial: first < addDays(today, -PARTS_KEPT_DAYS),
