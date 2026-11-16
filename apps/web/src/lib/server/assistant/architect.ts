@@ -643,6 +643,9 @@ export interface AgentSpec {
   workflow?: string;
   after?: string;
   before?: string;
+  /** SB05: the apps or actions it needs ("Linear: read issues"), and the documents it answers from. */
+  tools?: string[];
+  knowledge?: string;
 }
 
 /** The request the architect gets for Spotlight's newAgent: design it now, model, tools and knowledge included. */
@@ -653,6 +656,8 @@ export function designRequest(spec: AgentSpec): string {
     `Name: ${spec.name}`,
     `What it does: ${spec.description || '(see the instructions)'}`,
     spec.instructions && `How: ${spec.instructions}`,
+    spec.tools?.length && `It needs: ${spec.tools.join('; ')}.`, // SB05:
+    spec.knowledge && `It answers from: ${spec.knowledge}: give it a knowledge base (list_knowledge_bases; say so if none fits).`, // SB05:
     'Pick its model (list_models: a local one), the tools it needs from the plugins online (search_nodes), and a knowledge base if it works from documents (list_knowledge_bases). Keep the name.',
   ]
     .filter(Boolean)
@@ -677,7 +682,8 @@ const searchWords = (value: string | undefined) =>
 export function designBrief(spec: AgentSpec, input: Pick<ArchitectInput, 'types' | 'resources'>): string {
   const types = input.types.filter(usableAsTool);
   const hits = new Map<string, string>();
-  for (const query of [spec.description, spec.instructions, spec.name].map(searchWords)) {
+  // SB05: the tools it was said to need are searched first, so their nodes rank first.
+  for (const query of [...(spec.tools ?? []), spec.description, spec.instructions, spec.name].map(searchWords)) {
     // A score under 4 is words of the request found only in a node's description: not a match.
     for (const hit of query ? searchNodes(query, types, 6) : []) if (hit.score >= 4 && !hits.has(hit.type) && hits.size < 8) hits.set(hit.type, `${hit.type} (${hit.displayName}): ${shorten(hit.description, 120)}`);
   }

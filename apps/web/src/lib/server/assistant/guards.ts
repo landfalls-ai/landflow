@@ -231,9 +231,18 @@ export function asNewAgents(ops: unknown, typeOf: (name: string) => string | und
     names.push(name);
     agentHandles.push(name, ...(typeof o.ref === 'string' ? [o.ref] : []));
     const instructions = said(p.systemMessage) ?? said(p.prompt) ?? '';
+    // SB05: the tool nodes it had (attached by `after` or an ai_tool connection) become the new agent's tool hints.
+    const mine = handles(o);
+    const toolNames = [...new Set(ops.flatMap((t) => {
+      const x = t as Record<string, unknown>;
+      if (x?.op === 'addNode' && typeof x.type === 'string' && x.type !== LOCAL && !/chatmodel|memory/i.test(x.type) && mine.includes(String(x.after))) return [String(x.name ?? x.type)];
+      if (x?.op === 'connect' && x.type === 'ai_tool' && mine.includes(String(x.to))) return [String(added.has(String(x.from)) ? (ops.map((n) => n as Record<string, unknown>).find((n) => n.op === 'addNode' && handles(n).includes(String(x.from)))?.name ?? x.from) : x.from)];
+      return [];
+    }))].slice(0, 8).map((t) => t.slice(0, 80));
     return {
       op: 'newAgent',
       name,
+      ...(toolNames.length && { tools: toolNames }),
       description: (instructions.split(/(?<=[.!?])\s/)[0] ?? '').slice(0, 300) || name,
       instructions,
       ...(typeof p.prompt === 'string' && p.prompt.trim() && { parameters: { message: p.prompt } }),
@@ -241,6 +250,30 @@ export function asNewAgents(ops: unknown, typeOf: (name: string) => string | und
     };
   });
   return { ops: out, names, handles: agentHandles, notes: names.map((n) => `“${n}” is a dedicated agent (newAgent), designed on a local model: an AI Agent step here has no chat model it can run on`) };
+}
+
+/**
+ * SB05: a new agent (a `newAgent`, or the addNode it became) placed `before` a step with no `after`, when the message says
+ * "after <that step or another>" for a node in the flow, goes after it instead. A message that says "before <X>" keeps it.
+ */
+export function placedAsAsked(ops: unknown, message: string, nodeNames: string[]): { ops: unknown; notes: string[] } {
+  if (!Array.isArray(ops)) return { ops, notes: [] };
+  const text = message.toLowerCase();
+  const quote = `["“”'‘’]?`;
+  const said = (word: 'after' | 'before', name: string) => new RegExp(`\\b${word}\\s+(?:the\\s+)?(?:(?:step|node)\\s+)?${quote}${escapeRegExp(name.toLowerCase())}${quote}(?![\\w-])`).test(text);
+  const names = [...nodeNames].sort((a, b) => b.length - a.length);
+  const notes: string[] = [];
+  const out = ops.map((op) => {
+    const o = op as Record<string, unknown>;
+    if (!o || !(o.op === 'newAgent' || (o.op === 'addNode' && o.newAgent)) || typeof o.before !== 'string' || o.after !== undefined) return op;
+    if (said('before', o.before)) return op;
+    const after = names.find((n) => said('after', n));
+    if (!after) return op;
+    const { before: _before, ...rest } = o;
+    notes.push(`placed “${String(o.name ?? 'the agent')}” after “${after}”, as asked`);
+    return { ...rest, after };
+  });
+  return { ops: out, notes };
 }
 
 /** An id-like token in prose: a capital, then 8 or more capitals, digits, `_` or `-`, with a digit among them (C057L43652P). */

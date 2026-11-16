@@ -58,6 +58,10 @@ export interface NewAgentSpec {
   description: string;
   /** Its system instructions: how it does the job. */
   instructions: string;
+  /** SB05: the apps or actions it needs ("Linear: read issues"), for the Agent architect: at most 8, each cut to 80. */
+  tools?: string[];
+  /** SB05: the documents it answers from, for the architect to give it a knowledge base: cut to 200. */
+  knowledge?: string;
 }
 
 /** The node type that runs an agent as a step. */
@@ -67,7 +71,10 @@ export const RUN_AGENT_TYPE = 'core.messageAgent';
 export function newAgentSpec(o: Record<string, unknown> | undefined): NewAgentSpec | undefined {
   const name = text(o?.name)?.slice(0, 80);
   if (!name) return undefined;
-  return { name, description: text(o?.description)?.slice(0, 500) ?? '', instructions: text(o?.instructions)?.slice(0, 4000) ?? '' };
+  // SB05: tools and knowledge, when the model said any.
+  const tools = Array.isArray(o?.tools) ? o.tools.flatMap((t) => text(t)?.slice(0, 80) ?? []).slice(0, 8) : [];
+  const knowledge = text(o?.knowledge)?.slice(0, 200);
+  return { name, description: text(o?.description)?.slice(0, 500) ?? '', instructions: text(o?.instructions)?.slice(0, 4000) ?? '', ...(tools.length && { tools }), ...(knowledge && { knowledge }) };
 }
 
 /** The node settings an op may change. */
