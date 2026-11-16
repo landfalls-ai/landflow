@@ -2294,6 +2294,10 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   with a cursor, or as a CSV (`format=csv`, at most 10,000 rows, never prompt text). They list only what the viewer may
   open (rule 3 of [llm-gateway.md](llm-gateway.md#the-ai-page) "Who sees what", run-spend.ts's own checks) and count
   the rest in `hidden` (runs, calls, cost; no names, no ids). The screens that use them are SP10's.
+- **The AI page's trend, movers and drill-down (SP10), built:** the AI page gains 90 days and a custom range, ten groups
+  in a menu, filters as chips in the URL, a cost-or-tokens trend with the period before as a faint line and a stack of any
+  group's top 5, the biggest rises and falls, and a drill sheet from any row with the runs and calls behind it, "N runs you
+  can't open: $X", one call's composition and CSV ([llm-gateway.md](llm-gateway.md#the-ai-page)). Desktop only, as decided.
 
 ## Practices (waves P1 and P2)
 

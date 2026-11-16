@@ -454,6 +454,31 @@ the viewer may open is listed (rule 3 below); what they can't is counted in `hid
 filter or key naming something they can't read answers 404. `shared` ("Another ...") lists nothing; `other` can't be
 opened. `format=csv` downloads the same columns as `text/csv`, quoted per RFC 4180, with the hidden total as the last
 line and a note when it was cut at 10,000 rows. Neither holds prompt text.
+**The trend, the movers and the drill sheet (wave 13, SP10).** The period switch also has **90 days** and **Custom**
+(two dates, at most 400 days, none in the future; the page says why a range can't be asked yet). Above "Spend by" the
+page draws:
+
+- **The trend**: cost (or tokens: a switch) per day for the period, per hour for 24 hours, with the period before as a
+  faint dashed line (not for 24 hours or a range over 90 days). **By** stacks the columns by the top 5 of any group,
+  with "Other" in grey; the chart says whose spend it holds: **everyone's** for Person (D1), what you can see for any
+  other group. Hovering a day shows its numbers; the same numbers are a table for a screen reader.
+- **Movers**: the five biggest rises and the five biggest falls in cost against the period before, across every group
+  (never an "Another ...", "Other" or "No ..." row). A mover opens its runs.
+- **Spend by** lists all ten groups in a menu (project, goal, agent, workflow, person, model, source, credential,
+  surface, purpose). A person's name still links to the person filter (`/insights/ai?userId=<id>`), which now keeps the
+  period and the other filters.
+- **Filters** (project, agent, workflow, person, credential, model, purpose, source, surface) live in the page's URL and
+  show as chips; a chip's cross removes it. The period, range, group, stack and the open sheet are in the URL too, so Back
+  from a run lands on the same view.
+- **The drill sheet**: a click on a row (or its arrow) opens a sheet with the **runs** behind the number (costliest first;
+  **Show more** pages), a **Calls** tab, and **Download CSV** of the list. A run opens its Spend tab
+  (`/runs/<id>?tab=spend`, or the agent's session); a call opens its composition in the sheet, as in the Run Trace. What
+  you can't open is a line, "N runs you can't open: $X" (the sum only when calls are behind it): a count and a cost,
+  never a name, an id or any prompt text ([Who sees what](#the-ai-page) rule 3). "Another ..." and "Other" rows don't open.
+
+The trend and the sheet read `GET /api/insights/ai` (`compare=1`, `stack=<group>`, the filters, `period=custom&from&to`)
+and `GET /api/insights/ai/runs` and `.../calls` (`format=csv`). The faint line is asked as a second report for the days
+just before the range, since the report holds only the previous period's totals.
 
 **Who sees what.** Owners and admins see everything. Anyone else sees the calls of the workflows and agents they can open
 and their own calls in the page's totals and in every group but one; calls they may not see are in no total, and a
@@ -545,4 +570,4 @@ stores prompt text. These columns show on screens from wave 12; wave 11 only rec
   Slack answer never applies, see above).
 - Several cap-raise flows: one per instance.
 - Asking about a credential's caps (an admin sets those directly).
-- **The AI page:** charts over time, the previous period, filters and the new groups are in the report (`GET /api/insights/ai`) but not yet on the screen (wave 13's SP10 to SP12 build them); the report has no export, but the runs and calls behind a row do (CSV).
+- **The AI page:** the report itself has no export, but the runs and calls behind a row do (CSV); the page is desktop only.
