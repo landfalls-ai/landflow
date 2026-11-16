@@ -2280,6 +2280,16 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   seconds while the run is live ([run-trace.md](run-trace.md#spend)). A call opens its model span.
 - **One call's view (SP07), built:** a model step's sheet in the Run Trace shows the call's composition, cache line and what changed since the previous call; sessions show cached tokens ([run-trace.md](run-trace.md#one-call)).
 
+## Spotlight wave sb1
+
+- **The scenario suite (SB00), built:** the evaluation's builds, one-step fixes and agent asks are scenarios in the repo
+  (`apps/web/test/spotlight-scenarios/sb00.ts`), each with a scripted form that always runs and a live form on the local
+  model (`LANDFLOW_INTEGRATION=spotlight`) that prints the Build, Fix one step and Agents scorecards and writes them as JSON, so a
+  package's fix has a before and an after ([development.md](development.md#spotlight-scorecard)). A guard,
+  `local-only.cjs`, makes any connection to anything but this machine fail, for the suite and for a live host
+  (`NODE_OPTIONS`). Not built: the browser scorecard (each package checks its own screens) and the agents' guardrails, eval cases
+  and test-run columns of the evaluation (the scenario outcome carries no such fields yet).
+
 ## Practices (waves P1 and P2)
 
 Rules in the brain that connected agents follow, each approved by a person ([practices.md](practices.md)). Decided
