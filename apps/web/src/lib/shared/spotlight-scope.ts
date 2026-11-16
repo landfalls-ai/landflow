@@ -77,6 +77,9 @@ const FIXING = /\b(?:fix(?:es|ed)?|fail(?:s|ed|ing|ure)?|errors?|broke|broken|br
 /** "the step after Code", "what happens after", "right after": "after" locates a step, it does not say where a new one goes. */
 const LOCATING = /\b(?:step|node|call|one|request)\s+(?:right\s+)?(?:after|before)\b|\bwhat\s+(?:comes|happens|runs|follows)\s+(?:right\s+)?(?:after|before)\b|\bright\s+(?:after|before)\b/i;
 
+/** "the step after this", "what comes after Code": names ANOTHER step by its position, so the selection is only a landmark. */
+const NAMES_NEIGHBOUR = /\b(?:step|node|call|one|request)\s+(?:right\s+)?(?:after|before)\b|\bwhat\s+(?:comes|happens|runs|follows)\s+(?:right\s+)?(?:after|before)\b/i;
+
 /** Whether the message asks for a new step. Pass the canvas steps and a step named with a common verb ("Post to Slack") does not count. */
 export function asksToAdd(message: string, nodes: readonly ScopeNode[] = []): boolean {
   let text = message;
@@ -130,7 +133,7 @@ function insertionPoint(message: string, nodes: readonly ScopeNode[], selectedId
  * the person lifted the chip (`sent: null`) → none; the editor sent one → that one, with the ids that still exist;
  * "only"/"just" with named steps → `only` those; "only that one node" / "nothing else" with a selection → `only` it;
  * steps tagged with @ → `tagged` those; a new step after or before one named step (and no other step named) → `insert`; a selection, when the
- * message names no other step and adds none → `selected`. A test-and-fix session's `fix` and `review` requests have no
+ * message names no other step, adds none and does not name a neighbour by position ("the step after this fails") → `selected`. A test-and-fix session's `fix` and `review` requests have no
  * scope (the session's own `wastedFix` rule applies there): callers pass only typed messages (`auto` is typed).
  */
 export function scopeOf(request: ScopeRequest): SpotlightScope | undefined {
@@ -149,7 +152,7 @@ export function scopeOf(request: ScopeRequest): SpotlightScope | undefined {
   if (tagged.length) return { kind: 'tagged', nodes: [...new Set(tagged)] };
   const point = insertionPoint(message, nodes, selected);
   if (point) return { kind: 'insert', nodes: [point.node.id], side: point.side };
-  if (selected && !asksToAdd(message, nodes) && named.every((n) => n.id === selected)) return { kind: 'selected', nodes: [selected] };
+  if (selected && !asksToAdd(message, nodes) && !NAMES_NEIGHBOUR.test(message) && named.every((n) => n.id === selected)) return { kind: 'selected', nodes: [selected] };
   return undefined;
 }
 

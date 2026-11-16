@@ -83,6 +83,11 @@ describe('scopeOf', () => {
     expect(scopeOf({ message: 'it breaks right after this, fix the URL', nodes, selectedId: 'http' })).toEqual({ kind: 'selected', nodes: ['http'] });
     expect(scopeOf({ message: 'Remove duplicate items after Open status incident', nodes })).toEqual({ kind: 'insert', nodes: ['http'], side: 'after' });
   });
+  it('gives no selected scope when the message names a neighbour of the selection by position (SB07-O1)', () => {
+    for (const m of ['the step after this fails with 401, fix it', 'the node after this is wrong', 'what comes after this returns 500, fix it', 'The step after Start fails with 401, fix it']) {
+      expect(scopeOf({ message: m, nodes, selectedId: 'http' }), m).toBeUndefined();
+    }
+  });
   it('does not read a step named with a common verb as an add', () => {
     const named = [...nodes, { id: 'slack', name: 'Post to Slack' }];
     expect(scopeOf({ message: 'Post to Slack fails with 401, fix it', nodes: named, selectedId: 'slack' })).toEqual({ kind: 'selected', nodes: ['slack'] });
@@ -177,6 +182,14 @@ describe('the chat', () => {
     const { proposals } = await run([propose('c1', fix), { text: 'Done.' }], { messages: [{ role: 'user', content: 'it breaks right after this, fix the URL' }] });
     expect(proposals).toHaveLength(1);
     expect(proposals[0].ops).toEqual(fix);
+  });
+
+  it('keeps a fix to the next step when the message locates it from the selection (SB07-O1)', async () => {
+    const fix = [{ op: 'setParameters', node: 'Save to backlog', parameters: { json: '{"a":1}' } }];
+    const { calls, proposals } = await run([propose('c1', fix), { text: 'Done.' }], { messages: [{ role: 'user', content: 'the step after this fails with 401, fix it' }] });
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0].ops).toEqual(fix);
+    expect(calls[0].system).not.toContain('Scope:');
   });
 
   it('shows the whole proposal when the chip was lifted (scope: null)', async () => {
