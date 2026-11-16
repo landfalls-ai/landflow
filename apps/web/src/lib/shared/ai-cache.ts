@@ -1,4 +1,5 @@
 /** What `GET /api/insights/ai/cache` answers (SP11): the AI page's cache card. Counts, hit rates and reasons only, never prompt text. */
+import type { AiSpendPeriod } from './ai-spend';
 import type { CacheLine } from './run-spend';
 
 export interface AiCacheAgent {
@@ -17,7 +18,7 @@ export interface AiCacheAgent {
 }
 
 export interface AiCacheReport {
-  period: '24h' | '7d' | '30d';
+  period: AiSpendPeriod;
   /** The cache line over the period: the calls `cacheLine` counts (Anthropic and OpenAI rows, and gateway rows that report cache tokens). */
   cache: CacheLine;
   /** Distinct runs counted over the period, and how many had a miss. */

@@ -403,5 +403,22 @@ describe('the cache card', () => {
 
   it('says miss reasons are partial for a period reaching past 30 days of splits', () => {
     expect(aiCacheReport(owner, '30d', NOW).reasonsPartial).toBe(false);
+    expect(aiCacheReport(owner, '90d', NOW).reasonsPartial).toBe(true);
+  });
+
+  it("follows the AI page's 90 days and custom ranges, and answers 400 for a bad custom one", async () => {
+    // Integration of SP08 (90 days and custom ranges on the AI page) with SP11's card.
+    expect(aiCacheReport(owner, '90d', NOW).agentNode.calls).toBe(3);
+    const today = dayOf(NOW);
+    const todayOnly = aiCacheReport(owner, 'custom', NOW, { from: today, to: today });
+    expect(todayOnly.period).toBe('custom');
+    expect(todayOnly.agentNode.calls).toBe(3);
+    const before = aiCacheReport(owner, 'custom', NOW, { from: '2025-01-01', to: '2025-01-31' });
+    expect(before.runs).toBe(0);
+    expect(before.agentNode.calls).toBe(0);
+    const get = (query: string) => as(member, () => cacheRoute.GET(new Request(`http://x.test/api/insights/ai/cache?${query}`), { params: Promise.resolve({}) } as never));
+    expect((await get(`period=custom&from=${today}&to=${today}`)).status).toBe(200);
+    expect((await get('period=custom')).status).toBe(400);
+    expect((await get('period=custom&from=2020-01-01&to=2026-01-01')).status).toBe(400);
   });
 });

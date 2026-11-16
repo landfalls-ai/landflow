@@ -9,19 +9,21 @@ import { cacheHeadline, hitPercent } from '@/lib/client/ai-forecast';
 import { MISS_REASON_WORDS } from '@/lib/client/run-spend';
 import { formatTokens } from '@/lib/shared/ai-usage';
 import type { AiCacheReport } from '@/lib/shared/ai-cache';
-import type { AiConsolePeriod } from '@/lib/shared/llm-gateway';
+import type { AiSpendPeriod } from '@/lib/shared/ai-spend';
 import { Card } from '@/components/shell/page-header';
 import { SectionLabel } from '@/components/ui/inputs';
 
 const REFRESH_MS = 60_000;
 
-export function AiCacheCard({ period }: { period: AiConsolePeriod }) {
+export function AiCacheCard({ period, from, to }: { period: AiSpendPeriod; from?: string; to?: string }) {
+  // A custom range is asked with its days (the AI page's own range).
+  const query = period === 'custom' ? `period=custom&from=${encodeURIComponent(from ?? '')}&to=${encodeURIComponent(to ?? '')}` : `period=${period}`;
   const [report, setReport] = useState<AiCacheReport>();
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let current = true;
     const load = (background: boolean) =>
-      api<AiCacheReport>(`/api/insights/ai/cache?period=${period}`, { background })
+      api<AiCacheReport>(`/api/insights/ai/cache?${query}`, { background })
         .then((r) => {
           if (current) {
             setReport(r);
@@ -37,7 +39,7 @@ export function AiCacheCard({ period }: { period: AiConsolePeriod }) {
       current = false;
       clearInterval(timer);
     };
-  }, [period]);
+  }, [query]);
   if (failed && !report) return null;
   const shown = report?.period === period ? report : undefined;
   return (

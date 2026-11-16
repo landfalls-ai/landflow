@@ -103,7 +103,8 @@ interface Range {
   rawFrom: string;
 }
 
-function currentRange(query: AiSpendQuery, now: number): Range {
+/** The period's range (a custom one checked: 400 for a bad or too long one); also the cache card's (cache-report.ts). */
+export function currentRange(query: AiSpendQuery, now: number): Range {
   const meter = aiUsageMeter();
   const today = meter.today(now);
   if (query.period === '24h') {

@@ -13,6 +13,8 @@ import { aiUsageMeter } from './index';
 import { visibleRow } from './forecast';
 import { findPrice, priceOverrides } from './prices';
 import { cacheLine, callOf, partsOf } from './run-spend';
+import { currentRange } from './spend-report';
+import type { AiSpendPeriod } from '../../shared/ai-spend';
 import { uncachedInput } from '../../shared/run-spend';
 
 const DAY_MS = 86_400_000;
@@ -26,8 +28,6 @@ const COLUMNS =
   'id, at, execution_id, workflow_id, agent_id, session_id, user_id, project_id, provider, model, operation, source, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost, gateway_request_id, node_id, span_id, purpose, iteration, caller_agent_id, duration_ms, stop_reason';
 // The rows `cacheLine` can count: a provider that reports a cache, or any row that has cache tokens.
 const CANDIDATE = "(provider IN ('anthropic', 'openai') OR cache_read_tokens + cache_write_tokens > 0) AND operation <> 'embeddings'";
-const PERIOD_DAYS = { '24h': 1, '7d': 7, '30d': 30 } as const;
-
 // Not cached, as the Run Trace's call sheet says it: input minus reads and writes.
 const uncached = (c: SpendCall) => uncachedInput(c);
 const NOT_CHAT = ['embed', 'cache-embed', 'rerank'];
@@ -50,14 +50,16 @@ function runsLine(calls: SpendCall[], keys: string[], parts: Parameters<typeof c
   return { line: cacheLine(keyed, parts, price), runs, missRuns };
 }
 
-/** The cache card's numbers for `actor`. */
-export function aiCacheReport(actor: Actor, period: keyof typeof PERIOD_DAYS, now = Date.now()): AiCacheReport {
+/** The cache card's numbers for `actor`, over the AI page's period (a custom one takes `range`'s days). */
+export function aiCacheReport(actor: Actor, period: AiSpendPeriod, now = Date.now(), range: { from?: string; to?: string } = {}): AiCacheReport {
   const meter = aiUsageMeter();
   const today = meter.today(now);
-  const first = meter.today(now - (PERIOD_DAYS[period] - 1) * DAY_MS);
-  const where = period === '24h' ? 'at >= ?' : 'day >= ?';
-  const start = period === '24h' ? new Date(now - DAY_MS).toISOString() : first;
-  const found = database().all<UsageRow>(`SELECT ${COLUMNS} FROM ai_usage WHERE ${where} AND ${CANDIDATE} ORDER BY at DESC, id DESC LIMIT ${MAX_ROWS + 1}`, start);
+  // The AI page's own range (90 days and custom ones too; a bad custom range answers 400).
+  const span = currentRange({ period, ...range }, now);
+  const first = period === '24h' ? today : span.from;
+  const where = period === '24h' ? 'at >= ?' : 'day >= ? AND day <= ?';
+  const bounds = period === '24h' ? [new Date(now - DAY_MS).toISOString()] : [span.from, span.to];
+  const found = database().all<UsageRow>(`SELECT ${COLUMNS} FROM ai_usage WHERE ${where} AND ${CANDIDATE} ORDER BY at DESC, id DESC LIMIT ${MAX_ROWS + 1}`, ...bounds);
   const truncated = found.length > MAX_ROWS;
   const sees = visibleRow(actor);
   const rows = found.slice(0, MAX_ROWS).filter(sees);

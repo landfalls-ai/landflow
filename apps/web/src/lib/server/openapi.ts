@@ -2554,7 +2554,11 @@ function paths(): Record<string, Record<string, Json>> {
     summary: 'The AI page’s prompt-cache card',
     description:
       'Needs the `executions:read` scope or a session. Over the period: the cache hit rate over the calls the Run Trace’s cache line counts (Anthropic and OpenAI rows, and gateway rows that report cache tokens), the dollars it saved, the top 5 agents by uncached input with why they missed, and how many Anthropic calls the AI Agent node made (it asks for no cache). Only what the caller can see; numbers only, never prompt text. `reasonsPartial`: miss reasons need prompt splits, kept 30 days.',
-    query: [{ name: 'period', description: 'The period', schema: { type: 'string', enum: ['24h', '7d', '30d'], default: '7d' } }],
+    query: [
+      { name: 'period', description: 'The period', schema: { type: 'string', enum: ['24h', '7d', '30d', '90d', 'custom'], default: '7d' } },
+      { name: 'from', description: 'A custom range’s first day (YYYY-MM-DD)', schema: { type: 'string', format: 'date' } },
+      { name: 'to', description: 'A custom range’s last day (YYYY-MM-DD)', schema: { type: 'string', format: 'date' } },
+    ],
     responses: {
       200: reply('The cache card', object({ period: { type: 'string' }, cache: { type: 'object', additionalProperties: true }, agents: array({ type: 'object', additionalProperties: true }), agentNode: object({ calls: { type: 'integer' }, uncachedTokens: { type: 'integer' } }, ['calls', 'uncachedTokens']), reasonsPartial: { type: 'boolean' }, truncated: { type: 'boolean' } }, ['period', 'cache', 'agents', 'agentNode', 'reasonsPartial', 'truncated'])),
       400: invalid,
