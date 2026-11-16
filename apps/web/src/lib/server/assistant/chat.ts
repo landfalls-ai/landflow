@@ -575,7 +575,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         if (standIns.notes.length && Array.isArray(teamed) && !teamed.length) {
           return result(`Nothing changes: ${standIns.notes.join('; ')}. If everything the latest message asks for is proposed, stop and say in one line what the cards do.`, 'Skipped a stand-in for the new agent');
         }
-        const { ops: proposedOps, invented: inventedNotes, values } = withoutInventedIds(teamed, known(), typeText, (op) => (op.op === 'addNode' ? String(op.type ?? '') : nodeByName(String(op.node ?? ''))?.type));
+        const { ops: proposedOps, invented: inventedNotes, values, destinations: destinationNotes } = withoutInventedIds(teamed, known(), typeText, (op) => (op.op === 'addNode' ? String(op.type ?? '') : nodeByName(String(op.node ?? ''))?.type));
         for (const value of values) invented.add(value);
         let validated = validateOps(working, proposedOps, lookup); // SB07: let
         const back = addedBack(validated.ops);
@@ -619,9 +619,9 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
           keptSent = true;
           return result(`Not shown: ${kept} Only the person can change that: say so in one sentence.`, 'Kept what the person gave');
         }
-        // SB11: a channel, table or recipient nobody gave (not an id: those are left for the person to fill in): ask once instead of leaving it empty.
+        // SB11: a channel, table, recipient or destination id (`channelId`, `dataTableId`) nobody gave (a plain id is left for the person to fill in): ask once instead of leaving it empty.
         if (!testSession && !destinationSent && !askedUser) {
-          const missing = inventedNotes.filter((note) => /: a (?!host nobody)[^ ]+ nobody gave/.test(note));
+          const missing = destinationNotes;
           if (missing.length) {
             destinationSent = true;
             return result(`Not shown: ${missing.join('; ')}. The request does not say which: ask_user for it with 2 to 4 likely choices (or propose again without it to leave it for the person).`, 'Asked for a missing destination instead of leaving it empty', true, false);

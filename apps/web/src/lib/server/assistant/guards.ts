@@ -57,6 +57,8 @@ export const TOOL_NAMES: ReadonlySet<string> = new Set(['search_nodes', 'get_nod
 // SB02: ids, and the destinations (a channel, a table, an owner, an address, a URL) a person names; a model makes both up.
 const ID_PARAMETER = /^id$|[a-z]Ids?$/;
 const DESTINATION_PARAMETER = /^(channel|table|owner|repository|repo|email|to|cc|team|project|board|sheet)$/;
+/** An id that names a destination (a Slack `channelId`, a Data Table's `dataTableId`): the chat asks for it, where a plain id (`id`, `modelId`, `userId`) is cleared and listed. */
+const DESTINATION_ID_PARAMETER = /^(?:channel|table|dataTable|sheet|board|project|team|chat|repo)Ids?$/;
 const URL_PARAMETER = /^(url|baseUrl|webhookUrl)$/;
 
 const KIND = 'table|channel|sheet|repo|repository|project|board|team';
@@ -170,9 +172,11 @@ function literalHostOf(raw: string): string | undefined {
  * plausible ones. Those parameters are left out, so the user fills them in. `typeText` gives the node type's properties
  * for an op (defaults and fixed options are known), `typeOf` the node type of an op (an existing node's too, for its app's name). A URL is judged by its host: a path on a host somebody gave is kept.
  */
-export function withoutInventedIds(ops: unknown, known: string, typeText: (op: Record<string, unknown>) => string = () => '', typeOf: (op: Record<string, unknown>) => string | undefined = (op) => (op.op === 'addNode' ? String(op.type ?? '') : undefined)): { ops: unknown; invented: string[]; values: string[] } {
-  if (!Array.isArray(ops)) return { ops, invented: [], values: [] };
+export function withoutInventedIds(ops: unknown, known: string, typeText: (op: Record<string, unknown>) => string = () => '', typeOf: (op: Record<string, unknown>) => string | undefined = (op) => (op.op === 'addNode' ? String(op.type ?? '') : undefined)): { ops: unknown; invented: string[]; values: string[]; destinations: string[] } {
+  if (!Array.isArray(ops)) return { ops, invented: [], values: [], destinations: [] };
   const invented: string[] = [];
+  /** The notes (a subset of `invented`) about a channel, table, recipient or id-named destination nobody gave: the chat asks for these instead of leaving them empty (SB11). */
+  const destinations: string[] = [];
   const values: string[] = [];
   const appNames = (op: Record<string, unknown>) => (typeOf(op) ?? '').toLowerCase().split('.');
   const clean = (op: Record<string, unknown>, node: unknown, parameters: unknown) => {
@@ -199,7 +203,9 @@ export function withoutInventedIds(ops: unknown, known: string, typeText: (op: R
         if (!host || (host !== UNREADABLE && (mentionsHost(known, host) || mentionsHost(typeText(op), host)))) continue;
         invented.push(hostNote(key, node, host));
       } else {
-        invented.push(`${key} of “${String(node)}”: ${isId ? 'an id' : `a ${key}`} nobody gave, left for the user to fill in`);
+        const note = `${key} of “${String(node)}”: ${isId ? 'an id' : `a ${key}`} nobody gave, left for the user to fill in`;
+        invented.push(note);
+        if (DESTINATION_PARAMETER.test(key) || DESTINATION_ID_PARAMETER.test(key)) destinations.push(note);
       }
       delete out[key];
       values.push(value);
@@ -213,7 +219,7 @@ export function withoutInventedIds(ops: unknown, known: string, typeText: (op: R
     if (o.op === 'setParameters') return { ...o, parameters: clean(o, o.node, o.parameters) };
     return op;
   });
-  return { ops: cleaned, invented, values };
+  return { ops: cleaned, invented, values, destinations };
 }
 
 const UNIT_MS = { ms: 1, s: 1000, min: 60_000, h: 3_600_000 } as const;

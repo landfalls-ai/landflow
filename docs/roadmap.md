@@ -2500,12 +2500,10 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   channel, table or id that is missing; asking never needs the switch (decision D1), is not offered in a test session,
   ends the reply with no further model call, and a backstop sends back a change to one of several steps of a kind with
   none named or selected (a settings change fits every step that calls out). Live on the local model: "it should retry 3
-  times" asks which step 3 of 3 (0 of 3 before). Docs: [assistant.md](assistant.md#the-builder-chat). A made-up channel, table or recipient in a typed proposal is also sent back once to ask (not an id, not a URL
-  host, not in a test session). Left: "post the summary to Slack" with no channel asked first 1 of 3 live (qwen3-coder:30b):
-  the live form never registers the `messaging.slack` type (plugin types are added only in the unit form or through
-  `LANDFLOW_SPOTLIGHT_PLUGINS`), so `get_node_docs messaging.slack` answers "not found", the model wrote the question as
-  numbered text or asked "Which Slack node?" with type ids as chips, and the destination send-back is not exercised live;
-  not re-run with the plugin served, so open. The chips are not kept in a stored conversation.
+  times" asks which step 3 of 3 (0 of 3 before). Docs: [assistant.md](assistant.md#the-builder-chat). A made-up destination in a typed proposal is also sent back once to ask: the destination parameters `channel`, `table`, `to`, `cc`, `email`, `owner`, `repo`, `repository`, `team`, `project`, `board` and `sheet`, and the destination ids `channelId`, `dataTableId` and the like (`sheetId`, `boardId`, `projectId`, `teamId`, `chatId`, `repoId`: a key of the form channel, table, dataTable, sheet, board, project, team, chat or repo followed by `Id` or `Ids`; Slack's channel and a Data Table's table are these)
+  (not a plain id, not a URL host, not in a test session). Left: "post the summary to Slack" with no channel asked first 1 of 3
+  live (qwen3-coder:30b) before the send-back covered `channelId`: the live scorecard does register `messaging.slack` (`prepareLive`), and its
+  `channelId` was an id the guard cleared and listed, not a destination it sent back; re-run live (3 runs) after this fix, so open. The chips are not kept in a stored conversation.
 - **SB12, never empty, never a false claim, credentials offered, built:** a reply that the guards left empty says one
   line (*The card shows the change.* or *Nothing changed, because …*), a change claimed with no card is sent back once
   (`claimsAChange`), and a step that needs a credential gets a **Needs you** row with the credentials you may use, **Use

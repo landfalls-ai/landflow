@@ -8,10 +8,10 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { Workflow } from '@landflow/engine';
 import type { NodeTypeInfo } from '@/lib/shared/types';
-import { corePlugin } from '@/lib/server/nodes';
 import { registry } from '@/lib/server/plugins/registry';
 import { recoverToolCalls, runChat, TOOLS, type ChatEvent } from '@/lib/server/assistant/chat';
 import { scriptedModel, call } from './spotlight-scenarios/scenario';
+import { prepare } from './spotlight-scenarios/harness';
 import { applyStreamEvent, useAssistant, type AssistantTurn } from '@/components/editor/assistant';
 import { AskRow } from '@/components/editor/spotlight/reply';
 import { askedLine, requestAcrossAsk } from '@/lib/shared/spotlight-wire';
@@ -19,8 +19,9 @@ import { useEditor } from '@/components/editor/store';
 
 let types: NodeTypeInfo[];
 beforeAll(() => {
-  registry.registerBuiltin(corePlugin);
-  types = registry.nodeTypes().filter((t) => t.pluginId === 'core');
+  // The scenario suite's catalog: core and a Slack stand-in with the real node's `channelId` (and no LANDFLOW_SPOTLIGHT_PLUGINS).
+  prepare();
+  types = registry.nodeTypes();
 });
 
 /** A trigger and two HTTP steps. */
@@ -145,12 +146,39 @@ describe('the backstop: several steps fit', () => {
     expect(calls).toHaveLength(3);
   });
 
-  it('a Slack message with a channel nobody gave is sent back once to ask', async () => {
-    const slack = call('propose_changes', { summary: 'Post to Slack', ops: [{ op: 'addNode', type: 'core.httpRequest', name: 'Post update', after: 'Read Linear bugs', parameters: { channel: '#general', url: 'http://127.0.0.1:3412/status' } }] });
+  const MADE_UP = /an id nobody gave/;
+  const resultOf = (calls: Array<{ messages: unknown[] }>, at: number) => (calls[at].messages.at(-1) as { results: Array<{ content: string }> }).results[0].content;
+
+  it('a Slack message with a made-up channelId is sent back once to ask (SB11-O1)', async () => {
+    const slack = call('propose_changes', { summary: 'Post to Slack', ops: [{ op: 'addNode', type: 'messaging.slack', name: 'Post update', after: 'Read Linear bugs', parameters: { channelId: '#general', text: 'Done' } }] });
     const { events, calls } = await chat('post the result to slack', [slack, call('ask_user', { question: 'Which channel?', choices: ['#ops', '#dev'] }), { text: 'UNUSED' }]);
     expect(events.some((e) => e.type === 'proposal')).toBe(false);
     expect(events.some((e) => e.type === 'ask')).toBe(true);
-    expect((calls[1].messages.at(-1) as { results: Array<{ content: string }> }).results[0].content).toContain('nobody gave');
+    expect(resultOf(calls, 1)).toMatch(MADE_UP);
+    expect(resultOf(calls, 1)).toContain('ask_user');
+  });
+
+  it('a Data Table with a made-up dataTableId is sent back once to ask', async () => {
+    const save = call('propose_changes', { summary: 'Save the rows', ops: [{ op: 'addNode', type: 'core.dataTable', name: 'Save rows', after: 'Read Linear bugs', parameters: { operation: 'insert', dataTableId: 'dt_k3J9xQ2mPz' } }] });
+    const { events, calls } = await chat('save the bugs in a data table', [save, call('ask_user', { question: 'Which table?', choices: ['Bugs', 'Backlog'] }), { text: 'UNUSED' }]);
+    expect(events.some((e) => e.type === 'proposal')).toBe(false);
+    expect(events.some((e) => e.type === 'ask')).toBe(true);
+    expect(resultOf(calls, 1)).toContain('dataTableId');
+  });
+
+  it('a plain made-up id is not sent back: the card shows with the id listed as cleared', async () => {
+    const set = call('propose_changes', { summary: 'Point at a user', ops: [{ op: 'setParameters', node: 'Open status incident', parameters: { userId: 'u_k3J9xQ2mPz', method: 'POST' } }] });
+    const { events } = await chat('make Open status incident a POST', [set, { text: 'Done.' }]);
+    expect(events.some((e) => e.type === 'ask')).toBe(false);
+    expect(JSON.stringify(events.filter((e) => e.type === 'proposal'))).not.toContain('u_k3J9xQ2mPz');
+  });
+
+  it('an auto session is asked too (SB11-N2)', async () => {
+    const slack = call('propose_changes', { summary: 'Post to Slack', ops: [{ op: 'addNode', type: 'messaging.slack', name: 'Post update', after: 'Read Linear bugs', parameters: { channelId: '#general' } }] });
+    const { events, calls } = await chat('post the result to slack', [slack, call('ask_user', { question: 'Which channel?', choices: ['#ops', '#dev'] }), { text: 'UNUSED' }], { session: 'auto' });
+    expect(events.some((e) => e.type === 'ask')).toBe(true);
+    expect(events.some((e) => e.type === 'proposal')).toBe(false);
+    expect(resultOf(calls, 1)).toContain('Not shown:');
   });
 
   it('a URL host nobody gave is not sent back: the card shows with the URL listed as cleared', async () => {

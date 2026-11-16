@@ -519,15 +519,21 @@ describe('builder chat', () => {
     ]);
     const events: ChatEvent[] = [];
     await runChat({ messages: [{ role: 'user', content: 'Save the items, to table dt_given42 if it helps' }], workflow: workflow(), model, types, onEvent: (e) => events.push(e) });
-    const [made, given] = events.filter((e) => e.type === 'proposal') as Array<Extract<ChatEvent, { type: 'proposal' }>>;
-    expect(made.dropped).toContain('dataTableId of “Save”: an id nobody gave, left for the user to fill in');
-    expect(made.ops[0]).toMatchObject({ op: 'addNode', parameters: { operation: 'insert' } });
-    expect((made.ops[0] as { parameters: object }).parameters).not.toHaveProperty('dataTableId');
+    // A destination id (a Data Table's `dataTableId`, Slack's `channelId`) nobody gave is sent back once to ask (SB11-O1), so the made-up one never reaches a card.
+    const [given, ...more] = events.filter((e) => e.type === 'proposal') as Array<Extract<ChatEvent, { type: 'proposal' }>>;
+    expect(more).toHaveLength(0);
+    expect((calls[1].messages.at(-1) as { results: Array<{ content: string }> }).results[0].content).toContain('dataTableId of “Save”: an id nobody gave');
     expect(given.ops[0]).toMatchObject({ parameters: { operation: 'insert', dataTableId: 'dt_given42' } });
     expect(given.dropped.join()).not.toContain('nobody gave');
-    expect((calls[1].messages.at(-1) as { results: Array<{ content: string }> }).results[0].content).toContain('dataTableId of “Save”: an id nobody gave');
     // Nor does the text repeat the made-up one.
     expect(events.at(-2)).toEqual({ type: 'text', text: 'Pick the table on the card; dt_given42 is set.' });
+    // A plain id (`id`, `modelId`, `userId`) is cleared and listed, not asked for; a destination id is both cleared and a destination.
+    const plain = withoutInventedIds([{ op: 'setParameters', node: 'A', parameters: { userId: 'u_k3J9xQ2mPz', modelId: 'm_Zq81', id: 'x_77Jk' } }], 'change it');
+    expect(plain.invented).toHaveLength(3);
+    expect(plain.destinations).toEqual([]);
+    const destination = withoutInventedIds([{ op: 'setParameters', node: 'A', parameters: { channelId: 'C03ABCDEF', dataTableId: 'dt_Zq81', repoId: 'r_1x' } }], 'change it');
+    expect(destination.invented).toHaveLength(3);
+    expect(destination.destinations).toEqual(destination.invented);
     // Expressions, other parameters and a value the node type itself offers are left alone.
     const offered = () => JSON.stringify([{ name: 'modelId', default: 'gpt-5-mini' }]);
     expect(withoutInventedIds([{ op: 'setParameters', node: 'A', parameters: { sheetId: '{{ $json.sheet }}', name: 'X9Y8Z7W6V5', modelId: 'gpt-5-mini' } }], '', offered).invented).toEqual([]);
