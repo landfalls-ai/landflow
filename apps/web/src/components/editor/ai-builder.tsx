@@ -9,6 +9,7 @@ import { useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { api } from '@/lib/client/api';
 import type { FlowTemplate, TemplateNode } from '@/lib/client/templates';
+import type { DraftLeft } from '@/lib/shared/draft-left'; // SB02:
 import type { ConnectionType, NodeItem } from '@/lib/shared/types';
 import { useEditor } from './store';
 
@@ -20,6 +21,8 @@ interface FlowDraft {
   model: string;
   durationMs: number;
   dropped: string[];
+  /** What the guards left for the person (lib/shared/draft-left.ts). */
+  left?: DraftLeft[]; // SB02:
 }
 
 /** Columns by longest path from the trigger; sub-nodes under the node they attach to. */
@@ -60,6 +63,8 @@ export interface BuiltFlow {
   model: string;
   durationMs: number;
   dropped: number;
+  /** What the guards left for the person (SB02): made-up values cleared, credentials to pick, parts left out. */
+  left: DraftLeft[]; // SB02:
   /** Test data was pinned on the trigger. */
   pinned: boolean;
 }
@@ -102,7 +107,7 @@ export function useBuildFlow() {
   const build = async (prompt: string, signal?: AbortSignal): Promise<BuiltFlow> => {
     setBusy(true);
     try {
-      const { draft } = await api<{ draft: FlowDraft }>('/api/ai/build', { method: 'POST', json: { prompt }, signal });
+      const { draft } = await api<{ draft: FlowDraft }>('/api/ai/build', { method: 'POST', json: { prompt, workflowId: useEditor.getState().workflowId || undefined /* SB02 */ }, signal });
       const state = useEditor.getState();
       const right = state.nodes.length ? Math.max(...state.nodes.map((n) => n.position.x)) + 360 : 0;
       const top = state.nodes.length ? Math.min(...state.nodes.map((n) => n.position.y)) : 0;
@@ -114,7 +119,7 @@ export function useBuildFlow() {
       if (!state.description?.trim()) state.setMeta({ description: prompt });
       arriveLeftToRight(before);
       setTimeout(() => fitView({ padding: 0.25, duration: 600, maxZoom: 1.1 }), 60);
-      return { name: draft.name, nodes: draft.nodes.length, model: draft.model, durationMs: draft.durationMs, dropped: draft.dropped.length, pinned: Boolean(draft.pinData && Object.keys(draft.pinData).length) };
+      return { name: draft.name, nodes: draft.nodes.length, model: draft.model, durationMs: draft.durationMs, dropped: draft.dropped.length, left: draft.left ?? [], pinned: Boolean(draft.pinData && Object.keys(draft.pinData).length) };
     } finally {
       setBusy(false);
     }

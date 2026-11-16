@@ -4,14 +4,16 @@ import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { Bot, Check, CircleCheck, CircleStop, CircleX, ExternalLink, Hand, Loader2, Play, Rocket, Sparkles } from 'lucide-react';
 import { Button } from '../../ui/button';
+import { holdsForClick, typedSession } from '../autonomous'; // SB04:
 import { afterReply, useAutonomous } from '../autonomous';
 import { LiveSteps, useLive } from '../building';
 import { applyChanges, prefillSpotlight, undos, useAssistant, type AgentProgress, type ChatItem, type Need, type Outcome, type ReplyAction, type TestRun } from '../assistant';
 import { useEditor } from '../store';
+import { useAutonomyFacts } from '../spotlight-autonomy';
 import { ActivityTrace } from '../../ui/activity-trace';
 import { StatusSwap, StreamingText } from '../../ui/chat-motion';
 import { AssistantRow, ChatError, ChatMarkdown, ReplyMeta, ShortReply } from '../../ui/chat';
-import { MAX_FIXES, productionNote, publishToProduction, sendsAllowed, testUntilItRuns } from '../test-session';
+import { MAX_FIXES, approveDestinations, productionNote, publishToProduction, testUntilItRuns, undoApplied } from '../test-session'; // SB03:
 import { agentStep, runRow } from '../timeline';
 
 import { ProposalCard, ProposalRow } from './proposal';
@@ -20,6 +22,7 @@ import { swapState } from './swap';
 import { OPEN_CAPS_HREF, errorActions, type ErrorAction } from './states';
 import { can } from '@/lib/shared/auth';
 import { useViewer } from '../../auth/viewer';
+import { yesText } from '@/lib/shared/run-check';
 
 export type Reply = Extract<ChatItem, { role: 'assistant' }>;
 
@@ -41,9 +44,11 @@ function NeedRow({ itemId, need }: { itemId: string; need: Need }) {
     void testUntilItRuns(need.goal);
   };
   const primary =
-    need.what === 'sends'
-      ? { label: 'Run it for real', act: () => (sendsAllowed.add(useEditor.getState().workflowId), goOn()) }
-      : need.what === 'trigger'
+    need.what === 'sends' || need.what === 'destination'
+      ? { label: 'Run it for real', act: () => (approveDestinations(useEditor.getState().workflowId, need.destinations ?? [], need.once ?? []), goOn()) } // SB03:
+      : need.what === 'blocked' || need.what === 'address'
+        ? { label: 'Open the step', act: () => need.node && openNodeNamed(need.node) }
+        : need.what === 'trigger'
         ? { label: 'Add a manual trigger', act: () => applyChanges([{ ops: [{ op: 'addNode', type: 'core.manualTrigger', name: 'Start', ...(firstStep() && { before: firstStep() }) }], kind: 'proposal' }], 'Added a manual trigger', { quiet: true }) && goOn() }
         : { label: need.what === 'credential' ? 'Pick the credential' : `Pick ${need.what === 'agent' ? 'an agent' : 'it'}`, act: () => need.node && openNodeNamed(need.node) };
   return (
@@ -57,7 +62,7 @@ function NeedRow({ itemId, need }: { itemId: string; need: Need }) {
       </div>
       {need.state ? (
         <p className="pl-5 text-[11.5px] text-t3">
-          {need.state === 'dismissed' ? 'Left for later.' : need.what === 'sends' ? 'You said yes: tests of this workflow run for real.' : need.what === 'trigger' ? 'Trigger added.' : 'Testing again.'}
+          {need.state === 'dismissed' ? 'Left for later.' : need.what === 'sends' || need.what === 'destination' ? yesText(need.destinations) : need.what === 'blocked' || need.what === 'address' ? 'Left for you to change.' : need.what === 'trigger' ? 'Trigger added.' : 'Testing again.'}
         </p>
       ) : (
         <div className="flex flex-wrap gap-1.5 pl-5">
@@ -67,6 +72,11 @@ function NeedRow({ itemId, need }: { itemId: string; need: Need }) {
           {need.what === 'sends' ? (
             <Button size="sm" variant="ghost" onClick={() => mark('dismissed')}>
               Not now
+            </Button>
+          ) : need.what === 'destination' ? (
+            // SB03: take the change that brought the new destination back, then test on.
+            <Button size="sm" variant="ghost" disabled={busy || !need.fix} onClick={() => (need.fix && undoApplied(need.fix), goOn())}>
+              Undo that change
             </Button>
           ) : (
             <Button size="sm" variant="ghost" disabled={busy} onClick={goOn}>
@@ -288,7 +298,7 @@ function retryReply(replyId: string, resume?: { checkpoint: string }) {
   void useAssistant
     .getState()
     // Continue keeps what the failed reply had proposed: they are not in `pending` (the reply left the items), the server holds them.
-    .send(asked.text, { ...(useAutonomous.getState().on && { session: 'auto' as const }), ...(resume && { resume, carry: items[at] }) })
+    .send(asked.text, { ...typedSession(asked.text), ...(resume && { resume, carry: items[at] }) })
     .then(() => afterReply(asked.text));
 }
 
@@ -329,7 +339,13 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
   const own = item.parts.some((p) => p.kind === 'run' || p.kind === 'action');
   // Rows, not cards: Spotlight applied them itself (a session's fix, autonomous mode), or is about to (autonomous mode on
   // while the reply still has changes to apply). A turn applied by hand stays a card when the switch flips later.
-  const asRows = Boolean(item.testId || item.auto) || (autonomous && !item.earlier && (live || spotlightBusy) && pending.length > 0);
+  // SB04: a change that waits for a click (asks first, or one that removes a step) stays a card with Apply and Dismiss, in a session or an autonomous reply too.
+  // Re-render when what holdsForClick reads changes (the switch, the published read arriving, the workflow opening).
+  useAutonomyFacts((s) => s.workflows);
+  useAutonomyFacts((s) => s.switchOn);
+  useEditor((s) => s.workflowId);
+  const waits = pending.length > 0 && holdsForClick(pending);
+  const asRows = !waits && (Boolean(item.testId || item.auto) || (autonomous && !item.earlier && (live || spotlightBusy) && pending.length > 0));
   // Within a session, the reply's texts are one: its first sentence, the rest on "Show more".
   // Autonomous replies that changed the flow too: the rows say what was done.
   const session = Boolean(item.testId) || (Boolean(item.auto) && !live && item.parts.some((p) => p.kind === 'proposal'));

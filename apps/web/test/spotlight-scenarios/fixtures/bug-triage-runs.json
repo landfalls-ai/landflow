@@ -1,0 +1,248 @@
+{
+  "n_sch": {
+    "status": "success",
+    "durationMs": 120,
+    "inputs": [
+      {
+        "count": 1,
+        "sample": [
+          {}
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "count": 1,
+        "sample": [
+          {
+            "timestamp": "2026-11-16T08:00:00.000Z"
+          }
+        ]
+      }
+    ]
+  },
+  "n_lin": {
+    "status": "success",
+    "durationMs": 120,
+    "inputs": [
+      {
+        "count": 1,
+        "sample": [
+          {}
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "count": 1,
+        "sample": [
+          {
+            "id": "iss_1",
+            "source": "linear",
+            "kind": "work.ticket_opened",
+            "title": "ENG-412: Checkout returns 500 for all EU cards",
+            "url": "https://linear.app/acme/issue/ENG-412/checkout-returns-500",
+            "raw": {
+              "priority": 1,
+              "labels": [
+                "bug",
+                "payments"
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "n_agent": {
+    "status": "success",
+    "durationMs": 120,
+    "inputs": [
+      {
+        "count": 1,
+        "sample": [
+          {
+            "id": "iss_1",
+            "source": "linear",
+            "kind": "work.ticket_opened",
+            "title": "ENG-412: Checkout returns 500 for all EU cards",
+            "url": "https://linear.app/acme/issue/ENG-412/checkout-returns-500",
+            "raw": {
+              "priority": 1,
+              "labels": [
+                "bug",
+                "payments"
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "count": 1,
+        "sample": [
+          {
+            "output": "{\"priority\":\"P0\",\"reason\":\"Checkout is down for EU customers.\"}"
+          }
+        ]
+      }
+    ]
+  },
+  "n_parse": {
+    "status": "success",
+    "durationMs": 120,
+    "inputs": [
+      {
+        "count": 1,
+        "sample": [
+          {
+            "output": "{\"priority\":\"P0\",\"reason\":\"Checkout is down for EU customers.\"}"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "count": 1,
+        "sample": [
+          {
+            "id": "iss_1",
+            "source": "linear",
+            "kind": "work.ticket_opened",
+            "title": "ENG-412: Checkout returns 500 for all EU cards",
+            "url": "https://linear.app/acme/issue/ENG-412/checkout-returns-500",
+            "raw": {
+              "priority": 1,
+              "labels": [
+                "bug",
+                "payments"
+              ]
+            },
+            "priority": "P0",
+            "reason": "Checkout is down for EU customers."
+          }
+        ]
+      }
+    ]
+  },
+  "n_if": {
+    "status": "success",
+    "durationMs": 3,
+    "inputs": [
+      {
+        "count": 1,
+        "sample": [
+          {
+            "id": "iss_1",
+            "source": "linear",
+            "kind": "work.ticket_opened",
+            "title": "ENG-412: Checkout returns 500 for all EU cards",
+            "url": "https://linear.app/acme/issue/ENG-412/checkout-returns-500",
+            "raw": {
+              "priority": 1,
+              "labels": [
+                "bug",
+                "payments"
+              ]
+            },
+            "priority": "P0",
+            "reason": "Checkout is down for EU customers."
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "count": 1,
+        "sample": [
+          {
+            "id": "iss_1",
+            "source": "linear",
+            "kind": "work.ticket_opened",
+            "title": "ENG-412: Checkout returns 500 for all EU cards",
+            "url": "https://linear.app/acme/issue/ENG-412/checkout-returns-500",
+            "raw": {
+              "priority": 1,
+              "labels": [
+                "bug",
+                "payments"
+              ]
+            },
+            "priority": "P0",
+            "reason": "Checkout is down for EU customers."
+          }
+        ]
+      },
+      {
+        "count": 0,
+        "sample": []
+      }
+    ]
+  },
+  "n_slack": {
+    "status": "success",
+    "durationMs": 120,
+    "inputs": [
+      {
+        "count": 1,
+        "sample": [
+          {
+            "id": "iss_1",
+            "source": "linear",
+            "kind": "work.ticket_opened",
+            "title": "ENG-412: Checkout returns 500 for all EU cards",
+            "url": "https://linear.app/acme/issue/ENG-412/checkout-returns-500",
+            "raw": {
+              "priority": 1,
+              "labels": [
+                "bug",
+                "payments"
+              ]
+            },
+            "priority": "P0",
+            "reason": "Checkout is down for EU customers."
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "count": 1,
+        "sample": [
+          {
+            "ok": true,
+            "channel": "C0ONCALL",
+            "ts": "1763280000.000100"
+          }
+        ]
+      }
+    ]
+  },
+  "n_http": {
+    "status": "error",
+    "durationMs": 310,
+    "error": {
+      "message": "Request failed with status 401",
+      "description": "{\"error\":\"unauthorized\",\"message\":\"Missing or invalid Authorization header. Use: Authorization: Bearer <api token>\"}"
+    },
+    "inputs": [
+      {
+        "count": 1,
+        "sample": [
+          {
+            "ok": true,
+            "channel": "C0ONCALL",
+            "ts": "1763280000.000100"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "count": 0,
+        "sample": []
+      }
+    ]
+  }
+}

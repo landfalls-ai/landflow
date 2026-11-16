@@ -31,6 +31,7 @@ import { recoverToolCalls, withoutInventedIds, withoutRepeats } from './chat';
 import { chooseModel, type AgentResources } from './agent-resources';
 import { saveCheckpoint } from './checkpoints';
 import { assistantModel, errorText, modelLabel } from './model';
+import { isParseError, parseErrorText } from './parse-retry';
 import { catalogSummary, nodeDocs, searchNodes } from './research';
 import { builderContextEntry } from '../project-context/by-repo';
 
@@ -77,7 +78,8 @@ export interface ArchitectInput {
   resources?: AgentResources;
   /** The project the agent is being built for (the route checked the caller's role): its goals go to the model as data. */
   projectId?: string;
-  /** The only tools the model is offered (designAgent's short attempt offers propose_agent alone); all of them when absent. */
+  /** The only tools the model is offered (designAgent's short attempt offers propose_design alone); all of them when
+   * absent. */
   only?: string[];
 }
 
@@ -153,7 +155,7 @@ const TOOLS: ToolSpec[] = [
         mission: { type: 'string', description: 'What it does for them' },
         whatIDo: { type: 'array', items: { type: 'string' }, description: 'Up to 3 short lines (under 80 characters) for its team card: "Triages new tickets"' },
         tones: { type: 'array', items: { type: 'string' }, description: '2–3 words: Precise, Friendly, Calm, Direct, Warm, Brief, Thorough, Patient, Formal, Empathetic' },
-        length: { type: 'string', enum: ['sentence', 'short', 'detailed'] },
+        length: { type: 'string', enum: ['sentence', 'paragraph', 'detailed'] },
         always: { type: 'array', items: { type: 'string' }, description: 'Rules, a sentence each' },
         never: { type: 'array', items: { type: 'string' } },
         instructions: { type: 'string', description: 'How it works, step by step, naming its tools' },
@@ -168,16 +170,41 @@ const TOOLS: ToolSpec[] = [
 ];
 
 /**
- * propose_agent with only plain strings, for designAgent's short attempt: qwen3-coder writes a tool call as XML, and
- * Ollama's parser fails on the nested arrays of objects propose_agent takes ("XML syntax error … unexpected EOF").
+ * propose_agent with only plain strings, for designAgent's short attempt and the dialog on Ollama models: qwen3-coder
+ * writes a tool call as XML, and Ollama's parser fails on the nested arrays of objects propose_agent takes ("XML syntax
+ * error … unexpected EOF").
  * `fromDesign` turns it into propose_agent's arguments.
  */
 const DESIGN_TOOL: ToolSpec = {
   name: 'propose_design',
-  description: 'Propose the agent. Every value is plain text.',
+  description:
+    'Show the user the whole agent as a draft to review and create. Every value is plain text. ' + // SB06:
+    'Each call replaces the earlier draft, so always send every field, not only what changed.',
   inputSchema: {
     type: 'object',
     properties: {
+      summary: { type: 'string', description: 'One line: what this draft is or what changed' }, // SB06:
+      name: { type: 'string', description: 'A short name, a person-like name is fine ("Helpdesk Hana")' }, // SB06:
+      audience: { type: 'string', description: 'Who it helps' }, // SB06:
+      mission: { type: 'string', description: 'What it does for them' }, // SB06:
+      always: {
+        type: 'string',
+        description: 'Rules it always follows, one per line, a sentence each; empty for none',
+      }, // SB06:
+      never: { type: 'string', description: 'Rules it never breaks, one per line; empty for none' }, // SB06:
+      answerLength: {
+        type: 'string',
+        enum: ['short', 'medium', 'long'],
+        description: 'How long its answers are',
+      }, // SB06:
+      workflowTools: {
+        type: 'string',
+        description: 'Workflow ids (list_workflows) it calls as tools, comma-separated; empty for none',
+      }, // SB06:
+      agentTools: {
+        type: 'string',
+        description: 'Agent ids (list_agents) it delegates to, comma-separated; empty for none',
+      }, // SB06:
       role: { type: 'string', description: 'What it is in a few words ("Contract reviewer")' },
       description: { type: 'string', description: 'One sentence: what it does' },
       instructions: { type: 'string', description: 'How it works, step by step, naming its tools' },
@@ -193,19 +220,53 @@ const DESIGN_TOOL: ToolSpec = {
   },
 };
 
-const plain = (value: unknown) => (typeof value === 'string' ? value.replace(LEAKED_MARKUP, '').trim() : '');
+/** SB06: the tools with propose_agent replaced by the flat propose_design. */
+const flatTools = (list: ToolSpec[]): ToolSpec[] => list.map((t) => (t.name === 'propose_agent' ? DESIGN_TOOL : t));
+
+const plain = (value: unknown): string =>
+  typeof value === 'string'
+    ? value.replace(LEAKED_MARKUP, '').trim()
+    : Array.isArray(value)
+      ? value.filter((v) => typeof v === 'string').map((v) => plain(v)).filter(Boolean).join('\n')
+      : '';
 
 /** propose_design's plain strings as propose_agent's arguments. */
 export function fromDesign(args: Record<string, unknown>): Record<string, unknown> {
   const list = (value: unknown, split: RegExp) => plain(value).split(split).map((v) => v.trim()).filter(Boolean);
   const knowledge = plain(args.knowledge);
-  const tools = [
+  const tools: Array<Record<string, unknown>> = [ // SB06: workflow and agent tools join node and knowledge ones
     ...(knowledge && !/^(none|no|n\/a|-)$/i.test(knowledge) ? [{ type: 'knowledge', collection: knowledge, ...(plain(args.knowledgeDescription) && { description: plain(args.knowledgeDescription) }) }] : []),
     ...list(args.nodeTools, /[,\n]/).filter((t) => !/^(none|no|n\/a|-)$/i.test(t)).map((nodeType) => ({ type: 'node', nodeType })),
   ];
+  const none = /^(none|no|n\/a|-)$/i; // SB06:
+  /** A rule a model writes as "none" (or "no", "n/a", "-") is no rule. */
+  const rules = (value: unknown) => list(value, /\n/).filter((rule) => !none.test(rule)); // SB06:
+  const lengths: Record<string, string> = {
+    short: 'sentence',
+    medium: 'paragraph',
+    long: 'detailed',
+    sentence: 'sentence',
+    paragraph: 'paragraph',
+    detailed: 'detailed',
+  };
+  const length = lengths[plain(args.answerLength).toLowerCase()]; // SB06:
+  tools.push(
+    ...list(args.workflowTools, /[,\n]/)
+      .filter((id) => !none.test(id))
+      .map((workflowId) => ({ type: 'workflow', workflowId })), // SB06:
+    ...list(args.agentTools, /[,\n]/)
+      .filter((id) => !none.test(id))
+      .map((agentId) => ({ type: 'agent', agentId })), // SB06:
+  );
   return {
-    summary: 'Designed for Spotlight',
-    name: plain(args.name) || 'Agent',
+    // SB06: without a summary the dispatch's "Draft: <name>" applies
+    ...(plain(args.summary) && { summary: plain(args.summary) }),
+    ...(plain(args.name) && { name: plain(args.name) }), // SB06:
+    ...(plain(args.audience) && { audience: plain(args.audience) }), // SB06:
+    ...(plain(args.mission) && { mission: plain(args.mission) }), // SB06:
+    ...(rules(args.always).length && { always: rules(args.always) }), // SB06:
+    ...(rules(args.never).length && { never: rules(args.never) }), // SB06:
+    ...(length && { length }), // SB06:
     role: plain(args.role),
     ...(plain(args.description) && { description: plain(args.description) }),
     instructions: plain(args.instructions),
@@ -333,7 +394,9 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
   set('tones', texts(parsed(args.tones), 24, 4, /[,;\n]/));
   set('always', texts(parsed(args.always), 200, 8, /\n/));
   set('never', texts(parsed(args.never), 200, 8, /\n/));
-  if (args.length === 'sentence' || args.length === 'short' || args.length === 'detailed') persona.length = args.length as AnswerLength;
+  if (args.length === 'sentence' || args.length === 'paragraph' || args.length === 'detailed') {
+    persona.length = args.length as AnswerLength;
+  } else if (args.length === 'short') persona.length = 'paragraph'; // the old name for the middle value
 
   const tools: AgentToolConfig[] = [];
   const names = new Set<string>();
@@ -459,9 +522,14 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
   const { onEvent, actor } = input;
   const trace = input.trace === true;
   const types = input.types.filter(usableAsTool);
-  const tools = input.only ? [...TOOLS, DESIGN_TOOL].filter((t) => input.only!.includes(t.name)) : TOOLS;
-  const toolNames = new Set(tools.map((t) => t.name));
-  const model = assistantModel(input.model);
+  const model = assistantModel(input.model); // SB06: moved up, the tool choice reads its provider
+  // SB06: a local model is offered the flat propose_design in propose_agent's place: its nested arrays don't survive
+  // Ollama's parser.
+  const tools = input.only
+    ? [...TOOLS, DESIGN_TOOL].filter((t) => input.only!.includes(t.name))
+    : model.provider === 'ollama'
+      ? flatTools(TOOLS)
+      : TOOLS;
   const started = Date.now();
   let draft = input.resume ? input.resume.draft : input.draft;
   let said = input.resume?.said ?? '';
@@ -472,11 +540,14 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
   const recorded = new Set<string>();
   const usage = { inputTokens: 0, outputTokens: 0 };
   const known = () => [...input.messages.map((m) => m.content), JSON.stringify(draft ?? {})].join('\n');
+  const draftJson = draft ? JSON.stringify({ ...draft, avatar: undefined }).slice(0, 6000) : '';
   const system = [
     SYSTEM,
     `\nPlugins online and the nodes an agent can use from them (search_nodes for details):\n${catalogSummary(types)}`,
     input.projectId ? builderContextEntry(input.actor, { projectId: input.projectId }) : '', // PC10
-    draft ? `\nThe draft so far (propose_agent replaces it):\n${JSON.stringify({ ...draft, avatar: undefined }).slice(0, 6000)}` : '',
+    draft
+      ? `\nThe draft so far (a new proposal replaces it):\n${draftJson}`
+      : '',
   ].join('\n');
 
   let currentStep = 0;
@@ -589,13 +660,24 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
         steps++;
         currentStep = steps;
         if (trace) onEvent({ type: 'step.start', step: steps, label: steps === 1 ? 'Reading your request' : 'Thinking' });
-        const generate = () => withCallNote({ purpose: 'answer', draft: plainDraft({ system, tools, messages: history }) }, () => model.generate({ system, messages: history, tools, ...(input.signal && { signal: input.signal }) })); // SP03:
+        let offered = tools; // SB06: the retry after a parse error offers the flat tool
+        const generate = () =>
+          withCallNote({ purpose: 'answer', draft: plainDraft({ system, tools: offered, messages: history }) }, () =>
+            model.generate({
+              system,
+              messages: history,
+              tools: offered,
+              ...(input.signal && { signal: input.signal }),
+            }),
+          ); // SP03:
         let turn: Awaited<ReturnType<typeof generate>>;
         try {
-          // Ollama answers 500 when it can't parse the tool call qwen3-coder wrote ("XML syntax error", sometimes with no detail): ask once more.
+          // Ollama answers 500 when it can't parse the tool call qwen3-coder wrote ("XML syntax error", sometimes with
+          // no detail): ask once more, as the chat does (parse-retry.ts).
           turn = await generate().catch((error: unknown) => {
-            if (input.signal?.aborted || !/XML syntax error|tool call|unexpected end|Ollama error 500/i.test(String((error as Error)?.message ?? error))) throw error;
-            span.addEvent('assistant.retry', { 'landflow.reason': String((error as Error)?.message ?? error).slice(0, 200) });
+            if (input.signal?.aborted || isUsageCapError(error) || !isParseError(error)) throw error; // SB06:
+            span.addEvent('assistant.retry', { 'landflow.reason': parseErrorText(error) }); // SB06:
+            offered = flatTools(tools); // SB06:
             return generate();
           });
         } catch (caught) {
@@ -605,7 +687,9 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
         }
         usage.inputTokens += turn.usage?.inputTokens ?? 0;
         usage.outputTokens += turn.usage?.outputTokens ?? 0;
-        const { text: reply, calls } = turn.toolCalls.length ? { text: turn.text, calls: turn.toolCalls } : recoverToolCalls(turn.text, toolNames);
+        const { text: reply, calls } = turn.toolCalls.length
+          ? { text: turn.text, calls: turn.toolCalls }
+          : recoverToolCalls(turn.text, new Set([...offered.map((t) => t.name), 'propose_agent'])); // SB06:
         if (reply.trim()) {
           const shown = withoutRepeats(reply, said);
           said += `\n${reply}`;
@@ -643,6 +727,9 @@ export interface AgentSpec {
   workflow?: string;
   after?: string;
   before?: string;
+  /** SB05: the apps or actions it needs ("Linear: read issues"), and the documents it answers from. */
+  tools?: string[];
+  knowledge?: string;
 }
 
 /** The request the architect gets for Spotlight's newAgent: design it now, model, tools and knowledge included. */
@@ -653,6 +740,8 @@ export function designRequest(spec: AgentSpec): string {
     `Name: ${spec.name}`,
     `What it does: ${spec.description || '(see the instructions)'}`,
     spec.instructions && `How: ${spec.instructions}`,
+    spec.tools?.length && `It needs: ${spec.tools.join('; ')}.`, // SB05:
+    spec.knowledge && `It answers from: ${spec.knowledge}: give it a knowledge base (list_knowledge_bases; say so if none fits).`, // SB05:
     'Pick its model (list_models: a local one), the tools it needs from the plugins online (search_nodes), and a knowledge base if it works from documents (list_knowledge_bases). Keep the name.',
   ]
     .filter(Boolean)
@@ -677,7 +766,8 @@ const searchWords = (value: string | undefined) =>
 export function designBrief(spec: AgentSpec, input: Pick<ArchitectInput, 'types' | 'resources'>): string {
   const types = input.types.filter(usableAsTool);
   const hits = new Map<string, string>();
-  for (const query of [spec.description, spec.instructions, spec.name].map(searchWords)) {
+  // SB05: the tools it was said to need are searched first, so their nodes rank first.
+  for (const query of [...(spec.tools ?? []), spec.description, spec.instructions, spec.name].map(searchWords)) {
     // A score under 4 is words of the request found only in a node's description: not a match.
     for (const hit of query ? searchNodes(query, types, 6) : []) if (hit.score >= 4 && !hits.has(hit.type) && hits.size < 8) hits.set(hit.type, `${hit.type} (${hit.displayName}): ${shorten(hit.description, 120)}`);
   }
@@ -697,9 +787,11 @@ export function designBrief(spec: AgentSpec, input: Pick<ArchitectInput, 'types'
 
 /**
  * Spotlight's newAgent, designed by the architect without a conversation (POST /api/agents/design): its last draft,
- * named as Spotlight named it. The first try hands the model what it would look up (designBrief) and offers only
- * propose_agent; the second lets it look around. When neither proposes (or both fail), the agent is what Spotlight gave,
- * on the first model the host has, so the step still has an agent to run. A reached usage cap is thrown, not swallowed.
+ * named as Spotlight named it. The first try hands the model what it would look up (designBrief) and offers only the
+ * flat propose_design (plain strings: Ollama's parser fails on propose_agent's nested arrays); the second lets it look
+ * around, with the tools the model's provider gets in a conversation. When neither proposes (or both fail), the agent is
+ * what Spotlight gave, on the first model the host has, so the step still has an agent to run. A reached usage cap is
+ * thrown, not swallowed.
  */
 export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, 'messages' | 'onEvent' | 'draft' | 'only'>): Promise<DraftResult & { designed: boolean }> {
   let last: DraftResult | undefined;

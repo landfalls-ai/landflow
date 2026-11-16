@@ -6,6 +6,7 @@ import type { ToolCall } from '@landflow/engine';
 import type { AssistantOp } from '@/lib/shared/assistant-ops';
 import { withAgentId, type AgentBrief } from '@/lib/shared/agent-brief';
 import { withTeamId, type TeamBrief } from '@/lib/shared/agent-teams';
+import { AT_IN_EXPRESSION, givenKept, lastAtOutside, urlHost, withoutEquals } from '@/lib/shared/run-check';
 import type { PropertyDescriptor, Workflow } from '@/lib/shared/types';
 
 const shorten = (value: string, max = 60) => (value.length > max ? `${value.slice(0, max - 1)}…` : value);
@@ -53,24 +54,150 @@ export function withEarlierRefs(ops: unknown, refs: Map<string, string>): unknow
 /** The chat's tool names: what a tool call recovered from text may name. */
 export const TOOL_NAMES: ReadonlySet<string> = new Set(['search_nodes', 'get_node_docs', 'get_workflow', 'get_run_data', 'propose_changes']);
 
+// SB02: ids, and the destinations (a channel, a table, an owner, an address, a URL) a person names; a model makes both up.
 const ID_PARAMETER = /^id$|[a-z]Ids?$/;
+const DESTINATION_PARAMETER = /^(channel|table|owner|repository|repo|email|to|cc|team|project|board|sheet)$/;
+const URL_PARAMETER = /^(url|baseUrl|webhookUrl)$/;
+
+const KIND = 'table|channel|sheet|repo|repository|project|board|team';
 
 /**
- * An id the conversation, the workflow, its runs and the node type's own options never mention (a Slack channel, a
- * sheet, a user) can only have been made up: local models write plausible ones. Those parameters are left out, so the
- * user fills them in. `typeText` gives the node type's properties for an op (defaults and fixed options are known).
+ * Whether a plain word ("bugs") the person's text merely contains was named as that destination: a word like that is in
+ * most asks ("get the new bugs … save each bug to a table"), so it counts only after a naming cue or in quotes.
+ * A value with a "#", "@", ".", "/", "_", "-" or a digit is specific enough that finding it is the answer. The word for the
+ * kind ("channel") and the app's own name (`app`: "slack" for "post it to Slack") are never a name.
  */
-export function withoutInventedIds(ops: unknown, known: string, typeText: (op: Record<string, unknown>) => string = () => ''): { ops: unknown; invented: string[]; values: string[] } {
+function namedAs(value: string, known: string, app: readonly string[] = []): boolean {
+  if (/[#@./_\-\d]/.test(value) || !/^[\w ]+$/.test(value)) return known.toLowerCase().includes(value.toLowerCase());
+  // The word for the kind of thing ("channel") or the app's own name ("slack" for "post it to Slack") is no name of one.
+  if (new RegExp(`^(?:${KIND})$`, 'i').test(value.trim()) || app.includes(value.trim().toLowerCase())) return false;
+  const word = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const kind = KIND;
+  const quote = '["\'“‘`]';
+  const cue = `(?:called|named|${kind}|owner|into|in|to|on|at|by|with|as)`;
+  return [
+    `${quote}${word}${quote}`,
+    `\\b${cue}\\s+(?:(?:the|a|an|our|my|your|this|that)\\s+)?["'“‘\`#@]?${word}\\b`,
+    `\\b${word}\\s+(?:${kind})\\b`,
+    `[/#@]${word}\\b`,
+    `\\b${word}/`,
+  ].some((pattern) => new RegExp(pattern, 'i').test(known));
+}
+
+/**
+ * The type of the property `name` in a node type's properties JSON: the top-level property first (a nested one of the same
+ * name, such as a collection's `to`, is another property); undefined when it has none.
+ */
+function propertyType(json: string, name: string): string | undefined {
+  if (!json) return undefined;
+  try {
+    const list = JSON.parse(json) as unknown;
+    const own = (items: unknown) => (Array.isArray(items) ? (items as Array<{ name?: string; type?: string }>).find((p) => p?.name === name && typeof p.type === 'string')?.type : undefined);
+    const nested = (items: unknown): string | undefined => {
+      if (!Array.isArray(items)) return undefined;
+      for (const p of items as Array<{ values?: unknown; options?: unknown }>) {
+        const inner = own(p?.values) ?? own(p?.options) ?? nested(p?.values) ?? nested(p?.options);
+        if (inner) return inner;
+      }
+      return undefined;
+    };
+    return own(list) ?? nested(list);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Said of a URL's host that cannot be read: it is no host anybody gave. */
+const UNREADABLE = 'an address that cannot be read';
+
+/**
+ * The host name of a URL a model wrote ("https://httpbin.org/post" → "httpbin.org"), parsed with `new URL`:
+ * "https://evil.com#@good.com/" and "https://evil.com?@good.com/" are evil.com, as a fetch reads them. UNREADABLE for a
+ * backslash ("https://evil.com\@good.com/") or a URL that does not parse; undefined when it names none.
+ */
+function hostOf(value: string): string | undefined {
+  const parsed = urlHost(value);
+  return parsed === 'unreadable' ? UNREADABLE : parsed?.hostname;
+}
+
+const hostNote = (key: string, node: unknown, host: string) => `${key} of “${String(node)}”: ${host === UNREADABLE ? 'an address that cannot be read' : `a host nobody gave (${host})`}, left for the user to fill in`;
+
+/** Whether `text` names `host` as a whole host: "example.com" is not in "myexample.com" or "api.example.com". */
+function mentionsHost(text: string, host: string): boolean {
+  const escaped = host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:^|[^a-z0-9.-])${escaped}(?![a-z0-9-])`, 'i').test(text);
+}
+
+/**
+ * The host a URL with expressions in it names in its literal start ("https://x.com/users/{{ $json.id }}" → "x.com"); undefined
+ * when the value is a whole expression or the host itself is one (the literal part ends before the host does).
+ */
+function literalHostOf(raw: string): string | undefined {
+  const value = withoutEquals(raw); // an n8n-style expression: "=https://…"
+  const at = value.indexOf('{{');
+  const prefix = value.slice(0, at);
+  if (prefix.includes('\\')) return UNREADABLE;
+  const rest = prefix.replace(/^\s*[a-z][a-z0-9+.-]*:\/\//i, '');
+  const authority = /^[^/?#]*/.exec(rest)![0];
+  const hostOfAuthority = (text: string) => {
+    const parsed = urlHost(text);
+    return parsed === 'unreadable' ? UNREADABLE : parsed?.hostname;
+  };
+  // An expression in the user name ("{{ user }}@evil.com", "user:{{ pw }}@evil.com"): the host is what follows the last "@".
+  const whole = /^[^/?#]*/.exec(value.replace(/^\s*[a-z][a-z0-9+.-]*:\/\//i, ''))![0];
+  const lastAt = lastAtOutside(whole);
+  if (lastAt === AT_IN_EXPRESSION) return UNREADABLE; // an "@" inside an expression may be anything
+  if (lastAt >= 0 && !whole.slice(lastAt + 1).includes('{{')) return hostOfAuthority(whole.slice(lastAt + 1));
+  if (!authority) return undefined; // the whole host is an expression
+  // A "/", "?" or "#" ended the authority before the expression: the host is all literal.
+  if (authority.length < rest.length) return hostOfAuthority(authority);
+  // The expression sits inside the authority. Part of the userinfo ("user:{{ pw }}@host", "{{ user }}@host"): the host is
+  // what follows, not known here. A host that is cut short ("api.{{ env }}.com") is an expression's too.
+  if (/^[^/?#]*@/.test(value.slice(at)) || /[@.\-_]$/.test(authority)) return undefined;
+  // A port ("evil.com:{{ $json.port }}") is judged by the host in front of it.
+  if (authority.endsWith(':')) return hostOfAuthority(authority.slice(0, -1));
+  // A literal host followed straight by an expression ("good.com{{ '.evil.com' }}") may be any host.
+  return UNREADABLE;
+}
+
+/**
+ * An id, channel, table, owner, address or URL host the conversation, the workflow, its runs and the node type's own
+ * options never mention (a Slack channel, a sheet, a user, a site) can only have been made up: local models write
+ * plausible ones. Those parameters are left out, so the user fills them in. `typeText` gives the node type's properties
+ * for an op (defaults and fixed options are known), `typeOf` the node type of an op (an existing node's too, for its app's name). A URL is judged by its host: a path on a host somebody gave is kept.
+ */
+export function withoutInventedIds(ops: unknown, known: string, typeText: (op: Record<string, unknown>) => string = () => '', typeOf: (op: Record<string, unknown>) => string | undefined = (op) => (op.op === 'addNode' ? String(op.type ?? '') : undefined)): { ops: unknown; invented: string[]; values: string[] } {
   if (!Array.isArray(ops)) return { ops, invented: [], values: [] };
   const invented: string[] = [];
   const values: string[] = [];
+  const appNames = (op: Record<string, unknown>) => (typeOf(op) ?? '').toLowerCase().split('.');
   const clean = (op: Record<string, unknown>, node: unknown, parameters: unknown) => {
     if (!parameters || typeof parameters !== 'object') return parameters;
     const out = { ...(parameters as Record<string, unknown>) };
     for (const [key, value] of Object.entries(out)) {
-      if (!ID_PARAMETER.test(key) || typeof value !== 'string' || !value.trim() || value.includes('{{') || known.includes(value) || typeText(op).includes(JSON.stringify(value))) continue;
+      if (typeof value !== 'string' || !value.trim()) continue;
+      const isId = ID_PARAMETER.test(key);
+      if (value.includes('{{')) {
+        // An expression is kept, but a URL that starts with a literal host nobody gave is judged like a plain one.
+        const host = !isId && URL_PARAMETER.test(key) ? literalHostOf(value) : undefined;
+        if (!host || (host !== UNREADABLE && (mentionsHost(known, host) || mentionsHost(typeText(op), host)))) continue;
+        invented.push(hostNote(key, node, host));
+        delete out[key];
+        values.push(value);
+        continue;
+      }
+      if (!isId && !DESTINATION_PARAMETER.test(key) && !URL_PARAMETER.test(key)) continue;
+      // A property that is not text ("to" is the end of a date window on a dateTime) is no destination.
+      if (!isId && propertyType(typeText(op), key) !== undefined && propertyType(typeText(op), key) !== 'string') continue;
+      if (typeText(op).includes(JSON.stringify(value)) || (isId || URL_PARAMETER.test(key) ? known.includes(value) : namedAs(value, known, appNames(op)))) continue;
+      if (!isId && URL_PARAMETER.test(key)) {
+        const host = hostOf(value);
+        if (!host || (host !== UNREADABLE && (mentionsHost(known, host) || mentionsHost(typeText(op), host)))) continue;
+        invented.push(hostNote(key, node, host));
+      } else {
+        invented.push(`${key} of “${String(node)}”: ${isId ? 'an id' : `a ${key}`} nobody gave, left for the user to fill in`);
+      }
       delete out[key];
-      invented.push(`${key} of “${String(node)}”: an id nobody gave, left for the user to fill in`);
       values.push(value);
     }
     return out;
@@ -204,7 +331,7 @@ export function withoutAgentStandIns(ops: unknown, agents: ReadonlySet<string>, 
  * agent: a newAgent the Agent architect designs on a local model, with the tools and knowledge base it needs. One with an
  * Ollama chat model stays, as a small inline step. Its sub-nodes go with withoutAgentStandIns, given the names returned.
  */
-export function asNewAgents(ops: unknown, typeOf: (name: string) => string | undefined = () => undefined, already: ReadonlySet<string> = new Set()): { ops: unknown; names: string[]; handles: string[]; notes: string[] } {
+export function asNewAgents(ops: unknown, typeOf: (name: string) => string | undefined = () => undefined, already: ReadonlySet<string> = new Set(), kindOf: (type: string) => string | undefined = () => undefined, displayName: (type: string) => string | undefined = () => undefined): { ops: unknown; names: string[]; handles: string[]; notes: string[] } {
   if (!Array.isArray(ops)) return { ops, names: [], handles: [], notes: [] };
   const handles = (o: Record<string, unknown>) => [o.ref, o.name].filter((h): h is string => typeof h === 'string');
   const added = new Map<string, string>();
@@ -231,9 +358,23 @@ export function asNewAgents(ops: unknown, typeOf: (name: string) => string | und
     names.push(name);
     agentHandles.push(name, ...(typeof o.ref === 'string' ? [o.ref] : []));
     const instructions = said(p.systemMessage) ?? said(p.prompt) ?? '';
+    // SB05: the tool nodes it had (attached by `after` or an ai_tool connection) become the new agent's tool hints.
+    const mine = handles(o);
+    // Only a sub-node placed `after` the agent is a tool: any other node placed after it is the next step of the flow.
+    const nameOf = (x: Record<string, unknown>) => String((typeof x.type === 'string' && displayName(x.type)) || x.name || x.type);
+    const toolNames = [...new Set(ops.flatMap((t) => {
+      const x = t as Record<string, unknown>;
+      if (x?.op === 'addNode' && typeof x.type === 'string' && x.type !== LOCAL && !/chatmodel|memory/i.test(x.type) && kindOf(x.type) === 'subnode' && mine.includes(String(x.after))) return [nameOf(x)];
+      if (x?.op === 'connect' && x.type === 'ai_tool' && mine.includes(String(x.to))) {
+        const node = ops.map((n) => n as Record<string, unknown>).find((n) => n.op === 'addNode' && handles(n).includes(String(x.from)));
+        return [String(node ? nameOf(node) : x.from)];
+      }
+      return [];
+    }))].slice(0, 8).map((t) => t.slice(0, 80));
     return {
       op: 'newAgent',
       name,
+      ...(toolNames.length && { tools: toolNames }),
       description: (instructions.split(/(?<=[.!?])\s/)[0] ?? '').slice(0, 300) || name,
       instructions,
       ...(typeof p.prompt === 'string' && p.prompt.trim() && { parameters: { message: p.prompt } }),
@@ -241,6 +382,57 @@ export function asNewAgents(ops: unknown, typeOf: (name: string) => string | und
     };
   });
   return { ops: out, names, handles: agentHandles, notes: names.map((n) => `“${n}” is a dedicated agent (newAgent), designed on a local model: an AI Agent step here has no chat model it can run on`) };
+}
+
+/**
+ * SB05: a new agent (a `newAgent`, or the addNode it became) placed `before` a step with no `after`, when the clause that
+ * names the agent says "after <a step in the flow>", goes after that step instead. A message that says "before <X>" keeps
+ * it. `next` gives the steps a step feeds on the main path: when X already feeds the `before` step the op is left alone;
+ * otherwise `after: X` is set, with `before: Y` when X feeds exactly one step Y, so the agent sits between them and its
+ * answer still reaches Y.
+ */
+export function placedAsAsked(ops: unknown, message: string, nodeNames: string[], next: (name: string) => string[] = () => []): { ops: unknown; notes: string[] } {
+  if (!Array.isArray(ops)) return { ops, notes: [] };
+  const whole = message.toLowerCase();
+  const quote = `["“”'‘’]?`;
+  const said = (text: string, word: 'after' | 'before', name: string) => new RegExp(`\\b${word}\\s+(?:the\\s+)?(?:(?:step|node)\\s+)?${quote}${escapeRegExp(name.toLowerCase())}${quote}(?![\\w-])`).test(text);
+  const names = [...nodeNames].sort((a, b) => b.length - a.length);
+  const clauses = whole.split(/[.;,!?\n]|\balso\b|\bthen\b|\band\b(?=\s+(?:put|add|place|insert|make)\b)/);
+  const notes: string[] = [];
+  const out = ops.map((op) => {
+    const o = op as Record<string, unknown>;
+    if (!o || !(o.op === 'newAgent' || (o.op === 'addNode' && o.newAgent))) return op;
+    const hasBefore = typeof o.before === 'string';
+    const afterOnly = typeof o.after === 'string' && o.before === undefined;
+    if (!hasBefore && !afterOnly) return op;
+    if (o.output !== undefined) return op; // an output of the step it follows was chosen: that is a placement of its own
+    if (hasBefore && o.after !== undefined) return op;
+    if (hasBefore && said(whole, 'before', o.before as string)) return op;
+    const mine = [o.name, o.ref].filter((h): h is string => typeof h === 'string' && !!h.trim()).map((h) => h.toLowerCase());
+    const named = clauses.filter((c) => /\bagents?\b/.test(c) || mine.some((h) => new RegExp(`(?<![\\w-])${escapeRegExp(h)}(?![\\w-])`).test(c)));
+    const after = names.find((n) => named.some((c) => said(c, 'after', n)));
+    if (!after) return op;
+    if (afterOnly) {
+      // The model wrote `after: X` alone: the agent would hang off X as a dead-end branch. Put it in front of the one step X feeds.
+      if (o.after !== after) return op;
+      const feeds = next(after);
+      // A step already placed after the agent (a connect from it, or an addNode after it) is where its answer goes.
+      const onward = ops.some((x) => {
+        const y = x as Record<string, unknown> | null;
+        if (x === op || !y || typeof y !== 'object') return false;
+        return (y.op === 'connect' && mine.includes(String(y.from ?? '').toLowerCase())) || (y.op === 'addNode' && mine.includes(String(y.after ?? '').toLowerCase()));
+      });
+      if (feeds.length !== 1 || onward) return op;
+      notes.push(`placed “${String(o.name ?? 'the agent')}” between “${after}” and “${feeds[0]}”, as asked`);
+      return { ...o, before: feeds[0] };
+    }
+    const feeds = next(after);
+    if (feeds.includes(o.before as string)) return op; // already after it: `before` keeps the agent between the two
+    const { before: _before, ...rest } = o;
+    notes.push(`placed “${String(o.name ?? 'the agent')}” after “${after}”, as asked`);
+    return { ...rest, after, ...(feeds.length === 1 && { before: feeds[0] }) };
+  });
+  return { ops: out, notes };
 }
 
 /** An id-like token in prose: a capital, then 8 or more capitals, digits, `_` or `-`, with a digit among them (C057L43652P). */
@@ -332,7 +524,7 @@ export function withoutRepeats(text: string, earlier: string): string {
 }
 
 /** A reply that says only the person can fix it: a credential, an account, a key, an id. */
-export const PERSON_ONLY = /\b(credential|api key|access token|sign in|log in|permission)s?\b/i;
+export const PERSON_ONLY = /\b(credential|api key|access token|sign in|log in|permission|blocked by (?:this|the) host|blocked by (?:this|the) outbound policy|outbound|not allowed to reach)s?\b/i; // SB03: the host's outbound policy, in its words (a bare "blocked" is also what a stuck step is)
 
 /** The model saying what it is about to do or what it looked at, before the answer. */
 const NARRATION = /^(?:let me|let's|i'll|i will|i need to|i'm going to|now i|now,? let|first,|next,|looking at|based on|i can see|i see that|to fix this|the user (?:wants|needs|asked))\b/i;
@@ -375,6 +567,14 @@ export function wastedFix(ops: AssistantOp[], workflow: Workflow, failingId: str
     return refs.some((ref) => typeof ref === 'string' && near.has(byRef(ref)?.id ?? ''));
   });
   return touches ? undefined : `the run failed at “${failing.name}”, and this change touches neither it nor what feeds it.`;
+}
+
+/**
+ * SB03: why a session's fix would drop a step the request names or change a URL, address, channel or id the person
+ * gave, or `undefined`. `given` is what the person wrote; only they can change those.
+ */
+export function givenValuesKept(ops: AssistantOp[], workflow: Workflow, given: string): string | undefined {
+  return givenKept(ops, workflow.nodes, given);
 }
 
 export const APPLY_REQUEST = /\bclick (?:on )?(?:the )?["“]?apply\b|\bapply (?:this|that|the|these|those|my)(?: \w+)? (?:change|fix|proposal)e?s?\b|\b(?:run|test) (?:the workflow|it) again\b/i;

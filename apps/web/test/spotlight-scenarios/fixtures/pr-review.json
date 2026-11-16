@@ -1,0 +1,44 @@
+{
+  "id": "wf_pr_review",
+  "name": "PR review",
+  "nodes": [
+    {
+      "id": "n_t",
+      "name": "Start",
+      "type": "core.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "n_pr",
+      "name": "Sample PR",
+      "type": "core.set",
+      "typeVersion": 1,
+      "position": [
+        280,
+        0
+      ],
+      "parameters": {
+        "mode": "json",
+        "json": "{\"repo\":\"acme/shop\",\"number\":412,\"title\":\"Add retry to checkout client\",\"diff\":\"+ for (let i = 0; i < 99; i++) { try { await pay(); break; } catch (e) {} }\"}",
+        "includeOtherFields": false
+      }
+    }
+  ],
+  "pinData": {},
+  "settings": {},
+  "connections": [
+    {
+      "id": "c1",
+      "type": "main",
+      "source": "n_t",
+      "sourceIndex": 0,
+      "target": "n_pr",
+      "targetIndex": 0
+    }
+  ]
+}

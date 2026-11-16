@@ -2303,3 +2303,58 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
 - **Left (deferred)**: model verdicts in the CLI's `check` (a model's verdict reaches a flow through Check Practices, PR08;
   the CLI runs machine checks only) and a reminder after `Write` or `Edit` on a matching path (the mod never denies a
   tool call, so a reminder hook is its own package).
+
+## Spotlight wave sb1
+
+- **SB00, the scenario suite, built:** the evaluation's builds, one-step fixes and agent asks are scenarios in the
+  repo (`apps/web/test/spotlight-scenarios/sb00.ts`), each with a scripted form that always runs and a live form on
+  the local model (`LANDFLOW_INTEGRATION=spotlight`) that prints the Build, Fix one step and Agents scorecards and
+  writes them as JSON, so a package's fix has a before and an after
+  ([development.md](development.md#spotlight-scorecard)). A guard, `local-only.cjs`, makes any connection to anything
+  but this machine fail, for the suite and for a live host (`NODE_OPTIONS`). Not built: the browser scorecard (each
+  package checks its own screens) and the agents' guardrails, eval cases and test-run columns of the evaluation (the
+  scenario outcome carries no such fields yet).
+- **SB01, the first draft fills its collections, built:** the first draft asks Ollama for `format: "json"` with the
+  schema in the system prompt (a schema-held reply left every list empty: 9 of 9 drafts), parses the reply with a
+  schema (one send-back, then the error), checks the draft for empty lists (`emptyParts`) and sends it back once with
+  a line for each, keeps what is still empty as `FlowDraft.left`, maps a near-miss step type to the one it can mean,
+  and pins test items on an app trigger or on the app step that reads data after a schedule. Not built: the staged
+  build (wave sb3).
+- **SB02, the first draft is guarded, built:** a first draft is guarded as the chat guards a proposal: made-up
+  channels, tables, owners, addresses, ids and URL hosts are cleared and listed, one trigger, no empty Set,
+  credentials listed, and the build applies the workflow's allowed node types ([The empty
+  canvas](assistant.md#spotlight)). The chat's made-up values guard widened to destinations and URL hosts. Left: the
+  credential picker (SB12) and the full build summary (SB15).
+- **SB03, a test session cannot wreck a flow, built:** a run blocked by the host's outbound policy is **Needs you**
+  (no fix); the yes to sending is per destination and asked before every run (**Run it for real**, **Undo that
+  change**); a fix may not remove a step the person asked for or change a value they gave (client and chat route); a
+  pass after a fix is reviewed again before **Ready for production**, and not at all after steps were removed;
+  asks-first workflows, and a new draft's fixes that remove a step, wait for **Apply**
+  ([assistant.md](assistant.md#test-and-fix)).
+- **SB04, a question is answered and autonomy only on a brand-new draft, built (2026-11-16):** Finding 2.1 (4 of 4
+  "why did the last run fail?" changed the flow) and decision D1: `askKind` decides question or change once, the chat
+  offers no `propose_changes` for a question and the editor applies nothing for it, with a **Fix it** bubble after the
+  answer; Spotlight acts alone only while it builds a brand-new draft (`spotlight-autonomy.ts`), a saved or published
+  workflow shows the card and waits for Apply, and a removal waits for a click even on a new draft (finding 3.4's own
+  confirm). Docs: [assistant.md](assistant.md#autonomous-mode). Left: the scope of a change and `ask_user` (sb2), a
+  real diff on the card (sb2).
+- **SB05, a new agent survives a send-back, built:** Spotlight's `newAgent` keeps its name unrecorded until its
+  proposal is held, so a proposal sent back to be completed is no longer dropped as a stand-in of itself (findings
+  3.2); it carries `tools` and `knowledge` to the Agent architect; "after <step>" places it after the step (3.5); an
+  Ollama tool-call parse error is retried once (3.9). Wave sb3 SB16 builds on these hints.
+- **SB06, the Agent architect on a local model, built:** the dialog offers the flat `propose_design` (with the persona
+  fields as plain strings) on an Ollama model, and a parse error is retried with it
+  ([agents.md](agents.md#agent-architect)).
+- **Live checks (run before the merge, production profile, Ollama qwen3-coder:30b, headed Chrome, under
+  `local-only.cjs`, nothing refused):** the httpbin incident replayed: without `LANDFLOW_OUTBOUND_ALLOW` the test stops
+  at "Needs you · This host blocks …", both HTTP steps keep their local addresses, nothing is sent and there is no
+  "Ready for production"; with the allow list a saved flow asks first, a fix waits as a card and Apply runs again (1500
+  to /vip, 500 to /standard). "Why did the last run fail?" is answered with no change and a Fix it bubble 3 of 3. First
+  drafts fill their collections 3 of 3 for every build (the evaluation had 0 of 9), B4 runs right 3 of 3, and the
+  Linear/Slack draft clears the made-up channel and lists it with both credentials. The Agent architect drafts 6 of 6
+  on the local model (0 of 7 before). Left for wave sb2: a new agent's placement and tools (placed right 1 of 3, the
+  Linear tool kept 0 of 3), the 401 fix touching only the asked step (1 of 3 on the scorecard), a suggestion chip that
+  offers an outside address after a host block, the live form of the session scenarios, and "Test and fix" after a
+  reload.
+- **Owed to a person:** the asks-first wording and the **Needs you** rows on a real phone, and whether "saved" should
+  end autonomy at the first autosave rather than at the next open (decision D1 reads it at the next open).

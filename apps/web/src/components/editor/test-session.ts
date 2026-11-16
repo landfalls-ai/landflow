@@ -13,18 +13,115 @@
 import { nanoid } from 'nanoid';
 import { toast } from 'sonner';
 import { opsTitle } from '@/lib/shared/assistant-ops';
-import { checkRun, hollowSteps, multipliedSteps, needsPerson, sameFailure, sendingSteps, type CheckedRun, type RunVerdict } from '@/lib/shared/run-check';
+import { checkRun, destinationsOf, givenKept, hollowSteps, hostOf, multipliedSteps, needsPerson, isUnreadHost, NO_ADDRESS, sameFailure, type CheckedRun, type RunVerdict } from '@/lib/shared/run-check';
 import { applyChanges, fixedNodes, ownRun, runDigests, undos, useAssistant, type Need, type Outcome, type ReplyPart } from './assistant';
 import { nextRound } from './timeline';
 import { agentsSettled } from './new-agent';
 import { publishVersion, toastApprovalRequested } from './publish-control';
+import { autonomyOf, needsAClick, notePublished, type Autonomy } from './spotlight-autonomy'; // SB03:
 import { useEditor } from './store';
 import { useTestListener } from './test-listener';
 
 export const MAX_FIXES = 4;
 
-/** Workflows whose test runs may send for real, as the person said in this page's life (the `sends` row). */
-export const sendsAllowed = new Set<string>();
+/**
+ * SB03: the destinations each workflow's test runs may send to for real, as the person said in this page's life (the
+ * `sends` and `destination` rows): workflow id → destinations. A new destination asks again.
+ */
+export const sendsAllowed = new Map<string, Set<string>>();
+
+/**
+ * A yes for an expression destination holds for the one run that follows, and for the steps as the row showed them: each
+ * key is the workflow, the step's id and its URL text, so a changed expression, or a step deleted and added back under the
+ * same name, asks again.
+ */
+const approvedOnce = new Set<string>();
+
+interface Sending {
+  node: string;
+  destination: string;
+  /** The once-yes key of this step with this URL. */
+  key: string;
+}
+
+/** The enabled steps that would send for real, each with its own destination. */
+function sendingNow(): Sending[] {
+  const { nodes, workflowId } = useEditor.getState();
+  const live = nodes.filter((n) => !n.data.wf.disabled);
+  return destinationsOf(live.map((n) => ({ name: n.data.wf.name, type: n.data.wf.type, parameters: n.data.wf.parameters }))).map((d) => {
+    const step = live.find((n) => n.data.wf.name === d.node);
+    return { ...d, key: `${workflowId} ${step?.id ?? d.node} ${JSON.stringify(step?.data.wf.parameters.url ?? '')}` };
+  });
+}
+
+/**
+ * Record the person's yes for these destinations of a workflow. An expression destination ("{{ … }}") is never kept: the
+ * `once` keys the row listed cover the run that follows, and it asks again before the next one (contracts/sb1/needs-you.md).
+ */
+export function approveDestinations(workflowId: string, destinations: string[], once: readonly string[] = []): void {
+  const set = sendsAllowed.get(workflowId) ?? new Set<string>();
+  for (const destination of destinations) if (!isUnreadHost(destination) && destination !== NO_ADDRESS) set.add(destination);
+  for (const key of once) approvedOnce.add(key);
+  sendsAllowed.set(workflowId, set);
+}
+
+/** The enabled steps that would send for real, grouped by what the person has not said yes to yet. */
+function unapproved(): Sending[] {
+  const allowed = sendsAllowed.get(useEditor.getState().workflowId);
+  return sendingNow().filter((d) => !allowed?.has(d.destination) && !approvedOnce.has(d.key));
+}
+
+const quoted = (names: string[]) => names.slice(0, 2).map((n) => `“${n}”`).join(' and ') + (names.length > 2 ? ` and ${names.length - 2} more` : '');
+const listed = (items: string[]) => items.slice(0, 2).join(' and ') + (items.length > 2 ? ` and ${items.length - 2} more` : '');
+
+/**
+ * Before a run: a step that would send for real to a destination the person has not said yes to. The first run of a
+ * session asks as `sends`; a later one, or a destination a fix brought in, as `destination` (with the fix to undo).
+ */
+function destinationNeed(goal: string | undefined, first: boolean, fix?: { item: string; proposals: string[] }): Need | undefined {
+  const open = unapproved();
+  if (!open.length) return undefined;
+  // A step with no address yet is not a destination to say yes to: the person fills it in, before any run.
+  const empty = [...new Set(open.filter((d) => d.destination === NO_ADDRESS).map((d) => d.node))];
+  if (empty.length) return { what: 'address', node: empty[0], text: `${quoted(empty)} ${empty.length === 1 ? 'sends' : 'send'} to ${NO_ADDRESS}: open ${empty.length === 1 ? 'the step' : 'it'} and fill it in.`, ...(goal && { goal }) };
+  // With anything still open, the row names every expression destination, the ones said yes to before too: one yes then
+  // covers them all as they are now (a yes is for one run, so asking about only the new one would leave the rest asking).
+  const rows = sendingNow().filter((d) => isUnreadHost(d.destination) || open.some((o) => o.key === d.key && o.node === d.node));
+  const nodes = [...new Set(rows.map((d) => d.node))];
+  const destinations = [...new Set(rows.map((d) => d.destination))];
+  const once = rows.filter((d) => isUnreadHost(d.destination)).map((d) => d.key);
+  return first
+    ? { what: 'sends', node: nodes[0], nodes, once, destinations, text: `A test runs ${quoted(nodes)} for real: ${nodes.length === 1 ? 'it sends' : 'they send'} to ${listed(destinations)}.`, ...(goal && { goal }) }
+    : { what: 'destination', node: nodes[0], nodes, once, destinations, text: `${quoted(nodes)} now ${nodes.length === 1 ? 'sends' : 'send'} to ${listed(destinations)}, which you haven't approved.`, ...(fix && { fix }), ...(goal && { goal }) };
+}
+
+/** Take back what a fix applied (newest first; proposals of one apply share one undo, which runs once). */
+export function undoApplied(fix: { item: string; proposals: string[] }): void {
+  const done = new Set<() => void>();
+  for (const id of [...fix.proposals].reverse()) {
+    const undo = undos.get(id);
+    if (undo && !done.has(undo)) (done.add(undo), undo());
+    undos.delete(id);
+    useAssistant.getState().setProposalState(fix.item, id, 'undone');
+  }
+}
+
+/** SB03: true once `done()` holds for the conversation (a card's Apply or Dismiss); false when the session stops. */
+function untilAssistant(done: () => boolean, signal: AbortSignal): Promise<boolean> {
+  if (done()) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const finish = (value: boolean) => {
+      unsubscribe();
+      signal.removeEventListener('abort', onAbort);
+      resolve(value);
+    };
+    const onAbort = () => finish(false);
+    const unsubscribe = useAssistant.subscribe(() => {
+      if (done()) finish(true);
+    });
+    signal.addEventListener('abort', onAbort);
+  });
+}
 
 /** True once `done()` holds for the editor; false after `ms` (no limit by default) or when the session stops. */
 function until(done: () => boolean, signal: AbortSignal, ms?: number): Promise<boolean> {
@@ -76,7 +173,7 @@ function runError(): string | undefined {
 
 /** What the person has to do before a test can go on, or nothing. Checked before each session's first run. */
 function beforeTesting(goal: string | undefined): Need | undefined {
-  const { nodes, nodeTypes, workflowId } = useEditor.getState();
+  const { nodes, nodeTypes } = useEditor.getState();
   if (!nodes.some((n) => nodeTypes[n.data.wf.type]?.descriptor.kind === 'trigger')) {
     return { what: 'trigger', text: 'Nothing starts this flow yet.', ...(goal && { goal }) };
   }
@@ -84,13 +181,14 @@ function beforeTesting(goal: string | undefined): Need | undefined {
   if (agent && !useAssistant.getState().agents.some((a) => a.nodeId === agent.id)) {
     return { what: 'agent', node: agent.data.wf.name, text: `“${agent.data.wf.name}” has no ${agent.data.wf.type === 'core.runTeam' ? 'team' : 'agent'} picked.`, ...(goal && { goal }) };
   }
-  if (sendsAllowed.has(workflowId)) return undefined;
-  const sending = sendingSteps(nodes.filter((n) => !n.data.wf.disabled).map((n) => ({ name: n.data.wf.name, type: n.data.wf.type, parameters: n.data.wf.parameters })));
-  if (sending.length) {
-    const named = sending.slice(0, 2).map((n) => `“${n}”`).join(' and ') + (sending.length > 2 ? ` and ${sending.length - 2} more` : '');
-    return { what: 'sends', node: sending[0], text: `A test runs ${named} for real: ${sending.length === 1 ? 'it sends or changes' : 'they send or change'} things outside the flow.`, ...(goal && { goal }) };
-  }
-  return undefined;
+  return destinationNeed(goal, true); // SB03: per destination, not per workflow
+}
+
+/** Where the blocked step reaches: the host of its URL, else the one the error names. */
+function blockedHost(node: string | undefined, error: string | undefined): string {
+  const step = node ? useEditor.getState().nodes.find((n) => n.data.wf.name === node) : undefined;
+  const fromUrl = step && typeof step.data.wf.parameters.url === 'string' ? hostOf(step.data.wf.parameters.url) : undefined;
+  return fromUrl && !isUnreadHost(fromUrl) && fromUrl !== NO_ADDRESS ? fromUrl : (/Blocked: (\S+)/.exec(error ?? '')?.[1] ?? 'that address');
 }
 
 /** A failed run only the person can fix, as a row with the button that does it. */
@@ -98,14 +196,17 @@ function personNeed(result: RunVerdict, error: string | undefined, goal: string 
   const what = needsPerson(error);
   if (!what) return undefined;
   const node = result.node;
+  const step = node ?? 'a step';
   const text =
-    what === 'trigger'
+    what === 'blocked'
+      ? `This host blocks “${step}” from reaching ${blockedHost(node, error)}. An admin can allow it (LANDFLOW_OUTBOUND_ALLOW), or change the address yourself.`
+      : what === 'trigger'
       ? 'Nothing starts this flow yet.'
       : what === 'agent'
-        ? `“${node}” has no agent picked.`
+        ? `“${step}” has no agent picked.`
         : /credential/i.test(error ?? '')
-          ? `“${node}” needs ${/No (.+?) credential selected/i.exec(error ?? '')?.[1] ? `a ${/No (.+?) credential selected/i.exec(error ?? '')?.[1]} credential` : 'a credential'} picked.`
-          : `“${node}” was refused by the app (${error}): its credential is missing or wrong.`;
+          ? `“${step}” needs ${/No (.+?) credential selected/i.exec(error ?? '')?.[1] ? `a ${/No (.+?) credential selected/i.exec(error ?? '')?.[1]} credential` : 'a credential'} picked.`
+          : `“${step}” was refused by the app (${error}): its credential is missing or wrong.`;
   return { what, text, ...(node && { node }), ...(goal && { goal }) };
 }
 
@@ -121,6 +222,7 @@ function weakSteps(): Array<{ node: string; problem: string }> {
 /** Run the workflow once and judge it; `stopped` when the session can't go on. */
 async function runOnce(signal: AbortSignal): Promise<RunVerdict | { stopped: string }> {
   await until(() => !useEditor.getState().running, signal);
+  if (signal.aborted) return { stopped: 'Stopped.' };
   const { run } = useEditor.getState();
   if (!run) return { stopped: 'The editor can’t run the workflow right now.' };
   // This run is Spotlight's: its end is a row of the timeline, even once the session is over (no toast).
@@ -180,7 +282,7 @@ const setRun = (itemId: string, run: Extract<ReplyPart, { kind: 'run' }>['run'])
  * with the goal and fixes what doesn't match.
  */
 /** `publishAgents`: an agent a fix creates is published so the next run can use it (autonomous mode, ./autonomous.ts). */
-export async function testUntilItRuns(goal?: string, options: { publishAgents?: boolean } = {}): Promise<void> {
+export async function testUntilItRuns(goal?: string, options: { publishAgents?: boolean; autonomy?: Autonomy } = {}): Promise<void> {
   if (useAssistant.getState().pending || useAssistant.getState().testing) return;
   const abort = new AbortController();
   const { signal } = abort;
@@ -194,7 +296,12 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
       return;
     }
     let fixes = 0;
-    let reviewed = false;
+    // SB03: the fixes applied when the last review was asked; a pass is reviewed again after any fix since.
+    let reviewedAt: number | undefined;
+    /** SB03: what Spotlight may do alone, and the steps the flow had when the session started. */
+    const autonomy = options.autonomy ?? autonomyOf(useEditor.getState().workflowId);
+    const startNodes = useEditor.getState().nodes.map((n) => ({ id: n.id, name: n.data.wf.name, enabled: n.data.wf.disabled !== true }));
+    let ran = false;
     /** The last failure, to tell a fix that changed nothing. */
     let lastFailure: string | undefined;
     /** What was applied so far: the assistant gets no history, so it hears what didn't help. */
@@ -208,8 +315,20 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
     for (let round = nextRound(useAssistant.getState().items); !signal.aborted; round++) {
       // An agent Spotlight is still designing (./new-agent.ts): the run needs it saved and pointed at first.
       await agentsSettled();
+      if (signal.aborted) return; // stopped while an agent was being designed: no run
+      // SB03: before every real run, the first too (the wait above can change a URL): a destination the person never said yes to stops the session.
+      {
+        const last = ran ? lastApplied.at(-1) : undefined;
+        const need = destinationNeed(goal, false, last && { item: last.item, proposals: last.proposals });
+        if (need) {
+          ask(need);
+          return;
+        }
+      }
+      ran = true;
       const runItem = say([{ kind: 'run', run: { round, state: 'running' } }], testId);
       const result = await runOnce(signal);
+      approvedOnce.clear(); // a yes for an expression destination covered that run only
       if ('stopped' in result) {
         // The run that didn't happen gives way to why.
         useAssistant.setState((s) => ({ items: s.items.filter((item) => item.id !== runItem) }));
@@ -229,12 +348,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         // The same failure after a fix: the fix didn't help. Undo it and stop, rather than spend another.
         if (lastFailure && sameFailure(result.summary) === lastFailure) {
           const last = lastApplied.at(-1);
-          // One apply: its proposals share one undo.
-          if (last) undos.get(last.proposals[0])?.();
-          for (const proposal of last?.proposals ?? []) {
-            undos.delete(proposal);
-            useAssistant.getState().setProposalState(last!.item, proposal, 'undone');
-          }
+          if (last) undoApplied(last);
           lastApplied.pop();
           stop(`The last fix didn’t change the error${result.node ? ` at “${result.node}”` : ''}, so I undid it.`, result.node);
           return;
@@ -245,12 +359,24 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
       const hollow = result.passed ? weakSteps() : [];
       const failed = !result.passed || hollow.length > 0;
       if (hollow.length) setRun(runItem, { round, state: 'failed', summary: `no errors, but ${hollow.map((h) => h.problem).join('; ')}` });
-      // A pass is reviewed against the goal once: a pass after the review's fix is the outcome.
-      if (!failed && (!goal || reviewed || fixes >= MAX_FIXES)) {
+      // SB03: a pass with steps this session removed is never "Ready for production": the outcome names them.
+      // Steps turned off count with the removed ones: a pass that skips them is no pass.
+      const removed = startNodes.filter((n) => {
+        const now = useEditor.getState().nodes.find((m) => m.id === n.id);
+        return !now || (n.enabled && now.data.wf.disabled === true);
+      });
+      if (!failed && removed.length) {
+        const gone = removed.filter((n) => !useEditor.getState().nodes.some((m) => m.id === n.id)).length;
+        const verb = gone === removed.length ? 'removed' : gone === 0 ? 'turned off' : 'removed or turned off';
+        stop(`It runs, but this session ${verb} ${quoted(removed.map((n) => n.name))}, which the flow had before. Undo the fixes to get ${removed.length === 1 ? 'it' : 'them'} back.`, result.node);
+        return;
+      }
+      // SB03: a pass is reviewed against the goal; a pass after any fix since the last review is reviewed once more.
+      if (!failed && (!goal || reviewedAt === fixes)) {
         say([{ kind: 'action', action: 'publish' }]);
         return;
       }
-      if (fixes >= MAX_FIXES) {
+      if (fixes >= MAX_FIXES && failed) {
         stop(`Still failing${result.node ? ` at “${result.node}”` : ''} after ${MAX_FIXES} fixes${result.summary ? `: ${result.summary.replace(/^failed at “[^”]+”:\s*/, '').slice(0, 80)}` : ''}.`, result.node);
         return;
       }
@@ -263,9 +389,9 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         : hollow.length
           ? `Test run ${round} had no errors, but ${hollow.map((h) => h.problem).join('; ')}.${asked} Fix it.${before}`
           : `Test run ${round} had no errors: ${result.summary}.${outputOf(result.node)} Does that do what I asked for: “${goal}”? Check each part of what I asked against it. If not, fix it; if it does, start your reply with "Yes," and say so in one sentence.${before}`;
-      if (!failed) reviewed = true;
+      if (!failed) reviewedAt = fixes; // SB03:
       useAssistant.setState({ fixing: failed ? nodeId : undefined });
-      await useAssistant.getState().send(request, { auto: true, fresh: true, session: failed ? 'fix' : 'review', withoutSelection: true, testId, ...(nodeId && { nodeId }) });
+      await useAssistant.getState().send(request, { auto: true, fresh: true, session: failed ? 'fix' : 'review', autonomy, withoutSelection: true, testId, ...(nodeId && { nodeId }) });
       useAssistant.setState({ fixing: undefined });
       if (signal.aborted) return;
       const reply = useAssistant.getState().items.at(-1);
@@ -283,6 +409,52 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         // The reply above already says why.
         else stop(`I found no fix for “${result.node ?? 'this step'}”. Tell me what it should do, or open it.`, at);
         return;
+      }
+      // SB03: a fix never drops a step the person asked for or changes a value they gave: it is kept from it.
+      const kept = givenKept(
+        proposals.flatMap((p) => p.ops),
+        useEditor.getState().nodes.map((n) => ({ id: n.id, name: n.data.wf.name, parameters: n.data.wf.parameters })),
+        [goal, useEditor.getState().description, ...useAssistant.getState().items.flatMap((i) => (i.role === 'user' && !i.auto ? [i.text] : []))].filter(Boolean).join('\n'),
+      );
+      if (kept) {
+        for (const proposal of proposals) useAssistant.getState().setProposalState(reply.id, proposal.id, 'dismissed');
+        stop(`${kept[0].toUpperCase()}${kept.slice(1)} I kept it.`, at);
+        return;
+      }
+      if (fixes >= MAX_FIXES) {
+        for (const proposal of proposals) useAssistant.getState().setProposalState(reply.id, proposal.id, 'dismissed');
+        stop('It runs, but doesn’t do all you asked yet, and I am out of fixes: tell me what to change.', result.node);
+        return;
+      }
+      // SB03 (D1): asks-first, and a change that removes a step even under auto, waits for the person's Apply.
+      const graph = { nodes: useEditor.getState().nodes.map((n) => ({ id: n.id, name: n.data.wf.name })), connections: useEditor.getState().edges.map((e) => ({ source: e.source, target: e.target, type: e.data?.connectionType })) };
+      const reasons = autonomy === 'auto' ? needsAClick(proposals.flatMap((p) => p.ops), graph) : [];
+      if (autonomy === 'asks-first' || reasons.length) {
+        if (reasons.length) {
+          const note = `Waits for you: ${reasons.join(', ')}`;
+          useAssistant.getState().updateParts(reply.id, (parts) => parts.map((p) => (p.kind === 'proposal' && !p.proposal.state ? { ...p, proposal: { ...p.proposal, warnings: [...p.proposal.warnings, note] } } : p)));
+        }
+        const decided = () => {
+          const item = useAssistant.getState().items.find((i) => i.id === reply.id);
+          return item?.role === 'assistant' && proposals.every((p) => item.parts.some((x) => x.kind === 'proposal' && x.proposal.id === p.id && x.proposal.state));
+        };
+        await untilAssistant(decided, signal);
+        if (signal.aborted) {
+          // New conversation, another workflow: the reply is gone, and so is the session's place to speak.
+          if (useAssistant.getState().items.some((i) => i.id === reply.id)) stop('You stopped before the change was applied.', at);
+          return;
+        }
+        const item = useAssistant.getState().items.find((i) => i.id === reply.id);
+        const taken = proposals.filter((p) => item?.role === 'assistant' && item.parts.some((x) => x.kind === 'proposal' && x.proposal.id === p.id && x.proposal.state === 'applied'));
+        if (!taken.length) {
+          stop('You kept the flow as it was.', at);
+          return;
+        }
+        lastApplied.push({ item: reply.id, proposals: taken.map((p) => p.id) });
+        for (const proposal of taken) useAssistant.getState().noteFix(fixedNodes(proposal.ops, nodeId), opsTitle(proposal.ops));
+        tried.push(...taken.map((p) => p.summary));
+        fixes++;
+        continue;
       }
       const label = proposals.length === 1 ? `Spotlight applied “${proposals[0].summary}”` : `Spotlight applied ${proposals.length} fixes`;
       let skipped = 0;
@@ -312,6 +484,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
     // A bug must not end a session in silence.
     if (!signal.aborted) say([{ kind: 'text', text: `Testing stopped: ${(e as Error).message}` }]);
   } finally {
+    approvedOnce.clear(); // a yes covers the run that follows it, not a later session
     // Over: the conversation comes back from the side with the outcome.
     if (useAssistant.getState().testing === abort) useAssistant.setState({ testing: undefined, testingId: undefined, fixing: undefined });
   }
@@ -332,6 +505,7 @@ export async function publishToProduction(): Promise<boolean> {
   if (dirty && !(await save?.())) return false;
   try {
     const result = await publishVersion(workflowId);
+    notePublished(workflowId); // SB03: a published workflow is asks-first from here (an approval request counts)
     if (result.approvalRequired) toastApprovalRequested(result);
     else toast.success(`Published version ${result.published?.versionNumber ?? ''}`.trim(), { description: 'Production triggers run this version now' });
     return true;

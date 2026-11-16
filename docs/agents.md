@@ -61,6 +61,16 @@ call (those starting with **When Called by a Workflow or Agent**), the other age
 never values) and the persona templates. Then it proposes the whole agent (`propose_agent`); asking for a change sends
 the whole agent again, built on the draft so far.
 
+On a local (Ollama) model the architect proposes with the flat `propose_design` instead: the same agent with every
+value as plain text (name, audience, mission, Always and Never one rule per line, answer length `short`, `medium` or
+`long` (a sentence, a paragraph, detailed), node, workflow and agent tool ids comma-separated), because the nested
+arrays of `propose_agent` do not get through Ollama's tool-call parser (qwen3-coder's XML call fails with "XML syntax
+error"). The draft, its checks and the way you change it are the same. When any model's tool call cannot be parsed,
+the architect asks once more offering `propose_design` in place of `propose_agent`. A cloud or gateway model keeps
+`propose_agent`. A tool call counts as unparsable by the rule of Spotlight's chat: its message or detail says "XML
+syntax error" or "unexpected end", or it is a bare "Ollama error 500"; an out-of-memory 500 and a usage cap are not
+retried. A draft with no summary is shown as "Draft: <name>", and "none" for the rules is no rule.
+
 The chat is on the chat kit ([assistant.md](assistant.md#chat-surfaces)): the tools it used are one line ("6 steps ·
 24.8 s") that opens into each step with its time, a footer under the reply gives the model, time, steps, tokens and
 cost, and a model chip sits in the box. It **keeps its conversation** with the others
@@ -110,6 +120,9 @@ text: qwen3-coder writes tool calls as XML, and Ollama's parser fails on `propos
 (*XML syntax error … unexpected EOF*). If that proposes nothing, the architect gets the full conversation with its
 tools. If neither does, the agent is what Spotlight gave, on the first model. The draft keeps Spotlight's name, gets a
 face, and is saved in your project; tool-call markup a model leaks into a value (`<parameter=0>`) is dropped.
+Spotlight's request also carries the apps the agent needs (`tools`, "It needs: Linear: read issues.") and the documents
+it answers from (`knowledge`, which asks for a knowledge base, or for a mention of none that fits); the brief puts the
+node types matching the tool hints first.
 
 The avatar, colour and team you change in the dialog stay through later drafts. **Create agent** makes a draft agent
 from it (`POST /api/agents/import`); finish the open items on its page. The architect never creates or

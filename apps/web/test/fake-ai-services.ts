@@ -22,6 +22,8 @@ export interface FakeReply {
   usage?: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
   /** Ollama /api/chat without streaming: wait this long before answering (a slow model). */
   delayMs?: number;
+  /** Answer with this status and body instead (a model server's error, e.g. Ollama's 500 for a tool call it can't parse). */
+  error?: { status: number; body: string };
 }
 
 type Provider = 'openai' | 'ollama' | 'anthropic';
@@ -72,6 +74,11 @@ export async function startFakeModels(options: { reply?: (provider: Provider, bo
     requests.push({ method: req.method ?? 'GET', path, headers: req.headers, body });
     const provider: Provider = path === '/api/chat' ? 'ollama' : path === '/v1/messages' ? 'anthropic' : 'openai';
     const reply = options.reply?.(provider, body) ?? defaultReply(provider, body);
+    if (reply.error) {
+      res.writeHead(reply.error.status, { 'content-type': 'application/json' });
+      res.end(reply.error.body);
+      return;
+    }
     const text = reply.text ?? '';
     const usage = reply.usage ?? { input: 12, output: 8 };
 

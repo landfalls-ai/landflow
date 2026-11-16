@@ -163,6 +163,8 @@ export interface PanelState {
   drafting: boolean;
   testing: boolean;
   pending: boolean;
+  /** A session waits for the person's Apply (or Dismiss) on a fix: no work is going on. */
+  waitingForApply?: boolean;
   /** The node a fix is being asked for. */
   fixingName?: string;
   /** Agents being designed right now. */
@@ -170,20 +172,34 @@ export interface PanelState {
   /** The last run's state, once a session is over. */
   lastRun?: 'passed' | 'failed';
   /** What the person has to do before Spotlight goes on (a credential, a trigger, a yes to sending). */
-  needs?: 'credential' | 'agent' | 'trigger' | 'sends';
+  needs?: 'credential' | 'agent' | 'trigger' | 'sends' | 'destination' | 'blocked' | 'address'; // SB03:
   /** The node the last session stopped at. */
   stoppedAt?: string;
   /** Anything in the conversation yet. */
   hasItems: boolean;
 }
 
+/** Whether the running session waits for the person's Apply: a card of a reply it asked for is open. Another open card (an autonomous change held for a click) is not its wait. */
+export function sessionWaitsForApply(items: ChatItem[], testingId: string | undefined): boolean {
+  return Boolean(testingId) && items.some((item) => item.role === 'assistant' && item.testId === testingId && item.parts.some((p) => p.kind === 'proposal' && !p.proposal.state));
+}
+
+/**
+ * The session is waiting for the person (the title says "apply the fix?"): a session is running, its reply is not still
+ * streaming (under auto its proposals arrive before the session applies them itself), and a card of its own is open.
+ */
+export function sessionIsWaiting(state: { testing: boolean; pending: boolean }, items: ChatItem[], testingId: string | undefined): boolean {
+  return state.testing && !state.pending && sessionWaitsForApply(items, testingId);
+}
+
 /** The panel's header: what Spotlight is doing, or how the last session ended. */
 export function titleOf(state: PanelState): string {
   if (state.drafting) return 'Drafting the flow';
   if (state.designing) return `Designing “${state.designing}”`;
+  if (state.testing && state.waitingForApply) return 'Needs you: apply the fix?';
   if (state.testing) return state.fixingName ? `Fixing “${state.fixingName}”` : 'Testing the flow';
   if (state.pending) return 'Working on it';
-  if (state.needs) return `Needs you: ${{ credential: 'pick a credential', agent: 'pick an agent', trigger: 'add a trigger', sends: 'OK to send?' }[state.needs]}`;
+  if (state.needs) return `Needs you: ${{ credential: 'pick a credential', agent: 'pick an agent', trigger: 'add a trigger', sends: 'OK to send?', destination: 'OK to send there?', blocked: 'blocked by this host', address: 'fill in an address' }[state.needs]}`;
   if (state.lastRun === 'passed') return 'Passed';
   if (state.lastRun === 'failed') return state.stoppedAt ? `Stopped at “${state.stoppedAt}”` : 'Stopped';
   return state.hasItems ? 'Spotlight' : 'Ask Spotlight';
