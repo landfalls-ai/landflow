@@ -132,17 +132,22 @@ function mentionsHost(text: string, host: string): boolean {
  * The host a URL with expressions in it names in its literal start ("https://x.com/users/{{ $json.id }}" → "x.com"); undefined
  * when the value is a whole expression or the host itself is one (the literal part ends before the host does).
  */
-function literalHostOf(value: string): string | undefined {
+function literalHostOf(raw: string): string | undefined {
+  const value = raw.replace(/^\s*=/, ''); // an n8n-style expression: "=https://…"
   const at = value.indexOf('{{');
   const prefix = value.slice(0, at);
   if (prefix.includes('\\')) return UNREADABLE;
   const rest = prefix.replace(/^\s*[a-z][a-z0-9+.-]*:\/\//i, '');
   const authority = /^[^/?#]*/.exec(rest)![0];
-  if (!authority) return undefined; // the whole host is an expression
   const hostOfAuthority = (text: string) => {
     const parsed = urlHost(text);
     return parsed === 'unreadable' ? UNREADABLE : parsed?.hostname;
   };
+  // An expression in the user name ("{{ user }}@evil.com", "user:{{ pw }}@evil.com"): the host is what follows the last "@".
+  const whole = /^[^/?#]*/.exec(value.replace(/^\s*[a-z][a-z0-9+.-]*:\/\//i, ''))![0];
+  const lastAt = whole.lastIndexOf('@');
+  if (lastAt >= 0 && !whole.slice(lastAt + 1).includes('{{')) return hostOfAuthority(whole.slice(lastAt + 1));
+  if (!authority) return undefined; // the whole host is an expression
   // A "/", "?" or "#" ended the authority before the expression: the host is all literal.
   if (authority.length < rest.length) return hostOfAuthority(authority);
   // The expression sits inside the authority. Part of the userinfo ("user:{{ pw }}@host", "{{ user }}@host"): the host is

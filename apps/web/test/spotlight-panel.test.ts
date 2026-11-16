@@ -15,7 +15,7 @@ vi.mock('@/components/editor/assistant', async (original) => ({
 const { fixedNodes, ownRun, spotlightOwnsRun, useAssistant } = await import('@/components/editor/assistant');
 const { useEditor } = await import('@/components/editor/store');
 const { afterReply, useAutonomous } = await import('@/components/editor/autonomous');
-const { agentStep, lastRunOf, sessionWaitsForApply, stepsOf, titleOf } = await import('@/components/editor/timeline');
+const { agentStep, lastRunOf, sessionIsWaiting, sessionWaitsForApply, stepsOf, titleOf } = await import('@/components/editor/timeline');
 type ChatItem = import('@/components/editor/assistant').ChatItem;
 
 const session: ChatItem[] = [
@@ -59,6 +59,13 @@ describe('the timeline', () => {
     expect(titleOf({ ...base, fixingName: 'Triage', ...(sessionWaitsForApply([held] as never, 't1') && { waitingForApply: true }) })).toBe('Fixing “Triage”');
     expect(sessionWaitsForApply([held, sessionCard] as never, 't1')).toBe(true);
     expect(sessionWaitsForApply([held, { ...sessionCard, parts: [{ ...sessionCard.parts[0], proposal: { ...sessionCard.parts[0].proposal, state: 'dismissed' } }] }] as never, 't1')).toBe(false);
+  });
+
+  it('a fix reply still streaming is not a wait: the title stays Fixing until the reply is done', () => {
+    const card = { id: 'r1', role: 'assistant' as const, testId: 't1', parts: [{ kind: 'proposal' as const, proposal: { id: 'p1', summary: 'Fix', ops: [], dropped: [], warnings: [] } }] };
+    expect(sessionIsWaiting({ testing: true, pending: true }, [card] as never, 't1')).toBe(false);
+    expect(sessionIsWaiting({ testing: true, pending: false }, [card] as never, 't1')).toBe(true);
+    expect(sessionIsWaiting({ testing: false, pending: false }, [card] as never, 't1')).toBe(false);
   });
 
   it('says what Spotlight is doing in the header', () => {

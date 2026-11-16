@@ -47,6 +47,12 @@ describe('destinationsOf', () => {
     expect(hostOf('https://evil.com{{ $json.path }}')).toBe('evil.com{{ … }}');
     expect(hostOf('/api/x')).toBe('{{ … }}');
     expect(urlHost('/api/x')).toBeUndefined();
+    expect(urlHost('//evil.com/x')).toMatchObject({ hostname: 'evil.com' }); // protocol-relative: a host, not a path
+    expect(hostOf('//evil.com/x')).toBe('evil.com');
+    expect(hostOf('=https://evil.com/{{ $json.id }}')).toBe('evil.com');
+    expect(hostOf('https://{{ $json.u }}@evil.com/x')).toBe('evil.com');
+    expect(hostOf('https://user:{{ $json.pw }}@evil.com/x')).toBe('evil.com');
+    expect(hostOf('https://{{ $json.host }}/x')).toBe('{{ … }}');
     expect(isUnreadHost('evil.com{{ … }}')).toBe(true);
   });
 

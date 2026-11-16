@@ -152,12 +152,20 @@ export const NO_ADDRESS = 'an address not filled in yet';
  */
 export function urlHost(value: string): { host: string; hostname: string } | 'unreadable' | undefined {
   const text = value.trim().replace(/^=/, '');
-  if (!text || text.startsWith('/')) return undefined; // a path: no host
+  if (!text || /^\/(?!\/)/.test(text)) return undefined; // a path: no host ("//host/x" is a protocol-relative URL)
   const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(text);
   if (text.includes('\\')) return 'unreadable';
-  if (/^[^/?#]*\{\{/.test(hasScheme ? text.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '') : text)) return 'unreadable';
+  const afterScheme = hasScheme ? text.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '') : text.replace(/^\/\//, '');
+  const authority = /^[^/?#]*/.exec(afterScheme)![0];
+  let readable = text;
+  if (authority.includes('{{')) {
+    // An expression in the user name ("{{ user }}@evil.com"): the host is what follows the last "@", when that is literal.
+    const at = authority.lastIndexOf('@');
+    if (at < 0 || authority.slice(at + 1).includes('{{')) return 'unreadable';
+    readable = `http://${afterScheme.slice(at + 1)}`;
+  } else if (text.startsWith('//')) readable = `http:${text}`;
   try {
-    const url = new URL(hasScheme ? text : `http://${text}`);
+    const url = new URL(readable === text && !hasScheme ? `http://${text}` : readable);
     return url.host ? { host: url.host, hostname: url.hostname } : 'unreadable';
   } catch {
     return hasScheme ? 'unreadable' : undefined;

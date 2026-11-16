@@ -9,6 +9,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Workflow } from '@landflow/engine';
 import type { AssistantOp } from '@/lib/shared/assistant-ops';
 
+let agentsGate: Promise<void> | undefined;
+vi.mock('@/components/editor/new-agent', async (original) => ({ ...(await original<typeof import('@/components/editor/new-agent')>()), agentsSettled: async () => { await agentsGate; } }));
 vi.mock('@/components/canvas/sticky-note', () => ({ STICKY_DEFAULT_CONTENT: '## Note', STICKY_DEFAULT_SIZE: { width: 260, height: 180 } }));
 Object.assign(process.env, { LANDFLOW_DATA_DIR: mkdtempSync(join(tmpdir(), 'landflow-session-safety-')), LANDFLOW_REGISTRY_GRPC_PORT: 'off', LANDFLOW_SCAN_ON_START: 'false', LANDFLOW_PLUGINS: '' });
 
@@ -211,15 +213,15 @@ describe('an expression destination asks every time (review fixes)', () => {
     await testUntilItRuns(goal);
     expect(needs().map((n) => n.what)).toEqual(['sends']);
     expect(needs()[0].destinations).toEqual(['{{ … }}']);
-    approveDestinations(WF, ['{{ … }}'], needs()[0].nodes);
+    approveDestinations(WF, ['{{ … }}'], needs()[0].once);
     expect([...(sendsAllowed.get(WF) ?? [])]).toEqual(['127.0.0.1:3399']);
-    // A step added after the row was shown is not covered by its yes: it is asked about on its own, and nothing runs.
+    // A step added after the row was shown is not covered by its yes: the new row names it with the first one, and nothing runs.
     useEditor.getState().updateNode('c', { parameters: { method: 'POST', url: '={{ $json.other }}' } });
     await testUntilItRuns(goal);
     expect(run).not.toHaveBeenCalled();
-    expect(needs().at(-1)?.nodes).toEqual(['Notify Standard']);
-    // Its own yes runs both once; the next test asks again.
-    approveDestinations(WF, ['{{ … }}'], needs().at(-1)?.nodes);
+    expect(needs().at(-1)?.nodes).toEqual(['Notify VIP', 'Notify Standard']);
+    // One yes covers both, once; the next test asks again.
+    approveDestinations(WF, ['{{ … }}'], needs().at(-1)?.once);
     runs = [{ 'Notify VIP': { items: 1 }, 'Notify Standard': { items: 1 } }];
     const firstRow = useAssistant.getState().items.find((i) => i.role === 'assistant' && i.parts.some((p) => p.kind === 'needs'))!.id;
     await testUntilItRuns(goal);
@@ -229,6 +231,51 @@ describe('an expression destination asks every time (review fixes)', () => {
     const rows = useAssistant.getState().items.filter((i) => i.role === 'assistant' && i.parts.some((p) => p.kind === 'needs'));
     expect(rows).toHaveLength(1);
     expect(rows[0].id).not.toBe(firstRow); // asked again, a new row
+  });
+
+  it('a yes does not outlive a session that only asked: a changed expression asks again, and a yes on the new step does not send the old one', async () => {
+    noteOpened(WF, 0);
+    yes();
+    useEditor.getState().updateNode('b', { parameters: { method: 'POST', url: '={{ $json.url }}' } });
+    await testUntilItRuns(goal);
+    approveDestinations(WF, ['{{ … }}'], needs().at(-1)?.once); // yes on A (Notify VIP)
+    useEditor.getState().updateNode('c', { parameters: { method: 'POST', url: '={{ $json.other }}' } });
+    await testUntilItRuns(goal); // stops on B's row, runs nothing
+    expect(run).not.toHaveBeenCalled();
+    const bRow = needs().at(-1)!;
+    useEditor.getState().updateNode('b', { parameters: { method: 'POST', url: '={{ $json.somewhereElse }}' } });
+    approveDestinations(WF, ['{{ … }}'], bRow.once); // a yes on B's row as it was shown
+    await testUntilItRuns(goal);
+    expect(run).not.toHaveBeenCalled();
+    expect(needs().at(-1)?.nodes).toContain('Notify VIP');
+  });
+
+  it('a step deleted and added back under the same name asks again', async () => {
+    noteOpened(WF, 0);
+    yes();
+    useEditor.getState().updateNode('b', { parameters: { method: 'POST', url: '={{ $json.url }}' } });
+    await testUntilItRuns(goal);
+    approveDestinations(WF, ['{{ … }}'], needs().at(-1)?.once);
+    useEditor.setState((st) => ({ nodes: st.nodes.map((n) => (n.id === 'b' ? { ...n, id: 'b2' } : n)) })); // deleted and added back, same name and URL
+    await testUntilItRuns(goal);
+    expect(run).not.toHaveBeenCalled();
+    expect(needs().at(-1)?.nodes).toEqual(['Notify VIP']);
+  });
+});
+
+describe('a Stop before the run starts', () => {
+  it('stopped while an agent is being designed, no real run starts', async () => {
+    noteOpened(WF, 0);
+    yes();
+    let release!: () => void;
+    agentsGate = new Promise<void>((resolve) => (release = resolve));
+    const session = testUntilItRuns(goal);
+    await Promise.resolve();
+    useAssistant.getState().testing?.abort();
+    release();
+    await session;
+    agentsGate = undefined;
+    expect(run).not.toHaveBeenCalled();
   });
 });
 

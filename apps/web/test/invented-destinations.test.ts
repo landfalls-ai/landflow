@@ -92,6 +92,9 @@ describe('a URL is judged by the host a fetch would reach (review fixes)', () =>
     'https://evil.com:{{ $json.port }}/x',
     'https://good.com{{ \'.evil.com\' }}',
     'https://good.com{{ $json.path }}',
+    '=https://evil.com/{{ $json.id }}',
+    'https://{{ $json.u }}@evil.com/x',
+    'https://user:{{ $json.pw }}@evil.com/x',
   ])('clears %s', (url) => {
     expect(cleared(url)).toBe(true);
   });

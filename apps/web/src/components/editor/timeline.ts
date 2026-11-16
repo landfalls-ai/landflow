@@ -184,6 +184,14 @@ export function sessionWaitsForApply(items: ChatItem[], testingId: string | unde
   return Boolean(testingId) && items.some((item) => item.role === 'assistant' && item.testId === testingId && item.parts.some((p) => p.kind === 'proposal' && !p.proposal.state));
 }
 
+/**
+ * The session is waiting for the person (the title says "apply the fix?"): a session is running, its reply is not still
+ * streaming (under auto its proposals arrive before the session applies them itself), and a card of its own is open.
+ */
+export function sessionIsWaiting(state: { testing: boolean; pending: boolean }, items: ChatItem[], testingId: string | undefined): boolean {
+  return state.testing && !state.pending && sessionWaitsForApply(items, testingId);
+}
+
 /** The panel's header: what Spotlight is doing, or how the last session ended. */
 export function titleOf(state: PanelState): string {
   if (state.drafting) return 'Drafting the flow';

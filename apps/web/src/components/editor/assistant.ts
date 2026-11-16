@@ -260,6 +260,8 @@ export interface Need {
   fix?: { item: string; proposals: string[] };
   /** `sends` and `destination`: every step the row names; a yes to an expression destination covers these only. */
   nodes?: string[];
+  /** `sends` and `destination`: the once-yes keys of the expression destinations the row names (one yes covers these, for one run). */
+  once?: string[];
   /** The node it is about, to open. */
   node?: string;
   /** The session's goal, to test on with. */

@@ -30,28 +30,45 @@ export const MAX_FIXES = 4;
  */
 export const sendsAllowed = new Map<string, Set<string>>();
 
-/** A yes for an expression destination holds for one run only, and for the steps the row named. */
+/**
+ * A yes for an expression destination holds for the one run that follows, and for the steps as the row showed them: each
+ * key is the workflow, the step's id and its URL text, so a changed expression, or a step deleted and added back under the
+ * same name, asks again.
+ */
 const approvedOnce = new Set<string>();
 
+interface Sending {
+  node: string;
+  destination: string;
+  /** The once-yes key of this step with this URL. */
+  key: string;
+}
+
+/** The enabled steps that would send for real, each with its own destination. */
+function sendingNow(): Sending[] {
+  const { nodes, workflowId } = useEditor.getState();
+  const live = nodes.filter((n) => !n.data.wf.disabled);
+  return destinationsOf(live.map((n) => ({ name: n.data.wf.name, type: n.data.wf.type, parameters: n.data.wf.parameters }))).map((d) => {
+    const step = live.find((n) => n.data.wf.name === d.node);
+    return { ...d, key: `${workflowId} ${step?.id ?? d.node} ${JSON.stringify(step?.data.wf.parameters.url ?? '')}` };
+  });
+}
+
 /**
- * Record the person's yes for these destinations of a workflow. An expression destination ("{{ … }}") is never kept: its
- * yes covers the run that follows, and it asks again before the next one (contracts/sb1/needs-you.md).
+ * Record the person's yes for these destinations of a workflow. An expression destination ("{{ … }}") is never kept: the
+ * `once` keys the row listed cover the run that follows, and it asks again before the next one (contracts/sb1/needs-you.md).
  */
-export function approveDestinations(workflowId: string, destinations: string[], nodes: readonly string[] = []): void {
+export function approveDestinations(workflowId: string, destinations: string[], once: readonly string[] = []): void {
   const set = sendsAllowed.get(workflowId) ?? new Set<string>();
-  for (const destination of destinations) {
-    // Per step, the ones the row listed: a step added after the row was shown is asked about on its own.
-    if (isUnreadHost(destination)) for (const node of nodes) approvedOnce.add(`${workflowId} ${node} ${destination}`);
-    else if (destination !== NO_ADDRESS) set.add(destination);
-  }
+  for (const destination of destinations) if (!isUnreadHost(destination) && destination !== NO_ADDRESS) set.add(destination);
+  for (const key of once) approvedOnce.add(key);
   sendsAllowed.set(workflowId, set);
 }
 
 /** The enabled steps that would send for real, grouped by what the person has not said yes to yet. */
-function unapproved(): Array<{ node: string; destination: string }> {
-  const { nodes, workflowId } = useEditor.getState();
-  const allowed = sendsAllowed.get(workflowId);
-  return destinationsOf(nodes.filter((n) => !n.data.wf.disabled).map((n) => ({ name: n.data.wf.name, type: n.data.wf.type, parameters: n.data.wf.parameters }))).filter((d) => !allowed?.has(d.destination) && !approvedOnce.has(`${workflowId} ${d.node} ${d.destination}`));
+function unapproved(): Sending[] {
+  const allowed = sendsAllowed.get(useEditor.getState().workflowId);
+  return sendingNow().filter((d) => !allowed?.has(d.destination) && !approvedOnce.has(d.key));
 }
 
 const quoted = (names: string[]) => names.slice(0, 2).map((n) => `“${n}”`).join(' and ') + (names.length > 2 ? ` and ${names.length - 2} more` : '');
@@ -67,11 +84,15 @@ function destinationNeed(goal: string | undefined, first: boolean, fix?: { item:
   // A step with no address yet is not a destination to say yes to: the person fills it in, before any run.
   const empty = [...new Set(open.filter((d) => d.destination === NO_ADDRESS).map((d) => d.node))];
   if (empty.length) return { what: 'address', node: empty[0], text: `${quoted(empty)} ${empty.length === 1 ? 'sends' : 'send'} to ${NO_ADDRESS}: open ${empty.length === 1 ? 'the step' : 'it'} and fill it in.`, ...(goal && { goal }) };
-  const nodes = [...new Set(open.map((d) => d.node))];
-  const destinations = [...new Set(open.map((d) => d.destination))];
+  // With anything still open, the row names every expression destination, the ones said yes to before too: one yes then
+  // covers them all as they are now (a yes is for one run, so asking about only the new one would leave the rest asking).
+  const rows = sendingNow().filter((d) => isUnreadHost(d.destination) || open.some((o) => o.key === d.key && o.node === d.node));
+  const nodes = [...new Set(rows.map((d) => d.node))];
+  const destinations = [...new Set(rows.map((d) => d.destination))];
+  const once = rows.filter((d) => isUnreadHost(d.destination)).map((d) => d.key);
   return first
-    ? { what: 'sends', node: nodes[0], nodes, destinations, text: `A test runs ${quoted(nodes)} for real: ${nodes.length === 1 ? 'it sends' : 'they send'} to ${listed(destinations)}.`, ...(goal && { goal }) }
-    : { what: 'destination', node: nodes[0], nodes, destinations, text: `${quoted(nodes)} now ${nodes.length === 1 ? 'sends' : 'send'} to ${listed(destinations)}, which you haven't approved.`, ...(fix && { fix }), ...(goal && { goal }) };
+    ? { what: 'sends', node: nodes[0], nodes, once, destinations, text: `A test runs ${quoted(nodes)} for real: ${nodes.length === 1 ? 'it sends' : 'they send'} to ${listed(destinations)}.`, ...(goal && { goal }) }
+    : { what: 'destination', node: nodes[0], nodes, once, destinations, text: `${quoted(nodes)} now ${nodes.length === 1 ? 'sends' : 'send'} to ${listed(destinations)}, which you haven't approved.`, ...(fix && { fix }), ...(goal && { goal }) };
 }
 
 /** Take back what a fix applied (newest first; proposals of one apply share one undo, which runs once). */
@@ -201,6 +222,7 @@ function weakSteps(): Array<{ node: string; problem: string }> {
 /** Run the workflow once and judge it; `stopped` when the session can't go on. */
 async function runOnce(signal: AbortSignal): Promise<RunVerdict | { stopped: string }> {
   await until(() => !useEditor.getState().running, signal);
+  if (signal.aborted) return { stopped: 'Stopped.' };
   const { run } = useEditor.getState();
   if (!run) return { stopped: 'The editor can’t run the workflow right now.' };
   // This run is Spotlight's: its end is a row of the timeline, even once the session is over (no toast).
@@ -293,6 +315,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
     for (let round = nextRound(useAssistant.getState().items); !signal.aborted; round++) {
       // An agent Spotlight is still designing (./new-agent.ts): the run needs it saved and pointed at first.
       await agentsSettled();
+      if (signal.aborted) return; // stopped while an agent was being designed: no run
       // SB03: every run, not only the first: a destination the person never said yes to (a fix may have brought it in) stops the session.
       if (ran) {
         const last = lastApplied.at(-1);
@@ -461,6 +484,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
     // A bug must not end a session in silence.
     if (!signal.aborted) say([{ kind: 'text', text: `Testing stopped: ${(e as Error).message}` }]);
   } finally {
+    approvedOnce.clear(); // a yes covers the run that follows it, not a later session
     // Over: the conversation comes back from the side with the outcome.
     if (useAssistant.getState().testing === abort) useAssistant.setState({ testing: undefined, testingId: undefined, fixing: undefined });
   }

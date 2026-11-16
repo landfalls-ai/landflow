@@ -16,7 +16,7 @@ import { api } from '@/lib/client/api';
 import type { ConversationItem, ConversationRecord } from '@/lib/shared/conversations';
 import { useEditor } from '../store';
 import { isPhone } from '@/lib/client/use-phone';
-import { lastOutcomeOf, lastRunOf, openNeedOf, sessionWaitsForApply, stepsOf, stoppedAtOf, titleOf } from '../timeline';
+import { lastOutcomeOf, lastRunOf, openNeedOf, sessionIsWaiting, stepsOf, stoppedAtOf, titleOf } from '../timeline';
 import { Composer, focusSpotlight } from './composer';
 import { AsksFirstNote, AutonomousExplainer, AutonomousSwitch, useAutonomousExplainer } from './proposal';
 import { Timeline } from './timeline-view';
@@ -229,7 +229,7 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
   const waiting = items.reduce((n, item) => n + (item.role === 'assistant' ? item.parts.filter((p) => p.kind === 'proposal' && !p.proposal.state).length : 0), 0);
   // The session's own wait: only a card of a reply the session asked for (a held removal of an autonomous typed change is not its).
   const testingId = useAssistant((s) => s.testingId);
-  const sessionWaits = testing && sessionWaitsForApply(items, testingId);
+  const sessionWaits = sessionIsWaiting({ testing, pending }, items, testingId);
   const bar = foldedBar({ waiting });
   const designing = agents.find((a) => a.state === 'designing')?.name;
   const live = pending || drafting;
