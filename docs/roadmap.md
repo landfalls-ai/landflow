@@ -2420,6 +2420,9 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   ([llm-gateway.md](llm-gateway.md#forecasts-and-unusual-spend)).
 - **Left open (SP23)**: an anomaly view on the AI page, a Landledger trigger event for `cost.anomaly`, reading Landledger's
   own flags, a weekday-aware baseline and a way to mute one key.
+- **Still owed from wave 13 (SP11's live pass)**: the cache card on real Anthropic cache reads and a daily cap's pace line
+  late in the day. The first needs a vendor key (live checks never send off this machine); the second a live host late
+  in its day. Both stay owed, not dropped.
 
 ## Practices (waves P1 and P2)
 
