@@ -260,7 +260,9 @@ describe('colleagues, visibility and the admin rule', () => {
     expect(statusLine('auto', 'forbidden', 2, t)).toBe('brain: review (auto off by admin) · $1.23 today');
   });
 
-  const view = (at = '2026-11-13T10:00:00Z') => ({
+  // The band compares days on the machine's own clock, so the item times are local ones (10:00 the day before, 08:00 the
+  // day itself): fixed UTC times fall on another local day east of UTC+13 or west of UTC-8.
+  const view = (at = new Date(2026, 10, 13, 10).toISOString()) => ({
     day: '2026-11-14',
     today: [{ title: 'Mine', sourceId: 'cc-1' }],
     yesterday: [],
@@ -269,7 +271,7 @@ describe('colleagues, visibility and the admin rule', () => {
 
   it('shows the band only with an overlap, and not once dismissed for the day', () => {
     expect(bandLine(view(), undefined)).toBe('Ada Example changed billing/ yesterday · /brain sync');
-    expect(bandLine(view('2026-11-14T08:00:00Z'), undefined)).toContain('today');
+    expect(bandLine(view(new Date(2026, 10, 14, 8).toISOString()), undefined)).toContain('today');
     expect(bandLine({ ...view(), related: [] }, undefined)).toBeUndefined();
     expect(bandLine(undefined, undefined)).toBeUndefined();
     expect(bandLine(view(), '2026-11-14')).toBeUndefined();
