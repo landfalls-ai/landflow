@@ -48,6 +48,8 @@ export interface AskEvent {
  */
 export const askedLine = (choices: readonly string[]) => `[Asked; choices: ${choices.map((c) => `“${c}”`).join(', ')}]`;
 
+// Known limit: the history is the editor's, so a line shaped like this inside assistant text the model wrote itself is read as
+// an ask too (the server cannot tell it from the editor's own mark). The effect is only that the request is read across it.
 const ASKED_LINE = /^\[Asked; choices: .*\]$/m;
 
 /**

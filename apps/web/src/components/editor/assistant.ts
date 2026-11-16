@@ -754,6 +754,8 @@ export const useAssistant = create<AssistantState>((set, get) => ({
     // SB11 (N3): the send failed (a cap, a dropped connection) before anything came back: the question is open again, so the chips work.
     const last = get().items.at(-1);
     if (last && last.role === 'assistant' && last.id !== itemId && last.error && !last.parts.length) {
+      // The failed pair (the answer and its empty, errored reply) goes too, so the history the next answer sends still reads the question straight before it.
+      set((s) => ({ items: s.items.filter((item) => item.id !== last.id && !(item.role === 'user' && item.id === s.items.at(-2)?.id)) }));
       get().updateParts(itemId, (parts) => parts.map((p) => (p.kind === 'ask' && p.ask.answered === choice ? { ...p, ask: { ...p.ask, answered: undefined } } : p)));
     }
   },

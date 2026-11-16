@@ -131,8 +131,12 @@ describe('the chat', () => {
     const count = (ch: string) => system.split('\n').filter((l) => l.startsWith('Parameters: ')).reduce((n, l) => n + (l.match(new RegExp(ch, 'g'))?.length ?? 0), 0);
     expect(count('b')).toBeGreaterThan(11_000); // the selected step first, up to 12 000
     expect(count('d')).toBeGreaterThan(9_000);
-    expect(count('b') + count('d') + count('e') + count('f')).toBeLessThanOrEqual(24_000);
-    expect(count('f')).toBe(0);
+    // The two steps that fit the budget are cut with their note counted in; the one after it gets the 2 000-character summary, not an empty cut.
+    expect(count('b') + count('d')).toBeLessThanOrEqual(24_000);
+    for (const ch of ['e', 'f']) {
+      expect(count(ch)).toBeGreaterThan(1_000);
+      expect(count(ch)).toBeLessThanOrEqual(2_000);
+    }
     expect(system).toContain('more characters');
   });
 

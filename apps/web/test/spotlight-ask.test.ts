@@ -231,6 +231,7 @@ describe('the editor', () => {
     });
     useAssistant.setState({ pending: false, send: failing, items: [{ id: 'r1', role: 'assistant', parts: ask }] });
     await useAssistant.getState().answerAsk('r1', 'Read Linear bugs');
+    expect(useAssistant.getState().items.map((i) => i.id)).toEqual(['r1']); // the failed pair is gone: the next answer's history is the question, then the answer
     expect((useAssistant.getState().items[0] as AssistantTurn).parts[0]).toMatchObject({ kind: 'ask', ask: { answered: undefined } });
     const fine = vi.fn(async () => {
       useAssistant.setState((s) => ({ items: [...s.items, { id: 'u1', role: 'user' as const, text: 'Read Linear bugs' }, { id: 'r2', role: 'assistant' as const, parts: [{ kind: 'text' as const, text: 'Done.' }], steps: [], text: '', thinking: [] }] }));

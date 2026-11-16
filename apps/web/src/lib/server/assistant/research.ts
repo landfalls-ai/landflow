@@ -223,9 +223,18 @@ export function nodeContext(workflow: Workflow, nodeId: string, run: RunDigest |
   if (!node) return `No node with id ${nodeId}.`;
   const info = types.find((t) => t.type === node.type);
   const { upstream, downstream } = neighbours(workflow, nodeId);
-  // With a `budget` (the characters left for every step of one prompt), this step takes what it needs from it, at most 12 000.
-  const whole = options.full ? fullParameters(node.parameters, Math.min(12000, Math.max(0, options.budget?.left ?? 12000))) : undefined;
-  if (whole && options.budget) options.budget.left -= whole.length;
+  // With a `budget` (the characters left for every step of one prompt), this step takes what it needs from it, at most 12 000,
+  // the "… (N more characters)" note counted in. A step reached after the budget is spent gets the 2 000-character summary, not an empty cut.
+  let whole: string | undefined;
+  if (options.full) {
+    const left = options.budget ? options.budget.left : 12000;
+    if (left > 0) {
+      const cap = Math.min(12000, left);
+      whole = fullParameters(node.parameters, cap);
+      if (whole.length > cap) whole = fullParameters(node.parameters, Math.max(0, cap - (whole.length - cap)));
+      if (options.budget) options.budget.left -= whole.length;
+    }
+  }
   return [
     `Node “${node.name}” (${node.type})${node.disabled ? ' [disabled]' : ''}${node.onError === 'continue' ? ' [continues on error]' : ''}`,
     `Parameters: ${whole ?? json(node.parameters, 2000)}`,

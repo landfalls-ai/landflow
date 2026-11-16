@@ -134,7 +134,8 @@ describe('the list is trustworthy', () => {
     expect(ids).toEqual(['qwen3-coder:30b', 'tts-helper:7b', 'plain-old:7b']);
   });
 
-  it('does not cache a list when a source did not answer: a gateway that fails once, then answers, is listed on the next request (IR-4)', async () => {
+  it('does not cache a list when a source did not answer: a gateway that fails once, then answers, is listed once the short cache ends (IR-4)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
     let fail = true;
     const flaky = createServer((req, res) => {
       if (fail) {
@@ -151,10 +152,33 @@ describe('the list is trustworthy', () => {
       process.env.LANDFLOW_LLM_GATEWAY_URL = `http://127.0.0.1:${(flaky.address() as AddressInfo).port}`;
       process.env.LANDFLOW_LLM_GATEWAY_KEY = 'sk-fake-master';
       expect((await spotlightModels()).some((m) => m.id.startsWith('litellm/'))).toBe(false);
+      vi.setSystemTime(Date.now() + 9_000);
       expect(await resolveSpotlightModel('litellm/claude-sonnet-5-5')).toEqual({ model: 'litellm/claude-sonnet-5-5' });
     } finally {
+      vi.useRealTimers();
       await new Promise<void>((resolve) => flaky.close(() => resolve()));
     }
+  });
+
+  it('keeps an incomplete list for a few seconds, so a host without Ollama does not list on every request', async () => {
+    const before = asked.length;
+    const down = process.env.OLLAMA_URL;
+    process.env.OLLAMA_URL = 'http://127.0.0.1:1';
+    let calls = 0;
+    const real = globalThis.fetch;
+    vi.stubGlobal('fetch', (url: string | URL | Request, init?: RequestInit) => (calls++, real(url, init)));
+    try {
+      await spotlightModels();
+      const first = calls;
+      await spotlightModels();
+      expect(calls).toBe(first); // the second request is served from the short cache
+      expect(first).toBeGreaterThan(0);
+    } finally {
+      vi.unstubAllGlobals();
+      process.env.OLLAMA_URL = down;
+      forgetSpotlightModels();
+    }
+    expect(asked.length).toBe(before);
   });
 
   it('lists a default that is an anthropic/ or openai/ model as cloud, a bare name as local (IR-3)', async () => {

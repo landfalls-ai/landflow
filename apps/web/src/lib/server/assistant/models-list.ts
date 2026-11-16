@@ -21,9 +21,11 @@ export type { SpotlightModel } from '../../shared/spotlight-models';
 
 const KEY = 'spotlight';
 const CACHE_MS = 60_000;
+/** A list a source did not answer for is kept this long (a host without Ollama would otherwise list again on every request). */
+const SHORT_CACHE_MS = 8_000;
 const NOT_CHAT = /embed|whisper|tts|dall-e|moderation|rerank/i;
 
-let cache: { key: string; at: number; models: SpotlightModel[] } | undefined;
+let cache: { key: string; at: number; models: SpotlightModel[]; complete: boolean } | undefined;
 
 /** Forget the cached list (tests; after Settings changes the gateway). */
 export const forgetSpotlightModels = () => {
@@ -39,13 +41,13 @@ export function describeSpotlightModel(id: string): SpotlightModel {
   return { id, label: id.slice(prefix.length + 1), source: prefix === 'litellm' ? 'gateway' : (prefix as 'anthropic' | 'openai'), local: false };
 }
 
-/** The models this server offers Spotlight, local ones first. Cached for 60 seconds, and only when every source it asked answered. */
+/** The models this server offers Spotlight, local ones first. Cached for 60 seconds, or 8 seconds when a source did not answer. */
 export async function spotlightModels(): Promise<SpotlightModel[]> {
   const gateway = await gatewayConnection().catch(() => undefined);
   const anthropicKey = envString('ANTHROPIC_API_KEY');
   const openAiKey = envString('OPENAI_API_KEY');
   const key = [ollamaUrl(), gateway?.baseUrl ?? '', fingerprint(gateway?.apiKey), fingerprint(anthropicKey), fingerprint(openAiKey), envString('OPENAI_BASE_URL') ?? ''].join('|');
-  if (cache && cache.key === key && Date.now() - cache.at < CACHE_MS) return cache.models;
+  if (cache && cache.key === key && Date.now() - cache.at < (cache.complete ? CACHE_MS : SHORT_CACHE_MS)) return cache.models;
 
   const models: SpotlightModel[] = [];
   const add = (model: SpotlightModel) => {
@@ -78,7 +80,7 @@ export async function spotlightModels(): Promise<SpotlightModel[]> {
     for (const m of listed.filter((m) => !NOT_CHAT.test(m.id)).sort((a, b) => a.id.localeCompare(b.id))) add({ id: `openai/${m.id}`, label: m.id, source: 'openai', local: false });
   }
 
-  if (complete) cache = { key, at: Date.now(), models };
+  cache = { key, at: Date.now(), models, complete };
   return models;
 }
 
