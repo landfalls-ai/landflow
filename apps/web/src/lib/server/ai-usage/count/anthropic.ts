@@ -86,6 +86,8 @@ function plan(segments: DraftSegment[]): { base: CountRequest; steps: Step[] } |
   }
   if (tools.some((tool) => !tool || typeof tool !== 'object')) return undefined;
   const withTools = tools.length ? { tools } : {};
+  // All tools are one step credited to the first tool segment: it assumes every `where: 'tools'` segment is one part
+  // (the tool definitions).
   if (toolIndexes.length) steps.push({ request: { ...withTools, messages: baseline }, segment: toolIndexes[0]!, replaces: 0 });
 
   const system: Block[] = [];
@@ -123,10 +125,10 @@ function groupStart(segments: DraftSegment[], end: number): number {
 
 const requestKey = (key: Buffer, model: string, request: CountRequest): string => createHmac('sha256', key).update(model).update('\0').update(JSON.stringify(request)).digest('hex');
 
-async function clientFor(call: CountCall): Promise<Anthropic | undefined> {
-  const row = call.db.get<{ credential_id: string | null }>('SELECT credential_id FROM ai_usage WHERE id = ?', call.usageId);
-  if (!row) return undefined; // no row, no credential to count with
-  const credentialId = row.credential_id ?? undefined;
+/** The credential id the call used (null: none, the environment's), or undefined when the call has no `ai_usage` row. */
+const credentialOf = (call: CountCall): string | null | undefined => call.db.get<{ credential_id: string | null }>('SELECT credential_id FROM ai_usage WHERE id = ?', call.usageId)?.credential_id;
+
+async function clientFor(credentialId: string | null): Promise<Anthropic | undefined> {
   if (!credentialId) return new Anthropic({ timeout: REQUEST_TIMEOUT_MS, maxRetries: 0 }); // the SDK's own resolution, as anthropicModel does
   const data = await credentials.dataWithSecrets({ id: credentialId, name: credentialId }, 'core.anthropicApi');
   if (isGatewayCredential(data)) return undefined; // a LiteLLM gateway counts locally, not with Anthropic's tokenizer
@@ -135,7 +137,10 @@ async function clientFor(call: CountCall): Promise<Anthropic | undefined> {
   return apiKey ? new Anthropic({ apiKey, ...(baseUrl && { baseURL: baseUrl }), timeout: REQUEST_TIMEOUT_MS, maxRetries: 0 }) : new Anthropic({ timeout: REQUEST_TIMEOUT_MS, maxRetries: 0 });
 }
 
-/** Reserve `n` count requests of the credential's per-minute budget; false when they do not fit (nothing is reserved). */
+/**
+ * Reserve `n` count requests of the credential's per-minute budget; false when they do not fit (nothing is reserved).
+ * A reservation is kept when a request then fails: the budget is spent when requests are sent, not when they succeed.
+ */
 function reserve(credential: string, n: number, now = Date.now()): boolean {
   const recent = (state.sent.get(credential) ?? []).filter((t) => now - t < WINDOW_MS);
   if (recent.length + n > countsPerMinute()) {
@@ -157,10 +162,13 @@ export const anthropicCounter: Counter = {
     const keys = requests.map((r) => requestKey(call.key, call.model, r));
     const missing = [...new Set(keys.filter((k) => !state.counted.has(k)))];
     // The client first: a call with no `ai_usage` row, or on a gateway credential, is not counted and uses none of the budget.
-    const client = await clientFor(call);
-    if (!client) return undefined;
+    const credentialId = credentialOf(call);
+    if (credentialId === undefined) return undefined; // no row, no credential to count with
+    // With every prefix cached no client is needed (and no credential is decrypted).
+    const client = missing.length ? await clientFor(credentialId) : undefined;
+    if (missing.length && !client) return undefined;
     if (missing.length) {
-      const credential = call.db.get<{ credential_id: string | null }>('SELECT credential_id FROM ai_usage WHERE id = ?', call.usageId)?.credential_id ?? 'default';
+      const credential = credentialId ?? 'default';
       if (!reserve(credential, missing.length)) {
         logger.info('a model call stays an estimate: its count requests are over the per-minute budget');
         return undefined;
@@ -171,7 +179,7 @@ export const anthropicCounter: Counter = {
       const key = keys[i]!;
       let tokens = state.counted.get(key) ?? values.get(key);
       if (tokens === undefined) {
-        const reply = await client.beta.messages.countTokens({ model: call.model, ...request } as Anthropic.Beta.Messages.MessageCountTokensParams);
+        const reply = await client!.beta.messages.countTokens({ model: call.model, ...request } as Anthropic.Beta.Messages.MessageCountTokensParams);
         tokens = reply.input_tokens;
         values.set(key, tokens);
         state.counted.set(key, tokens);

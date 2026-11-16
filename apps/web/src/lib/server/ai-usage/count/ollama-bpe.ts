@@ -1,7 +1,10 @@
 /**
  * A byte-level BPE in TypeScript (the GPT-2 family: Qwen, Llama 3), built from the vocabulary Ollama's
  * `POST /api/show {"verbose": true}` returns (`tokenizer.ggml.tokens` and `tokenizer.ggml.merges`). It counts tokens of
- * the model's own tokenizer, with no network and no text kept. Special tokens in a text are counted as plain text.
+ * the model's own tokenizer, with no network. No text is kept past a `count()` call (the memo of repeated pre-tokens lives for
+ * one call). Special tokens in a text are counted as plain text. A single pre-token longer than `SLICE` characters (an
+ * unbroken run of letters, spaces or CJK) is counted in fixed slices, so a piece costs time linear in its length, never
+ * quadratic; the error is a few tokens at each cut.
  *
  * Only the pre-tokenizers named in `PRE_PATTERNS` are known; any other `tokenizer.ggml.pre` is not counted (the caller
  * falls back to an estimate).
@@ -31,6 +34,9 @@ const PRE_PATTERNS: Record<string, RegExp> = {
   'llama-bpe': new RegExp(`${CONTRACTION}|${TAIL}|\\p{N}{1,3}|${SYMBOLS}|${SPACES}`, 'gu'),
 };
 
+/** Longest pre-token merged in one piece (characters). */
+const SLICE = 256;
+
 export const supportsPre = (pre: string | undefined): boolean => pre !== undefined && pre in PRE_PATTERNS;
 
 export interface BpeVocabulary {
@@ -43,7 +49,6 @@ export interface BpeVocabulary {
 export class ByteLevelBpe {
   private readonly ranks = new Map<string, number>();
   private readonly pattern: RegExp;
-  private readonly memo = new Map<string, number>();
   private readonly encoder = new TextEncoder();
 
   constructor(input: BpeVocabulary) {
@@ -56,14 +61,24 @@ export class ByteLevelBpe {
   /** Tokens of `text` (no special tokens added). */
   count(text: string): number {
     if (!text) return 0;
+    const memo = new Map<string, number>();
     let total = 0;
-    for (const match of text.matchAll(this.pattern)) total += this.piece(match[0]);
+    for (const match of text.matchAll(this.pattern)) {
+      const chunk = match[0];
+      for (let at = 0; at < chunk.length; at += SLICE) {
+        let end = Math.min(chunk.length, at + SLICE);
+        const last = chunk.charCodeAt(end - 1);
+        if (end < chunk.length && last >= 0xd800 && last <= 0xdbff) end++; // never cut a surrogate pair
+        total += this.piece(chunk.slice(at, end), memo);
+        at = end - SLICE; // the loop adds SLICE
+      }
+    }
     return total;
   }
 
   /** Tokens of one pre-token: merge the lowest-ranked adjacent pair until none is left. */
-  private piece(chunk: string): number {
-    const known = this.memo.get(chunk);
+  private piece(chunk: string, memo: Map<string, number>): number {
+    const known = memo.get(chunk);
     if (known !== undefined) return known;
     const symbols: string[] = Array.from(this.encoder.encode(chunk), (b) => BYTE_SYMBOLS[b]!);
     while (symbols.length > 1) {
@@ -81,8 +96,7 @@ export class ByteLevelBpe {
       symbols.splice(best, 2, merged);
     }
     const tokens = symbols.length;
-    if (this.memo.size > 50_000) this.memo.clear();
-    this.memo.set(chunk, tokens);
+    memo.set(chunk, tokens);
     return tokens;
   }
 }

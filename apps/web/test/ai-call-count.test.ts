@@ -24,7 +24,7 @@ Object.assign(process.env, {
   ANTHROPIC_API_KEY: 'sk-ant-fake-for-tests',
   ANTHROPIC_BASE_URL: fake.url,
 });
-delete process.env.LANDFLOW_AI_PARTS_COUNT;
+process.env.LANDFLOW_AI_PARTS_COUNT = 'exact';
 delete process.env.LANDFLOW_AI_PARTS_COUNT_PER_MINUTE;
 
 const { setRecordedCallListener, notifyRecorded } = await import('@/lib/server/ai-usage/call-context');
@@ -88,7 +88,7 @@ beforeEach(() => {
   fake.failing = false;
   clearAnthropicCountState();
   clearVocabCache();
-  delete process.env.LANDFLOW_AI_PARTS_COUNT;
+  process.env.LANDFLOW_AI_PARTS_COUNT = 'exact';
   delete process.env.LANDFLOW_AI_PARTS_COUNT_PER_MINUTE;
   database().deleteBefore('ai_call_parts', 'at', '9999');
   setRecordedCallListener(writeParts);
@@ -307,6 +307,31 @@ describe('the byte-level BPE', () => {
     const bpe = new ByteLevelBpe(fixture);
     expect(fixture.cases.length).toBeGreaterThan(5);
     for (const c of fixture.cases) expect(bpe.count(c.text), JSON.stringify(c.text)).toBe(c.count);
+  });
+
+  it('counts one very long unbroken run in well under a second (in slices, not quadratic)', () => {
+    const bpe = new ByteLevelBpe(fixture);
+    for (const text of ['a'.repeat(100_000), 'qzxv'.repeat(25_000), ' '.repeat(100_000), '\u4e2d'.repeat(50_000), '\u{1F600}'.repeat(30_000)]) {
+      const started = Date.now();
+      expect(bpe.count(text)).toBeGreaterThan(0);
+      expect(Date.now() - started).toBeLessThan(1000);
+    }
+  });
+
+  it('keeps nothing of a counted text reachable from the tokenizer', () => {
+    const bpe = new ByteLevelBpe(fixture);
+    const secret = 'zqxjkvwsecretword';
+    bpe.count(`${secret} ${secret}`);
+    const seen = new Set<unknown>();
+    const reaches = (value: unknown): boolean => {
+      if (typeof value === 'string') return value.includes(secret);
+      if (!value || typeof value !== 'object' || seen.has(value)) return false;
+      seen.add(value);
+      if (value instanceof Map) return [...value.entries()].some(([k, v]) => reaches(k) || reaches(v));
+      if (value instanceof Set) return [...value].some(reaches);
+      return Object.values(value).some(reaches);
+    };
+    expect(reaches(bpe)).toBe(false);
   });
 
   it('knows the two pre-tokenizers and refuses others', () => {

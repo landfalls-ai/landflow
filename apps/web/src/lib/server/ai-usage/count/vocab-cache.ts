@@ -10,6 +10,8 @@ import { ByteLevelBpe, supportsPre } from './ollama-bpe';
 
 const CAPACITY = 3;
 const TIMEOUT_MS = 20_000;
+/** A model's digest is asked of the server at most this often (a re-pulled model is seen within it). */
+const DIGEST_TTL_MS = 30_000;
 
 /** A tokenizer, or why there is none (a log line names the pre-tokenizer, never text). */
 export type LoadedTokenizer = { bpe: ByteLevelBpe } | { reason: string };
@@ -17,13 +19,15 @@ export type LoadedTokenizer = { bpe: ByteLevelBpe } | { reason: string };
 interface State {
   entries: Map<string, LoadedTokenizer>;
   loading: Map<string, Promise<LoadedTokenizer>>;
+  digests: Map<string, { digest: string | undefined; at: number }>;
 }
-const state = singleton('ai-count-vocab-cache', (): State => ({ entries: new Map(), loading: new Map() }));
+const state = singleton('ai-count-vocab-cache', (): State => ({ entries: new Map(), loading: new Map(), digests: new Map() }));
 
 /** Forget everything (tests). */
 export function clearVocabCache(): void {
   state.entries.clear();
   state.loading.clear();
+  state.digests.clear();
 }
 
 interface Tag {
@@ -40,6 +44,15 @@ async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
 
 /** The digest of `model` on the server, or undefined when the server does not have it. */
 async function digestOf(baseUrl: string, model: string): Promise<string | undefined> {
+  const memo = state.digests.get(`${baseUrl}\n${model}`);
+  if (memo && Date.now() - memo.at < DIGEST_TTL_MS) return memo.digest;
+  const digest = await readDigest(baseUrl, model);
+  state.digests.set(`${baseUrl}\n${model}`, { digest, at: Date.now() });
+  if (state.digests.size > 50) state.digests.delete(state.digests.keys().next().value as string);
+  return digest;
+}
+
+async function readDigest(baseUrl: string, model: string): Promise<string | undefined> {
   const { models } = await getJson<{ models?: Tag[] }>(`${baseUrl}/api/tags`);
   const want = new Set([model, model.includes(':') ? undefined : `${model}:latest`]);
   return (models ?? []).find((tag) => want.has(tag.name) || want.has(tag.model))?.digest;
