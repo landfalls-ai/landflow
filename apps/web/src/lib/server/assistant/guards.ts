@@ -128,6 +128,9 @@ function mentionsHost(text: string, host: string): boolean {
   return new RegExp(`(?:^|[^a-z0-9.-])${escaped}(?![a-z0-9-])`, 'i').test(text);
 }
 
+/** A URL's scheme and the slashes after it, or the slashes alone of a protocol-relative URL ("//host/…"). */
+const SCHEME_AND_SLASHES = /^\s*(?:[a-z][a-z0-9+.-]*:)?\/\/+/i;
+
 /**
  * The host a URL with expressions in it names in its literal start ("https://x.com/users/{{ $json.id }}" → "x.com"); undefined
  * when the value is a whole expression or the host itself is one (the literal part ends before the host does).
@@ -137,14 +140,15 @@ function literalHostOf(raw: string): string | undefined {
   const at = value.indexOf('{{');
   const prefix = value.slice(0, at);
   if (prefix.includes('\\')) return UNREADABLE;
-  const rest = prefix.replace(/^\s*[a-z][a-z0-9+.-]*:\/\//i, '');
+  // A scheme, or none ("//evil.com/…", protocol-relative): what follows the slashes is the authority either way.
+  const rest = prefix.replace(SCHEME_AND_SLASHES, '');
   const authority = /^[^/?#]*/.exec(rest)![0];
   const hostOfAuthority = (text: string) => {
     const parsed = urlHost(text);
     return parsed === 'unreadable' ? UNREADABLE : parsed?.hostname;
   };
   // An expression in the user name ("{{ user }}@evil.com", "user:{{ pw }}@evil.com"): the host is what follows the last "@".
-  const whole = /^[^/?#]*/.exec(value.replace(/^\s*[a-z][a-z0-9+.-]*:\/\//i, ''))![0];
+  const whole = /^[^/?#]*/.exec(value.replace(SCHEME_AND_SLASHES, ''))![0];
   const lastAt = lastAtOutside(whole);
   if (lastAt === AT_IN_EXPRESSION) return UNREADABLE; // an "@" inside an expression may be anything
   if (lastAt >= 0 && !whole.slice(lastAt + 1).includes('{{')) return hostOfAuthority(whole.slice(lastAt + 1));

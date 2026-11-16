@@ -98,6 +98,9 @@ describe('a URL is judged by the host a fetch would reach (review fixes)', () =>
     "https://good.com{{ '@evil.com' }}",
     "https://good.com{{'@evil.com'}}",
     '= https://evil.com/{{ $json.id }}',
+    '=//evil.com/{{ $json.id }}',
+    '//evil.com/{{ $json.id }}',
+    'https:///evil.com/{{ $json.id }}',
   ])('clears %s', (url) => {
     expect(cleared(url)).toBe(true);
   });
@@ -105,6 +108,12 @@ describe('a URL is judged by the host a fetch would reach (review fixes)', () =>
   it('names the host of an "=" URL with a space, and an "@" in an expression as unreadable', () => {
     expect(withoutInventedIds(set({ url: '= https://evil.com/{{ $json.id }}' }), k).invented[0]).toContain('a host nobody gave (evil.com)');
     expect(withoutInventedIds(set({ url: "https://good.com{{'@evil.com'}}" }), k).invented[0]).toContain('an address that cannot be read');
+  });
+
+  it('reads a protocol-relative URL\'s host (sb1 review: an empty authority kept "=//evil.com/{{ … }}")', () => {
+    expect(withoutInventedIds(set({ url: '=//evil.com/{{ $json.id }}' }), k).invented[0]).toContain('a host nobody gave (evil.com)');
+    expect(cleared('//good.com/{{ $json.path }}')).toBe(false);
+    expect(cleared('/users/{{ $json.id }}')).toBe(false);
   });
 
   it('says a backslash URL cannot be read, and an evil.com one names its host', () => {
