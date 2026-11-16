@@ -107,13 +107,17 @@ export interface Outcome {
    * (unlike the lists above) so a package's copy of this file type-checks against a harness that does not fill it yet;
    * read it as `o.asked ?? []`.
    */
-  /** SB10: in a session, the proposals that changed nothing (refused by the guard, or left waiting for Apply). */
-  unapplied?: number;
   asked?: Array<{ question: string; choices: string[] }>;
   /** Wave sb2 (SB12): the credentials it offered to pick (`credential` events), in order: the step and the types it accepts (`o.offers ?? []`). */
   offers?: Array<{ node: string; credentialTypes: string[] }>;
   /** Wave sb2 (SB19): the model the reply's `done` event named (or the build's `model`), when there was one. */
   model?: string;
+  /**
+   * SB10: in a session, all or nothing: every proposal when the session left the store's canvas untouched (the guard
+   * refused them, or they wait for Apply), otherwise unset. `checks.noChange` subtracts it, so a session that only showed
+   * cards reads "changed nothing".
+   */
+  unapplied?: number;
 }
 
 /** A check: true, false, or 'n/a' (it does not apply to this outcome; not counted). */

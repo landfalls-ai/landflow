@@ -156,6 +156,35 @@ describe('the harness drives the product', () => {
     expect(o.after?.nodes.find((n) => n.name === 'C')?.parameters).toMatchObject({ codeEach: 'return $json;' });
   });
 
+  // SB10-O2: the session's "changed nothing" reading (harness.ts: `outcome.unapplied`), which `checks.noChange` subtracts.
+  const sessionWith = (id: string, autonomy: 'asks-first' | 'auto'): Scenario => ({
+    id,
+    owner: 'SB00',
+    job: 'fix',
+    via: 'session',
+    title: 't',
+    ask: 'make B return its input',
+    start: { workflow: { ...wf(), nodes: [{ ...node('t', 'Start'), type: 'core.manualTrigger' }, node('b', 'B')], connections: [{ id: 'e1', type: 'main', source: 't', sourceIndex: 0, target: 'b', targetIndex: 0 }] } as Workflow, autonomy, session: autonomy === 'auto' ? 'auto' : 'fix' },
+    script: [call('propose_changes', { summary: 'B returns its input', ops: [{ op: 'setParameters', node: 'B', parameters: { codeEach: 'return $json;' } }] }), { text: 'Done.' }, { text: 'Test run 1 had no errors.' }],
+    checks: [checks.noChange],
+  });
+
+  it('a session that leaves the card waiting changed nothing: no-change reads true and unapplied is every proposal', async () => {
+    const o = await runScenario(sessionWith('sb00-h-waiting', 'asks-first'), 'unit');
+    expect(o.error).toBeUndefined();
+    expect(o.proposals.length).toBeGreaterThan(0);
+    expect(o.unapplied).toBe(o.proposals.length);
+    expect(checks.noChange.judge(o)).toBe(true);
+  });
+
+  it('a session that applies its card changed something: no-change reads false and unapplied is unset', async () => {
+    const o = await runScenario(sessionWith('sb00-h-applied', 'auto'), 'unit');
+    expect(o.error).toBeUndefined();
+    expect(o.proposals.length).toBeGreaterThan(0);
+    expect(o.unapplied).toBeUndefined();
+    expect(checks.noChange.judge(o)).toBe(false);
+  });
+
   it('a session that needs a person records the row', async () => {
     const scenario: Scenario = {
       id: 'sb00-h-needs',

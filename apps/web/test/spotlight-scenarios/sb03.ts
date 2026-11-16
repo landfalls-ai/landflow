@@ -83,7 +83,7 @@ export default defineScenarios([
       call('propose_changes', { summary: 'Retry the VIP post', ops: [{ op: 'setNodeSettings', node: 'Notify VIP', settings: { retryOnFail: true, maxTries: 3 } }] }),
       { text: 'Retries three times.' },
     ],
-    // A card is shown and the canvas is as it was (checks.noChange also wants no card, which is the opposite of this scenario).
+    // A card is shown and the canvas is as it was (in a session `checks.noChange` reads a card left waiting as no change, so it would pass here too).
     checks: [checks.proposed, { id: 'canvas-unchanged', label: 'Left the canvas as it was', judge: keptTheFlow }],
     live: { runs: 3 },
   },

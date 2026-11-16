@@ -497,7 +497,7 @@ private addresses): with `LANDFLOW_OUTBOUND_ALLOW` unset a run to loopback is re
 scenario's `start.outbound: 'allowed'` lists `127.0.0.1,localhost` and nothing wider; `sb03-blocked-session` is
 `blocked`, the other SB03 scenarios `allowed`. SB03's flows point at the echo port (`127.0.0.1:3399`, rewritten to the
 run's echo server), and `?fail=404|500|503` makes the echo answer with that status. In a session, "changed nothing"
-counts only what was applied: a card the guard refused or one waiting for Apply changes nothing (`Outcome.unapplied`).
+counts only what was applied: a card the guard refused or one waiting for Apply changes nothing (`Outcome.unapplied`: every proposal when the session left the canvas untouched, otherwise unset; it is all or nothing, not a count of the proposals that did nothing).
 A build's
 checks read the draft, not the one-line summary: "credentials named" is a `credential` item in `draft.left`, "said what is
 left" is `draft.left` having items (not applicable when the draft lacks nothing), and "sent back once" is `draft.calls`
