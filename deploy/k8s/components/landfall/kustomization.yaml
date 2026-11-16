@@ -1,0 +1,8 @@
+# The Landfall (TypeScript SDK, the incident war room's API) plugin (plugins/landfall): a component so the base stays as it is. Build it first:
+#   docker --context orbstack buildx build --builder orbstack --load -f deploy/docker/node-plugin.Dockerfile \
+#     --build-arg PLUGIN=landfall --build-arg HTTP_PORT=7108 --build-arg GRPC_PORT=7208 -t landflow/plugin-landfall:k8s-dev .
+# Enable it with `- ../../components/landfall` in an overlay's components (the orbstack overlay does).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - landfall.yaml
