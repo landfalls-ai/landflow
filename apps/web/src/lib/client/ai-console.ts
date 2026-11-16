@@ -257,12 +257,12 @@ export const pageToday = (report?: { today?: string }): string | undefined => re
 
 /**
  * The last day a custom range may end on, for the page's own message. The report's `today` once there is one; until then
- * (a deep link, or a first load the server refused) the day after the browser's, the furthest the instance's day can be
+ * (a deep link, or a first load the server refused) two days after the browser's (a browser at UTC−12 and an instance at UTC+14 are 26 hours apart), the furthest the instance's day can be
  * ahead, so a range plainly in the future gets the page's message and a valid one is never held back.
  */
 export function rangeLimit(today: string | undefined, now: Date = new Date()): string {
   if (today) return today;
-  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2);
   return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
 }
 

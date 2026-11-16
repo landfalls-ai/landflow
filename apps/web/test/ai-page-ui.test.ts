@@ -301,13 +301,13 @@ describe('the page and the cache card while the view changes', () => {
     expect(rangeProblem('2026-11-10', '2026-11-16', rangeLimit('2026-11-16'))).toBeUndefined();
   });
 
-  it("before a report, a range plainly in the future gets the page's own message; one a day ahead is not held back", () => {
+  it("before a report, a range plainly in the future gets the page's own message; one up to two days ahead is not held back", () => {
     const now = new Date(2026, 10, 16, 12, 0);
-    expect(rangeLimit(undefined, now)).toBe('2026-11-17');
+    expect(rangeLimit(undefined, now)).toBe('2026-11-18');
     expect(rangeProblem('2026-11-10', '2026-11-20', rangeLimit(undefined, now))).toMatch(/future/);
     expect(viewReady(custom('2026-11-10', '2026-11-20'), rangeLimit(undefined, now))).toBe(false);
-    expect(viewReady(custom('2026-11-10', '2026-11-17'), rangeLimit(undefined, now))).toBe(true);
+    expect(viewReady(custom('2026-11-10', '2026-11-18'), rangeLimit(undefined, now))).toBe(true);
     // Month and year ends.
-    expect(rangeLimit(undefined, new Date(2026, 11, 31, 23, 0))).toBe('2027-01-01');
+    expect(rangeLimit(undefined, new Date(2026, 11, 31, 23, 0))).toBe('2027-01-02');
   });
 });

@@ -203,8 +203,10 @@ export function AiConsole() {
   // The instance's day, from the report (not the browser's: they can differ near midnight, and SSR has no browser day).
   // Until a report has come, the range check uses the browser's day plus one (`rangeLimit`): plainly future ranges get the page's message, not the server's 400.
   const today = pageToday(loaded?.report);
-  const limit = rangeLimit(today);
-  const ready = viewReady(view, limit);
+  // The browser's day is the fallback only after mount, so the server's HTML and the first client render match.
+  const limit = today ?? (mounted ? rangeLimit(today) : undefined);
+  // A custom range is not asked before mount without a report's day: its future check waits for the browser's day.
+  const ready = viewReady(view, limit) && (view.period !== 'custom' || Boolean(today) || mounted);
   const [previous, setPrevious] = useState<{ key: string; series: AiSpendPoint[] }>();
   // SP12: the model group's "Sort by tokens".
   const [byTokens, setByTokens] = useState(false);
