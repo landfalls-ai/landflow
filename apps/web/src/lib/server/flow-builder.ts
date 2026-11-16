@@ -521,8 +521,8 @@ function pinTarget(draft: Assembled, byType: Map<string, NodeTypeInfo>): DraftNo
  * `teams` and `agents`: the published agent teams and agents the caller can see, so a step that needs an agent runs one
  * that fits, and a Run a Team or Run an Agent node gets a real one (by id, never a guess).
  */
-export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: readonly TeamBrief[] = [], agents: readonly AgentBrief[] = []): Promise<FlowDraft> {
-  const types = registry.nodeTypes().filter((t) => t.available);
+export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: readonly TeamBrief[] = [], agents: readonly AgentBrief[] = [], options: { types?: NodeTypeInfo[] } = {}): Promise<FlowDraft> { // SB02: the workflow's allowed types
+  const types = options.types ?? registry.nodeTypes().filter((t) => t.available); // SB02: same as availableTypes(), with no new import
   const byType = new Map(types.map((t) => [t.type, t]));
   const teamsNote = byType.has('core.runTeam') && teams.length ? `\n\nPublished agent teams (core.runTeam: put the team's teamId in teamId, never its name):\n${describeTeams([...teams])}` : '';
   const started = Date.now();

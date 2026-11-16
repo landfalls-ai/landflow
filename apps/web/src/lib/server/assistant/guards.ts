@@ -53,12 +53,77 @@ export function withEarlierRefs(ops: unknown, refs: Map<string, string>): unknow
 /** The chat's tool names: what a tool call recovered from text may name. */
 export const TOOL_NAMES: ReadonlySet<string> = new Set(['search_nodes', 'get_node_docs', 'get_workflow', 'get_run_data', 'propose_changes']);
 
+// SB02: ids, and the destinations (a channel, a table, an owner, an address, a URL) a person names; a model makes both up.
 const ID_PARAMETER = /^id$|[a-z]Ids?$/;
+const DESTINATION_PARAMETER = /^(channel|table|owner|repository|repo|email|to|cc|team|project|board|sheet)$/;
+const URL_PARAMETER = /^(url|baseUrl|webhookUrl)$/;
 
 /**
- * An id the conversation, the workflow, its runs and the node type's own options never mention (a Slack channel, a
- * sheet, a user) can only have been made up: local models write plausible ones. Those parameters are left out, so the
- * user fills them in. `typeText` gives the node type's properties for an op (defaults and fixed options are known).
+ * Whether a plain word ("bugs") the person's text merely contains was named as that destination: a word like that is in
+ * most asks ("get the new bugs … save each bug to a table"), so it counts only after a naming cue or in quotes.
+ * A value with a "#", "@", ".", "/", "_", "-" or a digit is specific enough that finding it is the answer.
+ */
+function namedAs(value: string, known: string): boolean {
+  if (/[#@./_\-\d]/.test(value) || !/^[\w ]+$/.test(value)) return known.toLowerCase().includes(value.toLowerCase());
+  const word = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const kind = 'table|channel|sheet|repo|repository|project|board|team';
+  const quote = '["\'“‘`]';
+  const cue = `(?:called|named|${kind}|owner|into|in|to|on|for|from|at)`;
+  return [
+    `${quote}${word}${quote}`,
+    `\\b${cue}\\s+(?:(?:the|a|an|our|my|your|this|that)\\s+)?["'“‘\`#@]?${word}\\b`,
+    `\\b${word}\\s+(?:${kind})\\b`,
+    `[/#@]${word}\\b`,
+    `\\b${word}/`,
+  ].some((pattern) => new RegExp(pattern, 'i').test(known));
+}
+
+/** The type of the property `name` in a node type's properties JSON (nested ones too); undefined when it has none. */
+function propertyType(json: string, name: string): string | undefined {
+  if (!json) return undefined;
+  try {
+    const find = (list: unknown): string | undefined => {
+      if (!Array.isArray(list)) return undefined;
+      for (const p of list as Array<{ name?: string; type?: string; values?: unknown; options?: unknown }>) {
+        if (p?.name === name && typeof p.type === 'string') return p.type;
+        const inner = find(p?.values) ?? find(p?.options);
+        if (inner) return inner;
+      }
+      return undefined;
+    };
+    return find(JSON.parse(json));
+  } catch {
+    return undefined;
+  }
+}
+
+/** The host of a URL a model wrote ("https://httpbin.org/post" → "httpbin.org"); undefined when it names none. */
+function hostOf(value: string): string | undefined {
+  const match = /^\s*(?:[a-z][a-z0-9+.-]*:\/\/)?(?:[^/@\s]*@)?(\[[^\]]+\]|[^/\s:?#]+)/i.exec(value);
+  return match?.[1].toLowerCase();
+}
+
+/** Whether `text` names `host` as a whole host: "example.com" is not in "myexample.com" or "api.example.com". */
+function mentionsHost(text: string, host: string): boolean {
+  const escaped = host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:^|[^a-z0-9.-])${escaped}(?![a-z0-9-])`, 'i').test(text);
+}
+
+/**
+ * The host a URL with expressions in it names in its literal start ("https://x.com/users/{{ $json.id }}" → "x.com"); undefined
+ * when the value is a whole expression or the host itself is one (the literal part ends before the host does).
+ */
+function literalHostOf(value: string): string | undefined {
+  const prefix = value.slice(0, value.indexOf('{{'));
+  const rest = prefix.replace(/^\s*[a-z][a-z0-9+.-]*:\/\//i, '');
+  return /^[^/\s?#]+[/?#]/.test(rest) ? hostOf(rest) : undefined;
+}
+
+/**
+ * An id, channel, table, owner, address or URL host the conversation, the workflow, its runs and the node type's own
+ * options never mention (a Slack channel, a sheet, a user, a site) can only have been made up: local models write
+ * plausible ones. Those parameters are left out, so the user fills them in. `typeText` gives the node type's properties
+ * for an op (defaults and fixed options are known). A URL is judged by its host: a path on a host somebody gave is kept.
  */
 export function withoutInventedIds(ops: unknown, known: string, typeText: (op: Record<string, unknown>) => string = () => ''): { ops: unknown; invented: string[]; values: string[] } {
   if (!Array.isArray(ops)) return { ops, invented: [], values: [] };
@@ -68,9 +133,29 @@ export function withoutInventedIds(ops: unknown, known: string, typeText: (op: R
     if (!parameters || typeof parameters !== 'object') return parameters;
     const out = { ...(parameters as Record<string, unknown>) };
     for (const [key, value] of Object.entries(out)) {
-      if (!ID_PARAMETER.test(key) || typeof value !== 'string' || !value.trim() || value.includes('{{') || known.includes(value) || typeText(op).includes(JSON.stringify(value))) continue;
+      if (typeof value !== 'string' || !value.trim()) continue;
+      const isId = ID_PARAMETER.test(key);
+      if (value.includes('{{')) {
+        // An expression is kept, but a URL that starts with a literal host nobody gave is judged like a plain one.
+        const host = !isId && URL_PARAMETER.test(key) ? literalHostOf(value) : undefined;
+        if (!host || mentionsHost(known, host) || mentionsHost(typeText(op), host)) continue;
+        invented.push(`${key} of “${String(node)}”: a host nobody gave (${host}), left for the user to fill in`);
+        delete out[key];
+        values.push(value);
+        continue;
+      }
+      if (!isId && !DESTINATION_PARAMETER.test(key) && !URL_PARAMETER.test(key)) continue;
+      // A property that is not text ("to" is the end of a date window on a dateTime) is no destination.
+      if (!isId && propertyType(typeText(op), key) !== undefined && propertyType(typeText(op), key) !== 'string') continue;
+      if (typeText(op).includes(JSON.stringify(value)) || (isId || URL_PARAMETER.test(key) ? known.includes(value) : namedAs(value, known))) continue;
+      if (!isId && URL_PARAMETER.test(key)) {
+        const host = hostOf(value);
+        if (!host || mentionsHost(known, host) || mentionsHost(typeText(op), host)) continue;
+        invented.push(`${key} of “${String(node)}”: a host nobody gave (${host}), left for the user to fill in`);
+      } else {
+        invented.push(`${key} of “${String(node)}”: ${isId ? 'an id' : `a ${key}`} nobody gave, left for the user to fill in`);
+      }
       delete out[key];
-      invented.push(`${key} of “${String(node)}”: an id nobody gave, left for the user to fill in`);
       values.push(value);
     }
     return out;

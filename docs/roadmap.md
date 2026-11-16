@@ -2314,3 +2314,10 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
 - **Left (deferred)**: model verdicts in the CLI's `check` (a model's verdict reaches a flow through Check Practices, PR08;
   the CLI runs machine checks only) and a reminder after `Write` or `Edit` on a matching path (the mod never denies a
   tool call, so a reminder hook is its own package).
+
+## Spotlight wave sb1
+
+- SB02 ✅ Done: a first draft is guarded as the chat guards a proposal: made-up channels, tables, owners, addresses, ids and
+  URL hosts are cleared and listed, one trigger, no empty Set, credentials listed, and the build applies the workflow's
+  allowed node types ([The empty canvas](assistant.md#spotlight)). The chat's made-up values guard widened to destinations
+  and URL hosts. Left: the credential picker (SB12) and the full build summary (SB15).
