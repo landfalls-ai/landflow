@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { ChatComposer, ModelChip } from '../../ui/chat';
 import { MentionChips } from '../../ui/mention-picker';
 import { useMentionPicker } from '@/lib/client/use-mention-picker';
+import { scopeLabel, scopeOf, type SpotlightScope } from '@/lib/shared/spotlight-scope'; // SB07:
 import { mentionQueryAt, type MentionHit } from '@/lib/shared/mentions';
 import { completeBubbles, idleBubbles, liveMentions, TEST_BUBBLE, type Bubble, type Mention, type SpotlightContext } from '@/lib/shared/spotlight';
 import { useBuildFlow } from '../ai-builder';
@@ -150,6 +151,24 @@ export function Composer() {
   // A new selection is back in the context.
   useEffect(() => setWithoutSelection(false), [selectedName]);
 
+  // SB07: what the message may change, as it is typed: the selected step, steps tagged with @ or named with "only", or where a new step goes.
+  // The chip's × lifts it for this message (the chip then disappears and the send says `scope: null`); it comes back with an empty box or a new selection.
+  const [scopeLifted, setScopeLifted] = useState(false);
+  const selectedId = useEditor((s) => (withoutSelection ? undefined : (s.openNodeId ?? s.nodes.find((n) => n.selected)?.id)));
+  const scopeFor = (message: string): SpotlightScope | undefined =>
+    scopeOf({
+      message,
+      nodes: ctx.nodes,
+      selectedId,
+      taggedIds: picker.chips.filter((c) => c.type === 'node' && c.workflowId === workflowId).map((c) => c.id),
+    });
+  const scope = useMemo(
+    () => (scopeLifted || empty || !draft.trim() ? undefined : scopeFor(draft)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [scopeLifted, empty, draft, ctx.nodes, selectedId, picker.chips, workflowId],
+  );
+  useEffect(() => setScopeLifted(false), [selectedName, draft === '']);
+
   const bubbles = useMemo<Bubble[]>(() => {
     if (live) return [];
     // While an @ is being typed, the picker answers, not the bubbles.
@@ -188,9 +207,11 @@ export function Composer() {
     const message = text.trim();
     if (!message || live) return;
     // The picker's chips, then node types chosen from the bubbles still in the message.
+    const scoped = scopeLifted ? null : scopeFor(message); // SB07:
     const typed: KeptMention[] = liveMentions(message, [...mentions, ...extra]).flatMap((m) => (m.kind === 'type' ? [{ type: 'nodeType' as const, id: m.type, name: m.label }] : []));
     const tagged: KeptMention[] = [...picker.chips.map((c) => ({ type: c.type, id: c.id, ...(c.workflowId && { workflowId: c.workflowId }), name: c.name })), ...typed];
     picker.clear();
+    setScopeLifted(false); // SB07:
     setDraft('');
     setCaret(0);
     setMentions([]);
@@ -201,6 +222,7 @@ export function Composer() {
     }
     await useAssistant.getState().send(message, {
       withoutSelection,
+      ...(scoped !== undefined && { scope: scoped }), // SB07:
       // SB04: autonomous only on a brand-new draft and only for a change: the model hears that its proposal is applied and tested as it ends. A question is answered, never applied.
       ...typedSession(message),
       ...(tagged.length && { mentions: tagged.slice(0, 8) }),
@@ -323,14 +345,22 @@ export function Composer() {
             else setFocused(false);
           }}
           top={
-            picker.chips.length || (selectedName && !withoutSelection && !empty) || (model && !drafting && !pending) ? (
+            picker.chips.length || scope || (selectedName && !withoutSelection && !empty) || (model && !drafting && !pending) ? (
               <>
                 {/* The tags chosen with @: each is read for Spotlight when the message is sent. */}
                 <MentionChips chips={picker.chips} onRemove={picker.remove} />
-                {(selectedName && !withoutSelection && !empty) || (model && !drafting && !pending) ? (
+                {scope || (selectedName && !withoutSelection && !empty) || (model && !drafting && !pending) ? (
                   // The model chip sits with the selected node: a 360 px column has no room for it beside the text.
                   <div className="mb-1 flex items-center justify-between gap-2">
-                    {selectedName && !withoutSelection && !empty ? (
+                    {scope && !empty ? (
+                      // SB07: the scope, in the selection chip's place when it is the selection (one chip, not two).
+                      <span className="flex w-fit min-w-0 max-w-full items-center gap-0.5 rounded-md border border-hair bg-wl py-0.5 pl-1.5 pr-0.5 text-[11.5px] text-t2" title="Spotlight changes only this; the × lifts it for this message">
+                        <span className="truncate">{scopeLabel(scope, ctx.nodes)}</span>
+                        <button onMouseDown={(e) => e.preventDefault()} onClick={() => setScopeLifted(true)} aria-label={`Lift: ${scopeLabel(scope, ctx.nodes)}`} className="grid size-4 place-items-center rounded text-t3 hover:text-t1 max-md:size-9">
+                          <X className="size-3" />
+                        </button>
+                      </span>
+                    ) : selectedName && !withoutSelection && !empty ? (
                       <span className="flex w-fit min-w-0 max-w-full items-center gap-0.5 rounded-md border border-hair bg-wl py-0.5 pl-1.5 pr-0.5 text-[11.5px] text-t2" title="The selected node is part of what Spotlight sees">
                         <span className="truncate">{selectedName}</span>
                         <button onMouseDown={(e) => e.preventDefault()} onClick={() => setWithoutSelection(true)} aria-label={`Leave ${selectedName} out`} className="grid size-4 place-items-center rounded text-t3 hover:text-t1 max-md:size-9">

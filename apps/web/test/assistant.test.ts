@@ -414,7 +414,7 @@ describe('builder chat', () => {
       { text: 'Added a Remove Duplicates node after Code. Run it to check.' },
     ]);
     const events: ChatEvent[] = [];
-    await runChat({ messages: [{ role: 'user', content: 'Remove duplicate items after Code' }], workflow: workflow(), selectedNodeId: 'b', model, types, onEvent: (e) => events.push(e) });
+    await runChat({ messages: [{ role: 'user', content: 'Remove duplicate items after Code' }], workflow: workflow(), selectedNodeId: 'b', scope: null, model, types, onEvent: (e) => events.push(e) }); // SB07: scope: null, this test is about validation, not what the request may change
 
     expect(events.map((e) => e.type)).toEqual(['text', 'tool', 'tool', 'tool', 'tool', 'proposal', 'tool', 'text', 'done']);
     const tools = events.filter((e) => e.type === 'tool');
