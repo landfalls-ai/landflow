@@ -751,6 +751,11 @@ export const useAssistant = create<AssistantState>((set, get) => ({
     // SB07 × SB11 (the integrator's line): a choice that is a step's name is the scope of the change that follows.
     const step = useEditor.getState().nodes.find((n) => n.data.wf.name === choice);
     await get().send(choice, step ? { scope: { kind: 'only', nodes: [step.id] } } : {});
+    // SB11 (N3): the send failed (a cap, a dropped connection) before anything came back: the question is open again, so the chips work.
+    const last = get().items.at(-1);
+    if (last && last.role === 'assistant' && last.id !== itemId && last.error && !last.parts.length) {
+      get().updateParts(itemId, (parts) => parts.map((p) => (p.kind === 'ask' && p.ask.answered === choice ? { ...p, ask: { ...p.ask, answered: undefined } } : p)));
+    }
   },
 }));
 

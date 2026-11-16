@@ -224,6 +224,22 @@ describe('the editor', () => {
     expect(part).toMatchObject({ kind: 'ask', ask: { answered: 'Read Linear bugs' } });
   });
 
+  it('re-enables the chips when the answer\'s send fails, and keeps them marked when it goes through (SB11-N3)', async () => {
+    const ask = [{ kind: 'ask' as const, ask: { question: 'Which step?', choices: CHOICES } }];
+    const failing = vi.fn(async () => {
+      useAssistant.setState((s) => ({ items: [...s.items, { id: 'u1', role: 'user' as const, text: 'Read Linear bugs' }, { id: 'r2', role: 'assistant' as const, parts: [], steps: [], text: '', thinking: [], error: 'AI usage cap reached' }] }));
+    });
+    useAssistant.setState({ pending: false, send: failing, items: [{ id: 'r1', role: 'assistant', parts: ask }] });
+    await useAssistant.getState().answerAsk('r1', 'Read Linear bugs');
+    expect((useAssistant.getState().items[0] as AssistantTurn).parts[0]).toMatchObject({ kind: 'ask', ask: { answered: undefined } });
+    const fine = vi.fn(async () => {
+      useAssistant.setState((s) => ({ items: [...s.items, { id: 'u1', role: 'user' as const, text: 'Read Linear bugs' }, { id: 'r2', role: 'assistant' as const, parts: [{ kind: 'text' as const, text: 'Done.' }], steps: [], text: '', thinking: [] }] }));
+    });
+    useAssistant.setState({ pending: false, send: fine, items: [{ id: 'r1', role: 'assistant', parts: ask }] });
+    await useAssistant.getState().answerAsk('r1', 'Read Linear bugs');
+    expect((useAssistant.getState().items[0] as AssistantTurn).parts[0]).toMatchObject({ ask: { answered: 'Read Linear bugs' } });
+  });
+
   it('a chip that names a step on the canvas sends that step as the scope (SB07 × SB11)', async () => {
     const send = vi.fn(async () => {});
     const before = useEditor.getState().nodes;
