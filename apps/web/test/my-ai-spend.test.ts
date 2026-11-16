@@ -177,14 +177,21 @@ describe('GET /api/insights/ai/me', () => {
 
   it('folds the leading partial hour of the 24 hours into the first point, so the series equals the page totals', async () => {
     const eve = await createUser({ email: 'eve@me.test', name: 'Eve', role: 'member', password: 'eve-password-1' });
-    const at = new Date(Date.now() - 23.9 * 3_600_000);
-    row({ user_id: eve.id, cost: 5, at: at.toISOString(), day: aiUsageMeter().today(at.getTime()) });
-    row({ user_id: eve.id, cost: 1 });
-    const { body } = await get(eve, '?period=24h');
-    const total = body.series.reduce((sum: number, p: { cost: number }) => sum + p.cost, 0);
-    expect(body.byModel.reduce((sum: number, r: { cost: number }) => sum + r.cost, 0)).toBe(6);
-    expect(total).toBe(6);
-    expect(body.series.reduce((sum: number, p: { calls: number }) => sum + p.calls, 0)).toBe(2);
+    // Ten past the hour: 23.9 hours ago is in the leading partial hour, always.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.parse('2026-11-16T12:10:00.000Z'));
+    try {
+      const at = new Date(Date.now() - 23.9 * 3_600_000);
+      row({ user_id: eve.id, cost: 5, at: at.toISOString(), day: aiUsageMeter().today(at.getTime()) });
+      row({ user_id: eve.id, cost: 1 });
+      const { body } = await get(eve, '?period=24h');
+      const total = body.series.reduce((sum: number, p: { cost: number }) => sum + p.cost, 0);
+      expect(body.byModel.reduce((sum: number, r: { cost: number }) => sum + r.cost, 0)).toBe(6);
+      expect(total).toBe(6);
+      expect(body.series.reduce((sum: number, p: { calls: number }) => sum + p.calls, 0)).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("counts the report's days for 7d in a zone with daylight saving, just after midnight in the week after spring forward", async () => {
