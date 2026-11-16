@@ -117,14 +117,22 @@ const WORKFLOW_SETTINGS: Record<keyof WorkflowSettingsPatch, 'string' | 'number'
   retryBaseDelaySeconds: 'number',
 };
 
+// SB09: what a node's settings may be (the engine ignores or mishandles the rest): out of range is dropped and named by the caller.
+const NODE_RANGES: Record<string, (value: number) => boolean> = {
+  maxTries: (v) => Number.isInteger(v) && v >= 1 && v <= 10,
+  waitBetweenTriesMs: (v) => Number.isInteger(v) && v >= 0 && v <= 60_000,
+  timeoutSeconds: (v) => v >= 0.1 && v <= 86_400,
+};
+const NODE_RANGE_WORDS: Record<string, string> = { maxTries: 'a whole number from 1 to 10', waitBetweenTriesMs: 'a whole number from 0 to 60000 milliseconds', timeoutSeconds: '0.1 to 86400 seconds' };
+
 /** The settings of `raw` that `allowed` names, with the right types; undefined when none is left. */
-function settingsOf<T>(raw: unknown, allowed: Record<string, 'boolean' | 'number' | 'string' | 'onError' | 'backoff'>): T | undefined {
+function settingsOf<T>(raw: unknown, allowed: Record<string, 'boolean' | 'number' | 'string' | 'onError' | 'backoff'>, ranges?: Record<string, (value: number) => boolean>): T | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
     const kind = allowed[key];
     if (kind === 'boolean' && typeof value === 'boolean') out[key] = value;
-    else if (kind === 'number' && typeof value === 'number' && Number.isFinite(value) && value >= 0) out[key] = value;
+    else if (kind === 'number' && typeof value === 'number' && Number.isFinite(value) && value >= 0 && (ranges?.[key]?.(value) ?? true)) out[key] = value; // SB09: a node setting's range
     else if (kind === 'string' && typeof value === 'string' && value.trim()) out[key] = value.trim();
     else if (kind === 'onError' && (value === 'stop' || value === 'continue')) out[key] = value;
     else if (kind === 'backoff' && (value === 'fixed' || value === 'exponential')) out[key] = value;
@@ -749,10 +757,19 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
 
       case 'setNodeSettings': {
         const node = find(op.node);
-        const settings = settingsOf<NodeSettingsPatch>(op.settings, NODE_SETTINGS);
+        // SB09: ranges, then retry means retry: tries above 1 (or a backoff or a wait) turn retryOnFail on, and retryOnFail false with tries above 1 contradicts itself.
+        const settings = settingsOf<NodeSettingsPatch>(op.settings, NODE_SETTINGS, NODE_RANGES);
+        const outOfRange = node ? Object.entries(op.settings).filter(([key, value]) => NODE_RANGES[key] && typeof value === 'number' && (settings as Record<string, unknown> | undefined)?.[key] === undefined) : [];
+        for (const [key, value] of outOfRange) dropped.push(`“${node?.name}”: ${key} ${value} is out of range (use ${NODE_RANGE_WORDS[key]})`);
         if (!node || !settings) {
-          dropped.push(node ? `settings of “${node.name}”: nothing to change` : `settings: no node “${op.node}”`);
+          if (!outOfRange.length) dropped.push(node ? `settings of “${node.name}”: nothing to change` : `settings: no node “${op.node}”`);
           break;
+        }
+        if (settings.retryOnFail === false && (settings.maxTries ?? 0) > 1) {
+          dropped.push(`“${node.name}”: maxTries ${settings.maxTries} with retryOnFail false contradict each other (turn retry on, or leave the tries out)`);
+          delete settings.maxTries;
+        } else if (settings.retryOnFail === undefined && ((settings.maxTries ?? 0) > 1 || settings.retryBackoff || settings.waitBetweenTriesMs !== undefined)) {
+          settings.retryOnFail = true;
         }
         wf = { ...wf, nodes: wf.nodes.map((n) => (n.id === node.id ? { ...n, ...settings } : n)) };
         applied.push({ op: 'setNodeSettings', node: handle(node), settings });

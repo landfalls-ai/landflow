@@ -2455,3 +2455,10 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
 ## Spotlight wave sb2
 
 - **SB07, scope lock, built:** a request about one step carries a scope (the selected step, steps tagged with @, steps named with "only", or the step a new one goes after or before); the composer shows it as a chip (**Only “X”**, **New step after “X”**) whose × lifts it, the prompt says it, and `propose_changes` sends a change outside it back once and then leaves it out and lists it (finding 2.4; carryover item 3's "only the asked node" and item 2's placement half). Docs: [assistant.md](assistant.md#the-builder-chat). Left: asking "which step?" (SB11), what the model reads about the scope's steps (SB10).
+- **SB09, changes that mean what they say, built (2026-11-16):** "retry 3 times" sets `retryOnFail` with `maxTries`
+  (the engine read the tries only with it: 0 of 3 right in sb1), settings are checked for range, an expression that
+  reads a field the step's input has no sample, pin or schema for is sent back once with the fields it has, a schedule
+  must parse and name the days the request named, an Authorization header read from the data is sent back, and a
+  credential with a hand-written header is a caution. After a run the host blocked, Spotlight makes no model call and
+  offers no suggestion, and a suggestion that moves a step's destination is advice with no chip
+  ([assistant.md](assistant.md#after-run-suggestions)). Left: the credential picker (SB12), asking which step (SB11).

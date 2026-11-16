@@ -24,6 +24,7 @@ import { failSpan } from '../telemetry/spans';
 import { saveCheckpoint } from './checkpoints';
 import { assistantModel, errorText, modelLabel } from './model';
 import { withParseRetry } from './parse-retry'; // SB05:
+import { authHeaderProblems, cronProblems, expressionMisses, retryProblems } from './change-checks'; // SB09:
 import { redundantBranches, registryLookup, validateOps, withoutRepeatedAdds } from './ops';
 import {
   APPLY_REQUEST,
@@ -356,6 +357,8 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
   let failedSentBack = false;
   /** Whether a proposal that set a duration in the wrong unit was sent back. */
   let unitsSentBack = false;
+  let checksSent = false; // SB09:
+  const checkNotes: string[] = []; // SB09:
   let proposed = proposalLog.length > 0;
   /** Whether a fix request that proposed nothing was sent back for a proposal. */
   let pressed = false;
@@ -563,6 +566,19 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
           unitsSentBack = true;
           return result(`Not shown yet: ${slips.join('; ')}. Call propose_changes again with the numbers in the field's unit.`, 'Reworked the change', false, true);
         }
+        // SB09: a change that means what its card says: retry settings in range and on, expressions that read fields the step's input has, a schedule that parses and names the days asked, no Authorization header read from the data. Back once, then shown with the lines on the card.
+        // retryProblems reads the ops after apply, so its range and contradiction lines are normally caught earlier by the `dropped` send-back; it stays for ops that reach here unchanged.
+        const checkLines = [
+          ...retryProblems(validated.ops, working, validated.workflow, { latest }),
+          ...expressionMisses(validated.ops, working, validated.workflow, { runs, lookup, latest }),
+          ...cronProblems(validated.ops, working, validated.workflow, { latest }),
+          ...authHeaderProblems(validated.ops, working, validated.workflow, { latest }, 'data'),
+        ];
+        if (checkLines.length && !checksSent) {
+          checksSent = true;
+          return result(`Not shown yet: ${checkLines.join('; ')}. Call propose_changes again with that fixed.`, 'Reworked the change', false, true);
+        }
+        checkNotes.push(...checkLines);
         // A change with parts that failed (a type that doesn't exist, a connection to a node it never added) goes back once:
         // shown as it is, it could remove a node without adding the one meant to replace it.
         if (validated.dropped.length && !failedSentBack) {
@@ -598,7 +614,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         const shown = input.session
           ? result(`Recorded (${count}); ${input.session === 'auto' || input.autonomy === 'auto' ? 'Spotlight applies it when you finish' : 'it waits for the person to apply it, then Spotlight tests again'}.${notes} Don't list the changes again. If the message asks for something this doesn't cover yet, propose it now; otherwise stop with your one sentence.`, `Proposed ${count}`)
           : result(`Shown to the user as a card with an Apply button (${count}); nothing changes until they click it.${notes} Don't list the changes again, ask whether to apply them, or say they are applied. If the latest message asks for something this doesn't cover yet, propose it now (the nodes above are in the workflow for you to connect to); if it's all proposed, stop and say in one line what the cards do.`, `Proposed ${count}`);
-        onEvent({ type: 'proposal', id: `pr_${nanoid(8)}`, summary, ops: validated.ops, dropped, warnings: [...validated.warnings, ...validated.cautions] });
+        onEvent({ type: 'proposal', id: `pr_${nanoid(8)}`, summary, ops: validated.ops, dropped, warnings: [...validated.warnings, ...validated.cautions, ...checkNotes.splice(0)] });
         proposed = true;
         recordSuggestions(['proposal']);
         return shown;
