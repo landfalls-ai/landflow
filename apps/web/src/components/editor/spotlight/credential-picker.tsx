@@ -5,7 +5,7 @@
  * "Create one". Nothing is picked until the person picks, never on its own when exactly one fits (the node panel does
  * that; this does not). The pick is one undoable change of the step's `credentials`.
  */
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { toast } from 'sonner';
 import { isPhone } from '@/lib/client/use-phone';
 import { Button } from '../../ui/button';
@@ -52,6 +52,8 @@ export function CredentialPickerView({
   disabled?: boolean;
   loading?: boolean;
 }) {
+  // A group of its own: rows of older replies keep their radios apart.
+  const group = useId();
   return (
     <div className="space-y-1.5 pl-5" data-testid="credential-picker">
       {loading ? (
@@ -59,8 +61,8 @@ export function CredentialPickerView({
       ) : options.length ? (
         <div role="radiogroup" aria-label="Credentials that fit" className="space-y-1">
           {options.map((o) => (
-            <label key={o.id} className="flex cursor-pointer items-center gap-2 rounded-lg border border-hair bg-bg px-2 py-1.5 text-[12.5px] text-t1 has-[:checked]:border-ac has-[:checked]:bg-acbg">
-              <input type="radio" name="credential-pick" value={o.id} checked={chosen === o.id} onChange={() => onChoose(o.id)} disabled={disabled} className="size-3.5 shrink-0 accent-[var(--ac)]" />
+            <label key={o.id} className="flex cursor-pointer items-center gap-2 rounded-lg border border-hair bg-bg px-2 py-1.5 text-[12.5px] text-t1 max-md:min-h-11 has-[:checked]:border-ac has-[:checked]:bg-acbg">
+              <input type="radio" name={group} value={o.id} checked={chosen === o.id} onChange={() => onChoose(o.id)} disabled={disabled} className="size-3.5 shrink-0 accent-[var(--ac)]" />
               <span className="min-w-0 truncate">{o.name}</span>
             </label>
           ))}
