@@ -604,6 +604,7 @@ function TraceBody({
         <DetailSheet
           target={target}
           model={model}
+          full={full}
           onClose={() => setTarget(undefined)}
           open={open}
           onJump={onJump}

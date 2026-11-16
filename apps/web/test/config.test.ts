@@ -110,6 +110,8 @@ describe('checkConfig', () => {
     expect(r.errors.join()).toContain('LANDFLOW_LLM_GATEWAY_PARTS_SECRET');
     expect(r.errors.join()).toContain('LANDFLOW_LLM_GATEWAY_ADMIN_KEY');
     expect(JSON.stringify(r)).not.toContain('landflow-dev-parts-only');
+    expect(JSON.stringify(r)).not.toContain('sk-landflow-dev-master-only');
+    expect(checkConfig({ ...good, LANDFLOW_LLM_GATEWAY_KEY: 'sk-landflow-dev-master-only' }).errors.join()).toContain('LANDFLOW_LLM_GATEWAY_KEY');
     expect(checkConfig({ ...good, LANDFLOW_LLM_GATEWAY_PARTS_SECRET: 'a-secret-of-my-own' }).errors).toEqual([]);
     expect(checkConfig({ LANDFLOW_LLM_GATEWAY_PARTS_SECRET: 'landflow-dev-parts-only' }).errors).toEqual([]);
   });

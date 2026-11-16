@@ -152,6 +152,7 @@ function ChangeSheet({ changes, file, git }: { changes: FileChange[]; file: stri
 function SpanSheet({
   span,
   model,
+  full,
   open,
   onJump,
   changes,
@@ -159,6 +160,7 @@ function SpanSheet({
 }: {
   span: RunSpan;
   model: RunModel;
+  full: RunModel;
   open: (o: Open) => void;
   onJump: (ms: number) => void;
   changes?: RunChanges;
@@ -202,7 +204,7 @@ function SpanSheet({
         ]}
       />
       {/* SP07: a model call's composition and cache line. */}
-      {span.kind === 'model' && model.executionId && <CallSpend span={span} executionId={model.executionId} spans={Object.values(model.spans).filter((s) => s.kind === 'model')} live={model.live} />}
+      {span.kind === 'model' && model.executionId && <CallSpend span={full.spans[span.id] ?? span} executionId={model.executionId} spans={Object.values(full.spans).filter((s) => s.kind === 'model')} live={full.live} />}
       <div className="mt-3 flex flex-col gap-2.5">
         {edits?.length ? (
           <ChangeSheet changes={edits.map((e) => e.c)} file={edits[0].file} git={Boolean(changes?.git)} />
@@ -396,6 +398,7 @@ function ActorSheet({ id, model, open }: { id: string; model: RunModel; open: (o
 export function DetailSheet({
   target,
   model,
+  full,
   onClose,
   open,
   onJump,
@@ -406,6 +409,8 @@ export function DetailSheet({
 }: {
   target: Open;
   model: RunModel;
+  /** The whole run (not the replay cut): a model step's spend pairs its call against every span and polls only while the run is live. */
+  full?: RunModel;
   onClose: () => void;
   open: (o: Open) => void;
   onJump: (ms: number) => void;
@@ -421,7 +426,7 @@ export function DetailSheet({
     if (!span) return null;
     return (
       <Frame title={span.name} kicker={span.kind === 'delegate' ? 'Request' : span.kind} onClose={onClose}>
-        <SpanSheet span={span} model={model} open={open} onJump={onJump} changes={changes} repo={repo} />
+        <SpanSheet span={span} model={model} full={full ?? model} open={open} onJump={onJump} changes={changes} repo={repo} />
       </Frame>
     );
   }

@@ -3,9 +3,9 @@
  * principal for authenticated calls (LANDFLOW_RATE_LIMIT_API a minute) and one per client address and route group
  * for the public triggers (/api/webhook, /form, /chat, /mcp, /api/waiting, /api/gateway-parts:
  * LANDFLOW_RATE_LIMIT_PUBLIC a minute), so a public endpoint that starts model calls can't be driven for cost.
- * Defaults: 600 and 120 in the production profile, off (0) in development; 0 turns a bucket off anywhere. Fixed one-minute windows: in queue mode the count lives in
- * Valkey (the coordinator's `incr`, shared by every main), else in this process; if Valkey is unreachable the process
- * counts, so the limit never disappears. Health checks, plugin heartbeats and /api/metrics are never counted.
+ * Defaults: 600 and 120 in the production profile, off (0) in development; 0 turns a bucket off anywhere. Fixed
+ * one-minute windows: in queue mode the count lives in Valkey (the coordinator's `incr`, shared by every main), else in
+ * this process; if Valkey is unreachable the process counts, so the limit never disappears. Health checks, plugin heartbeats and /api/metrics are never counted.
  * `handler` (lib/server/http.ts) calls `limitRequest` right after the guard let the request in.
  */
 import { envInt, isProduction } from '../config';

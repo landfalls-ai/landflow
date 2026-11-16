@@ -703,7 +703,9 @@ models and cost are what happened in the run, never behind the developer-details
   model, the same node and agent when both have one, the call's time within a second before and two after the span, one
   call to one span (the nearest pair by the span's end first; a call is recorded when it ends; a span still open counts
   as ending at its start). A call with no such span shows its time as plain text. The tab reads once more when the run
-  ends, and a failed read has a Try again button.
+  ends (also when the tab or a sheet is opened after the end, so a mid-run answer is never kept; a read asked while
+  another is in flight is followed by one more), and a failed read has a Try again button. The tab and the sheets
+  share one poll.
 
 The answer holds sizes, counts and names only: no prompt text is shown or stored for spend.
 

@@ -309,6 +309,15 @@ describe('GET /api/ai-calls/:id', () => {
     expect(view.previous).toEqual({ usageId: 'au_mx_1', samePrefix: false, changedParts: [], compared: false });
   });
 
+  it('says compared: false when a split of the same source has no hashes to compare', async () => {
+    usage({ id: 'au_nh_1', at: at(4000), execution_id: 'ex_nh', workflow_id: 'wf_rs_demo', session_id: 'as_nh' });
+    split('au_nh_1', { parts: { instructions: 500 }, hashes: { instructions: 'aa' }, prefix: 'p1', at: at(4000) });
+    usage({ id: 'au_nh_2', at: at(4010), execution_id: 'ex_nh', workflow_id: 'wf_rs_demo', session_id: 'as_nh' });
+    split('au_nh_2', { parts: { instructions: 500 }, at: at(4010) });
+    const view = (await get(callRoute, 'au_nh_2', owner)).body as AiCallView;
+    expect(view.previous).toEqual({ usageId: 'au_nh_1', samePrefix: false, changedParts: [], compared: false });
+  });
+
   it('the route is readable with executions:read', () => {
     expect(routePolicy('GET', '/api/ai-calls/x')).toEqual({ scope: 'executions:read' });
   });

@@ -190,7 +190,7 @@ describe('one read of a run\'s spend for the tab and every sheet', () => {
     expect(api).toHaveBeenCalledTimes(1);
     expect(runSpendState('ex_demo').spend).toBe(demo);
     expect(heard.length).toBeGreaterThan(0);
-    // A sheet opened later reads nothing: the answer is there.
+    // A sheet opened later reads nothing: the answer is there (read when the run was not live).
     await ensureRunSpend('ex_demo');
     await ensureRunSpend('ex_demo', false);
     expect(api).toHaveBeenCalledTimes(1);
@@ -198,6 +198,35 @@ describe('one read of a run\'s spend for the tab and every sheet', () => {
     await readSpend('ex_demo');
     expect(api).toHaveBeenCalledTimes(2);
     unwatch();
+  });
+
+  it('reads again when the run has ended since the answer was read live', async () => {
+    vi.mocked(api).mockResolvedValue(demo);
+    await readSpend('ex_live', true);
+    expect(api).toHaveBeenCalledTimes(1);
+    // Still live and young: nothing to read.
+    await ensureRunSpend('ex_live', true);
+    expect(api).toHaveBeenCalledTimes(1);
+    // The tab was closed, the run ended, a tab or sheet opens: the mid-run answer is read again, once.
+    await Promise.all([ensureRunSpend('ex_live', false), ensureRunSpend('ex_live', false)]);
+    expect(api).toHaveBeenCalledTimes(2);
+    await ensureRunSpend('ex_live', false);
+    expect(api).toHaveBeenCalledTimes(2);
+  });
+
+  it('follows a read asked during one in flight with one more read', async () => {
+    let release!: () => void;
+    vi.mocked(api).mockImplementationOnce(() => new Promise((resolve) => (release = () => resolve(demo)))).mockResolvedValue(demo);
+    const poll = readSpend('ex_busy', true);
+    // The run ends while the poll is in flight: its answer may predate the end.
+    const end = ensureRunSpend('ex_busy', false);
+    const again = readSpend('ex_busy', false);
+    expect(api).toHaveBeenCalledTimes(1);
+    release();
+    await Promise.all([poll, end, again]);
+    expect(api).toHaveBeenCalledTimes(2);
+    await ensureRunSpend('ex_busy', false);
+    expect(api).toHaveBeenCalledTimes(2);
   });
 
   it('keeps the last answer when a later read fails, and reads once per run', async () => {

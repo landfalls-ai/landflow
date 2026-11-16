@@ -1,8 +1,9 @@
 'use client';
 /**
- * The run's Spend section on the client (wave 12, SP06): `useRunSpend` reads `GET /api/executions/:id/spend` (again every
- * 10 seconds while the run is live; the Spend tab and the call sheet share one read per run) and the pure helpers turn a `RunSpend` into the rows, the cache sentence, the
- * composition bar and the call rows the Spend tab draws. Numbers and names only; the answer holds no prompt text.
+ * The run's Spend section on the client (wave 12, SP06): `useRunSpend` reads `GET /api/executions/:id/spend` (again
+ * every 10 seconds while the run is live; the Spend tab and the call sheet share one read and one poll per run) and the
+ * pure helpers turn a `RunSpend` into the rows, the cache sentence, the composition bar and the call rows the Spend tab
+ * draws. Numbers and names only; the answer holds no prompt text.
  */
 import { useCallback, useEffect, useReducer, useRef } from 'react';
 import { api } from './api';
@@ -28,7 +29,15 @@ interface SpendEntry {
   state: RunSpendState;
   /** When the last answer arrived (ms). */
   at: number;
-  reading: boolean;
+  /** Whether the run was live when the latest read was asked: a finished run must not keep a mid-run answer. */
+  live: boolean;
+  /** The read in flight, shared by everyone who asks meanwhile. */
+  reading?: Promise<void>;
+  /** A read was asked while one was in flight: read once more when it lands (its answer may predate the ask). */
+  again?: { live: boolean };
+  /** Who watches the run as live (the Spend tab, an open sheet): one poll for all of them. */
+  holders: Map<symbol, boolean>;
+  timer?: ReturnType<typeof setInterval>;
   listeners: Set<() => void>;
 }
 
@@ -39,12 +48,15 @@ const MAX_ENTRIES = 6;
 function entryFor(executionId: string): SpendEntry {
   let entry = entries.get(executionId);
   if (!entry) {
-    entry = { state: { loading: true }, at: 0, reading: false, listeners: new Set() };
+    entry = { state: { loading: true }, at: 0, live: false, holders: new Map(), listeners: new Set() };
     entries.set(executionId, entry);
     // Keep the newest few runs; one nobody listens to is dropped first.
     for (const [id, old] of entries) {
       if (entries.size <= MAX_ENTRIES) break;
-      if (id !== executionId && old.listeners.size === 0) entries.delete(id);
+      if (id !== executionId && old.listeners.size === 0) {
+        if (old.timer) clearInterval(old.timer);
+        entries.delete(id);
+      }
     }
   }
   return entry;
@@ -55,27 +67,46 @@ const publish = (entry: SpendEntry, state: RunSpendState) => {
   for (const listener of entry.listeners) listener();
 };
 
-/** Reads the run's spend unless a read is already in flight. */
-export async function readSpend(executionId: string): Promise<void> {
+/**
+ * Reads the run's spend. A read asked while another is in flight shares it and is followed by one more when it lands,
+ * so an end-of-run or span-ended read is never lost to a poll that started before it. `live` says whether the run is
+ * live as the asker sees it; it is kept with the answer.
+ */
+export function readSpend(executionId: string, live = false): Promise<void> {
   const entry = entryFor(executionId);
-  if (entry.reading) return;
-  entry.reading = true;
-  try {
-    const spend = await api<RunSpend>(`/api/executions/${executionId}/spend`, { background: true });
-    entry.at = Date.now();
-    publish(entry, { spend, loading: false });
-  } catch (e) {
-    publish(entry, { ...entry.state, loading: false, error: (e as Error).message });
-  } finally {
-    entry.reading = false;
+  entry.live = live;
+  if (entry.reading) {
+    entry.again = { live };
+    return entry.reading;
   }
+  entry.reading = (async () => {
+    try {
+      const spend = await api<RunSpend>(`/api/executions/${executionId}/spend`, { background: true });
+      entry.at = Date.now();
+      publish(entry, { spend, loading: false });
+    } catch (e) {
+      publish(entry, { ...entry.state, loading: false, error: (e as Error).message });
+    } finally {
+      entry.reading = undefined;
+    }
+    const next = entry.again;
+    entry.again = undefined;
+    if (next) await readSpend(executionId, next.live);
+  })();
+  return entry.reading;
 }
 
-/** Reads unless there is an answer already (for a live run: one younger than a poll), so a second reader does not fetch. */
+/**
+ * Reads unless the answer is good enough: there is one, it is not a live run's answer for a run that has ended, and for
+ * a live run it is younger than a poll. A read in flight is shared; one that began while the run was live is followed by
+ * another when the run has ended meanwhile.
+ */
 export function ensureRunSpend(executionId: string, live = false): Promise<void> {
   const entry = entryFor(executionId);
-  if (entry.state.spend && !(live && Date.now() - entry.at > SPEND_REFRESH_MS)) return Promise.resolve();
-  return readSpend(executionId);
+  const stale = entry.live && !live;
+  if (entry.reading) return stale ? readSpend(executionId, live) : entry.reading;
+  if (entry.state.spend && !stale && !(live && Date.now() - entry.at > SPEND_REFRESH_MS)) return Promise.resolve();
+  return readSpend(executionId, live);
 }
 
 /** What is known of a run's spend right now, and a way to hear of changes. */
@@ -86,46 +117,66 @@ export function watchRunSpend(executionId: string, listener: () => void): () => 
   return () => void entry.listeners.delete(listener);
 }
 
+/** Says whether this watcher sees the run as live; while any does, the run is read every 10 s, once for all of them. */
+export function holdRunLive(executionId: string, live: boolean): () => void {
+  const entry = entryFor(executionId);
+  const token = Symbol('holder');
+  const sync = () => {
+    const any = [...entry.holders.values()].some(Boolean);
+    if (any && !entry.timer) entry.timer = setInterval(() => void (entry.reading ? undefined : readSpend(executionId, true)), SPEND_REFRESH_MS);
+    if (!any && entry.timer) {
+      clearInterval(entry.timer);
+      entry.timer = undefined;
+    }
+  };
+  entry.holders.set(token, live);
+  sync();
+  return () => {
+    entry.holders.delete(token);
+    sync();
+  };
+}
+
 /** Forgets what was read (a test starts from nothing). */
-export const resetRunSpend = () => entries.clear();
+export const resetRunSpend = () => {
+  for (const entry of entries.values()) if (entry.timer) clearInterval(entry.timer);
+  entries.clear();
+};
 
 /**
- * The run's spend, kept current while the run is live. Every caller of one run shares one answer and one read: the call
- * sheet passes a `refresh` key (the span's end and status) to read again when a live span moves. `retry` reads again
- * (after a failed read).
+ * The run's spend, kept current while the run is live. Every caller of one run shares one answer, one read and one poll:
+ * the call sheet passes a `refresh` key (the span's end and status) to read again when a live span moves. When the run
+ * has ended the answer is read once more, also by a tab or sheet opened after the end. `retry` reads again.
  */
 export function useRunSpend(executionId: string | undefined, live = false, refresh?: string): RunSpendState & { retry: () => void } {
   const [, rerender] = useReducer((n: number) => n + 1, 0);
   const wasLive = useRef(false);
+  const liveNow = useRef(live);
+  liveNow.current = live;
   const lastRefresh = useRef(refresh);
   useEffect(() => {
     if (!executionId) return;
     const unwatch = watchRunSpend(executionId, rerender);
-    // Nothing read yet, or a live run's answer that the poll would not reach for a while.
-    void ensureRunSpend(executionId, live);
+    // Nothing read yet, a live run's answer older than a poll, or a mid-run answer of a run that has ended.
+    void ensureRunSpend(executionId, liveNow.current);
     return unwatch;
-    // `live` only decides the first read; the poll below follows it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [executionId]);
   useEffect(() => {
     if (!executionId || lastRefresh.current === refresh) return;
     lastRefresh.current = refresh;
-    void readSpend(executionId);
+    void readSpend(executionId, liveNow.current);
   }, [executionId, refresh]);
   useEffect(() => {
-    if (executionId && readsAtEnd(wasLive.current, live)) void readSpend(executionId);
+    if (!executionId) return;
+    if (readsAtEnd(wasLive.current, live)) void ensureRunSpend(executionId, false);
     wasLive.current = live;
-  }, [executionId, live]);
-  useEffect(() => {
-    if (!executionId || !live) return;
-    const timer = setInterval(() => void readSpend(executionId), SPEND_REFRESH_MS);
-    return () => clearInterval(timer);
+    return holdRunLive(executionId, live);
   }, [executionId, live]);
   const retry = useCallback(() => {
     if (!executionId) return;
     const entry = entryFor(executionId);
     publish(entry, { ...entry.state, loading: !entry.state.spend, error: undefined });
-    void readSpend(executionId);
+    void readSpend(executionId, liveNow.current);
   }, [executionId]);
   const state: RunSpendState = executionId ? runSpendState(executionId) : { loading: false };
   return { ...state, retry };

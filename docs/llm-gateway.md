@@ -396,8 +396,8 @@ images), counts each part with the model's own tokenizer, and posts the result t
   `LANDFLOW_PARTS_SECRET` in the gateway (`deploy/.env.example` has a development value; compose passes the host's value
   through, and `LANDFLOW_LLM_GATEWAY_PARTS_URL` changes the default `http://host.docker.internal:3000/api/gateway-parts`).
   Compose mounts the file at `/app/custom_callbacks.py`, so a gateway container created before this mount existed must
-  be recreated (`compose up -d`), not restarted: a restarted one has no callback file and LiteLLM cannot start. In the Kubernetes example the file is in the `llm-gateway-config`
-  ConfigMap (a copy at `deploy/k8s/examples/llm-gateway/custom_callbacks.py`, which a test keeps equal) and mounted the
+  be recreated (`compose up -d`), not restarted: a restarted one has no callback file and LiteLLM cannot start. In the
+  Kubernetes example the file is in the `llm-gateway-config` ConfigMap (a copy at `deploy/k8s/examples/llm-gateway/custom_callbacks.py`, which a test keeps equal) and mounted the
   same way; add `LANDFLOW_PARTS_SECRET` to the `llm-gateway-keys` Secret (see the kustomization). Either one unset: the
   callback does nothing, and the host answers 404. A host that does not have the secret (a plain `pnpm dev`) answers 404 to
   a gateway that has it: the callback does not retry a 4xx other than 429 and warns once per status, so it costs one log
@@ -409,8 +409,8 @@ images), counts each part with the model's own tokenizer, and posts the result t
   call). Counting and posting run on the callback's own four threads with a queue of 64: a slow
   or unreachable Landflow or Ollama makes it drop splits, never hold LiteLLM's threads. A cache hit is no model call:
   nothing is sent. The route is public, the signature is the credential; it is in the public rate-limit group
-  `gateway-parts` (`LANDFLOW_RATE_LIMIT_PUBLIC`, per address), so a gateway busier than that limit loses the surplus: an operator with many agents should raise
-  `LANDFLOW_RATE_LIMIT_PUBLIC` (a busy gateway can post more than 120 splits a minute, and each 429 holds one of the
+  `gateway-parts` (`LANDFLOW_RATE_LIMIT_PUBLIC`, per address), so a gateway busier than that limit loses the surplus: an operator with many agents
+  should raise `LANDFLOW_RATE_LIMIT_PUBLIC` (a busy gateway can post more than 120 splits a minute, and each 429 holds one of the
   callback's four threads for up to 10 s).
   LiteLLM logs `api_base` as the full request URL; the callback strips `/api/chat` or `/v1/messages` to reach
   `/api/show` and `/v1/messages/count_tokens`, and remembers a failed tokenizer load for five minutes (the call is then an
