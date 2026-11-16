@@ -1,6 +1,6 @@
 'use client';
 /**
- * The You card, first on the AI page for members (docs/llm-gateway.md, "The AI page"): your own AI spend today, this
+ * The You card, first on the AI page for everyone (docs/llm-gateway.md, "The AI page"): your own AI spend today, this
  * month and in the page's period, the models you used (a local model nobody priced says "Not priced" and ranks by
  * tokens) and your own caps. Only your rows and your caps: the rest of the page is everyone's, by name.
  */

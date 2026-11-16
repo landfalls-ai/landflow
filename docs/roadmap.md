@@ -2284,10 +2284,11 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
 
 - **Local models priced in Settings (SP12), built**: Settings → AI prices lists the local models seen in the last 30 days (calls, tokens, "Not priced" or the
   price) with an inline "Set a price"; one `ollama/<model>` price covers Landflow's own `ollama` calls and the gateway's
-  `ollama_chat` rows ([observability.md](observability.md#8-token-and-cost-tracking)). The AI page's You card gives a member their own
+  `ollama_chat` rows ([observability.md](observability.md#8-token-and-cost-tracking)). The AI page's You card gives everyone their own
   spend and caps, and its Model group says "Not priced" and can rank by tokens ([llm-gateway.md](llm-gateway.md#the-ai-page)). By decision D5
   (2026-11-16) there is no "equivalent cost" for a local model: it costs $0 until someone prices it, and an unpriced one
-  is ranked by tokens. Equivalent cost is dropped, not postponed.
+  is ranked by tokens. Equivalent cost is dropped, not postponed. Follow-ups: the You card leaves out by purpose and by
+  surface (the API returns them), and F's "by agent" and "most expensive runs" are not built.
 
 ## Practices (waves P1 and P2)
 

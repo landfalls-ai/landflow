@@ -429,7 +429,7 @@ for the period (24 hours, 7 days, 30 days) and shows, from top to bottom:
 
 - **Totals**: the estimated cost, the tokens (in and out, and cached) and the calls. Cost comes from Landflow's own price
   table (Settings → AI prices), as everywhere else; a cost the gateway reports is not used for these totals.
-- **You** (members; first on the page): your own AI spend today, this month and in the period, the models you used
+- **You** (everyone; first on the page): your own AI spend today, this month and in the period, the models you used
   (one a local model nobody priced says "Not priced") and your own caps (your own set, or the default for everyone),
   from `GET /api/insights/ai/me`. It holds only your rows and your caps; other people's caps stay private.
 - **Spend by** project, goal, agent, person, model or source. Each row has its cost, tokens, calls and a bar for its share of

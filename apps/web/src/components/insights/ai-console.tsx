@@ -192,13 +192,14 @@ export function AiConsole() {
       <PageHeader title="AI" meta={shown && <span>Estimated from the price table · {shown.viewer.admin ? 'everything' : 'what you can open'}</span>} actions={<Segmented label="Period" options={AI_PERIODS} value={period} onChange={setPeriod} />} />
       <PageBody className="flex max-w-[1240px] flex-col gap-4">
         {error && <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>}
-        {/* SP12: your own spend, first for members (an owner or admin sees everything below) */}
-        {shown && !shown.viewer.admin && <MyAiSpend period={period} />}
+        {/* SP12: your own spend, first, for everyone (an owner or admin sees everyone's below too) */}
+        {shown && <MyAiSpend period={period} />}
         <Totals report={shown} />
         {shown && shown.totals.calls === 0 && <p className="text-[13px] text-t3">No AI calls in this period.</p>}
         <Card className="overflow-hidden p-0">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-hair px-4 py-2.5">
             <SectionLabel>Spend by</SectionLabel>
+            {/* SP12: the 'Sort by tokens' checkbox, the conditional ml-auto on Segmented and the byTokens state; SP10 owns this header */}
             {group === 'model' && (
               <label className="ml-auto flex items-center gap-1.5 text-[12px] text-t2 max-md:ml-0">
                 <input type="checkbox" checked={byTokens} onChange={(e) => setByTokens(e.target.checked)} />

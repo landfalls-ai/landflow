@@ -129,9 +129,10 @@ export function AiPricesSettings() {
       <LocalModels
         models={local}
         admin={admin}
+        dirty={dirty}
         onPrice={async (model, input, output) => {
-          // The saved list plus one `ollama/<model>` price: edits still unsaved in the table below are not saved with it.
-          const overrides = [...table.overrides.filter((p) => !(p.provider.toLowerCase() === 'ollama' && p.model.toLowerCase() === model.toLowerCase())), { provider: 'ollama', model, input, output }];
+          // The saved list plus one `ollama/<model>` price (an exact `ollama_chat/<model>` one is dropped, it would win): the button is off while the table below has unsaved edits.
+          const overrides = [...table.overrides.filter((p) => !((p.provider.toLowerCase() === 'ollama' || p.provider.toLowerCase() === 'ollama_chat') && p.model.toLowerCase() === model.toLowerCase())), { provider: 'ollama', model, input, output }];
           apply(await api<PriceTable>('/api/settings/ai-prices', { method: 'PUT', json: { overrides } }));
           toast.success(`Priced ${model}`);
         }}
@@ -298,10 +299,10 @@ export function AiPricesSettings() {
 }
 
 /** SP12: the models seen on your own hardware in the last 30 days, with calls and tokens, and a price for each (from now on). */
-function LocalModels({ models, admin, onPrice }: { models?: AiLocalModel[]; admin: boolean; onPrice: (model: string, input: number, output: number) => Promise<void> }) {
+function LocalModels({ models, admin, dirty, onPrice }: { models?: AiLocalModel[]; admin: boolean; dirty: boolean; onPrice: (model: string, input: number, output: number) => Promise<void> }) {
   const [open, setOpen] = useState<string>();
-  const [input, setInput] = useState('0');
-  const [output, setOutput] = useState('0');
+  const [input, setInput] = useState('');
+  const [output, setOutput] = useState('');
   const [problem, setProblem] = useState<string>();
   const [busy, setBusy] = useState(false);
   const submit = async (model: string) => {
@@ -355,8 +356,8 @@ function LocalModels({ models, admin, onPrice }: { models?: AiLocalModel[]; admi
                     variant="ghost"
                     onClick={() => {
                       setOpen(m.model);
-                      setInput(m.price ? String(m.price.input) : '0');
-                      setOutput(m.price ? String(m.price.output) : '0');
+                      setInput(m.price ? String(m.price.input) : '');
+                      setOutput(m.price ? String(m.price.output) : '');
                       setProblem(undefined);
                     }}
                   >
@@ -370,12 +371,13 @@ function LocalModels({ models, admin, onPrice }: { models?: AiLocalModel[]; admi
                   <span className="text-[12px] text-t3">in $/M</span>
                   <Input value={output} onChange={(e) => setOutput(e.target.value)} inputMode="decimal" aria-label={`Output price for ${m.model}`} className="h-8 w-24 px-2 text-right font-mono text-[12px]" />
                   <span className="text-[12px] text-t3">out $/M</span>
-                  <Button size="sm" variant="primary" loading={busy} onClick={() => submit(m.model)}>
+                  <Button size="sm" variant="primary" loading={busy} disabled={dirty} title={dirty ? 'Save or reset the edits in Your prices first' : undefined} onClick={() => submit(m.model)}>
                     Save price
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setOpen(undefined)}>
                     Cancel
                   </Button>
+                  {dirty && <span className="text-[12px] text-t3">Save or reset your prices below first.</span>}
                   {problem && <span className="text-[12px] text-rd">{problem}</span>}
                 </div>
               )}

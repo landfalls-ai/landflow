@@ -114,6 +114,23 @@ describe('GET /api/insights/ai/me', () => {
     expect((await get(alma, '?period=custom')).status).toBe(400);
   });
 
+  it('follows the 24h contract: 24 hourly points, ISO from/to, a rolling window by `at`', async () => {
+    const cleo = await createUser({ email: 'cleo@me.test', name: 'Cleo', role: 'member', password: 'cleo-password-1' });
+    const at = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000);
+    const stamp = (hoursAgo: number) => ({ at: at(hoursAgo).toISOString(), day: aiUsageMeter().today(at(hoursAgo).getTime()) });
+    row({ user_id: cleo.id, cost: 1, ...stamp(1) });
+    row({ user_id: cleo.id, cost: 2, ...stamp(23) });
+    row({ user_id: cleo.id, cost: 4, ...stamp(25) });
+    const { body } = await get(cleo, '?period=24h');
+    expect(body.period).toBe('24h');
+    expect(body.series).toHaveLength(24);
+    expect(Number.isNaN(Date.parse(body.from))).toBe(false);
+    expect(Number.isNaN(Date.parse(body.to))).toBe(false);
+    expect(body.series[0].at).toMatch(/T\d\d:00:00\.000Z$/);
+    expect(body.series.reduce((sum: number, p: { cost: number }) => sum + p.cost, 0)).toBe(3);
+    expect(body.byModel.reduce((sum: number, r: { cost: number }) => sum + r.cost, 0)).toBe(3);
+  });
+
   it('ranks models for the You card: cost first, then tokens', () => {
     const base = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0, calls: 1, unpricedCalls: 0, runs: 1, share: 0 };
     const rows = [

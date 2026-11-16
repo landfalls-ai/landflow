@@ -4,12 +4,12 @@
  * (docs/llm-gateway.md, "Who sees what", rule 5). Numbers and names only: no prompt text, no run contents.
  */
 import { database, type Database } from '../db';
-import { watchedCaps } from './alerts';
+import { userCaps } from './alerts';
 import { aiUsageMeter } from './index';
 import { findPrice, priceOverrides } from './prices';
 import { CALL_PURPOSE_LABELS, isCallPurpose } from '../../shared/ai-call';
 import type { AiMySpend, AiSpendPeriod, AiSpendPoint, AiSpendRow, AiSpendTotals } from '../../shared/ai-spend';
-import { parseCapId, type AiConsoleCap } from '../../shared/llm-gateway';
+import type { AiConsoleCap } from '../../shared/llm-gateway';
 import type { ModelPrice } from '../../shared/ai-usage';
 
 const DAY_MS = 86_400_000;
@@ -50,6 +50,12 @@ export function mySpend(userId: string, period: AiSpendPeriod = '7d', now: numbe
   const kept: AiSpendPeriod = PERIOD_DAYS[period] ? period : '7d';
   const fromDay = meter.today(now - (days - 1) * DAY_MS);
   const monthStart = `${today.slice(0, 7)}-01`;
+  // 24h is a rolling 24 hours by `at` (like the AI page's own 24h); the day periods are days by the `day` column.
+  const rolling = kept === '24h';
+  const fromAt = new Date(now - DAY_MS).toISOString();
+  const toAt = new Date(now).toISOString();
+  const periodWhere = rolling ? 'user_id = ? AND at >= ? AND at <= ?' : 'user_id = ? AND day >= ? AND day <= ?';
+  const periodArgs = rolling ? [fromAt, toAt] : [fromDay, today];
 
   /** Totals over `day >= from` (and `day <= to`), summed over (provider, model) so unpriced calls can be counted by the price table. */
   const totalsFor = (from: string, to: string): AiSpendTotals => {
@@ -66,10 +72,10 @@ export function mySpend(userId: string, period: AiSpendPeriod = '7d', now: numbe
 
   // One group of the period: its rows, the tail beyond 50 rolled into "Other".
   const groupBy = (column: 'surface' | 'purpose' | 'model', labelOf: (key: string, provider?: string) => string): AiSpendRow[] => {
-    const where = 'user_id = ? AND day >= ? AND day <= ?';
+    const where = periodWhere;
     const keyExpr = column === 'model' ? "provider || '/' || model" : `COALESCE(${column}, 'none')`;
-    const rows = db.all<Sums & { grp: string; provider: string; model: string }>(`SELECT ${keyExpr} AS grp, provider, model, ${SUMS} FROM ai_usage WHERE ${where} GROUP BY ${keyExpr}, provider, model`, userId, fromDay, today);
-    const runs = new Map(db.all<{ grp: string; runs: number }>(`SELECT ${keyExpr} AS grp, ${RUN} FROM ai_usage WHERE ${where} GROUP BY ${keyExpr}`, userId, fromDay, today).map((r) => [r.grp, Number(r.runs)]));
+    const rows = db.all<Sums & { grp: string; provider: string; model: string }>(`SELECT ${keyExpr} AS grp, provider, model, ${SUMS} FROM ai_usage WHERE ${where} GROUP BY ${keyExpr}, provider, model`, userId, ...periodArgs);
+    const runs = new Map(db.all<{ grp: string; runs: number }>(`SELECT ${keyExpr} AS grp, ${RUN} FROM ai_usage WHERE ${where} GROUP BY ${keyExpr}`, userId, ...periodArgs).map((r) => [r.grp, Number(r.runs)]));
     const map = new Map<string, AiSpendRow>();
     for (const row of rows) {
       let entry = map.get(row.grp);
@@ -91,7 +97,34 @@ export function mySpend(userId: string, period: AiSpendPeriod = '7d', now: numbe
     return finish([...map.values()]);
   };
 
+  const hourlySeries = (): AiSpendPoint[] => {
+    const hour = 3_600_000;
+    const last = Math.floor(now / hour) * hour;
+    const first = last - 23 * hour;
+    const rows = db.all<{ at: string; input_tokens: number; output_tokens: number; cache_read_tokens: number | null; cost: number; }>(
+      'SELECT at, input_tokens, output_tokens, cache_read_tokens, cost FROM ai_usage WHERE user_id = ? AND at >= ? AND at <= ?',
+      userId,
+      new Date(first).toISOString(),
+      toAt,
+    );
+    const points: AiSpendPoint[] = [];
+    for (let i = 0; i < 24; i++) points.push({ at: new Date(first + i * hour).toISOString(), cost: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, calls: 0 });
+    for (const row of rows) {
+      const index = Math.floor((Date.parse(row.at) - first) / hour);
+      const point = points[index];
+      if (!point) continue;
+      point.cost += Number(row.cost ?? 0);
+      point.inputTokens += Number(row.input_tokens ?? 0);
+      point.outputTokens += Number(row.output_tokens ?? 0);
+      point.cacheReadTokens += Number(row.cache_read_tokens ?? 0);
+      point.calls += 1;
+    }
+    for (const point of points) point.cost = round(point.cost);
+    return points;
+  };
+
   const series = (): AiSpendPoint[] => {
+    if (rolling) return hourlySeries();
     const rows = db.all<Sums & { day: string }>(`SELECT day, ${SUMS} FROM ai_usage WHERE user_id = ? AND day >= ? AND day <= ? GROUP BY day`, userId, fromDay, today);
     const byDay = new Map(rows.map((r) => [r.day, r]));
     const points: AiSpendPoint[] = [];
@@ -107,8 +140,8 @@ export function mySpend(userId: string, period: AiSpendPeriod = '7d', now: numbe
     today: totalsFor(today, today),
     month: totalsFor(monthStart, today),
     period: kept,
-    from: fromDay,
-    to: today,
+    from: rolling ? fromAt : fromDay,
+    to: rolling ? toAt : today,
     series: series(),
     byModel: groupBy('model', (key) => key.slice(key.indexOf('/') + 1)),
     byPurpose: groupBy('purpose', (key) => (key === 'none' ? 'No purpose' : isCallPurpose(key) ? CALL_PURPOSE_LABELS[key] : key)),
@@ -154,11 +187,7 @@ function myCaps(userId: string, db: Database): AiConsoleCap[] {
       .all<{ id: string; cap_id: string }>(`SELECT id, cap_id FROM ai_cap_requests WHERE requested_by = ? AND status IN ('pending', 'asking') ORDER BY created_at`, userId)
       .map((row) => [row.cap_id, row.id]),
   );
-  return watchedCaps()
-    .filter((cap) => {
-      const parsed = parseCapId(cap.id);
-      return parsed?.kind === 'user' && parsed.subjectId === userId;
-    })
+  return userCaps(userId)
     .map((cap) => {
       const requestId = pending.get(cap.id);
       return {
