@@ -88,12 +88,12 @@ export function nodeDocs(info: NodeTypeInfo, parameters?: Record<string, unknown
     `${info.pluginId === 'core' ? 'Built in' : `${info.pluginName} plugin (${info.language})`}. ${d.description}`,
     `Inputs: ${ports(d.inputs)}. Outputs: ${ports(d.outputs)}.`,
   ];
-  const fields = outputFields(d, parameters);
+  const effective = parameters && withPropertyDefaults(d.properties, parameters);
+  const fields = outputFields(d, effective);
   if (fields) lines.push(`Each output item has: ${fields}.`);
   if (d.credentials?.length) lines.push(`Credentials: ${d.credentials.map((c) => `${c.name}${c.required ? ' (required)' : ''}`).join(', ')}.`);
   if (d.documentationUrl) lines.push(`Docs: ${d.documentationUrl}`);
   const properties = d.properties.filter((p) => p.type !== 'notice');
-  const effective = parameters && withPropertyDefaults(d.properties, parameters);
   lines.push(properties.length ? 'Parameters:' : 'No parameters.', ...properties.map((p) => describeProperty(p, effective)));
   return lines.join('\n');
 }

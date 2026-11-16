@@ -406,6 +406,7 @@ Proposals use `lib/shared/assistant-ops.ts`. A node reference is a node **name**
 | `turnIntoTeam` | `node` | a Run an Agent node with agents attached as tools becomes one Run a Team node; applying it saves the team ([agent-teams.md](agent-teams.md#turn-into-a-team)) |
 | `setNodeSettings` | `node`, `settings` | A node's settings, not its parameters: `retryOnFail`, `maxTries`, `waitBetweenTriesMs`, `retryBackoff` (`fixed` or `exponential`), `onError`, `timeoutSeconds`, `alwaysOutputData`, `disabled`. Other keys are dropped. The [second brain](second-brain.md) uses it for retries |
 | `setWorkflowSettings` | `settings` | `errorWorkflowId`, `timeoutSeconds`, `retryMaxAttempts`, `retryBaseDelaySeconds`; other keys are dropped |
+
 The chat offers this op too (its op list and the system prompt name it): a time limit for the whole workflow ("stop it if it runs longer than 5 minutes") is `{"op":"setWorkflowSettings","settings":{"timeoutSeconds":300}}`, not a step's `timeoutSeconds`. A change that only touches the workflow's settings is a proposal like any other.
 
 `applyOps(workflow, ops, lookup)` is pure: workflow in, workflow out. It is also the validator. Validation follows the same rules as the flow builder:

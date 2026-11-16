@@ -827,7 +827,7 @@ export const useEditor = create<EditorState>((set, get) => {
 
   replaceGraph(workflow, focus) {
     record();
-    const before = { nodes: get().nodes, edges: get().edges, pinData: get().pinData, groups: get().groups };
+    const before = { nodes: get().nodes, edges: get().edges, pinData: get().pinData, groups: get().groups, settings: get().settings };
     const flow = toFlow(workflow);
     set((s) => {
       const oldNodes = new Map(s.nodes.map((n) => [n.id, n]));
@@ -842,6 +842,7 @@ export const useEditor = create<EditorState>((set, get) => {
         }),
         edges: flow.edges.map((e) => oldEdges.get(e.id) ?? e),
         pinData: workflow.pinData ?? {},
+        settings: workflow.settings ?? s.settings,
         ...(focus?.added && { lastAddedId: focus.id }),
         openNodeId: flow.nodes.some((n) => n.id === s.openNodeId) ? s.openNodeId : undefined,
         dirty: true,

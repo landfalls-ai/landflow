@@ -306,7 +306,6 @@ async function getFile(ctx: IExecuteContext, api: ApiContext, credentials: Slack
   return new ItemWithFiles(file, { [property]: ref });
 }
 
-/** Get: an activity item plus the message's full text. */
 // SB10: what Send, Update and Get Permalink return (Slack's own answer without ok/response_metadata), so a later step reads `$json.ts`.
 const MESSAGE_SENT_SCHEMA: JsonObject = {
   type: 'object',
@@ -336,6 +335,7 @@ const PERMALINK_SCHEMA: JsonObject = {
   required: ['channel', 'permalink'],
 };
 
+/** Get: an activity item plus the message's full text. */
 const ACTIVITY_WITH_TEXT_SCHEMA: JsonObject = {
   ...ACTIVITY_ITEM_SCHEMA,
   properties: { ...(ACTIVITY_ITEM_SCHEMA.properties as JsonObject), text: { type: 'string', description: 'The message’s full text, Slack markup made readable' } },
