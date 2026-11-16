@@ -456,10 +456,10 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
           offTargetSent = true;
           return result(`Not shown: ${wasted} Propose a change to that step or what feeds it, or, if only the person can fix it, say what to do in one sentence.`, 'Skipped a fix that changes nothing');
         }
-        // SB03: a session's fix never removes a step the person asked for or changes a value they gave.
+        // SB03: a test session's fix (not the person typing under auto, who is the one changing it) never removes a step the person asked for or changes a value they gave.
         const kept =
-          input.session && !keptSent
-            ? givenValuesKept(validated.ops, working, [(working as { description?: string }).description ?? '', ...input.messages.slice(0, input.session === 'auto' ? -1 : undefined).filter((m) => m.role === 'user').map((m) => (/^Test run \d+/.test(m.content) ? (/I asked for: “([\s\S]*?)”\./.exec(m.content)?.[1] ?? '') : m.content))].join('\n'))
+          input.session && input.session !== 'auto' && !keptSent
+            ? givenValuesKept(validated.ops, working, [(working as { description?: string }).description ?? '', ...input.messages.filter((m) => m.role === 'user').map((m) => (/^Test run \d+/.test(m.content) ? (/I asked for: “([\s\S]*?)”\./.exec(m.content)?.[1] ?? '') : m.content))].join('\n'))
             : undefined;
         if (kept) {
           keptSent = true;

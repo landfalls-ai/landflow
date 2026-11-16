@@ -162,16 +162,17 @@ function personNeed(result: RunVerdict, error: string | undefined, goal: string 
   const what = needsPerson(error);
   if (!what) return undefined;
   const node = result.node;
+  const step = node ?? 'a step';
   const text =
     what === 'blocked'
-      ? `This host blocks “${node}” from reaching ${blockedHost(node, error)}. An admin can allow it (LANDFLOW_OUTBOUND_ALLOW), or change the address yourself.`
+      ? `This host blocks “${step}” from reaching ${blockedHost(node, error)}. An admin can allow it (LANDFLOW_OUTBOUND_ALLOW), or change the address yourself.`
       : what === 'trigger'
       ? 'Nothing starts this flow yet.'
       : what === 'agent'
-        ? `“${node}” has no agent picked.`
+        ? `“${step}” has no agent picked.`
         : /credential/i.test(error ?? '')
-          ? `“${node}” needs ${/No (.+?) credential selected/i.exec(error ?? '')?.[1] ? `a ${/No (.+?) credential selected/i.exec(error ?? '')?.[1]} credential` : 'a credential'} picked.`
-          : `“${node}” was refused by the app (${error}): its credential is missing or wrong.`;
+          ? `“${step}” needs ${/No (.+?) credential selected/i.exec(error ?? '')?.[1] ? `a ${/No (.+?) credential selected/i.exec(error ?? '')?.[1]} credential` : 'a credential'} picked.`
+          : `“${step}” was refused by the app (${error}): its credential is missing or wrong.`;
   return { what, text, ...(node && { node }), ...(goal && { goal }) };
 }
 
@@ -264,7 +265,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
     let reviewedAt: number | undefined;
     /** SB03: what Spotlight may do alone, and the steps the flow had when the session started. */
     const autonomy = options.autonomy ?? autonomyOf(useEditor.getState().workflowId);
-    const startNodes = useEditor.getState().nodes.map((n) => ({ id: n.id, name: n.data.wf.name }));
+    const startNodes = useEditor.getState().nodes.map((n) => ({ id: n.id, name: n.data.wf.name, enabled: n.data.wf.disabled !== true }));
     let ran = false;
     /** The last failure, to tell a fix that changed nothing. */
     let lastFailure: string | undefined;
@@ -322,9 +323,15 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
       const failed = !result.passed || hollow.length > 0;
       if (hollow.length) setRun(runItem, { round, state: 'failed', summary: `no errors, but ${hollow.map((h) => h.problem).join('; ')}` });
       // SB03: a pass with steps this session removed is never "Ready for production": the outcome names them.
-      const removed = startNodes.filter((n) => !useEditor.getState().nodes.some((m) => m.id === n.id));
+      // Steps turned off count with the removed ones: a pass that skips them is no pass.
+      const removed = startNodes.filter((n) => {
+        const now = useEditor.getState().nodes.find((m) => m.id === n.id);
+        return !now || (n.enabled && now.data.wf.disabled === true);
+      });
       if (!failed && removed.length) {
-        stop(`It runs, but this session removed ${quoted(removed.map((n) => n.name))}, which the flow had before. Undo the fixes to get ${removed.length === 1 ? 'it' : 'them'} back.`, result.node);
+        const gone = removed.filter((n) => !useEditor.getState().nodes.some((m) => m.id === n.id)).length;
+        const verb = gone === removed.length ? 'removed' : gone === 0 ? 'turned off' : 'removed or turned off';
+        stop(`It runs, but this session ${verb} ${quoted(removed.map((n) => n.name))}, which the flow had before. Undo the fixes to get ${removed.length === 1 ? 'it' : 'them'} back.`, result.node);
         return;
       }
       // SB03: a pass is reviewed against the goal; a pass after any fix since the last review is reviewed once more.
@@ -396,7 +403,8 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         };
         await untilAssistant(decided, signal);
         if (signal.aborted) {
-          stop('You stopped before the change was applied.', at);
+          // New conversation, another workflow: the reply is gone, and so is the session's place to speak.
+          if (useAssistant.getState().items.some((i) => i.id === reply.id)) stop('You stopped before the change was applied.', at);
           return;
         }
         const item = useAssistant.getState().items.find((i) => i.id === reply.id);

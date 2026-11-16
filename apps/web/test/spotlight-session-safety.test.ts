@@ -26,6 +26,7 @@ vi.mock('@/components/editor/assistant', async (original) => {
         for (const op of change.ops) {
           const node = useEditor.getState().nodes.find((n) => n.data.wf.name === (op as { node?: string }).node);
           if (op.op === 'setParameters' && node) useEditor.getState().updateNode(node.id, { parameters: { ...node.data.wf.parameters, ...op.parameters } });
+          if (op.op === 'setNodeSettings' && node) useEditor.getState().updateNode(node.id, { disabled: (op as { settings: { disabled?: boolean } }).settings.disabled });
           if (op.op === 'removeNode' && node) useEditor.getState().removeNodes([node.id]);
         }
       }
@@ -192,6 +193,34 @@ describe('what a fix may not do', () => {
   });
 });
 
+describe('turning a step off', () => {
+  it('a pass after a step was turned off shows no publish card and names it', async () => {
+    noteOpened(WF, 3);
+    yes();
+    runs = [{ 'Notify VIP': { error: 'HTTP 500 Internal Server Error' } }, { 'Notify VIP': { items: 1 } }];
+    replies = [{ proposals: [{ summary: 'Turned off the second step', ops: [{ op: 'setNodeSettings', node: 'Notify Standard', settings: { disabled: true } }] }] }];
+    const session = testUntilItRuns('Tell the desk about big orders');
+    await vi.waitFor(() => expect(useAssistant.getState().items.some((i) => i.role === 'assistant' && i.parts.some((p) => p.kind === 'proposal'))).toBe(true));
+    useEditor.getState().updateNode('c', { disabled: true });
+    decide('r1p0', 'applied');
+    await session;
+    expect(actions()).toEqual([]);
+    expect(outcomes()[0].text).toContain('turned off “Notify Standard”');
+  });
+
+  it('reset() while a fix waits leaves the conversation empty', async () => {
+    noteOpened(WF, 3);
+    yes();
+    runs = [{ 'Notify VIP': { error: 'HTTP 500 Internal Server Error' } }];
+    replies = [{ proposals: [{ summary: 'Use PUT', ops: [{ op: 'setParameters', node: 'Notify VIP', parameters: { method: 'PUT' } }] }] }];
+    const session = testUntilItRuns('Tell the desk about big orders');
+    await vi.waitFor(() => expect(sentSessions).toEqual(['fix']));
+    useAssistant.getState().reset();
+    await session;
+    expect(useAssistant.getState().items).toEqual([]);
+  });
+});
+
 describe('autonomy (D1)', () => {
   const fixOps: AssistantOp[] = [{ op: 'setParameters', node: 'Notify VIP', parameters: { method: 'PUT' } }];
 
@@ -239,6 +268,7 @@ describe('autonomy (D1)', () => {
     useAssistant.getState().testing?.abort();
     await session;
     expect(applied).toEqual([]);
+    expect(outcomes()[0].text).toContain('You stopped before the change was applied');
     expect(useAssistant.getState().testing).toBeUndefined();
   });
 

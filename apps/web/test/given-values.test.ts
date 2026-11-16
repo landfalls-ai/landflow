@@ -50,6 +50,52 @@ describe('givenValuesKept', () => {
   });
 });
 
+describe('given-value edge cases', () => {
+  it('keeps turning off a step the request names', () => {
+    expect(givenValuesKept([{ op: 'setNodeSettings', node: 'Notify VIP', settings: { disabled: true } }], flow(), goal)).toContain('turn off “Notify VIP”');
+    expect(givenValuesKept([{ op: 'setNodeSettings', node: 'Notify VIP', settings: { retryOnFail: true } }], flow(), goal)).toBeUndefined();
+  });
+
+  it('a plain word is not a given value', () => {
+    const wf = flow();
+    wf.nodes[1].parameters = { resource: 'messages' };
+    expect(givenValuesKept([{ op: 'setParameters', node: 'Notify VIP', parameters: { resource: 'channels' } }], wf, 'send messages to the desk')).toBeUndefined();
+  });
+
+  it('a URL stored with a leading = is kept too', () => {
+    const wf = flow();
+    wf.nodes[1].parameters = { url: '=http://127.0.0.1:3399/vip' };
+    expect(givenValuesKept([{ op: 'setParameters', node: 'Notify VIP', parameters: { url: 'http://127.0.0.1:3399/other' } }], wf, goal)).toContain('url');
+  });
+});
+
+describe('the chat route in an auto session', () => {
+  const run = async (ops: unknown[], message = 'change it as I say') => {
+    const turns: Array<Partial<ModelTurn>> = [{ toolCalls: [{ id: 'c1', name: 'propose_changes', input: { summary: 'Change', ops } }] }, { text: 'Done.' }, { text: 'Done.' }];
+    const model: LanguageModel = {
+      provider: 'test',
+      model: 'scripted',
+      async generate() {
+        const next = turns.shift();
+        if (!next) throw new Error('No scripted turn left');
+        return { text: '', toolCalls: [], stopReason: 'stop', ...next };
+      },
+    };
+    const events: ChatEvent[] = [];
+    const wf = { ...flow(), description: goal } as Workflow;
+    await runChat({ messages: [{ role: 'user', content: message }], workflow: wf, model, types, session: 'auto', onEvent: (e) => events.push(e) });
+    return events.filter((e) => e.type === 'proposal');
+  };
+
+  it('shows an asked-for URL change', async () => {
+    expect(await run([{ op: 'setParameters', node: 'Notify VIP', parameters: { url: 'http://127.0.0.1:3399/vip2' } }])).toHaveLength(1);
+  });
+
+  it('shows an asked-for removal', async () => {
+    expect(await run([{ op: 'removeNode', node: 'Notify Standard' }], 'remove Notify Standard')).toHaveLength(1);
+  });
+});
+
 describe('the chat route in a fix session', () => {
   it('does not show the swap, and tells the model why', async () => {
     const calls: GenerateInput[] = [];

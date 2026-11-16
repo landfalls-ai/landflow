@@ -150,6 +150,8 @@ export function hostOf(url: string): string {
 
 /** What a person gives that a fix may not change: a URL, an email address, a channel, an id. */
 const GIVEN_VALUE = /^(?:https?:\/\/\S+|\S+@\S+\.\S+|[#@][\w.-]+|[\w-]{8,})$/i;
+/** A bare word is a given value only when it looks like an id: a digit, an underscore or dash, or mixed case. */
+const idLike = (value: string) => !/^[\w-]{8,}$/.test(value) || /\d|[_-]|(?=.*[a-z])(?=.*[A-Z])/.test(value);
 
 /**
  * Why a session's fix must not be applied: it removes a step the request names, or changes a URL, address, channel or
@@ -157,7 +159,7 @@ const GIVEN_VALUE = /^(?:https?:\/\/\S+|\S+@\S+\.\S+|[#@][\w.-]+|[\w-]{8,})$/i;
  * before the fix; `given` is what the person wrote (the goal, the description, their messages).
  */
 export function givenKept(
-  ops: ReadonlyArray<{ op: string; node?: string; parameters?: Record<string, unknown> }>,
+  ops: ReadonlyArray<{ op: string; node?: string; parameters?: Record<string, unknown>; settings?: object }>,
   nodes: ReadonlyArray<{ id: string; name: string; parameters: Record<string, unknown> }>,
   given: string,
 ): string | undefined {
@@ -170,11 +172,16 @@ export function givenKept(
     if (op.op === 'removeNode' && node.name.trim().length >= 3 && text.includes(node.name.trim().toLowerCase())) {
       return `the fix wanted to remove “${node.name}”, which you asked for.`;
     }
+    if (op.op === 'setNodeSettings' && (op.settings as { disabled?: boolean } | undefined)?.disabled === true && node.name.trim().length >= 3 && text.includes(node.name.trim().toLowerCase())) {
+      return `the fix wanted to turn off “${node.name}”, which you asked for.`;
+    }
     if (op.op === 'setParameters' && op.parameters) {
       for (const [key, next] of Object.entries(op.parameters)) {
         const current = node.parameters[key];
-        if (typeof current !== 'string' || !GIVEN_VALUE.test(current.trim()) || JSON.stringify(next) === JSON.stringify(current)) continue;
-        if (text.includes(current.trim().toLowerCase())) return `the fix wanted to change ${key} of “${node.name}” from ${current.trim()}, which you gave.`;
+        if (typeof current !== 'string') continue;
+        const value = current.trim().replace(/^=(?=https?:)/i, '');
+        if (!GIVEN_VALUE.test(value) || !idLike(value) || JSON.stringify(next) === JSON.stringify(current)) continue;
+        if (text.includes(value.toLowerCase())) return `the fix wanted to change ${key} of “${node.name}” from ${value}, which you gave.`;
       }
     }
   }
