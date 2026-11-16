@@ -2472,3 +2472,4 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   left" and "sent back once" read the draft (`draft.left`, `draft.calls`), and the outcome names the model. Docs:
   [assistant.md](assistant.md#the-builder-chat). Left: the live scorecard's before and after side by side (the run is slow; its numbers go with the merge report), and the schemas of the
   rest of GitHub, Slack and Linear.
+- **SB08, a real diff before Apply, built (2026-11-16):** finding 2.3 (the card printed the new value cut at 64 characters): the waiting card, the proposal row and the after-run suggestion show per step each parameter, setting, credential and wire old → new, long text behind **Show all**, and "N other steps untouched" (`diffOps`, `change-diff.tsx`). Docs: [assistant.md](assistant.md#fold-apply-and-errors).

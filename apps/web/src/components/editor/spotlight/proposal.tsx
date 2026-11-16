@@ -12,6 +12,7 @@ import { autonomyOf, useAutonomyFacts } from '../spotlight-autonomy'; // SB04:
 import { useEditor } from '../store'; // SB04:
 import { applyChanges, sendFeedback, undos, useAssistant, type Proposal } from '../assistant';
 import { LeftOut, OpsDiff, Warnings } from '../suggestions-card';
+import { ChangeDiff, hasDiff, useCanvas } from '../change-diff'; // SB08:
 import { EXPLAINER_KEY, cardFolded, explainerDue, isNewestUndo, undoGroup } from './states';
 
 /** Undo the step this proposal was applied in: every proposal applied with it goes back to 'undone' and loses its undo. */
@@ -32,6 +33,12 @@ export function undoProposal(proposalId: string): void {
  * A change waiting for Apply (autonomous mode off). Apply folds the card into its one-line row, with a tick, while the
  * ghosts on the canvas become the real nodes (`GhostNodeView`); Undo opens it again and the nodes go back to ghosts.
  */
+/** SB08: reads the canvas only while the card waits, so a folded card does not re-render on a node drag. */
+function WaitingDiff({ proposal }: { proposal: Proposal }) {
+  const canvas = useCanvas();
+  return <ChangeDiff before={canvas} ops={proposal.ops} id={proposal.id} />;
+}
+
 export function ProposalCard({ itemId, proposal }: { itemId: string; proposal: Proposal }) {
   const decide = (state: 'applied' | 'dismissed' | 'undone') => useAssistant.getState().setProposalState(itemId, proposal.id, state);
   const applied = cardFolded(proposal.state);
@@ -62,7 +69,7 @@ export function ProposalCard({ itemId, proposal }: { itemId: string; proposal: P
       </div>
       <Collapsible open={!applied}>
         <div className="space-y-2 pt-2">
-          <OpsDiff ops={proposal.ops} />
+          {applied ? <ChangeDiff ops={proposal.ops} id={proposal.id} settled /> : <WaitingDiff proposal={proposal} />} {/* SB08: */}
           <Warnings warnings={proposal.warnings} />
           <LeftOut reasons={proposal.dropped} />
           <div className="flex items-center gap-1.5">
@@ -135,7 +142,7 @@ export function ProposalRow({ proposal, fix }: { proposal: Proposal; fix: boolea
       {open && (
         <div className="mt-1.5 space-y-1.5 pl-5">
           <p className="text-[12px] leading-snug text-t2">{proposal.summary}</p>
-          <OpsDiff ops={proposal.ops} />
+          {hasDiff(proposal.id) ? <ChangeDiff ops={proposal.ops} id={proposal.id} settled open={false} /> : <OpsDiff ops={proposal.ops} />} {/* SB08: */}
           <Warnings warnings={proposal.warnings} />
           {proposal.dropped.length > 0 && <p className="text-[11px] text-t3">Left out: {proposal.dropped.join('; ')}</p>}
         </div>
