@@ -36,7 +36,7 @@ export function CompositionBar({ legend }: { legend: CompositionLegend }) {
             <span className={cn('size-2 shrink-0 rounded-sm', shades[i])} aria-hidden />
             <span className="min-w-0 flex-1 truncate text-t1">
               {item.label}
-              {item.cachedPrefix && <span className="ml-1.5 rounded border border-acbd bg-acdim px-1 text-[10px] font-semibold text-ac">cache prefix</span>}
+              {item.cachedPrefix && <span className="ml-1.5 rounded border border-acbd bg-acdim px-1 text-[10px] font-semibold text-ac">cached prefix</span>}
             </span>
             <span className="font-mono text-t2">{item.tokens.toLocaleString('en-US')}</span>
             <span className="w-9 text-right font-mono text-t3">{pct(item.share)}</span>

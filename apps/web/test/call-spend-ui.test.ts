@@ -98,7 +98,7 @@ describe('the rendered view', () => {
     const html = renderToStaticMarkup(createElement(CallSpendView, { view: view() }));
     expect(html).toContain('8,000 read from the cache');
     expect(html).toContain('Same prefix as the previous call');
-    expect(html).toContain('cache prefix');
+    expect(html).toContain('cached prefix');
     expect(html).not.toMatch(/toolNames|hash/i);
     const legend = compositionLegend(view())!;
     expect(legend.items.reduce((sum, i) => sum + i.share, 0)).toBeCloseTo(1);
