@@ -440,7 +440,6 @@ class LandflowParts(CustomLogger):
         self._show = show or self._ollama_show
         self._anthropic_count = anthropic_count or self._anthropic_count_http
         self._counters = {}
-        self._stubs = {}
         self._lock = threading.Lock()
         self._warned = set()
         self._pool = None

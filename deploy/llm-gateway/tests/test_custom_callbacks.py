@@ -360,6 +360,33 @@ class Resilience(unittest.TestCase):
         finish(cb, OPENAI, RESPONSE)
         self.assertEqual(len(calls), 2)
 
+    def test_a_429_waits_retry_after_capped_at_five_seconds(self):
+        calls = []
+        sleeps = []
+
+        def post(url, raw, headers):
+            calls.append(1)
+            raise urllib.error.HTTPError(url, 429, "slow down", {"Retry-After": "30" if len(calls) == 1 else "2"}, None)
+
+        cb = cc.LandflowParts(url="http://landflow.test/api/gateway-parts", secret=SECRET, post=post, sleep=sleeps.append)
+        self.assertFalse(cb.send(cb.url, SECRET, {"a": 1}))
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(sleeps, [5.0, 2.0])
+
+    def test_a_429_then_success_is_sent(self):
+        calls = []
+        sleeps = []
+
+        def post(url, raw, headers):
+            calls.append(1)
+            if len(calls) == 1:
+                raise urllib.error.HTTPError(url, 429, "slow down", {"Retry-After": "1"}, None)
+
+        cb = cc.LandflowParts(url="http://landflow.test/api/gateway-parts", secret=SECRET, post=post, sleep=sleeps.append)
+        self.assertTrue(cb.send(cb.url, SECRET, {"a": 1}))
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(sleeps, [1.0])
+
     def test_a_full_queue_drops(self):
         gate = threading.Event()
         calls = []

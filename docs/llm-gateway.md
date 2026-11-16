@@ -33,6 +33,8 @@ COMPOSE_BAKE=false docker --context orbstack compose -p landflow-infra -f deploy
 - **Development keys.** Master key `sk-landflow-dev-master-only`, salt key `sk-landflow-dev-salt-only` (never change it
   once keys exist: it encrypts what LiteLLM stores), UI login `admin` / `landflow-dev-only`. They come from
   `LANDFLOW_LLM_GATEWAY_MASTER_KEY`, `_SALT_KEY`, `_UI_USERNAME` and `_UI_PASSWORD` in `deploy/.env`; real ones go there.
+  The production check refuses the master key and `LANDFLOW_LLM_GATEWAY_PARTS_SECRET` (`landflow-dev-parts-only`) when
+  they are still the development values.
 - **Models.** [`deploy/llm-gateway/config.yaml`](../deploy/llm-gateway/config.yaml) lists `qwen3-coder:30b` and `qwen3.8`
   on the host's Ollama (`ollama_chat/` serves both `/v1/messages` and `/v1/chat/completions`). To add a model, append a
   `model_list` entry and restart the service. Every model name a client sends must be listed. Ollama models have no
@@ -352,9 +354,14 @@ keyed by the call's `ai_usage` row. It holds token counts, hashes and tool names
 - **Hashes.** Keyed hashes (HMAC-SHA-256 under a key derived from the instance's encryption key, 16 hex characters):
   `promptHash` for the whole prompt (the same prompt sent again), `prefixHash` for everything up to the last cache
   breakpoint (two calls with the same prefix could have shared a cache entry) and one hash per part (the instructions
-  changed between two runs). The hashes are made from the texts alone, so the same prompt has the same hashes whatever the method. A part's hash is over its segments' texts joined in order into one string, so a counter that
-  holds the part whole (the gateway's callback, wave 12) gets the same hash. The prompt's date line (`Current date and
-  time: …`) is a `formatting` segment: it is in `promptHash` and in no part hash (before wave 12 it was also in `prefixHash`), so the instructions' hash only changes when the instructions do. From wave 12 (SP19) `prefixHash` is the hash of the stable prefix (the tools and the system prompt up to the project block and practices): the date line and the memory are no longer in it (they stay in `promptHash`), so earlier rows don't compare with later ones. They are comparable inside one instance only and cannot be turned back into text.
+  changed between two runs). The hashes are made from the texts alone, so the same prompt has the same hashes whatever
+  the method. A part's hash is over its segments' texts joined in order into one string, so a counter that holds the
+  part whole (the gateway's callback, wave 12) gets the same hash. The prompt's date line (`Current date and time: …`)
+  is a `formatting` segment: it is in `promptHash` and in no part hash (before wave 12 it was also in `prefixHash`), so
+  the instructions' hash only changes when the instructions do. From wave 12 (SP19) `prefixHash` is the hash of the
+  stable prefix (the tools and the system prompt up to the project block and practices): the date line and the memory
+  are no longer in it (they stay in `promptHash`), so earlier rows don't compare with later ones. They are comparable
+  inside one instance only and cannot be turned back into text.
 - **Who writes it.** Agent runs (the system prompt is split where it is built), the AI Agent node, Spotlight, the Agent
   architect and Ask the brain. The text of a prompt is held in memory for the length of one call and is never stored,
   logged or put on a span.
@@ -388,19 +395,23 @@ images), counts each part with the model's own tokenizer, and posts the result t
 - **Turning it on.** Set the same secret on both sides: `LANDFLOW_LLM_GATEWAY_PARTS_SECRET` on the host and
   `LANDFLOW_PARTS_SECRET` in the gateway (`deploy/.env.example` has a development value; compose passes the host's value
   through, and `LANDFLOW_LLM_GATEWAY_PARTS_URL` changes the default `http://host.docker.internal:3000/api/gateway-parts`).
-  Compose mounts the file at `/app/custom_callbacks.py`. In the Kubernetes example the file is in the `llm-gateway-config`
+  Compose mounts the file at `/app/custom_callbacks.py`, so a gateway container created before this mount existed must
+  be recreated (`compose up -d`), not restarted: a restarted one has no callback file and LiteLLM cannot start. In the Kubernetes example the file is in the `llm-gateway-config`
   ConfigMap (a copy at `deploy/k8s/examples/llm-gateway/custom_callbacks.py`, which a test keeps equal) and mounted the
   same way; add `LANDFLOW_PARTS_SECRET` to the `llm-gateway-keys` Secret (see the kustomization). Either one unset: the
   callback does nothing, and the host answers 404. A host that does not have the secret (a plain `pnpm dev`) answers 404 to
-  a gateway that has it: the callback does not retry a 4xx and warns once per status, so it costs one log line, not one
-  per call. In a cluster the host is not at `host.docker.internal`: set `LANDFLOW_PARTS_URL` in the gateway to the host's
+  a gateway that has it: the callback does not retry a 4xx other than 429 and warns once per status, so it costs one log
+  line, not one per call. In a cluster the host is not at `host.docker.internal`: set `LANDFLOW_PARTS_URL` in the gateway to the host's
   Service URL (`http://<service>.<namespace>.svc:3000/api/gateway-parts`); the example's value is for OrbStack compose.
 - **The post** is signed (`x-landflow-signature: t=<unix seconds>,v1=<HMAC-SHA-256 of "<t>.<body>">`; 300 s window), sent
-  after the response so it never slows a call, retried twice (a 4xx is never retried), then dropped with a warning
-  (once per cause, not per call). Counting and posting run on the callback's own four threads with a queue of 64: a slow
+  after the response so it never slows a call, retried twice (a 4xx other than 429 is not retried; a 429 waits
+  Landflow's `Retry-After`, at most 5 s, then tries again), then dropped with a warning (once per cause, not per
+  call). Counting and posting run on the callback's own four threads with a queue of 64: a slow
   or unreachable Landflow or Ollama makes it drop splits, never hold LiteLLM's threads. A cache hit is no model call:
   nothing is sent. The route is public, the signature is the credential; it is in the public rate-limit group
-  `gateway-parts` (`LANDFLOW_RATE_LIMIT_PUBLIC`, per address), so a gateway busier than that limit loses the surplus.
+  `gateway-parts` (`LANDFLOW_RATE_LIMIT_PUBLIC`, per address), so a gateway busier than that limit loses the surplus: an operator with many agents should raise
+  `LANDFLOW_RATE_LIMIT_PUBLIC` (a busy gateway can post more than 120 splits a minute, and each 429 holds one of the
+  callback's four threads for up to 10 s).
   LiteLLM logs `api_base` as the full request URL; the callback strips `/api/chat` or `/v1/messages` to reach
   `/api/show` and `/v1/messages/count_tokens`, and remembers a failed tokenizer load for five minutes (the call is then an
   estimate).
