@@ -99,4 +99,13 @@ describe('the chat', () => {
     expect(offers).toHaveLength(1);
     expect(offers[0]).toMatchObject({ node: 'Open status incident', credentialTypes: ['httpHeaderAuth'] });
   });
+
+  it('offers every credential slot for a 401 on a step with no authentication (the fixture as it is), nothing proposed', async () => {
+    const runs: Record<string, RunDigest> = { h: { status: 'error', durationMs: 20, error: { message: 'Request failed with status 401 Unauthorized' }, inputs: [], outputs: [] } };
+    const events = await run('this HTTP step fails with 401, fix it', [{ text: 'The status page wants a token.' }], { runs, selectedNodeId: 'h' });
+    const offers = events.filter((e) => e.type === 'credential');
+    expect(offers).toHaveLength(1);
+    expect(offers[0]).toMatchObject({ node: 'Open status incident', nodeId: 'h' });
+    expect((offers[0] as { credentialTypes: string[] }).credentialTypes).toEqual(expect.arrayContaining(['httpHeaderAuth', 'httpBearerAuth']));
+  });
 });

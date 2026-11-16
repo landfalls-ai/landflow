@@ -313,7 +313,10 @@ function failedForCredential(workflow: Workflow, runs: Record<string, RunDigest>
   const node = (selectedId && failed(selectedId) ? workflow.nodes.find((n) => n.id === selectedId) : undefined) ?? workflow.nodes.find((n) => failed(n.id));
   const d = node && lookup(node.type);
   if (!node || !d) return undefined;
-  const types = (d.credentials ?? []).filter((c) => isPropertyVisible(c, withPropertyDefaults(d.properties, node.parameters))).map((c) => c.name);
+  const all = d.credentials ?? [];
+  // None visible for the step's parameters (an HTTP step with `authentication: none`): offer every slot; a pick sets what shows it.
+  const shown = all.filter((c) => isPropertyVisible(c, withPropertyDefaults(d.properties, node.parameters)));
+  const types = (shown.length ? shown : all).map((c) => c.name);
   return types.length ? { node: node.name, nodeId: node.id, credentialTypes: types, text: `“${node.name}” needs a credential: pick one or create one.` } : undefined;
 }
 

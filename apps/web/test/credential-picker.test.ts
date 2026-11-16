@@ -123,3 +123,27 @@ describe('the stream', () => {
     expect(next.parts).toEqual([{ kind: 'needs', need: { what: 'credential', text: '“Open status incident” needs a credential: pick one or create one.', node: 'Open status incident', nodeId: 'n_http', credentialTypes: ['httpHeaderAuth'] } }]);
   });
 });
+
+describe('a pick', () => {
+  it('sets what the slot needs to show, and only the row picked', async () => {
+    const { useEditor } = await import('@/components/editor/store');
+    const { useAssistant } = await import('@/components/editor/assistant');
+    const { setStepCredential } = await import('@/components/editor/spotlight/credential-picker');
+    const info = registry.nodeTypes().find((t) => t.type === 'core.httpRequest')!;
+    const wf = { id: 'wf_pick', name: 'Pick', nodes: [{ id: 'h', name: 'Open status incident', type: 'core.httpRequest', typeVersion: 1, position: [0, 0] as [number, number], parameters: { authentication: 'none' } }], connections: [] };
+    useEditor.getState().load(wf as never, [info]);
+    expect(setStepCredential('h', 'Open status incident', 'httpHeaderAuth', { id: 'c1', name: 'Echo token' })).toBe(true);
+    const step = useEditor.getState().toWorkflow().nodes[0];
+    expect(step.parameters).toMatchObject({ authentication: 'genericCredentialType', genericAuthType: 'httpHeaderAuth' });
+    expect(step.credentials?.httpHeaderAuth).toEqual({ id: 'c1', name: 'Echo token' });
+
+    // Two credential rows in one reply: marking one leaves the other open.
+    const need = (node: string) => ({ kind: 'needs' as const, need: { what: 'credential' as const, text: node, node, credentialTypes: ['httpHeaderAuth'] } });
+    useAssistant.setState({ items: [{ id: 'r', role: 'assistant', parts: [need('One'), need('Two')] } as never] });
+    const index = 0;
+    useAssistant.getState().updateParts('r', (parts) => parts.map((p, at) => (at === index && p.kind === 'needs' ? { ...p, need: { ...p.need, state: 'done' as const, picked: 'Echo token' } } : p)));
+    const parts = (useAssistant.getState().items[0] as { parts: Array<{ need: { state?: string } }> }).parts;
+    expect(parts[0].need.state).toBe('done');
+    expect(parts[1].need.state).toBeUndefined();
+  });
+});

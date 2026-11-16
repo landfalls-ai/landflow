@@ -37,13 +37,13 @@ export function openNodeNamed(name: string) {
  * Something only the person can do (docs/assistant.md#test-and-fix): what it is, the button that does it, and one that
  * tests on. Picking a credential or an agent opens the node; a trigger is one op; sending for real is a yes.
  */
-function NeedRow({ itemId, need }: { itemId: string; need: Need }) {
+function NeedRow({ itemId, index, need }: { itemId: string; /** Where this row's part sits in the reply: only this row changes when it is marked or picked. */ index: number; need: Need }) {
   const busy = useAssistant((s) => s.pending || Boolean(s.testing));
-  const mark = (state: 'done' | 'dismissed') => useAssistant.getState().updateParts(itemId, (parts) => parts.map((p) => (p.kind === 'needs' ? { ...p, need: { ...p.need, state } } : p)));
+  const mark = (state: 'done' | 'dismissed') => useAssistant.getState().updateParts(itemId, (parts) => parts.map((p, at) => (at === index && p.kind === 'needs' ? { ...p, need: { ...p.need, state } } : p)));
   const workflowId = useEditor((s) => s.workflowId); // SB12:
   // SB12: a credential row with the types a step accepts holds the picker; after a pick it reads "Using “name”" and is done.
   const offer = need.what === 'credential' && Boolean(need.credentialTypes?.length);
-  const picked = (name: string) => useAssistant.getState().updateParts(itemId, (parts) => parts.map((p) => (p.kind === 'needs' ? { ...p, need: { ...p.need, state: 'done' as const, picked: name } } : p)));
+  const picked = (name: string) => useAssistant.getState().updateParts(itemId, (parts) => parts.map((p, at) => (at === index && p.kind === 'needs' ? { ...p, need: { ...p.need, state: 'done' as const, picked: name } } : p)));
   const goOn = () => {
     mark('done');
     void testUntilItRuns(need.goal);
@@ -69,21 +69,7 @@ function NeedRow({ itemId, need }: { itemId: string; need: Need }) {
       {offer && !need.state && need.credentialTypes && (
         <>
           <CredentialPicker workflowId={workflowId} nodeId={need.nodeId} node={need.node ?? ''} credentialTypes={need.credentialTypes} onPicked={(c) => picked(c.name)} />
-          {need.goal && (
-            <div className="pl-5">
-              <Button size="sm" variant="ghost" disabled={busy} onClick={goOn}>
-                Test again
-              </Button>
-            </div>
-          )}
         </>
-      )}
-      {offer && need.state === 'done' && need.picked && need.goal && (
-        <div className="pl-5">
-          <Button size="sm" variant="ghost" disabled={busy} onClick={() => void testUntilItRuns(need.goal)}>
-            Test again
-          </Button>
-        </div>
       )}
       {offer && !need.state ? null : need.state ? (
         <p className="pl-5 text-[11.5px] text-t3">
@@ -422,7 +408,7 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
         ) : part.kind === 'action' ? (
           <ActionView key={i} itemId={item.id} action={part} />
         ) : part.kind === 'needs' ? (
-          <NeedRow key={i} itemId={item.id} need={part.need} />
+          <NeedRow key={i} itemId={item.id} index={i} need={part.need} />
         ) : part.kind === 'outcome' ? (
           <OutcomeCard key={i} itemId={item.id} outcome={part.outcome} />
         ) : null,

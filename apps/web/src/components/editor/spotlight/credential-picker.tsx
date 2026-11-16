@@ -7,6 +7,7 @@
  */
 import { useId, useState } from 'react';
 import { toast } from 'sonner';
+import { withPropertyDefaults } from '@landflow/protocol';
 import { isPhone } from '@/lib/client/use-phone';
 import { Button } from '../../ui/button';
 import { CredentialDialog } from '../../credentials/credential-dialog';
@@ -27,7 +28,12 @@ export function setStepCredential(nodeId: string | undefined, name: string, slot
   const workflow = state.toWorkflow();
   const step = workflow.nodes.find((n) => n.id === nodeId) ?? workflow.nodes.find((n) => n.name === name);
   if (!step) return false;
-  const undo = state.replaceGraph({ ...workflow, nodes: workflow.nodes.map((n) => (n.id === step.id ? { ...n, credentials: { ...n.credentials, [slot]: { id: picked.id, name: picked.name } } } : n)) });
+  // The slot may be hidden by the step's parameters (an HTTP step with no authentication): set what shows it, in the same undo step.
+  const descriptor = state.nodeTypes[step.type]?.descriptor;
+  const show = descriptor?.credentials?.find((c) => c.name === slot)?.displayOptions?.show ?? {};
+  const have = withPropertyDefaults(descriptor?.properties ?? [], step.parameters) as Record<string, unknown>;
+  const needed = Object.fromEntries(Object.entries(show).filter(([key, values]) => Array.isArray(values) && values.length && !values.includes(have[key] as never)).map(([key, values]) => [key, (values as unknown[])[0]]));
+  const undo = state.replaceGraph({ ...workflow, nodes: workflow.nodes.map((n) => (n.id === step.id ? { ...n, parameters: { ...n.parameters, ...needed }, credentials: { ...n.credentials, [slot]: { id: picked.id, name: picked.name } } } : n)) });
   toast.success(`Using “${picked.name}” on “${step.name}”`, { action: { label: 'Undo', onClick: undo }, duration: isPhone() ? 5_000 : 15_000 });
   return true;
 }
