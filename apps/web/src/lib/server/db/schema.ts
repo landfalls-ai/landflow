@@ -1944,8 +1944,8 @@ export const TABLES = {
   node_static_data: ['workflow_id', 'node_id'],
   ai_usage: ['id'],
   // SP08: the daily rollup of ai_usage
-  ai_spend_flags: ['id'], // SP23:
   ai_usage_daily: ['day', 'project_id', 'goal_id', 'agent_id', 'workflow_id', 'user_id', 'credential_id', 'surface', 'purpose', 'provider', 'model', 'source', 'runtime'],
+  ai_spend_flags: ['id'], // SP23:
   // SP03:
   ai_call_parts: ['id'],
   chat_messages: ['workflow_id', 'session_id', 'seq'],

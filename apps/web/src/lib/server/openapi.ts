@@ -752,7 +752,7 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Executions',
     id: 'listRunsNeedingYou',
     summary: 'What waits for a person across runs',
-    description: 'Waiting runs that ask for an approval, a form, an answer or a Run report decision, and failed checks of the last 7 days nobody settled. Each item: executionId, workflowId, workflowName, kind (approval, form, question, gate, check, budget), title, detail, actor, member (the team member a tool approval or a guard’s ask is for), spanId, since. A `budget` item (an open AI budget warning or stop of a project the caller administers or owns the budget of) has empty executionId, workflowId and workflowName, and projectId, incidentId, incidentKind, href, canRaise and canResume.',
+    description: 'Waiting runs that ask for an approval, a form, an answer or a Run report decision, and failed checks of the last 7 days nobody settled. Each item: executionId, workflowId, workflowName, kind (approval, form, question, gate, check, budget, spend, task), title, detail, actor, member (the team member a tool approval or a guard’s ask is for), spanId, since. A `budget` item (an open AI budget warning or stop of a project the caller administers or owns the budget of) has empty executionId, workflowId and workflowName, and projectId, incidentId, incidentKind, href, canRaise and canResume.',
     responses: { 200: reply('The items, newest first', object({ items: array({ type: 'object' }) }, ['items'])) },
   });
   add('get', '/api/runs/lines', {

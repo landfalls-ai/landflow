@@ -7,7 +7,7 @@ and post suggestions next to the built-in ones.
 
 ```
  observe ─────────► remember ─────────► conclude ─────────► propose ─────────► measure
- usage ledger       profiles, facts     13 detectors, your  Home inbox, canvas  did it help?
+ usage ledger       profiles, facts     21 detectors, your  Home inbox, canvas  did it help?
  (every run, edit,  and a searchable    workflows, the      card, a digest;     back into the
  AI call, action)   index               Platform analyst    Apply with a diff   facts
 ```

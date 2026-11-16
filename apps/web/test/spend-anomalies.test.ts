@@ -410,6 +410,12 @@ describe('the brain’s detector', () => {
     expect(found.map((f) => f.proposal.fingerprint)).toContain(fingerprintOf('spend-anomaly', `agent|${agentId}|${today}`));
   });
 
+  it('leaves out the flags of days after the point judged (a backtest)', () => {
+    const fingerprint = fingerprintOf('spend-anomaly', `agent|${agentId}|${today}`);
+    expect(DETECTOR_RUNS['spend-anomaly'](detectContext({}, database(), NOW)).map((f) => f.proposal.fingerprint)).toContain(fingerprint);
+    expect(DETECTOR_RUNS['spend-anomaly'](detectContext({}, database(), NOW - 3 * 86_400_000)).map((f) => f.proposal.fingerprint)).not.toContain(fingerprint);
+  });
+
   it('leaves out an acknowledged flag', () => {
     const flag = anomaly('agent', agentId)!;
     flags.saveFlag({ ...flag, acknowledgedBy: owner.id, acknowledgedAt: new Date(NOW).toISOString() });

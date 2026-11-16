@@ -16,9 +16,11 @@ const DAY_MS = 86_400_000;
 
 export function spendAnomalyFindings(ctx: DetectContext): Finding[] {
   const since = aiUsageMeter().today(ctx.now - 7 * DAY_MS);
+  // A backtest judges a point in the past: flags of later days did not exist yet.
+  const until = aiUsageMeter().today(ctx.now);
   const findings: Finding[] = [];
   for (const flag of listFlags('anomaly', since, ctx.db)) {
-    if (flag.acknowledgedAt || (flag.dimension !== 'agent' && flag.dimension !== 'workflow')) continue;
+    if (flag.day > until || flag.acknowledgedAt || (flag.dimension !== 'agent' && flag.dimension !== 'workflow')) continue;
     const agent = flag.dimension === 'agent' ? agentStore.get(flag.key) : undefined;
     const workflow = flag.dimension === 'workflow' ? store.getWorkflow(flag.key) : undefined;
     const name = agent?.name ?? workflow?.name;
