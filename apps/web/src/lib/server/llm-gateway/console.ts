@@ -107,7 +107,8 @@ export function capRaiseSetup(): CapRaiseSetup {
   return { workflowId, active: Boolean(productionWorkflowById(workflowId)) };
 }
 
-function capsFor(actor: Actor, admin: boolean): AiConsoleCap[] {
+// SP11: exported, so the month-end forecast covers the caps a viewer sees.
+export function capsFor(actor: Actor, admin: boolean): AiConsoleCap[] {
   const settings = gatewaySettings();
   const pending = admin ? new Map<string, string>() : openRequestIds(actor.id);
   const all = watchedCaps();

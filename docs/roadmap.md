@@ -2298,6 +2298,16 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   in a menu, filters as chips in the URL, a cost-or-tokens trend with the period before as a faint line and a stack of any
   group's top 5, the biggest rises and falls, and a drill sheet from any row with the runs and calls behind it, "N runs you
   can't open: $X", one call's composition and CSV ([llm-gateway.md](llm-gateway.md#the-ai-page)). Desktop only, as decided.
+- **The cache card and the forecast to month end (SP11), built**: the AI page gains a **Forecast to month end** card (the
+  month's total as a range, "$410 to $520 by Nov 30", the most likely figure in words, "early" under 7 days of data, and
+  each cap or budget the viewer may see with the day the P50 line reaches its limit or "stays under"; a daily cap shows
+  today's pace) and a **Prompt cache** card (hit rate, dollars saved, misses, the five agents with the most uncached input
+  with why they missed, and the AI Agent node's uncached calls). `forecastMonth` (`lib/shared/ai-forecast.ts`) is the one
+  method; SP23 alerts on it and SP12's My AI spend takes it for its own caps. Until the daily rollup (SP08) merges the
+  forecast reads `ai_usage` by day through one function (`dayRows` in `lib/server/ai-usage/forecast.ts`).
+  Live check: owner and member views on a seeded month, light and dark, desktop and phone; the seed had the same spend on
+  each day (no spread), so the range form was covered by unit tests only. Misses are also counted in distinct runs
+  ("in 3 of 40 runs"), each call grouped by its own session, else execution.
 
 ## Practices (waves P1 and P2)
 

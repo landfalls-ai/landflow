@@ -41,7 +41,7 @@ function fromZod(schema: z.ZodType): Json {
 const samplePath = (path: string) => path.replace(/\{[^}]+\}/g, 'sample');
 
 interface Operation {
-  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Settings' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks' | 'Conversations' | 'Goals' | 'Practices' | 'Projects' | 'Insights';
+  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Settings' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks' | 'Conversations' | 'Goals' | 'Practices' | 'Projects' | 'Insights'; // SP09, SP11: Insights
   id: string;
   summary: string;
   description?: string;
@@ -2526,6 +2526,40 @@ function paths(): Record<string, Record<string, Json>> {
     ],
     responses: { 200: reply('The agents', object({ agents: array({ type: 'object', additionalProperties: true }) }, ['agents'])), 404: notFound },
   });
+  // SP11: the AI page's forecast and cache card
+  const forecastShape = object({ monthToDate: { type: 'number' }, p50: { type: 'number' }, low: { type: 'number' }, high: { type: 'number' }, early: { type: 'boolean' }, daysObserved: { type: 'integer' }, daysLeft: { type: 'integer' } }, ['monthToDate', 'p50', 'low', 'high', 'early', 'daysObserved', 'daysLeft']);
+  add('get', '/api/insights/ai/forecast', {
+    tag: 'Insights',
+    id: 'aiForecast',
+    summary: 'The AI page’s month-end forecast',
+    description:
+      'Needs the `executions:read` scope or a session. The month’s total of what the caller can see, forecast to the month’s end (month to date + the mean of the last 7 complete days × the days left, with a band of ±1.2816·σ·√(days left), never below month to date; `early` with fewer than 7 days of data), and each cap or budget the caller may see: monthly ones forecast with the day the P50 line reaches the limit (`reachesOn`), daily ones as today’s `pace`. Cost caps in dollars, token caps in tokens. Other people’s caps are never listed for a member.',
+    responses: {
+      200: reply(
+        'The forecast',
+        object(
+          {
+            month: { type: 'string', description: 'YYYY-MM in the instance’s time zone' },
+            total: forecastShape,
+            caps: array(object({ capId: { type: 'string' }, subject: { type: 'string' }, period: { type: 'string', enum: ['day', 'month'] }, metric: { type: 'string', enum: ['cost', 'tokens'] }, max: { type: 'number' }, used: { type: 'number' }, forecast: forecastShape, pace: { type: 'number' }, reachesOn: { type: 'string', description: 'YYYY-MM-DD' } }, ['capId', 'subject', 'period', 'metric', 'max', 'used'])),
+          },
+          ['month', 'total', 'caps'],
+        ),
+      ),
+    },
+  });
+  add('get', '/api/insights/ai/cache', {
+    tag: 'Insights',
+    id: 'aiCache',
+    summary: 'The AI page’s prompt-cache card',
+    description:
+      'Needs the `executions:read` scope or a session. Over the period: the cache hit rate over the calls the Run Trace’s cache line counts (Anthropic and OpenAI rows, and gateway rows that report cache tokens), the dollars it saved, the top 5 agents by uncached input with why they missed, and how many Anthropic calls the AI Agent node made (it asks for no cache). Only what the caller can see; numbers only, never prompt text. `reasonsPartial`: miss reasons need prompt splits, kept 30 days.',
+    query: [{ name: 'period', description: 'The period', schema: { type: 'string', enum: ['24h', '7d', '30d'], default: '7d' } }],
+    responses: {
+      200: reply('The cache card', object({ period: { type: 'string' }, cache: { type: 'object', additionalProperties: true }, agents: array({ type: 'object', additionalProperties: true }), agentNode: object({ calls: { type: 'integer' }, uncachedTokens: { type: 'integer' } }, ['calls', 'uncachedTokens']), reasonsPartial: { type: 'boolean' }, truncated: { type: 'boolean' } }, ['period', 'cache', 'agents', 'agentNode', 'reasonsPartial', 'truncated'])),
+      400: invalid,
+    },
+  });
   // PC10: project context for a harness
   add('get', '/api/projects/context', {
     tag: 'Projects',
@@ -2787,8 +2821,8 @@ export function openApiDocument(origin?: string): Record<string, unknown> {
       { name: 'Conversations', description: 'A person’s own chats with Spotlight, the brain and the Agent architect, and their personal preferences: session only, owner only (docs/assistant.md#conversation-history)' },
       { name: 'Practices', description: 'Rules in the brain that connected agents follow: drafts, versions, approval by a person, waivers (docs/practices.md)' },
       { name: 'Projects', description: 'A project’s context block for a harness, found by repository or id (docs/connect-your-harness.md#project-context)' },
-      // SP09:
-      { name: 'Insights', description: 'The AI page’s spend: the runs and model calls behind a number, as JSON or CSV (docs/llm-gateway.md, “The AI page”)' },
+      // SP09, SP11:
+      { name: 'Insights', description: 'The AI page: spend, the runs and model calls behind a number (JSON or CSV), the month-end forecast against caps and budgets, and the prompt cache (docs/llm-gateway.md, “The AI page”)' },
       { name: 'MCP', description: 'Agents and MCP (docs/transports.md): Landflow-issued MCP tokens, tool grants, the JWKS, the plugin catalog (server.json, the registry API) and protected resource metadata' },
     ],
     security: [{ bearerAuth: [] }, { apiKeyHeader: [] }, { sessionCookie: [] }],

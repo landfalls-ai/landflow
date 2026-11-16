@@ -20,6 +20,8 @@ import { Segmented } from '@/components/ui/segmented';
 import { StatCard } from '@/components/ui/stat-card';
 import { Input, SectionLabel, Select } from '@/components/ui/inputs';
 import { CapsCard, RequestsCard } from './ai-console-caps';
+import { AiCacheCard } from './ai-cache-card'; // SP11:
+import { AiForecastCard } from './ai-forecast-card'; // SP11:
 import { GatewayCard } from './ai-console-gateway';
 import { AiDrill } from './ai-drill';
 import { AiMovers } from './ai-movers';
@@ -301,8 +303,10 @@ export function AiConsole() {
           {shown && view.group === 'person' && <PeopleTotal totals={shown.peopleTotals} admin={shown.viewer.admin} />}
           {shown ? <SpendBy rows={shown.groups[view.group]} label={label} onOpen={(row) => open(view.group, row.key)} hrefFor={(href) => applyFilterHref(view, href)} /> : <div className="m-4 h-24 rounded-xl bg-acdim animate-pulse-soft" />}
         </Card>
+        <AiForecastCard /> {/* SP11: */}
         {shown && <CapsCard report={asConsole(shown)} onChanged={() => load()} />}
         {shown && <RequestsCard report={asConsole(shown)} onChanged={() => load()} />}
+        <AiCacheCard period={view.period} /> {/* SP11: */}
         <GatewayCard status={status} admin={Boolean(shown?.viewer.admin)} />
       </PageBody>
       <AiDrill view={view} target={mounted ? view.drill : undefined} title={view.drill ? drillLabel(shown, view.drill) : ''} chips={chips} onClose={() => go({ ...view, drill: undefined })} />

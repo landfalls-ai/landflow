@@ -95,7 +95,8 @@ function toParts(row: PartsRow): CallParts {
 }
 
 /** Splits of these rows, keyed by `ai_usage.id` (a gateway split joins by the row's `gateway_request_id`). */
-function partsOf(rows: UsageRow[]): Map<string, CallParts> {
+// SP11: exported, so the AI page cache card runs the same cacheLine as the Run Trace.
+export function partsOf(rows: UsageRow[]): Map<string, CallParts> {
   const found = new Map<string, CallParts>();
   const db = database();
   const byRequest = new Map(rows.filter((r) => r.gateway_request_id).map((r) => [r.gateway_request_id as string, r.id]));
@@ -115,7 +116,8 @@ function partsOf(rows: UsageRow[]): Map<string, CallParts> {
 
 const priceFor = (overrides: ModelPrice[]) => (call: { provider: string; model: string }) => findPrice(call.provider, call.model, overrides);
 
-function callOf(row: UsageRow, price: (c: { provider: string; model: string }) => ModelPrice | undefined, hasParts: boolean, agentVisible: boolean): SpendCall {
+// SP11: exported, as partsOf.
+export function callOf(row: UsageRow, price: (c: { provider: string; model: string }) => ModelPrice | undefined, hasParts: boolean, agentVisible: boolean): SpendCall {
   return {
     usageId: row.id,
     at: row.at,
