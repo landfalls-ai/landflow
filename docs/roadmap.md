@@ -2395,6 +2395,14 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   b69627fe (the rollup's dirty marks taken in each day's own transaction, the page's view helpers, the calls CSV's run
   link, the chain nodes' prompt split) are covered by tests and Opus's last review, not by the browser.
 
+## Token spend wave 14
+
+- **Built (SP14)**: your own AI spend from a brain key. The MCP tool `my_ai_spend { period? }` (`brain:read`), `GET /api/brain/my-spend?period=`
+  (`brain:read`; the same answer as `GET /api/insights/ai/me`, which stays `executions:read`) and `landflow spend [--period] [--json]`
+  show today, this month, the period by model (and purpose over MCP) and your caps with their forecast or pace. Only your own rows and
+  caps, an owner or admin included; other people's spend stays on the AI page. The wire is `lib/shared/my-spend-wire.ts` (the CLI keeps
+  its own copy; the landflow-brain mod's status line, SP15, reads it). See [llm-gateway.md](llm-gateway.md#the-ai-page).
+
 ## Practices (waves P1 and P2)
 
 Rules in the brain that connected agents follow, each approved by a person ([practices.md](practices.md)). Decided
