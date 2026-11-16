@@ -357,10 +357,11 @@ keyed by the call's `ai_usage` row. It holds token counts, hashes and tool names
   changed between two runs). The hashes are made from the texts alone, so the same prompt has the same hashes whatever
   the method. A part's hash is over its segments' texts joined in order into one string, so a counter that holds the
   part whole (the gateway's callback, wave 12) gets the same hash. The prompt's date line (`Current date and time: …`)
-  is a `formatting` segment: it is in `promptHash` and in no part hash (before wave 12 it was also in `prefixHash`), so
+  is a `formatting` segment: it is in no part hash and, from the wave 14 fix pass, not in `promptHash` either (so two runs
+  of one prompt hash alike and `repeated-calls` can see an agent's repeats; before wave 12 it was also in `prefixHash`), so
   the instructions' hash only changes when the instructions do. From wave 12 (SP19) `prefixHash` is the hash of the
   stable prefix (the tools and the system prompt up to the project block and practices): the date line and the memory
-  are no longer in it (they stay in `promptHash`), so earlier rows don't compare with later ones. They are comparable
+  are no longer in it (the memory stays in `promptHash`), so earlier rows don't compare with later ones. They are comparable
   inside one instance only and cannot be turned back into text.
 - **Who writes it.** Agent runs (the system prompt is split where it is built), the AI Agent node, the Basic LLM Chain, Text Classifier and Information Extractor nodes, Spotlight, the Agent
   architect and Ask the brain (other single calls, such as RAG answers and evaluation judges, write none). The text of a prompt is held in memory for the length of one call and is never stored,

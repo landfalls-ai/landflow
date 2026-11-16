@@ -106,11 +106,12 @@ export interface PartHashes {
 }
 
 /**
- * Keyed hashes of a draft: `promptHash` over every segment in order with its `where`; `prefixHash` over the segments
+ * Keyed hashes of a draft: `promptHash` over every segment but `formatting` in order with its `where`; `prefixHash` over the segments
  * up to the last one marked `breakpoint` (else the tools and the system prompt); `partHashes` per part, over the
  * texts of that part's segments joined in order as one string (so a counter that holds the part whole, as the gateway's
  * callback does, gets the same hash); `formatting` and `images` have none: a prompt's date stamp is a `formatting`
- * segment, so it changes `promptHash` and `prefixHash` (it is in the prompt) but never the instructions' hash.
+ * segment, so it changes `prefixHash` (it is in the prompt) but neither `promptHash` nor the instructions' hash: two
+ * runs of one prompt stamped to the millisecond still hash alike, which is what repeated-call detection needs.
  */
 export function hashParts(draft: PromptDraft, key: Buffer): PartHashes {
   const field = (s: { where: string; part: string; text: string }) => [s.where, s.part, s.text];
@@ -128,7 +129,7 @@ export function hashParts(draft: PromptDraft, key: Buffer): PartHashes {
   }
   return {
     prefixHash: digest(key, prefix.flatMap(field)),
-    promptHash: digest(key, [...draft.segments.flatMap(field), `images:${draft.images ?? 0}`]),
+    promptHash: digest(key, [...draft.segments.filter((s) => s.part !== 'formatting').flatMap(field), `images:${draft.images ?? 0}`]),
     partHashes,
     ...(draft.toolNames?.length && { toolNames: [...draft.toolNames] }),
   };

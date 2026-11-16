@@ -2435,10 +2435,10 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   `spend-mcp-you-join` (`my_ai_spend` over `POST /api/mcp`, `GET /api/brain/my-spend` with the same key and the You card
   are equal for an owner and a member in every period; the instance token is refused) and `spend-status-line-join` (the
   mod's `getMySpend` and `statusLine` against the real route through the real guard). The detectors join found that
-  `repeated-calls` cannot see a Landflow agent's own repeats (left open below).
-- **Left open (join tests)**: `repeated-calls` groups calls by the whole prompt's hash, and an agent's system prompt ends
-  with the time to the millisecond, so two runs of one question never match. Grouping by the part hashes without
-  `formatting` (which the parts rows already keep) would let it judge agents; not done in wave 14.
+  `repeated-calls` could not see a Landflow agent's own repeats (fixed in the fix pass below).
+- **Fixed (join tests)**: `repeated-calls` could not judge an agent, because its system prompt ends with the time to the
+  millisecond and `promptHash` covered it. `promptHash` now leaves the `formatting` segments out (the gateway's callback
+  too); the date stays in `prefixHash`.
 
 ## Practices (waves P1 and P2)
 

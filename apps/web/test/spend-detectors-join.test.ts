@@ -182,21 +182,22 @@ describe('the waste detectors on what the meter and the parts listener recorded'
     expect(parts).toHaveLength(rows.length);
     expect(parts.every((p) => p.prompt_hash && JSON.parse(p.tool_names ?? '[]').includes('Unused'))).toBe(true);
     expect(parts.filter((p) => (JSON.parse(p.parts) as Record<string, number>).toolResults > 0)).toHaveLength(SESSIONS * 2);
-    // Each session asks the same question with the same instructions, yet no two first prompts hash alike: the agent's
-    // system prompt carries the current time to the millisecond (docs/limitations.md, Token spend wave 14), so
-    // repeated-calls cannot see an agent's own repeats. The workflow below repeats through the same meter and listener.
+    // Each session asks the same question with the same instructions; the system prompt's date stamp (to the
+    // millisecond, a `formatting` segment) is not in the prompt hash, so the first prompts hash alike.
     const first = new Set(rows.filter((r) => r.iteration === 1).map((r) => parts.find((p) => p.usage_id === r.id)!.prompt_hash));
-    expect(first.size).toBe(SESSIONS);
+    expect(first.size).toBe(1);
     const systems = fake.requests.filter((r) => !JSON.stringify(r.body.messages).includes('tool_result')).map((r) => JSON.stringify(r.body.system).replace(/Current date and time: [^"]*/, ''));
     expect(new Set(systems).size).toBe(1);
   });
 
-  it('fires fat tool results, the unused tool and the loop at the iteration limit on the agent, and repeated prompts on the flow', () => {
+  it('fires fat tool results, the unused tool and the loop at the iteration limit on the agent, and repeated prompts on the agent sessions and on the flow', () => {
     expect(targetIds('fat-tool-results')).toEqual([agentId]);
     expect(targetIds('unused-tools')).toEqual([agentId]);
     expect(of('unused-tools')[0]!.evidence!.find((e) => e.label === 'Tool names')!.value).toBe('Unused');
-    expect(targetIds('repeated-calls')).toEqual([REPEAT_WF]);
-    expect(of('repeated-calls')[0]!.evidence!.find((e) => e.label === 'Identical prompts in a day')!.value).toBe(6);
+    expect([...targetIds('repeated-calls')].sort()).toEqual([agentId, REPEAT_WF].sort());
+    const identical = (id: string) => of('repeated-calls').find((p) => p.target?.id === id)!.evidence!.find((e) => e.label === 'Identical prompts in a day')!.value;
+    expect(identical(REPEAT_WF)).toBe(6);
+    expect(identical(agentId)).toBe(SESSIONS);
     expect(targetIds('agent-loops')).toEqual([agentId]);
     expect(of('agent-loops')[0]!.evidence!.find((e) => e.label === 'Sessions at the iteration limit')!.value).toBe(SESSIONS);
     // The share the detector names is the share the parts rows hold.

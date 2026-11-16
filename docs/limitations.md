@@ -660,7 +660,3 @@ items still open (its "Wave 6" section); this page is the short list to check be
   Landledger's own alerting, not a check.
 - A member's inbox never holds a person's or a model's unusual day (the inbox names no person); they see their own in
   Needs you, and the owners and admins see everything there.
-- **`repeated-calls` never fires on a Landflow agent's own loop** ([second-brain.md](second-brain.md#4-detectors-and-suggestions)):
-  it groups calls by the hash of the whole prompt, and an agent's system prompt ends with the current time to the
-  millisecond (the `formatting` part), so the same question asked in two sessions never hashes alike. It does fire on a
-  workflow's or a script's model calls that send the same prompt; `spend-detectors-join.test.ts` pins both.
