@@ -151,6 +151,8 @@ still works.
 | `LANDFLOW_STT_URL` / `LANDFLOW_STT_MODEL` / `LANDFLOW_STT_API_KEY` *(secret)* | `http://127.0.0.1:8000/v1` / `whisper-1` / – | the OpenAI-compatible speech-to-text server behind Spotlight's microphone ([assistant.md](../assistant.md#spotlight)) |
 | `LANDFLOW_AI_USAGE_RETENTION_DAYS` | `400` | how long per-call AI usage rows (tokens, cost) are kept. Deprecated alias: `AI_USAGE_RETENTION_DAYS`. |
 | `LANDFLOW_AI_CALL_PARTS_RETENTION_DAYS` | `30` | how long the per-call split of a prompt into parts (token counts and hashes, never text) is kept ([llm-gateway.md](../llm-gateway.md#what-a-prompt-was-made-of)) |
+| `LANDFLOW_AI_PARTS_COUNT` | `exact` | `estimate` turns exact counting of a prompt's parts off (characters ÷ 4 only): `exact` counts with Anthropic's count endpoint, OpenAI's encodings or an Ollama model's own vocabulary, and falls back to the estimate when it cannot ([llm-gateway.md](../llm-gateway.md#what-a-prompt-was-made-of)) |
+| `LANDFLOW_AI_PARTS_COUNT_PER_MINUTE` | `50` | most Anthropic count requests per minute for one credential; a call that would need more stays an estimate ([llm-gateway.md](../llm-gateway.md#what-a-prompt-was-made-of)) |
 | `LANDFLOW_BRAIN` | `true` | `false` turns the [second brain](../second-brain.md) off: no usage ledger, no detectors, no study |
 | `LANDFLOW_USAGE_RETENTION_DAYS` | `90` | how long raw usage events are kept; daily rollups are kept 400 days. Deprecated alias: `USAGE_RETENTION_DAYS`. |
 | `LANDFLOW_BRIEFING_SLACK_TOKEN` *(secret)* | – | the Slack bot token (`xoxb-…`, scopes `chat:write` and `users:read.email`) Deliver Briefing sends people's briefings with, as a DM to whoever chose Slack. It uses no credential from the vault, so no project member can redirect the nightly delivery; without it, Slack delivery is skipped with a warning and email goes on ([work-and-briefings.md](../work-and-briefings.md#the-nightly-sync)) |
@@ -177,6 +179,7 @@ still works.
 | `LANDFLOW_LLM_GATEWAY_UI_URL` | `<gateway>/ui` | LiteLLM's admin UI, linked for admins from the AI page and Settings |
 | `LANDFLOW_LLM_GATEWAY_INGEST_SECONDS` | `300` | how often the leader imports from the gateway's spend log the calls Landflow did not meter itself (agents outside Landflow, other clients, and Landflow's own calls made outside a usage scope) (30 to 86400) |
 | `LANDFLOW_LLM_GATEWAY_SYNC_SECONDS` | `600` | how often the leader reconciles LiteLLM's teams, customers and key budgets with Landflow's projects, people and caps, when the sync is on (60 to 86400) |
+| `LANDFLOW_LLM_GATEWAY_PARTS_SECRET` *(secret)* | – | the shared secret the gateway's callback (`deploy/llm-gateway/custom_callbacks.py`, its `LANDFLOW_PARTS_SECRET`) signs its split of each call with; set, `POST /api/gateway-parts` accepts the split of calls kagent's agents and Claude Code make (numbers and hashes, never text); unset, the route answers 404 ([llm-gateway.md](../llm-gateway.md#the-gateways-split)) |
 
 ## Observability
 
@@ -226,7 +229,7 @@ still works.
 | `LANDFLOW_LOGIN_MAX_ATTEMPTS` | `10` | failed sign-ins per email in 15 minutes (3× that per IP address) |
 | `LANDFLOW_MAX_BODY_BYTES` | `16777216` (16 MiB) | the largest JSON request body `parseBody` reads; a bigger one is refused with 413 (raise it for very large imports) |
 | `LANDFLOW_RATE_LIMIT_API` | `600` in production, `0` in development | authenticated API requests a minute per signed-in principal; over it: 429 with `Retry-After`. `0` turns it off. Shared through Valkey in queue mode |
-| `LANDFLOW_RATE_LIMIT_PUBLIC` | `120` in production, `0` in development | requests a minute per client address and public trigger group (`/api/webhook`, `/form`, `/chat`, `/mcp`, `/api/waiting`); `0` turns it off. Health checks, `/api/plugins/announce` and `/api/metrics` are never counted |
+| `LANDFLOW_RATE_LIMIT_PUBLIC` | `120` in production, `0` in development | requests a minute per client address and public trigger group (`/api/webhook`, `/form`, `/chat`, `/mcp`, `/api/waiting`, `/api/gateway-parts`); `0` turns it off. Health checks, `/api/plugins/announce` and `/api/metrics` are never counted |
 | `LANDFLOW_SMTP_HOST` / `LANDFLOW_SMTP_PORT` / `LANDFLOW_SMTP_USER` / `LANDFLOW_SMTP_PASS` *(secret)* / `LANDFLOW_SMTP_FROM` | – / `587` / – / – / `Landflow <landflow@host>` | email for invites, password resets and failure alerts (unset: Settings shows links to copy; email alert channels fail). `LANDFLOW_SMTP_SECURE=true` for implicit TLS (default on port 465; otherwise STARTTLS when offered), `LANDFLOW_SMTP_IGNORE_TLS=true` to skip STARTTLS. The same SMTP sends approval emails (links valid `LANDFLOW_APPROVAL_EMAIL_TTL_HOURS`, default 24) |
 | `LANDFLOW_OIDC_ISSUER` / `LANDFLOW_OIDC_CLIENT_ID` / `LANDFLOW_OIDC_CLIENT_SECRET` *(secret)* | – | single sign-on (OIDC); all three turn on the SSO button |
 | `LANDFLOW_OIDC_ROLE_CLAIM` / `LANDFLOW_OIDC_ROLE_MAP` / `LANDFLOW_OIDC_DEFAULT_ROLE` | `roles` / – / `member` | the claim holding roles, `value=role` pairs (`landflow-admin=admin,landflow-editor=member`), the role of users without a mapped one (`none` refuses them) |

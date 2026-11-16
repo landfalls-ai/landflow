@@ -44,6 +44,23 @@ describe('API rate limits', () => {
     expect(await limitRequest(req('/api/auth/oidc'), undefined, now)).toBeUndefined();
   });
 
+  it('count /api/gateway-parts as a public group in production, and not at all in development', async () => {
+    const now = 2_500_000 * 60_000 + 10_000;
+    process.env.LANDFLOW_PROFILE = 'production';
+    process.env.LANDFLOW_RATE_LIMIT_PUBLIC = '2';
+    for (let i = 0; i < 2; i += 1) expect(await limitRequest(req('/api/gateway-parts'), undefined, now)).toBeUndefined();
+    const refused = await limitRequest(req('/api/gateway-parts'), undefined, now);
+    expect(refused?.status).toBe(429);
+    expect(refused?.headers.get('retry-after')).toBe('50');
+    expect(await limitRequest(req('/api/gateway-parts', '10.0.0.9'), undefined, now)).toBeUndefined();
+    // A group of its own: the webhook's count is untouched.
+    expect(await limitRequest(req('/api/webhook/abc'), undefined, now)).toBeUndefined();
+
+    process.env = { ...saved };
+    expect(apiLimit('public')).toBe(0);
+    for (let i = 0; i < 10; i += 1) expect(await limitRequest(req('/api/gateway-parts', '10.0.0.7'), undefined, now)).toBeUndefined();
+  });
+
   it('never count health checks, plugin heartbeats and metrics', async () => {
     process.env.LANDFLOW_RATE_LIMIT_API = '1';
     process.env.LANDFLOW_RATE_LIMIT_PUBLIC = '1';

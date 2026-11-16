@@ -9,6 +9,8 @@ import type { DraftSegment, PromptDraft } from './call-context';
 export interface SystemSegment {
   part: PromptPart;
   text: string;
+  /** SP19: the last stable segment: the provider's cache point sits after it. */
+  breakpoint?: true;
 }
 
 const toolText = (tool: ToolSpec): string => JSON.stringify({ name: tool.name, description: tool.description, input_schema: tool.inputSchema });
@@ -43,7 +45,10 @@ function messageSegments(messages: AgentMessage[]): { segments: DraftSegment[]; 
  */
 export function agentDraft(input: { systemSegments: SystemSegment[]; tools: ToolSpec[]; messages: AgentMessage[]; cache?: boolean }): PromptDraft {
   const tools: DraftSegment[] = input.tools.map((t, i) => ({ part: 'toolDefinitions', where: 'tools', text: toolText(t), ...(input.cache && i === input.tools.length - 1 && { breakpoint: true }) }));
-  const system: DraftSegment[] = input.systemSegments.map((s, i) => ({ part: s.part, where: 'system', text: s.text, ...(input.cache && i === input.systemSegments.length - 1 && { breakpoint: true }) }));
+  // SP19: the breakpoint goes on the segment marked as the last stable one, else on the last (as before). None on the messages in the draft.
+  const marked = input.systemSegments.findLastIndex((s) => s.breakpoint);
+  const breakAt = marked >= 0 ? marked : input.systemSegments.length - 1;
+  const system: DraftSegment[] = input.systemSegments.map((s, i) => ({ part: s.part, where: 'system', text: s.text, ...(input.cache && i === breakAt && { breakpoint: true }) }));
   const { segments, images } = messageSegments(input.messages);
   return { segments: [...tools, ...system, ...segments], ...(images > 0 && { images }), ...(input.tools.length && { toolNames: input.tools.map((t) => t.name) }) };
 }

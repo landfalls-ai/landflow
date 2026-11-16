@@ -616,6 +616,22 @@ function paths(): Record<string, Record<string, Json>> {
     summary: 'Get an execution with its run data',
     responses: { 200: reply('The execution (and a trace link when LANDFLOW_TRACE_URL is set)', object({ execution: ref('ExecutionRecord'), traceUrl: { type: 'string' } }, ['execution'])), 404: notFound },
   });
+  add('get', '/api/executions/{id}/spend', {
+    tag: 'Executions',
+    id: 'getExecutionSpend',
+    summary: 'Read what a run spent on model calls',
+    description: 'Totals, slices (purpose, model, node, agent, loop step), the prompt cache line and up to 500 calls, newest last, over the run and the sub-runs you may open; the ones you may not are counted in `hidden`. Numbers, names and hashes only, never prompt text.',
+    pathParams: { id: 'The execution id' },
+    responses: { 200: reply('The run’s spend', { type: 'object', additionalProperties: true }), 404: notFound },
+  });
+  add('get', '/api/ai-calls/{id}', {
+    tag: 'Executions',
+    id: 'getAiCall',
+    summary: 'Read one model call',
+    description: 'One call of `ai_usage`: tokens, cost, cache, its prompt split in tokens (`parts`, with who made the split), what changed against the call before it and a link to its run. Never prompt text. A call you can’t open answers 404.',
+    pathParams: { id: 'The call id (`ai_usage.id`)' },
+    responses: { 200: reply('The call', { type: 'object', additionalProperties: true }), 404: notFound },
+  });
   add('get', '/api/executions/{id}/events', {
     tag: 'Executions',
     id: 'getExecutionEvents',
@@ -1885,6 +1901,15 @@ function paths(): Record<string, Record<string, Json>> {
   add('get', '/api/mcp/approvals', { tag: 'MCP', id: 'listMcpApprovals', summary: 'MCP tool calls waiting for a person', description: 'The approvals of destructive (or, per grant, every) MCP tool calls that the signed-in user may answer: pending ones and the last day’s answers. Calls from clients that support MCP elicitation are asked through the client instead (lib/server/mcp/approvals.ts).', responses: { 200: reply('The approvals', object({ approvals: array({ type: 'object', additionalProperties: true }) }, ['approvals'])) } });
   add('post', '/api/mcp/approvals/{id}', { tag: 'MCP', id: 'decideMcpApproval', summary: 'Approve or deny an MCP tool call', description: 'Owners, admins, the user the agent acts for and members of a project they share. An approval is good for one repeat of the same call (same tool, same arguments, same caller) for ten minutes.', body: jsonBody(object({ approve: { type: 'boolean' } }, ['approve'])), responses: { 200: reply('Answered', object({ approval: { type: 'object', additionalProperties: true } }, ['approval'])), 403: errorRef('Not yours to answer'), 404: notFound, 409: errorRef('Already answered'), 410: errorRef('Expired') } });
   add('get', '/api/mcp/files/{id}', { tag: 'MCP', id: 'downloadMcpFile', summary: 'A file of an MCP tool result', description: 'The target of a `resource_link` in a tool result: a URL the host signed (`exp`, `t`, `c`, `sig` query parameters), valid until `exp` (LANDFLOW_MCP_FILE_URL_TTL_SECONDS, default 900). No session; 403 for a wrong signature, 410 once expired.', public: true, responses: { 200: { description: 'The bytes', content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } }, 403: errorRef('Invalid signature'), 404: notFound, 410: errorRef('Expired') } });
+  add('post', '/api/gateway-parts', {
+    tag: 'Agents',
+    id: 'postGatewayParts',
+    summary: 'The LLM gateway’s split of one model call',
+    description: 'Posted by the LiteLLM callback `deploy/llm-gateway/custom_callbacks.py` (docs/llm-gateway.md, “The gateway’s split”): the parts of a call kagent’s agents or Claude Code made through the gateway, in tokens, with keyed hashes, under the gateway’s response id. Never text: any key outside the contract is a 400. The `x-landflow-signature` header (`t=<unix seconds>,v1=<HMAC-SHA-256 of "<t>.<body>">` under LANDFLOW_LLM_GATEWAY_PARTS_SECRET, within 300 seconds) is the only credential; the route answers 404 while the secret is unset. A repeat of a request id is a no-op, and a split Landflow made of the same call wins.',
+    public: true,
+    body: jsonBody(object({ requestId: { type: 'string' }, at: { type: 'string' }, model: { type: 'string' }, provider: { type: 'string' }, method: { type: 'string', enum: ['provider', 'tokenizer', 'estimate'] }, inputTokens: { type: 'integer' }, parts: { type: 'object', additionalProperties: { type: 'integer' } }, prefixHash: { type: 'string' }, promptHash: { type: 'string' }, partHashes: { type: 'object', additionalProperties: { type: 'string' } }, toolNames: { type: 'array', items: { type: 'string' } } }, ['requestId', 'at', 'model', 'provider', 'method', 'inputTokens', 'parts'])),
+    responses: { 204: { description: 'Stored, or already stored' }, 400: invalid, 401: errorRef('Bad or old signature'), 404: notFound, 413: errorRef('Body over 32 KB') },
+  });
   add('post', '/api/agent-trace/{id}', {
     tag: 'Agents',
     id: 'postAgentTrace',

@@ -2015,6 +2015,31 @@ its reason:
   and `GET /api/insights/ai-usage?executionId=`, with Grafana's AI panels drawing on the local LGTM stack. They need a
   host and a headed browser, and are carried with those still owed from waves 6 to 9.
 
+## Company backbone: left open from the wave 11 reviews (2026-11-16)
+
+Wave 12 (token spend) checked the wave 11 notes against its merge. SP19 pinned the team member's prompt as a literal and
+tests a cache point in the middle of a real agent draft; SP07's history row says a team report's cost for Anthropic
+members has been cache-aware since wave 11; SP19 rewrapped the long `// SP03:` lines. These wait, each with its reason:
+
+- **No `knowledge` part is ever produced**: passages from an agent's knowledge bases reach the model as tool results, so
+  they count under `toolResults`; [llm-gateway.md](llm-gateway.md#what-a-prompt-was-made-of) leaves `knowledge` out of
+  its list and the screens show only parts that are present. Splitting them needs the knowledge tool to mark its
+  results; the waste detectors (SP13, wave 14) should not expect the part until then.
+- **The cache alert's 7-day baseline includes the dropped period** ([observability.md](observability.md)), so a
+  sustained drop lifts its own baseline and the alert clears after a few days. An `offset` baseline is its own change to
+  the rule and its promtool tests; SP19 raised the hit rate rather than dropped it.
+- **Run an Agent's calls have no model span** (found by `spend-trace-join`): the Spend tab lists them with plain times
+  and the per-call sheet never opens for them ([limitations](limitations.md#a-calls-composition-in-the-run-trace-wave-12-sp07)).
+  Writing one `model` span per loop step from the agent's session is a Run Trace change of its own.
+- **Live checks owed from wave 11 and wave 12**: Insights → AI as a member of an instance with several projects (projects
+  they can't open are "Another project", a person whose only rows are there still has their figure); the Run Trace's
+  Spend tab and a call's sheet at 1440×900 in light and dark (each "By" view, the cache line, a hidden sub-run for a
+  member, a live run's numbers moving, "Same prefix as the previous call", a gateway split's "From the LLM gateway",
+  390 px without sideways scroll); one call through the OrbStack gateway on `qwen3-coder:30b` giving a `gateway`,
+  `tokenizer` split whose `requestId` is the spend log's `request_id`, with nothing posted while the secret is unset; and
+  an Ollama agent run whose Spend tab says "Counted by the model's tokenizer". They need a host and a headed browser,
+  and are carried with those still owed from waves 6 to 10.
+
 ## Runs: one list (B20, 2026-11-14)
 
 Closed from the wave 1 page review: X2 (Executions, Runs and Search runs are one page, **Runs** at `/runs`, the old URLs redirect), P-ex-1 (no ID or Mode column), P-ex-2 (Stop all only while a run runs), P-ex-3 (repeated failures fold into one row), P-ex-4 (two re-run words), P-runs-1 (one search box with Status and Workflow chips, the rest under More filters) and P-cmp-1 (compare with fewer than two runs goes back to the list). See [the Runs list](run-trace.md#the-runs-list).
@@ -2207,34 +2232,53 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   duration and stop reason (migration 2900); the AI metrics gain `cache_read`/`cache_write` token types and a purpose
   label; the `ai.call` event gains purpose, node, session, iteration and usage id; the engine's `aroundNode` hook tells
   the host the active node. Setting purposes at the call sites is SP02, prompt parts SP03 ([llm-gateway.md](llm-gateway.md#what-each-call-was-for)).
-
-## Token spend, wave 11: purpose at the call sites (SP02)
-
-- **Built**: guardrail verdicts (chat model or judge), cache embeddings, the LLM reranker, evaluation judges and online
+- **SP02, purpose at the call sites, built**: guardrail verdicts (chat model or judge), cache embeddings, the LLM reranker, evaluation judges and online
   grading, an evaluation run's calls, and summaries (run report, briefing, workflow descriptions, wiki pages) say why they
   are made (`guardrail`, `cache-embed`, `rerank`, `judge`, `eval`, `summary`). Jev and Strands judge calls are counted
   (unpriced). Cohere's reranker is not a token call and stays unmetered.
-
-## Token spend wave 11: prompt parts (SP03)
-
-- Each chat call Landflow builds a prompt for gets a split into parts (instructions, project block, practices, memory,
+- **SP03, prompt parts, built**: each chat call Landflow builds a prompt for gets a split into parts (instructions, project block, practices, memory,
   tool notes, tool definitions, history, tool results, message, images) as an estimate, with keyed prompt, prefix and
   per-part hashes, kept 30 days; an agent session's usage keeps its cache numbers
   ([llm-gateway.md](llm-gateway.md#what-a-prompt-was-made-of)). Exact counts, the gateway's split and the screens come
   in wave 12.
-
-## Token spend wave 11: telemetry out (SP04, with SP16)
-
-- The overview dashboard gains an "AI" row (tokens by type, Anthropic cache hit rate, cost by purpose) and
+- **SP04, telemetry out (with SP16), built**: the overview dashboard gains an "AI" row (tokens by type, Anthropic cache hit rate, cost by purpose) and
   `prometheus-rules.yml` the 14th alert, `LandflowAiCacheHitRateDropped` (volume-guarded, promtool-tested, and a full
   cache loss still fires). A test pins the `ai.call` event's keys that Landledger reads. SP16 (the cache alert and
   panels) is folded into SP04.
-
-## Token spend wave 11: who sees spend (SP20)
-
-- **Built**: every member sees every person's AI spend by name on the AI page, with the instance's total above the
+- **SP20, who sees spend, built**: every member sees every person's AI spend by name on the AI page, with the instance's total above the
   person list (`peopleTotals`; admins get the caption alone, and a person with no name is "Unnamed person" to a member);
   the rules are in [llm-gateway.md](llm-gateway.md#the-ai-page) "Who sees what".
+
+## Token spend wave 12
+
+- **Exact counts per part (SP22), built**: a call's split is counted with the provider's own count (Anthropic's count endpoint, as cumulative prefixes
+  cached by a keyed hash and spent from a per-credential per-minute budget), OpenAI's encodings offline (`gpt-tokenizer`)
+  or an Ollama model's own vocabulary (a byte-level BPE in TypeScript, `qwen2` and `llama-bpe`), and says which
+  (`method`: `provider`, `tokenizer` or `estimate`). `formatting` is the reported input minus the counted parts. Two
+  variables, `LANDFLOW_AI_PARTS_COUNT` and `LANDFLOW_AI_PARTS_COUNT_PER_MINUTE`. The BPE is tested against a shared
+  fixture made with Hugging Face `tokenizers` (`apps/web/test/fixtures/bpe-fixture.json`, which SP21's Python counter
+  also reads). Against Ollama 0.40.14 and `qwen3-coder:30b` the count of a 1,200-token text and of a mixed-script
+  text with code matched `prompt_eval_count` minus the template to the token. The LLM gateway's
+  `/v1/messages/count_tokens` answers, but with its own local estimate, so a call through it stays an estimate
+  ([limitations.md](limitations.md)).
+- **The gateway's split (SP21), built**: a LiteLLM callback (`deploy/llm-gateway/custom_callbacks.py`) counts the parts of each call kagent's agents and
+  Claude Code make through the gateway with the model's own tokenizer and posts numbers and hashes to
+  `POST /api/gateway-parts`, under the gateway's response id; the spend import pairs them. Off until both sides have the
+  shared secret ([llm-gateway.md](llm-gateway.md#the-gateways-split)). Not built: a response id on the harness mod's step
+  events (Claude Code gives a mod none).
+- **Cache fixes (SP19), done:** the system prompt's cache point moved after the stable part (persona, skills, project block, practices); the
+  memory, intro line and date line follow it; the conversation has a breakpoint; memory is read once per run. Measured on
+  a fake Anthropic cache: see [agents.md](agents.md#prompt-cache). Still open: the AI Agent node asks for no cache, and no
+  real Anthropic call has confirmed the hit rate.
+- **A run's spend and one call's view (SP05), built**: `GET /api/executions/:id/spend` (totals, slices by purpose, model, node, agent and loop step, the prompt's
+  composition, the cache line with its miss reasons and the saving, up to 500 calls) and `GET /api/ai-calls/:id` (one
+  call, its split in tokens from Landflow or the gateway, what changed against the call before it, a link to its run).
+  Both follow [llm-gateway.md](llm-gateway.md#the-ai-page) "Who sees what" (rule 3) and hold no prompt text
+  ([run-trace.md](run-trace.md#spend)). The Run Trace opens them (SP06, SP07); the AI page's views of them are SP09 and SP10.
+- **The run's Spend tab (SP06), built**: the Run Trace gains a **Spend** tab for a run with model tokens: totals, spend by purpose, model, node, agent and step,
+  the cache line, the prompt's composition as one bar with the method named, and the calls list, refreshed every 10
+  seconds while the run is live ([run-trace.md](run-trace.md#spend)). A call opens its model span.
+- **One call's view (SP07), built:** a model step's sheet in the Run Trace shows the call's composition, cache line and what changed since the previous call; sessions show cached tokens ([run-trace.md](run-trace.md#one-call)).
 
 ## Practices (waves P1 and P2)
 

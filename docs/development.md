@@ -170,6 +170,8 @@ for p in go-crypto google-workspace databases threat-intel; do (cd plugins/$p &&
 plugins/py-insights/.venv/bin/python -m unittest discover -s sdks/python/tests
 (cd plugins/py-insights && .venv/bin/python -m unittest discover -s tests)
 (cd plugins/productivity && .venv/bin/python -m unittest discover -s tests)
+# the LLM gateway's callback, in the pinned LiteLLM image (by digest; no network)
+docker --context orbstack run --rm --network none -e LITELLM_LOCAL_MODEL_COST_MAP=True -v "$PWD/deploy/llm-gateway:/w" -w /w --entrypoint python ghcr.io/berriai/litellm:v1.108.2-lts@sha256:d8b4ac356743d647a13bb93f45b941fcd5f5354122cfd205948a1b192790389d -m unittest discover -s tests
 deploy/scripts/smoke.sh code                       # the dockerised code runner: health + network/file-system isolation
 ```
 
@@ -292,6 +294,7 @@ Start the matching infra services first ([deployment.md](deployment.md)), then r
 | `isolate` | the optional `isolated-vm` addon, and `NODE_OPTIONS=--no-node-snapshot` | `packages/engine/test/expression-isolate.test.ts` (the realm suite on the isolate, memory bombs each in a child process, churn, benchmark), `apps/web/test/expression-preview-isolate.test.ts` (a route uses the isolate) |
 | `ollama` | Ollama at `OLLAMA_URL` with nomic-embed-text and qwen3-coder:30b | `rag-live.test.ts`, `evaluations-live.test.ts` (qwen3-coder as the judge), `ollama-streaming-live.test.ts`, `landledger-flows.test.ts` (the variance-notes flow drafting with qwen3-coder against the fake Landledger, which checks every cite) |
 | `litellm` | the LiteLLM compose profile ([llm-gateway.md](llm-gateway.md)) and Ollama with qwen3-coder:30b; set `LANDFLOW_LLM_GATEWAY_URL=http://127.0.0.1:54100` and `LANDFLOW_LLM_GATEWAY_ADMIN_KEY` (the dev master key from `deploy/.env.example`); `litellm-live.test.ts` also reads `LANDFLOW_TEST_LITELLM_URL` and `LANDFLOW_TEST_LITELLM_MASTER_KEY` with the same defaults | `litellm-live.test.ts` (Landflow's own calls through the gateway), `litellm-ingest-live.test.ts` (the spend import), `litellm-budgets-live.test.ts` (budgets and a stop) |
+| `gateway-image` | Docker on the OrbStack engine and the pinned LiteLLM image, by digest (`ghcr.io/berriai/litellm:v1.108.2-lts@sha256:d8b4ac35…`, as in `deploy/compose.infra.yml`); runs with `--network none`, pulls nothing | `spend-bpe-join.test.ts` (the gateway callback's Python BPE counter and hashes against Landflow's, on the shared fixture and 200 seeded strings; the fixture copies are compared without the flag), `spend-gateway-join.test.ts` (the callback's signed post through `POST /api/gateway-parts`, the spend import and `GET /api/ai-calls/:id`, and a Landflow split winning in every order) |
 
 `cluster-runtime.test.ts` always runs: a main and workers through the runner on the in-process coordinator.
 

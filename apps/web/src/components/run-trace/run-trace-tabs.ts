@@ -8,8 +8,8 @@ import type { RunReport } from '@/lib/shared/run-report';
 import { formatCost } from '@/lib/shared/ai-usage';
 import { fmtMs, type RunModel } from '@/lib/shared/run-trace-model';
 
-export type Tab = 'story' | 'trace' | 'team' | 'artifacts';
-export const TAB_LABELS: Record<Tab, string> = { story: 'Story', trace: 'Trace', team: 'Team', artifacts: 'Artifacts' };
+export type Tab = 'story' | 'trace' | 'team' | 'artifacts' | 'spend'; // SP06: spend
+export const TAB_LABELS: Record<Tab, string> = { story: 'Story', trace: 'Trace', team: 'Team', artifacts: 'Artifacts', spend: 'Spend' }; // SP06: spend
 
 /** A run shorter than this has nothing to replay. */
 export const SCRUBBER_MIN_MS = 5000;
@@ -24,6 +24,8 @@ export function visibleTabs(model: RunModel, changes?: RunChanges): Tab[] {
   const tabs: Tab[] = ['story', 'trace'];
   if (participantsOf(model).length > 1) tabs.push('team');
   if (madeCount(model, changes) > 0) tabs.push('artifacts');
+  // SP06: Spend shows when the run used model tokens.
+  if (model.tokens.inputTokens + model.tokens.outputTokens > 0) tabs.push('spend');
   return tabs;
 }
 

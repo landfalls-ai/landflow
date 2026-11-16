@@ -19,6 +19,7 @@ import { RunScopeChips, WhatItSaw, sawOf } from './what-it-saw';
 import { imagesOf, ToolImages, withoutImages } from './tool-images';
 import { RerunPanel, useRunControls } from './run-controls';
 import { TeamPauseBar } from '../editor/team-pause';
+import { CallSpend } from './call-spend';
 
 export type Open = {
   kind: 'span' | 'artifact' | 'check' | 'actor';
@@ -151,6 +152,7 @@ function ChangeSheet({ changes, file, git }: { changes: FileChange[]; file: stri
 function SpanSheet({
   span,
   model,
+  full,
   open,
   onJump,
   changes,
@@ -158,6 +160,7 @@ function SpanSheet({
 }: {
   span: RunSpan;
   model: RunModel;
+  full: RunModel;
   open: (o: Open) => void;
   onJump: (ms: number) => void;
   changes?: RunChanges;
@@ -196,10 +199,12 @@ function SpanSheet({
           ['Started', <TimeButton key="s" iso={span.startedAt} onJump={onJump} />],
           ['Ended', span.endedAt ? <TimeButton key="e" iso={span.endedAt} onJump={onJump} /> : span.status === 'running' ? 'still going' : undefined],
           ['Took', fmtMs(span.ms)],
-          ['Tokens', span.usage ? `${span.usage.inputTokens.toLocaleString()} in · ${span.usage.outputTokens.toLocaleString()} out` : undefined],
+          ['Tokens', span.usage ? `${span.usage.inputTokens.toLocaleString()} in · ${span.usage.outputTokens.toLocaleString()} out${span.usage.cacheReadTokens ? ` · ${span.usage.cacheReadTokens.toLocaleString()} read from cache` : ''}${span.usage.cacheWriteTokens ? ` · ${span.usage.cacheWriteTokens.toLocaleString()} written to cache` : ''}` : undefined],
           ['Now', span.note],
         ]}
       />
+      {/* SP07: a model call's composition and cache line. */}
+      {span.kind === 'model' && model.executionId && <CallSpend span={full.spans[span.id] ?? span} executionId={model.executionId} spans={Object.values(full.spans).filter((s) => s.kind === 'model')} live={full.live} />}
       <div className="mt-3 flex flex-col gap-2.5">
         {edits?.length ? (
           <ChangeSheet changes={edits.map((e) => e.c)} file={edits[0].file} git={Boolean(changes?.git)} />
@@ -393,6 +398,7 @@ function ActorSheet({ id, model, open }: { id: string; model: RunModel; open: (o
 export function DetailSheet({
   target,
   model,
+  full,
   onClose,
   open,
   onJump,
@@ -403,6 +409,8 @@ export function DetailSheet({
 }: {
   target: Open;
   model: RunModel;
+  /** The whole run (not the replay cut): a model step's spend pairs its call against every span and polls only while the run is live. */
+  full?: RunModel;
   onClose: () => void;
   open: (o: Open) => void;
   onJump: (ms: number) => void;
@@ -418,7 +426,7 @@ export function DetailSheet({
     if (!span) return null;
     return (
       <Frame title={span.name} kicker={span.kind === 'delegate' ? 'Request' : span.kind} onClose={onClose}>
-        <SpanSheet span={span} model={model} open={open} onJump={onJump} changes={changes} repo={repo} />
+        <SpanSheet span={span} model={model} full={full ?? model} open={open} onJump={onJump} changes={changes} repo={repo} />
       </Frame>
     );
   }

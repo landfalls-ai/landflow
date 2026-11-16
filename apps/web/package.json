@@ -48,6 +48,7 @@
     "cmdk": "^1.1.1",
     "diff": "^9.0.0",
     "geist": "^1.8.2",
+    "gpt-tokenizer": "4.1.2",
     "imapflow": "^2.9.1",
     "jose": "^6.2.13",
     "lucide-react": "^1.61.0",

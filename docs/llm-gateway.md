@@ -33,6 +33,8 @@ COMPOSE_BAKE=false docker --context orbstack compose -p landflow-infra -f deploy
 - **Development keys.** Master key `sk-landflow-dev-master-only`, salt key `sk-landflow-dev-salt-only` (never change it
   once keys exist: it encrypts what LiteLLM stores), UI login `admin` / `landflow-dev-only`. They come from
   `LANDFLOW_LLM_GATEWAY_MASTER_KEY`, `_SALT_KEY`, `_UI_USERNAME` and `_UI_PASSWORD` in `deploy/.env`; real ones go there.
+  The production check refuses the master key and `LANDFLOW_LLM_GATEWAY_PARTS_SECRET` (`landflow-dev-parts-only`) when
+  they are still the development values.
 - **Models.** [`deploy/llm-gateway/config.yaml`](../deploy/llm-gateway/config.yaml) lists `qwen3-coder:30b` and `qwen3.8`
   on the host's Ollama (`ollama_chat/` serves both `/v1/messages` and `/v1/chat/completions`). To add a model, append a
   `model_list` entry and restart the service. Every model name a client sends must be listed. Ollama models have no
@@ -323,22 +325,102 @@ recorded: instructions, where this work fits (the project block), practices, mem
 conversation so far, tool results, the message and images. The row is `ai_call_parts` (migration 2901), one per call,
 keyed by the call's `ai_usage` row. It holds token counts, hashes and tool names, never text.
 
-- **An estimate in this wave.** Each part's characters divided by 4 (an image counts 1,600), scaled so the parts add up to
-  the call's input tokens, the rounding remainder going to the largest part. `method` says `estimate`; `formatting` is
-  always 0 because only an exact count can tell what the provider added (a draft with nothing to count has no parts).
-  Wave 12 makes the numbers exact with the same row.
+- **How the numbers were reached** (`method`, one per call: the weakest any part used). `provider` is Anthropic's own
+  count: Landflow asks `POST /v1/messages/count_tokens` (free, with its own rate limit) for the prompt up to each
+  segment, in prompt order (the tools, each system segment, then the messages, runs of one part as one step), and a part
+  is the difference of two counts. Each prefix is counted once and remembered by a keyed hash of the request (2,000
+  entries), so an agent loop whose history only grows costs one or two count requests per iteration. It uses the
+  credential and base URL the call used (no credential: the SDK's own key). `tokenizer` is the model's own tokenizer run
+  here: OpenAI's `o200k_base` or `cl100k_base` (the `gpt-tokenizer` package, offline), or an Ollama model's own
+  vocabulary, read from the server the call went to (`/api/show`, cached by model digest, the three most recent models
+  kept) and run through a byte-level BPE with the `qwen2` or `llama-bpe` pre-tokenizer. `estimate` is each part's
+  characters divided by 4 (an image counts 1,600), scaled so the parts add up to the call's input tokens, the rounding
+  remainder going to the largest part, and `formatting` 0. It is what a call gets when nothing exact can be had.
+- **`formatting`.** With an exact count, `formatting` is the reported input minus every counted part: what the provider
+  added around them (role markers, the chat template, the tool-use preamble, tool-call framing) and the run's date line.
+  It is never negative; when the counted parts add up to more than the reported input they are scaled down to it and
+  `formatting` is 0, so a call's parts always sum to its input.
+- **When it stays an estimate.** `LANDFLOW_AI_PARTS_COUNT=estimate`; a call through the LLM gateway (its own count is a
+  local estimate, `litellm_count_source: local_estimate`); a provider with no counter; an OpenAI-compatible model that
+  is not one of OpenAI's; an Ollama model its server does not have or whose tokenizer is not a `qwen2` or `llama-bpe`
+  byte-level BPE (a log line names the pre-tokenizer, never text); a count request that fails or would pass
+  `LANDFLOW_AI_PARTS_COUNT_PER_MINUTE` (default 50 per credential; a request that is sent and fails keeps its slot, only
+  a call that would pass the budget spends none); and a call with images (an image is a fixed
+  estimate, so the call is one). A count request is not a model call: it is never metered or traced as `gen_ai.*`, and it
+  is made after the response, so it can never delay or fail the call. The split of a call whose gateway split already
+  arrived (same response id) replaces it. A call on a gateway credential is recorded with the system `litellm`, which has no counter, so an OpenAI-looking model name through the gateway stays an estimate. Prompts are counted in memory for the
+  length of the count only (the OpenAI encoding's own merge cache, which would keep every counted word, is switched off); the Ollama tokenizer's pre-token memo lives for one count, and a single unbroken run longer
+  than 256 characters is merged in slices (a few tokens of error per cut) so a long run costs linear time.
 - **Hashes.** Keyed hashes (HMAC-SHA-256 under a key derived from the instance's encryption key, 16 hex characters):
   `promptHash` for the whole prompt (the same prompt sent again), `prefixHash` for everything up to the last cache
   breakpoint (two calls with the same prefix could have shared a cache entry) and one hash per part (the instructions
-  changed between two runs). A part's hash is over its segments' texts joined in order into one string, so a counter that
-  holds the part whole (the gateway's callback, wave 12) gets the same hash. The prompt's date line (`Current date and
-  time: …`) is a `formatting` segment: it is in `promptHash` and `prefixHash` (a new run is a new prefix) and in no part
-  hash, so the instructions' hash only changes when the instructions do. They are comparable inside one instance only and cannot be turned back into text.
+  changed between two runs). The hashes are made from the texts alone, so the same prompt has the same hashes whatever
+  the method. A part's hash is over its segments' texts joined in order into one string, so a counter that holds the
+  part whole (the gateway's callback, wave 12) gets the same hash. The prompt's date line (`Current date and time: …`)
+  is a `formatting` segment: it is in `promptHash` and in no part hash (before wave 12 it was also in `prefixHash`), so
+  the instructions' hash only changes when the instructions do. From wave 12 (SP19) `prefixHash` is the hash of the
+  stable prefix (the tools and the system prompt up to the project block and practices): the date line and the memory
+  are no longer in it (they stay in `promptHash`), so earlier rows don't compare with later ones. They are comparable
+  inside one instance only and cannot be turned back into text.
 - **Who writes it.** Agent runs (the system prompt is split where it is built), the AI Agent node, Spotlight, the Agent
   architect and Ask the brain. The text of a prompt is held in memory for the length of one call and is never stored,
   logged or put on a span.
 - **Kept 30 days**, `LANDFLOW_AI_CALL_PARTS_RETENTION_DAYS` ([configuration](reference/configuration.md)); pruned with
   the usage rows, at most hourly.
+
+### The gateway's split
+
+Calls that kagent's agents and Claude Code make go through the gateway, not through Landflow, so Landflow never builds
+their prompts. The gateway sees each request, so it counts the parts there and sends Landflow only numbers and hashes.
+`deploy/llm-gateway/custom_callbacks.py` is a LiteLLM callback (`litellm_settings.callbacks:
+custom_callbacks.proxy_handler_instance`). After a response it splits the request into the same parts as above (system
+prompt → instructions, tool definitions, earlier turns → conversation so far, tool results, the last user message,
+images), counts each part with the model's own tokenizer, and posts the result to `POST /api/gateway-parts`.
+
+- **What is sent**: the gateway's response id (the spend log's `request_id`, which is how Landflow pairs it with the
+  imported spend row), the model and provider, how it was counted, the reported input tokens, each part's tokens, `formatting` (the
+  provider's reported input minus what was counted), keyed hashes (`promptHash`, `prefixHash`, one per part) and tool
+  names. **What is never sent**: any prompt text, tool arguments or results, images. The route refuses a body with any other
+  key or a string over 200 characters, and the callback never logs text.
+- **How each model is counted**: an Ollama model with its own vocabulary (read once from Ollama's `/api/show`, a byte-level
+  BPE with the `qwen2` or `llama-bpe` pre-tokenizer: `tokenizer`); an OpenAI model with `tiktoken` (`cl100k_base` or
+  `o200k_base`, bundled with LiteLLM so it works offline: `tokenizer`); a Claude model with Anthropic's count endpoint
+  and the deployment's own key (`provider`; tool definitions go through the endpoint's `tools` field and the system prompt
+  through `system`). The key is the model's `api_key`, read from the gateway's router when LiteLLM's log of a `/v1/messages`
+  call lacks it; `ANTHROPIC_API_KEY` is used only when the model has no custom `api_base`, so it is never sent to another
+  host. Without a key, or when a count fails, the split is an estimate (characters ÷ 4: `estimate`). Images are estimated
+  (1,600 each), which makes the call an `estimate`. A call carries the weakest method used.
+- **Hashes** are made as Landflow's own are (see above), under a key derived from the shared secret instead of the
+  instance's encryption key, so gateway hashes compare with each other, never with Landflow's.
+- **Turning it on.** Set the same secret on both sides: `LANDFLOW_LLM_GATEWAY_PARTS_SECRET` on the host and
+  `LANDFLOW_PARTS_SECRET` in the gateway (`deploy/.env.example` has a development value; compose passes the host's value
+  through, and `LANDFLOW_LLM_GATEWAY_PARTS_URL` changes the default `http://host.docker.internal:3000/api/gateway-parts`).
+  Compose mounts the file at `/app/custom_callbacks.py`, so a gateway container created before this mount existed must
+  be recreated (`compose up -d`), not restarted: a restarted one has no callback file and LiteLLM cannot start. In the
+  Kubernetes example the file is in the `llm-gateway-config` ConfigMap (a copy at `deploy/k8s/examples/llm-gateway/custom_callbacks.py`, which a test keeps equal) and mounted the
+  same way; add `LANDFLOW_PARTS_SECRET` to the `llm-gateway-keys` Secret (see the kustomization). Either one unset: the
+  callback does nothing, and the host answers 404. A host that does not have the secret (a plain `pnpm dev`) answers 404 to
+  a gateway that has it: the callback does not retry a 4xx other than 429 and warns once per status, so it costs one log
+  line, not one per call. In a cluster the host is not at `host.docker.internal`: set `LANDFLOW_PARTS_URL` in the gateway to the host's
+  Service URL (`http://<service>.<namespace>.svc:3000/api/gateway-parts`); the example's value is for OrbStack compose.
+- **The post** is signed (`x-landflow-signature: t=<unix seconds>,v1=<HMAC-SHA-256 of "<t>.<body>">`; 300 s window), sent
+  after the response so it never slows a call, retried twice (a 4xx other than 429 is not retried; a 429 waits
+  Landflow's `Retry-After`, at most 5 s, then tries again), then dropped with a warning (once per cause, not per
+  call). Counting and posting run on the callback's own four threads with a queue of 64: a slow
+  or unreachable Landflow or Ollama makes it drop splits, never hold LiteLLM's threads. A cache hit is no model call:
+  nothing is sent. The route is public, the signature is the credential; it is in the public rate-limit group
+  `gateway-parts` (`LANDFLOW_RATE_LIMIT_PUBLIC`, per address), so a gateway busier than that limit loses the surplus: an operator with many agents
+  should raise `LANDFLOW_RATE_LIMIT_PUBLIC` (a busy gateway can post more than 120 splits a minute, and each 429 holds one of the
+  callback's four threads for up to 10 s).
+  LiteLLM logs `api_base` as the full request URL; the callback strips `/api/chat` or `/v1/messages` to reach
+  `/api/show` and `/v1/messages/count_tokens`, and remembers a failed tokenizer load for five minutes (the call is then an
+  estimate).
+- **Whose split wins.** One row per call (`ai_call_parts`, `source = 'gateway'`). A Landflow split of the same call wins in
+  every order: the host ignores a gateway post whose call already has a Landflow split, and the spend import drops a
+  waiting gateway split when it takes over a Landflow row that has one, otherwise it fills the split's `usage_id`.
+  Whichever of the split and the imported row comes first, the other finds it. Like all parts, they are for display, never for money,
+  caps or attribution.
+- Its tests run in the pinned LiteLLM image with no network: see [development.md](development.md#verification).
 
 ## The AI page
 

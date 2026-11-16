@@ -121,6 +121,11 @@ export interface LanguageModel {
   readonly model: string;
   generate(input: {
     system?: string;
+    /**
+     * SP19: where the stable part of `system` ends (a character index): a provider with prompt caching may put its
+     * cache point there. Others ignore it; the text sent is the same.
+     */
+    systemCacheBreak?: number;
     messages: AgentMessage[];
     tools: ToolSpec[];
     signal?: AbortSignal;

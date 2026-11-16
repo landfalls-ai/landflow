@@ -574,10 +574,15 @@ services:
       LITELLM_TELEMETRY_DISABLED: "true"
       LITELLM_LOG: INFO
       STORE_MODEL_IN_DB: "False"
+      # The gateway's split of each call (custom_callbacks.py): off until both are set; the secret is the host's
+      # LANDFLOW_LLM_GATEWAY_PARTS_SECRET (docs/llm-gateway.md, "The gateway's split").
+      LANDFLOW_PARTS_URL: ${LANDFLOW_LLM_GATEWAY_PARTS_URL:-http://host.docker.internal:3000/api/gateway-parts}
+      LANDFLOW_PARTS_SECRET: ${LANDFLOW_LLM_GATEWAY_PARTS_SECRET:-}
     ports:
       - "127.0.0.1:${LANDFLOW_LLM_GATEWAY_PORT:-54100}:4000"
     volumes:
       - ./llm-gateway/config.yaml:/app/config.yaml:ro
+      - ./llm-gateway/custom_callbacks.py:/app/custom_callbacks.py:ro
     depends_on:
       postgres:
         condition: service_healthy

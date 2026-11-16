@@ -10,7 +10,15 @@ import { profile } from './profile';
 const URL_SECRETS = CONFIG_CATALOG.filter((v) => v.urlCredentials).map((v) => v.name);
 
 /** The development values in deploy/.env.example and the compose files (besides anything containing `dev-only`). */
-const DEVELOPMENT_DEFAULTS = new Set(['change-me', 'changeme', 'landflow-dev-client-secret', 'landflow-dev-only']);
+const DEVELOPMENT_DEFAULTS = new Set([
+  'change-me',
+  'changeme',
+  'landflow-dev-client-secret',
+  'landflow-dev-only',
+  // The LLM gateway's public development values (deploy/.env.example): neither contains `dev-only`.
+  'landflow-dev-parts-only',
+  'sk-landflow-dev-master-only',
+]);
 
 const isDevelopmentValue = (value: string) => /dev-only/i.test(value) || DEVELOPMENT_DEFAULTS.has(value.toLowerCase());
 

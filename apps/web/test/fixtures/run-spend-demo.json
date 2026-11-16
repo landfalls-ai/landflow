@@ -1,0 +1,255 @@
+{
+  "executionId": "ex_demo",
+  "totals": {
+    "inputTokens": 30600,
+    "outputTokens": 1500,
+    "cacheReadTokens": 16000,
+    "cacheWriteTokens": 8000,
+    "cost": 0.07455,
+    "calls": 4,
+    "unpricedCalls": 1
+  },
+  "byPurpose": [
+    {
+      "inputTokens": 30000,
+      "outputTokens": 1450,
+      "cacheReadTokens": 16000,
+      "cacheWriteTokens": 8000,
+      "cost": 0.07455,
+      "calls": 3,
+      "unpricedCalls": 0,
+      "key": "answer",
+      "label": "Answer",
+      "share": 1
+    },
+    {
+      "inputTokens": 600,
+      "outputTokens": 50,
+      "cacheReadTokens": 0,
+      "cacheWriteTokens": 0,
+      "cost": 0,
+      "calls": 1,
+      "unpricedCalls": 1,
+      "key": "guardrail",
+      "label": "Guardrail check",
+      "share": 0
+    }
+  ],
+  "byModel": [
+    {
+      "inputTokens": 30000,
+      "outputTokens": 1450,
+      "cacheReadTokens": 16000,
+      "cacheWriteTokens": 8000,
+      "cost": 0.07455,
+      "calls": 3,
+      "unpricedCalls": 0,
+      "key": "anthropic/claude-sonnet-4-6",
+      "label": "claude-sonnet-4-6",
+      "share": 1
+    },
+    {
+      "inputTokens": 600,
+      "outputTokens": 50,
+      "cacheReadTokens": 0,
+      "cacheWriteTokens": 0,
+      "cost": 0,
+      "calls": 1,
+      "unpricedCalls": 1,
+      "key": "ollama/llama3.2",
+      "label": "llama3.2",
+      "share": 0
+    }
+  ],
+  "byNode": [
+    {
+      "inputTokens": 30000,
+      "outputTokens": 1450,
+      "cacheReadTokens": 16000,
+      "cacheWriteTokens": 8000,
+      "cost": 0.07455,
+      "calls": 3,
+      "unpricedCalls": 0,
+      "key": "n_agent",
+      "label": "Support agent",
+      "share": 1
+    },
+    {
+      "inputTokens": 600,
+      "outputTokens": 50,
+      "cacheReadTokens": 0,
+      "cacheWriteTokens": 0,
+      "cost": 0,
+      "calls": 1,
+      "unpricedCalls": 1,
+      "key": "n_guard",
+      "label": "Guard",
+      "share": 0
+    }
+  ],
+  "byAgent": [
+    {
+      "inputTokens": 30000,
+      "outputTokens": 1450,
+      "cacheReadTokens": 16000,
+      "cacheWriteTokens": 8000,
+      "cost": 0.07455,
+      "calls": 3,
+      "unpricedCalls": 0,
+      "key": "ag_demo",
+      "label": "Support agent",
+      "share": 1
+    }
+  ],
+  "byIteration": [
+    {
+      "inputTokens": 10000,
+      "outputTokens": 500,
+      "cacheReadTokens": 0,
+      "cacheWriteTokens": 8000,
+      "cost": 0.0435,
+      "calls": 1,
+      "unpricedCalls": 0,
+      "key": "1",
+      "label": "Step 1",
+      "share": 0.5835
+    },
+    {
+      "inputTokens": 10000,
+      "outputTokens": 450,
+      "cacheReadTokens": 8000,
+      "cacheWriteTokens": 0,
+      "cost": 0.01515,
+      "calls": 1,
+      "unpricedCalls": 0,
+      "key": "2",
+      "label": "Step 2",
+      "share": 0.2032
+    },
+    {
+      "inputTokens": 10000,
+      "outputTokens": 500,
+      "cacheReadTokens": 8000,
+      "cacheWriteTokens": 0,
+      "cost": 0.0159,
+      "calls": 1,
+      "unpricedCalls": 0,
+      "key": "3",
+      "label": "Step 3",
+      "share": 0.2133
+    }
+  ],
+  "composition": {
+    "method": "estimate",
+    "parts": {
+      "toolDefinitions": 4500,
+      "instructions": 9000,
+      "history": 13500,
+      "userMessage": 3000
+    },
+    "callsWithParts": 3,
+    "calls": 4
+  },
+  "cache": {
+    "hitRate": 0.5333,
+    "readTokens": 16000,
+    "writeTokens": 8000,
+    "missCalls": 0,
+    "missReasons": [],
+    "savedUsd": 0.0432
+  },
+  "calls": [
+    {
+      "usageId": "au_demo_1",
+      "at": "2026-11-16T10:00:00.000Z",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "purpose": "answer",
+      "iteration": 1,
+      "nodeId": "n_agent",
+      "agentId": "ag_demo",
+      "sessionId": "as_demo",
+      "inputTokens": 10000,
+      "outputTokens": 500,
+      "cacheReadTokens": 0,
+      "cacheWriteTokens": 8000,
+      "cost": 0.0435,
+      "priced": true,
+      "durationMs": 2000,
+      "stopReason": "tool_use",
+      "source": "landflow",
+      "hasParts": true
+    },
+    {
+      "usageId": "au_demo_2",
+      "at": "2026-11-16T10:00:10.000Z",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "purpose": "answer",
+      "iteration": 2,
+      "nodeId": "n_agent",
+      "agentId": "ag_demo",
+      "sessionId": "as_demo",
+      "inputTokens": 10000,
+      "outputTokens": 450,
+      "cacheReadTokens": 8000,
+      "cacheWriteTokens": 0,
+      "cost": 0.01515,
+      "priced": true,
+      "durationMs": 2000,
+      "stopReason": "tool_use",
+      "source": "landflow",
+      "hasParts": true
+    },
+    {
+      "usageId": "au_demo_3",
+      "at": "2026-11-16T10:00:20.000Z",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "purpose": "answer",
+      "iteration": 3,
+      "nodeId": "n_agent",
+      "agentId": "ag_demo",
+      "sessionId": "as_demo",
+      "inputTokens": 10000,
+      "outputTokens": 500,
+      "cacheReadTokens": 8000,
+      "cacheWriteTokens": 0,
+      "cost": 0.0159,
+      "priced": true,
+      "durationMs": 2000,
+      "stopReason": "end_turn",
+      "source": "landflow",
+      "hasParts": true
+    },
+    {
+      "usageId": "au_demo_guard",
+      "at": "2026-11-16T10:00:35.000Z",
+      "provider": "ollama",
+      "model": "llama3.2",
+      "purpose": "guardrail",
+      "nodeId": "n_guard",
+      "inputTokens": 600,
+      "outputTokens": 50,
+      "cacheReadTokens": 0,
+      "cacheWriteTokens": 0,
+      "cost": 0,
+      "priced": false,
+      "source": "landflow",
+      "hasParts": false
+    }
+  ],
+  "truncated": false,
+  "hidden": {
+    "runs": 0,
+    "totals": {
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "cacheReadTokens": 0,
+      "cacheWriteTokens": 0,
+      "cost": 0,
+      "calls": 0,
+      "unpricedCalls": 0
+    }
+  }
+}

@@ -123,9 +123,13 @@ it) and `development` otherwise. In the production profile `checkConfig()` (`app
 reports an error for an unset `LANDFLOW_PUBLIC_URL`, for any secret variable (`LANDFLOW_ENCRYPTION_KEY`,
 `LANDFLOW_BINARY_SECRET`, `LANDFLOW_TRANSPORT_SECRET`, `LANDFLOW_REGISTRY_SECRET`, `LANDFLOW_CODE_RUNNER_SECRET`,
 `LANDFLOW_MCP_GATEWAY_SECRET`, `LANDFLOW_OWNER_PASSWORD`, the S3 keys, …) holding a development value (anything with
-`dev-only`, or a known default), and for an unset `LANDFLOW_REGISTRY_SECRET` unless `LANDFLOW_REGISTRY_OPEN=true`; an unset
-`LANDFLOW_ENCRYPTION_KEY` or `LANDFLOW_BINARY_SECRET` is a warning, and so is a missing `LANDFLOW_CODE_RUNNER_URL` when
-`LANDFLOW_CODE_IN_PROCESS` is unset (Code nodes would have nowhere to run). Messages name the variable, never the value. The check is
+`dev-only`, or a known default such as the gateway's `landflow-dev-parts-only` and `sk-landflow-dev-master-only`), and
+for an unset `LANDFLOW_REGISTRY_SECRET` unless `LANDFLOW_REGISTRY_OPEN=true`; an unset `LANDFLOW_ENCRYPTION_KEY` or
+`LANDFLOW_BINARY_SECRET` is a warning, and so is a missing `LANDFLOW_CODE_RUNNER_URL` when `LANDFLOW_CODE_IN_PROCESS` is
+unset (Code nodes would have nowhere to run). The host cannot check `LANDFLOW_LLM_GATEWAY_MASTER_KEY`, which is the
+gateway container's own variable: it catches the development master key only when it is also given as
+`LANDFLOW_LLM_GATEWAY_ADMIN_KEY` or `LANDFLOW_LLM_GATEWAY_KEY`, so set a real one in the gateway. Messages name the
+variable, never the value. The check is
 a pure function; the host calls it at boot (`lib/server/runtime.ts`, the first required step, for the main and the worker).
 In the production profile any error stops the boot with a `ConfigError` that lists every problem (the process exits non-zero
 and the pod restarts); in development the problems are logged as warnings. `next build` (`NEXT_PHASE=phase-production-build`)
