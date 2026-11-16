@@ -321,6 +321,27 @@ describe("GET /api/insights/ai/runs", () => {
     );
   });
 
+  it("keeps a person row under a project filter to what the report shows the viewer, not every row", async () => {
+    const desk = projects.createTeamProject({ name: "Scoped desk" }).id;
+    projects.setMember(desk, member.id, "editor");
+    execution("ex_scoped_closed", "wf_sl_closed");
+    usage({
+      id: "au_scoped_closed",
+      at: at(5),
+      execution_id: "ex_scoped_closed",
+      workflow_id: "wf_sl_closed",
+      project_id: desk,
+      user_id: owner.id,
+      input_tokens: 9000,
+      output_tokens: 900,
+    });
+    const page = (
+      await runs({ group: "person", key: owner.id, projectId: desk }, member)
+    ).body as AiSpendRunsPage;
+    expect(page.runs).toEqual([]);
+    expect(page.hidden).toEqual({ runs: 0, calls: 0, cost: 0 });
+  });
+
   it("answers 404 for a filter or key the member cannot read, and 400 for “Other”", async () => {
     expect(
       (

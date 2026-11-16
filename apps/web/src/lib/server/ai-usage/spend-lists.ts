@@ -286,7 +286,13 @@ function selection(actor: Actor, query: AiSpendListQuery): Selection {
     case "person":
       picked = {
         ...simple("user_id", (r) => r.user_id === key),
-        everyone: true,
+        // Only a scoping filter narrows the report's rows; without one the person row is every row.
+        everyone: !(
+          query.projectId ||
+          query.agentId ||
+          query.workflowId ||
+          query.credentialId
+        ),
       };
       break;
     case "surface":
