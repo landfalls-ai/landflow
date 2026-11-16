@@ -91,6 +91,18 @@ patches:
           spec:
             containers:
               - name: host
+                # A 30B model on the Mac's Ollama starves this laptop for minutes while Spotlight builds a flow: the base probes
+                # (3 s, six failures) then restart the host mid-build. Wait up to 5 minutes before killing it.
+                livenessProbe:
+                  httpGet: { path: /api/health/live, port: http }
+                  periodSeconds: 20
+                  timeoutSeconds: 10
+                  failureThreshold: 15
+                readinessProbe:
+                  httpGet: { path: /api/health/ready, port: http }
+                  periodSeconds: 5
+                  timeoutSeconds: 10
+                  failureThreshold: 6
                 env:
                   # What the browser on this Mac opens (components/local-access publishes it on localhost).
                   - { name: LANDFLOW_PUBLIC_URL, value: "http://localhost:53000" }
