@@ -293,8 +293,34 @@ Start the matching infra services first ([deployment.md](deployment.md)), then r
 | `k8s` | the OrbStack cluster, namespace `landflow-dev`, the plugin image built locally | `kubernetes.integration.test.ts` (discovery, scale to 0 and back, calls spread over two pods) |
 | `isolate` | the optional `isolated-vm` addon, and `NODE_OPTIONS=--no-node-snapshot` | `packages/engine/test/expression-isolate.test.ts` (the realm suite on the isolate, memory bombs each in a child process, churn, benchmark), `apps/web/test/expression-preview-isolate.test.ts` (a route uses the isolate) |
 | `ollama` | Ollama at `OLLAMA_URL` with nomic-embed-text and qwen3-coder:30b | `rag-live.test.ts`, `evaluations-live.test.ts` (qwen3-coder as the judge), `ollama-streaming-live.test.ts`, `landledger-flows.test.ts` (the variance-notes flow drafting with qwen3-coder against the fake Landledger, which checks every cite) |
+| `spotlight` | Ollama at `OLLAMA_URL` (default `http://localhost:11434`) with `qwen3-coder:30b` (never pulled for you: the suite stops with a message if it is missing); nothing else, the echo server is the suite's own on `127.0.0.1:3399` | `spotlight-scenarios.test.ts` (the live form of every scenario in `test/spotlight-scenarios/`, three runs each, printing the scorecard; the scripted form always runs) |
 | `litellm` | the LiteLLM compose profile ([llm-gateway.md](llm-gateway.md)) and Ollama with qwen3-coder:30b; set `LANDFLOW_LLM_GATEWAY_URL=http://127.0.0.1:54100` and `LANDFLOW_LLM_GATEWAY_ADMIN_KEY` (the dev master key from `deploy/.env.example`); `litellm-live.test.ts` also reads `LANDFLOW_TEST_LITELLM_URL` and `LANDFLOW_TEST_LITELLM_MASTER_KEY` with the same defaults | `litellm-live.test.ts` (Landflow's own calls through the gateway), `litellm-ingest-live.test.ts` (the spend import), `litellm-budgets-live.test.ts` (budgets and a stop) |
 | `gateway-image` | Docker on the OrbStack engine and the pinned LiteLLM image, by digest (`ghcr.io/berriai/litellm:v1.108.2-lts@sha256:d8b4ac35…`, as in `deploy/compose.infra.yml`); runs with `--network none`, pulls nothing | `spend-bpe-join.test.ts` (the gateway callback's Python BPE counter and hashes against Landflow's, on the shared fixture and 200 seeded strings; the fixture copies are compared without the flag), `spend-gateway-join.test.ts` (the callback's signed post through `POST /api/gateway-parts`, the spend import and `GET /api/ai-calls/:id`, and a Landflow split winning in every order) |
+
+#### Spotlight scorecard
+
+Spotlight's builds, one-step fixes and agent creation are scored by scenarios in `apps/web/test/spotlight-scenarios/`
+(the evaluation of 2026-11-16, moved into the repo). Each scenario has a scripted form that always runs in the unit suite
+(`spotlight-scenarios.test.ts`: the product's route handlers, registry, `applyOps` and guards are real, only the model is
+scripted) and a live form on the local model that counts its checks:
+
+```bash
+cd apps/web && NODE_OPTIONS="--require $PWD/test/spotlight-scenarios/local-only.cjs" LANDFLOW_INTEGRATION=spotlight \
+  LANDFLOW_SPOTLIGHT_REPORT=/tmp/scorecard.json npx vitest run test/spotlight-scenarios.test.ts
+```
+
+It prints three tables (Build, Fix one step, Agents: per scenario the runs, the median time and "k of n" per check) and
+writes the same as JSON (sizes and check results only, no reply or ask text). Variables: `LANDFLOW_SPOTLIGHT_MODEL`
+(default `qwen3-coder:30b`), `LANDFLOW_SPOTLIGHT_RUNS` (runs per scenario; default the scenario's, 3),
+`LANDFLOW_SPOTLIGHT_ONLY` (comma-separated scenario ids or owners, e.g. `SB03,sb04-why-last-run`),
+`LANDFLOW_SPOTLIGHT_REPORT` (the JSON path; default `$TMPDIR/landflow-spotlight-scorecard.json`),
+`LANDFLOW_SPOTLIGHT_ECHO_PORT` (the suite's echo server, default 3399) and `LANDFLOW_SPOTLIGHT_PLUGINS` (comma-separated
+local plugin endpoints, e.g. the Linear and Messaging plugins; without them Slack and Linear are small stand-ins and the
+Linear build is skipped). The guard, `test/spotlight-scenarios/local-only.cjs`, makes every connection to anything but this
+machine fail with `ECONNREFUSED` (and every lookup of another name with `ENOTFOUND`), printing `[local-only] refused
+<host>:<port>`: the runner requires it itself, and a live check of a running host puts it in `NODE_OPTIONS`. A package adds
+its scenarios as `test/spotlight-scenarios/<owner>.ts` (`export default defineScenarios([...])`, ids `<owner>-<slug>`):
+the runner finds it, no index to edit. [assistant.md](assistant.md#how-spotlight-is-measured) says what the checks mean.
 
 `cluster-runtime.test.ts` always runs: a main and workers through the runner on the in-process coordinator.
 

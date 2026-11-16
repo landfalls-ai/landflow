@@ -429,6 +429,18 @@ The server runs it against the registry's available node types. The editor runs 
   - `landflow.assistant.suggestions{landflow.assistant.kind}`;
   - `landflow.assistant.applied` and `landflow.assistant.dismissed{landflow.assistant.kind}`, reported by the editor through the feedback route.
 
+## How Spotlight is measured
+
+Spotlight is scored on three jobs, the way the 2026-11-16 evaluation did it by hand: **build** a flow from an empty canvas,
+**fix one step** of a working flow (one-step asks, questions, a failed run), and **create an agent**. The scenarios live in
+`apps/web/test/spotlight-scenarios/` (`sb00.ts` is the evaluation's baseline; each later package adds its own file), each
+with a scripted form that pins a fix forever and a live form on the local model whose scorecard is printed before and after
+a change. The checks are the evaluation's: right node types, wiring, collections filled, ids asked rather than made up,
+credentials named, no junk nodes, only the asked node changed, the right change, no change for a question, and that nothing
+tried to leave this machine. Collections are judged by a heuristic (a condition, field, rule or schedule list with nothing in
+it counts as empty); "runs right with the pinned data" is judged on what the draft sends, not by running it. How to run it and
+what the variables do: [development.md](development.md#spotlight-scorecard).
+
 ## Code
 
 | | |

@@ -1,0 +1,239 @@
+{
+  "id": "wf_bug_triage",
+  "name": "Bug triage",
+  "description": "Every weekday at 8, triage new Linear bugs: P0s go to Slack #oncall and the status page, the rest to a data table.",
+  "nodes": [
+    {
+      "id": "n_sch",
+      "name": "Weekdays at 8",
+      "type": "core.schedule",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {
+        "unit": "rules",
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * 1-5"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_lin",
+      "name": "Read Linear bugs",
+      "type": "linear.linear",
+      "typeVersion": 1,
+      "position": [
+        280,
+        200
+      ],
+      "parameters": {
+        "authentication": "apiKey",
+        "resource": "issue",
+        "operation": "getManySince",
+        "since": "",
+        "returnAll": false,
+        "limit": 50,
+        "activityOptions": {}
+      }
+    },
+    {
+      "id": "n_agent",
+      "name": "Triage issue",
+      "type": "core.aiAgent",
+      "typeVersion": 1,
+      "position": [
+        560,
+        200
+      ],
+      "parameters": {
+        "prompt": "Triage this bug.\nTitle: {{ $json.title }}\nLabels: {{ $json.raw.labels }}\nReply with JSON only: {\"priority\":\"P0|P1|P2|P3\",\"reason\":\"one sentence\"}",
+        "systemMessage": "You triage bug reports for an on-call team. P0 = outage or data loss, P1 = major feature broken, P2 = minor, P3 = cosmetic.",
+        "needsFallback": false,
+        "requireApproval": "none",
+        "options": {}
+      }
+    },
+    {
+      "id": "n_model",
+      "name": "Ollama Chat Model",
+      "type": "core.ollamaChatModel",
+      "typeVersion": 1,
+      "position": [
+        570,
+        400
+      ],
+      "parameters": {
+        "baseUrl": "http://127.0.0.1:11434",
+        "model": "qwen3-coder:30b",
+        "temperature": 0.2
+      }
+    },
+    {
+      "id": "n_parse",
+      "name": "Parse triage",
+      "type": "core.code",
+      "typeVersion": 1,
+      "position": [
+        840,
+        200
+      ],
+      "parameters": {
+        "mode": "each",
+        "codeEach": "const t = JSON.parse($json.output);\nreturn { ...$('Read Linear bugs').item.json, priority: t.priority, reason: t.reason };"
+      }
+    },
+    {
+      "id": "n_if",
+      "name": "Is P0?",
+      "type": "core.if",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "condition": [
+            {
+              "left": "{{ $json.priority }}",
+              "operator": "equals",
+              "right": "P0"
+            }
+          ]
+        },
+        "combinator": "and"
+      }
+    },
+    {
+      "id": "n_slack",
+      "name": "Post to #oncall",
+      "type": "messaging.slack",
+      "typeVersion": 1,
+      "position": [
+        1400,
+        80
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "parameters": {
+        "authentication": "accessToken",
+        "resource": "message",
+        "operation": "post",
+        "channelId": "#oncall",
+        "text": ":rotating_light: P0 bug: {{ $json.title }}\nWhy: {{ $json.reason }}",
+        "blocksUi": "",
+        "otherOptions": {}
+      }
+    },
+    {
+      "id": "n_http",
+      "name": "Open status incident",
+      "type": "core.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1680,
+        80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:3399/incidents",
+        "authentication": "none",
+        "query": {},
+        "headers": {},
+        "bodyType": "json",
+        "body": "{\"title\": \"{{ $json.title }}\", \"severity\": \"critical\"}",
+        "options": {}
+      }
+    },
+    {
+      "id": "n_dt",
+      "name": "Save to backlog",
+      "type": "core.dataTable",
+      "typeVersion": 1,
+      "position": [
+        1400,
+        320
+      ],
+      "parameters": {
+        "operation": "insert",
+        "dataTableId": "dt_BXTqEwfZQl2C",
+        "mappingMode": "autoMapInputData"
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "c1",
+      "type": "main",
+      "source": "n_sch",
+      "sourceIndex": 0,
+      "target": "n_lin",
+      "targetIndex": 0
+    },
+    {
+      "id": "c2",
+      "type": "main",
+      "source": "n_lin",
+      "sourceIndex": 0,
+      "target": "n_agent",
+      "targetIndex": 0
+    },
+    {
+      "id": "c3",
+      "type": "ai_languageModel",
+      "source": "n_model",
+      "sourceIndex": 0,
+      "target": "n_agent",
+      "targetIndex": 0
+    },
+    {
+      "id": "c4",
+      "type": "main",
+      "source": "n_agent",
+      "sourceIndex": 0,
+      "target": "n_parse",
+      "targetIndex": 0
+    },
+    {
+      "id": "c5",
+      "type": "main",
+      "source": "n_parse",
+      "sourceIndex": 0,
+      "target": "n_if",
+      "targetIndex": 0
+    },
+    {
+      "id": "c6",
+      "type": "main",
+      "source": "n_if",
+      "sourceIndex": 0,
+      "target": "n_slack",
+      "targetIndex": 0
+    },
+    {
+      "id": "c7",
+      "type": "main",
+      "source": "n_slack",
+      "sourceIndex": 0,
+      "target": "n_http",
+      "targetIndex": 0
+    },
+    {
+      "id": "c8",
+      "type": "main",
+      "source": "n_if",
+      "sourceIndex": 1,
+      "target": "n_dt",
+      "targetIndex": 0
+    }
+  ],
+  "pinData": {},
+  "settings": {}
+}
