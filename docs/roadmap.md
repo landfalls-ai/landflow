@@ -2303,3 +2303,7 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
 - **Left (deferred)**: model verdicts in the CLI's `check` (a model's verdict reaches a flow through Check Practices, PR08;
   the CLI runs machine checks only) and a reminder after `Write` or `Edit` on a matching path (the mod never denies a
   tool call, so a reminder hook is its own package).
+
+## Spotlight wave sb1
+
+- **A new agent survives a send-back (SB05)**: Spotlight's `newAgent` keeps its name unrecorded until its proposal is held, so a proposal sent back to be completed is no longer dropped as a stand-in of itself (findings 3.2); it carries `tools` and `knowledge` to the Agent architect; "after <step>" places it after the step (3.5); an Ollama tool-call parse error is retried once (3.9). Wave sb3 SB16 builds on these hints.
