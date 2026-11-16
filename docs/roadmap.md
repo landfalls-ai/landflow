@@ -2359,6 +2359,19 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   `surface=none` included, the runs and calls lists count the calls, cost and runs the report counts, owner and members,
   24 hours, 7 and 30 days). The last found the lists reading `model=provider/model` and `surface=none` as literal values
   (nothing listed); they now take the report's filter forms.
+- **Live checks (wave 13, run before the merge on b69627fe)**: a production-profile host (CSP enforced,
+  `local-only.cjs`), headed Chrome at 1440×900 in light and dark, local Ollama `qwen3-coder:30b`, 100 days of made-up
+  rows for an owner and two made-up members in two projects. 7, 30 and 90 days and a custom range with compare: series
+  of 7, 30, 90 and 19 points, movers and the new groups; the 90-day report answered in 57 to 198 ms. The drill sheet's
+  runs, calls, one call's composition, the run link to its Spend tab and Back; the CSV quotes a workflow name with a
+  comma and quotes. Filters, `provider/model` and `surface=none` included, narrow the lists and the cache card. A member
+  sees every person's spend by name and no closed workflow or agent; another project's runs show as "30 runs you can't
+  open: $468.00". The You card's cap outlook equals the forecast card's. A price set in Settings priced the next real
+  Ollama calls and left 229 earlier rows at $0. After 11 minutes the rollup held today and yesterday, and 30 days read
+  458 calls and $832.50 on the page, in the raw rows and in the rollup alike. At 390 px nothing scrolls sideways. No
+  request left the machine, no CSP report, no console error but the member's deliberate 404s. The fix passes after
+  b69627fe (the rollup's dirty marks taken in each day's own transaction, the page's view helpers, the calls CSV's run
+  link, the chain nodes' prompt split) are covered by tests and Opus's last review, not by the browser.
 
 ## Practices (waves P1 and P2)
 
