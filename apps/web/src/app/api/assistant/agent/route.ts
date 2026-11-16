@@ -9,9 +9,10 @@ import type { AgentConfig } from '@/lib/shared/agents';
 import { runArchitect, type ArchitectState, type ArchitectStreamEvent } from '@/lib/server/assistant/architect';
 import { takeCheckpoint } from '@/lib/server/assistant/checkpoints';
 import { errorText } from '@/lib/server/assistant/model';
+import { resolveSpotlightModel } from '@/lib/server/assistant/models-list'; // SB19:
 import { allowedTypes } from '@/lib/server/assistant/scope';
 import { currentPrincipal } from '@/lib/server/auth/guard';
-import { handler, parseBody } from '@/lib/server/http';
+import { error, handler, parseBody } from '@/lib/server/http'; // SB19: error
 import { sseResponse } from '@/lib/server/sse';
 import { requireProject, routeActor } from '@/lib/server/projects/http';
 import { traceparentHeader } from '@/lib/server/telemetry';
@@ -36,7 +37,10 @@ const Body = z.object({
 export const POST = handler(async (request: Request) => {
   const parsed = await parseBody(request, Body);
   if (!parsed.ok) return parsed.response;
-  const { messages, model, resume, projectId } = parsed.data;
+  const { messages, resume, projectId } = parsed.data;
+  const picked = await resolveSpotlightModel(parsed.data.model); // SB19: a model this server offers, else the Settings default
+  if ('error' in picked) return error(picked.error, 400); // SB19:
+  const model = picked.model; // SB19:
   const draft = parsed.data.draft as Partial<AgentConfig> | undefined;
   const actor = routeActor();
   if (projectId) requireProject(actor, projectId, 'read'); // PC10: 404 without a role

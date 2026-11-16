@@ -5,6 +5,8 @@
  * operations that apply it. Nodes with nothing to say (a manual trigger that
  * worked) are skipped without a model call.
  */
+import { withCallNote } from '../ai-usage/call-context'; // SB19:
+import { plainDraft } from '../ai-usage/drafts'; // SB19:
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import type { LanguageModel } from '@landflow/engine';
@@ -160,13 +162,14 @@ export async function suggestAfterRun(input: SuggestInput): Promise<SuggestResul
       `\nNode under review:\n${nodeContext(workflow, nodeId, run, types)}`,
       `\nNode catalog (type ids for "next" suggestions):\n${catalogIndex(types)}`,
     ].join('\n');
-    const turn = await model.generate({
+    // SB19: counted as Spotlight's answer, with the prompt's parts.
+    const turn = await withCallNote({ purpose: 'answer', draft: plainDraft({ system: SYSTEM, messages: [{ role: 'user', content: prompt }] }) }, () => model.generate({
       system: SYSTEM,
       messages: [{ role: 'user', content: prompt }],
       tools: [],
       responseFormat: 'json',
       ...(input.signal && { signal: input.signal }),
-    });
+    }));
     const suggestions = readSuggestions(turn.text, workflow, types);
     span.setAttribute('landflow.assistant.suggestions', suggestions.length);
     recordSuggestions(suggestions.map((s) => s.kind));

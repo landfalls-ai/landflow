@@ -54,6 +54,8 @@ that designs it with you. Open it from **New agent** → **Design it with the Ag
 architect** on the roster. The chat is on the left; the draft it proposes stays on the right, whole: avatar, name, role,
 tone words, Always / Never rules, instructions, tools, and what you still have to finish.
 
+The architect runs on the model Spotlight uses (Settings → AI → Spotlight, [assistant.md](assistant.md#the-model-spotlight-uses)): the dialog sends none, so the server's default applies. Spotlight's own "new agent" design (`POST /api/agents/design`) takes the model picked in its header.
+
 The architect knows what this instance has. Its prompt lists every plugin online with the nodes an agent can use as
 tools (actions whose only required inputs are main ones: the Abilities tab's own filter), within the node policy for
 you. It searches them (`search_nodes`), reads their parameters (`get_node_docs`), and lists the workflows an agent can

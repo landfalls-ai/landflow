@@ -12,6 +12,7 @@ import type { FlowTemplate, TemplateNode } from '@/lib/client/templates';
 import type { DraftLeft } from '@/lib/shared/draft-left'; // SB02:
 import type { ConnectionType, NodeItem } from '@/lib/shared/types';
 import { useEditor } from './store';
+import { pickedModel } from './spotlight-model'; // SB19:
 
 interface FlowDraft {
   name: string;
@@ -107,7 +108,7 @@ export function useBuildFlow() {
   const build = async (prompt: string, signal?: AbortSignal): Promise<BuiltFlow> => {
     setBusy(true);
     try {
-      const { draft } = await api<{ draft: FlowDraft }>('/api/ai/build', { method: 'POST', json: { prompt, workflowId: useEditor.getState().workflowId || undefined /* SB02 */ }, signal });
+      const { draft } = await api<{ draft: FlowDraft }>('/api/ai/build', { method: 'POST', json: { prompt, workflowId: useEditor.getState().workflowId || undefined /* SB02 */, ...pickedModel() /* SB19 */ }, signal });
       const state = useEditor.getState();
       const right = state.nodes.length ? Math.max(...state.nodes.map((n) => n.position.x)) + 360 : 0;
       const top = state.nodes.length ? Math.min(...state.nodes.map((n) => n.position.y)) : 0;

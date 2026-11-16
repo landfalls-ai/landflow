@@ -19,6 +19,7 @@ import type { AskEvent, AskPart } from '@/lib/shared/spotlight-wire'; // SB11:
 import type { ReplyInfo } from '../ui/chat';
 import type { CredentialNeedFields, CredentialOfferEvent } from '@/lib/shared/spotlight-wire'; // SB12:
 import { useEditor } from './store';
+import { pickedModel } from './spotlight-model'; // SB19:
 import { emptyStored, withEarlier, type Stored } from './spotlight-history';
 
 import { saveAgentFor, type AgentPlace } from './new-agent';
@@ -682,6 +683,7 @@ export const useAssistant = create<AssistantState>((set, get) => ({
           ...(options.session && { session: options.session }),
           ...(options.session && options.autonomy && { autonomy: options.autonomy }),
           ...(options.resume && { resume: options.resume }),
+          ...pickedModel(), // SB19:
         },
         (_event, data) => {
           const event = data as StreamEvent;
