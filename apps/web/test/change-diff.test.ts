@@ -53,6 +53,11 @@ describe('diffOps', () => {
     expect(f.before!.length).toBe(300);
   });
 
+  it('an option reads as its name, as the node panel shows it', () => {
+    const diff = diffOps(triage, [{ op: 'setParameters', node: 'Open status incident', parameters: { authentication: 'genericCredentialType', genericAuthType: 'httpHeaderAuth' } }], lookup);
+    expect(diff.steps[0].fields.find((f) => f.key === 'authentication')).toMatchObject({ label: 'Authentication', before: 'None', after: 'Generic Credential Type' });
+  });
+
   it('settings read old → new: off → on, default → 3', () => {
     const diff = diffOps(triage, [{ op: 'setNodeSettings', node: 'Open status incident', settings: { retryOnFail: true, maxTries: 3 } }], lookup);
     expect(diff.steps[0].fields.map((f) => [f.label, f.before, f.after])).toEqual([

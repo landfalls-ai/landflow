@@ -1261,8 +1261,11 @@ export function diffOps(before: Workflow, ops: AssistantOp[] | AssistantOp[][], 
       const a = was?.parameters[key] ?? (was ? undefined : defaults[key]);
       const b = now.parameters[key];
       if (sameValue(a, b)) continue;
-      const label = props.find((p) => p.name === key)?.displayName ?? key;
-      out.push(field(key, label, was ? readableValue(a, 0, true) : undefined, b === undefined ? 'empty' : readableValue(b, 0, true)));
+      const prop = props.find((p) => p.name === key);
+      const label = prop?.displayName ?? key;
+      // An option reads as its name, as the node panel shows it ("None → Generic Credential Type").
+      const shown = (v: unknown) => (v !== null && typeof v !== 'object' ? prop?.options?.find((o) => 'value' in o && o.value === v)?.name : undefined) ?? readableValue(v, 0, true);
+      out.push(field(key, label, was ? shown(a) : undefined, b === undefined ? 'empty' : shown(b)));
     }
     for (const key of Object.keys(SETTING_LABELS)) {
       const a = (was as unknown as Record<string, unknown> | undefined)?.[key];
