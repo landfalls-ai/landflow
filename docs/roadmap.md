@@ -2280,6 +2280,16 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   seconds while the run is live ([run-trace.md](run-trace.md#spend)). A call opens its model span.
 - **One call's view (SP07), built:** a model step's sheet in the Run Trace shows the call's composition, cache line and what changed since the previous call; sessions show cached tokens ([run-trace.md](run-trace.md#one-call)).
 
+## Token spend wave 13
+
+- **The daily rollup and the AI page's report (SP08), built**: `ai_usage_daily` (migration 2902, backfilled from the rows
+  already there) is rewritten every 10 minutes for today, yesterday, any day a late import marked and every day since its last pass (so a host that was off for days loses nothing); the AI page's
+  `GET /api/insights/ai` answers 90 days and custom ranges of up to 400 days, ten groups (workflow, credential, surface and
+  purpose are new), a daily series, a stack, the previous period with movers, filters, distinct runs and an `unpriced` flag on
+  model rows, with people per D1 ([llm-gateway.md](llm-gateway.md#the-ai-page)). Yesterday and today are read from the raw
+  rows (always exact); the screens are SP10 to SP12. A model row's `unpricedCalls` counts a combination's calls when it has no
+  price and no cost, so a gateway-costed call among unpriced ones of one model is not told apart.
+
 ## Practices (waves P1 and P2)
 
 Rules in the brain that connected agents follow, each approved by a person ([practices.md](practices.md)). Decided
