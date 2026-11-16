@@ -53,11 +53,15 @@ export function upsertFact(input: FactInput, db: Database = database(), now = ne
 
 /** Facts not refreshed since `before` go stale (intended facts, the outcomes of applied suggestions and the statements people and flows added about an entity stay). */
 export function staleFactsBefore(before: string, db: Database = database()): number {
-  const rows = db.all<{ data: string }>("SELECT data FROM brain_facts WHERE status = 'active' AND last_seen < ? AND kind <> 'intended' AND id NOT LIKE '%:change:pr_%' AND id NOT LIKE 'entity:%:fact_%'", before);
+  // SP13: the whole row goes back (subject_type is NOT NULL, and the check runs before ON CONFLICT), `last_seen` unchanged.
+  const rows = db.all<{ id: string; subject_type: string; subject_id: string; kind: string; project_id: string | null; last_seen: string; data: string }>(
+    "SELECT id, subject_type, subject_id, kind, project_id, last_seen, data FROM brain_facts WHERE status = 'active' AND last_seen < ? AND kind <> 'intended' AND id NOT LIKE '%:change:pr_%' AND id NOT LIKE 'entity:%:fact_%'",
+    before,
+  );
   for (const row of rows) {
     const fact = parse<BrainFact>(row.data);
     if (!fact) continue;
-    db.upsert('brain_facts', { id: fact.id, status: 'stale', data: JSON.stringify({ ...fact, status: 'stale' }) });
+    db.upsert('brain_facts', { id: row.id, subject_type: row.subject_type, subject_id: row.subject_id, kind: row.kind, project_id: row.project_id, status: 'stale', last_seen: row.last_seen, data: JSON.stringify({ ...fact, status: 'stale' }) });
   }
   return rows.length;
 }
