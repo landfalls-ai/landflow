@@ -9,11 +9,11 @@ import type { ExecutionSummary } from '@/lib/shared/types';
 import { Badge } from '../ui/badge';
 import { RunTimelineLive } from './run-timeline-card';
 import { SectionTitle } from './parts';
-import { BudgetActions, TaskActions } from './needs-you-actions';
+import { BudgetActions, SpendActions, TaskActions } from './needs-you-actions';
 import { NeedFaces } from './approval-card';
 import { listFaces } from '@/lib/shared/approval-evidence';
 
-const KIND: Record<NeedsYouRow['kind'], string> = { approval: 'Approval', form: 'Form', question: 'Question', gate: 'Checks failed', check: 'Check failed', budget: 'AI budget', task: 'Task' };
+const KIND: Record<NeedsYouRow['kind'], string> = { approval: 'Approval', form: 'Form', question: 'Question', gate: 'Checks failed', check: 'Check failed', budget: 'AI budget', task: 'Task', spend: 'AI spend' };
 
 /** Waits for a person and failed checks nobody settled, newest first; each opens the run. */
 export function NeedsYouList() {
@@ -31,6 +31,8 @@ export function NeedsYouList() {
             <BudgetRow key={`budget:${item.incidentId ?? item.title}`} item={item} onDone={refresh} />
           ) : item.kind === 'task' ? (
             <TaskRow key={`task:${item.taskRunId ?? item.title}`} item={item} />
+          ) : item.kind === 'spend' ? (
+            <SpendRow key={`spend:${item.flagId ?? item.title}`} item={item} />
           ) : (
           <li key={`${item.executionId}:${item.spanId ?? item.title}`}>
             <Link href={`/runs/${item.executionId}`} className="flex min-h-[56px] items-center gap-3 px-4 py-2.5 hover:bg-acdim/60">
@@ -90,6 +92,26 @@ export function TaskRow({ item }: { item: NeedsYouRow }) {
         <ChevronRight className="size-4 shrink-0 text-t3" />
       </Link>
       <TaskActions row={item} className="mt-2" />
+    </li>
+  );
+}
+
+/** A forecast over a cap or unusual AI spend (SP23): the title opens the AI page at the day, Acknowledge clears it for everyone. */
+export function SpendRow({ item }: { item: NeedsYouRow }) {
+  return (
+    <li className="px-4 py-2.5">
+      <Link href={item.href ?? '/insights/ai'} className="-mx-2 flex min-h-[56px] items-center gap-3 rounded-xl px-2 hover:bg-acdim/60">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <Badge tone="warning">{KIND.spend}</Badge>
+            <span className="truncate text-[12px] text-t3">{timeAgo(item.since)}</span>
+          </div>
+          <p className="mt-1 text-[14px] font-medium text-t1">{item.title}</p>
+          {item.detail && <p className="text-[12.5px] text-t2">{cut(item.detail, 200)}</p>}
+        </div>
+        <ChevronRight className="size-4 shrink-0 text-t3" />
+      </Link>
+      <SpendActions row={item} className="mt-2" />
     </li>
   );
 }
