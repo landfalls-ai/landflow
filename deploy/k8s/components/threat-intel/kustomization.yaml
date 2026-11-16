@@ -1,0 +1,8 @@
+# The Threat Intel (Go SDK, IOC enrichment; every operation is a read) plugin (plugins/threat-intel): a component so the base stays as it is. Build it first:
+#   docker --context orbstack buildx build --builder orbstack --load -f deploy/docker/go-plugin.Dockerfile \
+#     --build-arg PLUGIN=threat-intel --build-arg HTTP_PORT=7110 --build-arg GRPC_PORT=7210 -t landflow/plugin-threat-intel:k8s-dev .
+# Enable it with `- ../../components/threat-intel` in an overlay's components (the orbstack overlay does).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - threat-intel.yaml

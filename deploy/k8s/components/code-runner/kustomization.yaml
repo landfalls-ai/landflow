@@ -1,0 +1,11 @@
+# The sandboxed code runner (services/code-runner) for the Code node: JavaScript on Node and Python on CPython, each snippet in
+# a fresh locked-down child process. Build it first (Dockerfile under deploy/docker, context the repository root):
+#   docker --context orbstack buildx build --builder orbstack --load -f deploy/docker/code-runner.Dockerfile \
+#     -t landflow/code-runner:k8s-dev .
+# Enable it with `- ../../components/code-runner` in an overlay's components (the orbstack overlay does). The overlay must
+# also give the host LANDFLOW_CODE_RUNNER_URL=http://landflow-code-runner:7300 and the secret under key `code-runner-secret` in
+# the `landflow-host` Secret (the same value the runner reads here).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - code-runner.yaml

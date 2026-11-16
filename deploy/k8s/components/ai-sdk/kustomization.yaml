@@ -1,0 +1,8 @@
+# The AI SDK (TypeScript SDK, keys from saved credentials only) plugin (plugins/ai-sdk): a component so the base stays as it is. Build it first:
+#   docker --context orbstack buildx build --builder orbstack --load -f deploy/docker/node-plugin.Dockerfile \
+#     --build-arg PLUGIN=ai-sdk --build-arg HTTP_PORT=7115 --build-arg GRPC_PORT=7215 -t landflow/plugin-ai-sdk:k8s-dev .
+# Enable it with `- ../../components/ai-sdk` in an overlay's components (the orbstack overlay does).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - ai-sdk.yaml
