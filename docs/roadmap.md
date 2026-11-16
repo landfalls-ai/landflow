@@ -2029,7 +2029,7 @@ members has been cache-aware since wave 11; SP19 rewrapped the long `// SP03:` l
   sustained drop lifts its own baseline and the alert clears after a few days. An `offset` baseline is its own change to
   the rule and its promtool tests; SP19 raised the hit rate rather than dropped it.
 - **Run an Agent's calls have no model span** (found by `spend-trace-join`): the Spend tab lists them with plain times
-  and the per-call sheet never opens for them ([limitations](limitations.md#a-calls-composition-in-the-run-trace-wave-12-sp07)).
+  and the per-call sheet never opens for them ([limitations](limitations.md#token-spend-what-it-cannot-do-yet)).
   Writing one `model` span per loop step from the agent's session is a Run Trace change of its own.
 - **Live checks owed from wave 11 and wave 12**: Insights → AI as a member of an instance with several projects (projects
   they can't open are "Another project", a person whose only rows are there still has their figure); the Run Trace's
@@ -2055,7 +2055,7 @@ and gateway rows without cache numbers. These wait, each with its reason:
   ([llm-gateway.md](llm-gateway.md#what-a-prompt-was-made-of)); deciding which split wins is its own change, and no wave
   13 package touched it.
 - **`MIN_CACHEABLE_TOKENS` is one figure (1,024) for every model** (`ai-usage/run-spend.ts`): a newer Claude model's
-  higher minimum reads as `not-requested`; documented ([limitations](limitations.md#token-spend-wave-13)), a per-model
+  higher minimum reads as `not-requested`; documented ([limitations](limitations.md#token-spend-what-it-cannot-do-yet)), a per-model
   table waits for a model that needs it.
 - **Two concurrent counts of the same prefix both send a count request** (`ai-usage/count/anthropic.ts`): the results
   stay correct and each request is free; sharing an in-flight count would also have to share its per-minute budget slot.
@@ -2439,6 +2439,100 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
 - **Fixed (join tests)**: `repeated-calls` could not judge an agent, because its system prompt ends with the time to the
   millisecond and `promptHash` covered it. `promptHash` now leaves the `formatting` segments out (the gateway's callback
   too); the date stays in `prefixHash`.
+
+## Token spend (waves 11–14): where it stands
+
+The program that made every model call visible, attributable and forecastable, closed on 2026-11-17 (SP17). The per-wave
+sections above stay and are linked from here; what the program cannot do yet is gathered in
+[limitations.md](limitations.md#token-spend-what-it-cannot-do-yet). Who sees spend follows
+[llm-gateway.md](llm-gateway.md#the-ai-page) "Who sees what" (D1).
+
+**What each package built** (one line each; the section has the detail):
+
+- Wave 11 ([section](#token-spend-wave-11)): **SP01** attribution on each call (node, span, purpose, iteration, caller,
+  duration, stop reason); **SP02** purposes at the call sites; **SP03** the prompt split into parts with keyed hashes;
+  **SP04** telemetry out (the AI row on the overview dashboard, the cache hit-rate alert; **SP16** is folded into it);
+  **SP20** everyone sees everyone's spend by name.
+- Wave 12 ([section](#token-spend-wave-12)): **SP05** a run's spend and one call's view over HTTP; **SP06** the Run
+  Trace's Spend tab; **SP07** one call's sheet; **SP19** cache fixes (memory out of the cached prompt, a history
+  breakpoint); **SP21** the gateway's split of kagent and Claude Code calls; **SP22** exact counts per part (the
+  provider's, OpenAI's encodings, an Ollama model's own vocabulary).
+- Wave 13 ([section](#token-spend-wave-13)): **SP08** the daily rollup and the AI page's report; **SP09** the runs and
+  calls behind a number; **SP10** trend, movers, ten groups and the drill sheet; **SP11** the cache card and the
+  forecast to month end; **SP12** local model prices and the You card.
+- Wave 14 ([section](#token-spend-wave-14)): **SP13** the six waste detectors; **SP14** your own spend over MCP, the
+  route and `landflow spend`; **SP15** today's spend in the landflow-brain status line; **SP23** forecast and
+  unusual-spend alerts; **SP17** this close-out (docs, the map, the owed live checks).
+
+**Decisions** (the user's, `spend/decisions.md`, 2026-11-15; D5 was applied when SP12 dropped the equivalent cost,
+2026-11-16): **D1** every member sees every person's spend by name, never run contents; **D2** split kagent and harness
+calls at the gateway, as exact as the model's own tokenizer allows; **D3** drill down to one call; **D4** per-call splits
+and hashes 30 days, daily rollups 400; **D5** real prices per local model, no "equivalent cost"; **D6** forecasts and
+anomalies in Landflow too, never double-alerting through Landledger without saying so; **D7** Claude Code per person is
+later (SP18); **D8** cache blind spots fixed now (SP19).
+
+**Live checks closed by SP17 (2026-11-17, on `29ef4cb0`)**: a production-profile host (CSP enforced,
+`local-only.cjs`, `LANDFLOW_OUTBOUND_ALLOW=127.0.0.1`), headed Chrome at 1440×900 in light and dark, local Ollama
+`qwen3-coder:30b`, made-up people (an owner and a member with a role in one of two projects). No request left the
+machine (`local-only] refused` 0 in every log, no aborted browser request); the only console errors are 404s for a run
+page that does not exist (an agent session's id, below).
+
+  - **Real LiteLLM import (done, on the development profile).** The production profile refuses the gateway's development
+    key at boot ("LANDFLOW_LLM_GATEWAY_ADMIN_KEY is a development value"), so the import was run on a second host on the
+    development profile against the running `landflow-infra` gateway (`127.0.0.1:54100`, development key from
+    `deploy/.env.example`), on a copy of the seed data with the import's last-run mark set to 2026-11-15 05:00Z
+    (otherwise the first run reads only the last 24 hours). It imported 51 rows (40 of 2026-11-15, 11 of 2026-11-16),
+    every one with `gateway_provider = 'ollama_chat'`. Three fresh calls of `qwen3-coder:30b` through the gateway then
+    imported with that provider too. A local price (0.30 in, 0.90 out per million, Settings → AI prices, which listed the
+    model under Local models with providers `ollama` and `ollama_chat`) priced the next import: 26 in and 4 out became
+    $0.0000114, `gateway_cost` 0. Rows imported before the price kept their cost (no repricing). The import of
+    2026-11-15 (a day before yesterday) left `ai_usage_daily` without that day and a dirty mark `["2026-11-15"]`; the next
+    rollup pass wrote it (40 calls, $0.084, 515 input tokens, equal to the raw rows) and cleared the mark.
+  - **The gateway's split (not possible without the person).** The callback (`custom_callbacks.py`) is mounted and
+    configured, but the container's `LANDFLOW_PARTS_SECRET` is empty (the gateway was created without
+    `LANDFLOW_LLM_GATEWAY_PARTS_SECRET` set), so it posts nothing: a listener on the port the callback targets saw no post
+    for three calls. A `gateway`, `tokenizer` split with the spend log's `request_id` still needs the container recreated
+    with the secret set on both sides, which is the person's call; not done.
+  - **Ask the brain and the AI Agent node write `ai_call_parts` (done).** The Brain page's streamed form: surface `brain`,
+    purpose `answer`, source `landflow`, method `tokenizer`, parts instructions 21, user message 338, formatting 13. An AI
+    Agent node on Ollama: purpose `answer`, `tokenizer`, 26 input tokens. The JSON form of `POST /api/brain/ask` wrote a
+    usage row with no purpose and no split (found; listed under what is left). A Landflow agent's test-chat session also
+    wrote its row (`tokenizer`).
+  - **The Spend tab for a member with a hidden sub-run (done).** A workflow in one project ran a sub-workflow of a project
+    the member cannot open, with three Ollama calls in all. The owner's tab: 3 calls, 92 in, 1,442 out. The member's:
+    2 calls, 61 in, 962 out, "1 run you can't open: 31 in · 480 out", the hidden call in neither the table nor the list.
+    Light and dark. At 390 px the page's `scrollWidth` is 390.
+  - **A live run's numbers moving (done).** Sampled every 3 seconds on `GET /api/executions/:id/spend` while the run was
+    live: 0, 1, 1, 2, 2 and 3 calls (539, 1,050 and 1,534 tokens); the open tab went 1 call, 2 calls and 3 calls with the
+    10-second refresh.
+  - **"Counted with the model's own tokenizer" (done).** On the Spend tab of an AI Agent node run on Ollama and of the
+    three-call run above, in light and dark. A Landflow agent's test chat has no Run Trace page (`/runs/<session id>` is a
+    404), so the phrase was not seen for one.
+  - **Still owed, needing a vendor key**: the cache card and the cache fixes on real Anthropic cache reads, and a daily
+    cap's pace line late in a host's day. Evidence: `backbone/live/SP17/` (the host logs, `c1`–`c4` scripts and logs)
+    and `backbone/shots/SP17/` in the session's scratchpad.
+
+**What is left:**
+
+- **SP18, one gateway key per person** (D7: later). Today a person's Claude Code calls through the gateway cannot be told
+  from the instance's other calls.
+- **Caching for the AI Agent node**: it asks for no cache; the cache fixes covered Landflow agents.
+- **Distinct runs per group in SQL**, or a run-day rollup (open since wave 13; [above](#token-spend-wave-13)).
+- **Deferred from the wave 14 carryover**, each with its reason: a `knowledge` part (the knowledge tool would have to mark
+  its results); a per-model cache minimum (`MIN_CACHEABLE_TOKENS` is 1,024 for all; waits for a model that needs more); the
+  previous-period request sent once more after a filter change (one wasted request, no wrong number); Run an Agent's
+  calls have no model span (a Run Trace change of its own); which split wins for a Landflow call on a gateway
+  credential; sharing an in-flight Anthropic count between two callers; long unwrapped doc lines (no formatter; a change
+  rewraps its own lines); the cache alert's baseline that includes the dropped period; the anomaly view, a `cost.anomaly`
+  Landledger event, a weekday-aware baseline and muting one key ([SP23](#token-spend-wave-14)).
+- **Ask the brain's JSON form** (`POST /api/brain/ask` without `Accept: text/event-stream`) writes no purpose and no
+  prompt split, where the streamed form the Brain page uses does (seen on the live host, 2026-11-17). Not a package yet.
+- **Still owed, needing a vendor key (live checks never use one)**: the cache card and SP19's cache fixes on real
+  Anthropic cache reads; a daily cap's pace line late in a host's day; a real Claude Code session with the landflow-brain
+  status line (SP15 left it: a session would call a vendor).
+- **Owed with the gateway's secret**: the gateway's split on a live call (`gateway`, `tokenizer`, the spend log's
+  `request_id`): the local gateway's callback is mounted but its `LANDFLOW_PARTS_SECRET` is empty, so it posts nothing;
+  recreating the container with the secret is the person's call.
 
 ## Practices (waves P1 and P2)
 
