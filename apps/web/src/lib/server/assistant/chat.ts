@@ -50,7 +50,6 @@ import {
   withoutNarration,
   withoutRepeats,
 } from './guards';
-import { scopeOf, type SpotlightScope } from '../../shared/spotlight-scope'; // SB10:
 import { availableTypes, catalogSummary, nodeContext, nodeDocs, searchNodes, workflowOutline } from './research';
 import { MENTION_LIMITS, mentionKey, type MentionRef } from '../../shared/mentions';
 import { BLOCK_CLOSE, BLOCK_OPEN, resolveMentions, type MentionRead, type SentMention } from '../mentions/resolve';
