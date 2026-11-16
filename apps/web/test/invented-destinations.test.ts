@@ -49,4 +49,30 @@ describe('made-up destinations', () => {
     expect(parametersOf(r)).toEqual({ n: 'x' });
     expect(r.invented).toHaveLength(3);
   });
+
+  it('keeps a plain-word destination the person gave in the usual wordings', () => {
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ table: 'bugs' }, 'save each bug to the bugs table'],
+      [{ channel: 'general' }, 'post it in the general channel'],
+      [{ repository: 'landflow' }, 'open an issue in landfalls-ai/landflow'],
+      [{ repo: 'landflow' }, 'on the landflow repo'],
+      [{ project: 'Website' }, 'to our Website project'],
+      [{ team: 'Platform' }, 'assign it to the Platform team'],
+      [{ sheet: 'Leads' }, 'add a row to my Leads sheet'],
+      [{ table: 'Bug Triage' }, 'save to the Bug Triage table'],
+      [{ channel: 'general' }, 'post to #general'],
+    ];
+    for (const [parameters, text] of cases) expect(parametersOf(withoutInventedIds(set(parameters), text)), text).toEqual(parameters);
+  });
+
+  it('still clears a plain word that only appears in the ask', () => {
+    expect(parametersOf(withoutInventedIds(set({ table: 'bugs' }), 'get the new bugs and save each bug to a table'))).toEqual({});
+  });
+
+  it('does not treat a date window end as an address', () => {
+    const typeText = () => JSON.stringify([{ name: 'from', type: 'dateTime' }, { name: 'to', type: 'dateTime' }]);
+    const r = withoutInventedIds(set({ to: '2026-11-01' }), 'get last week of spend', typeText);
+    expect(parametersOf(r)).toEqual({ to: '2026-11-01' });
+    expect(r.invented).toEqual([]);
+  });
 });

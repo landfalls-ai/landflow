@@ -66,7 +66,35 @@ const URL_PARAMETER = /^(url|baseUrl|webhookUrl)$/;
 function namedAs(value: string, known: string): boolean {
   if (/[#@./_\-\d]/.test(value) || !/^[\w ]+$/.test(value)) return known.toLowerCase().includes(value.toLowerCase());
   const word = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(?:["'“‘\`]${word}["'”’\`])|(?:\\b(?:called|named|table|channel|sheet|repo|repository|project|board|team|owner|into|in|to)\\s+["'“‘\`#@]?${word}\\b)`, 'i').test(known);
+  const kind = 'table|channel|sheet|repo|repository|project|board|team';
+  const quote = '["\'“‘`]';
+  const cue = `(?:called|named|${kind}|owner|into|in|to|on|for|from|at)`;
+  return [
+    `${quote}${word}${quote}`,
+    `\\b${cue}\\s+(?:(?:the|a|an|our|my|your|this|that)\\s+)?["'“‘\`#@]?${word}\\b`,
+    `\\b${word}\\s+(?:${kind})\\b`,
+    `[/#@]${word}\\b`,
+    `\\b${word}/`,
+  ].some((pattern) => new RegExp(pattern, 'i').test(known));
+}
+
+/** The type of the property `name` in a node type's properties JSON (nested ones too); undefined when it has none. */
+function propertyType(json: string, name: string): string | undefined {
+  if (!json) return undefined;
+  try {
+    const find = (list: unknown): string | undefined => {
+      if (!Array.isArray(list)) return undefined;
+      for (const p of list as Array<{ name?: string; type?: string; values?: unknown; options?: unknown }>) {
+        if (p?.name === name && typeof p.type === 'string') return p.type;
+        const inner = find(p?.values) ?? find(p?.options);
+        if (inner) return inner;
+      }
+      return undefined;
+    };
+    return find(JSON.parse(json));
+  } catch {
+    return undefined;
+  }
 }
 
 /** The host of a URL a model wrote ("https://httpbin.org/post" → "httpbin.org"); undefined when it names none. */
@@ -117,6 +145,8 @@ export function withoutInventedIds(ops: unknown, known: string, typeText: (op: R
         continue;
       }
       if (!isId && !DESTINATION_PARAMETER.test(key) && !URL_PARAMETER.test(key)) continue;
+      // A property that is not text ("to" is the end of a date window on a dateTime) is no destination.
+      if (!isId && propertyType(typeText(op), key) !== undefined && propertyType(typeText(op), key) !== 'string') continue;
       if (typeText(op).includes(JSON.stringify(value)) || (isId || URL_PARAMETER.test(key) ? known.includes(value) : namedAs(value, known))) continue;
       if (!isId && URL_PARAMETER.test(key)) {
         const host = hostOf(value);
