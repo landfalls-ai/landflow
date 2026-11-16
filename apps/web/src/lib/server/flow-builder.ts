@@ -423,12 +423,16 @@ function shapeOf(type: string, p: PropertyDescriptor): string {
   return line ? line.slice(line.indexOf(': ') + 2) : collectionShape(p);
 }
 
+/** Lists a step cannot work without although the node ships them empty: a table write's column values. */
+const NEEDED_LISTS = new Set(['core.dataTable:columns']);
+
 /** What the person is told a step does without the list. */
 function without(type: string, p: PropertyDescriptor): string {
   if (type === 'core.if' || type === 'core.filter') return 'no condition yet: it keeps every item';
   if (type === 'core.set') return 'no fields yet: it sets nothing';
   if (type === 'core.switch') return 'no routing rule yet: every item takes the fallback';
   if (type === 'core.schedule') return 'no time yet: it never runs';
+  if (type === 'core.dataTable') return 'no column values yet: it writes empty rows';
   return `${p.displayName.toLowerCase()} is still empty`;
 }
 
@@ -448,7 +452,7 @@ export function emptyParts(draft: Pick<FlowDraft, 'nodes' | 'edges'>, byType: Ma
     for (const p of descriptor.properties) {
       if (p.type !== 'fixedCollection' || !p.groups?.length || !isPropertyVisible(p, effective)) continue;
       if (!collectionEmpty(p, parameters[p.name])) continue;
-      if (!p.required && collectionEmpty(p, p.default)) continue;
+      if (!p.required && !NEEDED_LISTS.has(`${n.type}:${p.name}`) && collectionEmpty(p, p.default)) continue;
       parts.push({
         node: n.name,
         key: n.key,

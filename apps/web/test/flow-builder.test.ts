@@ -240,6 +240,44 @@ describe('SB01: the first draft is held in JSON mode, checked and sent back once
     expect(flow.left).toEqual([expect.objectContaining({ node: 'Check total', field: 'conditions', kind: 'empty', text: expect.stringContaining('Check total') })]);
   });
 
+  const dropsReply = JSON.stringify({
+    name: 'Orders',
+    nodes: [
+      { key: 'hook', type: 'core.webhook', name: 'Order in', parameters: { path: 'orders' } },
+      { key: 'check', type: 'core.if', name: 'Check total', parameters: { conditions: { condition: FILLED }, combinator: 'and' } },
+    ],
+    connections: [{ from: 'hook', to: 'check' }],
+  });
+
+  it('keeps the first draft when the second fills the If but loses a step type', async () => {
+    queue = [ifReply([]), dropsReply];
+    const before = mark();
+    const flow = await buildFlow('branch on the total');
+    expect(chatCalls().length - before).toBe(2);
+    expect(flow.nodes).toHaveLength(3);
+    expect(flow.left).toEqual([expect.objectContaining({ node: 'Check total', kind: 'empty' })]);
+  });
+
+  it('keeps the first draft when the second reply does not parse', async () => {
+    for (const second of ['not json at all', JSON.stringify({ nodes: { a: 1 } })]) {
+      queue = [ifReply([]), second];
+      const before = mark();
+      const flow = await buildFlow('branch on the total');
+      expect(chatCalls().length - before).toBe(2);
+      expect(flow.nodes).toHaveLength(3);
+      expect(flow.left).toEqual([expect.objectContaining({ node: 'Check total', kind: 'empty' })]);
+    }
+  });
+
+  it('keeps the first draft when the second has more empty parts', async () => {
+    const worse = JSON.parse(ifReply([]));
+    worse.nodes.push({ key: 'sw', type: 'core.set', name: 'Shape', parameters: { mode: 'manual' } });
+    worse.connections.push({ from: 'vip', to: 'sw' });
+    queue = [ifReply([]), JSON.stringify(worse)];
+    const flow = await buildFlow('branch on the total');
+    expect(flow.nodes).toHaveLength(3);
+  });
+
   it('makes one request for a draft with nothing empty', async () => {
     answer = ifReply(FILLED);
     const before = mark();
@@ -284,6 +322,24 @@ describe('SB01: emptyParts', () => {
         node('h', 'core.httpRequest', 'Call', { url: 'http://127.0.0.1:3402/x', method: 'POST' }),
       ]).filter((p) => p.kind === 'empty'),
     ).toEqual([]);
+  });
+});
+
+describe('SB01: table columns', () => {
+  const table = (parameters: Record<string, unknown>) => emptyParts({ nodes: [{ key: 'd', type: 'core.dataTable', name: 'Save', x: 0, y: 0, parameters }], edges: [] }, byTypeOf()).filter((p) => p.kind === 'empty');
+
+  it('lists a table write with no column values, however the empty value is written', () => {
+    for (const columns of [undefined, {}, { column: [] }, { column: [{}] }]) {
+      const found = table({ operation: 'insert', mappingMode: 'defineBelow', dataTableId: 'Bugs', ...(columns && { columns }) });
+      expect(found.map((p) => p.field)).toEqual(['columns']);
+      expect(found[0].left).toContain('no column values yet');
+    }
+  });
+
+  it('does not list a filled table, or one that maps automatically', () => {
+    expect(table({ operation: 'insert', mappingMode: 'defineBelow', dataTableId: 'Bugs', columns: { column: [{ column: 'title', value: '{{ $json.title }}' }] } })).toEqual([]);
+    expect(table({ operation: 'insert', mappingMode: 'autoMapInputData', dataTableId: 'Bugs' })).toEqual([]);
+    expect(table({ operation: 'get', dataTableId: 'Bugs' })).toEqual([]);
   });
 });
 
