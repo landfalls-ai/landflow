@@ -10,7 +10,8 @@ import { useMentionPicker } from '@/lib/client/use-mention-picker';
 import { mentionQueryAt, type MentionHit } from '@/lib/shared/mentions';
 import { completeBubbles, idleBubbles, liveMentions, TEST_BUBBLE, type Bubble, type Mention, type SpotlightContext } from '@/lib/shared/spotlight';
 import { useBuildFlow } from '../ai-builder';
-import { afterReply, useAutonomous } from '../autonomous';
+import { afterReply, typedSession } from '../autonomous';
+import { askKind } from '@/lib/shared/ask-kind';
 import { draftWholeFlow } from './draft-flow';
 import { suggestionKey, useAssistant, useSuggestions, useWorking, type ChatItem, type KeptMention, type Suggestion } from '../assistant';
 import { useEditor } from '../store';
@@ -99,6 +100,20 @@ function useFailureFix(offered: Set<string>): { nodeName: string; suggestion: Su
   }, [entries, runs, nodes, workflowId, offered]);
 }
 
+// SB04: the bubble after a question's answer.
+const FIX_ANSWER = 'fix-answer';
+
+/** The first sentence of the answer to the person's last typed message when that was a question; else nothing. */
+function answeredQuestion(items: ChatItem[]): string | undefined {
+  const reply = items.at(-1);
+  if (reply?.role !== 'assistant' || !reply.done || reply.error || reply.testId || reply.parts.some((p) => p.kind === 'proposal')) return undefined;
+  const asked = items.at(-2);
+  if (asked?.role !== 'user' || asked.auto || asked.testId || askKind(asked.text) !== 'question') return undefined;
+  const words = (reply.text ?? reply.parts.flatMap((p) => (p.kind === 'text' ? [p.text] : [])).join(' ')).replace(/\s+/g, ' ').trim();
+  const first = words.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? words;
+  return first.slice(0, 200) || undefined;
+}
+
 /** The input at the bottom of the panel, with its bubbles above it. */
 export function Composer() {
   const hasItems = useAssistant((s) => s.items.length > 0);
@@ -114,6 +129,7 @@ export function Composer() {
   const ctx = useSpotlightContext();
   const [offered, setOffered] = useState<Set<string>>(() => new Set());
   const fix = useFailureFix(offered);
+  const answered = useAssistant((s) => answeredQuestion(s.items)); // SB04:
   const { build } = useBuildFlow();
   const [draft, setDraft] = useState('');
   const [caret, setCaret] = useState(0);
@@ -151,11 +167,13 @@ export function Composer() {
     if (draft.trim()) return focused && !mentionQueryAt(draft, Math.min(caret, draft.length)) ? completeBubbles(draft, caret, ctx) : [];
     if (working) return [];
     const offer: Bubble[] = fix ? [{ id: `fix:${fix.suggestion.id}`, label: /^fix\b/i.test(fix.suggestion.title) ? fix.suggestion.title : `Fix: ${fix.suggestion.title}`, kind: 'ask', text: '', caret: 0 }] : [];
+    // SB04: after a question's answer, one bubble turns the answer into a change.
+    if (answered) offer.unshift({ id: FIX_ANSWER, label: 'Fix it', kind: 'ask', text: `Fix it: ${answered}`, caret: 0, send: true });
     const idle = idleBubbles(ctx);
     // Unfocused, only what needs attention (a failure) or a start on an empty canvas.
     const quiet = focused || empty ? idle : idle.filter((b) => b.id.startsWith('why-'));
     return [...offer, ...quiet].slice(0, 3);
-  }, [live, draft, caret, focused, ctx, working, fix, empty]);
+  }, [live, draft, caret, focused, ctx, working, fix, empty, answered]);
 
   useEffect(() => setActive(-1), [bubbles]);
 
@@ -194,8 +212,8 @@ export function Composer() {
     }
     await useAssistant.getState().send(message, {
       withoutSelection,
-      // Autonomous: the model hears that its proposal is applied and tested as it ends, so it never says "click Apply".
-      ...(useAutonomous.getState().on && { session: 'auto' as const }),
+      // SB04: autonomous only on a brand-new draft and only for a change: the model hears that its proposal is applied and tested as it ends. A question is answered, never applied.
+      ...typedSession(message),
       ...(tagged.length && { mentions: tagged.slice(0, 8) }),
     });
     // Autonomous: what the reply proposed is applied and the flow tested, without Apply or Test and fix.

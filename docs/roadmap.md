@@ -2303,3 +2303,7 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
 - **Left (deferred)**: model verdicts in the CLI's `check` (a model's verdict reaches a flow through Check Practices, PR08;
   the CLI runs machine checks only) and a reminder after `Write` or `Edit` on a matching path (the mod never denies a
   tool call, so a reminder hook is its own package).
+
+## Spotlight wave sb1
+
+- **A question is answered, autonomy only on a brand-new draft (SB04, 2026-11-16).** Finding 2.1 (4 of 4 "why did the last run fail?" changed the flow) and decision D1: `askKind` decides question or change once, the chat offers no `propose_changes` for a question and the editor applies nothing for it, with a **Fix it** bubble after the answer; Spotlight acts alone only while it builds a brand-new draft (`spotlight-autonomy.ts`), a saved or published workflow shows the card and waits for Apply, and a removal waits for a click even on a new draft (finding 3.4's own confirm). Docs: [assistant.md](assistant.md#autonomous-mode). Left: the scope of a change and `ask_user` (sb2), a real diff on the card (sb2).

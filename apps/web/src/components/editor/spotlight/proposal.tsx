@@ -8,6 +8,8 @@ import { Button } from '../../ui/button';
 import { Collapsible } from '../../ui/chat-motion';
 import { Segmented } from '../../ui/segmented';
 import { useAutonomous } from '../autonomous';
+import { autonomyOf, useAutonomyFacts } from '../spotlight-autonomy'; // SB04:
+import { useEditor } from '../store'; // SB04:
 import { applyChanges, sendFeedback, undos, useAssistant, type Proposal } from '../assistant';
 import { LeftOut, OpsDiff, Warnings } from '../suggestions-card';
 import { EXPLAINER_KEY, cardFolded, explainerDue, isNewestUndo, undoGroup } from './states';
@@ -187,6 +189,9 @@ export function AutonomousSwitch({ compact, explainer }: { compact?: boolean; ex
   const { on, set } = useAutonomous();
   const own = useAutonomousExplainer();
   const { note, close } = explainer ?? own;
+  // SB04: the switch is the person's choice, but on a saved or published workflow Spotlight asks first anyway (decision D1).
+  const workflowId = useEditor((st) => st.workflowId);
+  const asksFirst = useAutonomyFacts(() => autonomyOf(workflowId) === 'asks-first') && Boolean(workflowId);
   return (
     <div className="relative shrink-0">
       <Segmented
@@ -215,6 +220,12 @@ export function AutonomousSwitch({ compact, explainer }: { compact?: boolean; ex
         ]}
       />
       {note && !explainer && <AutonomousExplainer onClose={close} className="fixed inset-x-3 bottom-3 z-50" />}
+      {/* SB04: under the switch, over nothing of the canvas's layout (absolute: the header row keeps its height). */}
+      {on && asksFirst && (
+        <p role="note" className="absolute right-0 top-full z-10 mt-1 w-[min(19rem,calc(100vw-1.5rem))] rounded-lg border border-hair bg-sf px-2.5 py-1.5 text-[11.5px] leading-snug text-t2 shadow-pop">
+          Spotlight acts alone only while it builds a new draft. This workflow is saved, so it asks first.
+        </p>
+      )}
     </div>
   );
 }

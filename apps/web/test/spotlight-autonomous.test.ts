@@ -15,13 +15,20 @@ vi.mock('@/components/editor/assistant', async (original) => ({
   }),
 }));
 
+vi.mock('@/lib/client/api', () => ({ api: vi.fn(async () => ({ versions: [] })) }));
+
 const { useAssistant } = await import('@/components/editor/assistant');
+const { useEditor } = await import('@/components/editor/store');
+const { noteOpened } = await import('@/components/editor/spotlight-autonomy');
 const { testUntilItRuns } = await import('@/components/editor/test-session');
 const { afterReply, autonomous, testDraft, useAutonomous } = await import('@/components/editor/autonomous');
 
 const proposal = (id: string, state?: 'applied' | 'dismissed') => ({ id, summary: `Change ${id}`, ops: [{ op: 'removeNode' as const, node: id }], dropped: [], warnings: [], ...(state && { state }) });
 
 beforeEach(() => {
+  // SB04: Spotlight acts alone only on a brand-new draft: the workflow was opened empty in this tab.
+  useEditor.setState({ workflowId: 'wf_auto', nodes: [], edges: [] });
+  noteOpened('wf_auto', 0);
   applied.length = 0;
   vi.mocked(testUntilItRuns).mockClear();
   useAssistant.getState().reset();

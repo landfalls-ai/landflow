@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { Bot, Check, CircleCheck, CircleStop, CircleX, ExternalLink, Hand, Loader2, Play, Rocket, Sparkles } from 'lucide-react';
 import { Button } from '../../ui/button';
+import { holdsForClick, typedSession } from '../autonomous'; // SB04:
 import { afterReply, useAutonomous } from '../autonomous';
 import { LiveSteps, useLive } from '../building';
 import { applyChanges, prefillSpotlight, undos, useAssistant, type AgentProgress, type ChatItem, type Need, type Outcome, type ReplyAction, type TestRun } from '../assistant';
@@ -288,7 +289,7 @@ function retryReply(replyId: string, resume?: { checkpoint: string }) {
   void useAssistant
     .getState()
     // Continue keeps what the failed reply had proposed: they are not in `pending` (the reply left the items), the server holds them.
-    .send(asked.text, { ...(useAutonomous.getState().on && { session: 'auto' as const }), ...(resume && { resume, carry: items[at] }) })
+    .send(asked.text, { ...typedSession(asked.text), ...(resume && { resume, carry: items[at] }) })
     .then(() => afterReply(asked.text));
 }
 
@@ -329,7 +330,9 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
   const own = item.parts.some((p) => p.kind === 'run' || p.kind === 'action');
   // Rows, not cards: Spotlight applied them itself (a session's fix, autonomous mode), or is about to (autonomous mode on
   // while the reply still has changes to apply). A turn applied by hand stays a card when the switch flips later.
-  const asRows = Boolean(item.testId || item.auto) || (autonomous && !item.earlier && (live || spotlightBusy) && pending.length > 0);
+  // SB04: a change that waits for a click (asks first, or one that removes a step) stays a card with Apply and Dismiss, in a session or an autonomous reply too.
+  const waits = pending.length > 0 && holdsForClick(pending);
+  const asRows = !waits && (Boolean(item.testId || item.auto) || (autonomous && !item.earlier && (live || spotlightBusy) && pending.length > 0));
   // Within a session, the reply's texts are one: its first sentence, the rest on "Show more".
   // Autonomous replies that changed the flow too: the rows say what was done.
   const session = Boolean(item.testId) || (Boolean(item.auto) && !live && item.parts.some((p) => p.kind === 'proposal'));
