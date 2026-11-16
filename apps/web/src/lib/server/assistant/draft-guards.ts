@@ -4,6 +4,7 @@
  * draft keeps one trigger and no empty Set; each step that needs a credential says so (the person picks it).
  * Pure: the route calls it after `buildFlow`.
  */
+import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import { mergeLeft, type DraftLeft } from '@/lib/shared/draft-left';
 import type { NodeTypeInfo } from '@/lib/shared/types';
 import type { FlowDraft } from '../flow-builder';
@@ -17,6 +18,8 @@ export interface DraftGuardContext {
   /** Everything the person or the roster gave: the prompt and the published agents' and teams' descriptions. */
   known: string;
   byType: (type: string) => NodeTypeInfo | undefined;
+  /** A credential type's display name ("Slack API") by its name; without it the name itself is said. */
+  credentialName?: (name: string) => string | undefined;
 }
 
 /** The words a prompt uses for each kind of trigger. */
@@ -39,10 +42,12 @@ function names(info: NodeTypeInfo | undefined, prompt: string): boolean {
 
 export function guardDraft(draft: GuardedDraft, ctx: DraftGuardContext): GuardedDraft {
   const mine: DraftLeft[] = [];
+  /** Names of steps this guard removed: what the builder said was left for them goes too. */
+  const removed = new Set<string>();
   // A step of a type this workflow can't use (or doesn't exist) was already left out by the builder: say so.
   for (const line of draft.dropped) {
     const missing = /^node (.*) \(([^)]*)\)$/.exec(line);
-    if (missing) mine.push({ node: missing[1], kind: 'dropped', text: `“${missing[1]}”: ${missing[2] === 'no type' ? 'a step with no type' : `a ${missing[2]} step this workflow can’t use`} was left out` });
+    if (missing) mine.push({ node: missing[1], kind: 'dropped', text: `“${missing[1]}”: ${missing[2] === 'no type' ? 'a step with no type' : `a ${missing[2]} step that could not be used`} was left out` });
   }
   let nodes = draft.nodes.map((n) => ({ ...n }));
   let edges = draft.edges.map((e) => [...e] as FlowDraft['edges'][number]);
@@ -54,20 +59,25 @@ export function guardDraft(draft: GuardedDraft, ctx: DraftGuardContext): Guarded
     const keep = triggers.find((n) => names(ctx.byType(n.type), ctx.prompt)) ?? triggers[0];
     for (const gone of triggers.filter((n) => n !== keep)) {
       const targets = edges.filter(([from, , , type]) => from === gone.key && type === 'main');
-      const keptFeeds = edges.some(([from, , , type]) => from === keep.key && type === 'main');
-      if (!keptFeeds) for (const [, to, output] of targets) edges.push([keep.key, to, output, 'main']);
+      // Every target the kept trigger doesn't already feed is wired to it, so no step is left unreachable.
+      for (const [, to, output] of targets) {
+        if (!edges.some(([f, t, , ty]) => f === keep.key && t === to && ty === 'main')) edges.push([keep.key, to, output, 'main']);
+      }
       edges = edges.filter(([from, to]) => from !== gone.key && to !== gone.key);
       nodes = nodes.filter((n) => n !== gone);
       if (pinData?.[gone.key]) {
         const { [gone.key]: items, ...rest } = pinData;
         pinData = { [keep.key]: items, ...rest };
       }
+      removed.add(gone.name);
       mine.push({ node: gone.name, kind: 'dropped', text: `“${gone.name}”: a flow starts from one trigger, so it was left out and “${keep.name}” kept` });
     }
   }
 
   // No empty Set (1.6): nothing to set and no step reads it.
   for (const set of nodes.filter((n) => n.type === 'core.set')) {
+    // A Set with no `fields` at all counts as empty too (the editor would add a default "greeting" field, which is junk
+    // nobody asked for), so it is removed like one with an empty list.
     const p = set.parameters ?? {};
     const fields = (p.fields as { values?: unknown[] } | undefined)?.values;
     if ((p.mode ?? 'manual') !== 'manual' || (Array.isArray(fields) && fields.length) || (fields !== undefined && !Array.isArray(fields))) continue;
@@ -78,6 +88,7 @@ export function guardDraft(draft: GuardedDraft, ctx: DraftGuardContext): Guarded
     edges = edges.filter(([from, to]) => from !== set.key && to !== set.key);
     for (const [from, , output] of into) for (const [, to] of out) if (!edges.some(([f, t, o, ty]) => f === from && t === to && o === output && ty === 'main')) edges.push([from, to, output, 'main']);
     nodes = nodes.filter((n) => n !== set);
+    removed.add(set.name);
     mine.push({ node: set.name, kind: 'dropped', text: `“${set.name}”: it set no fields and nothing reads it, so it was left out` });
   }
 
@@ -99,9 +110,15 @@ export function guardDraft(draft: GuardedDraft, ctx: DraftGuardContext): Guarded
   // Credentials: the person picks one; a draft never holds one.
   for (const n of nodes) {
     const info = ctx.byType(n.type);
-    if (!info?.descriptor.credentials?.some((c) => c.required !== false)) continue;
-    mine.push({ node: n.name, field: 'credential', kind: 'credential', text: `“${n.name}” needs a ${info.pluginName} credential: pick one` });
+    if (!info) continue;
+    // As the chat's credentialWarnings: a slot counts when it is required and shown for this step's parameters.
+    const parameters = withPropertyDefaults(info.descriptor.properties, n.parameters ?? {});
+    for (const c of info.descriptor.credentials ?? []) {
+      if (!c.required || !isPropertyVisible(c, parameters)) continue;
+      const label = ctx.credentialName?.(c.name) ?? c.name;
+      mine.push({ node: n.name, field: 'credential', kind: 'credential', text: `“${n.name}” needs a ${label} credential: pick one` });
+    }
   }
 
-  return { ...draft, nodes, edges, pinData, left: mergeLeft(draft.left, mine) };
+  return { ...draft, nodes, edges, pinData, left: mergeLeft(draft.left?.filter((l) => !removed.has(l.node)), mine) };
 }

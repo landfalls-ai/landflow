@@ -10,13 +10,12 @@ const nodesOf = (o: Outcome) => (((o.draft ?? {}) as { nodes?: Array<{ type: str
 
 const madeUpGone: Check = {
   id: 'ids-asked-not-made-up',
-  label: 'No channel, table or team the ask did not give',
+  label: 'No address or table the ask did not give',
   judge: (o) => {
     const text = JSON.stringify(nodesOf(o).map((n) => n.parameters ?? {}));
-    return !/#bugs|"table":"bugs"|"teamId":"ENG"/.test(text) && left(o).some((l) => l.kind === 'made-up');
+    return !/made-up\.example|dt_bug_triage/.test(text) && left(o).filter((l) => l.kind === 'made-up').length >= 2;
   },
 };
-const credentialsListed: Check = { id: 'credentials-listed', label: 'Steps that need a credential are listed', judge: (o) => left(o).filter((l) => l.kind === 'credential').length >= 2 };
 const oneTrigger: Check = { id: 'no-junk-nodes', label: 'One trigger', judge: (o) => nodesOf(o).filter((n) => /trigger|schedule|webhook/i.test(n.type)).length === 1 };
 
 const flow = (): Workflow => ({
@@ -35,7 +34,7 @@ export default defineScenarios([
     owner: 'SB02',
     job: 'build',
     via: 'build',
-    title: 'A draft does not invent a channel, a table or a team',
+    title: 'A draft does not invent an address or a table (core types only: the unit harness registers the core plugin; the live form can use Slack and Linear)',
     ask: 'Every morning, get the new bugs and post a summary to Slack, and save each bug to a table',
     script: [
       {
@@ -43,15 +42,14 @@ export default defineScenarios([
           name: 'Bug digest',
           nodes: [
             { key: 't', type: 'core.schedule', name: 'Every morning', parameters: {} },
-            { key: 'bugs', type: 'linear.issues', name: 'Get bugs', parameters: { teamId: 'ENG' } },
-            { key: 'slack', type: 'messaging.slack', name: 'Post to Slack', parameters: { channel: '#bugs', text: '{{ $json.title }}' } },
-            { key: 'save', type: 'core.dataTable', name: 'Save bug', parameters: { operation: 'insert', table: 'bugs' } },
+            { key: 'bugs', type: 'core.httpRequest', name: 'Get bugs', parameters: { method: 'GET', url: 'https://made-up.example/bugs?id={{ $json.id }}' } },
+            { key: 'save', type: 'core.dataTable', name: 'Save bug', parameters: { operation: 'insert', dataTableId: 'dt_bug_triage' } },
           ],
-          connections: [{ from: 't', to: 'bugs' }, { from: 'bugs', to: 'slack' }, { from: 'slack', to: 'save' }],
+          connections: [{ from: 't', to: 'bugs' }, { from: 'bugs', to: 'save' }],
         }),
       },
     ],
-    checks: [madeUpGone, credentialsListed, oneTrigger],
+    checks: [madeUpGone, oneTrigger],
   },
   {
     id: 'sb02-two-triggers',

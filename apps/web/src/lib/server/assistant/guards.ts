@@ -64,7 +64,7 @@ const URL_PARAMETER = /^(url|baseUrl|webhookUrl)$/;
  * A value with a "#", "@", ".", "/", "_", "-" or a digit is specific enough that finding it is the answer.
  */
 function namedAs(value: string, known: string): boolean {
-  if (/[#@./_\-\d]/.test(value) || !/^[\w ]+$/.test(value)) return known.includes(value);
+  if (/[#@./_\-\d]/.test(value) || !/^[\w ]+$/.test(value)) return known.toLowerCase().includes(value.toLowerCase());
   const word = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`(?:["'“‘\`]${word}["'”’\`])|(?:\\b(?:called|named|table|channel|sheet|repo|repository|project|board|team|owner|into|in|to)\\s+["'“‘\`#@]?${word}\\b)`, 'i').test(known);
 }
@@ -73,6 +73,22 @@ function namedAs(value: string, known: string): boolean {
 function hostOf(value: string): string | undefined {
   const match = /^\s*(?:[a-z][a-z0-9+.-]*:\/\/)?(?:[^/@\s]*@)?(\[[^\]]+\]|[^/\s:?#]+)/i.exec(value);
   return match?.[1].toLowerCase();
+}
+
+/** Whether `text` names `host` as a whole host: "example.com" is not in "myexample.com" or "api.example.com". */
+function mentionsHost(text: string, host: string): boolean {
+  const escaped = host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:^|[^a-z0-9.-])${escaped}(?![a-z0-9-])`, 'i').test(text);
+}
+
+/**
+ * The host a URL with expressions in it names in its literal start ("https://x.com/users/{{ $json.id }}" → "x.com"); undefined
+ * when the value is a whole expression or the host itself is one (the literal part ends before the host does).
+ */
+function literalHostOf(value: string): string | undefined {
+  const prefix = value.slice(0, value.indexOf('{{'));
+  const rest = prefix.replace(/^\s*[a-z][a-z0-9+.-]*:\/\//i, '');
+  return /^[^/\s?#]+[/?#]/.test(rest) ? hostOf(rest) : undefined;
 }
 
 /**
@@ -88,15 +104,23 @@ export function withoutInventedIds(ops: unknown, known: string, typeText: (op: R
   const clean = (op: Record<string, unknown>, node: unknown, parameters: unknown) => {
     if (!parameters || typeof parameters !== 'object') return parameters;
     const out = { ...(parameters as Record<string, unknown>) };
-    const lower = known.toLowerCase();
     for (const [key, value] of Object.entries(out)) {
-      if (typeof value !== 'string' || !value.trim() || value.includes('{{')) continue;
+      if (typeof value !== 'string' || !value.trim()) continue;
       const isId = ID_PARAMETER.test(key);
+      if (value.includes('{{')) {
+        // An expression is kept, but a URL that starts with a literal host nobody gave is judged like a plain one.
+        const host = !isId && URL_PARAMETER.test(key) ? literalHostOf(value) : undefined;
+        if (!host || mentionsHost(known, host) || mentionsHost(typeText(op), host)) continue;
+        invented.push(`${key} of “${String(node)}”: a host nobody gave (${host}), left for the user to fill in`);
+        delete out[key];
+        values.push(value);
+        continue;
+      }
       if (!isId && !DESTINATION_PARAMETER.test(key) && !URL_PARAMETER.test(key)) continue;
       if (typeText(op).includes(JSON.stringify(value)) || (isId || URL_PARAMETER.test(key) ? known.includes(value) : namedAs(value, known))) continue;
       if (!isId && URL_PARAMETER.test(key)) {
         const host = hostOf(value);
-        if (!host || lower.includes(host) || typeText(op).toLowerCase().includes(host)) continue;
+        if (!host || mentionsHost(known, host) || mentionsHost(typeText(op), host)) continue;
         invented.push(`${key} of “${String(node)}”: a host nobody gave (${host}), left for the user to fill in`);
       } else {
         invented.push(`${key} of “${String(node)}”: ${isId ? 'an id' : `a ${key}`} nobody gave, left for the user to fill in`);

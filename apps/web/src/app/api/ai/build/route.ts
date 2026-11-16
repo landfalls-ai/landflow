@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { registry } from '@/lib/server/plugins/registry';
 import { guardDraft } from '@/lib/server/assistant/draft-guards';
 import { roster } from '@/lib/server/assistant/roster';
 import { allowedTypes } from '@/lib/server/assistant/scope';
@@ -23,8 +24,9 @@ export const POST = handler(async (request: Request) => {
     const types = allowedTypes(parsed.data.workflowId);
     const draft = await buildFlow(parsed.data.prompt, parsed.data.model, teams, agents, { types });
     const byType = new Map(types.map((t) => [t.type, t]));
+    const credentialNames = new Map(registry.credentialTypes().flatMap((c) => [[c.descriptor.name, c.descriptor.displayName], [c.type, c.descriptor.displayName]] as const));
     const known = [parsed.data.prompt, agents.length ? describeAgents(agents) : '', teams.length ? describeTeams([...teams]) : ''].join('\n');
-    return json({ draft: guardDraft(draft, { prompt: parsed.data.prompt, known, byType: (type) => byType.get(type) }) });
+    return json({ draft: guardDraft(draft, { prompt: parsed.data.prompt, known, byType: (type) => byType.get(type), credentialName: (name) => credentialNames.get(name) }) });
   } catch (e) {
     return error((e as Error).message, 502);
   }

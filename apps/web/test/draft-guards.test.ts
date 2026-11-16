@@ -33,14 +33,14 @@ afterAll(async () => {
 });
 
 type Draft = Parameters<typeof guardDraft>[0];
-const info = (type: string, kind: 'trigger' | 'action', extra: { triggerSource?: string; credentials?: Array<{ name: string }>; pluginName?: string } = {}): NodeTypeInfo =>
+const info = (type: string, kind: 'trigger' | 'action', extra: { triggerSource?: string; credentials?: Array<{ name: string; required?: boolean }>; pluginName?: string } = {}): NodeTypeInfo =>
   ({ type, pluginId: type.split('.')[0], pluginName: extra.pluginName ?? 'Core', language: 'ts', transport: 'http', available: true, descriptor: { name: type, displayName: type, description: '', version: 1, kind, triggerSource: extra.triggerSource, inputs: [], outputs: [], properties: [], credentials: extra.credentials } }) as unknown as NodeTypeInfo;
 const TYPES = new Map<string, NodeTypeInfo>([
   ['core.manualTrigger', info('core.manualTrigger', 'trigger', { triggerSource: 'manual' })],
   ['core.schedule', info('core.schedule', 'trigger', { triggerSource: 'schedule' })],
   ['core.set', info('core.set', 'action')],
-  ['messaging.slack', info('messaging.slack', 'action', { credentials: [{ name: 'slackApi' }], pluginName: 'Slack' })],
-  ['linear.issues', info('linear.issues', 'action', { credentials: [{ name: 'linearApi' }], pluginName: 'Linear' })],
+  ['messaging.slack', info('messaging.slack', 'action', { credentials: [{ name: 'slackApi', required: true }], pluginName: 'Slack' })],
+  ['linear.issues', info('linear.issues', 'action', { credentials: [{ name: 'linearApi', required: true }], pluginName: 'Linear' })],
   ['core.table', info('core.table', 'action')],
   ['core.httpRequest', info('core.httpRequest', 'action')],
 ]);
@@ -89,6 +89,34 @@ describe('made-up values in a first draft', () => {
     const out = guardDraft(d, ctx('post the result to http://127.0.0.1:3403/vip'));
     expect(out.nodes[1].parameters).toEqual({});
     expect(out.left!.find((l) => l.kind === 'made-up')!.text).toContain('url');
+  });
+});
+
+describe('credentials, with the real core types', () => {
+  const real = (t: string) => registry.nodeTypes().find((i) => i.type === t);
+  const agent = (parameters?: Record<string, unknown>) => draftOf([node('t', 'core.manualTrigger', 'Run'), node('a', 'core.aiAgent', 'Agent', parameters)], [main('t', 'a')]);
+  const run = (d: Draft) => guardDraft(d, { prompt: 'run an agent', known: 'run an agent', byType: real, credentialName: (n) => (/slack/i.test(n) ? 'Slack API' : undefined) });
+
+  it('lists none for an AI Agent step with default parameters', () => {
+    expect(real('core.aiAgent')).toBeDefined();
+    expect(run(agent()).left?.filter((l) => l.kind === 'credential') ?? []).toEqual([]);
+  });
+
+  it('lists the Slack credential when the agent asks in Slack, by its type name', () => {
+    const left = run(agent({ approvalChannel: 'slack', requireApproval: 'all' })).left!.filter((l) => l.kind === 'credential');
+    expect(left).toHaveLength(1);
+    expect(left[0].text).toContain('Slack');
+    expect(left[0].text).not.toContain('Landflow Core');
+  });
+});
+
+describe('a removed step’s leftovers', () => {
+  it('drops what the builder left for a trigger this guard removed, and wires every step the kept trigger did not feed', () => {
+    const d = { ...draftOf([node('m', 'core.manualTrigger', 'Run'), node('s', 'core.schedule', 'Every morning'), node('a', 'core.httpRequest', 'A'), node('b', 'core.httpRequest', 'B'), node('c', 'core.httpRequest', 'C')], [main('m', 'a'), main('a', 'b'), main('s', 'c')]), left: [{ node: 'Run', kind: 'empty' as const, text: 'Run is empty' }] };
+    const out = guardDraft(d as Draft, ctx('every morning'));
+    expect(out.left!.some((l) => l.kind === 'empty')).toBe(false);
+    expect(out.edges).toContainEqual(main('s', 'a'));
+    expect(out.edges).toContainEqual(main('s', 'c'));
   });
 });
 
