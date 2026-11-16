@@ -429,12 +429,15 @@ for the period (24 hours, 7, 30 or 90 days, or a custom range of up to 400 days)
 
 - **Totals**: the estimated cost, the tokens (in and out, and cached) and the calls. Cost comes from Landflow's own price
   table (Settings → AI prices), as everywhere else; a cost the gateway reports is not used for these totals.
+- **You** (everyone; first on the page): your own AI spend today, this month and in the period, the models you used
+  (one a local model nobody priced says "Not priced") and your own caps (your own set, or the default for everyone),
+  from `GET /api/insights/ai/me`. It holds only your rows and your caps; other people's caps stay private.
 - **Spend by** project, goal, agent, workflow, person, model, source, credential, surface or purpose. Each row has its cost, tokens, calls and a bar for its share of
   the cost. A project row with no project on it counts under the workflow's or agent's home project; calls from no
   agent (workflows, Spotlight) are "No agent". The Goal grouping uses the goal each call was stamped with
   ([what a goal costs](projects-and-goals.md#what-a-goal-costs)): "No goal" when there is none, "Another goal" for one
   you can't see. Sources are "Landflow" (calls Landflow made), "kagent", "Claude Code on
-  kagent" and "Other clients of the gateway" (the last three come from the spend import, once it has run). Workflows are named (a link when you can read them, "Another workflow" when not, "No workflow"); credentials by their
+  kagent" and "Other clients of the gateway" (the last three come from the spend import, once it has run). A model with no price whose calls cost nothing is marked "Not priced" (a local model nobody priced); a **Sort by tokens** switch for the Model group ranks by tokens, and admins get **Set a price**, a link to Settings → AI prices. Workflows are named (a link when you can read them, "Another workflow" when not, "No workflow"); credentials by their
   name when you can read them, else "Another credential" (never an id); a surface is "Spotlight", "Agent architect",
   "Ask the brain" or "Runs and agents"; a purpose is its name or "No purpose". Each list
   holds the top 50; the rest add up as "Other". On a phone each row is a card; desktop shows a table.

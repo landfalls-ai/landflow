@@ -1899,6 +1899,13 @@ export const MIGRATIONS: Migration[] = [
       `INSERT INTO ai_usage_daily (day, project_id, goal_id, agent_id, workflow_id, user_id, credential_id, surface, purpose, provider, model, source, runtime, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, calls, runs, cost) SELECT day, COALESCE(project_id, ''), COALESCE(goal_id, ''), COALESCE(agent_id, ''), COALESCE(workflow_id, ''), COALESCE(user_id, ''), COALESCE(credential_id, ''), COALESCE(surface, ''), COALESCE(purpose, ''), COALESCE(provider, ''), COALESCE(model, ''), COALESCE(source, ''), COALESCE(runtime, ''), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0), COALESCE(SUM(cache_read_tokens), 0), COALESCE(SUM(cache_write_tokens), 0), COUNT(*), COUNT(DISTINCT COALESCE(execution_id, session_id)), COALESCE(SUM(cost), 0) FROM ai_usage GROUP BY day, COALESCE(project_id, ''), COALESCE(goal_id, ''), COALESCE(agent_id, ''), COALESCE(workflow_id, ''), COALESCE(user_id, ''), COALESCE(credential_id, ''), COALESCE(surface, ''), COALESCE(purpose, ''), COALESCE(provider, ''), COALESCE(model, ''), COALESCE(source, ''), COALESCE(runtime, '')`,
     ],
   },
+  // SP12: the gateway's own name for the provider an imported call ran on (`ollama_chat`), so local models are known (docs/llm-gateway.md#the-ai-page)
+  {
+    version: 2903,
+    name: 'ai_usage_gateway_provider',
+    statements: [],
+    addColumns: [{ table: 'ai_usage', column: 'gateway_provider', definition: 'TEXT' }],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */

@@ -1217,6 +1217,32 @@ function paths(): Record<string, Record<string, Json>> {
     responses: { 200: reply('The settings', object({ settings: settingsDoc, jsonRender: { type: 'boolean' } })), 400: invalid, 403: errorRef('Not the owner (json-render)') },
   });
 
+  // SP12: the caller's own AI spend, and the local models Settings lists (docs/llm-gateway.md, "The AI page").
+  const spendTotals = { inputTokens: { type: 'integer' }, outputTokens: { type: 'integer' }, cacheReadTokens: { type: 'integer' }, cacheWriteTokens: { type: 'integer' }, cost: { type: 'number' }, calls: { type: 'integer' }, unpricedCalls: { type: 'integer' }, runs: { type: 'integer' } };
+  const spendTotalsDoc = object(spendTotals, ['inputTokens', 'outputTokens', 'cost', 'calls', 'unpricedCalls', 'runs']);
+  const spendRowDoc = object({ ...spendTotals, key: { type: 'string' }, label: { type: 'string' }, share: { type: 'number' }, unpriced: { type: 'boolean', description: 'A model with no price whose calls cost nothing (a local model nobody priced)' } }, ['key', 'label', 'share']);
+  add('get', '/api/insights/ai/me', {
+    tag: 'Insights',
+    id: 'getMyAiSpend',
+    summary: 'Your own AI spend',
+    description: 'Only the caller’s own rows (today, this month, the period’s days, by model, purpose and surface) and the caller’s own user caps (their own set, or the default for everyone); never anyone else’s. No prompt text.',
+    query: [{ name: 'period', description: '`24h`, `7d` (default), `30d` or `90d`', schema: { type: 'string', enum: ['24h', '7d', '30d', '90d'] } }],
+    responses: {
+      200: reply(
+        'Your spend',
+        object({ today: spendTotalsDoc, month: spendTotalsDoc, period: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' }, series: array(object({ at: { type: 'string' }, cost: { type: 'number' }, inputTokens: { type: 'integer' }, outputTokens: { type: 'integer' }, calls: { type: 'integer' } })), byModel: array(spendRowDoc), byPurpose: array(spendRowDoc), bySurface: array(spendRowDoc), caps: array(object({ id: { type: 'string' }, subject: { type: 'string' }, period: { type: 'string', enum: ['day', 'month'] }, metric: { type: 'string', enum: ['tokens', 'cost'] }, max: { type: 'number' }, used: { type: 'number' }, ratio: { type: 'number' } })) }, ['today', 'month', 'series', 'byModel', 'byPurpose', 'bySurface', 'caps']),
+      ),
+      400: invalid,
+    },
+  });
+  add('get', '/api/settings/ai-prices/local', {
+    tag: 'Settings',
+    id: 'listLocalModels',
+    summary: 'The local models seen in the last 30 days',
+    description: 'Every model seen on a local provider (Ollama through Landflow or the gateway) with its calls and tokens, and the override that prices it now (`price` absent: not priced). A price saved with `PUT /api/settings/ai-prices` applies from then on; recorded calls keep their cost.',
+    responses: { 200: reply('The local models', array(object({ model: { type: 'string' }, providers: array({ type: 'string' }), calls: { type: 'integer' }, inputTokens: { type: 'integer' }, outputTokens: { type: 'integer' }, lastAt: { type: 'string' }, price: object({ provider: { type: 'string' }, model: { type: 'string' }, input: { type: 'number' }, output: { type: 'number' } }) }, ['model', 'providers', 'calls', 'inputTokens', 'outputTokens', 'lastAt']))) },
+  });
+
   // ---- goals and project briefs (PC01; docs/projects-and-goals.md) ----
   const goalDoc = object({ id: { type: 'string' }, title: { type: 'string' }, why: { type: 'string' }, level: { type: 'string', enum: ['company', 'project'] }, status: { type: 'string', enum: ['planned', 'active', 'achieved', 'cancelled'] }, ownerId: { type: 'string' }, ownerName: { type: 'string' }, targetDate: { type: 'string', description: 'YYYY-MM-DD' }, parentId: { type: 'string' }, projectId: { type: 'string' }, projects: array(object({ id: { type: 'string' }, name: { type: 'string' } })), initiatives: array(object({ id: { type: 'string' }, name: { type: 'string' } })), canEdit: { type: 'boolean' }, createdAt: { type: 'string' }, updatedAt: { type: 'string' } }, ['id', 'title', 'level', 'status', 'projects', 'initiatives', 'canEdit']);
   const goalReply = (description: string) => reply(description, object({ goal: goalDoc }, ['goal']));
@@ -2825,8 +2851,8 @@ export function openApiDocument(origin?: string): Record<string, unknown> {
       { name: 'Conversations', description: 'A person’s own chats with Spotlight, the brain and the Agent architect, and their personal preferences: session only, owner only (docs/assistant.md#conversation-history)' },
       { name: 'Practices', description: 'Rules in the brain that connected agents follow: drafts, versions, approval by a person, waivers (docs/practices.md)' },
       { name: 'Projects', description: 'A project’s context block for a harness, found by repository or id (docs/connect-your-harness.md#project-context)' },
-      // SP09, SP11:
-      { name: 'Insights', description: 'The AI page: spend, the runs and model calls behind a number (JSON or CSV), the month-end forecast against caps and budgets, and the prompt cache (docs/llm-gateway.md, “The AI page”)' },
+      // SP09, SP11, SP12:
+      { name: 'Insights', description: 'The AI page: spend, the runs and model calls behind a number (JSON or CSV), the month-end forecast against caps and budgets, the prompt cache and the caller’s own spend (docs/llm-gateway.md, “The AI page”)' },
       { name: 'MCP', description: 'Agents and MCP (docs/transports.md): Landflow-issued MCP tokens, tool grants, the JWKS, the plugin catalog (server.json, the registry API) and protected resource metadata' },
     ],
     security: [{ bearerAuth: [] }, { apiKeyHeader: [] }, { sessionCookie: [] }],

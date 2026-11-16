@@ -53,6 +53,17 @@ function fromSet(set: UsageCapSet, prefix: string, subject: string, setIn: strin
   return caps;
 }
 
+/** One person's own user caps (their own set, or the default for everyone), even before their first call; nothing else is built. */
+export function userCaps(userId: string, meter: AiUsageMeter = aiUsageMeter()): WatchedCap[] {
+  const configured = meter.caps();
+  const settingsLink = `${publicUrl()}/settings#ai-caps`;
+  const totals = (period: 'day' | 'month') => meter.sinceTotals('user_id', userId, period);
+  const own = configured.users[userId];
+  if (own) return fromSet(own, `user:${userId}`, `user “${own.name || userId}”`, 'Settings → AI caps', settingsLink, totals);
+  if (configured.allUsers) return fromSet(configured.allUsers, `user:${userId}`, `user “${userName(userId)}” (the cap for every user)`, 'Settings → AI caps', settingsLink, totals);
+  return [];
+}
+
 /** Every cap with a period that is set now, with its current usage. */
 export function watchedCaps(meter: AiUsageMeter = aiUsageMeter()): WatchedCap[] {
   const caps: WatchedCap[] = [];

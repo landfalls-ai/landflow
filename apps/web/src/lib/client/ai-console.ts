@@ -65,7 +65,15 @@ export function rowModel(row: AiConsoleRow) {
     calls: `${row.calls.toLocaleString('en-US')} call${row.calls === 1 ? '' : 's'}`,
     share: formatPercent(row.share),
     bar: barPercent(row.share),
+    // SP12: a model with no price whose calls cost nothing.
+    unpriced: Boolean(row.unpriced),
   };
+}
+
+/** SP12: most tokens first (a local model nobody priced costs $0 and would sink to the bottom), then cost, then name. "Other" stays last. */
+export function sortByTokens(rows: AiConsoleRow[]): AiConsoleRow[] {
+  const last = (row: AiConsoleRow) => (row.key === 'other' ? 1 : 0);
+  return [...rows].sort((a, b) => last(a) - last(b) || totalTokens(b) - totalTokens(a) || b.cost - a.cost || a.label.localeCompare(b.label));
 }
 
 /** Cost first, then tokens, then name: the order the server sends, for a client that merges or re-sorts rows. */

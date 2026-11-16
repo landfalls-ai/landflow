@@ -10,7 +10,7 @@ import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ChevronRight } from 'lucide-react';
 import { api } from '@/lib/client/api';
-import { AI_GROUPS, AI_PERIODS, applyFilterHref, drillLabel, drillable, fillDays, filterChips, parseView, previousRange, rangeDays, rangeProblem, reportQuery, rowModel, totalTokens, viewParams, viewReady, withoutFilter, type AiView } from '@/lib/client/ai-console';
+import { AI_GROUPS, AI_PERIODS, applyFilterHref, drillLabel, drillable, fillDays, filterChips, parseView, previousRange, rangeDays, rangeProblem, reportQuery, rowModel, sortByTokens, totalTokens, viewParams, viewReady, withoutFilter, type AiView } from '@/lib/client/ai-console';
 import { formatCache, formatCost, formatTokens } from '@/lib/shared/ai-usage';
 import type { AiConsoleReport, AiConsoleRow, AiConsoleTotals, GatewayStatus } from '@/lib/shared/llm-gateway';
 import type { AiPageReport, AiSpendGroup, AiSpendPeriod, AiSpendPoint } from '@/lib/shared/ai-spend';
@@ -26,16 +26,32 @@ import { GatewayCard } from './ai-console-gateway';
 import { AiDrill } from './ai-drill';
 import { AiMovers } from './ai-movers';
 import { AiTrend } from './ai-trend';
+import { MyAiSpend } from './my-ai-spend'; // SP12:
 
 const REFRESH_MS = 60_000;
 
-function Label({ row, hrefFor }: { row: ReturnType<typeof rowModel>; hrefFor?: (href: string) => string }) {
-  return row.href ? (
+function Label({ row, hrefFor, admin }: { row: ReturnType<typeof rowModel>; hrefFor?: (href: string) => string; admin?: boolean }) {
+  const name = row.href ? (
     <Link href={hrefFor ? hrefFor(row.href) : row.href} className="text-t1 hover:text-ac hover:underline">
       {row.label}
     </Link>
   ) : (
     <span className="text-t1">{row.label}</span>
+  );
+  // SP12: a model nobody priced costs $0 here; admins can price it in Settings.
+  if (!row.unpriced) return name;
+  return (
+    <>
+      {name}
+      <span className="ml-2 whitespace-nowrap rounded-full border border-hair px-1.5 py-px text-[11px] font-normal text-t3" title="No price for this model: its calls count as $0">
+        Not priced
+      </span>
+      {admin && (
+        <Link href="/settings#ai-prices" className="ml-2 whitespace-nowrap text-[12px] font-normal text-t2 underline-offset-2 hover:underline">
+          Set a price
+        </Link>
+      )}
+    </>
   );
 }
 
@@ -47,14 +63,15 @@ function ShareBar({ percent }: { percent: number }) {
   );
 }
 
-export function SpendBy({ rows, label, onOpen, hrefFor }: { rows: AiConsoleRow[]; label: string; onOpen?: (row: AiConsoleRow) => void; hrefFor?: (href: string) => string }) {
+export function SpendBy({ rows, label, onOpen, hrefFor, admin, byTokens }: { rows: AiConsoleRow[]; label: string; onOpen?: (row: AiConsoleRow) => void; hrefFor?: (href: string) => string; admin?: boolean; byTokens?: boolean }) {
   // SP10: a click on a row (not on a link in it) opens its runs; a button keeps that reachable by keyboard.
   const openable = (row: AiConsoleRow) => Boolean(onOpen) && drillable(row);
   const rowClick = (row: AiConsoleRow) => (e: React.MouseEvent) => {
     if (openable(row) && !(e.target as HTMLElement).closest('a,button')) onOpen!(row);
   };
   const byKey = new Map(rows.map((r) => [r.key, r]));
-  const models = rows.map(rowModel);
+  // SP12: the model group can rank by tokens (a local model nobody priced costs $0).
+  const models = (byTokens ? sortByTokens(rows) : rows).map(rowModel);
   if (models.length === 0) return <p className="px-4 py-4 text-[13px] text-t3">Nothing to show for this period.</p>;
   return (
     <>
@@ -73,7 +90,7 @@ export function SpendBy({ rows, label, onOpen, hrefFor }: { rows: AiConsoleRow[]
           {models.map((row) => (
             <tr key={row.key} onClick={rowClick(byKey.get(row.key)!)} className={cn('border-b border-hair last:border-0', openable(byKey.get(row.key)!) && 'cursor-pointer hover:bg-acdim')}>
               <td className="max-w-[320px] truncate px-4 py-2.5" title={row.label}>
-                <Label row={row} hrefFor={hrefFor} />
+                <Label row={row} hrefFor={hrefFor} admin={admin} />
               </td>
               <td className="px-3 py-2.5 text-right tabular-nums text-t1">{row.cost}</td>
               <td className="px-3 py-2.5 text-right tabular-nums text-t2" title={row.tokenDetail}>
@@ -104,7 +121,7 @@ export function SpendBy({ rows, label, onOpen, hrefFor }: { rows: AiConsoleRow[]
           <li key={row.key} onClick={rowClick(byKey.get(row.key)!)} className={cn('flex flex-col gap-1.5 px-4 py-3', openable(byKey.get(row.key)!) && 'cursor-pointer')}>
             <div className="flex items-baseline gap-3">
               <span className="min-w-0 flex-1 break-words text-[14px] font-medium">
-                <Label row={row} hrefFor={hrefFor} />
+                <Label row={row} hrefFor={hrefFor} admin={admin} />
               </span>
               <span className="text-[14px] font-semibold tabular-nums text-t1">{row.cost}</span>
             </div>
@@ -186,6 +203,8 @@ export function AiConsole() {
 
   const [loaded, setLoaded] = useState<{ key: string; report: AiPageReport }>();
   const [previous, setPrevious] = useState<{ key: string; series: AiSpendPoint[] }>();
+  // SP12: the model group's "Sort by tokens".
+  const [byTokens, setByTokens] = useState(false);
   const [status, setStatus] = useState<GatewayStatus>();
   const [error, setError] = useState<string>();
   const requestId = useRef(0);
@@ -278,6 +297,8 @@ export function AiConsole() {
             ))}
           </ul>
         )}
+        {/* SP12: your own spend, first, for everyone (an owner or admin sees everyone's below too); its route takes no custom range */}
+        {shown && view.period !== 'custom' && <MyAiSpend period={view.period} />}
         <Totals report={shown && asConsole(shown)} />
         {shown && shown.totals.calls === 0 && <p className="text-[13px] text-t3">No AI calls in this period.</p>}
         {/* SP10: the trend and the movers */}
@@ -290,7 +311,14 @@ export function AiConsole() {
         <Card className="overflow-hidden p-0">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-hair px-4 py-2.5">
             <SectionLabel>Spend by</SectionLabel>
-            <div className="ml-auto max-md:ml-0 max-md:w-full">
+            {/* SP12: the 'Sort by tokens' checkbox on the model group */}
+            {view.group === 'model' && (
+              <label className="ml-auto flex items-center gap-1.5 text-[12px] text-t2 max-md:ml-0">
+                <input type="checkbox" checked={byTokens} onChange={(e) => setByTokens(e.target.checked)} />
+                Sort by tokens
+              </label>
+            )}
+            <div className={cn(view.group !== 'model' && 'ml-auto', 'max-md:ml-0 max-md:w-full')}>
               <Select value={view.group} onChange={(e) => go({ ...view, group: e.target.value as AiSpendGroup, drill: undefined })} aria-label="Spend by" className="h-8 w-auto min-w-[150px] py-0 text-[13px] max-md:w-full">
                 {AI_GROUPS.map((g) => (
                   <option key={g.value} value={g.value}>
@@ -301,7 +329,7 @@ export function AiConsole() {
             </div>
           </div>
           {shown && view.group === 'person' && <PeopleTotal totals={shown.peopleTotals} admin={shown.viewer.admin} />}
-          {shown ? <SpendBy rows={shown.groups[view.group]} label={label} onOpen={(row) => open(view.group, row.key)} hrefFor={(href) => applyFilterHref(view, href)} /> : <div className="m-4 h-24 rounded-xl bg-acdim animate-pulse-soft" />}
+          {shown ? <SpendBy rows={shown.groups[view.group]} label={label} onOpen={(row) => open(view.group, row.key)} hrefFor={(href) => applyFilterHref(view, href)} admin={shown.viewer.admin} byTokens={view.group === 'model' && byTokens} /> : <div className="m-4 h-24 rounded-xl bg-acdim animate-pulse-soft" />}
         </Card>
         <AiForecastCard /> {/* SP11: */}
         {shown && <CapsCard report={asConsole(shown)} onChanged={() => load()} />}
