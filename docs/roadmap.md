@@ -2345,9 +2345,16 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
 - **SB06, the Agent architect on a local model, built:** the dialog offers the flat `propose_design` (with the persona
   fields as plain strings) on an Ollama model, and a parse error is retried with it
   ([agents.md](agents.md#agent-architect)).
-- **Owed after the merge (carryover):** the live checks of the wave (the scorecard after, the httpbin incident
-  replayed with and without `LANDFLOW_OUTBOUND_ALLOW`, the question 3 of 3, the first drafts with the plugins started
-  locally, the docs and Linear agent and both Agent architect requests, all under `local-only.cjs` on Ollama in headed
-  Chrome), since the gate has no live host; and, for a person, the asks-first wording and the **Needs you** rows on a
-  real phone, and whether "saved" should end autonomy at the first autosave rather than at the next open (decision D1
-  reads it at the next open).
+- **Live checks (run before the merge, production profile, Ollama qwen3-coder:30b, headed Chrome, under
+  `local-only.cjs`, nothing refused):** the httpbin incident replayed: without `LANDFLOW_OUTBOUND_ALLOW` the test stops
+  at "Needs you · This host blocks …", both HTTP steps keep their local addresses, nothing is sent and there is no
+  "Ready for production"; with the allow list a saved flow asks first, a fix waits as a card and Apply runs again (1500
+  to /vip, 500 to /standard). "Why did the last run fail?" is answered with no change and a Fix it bubble 3 of 3. First
+  drafts fill their collections 3 of 3 for every build (the evaluation had 0 of 9), B4 runs right 3 of 3, and the
+  Linear/Slack draft clears the made-up channel and lists it with both credentials. The Agent architect drafts 6 of 6
+  on the local model (0 of 7 before). Left for wave sb2: a new agent's placement and tools (placed right 1 of 3, the
+  Linear tool kept 0 of 3), the 401 fix touching only the asked step (1 of 3 on the scorecard), a suggestion chip that
+  offers an outside address after a host block, the live form of the session scenarios, and "Test and fix" after a
+  reload.
+- **Owed to a person:** the asks-first wording and the **Needs you** rows on a real phone, and whether "saved" should
+  end autonomy at the first autosave rather than at the next open (decision D1 reads it at the next open).
