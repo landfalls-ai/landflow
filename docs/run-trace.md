@@ -681,7 +681,8 @@ spend. See [limitations](limitations.md#call-attribution-wave-11).
 
 A run that used model tokens has a **Spend** tab (after Artifacts; desktop first, on a phone it only must not scroll
 sideways). It reads `GET /api/executions/:id/spend` (the route and its numbers are SP05's) and again every 10 seconds
-while the run is live; the model steps' sheets read the same answer (one read per run, shared), not one each. Tokens, models and cost are what happened in the run, never behind the developer-details switch.
+while the run is live; the model steps' sheets read the same answer (one read per run, shared), not one each. Tokens,
+models and cost are what happened in the run, never behind the developer-details switch.
 
 - **The totals**: cost, tokens in and out, cached tokens and calls. "n unpriced calls" means the tokens count and the
   cost does not; admins get a link to Settings → AI prices (`/settings#ai-prices`). "n runs you can't open: $X" counts
@@ -727,7 +728,8 @@ tab reads, shared) by the rule above, then reads its view (`GET /api/ai-calls/:i
 - **No split for this call**, with the reason: built outside Landflow, or no split was kept for it (a split is kept for a
   limited time), or the step isn't in the run's spend record yet, or it may be older than the 500 newest calls the record
   holds.
-- **Couldn't read this call's spend.** and the error, when a request fails: a failure is never worded as a fact about the call.
+- **Couldn't read this call's spend.** and the error, when a request fails: a failure is never worded as a fact about
+  the call.
 
 The **Tokens** row of a model step also names the tokens read from and written to the cache. Sizes and shares only: never
 prompt text. These sheets are for a desktop; on a phone the page still fits.

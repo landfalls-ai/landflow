@@ -111,7 +111,8 @@ and `project.brief_changed`. The company profile rides on `settings.update`.
 An agent's run gets a short "Where this work fits" block: the mission, the project's brief, and its primary goal with the
 chain above it. How the block is built, how big it gets and how to turn it off are in
 [agents.md](agents.md#project-context). What a past run saw is kept and shown: see
-[What an agent saw](#what-an-agent-saw). The order is unchanged; the provider's cache point now sits right after the block and the practices, so the memory and the date line that follow don't break the cached part.
+[What an agent saw](#what-an-agent-saw). The order is unchanged; the provider's cache point now sits right after the
+block and the practices, so the memory and the date line that follow don't break the cached part.
 
 ## What an agent saw
 
