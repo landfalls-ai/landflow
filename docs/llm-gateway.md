@@ -491,7 +491,7 @@ credential filter a person row holds only the rows you can see (as `peopleTotals
 every row that matches.
 
 **The trend, the movers and the drill sheet (wave 13, SP10).** The period switch also has **90 days** and **Custom**
-(two dates, at most 400 days, none in the future; the page says why a range can't be asked yet). Above "Spend by" the
+(two dates, at most 400 days, none in the future; the page says why a range can't be asked yet, with the report's day once one has come and the browser's day plus one until then, so a deep link to a future range gets the page's message, not the server's error). Above "Spend by" the
 page draws:
 
 - **The trend**: cost (or tokens: a switch) per day for the period, per hour for 24 hours, with the period before as a

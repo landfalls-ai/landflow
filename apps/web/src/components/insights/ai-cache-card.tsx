@@ -5,6 +5,7 @@
  */
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/client/api';
+import { cacheCardState } from '@/lib/client/ai-console';
 import { cacheHeadline, hitPercent, missesLead } from '@/lib/client/ai-forecast';
 import { MISS_REASON_WORDS } from '@/lib/client/run-spend';
 import { formatTokens } from '@/lib/shared/ai-usage';
@@ -22,7 +23,7 @@ export function AiCacheCard({ query, ready }: { query: string; ready: boolean })
   const [loaded, setLoaded] = useState<{ query: string; report: AiCacheReport }>();
   const [failed, setFailed] = useState(false);
   useEffect(() => {
-    if (!ready) return;
+    if (!cacheCardState(undefined, query, ready).ask) return;
     let current = true;
     const load = (background: boolean) =>
       api<AiCacheReport>(`/api/insights/ai/cache?${query}`, { background })
@@ -45,7 +46,7 @@ export function AiCacheCard({ query, ready }: { query: string; ready: boolean })
   if (failed && !loaded) return null;
   // The last card stays on screen, dimmed, while a changed view (another range or filter) loads or can't be asked.
   const shown = loaded?.report;
-  const stale = Boolean(loaded) && (loaded!.query !== query || !ready);
+  const { stale } = cacheCardState(loaded?.query, query, ready);
   return (
     <div data-testid="ai-cache-card" className={stale ? 'opacity-60 transition-opacity' : 'transition-opacity'} aria-busy={stale}>
       <Card className="px-4 py-3.5">

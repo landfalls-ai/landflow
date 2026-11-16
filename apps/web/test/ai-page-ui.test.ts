@@ -9,6 +9,10 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_VIEW,
   applyFilterHref,
+  cacheCardState,
+  pageStale,
+  pageToday,
+  rangeLimit,
   drillable,
   drillQuery,
   fillDays,
@@ -255,5 +259,55 @@ describe('momentLabel', () => {
       expect(label).not.toMatch(/\b16\b/);
       expect(label).toMatch(/\b(15|3):30\b/);
     }
+  });
+});
+
+describe('the page and the cache card while the view changes', () => {
+  const custom = (from?: string, to?: string): AiView => ({ ...DEFAULT_VIEW, period: 'custom', from, to });
+  const key = (view: AiView) => reportQuery(view, { compare: true }).toString();
+
+  it('the cache card asks nothing while the view is not ready, and dims its last card', () => {
+    expect(cacheCardState(undefined, 'a', false).ask).toBe(false);
+    expect(cacheCardState('a', 'a', false)).toEqual({ ask: false, stale: true });
+    expect(cacheCardState('a', 'a', true)).toEqual({ ask: true, stale: false });
+    expect(cacheCardState(undefined, 'a', true)).toEqual({ ask: true, stale: false });
+  });
+
+  it('the cache card dims when the query changes, from one custom range to another too', () => {
+    const one = reportQuery(custom('2026-11-01', '2026-11-05')).toString();
+    const other = reportQuery(custom('2026-11-02', '2026-11-06')).toString();
+    expect(one).not.toBe(other);
+    expect(cacheCardState(one, other, true)).toEqual({ ask: true, stale: true });
+    expect(cacheCardState(one, one, true).stale).toBe(false);
+  });
+
+  it('Custom with no dates neither dims the page nor sets aria-busy', () => {
+    const loadedKey = key({ ...DEFAULT_VIEW, period: '7d' });
+    const bare = custom();
+    expect(viewReady(bare, '2026-11-16')).toBe(false);
+    // Fails without `&& ready`: a changed key with a view that can't be asked would dim the page for good.
+    expect(pageStale(loadedKey, key(bare), viewReady(bare, '2026-11-16'))).toBe(false);
+    const good = custom('2026-11-01', '2026-11-05');
+    expect(pageStale(loadedKey, key(good), viewReady(good, '2026-11-16'))).toBe(true);
+    expect(pageStale(undefined, key(good), true)).toBe(false);
+  });
+
+  it("takes the page's today from the report, not the browser", () => {
+    expect(pageToday({ today: '2026-11-16' })).toBe('2026-11-16');
+    expect(pageToday(undefined)).toBeUndefined();
+    // The report's day wins whatever the browser's clock says.
+    expect(rangeLimit('2026-11-16', new Date(2030, 0, 1))).toBe('2026-11-16');
+    expect(rangeProblem('2026-11-10', '2026-11-17', rangeLimit('2026-11-16'))).toMatch(/future/);
+    expect(rangeProblem('2026-11-10', '2026-11-16', rangeLimit('2026-11-16'))).toBeUndefined();
+  });
+
+  it("before a report, a range plainly in the future gets the page's own message; one a day ahead is not held back", () => {
+    const now = new Date(2026, 10, 16, 12, 0);
+    expect(rangeLimit(undefined, now)).toBe('2026-11-17');
+    expect(rangeProblem('2026-11-10', '2026-11-20', rangeLimit(undefined, now))).toMatch(/future/);
+    expect(viewReady(custom('2026-11-10', '2026-11-20'), rangeLimit(undefined, now))).toBe(false);
+    expect(viewReady(custom('2026-11-10', '2026-11-17'), rangeLimit(undefined, now))).toBe(true);
+    // Month and year ends.
+    expect(rangeLimit(undefined, new Date(2026, 11, 31, 23, 0))).toBe('2027-01-01');
   });
 });

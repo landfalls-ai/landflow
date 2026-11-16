@@ -11,7 +11,7 @@ import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ChevronRight } from 'lucide-react';
 import { api } from '@/lib/client/api';
-import { AI_GROUPS, AI_PERIODS, applyFilterHref, drillLabel, drillable, fillDays, filterChips, parseView, previousRange, rangeDays, rangeProblem, reportQuery, rowModel, sortByTokens, totalTokens, viewParams, viewReady, withoutFilter, type AiView } from '@/lib/client/ai-console';
+import { AI_GROUPS, AI_PERIODS, applyFilterHref, drillLabel, drillable, fillDays, filterChips, pageStale, pageToday, parseView, previousRange, rangeDays, rangeLimit, rangeProblem, reportQuery, rowModel, sortByTokens, totalTokens, viewParams, viewReady, withoutFilter, type AiView } from '@/lib/client/ai-console';
 import { formatCache, formatCost, formatTokens } from '@/lib/shared/ai-usage';
 import type { AiConsoleReport, AiConsoleRow, AiConsoleTotals, GatewayStatus } from '@/lib/shared/llm-gateway';
 import type { AiPageReport, AiSpendGroup, AiSpendPeriod, AiSpendPoint } from '@/lib/shared/ai-spend';
@@ -201,9 +201,10 @@ export function AiConsole() {
 
   const [loaded, setLoaded] = useState<{ key: string; report: AiPageReport }>();
   // The instance's day, from the report (not the browser's: they can differ near midnight, and SSR has no browser day).
-  // Until a report has come, no "not in the future" check: the server answers 400 for a day after today.
-  const today = loaded?.report.today;
-  const ready = viewReady(view, today);
+  // Until a report has come, the range check uses the browser's day plus one (`rangeLimit`): plainly future ranges get the page's message, not the server's 400.
+  const today = pageToday(loaded?.report);
+  const limit = rangeLimit(today);
+  const ready = viewReady(view, limit);
   const [previous, setPrevious] = useState<{ key: string; series: AiSpendPoint[] }>();
   // SP12: the model group's "Sort by tokens".
   const [byTokens, setByTokens] = useState(false);
@@ -242,7 +243,7 @@ export function AiConsole() {
   // The last report stays on screen, dimmed, while a changed view loads (a switch doesn't empty the page).
   const shown = loaded?.report;
   // While the range can't be asked (Custom without two good dates) nothing loads: the problem is shown, not a wait.
-  const stale = Boolean(loaded) && loaded!.key !== key && ready;
+  const stale = pageStale(loaded?.key, key, ready);
 
   // The faint line: the days just before the range, asked as a custom range (the report holds only the previous totals).
   const prevRange = shown && shown.period !== '24h' && rangeDays(shown.from, shown.to) <= 90 ? previousRange(shown.from, shown.to) : undefined;
@@ -261,7 +262,7 @@ export function AiConsole() {
 
   const label = AI_GROUPS.find((g) => g.value === view.group)!.label;
   const chips = shown ? filterChips(view.filters, shown.groups) : filterChips(view.filters);
-  const problem = view.period === 'custom' ? rangeProblem(view.from, view.to, today) : undefined;
+  const problem = view.period === 'custom' ? rangeProblem(view.from, view.to, limit) : undefined;
   const open = (group: AiSpendGroup, rowKey: string) => go({ ...view, drill: { group, key: rowKey } });
   return (
     <>

@@ -252,6 +252,31 @@ export function reportQuery(view: AiView, options: { compare?: boolean; stack?: 
 /** The query is askable: a custom range needs two good dates. */
 export const viewReady = (view: AiView, today?: string): boolean => view.period !== 'custom' || !rangeProblem(view.from, view.to, today);
 
+/** The instance's day, as the report that loaded last says it (the browser's can differ near midnight); none before a report. */
+export const pageToday = (report?: { today?: string }): string | undefined => report?.today;
+
+/**
+ * The last day a custom range may end on, for the page's own message. The report's `today` once there is one; until then
+ * (a deep link, or a first load the server refused) the day after the browser's, the furthest the instance's day can be
+ * ahead, so a range plainly in the future gets the page's message and a valid one is never held back.
+ */
+export function rangeLimit(today: string | undefined, now: Date = new Date()): string {
+  if (today) return today;
+  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
+}
+
+/** The page dims (and is busy) only while a changed view loads: not when it can't be asked (Custom with no good dates). */
+export const pageStale = (loadedKey: string | undefined, key: string, ready: boolean): boolean => loadedKey !== undefined && loadedKey !== key && ready;
+
+/**
+ * The cache card's state: it asks only while the view is ready, and its last card is dimmed when the query changed (another
+ * range, even one custom range to another) or can't be asked.
+ */
+export function cacheCardState(loadedQuery: string | undefined, query: string, ready: boolean): { ask: boolean; stale: boolean } {
+  return { ask: ready, stale: loadedQuery !== undefined && (loadedQuery !== query || !ready) };
+}
+
 /** A row opens the sheet unless it is "Another …" (what the viewer can't open) or the tail past 50. */
 export const drillable = (row: Pick<AiSpendRow, 'key'>): boolean => row.key !== 'shared' && row.key !== 'other';
 
