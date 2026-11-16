@@ -231,6 +231,7 @@ describe('the routes check the model', () => {
       // The first call goes over the cap (20 tokens of 10) and is counted; the next one is refused.
       await as(member, () => call(buildRoute.POST, post('/api/ai/build', { prompt: 'a flow with one step' })));
       const second = await as(member, () => call(buildRoute.POST, post('/api/ai/build', { prompt: 'a flow with one step' })));
+      expect(second.status).toBe(429); // SB19-N2: as the design route answers a reached cap
       expect(((await second.json()) as { error: string }).error).toMatch(/AI usage cap reached/);
     } finally {
       saveAiCaps({ credentials: {}, users: {} });

@@ -6,7 +6,7 @@ import { allowedTypes } from '@/lib/server/assistant/scope';
 import { describeAgents } from '@/lib/shared/agent-brief';
 import { describeTeams } from '@/lib/shared/agent-teams';
 import { buildFlow } from '@/lib/server/flow-builder';
-import { assistantScope, runInUsageScope } from '@/lib/server/ai-usage'; // SB19:
+import { assistantScope, isUsageCapError, runInUsageScope } from '@/lib/server/ai-usage'; // SB19:
 import { resolveSpotlightModel } from '@/lib/server/assistant/models-list'; // SB19:
 import { currentPrincipal } from '@/lib/server/auth/guard'; // SB19:
 import { meteredWorkflowId } from '@/lib/server/assistant/scope'; // SB19:
@@ -38,6 +38,7 @@ export const POST = handler(async (request: Request) => {
     const known = [parsed.data.prompt, agents.length ? describeAgents(agents) : '', teams.length ? describeTeams([...teams]) : ''].join('\n');
     return json({ draft: guardDraft(draft, { prompt: parsed.data.prompt, known, byType: (type) => byType.get(type), credentialName: (name) => credentialNames.get(name) }) });
   } catch (e) {
-    return error((e as Error).message, 502);
+    // The caller's AI cap, as the design route answers it: 429, not a 502 from the model.
+    return error((e as Error).message, isUsageCapError(e) ? 429 : 502);
   }
 });
