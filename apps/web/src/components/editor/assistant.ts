@@ -15,7 +15,7 @@ import { teamFromLead } from '@/lib/shared/turn-into-team';
 import type { ActivityKind, ActivityStep } from '@/lib/shared/activity';
 import type { NodeRun } from '@/lib/shared/types';
 import type { MentionRef } from '@/lib/shared/mentions';
-import type { AskEvent, AskPart } from '@/lib/shared/spotlight-wire'; // SB11:
+import { askedLine, type AskEvent, type AskPart } from '@/lib/shared/spotlight-wire'; // SB11: (askedLine: SB09 × SB11)
 import type { ReplyInfo } from '../ui/chat';
 import type { CredentialNeedFields, CredentialOfferEvent } from '@/lib/shared/spotlight-wire'; // SB12:
 import { useEditor } from './store';
@@ -577,6 +577,7 @@ function historyOf(items: ChatItem[]) {
         if (part.kind === 'text') return part.text;
         if (part.kind === 'proposal') return `[Proposed “${part.proposal.summary}”: ${part.proposal.state ?? 'not applied yet'}]`;
         if (part.kind === 'run' && part.run.state !== 'running') return `[Test run ${part.run.round} ${part.run.state}: ${part.run.summary ?? ''}]`;
+        if (part.kind === 'ask') return askedLine(part.ask.choices); // SB09 × SB11: the next message is the answer, the server reads the request across it
         return '';
       })
       .filter(Boolean)

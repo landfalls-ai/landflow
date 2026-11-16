@@ -9,6 +9,8 @@
  * 3. Model pick → chat, draft, architect, spend (SB19 → the routes, SB10's `FlowDraft.calls`, spend 13's report).
  * 4. Ask × scope (SB11 × SB07): the chip's answer, sent as the editor sends it, scopes the change that follows.
  * 5. Suggestion after a block × metering (SB09 × SB19): the suggest route skips a blocked run with no call and no row.
+ * 6. Scope × workflow settings (SB07 × SB10): a selected step and a request about the whole workflow's time limit.
+ * 7. Checks × ask (SB09 × SB11): the checks of what was asked read the request across the question, not the chip's word.
  */
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
@@ -92,6 +94,9 @@ const { useEditor } = await import('@/components/editor/store');
 const { applyChanges, applyStreamEvent, useAssistant } = await import('@/components/editor/assistant');
 type AssistantTurn = import('@/components/editor/assistant').AssistantTurn;
 const { setStepCredential } = await import('@/components/editor/spotlight/credential-picker');
+const { streamEvents } = await import('@/lib/client/api');
+/** The editor's own `send` (join 4 stubs it in the store): join 7 sends a chip's answer through it to see the history it builds. */
+const realSend = useAssistant.getState().send;
 
 let types: NodeTypeInfo[];
 beforeAll(() => {
@@ -428,5 +433,88 @@ describe('5. the suggestion after a block', () => {
     expect(usage().map((r) => `${r.surface}/${r.purpose}`)).toEqual(['spotlight/answer']);
     expect(body.suggestions.every((s) => s.ops.length === 0)).toBe(true);
     expect(JSON.stringify(body)).not.toContain('httpbin.org');
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 6. Scope × workflow settings (SB07 × SB10)
+// ---------------------------------------------------------------------------------------------------------------------
+
+describe('6. a selected step and a change to the workflow’s own settings', () => {
+  const timeout = [{ op: 'setWorkflowSettings', settings: { timeoutSeconds: 300 } }];
+
+  it('a workflow time limit asked with a step selected is one card with setWorkflowSettings, never sent back', async () => {
+    for (const content of ['stop the workflow if it runs longer than 5 minutes', 'set the workflow timeout to 300 seconds']) {
+      const { calls, proposals } = await chat([propose('c1', timeout), { text: 'Done.' }], { runs: {}, messages: [{ role: 'user', content }] });
+      expect(String(calls[0].system)).toContain('Scope: Only “Open status incident”');
+      expect(String(calls[0].system)).toContain('is setWorkflowSettings');
+      expect(toolResult(calls, 1)).not.toMatch(/outside what was asked/i);
+      expect(proposals).toHaveLength(1);
+      expect(proposals[0].ops).toEqual(timeout);
+      expect(proposals[0].dropped).toEqual([]);
+    }
+  });
+
+  it('a scope asked for in words ("only") still keeps the workflow’s settings out', async () => {
+    const { calls, proposals } = await chat([propose('c1', timeout), propose('c2', timeout), { text: 'Done.' }], { runs: {}, messages: [{ role: 'user', content: 'only Open status incident: stop it after 5 minutes' }] });
+    expect(toolResult(calls, 1)).toMatch(/setWorkflowSettings: outside what was asked/);
+    expect(proposals.flatMap((p) => p.ops)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 7. Checks × ask (SB09 × SB11)
+// ---------------------------------------------------------------------------------------------------------------------
+
+describe('7. the checks read the request across a question back', () => {
+  /** Two schedule triggers: the bug triage one and a "Morning" one. */
+  const twoSchedules = (): Workflow => {
+    const wf = triage();
+    wf.nodes.push({ id: 'n_sch2', name: 'Morning', type: 'core.schedule', typeVersion: 1, position: [0, 300], parameters: { unit: 'rules', rule: { interval: [{ field: 'cronExpression', expression: '0 9 * * *' }] } } });
+    wf.connections.push({ id: 'c_sch2', type: 'main', source: 'n_sch2', sourceIndex: 0, target: 'n_lin', targetIndex: 0 });
+    return wf;
+  };
+  const askTurn = (question: string, choices: string[]): Partial<ModelTurn> => ({ toolCalls: [{ id: 'q1', name: 'ask_user', input: { question, choices } }], stopReason: 'tool_use' });
+
+  /** The question, then the chip as the editor sends it: the messages and scope of the request that follows. */
+  async function answered(workflow: Workflow, request: string, question: string, choices: string[], choice: string) {
+    const asked = await chat([askTurn(question, choices)], { workflow, selectedNodeId: undefined, runs: {}, messages: [{ role: 'user', content: request }] });
+    const turn = asked.events.reduce((t, e) => (e.type === 'ask' || e.type === 'text' ? applyStreamEvent(t, e as never) : t), { id: 'r1', role: 'assistant', parts: [], text: '' } as unknown as AssistantTurn);
+    expect(turn.parts.map((p) => p.kind)).toContain('ask');
+    useEditor.getState().load(workflow, types);
+    useEditor.setState({ openNodeId: undefined, nodes: useEditor.getState().nodes.map((n) => ({ ...n, selected: false })) } as never);
+    vi.mocked(streamEvents).mockClear();
+    useAssistant.setState({ pending: false, items: [{ id: 'u1', role: 'user', text: request } as never, turn], send: realSend });
+    await useAssistant.getState().answerAsk('r1', choice);
+    const body = vi.mocked(streamEvents).mock.calls.at(-1)?.[1] as { messages: Array<{ role: 'user' | 'assistant'; content: string }>; scope?: { kind: 'only'; nodes: string[] } };
+    useAssistant.setState({ pending: false, abort: undefined });
+    expect(body.messages.at(-1)).toEqual({ role: 'user', content: choice });
+    return body;
+  }
+  const quiet = (calls: GenerateInput[], proposals: Proposal[]) => {
+    expect(toolResult(calls, 1)).not.toMatch(/did not ask for|named no days/);
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0].warnings.join(' ')).not.toMatch(/did not ask for|named no days/);
+  };
+
+  it('a Monday schedule for "run it on Mondays at 9", after "Which schedule?" → "Morning": no send-back, no caution', async () => {
+    const body = await answered(twoSchedules(), 'run it on Mondays at 9', 'Which schedule?', ['Morning', 'Weekdays at 8'], 'Morning');
+    expect(body.scope).toEqual({ kind: 'only', nodes: ['n_sch2'] });
+    const monday = [{ op: 'setParameters', node: 'Morning', parameters: { unit: 'rules', rule: { interval: [{ field: 'cronExpression', expression: '0 9 * * 1' }] } } }];
+    const { calls, proposals } = await chat([propose('c1', monday), { text: 'Done.' }], { workflow: twoSchedules(), selectedNodeId: undefined, runs: {}, messages: body.messages, scope: body.scope });
+    quiet(calls, proposals);
+
+    // The control: the same answer with no question before it is read alone, and the Monday schedule goes back.
+    const alone = await chat([propose('c1', monday), { text: 'Done.' }], { workflow: twoSchedules(), selectedNodeId: undefined, runs: {}, messages: [{ role: 'user', content: 'Morning' }] });
+    expect(toolResult(alone.calls, 1)).toMatch(/named no days/);
+  });
+
+  it('continue on error for "continue on error", after "Which step?" → a step: no send-back, no caution', async () => {
+    const body = await answered(twoHttp(), 'continue on error', 'Which step?', ['Open status incident', 'Notify status page'], 'Notify status page');
+    expect(body.scope).toEqual({ kind: 'only', nodes: ['n_http2'] });
+    const onError = [{ op: 'setNodeSettings', node: 'Notify status page', settings: { onError: 'continue' } }];
+    const { calls, proposals } = await chat([propose('c1', onError), { text: 'Done.' }], { workflow: twoHttp(), selectedNodeId: undefined, runs: {}, messages: body.messages, scope: body.scope });
+    quiet(calls, proposals);
+    expect(proposals[0].ops).toEqual(onError);
   });
 });

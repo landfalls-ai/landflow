@@ -10,7 +10,7 @@ import { parseCron } from '../agents/cron';
 type Node = Workflow['nodes'][number];
 
 export interface CheckContext {
-  /** The latest message of the person, lower-cased or not. */
+  /** What the person asked, lower-cased or not: the latest message, or across a question back the request, then the answer (`requestAcrossAsk`). */
   latest?: string;
   /** The last run of each step, by node id. */
   runs?: Record<string, RunDigest>;

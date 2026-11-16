@@ -122,8 +122,11 @@ describe('outsideScope', () => {
     const ops = [{ op: 'addNode', ref: 'n', name: 'Retry', after: 'Open status incident' }, { op: 'connect', from: 'n', to: 'Save to backlog' }];
     expect(outsideScope(ops, { kind: 'selected', nodes: ['http'] }, graph, 'add a retry step')).toEqual([]);
   });
-  it('puts workflow settings and other steps outside', () => {
-    expect(outsideScope([{ op: 'setWorkflowSettings' }], selected, graph, 'x')).toHaveLength(1);
+  it('puts other steps outside, and workflow settings under every kind but the selection', () => {
+    expect(outsideScope([{ op: 'setWorkflowSettings' }], selected, graph, 'stop the workflow if it runs longer than 5 minutes')).toEqual([]);
+    for (const scope of [{ kind: 'only' as const, nodes: ['http'] }, { kind: 'tagged' as const, nodes: ['http'] }, { kind: 'insert' as const, nodes: ['http'], side: 'after' as const }]) {
+      expect(outsideScope([{ op: 'setWorkflowSettings' }], scope, graph, 'x')).toHaveLength(1);
+    }
     expect(outsideScope([{ op: 'setNodeSettings', node: 'Save to backlog' }], selected, graph, 'x')).toHaveLength(1);
     expect(outsideScope([{ op: 'setNodeSettings', node: 'Open status incident' }], selected, graph, 'x')).toEqual([]);
   });

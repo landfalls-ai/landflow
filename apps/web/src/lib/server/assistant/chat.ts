@@ -25,7 +25,7 @@ import { saveCheckpoint } from './checkpoints';
 import { assistantModel, errorText, modelLabel } from './model';
 import { withParseRetry } from './parse-retry'; // SB05:
 import { authHeaderProblems, cronProblems, expressionMisses, retryProblems } from './change-checks'; // SB09:
-import { ASK_CHOICES_MAX, ASK_CHOICES_MIN, ASK_CHOICE_MAX_CHARS, ASK_USER_TOOL, type AskEvent, type CredentialOfferEvent } from '../../shared/spotlight-wire'; // SB11: (CredentialOfferEvent: SB12)
+import { ASK_CHOICES_MAX, ASK_CHOICES_MIN, ASK_CHOICE_MAX_CHARS, ASK_USER_TOOL, requestAcrossAsk, type AskEvent, type CredentialOfferEvent } from '../../shared/spotlight-wire'; // SB11: (CredentialOfferEvent: SB12; requestAcrossAsk: SB09 × SB11)
 import { claimsAChange } from './guards'; // SB12:
 import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol'; // SB12:
 import { needsPerson } from '@/lib/shared/run-check'; // SB12:
@@ -401,11 +401,13 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
   // SB07: what the request may change: the selected, tagged or named steps, or where a new step goes. A test-and-fix session has its own rules.
   // (`input.workflow.id` is the metered id, 'draft' when unsaved, so the tag's own workflow is not compared: `scopeOf` keeps the ids on this canvas.)
   const taggedIds = (input.tagged?.reads ?? []).flatMap((r) => (r.ok && r.ref.type === 'node' ? [r.ref.id] : []));
-  const askScope = input.session === 'fix' || input.session === 'review' ? undefined : scopeOf({ sent: input.scope, message: input.messages.findLast((m) => m.role === 'user')?.content ?? '', nodes: working.nodes, selectedId: input.selectedNodeId, taggedIds });
+  // SB09 × SB11: what was asked: the latest message, or across a question back the message before it with the answer ("Morning").
+  const request = requestAcrossAsk(input.messages);
+  const askScope = input.session === 'fix' || input.session === 'review' ? undefined : scopeOf({ sent: input.scope, message: request, nodes: working.nodes, selectedId: input.selectedNodeId, taggedIds });
   // SB10: the steps whose parameters, settings and credential state the model reads whole: the scope's (SB07's), else the selected one.
   const focus = new Set<string>(askScope?.nodes ?? (input.selectedNodeId ? [input.selectedNodeId] : []));
   const outline = () => workflowOutline(working, runs, { types, full: focus, pending: waiting, pendingSummaries: waitingSummaries, removed: [...removed.values()] });
-  const latest = input.messages.findLast((m) => m.role === 'user')?.content.toLowerCase() ?? '';
+  const latest = request.toLowerCase();
   /** Whether the latest message asks to add a node by this name ("remove Check and add a new Check after Filter"). */
   const asksToAdd = (name: string) => new RegExp(`\\b(?:add|insert|put|create|new|another)\\b(?:(?!\\b(?:remove|delete|drop)\\b)[^.!?\\n])*\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(latest);
   /** A node this proposal adds back after a pending proposal removed it: by name, or by type unless the latest message names the type; not when it asks for one by that name. */
@@ -478,7 +480,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
     builderContextEntry(input.actor, { workflowId: input.workflow.id }), // PC10: the goals of the project this workflow is in, as data
     tagged.length ? `\nThe user tagged these in the message (checked against what they may open):\n${tagged.join('\n')}` : '',
     question ? '\nThe latest message is a question: answer it; you cannot change the workflow in this reply.' : '', // SB04:
-    askScope && !question ? `\nScope: ${scopeLabel(askScope, working.nodes)}. Change only that (and, for a new step, put it there); say in one sentence if the request needs more.` : '', // SB07:
+    askScope && !question ? `\nScope: ${scopeLabel(askScope, working.nodes)}. Change only that (and, for a new step, put it there${askScope.kind === 'selected' ? '; a request about the whole workflow, like its time limit, is setWorkflowSettings' : ''}); say in one sentence if the request needs more.` : '', // SB07: (SB07 × SB10: the selection allows the workflow's settings)
     input.session === 'auto' ? `\n${AUTO}` : input.session ? `\n${sessionText(input.autonomy ?? 'asks-first')}` : '',
   ].join('\n');
 
@@ -487,7 +489,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
    * scope (SB07's `askScope`), names no step and nothing is selected; else undefined. "All"/"both"/"every"/"each" is a choice already made.
    */
   const severalFit = (ops: AssistantOp[]): string[] | undefined => {
-    const latestRaw = input.messages.findLast((m) => m.role === 'user')?.content ?? '';
+    const latestRaw = request;
     if (askScope || input.selectedNodeId || namedNodes(latestRaw, working.nodes).length || /\b(?:all|both|every|each)\b/i.test(latestRaw)) return undefined;
     const edited = ops.flatMap((op) => (op.op === 'setParameters' || op.op === 'setNodeSettings' ? [nodeByName(String((op as { node?: unknown }).node ?? ''))] : [])).filter((n): n is NonNullable<typeof n> => n !== undefined && !waiting.has(n.id)); // only steps that existed before this reply
     const first = edited[0];
@@ -584,7 +586,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
           );
         }
         // SB07: a change outside the scope goes back once, then is left out and listed.
-        const outside = askScope ? outsideScope(validated.ops, askScope, working, input.messages.findLast((m) => m.role === 'user')?.content ?? '') : [];
+        const outside = askScope ? outsideScope(validated.ops, askScope, working, request) : [];
         if (askScope && outside.length) {
           const label = scopeLabel(askScope, working.nodes);
           if (!scopeSent) {

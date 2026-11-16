@@ -14,6 +14,7 @@ import { recoverToolCalls, runChat, TOOLS, type ChatEvent } from '@/lib/server/a
 import { scriptedModel, call } from './spotlight-scenarios/scenario';
 import { applyStreamEvent, useAssistant, type AssistantTurn } from '@/components/editor/assistant';
 import { AskRow } from '@/components/editor/spotlight/reply';
+import { askedLine, requestAcrossAsk } from '@/lib/shared/spotlight-wire';
 import { useEditor } from '@/components/editor/store';
 
 let types: NodeTypeInfo[];
@@ -206,5 +207,19 @@ describe('the editor', () => {
     } finally {
       useEditor.setState({ nodes: before });
     }
+  });
+});
+
+describe('the request across a question (SB09 × SB11)', () => {
+  const asked = (question: string, choices: string[]) => ({ role: 'assistant' as const, content: `${question}\n${askedLine(choices)}` });
+  it('is the latest message alone when the reply before it did not ask', () => {
+    expect(requestAcrossAsk([{ role: 'user', content: 'run it on Mondays at 9' }])).toBe('run it on Mondays at 9');
+    expect(requestAcrossAsk([{ role: 'user', content: 'a' }, { role: 'assistant', content: 'Which one?' }, { role: 'user', content: 'Morning' }])).toBe('Morning');
+    expect(requestAcrossAsk([])).toBe('');
+  });
+  it('joins the request and the answer, through several questions in a row', () => {
+    const one = [{ role: 'user' as const, content: 'run it on Mondays at 9' }, asked('Which schedule?', ['Morning', 'Weekdays at 8']), { role: 'user' as const, content: 'Morning' }];
+    expect(requestAcrossAsk(one)).toBe('run it on Mondays at 9\nMorning');
+    expect(requestAcrossAsk([{ role: 'user', content: 'earlier' }, { role: 'assistant', content: 'Done.' }, ...one, asked('Which time zone?', ['UTC', 'Local']), { role: 'user', content: 'UTC' }])).toBe('run it on Mondays at 9\nMorning\nUTC');
   });
 });

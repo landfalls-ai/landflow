@@ -171,7 +171,10 @@ export function scopeLabel(scope: SpotlightScope, nodes: readonly ScopeNode[]): 
  * - a `connect` or `disconnect` whose two ends are scope steps, steps these ops add, or the neighbours of the scope
  *   (for `insert`, the anchor's own on its `side`; for the other kinds, when the message adds a step): the step it fed,
  *   or the step that fed it, is rewired to the new one;
- * - `setWorkflowSettings` and anything else: outside.
+ * - `setWorkflowSettings` under `selected` (the scope the selection gives on its own, never asked for in words): a request
+ *   about the whole workflow ("stop the workflow if it runs longer than 5 minutes") is made with a step selected or open;
+ *   under `only`, `tagged` and `insert` it is outside;
+ * - anything else: outside.
  */
 export function outsideScope(
   ops: readonly ScopeOp[],
@@ -231,6 +234,9 @@ export function outsideScope(
       case 'connect':
       case 'disconnect':
         if (isOutsideAdded(op.from) || isOutsideAdded(op.to) || !endOk(op.from) || !endOk(op.to) || (!anchor && ![op.from, op.to].some((r) => isAdded(r) || inScope.has(idOf(r) ?? '')))) say(`${op.op === 'connect' ? 'connecting' : 'disconnecting'} “${op.from ?? '?'}” → “${op.to ?? '?'}”`);
+        return;
+      case 'setWorkflowSettings':
+        if (scope.kind !== 'selected') say(op.op);
         return;
       default:
         say(op.op);

@@ -6,7 +6,7 @@
  * Contract file: backbone/contracts/sb2/spotlight-wire.ts, copied byte for byte to
  * apps/web/src/lib/shared/spotlight-wire.ts by SB11 (owner), SB12 and SB10 (the scenario harness reads both events into
  * `Outcome.asked` and `Outcome.offers`, contracts/sb2/spotlight-scenario.ts). Change it in the contracts folder first.
- * Pure: types and constants only, no imports, no I/O.
+ * Pure: types, constants and pure functions only, no imports, no I/O.
  */
 
 /** The tool the chat offers for a question back (SB11). Not offered in a test-and-fix session (`session` fix/review). */
@@ -38,6 +38,32 @@ export interface AskEvent {
   question: string;
   choices: string[];
   step?: number;
+}
+
+/**
+ * SB09 × SB11: a reply that asked, as the editor sends it back in the history (after the reply's text). The next
+ * person's message is the answer (a chip's words, or their own), not the request: the request is the message before
+ * the question with the answer after it (`requestAcrossAsk`), so the chat's checks of what was asked (a day named,
+ * "continue on error", a duration) read the request, not "Morning" or "Call".
+ */
+export const askedLine = (choices: readonly string[]) => `[Asked; choices: ${choices.map((c) => `“${c}”`).join(', ')}]`;
+
+const ASKED_LINE = /^\[Asked; choices: .*\]$/m;
+
+/**
+ * The request the latest person's message belongs to: that message alone, or, when the reply before it asked
+ * (`askedLine`), the person's message before the question, then the answer, one per line (through several questions in
+ * a row). '' when there is no person's message.
+ */
+export function requestAcrossAsk(messages: ReadonlyArray<{ role: 'user' | 'assistant'; content: string }>): string {
+  let at = messages.findLastIndex((m) => m.role === 'user');
+  if (at < 0) return '';
+  const parts = [messages[at].content];
+  while (at >= 2 && messages[at - 1].role === 'assistant' && ASKED_LINE.test(messages[at - 1].content) && messages[at - 2].role === 'user') {
+    parts.unshift(messages[at - 2].content);
+    at -= 2;
+  }
+  return parts.join('\n');
 }
 
 /** The reply part the editor keeps for it (`ReplyPart` in components/editor/assistant.ts). `answered`: a chip was sent. */
