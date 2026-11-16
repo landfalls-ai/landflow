@@ -595,3 +595,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - The run's spend record holds its newest 500 calls; in a longer run an older step says it may be older than the record.
 - A step's split is read when its sheet opens and again when the step ends or its status moves; it is not live inside one
   step.
+- A Landflow agent started by Run an Agent writes its turns and tool calls to the journal but no
+  `model` span per loop step, so its calls in the Spend tab show their time as plain text and have no sheet with their
+  composition; `GET /api/ai-calls/:id` answers for them. The sheet opens for the AI Agent node's model sub-node, a plugin
+  node's `model` record and the harness mod's requests (found by the wave 12 join test `spend-trace-join`).
