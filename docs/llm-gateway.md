@@ -362,8 +362,8 @@ keyed by the call's `ai_usage` row. It holds token counts, hashes and tool names
   stable prefix (the tools and the system prompt up to the project block and practices): the date line and the memory
   are no longer in it (they stay in `promptHash`), so earlier rows don't compare with later ones. They are comparable
   inside one instance only and cannot be turned back into text.
-- **Who writes it.** Agent runs (the system prompt is split where it is built), the AI Agent node, Spotlight, the Agent
-  architect and Ask the brain. The text of a prompt is held in memory for the length of one call and is never stored,
+- **Who writes it.** Agent runs (the system prompt is split where it is built), the AI Agent node, the Basic LLM Chain, Text Classifier and Information Extractor nodes, Spotlight, the Agent
+  architect and Ask the brain (other single calls, such as RAG answers and evaluation judges, write none). The text of a prompt is held in memory for the length of one call and is never stored,
   logged or put on a span.
 - **Kept 30 days**, `LANDFLOW_AI_CALL_PARTS_RETENTION_DAYS` ([configuration](reference/configuration.md)); pruned with
   the usage rows, at most hourly.

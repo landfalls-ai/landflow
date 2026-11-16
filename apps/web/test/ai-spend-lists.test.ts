@@ -636,12 +636,22 @@ describe("GET /api/insights/ai/calls", () => {
     const found = every.find((c) => c.usageId === "au_words");
     expect(found).toMatchObject({
       executionId: "ex_words",
-      runHref: "/runs/ex_words",
+      runHref: "/runs/ex_words?tab=spend",
       hasParts: true,
       purpose: "answer",
       iteration: 1,
       agentId: openAgent.id,
     });
+  });
+
+  it("the calls CSV's run_href is the runs CSV's: the run's spend tab", async () => {
+    const csv = (await calls({ group: "agent", key: openAgent.id, format: "csv" }, member)).text.split("\r\n");
+    const column = csv[0].split(",").indexOf("run_href");
+    const row = csv.find((line) => line.includes("au_words"));
+    expect(row).toBeDefined();
+    expect(row!.split(",")[column]).toBe("/runs/ex_words?tab=spend");
+    const runsCsv = (await runs({ group: "agent", key: openAgent.id, format: "csv" }, member)).text;
+    expect(runsCsv).toContain("/runs/ex_words?tab=spend");
   });
 
   it("pages newest first with a cursor and no call twice", async () => {

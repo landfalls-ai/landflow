@@ -633,7 +633,7 @@ function callsOf(scanned: Scan, rows: Row[]): CallItem[] {
     if (row.execution_id) {
       let ok = runOk.get(row.execution_id);
       if (ok === undefined) runOk.set(row.execution_id, (ok = admin || canOpenRun(actor, row.execution_id)));
-      if (ok) runHref = `/runs/${row.execution_id}`;
+      if (ok) runHref = `/runs/${row.execution_id}?tab=spend`;
     }
     return {
       id: row.id,
