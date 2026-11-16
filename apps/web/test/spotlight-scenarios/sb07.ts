@@ -1,6 +1,6 @@
 /**
  * SB07's scenarios: a request about one step carries a scope (selected, tagged with @, named with "only", or where a new
- * step goes); a change outside it goes back once, then is left out and listed (docs/assistant.md#scope). The Bug triage
+ * step goes); a change outside it goes back once, then is left out and listed (docs/assistant.md#the-builder-chat). The Bug triage
  * flow and the PR flow are the evaluation's; the unit form scripts a model that wanders first, the live form asks the
  * local model three times.
  */

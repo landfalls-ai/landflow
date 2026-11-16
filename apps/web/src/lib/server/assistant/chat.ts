@@ -404,7 +404,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
     builderContextEntry(input.actor, { workflowId: input.workflow.id }), // PC10: the goals of the project this workflow is in, as data
     tagged.length ? `\nThe user tagged these in the message (checked against what they may open):\n${tagged.join('\n')}` : '',
     question ? '\nThe latest message is a question: answer it; you cannot change the workflow in this reply.' : '', // SB04:
-    askScope ? `\nScope: ${scopeLabel(askScope, working.nodes)}. Change only that (and, for a new step, put it there); say in one sentence if the request needs more.` : '', // SB07:
+    askScope && !question ? `\nScope: ${scopeLabel(askScope, working.nodes)}. Change only that (and, for a new step, put it there); say in one sentence if the request needs more.` : '', // SB07:
     input.session === 'auto' ? `\n${AUTO}` : input.session ? `\n${sessionText(input.autonomy ?? 'asks-first')}` : '',
   ].join('\n');
 
@@ -497,7 +497,11 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
             return result(`Not shown: ${outside.map((o) => o.reason).join('\n')}.\nThe scope of this request is: ${label}. Change only that, then propose again.`, 'Outside what was asked');
           }
           const gone = new Set(outside.map((o) => o.index));
-          validated = validateOps(working, validated.ops.filter((_, i) => !gone.has(i)), lookup);
+          const prev = validated;
+          validated = validateOps(working, prev.ops.filter((_, i) => !gone.has(i)), lookup);
+          // Parts that failed the first check are not lost with the ops that passed it.
+          validated.dropped.unshift(...prev.dropped);
+          validated.ignored.unshift(...prev.ignored);
           // `ignored`, not `dropped`: a dropped part would send the whole proposal back as failed.
           validated.ignored.push(...outside.map((o) => `Left out: ${o.reason}`));
           if (!validated.ops.length) return result(`Not shown: every change was outside what was asked (${label}). Say so in one sentence.`, 'Outside what was asked');

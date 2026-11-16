@@ -1,5 +1,5 @@
 /**
- * SB07: the scope of a change (lib/shared/spotlight-scope.ts, docs/assistant.md#scope): `scopeOf`, `outsideScope`, and the
+ * SB07: the scope of a change (lib/shared/spotlight-scope.ts, docs/assistant.md#the-builder-chat): `scopeOf`, `outsideScope`, and the
  * chat that sends a change outside it back once and then leaves it out. Models are scripted fakes.
  */
 import { mkdtempSync } from 'node:fs';
@@ -69,6 +69,14 @@ describe('scopeOf', () => {
     expect(scopeOf({ message: 'add a retry step', nodes, selectedId: 'http' })).toBeUndefined();
     expect(scopeOf({ message: 'fix it', nodes })).toBeUndefined();
   });
+  it('reads the next step without an adding verb as an insert, and still scopes a plain fix to the selection', () => {
+    expect(scopeOf({ message: 'Remove duplicate items after Open status incident', nodes, selectedId: 'http' })).toEqual({ kind: 'insert', nodes: ['http'], side: 'after' });
+    expect(scopeOf({ message: 'filter out empty rows after this', nodes, selectedId: 'http' })).toEqual({ kind: 'insert', nodes: ['http'], side: 'after' });
+    for (const m of ['then email the team', 'filter out empty rows here', 'use an If to check the status', 'send a Slack message', 'follow with a Set']) {
+      expect(scopeOf({ message: m, nodes, selectedId: 'http' }), m).toBeUndefined();
+    }
+    expect(scopeOf({ message: 'fix the 401 on this step', nodes, selectedId: 'http' })).toEqual({ kind: 'selected', nodes: ['http'] });
+  });
   it("an insert is dropped when the message names another step too", () => {
     expect(scopeOf({ message: "Remove the Save to backlog step, then add a new Set after Open status incident", nodes })).toBeUndefined();
   });
@@ -94,6 +102,10 @@ describe('outsideScope', () => {
     ];
     expect(outsideScope(ops, insert, graph, 'add an agent after Open status incident')).toEqual([]);
     expect(outsideScope([{ op: 'setParameters', node: 'Save to backlog' }], insert, graph, 'add an agent after Open status incident')).toHaveLength(1);
+  });
+  it('lets a new step after a scope step take over the next step, under every kind', () => {
+    const ops = [{ op: 'addNode', ref: 'n', name: 'Retry', after: 'Open status incident' }, { op: 'connect', from: 'n', to: 'Save to backlog' }];
+    expect(outsideScope(ops, { kind: 'selected', nodes: ['http'] }, graph, 'add a retry step')).toEqual([]);
   });
   it('puts workflow settings and other steps outside', () => {
     expect(outsideScope([{ op: 'setWorkflowSettings' }], selected, graph, 'x')).toHaveLength(1);
@@ -150,6 +162,8 @@ describe('the chat', () => {
 
   it('applies no scope to a test-and-fix session', async () => {
     const { proposals } = await run([propose('c1', wander), { text: 'Done.' }], { session: 'fix' });
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0].ops).toHaveLength(3);
     expect(proposals.flatMap((p) => p.dropped).filter((d) => d.startsWith('Left out'))).toEqual([]);
   });
 

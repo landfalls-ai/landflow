@@ -207,7 +207,7 @@ export function Composer() {
     const message = text.trim();
     if (!message || live) return;
     // The picker's chips, then node types chosen from the bubbles still in the message.
-    const scoped = scopeLifted ? null : scopeFor(message); // SB07:
+    const scoped = scopeLifted ? null : (scopeFor(message) ?? null); // SB07: no chip shown, no scope for the server to apply
     const typed: KeptMention[] = liveMentions(message, [...mentions, ...extra]).flatMap((m) => (m.kind === 'type' ? [{ type: 'nodeType' as const, id: m.type, name: m.label }] : []));
     const tagged: KeptMention[] = [...picker.chips.map((c) => ({ type: c.type, id: c.id, ...(c.workflowId && { workflowId: c.workflowId }), name: c.name })), ...typed];
     picker.clear();
@@ -352,20 +352,25 @@ export function Composer() {
                 {scope || (selectedName && !withoutSelection && !empty) || (model && !drafting && !pending) ? (
                   // The model chip sits with the selected node: a 360 px column has no room for it beside the text.
                   <div className="mb-1 flex items-center justify-between gap-2">
+                    {(scope && !empty) || (selectedName && !withoutSelection && !empty) ? (
+                      <span className="flex min-w-0 flex-wrap items-center gap-1">
                     {scope && !empty ? (
-                      // SB07: the scope, in the selection chip's place when it is the selection (one chip, not two).
+                      // SB07: the scope; it takes the selection chip's place when the scope is the selection (one chip, not two).
                       <span className="flex w-fit min-w-0 max-w-full items-center gap-0.5 rounded-md border border-hair bg-wl py-0.5 pl-1.5 pr-0.5 text-[11.5px] text-t2" title="Spotlight changes only this; the × lifts it for this message">
                         <span className="truncate">{scopeLabel(scope, ctx.nodes)}</span>
                         <button onMouseDown={(e) => e.preventDefault()} onClick={() => setScopeLifted(true)} aria-label={`Lift: ${scopeLabel(scope, ctx.nodes)}`} className="grid size-4 place-items-center rounded text-t3 hover:text-t1 max-md:size-9">
                           <X className="size-3" />
                         </button>
                       </span>
-                    ) : selectedName && !withoutSelection && !empty ? (
+                    ) : null}
+                    {selectedName && !withoutSelection && !empty && !(scope && scope.nodes.length === 1 && scope.nodes[0] === selectedId) ? (
                       <span className="flex w-fit min-w-0 max-w-full items-center gap-0.5 rounded-md border border-hair bg-wl py-0.5 pl-1.5 pr-0.5 text-[11.5px] text-t2" title="The selected node is part of what Spotlight sees">
                         <span className="truncate">{selectedName}</span>
                         <button onMouseDown={(e) => e.preventDefault()} onClick={() => setWithoutSelection(true)} aria-label={`Leave ${selectedName} out`} className="grid size-4 place-items-center rounded text-t3 hover:text-t1 max-md:size-9">
                           <X className="size-3" />
                         </button>
+                      </span>
+                    ) : null}
                       </span>
                     ) : (
                       <span />
