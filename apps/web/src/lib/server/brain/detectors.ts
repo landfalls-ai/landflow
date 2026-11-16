@@ -14,7 +14,7 @@ import type { AssistantOp } from '../../shared/assistant-ops';
 import type { BuiltinDetectorId, DetectorId, ProposalEvidence, ProposalRisk } from '../../shared/brain';
 import { agentStore } from '../agents/store';
 import { DEFAULT_PRICES, LOCAL_PROVIDERS, priceOverrides } from '../ai-usage/prices';
-import { localModelName, localModels, localPrice } from '../ai-usage/local-models'; // SP13:
+import { LOCAL_MODEL_DAYS, localModelName, localPrice } from '../ai-usage/local-models'; // SP13:
 import { credentials } from '../credentials/vault';
 import { database, type Database, type SqlValue } from '../db';
 import { homeProjectId } from '../projects/store';
@@ -357,7 +357,15 @@ function localAiCost(ctx: DetectContext): Finding[] {
   );
   if (!rows.length) return [];
   const overrides = priceOverrides(ctx.db);
-  const seen = localModels(ctx.now, ctx.db).map((m) => m.model);
+  // The local models seen in the 30 days up to `now` (localModels() has no upper bound, so a backtest would see later ones).
+  const seenRows = ctx.db.all<{ model: string }>(
+    `SELECT DISTINCT model FROM ai_usage WHERE at >= ? AND at <= ? AND (provider IN (${marks}) OR gateway_provider IN (${marks}))`,
+    iso(ctx.now - LOCAL_MODEL_DAYS * DAY_MS),
+    iso(ctx.now),
+    ...LOCAL_PROVIDERS,
+    ...LOCAL_PROVIDERS,
+  );
+  const seen = [...new Set(seenRows.map((r) => localModelName(r.model)))].filter((m) => !localPrice(m, overrides));
   const merged = new Map<string, { workflow: string; model: string; n: number; input: number; output: number }>();
   for (const r of rows) {
     const key = `${r.workflow_id}|${localModelName(r.model)}`;
