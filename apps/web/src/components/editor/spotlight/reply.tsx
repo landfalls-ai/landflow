@@ -11,7 +11,7 @@ import { useEditor } from '../store';
 import { ActivityTrace } from '../../ui/activity-trace';
 import { StatusSwap, StreamingText } from '../../ui/chat-motion';
 import { AssistantRow, ChatError, ChatMarkdown, ReplyMeta, ShortReply } from '../../ui/chat';
-import { MAX_FIXES, productionNote, publishToProduction, sendsAllowed, testUntilItRuns } from '../test-session';
+import { MAX_FIXES, approveDestinations, productionNote, publishToProduction, testUntilItRuns, undoApplied } from '../test-session'; // SB03:
 import { agentStep, runRow } from '../timeline';
 
 import { ProposalCard, ProposalRow } from './proposal';
@@ -41,9 +41,11 @@ function NeedRow({ itemId, need }: { itemId: string; need: Need }) {
     void testUntilItRuns(need.goal);
   };
   const primary =
-    need.what === 'sends'
-      ? { label: 'Run it for real', act: () => (sendsAllowed.add(useEditor.getState().workflowId), goOn()) }
-      : need.what === 'trigger'
+    need.what === 'sends' || need.what === 'destination'
+      ? { label: 'Run it for real', act: () => (approveDestinations(useEditor.getState().workflowId, need.destinations ?? []), goOn()) } // SB03:
+      : need.what === 'blocked'
+        ? { label: 'Open the step', act: () => need.node && openNodeNamed(need.node) }
+        : need.what === 'trigger'
         ? { label: 'Add a manual trigger', act: () => applyChanges([{ ops: [{ op: 'addNode', type: 'core.manualTrigger', name: 'Start', ...(firstStep() && { before: firstStep() }) }], kind: 'proposal' }], 'Added a manual trigger', { quiet: true }) && goOn() }
         : { label: need.what === 'credential' ? 'Pick the credential' : `Pick ${need.what === 'agent' ? 'an agent' : 'it'}`, act: () => need.node && openNodeNamed(need.node) };
   return (
@@ -57,7 +59,7 @@ function NeedRow({ itemId, need }: { itemId: string; need: Need }) {
       </div>
       {need.state ? (
         <p className="pl-5 text-[11.5px] text-t3">
-          {need.state === 'dismissed' ? 'Left for later.' : need.what === 'sends' ? 'You said yes: tests of this workflow run for real.' : need.what === 'trigger' ? 'Trigger added.' : 'Testing again.'}
+          {need.state === 'dismissed' ? 'Left for later.' : need.what === 'sends' || need.what === 'destination' ? `You said yes: tests of this workflow run for real${need.destinations?.length ? ` to ${need.destinations.join(', ')}` : ''}.` : need.what === 'blocked' ? 'Left for you to change.' : need.what === 'trigger' ? 'Trigger added.' : 'Testing again.'}
         </p>
       ) : (
         <div className="flex flex-wrap gap-1.5 pl-5">
@@ -67,6 +69,11 @@ function NeedRow({ itemId, need }: { itemId: string; need: Need }) {
           {need.what === 'sends' ? (
             <Button size="sm" variant="ghost" onClick={() => mark('dismissed')}>
               Not now
+            </Button>
+          ) : need.what === 'destination' ? (
+            // SB03: take the change that brought the new destination back, then test on.
+            <Button size="sm" variant="ghost" disabled={busy || !need.fix} onClick={() => (need.fix && undoApplied(need.fix), goOn())}>
+              Undo that change
             </Button>
           ) : (
             <Button size="sm" variant="ghost" disabled={busy} onClick={goOn}>

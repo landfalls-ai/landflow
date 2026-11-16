@@ -2303,3 +2303,11 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
 - **Left (deferred)**: model verdicts in the CLI's `check` (a model's verdict reaches a flow through Check Practices, PR08;
   the CLI runs machine checks only) and a reminder after `Write` or `Edit` on a matching path (the mod never denies a
   tool call, so a reminder hook is its own package).
+
+## Spotlight wave sb1
+
+- **SB03, built:** a test session cannot wreck a flow. A run blocked by the host's outbound policy is **Needs you** (no
+  fix); the yes to sending is per destination and asked before every run (**Run it for real**, **Undo that change**); a
+  fix may not remove a step the person asked for or change a value they gave (client and chat route); a pass after a fix
+  is reviewed again before **Ready for production**, and not at all after steps were removed; asks-first workflows, and a
+  new draft's fixes that remove a step, wait for **Apply** ([assistant.md](assistant.md#test-and-fix)).
