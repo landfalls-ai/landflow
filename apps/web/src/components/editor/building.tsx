@@ -23,6 +23,7 @@ import { edgePath, useLane } from '../canvas/edge-path';
 import { applyChanges, editorLookup, sendFeedback, undos, useAssistant, useWorking, type AssistantTurn, type ChatItem, type Proposal } from './assistant';
 import { holdsForClick, useAutonomous } from './autonomous';
 import { LeftOut, Warnings } from './suggestions-card';
+import { ChangeDiff, useCanvas } from './change-diff'; // SB08:
 import { MOTION_MS, ghostFade } from './spotlight/states';
 import { handleId, useEditor } from './store';
 import { useAutonomyFacts } from './spotlight-autonomy';
@@ -138,6 +139,7 @@ export function LiveSteps({ live, trace, durationMs }: { live: Live; trace?: Act
   const all = revealed >= plan.steps.length;
   const dropped = live.proposals.reduce((n, p) => n + p.proposal.dropped.length, 0);
   const warnings = live.proposals.flatMap((p) => p.proposal.warnings);
+  const canvas = useCanvas(); // SB08: the canvas the waiting card is read against
 
   const decide = (state: 'applied' | 'dismissed') => {
     for (const { itemId, proposal } of live.proposals) useAssistant.getState().setProposalState(itemId, proposal.id, state);
@@ -161,6 +163,8 @@ export function LiveSteps({ live, trace, durationMs }: { live: Live; trace?: Act
       {/* The plan's steps once there are some, else what the chat stream says it did (with times): one trace line while it works. */}
       <ActivityTrace steps={mergeTrace(trace, steps)} live={streaming || !all} durationMs={durationMs} />
       {ready && <Warnings warnings={warnings} />}
+      {/* SB08: what Apply changes, per step: the old value and the new one, open while the card waits */}
+      {ready && all && (!autonomous || holdsForClick(live.proposals.map((p) => p.proposal))) && live.proposals.map(({ proposal }) => <ChangeDiff key={proposal.id} before={canvas} ops={proposal.ops} id={proposal.id} />)}
       {ready && dropped > 0 && (
         <LeftOut reasons={live.proposals.flatMap((p) => p.proposal.dropped)} />
       )}

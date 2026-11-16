@@ -12,6 +12,7 @@ import { autonomyOf, useAutonomyFacts } from '../spotlight-autonomy'; // SB04:
 import { useEditor } from '../store'; // SB04:
 import { applyChanges, sendFeedback, undos, useAssistant, type Proposal } from '../assistant';
 import { LeftOut, OpsDiff, Warnings } from '../suggestions-card';
+import { ChangeDiff, hasDiff, useCanvas } from '../change-diff'; // SB08:
 import { EXPLAINER_KEY, cardFolded, explainerDue, isNewestUndo, undoGroup } from './states';
 
 /** Undo the step this proposal was applied in: every proposal applied with it goes back to 'undone' and loses its undo. */
@@ -35,6 +36,7 @@ export function undoProposal(proposalId: string): void {
 export function ProposalCard({ itemId, proposal }: { itemId: string; proposal: Proposal }) {
   const decide = (state: 'applied' | 'dismissed' | 'undone') => useAssistant.getState().setProposalState(itemId, proposal.id, state);
   const applied = cardFolded(proposal.state);
+  const canvas = useCanvas(); // SB08:
   // Re-read on each render (the subscription): the newest undo is the only one that is safe to use.
   const canUndo = useAssistant((s) => s.items.length) >= 0 && isNewestUndo(undos, proposal.id);
   const apply = () => {
@@ -62,7 +64,7 @@ export function ProposalCard({ itemId, proposal }: { itemId: string; proposal: P
       </div>
       <Collapsible open={!applied}>
         <div className="space-y-2 pt-2">
-          <OpsDiff ops={proposal.ops} />
+          <ChangeDiff before={canvas} ops={proposal.ops} id={proposal.id} settled={applied} /> {/* SB08: */}
           <Warnings warnings={proposal.warnings} />
           <LeftOut reasons={proposal.dropped} />
           <div className="flex items-center gap-1.5">
@@ -108,6 +110,7 @@ export function ProposalRow({ proposal, fix }: { proposal: Proposal; fix: boolea
   const latest = useAssistant((s) => s.items.length) >= 0 && isNewestUndo(undos, proposal.id);
   const verb = proposal.state === 'applied' ? (fix ? 'Fixed' : 'Done') : proposal.state === 'dismissed' ? 'Not applied' : proposal.state === 'undone' ? 'Undone' : 'Applying';
   const undo = () => undoProposal(proposal.id);
+  const canvas = useCanvas(); // SB08:
   return (
     <div className="animate-in">
       <div className="flex items-start gap-1">
@@ -135,7 +138,7 @@ export function ProposalRow({ proposal, fix }: { proposal: Proposal; fix: boolea
       {open && (
         <div className="mt-1.5 space-y-1.5 pl-5">
           <p className="text-[12px] leading-snug text-t2">{proposal.summary}</p>
-          <OpsDiff ops={proposal.ops} />
+          {hasDiff(proposal.id) ? <ChangeDiff before={canvas} ops={proposal.ops} id={proposal.id} settled open={false} /> : <OpsDiff ops={proposal.ops} />} {/* SB08: */}
           <Warnings warnings={proposal.warnings} />
           {proposal.dropped.length > 0 && <p className="text-[11px] text-t3">Left out: {proposal.dropped.join('; ')}</p>}
         </div>

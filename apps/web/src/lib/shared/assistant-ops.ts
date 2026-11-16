@@ -1144,6 +1144,149 @@ export function describeOps(ops: AssistantOp[], lookup?: DescriptorLookup): Diff
   });
 }
 
+// SB08: a real diff before Apply: what each touched step was and what it becomes.
+export interface FieldDiff {
+  key: string;
+  label: string;
+  /** What was there; none for a step the change adds. */
+  before?: string;
+  /** What it becomes; none for a value that goes away. */
+  after?: string;
+  /** Over 120 characters on either side, or with a line break: the card folds it behind "Show all". */
+  long: boolean;
+}
+
+export interface StepDiff {
+  /** The step's name after the change (the old one is `was` for a rename). */
+  node: string;
+  kind: 'added' | 'changed' | 'removed' | 'renamed';
+  was?: string;
+  fields: FieldDiff[];
+  /** "→ A → B" for a connection that appears, "− A → B" for one that goes. */
+  wires: string[];
+}
+
+export interface ChangeDiff {
+  steps: StepDiff[];
+  /** Steps of the workflow no op touches. */
+  untouched: number;
+  /** Workflow settings that change. */
+  workflow?: FieldDiff[];
+}
+
+const SETTING_LABELS: Record<string, string> = {
+  retryOnFail: 'Retry on fail',
+  maxTries: 'Max tries',
+  waitBetweenTriesMs: 'Wait between tries (ms)',
+  retryBackoff: 'Retry backoff',
+  onError: 'On error',
+  timeoutSeconds: 'Timeout (seconds)',
+  alwaysOutputData: 'Always output data',
+  executeOnce: 'Execute once',
+  disabled: 'Disabled',
+};
+const WORKFLOW_SETTING_LABELS: Record<string, string> = {
+  errorWorkflowId: 'Error workflow',
+  timeoutSeconds: 'Timeout (seconds)',
+  retryMaxAttempts: 'Retry attempts',
+  retryBaseDelaySeconds: 'Retry delay (seconds)',
+};
+
+const sameValue = (a: unknown, b: unknown) => JSON.stringify(a === '' ? null : (a ?? null)) === JSON.stringify(b === '' ? null : (b ?? null));
+const settingText = (value: unknown) => (value === undefined || value === null ? 'default' : typeof value === 'boolean' ? (value ? 'on' : 'off') : String(value));
+const flagText = (value: unknown) => (typeof value === 'boolean' || value === undefined ? (value ? 'on' : 'off') : String(value));
+
+function field(key: string, label: string, before: string | undefined, after: string | undefined): FieldDiff {
+  const text = `${before ?? ''}${after ?? ''}`;
+  return { key, label, ...(before !== undefined && { before }), ...(after !== undefined && { after }), long: (before?.length ?? 0) > 120 || (after?.length ?? 0) > 120 || /\n/.test(text) };
+}
+
+/**
+ * What `ops` would change in `before`, per step and value, read by applying them (`applyOps`, the same rules as Apply):
+ * each touched step's parameters (named as the node panel names them), settings, credentials and wires, the old and the
+ * new value whole, and how many steps stay as they are. Pure: the card calls it with the canvas and the proposal's ops.
+ */
+export function diffOps(before: Workflow, ops: AssistantOp[], lookup?: DescriptorLookup): ChangeDiff {
+  const find = lookup ?? (() => undefined);
+  const after = applyOps(before, ops, find).workflow;
+  const wasById = new Map(before.nodes.map((n) => [n.id, n]));
+  const nowById = new Map(after.nodes.map((n) => [n.id, n]));
+  const nameOf = (id: string) => nowById.get(id)?.name ?? wasById.get(id)?.name ?? id;
+  const edgeKey = (c: WorkflowConnection) => `${c.type}|${c.source}:${c.sourceIndex}|${c.target}:${c.targetIndex}`;
+  const wasEdges = new Set(before.connections.map(edgeKey));
+  const nowEdges = new Set(after.connections.map(edgeKey));
+  const appeared = after.connections.filter((c) => !wasEdges.has(edgeKey(c)));
+  const gone = before.connections.filter((c) => !nowEdges.has(edgeKey(c)));
+  const isAdded = (id: string) => !wasById.has(id) && nowById.has(id);
+  const arrow = (c: WorkflowConnection) => `${nameOf(c.source)} → ${nameOf(c.target)}${c.type !== 'main' ? ` (${c.type.replace('ai_', '')})` : ''}`;
+
+  /** Wires by the step they are shown under. */
+  const wires = new Map<string, string[]>();
+  const show = (id: string, text: string) => wires.set(id, [...(wires.get(id) ?? []), text]);
+  for (const c of appeared) show(isAdded(c.target) ? c.target : c.source, `→ ${arrow(c)}`);
+  for (const c of gone) {
+    if (!nowById.has(c.source) || !nowById.has(c.target)) continue;
+    // A connection an added step now sits in is shown under that step.
+    const between = after.nodes.find((n) => isAdded(n.id) && after.connections.some((e) => e.source === c.source && e.target === n.id) && after.connections.some((e) => e.source === n.id && e.target === c.target));
+    show(between?.id ?? c.source, `− ${arrow(c)}`);
+  }
+
+  const steps: StepDiff[] = [];
+  const fieldsOf = (was: WorkflowNode | undefined, now: WorkflowNode): FieldDiff[] => {
+    const descriptor = find(now.type);
+    const props = descriptor?.properties ?? [];
+    const defaults = was || !descriptor ? {} : defaultParameters(descriptor);
+    const keys = [...new Set([...props.map((p) => p.name), ...Object.keys(was?.parameters ?? {}), ...Object.keys(now.parameters)])].filter((k) => k in (was?.parameters ?? {}) || k in now.parameters);
+    const out: FieldDiff[] = [];
+    for (const key of keys) {
+      const a = was?.parameters[key] ?? (was ? undefined : defaults[key]);
+      const b = now.parameters[key];
+      if (sameValue(a, b)) continue;
+      const label = props.find((p) => p.name === key)?.displayName ?? key;
+      out.push(field(key, label, was ? readableValue(a) : undefined, b === undefined ? 'empty' : readableValue(b)));
+    }
+    for (const key of Object.keys(SETTING_LABELS)) {
+      const a = (was as unknown as Record<string, unknown> | undefined)?.[key];
+      const b = (now as unknown as Record<string, unknown>)[key];
+      if (sameValue(a, b)) continue;
+      const render = typeof (a ?? b) === 'boolean' || key === 'retryOnFail' ? flagText : settingText;
+      out.push(field(`setting.${key}`, SETTING_LABELS[key], was ? render(a) : undefined, render(b)));
+    }
+    for (const type of new Set([...Object.keys(was?.credentials ?? {}), ...Object.keys(now.credentials ?? {})])) {
+      const a = was?.credentials?.[type]?.name;
+      const b = now.credentials?.[type]?.name;
+      if (a === b) continue;
+      out.push(field(`credential.${type}`, `Credential (${type})`, was ? (a ?? 'none') : undefined, b ?? 'none'));
+    }
+    return out;
+  };
+
+  for (const now of after.nodes) {
+    const was = wasById.get(now.id);
+    const w = wires.get(now.id) ?? [];
+    if (!was) {
+      steps.push({ node: now.name, kind: 'added', fields: fieldsOf(undefined, now), wires: w });
+      continue;
+    }
+    const fields = fieldsOf(was, now);
+    const renamed = was.name !== now.name;
+    if (!renamed && !fields.length && !w.length) continue;
+    steps.push({ node: now.name, kind: renamed ? 'renamed' : 'changed', ...(renamed && { was: was.name }), fields, wires: w });
+  }
+  for (const was of before.nodes) {
+    if (!nowById.has(was.id)) steps.push({ node: was.name, kind: 'removed', fields: [], wires: wires.get(was.id) ?? [] });
+  }
+
+  const touched = steps.filter((s) => s.kind !== 'added').length;
+  const flow: FieldDiff[] = [];
+  for (const key of Object.keys(WORKFLOW_SETTING_LABELS)) {
+    const a = (before.settings as Record<string, unknown> | undefined)?.[key];
+    const b = (after.settings as Record<string, unknown> | undefined)?.[key];
+    if (!sameValue(a, b)) flow.push(field(`workflow.${key}`, WORKFLOW_SETTING_LABELS[key], settingText(a), settingText(b)));
+  }
+  return { steps, untouched: Math.max(0, before.nodes.length - touched), ...(flow.length && { workflow: flow }) };
+}
+
 /**
  * What a change did, in a few words and the past tense, read from its ops rather than the model's summary: the title of
  * Spotlight's fix rows and node bubbles ("Set channel on “Post to Slack”", "Added “Format Message” before “Post to Slack”").

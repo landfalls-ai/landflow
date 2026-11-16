@@ -171,6 +171,7 @@ What the panel does between states (the rules for the states themselves are in [
 - **Fold motion.** The desktop column eases its width (240 ms) and its content cross-fades; when it stops, the canvas fits the flow again once. On a phone the sheet's three heights (the bar as measured, peek and half) ease over 240 ms; the sheet follows the header drag and settles on the nearest height. Under Reduce motion nothing moves and the canvas fits at once.
 - **Apply and Undo.** Apply folds the proposal card (200 ms) into its one-line row with a tick, while the dashed ghosts on the canvas fade out as the real nodes appear in the same places. Undo opens the row again; the ghosts come back for a moment, then fade out. The row has the **Undo**.
 - **Errors with actions.** A reply that failed after some steps offers **Continue from step N** (the chat route's `resume` with the checkpoint) and **Try again**; a usage cap offers **Open AI caps** to admins (it opens Settings at its own `#ai-caps` section), else only its text; a stalled reply offers **Try again**. A run that failed at a node in a test-and-fix has **Open the node** and **Ask Spotlight to fix it**, which puts *Fix <node>: <error>* in the box.
+- **What Apply changes.** A change waiting for Apply shows a diff, open by default, read from its ops and the canvas (`diffOps` in `lib/shared/assistant-ops.ts`, drawn by `components/editor/change-diff.tsx`): one block per touched step (+ added, ~ changed, − removed, ✎ renamed), each parameter named as the node panel names it, each setting (*Retry on fail: off → on*, *Max tries: default → 3*), credential name and wire, with the old value struck through and the new one plain, and a last line *N other steps untouched*. A value over 120 characters or with a line break shows two lines and **Show all**, which opens the old and the new text whole (monospace, at most 240 px tall, scrolling inside). The header folds the block. Once the change is applied its row keeps the diff the card showed, folded; a change Spotlight applied alone (a new draft) has no waiting card, so its row keeps the one-line list. The after-run suggestions card uses the same diff.
 - **Empty panel.** One line, *Describe a flow, or ask about this one*; the suggestion bubbles above the composer are its starters (the panel adds no chips of its own).
 - **Phone bar.** With a change waiting, the folded bar shows the amber needs-you icon, **Review** (opens the sheet to the proposal) and **Apply** (44 px).
 
@@ -381,6 +382,8 @@ mounts it.
 The routes are `/api/conversations` and `/api/me/preferences` ([reference/api.md](reference/api.md)).
 
 ## Edit operations
+
+A card's diff (`diffOps`) applies these same ops with `applyOps` and compares the result with the canvas, so it shows what Apply does, including parameters a change resets, and nothing the ops drop.
 
 Proposals use `lib/shared/assistant-ops.ts`. A node reference is a node **name**, an id, or the `ref` of a node added earlier in the same list.
 

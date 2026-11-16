@@ -2451,3 +2451,7 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   reload.
 - **Owed to a person:** the asks-first wording and the **Needs you** rows on a real phone, and whether "saved" should
   end autonomy at the first autosave rather than at the next open (decision D1 reads it at the next open).
+
+## Spotlight wave sb2
+
+- **SB08, a real diff before Apply, built (2026-11-16):** finding 2.3 (the card printed the new value cut at 64 characters): the waiting card, the proposal row and the after-run suggestion show per step each parameter, setting, credential and wire old → new, long text behind **Show all**, and "N other steps untouched" (`diffOps`, `change-diff.tsx`). Docs: [assistant.md](assistant.md#fold-apply-and-errors).
