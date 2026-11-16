@@ -252,8 +252,12 @@ export interface Proposal {
  * an agent, add a trigger, or say a test may send for real. Its row has the button that does it and one that goes on.
  */
 export interface Need {
-  what: 'credential' | 'agent' | 'trigger' | 'sends';
+  what: 'credential' | 'agent' | 'trigger' | 'sends' | 'destination' | 'blocked'; // SB03:
   text: string;
+  /** `sends` and `destination`: where the test would send; the yes is kept for these (SB03). */
+  destinations?: string[];
+  /** `destination`: the fix whose change it was, to undo (SB03). */
+  fix?: { item: string; proposals: string[] };
   /** The node it is about, to open. */
   node?: string;
   /** The session's goal, to test on with. */

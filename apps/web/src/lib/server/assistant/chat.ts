@@ -29,6 +29,7 @@ import {
   opsArgument,
   recoverToolCalls,
   standInKey,
+  givenValuesKept, // SB03:
   unitSlips,
   wastedFix,
   withAgentIds,
@@ -222,10 +223,10 @@ How to work:
 
 ${PARAMETER_FORMATS}`;
 
-const SESSION = 'This message comes from Spotlight\'s test-and-fix session: it applies your proposal and runs the workflow again by itself. Never ask the user to click Apply or to run it.';
+const SESSION = 'This message comes from Spotlight\'s test-and-fix session: it applies your proposal and runs the workflow again by itself. Never ask the user to click Apply or to run it. A run blocked by the host\'s outbound policy, a credential or an account is the person\'s to fix: propose nothing and say what they must do. Never change a URL, channel, address or id the person gave, and never remove a step they asked for.'; // SB03:
 
 /** Autonomous mode: what the person asked is applied and tested as soon as the reply ends (components/editor/autonomous.ts). */
-const AUTO = 'Autonomous mode: Spotlight applies your proposal as soon as you finish, then tests the flow. Never mention Apply, cards or running it. End with one sentence: what changed, then only what the person must do (pick a credential, fill in a value). A new agent you propose is designed and published by Spotlight: say only "Created the agent “<name>” for <job>."';
+const AUTO = 'Autonomous mode: Spotlight applies your proposal as soon as you finish, then tests the flow. A run blocked by the host\'s outbound policy, a credential or an account is the person\'s to fix: propose nothing and say what they must do. Never change a URL, channel, address or id the person gave, and never remove a step they asked for. Never mention Apply, cards or running it. End with one sentence: what changed, then only what the person must do (pick a credential, fill in a value). A new agent you propose is designed and published by Spotlight: say only "Created the agent “<name>” for <job>."';
 
 const shorten = (value: string, max = 60) => (value.length > max ? `${value.slice(0, max - 1)}…` : value);
 
@@ -336,6 +337,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
   let pressed = false;
   /** A fix that missed the failing step was sent back once. */
   let offTargetSent = false;
+  let keptSent = false; // SB03:
   let applyRetried = false;
   /** The ops of each proposal so far, as sent: a model may send the same one again and again. */
   const sent = new Set<string>(input.resume?.sent);
@@ -453,6 +455,15 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         if (wasted) {
           offTargetSent = true;
           return result(`Not shown: ${wasted} Propose a change to that step or what feeds it, or, if only the person can fix it, say what to do in one sentence.`, 'Skipped a fix that changes nothing');
+        }
+        // SB03: a test session's fix (not the person typing under auto, who is the one changing it) never removes a step the person asked for or changes a value they gave.
+        const kept =
+          input.session && input.session !== 'auto' && !keptSent
+            ? givenValuesKept(validated.ops, working, [(working as { description?: string }).description ?? '', ...input.messages.filter((m) => m.role === 'user').map((m) => (/^Test run \d+/.test(m.content) ? (/I asked for: “([\s\S]*?)”\./.exec(m.content)?.[1] ?? '') : m.content))].join('\n'))
+            : undefined;
+        if (kept) {
+          keptSent = true;
+          return result(`Not shown: ${kept} Only the person can change that: say so in one sentence.`, 'Kept what the person gave');
         }
         if (!validated.ops.length && repeated.length && !validated.dropped.length) {
           return result(`Nothing changes: ${repeated.join('; ')}. Connect from it with another propose_changes call if something is still missing.`, 'Skipped a repeated proposal');

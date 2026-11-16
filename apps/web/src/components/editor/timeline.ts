@@ -170,7 +170,7 @@ export interface PanelState {
   /** The last run's state, once a session is over. */
   lastRun?: 'passed' | 'failed';
   /** What the person has to do before Spotlight goes on (a credential, a trigger, a yes to sending). */
-  needs?: 'credential' | 'agent' | 'trigger' | 'sends';
+  needs?: 'credential' | 'agent' | 'trigger' | 'sends' | 'destination' | 'blocked'; // SB03:
   /** The node the last session stopped at. */
   stoppedAt?: string;
   /** Anything in the conversation yet. */
@@ -183,7 +183,7 @@ export function titleOf(state: PanelState): string {
   if (state.designing) return `Designing “${state.designing}”`;
   if (state.testing) return state.fixingName ? `Fixing “${state.fixingName}”` : 'Testing the flow';
   if (state.pending) return 'Working on it';
-  if (state.needs) return `Needs you: ${{ credential: 'pick a credential', agent: 'pick an agent', trigger: 'add a trigger', sends: 'OK to send?' }[state.needs]}`;
+  if (state.needs) return `Needs you: ${{ credential: 'pick a credential', agent: 'pick an agent', trigger: 'add a trigger', sends: 'OK to send?', destination: 'OK to send there?', blocked: 'blocked by this host' }[state.needs]}`;
   if (state.lastRun === 'passed') return 'Passed';
   if (state.lastRun === 'failed') return state.stoppedAt ? `Stopped at “${state.stoppedAt}”` : 'Stopped';
   return state.hasItems ? 'Spotlight' : 'Ask Spotlight';
