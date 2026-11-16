@@ -324,7 +324,12 @@ and it is not loaded, so the command above sets `NODE_OPTIONS` (a live check of 
 `net` connections and `dns.lookup`; it does not cover `dns.resolve*` or `Resolver` (c-ares over UDP), `dgram` or child
 processes, which no product code uses today. A package adds
 its scenarios as `test/spotlight-scenarios/<owner>.ts` (`export default defineScenarios([...])`, ids `<owner>-<slug>`):
-the runner finds it, no index to edit. [assistant.md](assistant.md#how-spotlight-is-measured) says what the checks mean.
+the runner finds it, no index to edit. A scenario's `start.autonomy` decides what the scripted form applies: asks-first
+leaves every card waiting (nobody clicks Apply; a session waiting for Apply is stopped as the person would with ■), auto
+applies a card unless it removes a step or leaves one without its input (`needsAClick`), and unset applies every card
+(a session runs as auto). `start.approvedDestinations` is the person's yes to a session's test runs that send, by
+`host:port`. In the scripted form the fake Ollama spends no script turn on a request that is not a chat (the model
+list), and a script turn that throws `Ollama error 500: <body>` is answered as that status and body. [assistant.md](assistant.md#how-spotlight-is-measured) says what the checks mean.
 
 `cluster-runtime.test.ts` always runs: a main and workers through the runner on the in-process coordinator.
 

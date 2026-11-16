@@ -9,7 +9,17 @@ import type { LanguageModel } from '@landflow/engine';
 import { isUsageCapError } from '../ai-usage';
 
 /** The error Ollama gives for a tool call it could not parse. Narrower than the architect's loop: no bare "tool call", which hosted models' errors also say. */
-export const PARSE_ERROR = /XML syntax error|unexpected end|Ollama error 500/i;
+export const PARSE_ERROR = /XML syntax error|unexpected end/i;
+
+/**
+ * A parse error: its words in the message or the detail Ollama sent (models.ts puts the body in `description`), or a
+ * bare "Ollama error 500" with no detail at all. A 500 that says what it was (out of memory) is not retried.
+ */
+export function isParseError(caught: unknown): boolean {
+  const message = String((caught as Error)?.message ?? caught);
+  const description = String((caught as { description?: unknown })?.description ?? '');
+  return PARSE_ERROR.test(`${message} ${description}`) || (/^Ollama error 500$/i.test(message.trim()) && !description.trim());
+}
 
 export function withParseRetry(model: LanguageModel): LanguageModel {
   return {
@@ -18,7 +28,7 @@ export function withParseRetry(model: LanguageModel): LanguageModel {
       try {
         return await model.generate(input);
       } catch (caught) {
-        if (input.signal?.aborted || isUsageCapError(caught) || !PARSE_ERROR.test(String((caught as Error)?.message ?? caught))) throw caught;
+        if (input.signal?.aborted || isUsageCapError(caught) || !isParseError(caught)) throw caught;
         trace.getActiveSpan()?.addEvent('assistant.retry', { 'landflow.reason': String((caught as Error)?.message ?? caught).slice(0, 200) });
         return model.generate(input);
       }

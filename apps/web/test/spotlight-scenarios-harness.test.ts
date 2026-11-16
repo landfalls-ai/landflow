@@ -81,7 +81,7 @@ describe('the live form', () => {
 
 describe('the harness drives the product', () => {
   it('a build: the fake Ollama answers the script and the draft is laid out as a workflow', async () => {
-    const draft = { name: 'D', nodes: [{ key: 'start', type: 'core.manualTrigger', name: 'Start' }, { key: 'set', type: 'core.set', name: 'Set' }], connections: [{ from: 'start', to: 'set' }] };
+    const draft = { name: 'D', nodes: [{ key: 'start', type: 'core.manualTrigger', name: 'Start' }, { key: 'set', type: 'core.set', name: 'Set', parameters: { mode: 'manual', fields: { values: [{ name: 'copied', type: 'string', value: '{{ $json.name }}' }] } } }], connections: [{ from: 'start', to: 'set' }] };
     const scenario: Scenario = { id: 'sb00-h-build', owner: 'SB00', job: 'build', via: 'build', title: 't', ask: 'copy the fields over', script: [{ text: JSON.stringify(draft) }], checks: [] };
     const o = await runScenario(scenario, 'unit');
     expect(o.error).toBeUndefined();

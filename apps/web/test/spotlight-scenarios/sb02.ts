@@ -36,7 +36,19 @@ export default defineScenarios([
     via: 'build',
     title: 'A draft does not invent an address or a table (core types only: the unit harness registers the core plugin; the live form can use Slack and Linear)',
     ask: 'Every morning, get the new bugs and post a summary to Slack, and save each bug to a table',
+    // Twice: SB01 sends a draft with an empty schedule rule back once, and the model answers with the same draft.
     script: [
+      {
+        text: JSON.stringify({
+          name: 'Bug digest',
+          nodes: [
+            { key: 't', type: 'core.schedule', name: 'Every morning', parameters: {} },
+            { key: 'bugs', type: 'core.httpRequest', name: 'Get bugs', parameters: { method: 'GET', url: 'https://made-up.example/bugs?id={{ $json.id }}' } },
+            { key: 'save', type: 'core.dataTable', name: 'Save bug', parameters: { operation: 'insert', dataTableId: 'dt_bug_triage' } },
+          ],
+          connections: [{ from: 't', to: 'bugs' }, { from: 'bugs', to: 'save' }],
+        }),
+      },
       {
         text: JSON.stringify({
           name: 'Bug digest',
@@ -58,7 +70,19 @@ export default defineScenarios([
     via: 'build',
     title: 'A draft keeps one trigger: the one the ask names',
     ask: 'Every morning, fetch the page and tell me what changed',
+    // Twice: SB01 sends a draft with an empty schedule rule back once, and the model answers with the same draft.
     script: [
+      {
+        text: JSON.stringify({
+          name: 'Morning check',
+          nodes: [
+            { key: 'm', type: 'core.manualTrigger', name: 'Run', parameters: {} },
+            { key: 's', type: 'core.schedule', name: 'Every morning', parameters: {} },
+            { key: 'a', type: 'core.httpRequest', name: 'Fetch page', parameters: { method: 'GET' } },
+          ],
+          connections: [{ from: 'm', to: 'a' }, { from: 's', to: 'a' }],
+        }),
+      },
       {
         text: JSON.stringify({
           name: 'Morning check',

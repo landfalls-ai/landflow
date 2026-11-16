@@ -478,9 +478,10 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
           return result(`Not shown: ${wasted} Propose a change to that step or what feeds it, or, if only the person can fix it, say what to do in one sentence.`, 'Skipped a fix that changes nothing');
         }
         // SB03: a test session's fix (not the person typing under auto, who is the one changing it) never removes a step the person asked for or changes a value they gave.
+        // Read before SB02's made-up-values strip (`teamed`, not `proposedOps`): a swap to a host nobody gave is still a swap of the person's value.
         const kept =
           input.session && input.session !== 'auto' && !keptSent
-            ? givenValuesKept(validated.ops, working, [(working as { description?: string }).description ?? '', ...input.messages.filter((m) => m.role === 'user').map((m) => (/^Test run \d+/.test(m.content) ? (/I asked for: “([\s\S]*?)”\./.exec(m.content)?.[1] ?? '') : m.content))].join('\n'))
+            ? givenValuesKept(validateOps(working, teamed, lookup).ops, working, [(working as { description?: string }).description ?? '', ...input.messages.filter((m) => m.role === 'user').map((m) => (/^Test run \d+/.test(m.content) ? (/I asked for: “([\s\S]*?)”\./.exec(m.content)?.[1] ?? '') : m.content))].join('\n'))
             : undefined;
         if (kept) {
           keptSent = true;

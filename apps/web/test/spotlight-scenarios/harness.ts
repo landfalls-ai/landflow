@@ -11,8 +11,9 @@ import './env';
 import { createRequire } from 'node:module';
 import { nanoid } from 'nanoid';
 import { definePlugin, defineNode } from '@landflow/sdk';
-import type { NodeRun, Workflow } from '@landflow/engine';
+import type { ModelTurn, NodeRun, Workflow } from '@landflow/engine';
 import { applyOps, type AssistantOp, type RunDigest } from '@/lib/shared/assistant-ops';
+import { needsAClick, type Autonomy } from '@/components/editor/spotlight-autonomy';
 import type { AgentConfig } from '@/lib/shared/agents';
 import { corePlugin } from '@/lib/server/nodes';
 import { registry } from '@/lib/server/plugins/registry';
@@ -152,10 +153,20 @@ function runsById(wf: Workflow | undefined, runs: Record<string, RunDigest> | un
  */
 function fakeReplyOf(script: ScriptTurn[]) {
   const left = [...script];
-  return () => {
+  return (_provider: unknown, body: unknown) => {
+    // A request that is no chat (the model list the Agent architect reads first) spends no turn of the script.
+    if (!Array.isArray((body as { messages?: unknown } | undefined)?.messages)) return { text: '', toolCalls: [] };
     const next = left.shift();
     if (!next) throw new Error('No scripted turn left');
-    const turn = typeof next === 'function' ? next({ system: '', messages: [], tools: [] } as never) : next;
+    let turn: Partial<ModelTurn>;
+    try {
+      turn = typeof next === 'function' ? next({ system: '', messages: [], tools: [] } as never) : next;
+    } catch (thrown) {
+      // A turn that throws is the server's error: "Ollama error 500: {…}" answers 500 with that body.
+      const message = (thrown as Error).message;
+      const parts = /^\w+ error (\d{3}):\s*([\s\S]*)$/.exec(message);
+      return { error: { status: parts ? Number(parts[1]) : 500, body: parts ? parts[2] : JSON.stringify({ error: message }) } };
+    }
     return { text: turn.text ?? '', toolCalls: (turn.toolCalls ?? []).map((c) => ({ id: c.id, name: c.name, arguments: c.input })) };
   };
 }
@@ -313,18 +324,42 @@ function applyAll(workflow: Workflow, proposals: Outcome['proposals']): Workflow
   return wf;
 }
 
+/**
+ * `start.autonomy` (SB03, SB04; spotlight-autonomy.ts): asks-first leaves every card waiting for Apply, nobody clicks it
+ * here, so the canvas stays as it was; auto applies a card unless it needs a click (it removes a step or leaves one
+ * without its input). Unset: every card is applied, the measure SB00's scenarios were written against.
+ */
+function applyAsTheEditor(workflow: Workflow, proposals: Outcome['proposals'], autonomy: Autonomy | undefined): Workflow {
+  if (autonomy === 'asks-first') return workflow;
+  if (!autonomy) return applyAll(workflow, proposals);
+  const graph = { nodes: workflow.nodes.map((n) => ({ id: n.id, name: n.name })), connections: workflow.connections };
+  return applyAll(workflow, proposals.filter((p) => needsAClick(p.ops, graph).length === 0));
+}
+
+/** The cards of the session's replies still waiting for Apply (no state yet). */
+function undecided(items: ReadonlyArray<{ role: string; parts?: ReadonlyArray<{ kind: string; proposal?: { state?: string } }> }>): number {
+  return items.reduce((n, item) => n + (item.role === 'assistant' ? (item.parts ?? []).filter((p) => p.kind === 'proposal' && !p.proposal?.state).length : 0), 0);
+}
+
 // ---------------------------------------------------------------------------
 // The session: Spotlight's test-and-fix loop on the editor's stores, in Node
 // ---------------------------------------------------------------------------
 
-async function sessionOf(scenario: Scenario, form: Form, options: RunOptions, first: Collected, afterChat: Workflow, scripted: Scripted | undefined) {
+async function sessionOf(scenario: Scenario, form: Form, options: RunOptions, first: Collected, canvas: Workflow, afterChat: Workflow, scripted: Scripted | undefined) {
   const { useEditor } = await import('@/components/editor/store');
   const { useAssistant, runDigests } = await import('@/components/editor/assistant');
-  const { testUntilItRuns } = await import('@/components/editor/test-session');
+  const { testUntilItRuns, approveDestinations, sendsAllowed } = await import('@/components/editor/test-session');
   const { statusesOf } = await import('@/lib/client/run-data');
   const types = registry.nodeTypes();
   useAssistant.getState().reset();
+  // The canvas as the editor gives it back (its own field order and defaults), so `before` and `after` compare like for like.
+  useEditor.getState().load(canvas, types);
+  const before = useEditor.getState().toWorkflow();
   useEditor.getState().load(afterChat, types);
+  // SB03: the person's yes to test runs that send for real, by destination (`start.approvedDestinations`); none by default.
+  const workflowId = useEditor.getState().workflowId;
+  sendsAllowed.delete(workflowId);
+  approveDestinations(workflowId, scenario.start?.approvedDestinations ?? []);
   const rounds = scenario.start?.sessionRuns ?? [];
   const roundOf = (all: typeof rounds, i: number) => all[Math.min(Math.max(i, 0), Math.max(all.length - 1, 0))] ?? {};
   let round = 0;
@@ -396,11 +431,25 @@ async function sessionOf(scenario: Scenario, form: Form, options: RunOptions, fi
     }) as never,
   });
 
-  await testUntilItRuns(scenario.ask, { publishAgents: true });
+  // `start.autonomy`: asks-first waits for an Apply nobody clicks here, so once a card has waited with nothing else going
+  // on, the session is stopped as the person would (■). Unset: auto, the session applying its own fixes as SB00 measured.
+  const autonomy: Autonomy = scenario.start?.autonomy ?? 'auto';
+  let quiet = 0;
+  const watch = setInterval(() => {
+    const assistant = useAssistant.getState();
+    const waiting = assistant.testing && !assistant.pending && !useEditor.getState().running && undecided(assistant.items as never) > 0;
+    quiet = waiting ? quiet + 1 : 0;
+    if (quiet >= 8) assistant.testing?.abort();
+  }, 25);
+  try {
+    await testUntilItRuns(scenario.ask, { publishAgents: true, autonomy });
+  } finally {
+    clearInterval(watch);
+  }
   const needs = useAssistant
     .getState()
     .items.flatMap((item) => (item.role === 'assistant' ? item.parts.flatMap((p) => (p.kind === 'needs' ? [p.need.what as string] : [])) : []));
-  return { after: useEditor.getState().toWorkflow(), needs, replies };
+  return { before, after: useEditor.getState().toWorkflow(), needs, replies };
 }
 
 // ---------------------------------------------------------------------------
@@ -410,8 +459,8 @@ async function sessionOf(scenario: Scenario, form: Form, options: RunOptions, fi
 /** Run `scenario` once. Never throws for a product failure: that is the Outcome's `error`. */
 export async function runScenario(scenario: Scenario, form: Form, options: RunOptions = {}): Promise<Outcome> {
   prepare();
-  // `start.autonomy` and `start.approvedDestinations` are not wired yet: SB03 (autonomy) and SB04 (needs you) add them
-  // here. Until then a scenario that sets them (`sb00-fix-401-autonomous`) differs from the plain one by `session` only.
+  // `start.autonomy` decides what is applied (`applyAsTheEditor`, the session's own rule) and `start.approvedDestinations`
+  // what a session's test run may send to (`sessionOf`): wired at the wave sb1 merge, SB03 and SB04 having no harness.
   const started = Date.now();
   const refusedBefore = refusedNow().length;
   const echoBefore = options.echo?.log.length ?? 0;
@@ -453,9 +502,10 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
       const result = await chatOnce({ ask: scenario.ask, workflow: canvas, selected: idOf(canvas, scenario.start?.selected), runs: runsById(canvas, scenario.start?.runs), session: scenario.start?.session }, form, scripted, options);
       Object.assign(outcome, { text: result.text, tools: result.tools, proposals: result.proposals, ...(result.error && { error: result.error }) });
       withDone(result);
-      outcome.after = applyAll(canvas, result.proposals);
+      outcome.after = applyAsTheEditor(canvas, result.proposals, scenario.start?.autonomy);
       if (scenario.via === 'session') {
-        const session = await sessionOf(scenario, form, options, result, outcome.after, scripted);
+        const session = await sessionOf(scenario, form, options, result, canvas, outcome.after, scripted);
+        outcome.before = session.before;
         outcome.after = session.after;
         outcome.needs = session.needs;
         outcome.modelCalls += session.replies.slice(1).reduce((n, r) => n + r.calls, 0);

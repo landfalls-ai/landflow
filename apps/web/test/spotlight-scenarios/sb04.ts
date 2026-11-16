@@ -28,7 +28,7 @@ const BUG_TRIAGE = {
     },
     {
       id: 'n_http', name: 'Open status incident', type: 'core.httpRequest', typeVersion: 1, position: [1680, 80],
-      parameters: { method: 'POST', url: 'https://status.example.com/api/v1/incidents', authentication: 'none', query: {}, headers: {}, bodyType: 'json', body: '{"title": "{{ $json.title }}", "severity": "critical"}', options: {} },
+      parameters: { method: 'POST', url: 'http://127.0.0.1:3399/incidents', authentication: 'none', query: {}, headers: {}, bodyType: 'json', body: '{"title": "{{ $json.title }}", "severity": "critical"}', options: {} },
     },
     {
       id: 'n_dt', name: 'Save to backlog', type: 'core.dataTable', typeVersion: 1, position: [1400, 320],

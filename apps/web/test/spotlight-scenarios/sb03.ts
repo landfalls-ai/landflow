@@ -60,9 +60,11 @@ export default defineScenarios([
     job: 'fix',
     via: 'session',
     title: 'A fix that points a step at another local host:port is asked again',
-    ask,
+    // No URL in the ask: a URL the person gave is theirs to change (sb03-fix-removes-steps), so this fix would not be shown.
+    ask: 'Tell the desk about big orders: Notify VIP for a total over 500, Notify Standard for the rest, then respond.',
     start: { workflow: webhookFlow(), autonomy: 'auto', session: 'auto', approvedDestinations: ['127.0.0.1:3400'], sessionRuns: [{ 'Notify VIP': { error: 'HTTP 404 Not Found' } }] },
-    script: [call('propose_changes', { summary: 'Set the url', ops: [{ op: 'setParameters', node: 'Notify Standard', parameters: { url: 'http://127.0.0.1:3500/standard' } }] }), { text: 'Changed the address.' }],
+    // The first reply is the ask's (nothing to change yet); the session's fix after the 404 moves the step that failed.
+    script: [{ text: 'I will test it.' }, call('propose_changes', { summary: 'Set the url', ops: [{ op: 'setParameters', node: 'Notify VIP', parameters: { url: 'http://127.0.0.1:3500/vip' } }] }), { text: 'Changed the address.' }],
     checks: [checks.needs('destination'), checks.noOutside],
     live: { runs: 3 },
   },
@@ -74,8 +76,15 @@ export default defineScenarios([
     title: 'An asks-first session shows the fix and waits for Apply',
     ask: 'Retry the VIP post three times.',
     start: { workflow: webhookFlow(), autonomy: 'asks-first', session: 'fix', approvedDestinations: ['127.0.0.1:3400'], sessionRuns: [{ 'Notify VIP': { error: 'HTTP 503 Service Unavailable' } }] },
-    script: [call('propose_changes', { summary: 'Retry the VIP post', ops: [{ op: 'setNodeSettings', node: 'Notify VIP', settings: { retryOnFail: true, maxTries: 3 } }] }), { text: 'Retries three times.' }],
-    checks: [checks.proposed, checks.noChange],
+    // The same card twice: for the ask, and as the session's fix after the 503, which waits for Apply.
+    script: [
+      call('propose_changes', { summary: 'Retry the VIP post', ops: [{ op: 'setNodeSettings', node: 'Notify VIP', settings: { retryOnFail: true, maxTries: 3 } }] }),
+      { text: 'Retries three times.' },
+      call('propose_changes', { summary: 'Retry the VIP post', ops: [{ op: 'setNodeSettings', node: 'Notify VIP', settings: { retryOnFail: true, maxTries: 3 } }] }),
+      { text: 'Retries three times.' },
+    ],
+    // A card is shown and the canvas is as it was (checks.noChange also wants no card, which is the opposite of this scenario).
+    checks: [checks.proposed, { id: 'canvas-unchanged', label: 'Left the canvas as it was', judge: keptTheFlow }],
     live: { runs: 3 },
   },
 ]);
