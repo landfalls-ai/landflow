@@ -207,7 +207,7 @@ export const useSuggestions = create<SuggestionsState>((set, get) => ({
     const update = (patch: Partial<SuggestionEntry>) =>
       set((s) => ({ entries: { ...s.entries, [key]: { ...(s.entries[key] ?? { status: 'loading', handled: {} }), ...patch } } }));
     update({ status: 'loading', error: undefined, handled: {} });
-    api<SuggestResult>('/api/assistant/suggest', { method: 'POST', json: { workflow: editor.toWorkflow(), workflowId: editor.workflowId, nodeId, run: digestRun(run) } })
+    api<SuggestResult>('/api/assistant/suggest', { method: 'POST', json: { workflow: editor.toWorkflow(), workflowId: editor.workflowId, nodeId, run: digestRun(run), ...pickedModel() /* SB19 (IR-2): the session's pick, as the chat sends it */ } })
       .then((result) => update({ status: 'done', result }))
       .catch((e: Error) => update({ status: 'error', error: e.message }));
   },

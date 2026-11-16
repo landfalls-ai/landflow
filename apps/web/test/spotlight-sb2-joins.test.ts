@@ -280,6 +280,12 @@ describe('2. the credential offer and the diff card', () => {
     expect(step.credentials?.httpHeaderAuth).toEqual({ id: 'cred_echo', name: 'Echo token' });
   });
 
+  it('a reply that ends with a question has no credential picker under its chips (IR-1)', async () => {
+    const { events } = await chat([{ toolCalls: [{ id: 'q', name: 'ask_user', input: { question: 'Which token should it use?', choices: ['Echo token', 'Other token'] } }], stopReason: 'tool_use' }]);
+    expect(events.some((e) => e.type === 'ask')).toBe(true);
+    expect(events.some((e) => e.type === 'credential')).toBe(false);
+  });
+
   it('for a step the proposal adds, the event has no nodeId and the picker finds it by name after Apply', async () => {
     const add: AssistantOp[] = [{ op: 'addNode', ref: 'h2', type: 'core.httpRequest', name: 'Call status API', after: 'Open status incident', parameters: { method: 'GET', url: 'http://127.0.0.1:3399/incidents', authentication: 'genericCredentialType', genericAuthType: 'httpHeaderAuth' } }];
     const { events } = await chat([propose('c1', add), { text: 'Pick its token.' }], { workflow: plain(), selectedNodeId: undefined, messages: [{ role: 'user', content: 'add a step after Open status incident that reads http://127.0.0.1:3399/incidents' }] });

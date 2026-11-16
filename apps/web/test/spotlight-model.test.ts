@@ -8,7 +8,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { startFakeLiteLlm } from './fake-litellm';
 
 // A fake Ollama: the model list (a chat model, a second one, an embedding model) and /api/chat, recording what it was asked.
@@ -193,6 +193,32 @@ describe('the routes check the model', () => {
     } finally {
       saveAiCaps({ credentials: {}, users: {} });
       aiUsageMeter().invalidateCaps();
+    }
+  });
+});
+
+describe('the after-run suggestion request (IR-2)', () => {
+  it('sends the session\'s pick, and nothing when no model was picked', async () => {
+    const { useSuggestions } = await import('@/components/editor/assistant');
+    const { useSpotlightModel } = await import('@/components/editor/spotlight-model');
+    const bodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal('fetch', async (_url: string, init: { body?: string }) => {
+      bodies.push(JSON.parse(init.body ?? '{}'));
+      return new Response(JSON.stringify({ suggestions: [] }), { status: 200 });
+    });
+    try {
+      useSpotlightModel.setState({ default: 'qwen3-coder:30b', models: [{ id: 'qwen3-coder:30b', label: 'q', source: 'ollama', local: true }, { id: 'qwen3.8', label: 'q8', source: 'ollama', local: true }], pick: 'qwen3.8' });
+      useSuggestions.getState().request('n1', { status: 'error', startedAt: '2026-11-16T10:00:00Z', durationMs: 5, inputs: [], outputs: [] } as never);
+      await vi.waitFor(() => expect(bodies).toHaveLength(1));
+      expect(bodies[0].model).toBe('qwen3.8');
+      useSpotlightModel.setState({ pick: undefined });
+      useSuggestions.getState().request('n1', { status: 'error', startedAt: '2026-11-16T10:00:01Z', durationMs: 5, inputs: [], outputs: [] } as never);
+      await vi.waitFor(() => expect(bodies).toHaveLength(2));
+      expect(bodies[1]).not.toHaveProperty('model');
+    } finally {
+      vi.unstubAllGlobals();
+      useSpotlightModel.setState({ pick: undefined, models: [] });
+      useSuggestions.getState().clear();
     }
   });
 });

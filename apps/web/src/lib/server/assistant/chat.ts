@@ -911,7 +911,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
       else onEvent({ type: 'text', text });
     }
     // SB12: a reply that proposes nothing, about a step whose last run failed for a credential: offer the credentials to pick.
-    if (!proposed && !question && !input.session) {
+    if (!proposed && !question && !askedUser && !input.session) {
       const failing = failedForCredential(working, runs, input.selectedNodeId, lookup);
       if (failing && !offered.has(failing.node)) {
         offered.add(failing.node);
