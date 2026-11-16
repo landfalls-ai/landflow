@@ -2460,7 +2460,7 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   `setWorkflowSettings` (a settings-only proposal is no longer read as "already there"); a node's docs list the output
   fields of the operation its parameters select, and Linear issue create, add link and comment create, Slack send,
   update and get permalink, and GitHub pull request and issue writes declare an `outputSchema` (finding 1.4). The
-  scorecard: a blocked scenario's live run is blocked (`start.outbound`), builds' "credentials named", "said what is
+  scorecard: a blocked scenario's live run is blocked (`start.outbound`, the policy set outright), SB03's flows hit the echo server and a session's "changed nothing" ignores refused or waiting cards, builds' "credentials named", "said what is
   left" and "sent back once" read the draft (`draft.left`, `draft.calls`), and the outcome names the model. Docs:
-  [assistant.md](assistant.md#the-builder-chat). Left: live scorecard numbers before and after, and the schemas of the
+  [assistant.md](assistant.md#the-builder-chat). Left: the live scorecard's before and after side by side (the run is slow; its numbers go with the merge report), and the schemas of the
   rest of GitHub, Slack and Linear.

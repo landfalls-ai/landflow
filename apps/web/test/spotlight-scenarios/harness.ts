@@ -44,6 +44,16 @@ export function outboundAllow(scenario: Pick<Scenario, 'start'>, form: Form): st
   return form === 'live' && scenario.start?.outbound === 'allowed' ? '127.0.0.1,localhost' : undefined;
 }
 
+/**
+ * The outbound environment of a live run, set outright: the scorecard runs in vitest (development profile), where the host
+ * does not block private addresses unless told to, so both variables are set (`LANDFLOW_OUTBOUND_BLOCK_PRIVATE=true`; the
+ * allow list only for `allowed`). Unit form: nothing.
+ */
+export function outboundEnv(scenario: Pick<Scenario, 'start'>, form: Form): Record<'LANDFLOW_OUTBOUND_BLOCK_PRIVATE' | 'LANDFLOW_OUTBOUND_ALLOW', string | undefined> | undefined {
+  if (form !== 'live') return undefined;
+  return { LANDFLOW_OUTBOUND_BLOCK_PRIVATE: 'true', LANDFLOW_OUTBOUND_ALLOW: outboundAllow(scenario, form) };
+}
+
 /** The live form runs only when LANDFLOW_INTEGRATION names `spotlight`. */
 export const liveEnabled = (env: Record<string, string | undefined> = process.env): boolean => (env.LANDFLOW_INTEGRATION ?? '').split(',').map((s) => s.trim()).includes('spotlight');
 
@@ -148,6 +158,9 @@ function canvasOf(scenario: Scenario, options: RunOptions): Workflow | undefined
   const copy = JSON.parse(JSON.stringify(wf)) as Workflow;
   return port && port !== ECHO_PORT ? (JSON.parse(JSON.stringify(copy).replaceAll(`127.0.0.1:${ECHO_PORT}`, `127.0.0.1:${port}`)) as Workflow) : copy;
 }
+
+/** A string with the echo URLs pointed at this run's echo server. */
+const echoed = (text: string, options: RunOptions): string => (options.echo?.port && options.echo.port !== ECHO_PORT ? text.replaceAll(`127.0.0.1:${ECHO_PORT}`, `127.0.0.1:${options.echo.port}`) : text);
 
 const idOf = (wf: Workflow | undefined, name: string | undefined) => (name ? (wf?.nodes.find((n) => n.name === name || n.id === name)?.id ?? name) : undefined);
 
@@ -370,7 +383,7 @@ async function sessionOf(scenario: Scenario, form: Form, options: RunOptions, fi
   // SB03: the person's yes to test runs that send for real, by destination (`start.approvedDestinations`); none by default.
   const workflowId = useEditor.getState().workflowId;
   sendsAllowed.delete(workflowId);
-  approveDestinations(workflowId, scenario.start?.approvedDestinations ?? []);
+  approveDestinations(workflowId, (scenario.start?.approvedDestinations ?? []).map((d) => echoed(d, options)));
   const rounds = scenario.start?.sessionRuns ?? [];
   const roundOf = (all: typeof rounds, i: number) => all[Math.min(Math.max(i, 0), Math.max(all.length - 1, 0))] ?? {};
   let round = 0;
@@ -484,10 +497,14 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
   const previousOllama = process.env.OLLAMA_URL;
   let fake: FakeModels | undefined;
   const previousAllow = process.env.LANDFLOW_OUTBOUND_ALLOW;
-  // SB10: blocked unless the scenario says allowed (it was allowed whenever an echo server ran).
-  const allow = outboundAllow(scenario, form);
-  if (allow) process.env.LANDFLOW_OUTBOUND_ALLOW = allow;
-  else if (form === 'live') delete process.env.LANDFLOW_OUTBOUND_ALLOW;
+  const previousBlock = process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE;
+  // SB10: the policy is set outright for a live run: blocked unless the scenario says allowed (it was allowed whenever an echo server ran).
+  const outbound = outboundEnv(scenario, form);
+  if (outbound) {
+    process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE = outbound.LANDFLOW_OUTBOUND_BLOCK_PRIVATE;
+    if (outbound.LANDFLOW_OUTBOUND_ALLOW) process.env.LANDFLOW_OUTBOUND_ALLOW = outbound.LANDFLOW_OUTBOUND_ALLOW;
+    else delete process.env.LANDFLOW_OUTBOUND_ALLOW;
+  }
   try {
     // The product reaches for Ollama itself in these (the builder, the agent designer, the architect): a fake one answers the script.
     if (form === 'unit' && scenario.via !== 'chat' && scenario.via !== 'session') {
@@ -516,7 +533,7 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
       if (typeof body.draft?.model === 'string') outcome.model = body.draft.model;
     } else if (scenario.via === 'chat' || scenario.via === 'session') {
       if (!canvas) throw new Error(`${scenario.id}: a chat scenario needs start.workflow`);
-      const result = await chatOnce({ ask: scenario.ask, workflow: canvas, selected: idOf(canvas, scenario.start?.selected), runs: runsById(canvas, scenario.start?.runs), session: scenario.start?.session }, form, scripted, options);
+      const result = await chatOnce({ ask: echoed(scenario.ask, options), workflow: canvas, selected: idOf(canvas, scenario.start?.selected), runs: runsById(canvas, scenario.start?.runs), session: scenario.start?.session }, form, scripted, options);
       Object.assign(outcome, { text: result.text, tools: result.tools, proposals: result.proposals, ...(result.error && { error: result.error }) });
       withDone(result);
       outcome.after = applyAsTheEditor(canvas, result.proposals, scenario.start?.autonomy);
@@ -527,6 +544,8 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
         outcome.needs = session.needs;
         outcome.modelCalls += session.replies.slice(1).reduce((n, r) => n + r.calls, 0);
         outcome.proposals.push(...session.replies.slice(1).flatMap((r) => r.proposals));
+        // SB10: what a session applied is the canvas in the store; a card the guard refused or that waits for Apply changed nothing.
+        if (touchedNodes(outcome.before, outcome.after).length === 0) outcome.unapplied = outcome.proposals.length;
       }
     } else if (scenario.via === 'design') {
       const route = await import('@/app/api/agents/design/route');
@@ -551,6 +570,8 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
     else process.env.OLLAMA_URL = previousOllama;
     if (previousAllow === undefined) delete process.env.LANDFLOW_OUTBOUND_ALLOW;
     else process.env.LANDFLOW_OUTBOUND_ALLOW = previousAllow;
+    if (previousBlock === undefined) delete process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE;
+    else process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE = previousBlock;
   }
   outcome.ms = Date.now() - started;
   outcome.refused = form === 'live' ? refusedNow().slice(refusedBefore) : [];

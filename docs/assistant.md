@@ -464,9 +464,14 @@ tried to leave this machine. Collections are judged by a heuristic (a condition,
 it counts as empty); "runs right with the pinned data" is judged on what the draft sends, not by running it. How to run it and
 what the variables do: [development.md](development.md#spotlight-scorecard).
 
-Where the scorecard once read the wrong thing, it now reads what happened. A live session runs with the host's outbound
-policy of a fresh install (loopback refused) unless the scenario sets `start.outbound: 'allowed'`, which allows
-`127.0.0.1,localhost` and nothing wider; `sb03-blocked-session` is `blocked`, the other SB03 scenarios `allowed`. A build's
+The scorecard reads what happened in the places SB10 fixed. A live session sets the host's outbound policy outright
+(`LANDFLOW_OUTBOUND_BLOCK_PRIVATE=true`, since the scorecard runs in vitest, whose development profile does not block
+private addresses): with `LANDFLOW_OUTBOUND_ALLOW` unset a run to loopback is refused as production refuses it, and a
+scenario's `start.outbound: 'allowed'` lists `127.0.0.1,localhost` and nothing wider; `sb03-blocked-session` is
+`blocked`, the other SB03 scenarios `allowed`. SB03's flows point at the echo port (`127.0.0.1:3399`, rewritten to the
+run's echo server), and `?fail=404|500|503` makes the echo answer with that status. In a session, "changed nothing"
+counts only what was applied: a card the guard refused or one waiting for Apply changes nothing (`Outcome.unapplied`).
+A build's
 checks read the draft, not the one-line summary: "credentials named" is a `credential` item in `draft.left`, "said what is
 left" is `draft.left` having items (not applicable when the draft lacks nothing), and "sent back once" is `draft.calls`
 (2) rather than a count of model calls (not applicable for one call and no empty part).

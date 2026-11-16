@@ -9,7 +9,7 @@ import type { LanguageModel, ModelTurn, Workflow } from '@landflow/engine';
 import { call, checks, defineScenarios, scriptedModel, touchedNodes, type Outcome, type Scenario } from './spotlight-scenarios/scenario';
 import sb00 from './spotlight-scenarios/sb00';
 import sb01 from './spotlight-scenarios/sb01';
-import { assertUnit, failedChecks, judge, liveEnabled, outboundAllow, reportOf, runScenario, tables } from './spotlight-scenarios/harness';
+import { assertUnit, failedChecks, judge, liveEnabled, outboundAllow, outboundEnv, reportOf, runScenario, tables } from './spotlight-scenarios/harness';
 
 const node = (id: string, name: string, parameters: Record<string, unknown> = {}) => ({ id, name, type: 'core.code', typeVersion: 1, position: [0, 0] as [number, number], parameters });
 const wf = (): Workflow => ({ id: 'wf_h', name: 'H', nodes: [node('a', 'A'), node('b', 'B'), node('c', 'C')], connections: [{ id: 'e1', type: 'main', source: 'a', sourceIndex: 0, target: 'b', targetIndex: 0 }], pinData: {}, settings: {} }) as Workflow;
@@ -340,13 +340,36 @@ describe('the outbound policy of a live run', () => {
     expect(outboundAllow({ start: { outbound: 'allowed' } }, 'unit')).toBeUndefined();
   });
 
+  it('gives a live run the policy outright: blocked has blockPrivate and no allow list, allowed lists loopback', async () => {
+    const { outboundPolicy } = await import('@/lib/server/net/safe-fetch');
+    const saved = { b: process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE, a: process.env.LANDFLOW_OUTBOUND_ALLOW };
+    const apply = (env: ReturnType<typeof outboundEnv>) => {
+      for (const [k, v] of Object.entries(env ?? {})) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+      return outboundPolicy();
+    };
+    try {
+      process.env.LANDFLOW_OUTBOUND_ALLOW = '10.0.0.0/8';
+      const blocked = apply(outboundEnv({ start: { outbound: 'blocked' } }, 'live'));
+      expect(blocked.blockPrivate).toBe(true);
+      expect(blocked.allow.length).toBe(0);
+      const allowed = apply(outboundEnv({ start: { outbound: 'allowed' } }, 'live'));
+      expect(allowed.blockPrivate).toBe(true);
+      expect(allowed.allow).toEqual(['127.0.0.1', 'localhost']);
+      expect(outboundEnv({}, 'unit')).toBeUndefined();
+    } finally {
+      if (saved.b === undefined) delete process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE; else process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE = saved.b;
+      if (saved.a === undefined) delete process.env.LANDFLOW_OUTBOUND_ALLOW; else process.env.LANDFLOW_OUTBOUND_ALLOW = saved.a;
+    }
+  });
+
   it('is set on the SB03 scenarios: blocked for the blocked session, allowed for the others', async () => {
     const sb03 = (await import('./spotlight-scenarios/sb03')).default;
     for (const s of sb03) expect(s.start?.outbound, s.id).toBe(s.id === 'sb03-blocked-session' ? 'blocked' : 'allowed');
   });
 
-  it('a live run of a blocked scenario sets nothing, and puts back what was there', async () => {
+  it('a live run of a blocked scenario blocks private addresses with no allow list, and puts back what was there', async () => {
     const seen: Array<string | undefined> = [];
+    const blockSeen: Array<string | undefined> = [];
     const previous = process.env.LANDFLOW_OUTBOUND_ALLOW;
     process.env.LANDFLOW_OUTBOUND_ALLOW = '10.0.0.0/8';
     const scenario: Scenario = { id: 'sb10-h-blocked', owner: 'SB10', job: 'fix', via: 'chat', title: 't', ask: 'a', start: { workflow: wf(), outbound: 'blocked' }, checks: [] };
@@ -354,6 +377,7 @@ describe('the outbound policy of a live run', () => {
     const original = fetch;
     globalThis.fetch = (async (...args: Parameters<typeof fetch>) => {
       seen.push(process.env.LANDFLOW_OUTBOUND_ALLOW);
+      blockSeen.push(process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE);
       void args;
       throw new Error('no model here');
     }) as typeof fetch;
@@ -364,6 +388,7 @@ describe('the outbound policy of a live run', () => {
     }
     expect(seen.length).toBeGreaterThan(0);
     expect(seen.every((v) => v === undefined)).toBe(true);
+    expect(blockSeen.every((v) => v === 'true')).toBe(true);
     expect(process.env.LANDFLOW_OUTBOUND_ALLOW).toBe('10.0.0.0/8');
     if (previous === undefined) delete process.env.LANDFLOW_OUTBOUND_ALLOW;
     else process.env.LANDFLOW_OUTBOUND_ALLOW = previous;

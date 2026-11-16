@@ -330,8 +330,9 @@ applies a card unless it removes a step or leaves one without its input (`needsA
 (a session runs as auto). `start.approvedDestinations` is the person's yes to a session's test runs that send, by
 `host:port`. In the scripted form the fake Ollama spends no script turn on a request that is not a chat (the model
 list), and a script turn that throws `Ollama error 500: <body>` is answered as that status and body. A scenario's `start.outbound` (`blocked`, the default, or `allowed`) is the host's outbound policy for the
-live session's test runs: only `allowed` sets `LANDFLOW_OUTBOUND_ALLOW=127.0.0.1,localhost` (never because an echo server
-runs). A build's checks read its draft: `credentials-listed` an item of kind `credential` in `draft.left`, `left-listed`
+live session's test runs, set outright (`LANDFLOW_OUTBOUND_BLOCK_PRIVATE=true`, because vitest's development profile does
+not block): only `allowed` sets `LANDFLOW_OUTBOUND_ALLOW=127.0.0.1,localhost` (never because an echo server runs). The
+echo answers `?fail=NNN` with that status; a session's "changed nothing" ignores cards that were refused or are waiting. A build's checks read its draft: `credentials-listed` an item of kind `credential` in `draft.left`, `left-listed`
 `draft.left` (n/a when empty), `sent-back-once` `draft.calls` (n/a for one call and nothing empty); `Outcome.model` is the
 reply's `done` model or the draft's. [assistant.md](assistant.md#how-spotlight-is-measured) says what the checks mean.
 
