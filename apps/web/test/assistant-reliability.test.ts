@@ -105,11 +105,15 @@ describe('a fix that hides the error', () => {
   it('shows on the proposal card', async () => {
     const { model } = scripted([
       { toolCalls: [{ id: 'c1', name: 'propose_changes', input: { summary: 'Fix Code', ops: [{ op: 'setNodeSettings', node: 'Code', settings: { onError: 'continue' } }] } }] },
+      // SB09: continue-on-error nobody asked for is sent back once; the model proposing it again gets the card.
+      { toolCalls: [{ id: 'c2', name: 'propose_changes', input: { summary: 'Fix Code', ops: [{ op: 'setNodeSettings', node: 'Code', settings: { onError: 'continue' } }] } }] },
       { text: 'Done.' },
     ]);
     const events: ChatEvent[] = [];
     await runChat({ messages: [{ role: 'user', content: 'Code fails, fix it' }], workflow: simple(), model, types, onEvent: (e) => events.push(e) });
-    expect(events.find((e) => e.type === 'proposal')).toMatchObject({ warnings: ['“Code” is set to continue on error: the failure is hidden, not fixed'] });
+    expect(events.find((e) => e.type === 'proposal')).toMatchObject({
+      warnings: ['“Code” is set to continue on error: the failure is hidden, not fixed', '“Code” is set to continue on error, which the request did not ask for: the failure would be hidden'],
+    });
   });
 });
 

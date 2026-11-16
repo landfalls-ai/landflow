@@ -147,7 +147,8 @@ describe('the chat', () => {
   const wander = [
     { op: 'setNodeSettings', node: 'Open status incident', settings: { maxTries: 3, retryOnFail: true } },
     { op: 'addNode', ref: 'x', type: 'core.set', name: 'Extra', after: 'Open status incident' },
-    { op: 'setNodeSettings', node: 'Save to backlog', settings: { onError: 'continue' } },
+    // A setting SB09's checks accept (continue-on-error nobody asked for is sent back on its own), so only the scope decides.
+    { op: 'setNodeSettings', node: 'Save to backlog', settings: { timeoutSeconds: 30 } },
   ];
   const propose = (id: string, ops: unknown[]): Partial<ModelTurn> => ({ toolCalls: [{ id, name: 'propose_changes', input: { summary: 'Fix', ops } }] });
   const run = async (turns: Array<Partial<ModelTurn>>, extra: Partial<Parameters<typeof runChat>[0]> = {}) => {

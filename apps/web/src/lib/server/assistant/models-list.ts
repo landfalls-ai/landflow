@@ -10,7 +10,7 @@
 import { createHash } from 'node:crypto';
 import type { SpotlightModel } from '../../shared/spotlight-models';
 import { database } from '../db';
-import { ollamaUrl } from '../config';
+import { envString, ollamaUrl } from '../config';
 import { modelOptions } from '../agents/models';
 import { gatewayModelOptions } from '../llm-gateway/models';
 import { gatewayConnection } from '../llm-gateway/settings';
@@ -30,15 +30,14 @@ export const forgetSpotlightModels = () => {
   cache = undefined;
 };
 
-const serverKey = (name: string) => process.env[name]?.trim() || undefined;
 const fingerprint = (value: string | undefined) => (value ? createHash('sha256').update(value).digest('hex').slice(0, 12) : '');
 
 /** The models this server offers Spotlight, local ones first. Cached for 60 seconds. */
 export async function spotlightModels(): Promise<SpotlightModel[]> {
   const gateway = await gatewayConnection().catch(() => undefined);
-  const anthropicKey = serverKey('ANTHROPIC_API_KEY');
-  const openAiKey = serverKey('OPENAI_API_KEY');
-  const key = [ollamaUrl(), gateway?.baseUrl ?? '', fingerprint(gateway?.apiKey), fingerprint(anthropicKey), fingerprint(openAiKey), process.env.OPENAI_BASE_URL ?? ''].join('|');
+  const anthropicKey = envString('ANTHROPIC_API_KEY');
+  const openAiKey = envString('OPENAI_API_KEY');
+  const key = [ollamaUrl(), gateway?.baseUrl ?? '', fingerprint(gateway?.apiKey), fingerprint(anthropicKey), fingerprint(openAiKey), envString('OPENAI_BASE_URL') ?? ''].join('|');
   if (cache && cache.key === key && Date.now() - cache.at < CACHE_MS) return cache.models;
 
   const models: SpotlightModel[] = [];
@@ -60,7 +59,7 @@ export async function spotlightModels(): Promise<SpotlightModel[]> {
   }
   if (openAiKey) {
     // The server's key and base URL only: the models it lists, or none when the endpoint does not answer.
-    const listed = await openAiModels(openAiConnection({ apiKey: openAiKey, baseUrl: process.env.OPENAI_BASE_URL ?? '' })).catch(() => []);
+    const listed = await openAiModels(openAiConnection({ apiKey: openAiKey, baseUrl: envString('OPENAI_BASE_URL') ?? '' })).catch(() => []);
     for (const m of listed.filter((m) => !NOT_CHAT.test(m.id)).sort((a, b) => a.id.localeCompare(b.id))) add({ id: `openai/${m.id}`, label: m.id, source: 'openai', local: false });
   }
 
