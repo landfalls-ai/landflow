@@ -47,7 +47,6 @@ interface DayRow extends Record<string, SqlValue> {
   cost: number;
 }
 
-const keyList = ROLLUP_KEYS.join(', ');
 const coalesced = ROLLUP_KEYS.map((key) => `COALESCE(${key}, '') AS ${key}`).join(', ');
 
 function dirtyDays(db: Database): string[] {
