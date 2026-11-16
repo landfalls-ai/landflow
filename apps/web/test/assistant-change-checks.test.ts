@@ -130,6 +130,12 @@ describe('expressions against the step input', () => {
     expect(expressionMisses(ops, wf, apply(ops, wf).workflow, { runs })).toEqual([]);
   });
 
+  it('is silent when a step edited in the same proposal makes the field another step reads by name', () => {
+    const wf = flow();
+    const ops = [set({ codeEach: 'return { summary: $json.title };' }, 'Triage'), set({ body: "{{ $('Triage').item.json.summary }}" })];
+    expect(expressionMisses(ops, wf, apply(ops, wf).workflow, { runs })).toEqual([]);
+  });
+
   it('checks $(\'Name\').item.json reads against that step', () => {
     const wf = flow();
     const ops = [set({ body: "{{ $('Triage').item.json.owner }}" })];

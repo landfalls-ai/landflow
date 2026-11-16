@@ -118,6 +118,11 @@ function outputSources(node: Node, after: Workflow, context: CheckContext, stale
 const JSON_READ = /\$json((?:\.[A-Za-z_$][\w$]*)+)/g;
 const NODE_READ = /\$\(\s*['"]([^'"]+)['"]\s*\)\.(?:item|first\(\)|last\(\)|itemMatching\(\s*\d+\s*\))\.json((?:\.[A-Za-z_$][\w$]*)+)/g;
 
+/** The node an op names as its target, when it has one. */
+function opTarget(op: AssistantOp): string | undefined {
+  return 'node' in op ? (op.node as string | undefined) : undefined;
+}
+
 /**
  * The `$json.<path>` and `$('Name').item.json.<path>` reads of the expressions these ops write that name a field the
  * step's input (or the named step) does not have, by its last run, its pinned data and its output schema. A source with
@@ -125,6 +130,13 @@ const NODE_READ = /\$\(\s*['"]([^'"]+)['"]\s*\)\.(?:item|first\(\)|last\(\)|item
  */
 export function expressionMisses(ops: AssistantOp[], before: Workflow, after: Workflow, context: CheckContext = {}): string[] {
   const out: string[] = [];
+  // A step the same proposal adds, edits or renames has a last run that no longer says what it will output.
+  const touched = (n: Node) =>
+    ops.some((o) => {
+      if (o.op !== 'setParameters' && o.op !== 'addNode' && o.op !== 'renameNode') return false;
+      const target = opTarget(o);
+      return target === n.name || target === n.id || (o.op === 'addNode' && (o.name ?? o.type) === n.name);
+    });
   for (const op of ops) {
     const set = parametersOf(op, after);
     if (!set?.node) continue;
@@ -137,8 +149,6 @@ export function expressionMisses(ops: AssistantOp[], before: Workflow, after: Wo
     const feeders = after.connections.filter((c) => c.type === 'main' && c.target === node.id).map((c) => after.nodes.find((n) => n.id === c.source)).filter((n): n is Node => Boolean(n));
     const input = { samples: [] as unknown[], schemas: [] as unknown[] };
     let inputKnown = feeders.length > 0;
-    // A feeder the same proposal adds or edits has a last run that no longer says what it will output.
-    const touched = (n: Node) => ops.some((o) => ((o.op === 'setParameters' || o.op === 'addNode' || o.op === 'renameNode') && (('node' in o ? o.node : undefined) === n.name || ('node' in o ? o.node : undefined) === n.id || (o.op === 'addNode' && (o.name ?? o.type) === n.name))));
     const feedersOf = (wf: Workflow) => wf.connections.filter((c) => c.type === 'main' && c.target === node.id).map((c) => c.source).sort().join();
     const feedersSame = feedersOf(before) === feedersOf(after) && !feeders.some(touched);
     for (const feeder of feeders) {
@@ -168,7 +178,7 @@ export function expressionMisses(ops: AssistantOp[], before: Workflow, after: Wo
         for (const m of expression.matchAll(NODE_READ)) {
           const named = after.nodes.find((n) => n.name === m[1]);
           if (!named) continue;
-          const source = outputSources(named, after, context);
+          const source = outputSources(named, after, context, touched(named));
           const miss = missing(source, m[2].slice(1).split('.'));
           if (miss) out.push(`“${node.name}” reads $('${m[1]}').item.json${m[2]}, which “${m[1]}” has no field of (it has: ${miss.have.join(', ')})`);
         }
@@ -283,20 +293,20 @@ function headerRows(parameters: Record<string, unknown>): Array<{ name: string; 
  */
 export function authHeaderProblems(ops: AssistantOp[], before: Workflow, after: Workflow, _context: CheckContext = {}, only?: 'data' | 'credential'): string[] {
   const out: string[] = [];
+  const authOf = (n?: Node) => `${CREDENTIAL_AUTH.has(String(n?.parameters.authentication ?? '')) ? String(n?.parameters.authentication) : ''}|${Object.keys(n?.credentials ?? {}).sort().join()}`;
   for (const op of ops) {
     const set = parametersOf(op, after);
     if (!set?.node) continue;
     const node = set.node;
-    const was = headerRows(byRef(before, set.name)?.parameters ?? {});
+    const wasNode = byRef(before, set.name);
+    const was = headerRows(wasNode?.parameters ?? {});
     const all = headerRows(node.parameters).filter((r) => /^authorization$/i.test(r.name));
     const rows = all.filter((r) => !was.some((w) => w.name === r.name && w.value === r.value));
-    const wasNode = byRef(before, set.name);
-    const credentialed = CREDENTIAL_AUTH.has(String(node.parameters.authentication ?? '')) || Object.keys(node.credentials ?? {}).length > 0;
-    const credentialWas = Boolean(wasNode) && (CREDENTIAL_AUTH.has(String(wasNode?.parameters.authentication ?? '')) || Object.keys(wasNode?.credentials ?? {}).length > 0);
-    const hits = only === 'data' ? rows : only === 'credential' && !credentialWas ? all : only === 'credential' ? rows : rows.length ? all : [];
-    if (!hits.length) continue;
+    const credentialed = authOf(node) !== '|';
+    // An existing header counts when the credential is new or of another kind; otherwise only a new header does.
+    const credentialRows = !wasNode || authOf(wasNode) !== authOf(node) ? all : rows;
     if (only !== 'credential' && rows.some((r) => /\$json|\$\(/.test(r.value))) out.push(`“${node.name}” builds its Authorization header from the data: use a credential (the person picks it), not a header read from the data`);
-    if (only !== 'data' && credentialed) out.push(`“${node.name}” has a credential and a hand-written Authorization header: the header wins, so the credential is not used`);
+    if (only !== 'data' && credentialed && credentialRows.length) out.push(`“${node.name}” has a credential and a hand-written Authorization header: the header wins, so the credential is not used`);
   }
   return out;
 }
