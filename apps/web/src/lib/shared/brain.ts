@@ -203,6 +203,12 @@ export const DETECTORS = [
   'missing-tool',
   'work-overlap',
   'practice-drift', // PR09:
+  'context-bloat', // SP13:
+  'fat-tool-results', // SP13:
+  'unused-tools', // SP13:
+  'cache-misses', // SP13:
+  'repeated-calls', // SP13:
+  'agent-loops', // SP13:
 ] as const;
 
 /** A detector built into Landflow (lib/server/brain/detectors.ts). */
@@ -244,6 +250,12 @@ export const DETECTOR_LABELS: Record<BuiltinDetectorId, string> = {
   'missing-tool': 'Missing tool',
   'work-overlap': 'Work overlap',
   'practice-drift': 'Practice drift', // PR09:
+  'context-bloat': 'Context bloat', // SP13:
+  'fat-tool-results': 'Fat tool results', // SP13:
+  'unused-tools': 'Unused tools', // SP13:
+  'cache-misses': 'Cache misses', // SP13:
+  'repeated-calls': 'Repeated calls', // SP13:
+  'agent-loops': 'Agent loops', // SP13:
 };
 
 /** A detector's name: a built-in one's label, or a flow detector's workflow name (`name`, or the suggestion's label). */

@@ -638,3 +638,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
   still priced by model name.
 - The AI page's **You** card covers 24 hours, 7, 30 or 90 days; with a custom range on the page it is not shown.
 - The change diff on a proposal card compares values as text: a Code step's source is shown whole, not parsed, and an expression (`{{ … }}`) is shown as written, not as it resolves. A change Spotlight applies alone (a new draft) has no waiting card, so its row keeps the one-line list, and a row from an earlier visit has no diff. When one reply holds several proposals they share one diff (they are applied together, so one card): each folded row of that reply shows the whole reply's diff, not only its own proposal's part.
+
+## Token spend wave 14
+
+- The waste detectors read the prompt parts, which are kept 30 days: they see nothing older, and "unused tools" looks back 30 days at most. They cannot see a kagent agent's tool calls (kagent runs its own loop), so `unused-tools` skips those agents and workflows. A local model has no price, so its suggestion names a smaller local model seen on this instance in the last 30 days and gives no saving in money; with none seen there is no finding. An agent whose session can no longer be read is left out of `unused-tools` rather than guessed at.

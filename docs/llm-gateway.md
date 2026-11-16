@@ -573,6 +573,8 @@ rows from before it, rows imported from the gateway's spend log and calls outsid
 | `duration_ms` | Wall time of the call |
 | `stop_reason` | The provider's first finish reason (`end_turn`, `tool_use`, `max_tokens`, `stop`, `length`) |
 
+The brain's waste detectors (context bloat, fat tool results, unused tools, cache misses, repeated calls, agent loops) read these columns and the prompt parts ([second-brain.md](second-brain.md#4-detectors-and-suggestions)); they leave out rows from Spotlight, the Agent architect and the brain.
+
 **Purpose** is one of `answer`, `guardrail`, `judge`, `embed`, `cache-embed`, `rerank`, `summary`, `eval`. Code that
 knows why it makes a call sets it with `withCallPurpose` (`lib/server/ai-usage/call-context.ts`); otherwise an
 embeddings call is `embed`, a chat call inside a workflow run or an agent session is `answer`, and anything else stays
