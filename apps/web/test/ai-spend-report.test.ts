@@ -391,7 +391,8 @@ describe('the rollup', () => {
     insert.run('a', '2026-11-01T10:00:00Z', '2026-11-01', 10, 5, 1, 'ex1', null, 'wf');
     insert.run('b', '2026-11-01T11:00:00Z', '2026-11-01', 20, 5, 2, 'ex1', null, 'wf');
     insert.run('c', '2026-11-01T12:00:00Z', '2026-11-01', 1, 1, 0.5, null, 's1', null);
-    expect(migrateSqlite(sqlite)).toEqual([2902]);
+    // Only 2902 here: later migrations (SP12's 2903) are not this test's.
+    expect(migrateSqlite(sqlite, MIGRATIONS.filter((m) => m.version <= 2902))).toEqual([2902]);
     const rows = sqlite.prepare('SELECT * FROM ai_usage_daily ORDER BY workflow_id').all() as Array<Record<string, unknown>>;
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({
