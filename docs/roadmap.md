@@ -2510,3 +2510,26 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   it** and **Create one**, with nothing picked by Spotlight (decision D2; the `credential` chat event). Docs:
   [assistant.md](assistant.md#the-builder-chat).
 - **SB19, the model Spotlight uses, built:** a default in Settings → AI → Spotlight, a per-tab pick in the panel's desktop header, only models the server is configured for (Ollama, the gateway, the server's own keys), local the default. Every Spotlight call counts under token spend, the first draft and the after-run suggestion included (the draft used a bare `fetch` to Ollama and wrote nothing). The chat, build, design, agent and suggest routes refuse an unlisted model with 400. Docs: [assistant.md](assistant.md#the-model-spotlight-uses). Left: a per-person default; a picker on a phone.
+- **Live checks (wave sb2, run before the merge on a4e2899d)**: a production-profile host (CSP enforced, `local-only.cjs`),
+  headed Chrome at 1440×900, local Ollama `qwen3-coder:30b`, an echo server for every address. The scorecard, 3 runs for
+  the scenarios this wave owns or moved and 1 for the rest, against sb1's record and the base read with sb2's readings:
+  the 401 fix with the step selected right 3 of 3 (sb1 1 of 3), autonomous 3 of 3 (0 of 3), the vague retry 3 of 3 (0 of
+  3, it now asks); every SB07, SB09, SB11, SB12 and SB19 scenario's own checks 3 of 3; SB03's blocked and no-change
+  readings 3 of 3 once the harness read what happened (SB10). In the browser: the chip "Only “Open status incident”", a
+  card touching only that step, the diff open and the credential row with nothing chosen, 3 of 3 each; picking a made-up
+  "Echo token", Apply and run reached the echo server with auth, and Undo took it back. "It should retry 3 times" with
+  two HTTP steps asked which step 3 of 3, and the chip's answer changed only that step. With the host blocking local
+  addresses, the run was blocked 3 of 3 with no suggestion and no change; sb1's incident replay stopped at "Needs you ·
+  This host blocks …" with both HTTP steps intact and nothing sent. "Send the whole order" gave a card 3 of 3. Picking
+  `litellm/qwen3-coder:30b` (the local gateway to Ollama) named it in the reply and showed under Spotlight on the AI page;
+  a reload went back to the default; a first draft is now counted. Every Spotlight and architect call had its
+  `ai_call_parts` row. No request left the machine. The gateway pick ran on the development profile, since the production
+  profile refuses the gateway's development key. The two fix rounds after a4e2899d (neighbour wording, the failed answer,
+  the models cache, the focus budget) are covered by tests and Opus's last review, not the browser.
+- **Left after sb2's live checks (for sb3):** the retry backoff fix (0 of 3 in every column), "every morning" (1 of 3), a
+  one-line change in long code (0 of 3), asking for a Slack channel live (0 of 3, not re-run since the `channelId`
+  send-back), sb03's new-destination row (0 of 3, also on the base); a 401 fix once proposed
+  `Authorization: Bearer {{ $cred('my-api-key') }}`, a credential name nobody has, which the made-up value check does
+  not catch yet; one click on a credential row's radio did nothing before Apply (the label works; unconfirmed). The
+  phone Execute/Debug pill overlap is the same on main (a phone follow-up). Not Spotlight: after runs the host logged
+  "the brain's run failed: NOT NULL constraint failed: brain_facts.subject_type" 6 times.
