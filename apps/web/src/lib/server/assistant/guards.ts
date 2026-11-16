@@ -53,12 +53,33 @@ export function withEarlierRefs(ops: unknown, refs: Map<string, string>): unknow
 /** The chat's tool names: what a tool call recovered from text may name. */
 export const TOOL_NAMES: ReadonlySet<string> = new Set(['search_nodes', 'get_node_docs', 'get_workflow', 'get_run_data', 'propose_changes']);
 
+// SB02: ids, and the destinations (a channel, a table, an owner, an address, a URL) a person names; a model makes both up.
 const ID_PARAMETER = /^id$|[a-z]Ids?$/;
+const DESTINATION_PARAMETER = /^(channel|table|owner|repository|repo|email|to|cc|team|project|board|sheet)$/;
+const URL_PARAMETER = /^(url|baseUrl|webhookUrl)$/;
 
 /**
- * An id the conversation, the workflow, its runs and the node type's own options never mention (a Slack channel, a
- * sheet, a user) can only have been made up: local models write plausible ones. Those parameters are left out, so the
- * user fills them in. `typeText` gives the node type's properties for an op (defaults and fixed options are known).
+ * Whether a plain word ("bugs") the person's text merely contains was named as that destination: a word like that is in
+ * most asks ("get the new bugs … save each bug to a table"), so it counts only after a naming cue or in quotes.
+ * A value with a "#", "@", ".", "/", "_", "-" or a digit is specific enough that finding it is the answer.
+ */
+function namedAs(value: string, known: string): boolean {
+  if (/[#@./_\-\d]/.test(value) || !/^[\w ]+$/.test(value)) return known.includes(value);
+  const word = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:["'“‘\`]${word}["'”’\`])|(?:\\b(?:called|named|table|channel|sheet|repo|repository|project|board|team|owner|into|in|to)\\s+["'“‘\`#@]?${word}\\b)`, 'i').test(known);
+}
+
+/** The host of a URL a model wrote ("https://httpbin.org/post" → "httpbin.org"); undefined when it names none. */
+function hostOf(value: string): string | undefined {
+  const match = /^\s*(?:[a-z][a-z0-9+.-]*:\/\/)?(?:[^/@\s]*@)?(\[[^\]]+\]|[^/\s:?#]+)/i.exec(value);
+  return match?.[1].toLowerCase();
+}
+
+/**
+ * An id, channel, table, owner, address or URL host the conversation, the workflow, its runs and the node type's own
+ * options never mention (a Slack channel, a sheet, a user, a site) can only have been made up: local models write
+ * plausible ones. Those parameters are left out, so the user fills them in. `typeText` gives the node type's properties
+ * for an op (defaults and fixed options are known). A URL is judged by its host: a path on a host somebody gave is kept.
  */
 export function withoutInventedIds(ops: unknown, known: string, typeText: (op: Record<string, unknown>) => string = () => ''): { ops: unknown; invented: string[]; values: string[] } {
   if (!Array.isArray(ops)) return { ops, invented: [], values: [] };
@@ -67,10 +88,20 @@ export function withoutInventedIds(ops: unknown, known: string, typeText: (op: R
   const clean = (op: Record<string, unknown>, node: unknown, parameters: unknown) => {
     if (!parameters || typeof parameters !== 'object') return parameters;
     const out = { ...(parameters as Record<string, unknown>) };
+    const lower = known.toLowerCase();
     for (const [key, value] of Object.entries(out)) {
-      if (!ID_PARAMETER.test(key) || typeof value !== 'string' || !value.trim() || value.includes('{{') || known.includes(value) || typeText(op).includes(JSON.stringify(value))) continue;
+      if (typeof value !== 'string' || !value.trim() || value.includes('{{')) continue;
+      const isId = ID_PARAMETER.test(key);
+      if (!isId && !DESTINATION_PARAMETER.test(key) && !URL_PARAMETER.test(key)) continue;
+      if (typeText(op).includes(JSON.stringify(value)) || (isId || URL_PARAMETER.test(key) ? known.includes(value) : namedAs(value, known))) continue;
+      if (!isId && URL_PARAMETER.test(key)) {
+        const host = hostOf(value);
+        if (!host || lower.includes(host) || typeText(op).toLowerCase().includes(host)) continue;
+        invented.push(`${key} of “${String(node)}”: a host nobody gave (${host}), left for the user to fill in`);
+      } else {
+        invented.push(`${key} of “${String(node)}”: ${isId ? 'an id' : `a ${key}`} nobody gave, left for the user to fill in`);
+      }
       delete out[key];
-      invented.push(`${key} of “${String(node)}”: an id nobody gave, left for the user to fill in`);
       values.push(value);
     }
     return out;

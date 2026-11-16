@@ -18,7 +18,8 @@ export async function draftWholeFlow(message: string, build: (prompt: string, si
   try {
     const flow = await build(message, abort.signal);
     const auto = useAutonomous.getState().on;
-    const skipped = flow.dropped ? ` I left out ${flow.dropped} part${flow.dropped === 1 ? '' : 's'} that didn’t fit.` : '';
+    // SB02: what the guards left for the person (the full summary is wave sb3's).
+    const skipped = flow.left.length ? ` Left for you: ${flow.left.slice(0, 3).map((l) => l.text).join('; ')}${flow.left.length > 3 ? ` (and ${flow.left.length - 3} more)` : ''}.` : '';
     const pinned = flow.pinned ? ' Test data is pinned on the trigger.' : '';
     patch({
       parts: [{ kind: 'text', text: `Built “${flow.name}” with ${flow.nodes} nodes.${skipped}${pinned} ⌘Z undoes it.${auto ? ' Testing it now.' : ''}` }, { kind: 'action', action: 'test', goal: message }],
