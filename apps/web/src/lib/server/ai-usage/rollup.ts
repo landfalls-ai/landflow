@@ -103,7 +103,7 @@ export function rollupDay(day: string, db: Database = database()): number {
 }
 
 /** What one pass recomputes: today, yesterday, every day since the last pass (up to the retention) and the dirty days, oldest first. */
-function planPass(now: number, db: Database): { days: string[]; dirty: string[] } {
+function planPass(now: number, db: Database): string[] {
   const meter = aiUsageMeter();
   // Around a time-zone change of clocks "a day ago" can name the same day twice or skip one: ask around it.
   const days = new Set<string>([meter.today(now), meter.today(now - DAY_MS), meter.today(now - DAY_MS - 3_600_000), meter.today(now - DAY_MS + 3_600_000)]);
@@ -117,23 +117,37 @@ function planPass(now: number, db: Database): { days: string[]; dirty: string[] 
       days.add(day);
     }
   }
-  const dirty = dirtyDays(db);
-  for (const day of dirty) days.add(day);
-  return { days: [...days].sort(), dirty };
+  for (const day of dirtyDays(db)) days.add(day);
+  return [...days].sort();
 }
 
-/** The end of a pass: the day it reached, the dirty marks it handled, and the retention prune. */
-function finishPass(now: number, db: Database, dirty: string[]) {
+/**
+ * Roll up some days, taking their dirty marks out first, in the same synchronous step: a mark added after this step (a late
+ * import during a pause between batches) is for rows this step's read did not see, so it must outlive the pass. A day whose
+ * rollup throws is marked again.
+ */
+function rollupTaken(days: string[], db: Database) {
+  db.transaction(() => {
+    const marked = dirtyDays(db);
+    const rest = marked.filter((day) => !days.includes(day));
+    if (rest.length === marked.length) return;
+    if (rest.length) db.upsert('meta', { key: DIRTY_KEY, value: JSON.stringify(rest) });
+    else db.delete('meta', { key: DIRTY_KEY });
+  });
+  for (const day of days) {
+    try {
+      rollupDay(day, db);
+    } catch (error) {
+      markSpendDays([day], db);
+      throw error;
+    }
+  }
+}
+
+/** The end of a pass: the day it reached and the retention prune. The dirty marks were taken, batch by batch, as the days were rolled. */
+function finishPass(now: number, db: Database) {
   const meter = aiUsageMeter();
   db.upsert('meta', { key: THROUGH_KEY, value: meter.today(now) });
-  // Clear only what was marked before the pass: a day marked while it ran stays for the next one.
-  if (dirty.length) {
-    db.transaction(() => {
-      const rest = dirtyDays(db).filter((day) => !dirty.includes(day));
-      if (rest.length) db.upsert('meta', { key: DIRTY_KEY, value: JSON.stringify(rest) });
-      else db.delete('meta', { key: DIRTY_KEY });
-    });
-  }
   db.deleteBefore('ai_usage_daily', 'day', meter.today(now - aiUsageRetentionDays() * DAY_MS));
 }
 
@@ -142,9 +156,9 @@ function finishPass(now: number, db: Database, dirty: string[]) {
  * returned), then the retention prune. The leader's service runs `runRollupInBatches`, which does the same in steps.
  */
 export function runRollup(now = Date.now(), db: Database = database()): string[] {
-  const { days, dirty } = planPass(now, db);
-  for (const day of days) rollupDay(day, db);
-  finishPass(now, db, dirty);
+  const days = planPass(now, db);
+  rollupTaken(days, db);
+  finishPass(now, db);
   return days;
 }
 
@@ -154,16 +168,23 @@ const yieldToEventLoop = () => new Promise<void>((resolve) => setImmediate(resol
 /**
  * The same pass as `runRollup`, a week of days per step with `pause` (the event loop by default) between steps, so a host
  * off for days, or the first pass over 400 days, doesn't hold the leader's event loop for the whole of it. `through` moves
- * only at the end, so a pass cut short starts from the same day again.
+ * only at the end, so a pass cut short starts from the same day again. `halt` is asked between steps: true ends the pass
+ * there (the days rolled so far are returned, `through` stays).
  */
-export async function runRollupInBatches(now = Date.now(), db: Database = database(), pause: () => Promise<void> = yieldToEventLoop, batchDays = BATCH_DAYS): Promise<string[]> {
-  const { days, dirty } = planPass(now, db);
+export async function runRollupInBatches(now = Date.now(), db: Database = database(), pause: () => Promise<void> = yieldToEventLoop, batchDays = BATCH_DAYS, halt: () => boolean = () => false): Promise<string[]> {
+  const days = planPass(now, db);
+  const done: string[] = [];
   for (let i = 0; i < days.length; i += batchDays) {
-    if (i > 0) await pause();
-    for (const day of days.slice(i, i + batchDays)) rollupDay(day, db);
+    if (i > 0) {
+      await pause();
+      if (halt()) return done;
+    }
+    const batch = days.slice(i, i + batchDays);
+    rollupTaken(batch, db);
+    done.push(...batch);
   }
-  finishPass(now, db, dirty);
-  return days;
+  finishPass(now, db);
+  return done;
 }
 
 /** The leader's service: the first pass 15 s after start, then every 10 minutes. */
@@ -173,7 +194,7 @@ export const aiSpendRollup = singleton('ai-spend-rollup', () => {
 
   function arm(delay: number) {
     timer = setTimeout(() => {
-      runRollupInBatches()
+      runRollupInBatches(Date.now(), database(), yieldToEventLoop, BATCH_DAYS, () => stopped)
         .catch((error) => logger.warn('ai spend rollup failed', { error: (error as Error).message }))
         .finally(() => {
           if (!stopped) arm(EVERY_MS);

@@ -6,7 +6,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Workflow } from '@landflow/engine';
 import { AI_SPEND_GROUPS, AI_SPEND_PERIODS, type AiPageReport, type AiSpendGroup } from '@/lib/shared/ai-spend';
 import type { AiConsoleGroup, AiConsolePeriod } from '@/lib/shared/llm-gateway';
@@ -27,7 +27,7 @@ const { enableTestAuth } = await import('@/lib/server/auth/test-bypass');
 const projects = await import('@/lib/server/projects');
 const { database, MIGRATIONS, migrateSqlite } = await import('@/lib/server/db');
 const { aiUsageMeter } = await import('@/lib/server/ai-usage');
-const { runRollup, runRollupInBatches, markSpendDays, rollupDay } = await import('@/lib/server/ai-usage/rollup');
+const { aiSpendRollup, runRollup, runRollupInBatches, markSpendDays, rollupDay } = await import('@/lib/server/ai-usage/rollup');
 const { aiSpendReport } = await import('@/lib/server/ai-usage/spend-report');
 const { aiConsoleReport } = await import('@/lib/server/llm-gateway/console');
 const { credentials } = await import('@/lib/server/credentials/vault');
@@ -367,6 +367,67 @@ describe('the rollup', () => {
     expect(pauses).toBeGreaterThanOrEqual(4);
     expect(rolled()).toEqual(wanted);
     expect(database().get<{ value: string }>("SELECT value FROM meta WHERE key = 'ai_spend_rolled_through'")?.value).toBe(daysAgo(0));
+  });
+
+  it('a late import during a pause, into a dirty day already rolled, is rolled on the next pass', async () => {
+    const day = daysAgo(20);
+    const insert = (id: string) => database().insertNew('ai_usage', { id, at: `${day}T10:00:00.000Z`, day, provider: 'anthropic', model: 'claude-sonnet-5-5', operation: 'chat', input_tokens: 10, output_tokens: 1, cost: 1 });
+    const count = (sql: string) => Number(database().get<{ c: number }>(sql, day)!.c);
+    const raw = () => count('SELECT COUNT(*) AS c FROM ai_usage WHERE day = ?');
+    const rolled = () => count('SELECT COALESCE(SUM(calls), 0) AS c FROM ai_usage_daily WHERE day = ?');
+    const dirty = () => database().get<{ value: string }>("SELECT value FROM meta WHERE key = 'ai_spend_dirty_days'")?.value;
+    try {
+      insert('race-1');
+      markSpendDays([day]);
+      let fired = false;
+      await runRollupInBatches(
+        Date.now(),
+        database(),
+        async () => {
+          // The day was rolled by the first step; a late import adds a row and marks it during the pause.
+          if (!fired) {
+            fired = true;
+            insert('race-2');
+            markSpendDays([day]);
+          }
+          await Promise.resolve();
+        },
+        1,
+      );
+      expect(fired).toBe(true);
+      // The mark added during the pause outlives the pass, and the rollup is short until the next one.
+      expect(dirty()).toContain(day);
+      await runRollupInBatches(Date.now(), database(), async () => {}, 1);
+      expect(rolled()).toBe(raw());
+      expect(dirty()).toBeUndefined();
+    } finally {
+      database().delete('ai_usage', { id: 'race-1' });
+      database().delete('ai_usage', { id: 'race-2' });
+      database().delete('meta', { key: 'ai_spend_dirty_days' });
+      rollupDay(day);
+    }
+  });
+
+  it('stop() ends a pass in flight between batches and leaves `through` alone', async () => {
+    const through = daysAgo(30);
+    database().upsert('meta', { key: 'ai_spend_rolled_through', value: through });
+    for (let back = 0; back <= 30; back++) database().delete('ai_usage_daily', { day: daysAgo(back) });
+    const rolledOn = (day: string) => Number(database().get<{ c: number }>('SELECT COUNT(*) AS c FROM ai_usage_daily WHERE day = ?', day)!.c);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      aiSpendRollup.start();
+      // The pass starts after 15 s: it rolls its first week and then waits on the event loop.
+      await vi.advanceTimersByTimeAsync(15_000);
+      aiSpendRollup.stop();
+      for (let tick = 0; tick < 10; tick++) await new Promise((resolve) => setImmediate(resolve));
+      // Without the halt the pass runs on to today and moves `through`.
+      expect(rolledOn(daysAgo(0))).toBe(0);
+      expect(database().get<{ value: string }>("SELECT value FROM meta WHERE key = 'ai_spend_rolled_through'")?.value).toBe(through);
+    } finally {
+      aiSpendRollup.stop();
+      vi.useRealTimers();
+      runRollup();
+    }
   });
 
   it('writes only through row-level calls', () => {
