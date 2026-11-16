@@ -9,7 +9,8 @@ import { ChevronDown, ChevronRight, CircleDollarSign, Plus, Save, Search, Trash2
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { can } from '@/lib/shared/auth';
-import type { ModelPrice, PriceTable } from '@/lib/shared/ai-usage';
+import { formatTokens, type ModelPrice, type PriceTable } from '@/lib/shared/ai-usage';
+import type { AiLocalModel } from '@/lib/shared/ai-spend';
 import { useViewer } from '@/components/auth/viewer';
 import { Card } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
@@ -76,9 +77,15 @@ export function AiPricesSettings() {
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
 
+  const [local, setLocal] = useState<AiLocalModel[]>();
+  const loadLocal = () =>
+    api<AiLocalModel[]>('/api/settings/ai-prices/local')
+      .then(setLocal)
+      .catch(() => setLocal([]));
   const apply = (next: PriceTable) => {
     setTable(next);
     setRows(next.overrides.map(toRow));
+    loadLocal();
   };
   useEffect(() => {
     api<PriceTable>('/api/settings/ai-prices')
@@ -118,6 +125,17 @@ export function AiPricesSettings() {
   const cell = 'h-8 px-2 font-mono text-[12px]';
   return (
     <div className="space-y-4">
+      {/* SP12: local models, priced here */}
+      <LocalModels
+        models={local}
+        admin={admin}
+        onPrice={async (model, input, output) => {
+          // The saved list plus one `ollama/<model>` price: edits still unsaved in the table below are not saved with it.
+          const overrides = [...table.overrides.filter((p) => !(p.provider.toLowerCase() === 'ollama' && p.model.toLowerCase() === model.toLowerCase())), { provider: 'ollama', model, input, output }];
+          apply(await api<PriceTable>('/api/settings/ai-prices', { method: 'PUT', json: { overrides } }));
+          toast.success(`Priced ${model}`);
+        }}
+      />
       <Card className="px-5 py-4">
         <div className="mb-1 flex items-center gap-2">
           <CircleDollarSign className="size-4 text-t3" strokeWidth={1.8} />
@@ -132,7 +150,7 @@ export function AiPricesSettings() {
           Your prices win over the built-in ones, in USD per million tokens.
           <HelpTip label="How prices are matched" className="ml-1 align-middle">
             A model id also prices the ids that start with it (<code className="font-mono">claude-sonnet-5-5</code> prices <code className="font-mono">claude-sonnet-5-5-20261001</code>). Cache read and write prices apply to
-            the cached part of the prompt; empty means the input price. Ollama and other local models cost $0 unless you price them here. Costs are estimates; your provider’s bill is what counts.
+            the cached part of the prompt; empty means the input price. Ollama and other local models cost $0 unless you price them here; a price applies from the moment you save it, and earlier calls keep the cost they had. Costs are estimates; your provider’s bill is what counts.
           </HelpTip>
           {' '}
           <a href="/settings#ai-caps" className="relative whitespace-nowrap text-t2 underline-offset-2 hover:underline">Usage caps are in AI caps ›</a>
@@ -188,7 +206,7 @@ export function AiPricesSettings() {
               </tbody>
             </table>
             <datalist id="ai-price-providers">
-              {['anthropic', 'openai', 'ollama'].map((p) => (
+              {['anthropic', 'openai', 'ollama', 'ollama_chat'].map((p) => (
                 <option key={p} value={p} />
               ))}
             </datalist>
@@ -276,5 +294,95 @@ export function AiPricesSettings() {
         )}
       </Card>
     </div>
+  );
+}
+
+/** SP12: the models seen on your own hardware in the last 30 days, with calls and tokens, and a price for each (from now on). */
+function LocalModels({ models, admin, onPrice }: { models?: AiLocalModel[]; admin: boolean; onPrice: (model: string, input: number, output: number) => Promise<void> }) {
+  const [open, setOpen] = useState<string>();
+  const [input, setInput] = useState('0');
+  const [output, setOutput] = useState('0');
+  const [problem, setProblem] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  const submit = async (model: string) => {
+    const i = Number(input);
+    const o = Number(output);
+    if (input.trim() === '' || output.trim() === '' || !Number.isFinite(i) || !Number.isFinite(o) || i < 0 || o < 0) return setProblem('Prices are USD per million tokens, 0 or more');
+    setBusy(true);
+    setProblem(undefined);
+    try {
+      await onPrice(model, i, o);
+      setOpen(undefined);
+    } catch (e) {
+      setProblem((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Card className="px-5 py-4">
+      <div className="mb-1 flex items-center gap-2">
+        <SectionLabel>Local models</SectionLabel>
+        <span className="text-[12px] text-t3">last 30 days</span>
+      </div>
+      <p className="mb-3 text-[12px] leading-relaxed text-t3">
+        Models that ran on your own hardware, called by Landflow or through the gateway. They cost $0 until you price them; a price applies from the moment you save it, and earlier calls keep the cost they had.
+      </p>
+      {!models ? (
+        <div className="h-12 rounded-xl bg-acdim animate-pulse-soft" />
+      ) : models.length === 0 ? (
+        <p className="rounded-[10px] border border-dashed border-bd px-3 py-3 text-center text-[12px] text-t3">No local model was called in the last 30 days.</p>
+      ) : (
+        <ul className="divide-y divide-hair">
+          {models.map((m) => (
+            <li key={m.model} className="flex flex-col gap-2 py-2.5">
+              <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[13px]">
+                <span className="font-mono text-[12px] text-t1">{m.model}</span>
+                <span className="text-[12px] text-t3">{m.providers.join(', ')}</span>
+                <span className="ml-auto tabular-nums text-t2">
+                  {m.calls.toLocaleString('en-US')} call{m.calls === 1 ? '' : 's'} · {formatTokens(m.inputTokens + m.outputTokens)} tokens
+                </span>
+                {m.price ? (
+                  <span className="tabular-nums text-t1">
+                    {usd(m.price.input)} in · {usd(m.price.output)} out per M
+                  </span>
+                ) : (
+                  <span className="rounded-full border border-hair px-1.5 py-px text-[11px] text-t3">Not priced</span>
+                )}
+                {admin && open !== m.model && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setOpen(m.model);
+                      setInput(m.price ? String(m.price.input) : '0');
+                      setOutput(m.price ? String(m.price.output) : '0');
+                      setProblem(undefined);
+                    }}
+                  >
+                    {m.price ? 'Change price' : 'Set a price'}
+                  </Button>
+                )}
+              </div>
+              {admin && open === m.model && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input value={input} onChange={(e) => setInput(e.target.value)} inputMode="decimal" aria-label={`Input price for ${m.model}`} className="h-8 w-24 px-2 text-right font-mono text-[12px]" />
+                  <span className="text-[12px] text-t3">in $/M</span>
+                  <Input value={output} onChange={(e) => setOutput(e.target.value)} inputMode="decimal" aria-label={`Output price for ${m.model}`} className="h-8 w-24 px-2 text-right font-mono text-[12px]" />
+                  <span className="text-[12px] text-t3">out $/M</span>
+                  <Button size="sm" variant="primary" loading={busy} onClick={() => submit(m.model)}>
+                    Save price
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setOpen(undefined)}>
+                    Cancel
+                  </Button>
+                  {problem && <span className="text-[12px] text-rd">{problem}</span>}
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   );
 }

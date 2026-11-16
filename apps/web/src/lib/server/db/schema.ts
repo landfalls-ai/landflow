@@ -1889,6 +1889,13 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS ai_call_parts_prompt ON ai_call_parts (prompt_hash, at)`,
     ],
   },
+  // SP12: the gateway's own name for the provider an imported call ran on (`ollama_chat`), so local models are known (docs/llm-gateway.md#the-ai-page)
+  {
+    version: 2903,
+    name: 'ai_usage_gateway_provider',
+    statements: [],
+    addColumns: [{ table: 'ai_usage', column: 'gateway_provider', definition: 'TEXT' }],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */

@@ -90,8 +90,16 @@ const priceSchema = z.object({
 });
 export const priceOverridesSchema = z.array(priceSchema).max(500);
 
-/** Providers that run on your own hardware: free unless priced in Settings. */
-const LOCAL = new Set(['ollama']);
+/**
+ * Providers that run on your own hardware: free unless priced in Settings.
+ * SP12: `ollama_chat` is the name LiteLLM logs for an Ollama model (the gateway's spend log), so a gateway call and a
+ * Landflow call on the same model share one price.
+ */
+export const LOCAL_PROVIDERS = ['ollama', 'ollama_chat'] as const;
+const LOCAL = new Set<string>(LOCAL_PROVIDERS);
+
+/** Whether `name` (a provider, as the rows or the gateway name it) runs on your own hardware. */
+export const isLocalProvider = (name: string | null | undefined): boolean => LOCAL.has((name ?? '').trim().toLowerCase());
 
 const normal = (model: string) => model.trim().toLowerCase().replace(/^[a-z0-9_.-]+\//, '');
 
@@ -121,17 +129,17 @@ export function findPrice(provider: string, model: string, overrides: ModelPrice
   const id = normal(model);
   const system = provider.trim().toLowerCase();
   // Overrides first, then (for hosted providers) the defaults; each: exact, then longest prefix.
-  const lists = LOCAL.has(system) ? [overrides] : [overrides, DEFAULT_PRICES];
+  const local = LOCAL.has(system);
+  const lists = local ? [overrides] : [overrides, DEFAULT_PRICES];
   for (const sameProvider of [true, false]) {
     for (const list of lists) {
-      const candidates = list.filter((p) => !sameProvider || p.provider.toLowerCase() === system);
+      // SP12: a local provider takes the overrides of any local provider (never a hosted one's, never the built-ins).
+      const candidates = list.filter((p) => (sameProvider ? p.provider.toLowerCase() === system : !local || LOCAL.has(p.provider.toLowerCase())));
       const exact = candidates.find((p) => normal(p.model) === id);
       if (exact) return exact;
       const prefix = candidates.filter((p) => id.startsWith(normal(p.model))).sort((a, b) => b.model.length - a.model.length)[0];
       if (prefix) return prefix;
     }
-    // A local provider only takes overrides for itself.
-    if (LOCAL.has(system)) return undefined;
   }
   return undefined;
 }

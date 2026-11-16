@@ -18,6 +18,7 @@ import { getGoal } from '../goals/store';
 import { visibleGoals } from '../goals/views';
 import { getProject, homeProjectId } from '../projects/store';
 import { aiUsageMeter } from '../ai-usage';
+import { findPrice, priceOverrides } from '../ai-usage/prices';
 import { store } from '../store';
 import {
   backstopBudget,
@@ -337,6 +338,13 @@ export function aiConsoleReport(actor: Actor, period: AiConsolePeriod, now = Dat
     bump(groups.model, `${row.provider}/${row.model}`, row.model, row);
     const key = sourceKey(row.source, row.runtime);
     bump(groups.source, key, SOURCE_LABELS[key] ?? key, row);
+  }
+
+  // SP12: a model with no price whose calls cost nothing is "Not priced" (a local model nobody priced), so the page can rank it by tokens.
+  const overrides = priceOverrides();
+  for (const [key, entry] of groups.model) {
+    const at = key.indexOf('/');
+    if (entry.cost <= 0 && findPrice(key.slice(0, at), key.slice(at + 1), overrides) === undefined) entry.unpriced = true;
   }
 
   // The same model through two providers keeps one row each: name the provider when labels collide.

@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/client/api';
-import { AI_GROUPS, AI_PERIODS, rowModel, totalTokens } from '@/lib/client/ai-console';
+import { AI_GROUPS, AI_PERIODS, rowModel, sortByTokens, totalTokens } from '@/lib/client/ai-console';
 import { formatCache, formatCost, formatTokens } from '@/lib/shared/ai-usage';
 import type { AiConsoleGroup, AiConsolePeriod, AiConsoleReport, AiConsoleRow, AiConsoleTotals, GatewayStatus } from '@/lib/shared/llm-gateway';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
@@ -16,16 +16,32 @@ import { StatCard } from '@/components/ui/stat-card';
 import { SectionLabel } from '@/components/ui/inputs';
 import { CapsCard, RequestsCard } from './ai-console-caps';
 import { GatewayCard } from './ai-console-gateway';
+import { MyAiSpend } from './my-ai-spend';
 
 const REFRESH_MS = 60_000;
 
-function Label({ row }: { row: ReturnType<typeof rowModel> }) {
-  return row.href ? (
+function Label({ row, admin }: { row: ReturnType<typeof rowModel>; admin?: boolean }) {
+  const name = row.href ? (
     <Link href={row.href} className="text-t1 hover:text-ac hover:underline">
       {row.label}
     </Link>
   ) : (
     <span className="text-t1">{row.label}</span>
+  );
+  // SP12: a model nobody priced costs $0 here; admins can price it in Settings.
+  if (!row.unpriced) return name;
+  return (
+    <>
+      {name}
+      <span className="ml-2 whitespace-nowrap rounded-full border border-hair px-1.5 py-px text-[11px] font-normal text-t3" title="No price for this model: its calls count as $0">
+        Not priced
+      </span>
+      {admin && (
+        <Link href="/settings#ai-prices" className="ml-2 whitespace-nowrap text-[12px] font-normal text-t2 underline-offset-2 hover:underline">
+          Set a price
+        </Link>
+      )}
+    </>
   );
 }
 
@@ -37,8 +53,8 @@ function ShareBar({ percent }: { percent: number }) {
   );
 }
 
-export function SpendBy({ rows, label }: { rows: AiConsoleRow[]; label: string }) {
-  const models = rows.map(rowModel);
+export function SpendBy({ rows, label, admin, byTokens }: { rows: AiConsoleRow[]; label: string; admin?: boolean; byTokens?: boolean }) {
+  const models = (byTokens ? sortByTokens(rows) : rows).map(rowModel);
   if (models.length === 0) return <p className="px-4 py-4 text-[13px] text-t3">Nothing to show for this period.</p>;
   return (
     <>
@@ -56,7 +72,7 @@ export function SpendBy({ rows, label }: { rows: AiConsoleRow[]; label: string }
           {models.map((row) => (
             <tr key={row.key} className="border-b border-hair last:border-0">
               <td className="max-w-[320px] truncate px-4 py-2.5" title={row.label}>
-                <Label row={row} />
+                <Label row={row} admin={admin} />
               </td>
               <td className="px-3 py-2.5 text-right tabular-nums text-t1">{row.cost}</td>
               <td className="px-3 py-2.5 text-right tabular-nums text-t2" title={row.tokenDetail}>
@@ -78,7 +94,7 @@ export function SpendBy({ rows, label }: { rows: AiConsoleRow[]; label: string }
           <li key={row.key} className="flex flex-col gap-1.5 px-4 py-3">
             <div className="flex items-baseline gap-3">
               <span className="min-w-0 flex-1 break-words text-[14px] font-medium">
-                <Label row={row} />
+                <Label row={row} admin={admin} />
               </span>
               <span className="text-[14px] font-semibold tabular-nums text-t1">{row.cost}</span>
             </div>
@@ -137,6 +153,7 @@ export function AiConsole() {
   const [period, setPeriod] = useState<AiConsolePeriod>('7d');
   const [group, setGroup] = useState<AiConsoleGroup>('project');
   const [report, setReport] = useState<AiConsoleReport>();
+  const [byTokens, setByTokens] = useState(false);
   const [status, setStatus] = useState<GatewayStatus>();
   const [error, setError] = useState<string>();
   const requestId = useRef(0);
@@ -175,15 +192,23 @@ export function AiConsole() {
       <PageHeader title="AI" meta={shown && <span>Estimated from the price table · {shown.viewer.admin ? 'everything' : 'what you can open'}</span>} actions={<Segmented label="Period" options={AI_PERIODS} value={period} onChange={setPeriod} />} />
       <PageBody className="flex max-w-[1240px] flex-col gap-4">
         {error && <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>}
+        {/* SP12: your own spend, first for members (an owner or admin sees everything below) */}
+        {shown && !shown.viewer.admin && <MyAiSpend period={period} />}
         <Totals report={shown} />
         {shown && shown.totals.calls === 0 && <p className="text-[13px] text-t3">No AI calls in this period.</p>}
         <Card className="overflow-hidden p-0">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-hair px-4 py-2.5">
             <SectionLabel>Spend by</SectionLabel>
-            <Segmented label="Spend by" options={AI_GROUPS} value={group} onChange={setGroup} className="ml-auto max-md:ml-0 max-md:w-full max-md:[&>button]:flex-1 max-md:[&>button]:shrink max-md:[&>button]:px-1.5 max-md:[&>button]:text-[12px]" />
+            {group === 'model' && (
+              <label className="ml-auto flex items-center gap-1.5 text-[12px] text-t2 max-md:ml-0">
+                <input type="checkbox" checked={byTokens} onChange={(e) => setByTokens(e.target.checked)} />
+                Sort by tokens
+              </label>
+            )}
+            <Segmented label="Spend by" options={AI_GROUPS} value={group} onChange={setGroup} className={`${group === 'model' ? '' : 'ml-auto'} max-md:ml-0 max-md:w-full max-md:[&>button]:flex-1 max-md:[&>button]:shrink max-md:[&>button]:px-1.5 max-md:[&>button]:text-[12px]`} />
           </div>
           {shown && group === 'person' && <PeopleTotal totals={shown.peopleTotals} admin={shown.viewer.admin} />}
-          {shown ? <SpendBy rows={shown.groups[group]} label={label} /> : <div className="m-4 h-24 rounded-xl bg-acdim animate-pulse-soft" />}
+          {shown ? <SpendBy rows={shown.groups[group]} label={label} admin={shown.viewer.admin} byTokens={group === 'model' && byTokens} /> : <div className="m-4 h-24 rounded-xl bg-acdim animate-pulse-soft" />}
         </Card>
         {shown && <CapsCard report={shown} onChanged={() => load()} />}
         {shown && <RequestsCard report={shown} onChanged={() => load()} />}

@@ -293,6 +293,8 @@ export interface AiConsoleRow extends AiConsoleTotals {
   href?: string;
   /** Share of the period's cost (of its tokens when nothing cost anything), 0 to 1. */
   share: number;
+  /** SP12: a model row the price table has no price for, whose calls cost nothing (a local model nobody priced): "Not priced". */
+  unpriced?: boolean;
 }
 
 export interface AiConsoleCap {
