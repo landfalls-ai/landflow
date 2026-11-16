@@ -39,6 +39,7 @@ import { MembersAtWork, RerunOfBadge, RunControlsProvider } from './run-controls
 import { RunTimelineCard } from './run-timeline-card';
 import { TakeOver } from '../editor/team-pause';
 import { DetailSheet, type Open } from './sheet';
+import { Spend } from './spend'; // SP06
 import { Story } from './story';
 import { Team } from './team';
 import { Trace } from './trace';
@@ -549,6 +550,8 @@ function TraceBody({
         )}
         {current === 'trace' && <Trace model={model} open={open} />}
         {current === 'team' && <Team model={model} open={open} />}
+        {/* SP06: the Spend tab */}
+        {current === 'spend' && <Spend executionId={executionId} live={full.live} open={open} model={full} />}
         {current === 'artifacts' && <Artifacts executionId={executionId} model={model} changes={changes} repo={github} open={open} replay={replay} />}
       </div>
 

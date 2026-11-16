@@ -2265,6 +2265,10 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   call, its split in tokens from Landflow or the gateway, what changed against the call before it, a link to its run).
   Both follow [llm-gateway.md](llm-gateway.md#the-ai-page) "Who sees what" (rule 3) and hold no prompt text
   ([run-trace.md](run-trace.md#spend)). No screen yet: the Run Trace (SP06, SP07) and the AI page (SP09, SP10) open them.
+- **The run's Spend tab (SP06), built**: the Run Trace gains a **Spend** tab for a run with model tokens: totals, spend by purpose, model, node, agent and step,
+  the cache line, the prompt's composition as one bar with the method named, and the calls list, refreshed every 10
+  seconds while the run is live ([run-trace.md](run-trace.md#spend)). A call opens its model span; the call's own sheet
+  with its composition comes with SP07.
 
 ## Practices (waves P1 and P2)
 

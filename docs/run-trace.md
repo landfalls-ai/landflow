@@ -113,8 +113,8 @@ the run in its workflow's Runs tab (`/workflows/<id>/runs/<executionId>`, no red
   for what), while **Needs you** keeps the run's (its buttons answer the execution); `waitEchoes` in
   `lib/shared/run-trace-model.ts` picks them. A team run opens with its [headlines](#headlines).
 - **Tabs only with something in them.** **Story** and **Trace** are always there. **Team** shows when more than one
-  person or agent took part, **Artifacts** when the run made something (files agents wrote count), so a short
-  single-flow run has just Story and Trace. The tabs are decided from the whole run, not the replay cut. A saved or linked tab that is
+  person or agent took part, **Artifacts** when the run made something (files agents wrote count), **Spend** when the
+  run used model tokens, so a short single-flow run has just Story and Trace. The tabs are decided from the whole run, not the replay cut. A saved or linked tab that is
   not shown falls back to the Story. `visibleTabs()` in `components/run-trace/run-trace-tabs.ts`.
 - **The time slider** shows only when the run took 5 seconds or more and more than one took part
   (`showScrubber()`); otherwise there is nothing to replay.
@@ -676,7 +676,27 @@ and loop-step slices leave out calls without that field, so they need not sum to
 composition cover the newest 500 calls, the totals all; calls with no run id (unattributed gateway rows) are in no run's
 spend. See [limitations](limitations.md#call-attribution-wave-11).
 
-The screens (the Run Trace's Spend section and a call's composition) come with wave 12's UI packages.
+A run that used model tokens has a **Spend** tab (after Artifacts; desktop first, on a phone it only must not scroll
+sideways). It reads `GET /api/executions/:id/spend` (the route and its numbers are SP05's) and again every 10 seconds
+while the run is live. Tokens, models and cost are what happened in the run, never behind the developer-details switch.
+
+- **The totals**: cost, tokens in and out, cached tokens and calls. "n unpriced calls" means the tokens count and the
+  cost does not; admins get a link to Settings → AI prices (`/settings#ai-prices`). "n runs you can't open: $X" counts
+  the sub-runs of projects you can't read (their cost, never their names).
+- **Where it went**: one table, switched between Purpose, Model, Node, Agent and Step (the agent's loop step, for Landflow
+  agents and the AI Agent node), with each row's share of the cost, calls, tokens, cached tokens and cost.
+- **The cache**: "53% of the prompt came from the cache · saved $0.0432 · 0 misses", with each miss's reason in words
+  (the instructions or tools changed, may be under the provider's minimum, expired, no cache asked for).
+- **What the prompt was made of**: one stacked bar over the calls that have a split, a legend of parts with tokens and
+  shares, and how they were counted, said from the data: "Counted exactly", "Counted by the model's tokenizer" or
+  "Estimated" (the weakest method among the calls summed), plus how many calls have no split.
+- **Calls**: time, purpose, model, tokens and cost, the latest 20 (Show all lists the rest); a time opens the call's
+  model span in the detail sheet. A call's `spanId` is the OpenTelemetry id, the Run Trace's spans have journal ids, so
+  `matchCallToSpan` (`lib/client/run-spend.ts`) finds the span: same model name, the call's time within a second before
+  and two after the span, the same agent, the span whose end is nearest on a tie (a call is recorded when it ends). A call with no such span shows its time as plain
+  text. The tab reads once more when the run ends, and a failed read has a Try again button.
+
+The answer holds sizes, counts and names only: no prompt text is shown or stored for spend.
 
 ## HTTP API
 
