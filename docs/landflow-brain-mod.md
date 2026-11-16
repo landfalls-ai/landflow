@@ -151,7 +151,7 @@ Or straight from a checkout:
 claude plugin install apps/web/claude-plugins/landflow-brain
 ```
 
-It asks for five options (`userConfig`):
+It asks for six options (`userConfig`):
 
 | Option | Meaning |
 |---|---|

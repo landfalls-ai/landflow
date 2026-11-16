@@ -638,3 +638,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
   still priced by model name.
 - The AI page's **You** card covers 24 hours, 7, 30 or 90 days; with a custom range on the page it is not shown.
 - The change diff on a proposal card compares values as text: a Code step's source is shown whole, not parsed, and an expression (`{{ … }}`) is shown as written, not as it resolves. A change Spotlight applies alone (a new draft) has no waiting card, so its row keeps the one-line list, and a row from an earlier visit has no diff. When one reply holds several proposals they share one diff (they are applied together, so one card): each folded row of that reply shows the whole reply's diff, not only its own proposal's part.
+
+## Token spend wave 14
+
+- **The status line's day** ([landflow-brain-mod.md](landflow-brain-mod.md)): the spend answer carries no day, so the mod keeps today's figure under its own local day. Near midnight, when the mod's timezone differs from the instance's, the line can keep or drop a figure a few hours off.

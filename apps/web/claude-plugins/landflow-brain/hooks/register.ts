@@ -152,7 +152,7 @@ async function showStatus($: EngineInterface) {
 }
 
 interface StoredSpend {
-  /** The day the totals are for (the instance's day, as the line's own clock reads it). */
+  /** The day the totals are for (the mod's local day, since the wire carries no day; near midnight it can differ from the instance's). */
   day: string
   totals: MySpendTotals
 }
@@ -566,7 +566,13 @@ export const register: Register = (on, options) => {
 
   on('turn.complete', async ($, e, next) => {
     if (current && !e.agentId) await upsert($, current).catch(() => undefined)
-    if (config && showSpend && mode !== 'off' && !e.agentId && (await $.clock.now()) - spendAt >= SPEND_EVERY_MS) void refreshSpend($).then(() => showStatus($)).catch(() => undefined)
+    if (config && showSpend && mode !== 'off' && !e.agentId) {
+      const now = await $.clock.now()
+      if (now - spendAt >= SPEND_EVERY_MS) {
+        spendAt = now // before any await, so a second turn.complete straight after does not ask again
+        void refreshSpend($).then(() => showStatus($)).catch(() => undefined)
+      }
+    }
     return next(e)
   }).catch(($, e, next) => next(e))
 

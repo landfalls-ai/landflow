@@ -16,7 +16,7 @@ const SPEND = { cost: 1.234, inputTokens: 1000, outputTokens: 500, calls: 4, unp
 const BRIEFING = { yesterday: [{ title: 'Ship the billing page', repo: 'acme/widgets' }], autoSend: 'allowed', brain: 'on' }
 
 /** The engine beneath the mod: git answers, a fake Landflow, a clock and a store in memory. */
-function world(on: On, init: { remote?: string; briefing?: unknown; briefingDelayMs?: number; postStatus?: number; postDelayMs?: number; deleteStatuses?: number[]; answers?: string[]; seed?: Record<string, unknown>; onAsk?: () => Promise<void>; briefingStatus?: number; askStatus?: number; askBody?: unknown; practicesText?: string; practicesDelayMs?: number; practicesDown?: boolean; project?: unknown; projectDelayMs?: number; projectStatus?: number; approved?: unknown[]; draftStatus?: number; spend?: unknown; spendStatus?: number } = {}) {
+function world(on: On, init: { remote?: string; briefing?: unknown; briefingDelayMs?: number; postStatus?: number; postDelayMs?: number; deleteStatuses?: number[]; answers?: string[]; seed?: Record<string, unknown>; onAsk?: () => Promise<void>; briefingStatus?: number; askStatus?: number; askBody?: unknown; practicesText?: string; practicesDelayMs?: number; practicesDown?: boolean; project?: unknown; projectDelayMs?: number; projectStatus?: number; approved?: unknown[]; draftStatus?: number; spend?: unknown; spendStatus?: number; spendBody?: string; spendDelayMs?: number } = {}) {
   const spendUrls: string[] = []
   const practiceUrls: string[] = []
   const projectUrls: string[] = []
@@ -57,6 +57,8 @@ function world(on: On, init: { remote?: string; briefing?: unknown; briefingDela
     }
     if (request.url.includes('/api/brain/my-spend')) {
       spendUrls.push(request.url)
+      if (init.spendDelayMs) await clock.sleep(init.spendDelayMs)
+      if (init.spendBody !== undefined) return { value: { status: 200, ok: true, headers: {}, text: init.spendBody } }
       const status = init.spendStatus ?? 200
       return { value: { status, ok: status < 300, headers: {}, text: JSON.stringify(status < 300 ? { today: init.spend ?? { ...SPEND, calls: 0, cost: 0 }, month: SPEND } : { error: 'forbidden' }) } }
     }
@@ -907,9 +909,37 @@ test('showSpend off makes no spend call', { options: { ...OPTIONS, showSpend: fa
   expect(statuses.at(-1)).toBe('brain: on · 0 held')
 })
 
-test('paused and key rejected show no spend', { options: { ...OPTIONS, mode: 'auto' }, }, async ($, on) => {
-  const { statuses } = world(on, { postStatus: 401 })
+test('key rejected shows no spend, though one is held', { options: { ...OPTIONS, mode: 'auto' } }, async ($, on) => {
+  const { statuses } = world(on, { postStatus: 401, spend: SPEND })
   await work($)
   await settled()
+  expect(statuses).toContain('brain: on · 0 held · $1.23 today')
   expect(statuses.at(-1)).toBe('brain: key rejected')
+})
+
+test('paused shows no spend, though one is held', { options: OPTIONS }, async ($, on) => {
+  const { statuses } = world(on, { spend: SPEND, seed: { paused: true, spend: { day: '2026-11-14', totals: SPEND } } })
+  await startSession($)
+  expect(statuses.at(-1)).toBe('brain: paused')
+  expect(statuses.join('|')).not.toMatch(/today/)
+})
+
+test('a spend call past 3 s shows no spend', { options: OPTIONS }, async ($, on) => {
+  const { statuses, clock } = world(on, { spend: SPEND, spendDelayMs: 10_000 })
+  const started = startSession($)
+  await clock.advance(3001)
+  await started
+  expect(statuses.at(-1)).toBe('brain: on · 0 held')
+})
+
+test('a spend body that is not JSON shows no spend', { options: OPTIONS }, async ($, on) => {
+  const first = world(on, { spendBody: 'not json' })
+  await startSession($)
+  expect(first.statuses.at(-1)).toBe('brain: on · 0 held')
+})
+
+test('a spend body without today shows no spend', { options: OPTIONS }, async ($, on) => {
+  const { statuses } = world(on, { spendBody: JSON.stringify({ month: SPEND }) })
+  await startSession($)
+  expect(statuses.at(-1)).toBe('brain: on · 0 held')
 })

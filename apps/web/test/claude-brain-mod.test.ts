@@ -254,6 +254,7 @@ describe('colleagues, visibility and the admin rule', () => {
     expect(statusLine('review', 'allowed', 2, t)).toBe('brain: on · 2 held · $1.23 today');
     expect(statusLine('review', 'allowed', 2, { ...t, cost: 0.004 })).toBe('brain: on · 2 held · <$0.01 today');
     expect(statusLine('review', 'allowed', 2, { ...t, cost: 0, unpricedCalls: 5 })).toBe('brain: on · 2 held · 120k tokens today');
+    expect(statusLine('review', 'allowed', 2, { ...t, cost: 0, unpricedCalls: 5, inputTokens: 1_000_000, outputTokens: 500_000 })).toBe('brain: on · 2 held · 1.5M tokens today');
     expect(statusLine('review', 'allowed', 2, { ...t, calls: 0 })).toBe('brain: on · 2 held');
     expect(statusLine('review', 'allowed', 2, undefined)).toBe('brain: on · 2 held');
     expect(statusLine('auto', 'forbidden', 2, t)).toBe('brain: review (auto off by admin) · $1.23 today');

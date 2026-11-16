@@ -318,7 +318,7 @@ export function spendText(spend?: MySpendTotals): string {
   if (!spend || !(spend.calls > 0)) return ''
   if (!(spend.cost > 0) && spend.unpricedCalls > 0) {
     const tokens = spend.inputTokens + spend.outputTokens
-    return ` · ${tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : tokens} tokens today`
+    return ` · ${tokens >= 1_000_000 ? `${(tokens / 1_000_000).toFixed(1)}M` : tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : tokens} tokens today`
   }
   return spend.cost > 0 && spend.cost < 0.01 ? ' · <$0.01 today' : ` · $${spend.cost.toFixed(2)} today`
 }
