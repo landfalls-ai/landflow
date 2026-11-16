@@ -78,7 +78,7 @@ const FIXING = /\b(?:fix(?:es|ed)?|fail(?:s|ed|ing|ure)?|errors?|broke|broken|br
 const LOCATING = /\b(?:step|node|call|one|request)\s+(?:right\s+)?(?:after|before)\b|\bwhat\s+(?:comes|happens|runs|follows)\s+(?:right\s+)?(?:after|before)\b|\bright\s+(?:after|before)\b/i;
 
 /** "the step after this", "what comes after Code": names ANOTHER step by its position, so the selection is only a landmark. */
-const NAMES_NEIGHBOUR = /\b(?:step|node|call|one|request)\s+(?:right\s+)?(?:after|before)\b|\bwhat\s+(?:comes|happens|runs|follows)\s+(?:right\s+)?(?:after|before)\b/i;
+const NAMES_NEIGHBOUR = /\b(?:the|a|an)\s+(?:step|node|call|one|request)\s+(?:right\s+)?(?:after|before)\b|\b(?:previous|prior|preceding|following|next|upstream|downstream)\s+(?:step|node|call|one|request)\b|\bwhat\s+(?:comes|happens|runs|follows)\s+(?:right\s+)?(?:after|before)\b/i;
 
 /** Whether the message asks for a new step. Pass the canvas steps and a step named with a common verb ("Post to Slack") does not count. */
 export function asksToAdd(message: string, nodes: readonly ScopeNode[] = []): boolean {

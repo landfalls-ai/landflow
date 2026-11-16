@@ -88,6 +88,14 @@ describe('scopeOf', () => {
       expect(scopeOf({ message: m, nodes, selectedId: 'http' }), m).toBeUndefined();
     }
   });
+  it('names a neighbour by "previous", "following" and "the one after", and keeps selected for everyday before/after phrases (SB07-O1 round 2)', () => {
+    for (const m of ['the previous step is wrong, fix it', 'the following step fails, fix it', 'the one after this fails, fix it']) {
+      expect(scopeOf({ message: m, nodes, selectedId: 'http' }), m).toBeUndefined();
+    }
+    for (const m of ['fix this one before I run it', 'retry this call before giving up', 'make this request before 9am', 'change this step before the demo tomorrow', 'it breaks right after this, fix the URL', 'set the timeout to 30s']) {
+      expect(scopeOf({ message: m, nodes, selectedId: 'http' }), m).toEqual({ kind: 'selected', nodes: ['http'] });
+    }
+  });
   it('does not read a step named with a common verb as an add', () => {
     const named = [...nodes, { id: 'slack', name: 'Post to Slack' }];
     expect(scopeOf({ message: 'Post to Slack fails with 401, fix it', nodes: named, selectedId: 'slack' })).toEqual({ kind: 'selected', nodes: ['slack'] });
