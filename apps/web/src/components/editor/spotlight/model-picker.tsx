@@ -1,13 +1,15 @@
 'use client';
 /** SB19: Spotlight's model for this session (desktop only; a phone uses the default). */
 import { useEffect } from 'react';
-import { useSpotlightModel } from '../spotlight-model';
+import { loadWhenWide, useSpotlightModel } from '../spotlight-model';
+
+/** The panel's md breakpoint, where the desktop header (and so the picker) shows. */
+const WIDE = '(min-width: 768px)';
 
 export function ModelPicker() {
   const { pick, default: fallback, models, load, setPick } = useSpotlightModel();
-  useEffect(() => {
-    void load();
-  }, [load]);
+  // The picker is hidden on a phone (it uses the default), so the list is not fetched there; it is, once the window reaches md.
+  useEffect(() => loadWhenWide(window.matchMedia(WIDE), load), [load]);
   if (models.length < 2) return null;
   return (
     <label className="flex h-8 items-center gap-2 px-3 text-[12px] text-t3">

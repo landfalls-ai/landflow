@@ -265,3 +265,30 @@ describe('the after-run suggestion request (IR-2)', () => {
     }
   });
 });
+
+describe('the model picker loads the list only where it shows (SB19-N8)', () => {
+  const media = (matches: boolean) => {
+    const listeners = new Set<() => void>();
+    const query = { matches, addEventListener: (_: string, l: () => void) => listeners.add(l), removeEventListener: (_: string, l: () => void) => listeners.delete(l) };
+    return { query: query as unknown as MediaQueryList, listeners, widen: () => { query.matches = true; listeners.forEach((l) => l()); } };
+  };
+
+  it('does not fetch on a phone, and fetches once the window reaches md', async () => {
+    const { loadWhenWide } = await import('@/components/editor/spotlight-model');
+    const load = vi.fn();
+    const phone = media(false);
+    const stop = loadWhenWide(phone.query, load);
+    expect(load).not.toHaveBeenCalled();
+    phone.widen();
+    expect(load).toHaveBeenCalledTimes(1);
+    stop();
+    expect(phone.listeners.size).toBe(0);
+  });
+
+  it('fetches at once at md and up', async () => {
+    const { loadWhenWide } = await import('@/components/editor/spotlight-model');
+    const load = vi.fn();
+    loadWhenWide(media(true).query, load);
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+});

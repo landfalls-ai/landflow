@@ -39,3 +39,16 @@ export const pickedModel = (): { model?: string } => {
   // A pick the server stopped offering falls back to the default.
   return pick && models.some((m) => m.id === pick) ? { model: pick } : {};
 };
+
+/** Run `load` now when the media query matches (the desktop header), else when it first does; returns the cleanup. */
+export function loadWhenWide(wide: Pick<MediaQueryList, 'matches' | 'addEventListener' | 'removeEventListener'>, load: () => unknown): () => void {
+  if (wide.matches) {
+    void load();
+    return () => {};
+  }
+  const onChange = () => {
+    if (wide.matches) void load();
+  };
+  wide.addEventListener('change', onChange);
+  return () => wide.removeEventListener('change', onChange);
+}
