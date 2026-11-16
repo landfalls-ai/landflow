@@ -2423,6 +2423,22 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
 - **Still owed from wave 13 (SP11's live pass)**: the cache card on real Anthropic cache reads and a daily cap's pace line
   late in the day. The first needs a vendor key (live checks never send off this machine); the second a live host late
   in its day. Both stay owed, not dropped.
+- **Wave 14 join tests (integration), built**: `spend-alert-forecast-join` (a month through the real meter, one rollup
+  pass, one flags pass and one alert tick to a local webhook catcher: one forecast notice per cap over, none for the cap
+  under or an early one; the notice's, Needs you's, the forecast card's and the You card's P50 and date equal
+  `capForecaster`'s to the cent; each person's Needs you, a second tick, Acknowledge), `spend-anomaly-join` (each flag's
+  value, baseline median and runs equal the AI page's report for that day and key, through the flag's own Open link;
+  the inbox names no person; the Landledger option sends only the person's and workflow's notices),
+  `spend-detectors-join` (a real agent loop on a fake model, Spotlight calls with a `workflowId`, a flow on a large local
+  model: SP13's detectors on what the meter and the parts listener recorded, the local `aiCost` on the rollup's token
+  sums, SP13's and SP23's detectors in one `runBrain('all')` past a stale fact, no prompt word stored),
+  `spend-mcp-you-join` (`my_ai_spend` over `POST /api/mcp`, `GET /api/brain/my-spend` with the same key and the You card
+  are equal for an owner and a member in every period; the instance token is refused) and `spend-status-line-join` (the
+  mod's `getMySpend` and `statusLine` against the real route through the real guard). The detectors join found that
+  `repeated-calls` cannot see a Landflow agent's own repeats (left open below).
+- **Left open (join tests)**: `repeated-calls` groups calls by the whole prompt's hash, and an agent's system prompt ends
+  with the time to the millisecond, so two runs of one question never match. Grouping by the part hashes without
+  `formatting` (which the parts rows already keep) would let it judge agents; not done in wave 14.
 
 ## Practices (waves P1 and P2)
 
