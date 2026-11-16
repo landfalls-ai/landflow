@@ -66,14 +66,25 @@ export interface ScopeOp {
 const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** Words that ask for a new step ("add a retry step", "insert a Set", "put an agent after …"). */
-const ADDS = /\b(?:add|adds|adding|insert|put|create|append|attach|another|new (?:step|node|agent))\b/i;
+const ADDS = /\b(?:add|adds|adding|insert|put|create|append|attach|another|then|next|send|email|notify|post (?:a|an|the|it|this|that|to)|filter|branch|loop|follow(?:ed)? with|use an? (?!different\b|other\b|new (?:url|value|header|key|token)\b)|new (?:step|node|agent))\b/i;
 
 /** "only that one node", "just this step", "nothing else": the selected step and nothing more. */
 const ONLY_SELECTED = /\b(?:only|just) (?:(?:that|this|the selected|the) )?(?:one )?(?:node|step)\b|\bonly (?:it|that one|this one)\b|\bnothing else\b/i;
 
-/** Whether the message asks for a new step. */
-export function asksToAdd(message: string): boolean {
-  return ADDS.test(message);
+/** Words of a fix or a failure: a message with them and no adding verb locates a step, it does not add one. */
+const FIXING = /\b(?:fix(?:es|ed)?|fail(?:s|ed|ing|ure)?|errors?|broke|broken|breaks|wrong|[45]\d\d)\b/i;
+
+/** "the step after Code", "what happens after", "right after": "after" locates a step, it does not say where a new one goes. */
+const LOCATING = /\b(?:step|node|call|one|request)\s+(?:right\s+)?(?:after|before)\b|\bwhat\s+(?:comes|happens|runs|follows)\s+(?:right\s+)?(?:after|before)\b|\bright\s+(?:after|before)\b/i;
+
+/** Whether the message asks for a new step. Pass the canvas steps and a step named with a common verb ("Post to Slack") does not count. */
+export function asksToAdd(message: string, nodes: readonly ScopeNode[] = []): boolean {
+  let text = message;
+  for (const node of [...nodes].sort((a, b) => b.name.length - a.name.length)) {
+    if (node.name.trim().length < 3) continue;
+    text = text.replace(new RegExp(`(?<![\\p{L}\\p{N}])${escape(node.name.trim())}(?![\\p{L}\\p{N}])`, 'giu'), ' ');
+  }
+  return ADDS.test(text);
 }
 
 /**
@@ -97,22 +108,28 @@ export function namedNodes(message: string, nodes: readonly ScopeNode[]): ScopeN
 }
 
 /** "after “Sample question”", "before Post to Slack": the one step a new one goes beside, when the message adds one. */
-function insertionPoint(message: string, nodes: readonly ScopeNode[]): { node: ScopeNode; side: 'after' | 'before' } | undefined {
-  if (!asksToAdd(message)) return undefined;
+function insertionPoint(message: string, nodes: readonly ScopeNode[], selectedId?: string): { node: ScopeNode; side: 'after' | 'before' } | undefined {
+  // "after Code" / "after this" is where the next step goes even without an adding verb ("remove duplicate items after Code"),
+  // unless it only locates a step ("the step after Code fails with 401, fix it", "it breaks right after this").
+  if (!asksToAdd(message, nodes) && (FIXING.test(message) || LOCATING.test(message))) return undefined;
+  const deictic = /\b(after|before)\s+(?:this|that|it)(?:\s+(?:step|node|one))?\b/i.exec(message);
+  const selectedNode = selectedId ? nodes.find((n) => n.id === selectedId) : undefined;
+  if (deictic && selectedNode && namedNodes(message, nodes).every((n) => n.id === selectedNode.id)) return { node: selectedNode, side: deictic[1].toLowerCase() === 'after' ? 'after' : 'before' };
   const found: Array<{ node: ScopeNode; side: 'after' | 'before' }> = [];
   for (const node of namedNodes(message, nodes)) {
     const pattern = new RegExp(`\\b(after|before|in front of)\\s+(?:the\\s+)?(?:step\\s+|node\\s+)?["“'‘]?${escape(node.name.trim())}(?![\\p{L}\\p{N}])`, 'iu');
     const match = pattern.exec(message);
     if (match) found.push({ node, side: match[1].toLowerCase() === 'after' ? 'after' : 'before' });
   }
-  return found.length === 1 ? found[0] : undefined;
+  // A message that names another step too ("remove Check, then add a new Check after Code") is about more than the new step: no scope.
+  return found.length === 1 && namedNodes(message, nodes).every((n) => n.id === found[0].node.id) ? found[0] : undefined;
 }
 
 /**
  * The scope of a typed request, or `undefined` (none: the change may touch any step, as before wave sb2). In order:
  * the person lifted the chip (`sent: null`) → none; the editor sent one → that one, with the ids that still exist;
  * "only"/"just" with named steps → `only` those; "only that one node" / "nothing else" with a selection → `only` it;
- * steps tagged with @ → `tagged` those; a new step after or before one named step → `insert`; a selection, when the
+ * steps tagged with @ → `tagged` those; a new step after or before one named step (and no other step named) → `insert`; a selection, when the
  * message names no other step and adds none → `selected`. A test-and-fix session's `fix` and `review` requests have no
  * scope (the session's own `wastedFix` rule applies there): callers pass only typed messages (`auto` is typed).
  */
@@ -126,13 +143,13 @@ export function scopeOf(request: ScopeRequest): SpotlightScope | undefined {
   }
   const named = namedNodes(message, nodes);
   const selected = request.selectedId && exists(request.selectedId) ? request.selectedId : undefined;
-  if (/\b(?:only|just)\b/i.test(message) && named.length && !asksToAdd(message)) return { kind: 'only', nodes: named.map((n) => n.id) };
+  if (/\b(?:only|just)\b/i.test(message) && named.length && !asksToAdd(message, nodes)) return { kind: 'only', nodes: named.map((n) => n.id) };
   if (selected && ONLY_SELECTED.test(message)) return { kind: 'only', nodes: [selected] };
   const tagged = (request.taggedIds ?? []).filter(exists);
   if (tagged.length) return { kind: 'tagged', nodes: [...new Set(tagged)] };
-  const point = insertionPoint(message, nodes);
+  const point = insertionPoint(message, nodes, selected);
   if (point) return { kind: 'insert', nodes: [point.node.id], side: point.side };
-  if (selected && !asksToAdd(message) && named.every((n) => n.id === selected)) return { kind: 'selected', nodes: [selected] };
+  if (selected && !asksToAdd(message, nodes) && named.every((n) => n.id === selected)) return { kind: 'selected', nodes: [selected] };
   return undefined;
 }
 
@@ -151,8 +168,9 @@ export function scopeLabel(scope: SpotlightScope, nodes: readonly ScopeNode[]): 
  *   the step is in `scope.nodes` (never for `insert`: there the existing steps stay as they are);
  * - an `addNode` (a new agent too) placed after or before a scope step or a step these ops add: for `insert`, only on
  *   its `side` of the anchor; for the other kinds, only when the message asks for a new step;
- * - a `connect` or `disconnect` whose two ends are scope steps, steps these ops add, or (for `insert`) the anchor's own
- *   neighbours on its `side` (the step it fed, or the step that fed it, is rewired to the new one);
+ * - a `connect` or `disconnect` whose two ends are scope steps, steps these ops add, or the neighbours of the scope
+ *   (for `insert`, the anchor's own on its `side`; for the other kinds, when the message adds a step): the step it fed,
+ *   or the step that fed it, is rewired to the new one;
  * - `setWorkflowSettings` and anything else: outside.
  */
 export function outsideScope(
@@ -170,16 +188,22 @@ export function outsideScope(
   const side = scope.side ?? 'after';
   const main = workflow.connections.filter((c) => (c.type ?? 'main') === 'main');
   // For `insert`: the steps beside the anchor on its side may be rewired to the new step.
-  const neighbours = new Set(anchor ? (side === 'after' ? main.filter((c) => c.source === anchor).map((c) => c.target) : main.filter((c) => c.target === anchor).map((c) => c.source)) : []);
+  // The same holds for a new step added beside a scope step under the other kinds: the neighbour it takes over is rewired.
+  const neighbours = new Set(anchor ? (side === 'after' ? main.filter((c) => c.source === anchor).map((c) => c.target) : main.filter((c) => c.target === anchor).map((c) => c.source)) : asksToAdd(message, workflow.nodes) ? main.filter((c) => inScope.has(c.source) || inScope.has(c.target)).flatMap((c) => [c.source, c.target]) : []);
   const scopeNames = scope.nodes.map((id) => `“${nameOf(id)}”`).join(', ');
   const where = anchor ? `the new step goes ${side} “${nameOf(anchor)}”` : `the request is about ${scopeNames}`;
-  const mayAdd = anchor !== undefined || asksToAdd(message);
+  const mayAdd = anchor !== undefined || asksToAdd(message, workflow.nodes);
   const endOk = (ref: string | undefined) => isAdded(ref) || (() => {
     const id = idOf(ref);
-    return id !== undefined && (anchor ? id === anchor || neighbours.has(id) : inScope.has(id));
+    return id !== undefined && (anchor ? id === anchor || neighbours.has(id) : inScope.has(id) || neighbours.has(id));
   })();
   const out: Array<{ index: number; reason: string }> = [];
-  ops.forEach((op, index) => {
+  // A step added outside the scope is left out, so a rewire to it is too (else the second pass drops it as an unknown ref).
+  const outsideAdded = new Set<string>();
+  const isOutsideAdded = (ref: string | undefined) => ref !== undefined && outsideAdded.has(ref);
+  // Connections last: they depend on which added steps stay.
+  const ordered = ops.map((op, index) => ({ op, index })).sort((a, b) => Number(a.op.op === 'connect' || a.op.op === 'disconnect') - Number(b.op.op === 'connect' || b.op.op === 'disconnect') || a.index - b.index);
+  ordered.forEach(({ op, index }) => {
     const say = (what: string) => out.push({ index, reason: `${what}: outside what was asked (${where})` });
     switch (op.op) {
       case 'setParameters':
@@ -194,19 +218,23 @@ export function outsideScope(
       case 'addNode': {
         const at = op.after !== undefined ? { ref: op.after, side: 'after' as const } : op.before !== undefined ? { ref: op.before, side: 'before' as const } : undefined;
         const label = `adding “${op.name ?? op.ref ?? 'a step'}”`;
-        if (!mayAdd || !at) return say(label);
-        if (isAdded(at.ref)) return;
+        const left = () => {
+          for (const r of [op.ref, op.name]) if (r) outsideAdded.add(r);
+          say(label);
+        };
+        if (!mayAdd || !at) return left();
+        if (isAdded(at.ref)) return isOutsideAdded(at.ref) ? left() : undefined;
         const id = idOf(at.ref);
-        if (anchor !== undefined ? id !== anchor || at.side !== side : !id || !inScope.has(id)) say(label);
+        if (anchor !== undefined ? id !== anchor || at.side !== side : !id || !inScope.has(id)) left();
         return;
       }
       case 'connect':
       case 'disconnect':
-        if (!endOk(op.from) || !endOk(op.to)) say(`${op.op === 'connect' ? 'connecting' : 'disconnecting'} “${op.from ?? '?'}” → “${op.to ?? '?'}”`);
+        if (isOutsideAdded(op.from) || isOutsideAdded(op.to) || !endOk(op.from) || !endOk(op.to) || (!anchor && ![op.from, op.to].some((r) => isAdded(r) || inScope.has(idOf(r) ?? '')))) say(`${op.op === 'connect' ? 'connecting' : 'disconnecting'} “${op.from ?? '?'}” → “${op.to ?? '?'}”`);
         return;
       default:
         say(op.op);
     }
   });
-  return out;
+  return out.sort((a, b) => a.index - b.index);
 }

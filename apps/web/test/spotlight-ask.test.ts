@@ -89,6 +89,7 @@ describe('ask_user in the chat', () => {
     const { events, calls } = await chat('it should retry 3 times', [both, { text: 'UNUSED' }]);
     expect(events.some((e) => e.type === 'proposal')).toBe(false);
     expect(events.some((e) => e.type === 'ask')).toBe(true);
+    expect(events.some((e) => e.type === 'tool' && e.name === 'propose_changes' && /Held the change/.test(e.label))).toBe(true);
     expect(calls).toHaveLength(1);
   });
 
@@ -132,6 +133,22 @@ describe('the backstop: several steps fit', () => {
     expect(events.some((e) => e.type === 'ask')).toBe(true);
     expect(events.some((e) => e.type === 'proposal')).toBe(false);
     expect(calls).toHaveLength(2);
+  });
+
+  it('a settings change on a step this reply just added is not sent back', async () => {
+    const add = call('propose_changes', { summary: 'Add a call', ops: [{ op: 'addNode', type: 'core.httpRequest', name: 'Fetch bugs', after: 'Read Linear bugs', parameters: { url: 'http://127.0.0.1:3412/bugs' } }] });
+    const settings = call('propose_changes', { summary: 'Retry 3 times', ops: [{ op: 'setNodeSettings', node: 'Fetch bugs', settings: { retryOnFail: true, maxTries: 3 } }] });
+    const { events, calls } = await chat('add a call to http://127.0.0.1:3412/bugs that retries 3 times', [add, settings, { text: 'Done.' }]);
+    expect(events.filter((e) => e.type === 'proposal')).toHaveLength(2);
+    expect(calls).toHaveLength(3);
+  });
+
+  it('a Slack message with a channel nobody gave is sent back once to ask', async () => {
+    const slack = call('propose_changes', { summary: 'Post to Slack', ops: [{ op: 'addNode', type: 'core.httpRequest', name: 'Post update', after: 'Read Linear bugs', parameters: { channel: '#general', url: 'http://127.0.0.1:3412/status' } }] });
+    const { events, calls } = await chat('post the result to slack', [slack, call('ask_user', { question: 'Which channel?', choices: ['#ops', '#dev'] }), { text: 'UNUSED' }]);
+    expect(events.some((e) => e.type === 'proposal')).toBe(false);
+    expect(events.some((e) => e.type === 'ask')).toBe(true);
+    expect((calls[1].messages.at(-1) as { results: Array<{ content: string }> }).results[0].content).toContain('nobody gave');
   });
 
   it('a test session is never sent back', async () => {
