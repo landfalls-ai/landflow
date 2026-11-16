@@ -2040,6 +2040,28 @@ members has been cache-aware since wave 11; SP19 rewrapped the long `// SP03:` l
   an Ollama agent run whose Spend tab says "Counted by the model's tokenizer". They need a host and a headed browser,
   and are carried with those still owed from waves 6 to 10.
 
+## Company backbone: left open from the wave 12 reviews (2026-11-16)
+
+Wave 13 (token spend) checked the wave 12 notes against its merge. SP10's drill sheet opens any call by its id, so a Run
+an Agent call's composition is reachable from the AI page; SP11's limitation lines name the 1,024-token cache minimum and
+gateway rows without cache numbers. These wait, each with its reason:
+
+- **On Ollama `formatting` holds the chat template** (about half of a call with tools, 221 of 355 tokens on
+  `qwen3-coder:30b`; [limitations](limitations.md)): it is real input, so the waste detectors (SP13, wave 14) should not
+  read a large `formatting` on an Ollama call as waste. Wave 13 shows no composition on the AI page.
+- **Run an Agent's calls still have no model span** in the Run Trace (above, wave 11): the AI page's drill sheet opens
+  them by id, but the Spend tab's per-call sheet does not; one `model` span per loop step is its own change.
+- **A Landflow call on a gateway credential keeps Landflow's estimate** even when the gateway's split counted it exactly
+  ([llm-gateway.md](llm-gateway.md#what-a-prompt-was-made-of)); deciding which split wins is its own change, and no wave
+  13 package touched it.
+- **`MIN_CACHEABLE_TOKENS` is one figure (1,024) for every model** (`ai-usage/run-spend.ts`): a newer Claude model's
+  higher minimum reads as `not-requested`; documented ([limitations](limitations.md#token-spend-wave-13)), a per-model
+  table waits for a model that needs it.
+- **Two concurrent counts of the same prefix both send a count request** (`ai-usage/count/anthropic.ts`): the results
+  stay correct and each request is free; sharing an in-flight count would also have to share its per-minute budget slot.
+- **Long unwrapped doc lines** (`llm-gateway.md`, `projects-and-goals.md`, `run-trace.md`, `agents.md`): cosmetic, there
+  is no formatter, and rewrapping whole files is not done; a change rewraps the lines it edits.
+
 ## Runs: one list (B20, 2026-11-14)
 
 Closed from the wave 1 page review: X2 (Executions, Runs and Search runs are one page, **Runs** at `/runs`, the old URLs redirect), P-ex-1 (no ID or Mode column), P-ex-2 (Stop all only while a run runs), P-ex-3 (repeated failures fold into one row), P-ex-4 (two re-run words), P-runs-1 (one search box with Status and Workflow chips, the rest under More filters) and P-cmp-1 (compare with fewer than two runs goes back to the list). See [the Runs list](run-trace.md#the-runs-list).
@@ -2303,8 +2325,9 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   each cap or budget the viewer may see with the day the P50 line reaches its limit or "stays under"; a daily cap shows
   today's pace) and a **Prompt cache** card (hit rate, dollars saved, misses, the five agents with the most uncached input
   with why they missed, and the AI Agent node's uncached calls). `forecastMonth` (`lib/shared/ai-forecast.ts`) is the one
-  method; SP23 alerts on it and SP12's My AI spend takes it for its own caps. Until the daily rollup (SP08) merges the
-  forecast reads `ai_usage` by day through one function (`dayRows` in `lib/server/ai-usage/forecast.ts`).
+  method; SP23 alerts on it and SP12's My AI spend takes it for its own caps. The forecast reads `ai_usage` by day
+  through one function (`dayRows` in `lib/server/ai-usage/forecast.ts`), not the daily rollup (SP08): exact, and moving
+  it onto the rollup is a speed change for when a month of rows gets slow.
   Live check: owner and member views on a seeded month, light and dark, desktop and phone; the seed had the same spend on
   each day (no spread), so the range form was covered by unit tests only. Misses are also counted in distinct runs
   ("in 3 of 40 runs"), each call grouped by its own session, else execution.
