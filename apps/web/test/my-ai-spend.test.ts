@@ -58,6 +58,7 @@ beforeAll(async () => {
   row({ user_id: alma.id, cost: 1, execution_id: 'ex_1', purpose: 'answer', surface: 'spotlight' });
   row({ user_id: alma.id, cost: 2, execution_id: 'ex_1', purpose: 'judge' });
   row({ user_id: alma.id, cost: 0, provider: 'ollama', model: 'qwen3-coder:30b', input_tokens: 5000, output_tokens: 500, session_id: 's_1' });
+  row({ user_id: alma.id, cost: 0, provider: 'litellm', model: 'qwen3-coder:30b', gateway_provider: 'ollama_chat', source: 'litellm', input_tokens: 70, output_tokens: 7 });
   row({ user_id: ben.id, cost: 40, execution_id: 'ex_ben' });
   row({ cost: 9 });
   saveAiCaps({ credentials: {}, users: { [ben.id]: { name: 'Ben', dayCost: 77 } }, allUsers: { monthCost: 100 } });
@@ -73,15 +74,15 @@ describe('GET /api/insights/ai/me', () => {
   it('answers only the caller’s own rows, with runs counted once and local models "Not priced"', async () => {
     const { status, body } = await get(alma);
     expect(status).toBe(200);
-    expect(body.today).toMatchObject({ cost: 3, calls: 3, runs: 2, unpricedCalls: 1 });
-    expect(body.month.calls).toBe(3);
-    expect(body.byModel.map((r: { label: string }) => r.label)).toEqual(['claude-sonnet-5-5', 'qwen3-coder:30b']);
-    expect(body.byModel.find((r: { label: string }) => r.label === 'qwen3-coder:30b')).toMatchObject({ unpriced: true, calls: 1 });
+    expect(body.today).toMatchObject({ cost: 3, calls: 4, runs: 2, unpricedCalls: 2 });
+    expect(body.month.calls).toBe(4);
+    expect(body.byModel.map((r: { label: string }) => r.label)).toEqual(['claude-sonnet-5-5', 'qwen3-coder:30b (ollama)', 'qwen3-coder:30b (litellm)']);
+    expect(body.byModel.find((r: { label: string }) => r.label === 'qwen3-coder:30b (ollama)')).toMatchObject({ unpriced: true, calls: 1 });
     expect(body.byModel[0].unpriced).toBeUndefined();
     expect(body.byPurpose.map((r: { key: string }) => r.key).sort()).toEqual(['answer', 'judge', 'none']);
     expect(body.bySurface.find((r: { key: string }) => r.key === 'spotlight')).toMatchObject({ calls: 1 });
     expect(body.series).toHaveLength(7);
-    expect(body.series.at(-1)).toMatchObject({ calls: 3, cost: 3 });
+    expect(body.series.at(-1)).toMatchObject({ calls: 4, cost: 3 });
     // Nobody else's rows or names.
     expect(body.today.cost).toBeLessThan(9);
     expect(body.forecast).toBeUndefined();
@@ -91,7 +92,7 @@ describe('GET /api/insights/ai/me', () => {
     savePriceOverrides([{ provider: 'ollama', model: 'qwen3-coder:30b', input: 1, output: 1 }]);
     aiUsageMeter().invalidatePrices();
     const { body } = await get(alma);
-    expect(body.byModel.find((r: { label: string }) => r.label === 'qwen3-coder:30b').unpriced).toBeUndefined();
+    expect(body.byModel.find((r: { label: string }) => r.label === 'qwen3-coder:30b (ollama)').unpriced).toBeUndefined();
     savePriceOverrides([]);
     aiUsageMeter().invalidatePrices();
   });

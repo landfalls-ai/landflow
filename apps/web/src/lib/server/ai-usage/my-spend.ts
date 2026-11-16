@@ -82,6 +82,12 @@ export function mySpend(userId: string, period: AiSpendPeriod = '7d', now: numbe
       if (unpriced) entry.unpricedCalls += Number(row.calls ?? 0);
       if (column === 'model' && unpriced) entry.unpriced = true;
     }
+    // The same model through two providers keeps one row each: name the provider when labels collide.
+    if (column === 'model') {
+      const counts = new Map<string, number>();
+      for (const entry of map.values()) counts.set(entry.label, (counts.get(entry.label) ?? 0) + 1);
+      for (const [key, entry] of map) if ((counts.get(entry.label) ?? 0) > 1) entry.label = `${entry.label} (${key.slice(0, key.indexOf('/'))})`;
+    }
     return finish([...map.values()]);
   };
 
