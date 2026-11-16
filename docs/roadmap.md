@@ -2473,3 +2473,14 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   [assistant.md](assistant.md#the-builder-chat). Left: the live scorecard's before and after side by side (the run is slow; its numbers go with the merge report), and the schemas of the
   rest of GitHub, Slack and Linear.
 - **SB08, a real diff before Apply, built (2026-11-16):** finding 2.3 (the card printed the new value cut at 64 characters): the waiting card, the proposal row and the after-run suggestion show per step each parameter, setting, credential and wire old → new, long text behind **Show all**, and "N other steps untouched" (`diffOps`, `change-diff.tsx`). Docs: [assistant.md](assistant.md#fold-apply-and-errors).
+- **SB11, Spotlight asks when it is not clear, built:** finding 2.5 and the "retry 3 times" with nothing selected: an
+  `ask_user` tool (one question, 2 to 4 choices as chips, *or type your own answer*) for several steps that fit or a
+  channel, table or id that is missing; asking never needs the switch (decision D1), is not offered in a test session,
+  ends the reply with no further model call, and a backstop sends back a change to one of several steps of a kind with
+  none named or selected (a settings change fits every step that calls out). Live on the local model: "it should retry 3
+  times" asks which step 3 of 3 (0 of 3 before). Docs: [assistant.md](assistant.md#the-builder-chat). A made-up channel, table or recipient in a typed proposal is also sent back once to ask (not an id, not a URL
+  host, not in a test session). Left: "post the summary to Slack" with no channel asked first 1 of 3 live (qwen3-coder:30b):
+  the live form never registers the `messaging.slack` type (plugin types are added only in the unit form or through
+  `LANDFLOW_SPOTLIGHT_PLUGINS`), so `get_node_docs messaging.slack` answers "not found", the model wrote the question as
+  numbered text or asked "Which Slack node?" with type ids as chips, and the destination send-back is not exercised live;
+  not re-run with the plugin served, so open. The chips are not kept in a stored conversation.

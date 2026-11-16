@@ -70,7 +70,7 @@ describe('given-value edge cases', () => {
 });
 
 describe('the chat route in an auto session', () => {
-  const run = async (ops: unknown[], message = 'change it as I say') => {
+  const run = async (ops: unknown[], message = 'change Notify VIP as I say') => {
     const turns: Array<Partial<ModelTurn>> = [{ toolCalls: [{ id: 'c1', name: 'propose_changes', input: { summary: 'Change', ops } }] }, { text: 'Done.' }, { text: 'Done.' }];
     const model: LanguageModel = {
       provider: 'test',

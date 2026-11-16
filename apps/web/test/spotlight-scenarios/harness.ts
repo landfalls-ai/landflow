@@ -234,10 +234,11 @@ interface Collected {
   done?: { steps: number; model?: string; usage: { inputTokens: number; outputTokens: number } };
   error?: string;
   drafts: Array<Partial<AgentConfig>>;
+  asked: Array<{ question: string; choices: string[] }>; // SB11:
 }
 
 function collect(events: Array<{ event: string; data: any }>): Collected { // eslint-disable-line @typescript-eslint/no-explicit-any
-  const out: Collected = { text: '', tools: [], proposals: [], drafts: [] };
+  const out: Collected = { text: '', tools: [], proposals: [], drafts: [], asked: [] };
   for (const { data } of events) {
     switch (data.type) {
       case 'text':
@@ -248,6 +249,9 @@ function collect(events: Array<{ event: string; data: any }>): Collected { // es
         break;
       case 'proposal':
         out.proposals.push({ summary: data.summary, ops: data.ops, dropped: data.dropped ?? [], warnings: data.warnings ?? [] });
+        break;
+      case 'ask': // SB11:
+        out.asked.push({ question: data.question, choices: data.choices });
         break;
       case 'draft':
         out.drafts.push(data.config);
@@ -550,7 +554,7 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
     } else if (scenario.via === 'chat' || scenario.via === 'session') {
       if (!canvas) throw new Error(`${scenario.id}: a chat scenario needs start.workflow`);
       const result = await chatOnce({ ask: echoed(scenario.ask, options), workflow: canvas, selected: idOf(canvas, scenario.start?.selected), runs: runsById(canvas, scenario.start?.runs), session: scenario.start?.session, ...scopeOfStart(canvas, scenario.start) }, form, scripted, options);
-      Object.assign(outcome, { text: result.text, tools: result.tools, proposals: result.proposals, ...(result.error && { error: result.error }) });
+      Object.assign(outcome, { text: result.text, tools: result.tools, proposals: result.proposals, asked: result.asked, ...(result.error && { error: result.error }) }); // SB11: asked
       withDone(result);
       outcome.after = applyAsTheEditor(canvas, result.proposals, scenario.start?.autonomy);
       if (scenario.via === 'session') {

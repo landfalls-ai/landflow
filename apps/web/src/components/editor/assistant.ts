@@ -15,6 +15,7 @@ import { teamFromLead } from '@/lib/shared/turn-into-team';
 import type { ActivityKind, ActivityStep } from '@/lib/shared/activity';
 import type { NodeRun } from '@/lib/shared/types';
 import type { MentionRef } from '@/lib/shared/mentions';
+import type { AskEvent, AskPart } from '@/lib/shared/spotlight-wire'; // SB11:
 import type { ReplyInfo } from '../ui/chat';
 import { useEditor } from './store';
 import { emptyStored, withEarlier, type Stored } from './spotlight-history';
@@ -315,7 +316,8 @@ export type ReplyPart =
   | { kind: 'run'; run: TestRun }
   | { kind: 'needs'; need: Need }
   | { kind: 'outcome'; outcome: Outcome }
-  | ({ kind: 'action' } & ReplyAction);
+  | ({ kind: 'action' } & ReplyAction)
+  | AskPart; // SB11: a question back with its choices
 
 /**
  * `testId`: the test-and-fix session the turn belongs to; Spotlight folds a finished session into one line.
@@ -363,6 +365,7 @@ export type StreamEvent =
   | { type: 'thinking'; step: number; text: string }
   | { type: 'tool'; name: string; label: string; ok: boolean; id?: string; step?: number; durationMs?: number; detail?: string }
   | ({ type: 'proposal' } & Omit<Proposal, 'state'>)
+  | AskEvent // SB11:
   | { type: 'done'; model: string; durationMs: number; steps: number; usage?: { inputTokens: number; outputTokens: number }; costUsd?: number; local?: boolean }
   | { type: 'error'; message: string; kind?: 'model' | 'cap' | 'stalled' | 'internal'; checkpoint?: string; step?: number };
 
@@ -423,6 +426,8 @@ export function applyStreamEvent(turn: AssistantTurn, event: StreamEvent, now: n
       const { type: _type, ...proposal } = event;
       return { ...turn, parts: [...turn.parts, { kind: 'proposal', proposal }] };
     }
+    case 'ask': // SB11: the question and its chips; the question's words arrive as the reply's text
+      return { ...turn, parts: [...turn.parts, { kind: 'ask', ask: { question: event.question, choices: event.choices } }] };
     case 'done':
       return {
         ...turn,
@@ -553,6 +558,8 @@ interface AssistantState {
   setProposalState(itemId: string, proposalId: string, state: 'applied' | 'dismissed' | 'undone', skipped?: number): void;
   /** Change the parts of one reply (a test-and-fix session adds and updates its runs; buttons record what was chosen). */
   updateParts(itemId: string, fn: (parts: ReplyPart[]) => ReplyPart[]): void;
+  /** SB11: a chip of a question back: marks it picked, then sends it as a typed message (not `auto`, no session). */
+  answerAsk(itemId: string, choice: string): Promise<void>;
 }
 
 /** What the model sees of earlier turns: the text, plus a note of each proposal and whether it was applied. */
@@ -728,6 +735,12 @@ export const useAssistant = create<AssistantState>((set, get) => ({
 
   updateParts(itemId, fn) {
     set((s) => ({ items: s.items.map((item) => (item.id === itemId && item.role === 'assistant' ? { ...item, parts: fn(item.parts) } : item)) }));
+  },
+
+  async answerAsk(itemId, choice) { // SB11:
+    if (get().pending) return;
+    get().updateParts(itemId, (parts) => parts.map((p) => (p.kind === 'ask' && !p.ask.answered ? { ...p, ask: { ...p.ask, answered: choice } } : p)));
+    await get().send(choice, {});
   },
 }));
 
