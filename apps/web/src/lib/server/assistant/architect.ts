@@ -174,10 +174,19 @@ const TOOLS: ToolSpec[] = [
  */
 const DESIGN_TOOL: ToolSpec = {
   name: 'propose_design',
-  description: 'Propose the agent. Every value is plain text.',
+  description: 'Show the user the whole agent as a draft to review and create. Every value is plain text. Each call replaces the earlier draft, so always send every field, not only what changed.', // SB06:
   inputSchema: {
     type: 'object',
     properties: {
+      summary: { type: 'string', description: 'One line: what this draft is or what changed' }, // SB06:
+      name: { type: 'string', description: 'A short name, a person-like name is fine ("Helpdesk Hana")' }, // SB06:
+      audience: { type: 'string', description: 'Who it helps' }, // SB06:
+      mission: { type: 'string', description: 'What it does for them' }, // SB06:
+      always: { type: 'string', description: 'Rules it always follows, one per line, a sentence each; empty for none' }, // SB06:
+      never: { type: 'string', description: 'Rules it never breaks, one per line; empty for none' }, // SB06:
+      answerLength: { type: 'string', enum: ['short', 'medium', 'long'], description: 'How long its answers are' }, // SB06:
+      workflowTools: { type: 'string', description: 'Workflow ids (list_workflows) it calls as tools, comma-separated; empty for none' }, // SB06:
+      agentTools: { type: 'string', description: 'Agent ids (list_agents) it delegates to, comma-separated; empty for none' }, // SB06:
       role: { type: 'string', description: 'What it is in a few words ("Contract reviewer")' },
       description: { type: 'string', description: 'One sentence: what it does' },
       instructions: { type: 'string', description: 'How it works, step by step, naming its tools' },
@@ -193,19 +202,33 @@ const DESIGN_TOOL: ToolSpec = {
   },
 };
 
+/** SB06: the tools with propose_agent replaced by the flat propose_design. */
+const flatTools = (list: ToolSpec[]): ToolSpec[] => list.map((t) => (t.name === 'propose_agent' ? DESIGN_TOOL : t));
+
 const plain = (value: unknown) => (typeof value === 'string' ? value.replace(LEAKED_MARKUP, '').trim() : '');
 
 /** propose_design's plain strings as propose_agent's arguments. */
 export function fromDesign(args: Record<string, unknown>): Record<string, unknown> {
   const list = (value: unknown, split: RegExp) => plain(value).split(split).map((v) => v.trim()).filter(Boolean);
   const knowledge = plain(args.knowledge);
-  const tools = [
+  const tools: Array<Record<string, unknown>> = [ // SB06: workflow and agent tools join node and knowledge ones
     ...(knowledge && !/^(none|no|n\/a|-)$/i.test(knowledge) ? [{ type: 'knowledge', collection: knowledge, ...(plain(args.knowledgeDescription) && { description: plain(args.knowledgeDescription) }) }] : []),
     ...list(args.nodeTools, /[,\n]/).filter((t) => !/^(none|no|n\/a|-)$/i.test(t)).map((nodeType) => ({ type: 'node', nodeType })),
   ];
+  const none = /^(none|no|n\/a|-)$/i; // SB06:
+  const length = ({ short: 'sentence', medium: 'short', long: 'detailed', sentence: 'sentence', detailed: 'detailed' } as Record<string, string>)[plain(args.answerLength).toLowerCase()]; // SB06:
+  tools.push(
+    ...list(args.workflowTools, /[,\n]/).filter((id) => !none.test(id)).map((workflowId) => ({ type: 'workflow', workflowId })), // SB06:
+    ...list(args.agentTools, /[,\n]/).filter((id) => !none.test(id)).map((agentId) => ({ type: 'agent', agentId })), // SB06:
+  );
   return {
-    summary: 'Designed for Spotlight',
-    name: plain(args.name) || 'Agent',
+    summary: plain(args.summary) || 'Designed for Spotlight', // SB06:
+    ...(plain(args.name) && { name: plain(args.name) }), // SB06:
+    ...(plain(args.audience) && { audience: plain(args.audience) }), // SB06:
+    ...(plain(args.mission) && { mission: plain(args.mission) }), // SB06:
+    ...(list(args.always, /\n/).length && { always: list(args.always, /\n/) }), // SB06:
+    ...(list(args.never, /\n/).length && { never: list(args.never, /\n/) }), // SB06:
+    ...(length && { length }), // SB06:
     role: plain(args.role),
     ...(plain(args.description) && { description: plain(args.description) }),
     instructions: plain(args.instructions),
@@ -459,9 +482,9 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
   const { onEvent, actor } = input;
   const trace = input.trace === true;
   const types = input.types.filter(usableAsTool);
-  const tools = input.only ? [...TOOLS, DESIGN_TOOL].filter((t) => input.only!.includes(t.name)) : TOOLS;
-  const toolNames = new Set(tools.map((t) => t.name));
-  const model = assistantModel(input.model);
+  const model = assistantModel(input.model); // SB06: moved up, the tool choice reads its provider
+  // SB06: a local model is offered the flat propose_design in propose_agent's place: its nested arrays don't survive Ollama's parser.
+  const tools = input.only ? [...TOOLS, DESIGN_TOOL].filter((t) => input.only!.includes(t.name)) : model.provider === 'ollama' ? flatTools(TOOLS) : TOOLS;
   const started = Date.now();
   let draft = input.resume ? input.resume.draft : input.draft;
   let said = input.resume?.said ?? '';
@@ -589,13 +612,15 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
         steps++;
         currentStep = steps;
         if (trace) onEvent({ type: 'step.start', step: steps, label: steps === 1 ? 'Reading your request' : 'Thinking' });
-        const generate = () => withCallNote({ purpose: 'answer', draft: plainDraft({ system, tools, messages: history }) }, () => model.generate({ system, messages: history, tools, ...(input.signal && { signal: input.signal }) })); // SP03:
+        let offered = tools; // SB06: the retry after a parse error offers the flat tool
+        const generate = () => withCallNote({ purpose: 'answer', draft: plainDraft({ system, tools: offered, messages: history }) }, () => model.generate({ system, messages: history, tools: offered, ...(input.signal && { signal: input.signal }) })); // SP03:
         let turn: Awaited<ReturnType<typeof generate>>;
         try {
           // Ollama answers 500 when it can't parse the tool call qwen3-coder wrote ("XML syntax error", sometimes with no detail): ask once more.
           turn = await generate().catch((error: unknown) => {
             if (input.signal?.aborted || !/XML syntax error|tool call|unexpected end|Ollama error 500/i.test(String((error as Error)?.message ?? error))) throw error;
             span.addEvent('assistant.retry', { 'landflow.reason': String((error as Error)?.message ?? error).slice(0, 200) });
+            offered = flatTools(tools); // SB06:
             return generate();
           });
         } catch (caught) {
@@ -605,7 +630,7 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
         }
         usage.inputTokens += turn.usage?.inputTokens ?? 0;
         usage.outputTokens += turn.usage?.outputTokens ?? 0;
-        const { text: reply, calls } = turn.toolCalls.length ? { text: turn.text, calls: turn.toolCalls } : recoverToolCalls(turn.text, toolNames);
+        const { text: reply, calls } = turn.toolCalls.length ? { text: turn.text, calls: turn.toolCalls } : recoverToolCalls(turn.text, new Set(offered.map((t) => t.name))); // SB06:
         if (reply.trim()) {
           const shown = withoutRepeats(reply, said);
           said += `\n${reply}`;

@@ -2303,3 +2303,7 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
 - **Left (deferred)**: model verdicts in the CLI's `check` (a model's verdict reaches a flow through Check Practices, PR08;
   the CLI runs machine checks only) and a reminder after `Write` or `Edit` on a matching path (the mod never denies a
   tool call, so a reminder hook is its own package).
+
+## Spotlight wave sb1
+
+- **SB06, the Agent architect on a local model**: the dialog offers the flat `propose_design` (with the persona fields as plain strings) on an Ollama model, and a parse error is retried with it ([agents.md](agents.md#agent-architect)).
