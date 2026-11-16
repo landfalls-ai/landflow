@@ -22,6 +22,7 @@ const { newSession } = await import('@/lib/server/agents/runtime');
 const { DETECTOR_RUNS, detectContext } = await import('@/lib/server/brain/detectors');
 const { upsertProposal, dismissProposal } = await import('@/lib/server/brain/proposals');
 const { recordUsage, dayOf } = await import('@/lib/server/usage/ledger');
+const { LOAD_LIMIT } = await import('@/lib/server/brain/spend-detectors');
 const { DETECTORS, DETECTOR_LABELS } = await import('@/lib/shared/brain');
 
 afterAll(() => {
@@ -111,6 +112,28 @@ const run = (id: keyof typeof DETECTOR_RUNS, quiet: Record<string, number> = {})
 
 /** What a proposal would show: it must hold no text of a prompt and no person. */
 const serialized = (found: unknown) => JSON.stringify(found);
+
+describe('the read window', () => {
+  it('a row after now does not count (a backtest never sees the future)', () => {
+    const a = agent('Future');
+    many(20, (i) => ({ agent: a.id, session: `f${i}`, input: 1000, parts: { toolResults: 600, instructions: 400 } }));
+    expect(DETECTOR_RUNS['fat-tool-results'](detectContext({}, database(), NOW - 3 * DAY))).toEqual([]);
+    expect(run('fat-tool-results')).toHaveLength(1);
+  });
+  it('the row cap drops the oldest rows, so the recent week is kept', () => {
+    const a = agent('Capped');
+    const old = [...many(10, (i) => ({ agent: a.id, session: `o${i}`, daysAgo: 10, input: 1000, parts: { instructions: 1000 } }))];
+    many(20, (i) => ({ agent: a.id, session: `c${i}`, daysAgo: 1, input: 1000, parts: { toolResults: 600, instructions: 400 } }));
+    expect(old).toHaveLength(10);
+    const before = LOAD_LIMIT.rows;
+    LOAD_LIMIT.rows = 20;
+    try {
+      expect(run('fat-tool-results')).toHaveLength(1);
+    } finally {
+      LOAD_LIMIT.rows = before;
+    }
+  });
+});
 
 describe('registration', () => {
   it('the six detectors are registered and labeled', () => {
@@ -268,7 +291,18 @@ describe('agent-loops', () => {
     expect(found).toHaveLength(1);
     expect(found[0].proposal.target).toMatchObject({ type: 'agent', id: a.id });
     reset();
-    for (const s of ['s1', 's2']) ended(a.id, s, 'max_iterations');
+    for (const s of ['s1', 's2']) {
+      ended(a.id, s, 'max_iterations');
+      call({ agent: a.id, session: s, iteration: 1 });
+    }
+    expect(run('agent-loops')).toEqual([]);
+  });
+  it('is quiet on a runaway rule near miss: 4 sessions, or a top exactly 3x the median', () => {
+    const a = agent('Near runaway');
+    for (const [i, top] of [2, 2, 3, 12].entries()) call({ agent: a.id, session: `n${i}`, iteration: top });
+    expect(run('agent-loops')).toEqual([]);
+    reset();
+    for (const [i, top] of [2, 2, 2, 2, 6].entries()) call({ agent: a.id, session: `e${i}`, iteration: top });
     expect(run('agent-loops')).toEqual([]);
   });
   it('fires when the highest iteration is over 3x the median', () => {

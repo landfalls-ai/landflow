@@ -74,12 +74,17 @@ const sum = (values: number[]) => values.reduce((s, v) => s + v, 0);
 const runsOf = (calls: Call[]) => new Set(calls.map((c) => c.run)).size;
 const label = (part: PromptPart) => PROMPT_PART_LABELS[part];
 
-/** The calls of the last `days` days: chat calls of agents and workflows, with their splits when they have one. */
+/** The most rows one detector reads; the cap drops the oldest rows, never the newest. Tests lower it. */
+export const LOAD_LIMIT = { rows: 50_000 };
+
+/** The calls of the last `days` days up to ctx.now (a backtest never sees the future): chat calls of agents and workflows, with their splits when they have one. */
 function load(ctx: DetectContext, days: number): Subject[] {
   const rows = ctx.db.all<Row>(
-    `SELECT * FROM ai_usage WHERE at >= ? AND operation <> 'embeddings' AND surface IS NULL AND (agent_id IS NOT NULL OR workflow_id IS NOT NULL)
-       AND COALESCE(purpose, '') NOT IN ('embed', 'cache-embed', 'rerank') ORDER BY at LIMIT 50000`,
+    `SELECT * FROM ai_usage WHERE at >= ? AND at <= ? AND operation <> 'embeddings' AND surface IS NULL AND (agent_id IS NOT NULL OR workflow_id IS NOT NULL)
+       AND COALESCE(purpose, '') NOT IN ('embed', 'cache-embed', 'rerank') ORDER BY at DESC LIMIT ?`,
     new Date(ctx.now - days * DAY_MS).toISOString(),
+    new Date(ctx.now).toISOString(),
+    LOAD_LIMIT.rows,
   );
   const splits = partsOf(rows as never);
   const subjects = new Map<string, Subject>();

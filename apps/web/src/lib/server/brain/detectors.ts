@@ -348,9 +348,10 @@ function localAiCost(ctx: DetectContext): Finding[] {
   const marks = LOCAL_PROVIDERS.map(() => '?').join(', ');
   const rows = ctx.db.all<{ workflow_id: string; model: string; n: number; input: number; output: number }>(
     `SELECT workflow_id, model, COUNT(*) AS n, COALESCE(SUM(input_tokens), 0) AS input, COALESCE(SUM(output_tokens), 0) AS output
-     FROM ai_usage WHERE at >= ? AND workflow_id IS NOT NULL AND surface IS NULL AND operation <> 'embeddings' AND cost = 0
+     FROM ai_usage WHERE at >= ? AND at <= ? AND workflow_id IS NOT NULL AND surface IS NULL AND operation <> 'embeddings' AND cost = 0
        AND (provider IN (${marks}) OR gateway_provider IN (${marks})) GROUP BY workflow_id, model`,
     iso(ctx.now - 7 * DAY_MS),
+    iso(ctx.now),
     ...LOCAL_PROVIDERS,
     ...LOCAL_PROVIDERS,
   );
@@ -390,7 +391,12 @@ function localAiCost(ctx: DetectContext): Finding[] {
           { label: 'Smaller model seen here', value: smaller },
         ],
         effect: 'Faster answers and less memory on your own hardware',
-        ops: nodes.map((n) => ({ op: 'setParameters' as const, node: n.name, parameters: { model: smaller } })),
+        ops: nodes.map((n) => {
+          // Keep the gateway prefix the node has (ollama_chat/…): only the model name changes.
+          const current = n.parameters.model as string;
+          const prefix = current.endsWith(r.model) ? current.slice(0, current.length - r.model.length) : '';
+          return { op: 'setParameters' as const, node: n.name, parameters: { model: `${prefix}${smaller}` } };
+        }),
         risk: 'medium',
         confidence: 0.5,
         impact: 1,
