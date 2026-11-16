@@ -51,7 +51,8 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 - The new `ai_usage` columns (node, span, purpose, iteration, caller, duration, stop reason) show on no screen until wave 12.
 - Rows imported from the gateway's spend log have none of them; neither has a call a plugin node reports in its `model` record, except `node_id`. A failed call writes no row.
-- `node_id` is the innermost node, so a model sub-node's call names the sub-node, not the Agent node it belongs to. A per-node spend view must roll sub-nodes up to their root.
+- `node_id` is the innermost node, so a model sub-node's call names the sub-node, not the Agent node it belongs to. `GET /api/executions/:id/spend` does not roll them up: its `byNode` slice names the sub-node, so an AI Agent node's spend appears under its model sub-node.
+- The spend report's `byNode`, `byAgent` and `byIteration` leave out calls without a node, agent or loop step, so they need not sum to the totals. The cache line and the prompt composition cover only the newest 500 calls; the totals cover all. A call whose row has no `execution_id` (gateway-imported kagent rows without attribution) is not in any run's spend. `savedUsd` ignores the long-context price tier. A call priced only by a trusted gateway cost counts as priced.
 - `landflow.ai.usage_id` is set on the call's own span only when OpenTelemetry's context manager is on; a plugin node's model record has no span of its own, so it is set on none. A plugin node's tokens carry the purpose `none` and it adds no `landflow.ai.cost` point.
 
 ## The gateway's split (wave 12)

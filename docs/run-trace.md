@@ -648,6 +648,36 @@ stopped, or after `LANDFLOW_TEAM_PAUSE_MINUTES` (default 30), when the member ca
 so. A host restart ends the run as any run is interrupted (the pause is not saved), and in queue mode the pause routes
 only reach the process that runs the execution.
 
+## Spend
+
+Two routes answer what a run's model calls cost and what one call was made of. Neither returns prompt text: numbers,
+names and hashes only (the Run Trace's own content still follows `LANDFLOW_TRACE_CONTENT`).
+
+- `GET /api/executions/:id/spend` answers the run's totals (tokens, cost, calls, and how many calls had no price: their
+  tokens count, their cost is 0), slices by purpose, model, node, agent and loop step, the prompt's parts summed over the
+  calls that have a split, the cache line and the calls, newest last (500 at most, then `truncated`). It sums the run and
+  its sub-runs: sub-workflows, and the sessions of team members and agent tools that ran under it.
+- The cache line is `hitRate` (cache reads over the whole prompt, for chat calls of providers that report cache numbers),
+  the tokens read and written, the calls that wrote the prefix again instead of reading it (`missCalls`) and why, as far
+  as hashes tell: the instructions changed, the tools changed, more than 5 minutes passed, the stable prefix may be under
+  the provider's minimum (1,024 tokens; also when a session made no cache write or read at all and its split shows a small prefix), or the model asked for no cache (no split, or a prefix over the minimum); `unknown` otherwise. `savedUsd` is what the
+  reads saved against the input price, 0 for a model with no price.
+- A sub-run the viewer can't open (a sub-workflow of another project, a team member's agent they can't read) is counted
+  in `hidden` (runs, totals) and never listed or named. An agent they can't read is "Another agent".
+- `GET /api/ai-calls/:id` answers one call (`call`), its split in tokens (`parts`, with `source`: Landflow made it or the
+  gateway did for a kagent call), the previous call of the same session (else run), agent and model (`previous`: whether
+  the stable prefix is the same and which parts changed, by hash) and the run's link. A call opens for anyone who can
+  read its run or its agent or has a role in its project; a call with none of these opens only for its own person and
+  owners and admins. Anything else answers 404 (the rules are "Who sees what" in
+  [llm-gateway.md](llm-gateway.md#the-ai-page)).
+
+Limits of the report: the node slice names the innermost node (a model sub-node, not its AI Agent node); the node, agent
+and loop-step slices leave out calls without that field, so they need not sum to the totals; the cache line and the
+composition cover the newest 500 calls, the totals all; calls with no run id (unattributed gateway rows) are in no run's
+spend. See [limitations](limitations.md#call-attribution-wave-11).
+
+The screens (the Run Trace's Spend section and a call's composition) come with wave 12's UI packages.
+
 ## HTTP API
 
 | Route | What it does |
