@@ -25,6 +25,7 @@ import { holdsForClick, useAutonomous } from './autonomous';
 import { LeftOut, Warnings } from './suggestions-card';
 import { MOTION_MS, ghostFade } from './spotlight/states';
 import { handleId, useEditor } from './store';
+import { useAutonomyFacts } from './spotlight-autonomy';
 
 /** How long a step takes to tick off once the plan is there. */
 const STEP_MS = 520;
@@ -141,6 +142,10 @@ export function LiveSteps({ live, trace, durationMs }: { live: Live; trace?: Act
   const decide = (state: 'applied' | 'dismissed') => {
     for (const { itemId, proposal } of live.proposals) useAssistant.getState().setProposalState(itemId, proposal.id, state);
   };
+  // Re-render when what holdsForClick reads changes (the switch, the published read arriving, the workflow opening).
+  useAutonomyFacts((s) => s.workflows);
+  useAutonomyFacts((s) => s.switchOn);
+  useEditor((s) => s.workflowId);
   const apply = () => {
     const label = live.proposals.length === 1 ? live.proposals[0].proposal.summary : `${live.proposals.length} changes`;
     // Each proposal keeps the one Undo, so the row it folds into can offer it.

@@ -603,7 +603,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         const proposing = !question && (proposed || calls.some((call) => call.name === 'propose_changes')); // SB04:
         // Whether this step is sent back to the model (a fix that proposed nothing; a card announced and never made): then it is not the reply.
         const pressNow = !calls.length && input.session === 'fix' && !proposed && !pressed && !PERSON_ONLY.test(text);
-        const applyNow = !calls.length && !input.session && !proposed && !waiting.size && APPLY_REQUEST.test(text);
+        const applyNow = !question && !calls.length && !input.session && !proposed && !waiting.size && APPLY_REQUEST.test(text);
         const continues = calls.length > 0 || pressNow || (applyNow && !applyRetried);
         /** Text a step sends: its checked text is the reply when it is the last step, else part of the trace. */
         const say = (shown: string, last = !continues) => {

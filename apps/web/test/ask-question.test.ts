@@ -68,6 +68,12 @@ describe('a question is answered', () => {
     expect(events.filter((e) => e.type === 'proposal')).toHaveLength(1);
   });
 
+  it('still offers propose_changes for a condition with a comma clause ("When …, send …")', async () => {
+    const { model, calls } = scripted([{ text: 'Nothing to do.' }]);
+    await runChat({ messages: [{ role: 'user', content: 'When the total is over 100, send a Slack message' }], workflow: workflow(), model, types, onEvent: () => {} });
+    expect((calls[0].tools ?? []).map((t) => t.name)).toContain('propose_changes');
+  });
+
   it('never treats a test-and-fix session message as a question', async () => {
     const { model, calls } = scripted([{ text: 'Nothing to change.' }, { text: 'Only you can fix it, so nothing to change.' }]);
     await runChat({ messages: [{ role: 'user', content: 'Why did “Code” fail? It failed at run 1.' }], workflow: workflow(), session: 'fix', model, types, onEvent: () => {} });

@@ -9,6 +9,7 @@ import { afterReply, useAutonomous } from '../autonomous';
 import { LiveSteps, useLive } from '../building';
 import { applyChanges, prefillSpotlight, undos, useAssistant, type AgentProgress, type ChatItem, type Need, type Outcome, type ReplyAction, type TestRun } from '../assistant';
 import { useEditor } from '../store';
+import { useAutonomyFacts } from '../spotlight-autonomy';
 import { ActivityTrace } from '../../ui/activity-trace';
 import { StatusSwap, StreamingText } from '../../ui/chat-motion';
 import { AssistantRow, ChatError, ChatMarkdown, ReplyMeta, ShortReply } from '../../ui/chat';
@@ -331,6 +332,10 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
   // Rows, not cards: Spotlight applied them itself (a session's fix, autonomous mode), or is about to (autonomous mode on
   // while the reply still has changes to apply). A turn applied by hand stays a card when the switch flips later.
   // SB04: a change that waits for a click (asks first, or one that removes a step) stays a card with Apply and Dismiss, in a session or an autonomous reply too.
+  // Re-render when what holdsForClick reads changes (the switch, the published read arriving, the workflow opening).
+  useAutonomyFacts((s) => s.workflows);
+  useAutonomyFacts((s) => s.switchOn);
+  useEditor((s) => s.workflowId);
   const waits = pending.length > 0 && holdsForClick(pending);
   const asRows = !waits && (Boolean(item.testId || item.auto) || (autonomous && !item.earlier && (live || spotlightBusy) && pending.length > 0));
   // Within a session, the reply's texts are one: its first sentence, the rest on "Show more".
