@@ -151,6 +151,15 @@ describe('the backstop: several steps fit', () => {
     expect((calls[1].messages.at(-1) as { results: Array<{ content: string }> }).results[0].content).toContain('nobody gave');
   });
 
+  it('a URL host nobody gave is not sent back: the card shows with the URL listed as cleared', async () => {
+    const weather = call('propose_changes', { summary: 'Get the weather', ops: [{ op: 'addNode', type: 'core.httpRequest', name: 'Get weather', after: 'Read Linear bugs', parameters: { url: 'https://api.weather-example.com/paris' } }] });
+    const { events, calls } = await chat('add a step that gets the weather for Paris', [weather, { text: 'Done.' }]);
+    expect(events.filter((e) => e.type === 'proposal')).toHaveLength(1);
+    expect(events.some((e) => e.type === 'ask')).toBe(false);
+    expect(calls).toHaveLength(2);
+    expect(JSON.stringify(events.filter((e) => e.type === 'proposal'))).toContain('nobody gave');
+  });
+
   it('a test session is never sent back', async () => {
     const { events } = await chat('Fix “Open status incident”: it failed with 401.', [retry('Open status incident'), { text: 'Done.' }], { session: 'fix', selectedNodeId: 'b' });
     expect(events.filter((e) => e.type === 'proposal')).toHaveLength(1);

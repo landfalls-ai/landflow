@@ -2458,7 +2458,9 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   channel, table or id that is missing; asking never needs the switch (decision D1), is not offered in a test session,
   ends the reply with no further model call, and a backstop sends back a change to one of several steps of a kind with
   none named or selected (a settings change fits every step that calls out). Live on the local model: "it should retry 3
-  times" asks which step 3 of 3 (0 of 3 before). Docs: [assistant.md](assistant.md#the-builder-chat). Left: "post the
-  summary to Slack" with no channel is rarely asked (1 of 3, 0 of 3 earlier: the model proposes and the made-up channel is cleared and
-  listed; a send-back on a cleared value would change the made-up-values guard), and the chips are not kept in a stored
-  conversation.
+  times" asks which step 3 of 3 (0 of 3 before). Docs: [assistant.md](assistant.md#the-builder-chat). A made-up channel, table or recipient in a typed proposal is also sent back once to ask (not an id, not a URL
+  host, not in a test session). Left: "post the summary to Slack" with no channel asked first 1 of 3 live (qwen3-coder:30b):
+  the live form never registers the `messaging.slack` type (plugin types are added only in the unit form or through
+  `LANDFLOW_SPOTLIGHT_PLUGINS`), so `get_node_docs messaging.slack` answers "not found", the model wrote the question as
+  numbered text or asked "Which Slack node?" with type ids as chips, and the destination send-back is not exercised live;
+  not re-run with the plugin served, so open. The chips are not kept in a stored conversation.
