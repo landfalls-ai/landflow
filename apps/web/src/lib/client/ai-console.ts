@@ -321,6 +321,13 @@ export function pointLabel(at: string, long = false): string {
   return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
+/** A run's or call's moment: date and time both in the viewer's local zone (never the UTC date with a local time). */
+export function momentLabel(at: string): string {
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime())) return at;
+  return date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
 export interface Mover {
   group: AiSpendGroup;
   key: string;

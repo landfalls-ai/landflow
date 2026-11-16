@@ -1,7 +1,8 @@
 'use client';
 /**
- * Insights → AI (docs/llm-gateway.md, "The AI page"): spend and tokens for the period, spend by project, agent, person,
- * model and source, the caps and how near each is, the requests for more, and the gateway. The report holds only what
+ * Insights → AI (docs/llm-gateway.md, "The AI page"): spend and tokens for the period, spend by the ten groups
+ * (project, agent, person, model, source and more), a trend with its movers and new groups, a drill sheet down to runs
+ * and one call, the caps and how near each is, the requests for more, and the gateway. The report holds only what
  * the viewer may see. On a phone each row is a card; desktop shows tables in cards like the other Insights pages.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';

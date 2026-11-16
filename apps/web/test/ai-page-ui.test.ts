@@ -15,6 +15,7 @@ import {
   filterChips,
   hiddenLine,
   moverLists,
+  momentLabel,
   parseView,
   previousRange,
   rangeDays,
@@ -209,5 +210,16 @@ describe('the drill sheet', () => {
     expect(html).toContain('claude-sonnet');
     expect(html).toContain('1 call you can’t open: $0.2');
     expect(html).toContain('Judge');
+  });
+});
+
+describe('momentLabel', () => {
+  it('takes the date and the time from the same local moment', () => {
+    const at = '2026-11-15T23:30:00.000Z';
+    const d = new Date(at);
+    const label = momentLabel(at);
+    expect(label).toContain(d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }));
+    expect(label).toContain(d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }));
+    expect(momentLabel('nope')).toBe('nope');
   });
 });

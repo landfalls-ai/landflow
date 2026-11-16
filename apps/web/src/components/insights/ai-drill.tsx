@@ -5,11 +5,11 @@
  * count and a sum (never a name), opens a run's Spend tab, opens one call's composition in the sheet, and downloads
  * the list as CSV. Numbers, names and hashes only: no prompt text is stored for spend.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Download } from 'lucide-react';
 import { api } from '@/lib/client/api';
-import { drillQuery, hiddenLine, pointLabel, totalTokens, type AiView, type FilterChip } from '@/lib/client/ai-console';
+import { drillQuery, hiddenLine, momentLabel, totalTokens, type AiView, type FilterChip } from '@/lib/client/ai-console';
 import { useAiCall } from '@/lib/client/call-spend';
 import { CALL_PURPOSE_LABELS } from '@/lib/shared/ai-call';
 import { formatCost, formatTokens } from '@/lib/shared/ai-usage';
@@ -56,18 +56,21 @@ function useSpendList<T>(tab: Tab, view: AiView, target: DrillTarget, enabled: b
       alive = false;
     };
   }, [read, enabled, tab]);
+  const current = useRef(`${tab}?${query}`);
+  current.current = `${tab}?${query}`;
   const more = () => {
     const cursor = state.next;
     if (!cursor) return;
+    const key = current.current;
     setState((s) => ({ ...s, loading: true }));
     read(cursor)
-      .then((page) => setState((s) => ({ items: [...s.items, ...((tab === 'runs' ? page.runs : page.calls) ?? [])], hidden: page.hidden, next: page.next, loading: false })))
-      .catch((e: Error) => setState((s) => ({ ...s, loading: false, error: e.message })));
+      .then((page) => key === current.current && setState((s) => ({ items: [...s.items, ...((tab === 'runs' ? page.runs : page.calls) ?? [])], hidden: page.hidden, next: page.next, loading: false })))
+      .catch((e: Error) => key === current.current && setState((s) => ({ ...s, loading: false, error: e.message })));
   };
   return { ...state, more, query };
 }
 
-const when = (at: string) => (Number.isNaN(Date.parse(at)) ? at : `${pointLabel(at.slice(0, 10) as string)} ${new Date(at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`);
+const when = momentLabel;
 
 export function HiddenNote({ hidden }: { hidden?: AiSpendHidden }) {
   const line = hidden && hiddenLine(hidden);
