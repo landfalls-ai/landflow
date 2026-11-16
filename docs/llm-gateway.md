@@ -346,10 +346,8 @@ keyed by the call's `ai_usage` row. It holds token counts, hashes and tool names
   a call that would pass the budget spends none); and a call with images (an image is a fixed
   estimate, so the call is one). A count request is not a model call: it is never metered or traced as `gen_ai.*`, and it
   is made after the response, so it can never delay or fail the call. The split of a call whose gateway split already
-  arrived (same response id) replaces it. Only the Anthropic count checks for a gateway credential: an OpenAI-provider
-  call on a gateway credential with a `gpt-*` or `o*` model name is counted with OpenAI's encoding (labelled
-  `tokenizer`) even though a LiteLLM alias can route that name to another model. Prompts are counted in memory for the
-  length of the count only; the Ollama tokenizer's pre-token memo lives for one count, and a single unbroken run longer
+  arrived (same response id) replaces it. A call on a gateway credential is recorded with the system `litellm`, which has no counter, so an OpenAI-looking model name through the gateway stays an estimate. Prompts are counted in memory for the
+  length of the count only (the OpenAI encoding's own merge cache, which would keep every counted word, is switched off); the Ollama tokenizer's pre-token memo lives for one count, and a single unbroken run longer
   than 256 characters is merged in slices (a few tokens of error per cut) so a long run costs linear time.
 - **Hashes.** Keyed hashes (HMAC-SHA-256 under a key derived from the instance's encryption key, 16 hex characters):
   `promptHash` for the whole prompt (the same prompt sent again), `prefixHash` for everything up to the last cache

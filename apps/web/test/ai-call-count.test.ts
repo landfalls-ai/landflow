@@ -33,7 +33,7 @@ const { countParts } = await import('@/lib/server/ai-usage/count');
 const { clearAnthropicCountState } = await import('@/lib/server/ai-usage/count/anthropic');
 const { ByteLevelBpe, supportsPre } = await import('@/lib/server/ai-usage/count/ollama-bpe');
 const { clearVocabCache } = await import('@/lib/server/ai-usage/count/vocab-cache');
-const { openAiEncoding } = await import('@/lib/server/ai-usage/count/openai');
+const { openAiEncoding, loadedEncodings } = await import('@/lib/server/ai-usage/count/openai');
 const { database } = await import('@/lib/server/db');
 const { openSqlite } = await import('@/lib/server/db/database');
 const { singleton } = await import('@/lib/server/singleton');
@@ -284,6 +284,41 @@ describe('OpenAI: the encodings, offline', () => {
     expect(cl100k?.parts).toMatchObject({ instructions: 4, userMessage: 12 });
     expect(await countParts(draft, callOf('u_x', { provider: 'openai', model: 'mistral-7b' }))).toBeUndefined();
     expect(fake.requests).toHaveLength(0);
+  });
+
+  it('keeps no prompt text reachable from the encoding after a count', async () => {
+    const secret = 'zqxjkvwsecretword';
+    const draft: PromptDraft = { segments: [seg('instructions', 'system', `the ${secret} is here, and ${secret}x too`)] };
+    for (const model of ['gpt-4o', 'gpt-4']) expect(await countParts(draft, callOf('u_x', { provider: 'openai', model }))).toBeDefined();
+    const seen = new Set<unknown>();
+    const stack: unknown[] = await loadedEncodings();
+    expect(stack.length).toBe(2);
+    let found = false;
+    while (stack.length && !found) {
+      const v = stack.pop();
+      if (typeof v === 'string') {
+        if (v.includes(secret)) found = true;
+        continue;
+      }
+      if (!v || typeof v !== 'object' && typeof v !== 'function') continue;
+      if (seen.has(v)) continue;
+      seen.add(v);
+      if (v instanceof Map) {
+        for (const [k, x] of v) stack.push(k, x);
+      } else if (v instanceof Set) {
+        for (const x of v) stack.push(x);
+      } else {
+        for (const k of Reflect.ownKeys(v as object)) {
+          if (typeof k === 'string' && k.includes(secret)) found = true;
+          try {
+            stack.push((v as Record<string | symbol, unknown>)[k]);
+          } catch {
+            // a getter that throws holds nothing
+          }
+        }
+      }
+    }
+    expect(found).toBe(false);
   });
 
   it('writes a tokenizer split with the chat framing in formatting', async () => {
