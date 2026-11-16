@@ -12,10 +12,12 @@ declare const setTimeout: (run: (value?: unknown) => void, ms: number) => unknow
 
 const OPTIONS = { url: 'http://localhost:3000', key: 'lf_dev_key_for_tests_only_000000', repos: 'acme/widgets', mode: 'review', sync: true }
 const COMPOSE = { model: 'm', promptModel: 'm', surfaces: ['terminal'], tools: [], outputStyle: null, traits: [] }
+const SPEND = { cost: 1.234, inputTokens: 1000, outputTokens: 500, calls: 4, unpricedCalls: 0 }
 const BRIEFING = { yesterday: [{ title: 'Ship the billing page', repo: 'acme/widgets' }], autoSend: 'allowed', brain: 'on' }
 
 /** The engine beneath the mod: git answers, a fake Landflow, a clock and a store in memory. */
-function world(on: On, init: { remote?: string; briefing?: unknown; briefingDelayMs?: number; postStatus?: number; postDelayMs?: number; deleteStatuses?: number[]; answers?: string[]; seed?: Record<string, unknown>; onAsk?: () => Promise<void>; briefingStatus?: number; askStatus?: number; askBody?: unknown; practicesText?: string; practicesDelayMs?: number; practicesDown?: boolean; project?: unknown; projectDelayMs?: number; projectStatus?: number; approved?: unknown[]; draftStatus?: number } = {}) {
+function world(on: On, init: { remote?: string; briefing?: unknown; briefingDelayMs?: number; postStatus?: number; postDelayMs?: number; deleteStatuses?: number[]; answers?: string[]; seed?: Record<string, unknown>; onAsk?: () => Promise<void>; briefingStatus?: number; askStatus?: number; askBody?: unknown; practicesText?: string; practicesDelayMs?: number; practicesDown?: boolean; project?: unknown; projectDelayMs?: number; projectStatus?: number; approved?: unknown[]; draftStatus?: number; spend?: unknown; spendStatus?: number; spendBody?: string; spendDelayMs?: number } = {}) {
+  const spendUrls: string[] = []
   const practiceUrls: string[] = []
   const projectUrls: string[] = []
   const drafts: unknown[] = []
@@ -52,6 +54,13 @@ function world(on: On, init: { remote?: string; briefing?: unknown; briefingDela
       if (init.projectDelayMs) await clock.sleep(init.projectDelayMs)
       const status = init.projectStatus ?? 200
       return { value: { status, ok: status < 300, headers: {}, text: JSON.stringify(init.project ?? { projects: [], context: null }) } }
+    }
+    if (request.url.includes('/api/brain/my-spend')) {
+      spendUrls.push(request.url)
+      if (init.spendDelayMs) await clock.sleep(init.spendDelayMs)
+      if (init.spendBody !== undefined) return { value: { status: 200, ok: true, headers: {}, text: init.spendBody } }
+      const status = init.spendStatus ?? 200
+      return { value: { status, ok: status < 300, headers: {}, text: JSON.stringify(status < 300 ? { today: init.spend ?? { ...SPEND, calls: 0, cost: 0 }, month: SPEND } : { error: 'forbidden' }) } }
     }
     if (request.url.includes('/api/practices')) {
       if (init.practicesDown) throw new Error('unreachable')
@@ -119,7 +128,7 @@ function world(on: On, init: { remote?: string; briefing?: unknown; briefingDela
   })
   on('turn.complete', (_, e) => ({ text: e.answer }))
   on('session.end', (_, e) => ({ sessionId: e.sessionId }))
-  return { projectUrls, posts, deleted, statuses, ran, clock, shares, patches, asks, tools, practiceUrls, drafts, submitted }
+  return { spendUrls, projectUrls, posts, deleted, statuses, ran, clock, shares, patches, asks, tools, practiceUrls, drafts, submitted }
 }
 
 async function work($: Engine) {
@@ -846,4 +855,104 @@ test('/brain project with no project says so', { options: OPTIONS }, async ($, o
   world(on, { project: { projects: [], context: null } })
   await start($)
   expect(JSON.stringify(await command($, 'project'))).toContain('No project lists acme/widgets.')
+})
+
+// SP15: today's spend in the status line
+const settled = () => new Promise(resolve => setTimeout(resolve, 20))
+const startSession = async ($: Engine) => {
+  await $.session.start({ cwd: '/work/widgets', surface: 'terminal', isInteractive: true })
+  await settled()
+}
+const turn = ($: Engine, id: string) => $.turn.complete({ answer: 'x', durationMs: 1, isAborted: false, turnId: id, reason: 'answer' })
+
+test('the status line shows today\'s spend after session start', { options: OPTIONS }, async ($, on) => {
+  const { statuses, spendUrls } = world(on, { spend: SPEND })
+  await startSession($)
+  expect(spendUrls).toEqual(['http://localhost:3000/api/brain/my-spend?period=24h'])
+  expect(statuses.at(-1)).toBe('brain: on · 0 held · $1.23 today')
+})
+
+test('spend is read again after a turn at most every 5 minutes', { options: OPTIONS }, async ($, on) => {
+  const { spendUrls, clock } = world(on, { spend: SPEND })
+  await startSession($)
+  await turn($, 't1')
+  await settled()
+  expect(spendUrls).toHaveLength(1)
+  await clock.advance(5 * 60_000 + 1)
+  await turn($, 't2')
+  await settled()
+  expect(spendUrls).toHaveLength(2)
+})
+
+test('a failed spend call keeps the last value of the same day', { options: OPTIONS }, async ($, on) => {
+  const { statuses, clock } = world(on, { spendStatus: 403, seed: { spend: { day: '2026-11-14', totals: SPEND } } })
+  await startSession($)
+  expect(statuses.at(-1)).toBe('brain: on · 0 held · $1.23 today')
+  await clock.advance(5 * 60_000 + 1)
+  await turn($, 't1')
+  await settled()
+  expect(statuses.at(-1)).toBe('brain: on · 0 held · $1.23 today')
+})
+
+test('a 403 shows no spend, and an older day\'s value is dropped', { options: OPTIONS }, async ($, on) => {
+  const { statuses } = world(on, { spendStatus: 403, seed: { spend: { day: '2026-11-13', totals: SPEND } } })
+  await startSession($)
+  expect(statuses.at(-1)).toBe('brain: on · 0 held')
+})
+
+test('showSpend off makes no spend call', { options: { ...OPTIONS, showSpend: false } }, async ($, on) => {
+  const { statuses, spendUrls } = world(on, { spend: SPEND })
+  await startSession($)
+  await turn($, 't1')
+  await settled()
+  expect(spendUrls).toEqual([])
+  expect(statuses.at(-1)).toBe('brain: on · 0 held')
+})
+
+test('key rejected shows no spend, though one is held', { options: { ...OPTIONS, mode: 'auto' } }, async ($, on) => {
+  const { statuses } = world(on, { postStatus: 401, spend: SPEND })
+  await work($)
+  await settled()
+  expect(statuses).toContain('brain: on · 0 held · $1.23 today')
+  expect(statuses.at(-1)).toBe('brain: key rejected')
+})
+
+test('paused shows no spend, though one is held', { options: OPTIONS }, async ($, on) => {
+  const { statuses } = world(on, { spend: SPEND, seed: { paused: true, spend: { day: '2026-11-14', totals: SPEND } } })
+  await startSession($)
+  expect(statuses.at(-1)).toBe('brain: paused')
+  expect(statuses.join('|')).not.toMatch(/today/)
+})
+
+test('a spend call past 3 s shows no spend', { options: OPTIONS }, async ($, on) => {
+  const { statuses, clock } = world(on, { spend: SPEND, spendDelayMs: 10_000 })
+  const started = startSession($)
+  await clock.advance(3001)
+  await started
+  expect(statuses.at(-1)).toBe('brain: on · 0 held')
+  // The slow answer arrives at 10 s: it is dropped, not stored and shown later.
+  await clock.advance(10_000)
+  await settled()
+  expect(statuses.join('|')).not.toMatch(/today/)
+  expect(statuses.at(-1)).toBe('brain: on · 0 held')
+  // One more turn renders the status again: the late value is still not there (the next call also times out at 3 s).
+  const next = turn($, 't1')
+  await clock.advance(3001)
+  await next
+  await clock.advance(10_000)
+  await settled()
+  expect(statuses.join('|')).not.toMatch(/today/)
+  expect(statuses.at(-1)).toBe('brain: on · 0 held')
+})
+
+test('a spend body that is not JSON shows no spend', { options: OPTIONS }, async ($, on) => {
+  const first = world(on, { spendBody: 'not json' })
+  await startSession($)
+  expect(first.statuses.at(-1)).toBe('brain: on · 0 held')
+})
+
+test('a spend body without today shows no spend', { options: OPTIONS }, async ($, on) => {
+  const { statuses } = world(on, { spendBody: JSON.stringify({ month: SPEND }) })
+  await startSession($)
+  expect(statuses.at(-1)).toBe('brain: on · 0 held')
 })

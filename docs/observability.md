@@ -562,7 +562,8 @@ the call may start, then prices and records what it used.
   80) sends a message through its channels when a workflow, agent, credential or user cap reaches the
   threshold, once per cap per period (day or month; `alert_state`, migration 1820), checked when usage
   is recorded and by the alerts ticker on the leader. Per-execution caps aren't watched (they have
-  no period).
+  no period). The same rule also sends a forecast over a monthly cap and unusual spend of a day (two switches, and the
+  option that leaves agent and model spikes to Landledger): [llm-gateway.md](llm-gateway.md#forecasts-and-unusual-spend).
 
 ## Health probes
 

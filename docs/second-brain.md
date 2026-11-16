@@ -7,7 +7,7 @@ and post suggestions next to the built-in ones.
 
 ```
  observe ─────────► remember ─────────► conclude ─────────► propose ─────────► measure
- usage ledger       profiles, facts     13 detectors, your  Home inbox, canvas  did it help?
+ usage ledger       profiles, facts     21 detectors, your  Home inbox, canvas  did it help?
  (every run, edit,  and a searchable    workflows, the      card, a digest;     back into the
  AI call, action)   index               Platform analyst    Apply with a diff   facts
 ```
@@ -113,7 +113,16 @@ The first tick is 30 s after start.
 | Missing tool | something the Agent architect needed and no node online does, grouped by the app (or the first telling word, with spellings like "Text Toolkit" and "TextToolkit" as one); one need is enough, the same person asking again the same day counts once | "Build a tool for Grafana", with a sketch of the node plugin the model writes (nodes, parameters, credential) and a link to **Build a plugin**. Its button is **Build it**: approving it starts the workflows that build one (below) |
 | Work overlap | two people whose `org` work of the last 3 days shares an initiative, a customer, a directory of the same repository, or similar words, and who were not introduced in the last 14 days ([below](#work-overlap)) | one suggestion addressed to both: "Ana and Ben are both on billing", with the `org` titles |
 | No safety net | an active workflow with 3+ failed production runs in 14 days and no error workflow | `setWorkflowSettings` with the error workflow you have, or a draft "Failure alerts" workflow when there is none |
+| Unusual AI spend | an agent or a workflow with an unacknowledged flag of the last 7 days: its spend of a day was far from its usual day ([llm-gateway.md](llm-gateway.md#forecasts-and-unusual-spend)) | advice only (no operations): where to look, with the day, the figure, the baseline median and days, the score and the distinct runs; it names no person, and a person's or a model's day is not filed |
 | Practice drift | an approved practice given 10+ times in 14 days and cited under 20% of them, or whose checks failed more than half the time ([practices.md](practices.md#compliance)) | advice: "Review <title>: rarely followed", with the numbers and a link to the practice; nothing is applied |
+| Context bloat | an agent's or workflow's median input tokens per call this week over 1.5× the week before, with 20+ calls in each (`ai_call_parts`; `formatting` is not judged on Ollama, `knowledge` is not named) | advice: names the part that grew most (conversation so far, tool results, instructions) and what to trim |
+| Fat tool results | tool results over 40% of an agent's input tokens, over 20+ calls in 14 days | advice: ask the tools for less (fewer fields, a row limit, a summary) |
+| Unused tools | a tool name sent on 50+ calls of one Landflow agent in 30 days that none of its sessions called (the names of the tool calls only; not kagent agents or workflows) | advice: remove the tools from the agent |
+| Cache misses | an Anthropic agent or workflow with a cache hit rate under 20% over 20+ calls in 14 days, with the most common miss reason | advice: keep the start of the prompt the same and long enough to cache |
+| Repeated calls | the same prompt hash 5+ times in one day within one agent or workflow ("5 identical prompts in 3 runs"); the first prompt of a run is not counted when a call of that run carried tool results (a scheduled agent asks the same first question and fetches fresh data; the rows hold sizes and hashes, no prompt text, so tool results are read from the tool-results part) | advice: cache the answer or reuse it |
+| Agent loops | an agent with 3+ sessions in 14 days that ended at its iteration limit, or whose longest session ran over 3× the typical highest iteration (5+ sessions) | advice: a stopping rule, a lower iteration limit, or a tool that answers what it keeps asking |
+
+- **Waste detectors** (`lib/server/brain/spend-detectors.ts`, wave 14): the six above read `ai_usage`, `ai_call_parts` and the `agent.session` events of the last 14 days (30 for unused tools), count distinct runs (a session, an execution), target an agent or a workflow and name no person. Their evidence holds numbers, part names, tool names and hash prefixes, never text. Calls from Spotlight, the Agent architect and the brain (they carry a workflow id but are not the flow's own spend) are left out. **AI cost on a local model**: an unpriced local model has no cost, so it is judged on tokens from `ai_usage`: 20+ short answers a week to a large model (a `:<n>b` tag) name a smaller local model of the same family that this instance has seen in the last 30 days; none seen, no finding, and no dollar figure is made up.
 
 - **Practice suggestions** (`source: practice`): every draft practice files one for the people who may approve it, and an approval, rejection or retirement on /brain settles it. A draft read from outside only links to /brain; one a person wrote is applied (approved) from the inbox by owners and admins only. Slack gets a link and no buttons ([practices.md](practices.md#the-inbox)).
 - **What a suggestion holds** (`proposals`): a title; why, with evidence; the expected effect; its changes (ops, a
@@ -393,6 +402,7 @@ no hand-built MCP Server Trigger workflow:
 | `brain_suggest` | post a suggestion (source `analyst`, like `POST /api/proposals`) |
 | `brain_ask` | ask the brain a question (`question`, `about`), like `POST /api/brain/ask` |
 | `my_briefing` | the caller's own briefing (`day`) |
+| `my_ai_spend` | the caller's own AI spend and caps (`period`: `24h`, `7d`, `30d`, `90d`), as text and JSON; never anyone else's ([llm-gateway.md](llm-gateway.md)) |
 | `record_work` | save the caller's own work events, private |
 | `project_context` | the "Where this work fits" block of the project that lists a repository, or of a project you name (`repo`, `projectId`, `size`); the resource `project://{id}/context` is the full block ([connect-your-harness.md](connect-your-harness.md#project-context)) |
 

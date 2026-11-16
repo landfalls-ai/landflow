@@ -159,6 +159,7 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'project.budget.resumed': 'Resumed a project’s paid AI calls',
   'project.budget.raised': 'Raised a project’s AI budget',
   'project.budget.dismissed': 'Dismissed a project’s AI budget warning',
+  'ai.spend.acknowledged': 'Acknowledged a forecast or unusual-spend flag',
   'goal.created': 'Created a goal',
   'goal.updated': 'Changed a goal',
   'goal.deleted': 'Deleted a goal',

@@ -196,7 +196,16 @@ function normalizedRule(rule: AlertRule): AlertRule {
       return { ...base, plugins: { ...(ids.length && { ids }), graceSeconds: plugins?.graceSeconds ?? DEFAULT_PLUGIN_GRACE_SECONDS, notifyRecovery: plugins?.notifyRecovery ?? true } };
     }
     case 'cost':
-      return { ...base, cost: { thresholdPercent: cost?.thresholdPercent ?? DEFAULT_COST_THRESHOLD_PERCENT } };
+      // SP23: the switches are kept as saved (absent forecast and anomalies are on, absent landledgerHandlesAgentModel is off).
+      return {
+        ...base,
+        cost: {
+          thresholdPercent: cost?.thresholdPercent ?? DEFAULT_COST_THRESHOLD_PERCENT,
+          ...(cost?.forecast !== undefined && { forecast: cost.forecast }),
+          ...(cost?.anomalies !== undefined && { anomalies: cost.anomalies }),
+          ...(cost?.landledgerHandlesAgentModel !== undefined && { landledgerHandlesAgentModel: cost.landledgerHandlesAgentModel }),
+        },
+      };
     case 'evaluation': {
       const below = evaluation?.below !== undefined && Number.isFinite(evaluation.below) ? evaluation.below : undefined;
       const dropPercent = evaluation?.dropPercent && evaluation.dropPercent > 0 ? evaluation.dropPercent : undefined;

@@ -68,6 +68,14 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | Specs: proposals written before the code (fifteen next features from 2026-11-05, chat with agents, the parallel build plan, the Desktop agent node, the debug token) | [specs/README.md](specs/README.md) | |
 | Files and binary data | [features/files.md](features/files.md) | [protocol.md](protocol.md) §11 |
 | The LLM gateway (LiteLLM) and the AI page: spend by project, agent, person, model and source, caps, requests | [llm-gateway.md](llm-gateway.md) | [observability.md §8](observability.md) |
+| The AI page's trend, movers, drill-down to one call, forecast to month end, prompt cache card and your own spend (You card), over 24 hours to 400 days | [llm-gateway.md](llm-gateway.md#the-ai-page) | [reference/api.md](reference/api.md) |
+| The Run Trace's Spend tab and one call's view: totals, spend by purpose, model, node, agent and step, the cache line and what the prompt was made of | [run-trace.md](run-trace.md#spend) | [run-trace.md](run-trace.md#one-call) |
+| Forecasts over a cap and unusual spend: alerts, Needs you and the brain's inbox | [llm-gateway.md](llm-gateway.md#forecasts-and-unusual-spend) | [run-trace.md](run-trace.md#needs-you-for-ai-spend) |
+| The waste detectors: context bloat, fat tool results, unused tools, cache misses, repeated calls and agent loops | [second-brain.md](second-brain.md#4-detectors-and-suggestions) | [llm-gateway.md](llm-gateway.md#what-each-call-was-for) |
+| Your own spend in MCP (`my_ai_spend`), the CLI (`landflow spend`) and the landflow-brain mod's status line | [features/cli.md](features/cli.md#your-ai-spend-landflow-spend) | [landflow-brain-mod.md](landflow-brain-mod.md) |
+| Local model prices: Settings → AI prices, Ollama and gateway rows priced once | [observability.md](observability.md#8-token-and-cost-tracking) | [llm-gateway.md](llm-gateway.md#the-ai-page) |
+| The gateway's split of each call (kagent, Claude Code) with the model's own tokenizer | [llm-gateway.md](llm-gateway.md#the-gateways-split) | [llm-gateway.md](llm-gateway.md#what-a-prompt-was-made-of) |
+| Token spend, wave by wave: what was built, the decisions, what is left | [roadmap.md](roadmap.md#token-spend-waves-1114-where-it-stands) | [limitations.md](limitations.md#token-spend-what-it-cannot-do-yet) |
 | Settings, variables, data tables, insights | [features/settings-and-data.md](features/settings-and-data.md) | |
 | LLM gateway (LiteLLM), budgets in LiteLLM | [llm-gateway.md](llm-gateway.md) | |
 | Authentication: users, roles, projects, API keys, OIDC, SAML, SCIM | [features/authentication.md](features/authentication.md) | |

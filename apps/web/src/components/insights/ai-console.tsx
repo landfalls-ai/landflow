@@ -11,7 +11,7 @@ import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ChevronRight } from 'lucide-react';
 import { api } from '@/lib/client/api';
-import { AI_GROUPS, AI_PERIODS, applyFilterHref, drillLabel, drillable, fillDays, filterChips, pageStale, pageToday, parseView, previousRange, rangeDays, rangeLimit, rangeProblem, reportQuery, rowModel, sortByTokens, totalTokens, viewParams, viewReady, withoutFilter, type AiView } from '@/lib/client/ai-console';
+import { AI_GROUPS, AI_PERIODS, applyFilterHref, drillLabel, drillable, fillDays, filterChips, pageStale, pageToday, parseView, previousAsk, rangeLimit, rangeProblem, reportQuery, rowModel, sortByTokens, totalTokens, viewParams, viewReady, withoutFilter, type AiView } from '@/lib/client/ai-console';
 import { formatCache, formatCost, formatTokens } from '@/lib/shared/ai-usage';
 import type { AiConsoleReport, AiConsoleRow, AiConsoleTotals, GatewayStatus } from '@/lib/shared/llm-gateway';
 import type { AiPageReport, AiSpendGroup, AiSpendPeriod, AiSpendPoint } from '@/lib/shared/ai-spend';
@@ -248,8 +248,9 @@ export function AiConsole() {
   const stale = pageStale(loaded?.key, key, ready);
 
   // The faint line: the days just before the range, asked as a custom range (the report holds only the previous totals).
-  const prevRange = shown && shown.period !== '24h' && rangeDays(shown.from, shown.to) <= 90 ? previousRange(shown.from, shown.to) : undefined;
-  const prevQuery = prevRange ? reportQuery({ ...view, period: 'custom', from: prevRange.from, to: prevRange.to }).toString() : undefined;
+  const prevAsk = previousAsk(view, shown, loaded?.key, key);
+  const prevRange = prevAsk?.range;
+  const prevQuery = prevAsk?.query;
   useEffect(() => {
     if (!prevQuery || !prevRange) return;
     let alive = true;

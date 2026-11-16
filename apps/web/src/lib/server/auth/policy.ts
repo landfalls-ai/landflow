@@ -100,6 +100,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (under('/api/executions') || under('/api/binary')) return { scope: read ? 'executions:read' : 'executions:write' };
   // SP05: one model call's view (docs/run-trace.md#spend); the route checks who may open it. Without a rule the fallback is admin-only.
   if (under('/api/ai-calls')) return { scope: 'executions:read' };
+  // SP23: acknowledging a spend flag is a write; every other method under /api/insights reads.
+  if (under('/api/insights/ai/flags')) return { scope: read ? 'executions:read' : 'executions:write' };
   // Run Trace: the needs-you list across runs (docs/run-trace.md) reads like executions; the route limits it to what the caller sees.
   if (under('/api/events') || under('/api/runs') || under('/api/insights') || under('/api/metrics')) return { scope: 'executions:read' };
   // The second brain (docs/second-brain.md): reading usage and facts is like reading insights; the editor reports its own
@@ -113,6 +115,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   // B05: work events are the caller's own (docs/work-and-briefings.md): recording needs `brain:write`; the briefing and asking, `brain:read`.
   if (under('/api/brain/work')) return { scope: 'brain:write' };
   if (path === '/api/brain/briefing' || path === '/api/brain/ask') return { scope: 'brain:read' };
+  // SP14: your own AI spend, for a brain key (the CLI, the mod's status line); /api/insights/** stays executions:read.
+  if (path === '/api/brain/my-spend') return { scope: 'brain:read' };
   if (under('/api/brain')) return { scope: 'executions:read' };
   if (under('/api/proposals')) return { scope: read ? 'workflows:read' : 'workflows:write' };
   // B04: the @ picker's search lists only what the caller can open (lib/server/mentions/search.ts).

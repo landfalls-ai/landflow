@@ -614,6 +614,7 @@ describe('Instance MCP server', () => {
         'list_executions',
         'list_node_types',
         'list_workflows',
+        'my_ai_spend',
         'my_briefing',
         'practice_cite',
         'practice_draft',

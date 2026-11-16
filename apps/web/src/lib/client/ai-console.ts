@@ -266,6 +266,23 @@ export function rangeLimit(today: string | undefined, now: Date = new Date()): s
   return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
 }
 
+/**
+ * The faint line's ask: the days just before the report on screen, as a custom range with the view's filters. Only while
+ * that report is the current view's (`loadedKey === key`): after a filter change the old report's range with the new
+ * filters would be one wasted request, asked again for the new range once its report lands. None for 24 hours or past 90 days.
+ */
+export function previousAsk(
+  view: AiView,
+  report: { period: string; from: string; to: string } | undefined,
+  loadedKey: string | undefined,
+  key: string,
+): { range: { from: string; to: string }; query: string } | undefined {
+  if (!report || loadedKey !== key || report.period === '24h' || !(rangeDays(report.from, report.to) <= 90)) return undefined;
+  const range = previousRange(report.from, report.to);
+  if (!range) return undefined;
+  return { range, query: reportQuery({ ...view, period: 'custom', from: range.from, to: range.to }).toString() };
+}
+
 /** The page dims (and is busy) only while a changed view loads: not when it can't be asked (Custom with no good dates). */
 export const pageStale = (loadedKey: string | undefined, key: string, ready: boolean): boolean => loadedKey !== undefined && loadedKey !== key && ready;
 

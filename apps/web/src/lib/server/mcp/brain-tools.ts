@@ -24,6 +24,9 @@ import { askBrain } from '../brain/wiki';
 import { WORK_LIMITS } from '@landflow/protocol';
 import { MAX_WORK_EVENTS, recordWork } from '../brain/work';
 import { briefingMarkdown, dayArgument } from './brain-prompts';
+import { mySpend } from '../ai-usage/my-spend'; // SP14
+import { MY_SPEND_PERIODS } from '../../shared/my-spend-wire';
+import { mySpendText } from './my-spend-text';
 import { HttpError } from '../errors';
 import { homeProjectId } from '../projects/store';
 import type { Actor } from '../projects/access';
@@ -237,6 +240,22 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
       const briefing = briefingFor(actor, day ? { day } : {});
       const { related: _related, summary: _summary, generatedBy: _generatedBy, ...own } = briefing;
       return json({ text: briefingMarkdown(briefing), briefing: own });
+    },
+  );
+
+  // SP14: the caller's own AI spend (docs/llm-gateway.md "Who sees what", rule 5): their rows and caps only, an owner or admin included.
+  server.registerTool(
+    'my_ai_spend',
+    {
+      title: 'My AI spend',
+      description: 'Your own AI spend: today, this month, the period by model and by purpose, and each of your caps with its forecast or pace, as text and JSON. Only your own calls; nobody else’s.',
+      inputSchema: z.object({ period: z.enum(MY_SPEND_PERIODS).default('7d').describe('24h, 7d (default), 30d or 90d') }),
+      annotations: READ_ONLY,
+    },
+    async ({ period }) => {
+      if (!actor) return failure('AI spend is a person’s own: connect with a personal API key or sign in, not the instance access token');
+      const spend = mySpend(actor.id, period);
+      return json({ text: mySpendText(spend), spend });
     },
   );
 

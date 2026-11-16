@@ -357,13 +357,14 @@ keyed by the call's `ai_usage` row. It holds token counts, hashes and tool names
   changed between two runs). The hashes are made from the texts alone, so the same prompt has the same hashes whatever
   the method. A part's hash is over its segments' texts joined in order into one string, so a counter that holds the
   part whole (the gateway's callback, wave 12) gets the same hash. The prompt's date line (`Current date and time: …`)
-  is a `formatting` segment: it is in `promptHash` and in no part hash (before wave 12 it was also in `prefixHash`), so
+  is a `formatting` segment: it is in no part hash and, from the wave 14 fix pass, not in `promptHash` either (so two runs
+  of one prompt hash alike and `repeated-calls` can see an agent's repeats; before wave 12 it was also in `prefixHash`), so
   the instructions' hash only changes when the instructions do. From wave 12 (SP19) `prefixHash` is the hash of the
   stable prefix (the tools and the system prompt up to the project block and practices): the date line and the memory
-  are no longer in it (they stay in `promptHash`), so earlier rows don't compare with later ones. They are comparable
+  are no longer in it (the memory stays in `promptHash`), so earlier rows don't compare with later ones. They are comparable
   inside one instance only and cannot be turned back into text.
 - **Who writes it.** Agent runs (the system prompt is split where it is built), the AI Agent node, the Basic LLM Chain, Text Classifier and Information Extractor nodes, Spotlight, the Agent
-  architect and Ask the brain (other single calls, such as RAG answers and evaluation judges, write none). The text of a prompt is held in memory for the length of one call and is never stored,
+  architect and Ask the brain's streamed form, the one the Brain page uses (the JSON form of `POST /api/brain/ask`, and other single calls such as RAG answers and evaluation judges, write none). The text of a prompt is held in memory for the length of one call and is never stored,
   logged or put on a span.
 - **Kept 30 days**, `LANDFLOW_AI_CALL_PARTS_RETENTION_DAYS` ([configuration](reference/configuration.md)); pruned with
   the usage rows, at most hourly.
@@ -515,7 +516,8 @@ page draws:
 
 The trend and the sheet read `GET /api/insights/ai` (`compare=1`, `stack=<group>`, the filters, `period=custom&from&to`)
 and `GET /api/insights/ai/runs` and `.../calls` (`format=csv`). The faint line is asked as a second report for the days
-just before the range, since the report holds only the previous period's totals.
+just before the range, since the report holds only the previous period's totals; it is asked once the report for the
+current view has landed, so a filter change sends no request for the old range.
 
 **Who sees what.** Owners and admins see everything. Anyone else sees the calls of the workflows and agents they can open
 and their own calls in the page's totals and in every group but one; calls they may not see are in no total, and a
@@ -526,7 +528,13 @@ admins see the caption alone, since the page's totals are already that figure). 
 their email address, is "Unnamed person" to a member, who never sees another person's email; admins, and the person
 themselves, see the email. Spend views never show prompt text or run contents. A member sees only their own user cap
 and the caps of workflows and agents they can open; credential caps and the gateway's address, keys and sync detail
-are for admins. The page never shows a key.
+are for admins. The page never shows a key. Your own spend and caps also reach you over MCP (`my_ai_spend`), the CLI (`landflow spend`) and the landflow-brain mod, through `GET /api/brain/my-spend` (`brain:read`): only your own rows and caps, an owner or admin included.
+
+**Rule 6: alerts and the inbox.** An alert about a person's spend names that person, and goes only to the channels an
+owner or admin set up (a channel is theirs); the same flag shows in Needs you to that person and to owners and admins,
+never to another member. A suggestion in the brain's inbox (the `spend-anomaly` detector) names an agent or a workflow
+and never a person; a person's or a model's unusual day is not filed there. Alerts, Needs you items and suggestions
+only tell: none of them changes a cap, a budget or a run.
 
 **The report behind the page** (`GET /api/insights/ai`, SP08). Besides the totals and the ten groups it holds a daily
 series (hourly for 24 hours; days with no calls are zeros), optionally split by one group (`stack=<group>`: its top 5 by
@@ -558,6 +566,55 @@ The page reads `GET /api/insights/ai`, `GET /api/insights/ai/forecast`, `GET /ap
 `GET /api/llm-gateway/status` ([reference/api.md](reference/api.md)) and refreshes every minute while the tab is
 visible.
 
+## Forecasts and unusual spend
+
+Landflow tells you when the month is heading over a cap and when a day of spend is far from usual, before the bill does
+(decision D6). Both are flags the leader writes every 10 minutes (the service **AI spend flags**, first pass 60 seconds
+after start) into `ai_spend_flags` (migration 2904), pruned with `LANDFLOW_AI_USAGE_RETENTION_DAYS`. They are read by the
+cost alerts, Needs you and the brain; nothing here pauses or changes anything.
+
+**Unusual spend.** For today and yesterday (the instance's days), and for each person (`user_id`), agent, workflow,
+project (a row with no project counts under its workflow's or agent's home project, as the AI page does) and model
+(`provider/model`), the day's value is checked against the 14 days before it. It is Landledger's check, so one number
+means one thing in both products: the baseline is those 14 days (a key absent on a day counts 0, and only days on or after
+the instance's first AI call are observed); with fewer than 7 observed days nothing is judged; otherwise the day is
+unusual when its jump over the baseline's **median** is at least the smallest jump, at least **half the median**, and, unless
+the baseline is flat (MAD 0), its **score** is at least **3.5**. The score is jump ÷ (1.4826 × the median absolute
+deviation), to two places; a flat baseline has no score and any big enough jump counts, new spend included. Money is
+computed in millionths of a dollar (the median of an even count rounds half to even), so the numbers match
+Landledger's exactly. The smallest jump is `LANDFLOW_AI_ANOMALY_MIN_USD` (default 1 dollar). A key with tokens but no cost
+in any of its 15 days (a local model nobody priced, or a person who used only one) is judged on tokens (input plus
+output) with a smallest jump of `ANOMALY_MIN_TOKENS` = 100,000. Today is checked as it stands, never projected, so a
+flag can appear in the afternoon. Yesterday and today are read from `ai_usage` and older days from the daily rollup,
+as the AI page does. A flag counts the **distinct runs** behind the day (an execution, else an agent session; five calls of
+one session are one run) and names the surfaces that made it up ("Spotlight", "workflow and agent runs"). Once a day's
+value reaches twice what an alert last said, the alert goes again; an acknowledged flag opens again when the day's value
+doubles.
+
+**Forecast over a cap.** Each monthly cap (a cost or token cap of a person, an agent, a credential, a project's budget)
+whose month-end forecast is not `early`, has a P50 at or above the cap while the month to date is still under it, gets one
+flag for the month. Each pass updates its P50 and the day it is expected to be reached; a pass that finds it under the
+cap again deletes it unless someone acknowledged it. A cap already reached is the threshold alert's, not this.
+
+**Who is told what.**
+
+| Channel | Who | What |
+|---|---|---|
+| Alert channels (a **cost** rule in Settings → Alerts) | the rule's channels (an owner's or admin's) | "forecast over the cap" once per cap and month; "unusual spend" once per dimension, key and day (again at twice the last alerted value). The message has the figure, the baseline (median a day over N observed days), the score, the distinct runs and an **Open** link to the AI page filtered to the key and the day (`/insights/ai?period=custom&from=<day>&to=<day>&agentId=…`, `userId`, `workflowId`, `projectId` or `model=provider/model`). A person's alert names the person |
+| Needs you, kind **AI spend** ([run-trace.md](run-trace.md#needs-you-for-ai-spend)) | the person for their own flags and their own caps' forecasts; the editors of the agent or workflow; the project's admins (for the project and its budget's forecast); owners and admins for everything (the model dimension and credential caps: owners and admins only) | the same words, with **Acknowledge** and **Open** |
+| The brain's inbox ([second-brain.md](second-brain.md#4-detectors-and-suggestions)) | by the suggestion's target | the detector **Unusual AI spend**: an agent's or workflow's unacknowledged flag of the last 7 days, no person named, no operations |
+
+The cost rule has two switches, **Forecast over a cap** and **Unusual spend** (both on unless saved off, so a stored rule
+keeps working), and **Landledger alerts on agent and model spikes** (off). [Landledger](features/landledger.md) flags
+agent and model spikes too, in its console and webhooks; with the option on, Landflow sends no channel alert for those two
+dimensions (they still show in Needs you and the inbox), so nobody hears them twice. With it off, the agent and model
+alerts say that Landledger flags them as well.
+
+**Acknowledge** is `POST /api/insights/ai/flags/:id/ack` (anyone in the flag's audience; 404 for anyone else; audited as
+`ai.spend.acknowledged`). It clears the item for everyone, with who and when. A project's flags stay after the project is
+deleted (spend history, like `ai_usage`) but leave Needs you; a transferred agent's or workflow's flags follow its access
+now.
+
 ## What each call was for
 
 Each model call's `ai_usage` row says, besides the run, model and tokens, where the call ran and why (migration 2900;
@@ -572,6 +629,8 @@ rows from before it, rows imported from the gateway's spend log and calls outsid
 | `caller_agent_id` | The agent that asked: the nearest agent up the chain that is not the row's own, else the call note's `callerAgentId` when that is not the row's own agent (a team member names its lead, a sub-agent its caller) |
 | `duration_ms` | Wall time of the call |
 | `stop_reason` | The provider's first finish reason (`end_turn`, `tool_use`, `max_tokens`, `stop`, `length`) |
+
+The brain's waste detectors (context bloat, fat tool results, unused tools, cache misses, repeated calls, agent loops) read these columns and the prompt parts ([second-brain.md](second-brain.md#4-detectors-and-suggestions)); they leave out rows from Spotlight, the Agent architect and the brain.
 
 **Purpose** is one of `answer`, `guardrail`, `judge`, `embed`, `cache-embed`, `rerank`, `summary`, `eval`. Code that
 knows why it makes a call sets it with `withCallPurpose` (`lib/server/ai-usage/call-context.ts`); otherwise an

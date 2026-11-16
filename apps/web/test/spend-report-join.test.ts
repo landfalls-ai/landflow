@@ -60,9 +60,16 @@ async function call<T>(route: { GET: unknown }, path: string, params: Record<str
   return { status: response.status, body: (await response.json()) as T };
 }
 
-/** A raw row `back` days ago (an hour before now on that day, so 24h holds today's rows and not yesterday's). */
+/**
+ * A raw row `back` days ago (an hour before now on that day, so 24h holds today's rows and not yesterday's). In the
+ * instance's first hour an hour back is the day before, so the time walks forward to the start of the day meant: still
+ * before now, and for `back` ≥ 1 still outside the last 24 hours.
+ */
 function row(back: number, fields: Record<string, unknown>) {
-  const when = Date.now() - back * DAY_MS - (back === 0 ? 60_000 : 3_600_000);
+  const meter = aiUsageMeter();
+  const day = meter.today(Date.now() - back * DAY_MS);
+  let when = Date.now() - back * DAY_MS - (back === 0 ? 60_000 : 3_600_000);
+  while (meter.today(when) !== day) when += 60_000;
   database().insertNew('ai_usage', {
     id: `rj-${++counter}`,
     call_id: `rj-call-${counter}`,

@@ -1,6 +1,6 @@
 {
   "name": "landflow-brain",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Your own Claude Code work in the Landflow company brain: a local journal, a summary held for your review, your yesterday back at the next session, the colleagues whose work overlaps yours, and the practices your admins approved for the repository",
   "author": {
     "name": "Landflow"
@@ -36,6 +36,12 @@
       "type": "boolean",
       "title": "Load yesterday",
       "description": "At the start of a session, bring in your own work from yesterday.",
+      "default": true
+    },
+    "showSpend": {
+      "type": "boolean",
+      "title": "Show today's AI spend",
+      "description": "Show today's AI spend in the status line.",
       "default": true
     }
   }

@@ -97,7 +97,7 @@ export interface NeedsYouRow {
   workflowId: string;
   workflowName: string;
   /** `gate`: a Run report waits for someone to accept its failed checks or send the work back. */
-  kind: 'approval' | 'form' | 'question' | 'gate' | 'check' | 'budget' | 'task'; // PC15: budget; PC20: task
+  kind: 'approval' | 'form' | 'question' | 'gate' | 'check' | 'budget' | 'task' | 'spend'; // PC15: budget; PC20: task; SP23: spend
   title: string;
   detail?: string;
   actor?: RunActor;
@@ -118,7 +118,14 @@ export interface NeedsYouRow {
   taskRunId?: string;
   taskRunStatus?: 'requested' | 'waiting';
   canDecide?: boolean;
+  // SP23: a spend item (a forecast over a cap, or unusual AI spend); `href` opens the AI page at the day.
+  flagId?: string;
+  flagKind?: 'anomaly' | 'forecast';
+  canAcknowledge?: boolean;
 }
+
+/** Acknowledge a spend flag (POST /api/insights/ai/flags/:id/ack): it leaves Needs you for everyone. */
+export const acknowledgeSpendFlag = (flagId: string) => api<{ id: string }>(`/api/insights/ai/flags/${encodeURIComponent(flagId)}/ack`, { method: 'POST' });
 
 /** Approve or deny a task's requested run (POST /api/task-runs/:runId, session only); a 409 carries its message. */
 export const decideTaskRun = (runId: string, decision: 'approve' | 'deny') => api<{ run: { id: string; status: string } }>(`/api/task-runs/${encodeURIComponent(runId)}`, { method: 'POST', json: { decision } });

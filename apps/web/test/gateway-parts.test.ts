@@ -255,6 +255,8 @@ describe('the hashes', () => {
     { where: 'tools', part: 'toolDefinitions', text: '{"name":"bash"}', breakpoint: true },
     { where: 'system', part: 'instructions', text: 'You are a careful agent. ' },
     { where: 'system', part: 'instructions', text: 'Today is 2026-11-16 — café ☕', breakpoint: true },
+    // The agent prompt's date stamp: in no part hash and not in promptHash (so the expected hashes are the same without it).
+    { where: 'messages', part: 'formatting', text: 'Current date and time: 2026-11-16T10:11:12.345Z' },
     { where: 'messages', part: 'history', text: 'earlier turn' },
     { where: 'messages', part: 'toolResults', text: 'file contents\n' },
     { where: 'messages', part: 'userMessage', text: 'Now fix the bug.' },

@@ -1906,6 +1906,15 @@ export const MIGRATIONS: Migration[] = [
     statements: [],
     addColumns: [{ table: 'ai_usage', column: 'gateway_provider', definition: 'TEXT' }],
   },
+  // SP23: the forecast-over-a-cap and unusual-spend flags (docs/llm-gateway.md#forecasts-and-unusual-spend)
+  {
+    version: 2904,
+    name: 'ai_spend_flags',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS ai_spend_flags (id TEXT PRIMARY KEY, kind TEXT NOT NULL, day TEXT NOT NULL, dimension TEXT NOT NULL, key TEXT NOT NULL, label TEXT, metric TEXT NOT NULL, value DOUBLE PRECISION NOT NULL DEFAULT 0, baseline_median DOUBLE PRECISION, baseline_mad DOUBLE PRECISION, score TEXT, baseline_days BIGINT, runs BIGINT NOT NULL DEFAULT 0, surfaces TEXT, cap_max DOUBLE PRECISION, p50 DOUBLE PRECISION, reaches_on TEXT, first_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_alert_value DOUBLE PRECISION, acknowledged_by TEXT, acknowledged_at TEXT)`,
+      `CREATE INDEX IF NOT EXISTS ai_spend_flags_day ON ai_spend_flags (day)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -1936,6 +1945,7 @@ export const TABLES = {
   ai_usage: ['id'],
   // SP08: the daily rollup of ai_usage
   ai_usage_daily: ['day', 'project_id', 'goal_id', 'agent_id', 'workflow_id', 'user_id', 'credential_id', 'surface', 'purpose', 'provider', 'model', 'source', 'runtime'],
+  ai_spend_flags: ['id'], // SP23:
   // SP03:
   ai_call_parts: ['id'],
   chat_messages: ['workflow_id', 'session_id', 'seq'],

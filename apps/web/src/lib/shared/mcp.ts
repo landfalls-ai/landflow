@@ -224,6 +224,7 @@ export const TOOL_SCOPES = {
   check_overlap: 'brain:read',
   brain_ask: 'brain:read',
   my_briefing: 'brain:read',
+  my_ai_spend: 'brain:read', // SP14
   brain_suggest: 'brain:write',
   record_work: 'brain:write',
   // PR04: practices (docs/practices.md)

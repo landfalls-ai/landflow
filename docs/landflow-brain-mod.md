@@ -63,7 +63,16 @@ If the server says the brain is off, the mod pauses for that session.
 ## The status line
 
 `brain: on · N held` (N entries wait for your review), `brain: paused`, or `brain: key rejected` when the server answered
-401: sending stops until you change the key (the mod keeps a hash of the rejected key, never the key).
+401: sending stops until you change the key (the mod keeps a hash of the rejected key, never the key). While the admin
+forbids automatic sending the line reads `brain: review (auto off by admin)`.
+
+**Today's spend.** On the two lines that show the brain on, ` · $1.23 today` follows: your own AI spend for the
+instance's day (the You card's number), or ` · 120k tokens today` when nothing today was priced (a local model nobody
+priced). No calls today, no text; under a cent it reads `<$0.01`. Never on `paused` or `key rejected`. It comes from
+`GET /api/brain/my-spend?period=24h` (the `brain:read` scope, which the mod's key holds; only your own spend), read at
+session start after the briefing (so it never delays it) and after a turn at most every 5 minutes, each read bounded
+at 3 seconds. A failed read keeps the last value of the same day; a new day drops it. The option `showSpend` turns it
+off, and then the mod makes no such call. It shows what a run spent, so no developer-details switch hides it.
 
 ## Yesterday at session start
 
@@ -142,7 +151,7 @@ Or straight from a checkout:
 claude plugin install apps/web/claude-plugins/landflow-brain
 ```
 
-It asks for five options (`userConfig`):
+It asks for six options (`userConfig`):
 
 | Option | Meaning |
 |---|---|
@@ -151,6 +160,7 @@ It asks for five options (`userConfig`):
 | `repos` | the repositories to record, `owner/name`, separated by commas or spaces; empty means none |
 | `mode` | `review` (the default), `auto` or `off` |
 | `sync` | `true` (the default): bring yesterday in at session start |
+| `showSpend` | `true` (the default): show today's AI spend in the status line |
 
 [Connect your harness](connect-your-harness.md) (`/connect`) makes the key and shows these options.
 

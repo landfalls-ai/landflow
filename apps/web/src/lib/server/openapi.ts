@@ -752,7 +752,7 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Executions',
     id: 'listRunsNeedingYou',
     summary: 'What waits for a person across runs',
-    description: 'Waiting runs that ask for an approval, a form, an answer or a Run report decision, and failed checks of the last 7 days nobody settled. Each item: executionId, workflowId, workflowName, kind (approval, form, question, gate, check, budget), title, detail, actor, member (the team member a tool approval or a guard’s ask is for), spanId, since. A `budget` item (an open AI budget warning or stop of a project the caller administers or owns the budget of) has empty executionId, workflowId and workflowName, and projectId, incidentId, incidentKind, href, canRaise and canResume.',
+    description: 'Waiting runs that ask for an approval, a form, an answer or a Run report decision, and failed checks of the last 7 days nobody settled. Each item: executionId, workflowId, workflowName, kind (approval, form, question, gate, check, budget, spend, task), title, detail, actor, member (the team member a tool approval or a guard’s ask is for), spanId, since. A `budget` item (an open AI budget warning or stop of a project the caller administers or owns the budget of) has empty executionId, workflowId and workflowName, and projectId, incidentId, incidentKind, href, canRaise and canResume.',
     responses: { 200: reply('The items, newest first', object({ items: array({ type: 'object' }) }, ['items'])) },
   });
   add('get', '/api/runs/lines', {
@@ -1959,7 +1959,7 @@ function paths(): Record<string, Record<string, Json>> {
     summary: 'Talk to one project’s MCP server',
     // B13: the description's key-scope sentence.
     description:
-      'The instance MCP server (`/api/mcp`: build, validate and run workflows) scoped to one project: it lists, reads, changes and runs only that project’s workflows and creates new ones in it. Off while the instance server is off (Settings → MCP). Callers: the instance access token, a Landflow MCP token (one scoped to another project gets 403), an identity provider token, an API key, or the bundled gateway. An API key lists and calls only the tools its scopes cover (`workflows:read` the workflow and node-type reads, `workflows:write` create and update, `run` execute, retry and run a node, `executions:read` executions and the debug reads, `brain:read` the brain reads, `brain_ask` and `my_briefing`, `brain:write` also `brain_suggest` and `record_work`); the same server serves the `morning-briefing` prompt and the `brain://briefing/today`, `brain://briefing/yesterday` and `brain://work/today` resources to a key with `brain:read`.',
+      'The instance MCP server (`/api/mcp`: build, validate and run workflows) scoped to one project: it lists, reads, changes and runs only that project’s workflows and creates new ones in it. Off while the instance server is off (Settings → MCP). Callers: the instance access token, a Landflow MCP token (one scoped to another project gets 403), an identity provider token, an API key, or the bundled gateway. An API key lists and calls only the tools its scopes cover (`workflows:read` the workflow and node-type reads, `workflows:write` create and update, `run` execute, retry and run a node, `executions:read` executions and the debug reads, `brain:read` the brain reads, `brain_ask`, `my_briefing` and `my_ai_spend` (your own AI spend), `brain:write` also `brain_suggest` and `record_work`); the same server serves the `morning-briefing` prompt and the `brain://briefing/today`, `brain://briefing/yesterday` and `brain://work/today` resources to a key with `brain:read`.',
     public: true,
     pathParams: { id: 'The project id' },
     body: jsonBody(jsonRpc),
@@ -2347,6 +2347,15 @@ function paths(): Record<string, Record<string, Json>> {
     query: [text('day', 'YYYY-MM-DD')],
     responses: { 200: reply('The briefing', object({ day: { type: 'string' }, generatedAt: { type: 'string' }, source: { type: 'string', enum: ['live', 'flow'] }, today: array(briefingWorkItem), yesterday: array(briefingWorkItem), related: array({ type: 'object' }), summary: { type: 'string' }, autoSend: { type: 'string', enum: ['allowed', 'forbidden'] }, brain: { type: 'string', enum: ['on', 'off'] } }, ['day', 'generatedAt', 'source', 'today', 'yesterday', 'related', 'autoSend', 'brain'])), 400: invalid },
   });
+  // SP14: your own AI spend over a brain key.
+  add('get', '/api/brain/my-spend', {
+    tag: 'Second brain',
+    id: 'getBrainMyAiSpend',
+    summary: 'Your own AI spend',
+    description: 'Needs the `brain:read` scope (`brain:write` includes it) or a session. The same answer as `GET /api/insights/ai/me`: today, this month, the period by model, purpose and surface, and your own caps with their forecast or pace. Only the caller’s own rows and caps.',
+    query: [text('period', '24h, 7d (default), 30d or 90d')],
+    responses: { 200: reply('Your AI spend', { type: 'object' }), 400: invalid },
+  });
   // PR01: practices (docs/practices.md).
   const practiceDraftBody = object(
     {
@@ -2592,6 +2601,16 @@ function paths(): Record<string, Record<string, Json>> {
         ),
       ),
     },
+  });
+  // SP23: acknowledge a forecast-over-a-cap or unusual-spend flag
+  add('post', '/api/insights/ai/flags/{id}/ack', {
+    tag: 'Insights',
+    id: 'acknowledgeAiSpendFlag',
+    summary: 'Acknowledge a forecast or unusual-spend flag',
+    description:
+      'Needs the `executions:write` scope or a session. Anyone in the flag’s audience (the person it is about; the editors of the agent or workflow; a project’s admins; owners and admins, who also hear model and credential flags) clears it from Needs you for everyone; the answer says who and when. A caller outside the audience gets 404. Acknowledging again changes nothing. Audited as `ai.spend.acknowledged`. A day whose value doubles after it opens again.',
+    pathParams: { id: 'The flag id (`flagId` of a `spend` item in `GET /api/runs/needs-you`)' },
+    responses: { 200: reply('Acknowledged', object({ id: { type: 'string' }, acknowledgedBy: { type: 'string' }, acknowledgedAt: { type: 'string' } }, ['id'])), 404: notFound },
   });
   add('get', '/api/insights/ai/cache', {
     tag: 'Insights',

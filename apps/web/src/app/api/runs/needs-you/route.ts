@@ -5,9 +5,12 @@
  * actor?, spanId?, since. A `budget` item (a project's AI budget warning or stop, for its admins and the budget's owner) has
  * projectId, incidentId, incidentKind, href, canRaise and canResume too (docs/projects-and-goals.md#ai-budget). A `task` item (a
  * project task's run that waits for an Approve, or for a tool approval in the agent's session, for the project's editors and
- * admins) has projectId, taskId, taskRunId, taskRunStatus, href and canDecide (docs/projects-and-goals.md#tasks).
+ * admins) has projectId, taskId, taskRunId, taskRunStatus, href and canDecide (docs/projects-and-goals.md#tasks). A `spend` item (a
+ * forecast over a cap, or unusual AI spend of a day; for the people the spend is theirs to hear, docs/llm-gateway.md#forecasts-and-unusual-spend)
+ * has flagId, flagKind (`anomaly` or `forecast`), href (the AI page at the day) and canAcknowledge.
  */
 import { aiUsageMeter } from '@/lib/server/ai-usage';
+import { spendItems } from '@/lib/server/ai-usage/spend-flags'; // SP23:
 import { budgetItems } from '@/lib/server/budgets/enforce';
 import { handler, json } from '@/lib/server/http';
 import { taskItems } from '@/lib/server/tasks/needs-you';
@@ -24,6 +27,6 @@ export const GET = handler(async () => {
   const actor = routeActor();
   // PC14: a project's AI budget incidents join the run items, newest first.
   // Budget items are added after needsYou() cut to its MAX_ITEMS, so the answer can pass it.
-  const items = [...(await needsYou(visible)), ...budgetItems(actor, aiUsageMeter()), ...taskItems(actor)].sort((a, b) => b.since.localeCompare(a.since));
+  const items = [...(await needsYou(visible)), ...budgetItems(actor, aiUsageMeter()), ...taskItems(actor), ...spendItems(actor, aiUsageMeter().today())].sort((a, b) => b.since.localeCompare(a.since));
   return json({ items });
 });

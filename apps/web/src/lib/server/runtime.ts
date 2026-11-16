@@ -48,6 +48,7 @@ import { checkConfig, ConfigError, profile } from './config';
 import { conversationRetention } from './conversations/retention';
 import { llmGatewayIngest } from './llm-gateway/ingest';
 import { aiSpendRollup } from './ai-usage/rollup'; // SP08:
+import { aiSpendFlags } from './ai-usage/anomalies'; // SP23:
 import { closeDatabase, openDatabase } from './db';
 import { startOnlineEvaluations } from './evaluations/online';
 import { ensureExecutionReactions } from './execution-reactions';
@@ -160,6 +161,8 @@ export const SERVICES: ServiceSpec[] = [
   { name: 'LLM gateway spend import', roles: MAIN, leader: true, start: () => llmGatewayIngest.start(), stop: () => llmGatewayIngest.stop() },
   // SP08: the daily rollup of ai_usage the AI page reads for 90 days and custom ranges (lib/server/ai-usage/rollup.ts).
   { name: 'AI spend rollup', roles: MAIN, leader: true, start: () => aiSpendRollup.start(), stop: () => aiSpendRollup.stop() },
+  // SP23: the forecast-over-a-cap and unusual-spend flags the cost alerts, Needs you and the inbox read (lib/server/ai-usage/anomalies.ts).
+  { name: 'AI spend flags', roles: MAIN, leader: true, start: () => aiSpendFlags.start(), stop: () => aiSpendFlags.stop() },
   // Audit log: publish/plugin listeners, SIEM outbox delivery and hourly retention (lib/server/audit).
   { name: 'audit', roles: MAIN, start: startAudit },
   // Signed chain heads (lib/server/audit/anchoring.ts): the leader signs the head on a schedule and anchors it (S3, webhook).

@@ -133,14 +133,14 @@ describe('hashParts', () => {
     expect(pieces.partHashes.memory).toBeDefined();
   });
 
-  it('never lets a formatting segment (the date stamp) into a part hash, but keeps it in the prompt and prefix hashes', () => {
+  it('never lets a formatting segment (the date stamp) into a part hash, or the prompt hash, but keeps it in the prefix hash', () => {
     const stamped = (at: string) => ({ segments: [{ part: 'instructions' as const, where: 'system' as const, text: 'Be brief.' }, { part: 'formatting' as const, where: 'system' as const, text: ` Current date and time: ${at}.` }] });
     const a = hashParts(stamped('2026-01-02T03:04:05.000Z'), key);
     const b = hashParts(stamped('2026-01-03T03:04:05.000Z'), key);
     expect(a.partHashes).toEqual(b.partHashes);
     expect(Object.keys(a.partHashes)).toEqual(['instructions']);
     expect(a.prefixHash).not.toBe(b.prefixHash);
-    expect(a.promptHash).not.toBe(b.promptHash);
+    expect(a.promptHash).toBe(b.promptHash);
   });
 
   it('cuts the prefix at the last breakpoint even when it sits in the middle of the messages', () => {

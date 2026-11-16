@@ -101,7 +101,7 @@ def hash_segments(segments, images, key, tool_names=()):
     part_hashes = {part: digest(key, ["".join(by_part[part])]) for part in PARTS if part in by_part}
     out = {
         "prefixHash": digest(key, [f for s in prefix for f in fields(s)]),
-        "promptHash": digest(key, [f for s in segments for f in fields(s)] + ["images:%d" % images]),
+        "promptHash": digest(key, [f for s in segments if s["part"] != "formatting" for f in fields(s)] + ["images:%d" % images]),
         "partHashes": part_hashes,
     }
     names = [n for n in tool_names if isinstance(n, str) and 0 < len(n) <= MAX_STRING]
