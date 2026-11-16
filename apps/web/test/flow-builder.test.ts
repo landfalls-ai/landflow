@@ -414,6 +414,12 @@ describe('SB01: near-miss types', () => {
     expect(flow.left).toContainEqual(expect.objectContaining({ node: 'Get issues', kind: 'dropped', text: expect.stringContaining('core.linear.linear') }));
   });
 
+  it('lists no remap for a step that is left out anyway (a repeated key)', async () => {
+    answer = JSON.stringify({ name: 'Linear', nodes: [{ key: 'a', type: 'core.manualTrigger', name: 'Go' }, { key: 'a', type: 'core.linear.linear', name: 'Get issues', parameters: {} }], connections: [] });
+    const flow = await buildFlow('get my Linear issues');
+    expect(flow.left.some((l) => l.text.includes('was used instead'))).toBe(false);
+  });
+
   it('drops it and lists it when two types could be meant', async () => {
     registry.registerBuiltin(definePlugin({ info: { id: 'sb01other', name: 'Other (test)', version: '1.0.0', language: 'typescript' }, nodes: [defineNode({ description: { name: 'linear', displayName: 'Linear too', version: 1, kind: 'action', inputs: [{ type: 'main' }], outputs: [{ type: 'main' }], properties: [] }, async execute() { return [[]]; } })] }));
     answer = JSON.stringify({ name: 'Linear', nodes: [{ key: 'a', type: 'core.linear.linear', name: 'Get issues', parameters: {} }, { key: 'b', type: 'core.manualTrigger', name: 'Go' }], connections: [{ from: 'b', to: 'a' }] });

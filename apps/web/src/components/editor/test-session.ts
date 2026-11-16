@@ -13,7 +13,7 @@
 import { nanoid } from 'nanoid';
 import { toast } from 'sonner';
 import { opsTitle } from '@/lib/shared/assistant-ops';
-import { checkRun, destinationsOf, givenKept, hollowSteps, hostOf, multipliedSteps, needsPerson, NO_ADDRESS, sameFailure, UNREAD_HOST, type CheckedRun, type RunVerdict } from '@/lib/shared/run-check';
+import { checkRun, destinationsOf, givenKept, hollowSteps, hostOf, multipliedSteps, needsPerson, isUnreadHost, NO_ADDRESS, sameFailure, type CheckedRun, type RunVerdict } from '@/lib/shared/run-check';
 import { applyChanges, fixedNodes, ownRun, runDigests, undos, useAssistant, type Need, type Outcome, type ReplyPart } from './assistant';
 import { nextRound } from './timeline';
 import { agentsSettled } from './new-agent';
@@ -41,7 +41,7 @@ export function approveDestinations(workflowId: string, destinations: string[], 
   const set = sendsAllowed.get(workflowId) ?? new Set<string>();
   for (const destination of destinations) {
     // Per step, the ones the row listed: a step added after the row was shown is asked about on its own.
-    if (destination === UNREAD_HOST) for (const node of nodes) approvedOnce.add(`${workflowId} ${node} ${destination}`);
+    if (isUnreadHost(destination)) for (const node of nodes) approvedOnce.add(`${workflowId} ${node} ${destination}`);
     else if (destination !== NO_ADDRESS) set.add(destination);
   }
   sendsAllowed.set(workflowId, set);
@@ -167,7 +167,7 @@ function beforeTesting(goal: string | undefined): Need | undefined {
 function blockedHost(node: string | undefined, error: string | undefined): string {
   const step = node ? useEditor.getState().nodes.find((n) => n.data.wf.name === node) : undefined;
   const fromUrl = step && typeof step.data.wf.parameters.url === 'string' ? hostOf(step.data.wf.parameters.url) : undefined;
-  return fromUrl && fromUrl !== UNREAD_HOST && fromUrl !== NO_ADDRESS ? fromUrl : (/Blocked: (\S+)/.exec(error ?? '')?.[1] ?? 'that address');
+  return fromUrl && !isUnreadHost(fromUrl) && fromUrl !== NO_ADDRESS ? fromUrl : (/Blocked: (\S+)/.exec(error ?? '')?.[1] ?? 'that address');
 }
 
 /** A failed run only the person can fix, as a row with the button that does it. */

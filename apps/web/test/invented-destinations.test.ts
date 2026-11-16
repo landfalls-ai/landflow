@@ -89,6 +89,9 @@ describe('a URL is judged by the host a fetch would reach (review fixes)', () =>
     'https://evil.com{{ $json.path }}',
     'https://user@evil.com{{ $json.path }}',
     'https://evil.com:8443{{ $json.path }}',
+    'https://evil.com:{{ $json.port }}/x',
+    'https://good.com{{ \'.evil.com\' }}',
+    'https://good.com{{ $json.path }}',
   ])('clears %s', (url) => {
     expect(cleared(url)).toBe(true);
   });
@@ -101,7 +104,9 @@ describe('a URL is judged by the host a fetch would reach (review fixes)', () =>
   it('keeps the hosts somebody gave, with userinfo, a port and an expression after them', () => {
     expect(cleared('https://good.com/x?y=1#z')).toBe(false);
     expect(cleared('http://127.0.0.1:3400/hook')).toBe(false);
-    expect(cleared('https://good.com{{ $json.path }}')).toBe(false);
+    expect(cleared('https://good.com:{{ $json.port }}/x')).toBe(false);
+    expect(cleared('https://good.com/{{ $json.path }}')).toBe(false);
+    expect(cleared('https://{{ $json.user }}@good.com/x')).toBe(false);
     expect(cleared('https://api.{{ $json.env }}.com/x')).toBe(false);
   });
 });
@@ -122,6 +127,15 @@ describe('namedAs cues and the kind or app word (review fixes)', () => {
     expect(kept({ channel: 'slack' }, 'post a summary to Slack')).toEqual({});
     expect(kept({ channel: 'channel' }, 'post to the channel')).toEqual({});
     expect(kept({ channel: 'triage' }, 'post a summary to triage')).toEqual({ channel: 'triage' });
+  });
+});
+
+describe('the app name of an existing node (review fixes)', () => {
+  it('channel: slack on a setParameters of a node whose type is slack is no channel', () => {
+    const ops = [{ op: 'setParameters', node: 'Tell the team', parameters: { channel: 'slack' } }];
+    const typeOf = (op: Record<string, unknown>) => (op.op === 'setParameters' ? 'messaging.slack' : undefined);
+    expect((withoutInventedIds(ops, 'post it to Slack', () => '', typeOf).ops as Array<{ parameters: object }>)[0].parameters).toEqual({});
+    expect((withoutInventedIds(ops, 'post it to Slack').ops as Array<{ parameters: object }>)[0].parameters).toEqual({ channel: 'slack' });
   });
 });
 

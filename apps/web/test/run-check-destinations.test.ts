@@ -3,7 +3,7 @@
  * `needsPerson` reads the block before the credential rules; `destinationsOf` says where each sending step reaches.
  */
 import { describe, expect, it } from 'vitest';
-import { NO_ADDRESS, destinationsOf, hostOf, needsPerson } from '@/lib/shared/run-check';
+import { NO_ADDRESS, destinationsOf, hostOf, isUnreadHost, needsPerson, urlHost } from '@/lib/shared/run-check';
 
 describe('a blocked run', () => {
   it('is the person’s, whatever the status code says', () => {
@@ -44,7 +44,10 @@ describe('destinationsOf', () => {
     expect(hostOf('  ')).toBe(NO_ADDRESS);
     expect(hostOf('http://evil.example\\@127.0.0.1:3400/')).toBe('{{ … }}');
     expect(hostOf('https://evil.com\\@good.com/x')).toBe('{{ … }}');
-    expect(hostOf('https://evil.com{{ $json.path }}')).toBe('{{ … }}');
+    expect(hostOf('https://evil.com{{ $json.path }}')).toBe('evil.com{{ … }}');
+    expect(hostOf('/api/x')).toBe('{{ … }}');
+    expect(urlHost('/api/x')).toBeUndefined();
+    expect(isUnreadHost('evil.com{{ … }}')).toBe(true);
   });
 
   it('reads the host as a fetch does: after # and ? the host has ended', () => {

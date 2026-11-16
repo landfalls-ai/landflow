@@ -133,29 +133,38 @@ function mentionsHost(text: string, host: string): boolean {
  * when the value is a whole expression or the host itself is one (the literal part ends before the host does).
  */
 function literalHostOf(value: string): string | undefined {
-  const prefix = value.slice(0, value.indexOf('{{'));
+  const at = value.indexOf('{{');
+  const prefix = value.slice(0, at);
   if (prefix.includes('\\')) return UNREADABLE;
   const rest = prefix.replace(/^\s*[a-z][a-z0-9+.-]*:\/\//i, '');
   const authority = /^[^/?#]*/.exec(rest)![0];
-  if (!authority) return undefined;
-  // The expression sits in the authority itself ("https://evil.com{{ $json.path }}"): the literal part names the host unless
-  // it stops where the host goes on ("api.{{ env }}.com", "user:{{ pw }}@host").
-  if (authority.length === rest.length && /[.:@_-]$/.test(authority)) return undefined;
-  const parsed = urlHost(authority);
-  return parsed === 'unreadable' ? UNREADABLE : parsed?.hostname;
+  if (!authority) return undefined; // the whole host is an expression
+  const hostOfAuthority = (text: string) => {
+    const parsed = urlHost(text);
+    return parsed === 'unreadable' ? UNREADABLE : parsed?.hostname;
+  };
+  // A "/", "?" or "#" ended the authority before the expression: the host is all literal.
+  if (authority.length < rest.length) return hostOfAuthority(authority);
+  // The expression sits inside the authority. Part of the userinfo ("user:{{ pw }}@host", "{{ user }}@host"): the host is
+  // what follows, not known here. A host that is cut short ("api.{{ env }}.com") is an expression's too.
+  if (/^[^/?#]*@/.test(value.slice(at)) || /[@.\-_]$/.test(authority)) return undefined;
+  // A port ("evil.com:{{ $json.port }}") is judged by the host in front of it.
+  if (authority.endsWith(':')) return hostOfAuthority(authority.slice(0, -1));
+  // A literal host followed straight by an expression ("good.com{{ '.evil.com' }}") may be any host.
+  return UNREADABLE;
 }
 
 /**
  * An id, channel, table, owner, address or URL host the conversation, the workflow, its runs and the node type's own
  * options never mention (a Slack channel, a sheet, a user, a site) can only have been made up: local models write
  * plausible ones. Those parameters are left out, so the user fills them in. `typeText` gives the node type's properties
- * for an op (defaults and fixed options are known). A URL is judged by its host: a path on a host somebody gave is kept.
+ * for an op (defaults and fixed options are known), `typeOf` the node type of an op (an existing node's too, for its app's name). A URL is judged by its host: a path on a host somebody gave is kept.
  */
-export function withoutInventedIds(ops: unknown, known: string, typeText: (op: Record<string, unknown>) => string = () => ''): { ops: unknown; invented: string[]; values: string[] } {
+export function withoutInventedIds(ops: unknown, known: string, typeText: (op: Record<string, unknown>) => string = () => '', typeOf: (op: Record<string, unknown>) => string | undefined = (op) => (op.op === 'addNode' ? String(op.type ?? '') : undefined)): { ops: unknown; invented: string[]; values: string[] } {
   if (!Array.isArray(ops)) return { ops, invented: [], values: [] };
   const invented: string[] = [];
   const values: string[] = [];
-  const appNames = (op: Record<string, unknown>) => String(op.type ?? '').toLowerCase().split('.');
+  const appNames = (op: Record<string, unknown>) => (typeOf(op) ?? '').toLowerCase().split('.');
   const clean = (op: Record<string, unknown>, node: unknown, parameters: unknown) => {
     if (!parameters || typeof parameters !== 'object') return parameters;
     const out = { ...(parameters as Record<string, unknown>) };

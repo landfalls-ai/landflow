@@ -469,7 +469,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         if (standIns.notes.length && Array.isArray(teamed) && !teamed.length) {
           return result(`Nothing changes: ${standIns.notes.join('; ')}. If everything the latest message asks for is proposed, stop and say in one line what the cards do.`, 'Skipped a stand-in for the new agent');
         }
-        const { ops: proposedOps, invented: inventedNotes, values } = withoutInventedIds(teamed, known(), typeText);
+        const { ops: proposedOps, invented: inventedNotes, values } = withoutInventedIds(teamed, known(), typeText, (op) => (op.op === 'addNode' ? String(op.type ?? '') : nodeByName(String(op.node ?? ''))?.type));
         for (const value of values) invented.add(value);
         const validated = validateOps(working, proposedOps, lookup);
         const back = addedBack(validated.ops);

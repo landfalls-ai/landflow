@@ -275,18 +275,19 @@ describe('the scenario data directory (env.ts)', () => {
     expect(r.status).toBe(0);
   });
 
-  it('removes a stale directory of an earlier run (older than an hour) and keeps a fresh one', () => {
+  it('removes a stale directory (older than an hour, its process gone or unknown) and keeps a fresh one and one whose process runs', () => {
+    const dead = spawnSync(process.execPath, ['-e', '0']).pid;
     const r = child(`
       const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
-      const stale = fs.mkdtempSync(path.join(os.tmpdir(), 'landflow-spotlight-scenarios-'));
-      const fresh = fs.mkdtempSync(path.join(os.tmpdir(), 'landflow-spotlight-scenarios-'));
+      const make = (pid) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'landflow-spotlight-scenarios-')); if (pid) fs.writeFileSync(path.join(d, 'pid'), String(pid)); return d; };
       const old = new Date(Date.now() - 2 * 3600 * 1000);
-      fs.utimesSync(stale, old, old);
+      const stale = make(${dead}), unknown = make(0), running = make(process.pid), fresh = make(${dead});
+      for (const d of [stale, unknown, running]) fs.utimesSync(d, old, old);
       import(${JSON.stringify(env)}).then(() => {
-        console.log(JSON.stringify({ stale: fs.existsSync(stale), fresh: fs.existsSync(fresh) }));
-        fs.rmSync(fresh, { recursive: true, force: true });
-        fs.rmSync(process.env.LANDFLOW_DATA_DIR, { recursive: true, force: true });
+        const out = { stale: fs.existsSync(stale), unknown: fs.existsSync(unknown), running: fs.existsSync(running), fresh: fs.existsSync(fresh) };
+        console.log(JSON.stringify(out));
+        for (const d of [stale, unknown, running, fresh, process.env.LANDFLOW_DATA_DIR]) fs.rmSync(d, { recursive: true, force: true });
       });`);
-    expect(JSON.parse(r.stdout.trim().split('\n').pop()!)).toEqual({ stale: false, fresh: true });
+    expect(JSON.parse(r.stdout.trim().split('\n').pop()!)).toEqual({ stale: false, unknown: false, running: true, fresh: true });
   });
 });

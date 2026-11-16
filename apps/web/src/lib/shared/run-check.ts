@@ -152,7 +152,7 @@ export const NO_ADDRESS = 'an address not filled in yet';
  */
 export function urlHost(value: string): { host: string; hostname: string } | 'unreadable' | undefined {
   const text = value.trim().replace(/^=/, '');
-  if (!text) return undefined;
+  if (!text || text.startsWith('/')) return undefined; // a path: no host
   const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(text);
   if (text.includes('\\')) return 'unreadable';
   if (/^[^/?#]*\{\{/.test(hasScheme ? text.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '') : text)) return 'unreadable';
@@ -168,8 +168,15 @@ export function urlHost(value: string): { host: string; hostname: string } | 'un
 export function hostOf(url: string): string {
   if (!url.trim().replace(/^=/, '').trim()) return NO_ADDRESS;
   const parsed = urlHost(url);
-  return parsed && parsed !== 'unreadable' ? parsed.host : UNREAD_HOST;
+  if (parsed && parsed !== 'unreadable') return parsed.host;
+  // What is literal in front of the expression stays visible ("evil.com{{ … }}"), so the person sees where it may go.
+  const literal = url.trim().replace(/^=/, '').replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').split('{{')[0];
+  const shown = url.includes('{{') && !literal.includes('\\') ? /^[^/?#\s]*/.exec(literal)![0].slice(0, 60) : '';
+  return `${shown}${UNREAD_HOST}`;
 }
+
+/** Whether a destination is an expression or an unreadable URL ("{{ … }}", maybe with its literal start): it asks every run. */
+export const isUnreadHost = (destination: string) => destination.endsWith(UNREAD_HOST);
 
 /** What a person gives that a fix may not change: a URL, an email address, a channel, an id. */
 const GIVEN_VALUE = /^(?:https?:\/\/\S+|\S+@\S+\.\S+|[#@][\w.-]+|[\w-]{8,})$/i;

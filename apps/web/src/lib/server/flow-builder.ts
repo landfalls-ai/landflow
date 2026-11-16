@@ -341,13 +341,13 @@ function assemble(raw: Reply, byType: Map<string, NodeTypeInfo>, teams: readonly
     // SB01: a type that is not in the catalog maps to the one available type it can mean.
     const exact = n.type ? byType.get(n.type) : undefined;
     const info = exact ?? (n.type ? nearType(n.type, byType) : undefined);
-    if (info && !exact && n.type) left.push({ node: n.name ?? info.descriptor.displayName, kind: 'dropped', text: `“${n.name ?? info.descriptor.displayName}”: the step type “${n.type}” is not available, so “${info.descriptor.displayName}” was used instead: check it is the one you meant` });
     if (!info || !n.key || keys.has(n.key)) {
       dropped.push(`node ${n.name ?? n.type ?? '?'} (${n.type ?? 'no type'})`);
       if (n.type && !info) left.push({ node: n.name ?? n.type, kind: 'dropped', text: `“${n.name ?? n.type}”: the step type “${n.type}” is not available, so it was left out` });
       continue;
     }
     keys.add(n.key);
+    if (info && !exact && n.type) left.push({ node: n.name ?? info.descriptor.displayName, kind: 'dropped', text: `“${n.name ?? info.descriptor.displayName}”: the step type “${n.type}” is not available, so “${info.descriptor.displayName}” was used instead: check it is the one you meant` });
     const known = new Set(info.descriptor.properties.map((p) => p.name));
     const kept = Object.fromEntries(Object.entries(n.parameters ?? {}).filter(([k]) => known.has(k)));
     // Models write the team's name where its id goes: the one published team it names becomes the id.
@@ -510,16 +510,16 @@ function keepsTypes(first: Assembled, next: Assembled): boolean {
 
 const READ_OPERATION = /^(get|getall|list|search|find|read|fetch|query)/i;
 
-/**
- * SB01: where the test items are pinned. A webhook, form or manual trigger: on itself. An app trigger (a plugin's
- * trigger node): on itself, since its output is the app's event. A schedule: on the app step after it that reads data,
- * so a test runs on sample records instead of needing the app; a schedule's own item is only a time, so otherwise none.
- */
 /** Whether test data is pinned on the trigger itself (a webhook, form or manual trigger, or an app's own trigger). */
 export function pinsOnTrigger(type: string, info: NodeTypeInfo | undefined): boolean {
   return PINNED_TRIGGERS.has(type) || Boolean(info && info.pluginId !== 'core' && info.descriptor.kind === 'trigger');
 }
 
+/**
+ * SB01: where the test items are pinned. A webhook, form or manual trigger: on itself. An app trigger (a plugin's
+ * trigger node): on itself, since its output is the app's event. A schedule: on the app step after it that reads data,
+ * so a test runs on sample records instead of needing the app; a schedule's own item is only a time, so otherwise none.
+ */
 function pinTarget(draft: Assembled, byType: Map<string, NodeTypeInfo>): DraftNode | undefined {
   const { trigger, nodes, edges } = draft;
   if (!trigger) return undefined;
