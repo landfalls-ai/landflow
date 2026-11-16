@@ -2062,6 +2062,28 @@ and gateway rows without cache numbers. These wait, each with its reason:
 - **Long unwrapped doc lines** (`llm-gateway.md`, `projects-and-goals.md`, `run-trace.md`, `agents.md`): cosmetic, there
   is no formatter, and rewrapping whole files is not done; a change rewraps the lines it edits.
 
+## Company backbone: left open from the Spotlight wave sb1 reviews (2026-11-16)
+
+Wave sb2 took sb1's one-step half (scope, changes that mean what they say, context, the diff, asking, credentials, the
+model) and fixed the protocol-relative URL host the guard kept. These wait for wave sb3, each with the package that owns
+the code:
+
+- **A new agent's tools and knowledge** (sb1 live: tools kept 0 of 3, knowledge base 0 of 3, fed on to the reply 1 of 3,
+  Linear added as a main step with an invalid operation): SB16 (agents anywhere, D5) and SB17 (the agent brief) decide
+  how a new agent's tools and knowledge reach the architect and the canvas; sb2 only placed it (SB07's insert scope).
+- **The architect's tool choice** (the PR reviewer's least privilege 0 of 3; Slack and `run_an_agent` added unasked) and
+  **the dialog reopening the previous conversation**: SB17 owns the brief, its evals and the dialog's start.
+- **"Test and fix" and the "Run it for real" card are lost on reload**: SB18 owns `test-session.ts` and the session's
+  start; a kept conversation does not keep a session's turns by design ([limitations](limitations.md)).
+- **"Stopped · It runs, but doesn't do all you asked yet" after a right fix** (the review too strict) and **"Run it for
+  real" re-entering `testUntilItRuns`** (the fix budget, `startNodes`, `lastApplied` and `tried` reset; each round
+  still needs the person's click, so nothing runs alone): SB18 owns the session's verdict, the review and its loop.
+- **`https://x` and `http://x` share one yes to send** (`run-check.ts` `destinationsOf` keys a destination by host):
+  the same host, so no new destination; SB18 owns the yes ([limitations](limitations.md)).
+- **The Linear/Slack first draft** reads `$json.lastRun` before the Set that defines it, turns "every morning" into
+  weekdays 9:00 and assumes `$json.issues` in Slack: the first draft's prompt and checks are SB13/SB14's (the staged
+  build); SB09's `change-checks.ts` (`expressionMisses`, `cronProblems`) is written to be reused there.
+
 ## Runs: one list (B20, 2026-11-14)
 
 Closed from the wave 1 page review: X2 (Executions, Runs and Search runs are one page, **Runs** at `/runs`, the old URLs redirect), P-ex-1 (no ID or Mode column), P-ex-2 (Stop all only while a run runs), P-ex-3 (repeated failures fold into one row), P-ex-4 (two re-run words), P-runs-1 (one search box with Status and Workflow chips, the rest under More filters) and P-cmp-1 (compare with fewer than two runs goes back to the list). See [the Runs list](run-trace.md#the-runs-list).
