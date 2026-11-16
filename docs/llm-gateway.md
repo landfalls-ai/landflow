@@ -323,14 +323,36 @@ recorded: instructions, where this work fits (the project block), practices, mem
 conversation so far, tool results, the message and images. The row is `ai_call_parts` (migration 2901), one per call,
 keyed by the call's `ai_usage` row. It holds token counts, hashes and tool names, never text.
 
-- **An estimate in this wave.** Each part's characters divided by 4 (an image counts 1,600), scaled so the parts add up to
-  the call's input tokens, the rounding remainder going to the largest part. `method` says `estimate`; `formatting` is
-  always 0 because only an exact count can tell what the provider added (a draft with nothing to count has no parts).
-  Wave 12 makes the numbers exact with the same row.
+- **How the numbers were reached** (`method`, one per call: the weakest any part used). `provider` is Anthropic's own
+  count: Landflow asks `POST /v1/messages/count_tokens` (free, with its own rate limit) for the prompt up to each
+  segment, in prompt order (the tools, each system segment, then the messages, runs of one part as one step), and a part
+  is the difference of two counts. Each prefix is counted once and remembered by a keyed hash of the request (2,000
+  entries), so an agent loop whose history only grows costs one or two count requests per iteration. It uses the
+  credential and base URL the call used (no credential: the SDK's own key). `tokenizer` is the model's own tokenizer run
+  here: OpenAI's `o200k_base` or `cl100k_base` (the `gpt-tokenizer` package, offline), or an Ollama model's own
+  vocabulary, read from the server the call went to (`/api/show`, cached by model digest, the three most recent models
+  kept) and run through a byte-level BPE with the `qwen2` or `llama-bpe` pre-tokenizer. `estimate` is each part's
+  characters divided by 4 (an image counts 1,600), scaled so the parts add up to the call's input tokens, the rounding
+  remainder going to the largest part, and `formatting` 0. It is what a call gets when nothing exact can be had.
+- **`formatting`.** With an exact count, `formatting` is the reported input minus every counted part: what the provider
+  added around them (role markers, the chat template, the tool-use preamble, tool-call framing) and the run's date line.
+  It is never negative; when the counted parts add up to more than the reported input they are scaled down to it and
+  `formatting` is 0, so a call's parts always sum to its input.
+- **When it stays an estimate.** `LANDFLOW_AI_PARTS_COUNT=estimate`; a call through the LLM gateway (its own count is a
+  local estimate, `litellm_count_source: local_estimate`); a provider with no counter; an OpenAI-compatible model that
+  is not one of OpenAI's; an Ollama model its server does not have or whose tokenizer is not a `qwen2` or `llama-bpe`
+  byte-level BPE (a log line names the pre-tokenizer, never text); a count request that fails or would pass
+  `LANDFLOW_AI_PARTS_COUNT_PER_MINUTE` (default 50 per credential; a request that is sent and fails keeps its slot, only
+  a call that would pass the budget spends none); and a call with images (an image is a fixed
+  estimate, so the call is one). A count request is not a model call: it is never metered or traced as `gen_ai.*`, and it
+  is made after the response, so it can never delay or fail the call. The split of a call whose gateway split already
+  arrived (same response id) replaces it. A call on a gateway credential is recorded with the system `litellm`, which has no counter, so an OpenAI-looking model name through the gateway stays an estimate. Prompts are counted in memory for the
+  length of the count only (the OpenAI encoding's own merge cache, which would keep every counted word, is switched off); the Ollama tokenizer's pre-token memo lives for one count, and a single unbroken run longer
+  than 256 characters is merged in slices (a few tokens of error per cut) so a long run costs linear time.
 - **Hashes.** Keyed hashes (HMAC-SHA-256 under a key derived from the instance's encryption key, 16 hex characters):
   `promptHash` for the whole prompt (the same prompt sent again), `prefixHash` for everything up to the last cache
   breakpoint (two calls with the same prefix could have shared a cache entry) and one hash per part (the instructions
-  changed between two runs). A part's hash is over its segments' texts joined in order into one string, so a counter that
+  changed between two runs). The hashes are made from the texts alone, so the same prompt has the same hashes whatever the method. A part's hash is over its segments' texts joined in order into one string, so a counter that
   holds the part whole (the gateway's callback, wave 12) gets the same hash. The prompt's date line (`Current date and
   time: …`) is a `formatting` segment: it is in `promptHash` and `prefixHash` (a new run is a new prefix) and in no part
   hash, so the instructions' hash only changes when the instructions do. They are comparable inside one instance only and cannot be turned back into text.

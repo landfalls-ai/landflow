@@ -2223,6 +2223,19 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   ([llm-gateway.md](llm-gateway.md#what-a-prompt-was-made-of)). Exact counts, the gateway's split and the screens come
   in wave 12.
 
+## Token spend wave 12: exact counts per part (SP22)
+
+- **Built**: a call's split is counted with the provider's own count (Anthropic's count endpoint, as cumulative prefixes
+  cached by a keyed hash and spent from a per-credential per-minute budget), OpenAI's encodings offline (`gpt-tokenizer`)
+  or an Ollama model's own vocabulary (a byte-level BPE in TypeScript, `qwen2` and `llama-bpe`), and says which
+  (`method`: `provider`, `tokenizer` or `estimate`). `formatting` is the reported input minus the counted parts. Two
+  variables, `LANDFLOW_AI_PARTS_COUNT` and `LANDFLOW_AI_PARTS_COUNT_PER_MINUTE`. The BPE is tested against a shared
+  fixture made with Hugging Face `tokenizers` (`apps/web/test/fixtures/bpe-fixture.json`, which SP21's Python counter
+  also reads). Against Ollama 0.40.14 and `qwen3-coder:30b` the count of a 1,200-token text and of a mixed-script
+  text with code matched `prompt_eval_count` minus the template to the token. The LLM gateway's
+  `/v1/messages/count_tokens` answers, but with its own local estimate, so a call through it stays an estimate
+  ([limitations.md](limitations.md)).
+
 ## Token spend wave 11: telemetry out (SP04, with SP16)
 
 - The overview dashboard gains an "AI" row (tokens by type, Anthropic cache hit rate, cost by purpose) and

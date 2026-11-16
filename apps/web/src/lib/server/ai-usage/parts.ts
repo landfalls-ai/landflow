@@ -14,6 +14,7 @@ import { credentials } from '../credentials/vault';
 import { database, type Database } from '../db';
 import { logger } from '../telemetry/logger';
 import type { PromptDraft, RecordedCall } from './call-context';
+import { countParts, type CountedParts } from './count';
 
 const DAY_MS = 86_400_000;
 /** An image's share of the input in an estimate: the order of an Anthropic image. */
@@ -51,6 +52,43 @@ export function estimateParts(draft: PromptDraft, inputTokens: number): Partial<
   parts[largest] = (parts[largest] ?? 0) + (total - assigned);
   for (const part of Object.keys(parts) as PromptPart[]) if (!parts[part]) delete parts[part];
   return parts;
+}
+
+// SP22: exact counts become a split (the estimate above stays the fallback).
+/**
+ * A counted draft as a split of `inputTokens`: what was counted per part, `formatting` = the reported input minus every
+ * other part (the provider's roles and templates, the run's date stamp), never negative. When the counted parts add up
+ * to more than the reported input, they are scaled down to it and `formatting` is 0 (a call's parts always sum to its
+ * input). Images are not counted from text: a fixed estimate each, and a call with images is an `estimate` (the
+ * weakest method any part used).
+ */
+export function countedSplit(counted: CountedParts, draft: PromptDraft, inputTokens: number): Pick<CallParts, 'method' | 'parts'> {
+  const total = Math.max(0, Math.floor(inputTokens));
+  const weights: Partial<Record<PromptPart, number>> = { ...counted.parts };
+  let method: CallParts['method'] = counted.method;
+  if (draft.images && draft.images > 0) {
+    weights.images = (weights.images ?? 0) + draft.images * ESTIMATED_IMAGE_TOKENS;
+    method = 'estimate';
+  }
+  const entries = PROMPT_PARTS.filter((part) => (weights[part] ?? 0) > 0).map((part) => [part, weights[part] as number] as const);
+  const sum = entries.reduce((n, [, w]) => n + w, 0);
+  const parts: Partial<Record<PromptPart, number>> = {};
+  if (sum <= total) {
+    for (const [part, w] of entries) parts[part] = w;
+    if (total > sum) parts.formatting = total - sum;
+    return { method, parts };
+  }
+  let assigned = 0;
+  let largest: PromptPart | undefined;
+  for (const [part, w] of entries) {
+    const tokens = Math.floor((w / sum) * total);
+    parts[part] = tokens;
+    assigned += tokens;
+    if (!largest || w > (weights[largest] ?? 0)) largest = part;
+  }
+  if (largest) parts[largest] = (parts[largest] ?? 0) + (total - assigned);
+  for (const part of Object.keys(parts) as PromptPart[]) if (!parts[part]) delete parts[part];
+  return { method, parts };
 }
 
 /** HMAC-SHA-256 over length-prefixed fields, first 16 hex: no two different field lists hash the same input. */
@@ -100,16 +138,17 @@ export function hashParts(draft: PromptDraft, key: Buffer): PartHashes {
 const hashKey = (): Buffer => credentials.deriveKey('ai-call-parts');
 
 /** The split of one recorded chat call, as it is stored. Pure over the draft and the key. */
-export function splitCall(call: Pick<RecordedCall, 'usageId' | 'at' | 'inputTokens' | 'gatewayRequestId'>, draft: PromptDraft, key: Buffer): CallParts {
+export function splitCall(call: Pick<RecordedCall, 'usageId' | 'at' | 'inputTokens' | 'gatewayRequestId'>, draft: PromptDraft, key: Buffer, counted?: CountedParts): CallParts {
   const hashes = hashParts(draft, key);
+  const split = counted ? countedSplit(counted, draft, call.inputTokens) : { method: 'estimate' as const, parts: estimateParts(draft, call.inputTokens) };
   return {
     usageId: call.usageId,
     ...(call.gatewayRequestId && { gatewayRequestId: call.gatewayRequestId }),
     at: call.at,
     source: 'landflow',
-    method: 'estimate',
+    method: split.method,
     inputTokens: call.inputTokens,
-    parts: estimateParts(draft, call.inputTokens),
+    parts: split.parts,
     prefixHash: hashes.prefixHash,
     promptHash: hashes.promptHash,
     partHashes: hashes.partHashes,
@@ -125,31 +164,42 @@ export function writeParts(recorded: RecordedCall): void {
   let draft: PromptDraft | undefined = recorded.note.draft;
   if (recorded.operation !== 'chat' || !draft || !(recorded.inputTokens > 0)) return;
   const call = { usageId: recorded.usageId, at: recorded.at, inputTokens: recorded.inputTokens, ...(recorded.gatewayRequestId && { gatewayRequestId: recorded.gatewayRequestId }) };
-  // The handle is the one in force now, not whatever the singleton is when the callback runs (a test or a restart may swap it).
+  // The handle is the one in force now, not whatever the singleton is when the callback runs (a test or a restart may swap it);
+  // SP22: it is kept through the async counting, which reads the call's `ai_usage` row and writes the split through it.
   const db = database();
   setImmediate(() => {
-    try {
-      const parts = splitCall(call, draft as PromptDraft, hashKey());
-      const existing = db.get<{ id: string }>('SELECT id FROM ai_call_parts WHERE usage_id = ?', call.usageId);
-      db.upsert('ai_call_parts', {
-        id: existing?.id ?? `acp_${nanoid(14)}`,
-        usage_id: call.usageId,
-        gateway_request_id: parts.gatewayRequestId ?? null,
-        at: parts.at,
-        source: parts.source,
-        method: parts.method,
-        input_tokens: parts.inputTokens,
-        parts: JSON.stringify(parts.parts),
-        prefix_hash: parts.prefixHash ?? null,
-        prompt_hash: parts.promptHash ?? null,
-        part_hashes: JSON.stringify(parts.partHashes ?? {}),
-        tool_names: parts.toolNames ? JSON.stringify(parts.toolNames) : null,
-      });
-    } catch (error) {
-      logger.warn('could not write the parts of a model call', { error: (error as Error).message });
-    } finally {
-      draft = undefined;
-    }
+    void (async () => {
+      try {
+        const key = hashKey();
+        // SP22: an exact count first (a provider's, or the model's own tokenizer); any failure leaves the estimate.
+        const counted = await countParts(draft as PromptDraft, { usageId: call.usageId, provider: recorded.provider, model: recorded.model, ...(recorded.agentId && { agentId: recorded.agentId }), db, key: credentials.deriveKey('ai-call-parts-count') });
+        const parts = splitCall(call, draft as PromptDraft, key, counted);
+        const existing = db.get<{ id: string }>('SELECT id FROM ai_call_parts WHERE usage_id = ?', call.usageId);
+        // SP22: the gateway's split of this call (source 'gateway', same response id) is replaced by Landflow's own.
+        if (parts.gatewayRequestId) {
+          const gateway = db.get<{ id: string }>("SELECT id FROM ai_call_parts WHERE gateway_request_id = ? AND source = 'gateway'", parts.gatewayRequestId);
+          if (gateway && gateway.id !== existing?.id) db.delete('ai_call_parts', { id: gateway.id });
+        }
+        db.upsert('ai_call_parts', {
+          id: existing?.id ?? `acp_${nanoid(14)}`,
+          usage_id: call.usageId,
+          gateway_request_id: parts.gatewayRequestId ?? null,
+          at: parts.at,
+          source: parts.source,
+          method: parts.method,
+          input_tokens: parts.inputTokens,
+          parts: JSON.stringify(parts.parts),
+          prefix_hash: parts.prefixHash ?? null,
+          prompt_hash: parts.promptHash ?? null,
+          part_hashes: JSON.stringify(parts.partHashes ?? {}),
+          tool_names: parts.toolNames ? JSON.stringify(parts.toolNames) : null,
+        });
+      } catch (error) {
+        logger.warn('could not write the parts of a model call', { error: (error as Error).message });
+      } finally {
+        draft = undefined;
+      }
+    })();
   });
 }
 
