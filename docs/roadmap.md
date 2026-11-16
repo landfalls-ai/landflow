@@ -2451,3 +2451,14 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   reload.
 - **Owed to a person:** the asks-first wording and the **Needs you** rows on a real phone, and whether "saved" should
   end autonomy at the first autosave rather than at the next open (decision D1 reads it at the next open).
+
+## Spotlight wave sb2
+- **SB11, Spotlight asks when it is not clear, built:** finding 2.5 and the "retry 3 times" with nothing selected: an
+  `ask_user` tool (one question, 2 to 4 choices as chips, *or type your own answer*) for several steps that fit or a
+  channel, table or id that is missing; asking never needs the switch (decision D1), is not offered in a test session,
+  ends the reply with no further model call, and a backstop sends back a change to one of several steps of a kind with
+  none named or selected (a settings change fits every step that calls out). Live on the local model: "it should retry 3
+  times" asks which step 3 of 3 (0 of 3 before). Docs: [assistant.md](assistant.md#the-builder-chat). Left: "post the
+  summary to Slack" with no channel is still not asked (0 of 3: the model proposes and the made-up channel is cleared and
+  listed; a send-back on a cleared value would change the made-up-values guard), and the chips are not kept in a stored
+  conversation.

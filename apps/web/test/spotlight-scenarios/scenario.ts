@@ -1,9 +1,11 @@
 /**
  * The Spotlight scenario suite's API: what a scenario is, what running it gives, and the checks the scorecards count.
  *
- * Contract file: backbone/contracts/sb1/spotlight-scenario.ts, copied byte for byte to
- * apps/web/test/spotlight-scenarios/scenario.ts by SB00 (owner) and by every package that adds scenarios (SB01–SB06).
- * Change it in the contracts folder first. Types and pure helpers only: no server import, no I/O. SB00's runner
+ * Contract file: backbone/contracts/sb2/spotlight-scenario.ts (version 2, wave sb2), copied byte for byte to
+ * apps/web/test/spotlight-scenarios/scenario.ts by SB10 (owner this wave: the harness) and by every sb2 package that
+ * adds scenarios (SB07, SB08, SB09, SB11, SB12, SB19). Version 1 was backbone/contracts/sb1/spotlight-scenario.ts
+ * (SB00); version 2 only adds optional fields and helpers, so every sb1 scenario still type-checks. Change it in the
+ * contracts folder first. Types and pure helpers only: no server import, no I/O. SB00's runner
  * (apps/web/test/spotlight-scenarios.test.ts, with apps/web/test/spotlight-scenarios/harness.ts) finds every
  * `apps/web/test/spotlight-scenarios/<owner>.ts` (lower case, e.g. `sb03.ts`) with `import.meta.glob`, so packages never
  * edit a shared index: each adds one file that `export default defineScenarios([...])`.
@@ -50,6 +52,27 @@ export interface Start {
   sessionRuns?: ScriptedRun[];
   /** The person's yes to test runs that send for real, by destination host (none by default). */
   approvedDestinations?: string[];
+  /**
+   * Wave sb2 (SB07): the scope the editor sends, by node NAME (the harness maps names to ids for the body's `scope`):
+   * absent, the editor sent none and the server derives one (lib/shared/spotlight-scope.ts `scopeOf`); `null`, the
+   * person lifted the chip.
+   */
+  scope?: { kind: 'selected' | 'tagged' | 'only' | 'insert'; nodes: string[]; side?: 'after' | 'before' } | null;
+  /** Wave sb2 (SB07): steps the person tagged with @, by name (sent as the editor's node mentions). */
+  tagged?: string[];
+  /**
+   * Wave sb2 (SB10, carryover item 5): the host's outbound policy for the session's live runs. `blocked` (the default
+   * for a scenario that has no echo server) leaves `LANDFLOW_OUTBOUND_ALLOW` unset, so a run to 127.0.0.1 is refused by
+   * the host as on a fresh install; `allowed` sets it to `127.0.0.1,localhost` and nothing wider. Before sb2 the live
+   * form allowed loopback whenever an echo server ran, so a blocked scenario was never blocked live.
+   */
+  outbound?: 'blocked' | 'allowed';
+  /**
+   * Wave sb2 (SB19): the model Spotlight is asked to use, as the picker sends it (`qwen3-coder:30b`,
+   * `litellm/qwen3-coder:30b`). Absent: the harness's model (`LANDFLOW_SPOTLIGHT_MODEL`, else the unit form's script).
+   * Live, only a model this machine serves: Ollama or the local LiteLLM container routing to it.
+   */
+  model?: string;
 }
 
 /** What running a scenario once gave. Every list is empty, never absent. */
@@ -79,6 +102,16 @@ export interface Outcome {
   tokens: { input: number; output: number };
   /** The reply's error (an `error` event or a thrown error), if any. */
   error?: string;
+  /**
+   * Wave sb2 (SB11): the questions the chat asked back (`ask` events, lib/shared/spotlight-wire.ts), in order. Optional
+   * (unlike the lists above) so a package's copy of this file type-checks against a harness that does not fill it yet;
+   * read it as `o.asked ?? []`.
+   */
+  asked?: Array<{ question: string; choices: string[] }>;
+  /** Wave sb2 (SB12): the credentials it offered to pick (`credential` events), in order: the step and the types it accepts (`o.offers ?? []`). */
+  offers?: Array<{ node: string; credentialTypes: string[] }>;
+  /** Wave sb2 (SB19): the model the reply's `done` event named (or the build's `model`), when there was one. */
+  model?: string;
 }
 
 /** A check: true, false, or 'n/a' (it does not apply to this outcome; not counted). */
@@ -166,4 +199,21 @@ export const checks = {
   }),
   /** The session asked the person for this "Needs you" reason. */
   needs: (what: string): Check => ({ id: `needs-${what}`, label: `Asked the person (${what})`, judge: (o) => o.needs.includes(what) }),
+  /** Wave sb2 (SB11): asked one question back, with 2–4 choices, and changed nothing yet. */
+  askedFirst: {
+    id: 'asked-first',
+    label: 'Asked which one, changed nothing yet',
+    judge: (o: Outcome) => (o.asked ?? []).length > 0 && (o.asked ?? []).every((a) => a.choices.length >= 2 && a.choices.length <= 4) && o.proposals.length === 0 && touchedNodes(o.before, o.after).length === 0,
+  } satisfies Check,
+  /** Wave sb2 (SB12): the reply has words, never an empty bubble (finding 2.7). */
+  neverEmpty: { id: 'never-empty', label: 'Said something (no empty reply)', judge: (o: Outcome) => Boolean(o.error) || o.text.trim().length > 0 } satisfies Check,
+  /** Wave sb2 (SB12): offered a credential for this step, and set none itself (decision D2). */
+  offeredCredential: (node: string): Check => ({
+    id: 'offered-credential',
+    label: `Offered a credential to pick for ${node}, set none`,
+    judge: (o) => {
+      const count = (wf: Workflow | undefined) => Object.keys(wf?.nodes.find((n) => n.name === node)?.credentials ?? {}).length;
+      return (o.offers ?? []).some((c) => c.node === node) && count(o.after) <= count(o.before);
+    },
+  }),
 };

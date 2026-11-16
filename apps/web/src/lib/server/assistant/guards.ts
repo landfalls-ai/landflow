@@ -52,7 +52,7 @@ export function withEarlierRefs(ops: unknown, refs: Map<string, string>): unknow
 
 
 /** The chat's tool names: what a tool call recovered from text may name. */
-export const TOOL_NAMES: ReadonlySet<string> = new Set(['search_nodes', 'get_node_docs', 'get_workflow', 'get_run_data', 'propose_changes']);
+export const TOOL_NAMES: ReadonlySet<string> = new Set(['search_nodes', 'get_node_docs', 'get_workflow', 'get_run_data', 'propose_changes', 'ask_user']); // SB11:
 
 // SB02: ids, and the destinations (a channel, a table, an owner, an address, a URL) a person names; a model makes both up.
 const ID_PARAMETER = /^id$|[a-z]Ids?$/;

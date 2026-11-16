@@ -228,6 +228,38 @@ export function AgentRow({ agent }: { agent: AgentProgress }) {
   );
 }
 
+// SB11:
+/** A question back (`ask_user`): the question, one chip per choice, and a hint that one's own answer works too. A chip is sent as the next message, typed by the person. */
+export function AskRow({ itemId, ask, busy = false }: { itemId: string; ask: { question: string; choices: string[]; answered?: string }; busy?: boolean }) {
+  return (
+    <div className="flex animate-in flex-col gap-1.5">
+      <p className="text-[13px] leading-snug text-t1 [overflow-wrap:anywhere]">{ask.question}</p>
+      <div className="flex flex-wrap gap-1.5">
+        {ask.choices.map((choice) => {
+          const picked = ask.answered === choice;
+          return (
+            <button
+              key={choice}
+              type="button"
+              disabled={busy || ask.answered !== undefined}
+              aria-pressed={ask.answered === undefined ? undefined : picked}
+              onClick={() => void useAssistant.getState().answerAsk(itemId, choice)}
+              className={cn(
+                'min-h-7 rounded-full border px-2.5 text-[12px] font-semibold max-md:min-h-9',
+                picked ? 'border-ac bg-acdim text-ac' : 'border-hair text-t2 enabled:hover:bg-acdim',
+                ask.answered !== undefined && !picked && 'opacity-50',
+              )}
+            >
+              {choice}
+            </button>
+          );
+        })}
+      </div>
+      {ask.answered === undefined && <span className="text-[11.5px] text-t3">or type your own answer</span>}
+    </div>
+  );
+}
+
 /** "Test and fix" after a drafted flow (autonomous mode starts it by itself); "Ready for production" after a run passed. */
 function ActionView({ itemId, action }: { itemId: string; action: ReplyAction }) {
   const busy = useAssistant((s) => s.pending || Boolean(s.testing));
@@ -360,7 +392,9 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
   const firstText = item.parts.findIndex((p) => p.kind === 'text');
   const firstProposal = item.parts.findIndex((p) => p.kind === 'proposal');
   const hasTrace = (item.steps?.length ?? 0) > 0;
-  const words = quietText || !text.trim() ? null : provisional ? (
+  // SB11: a question back shows its words in its own row (never cut to two sentences).
+  const asked = item.parts.find((p) => p.kind === 'ask');
+  const words = quietText || !text.trim() || (asked && asked.ask.question.trim() === text.trim()) ? null : provisional ? (
     <StreamingText text={text} streaming />
   ) : streamed ? (
     <ShortReply text={text} sentences={session ? 1 : 2} />
@@ -400,6 +434,9 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
           <NeedRow key={i} itemId={item.id} need={part.need} />
         ) : part.kind === 'outcome' ? (
           <OutcomeCard key={i} itemId={item.id} outcome={part.outcome} />
+        ) : part.kind === 'ask' ? (
+          // SB11:
+          <AskRow key={i} itemId={item.id} ask={part.ask} busy={spotlightBusy} />
         ) : null,
       )}
       {!streamed && steps && firstProposal < 0 && <LiveSteps live={steps} />}

@@ -23,6 +23,8 @@ import { failSpan } from '../telemetry/spans';
 import { saveCheckpoint } from './checkpoints';
 import { assistantModel, errorText, modelLabel } from './model';
 import { withParseRetry } from './parse-retry'; // SB05:
+import { ASK_CHOICES_MAX, ASK_CHOICES_MIN, ASK_CHOICE_MAX_CHARS, ASK_USER_TOOL, type AskEvent } from '../../shared/spotlight-wire'; // SB11:
+import { namedNodes, scopeOf } from '../../shared/spotlight-scope'; // SB11:
 import { redundantBranches, registryLookup, validateOps, withoutRepeatedAdds } from './ops';
 import {
   APPLY_REQUEST,
@@ -78,6 +80,7 @@ export type ChatEvent =
   | { type: 'thinking'; step: number; text: string }
   | { type: 'tool'; name: string; label: string; ok: boolean; id: string; step: number; durationMs: number; detail?: string }
   | { type: 'proposal'; id: string; summary: string; ops: AssistantOp[]; dropped: string[]; warnings: string[] }
+  | AskEvent // SB11:
   | { type: 'done'; model: string; durationMs: number; steps: number; usage: { inputTokens: number; outputTokens: number }; costUsd?: number; local: boolean }
   | { type: 'error'; message: string; kind: ChatErrorKind; checkpoint?: string; step?: number };
 
@@ -196,6 +199,19 @@ export const TOOLS: ToolSpec[] = [
       required: ['summary', 'ops'],
     },
   },
+  // SB11: a question back, one tap to answer; never needs the autonomous switch.
+  {
+    name: ASK_USER_TOOL,
+    description: `Ask the person one question when you cannot go on without their answer: several steps could be the one they mean and the request names none (and none is selected), or a value only they know (a channel, a table, an id, a recipient) is missing and has no default. Give ${ASK_CHOICES_MIN} to ${ASK_CHOICES_MAX} short choices, each what the person would type. Never for anything search_nodes, get_workflow or get_run_data answers, and never together with propose_changes: ask, then stop.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        question: { type: 'string', description: 'One short question, at most 300 characters.' },
+        choices: { type: 'array', items: { type: 'string' }, minItems: ASK_CHOICES_MIN, maxItems: ASK_CHOICES_MAX, description: `${ASK_CHOICES_MIN} to ${ASK_CHOICES_MAX} distinct short answers (at most ${ASK_CHOICE_MAX_CHARS} characters), like the step names or channel names to pick from.` },
+      },
+      required: ['question', 'choices'],
+    },
+  },
 ];
 
 const SYSTEM = `You are the Landflow assistant inside the workflow editor. Landflow is an n8n-like automation tool: nodes joined by connections, JSON items flowing left to right.
@@ -223,7 +239,8 @@ How to work:
 - After proposing, say in one sentence what it does and what the user still has to do (click Apply, pick a credential, run it). Nothing is applied yet: never say the change was applied or made. Don't repeat the ops in prose.
 - When asked whether a test run's result does what the user asked for, read the output of the last step with get_run_data and compare it with the request: if it falls short (wrong items, a filter that keeps everything, fields missing), propose the change; if it does what was asked, say so in one sentence and propose nothing.
 - A question about the flow or a run (why, what, how…) is answered from the workflow and the run data in at most two sentences, naming the cause; propose nothing unless the message asks for a change.
-- When a message reports a failed test run, read the failing node's run data with get_run_data, find the cause and propose the smallest change that fixes it, without asking first. Say the cause in one clause of at most 12 words ("“Triage Ticket” got an empty message."). Fix the failing node or what feeds it, never something else, and never by removing a node and adding the same one back. If only the user can fix it (a credential, an id, an account), say what to do in one sentence and propose nothing.
+- When a message reports a failed test run, read the failing node's run data with get_run_data, find the cause and propose the smallest change that fixes it, without asking first, unless several steps could be meant: then ask_user. Say the cause in one clause of at most 12 words ("“Triage Ticket” got an empty message."). Fix the failing node or what feeds it, never something else, and never by removing a node and adding the same one back. If only the user can fix it (a credential, an id, an account), say what to do in one sentence and propose nothing.
+- Ask when it is not clear (ask_user): when several steps could be the one the request means and it names none, or a value only the person knows (a channel, a table, an id, a recipient) is missing and has no default. Ask one question with 2 to 4 short choices that are what the person would type, then stop: never ask and propose in the same step, and never ask what search_nodes, get_workflow or get_run_data can tell you.
 - When no change is needed, just answer. Write for a phone: at most two short sentences (about 25 words), no headings or lists unless asked. Start with the result or the answer. Never describe what you are about to do or what you looked at ("Let me…", "I'll…", "Looking at…", "The error indicates…").
 - A parameter that get_node_docs shows with "stored as …" (a collection or fixed collection) is written exactly in that shape: the group names, the field names and, for a field with options, one of the listed values. Never a flat list, never a field or option value the docs don't list.
 - Chat models, memory and tools are sub-nodes: attach them to the agent with a connection of type ai_languageModel, ai_memory or ai_tool (addNode "after": "<agent>" does it), never as a normal step after the agent. Don't pin test data on a trigger unless asked.
@@ -295,7 +312,8 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
   const question = input.session !== 'fix' && input.session !== 'review' && askKind(input.messages.findLast((m) => m.role === 'user')?.content ?? '') === 'question';
   if (question && input.session === 'auto') input = { ...input, session: undefined };
   /** SB04: a question is offered every tool except the one that changes the workflow. */
-  const tools = question ? TOOLS.filter((t) => t.name !== 'propose_changes') : TOOLS;
+  const testSession = input.session === 'fix' || input.session === 'review'; // SB11: a test session goes on by itself and asks through its own "Needs you" rows
+  const tools = (question ? TOOLS.filter((t) => t.name !== 'propose_changes') : TOOLS).filter((t) => !(testSession && t.name === ASK_USER_TOOL)); // SB11:
   const { onEvent, runs = {} } = input;
   const trace = input.trace === true;
   const types = input.types ?? availableTypes();
@@ -359,6 +377,9 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
   /** A fix that missed the failing step was sent back once. */
   let offTargetSent = false;
   let keptSent = false; // SB03:
+  let askedUser = false; // SB11:
+  let badAsks = 0; // SB11:
+  let severalSent = false; // SB11:
   let applyRetried = false;
   /** The ops of each proposal so far, as sent: a model may send the same one again and again. */
   const sent = new Set<string>(input.resume?.sent);
@@ -398,6 +419,27 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
     question ? '\nThe latest message is a question: answer it; you cannot change the workflow in this reply.' : '', // SB04:
     input.session === 'auto' ? `\n${AUTO}` : input.session ? `\n${sessionText(input.autonomy ?? 'asks-first')}` : '',
   ].join('\n');
+
+  /**
+   * SB11: the names of the steps that fit when the proposal edits an existing step of a kind several steps share, the request has no
+   * scope (the integrator swaps in SB07's `scope`), names no step and nothing is selected; else undefined. "All"/"both"/"every"/"each" is a choice already made.
+   */
+  const severalFit = (ops: AssistantOp[]): string[] | undefined => {
+    const latestRaw = input.messages.findLast((m) => m.role === 'user')?.content ?? '';
+    const taggedIds = (input.tagged?.reads ?? []).flatMap((r) => (r.ok && r.ref.type === 'node' ? [r.ref.id] : []));
+    if (scopeOf({ message: latestRaw, nodes: working.nodes, selectedId: input.selectedNodeId, taggedIds }) || namedNodes(latestRaw, working.nodes).length || /\b(?:all|both|every|each)\b/i.test(latestRaw)) return undefined;
+    const edited = ops.flatMap((op) => (op.op === 'setParameters' || op.op === 'setNodeSettings' ? [nodeByName(String((op as { node?: unknown }).node ?? ''))] : [])).filter((n): n is NonNullable<typeof n> => Boolean(n));
+    const first = edited[0];
+    if (!first) return undefined;
+    // A settings change (retry, timeout, on error) fits every step that calls out; a parameters change, every step of the same type.
+    const calls = (type: string) => !type.startsWith('core.') || /^core\.(?:httpRequest|aiAgent|messageAgent|runTeam|a2aAgent|mcp\w*|sendEmail)$/.test(type) || Boolean(types.find((t) => t.type === type)?.descriptor.credentials?.length);
+    const settings = ops.some((op) => op.op === 'setNodeSettings');
+    const fits = working.nodes.filter((n) => (settings ? calls(n.type) && calls(first.type) : n.type === first.type));
+    if (fits.length < 2 || fits.every((n) => edited.some((e) => e.id === n.id))) return undefined;
+    // A short name (under three letters, which `namedNodes` skips) the message spells exactly is a name given.
+    if (fits.some((n) => n.name.trim().length < 3 && new RegExp(`(?<![\\p{L}\\p{N}])${n.name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'u').test(latestRaw))) return undefined;
+    return fits.map((n) => n.name);
+  };
 
   /** The step now running, for the tool events. */
   let currentStep = 0;
@@ -495,6 +537,14 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
           keptSent = true;
           return result(`Not shown: ${kept} Only the person can change that: say so in one sentence.`, 'Kept what the person gave');
         }
+        // SB11: an edit of one of several steps of its kind, with no scope and no step named: ask which, once.
+        if (!testSession && !severalSent && !askedUser) {
+          const several = severalFit(validated.ops);
+          if (several) {
+            severalSent = true;
+            return result(`Several steps fit (${several.map((n) => `“${n}”`).join(', ')}): ask_user which one instead of picking. The request names none and none is selected.`, 'Asked which step instead of picking', true, false);
+          }
+        }
         if (!validated.ops.length && repeated.length && !validated.dropped.length) {
           return result(`Nothing changes: ${repeated.join('; ')}. Connect from it with another propose_changes call if something is still missing.`, 'Skipped a repeated proposal');
         }
@@ -575,6 +625,25 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         proposed = true;
         recordSuggestions(['proposal']);
         return shown;
+      }
+      case ASK_USER_TOOL: { // SB11:
+        const question = typeof args.question === 'string' ? args.question.trim() : '';
+        const choices = Array.isArray(args.choices) ? args.choices.map((c) => (typeof c === 'string' ? c.trim() : '')) : [];
+        const bad = !question || question.length > 300 ? 'the question must be 1 to 300 characters' : choices.length < ASK_CHOICES_MIN || choices.length > ASK_CHOICES_MAX ? `give ${ASK_CHOICES_MIN} to ${ASK_CHOICES_MAX} choices` : choices.some((c) => !c || c.length > ASK_CHOICE_MAX_CHARS) ? `each choice must be 1 to ${ASK_CHOICE_MAX_CHARS} characters` : new Set(choices.map((c) => c.toLowerCase())).size !== choices.length ? 'the choices must differ' : undefined;
+        detail = question;
+        if (bad) {
+          badAsks++;
+          if (badAsks === 1) return result(`Not asked: ${bad}. Call ask_user again with a valid question, or go on without asking.`, 'Question rejected', false);
+          // The second bad call ends the reply with the question as plain words.
+          askedUser = true;
+          if (question) onEvent(trace ? { type: 'text', text: shorten(question, 300), step: currentStep } : { type: 'text', text: shorten(question, 300) });
+          return result('Not asked: the question was not valid twice. The reply ends here.', 'Question shown as text', false, true);
+        }
+        const done = result('Asked the person. Stop here; their answer is the next message.', `Asked: ${shorten(question, 60)}`);
+        onEvent({ type: 'ask', question, choices, step: currentStep });
+        onEvent(trace ? { type: 'text', text: question, step: currentStep } : { type: 'text', text: question });
+        askedUser = true;
+        return done;
       }
       default:
         return result(`Unknown tool ${call.name}`, `Unknown tool ${call.name}`, false);
@@ -683,10 +752,13 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         if (finished) break;
         const results: ToolResult[] = [];
         let progress = false;
+        // SB11: a valid question in this step: the change in the same step is dropped (the trace lists it) and the model is not called again.
+        const asking = calls.some((c) => c.name === ASK_USER_TOOL && !testSession && Array.isArray(c.input?.choices) && c.input.choices.length >= ASK_CHOICES_MIN && c.input.choices.length <= ASK_CHOICES_MAX);
         for (const call of calls) {
           const shownBefore = waitingSummaries.length;
           // SB04: a propose_changes call (recovered from text) in the answer to a question shows no card.
-          const outcome: ToolResult = question && call.name === 'propose_changes' ? { id: call.id, name: call.name, content: 'Not offered: this is a question.', isError: true } : await execute(call);
+          // SB11: asking is not offered in a test session, and a change in the same step as a question is held back: ask first.
+          const outcome: ToolResult = question && call.name === 'propose_changes' ? { id: call.id, name: call.name, content: 'Not offered: this is a question.', isError: true } : testSession && call.name === ASK_USER_TOOL ? { id: call.id, name: call.name, content: 'Not offered: this session goes on by itself.', isError: true } : asking && call.name === 'propose_changes' ? { id: call.id, name: call.name, content: 'Not shown: you asked the person a question in this step. Ask first, propose after the answer.', isError: true } : await execute(call);
           span.addEvent('assistant.tool', { 'gen_ai.tool.name': call.name, 'landflow.outcome': outcome.isError ? 'error' : 'ok' });
           results.push(outcome);
           // Progress is a new proposal, or a result this reply hasn't had yet.
@@ -696,6 +768,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         }
         stalled = progress ? 0 : stalled + 1;
         history.push({ role: 'tool', results });
+        if (askedUser) { finished = true; break; } // SB11: the reply ends with the question; the answer is the next message
       }
     } catch (caught) {
       // Not a model failure (those returned above): a tool or the host failed.
