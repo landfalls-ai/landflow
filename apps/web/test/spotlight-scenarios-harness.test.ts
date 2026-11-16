@@ -264,3 +264,29 @@ describe('the report', () => {
     expect(tables(report, [scenario])).toContain('sb00-s: because');
   });
 });
+
+describe('the scenario data directory (env.ts)', () => {
+  const env = join(import.meta.dirname, 'spotlight-scenarios/env.ts');
+  const child = (script: string) => spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', '-e', script], { encoding: 'utf8', timeout: 20_000 });
+
+  it('leaves the directory to the host\'s own exit flush: a later exit handler can still write into it, and the run ends 0', () => {
+    const r = child(`import(${JSON.stringify(env)}).then(() => { const fs = require('node:fs'); process.once('exit', () => fs.writeFileSync(process.env.LANDFLOW_DATA_DIR + '/insights.json', '{}')); })`);
+    expect(r.stderr).not.toContain('ENOENT');
+    expect(r.status).toBe(0);
+  });
+
+  it('removes a stale directory of an earlier run (older than an hour) and keeps a fresh one', () => {
+    const r = child(`
+      const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
+      const stale = fs.mkdtempSync(path.join(os.tmpdir(), 'landflow-spotlight-scenarios-'));
+      const fresh = fs.mkdtempSync(path.join(os.tmpdir(), 'landflow-spotlight-scenarios-'));
+      const old = new Date(Date.now() - 2 * 3600 * 1000);
+      fs.utimesSync(stale, old, old);
+      import(${JSON.stringify(env)}).then(() => {
+        console.log(JSON.stringify({ stale: fs.existsSync(stale), fresh: fs.existsSync(fresh) }));
+        fs.rmSync(fresh, { recursive: true, force: true });
+        fs.rmSync(process.env.LANDFLOW_DATA_DIR, { recursive: true, force: true });
+      });`);
+    expect(JSON.parse(r.stdout.trim().split('\n').pop()!)).toEqual({ stale: false, fresh: true });
+  });
+});
