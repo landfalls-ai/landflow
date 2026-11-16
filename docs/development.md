@@ -316,9 +316,10 @@ writes the same as JSON (sizes and check results only, no reply or ask text). Va
 `LANDFLOW_SPOTLIGHT_REPORT` (the JSON path; default `$TMPDIR/landflow-spotlight-scorecard.json`),
 `LANDFLOW_SPOTLIGHT_ECHO_PORT` (the suite's echo server, default 3399) and `LANDFLOW_SPOTLIGHT_PLUGINS` (comma-separated
 local plugin endpoints that serve Linear and Messaging; without it the live form registers the bundled Linear and
-Messaging plugins in the test process, so builds see the catalog a person has; the scripted form uses small stand-ins). The guard, `test/spotlight-scenarios/local-only.cjs`, makes every connection to anything but this
-machine fail with `ECONNREFUSED` (and every lookup of another name with `ENOTFOUND`), printing `[local-only] refused
-<host>:<port>`. It must be on from the process's start: the runner stops with a message when the live form is asked for
+Messaging plugins in the test process, so builds see the core nodes plus those two, not the whole bundled catalog; the
+scripted form uses small stand-ins). The guard, `test/spotlight-scenarios/local-only.cjs`, makes every connection to
+anything but this machine fail with `ECONNREFUSED` (and every lookup of another name with `ENOTFOUND`), printing
+`[local-only] refused <host>:<port>`. It must be on from the process's start: the runner stops with a message when the live form is asked for
 and it is not loaded, so the command above sets `NODE_OPTIONS` (a live check of a running host does the same). It covers
 `net` connections and `dns.lookup`; it does not cover `dns.resolve*` or `Resolver` (c-ares over UDP), `dgram` or child
 processes, which no product code uses today. A package adds

@@ -145,7 +145,11 @@ function runsById(wf: Workflow | undefined, runs: Record<string, RunDigest> | un
   return Object.fromEntries(Object.entries(runs).map(([name, digest]) => [idOf(wf, name)!, digest]));
 }
 
-/** What the model's script turn looks like to Ollama's API: tool inputs are `arguments`. */
+/**
+ * What the model's script turn looks like to Ollama's API: tool inputs are `arguments`. A function turn gets an empty
+ * request here (the build, design and architect forms reach the fake over HTTP), so function-form scripts cannot
+ * inspect the request in those forms; chat and session scripts get the real one.
+ */
 function fakeReplyOf(script: ScriptTurn[]) {
   const left = [...script];
   return () => {
@@ -313,7 +317,7 @@ function applyAll(workflow: Workflow, proposals: Outcome['proposals']): Workflow
 // The session: Spotlight's test-and-fix loop on the editor's stores, in Node
 // ---------------------------------------------------------------------------
 
-async function sessionOf(scenario: Scenario, form: Form, options: RunOptions, start: Workflow, first: Collected, afterChat: Workflow, scripted: Scripted | undefined) {
+async function sessionOf(scenario: Scenario, form: Form, options: RunOptions, first: Collected, afterChat: Workflow, scripted: Scripted | undefined) {
   const { useEditor } = await import('@/components/editor/store');
   const { useAssistant, runDigests } = await import('@/components/editor/assistant');
   const { testUntilItRuns } = await import('@/components/editor/test-session');
@@ -396,7 +400,6 @@ async function sessionOf(scenario: Scenario, form: Form, options: RunOptions, st
   const needs = useAssistant
     .getState()
     .items.flatMap((item) => (item.role === 'assistant' ? item.parts.flatMap((p) => (p.kind === 'needs' ? [p.need.what as string] : [])) : []));
-  void start;
   return { after: useEditor.getState().toWorkflow(), needs, replies };
 }
 
@@ -452,7 +455,7 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
       withDone(result);
       outcome.after = applyAll(canvas, result.proposals);
       if (scenario.via === 'session') {
-        const session = await sessionOf(scenario, form, options, canvas, result, outcome.after, scripted);
+        const session = await sessionOf(scenario, form, options, result, outcome.after, scripted);
         outcome.after = session.after;
         outcome.needs = session.needs;
         outcome.modelCalls += session.replies.slice(1).reduce((n, r) => n + r.calls, 0);

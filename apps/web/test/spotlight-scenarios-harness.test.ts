@@ -111,13 +111,13 @@ describe('the harness drives the product', () => {
   });
 
   it('a session: one script across every message, the failed run reaches the fix request, and "Needs you" is recorded', async () => {
-    const seen: Array<{ turn: number; last: string; runs: string }> = [];
+    const seen: Array<{ turn: number; last: string; system: string }> = [];
     const lastUser = (input: Parameters<LanguageModel['generate']>[0]) => {
       const m = [...input.messages].reverse().find((x) => x.role === 'user');
       return typeof m?.content === 'string' ? m.content : JSON.stringify(m?.content);
     };
     const see = (turn: number, reply: Partial<ModelTurn>) => (input: Parameters<LanguageModel['generate']>[0]) => {
-      seen.push({ turn, last: lastUser(input), runs: JSON.stringify(input) });
+      seen.push({ turn, last: lastUser(input), system: input.system });
       return reply;
     };
     const scenario: Scenario = {
@@ -145,8 +145,11 @@ describe('the harness drives the product', () => {
     const fix = seen.find((s) => s.last.includes('Test run 1 failed'));
     expect(fix?.turn).toBe(2);
     expect(seen.at(-1)?.last).toContain('Test run 2 had no errors');
-    // The failed run's data reached the model, as the editor's `runs` do: the failed node's error.
-    expect(fix?.runs).toContain('Boom: bad code');
+    // The failed run's digest reached the fix request, as the editor's `runs` do: the failed node's context holds its
+    // last run (only `runDigests()` puts it there), where without it the prompt says "Not run yet."
+    expect(fix?.system).toContain('Last run:');
+    expect(fix?.system).toContain('Boom: bad code');
+    expect(fix?.system).not.toContain('Not run yet.');
     expect(o.proposals.map((p) => p.summary)).toContain('Fixed C');
     expect(o.modelCalls).toBe(seen.length);
     expect(o.after?.nodes.find((n) => n.name === 'C')?.parameters).toMatchObject({ codeEach: 'return $json;' });
