@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: landflow-mailpit
+  labels: { app.kubernetes.io/name: landflow-mailpit, app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: mail }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: landflow-mailpit }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: landflow-mailpit, app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: mail }
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: mailpit
+          image: axllent/mailpit:v1.31.6
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: smtp, containerPort: 1025 }
+            - { name: http, containerPort: 8025 }
+          env:
+            - { name: MP_MAX_MESSAGES, value: "5000" }
+            # Accept any SMTP user/password (and none), without TLS: a sink.
+            - { name: MP_SMTP_AUTH_ACCEPT_ANY, value: "1" }
+            - { name: MP_SMTP_AUTH_ALLOW_INSECURE, value: "1" }
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: landflow-mailpit
+  labels: { app.kubernetes.io/name: landflow-mailpit, app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: mail }
+spec:
+  selector: { app.kubernetes.io/name: landflow-mailpit }
+  ports:
+    - { name: smtp, port: 1025, targetPort: smtp }
+    - { name: http, port: 8025, targetPort: http }
