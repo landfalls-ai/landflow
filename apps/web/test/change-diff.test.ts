@@ -137,3 +137,17 @@ describe('ChangeDiff', () => {
     expect(one).toContain('8 other steps untouched');
   });
 });
+
+describe('LiveSteps: two proposals of one reply share one diff (SB08-N3)', () => {
+  it('each proposal is its own group, so two that reuse a ref both show their added step', async () => {
+    const { LiveSteps } = await import('@/components/editor/building');
+    const { useEditor } = await import('@/components/editor/store');
+    useEditor.getState().load(triage, types);
+    const proposal = (id: string, name: string) => ({ itemId: 'r1', proposal: { id, summary: name, ops: [{ op: 'addNode', ref: 'r1', type: 'core.noOp', name, before: 'Save to backlog' }] as AssistantOp[], dropped: [], warnings: [] } });
+    const live = { replyId: 'r1', proposals: [proposal('p1', 'Pause'), proposal('p2', 'Wait more')], tools: [], streaming: false, plan: { steps: [] }, revealed: 0, steps: [], progress: 1 };
+    const html = renderToStaticMarkup(createElement(LiveSteps, { live: live as never }));
+    expect(html).toContain('Pause');
+    expect(html).toContain('Wait more');
+    expect(html).toContain('Apply');
+  });
+});

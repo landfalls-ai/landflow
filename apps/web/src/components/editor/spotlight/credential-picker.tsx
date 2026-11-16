@@ -89,15 +89,15 @@ export function CredentialPickerView({
   );
 }
 
-/**
- * The picker of a "Needs you" credential row. `credentialTypes` are the step's credential slots (the node type's
- * `credentials` names); a credential of the step's type qualified with each is offered.
- */
 /** Every credential type a step accepts, qualified for the dialog: one presets it, several show its chooser (D2). */
 export function allowedTypesFor(type: string, slots: string[]): string[] {
   return slots.map((slot) => qualifiedCredentialType(type, slot));
 }
 
+/**
+ * The picker of a "Needs you" credential row. `credentialTypes` are the step's credential slots (the node type's
+ * `credentials` names); a credential of the step's type qualified with each is offered.
+ */
 export function CredentialPicker({
   workflowId,
   nodeId,
@@ -105,6 +105,7 @@ export function CredentialPicker({
   nodeType,
   credentialTypes,
   onPicked,
+  startCreating = false,
 }: {
   workflowId: string;
   nodeId?: string;
@@ -114,11 +115,13 @@ export function CredentialPicker({
   nodeType?: string;
   credentialTypes: string[];
   onPicked: (picked: { id: string; name: string }) => void;
+  /** The dialog is open from the first render (the tests read what the picker hands it). */
+  startCreating?: boolean;
 }) {
   const { credentials: all } = useCredentials();
   const { scope, reload } = useCredentialScope(workflowId);
   const [chosen, setChosen] = useState('');
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState(startCreating);
   // Re-read when the canvas changes: the step may be added by the card applied after this row appeared.
   const onCanvas = useEditor((s) => s.nodes.map((n) => n.data.wf).find((n) => n.id === nodeId) ?? s.nodes.map((n) => n.data.wf).find((n) => n.name === node));
   const type = nodeType ?? onCanvas?.type;

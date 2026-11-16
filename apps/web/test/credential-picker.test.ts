@@ -133,6 +133,23 @@ describe('Create one', () => {
   });
 });
 
+describe('the picker hands the dialog every type the step accepts (SB12-N2)', () => {
+  it('opens CredentialDialog with allowedTypesFor\'s list, not the first type', async () => {
+    const dialog = await import('@/components/credentials/credential-dialog');
+    const { allowedTypesFor } = await import('@/components/editor/spotlight/credential-picker');
+    const seen: string[][] = [];
+    // Render the element tree one level: the picker returns the view and the dialog as children of a fragment.
+    const spy = vi.spyOn(dialog, 'CredentialDialog').mockImplementation(((props: { allowedTypes: string[] }) => (seen.push(props.allowedTypes), null)) as never);
+    try {
+      renderToStaticMarkup(createElement(CredentialPicker, { workflowId: 'wf_1', node: 'Open status incident', nodeType: 'core.httpRequest', credentialTypes: ['oAuth2Api', 'httpBearerAuth', 'httpHeaderAuth'], onPicked: () => {}, startCreating: true }));
+    } finally {
+      spy.mockRestore();
+    }
+    expect(seen).toEqual([allowedTypesFor('core.httpRequest', ['oAuth2Api', 'httpBearerAuth', 'httpHeaderAuth'])]);
+    expect(seen[0]).toHaveLength(3);
+  });
+});
+
 describe('a pick', () => {
   it('sets what the slot needs to show, and only the row picked', async () => {
     const { useEditor } = await import('@/components/editor/store');
