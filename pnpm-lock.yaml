@@ -128,7 +128,7 @@ importers:
         specifier: ^1.8.2
         version: 1.8.2(next@16.4.3(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))
       gpt-tokenizer:
-        specifier: ^4.1.2
+        specifier: 4.1.2
         version: 4.1.2
       imapflow:
         specifier: ^2.9.1
